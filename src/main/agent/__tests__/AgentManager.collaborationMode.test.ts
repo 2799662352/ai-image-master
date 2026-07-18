@@ -73,8 +73,8 @@ function makeBackendWithPresets(
   backend.listModels = async () => ({
     data: [
       modelRow({
-        id: 'gpt-5.2-codex',
-        model: 'gpt-5.2-codex',
+        id: 'gpt-5.4',
+        model: 'gpt-5.4',
         supportedReasoningEfforts: [
           { reasoningEffort: 'low', description: 'low' },
           { reasoningEffort: 'medium', description: 'medium' },
@@ -207,10 +207,12 @@ function makeCollaborationBackend(options: {
       return options.updateThreadSettings!(params)
     }
   }
-  if (options.restartCodex) {
+  if (options.restartCodex || options.initialEpoch === undefined) {
     backend.restartCodex = async () => {
       backend.restartCalls += 1
-      await options.restartCodex!(backend)
+      if (options.restartCodex) {
+        await options.restartCodex(backend)
+      }
     }
   }
   if (options.resumeThread) {
@@ -278,7 +280,7 @@ describe('AgentManager collaborationMode', () => {
     await mgr.sendMessage({
       content: 'plan this',
       attachments: [],
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.4',
       collaborationModeKind: 'plan',
     })
     await flushMicrotasks()
@@ -287,7 +289,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[0].input.collaborationMode).toEqual({
       mode: 'plan',
       settings: {
-        model: 'gpt-5.2-codex',
+        model: 'gpt-5.4',
         reasoning_effort: 'medium',
         developer_instructions: null,
       },
@@ -329,7 +331,7 @@ describe('AgentManager collaborationMode', () => {
     await mgr.sendMessage({
       content: 'plan this',
       attachments: [],
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.4',
       collaborationModeKind: 'plan',
     })
     await flushMicrotasks()
@@ -338,7 +340,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[0].input.collaborationMode).toEqual({
       mode: 'plan',
       settings: {
-        model: 'gpt-5.2-codex',
+        model: 'gpt-5.4',
         reasoning_effort: 'medium',
         developer_instructions: null,
       },
@@ -374,7 +376,7 @@ describe('AgentManager collaborationMode', () => {
     await mgr.sendMessage({
       content: 'plan this',
       attachments: [],
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.4',
       collaborationModeKind: 'plan',
     })
     await flushMicrotasks()
@@ -383,7 +385,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[0].input.collaborationMode).toEqual({
       mode: 'plan',
       settings: {
-        model: 'gpt-5.2-codex',
+        model: 'gpt-5.4',
         reasoning_effort: null,
         developer_instructions: null,
       },
@@ -819,7 +821,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(pending).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         backendEpoch: 2,
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['medium'],
@@ -846,11 +848,11 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toMatchObject({
       ok: true,
       data: {
-        providerId: 'apiyi',
+        providerId: 'apiyi-standard',
         backendEpoch: 1,
       },
     })
-    expect(backend.modelCalls).toHaveLength(1)
+    expect(backend.modelCalls).toHaveLength(0)
   })
 
   it('keeps Plan Max for Right Code gpt-5.6-sol through the shared provider policy', async () => {
@@ -878,7 +880,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         source: 'codex',
@@ -911,7 +913,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
         source: 'codex',
@@ -932,7 +934,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'apiyi',
+        providerId: 'apiyi-standard',
         planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
@@ -957,7 +959,7 @@ describe('AgentManager collaboration capabilities', () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        providerId: 'apiyi',
+        providerId: 'apiyi-standard',
         planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
@@ -994,7 +996,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         planDefaultEffort: 'max',
         supportedPlanEfforts: ['max'],
         source: 'codex',
@@ -1006,7 +1008,7 @@ describe('AgentManager collaboration capabilities', () => {
     ['collaborationMode/list unavailable', makeCollaborationBackend({
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: 'low',
       supportedPlanEfforts: ['low', 'high'],
       source: 'codex',
@@ -1014,7 +1016,7 @@ describe('AgentManager collaboration capabilities', () => {
     ['model/list unavailable', makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',
@@ -1023,7 +1025,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModes: async () => { throw new Error('presets failed') },
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: 'low',
       supportedPlanEfforts: ['low', 'high'],
       source: 'codex',
@@ -1032,7 +1034,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModes: async () => UPSTREAM_PRESETS,
       listModels: async () => { throw new Error('models failed') },
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',

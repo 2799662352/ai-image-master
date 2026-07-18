@@ -81,6 +81,23 @@ export class ToolRouter {
     return this.callRenderer(name, params, codexThreadId)
   }
 
+  /**
+   * 渲染进程重载/崩溃时由主进程接线调用：所有 pending 的渲染层工具调用
+   * （generate_image kick、ask_user…）的响应永远不会回来，立即全部 reject,
+   * 让 MCP 工具马上把明确的失败带回给模型，而不是干等 33 分钟/6 小时超时。
+   * 返回被拒绝的调用数。
+   */
+  failAllPending(reason: string): number {
+    let rejected = 0
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timeout)
+      this.pending.delete(id)
+      pending.reject(new Error(reason))
+      rejected += 1
+    }
+    return rejected
+  }
+
   handleRendererResponse(response: AgentToolResponse): void {
     const pending = this.pending.get(response.id)
     if (!pending) return

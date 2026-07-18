@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCodexLaunchArgs,
-  DEFAULT_CODEX_MODEL_CONTEXT_CONFIG,
   DEFAULT_CODEX_SESSION_CONFIG,
   DEFAULT_LISTEN_URL,
   resolveCodexSessionConfig,
@@ -50,8 +49,6 @@ describe('buildCodexLaunchArgs', () => {
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
-      '-c', 'model_context_window=272000',
-      '-c', 'model_auto_compact_token_limit=244800',
     ])
   })
 
@@ -77,8 +74,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.memories=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
-      '-c', 'model_context_window=272000',
-      '-c', 'model_auto_compact_token_limit=244800',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -146,6 +141,87 @@ describe('buildCodexLaunchArgs', () => {
     expect(withMcp).toContain('features.memories=true')
   })
 
+  it('pins memories side-request models to the channel model (grok 400 fix)', () => {
+    // With `features.memories=true`, codex fires background memory
+    // extraction/consolidation turns using its own defaults (gpt-5.4 —
+    // confirmed via live capture: "Memory Writing Agent: Phase 2" POSTed
+    // `model: gpt-5.4` to right.codes/grok and got 400 端点未配置模型). Pinning
+    // `memories.extract_model` / `memories.consolidation_model` (both keys
+    // verified present in the bundled binary's config surface) to the channel
+    // model keeps every side request on a model the endpoint actually serves.
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'rightcode-grok',
+        name: 'Right.Codes Grok',
+        baseUrl: 'https://right.codes/grok/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'grok-4.5',
+      },
+    })
+    expect(pairs(args)).toContainEqual(['-c', 'memories.extract_model="grok-4.5"'])
+    expect(pairs(args)).toContainEqual(['-c', 'memories.consolidation_model="grok-4.5"'])
+  })
+
+  it('prefers an explicit memoriesModel over the channel model for memory side requests', () => {
+    // apiyi-grok's base URL is the FULL apiyi endpoint (api.apiyi.com/v1 —
+    // same host as apiyi-standard, every model available), so its memory side
+    // requests can run on the smarter gpt-5.5 while the chat model stays
+    // grok-4.5. Channels whose endpoint only serves one model (rightcode-grok)
+    // simply omit memoriesModel and fall back to the channel model.
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi-grok',
+        name: 'API Yi Grok',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'grok-4.5',
+        memoriesModel: 'gpt-5.5',
+      },
+    })
+    expect(pairs(args)).toContainEqual(['-c', 'model="grok-4.5"'])
+    expect(pairs(args)).toContainEqual(['-c', 'memories.extract_model="gpt-5.5"'])
+    expect(pairs(args)).toContainEqual(['-c', 'memories.consolidation_model="gpt-5.5"'])
+    expect(args.join(' ')).not.toContain('memories.extract_model="grok-4.5"')
+  })
+
+  it('pins memories models from memoriesModel alone when the channel has no chat model pin', () => {
+    // apiyi-standard style: no `-c model` (user picks per turn) but memory
+    // side requests still deserve the smarter model instead of the gpt-5.4
+    // default.
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi',
+        name: 'API Yi',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        memoriesModel: 'gpt-5.5',
+      },
+    })
+    expect(args.join(' ')).not.toContain('-c model="')
+    expect(pairs(args)).toContainEqual(['-c', 'memories.extract_model="gpt-5.5"'])
+    expect(pairs(args)).toContainEqual(['-c', 'memories.consolidation_model="gpt-5.5"'])
+  })
+
+  it('leaves memories models on codex defaults when the provider has no pinned model', () => {
+    // apiyi-standard style channels: default memory models (gpt-5.4) exist on
+    // those endpoints, so no override is needed — and with no provider at all
+    // (official OpenAI) the defaults must stay untouched too.
+    const withProvider = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi',
+        name: 'API Yi',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+      },
+    })
+    expect(withProvider.join(' ')).not.toContain('memories.extract_model')
+    expect(withProvider.join(' ')).not.toContain('memories.consolidation_model')
+
+    const withoutProvider = buildCodexLaunchArgs()
+    expect(withoutProvider.join(' ')).not.toContain('memories.extract_model')
+    expect(withoutProvider.join(' ')).not.toContain('memories.consolidation_model')
+  })
+
   it('configures the active provider via -c overrides when provider config is given', () => {
     const args = buildCodexLaunchArgs({
       provider: {
@@ -198,11 +274,23 @@ describe('buildCodexLaunchArgs', () => {
     expect(flat).not.toContain('model_providers.')
   })
 
-  it('uses the default model 272K/244800 runtime config and never emits the legacy 220K limit', () => {
+  it('omits the context pin by default so Codex resolves native model metadata', () => {
+    // models.json ships per-slug context windows (gpt-5.5 272K, gpt-5.6-* 372K).
+    // A launch-time `model_context_window` override applies globally to every
+    // model in the process AND disables native auto-compaction defaults, so we
+    // only pin when the user selects a non-native window.
     const args = buildCodexLaunchArgs()
-    expect(args).toContain('model_context_window=272000')
-    expect(args).toContain('model_auto_compact_token_limit=244800')
-    expect(args.join(' ')).not.toContain('220000')
+    const flat = args.join(' ')
+    expect(flat).not.toContain('model_context_window')
+    expect(flat).not.toContain('model_auto_compact_token_limit')
+    expect(flat).not.toContain('220000')
+  })
+
+  it('omits the context pin when modelContextConfig is explicitly null (unpinned)', () => {
+    const args = buildCodexLaunchArgs({ modelContextConfig: null })
+    const flat = args.join(' ')
+    expect(flat).not.toContain('model_context_window')
+    expect(flat).not.toContain('model_auto_compact_token_limit')
   })
 
   it('uses an explicit 372K/334800 runtime context config', () => {
@@ -247,17 +335,6 @@ describe('buildCodexLaunchArgs', () => {
     expect(() => buildCodexLaunchArgs({
       modelContextConfig: config,
     })).toThrow(/invalid.*model context config/i)
-  })
-
-  it('freezes the exported default context config against caller mutation', () => {
-    expect(Object.isFrozen(DEFAULT_CODEX_MODEL_CONTEXT_CONFIG)).toBe(true)
-    expect(() => {
-      (DEFAULT_CODEX_MODEL_CONTEXT_CONFIG as { modelContextWindow: number }).modelContextWindow = 1
-    }).toThrow()
-
-    const args = buildCodexLaunchArgs()
-    expect(args).toContain('model_context_window=272000')
-    expect(args).toContain('model_auto_compact_token_limit=244800')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {

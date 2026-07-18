@@ -10,10 +10,6 @@ import type {
 } from '../../types/agent'
 
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
-export const DEFAULT_CODEX_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = Object.freeze({
-  modelContextWindow: 272_000,
-  modelAutoCompactTokenLimit: 244_800,
-})
 
 const RESERVED_PROVIDER_TOP_LEVEL_KEYS = new Set([
   'model_context_window',
@@ -27,6 +23,11 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   webSearch: 'live',
   writableRoots: [],
 }
+
+/** Selects an explicit compatibility adapter for a provider channel. */
+export type ProviderCompatibilityPolicy =
+  | 'none'
+  | 'responses-namespace-bridge'
 
 /**
  * Custom Codex model_provider config. When passed, we wire it through the
@@ -64,6 +65,15 @@ export interface CodexProviderConfig {
   envKey: string
   /** Optional. When set, becomes `-c model="..."`. */
   model?: string
+  /**
+   * Optional model for background memories side requests
+   * (`memories.extract_model` / `memories.consolidation_model`). Falls back
+   * to `model` when omitted. Set it when the channel's endpoint serves a
+   * smarter model than the chat model (e.g. apiyi-grok chats on grok-4.5 but
+   * its full apiyi endpoint also serves gpt-5.5); leave it unset on
+   * single-model endpoints where anything but `model` would 400.
+   */
+  memoriesModel?: string
   /** Optional. When set, becomes `-c model_reasoning_effort="..."`. */
   reasoningEffort?: string
   /** Optional. When set, becomes `-c model_verbosity="..."`. */
@@ -87,6 +97,8 @@ export interface CodexProviderConfig {
    * strings serialize as `key="value"`.
    */
   extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
+  /** Optional channel adapter policy; omitted providers use native Responses behavior. */
+  compatibilityPolicy?: ProviderCompatibilityPolicy
 }
 
 /**
@@ -129,7 +141,16 @@ export interface CodexLaunchOptions {
    */
   extraProviders?: readonly CodexProviderConfig[]
   sessionConfig?: Partial<CodexSessionConfig>
-  modelContextConfig?: CodexModelContextConfig
+  /**
+   * Optional launch-time context pin. `null`/`undefined` means "unpinned":
+   * neither `model_context_window` nor `model_auto_compact_token_limit` is
+   * emitted, and Codex resolves both from its bundled per-model metadata
+   * (models.json). Only pass a config when the user explicitly selected a
+   * non-native window (see `resolveModelContextPin`), because the override
+   * applies globally to every model in the process and changing it requires
+   * a full restart.
+   */
+  modelContextConfig?: CodexModelContextConfig | null
   /**
    * Local in-process catimation MCP server coordinates. When present we
    * inject an ephemeral `[mcp_servers.catimation]` entry via `-c` so the
@@ -247,6 +268,22 @@ export function appendProviderArgs(
   if (provider.model) {
     args.push('-c', `model="${provider.model}"`)
   }
+  // Memories side requests (extraction "Phase 1" + consolidation "Phase 2")
+  // default to codex's own memory models (gpt-5.4 in the bundled build) and
+  // are POSTed to the ACTIVE provider's endpoint. On single-model gateways
+  // like right.codes/grok that 400s ("端点未配置模型gpt-5.4") on every thread
+  // start — non-fatal but wasteful. Pin both documented override keys
+  // (developers.openai.com/codex/memories; string table verified in the
+  // bundled binary) to `memoriesModel` (the smartest model the endpoint
+  // serves) or, failing that, the channel's own chat model — either way the
+  // side request always targets a model the endpoint actually has.
+  const memoriesModel = provider.memoriesModel ?? provider.model
+  if (memoriesModel) {
+    args.push(
+      '-c', `memories.extract_model="${memoriesModel}"`,
+      '-c', `memories.consolidation_model="${memoriesModel}"`,
+    )
+  }
   if (provider.reasoningEffort) {
     args.push('-c', `model_reasoning_effort="${provider.reasoningEffort}"`)
   }
@@ -291,8 +328,10 @@ export function appendExtraProviders(
 }
 
 export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
-  const modelContextConfig = options?.modelContextConfig ?? DEFAULT_CODEX_MODEL_CONTEXT_CONFIG
-  assertCodexModelContextConfig(modelContextConfig)
+  const modelContextConfig = options?.modelContextConfig ?? null
+  if (modelContextConfig !== null) {
+    assertCodexModelContextConfig(modelContextConfig)
+  }
   const url = options?.listenUrl ?? DEFAULT_LISTEN_URL
   const sessionConfig = resolveCodexSessionConfig(options?.sessionConfig)
   const args: string[] = [
@@ -573,12 +612,17 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
 
   const withActive = appendProviderArgs(args, options?.provider)
   const withProviders = appendExtraProviders(withActive, options?.extraProviders)
-  // Runtime settings are authoritative. Append both reserved keys after every
-  // provider override so Codex's last-wins `-c` precedence cannot be hijacked
-  // by a provider preset.
-  withProviders.push(
-    '-c', `model_context_window=${modelContextConfig.modelContextWindow}`,
-    '-c', `model_auto_compact_token_limit=${modelContextConfig.modelAutoCompactTokenLimit}`,
-  )
+  // Runtime settings are authoritative. When pinned, append both reserved keys
+  // after every provider override so Codex's last-wins `-c` precedence cannot
+  // be hijacked by a provider preset. When unpinned, omit them entirely so
+  // Codex resolves the window + auto-compaction budget per model from its own
+  // metadata (presets carrying these keys are rejected upfront by
+  // `assertNoReservedProviderConfig`).
+  if (modelContextConfig !== null) {
+    withProviders.push(
+      '-c', `model_context_window=${modelContextConfig.modelContextWindow}`,
+      '-c', `model_auto_compact_token_limit=${modelContextConfig.modelAutoCompactTokenLimit}`,
+    )
+  }
   return withProviders
 }

@@ -1,5 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 
+import type { AgentThreadModelSnapshot } from '../../types/agent'
+
 export class ThreadStore {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -74,6 +76,34 @@ export class ThreadStore {
       where: { id: threadId, manualTitle: false },
       data: { title },
     })
+  }
+
+  /**
+   * Stores the confirmed model for an existing Agent thread — e.g. after a
+   * Gateway/model switch mid-conversation. Scoped to the target thread only
+   * via `where: { id: threadId }`, matching {@link renameThread}.
+   */
+  async setThreadModel(threadId: string, model: string): Promise<void> {
+    await this.prisma.agentThread.update({
+      where: { id: threadId },
+      data: { model },
+    })
+  }
+
+  /**
+   * Reads one thread's confirmed model while preserving missing-vs-unset
+   * identity for turn admission and transaction rollback.
+   */
+  async getThreadModelSnapshot(
+    threadId: string,
+  ): Promise<AgentThreadModelSnapshot> {
+    const row = await this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      select: { model: true },
+    })
+    return row
+      ? { exists: true, model: row.model ?? null }
+      : { exists: false }
   }
 
   async deleteThread(threadId: string): Promise<void> {

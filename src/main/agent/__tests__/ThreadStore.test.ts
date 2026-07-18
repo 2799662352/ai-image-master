@@ -70,6 +70,72 @@ describe('ThreadStore.attachCodexReconcile', () => {
   })
 })
 
+describe('ThreadStore.setThreadModel', () => {
+  it('updates the persisted thread model after confirmed selection', async () => {
+    const update = vi.fn().mockResolvedValue(undefined)
+    const prisma = {
+      agentThread: { update },
+    } as any
+    const store = new ThreadStore(prisma)
+
+    await store.setThreadModel('thread_1', 'grok-4.5')
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'thread_1' },
+      data: { model: 'grok-4.5' },
+    })
+  })
+
+  it('only touches the target thread, never other rows', async () => {
+    const update = vi.fn().mockResolvedValue(undefined)
+    const prisma = {
+      agentThread: { update },
+    } as any
+    const store = new ThreadStore(prisma)
+
+    await store.setThreadModel('thread_target', 'gpt-5.5')
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'thread_target' },
+      data: { model: 'gpt-5.5' },
+    })
+  })
+
+  it('reads only the target thread model for transaction rollback', async () => {
+    const findUnique = vi.fn().mockResolvedValue({ model: 'thread-old-model' })
+    const store = new ThreadStore({
+      agentThread: { findUnique },
+    } as any)
+
+    await expect(store.getThreadModelSnapshot('thread_target')).resolves.toEqual({
+      exists: true,
+      model: 'thread-old-model',
+    })
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 'thread_target' },
+      select: { model: true },
+    })
+  })
+
+  it('distinguishes a missing thread from an existing thread with no model', async () => {
+    const findUnique = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ model: null })
+    const store = new ThreadStore({
+      agentThread: { findUnique },
+    } as any)
+
+    await expect(store.getThreadModelSnapshot('missing')).resolves.toEqual({
+      exists: false,
+    })
+    await expect(store.getThreadModelSnapshot('legacy')).resolves.toEqual({
+      exists: true,
+      model: null,
+    })
+  })
+})
+
 describe('ThreadStore.listThreads', () => {
   it('orders by lastMessageAt desc then updatedAt desc, and surfaces lastMessageAt + manualTitle', async () => {
     const fakeRows = [

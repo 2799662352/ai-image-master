@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CodexProviderStore } from '../CodexProviderStore'
+import { CodexProviderStore, type PersistedProvidersV2 } from '../CodexProviderStore'
 import { DEFAULT_PROVIDER_ID } from '../codexProviders'
 
 let tmpDir: string
@@ -23,8 +23,9 @@ describe('CodexProviderStore', () => {
   it('returns sensible defaults when no file exists', async () => {
     const store = makeStore()
     const state = await store.load()
-    expect(state.version).toBe(1)
-    expect(state.selectedProviderId).toBe(DEFAULT_PROVIDER_ID)
+    expect(state.version).toBe(2)
+    expect(state.selectedGatewayId).toBe(DEFAULT_PROVIDER_ID)
+    expect(state.selectedModelId).toBe('gpt-5.5')
     expect(state.apiKeys).toEqual({})
     expect(state.customProviders).toEqual([])
   })
@@ -79,7 +80,7 @@ describe('CodexProviderStore', () => {
 
     const store = makeStore()
     const state = await store.load()
-    expect(state.selectedProviderId).toBe(DEFAULT_PROVIDER_ID)
+    expect(state.selectedGatewayId).toBe(DEFAULT_PROVIDER_ID)
     expect(state.apiKeys.apiyi).toBe('sk-legacy-key')
 
     // Migration creates the new file so subsequent loads do not re-migrate.
@@ -105,7 +106,7 @@ describe('CodexProviderStore', () => {
 
     const store = makeStore()
     const state = await store.load()
-    expect(state.selectedProviderId).toBe('rightcode')
+    expect(state.selectedGatewayId).toBe('rightcode')
     expect(state.apiKeys.rightcode).toBe('sk-rc-key')
     expect(state.apiKeys['rightcode-pro']).toBeUndefined()
     expect(state.apiKeys.apiyi).toBe('sk-apiyi')
@@ -113,7 +114,7 @@ describe('CodexProviderStore', () => {
     // Same remap on the sync path used at AgentManager construction.
     const syncStore = new CodexProviderStore({ userDataDir: tmpDir })
     const syncState = syncStore.loadSync()
-    expect(syncState.selectedProviderId).toBe('rightcode')
+    expect(syncState.selectedGatewayId).toBe('rightcode')
     expect(syncState.apiKeys.rightcode).toBe('sk-rc-key')
   })
 
@@ -134,11 +135,138 @@ describe('CodexProviderStore', () => {
     expect(state.apiKeys['rightcode-pro']).toBeUndefined()
   })
 
+  it('migrates apiyi-grok to gateway plus Grok selection', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'apiyi-grok',
+        apiKeys: { apiyi: 'shared-key' },
+        customProviders: [],
+      }),
+    )
+
+    const store = makeStore()
+    const state = await store.load()
+
+    expect(state).toMatchObject({
+      version: 2,
+      selectedGatewayId: 'apiyi',
+      selectedModelId: 'grok-4.5',
+      apiKeys: { apiyi: 'shared-key' },
+    })
+  })
+
+  it('migrates rightcode-grok to gateway plus Grok selection', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'rightcode-grok',
+        apiKeys: { rightcode: 'shared-key' },
+        customProviders: [],
+      }),
+    )
+
+    const store = makeStore()
+    const state = await store.load()
+
+    expect(state).toMatchObject({
+      version: 2,
+      selectedGatewayId: 'rightcode',
+      selectedModelId: 'grok-4.5',
+      apiKeys: { rightcode: 'shared-key' },
+    })
+  })
+
+  it('never persists builtin channel ids as selected gateways', async () => {
+    const store = makeStore()
+    await store.setSelectedGatewayId('apiyi-grok')
+    const state = await store.load()
+
+    expect(state.selectedGatewayId).toBe('apiyi')
+    expect(state.selectedModelId).toBe('grok-4.5')
+  })
+
+  it('migration is idempotent — reloading a migrated V2 file changes nothing', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'rightcode-grok',
+        apiKeys: { rightcode: 'shared-key' },
+        customProviders: [],
+      }),
+    )
+
+    const store = makeStore()
+    const migrated = await store.load()
+
+    const reopened = makeStore()
+    const reloaded = await reopened.load()
+
+    expect(reloaded).toEqual(migrated)
+  })
+
+  it('does not duplicate API keys when migrating a Grok-selected legacy file', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'apiyi-grok',
+        apiKeys: { apiyi: 'shared-key' },
+        customProviders: [],
+      }),
+    )
+
+    const store = makeStore()
+    const state = await store.load()
+
+    // Grok and GPT share one Gateway credential slot — migration must not
+    // fork a second `apiyi-grok` (or similar) key entry.
+    expect(Object.keys(state.apiKeys)).toEqual(['apiyi'])
+  })
+
+  it('preserves single-channel custom providers across V1->V2 migration', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'custom-legacy',
+        apiKeys: { 'custom-legacy': 'sk-custom' },
+        customProviders: [
+          {
+            id: 'custom-legacy',
+            name: 'Legacy Custom',
+            baseUrl: 'https://legacy.example.com/v1',
+            envKey: 'OPENAI_API_KEY',
+            isCustom: true,
+          },
+        ],
+      }),
+    )
+
+    const store = makeStore()
+    const state = await store.load()
+
+    expect(state.selectedGatewayId).toBe('custom-legacy')
+    expect(state.customProviders).toEqual([
+      {
+        id: 'custom-legacy',
+        name: 'Legacy Custom',
+        baseUrl: 'https://legacy.example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        isCustom: true,
+      },
+    ])
+    expect(state.apiKeys['custom-legacy']).toBe('sk-custom')
+  })
+
   it('treats malformed json as fresh defaults rather than crashing', async () => {
     await fs.writeFile(path.join(tmpDir, 'codex-providers.json'), '{not json')
     const store = makeStore()
     const state = await store.load()
-    expect(state.selectedProviderId).toBe(DEFAULT_PROVIDER_ID)
+    expect(state.selectedGatewayId).toBe(DEFAULT_PROVIDER_ID)
     expect(state.apiKeys).toEqual({})
     expect(state.customProviders).toEqual([])
   })
@@ -162,6 +290,45 @@ describe('CodexProviderStore', () => {
         envKey: 'OPENAI_API_KEY',
       }),
     ).rejects.toThrow(/builtin/i)
+  })
+
+  it.each([
+    'apiyi-standard',
+    'apiyi-grok',
+    'rightcode-standard',
+    'rightcode-grok',
+  ])('rejects internal channel id %s across custom Provider CRUD', async (id) => {
+    const store = makeStore()
+    await expect(store.addCustomProvider({
+      id,
+      name: 'Conflicting channel',
+      baseUrl: 'https://shadow.example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+    })).rejects.toThrow(/reserved/i)
+    await expect(
+      store.updateCustomProvider(id, { name: 'Shadow update' }),
+    ).rejects.toThrow(/reserved/i)
+    await expect(store.removeCustomProvider(id)).rejects.toThrow(/reserved/i)
+  })
+
+  it('drops persisted custom Providers that collide with internal channel ids', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'apiyi',
+        apiKeys: {},
+        customProviders: [{
+          id: 'apiyi-grok',
+          name: 'Shadow channel',
+          baseUrl: 'https://shadow.example.com/v1',
+          envKey: 'OPENAI_API_KEY',
+          isCustom: true,
+        }],
+      }),
+    )
+
+    expect((await makeStore().load()).customProviders).toEqual([])
   })
 
   it('updateCustomProvider merges fields and rejects non-existent / builtin ids', async () => {
@@ -226,6 +393,34 @@ describe('CodexProviderStore', () => {
 
     const reopened = makeStore()
     expect(await reopened.load()).toEqual(before)
+  })
+
+  it('restore() re-validates and drops custom providers that now collide with reserved ids', async () => {
+    // A snapshot captured before `apiyi-grok` became an internal Channel id
+    // (Task 1) must not resurrect a shadow custom Provider with that id on
+    // restore — `isReservedProviderId()` is the single source of truth, and
+    // restore() must re-check against it rather than trusting the snapshot.
+    const store = makeStore()
+    const staleSnapshot: PersistedProvidersV2 = {
+      version: 2,
+      selectedGatewayId: DEFAULT_PROVIDER_ID,
+      selectedModelId: 'gpt-5.5',
+      apiKeys: {},
+      customProviders: [
+        {
+          id: 'apiyi-grok',
+          name: 'Shadow Grok',
+          baseUrl: 'https://shadow.example.com/v1',
+          envKey: 'OPENAI_API_KEY',
+          isCustom: true,
+        },
+      ],
+    }
+
+    await store.restore(staleSnapshot)
+
+    const reopened = makeStore()
+    expect(await reopened.getCustomProviders()).toEqual([])
   })
 
   it('serializes concurrent Provider mutations without losing selected id or keys', async () => {

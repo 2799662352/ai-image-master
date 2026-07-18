@@ -99,6 +99,12 @@ export interface AgentSendMessagePayload {
    */
   model?: string
   /**
+   * Renderer-confirmed Gateway/model/context intent. The main process verifies
+   * this route before accepting a turn so a model can never be sent through a
+   * stale Provider Channel.
+   */
+  modelSelection?: AgentModelSelectionIntent
+  /**
    * Native Codex reasoning-effort override for the selected model. This is
    * independent from the model slug and is forwarded as `turn/start.effort`.
    */
@@ -164,24 +170,148 @@ export interface CodexModelContextConfig {
   modelAutoCompactTokenLimit: number
 }
 
+export type AgentModelFamily = 'openai' | 'xai' | 'other'
+
+export interface AgentModelRoute {
+  gatewayId: string
+  channelId: string
+  modelId: string
+  family: AgentModelFamily
+}
+
+export type AgentModelAvailability =
+  | { status: 'available' }
+  | { status: 'needs-key'; reason: string }
+  | { status: 'unauthorized'; reason: string }
+
+export interface AgentGatewayRecord {
+  id: string
+  name: string
+  description?: string
+  credentialId: string
+  defaultChannelId: string
+  channelIds: string[]
+  isCustom?: boolean
+}
+
 export interface AgentModelSettingsEntry {
   id: string
   displayName: string
   description: string
   hidden: boolean
   isDefault: boolean
+  family: AgentModelFamily
+  route: AgentModelRoute
+  availability: AgentModelAvailability
   capabilities: ModelSettingsCapabilities
 }
 
 export interface AgentModelSettingsCatalog {
-  provider: string
-  source: 'codex' | 'fallback'
+  gatewayId: string
+  revision: string
+  source: 'codex' | 'mixed' | 'fallback'
   models: AgentModelSettingsEntry[]
 }
 
 export type AgentModelSettingsCatalogResult =
   | { ok: true; data: AgentModelSettingsCatalog }
   | { ok: false; error: string }
+
+/** One Gateway/model/context choice asserted by the renderer. */
+export interface AgentModelSelectionIntent {
+  gatewayId: string
+  modelId: string
+  contextWindow: number
+  catalogRevision: string
+  /**
+   * `context-only` is reserved for the explicit Context control. Model and turn
+   * selection preserve the active Context whenever the target model supports it.
+   */
+  contextSource?: 'model-selection' | 'context-only'
+}
+
+/** A versioned model-selection request that may be tied to a persisted thread. */
+export interface AgentModelSelectionApplyPayload
+  extends AgentModelSelectionIntent {
+  threadId?: string
+  /**
+   * Renderer-owned correlation version. It is not the cross-origin ordering
+   * clock; the main process reserves a separate internal intent sequence.
+   */
+  requestVersion: number
+}
+
+/** Thread-scoped model state, preserving missing-vs-unset identity. */
+export type AgentThreadModelSnapshot =
+  | { exists: false }
+  | { exists: true; model: string | null }
+
+/** Fully confirmed Gateway, Channel, model, and context state. */
+export interface AgentModelSelectionSnapshot {
+  gatewayId: string
+  channelId: string
+  modelId: string
+  /** Target thread state used for validation and thread-scoped rollback. */
+  thread?: AgentThreadModelSnapshot
+  contextWindow: number
+  autoCompactTokenLimit: number
+  catalogRevision: string
+  backendEpoch?: number
+  threadRestored: boolean
+}
+
+/** Stable classification for selection failures exposed across IPC. */
+export type AgentModelSelectionErrorKind =
+  | 'configuration'
+  | 'transient'
+  | 'transaction'
+
+/** Last transaction stage reached before a selection failed. */
+export type AgentModelSelectionStage =
+  | 'validate'
+  | 'busy'
+  | 'persist'
+  | 'restart'
+  | 'catalog'
+  | 'resume'
+  | 'verify'
+  | 'rollback'
+
+/** Atomic selection outcome, including compensation and recovery state. */
+export type AgentModelSelectionApplyResult =
+  | {
+      ok: true
+      data: AgentModelSelectionSnapshot & { requestVersion: number }
+    }
+  | {
+      ok: false
+      error: string
+      kind: AgentModelSelectionErrorKind
+      stage: AgentModelSelectionStage
+      retryable: boolean
+      /** Runtime identity is unprovable until an explicit recovery succeeds. */
+      recoveryRequired: boolean
+      requestVersion: number
+      previous: AgentModelSelectionSnapshot
+      rollback:
+        | { ok: true; snapshot: AgentModelSelectionSnapshot }
+        | { ok: false; error: string; effectiveSnapshot: null }
+    }
+
+/** Explicit recovery outcome for a poisoned model-selection runtime. */
+export type AgentModelSelectionRecoveryResult =
+  | {
+      ok: true
+      recoveryRequired: false
+      snapshot: AgentModelSelectionSnapshot | null
+    }
+  | {
+      ok: false
+      error: string
+      stage: 'busy' | 'recovery'
+      retryable: boolean
+      recoveryRequired: boolean
+    }
 
 export type AgentModelContextSnapshot = CodexModelContextConfig & {
   recoveryRequired: boolean
@@ -204,8 +334,10 @@ export type AgentModelContextApplyStage =
   | 'busy'
   | 'persist'
   | 'restart'
+  | 'catalog'
   | 'resume'
   | 'verify'
+  | 'rollback'
 
 export type AgentModelContextRollbackResult =
   | {

@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentModelSettingsCatalog } from '../../../../../types/agent'
+import type {
+  AgentModelAvailability,
+  AgentModelSettingsCatalog,
+} from '../../../../../types/agent'
+import { mergeModelSettingsCapabilities } from '../../../../../shared/modelSettings'
+import { resolveGatewayModelRoute } from '../../../../../main/agent/gatewayModelRouting'
 import { ModelPicker } from '../ModelPicker'
 import { useAgentChatStore } from '../store'
 
@@ -12,11 +17,15 @@ const originalActions = {
   setSelectedModel: useAgentChatStore.getState().setSelectedModel,
   setModelReasoningEffort: useAgentChatStore.getState().setModelReasoningEffort,
   setModelContextWindow: useAgentChatStore.getState().setModelContextWindow,
+  retryModelSelection: useAgentChatStore.getState().retryModelSelection,
 }
 
 function runtimeCatalog(source: 'codex' | 'fallback' = 'codex'): AgentModelSettingsCatalog {
+  const solRoute = resolveGatewayModelRoute('rightcode', 'gpt-5.6-sol')
+  const gpt55Route = resolveGatewayModelRoute('rightcode', 'gpt-5.5')
   return {
-    provider: 'rightcode',
+    gatewayId: 'rightcode',
+    revision: `test-${source}`,
     source,
     models: [
       {
@@ -25,6 +34,9 @@ function runtimeCatalog(source: 'codex' | 'fallback' = 'codex'): AgentModelSetti
         description: 'Frontier model',
         hidden: false,
         isDefault: true,
+        family: solRoute.family,
+        route: solRoute,
+        availability: { status: 'available' },
         capabilities: {
           model: 'gpt-5.6-sol',
           provider: 'rightcode',
@@ -43,6 +55,9 @@ function runtimeCatalog(source: 'codex' | 'fallback' = 'codex'): AgentModelSetti
         description: 'Stable model',
         hidden: false,
         isDefault: false,
+        family: gpt55Route.family,
+        route: gpt55Route,
+        availability: { status: 'available' },
         capabilities: {
           model: 'gpt-5.5',
           provider: 'rightcode',
@@ -76,12 +91,84 @@ function setPickerState(
     modelSettingsLoading: false,
     modelSettingsError: undefined,
     modelSettingsPersistenceWarnings: {},
+    modelSelectionPending: undefined,
+    modelSelectionFailedIntent: undefined,
+    modelSelectionError: undefined,
     collabModeKind: 'plan',
     collabModePendingByThread: {},
     isRunning: false,
     setSelectedModel,
     setModelReasoningEffort,
     setModelContextWindow,
+    ...overrides,
+  } as never)
+}
+
+function gatewayFamilyCatalog(
+  grokAvailability: AgentModelAvailability = { status: 'available' },
+): AgentModelSettingsCatalog {
+  const openaiRoute = {
+    gatewayId: 'rightcode',
+    channelId: 'rightcode-standard',
+    modelId: 'gpt-5.5',
+    family: 'openai' as const,
+  }
+  const grokRoute = {
+    gatewayId: 'rightcode',
+    channelId: 'rightcode-grok',
+    modelId: 'grok-4.5',
+    family: 'xai' as const,
+  }
+  return {
+    gatewayId: 'rightcode',
+    revision: 'catalog-1',
+    source: 'mixed',
+    models: [
+      {
+        id: 'gpt-5.5',
+        displayName: 'GPT-5.5',
+        description: 'OpenAI model',
+        hidden: false,
+        isDefault: true,
+        family: 'openai',
+        route: openaiRoute,
+        availability: { status: 'available' },
+        capabilities: mergeModelSettingsCapabilities({
+          model: 'gpt-5.5',
+          gatewayId: 'rightcode',
+          channelId: 'rightcode-standard',
+          supportedReasoningEfforts: [],
+        }),
+      },
+      {
+        id: 'grok-4.5',
+        displayName: 'Grok 4.5',
+        description: 'xAI model',
+        hidden: false,
+        isDefault: false,
+        family: 'xai',
+        route: grokRoute,
+        availability: grokAvailability,
+        capabilities: mergeModelSettingsCapabilities({
+          model: 'grok-4.5',
+          gatewayId: 'rightcode',
+          channelId: 'rightcode-grok',
+          supportedReasoningEfforts: ['low', 'medium', 'high'],
+        }),
+      },
+    ],
+  }
+}
+
+function setGatewayPickerState(
+  grokAvailability: AgentModelAvailability = { status: 'available' },
+  overrides: Partial<ReturnType<typeof useAgentChatStore.getState>> = {},
+): void {
+  setPickerState({
+    selectedModelId: 'gpt-5.5',
+    modelSettingsCatalog: gatewayFamilyCatalog(grokAvailability),
+    modelReasoningEffortByModel: {},
+    activeModelContextWindow: 272_000,
     ...overrides,
   } as never)
 }
@@ -170,7 +257,8 @@ describe('ModelPicker model settings integration', () => {
     setPickerState({
       selectedModelId: 'vendor-runtime-only',
       modelSettingsCatalog: {
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        revision: 'test-empty',
         source: 'codex',
         models: [],
       },
@@ -185,11 +273,36 @@ describe('ModelPicker model settings integration', () => {
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
+  it('routes an unknown fallback model for a catalog-authorized custom gateway', () => {
+    setPickerState({
+      selectedModelId: 'vendor-custom-future',
+      modelSettingsCatalog: {
+        gatewayId: 'custom-studio',
+        revision: 'test-custom-empty',
+        source: 'codex',
+        models: [],
+      },
+      modelReasoningEffortByModel: { 'vendor-custom-future': 'auto' },
+      activeModelContextWindow: 200_000,
+    })
+
+    render(<ModelPicker />)
+    expect(screen.getByRole('button', {
+      name: /选择模型：Unknown · vendor-custom-future · Auto/,
+    })).toBeTruthy()
+    openPicker()
+    expect(screen.getByRole('option', {
+      name: 'Unknown · vendor-custom-future',
+    })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /200K/ })).toBeTruthy()
+  })
+
   it('keeps canonical metadata for a pinned model omitted by the runtime catalog', () => {
     setPickerState({
       selectedModelId: 'grok-4.5',
       modelSettingsCatalog: {
-        provider: 'rightcode-grok',
+        gatewayId: 'rightcode',
+        revision: 'test-rightcode-grok',
         source: 'codex',
         models: [],
       },
@@ -203,6 +316,8 @@ describe('ModelPicker model settings integration', () => {
     })).toBeTruthy()
     openPicker()
     expect(screen.getByRole('option', { name: 'Grok 4.5' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /1M/ })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /500K/ })).toBeNull()
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
@@ -321,5 +436,146 @@ describe('ModelPicker model settings integration', () => {
     expect(document.activeElement).toBe(onlyOption)
     fireEvent.keyDown(onlyOption, { key: 'ArrowDown' })
     expect(document.activeElement).toBe(onlyOption)
+  })
+})
+
+describe('ModelPicker family grouping and route transition status', () => {
+  it('groups models by family with XAI above OPENAI in one keyboard index', () => {
+    const selectModel = vi.fn(async () => true)
+    setGatewayPickerState({ status: 'available' }, {
+      setSelectedModel: selectModel,
+    } as never)
+    render(<ModelPicker />)
+    openPicker()
+
+    // User-requested ordering: the Grok (XAI) group renders ABOVE the OpenAI
+    // group in the picker.
+    const xaiHeader = screen.getByText('XAI')
+    const openaiHeader = screen.getByText('OPENAI')
+    expect(
+      xaiHeader.compareDocumentPosition(openaiHeader)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByText(/Gateway.*Right\.Codes/)).toBeTruthy()
+
+    // The flat keyboard index spans groups: Grok (first group) → ArrowDown
+    // reaches the first OpenAI model.
+    const grokOption = screen.getByRole('option', { name: 'Grok 4.5' })
+    grokOption.focus()
+    fireEvent.keyDown(grokOption, { key: 'ArrowDown' })
+    const gptOption = screen.getByRole('option', { name: 'GPT-5.5' })
+    expect(document.activeElement).toBe(gptOption)
+
+    // Enter on a focused native button activates it; jsdom needs the click.
+    fireEvent.click(grokOption)
+    expect(selectModel).toHaveBeenCalledWith('grok-4.5')
+  })
+
+  it('keeps deterministic unauthorized Grok visible and disabled', () => {
+    setGatewayPickerState({
+      status: 'unauthorized',
+      reason: '当前 Key 未开通',
+    })
+    render(<ModelPicker />)
+    openPicker()
+
+    expect(screen.getByText('Grok 4.5')).toBeTruthy()
+    expect(screen.getByText('当前 Key 未开通')).toBeTruthy()
+    const grokOption = screen.getByRole('option', { name: /Grok 4\.5/ })
+    expect(grokOption.getAttribute('aria-disabled')).toBe('true')
+
+    fireEvent.click(grokOption)
+    expect(setSelectedModel).not.toHaveBeenCalled()
+  })
+
+  it('shows a needs-key Grok with its guidance reason and blocks selection', () => {
+    setGatewayPickerState({
+      status: 'needs-key',
+      reason: '请先在设置页保存 Right.Codes Key',
+    })
+    render(<ModelPicker />)
+    openPicker()
+
+    expect(screen.getByText('请先在设置页保存 Right.Codes Key')).toBeTruthy()
+    const grokOption = screen.getByRole('option', { name: /Grok 4\.5/ })
+    expect(grokOption.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(grokOption)
+    expect(setSelectedModel).not.toHaveBeenCalled()
+  })
+
+  it('announces the pending channel switch politely and keeps the popover open', () => {
+    setGatewayPickerState()
+    render(<ModelPicker />)
+    openPicker()
+
+    act(() => {
+      useAgentChatStore.setState({
+        modelSelectionPending: {
+          gatewayId: 'rightcode',
+          modelId: 'grok-4.5',
+          contextWindow: 1_000_000,
+          catalogRevision: 'catalog-1',
+          requestVersion: 1,
+        },
+      } as never)
+    })
+
+    const status = screen.getByText('正在切换 Grok 4.5 通道…')
+    expect(status).toBeTruthy()
+    expect(status.closest('[aria-live="polite"]')).not.toBeNull()
+    expect(screen.getByRole('listbox', { name: '模型列表' })).toBeTruthy()
+    expect(
+      (screen.getByRole('option', { name: 'GPT-5.5' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+  })
+
+  it('keeps the popover open on failure and retries only when retryable', () => {
+    const retryModelSelection = vi.fn(async () => true)
+    setGatewayPickerState({ status: 'available' }, {
+      retryModelSelection,
+    } as never)
+    render(<ModelPicker />)
+    openPicker()
+
+    act(() => {
+      useAgentChatStore.setState({
+        modelSelectionError: {
+          message: 'Grok 通道重启失败',
+          kind: 'transient',
+          retryable: true,
+        },
+        modelSelectionFailedIntent: {
+          gatewayId: 'rightcode',
+          modelId: 'grok-4.5',
+          contextWindow: 1_000_000,
+          catalogRevision: 'catalog-1',
+          requestVersion: 1,
+        },
+      } as never)
+    })
+
+    expect(screen.getByRole('listbox', { name: '模型列表' })).toBeTruthy()
+    expect(screen.getByText('Grok 通道重启失败')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(retryModelSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the retry button for non-retryable selection errors', () => {
+    setGatewayPickerState()
+    render(<ModelPicker />)
+    openPicker()
+
+    act(() => {
+      useAgentChatStore.setState({
+        modelSelectionError: {
+          message: '当前 Key 未开通 Grok',
+          kind: 'configuration',
+          retryable: false,
+        },
+      } as never)
+    })
+
+    expect(screen.getByText('当前 Key 未开通 Grok')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
   })
 })

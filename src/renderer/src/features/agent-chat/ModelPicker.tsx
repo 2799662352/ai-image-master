@@ -11,16 +11,38 @@ import {
   CANONICAL_MODEL_SETTINGS_ROWS,
   isModelReasoningEffort,
   mergeModelSettingsCapabilities,
-  modelContextOptions,
   type CanonicalModelTier,
   type ModelReasoningEffort,
 } from '../../../../shared/modelSettings'
-import type { AgentModelSettingsEntry } from '../../../../types/agent'
+import type {
+  AgentModelFamily,
+  AgentModelSettingsEntry,
+} from '../../../../types/agent'
+import {
+  builtinGateways,
+  resolveAuthorizedGatewayModelRoute,
+  type AuthorizedGatewayRouteContext,
+} from '../../../../main/agent/gatewayModelRouting'
 import { findModel } from './models'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { useAgentChatStore } from './store'
 
-const TIER_ORDER: CanonicalModelTier[] = ['Fast', 'Medium', 'High', 'Extra High']
+// XAI (Grok) renders above OPENAI by explicit user request — Grok is the
+// headline channel on these gateways, so it gets the top slot in the picker.
+const FAMILY_ORDER: readonly AgentModelFamily[] = ['xai', 'openai', 'other']
+
+const FAMILY_LABEL: Record<AgentModelFamily, string> = {
+  openai: 'OPENAI',
+  xai: 'XAI',
+  other: 'OTHER',
+}
+
+const DEFAULT_GATEWAY_ID = builtinGateways()[0]?.id ?? 'apiyi'
+
+function gatewayDisplayName(gatewayId: string): string {
+  return builtinGateways().find((gateway) => gateway.id === gatewayId)?.name
+    ?? gatewayId
+}
 
 const TIER_BADGE: Record<CanonicalModelTier, string> = {
   Fast: 'text-emerald-300/90 bg-emerald-500/10 border-emerald-400/30',
@@ -47,25 +69,48 @@ interface ModelPickerProps {
   disabled?: boolean
 }
 
-function conservativeFallbackRows(provider: string): AgentModelSettingsEntry[] {
-  return CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
-    id: row.id,
-    displayName: row.displayName,
-    description: row.description,
+function conservativeEntry(
+  gatewayId: string,
+  routeSource: AuthorizedGatewayRouteContext['source'],
+  row: {
+    id: string
+    displayName: string
+    description: string
+    isDefault: boolean
+  },
+): AgentModelSettingsEntry {
+  const route = resolveAuthorizedGatewayModelRoute({
+    source: routeSource,
+    gatewayId,
+  }, row.id)
+  const capabilities = mergeModelSettingsCapabilities({
+    model: row.id,
+    gatewayId: route.gatewayId,
+    channelId: route.channelId,
+    supportedReasoningEfforts: [],
+  })
+  return {
+    ...row,
     hidden: false,
-    isDefault: row.isDefault,
+    family: route.family,
+    route,
+    availability: { status: 'available' },
     capabilities: {
-      ...mergeModelSettingsCapabilities({
-        model: row.id,
-        provider,
-        supportedReasoningEfforts: [],
-      }),
-      contextOptions: modelContextOptions(row.id, provider).map((option) => ({
+      ...capabilities,
+      contextOptions: capabilities.contextOptions.map((option) => ({
         ...option,
         conservative: true,
       })),
     },
-  }))
+  }
+}
+
+function conservativeFallbackRows(
+  gatewayId: string,
+  routeSource: AuthorizedGatewayRouteContext['source'],
+): AgentModelSettingsEntry[] {
+  return CANONICAL_MODEL_SETTINGS_ROWS.map((row) =>
+    conservativeEntry(gatewayId, routeSource, row))
 }
 
 function pickerModel(row: AgentModelSettingsEntry): PickerModel {
@@ -76,28 +121,20 @@ function pickerModel(row: AgentModelSettingsEntry): PickerModel {
   }
 }
 
-function unknownModel(id: string, provider: string): PickerModel {
+function unknownModel(
+  id: string,
+  gatewayId: string,
+  routeSource: AuthorizedGatewayRouteContext['source'],
+): PickerModel {
   const metadata = findModel(id)
-  return pickerModel({
+  return pickerModel(conservativeEntry(gatewayId, routeSource, {
     id,
     displayName: metadata?.label ?? `Unknown · ${id}`,
     description:
       metadata?.description
       ?? '当前 Provider 提供的未识别模型；能力采用保守默认。',
-    hidden: false,
     isDefault: false,
-    capabilities: {
-      ...mergeModelSettingsCapabilities({
-        model: id,
-        provider,
-        supportedReasoningEfforts: [],
-      }),
-      contextOptions: modelContextOptions(id, provider).map((option) => ({
-        ...option,
-        conservative: true,
-      })),
-    },
-  })
+  }))
 }
 
 function moveModelFocus(
@@ -161,29 +198,41 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const setModelContextWindow = useAgentChatStore(
     (state) => state.setModelContextWindow,
   )
+  const retryModelSelection = useAgentChatStore(
+    (state) => state.retryModelSelection,
+  )
 
+  const modelSelectionPendingIntent = useAgentChatStore(
+    (state) => state.modelSelectionPending,
+  )
+  const modelSelectionError = useAgentChatStore(
+    (state) => state.modelSelectionError,
+  )
+  const storeSelectionPending = modelSelectionPendingIntent !== undefined
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [modelSelectionPending, setModelSelectionPending] = useState(false)
+  const [localSelectionPending, setModelSelectionPending] = useState(false)
+  const modelSelectionPending = localSelectionPending || storeSelectionPending
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
   const modelRefs = useRef<Array<HTMLButtonElement | null>>([])
   const focusFrameRef = useRef<number | null>(null)
 
-  const provider = catalog?.provider ?? 'unknown'
+  const gatewayId = catalog?.gatewayId ?? DEFAULT_GATEWAY_ID
+  const routeSource = catalog ? 'model-catalog' : 'builtin'
   const baseRows = useMemo(
     () => (
       catalog
         ? catalog.models
-        : conservativeFallbackRows(provider)
+        : conservativeFallbackRows(gatewayId, routeSource)
     ).filter((row) => !row.hidden).map(pickerModel),
-    [catalog, provider],
+    [catalog, gatewayId, routeSource],
   )
   const selectedKnown = baseRows.find((model) => model.id === selectedModelId)
   const selected = useMemo(
-    () => selectedKnown ?? unknownModel(selectedModelId, provider),
-    [provider, selectedKnown, selectedModelId],
+    () => selectedKnown ?? unknownModel(selectedModelId, gatewayId, routeSource),
+    [gatewayId, routeSource, selectedKnown, selectedModelId],
   )
   const availableModels = useMemo(
     () => selectedKnown ? baseRows : [selected, ...baseRows],
@@ -216,15 +265,20 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
           || model.id.toLowerCase().includes(normalizedQuery)
           || model.description.toLowerCase().includes(normalizedQuery))
       : availableModels
-    const buckets = new Map<CanonicalModelTier, PickerModel[]>(
-      TIER_ORDER.map((tier) => [tier, []]),
+    const buckets = new Map<AgentModelFamily, PickerModel[]>(
+      FAMILY_ORDER.map((family) => [family, []]),
     )
-    for (const model of filtered) buckets.get(model.tier)?.push(model)
-    return TIER_ORDER
-      .map((tier) => ({ tier, items: buckets.get(tier) ?? [] }))
+    for (const model of filtered) buckets.get(model.family)?.push(model)
+    return FAMILY_ORDER
+      .map((family) => ({ family, items: buckets.get(family) ?? [] }))
       .filter((group) => group.items.length > 0)
   }, [availableModels, query])
   const flatModels = grouped.flatMap((group) => group.items)
+  const pendingModelLabel = modelSelectionPendingIntent
+    ? availableModels.find(
+        (model) => model.id === modelSelectionPendingIntent.modelId,
+      )?.label ?? modelSelectionPendingIntent.modelId
+    : undefined
   const persistenceWarning = Object.values(modelSettingsPersistenceWarnings)
     .filter((warning): warning is string => Boolean(warning))
     .join('；')
@@ -299,11 +353,13 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
 
   async function handlePick(id: string): Promise<void> {
     if (settingsInteractionsDisabled || id === selectedModelId) return
+    const target = availableModels.find((model) => model.id === id)
+    if (target && target.availability.status !== 'available') return
     setModelSelectionPending(true)
     let selectionApplied = false
     try {
-      await setSelectedModel(id)
-      selectionApplied = useAgentChatStore.getState().selectedModelId === id
+      selectionApplied = (await setSelectedModel(id)) === true
+        || useAgentChatStore.getState().selectedModelId === id
     } finally {
       setModelSelectionPending(false)
     }
@@ -381,6 +437,9 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               aria-label="Search models"
               className="w-full rounded border border-zinc-800 bg-black/40 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-400/40"
             />
+            <div className="mt-1 px-1 text-[10px] text-zinc-500">
+              Gateway · {gatewayDisplayName(gatewayId)}
+            </div>
           </div>
 
           {capabilitiesUnconfirmed ? (
@@ -404,13 +463,18 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               </div>
             ) : (
               grouped.map((group) => (
-                <div key={group.tier} className="mb-1">
+                <div key={group.family} className="mb-1">
                   <div className="px-3 py-1 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                    {group.tier}
+                    {FAMILY_LABEL[group.family]}
                   </div>
                   {group.items.map((model) => {
                     const index = flatModels.findIndex((item) => item.id === model.id)
                     const isActive = model.id === selectedModelId
+                    const unavailable = model.availability.status !== 'available'
+                    const unavailableReason =
+                      model.availability.status === 'available'
+                        ? undefined
+                        : model.availability.reason
                     return (
                       <button
                         key={model.id}
@@ -421,6 +485,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                         role="option"
                         aria-label={model.label}
                         aria-selected={isActive}
+                        aria-disabled={unavailable || settingsInteractionsDisabled}
                         disabled={settingsInteractionsDisabled}
                         onClick={() => {
                           void handlePick(model.id)
@@ -431,13 +496,20 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                         className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition disabled:cursor-wait disabled:opacity-60 ${
                           isActive
                             ? 'bg-cyan-500/10 text-cyan-100'
-                            : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-cyan-100'
+                            : unavailable
+                              ? 'cursor-not-allowed text-zinc-500'
+                              : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-cyan-100'
                         }`}
                         title={model.description}
                       >
                         <span className="flex min-w-0 flex-col">
                           <span className="truncate font-medium">{model.label}</span>
                           <span className="truncate text-[10px] text-zinc-500">{model.id}</span>
+                          {unavailableReason ? (
+                            <span className="truncate text-[10px] text-amber-300/80">
+                              {unavailableReason}
+                            </span>
+                          ) : null}
                         </span>
                         <span
                           className={`rounded border px-1 py-[1px] text-[9px] uppercase tracking-wider ${TIER_BADGE[model.tier]}`}
@@ -451,6 +523,36 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               ))
             )}
           </div>
+
+          {modelSelectionPendingIntent || modelSelectionError ? (
+            <div className="flex items-center justify-between gap-2 border-t border-zinc-800/80 px-3 py-1.5">
+              <div
+                aria-live="polite"
+                role="status"
+                className={`min-w-0 truncate text-[10px] ${
+                  modelSelectionPendingIntent
+                    ? 'text-cyan-200/90'
+                    : 'text-amber-200/90'
+                }`}
+              >
+                {modelSelectionPendingIntent
+                  ? `正在切换 ${pendingModelLabel} 通道…`
+                  : modelSelectionError?.message}
+              </div>
+              {!modelSelectionPendingIntent
+                && modelSelectionError?.retryable === true ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void retryModelSelection()
+                  }}
+                  className="shrink-0 rounded border border-amber-400/40 px-1.5 py-0.5 text-[10px] text-amber-200 transition hover:bg-amber-400/10"
+                >
+                  重试
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="border-t border-zinc-800/80 p-2">
             <ModelSettingsPanel

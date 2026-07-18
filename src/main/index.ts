@@ -47,6 +47,8 @@ import { registerCanvasCheckpointIpc } from './file-explorer/canvasCheckpointIpc
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
+import { wireRendererLifecycle } from './mcp/rendererLifecycle'
+import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
@@ -821,6 +823,14 @@ function createWindow(): void {
 }
 
 async function initAgentRuntime(win: BrowserWindow): Promise<void> {
+  // 渲染进程重载/崩溃 ⇒ 挂起中的图片任务与渲染层工具调用立即清账,
+  // 不再等 30 分钟超时(幂等,重复接线安全)。router 惰性取:MCP 监听
+  // 可能尚未起来或绑定失败,均降级为只清图片任务。
+  wireRendererLifecycle(win.webContents, {
+    failAllRunningImageTasks: (error) => imageTaskManager.failAllRunning(error),
+    getRouter: () => agentMcpRuntime?.router ?? null,
+  })
+
   // Once the AgentManager exists this conversation is initialized — we just
   // rebind the new BrowserWindow. We deliberately do NOT key off
   // `agentMcpRuntime` here because it can legitimately be null when the

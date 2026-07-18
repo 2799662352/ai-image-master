@@ -8,6 +8,9 @@ import type { IAgentBackend } from '../types'
 import type { CodexSessionConfig } from '../../../types/agent'
 
 vi.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+  },
   dialog: {
     showMessageBox: vi.fn(),
   },

@@ -33,6 +33,9 @@ import type {
   AgentModelContextApplyPayload,
   AgentModelContextApplyResult,
   AgentModelContextSnapshotResult,
+  AgentModelSelectionApplyPayload,
+  AgentModelSelectionApplyResult,
+  AgentModelSelectionRecoveryResult,
   AgentModelSettingsCatalogResult,
   AgentProviderMutationResult,
   AgentSendMessagePayload,
@@ -274,6 +277,8 @@ const IPC_CHANNELS = {
     MODEL_SETTINGS_CATALOG: 'agent:model-settings-catalog',
     MODEL_CONTEXT_GET: 'agent:model-context-get',
     MODEL_CONTEXT_APPLY: 'agent:model-context-apply',
+    MODEL_SELECTION_APPLY: 'agent:model-selection-apply',
+    MODEL_SELECTION_RECOVER: 'agent:model-selection-recover',
     PLUGIN_LIST: 'agent:plugin-list',
     PLUGIN_INSTALLED: 'agent:plugin-installed',
     PLUGIN_READ: 'agent:plugin-read',
@@ -295,6 +300,9 @@ const IPC_CHANNELS = {
     GET_PROVIDERS: 'agent:get-providers',
     SET_ACTIVE_PROVIDER: 'agent:set-active-provider',
     SET_PROVIDER_API_KEY: 'agent:set-provider-api-key',
+    GET_GATEWAYS: 'agent:get-gateways',
+    SET_ACTIVE_GATEWAY: 'agent:set-active-gateway',
+    SET_GATEWAY_API_KEY: 'agent:set-gateway-api-key',
     ADD_CUSTOM_PROVIDER: 'agent:add-custom-provider',
     UPDATE_CUSTOM_PROVIDER: 'agent:update-custom-provider',
     REMOVE_CUSTOM_PROVIDER: 'agent:remove-custom-provider',
@@ -476,6 +484,16 @@ export type CodexProviderMutationResponse = {
   error?: string
 } & Partial<AgentProviderMutationResult>
 
+/** Renderer-safe user-facing Gateway snapshot during the Provider migration. */
+export interface CodexGatewaySnapshotResponse {
+  ok: boolean
+  error?: string
+  builtins?: CodexProviderRecord[]
+  custom?: CodexProviderRecord[]
+  activeId?: string
+  apiKeys?: Record<string, string>
+}
+
 export interface ElectronAPI {
   isElectron: boolean
   // AI Skills
@@ -526,11 +544,22 @@ export interface ElectronAPI {
     updateCollaborationMode: (
       payload: AgentCollaborationModeUpdatePayload,
     ) => Promise<AgentCollaborationModeUpdateResult>
+    /** Returns user-facing Gateway records while legacy Provider UI remains available. */
+    getGateways: () => Promise<CodexGatewaySnapshotResponse>
+    /** Activates a user-facing Gateway through the main-process transaction. */
+    setActiveGateway: (id: string) => Promise<CodexProviderMutationResponse>
+    /** Updates a Gateway credential without exposing ipcRenderer to the renderer. */
+    setGatewayApiKey: (id: string, key: string) => Promise<CodexProviderMutationResponse>
     getModelSettingsCatalog: () => Promise<AgentModelSettingsCatalogResult>
     getModelContextConfig: () => Promise<AgentModelContextSnapshotResult>
     applyModelContext: (
       payload: AgentModelContextApplyPayload,
     ) => Promise<AgentModelContextApplyResult>
+    /** Applies one authoritative Gateway/model/context selection transaction. */
+    applyModelSelection: (
+      payload: AgentModelSelectionApplyPayload,
+    ) => Promise<AgentModelSelectionApplyResult>
+    recoverModelSelection: () => Promise<AgentModelSelectionRecoveryResult>
     setAllowedRoots: (roots: string[]) => Promise<string[]>
     getMcpSummary: () => Promise<CodexMcpSummary>
     getSkillsSummary: () => Promise<CodexSkillsSummary>
@@ -1137,6 +1166,19 @@ const electronAPI: ElectronAPI = {
         payload,
       ),
 
+    getGateways: () =>
+      safeInvoke<CodexGatewaySnapshotResponse>(IPC_CHANNELS.AGENT.GET_GATEWAYS),
+
+    setActiveGateway: (id: string) =>
+      safeInvoke<CodexProviderMutationResponse>(IPC_CHANNELS.AGENT.SET_ACTIVE_GATEWAY, id),
+
+    setGatewayApiKey: (id: string, key: string) =>
+      safeInvoke<CodexProviderMutationResponse>(
+        IPC_CHANNELS.AGENT.SET_GATEWAY_API_KEY,
+        id,
+        key,
+      ),
+
     getModelSettingsCatalog: () =>
       safeInvoke<AgentModelSettingsCatalogResult>(
         IPC_CHANNELS.AGENT.MODEL_SETTINGS_CATALOG,
@@ -1151,6 +1193,17 @@ const electronAPI: ElectronAPI = {
       safeInvoke<AgentModelContextApplyResult>(
         IPC_CHANNELS.AGENT.MODEL_CONTEXT_APPLY,
         payload,
+      ),
+
+    applyModelSelection: (payload: AgentModelSelectionApplyPayload) =>
+      safeInvoke<AgentModelSelectionApplyResult>(
+        IPC_CHANNELS.AGENT.MODEL_SELECTION_APPLY,
+        payload,
+      ),
+
+    recoverModelSelection: () =>
+      safeInvoke<AgentModelSelectionRecoveryResult>(
+        IPC_CHANNELS.AGENT.MODEL_SELECTION_RECOVER,
       ),
 
     setAllowedRoots: (roots: string[]) =>

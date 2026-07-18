@@ -98,3 +98,7 @@ scripts/sakuga/vectors_full/
 scripts/sakuga/checkpoint*.txt
 scripts/sakuga/named_batch*.txt
 scripts/sakuga/upload_batches_done.txt
+
+# local diagnostics
+scripts/.diag-grok/
+.superpowers/

@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { getCodexResourceRoot, resolveCodexBinary } from '../../src/main/agent/paths'
 import { CodexProviderStore } from '../../src/main/agent/CodexProviderStore'
 import { resolveActiveProvider } from '../../src/main/agent/codexProviders'
+import {
+  resolveGatewayModelRoute,
+  resolveProviderChannel,
+} from '../../src/main/agent/gatewayModelRouting'
 import type { CodexProviderConfig } from './codexArgs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -51,8 +55,18 @@ export function resolveAppCreds(): AppCreds | null {
   try {
     const store = new CodexProviderStore({ userDataDir: resolveUserDataDir() })
     const state = store.loadSync()
-    const provider = resolveActiveProvider(state.selectedProviderId, state.customProviders)
-    const apiKey = (state.apiKeys[state.selectedProviderId] ?? '').trim()
+    const gateway = resolveActiveProvider(state.selectedGatewayId, state.customProviders)
+    let provider: CodexProviderConfig = gateway
+    if (gateway.id === state.selectedGatewayId) {
+      const route = resolveGatewayModelRoute(
+        state.selectedGatewayId,
+        state.selectedModelId,
+        state.customProviders,
+      )
+      const channel = resolveProviderChannel(route.channelId, state.customProviders)
+      provider = { ...channel, model: route.modelId }
+    }
+    const apiKey = (state.apiKeys[state.selectedGatewayId] ?? '').trim()
     if (!apiKey) return null
     return { apiKey, provider }
   } catch {

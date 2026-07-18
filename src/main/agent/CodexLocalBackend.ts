@@ -30,6 +30,7 @@ import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
 import type {
   CodexModelListParams,
   CodexModelListResponse,
+  CodexThreadConfigOverrides,
   CollaborationModeListResponse,
   ThreadSettingsUpdateParams,
   ThreadSettingsUpdateResponse,
@@ -124,11 +125,13 @@ export interface CodexLocalBackendOptions {
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
   /**
-   * Reads the last confirmed runtime context limits immediately before every
-   * fresh process spawn. Keeping this as a getter ensures restartCodex consumes
-   * settings confirmed after the previous process was launched.
+   * Reads the current context pin immediately before every fresh process
+   * spawn. Keeping this as a getter ensures restartCodex consumes settings
+   * confirmed after the previous process was launched. `null` means unpinned:
+   * the spawn omits the `model_context_window` overrides so Codex resolves
+   * per-model windows from its native metadata.
    */
-  getModelContextConfig?: () => CodexModelContextConfig
+  getModelContextConfig?: () => CodexModelContextConfig | null
   /**
    * Local in-process catimation MCP server coordinates. Forwarded to
    * `buildCodexLaunchArgs` so the spawned Codex subprocess gets an ephemeral
@@ -381,10 +384,13 @@ export class CodexLocalBackend implements IAgentBackend {
   }
 
   private async startSpawnedClient(): Promise<SpawnedCodexClient> {
-    const modelContextConfig = this.options.getModelContextConfig?.()
-    if (this.options.getModelContextConfig) {
-      assertCodexModelContextConfig(modelContextConfig)
+    const rawModelContext = this.options.getModelContextConfig?.()
+    if (this.options.getModelContextConfig && rawModelContext !== null) {
+      // Strict boundary: a wired getter may return a valid pin or the explicit
+      // unpinned `null`, never undefined/garbage.
+      assertCodexModelContextConfig(rawModelContext)
     }
+    const modelContextConfig = rawModelContext ?? null
     const port = await pickFreePort(4222)
     const listenUrl = `ws://127.0.0.1:${port}`
     const resourceRoot = this.resolveResourceRoot()
@@ -638,12 +644,32 @@ export class CodexLocalBackend implements IAgentBackend {
 
   async forkThread(threadId: string): Promise<CodexThreadSummary> {
     if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
-    return this.client.forkThread(threadId)
+    return this.client.forkThread(threadId, this.threadConfigOverrides())
   }
 
   async resumeThread(threadId: string): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.resumeThread called before start')
-    return this.client.resumeThread(threadId)
+    return this.client.resumeThread(threadId, this.threadConfigOverrides())
+  }
+
+  /**
+   * Explicit resume/fork config overrides pinning the thread to the CURRENT
+   * launch selection. Without these, codex restores the thread's persisted
+   * `model_provider` from metadata (openai/codex#19287) — and after a
+   * cross-channel model switch (grok↔gpt) that old provider table is no longer
+   * defined in the running config, so `thread/resume` dies with
+   * "failed to load configuration: Model provider `<old>` not found".
+   * `currentProvider.id` is exactly the id written into the launch args
+   * (compat-proxy rewrites only touch baseUrl); with no custom provider the
+   * active provider is codex's built-in `openai`, which always exists.
+   */
+  private threadConfigOverrides(): CodexThreadConfigOverrides {
+    const provider = this.currentProvider
+    if (!provider) return { modelProvider: 'openai' }
+    return {
+      modelProvider: provider.id,
+      ...(provider.model ? { model: provider.model } : {}),
+    }
   }
 
   async archiveThread(threadId: string): Promise<void> {
@@ -680,6 +706,11 @@ export class CodexLocalBackend implements IAgentBackend {
 
   hasInFlightWork(): boolean {
     return this.client?.hasInFlightWork() ?? false
+  }
+
+  /** Reports active Codex turns without conflating pending send setup. */
+  hasActiveTurns(): boolean {
+    return this.client?.hasActiveTurns() ?? false
   }
 
   currentEpoch(): number {

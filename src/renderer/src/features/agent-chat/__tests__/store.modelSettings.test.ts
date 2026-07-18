@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentModelContextApplyResult,
   AgentModelContextSnapshotResult,
+  AgentModelSelectionApplyPayload,
+  AgentModelSelectionApplyResult,
   AgentModelSettingsCatalog,
   AgentModelSettingsCatalogResult,
+  AgentModelSettingsEntry,
 } from '../../../../../types/agent'
 
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
@@ -34,23 +37,56 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject }
 }
 
+function catalogEntry(
+  id: string,
+  gatewayId: string,
+  overrides: Partial<AgentModelSettingsEntry> = {},
+): AgentModelSettingsEntry {
+  return {
+    id,
+    displayName: id,
+    description: `${id} entry`,
+    hidden: false,
+    isDefault: false,
+    family: 'openai',
+    route: {
+      gatewayId,
+      channelId: `${gatewayId}-standard`,
+      modelId: id,
+      family: 'openai',
+    },
+    availability: { status: 'available' },
+    capabilities: {
+      model: id,
+      provider: gatewayId,
+      defaultContextWindow: 272_000,
+      contextOptions: [
+        { value: 272_000, experimental: false },
+        { value: 1_000_000, experimental: true },
+      ],
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+    },
+    ...overrides,
+  }
+}
+
 function modelCatalog(
-  provider = 'apiyi',
+  gatewayId = 'apiyi',
   source: AgentModelSettingsCatalog['source'] = 'codex',
 ): AgentModelSettingsCatalog {
   return {
-    provider,
+    gatewayId,
+    revision: `${gatewayId}-catalog-1`,
     source,
     models: [
-      {
-        id: 'gpt-5.6-sol',
+      catalogEntry('gpt-5.6-sol', gatewayId, {
         displayName: 'GPT-5.6 Sol',
         description: 'Frontier coding model',
-        hidden: false,
         isDefault: true,
         capabilities: {
           model: 'gpt-5.6-sol',
-          provider,
+          provider: gatewayId,
           defaultContextWindow: 372_000,
           contextOptions: [
             { value: 372_000, experimental: false },
@@ -59,51 +95,62 @@ function modelCatalog(
           defaultReasoningEffort: 'medium',
           supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         },
-      },
-      {
-        id: 'gpt-5.5',
+      }),
+      catalogEntry('gpt-5.5', gatewayId, {
         displayName: 'GPT-5.5',
         description: 'Stable coding model',
-        hidden: false,
-        isDefault: false,
-        capabilities: {
-          model: 'gpt-5.5',
-          provider,
-          defaultContextWindow: 272_000,
-          contextOptions: [
-            { value: 272_000, experimental: false },
-            { value: 1_000_000, experimental: true },
-          ],
-          defaultReasoningEffort: 'medium',
-          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-        },
-      },
+      }),
     ],
   }
 }
 
 function grokCatalog(
-  provider: 'apiyi-grok' | 'rightcode-grok',
+  gatewayId: 'apiyi' | 'rightcode',
   contextWindow: 500_000 | 1_000_000,
 ): AgentModelSettingsCatalog {
   return {
-    provider,
+    gatewayId,
+    revision: `${gatewayId}-grok-catalog-1`,
     source: 'fallback',
-    models: [{
-      id: 'grok-4.5',
+    models: [catalogEntry('grok-4.5', gatewayId, {
       displayName: 'Grok 4.5',
       description: 'Grok coding model',
-      hidden: false,
       isDefault: true,
+      family: 'xai',
+      route: {
+        gatewayId,
+        channelId: `${gatewayId}-grok`,
+        modelId: 'grok-4.5',
+        family: 'xai',
+      },
       capabilities: {
         model: 'grok-4.5',
-        provider,
+        provider: gatewayId,
         defaultContextWindow: contextWindow,
         contextOptions: [{ value: contextWindow, experimental: false }],
         defaultReasoningEffort: 'high',
         supportedReasoningEfforts: ['low', 'medium', 'high'],
       },
-    }],
+    })],
+  }
+}
+
+function confirmedSelection(
+  payload: AgentModelSelectionApplyPayload,
+): Extract<AgentModelSelectionApplyResult, { ok: true }> {
+  return {
+    ok: true,
+    data: {
+      gatewayId: payload.gatewayId,
+      channelId: `${payload.gatewayId}-standard`,
+      modelId: payload.modelId,
+      contextWindow: payload.contextWindow,
+      autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+      catalogRevision: payload.catalogRevision,
+      backendEpoch: 1,
+      threadRestored: false,
+      requestVersion: payload.requestVersion,
+    },
   }
 }
 
@@ -118,6 +165,9 @@ function installModelSettingsApi(api: {
       requestVersion: number
     },
   ) => Promise<AgentModelContextApplyResult>
+  applyModelSelection?: (
+    payload: AgentModelSelectionApplyPayload,
+  ) => Promise<AgentModelSelectionApplyResult>
 }): void {
   ;(window as unknown as { electronAPI: unknown }).electronAPI = {
     agent: api,
@@ -381,8 +431,13 @@ describe('useAgentChatStore model settings persistence', () => {
   })
 
   it('commits a successful Context apply in memory when persistence fails', async () => {
-    installModelSettingsApi({
-      applyModelContext: vi.fn(async (payload) => ({
+    const applyModelContext = vi.fn(
+      async (payload: {
+        threadId?: string
+        model: string
+        contextWindow: number
+        requestVersion: number
+      }): Promise<AgentModelContextApplyResult> => ({
         ok: true,
         data: {
           model: payload.model,
@@ -391,8 +446,9 @@ describe('useAgentChatStore model settings persistence', () => {
           threadRestored: false,
           requestVersion: payload.requestVersion,
         },
-      })),
-    })
+      }),
+    )
+    installModelSettingsApi({ applyModelContext })
     const store = await loadFreshStore()
     store.setState({
       selectedModelId: 'gpt-5.6-sol',
@@ -425,11 +481,13 @@ describe('useAgentChatStore model settings persistence', () => {
       store.getState().setModelContextWindow(1_000_000),
     ).resolves.toBe(true)
     expect(store.getState().modelSettingsPersistenceWarnings.context).toBeUndefined()
-    expect(window.electronAPI.agent.applyModelContext).toHaveBeenCalledTimes(1)
+    expect(applyModelContext).toHaveBeenCalledTimes(1)
   })
 
   it('commits model selection in session when the v2 boundary cannot persist', async () => {
-    installModelSettingsApi({})
+    installModelSettingsApi({
+      applyModelSelection: async (payload) => confirmedSelection(payload),
+    })
     const store = await loadFreshStore()
     store.setState({
       selectedModelId: 'gpt-5.6-sol',
@@ -463,34 +521,23 @@ describe('useAgentChatStore model settings persistence', () => {
     expect(store.getState().modelSettingsPersistenceWarnings.model).toBeUndefined()
   })
 
-  it('ignores a persisted model context unsupported by the active Provider', async () => {
-    const applyModelContext = vi.fn(async (payload: {
-      model: string
-      contextWindow: number
-      requestVersion: number
-    }) => ({
-      ok: true as const,
-      data: {
-        model: payload.model,
-        contextWindow: payload.contextWindow,
-        autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-        threadRestored: false,
-        requestVersion: payload.requestVersion,
-      },
-    }))
-    installModelSettingsApi({ applyModelContext })
+  it('ignores a persisted model context unsupported by the active Gateway', async () => {
+    const applyModelSelection = vi.fn(async (
+      payload: AgentModelSelectionApplyPayload,
+    ) => confirmedSelection(payload))
+    installModelSettingsApi({ applyModelSelection })
     const store = await loadFreshStore()
     store.setState({
       selectedModelId: 'gpt-5.5',
       activeModelContextWindow: 272_000,
       modelContextWindowByModel: { 'grok-4.5': 1_000_000 },
-      modelSettingsCatalog: grokCatalog('apiyi-grok', 500_000),
+      modelSettingsCatalog: grokCatalog('apiyi', 500_000),
     } as never)
 
     await store.getState().setSelectedModel('grok-4.5')
 
-    expect(applyModelContext).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'grok-4.5',
+    expect(applyModelSelection).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: 'grok-4.5',
       contextWindow: 500_000,
     }))
   })
@@ -510,7 +557,12 @@ describe('useAgentChatStore model settings lifecycle', () => {
     let busy = false
     let effectiveContext = 200_000
     installModelSettingsApi({
-      applyModelContext: vi.fn(async (payload) => {
+      applyModelContext: vi.fn(async (payload: {
+        threadId?: string
+        model: string
+        contextWindow: number
+        requestVersion: number
+      }): Promise<AgentModelContextApplyResult> => {
         calls.push(payload)
         if (busy) {
           return {
@@ -583,48 +635,35 @@ describe('useAgentChatStore model settings lifecycle', () => {
     expect(store.getState().modelContextPending).toBeUndefined()
   })
 
-  it('commits an actual model switch before a queued switch and keeps it when the latter fails', async () => {
-    const firstGate = deferred<void>()
-    const calls: Array<{
-      model: string
-      contextWindow: number
-      requestVersion: number
-    }> = []
+  it('keeps the original model when the latest of two racing switches fails', async () => {
+    const firstGate = deferred<AgentModelSelectionApplyResult>()
+    const calls: AgentModelSelectionApplyPayload[] = []
     installModelSettingsApi({
-      applyModelContext: vi.fn(async (payload) => {
+      applyModelSelection: vi.fn(async (
+        payload: AgentModelSelectionApplyPayload,
+      ): Promise<AgentModelSelectionApplyResult> => {
         calls.push(payload)
-        if (calls.length === 1) {
-          await firstGate.promise
-          return {
-            ok: true,
-            data: {
-              model: payload.model,
-              contextWindow: payload.contextWindow,
-              autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-              threadRestored: false,
-              requestVersion: payload.requestVersion,
-            },
-          }
-        }
+        if (calls.length === 1) return firstGate.promise
         return {
           ok: false,
           error: 'B restart failed',
+          kind: 'transient',
           stage: 'restart',
-          previousConfig: {
-            modelContextWindow: 272_000,
-            modelAutoCompactTokenLimit: 244_800,
-          },
-          attemptedConfig: {
-            modelContextWindow: payload.contextWindow,
-            modelAutoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-          },
+          retryable: true,
+          recoveryRequired: false,
           requestVersion: payload.requestVersion,
+          previous: confirmedSelection({
+            ...payload,
+            modelId: 'gpt-5.6-sol',
+            contextWindow: 372_000,
+          }).data,
           rollback: {
             ok: true,
-            activeConfig: {
-              modelContextWindow: 272_000,
-              modelAutoCompactTokenLimit: 244_800,
-            },
+            snapshot: confirmedSelection({
+              ...payload,
+              modelId: 'gpt-5.6-sol',
+              contextWindow: 372_000,
+            }).data,
           },
         }
       }),
@@ -640,44 +679,38 @@ describe('useAgentChatStore model settings lifecycle', () => {
       modelSettingsCatalog: modelCatalog(),
     } as never)
 
-    const switchToA = store.getState().setSelectedModel('gpt-5.5')
-    const switchToB = store.getState().setSelectedModel('gpt-5.6-sol')
-    await vi.waitFor(() => expect(calls).toHaveLength(1))
-    firstGate.resolve()
-    await switchToA
-    expect(store.getState().selectedModelId).toBe('gpt-5.5')
-    expect(store.getState().activeModelContextWindow).toBe(272_000)
+    const staleSwitch = store.getState().setSelectedModel('gpt-5.5')
+    const latestSwitch = store.getState().setSelectedModel('gpt-5.6-sol')
+    await expect(latestSwitch).resolves.toBe(false)
+    expect(store.getState().modelSelectionFailedIntent?.modelId).toBe('gpt-5.6-sol')
 
-    await switchToB
-    expect(calls.map((call) => call.model)).toEqual([
+    // The stale first response resolves later and must be discarded silently.
+    firstGate.resolve(confirmedSelection({
+      gatewayId: 'apiyi',
+      modelId: 'gpt-5.5',
+      contextWindow: 272_000,
+      catalogRevision: 'apiyi-catalog-1',
+      requestVersion: 1,
+    }))
+    await expect(staleSwitch).resolves.toBe(false)
+
+    expect(calls.map((call) => call.modelId)).toEqual([
       'gpt-5.5',
       'gpt-5.6-sol',
     ])
-    expect(store.getState().selectedModelId).toBe('gpt-5.5')
-    expect(store.getState().activeModelContextWindow).toBe(272_000)
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    expect(store.getState().activeModelContextWindow).toBe(372_000)
+    expect(store.getState().modelSelectionFailedIntent?.modelId).toBe('gpt-5.6-sol')
   })
 
-  it('queues a switch back to the current Context behind an in-flight model switch', async () => {
-    const firstGate = deferred<void>()
-    const calls: Array<{
-      model: string
-      contextWindow: number
-      requestVersion: number
-    }> = []
+  it('commits only the latest of two racing switches when both succeed', async () => {
+    const firstGate = deferred<AgentModelSelectionApplyResult>()
+    const calls: AgentModelSelectionApplyPayload[] = []
     installModelSettingsApi({
-      applyModelContext: vi.fn(async (payload) => {
+      applyModelSelection: vi.fn(async (payload) => {
         calls.push(payload)
-        if (calls.length === 1) await firstGate.promise
-        return {
-          ok: true,
-          data: {
-            model: payload.model,
-            contextWindow: payload.contextWindow,
-            autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-            threadRestored: false,
-            requestVersion: payload.requestVersion,
-          },
-        }
+        if (calls.length === 1) return firstGate.promise
+        return confirmedSelection(payload)
       }),
     })
     const store = await loadFreshStore()
@@ -693,15 +726,17 @@ describe('useAgentChatStore model settings lifecycle', () => {
 
     const switchToA = store.getState().setSelectedModel('gpt-5.5')
     const switchBackToB = store.getState().setSelectedModel('gpt-5.6-sol')
-    await vi.waitFor(() => expect(calls).toHaveLength(1))
-    expect(calls[0]).toMatchObject({ model: 'gpt-5.5', contextWindow: 272_000 })
+    expect(calls[0]).toMatchObject({ modelId: 'gpt-5.5', contextWindow: 272_000 })
 
-    firstGate.resolve()
-    await Promise.all([switchToA, switchBackToB])
+    await expect(switchBackToB).resolves.toBe(true)
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+
+    firstGate.resolve(confirmedSelection(calls[0]))
+    await expect(switchToA).resolves.toBe(false)
 
     expect(calls).toEqual([
-      expect.objectContaining({ model: 'gpt-5.5', contextWindow: 272_000 }),
-      expect.objectContaining({ model: 'gpt-5.6-sol', contextWindow: 372_000 }),
+      expect.objectContaining({ modelId: 'gpt-5.5', contextWindow: 272_000 }),
+      expect.objectContaining({ modelId: 'gpt-5.6-sol', contextWindow: 372_000 }),
     ])
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
     expect(store.getState().activeModelContextWindow).toBe(372_000)
@@ -711,13 +746,9 @@ describe('useAgentChatStore model settings lifecycle', () => {
     })
   })
 
-  it('still applies the queued final model when the preceding switch fails', async () => {
-    const firstGate = deferred<void>()
-    const calls: Array<{
-      model: string
-      contextWindow: number
-      requestVersion: number
-    }> = []
+  it('still commits the final model when the earlier racing switch fails', async () => {
+    const firstGate = deferred<AgentModelSelectionApplyResult>()
+    const calls: AgentModelSelectionApplyPayload[] = []
     installModelSettingsApi({
       getModelSettingsCatalog: async () => ({
         ok: true,
@@ -728,44 +759,15 @@ describe('useAgentChatStore model settings lifecycle', () => {
         data: {
           modelContextWindow: 372_000,
           modelAutoCompactTokenLimit: 334_800,
+          recoveryRequired: false,
         },
       }),
-      applyModelContext: vi.fn(async (payload) => {
+      applyModelSelection: vi.fn(async (
+        payload: AgentModelSelectionApplyPayload,
+      ): Promise<AgentModelSelectionApplyResult> => {
         calls.push(payload)
-        if (calls.length === 1) {
-          await firstGate.promise
-          return {
-            ok: false,
-            error: 'A restart failed',
-            stage: 'restart',
-            previousConfig: {
-              modelContextWindow: 372_000,
-              modelAutoCompactTokenLimit: 334_800,
-            },
-            attemptedConfig: {
-              modelContextWindow: payload.contextWindow,
-              modelAutoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-            },
-            requestVersion: payload.requestVersion,
-            rollback: {
-              ok: true,
-              activeConfig: {
-                modelContextWindow: 372_000,
-                modelAutoCompactTokenLimit: 334_800,
-              },
-            },
-          }
-        }
-        return {
-          ok: true,
-          data: {
-            model: payload.model,
-            contextWindow: payload.contextWindow,
-            autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-            threadRestored: false,
-            requestVersion: payload.requestVersion,
-          },
-        }
+        if (calls.length === 1) return firstGate.promise
+        return confirmedSelection(payload)
       }),
     })
     const store = await loadFreshStore()
@@ -781,44 +783,56 @@ describe('useAgentChatStore model settings lifecycle', () => {
 
     const switchToA = store.getState().setSelectedModel('gpt-5.5')
     const switchBackToB = store.getState().setSelectedModel('gpt-5.6-sol')
-    await vi.waitFor(() => expect(calls).toHaveLength(1))
-    firstGate.resolve()
-    await Promise.all([switchToA, switchBackToB])
+    await expect(switchBackToB).resolves.toBe(true)
 
-    expect(calls.map((call) => [call.model, call.contextWindow])).toEqual([
+    firstGate.resolve({
+      ok: false,
+      error: 'A restart failed',
+      kind: 'transient',
+      stage: 'restart',
+      retryable: true,
+      recoveryRequired: false,
+      requestVersion: calls[0].requestVersion,
+      previous: confirmedSelection({
+        ...calls[0],
+        modelId: 'gpt-5.6-sol',
+        contextWindow: 372_000,
+      }).data,
+      rollback: {
+        ok: true,
+        snapshot: confirmedSelection({
+          ...calls[0],
+          modelId: 'gpt-5.6-sol',
+          contextWindow: 372_000,
+        }).data,
+      },
+    })
+    await expect(switchToA).resolves.toBe(false)
+
+    expect(calls.map((call) => [call.modelId, call.contextWindow])).toEqual([
       ['gpt-5.5', 272_000],
       ['gpt-5.6-sol', 372_000],
     ])
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
     expect(store.getState().activeModelContextWindow).toBe(372_000)
+    // The stale failure must not surface an error over the committed switch.
+    expect(store.getState().modelSelectionError).toBeUndefined()
     expect(store.getState().modelSettingsError).toBeUndefined()
   })
 
-  it('cancels old-provider queued intents and reconciles an active old result by snapshot', async () => {
-    const firstGate = deferred<void>()
+  it('drops an in-flight old-gateway selection after invalidation and reconciles by fresh load', async () => {
+    const firstGate = deferred<AgentModelSelectionApplyResult>()
     const catalogResult = deferred<AgentModelSettingsCatalogResult>()
     const snapshotResult = deferred<AgentModelContextSnapshotResult>()
     const getModelSettingsCatalog = vi.fn(() => catalogResult.promise)
     const getModelContextConfig = vi.fn(() => snapshotResult.promise)
-    const applyModelContext = vi.fn(async (payload) => {
-      if (applyModelContext.mock.calls.length === 1) {
-        await firstGate.promise
-      }
-      return {
-        ok: true as const,
-        data: {
-          model: payload.model,
-          contextWindow: payload.contextWindow,
-          autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-          threadRestored: false,
-          requestVersion: payload.requestVersion,
-        },
-      }
-    })
+    const applyModelSelection = vi.fn(
+      (_payload: AgentModelSelectionApplyPayload) => firstGate.promise,
+    )
     installModelSettingsApi({
       getModelSettingsCatalog,
       getModelContextConfig,
-      applyModelContext,
+      applyModelSelection,
     })
     const store = await loadFreshStore()
     store.setState({
@@ -831,17 +845,22 @@ describe('useAgentChatStore model settings lifecycle', () => {
     } as never)
 
     const activeOldSwitch = store.getState().setSelectedModel('gpt-5.5')
-    const queuedOldSwitch = store.getState().setSelectedModel('gpt-5.6-sol')
-    await vi.waitFor(() => expect(applyModelContext).toHaveBeenCalledTimes(1))
+    expect(applyModelSelection).toHaveBeenCalledTimes(1)
 
     store.getState().invalidateCollaborationCapabilities()
     store.setState({ modelSettingsError: 'new provider loading' } as never)
-    firstGate.resolve()
-    await Promise.all([activeOldSwitch, queuedOldSwitch])
+    firstGate.resolve(confirmedSelection({
+      gatewayId: 'apiyi',
+      modelId: 'gpt-5.5',
+      contextWindow: 272_000,
+      catalogRevision: 'apiyi-catalog-1',
+      requestVersion: 1,
+    }))
+    await expect(activeOldSwitch).resolves.toBe(false)
 
-    expect(applyModelContext).toHaveBeenCalledTimes(1)
-    expect(store.getState().activeModelContextWindow).toBe(272_000)
+    // The old-gateway confirmation must not commit against the new owner.
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    expect(store.getState().modelSelectionPending).toBeUndefined()
     expect(store.getState().modelContextWindowByModel).toEqual({
       'gpt-5.6-sol': 1_000_000,
     })
@@ -861,9 +880,8 @@ describe('useAgentChatStore model settings lifecycle', () => {
       },
     })
     await reconciliation
-    await vi.waitFor(() => expect(getModelContextConfig).toHaveBeenCalledTimes(2))
 
-    expect(store.getState().modelSettingsCatalog?.provider).toBe('rightcode')
+    expect(store.getState().modelSettingsCatalog?.gatewayId).toBe('rightcode')
     expect(store.getState().activeModelContextWindow).toBe(372_000)
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
     expect(store.getState().modelContextWindowByModel).toEqual({
@@ -916,11 +934,12 @@ describe('useAgentChatStore model settings lifecycle', () => {
       modelSettingsCatalog: modelCatalog(),
     } as never)
 
-    const firstSwitch = store.getState().setSelectedModel('gpt-5.5')
-    const queuedSwitch = store.getState().setSelectedModel('gpt-5.5')
+    const firstApply = store.getState().setModelContextWindow(272_000)
+    const queuedApply = store.getState().setModelContextWindow(272_000)
     await vi.waitFor(() => expect(applyModelContext).toHaveBeenCalledTimes(1))
     firstGate.resolve()
-    await Promise.all([firstSwitch, queuedSwitch])
+    await expect(firstApply).resolves.toBe(false)
+    await expect(queuedApply).resolves.toBe(false)
 
     expect(applyModelContext).toHaveBeenCalledTimes(1)
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
@@ -956,6 +975,7 @@ describe('useAgentChatStore model settings lifecycle', () => {
       data: {
         modelContextWindow: 372_000,
         modelAutoCompactTokenLimit: 334_800,
+        recoveryRequired: false,
       },
     })
     await Promise.all([first, duplicate])
@@ -1014,6 +1034,7 @@ describe('useAgentChatStore model settings lifecycle', () => {
       data: {
         modelContextWindow: 1_000_000,
         modelAutoCompactTokenLimit: 900_000,
+        recoveryRequired: false,
       },
     })
     await second
@@ -1023,11 +1044,12 @@ describe('useAgentChatStore model settings lifecycle', () => {
       data: {
         modelContextWindow: 200_000,
         modelAutoCompactTokenLimit: 180_000,
+        recoveryRequired: false,
       },
     })
     await first
 
-    expect(store.getState().modelSettingsCatalog?.provider).toBe('rightcode')
+    expect(store.getState().modelSettingsCatalog?.gatewayId).toBe('rightcode')
     expect(store.getState().activeModelContextWindow).toBe(1_000_000)
   })
 
@@ -1068,6 +1090,7 @@ describe('useAgentChatStore model settings lifecycle', () => {
       data: {
         modelContextWindow: 372_000,
         modelAutoCompactTokenLimit: 334_800,
+        recoveryRequired: false,
       },
     })
     await loading
@@ -1132,6 +1155,7 @@ describe('useAgentChatStore model settings lifecycle', () => {
         data: {
           modelContextWindow: 372_000,
           modelAutoCompactTokenLimit: 334_800,
+          recoveryRequired: false,
         },
       })
       await loading
@@ -1268,16 +1292,9 @@ describe('useAgentChatStore model settings lifecycle', () => {
   })
 
   it('uses a same-model selection as an explicit recovery apply after cold reload', async () => {
-    const applyModelContext = vi.fn(async (payload) => ({
-      ok: true as const,
-      data: {
-        model: payload.model,
-        contextWindow: payload.contextWindow,
-        autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
-        threadRestored: false,
-        requestVersion: payload.requestVersion,
-      },
-    }))
+    const applyModelSelection = vi.fn(async (
+      payload: AgentModelSelectionApplyPayload,
+    ) => confirmedSelection(payload))
     const getModelContextConfig = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -1302,7 +1319,7 @@ describe('useAgentChatStore model settings lifecycle', () => {
         data: modelCatalog(),
       }),
       getModelContextConfig,
-      applyModelContext,
+      applyModelSelection,
     })
     const store = await loadFreshStore()
     store.setState({
@@ -1311,10 +1328,13 @@ describe('useAgentChatStore model settings lifecycle', () => {
       modelContextWindowByModel: { 'gpt-5.6-sol': 372_000 },
     } as never)
     await store.getState().loadModelSettingsCatalog()
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(true)
 
-    await store.getState().setSelectedModel('gpt-5.6-sol')
+    await expect(
+      store.getState().setSelectedModel('gpt-5.6-sol'),
+    ).resolves.toBe(true)
 
-    expect(applyModelContext).toHaveBeenCalledTimes(1)
+    expect(applyModelSelection).toHaveBeenCalledTimes(1)
     expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
     expect(store.getState().modelSettingsError).toBeUndefined()
   })
@@ -1570,9 +1590,9 @@ describe('useAgentChatStore model settings lifecycle', () => {
   )
 
   it('applies the target remembered context before committing an async model selection', async () => {
-    const apply = deferred<AgentModelContextApplyResult>()
-    const applyModelContext = vi.fn(() => apply.promise)
-    installModelSettingsApi({ applyModelContext })
+    const apply = deferred<AgentModelSelectionApplyResult>()
+    const applyModelSelection = vi.fn(() => apply.promise)
+    installModelSettingsApi({ applyModelSelection })
     const store = await loadFreshStore()
     store.setState({
       modelSettingsCatalog: modelCatalog(),
@@ -1583,49 +1603,83 @@ describe('useAgentChatStore model settings lifecycle', () => {
 
     const selecting = store.getState().setSelectedModel('gpt-5.5')
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
-    expect(applyModelContext).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'gpt-5.5',
+    // Active 372k is unsupported by gpt-5.5, so the validated memory wins.
+    expect(applyModelSelection).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: 'gpt-5.5',
       contextWindow: 1_000_000,
     }))
-    apply.resolve({
-      ok: true,
-      data: {
-        model: 'gpt-5.5',
-        contextWindow: 1_000_000,
-        autoCompactTokenLimit: 900_000,
-        threadRestored: false,
-        requestVersion: 1,
-      },
-    })
-    await selecting
+    apply.resolve(confirmedSelection({
+      gatewayId: 'apiyi',
+      modelId: 'gpt-5.5',
+      contextWindow: 1_000_000,
+      catalogRevision: 'apiyi-catalog-1',
+      requestVersion: 1,
+    }))
+    await expect(selecting).resolves.toBe(true)
 
     expect(store.getState().selectedModelId).toBe('gpt-5.5')
     expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
   })
 
-  it('keeps the old model when target context apply fails and skips apply for equal context', async () => {
-    const applyModelContext = vi.fn().mockResolvedValue({
+  it('runs the selection transaction even when the Context is unchanged', async () => {
+    const apply = deferred<AgentModelSelectionApplyResult>()
+    const applyModelSelection = vi.fn(() => apply.promise)
+    installModelSettingsApi({ applyModelSelection })
+    const store = await loadFreshStore()
+    store.setState({
+      modelSettingsCatalog: modelCatalog(),
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 1_000_000,
+      modelContextWindowByModel: { 'gpt-5.5': 272_000 },
+    } as never)
+
+    const selecting = store.getState().setSelectedModel('gpt-5.5')
+
+    expect(applyModelSelection).toHaveBeenCalledOnce()
+    // A supported active Context is preserved over the per-model memory.
+    expect(applyModelSelection).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: 'gpt-5.5',
+      contextWindow: 1_000_000,
+    }))
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    apply.resolve(confirmedSelection({
+      gatewayId: 'apiyi',
+      modelId: 'gpt-5.5',
+      contextWindow: 1_000_000,
+      catalogRevision: 'apiyi-catalog-1',
+      requestVersion: 1,
+    }))
+    await expect(selecting).resolves.toBe(true)
+
+    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+  })
+
+  it('keeps the old model when the selection transaction fails', async () => {
+    const applyModelSelection = vi.fn(async (
+      payload: AgentModelSelectionApplyPayload,
+    ): Promise<AgentModelSelectionApplyResult> => ({
       ok: false,
       error: 'restart failed',
+      kind: 'transient',
       stage: 'restart',
-      previousConfig: {
-        modelContextWindow: 372_000,
-        modelAutoCompactTokenLimit: 334_800,
-      },
-      attemptedConfig: {
-        modelContextWindow: 1_000_000,
-        modelAutoCompactTokenLimit: 900_000,
-      },
-      requestVersion: 1,
+      retryable: true,
+      recoveryRequired: false,
+      requestVersion: payload.requestVersion,
+      previous: confirmedSelection({
+        ...payload,
+        modelId: 'gpt-5.6-sol',
+        contextWindow: 372_000,
+      }).data,
       rollback: {
         ok: true,
-        activeConfig: {
-          modelContextWindow: 372_000,
-          modelAutoCompactTokenLimit: 334_800,
-        },
+        snapshot: confirmedSelection({
+          ...payload,
+          modelId: 'gpt-5.6-sol',
+          contextWindow: 372_000,
+        }).data,
       },
-    } satisfies AgentModelContextApplyResult)
-    installModelSettingsApi({ applyModelContext })
+    }))
+    installModelSettingsApi({ applyModelSelection })
     const store = await loadFreshStore()
     store.setState({
       modelSettingsCatalog: modelCatalog(),
@@ -1634,18 +1688,23 @@ describe('useAgentChatStore model settings lifecycle', () => {
       modelContextWindowByModel: { 'gpt-5.5': 1_000_000 },
     } as never)
 
-    await store.getState().setSelectedModel('gpt-5.5')
+    await expect(store.getState().setSelectedModel('gpt-5.5')).resolves.toBe(false)
     expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
 
-    applyModelContext.mockClear()
+    applyModelSelection.mockClear()
     store.setState({
-      modelContextWindowByModel: { 'gpt-5.5': 372_000 },
-      modelSettingsError: undefined,
+      modelContextWindowByModel: { 'gpt-5.5': 1_000_000 },
+      modelSelectionError: undefined,
+      modelSelectionFailedIntent: undefined,
     } as never)
-    await store.getState().setSelectedModel('gpt-5.5')
-    expect(applyModelContext).not.toHaveBeenCalled()
-    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+    await expect(store.getState().setSelectedModel('gpt-5.5')).resolves.toBe(false)
+    expect(applyModelSelection).toHaveBeenCalledOnce()
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    expect(store.getState().modelSelectionError).toMatchObject({
+      message: 'restart failed',
+      retryable: true,
+    })
     expect(store.getState().modelContextWindowByModel['gpt-5.6-sol']).toBeUndefined()
-    expect(store.getState().modelContextWindowByModel['gpt-5.5']).toBe(372_000)
+    expect(store.getState().modelContextWindowByModel['gpt-5.5']).toBe(1_000_000)
   })
 })

@@ -61,6 +61,14 @@ const MAX_RUNNING_MS = 30 * 60_000
 export const IMAGE_TASK_TIMEOUT_ERROR =
   'Task timed out after 30 minutes without a terminal report. The image may have ALREADY been rendered and shown in the chat — ask the user to confirm before doing anything else, and do NOT blindly resubmit (that could create a duplicate).'
 
+/**
+ * 渲染进程重载/崩溃时的兜底错误文案：后台渲染 Promise 随渲染进程一起消失，
+ * `image:task-update` 终态广播永远不会到达，任务必须立刻判失败而不是干等
+ * 30 分钟超时。图片可能已在崩溃前渲染并展示 —— 提示模型先跟用户确认。
+ */
+export const IMAGE_TASK_RENDERER_GONE_ERROR =
+  'The renderer process reloaded or crashed while this image task was running, so its completion report was lost. The image may have ALREADY been rendered and shown in the chat before the reload — ask the user to confirm before doing anything else, and do NOT blindly resubmit (that could create a duplicate).'
+
 export class ImageTaskManager {
   private tasks = new Map<string, ImageTaskState>()
   /** 每个 taskId 上等待终态的唤醒回调（长轮询用）。 */
@@ -92,6 +100,21 @@ export class ImageTaskManager {
   /** 渲染层 ack 失败（根本没跑起来）时由调用方直接判失败。 */
   fail(taskId: string, error: string): void {
     this.settle(taskId, 'failed', { error })
+  }
+
+  /**
+   * 渲染进程消失（reload / crash）时由主进程接线调用：所有 running 任务的
+   * 终态广播已不可能到达，立即全部判失败并唤醒长轮询者，避免 30 分钟僵死。
+   * 返回被判失败的任务数（0 = 无事发生，首次加载时就是这种情况）。
+   */
+  failAllRunning(error: string): number {
+    let failed = 0
+    for (const task of this.tasks.values()) {
+      if (task.status !== 'running') continue
+      this.settle(task.taskId, 'failed', { error })
+      failed += 1
+    }
+    return failed
   }
 
   private settle(

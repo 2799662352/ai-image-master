@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentManager } from '../AgentManager'
+import type { CodexLocalBackendOptions } from '../CodexLocalBackend'
 import type { AgentInput, IAgentBackend } from '../types'
 import type { AgentStreamEvent } from '../../../types/agent'
 import type { CodexProviderConfig } from '../codexLaunch'
@@ -111,7 +112,7 @@ describe('AgentManager codex api key', () => {
     )
     // Default active provider is `apiyi` — see codexProviders.ts.
     expect(onDisk.apiKeys.apiyi).toBe('sk-new')
-    expect(onDisk.selectedProviderId).toBe('apiyi')
+    expect(onDisk.selectedGatewayId).toBe('apiyi')
 
     const entries = await fs.readdir(tmpDir)
     expect(entries.some((name) => name.endsWith('.tmp'))).toBe(false)
@@ -123,6 +124,132 @@ describe('AgentManager codex api key', () => {
 
     const reader = new AgentManager({ userDataDir: tmpDir })
     expect(reader.getCodexApiKey()).toBe('sk-persist')
+  })
+})
+
+describe('AgentManager persisted Gateway/model startup routing', () => {
+  async function writeProvidersState(input: {
+    selectedGatewayId: string
+    selectedModelId: string
+    apiKeys?: Record<string, string>
+    customProviders?: CodexProviderConfig[]
+  }): Promise<void> {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: input.selectedGatewayId,
+        selectedModelId: input.selectedModelId,
+        apiKeys: input.apiKeys ?? {},
+        customProviders: input.customProviders ?? [],
+      }),
+      'utf8',
+    )
+  }
+
+  function constructAndCaptureBackend(): CodexLocalBackendOptions {
+    let captured: CodexLocalBackendOptions | undefined
+    new AgentManager({
+      userDataDir: tmpDir,
+      backendFactory: (options) => {
+        captured = options
+        return makeStubBackend([])
+      },
+    })
+    if (!captured) throw new Error('Expected AgentManager to construct its default backend')
+    return captured
+  }
+
+  it.each([
+    {
+      gatewayId: 'apiyi',
+      expectedChannelId: 'apiyi-grok',
+      expectedBaseUrl: 'https://api.apiyi.com/v1',
+    },
+    {
+      gatewayId: 'rightcode',
+      expectedChannelId: 'rightcode-grok',
+      expectedBaseUrl: 'https://right.codes/grok/v1',
+    },
+  ])(
+    'restores $gatewayId + grok-4.5 through its Grok channel',
+    async ({ gatewayId, expectedChannelId, expectedBaseUrl }) => {
+      await writeProvidersState({
+        selectedGatewayId: gatewayId,
+        selectedModelId: 'grok-4.5',
+        apiKeys: { [gatewayId]: 'shared-key' },
+      })
+
+      const options = constructAndCaptureBackend()
+
+      expect(options.provider).toMatchObject({
+        id: expectedChannelId,
+        gatewayId,
+        model: 'grok-4.5',
+        baseUrl: expectedBaseUrl,
+      })
+      expect(options.getApiKey?.()).toBe('shared-key')
+    },
+  )
+
+  it.each([
+    { gatewayId: 'apiyi', expectedChannelId: 'apiyi-standard' },
+    { gatewayId: 'rightcode', expectedChannelId: 'rightcode-standard' },
+  ])(
+    'restores $gatewayId + gpt-5.5 through its standard channel',
+    async ({ gatewayId, expectedChannelId }) => {
+      await writeProvidersState({
+        selectedGatewayId: gatewayId,
+        selectedModelId: 'gpt-5.5',
+      })
+
+      const options = constructAndCaptureBackend()
+
+      expect(options.provider).toMatchObject({
+        id: expectedChannelId,
+        gatewayId,
+        model: 'gpt-5.5',
+      })
+    },
+  )
+
+  it('restores a custom Gateway through its single custom channel', async () => {
+    await writeProvidersState({
+      selectedGatewayId: 'custom-studio',
+      selectedModelId: 'vendor-model',
+      apiKeys: { 'custom-studio': 'custom-key' },
+      customProviders: [{
+        id: 'custom-studio',
+        name: 'Studio Gateway',
+        baseUrl: 'https://studio.example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        isCustom: true,
+      }],
+    })
+
+    const options = constructAndCaptureBackend()
+
+    expect(options.provider).toMatchObject({
+      id: 'custom:custom-studio',
+      gatewayId: 'custom-studio',
+      model: 'vendor-model',
+      baseUrl: 'https://studio.example.com/v1',
+    })
+    expect(options.getApiKey?.()).toBe('custom-key')
+  })
+
+  it('keeps the existing default-provider fallback for an unknown persisted Gateway', async () => {
+    await writeProvidersState({
+      selectedGatewayId: 'missing-gateway',
+      selectedModelId: 'grok-4.5',
+    })
+
+    const options = constructAndCaptureBackend()
+
+    expect(options.provider).toMatchObject({
+      id: 'apiyi',
+      baseUrl: 'https://api.apiyi.com/v1',
+    })
   })
 })
 
@@ -187,11 +314,13 @@ describe('AgentManager transactional provider application', () => {
     calls: BackendCall[]
     cancelCalls: string[]
     configuredProviders: Array<string | undefined>
+    configuredProviderConfigs: CodexProviderConfig[]
     restartCalls: number
     epoch: number
   } {
     const backend = Object.assign(makeStubBackend([]), {
       configuredProviders: [] as Array<string | undefined>,
+      configuredProviderConfigs: [] as CodexProviderConfig[],
       restartCalls: 0,
       epoch: 1,
       currentEpoch() {
@@ -199,6 +328,7 @@ describe('AgentManager transactional provider application', () => {
       },
       setProvider(provider: CodexProviderConfig | undefined) {
         backend.configuredProviders.push(provider?.id)
+        if (provider) backend.configuredProviderConfigs.push(provider)
       },
       async restartCodex() {
         backend.restartCalls += 1
@@ -226,7 +356,7 @@ describe('AgentManager transactional provider application', () => {
       healthy: false,
       epoch: 1,
       activeClient: 'old-client',
-      configuredProviderId: 'apiyi',
+      configuredProviderId: 'apiyi-standard',
       oldClientInterrupted: false,
       isHealthy() {
         return backend.healthy
@@ -235,7 +365,7 @@ describe('AgentManager transactional provider application', () => {
         return backend.epoch
       },
       setProvider(provider: CodexProviderConfig | undefined) {
-        backend.configuredProviderId = provider?.id ?? 'apiyi'
+        backend.configuredProviderId = provider?.id ?? 'apiyi-standard'
       },
       async restartCodex() {
         markRestartStarted()
@@ -288,6 +418,78 @@ describe('AgentManager transactional provider application', () => {
 
     expect(manager.getCodexApiKey()).toBe('sk-shared')
     expect(backend.configuredProviders).toEqual(['rightcode-grok'])
+    await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
+      activeId: 'rightcode',
+    })
+  })
+
+  it('keeps the restored Grok channel when rotating its active Gateway key', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: 'rightcode',
+        selectedModelId: 'grok-4.5',
+        apiKeys: { rightcode: 'sk-old' },
+        customProviders: [],
+      }),
+      'utf8',
+    )
+    const backend = makeTransactionalBackend(async () => {
+      backend.epoch += 1
+    })
+    const manager = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await manager.setProviderApiKey('rightcode', 'sk-rotated')
+
+    expect(backend.configuredProviderConfigs.at(-1)).toMatchObject({
+      id: 'rightcode-grok',
+      gatewayId: 'rightcode',
+      model: 'grok-4.5',
+      baseUrl: 'https://right.codes/grok/v1',
+    })
+    await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
+      activeId: 'rightcode',
+    })
+  })
+
+  it('rolls a failed active-key apply back to the restored Grok channel', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: 'rightcode',
+        selectedModelId: 'grok-4.5',
+        apiKeys: { rightcode: 'sk-old' },
+        customProviders: [],
+      }),
+      'utf8',
+    )
+    const backend = makeTransactionalBackend(async () => {
+      throw new Error('replacement spawn failed')
+    })
+    const manager = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(
+      manager.setProviderApiKey('rightcode', 'sk-new'),
+    ).rejects.toThrow('replacement spawn failed')
+
+    expect(backend.configuredProviderConfigs).toHaveLength(2)
+    expect(backend.configuredProviderConfigs[0]).toMatchObject({
+      id: 'rightcode-grok',
+      model: 'grok-4.5',
+      baseUrl: 'https://right.codes/grok/v1',
+    })
+    expect(backend.configuredProviderConfigs[1]).toMatchObject({
+      id: 'rightcode-grok',
+      model: 'grok-4.5',
+      baseUrl: 'https://right.codes/grok/v1',
+    })
+    expect(manager.getCodexApiKey()).toBe('sk-old')
+    await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
+      activeId: 'rightcode',
+      apiKeys: { rightcode: 'sk-old' },
+    })
   })
 
   it('confirms a successful switch only after a new backend epoch exists', async () => {
@@ -314,7 +516,7 @@ describe('AgentManager transactional provider application', () => {
       providerGeneration: 2,
     })
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('rightcode')
-    expect(backend.configuredProviders).toEqual(['rightcode'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard'])
   })
 
   it('admits a Default send only on the replacement generation after Provider apply succeeds', async () => {
@@ -343,7 +545,7 @@ describe('AgentManager transactional provider application', () => {
     await vi.waitFor(() => expect(sends).toHaveLength(1))
     expect(sends).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(backend.oldClientInterrupted).toBe(false)
@@ -376,7 +578,7 @@ describe('AgentManager transactional provider application', () => {
     await vi.waitFor(() => expect(sends).toHaveLength(1))
     expect(sends).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(errors).not.toContainEqual(
@@ -401,7 +603,7 @@ describe('AgentManager transactional provider application', () => {
     const backend = Object.assign(makeStubBackend([]), {
       healthy: false,
       epoch: 1,
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       turnInFlight: false,
       restartCalls: 0,
       isHealthy() {
@@ -411,7 +613,7 @@ describe('AgentManager transactional provider application', () => {
         return backend.epoch
       },
       setProvider(provider: CodexProviderConfig | undefined) {
-        backend.providerId = provider?.id ?? 'apiyi'
+        backend.providerId = provider?.id ?? 'apiyi-standard'
       },
       async restartCodex() {
         backend.restartCalls += 1
@@ -457,7 +659,7 @@ describe('AgentManager transactional provider application', () => {
     releasePersistence()
     await send
     await expect(transition).rejects.toThrow(/current turn.*retry/i)
-    expect(sends).toEqual(['apiyi'])
+    expect(sends).toEqual(['apiyi-standard'])
     expect((await manager.getProvidersSnapshot()).activeId).toBe('apiyi')
 
     releaseTurn()
@@ -484,11 +686,11 @@ describe('AgentManager transactional provider application', () => {
     await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(/current turn.*retry/i)
 
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     const persisted = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
-    expect(persisted.selectedProviderId).toBe('apiyi')
+    expect(persisted.selectedGatewayId).toBe('apiyi')
     await mgr.setCodexApiKey('sk-old-provider')
     await mgr.sendMessage({ content: 'still old', attachments: [] })
     await vi.waitFor(() => expect(backend.calls).toHaveLength(1))
@@ -503,12 +705,12 @@ describe('AgentManager transactional provider application', () => {
     await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(/spawn failed/i)
 
     expect(mgr.getCodexApiKey()).toBe('')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
     const persisted = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
-    expect(persisted.selectedProviderId).toBe('apiyi')
+    expect(persisted.selectedGatewayId).toBe('apiyi')
   })
 
   it('compensates an unhealthy failed Provider switch with a verified old generation', async () => {
@@ -529,13 +731,90 @@ describe('AgentManager transactional provider application', () => {
     )
 
     expect(backend.restartCalls).toBe(2)
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     expect(backend.epoch).toBe(2)
     expect(backend.isHealthy()).toBe(true)
     await expect(
       (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
         .providerCapabilityBarrier,
     ).resolves.toBe(true)
+  })
+
+  it('rolls back when restart resolves without creating a new generation', async () => {
+    const backend = makeTransactionalBackend(async (call) => {
+      if (call === 2) backend.epoch += 1
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /did not create a new backend generation/i,
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    expect(
+      (mgr as unknown as {
+        channelController: { currentChannelId: () => string }
+      }).channelController.currentChannelId(),
+    ).toBe('apiyi-standard')
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(true)
+  })
+
+  it('keeps old identity and marks capabilities unavailable when atomic recovery fails', async () => {
+    let healthy = true
+    const backend = makeTransactionalBackend(async (call) => {
+      healthy = false
+      if (call === 2) throw new Error('old Provider recovery failed')
+    })
+    backend.isHealthy = () => healthy
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /without a healthy backend.*old Provider recovery failed/i,
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    expect(
+      (mgr as unknown as {
+        channelController: { currentChannelId: () => string }
+      }).channelController.currentChannelId(),
+    ).toBe('apiyi-standard')
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(false)
+  })
+
+  it('rejects Channel changes when an active backend has no restart support', async () => {
+    const configuredProviders: Array<string | undefined> = []
+    const backend = Object.assign(makeStubBackend([]), {
+      setProvider(provider: CodexProviderConfig | undefined) {
+        configuredProviders.push(provider?.id)
+      },
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /without restart support/i,
+    )
+
+    expect(configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    expect(
+      (mgr as unknown as {
+        channelController: { currentChannelId: () => string }
+      }).channelController.currentChannelId(),
+    ).toBe('apiyi-standard')
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(false)
   })
 
   it('marks Provider capabilities not ready when compensation restart also fails', async () => {
@@ -553,7 +832,7 @@ describe('AgentManager transactional provider application', () => {
     )
 
     expect(backend.restartCalls).toBe(2)
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     await expect(
       (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
         .providerCapabilityBarrier,
@@ -579,7 +858,7 @@ describe('AgentManager transactional provider application', () => {
     await b
 
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     expect(backend.epoch).toBe(3)
   })
 
@@ -603,7 +882,7 @@ describe('AgentManager transactional provider application', () => {
     await expect(a).rejects.toThrow('A failed')
     await expect(b).resolves.toMatchObject({ activeId: 'apiyi' })
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
   })
 
   it('applies active key, custom update, and active removal through confirmed generations', async () => {
@@ -724,7 +1003,7 @@ describe('AgentManager apiyi-mcp key bridge', () => {
     expect(onDisk.apiKeys['apiyi-mcp']).toBe('sk-apiyi')
     // It must NOT have touched the codex gateway provider key (apiyi) or active id.
     expect(onDisk.apiKeys.apiyi).toBeUndefined()
-    expect(onDisk.selectedProviderId).toBe('apiyi')
+    expect(onDisk.selectedGatewayId).toBe('apiyi')
   })
 
   it('a fresh manager preloads the persisted apiyi-mcp key so an idempotent re-push does not restart', async () => {
@@ -776,7 +1055,7 @@ describe('AgentManager cinematography-kb key bridge', () => {
     expect(onDisk.apiKeys['cinematography-kb']).toBe('sk-dashscope')
     // It must NOT have touched the apiyi-mcp slot or the active id.
     expect(onDisk.apiKeys['apiyi-mcp']).toBeUndefined()
-    expect(onDisk.selectedProviderId).toBe('apiyi')
+    expect(onDisk.selectedGatewayId).toBe('apiyi')
   })
 
   it('a fresh manager preloads the persisted cinematography-kb key so an idempotent re-push does not restart', async () => {
@@ -814,11 +1093,16 @@ describe('AgentManager testConnection provider resolution', () => {
   })
 
   it('uses the currently selected provider for the probe backend (not a hard-coded default)', async () => {
-    // Stub backend bypasses the real CodexLocalBackend constructor and its
-    // restartCodex hook so we can swap active providers freely. testConnection
-    // ignores opts.backend and builds its own fresh CodexLocalBackend, which
-    // is exactly the path we want to exercise.
-    const stub = makeStubBackend([])
+    // testConnection ignores opts.backend and builds its own fresh
+    // CodexLocalBackend. The manager stub still provides a verified generation
+    // bump because active Channel changes require atomic restart support.
+    let epoch = 1
+    const stub = Object.assign(makeStubBackend([]), {
+      currentEpoch: () => epoch,
+      restartCodex: async () => {
+        epoch += 1
+      },
+    })
     const mgr = new AgentManager({ userDataDir: tmpDir, backend: stub })
 
     // Provision a key for rightcode before switching, so testConnection's
@@ -847,7 +1131,7 @@ describe('AgentManager testConnection provider resolution', () => {
       const captured = (globalThis as Record<string, unknown>).__capturedProvider as
         | { id?: string }
         | undefined
-      expect(captured?.id).toBe('rightcode')
+      expect(captured?.id).toBe('rightcode-standard')
     } finally {
       CodexLocalBackend.prototype.start = realStart
       delete (globalThis as Record<string, unknown>).__capturedProvider
@@ -1354,13 +1638,13 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
       healthy: false,
       epoch: 1,
       activeClient: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       async start() {},
       async stop() {},
       isHealthy() { return backend.healthy },
       currentEpoch() { return backend.epoch },
       setProvider(provider: CodexProviderConfig | undefined) {
-        backend.providerId = provider?.id ?? 'apiyi'
+        backend.providerId = provider?.id ?? 'apiyi-standard'
       },
       async restartCodex() {
         markRestartStarted()
@@ -1439,12 +1723,12 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(calls).toHaveLength(2)
     expect(callsBeforeRestartRelease).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(calls[1]).toEqual({
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     })
     expect(added).toHaveLength(1)
@@ -1576,11 +1860,15 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
       backend,
     })
 
-    await mgr.sendMessage({ content: 'hi', attachments: [], model: 'o3-pro' })
+    await mgr.sendMessage({
+      content: 'hi',
+      attachments: [],
+      model: 'gpt-5.4',
+    })
     await flushMicrotasks(20)
 
     expect(backend.calls).toHaveLength(1)
-    expect(backend.calls[0].input.model).toBe('o3-pro')
+    expect(backend.calls[0].input.model).toBe('gpt-5.4')
   })
 
   it('falls back to default model when payload omits model', async () => {

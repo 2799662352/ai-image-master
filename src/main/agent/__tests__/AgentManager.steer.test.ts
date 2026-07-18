@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -72,13 +72,13 @@ function makeDeferredProviderBackend(options: {
     healthy: false,
     epoch: 1,
     activeClient: 'old-client',
-    providerId: 'apiyi',
+    providerId: 'apiyi-standard',
     async start() {},
     async stop() {},
     isHealthy() { return backend.healthy },
     currentEpoch() { return backend.epoch },
     setProvider(provider: CodexProviderConfig | undefined) {
-      backend.providerId = provider?.id ?? 'apiyi'
+      backend.providerId = provider?.id ?? 'apiyi-standard'
     },
     async restartCodex() {
       markRestartStarted()
@@ -187,7 +187,7 @@ describe('AgentManager.steer (turn/steer)', () => {
 
     expect(fixture.steerCalls).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(fixture.sendCalls).toEqual([])
@@ -232,12 +232,12 @@ describe('AgentManager.steer (turn/steer)', () => {
 
     expect(fixture.steerCalls).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(fixture.sendCalls).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(added).toHaveLength(1)
@@ -283,12 +283,12 @@ describe('AgentManager.steer (turn/steer)', () => {
 
     expect(fixture.steerCalls).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(fixture.sendCalls).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(added).toHaveLength(1)
@@ -334,6 +334,104 @@ describe('AgentManager.steer (turn/steer)', () => {
     // The interjection is persisted as a user message row.
     expect(added.some((m) => m.role === 'user')).toBe(true)
     expect(result.threadId).toBe(first.threadId)
+  })
+
+  it('repairs a legacy model-only route before persisting a steering message', async () => {
+    const operations: string[] = []
+    const backend = {
+      async start() {},
+      async stop() {},
+      isHealthy: () => true,
+      setProvider: (provider: { id: string } | undefined) => {
+        operations.push(`channel:${provider?.id ?? 'none'}`)
+      },
+      async restartCodex() {
+        operations.push('restart')
+      },
+      async cancel() {},
+      async steer() {
+        operations.push('steer')
+        return 'turn-model-selection'
+      },
+      async *send(): AsyncIterable<AgentStreamEvent> {},
+    } satisfies IAgentBackend
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        ...persistStubs,
+        addMessage: async () => {
+          operations.push('message')
+          return { id: 'message-model-selection' }
+        },
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    const catalogResult = await manager.getModelSettingsCatalogRpc()
+    if (!catalogResult.ok) throw new Error(catalogResult.error)
+    const grok = catalogResult.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    operations.length = 0
+
+    await manager.steer({
+      threadId: 'db-model-selection',
+      content: 'route me before persistence',
+      attachments: [],
+      model: grok.id,
+    })
+
+    expect(operations.indexOf('channel:apiyi-grok')).toBeGreaterThanOrEqual(0)
+    expect(operations.indexOf('channel:apiyi-grok')).toBeLessThan(
+      operations.indexOf('message'),
+    )
+    expect(operations.indexOf('message')).toBeLessThan(operations.indexOf('steer'))
+  })
+
+  it('rejects steering model mismatch before persistence or backend admission', async () => {
+    const addMessage = vi.fn(async () => ({ id: 'message-mismatch' }))
+    const steer = vi.fn(async () => 'turn-mismatch')
+    const start = vi.fn(async () => undefined)
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        start,
+        async stop() {},
+        isHealthy: () => false,
+        async cancel() {},
+        steer,
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      store: {
+        ...persistStubs,
+        addMessage,
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalogResult = await manager.getModelSettingsCatalogRpc()
+    if (!catalogResult.ok) throw new Error(catalogResult.error)
+    const grok = catalogResult.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    start.mockClear()
+
+    await expect(manager.steer({
+      threadId: 'db-mismatch',
+      content: 'mismatch',
+      attachments: [],
+      model: 'gpt-5.5',
+      modelSelection: {
+        gatewayId: catalogResult.data.gatewayId,
+        modelId: grok.id,
+        contextWindow: grok.capabilities.defaultContextWindow,
+        catalogRevision: catalogResult.data.revision,
+      },
+    })).rejects.toThrow(/model.*mismatch|不一致/i)
+
+    expect(start).not.toHaveBeenCalled()
+    expect(addMessage).not.toHaveBeenCalled()
+    expect(steer).not.toHaveBeenCalled()
   })
 
   it('is a no-op (no backend.steer) when called without a threadId', async () => {

@@ -143,22 +143,22 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
 ])
 
 const PROVIDER_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new Map([
-  ['rightcode-grok:grok-4.5', {
-    defaultWindow: EXPERIMENTAL_CONTEXT_WINDOW,
+  ['apiyi:apiyi-grok:grok-4.5', {
+    defaultWindow: 500_000,
+    allowExperimental1M: false,
+  }],
+  ['rightcode:rightcode-grok:grok-4.5', {
+    defaultWindow: 1_000_000,
     allowExperimental1M: false,
   }],
 ])
 
 const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> = new Map([
-  ['apiyi:grok-4.5', {
+  ['apiyi:apiyi-grok:grok-4.5', {
     defaultEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
   }],
-  ['apiyi-grok:grok-4.5', {
-    defaultEffort: 'high',
-    supportedEfforts: ['low', 'medium', 'high'],
-  }],
-  ['rightcode-grok:grok-4.5', {
+  ['rightcode:rightcode-grok:grok-4.5', {
     defaultEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
   }],
@@ -188,35 +188,77 @@ export function isConcreteModelReasoningEffort(
   return isModelReasoningEffort(value) && value !== 'auto'
 }
 
-function providerModelKey(provider: string, model: string): string {
-  return `${provider}:${model}`
+function providerModelKey(
+  gatewayId: string,
+  channelId: string,
+  model: string,
+): string {
+  return `${gatewayId}:${channelId}:${model}`
 }
 
 function contextPolicy(
   model: string,
-  provider?: string,
+  route?: { gatewayId: string; channelId: string },
 ): ModelContextPolicy | undefined {
-  return (
-    (provider
-      ? PROVIDER_CONTEXT_POLICIES.get(providerModelKey(provider, model))
-      : undefined)
-    ?? VERIFIED_CONTEXT_POLICIES.get(model)
+  if (route) {
+    const routed = PROVIDER_CONTEXT_POLICIES.get(
+      providerModelKey(route.gatewayId, route.channelId, model),
+    )
+    if (routed) return routed
+  }
+  return VERIFIED_CONTEXT_POLICIES.get(model)
+}
+
+function contextRoute(
+  gatewayId?: string,
+  channelId?: string,
+): { gatewayId: string; channelId: string } | undefined {
+  if (gatewayId === undefined && channelId === undefined) return undefined
+  if (gatewayId === undefined || channelId === undefined) {
+    throw new TypeError('Gateway and channel ids must be provided together')
+  }
+  return { gatewayId, channelId }
+}
+
+function reasoningPolicy(
+  model: string,
+  gatewayId: string,
+  channelId: string,
+): ProviderReasoningPolicy | undefined {
+  return PROVIDER_REASONING_POLICIES.get(
+    providerModelKey(gatewayId, channelId, model),
   )
 }
 
+/** Returns the verified default for a model, optionally scoped to one route. */
+export function defaultContextWindowForModel(model: string): number
 export function defaultContextWindowForModel(
   model: string,
-  provider?: string,
+  gatewayId: string,
+  channelId: string,
+): number
+export function defaultContextWindowForModel(
+  model: string,
+  gatewayId?: string,
+  channelId?: string,
 ): number {
-  return contextPolicy(model, provider)?.defaultWindow
+  return contextPolicy(model, contextRoute(gatewayId, channelId))?.defaultWindow
     ?? UNKNOWN_MODEL_CONTEXT_WINDOW
 }
 
+/** Lists verified context choices for a model or an exact gateway route. */
+export function modelContextOptions(modelId: string): ModelContextOption[]
 export function modelContextOptions(
-  model: string,
-  provider?: string,
+  modelId: string,
+  gatewayId: string,
+  channelId: string,
+): ModelContextOption[]
+export function modelContextOptions(
+  modelId: string,
+  gatewayId?: string,
+  channelId?: string,
 ): ModelContextOption[] {
-  const policy = contextPolicy(model, provider)
+  const policy = contextPolicy(modelId, contextRoute(gatewayId, channelId))
   const defaultContextWindow = policy?.defaultWindow ?? UNKNOWN_MODEL_CONTEXT_WINDOW
   const defaultOption: ModelContextOption = {
     value: defaultContextWindow,
@@ -236,17 +278,43 @@ export function modelContextOptions(
   ]
 }
 
+/** Returns the verified reasoning efforts for an exact Gateway + Channel route. */
+export function supportedReasoningEfforts(
+  modelId: string,
+  gatewayId: string,
+  channelId: string,
+): ConcreteModelReasoningEffort[] {
+  const verified = reasoningPolicy(modelId, gatewayId, channelId)
+  return verified ? [...verified.supportedEfforts] : []
+}
+
+/** Checks a context window against model-only or exact-route policy. */
 export function isModelContextWindowSupported(
   model: string,
   contextWindow: number,
-  provider?: string,
+): boolean
+export function isModelContextWindowSupported(
+  model: string,
+  contextWindow: number,
+  gatewayId: string,
+  channelId: string,
+): boolean
+export function isModelContextWindowSupported(
+  model: string,
+  contextWindow: number,
+  gatewayId?: string,
+  channelId?: string,
 ): boolean {
+  const route = contextRoute(gatewayId, channelId)
   if (
-    modelContextOptions(model, provider).some(
+    (route
+      ? modelContextOptions(model, route.gatewayId, route.channelId)
+      : modelContextOptions(model)
+    ).some(
       (option) => option.value === contextWindow,
     )
   ) return true
-  if (provider) return false
+  if (route) return false
   for (const [key, policy] of PROVIDER_CONTEXT_POLICIES) {
     if (
       key.endsWith(`:${model}`)
@@ -258,22 +326,26 @@ export function isModelContextWindowSupported(
 
 export function mergeModelSettingsCapabilities(input: {
   model: string
-  provider: string
+  gatewayId: string
+  channelId: string
   defaultReasoningEffort?: string
-  supportedReasoningEfforts: readonly string[]
+  supportedReasoningEfforts?: readonly string[]
 }): ModelSettingsCapabilities {
-  const verifiedReasoning = PROVIDER_REASONING_POLICIES.get(
-    providerModelKey(input.provider, input.model),
+  const verifiedReasoning = reasoningPolicy(
+    input.model,
+    input.gatewayId,
+    input.channelId,
   )
   const supported = new Set(
-    input.supportedReasoningEfforts.length > 0
+    (input.supportedReasoningEfforts?.length ?? 0) > 0
       ? input.supportedReasoningEfforts
       : verifiedReasoning?.supportedEfforts ?? [],
   )
-  const supportedReasoningEfforts = MODEL_REASONING_EFFORTS.filter((effort) => {
+  const supportedReasoningEffortsList = MODEL_REASONING_EFFORTS.filter((effort) => {
     if (!supported.has(effort)) return false
     return !(
-      input.provider === 'rightcode'
+      input.gatewayId === 'rightcode'
+      && input.channelId === 'rightcode-standard'
       && input.model === 'gpt-5.5'
       && effort === 'max'
     )
@@ -281,13 +353,21 @@ export function mergeModelSettingsCapabilities(input: {
 
   return {
     model: input.model,
-    provider: input.provider,
-    defaultContextWindow: defaultContextWindowForModel(input.model, input.provider),
-    contextOptions: modelContextOptions(input.model, input.provider),
+    provider: input.gatewayId,
+    defaultContextWindow: defaultContextWindowForModel(
+      input.model,
+      input.gatewayId,
+      input.channelId,
+    ),
+    contextOptions: modelContextOptions(
+      input.model,
+      input.gatewayId,
+      input.channelId,
+    ),
     defaultReasoningEffort:
       input.defaultReasoningEffort
       ?? verifiedReasoning?.defaultEffort,
-    supportedReasoningEfforts,
+    supportedReasoningEfforts: supportedReasoningEffortsList,
   }
 }
 
@@ -304,6 +384,61 @@ export function migrateLegacyModelSelection(id: string): LegacyModelSelection {
 
 export function modelAutoCompactTokenLimit(contextWindow: number): number {
   return Math.floor(contextWindow * 0.9)
+}
+
+/**
+ * Context windows Codex resolves natively from its bundled models.json
+ * (verified against openai/codex rust-v0.144.5 codex-rs/models-manager/
+ * models.json). Only slugs listed there belong here: for these models Codex
+ * already knows the window AND derives its own auto-compaction budget, so a
+ * launch-time `model_context_window` override is redundant — and harmful,
+ * because the `-c` override applies globally to every model in the process
+ * and forces a full restart whenever it changes.
+ */
+const CODEX_NATIVE_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+  ['gpt-5.6-sol', 372_000],
+  ['gpt-5.6-terra', 372_000],
+  ['gpt-5.6-luna', 372_000],
+  ['gpt-5.5', 272_000],
+  ['gpt-5.4', 272_000],
+  ['gpt-5.4-mini', 272_000],
+  ['gpt-5.2', 272_000],
+])
+
+/**
+ * Decides whether a selected context window needs a launch-time pin.
+ *
+ * Returns `null` (unpinned) when the selection matches the model's
+ * Codex-native window: the process then launches WITHOUT
+ * `model_context_window` / `model_auto_compact_token_limit` overrides and
+ * Codex resolves both from its own metadata. Switching between two unpinned
+ * models (e.g. gpt-5.5 272K ↔ gpt-5.6-sol 372K) therefore never restarts.
+ *
+ * Models absent from Codex's catalog (Grok, custom gateways) always pin,
+ * because Codex would otherwise fall back to 272K metadata.
+ */
+export function resolveModelContextPin(
+  model: string,
+  contextWindow: number,
+): CodexModelContextConfig | null {
+  const native = CODEX_NATIVE_CONTEXT_WINDOWS.get(model)
+  if (native !== undefined && native === contextWindow) return null
+  return {
+    modelContextWindow: contextWindow,
+    modelAutoCompactTokenLimit: modelAutoCompactTokenLimit(contextWindow),
+  }
+}
+
+/** Structural equality for pins where `null` means "unpinned". */
+export function modelContextPinsEqual(
+  a: CodexModelContextConfig | null,
+  b: CodexModelContextConfig | null,
+): boolean {
+  if (a === null || b === null) return a === b
+  return (
+    a.modelContextWindow === b.modelContextWindow
+    && a.modelAutoCompactTokenLimit === b.modelAutoCompactTokenLimit
+  )
 }
 
 const MODEL_CONTEXT_CONFIG_KEYS = [

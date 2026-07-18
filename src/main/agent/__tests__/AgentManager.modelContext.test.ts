@@ -1,968 +1,279 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { AgentManager } from '../AgentManager'
-import type { CodexLocalBackendOptions } from '../CodexLocalBackend'
 import {
   CodexRuntimeSettingsStore,
   type PersistedCodexRuntimeSettingsV1,
 } from '../CodexRuntimeSettingsStore'
 import type { AgentInput, IAgentBackend } from '../types'
-import type {
-  AgentModelContextApplyPayload,
-  AgentModelContextApplyResult,
-  AgentStreamEvent,
-  CodexModelContextConfig,
-} from '../../../types/agent'
+import type { AgentStreamEvent } from '../../../types/agent'
 
-const PREVIOUS_CONFIG: CodexModelContextConfig = {
+const PREVIOUS_CONTEXT = {
   modelContextWindow: 272_000,
   modelAutoCompactTokenLimit: 244_800,
 }
-const TARGET_CONFIG: CodexModelContextConfig = {
+
+const TARGET_CONTEXT = {
   modelContextWindow: 1_000_000,
   modelAutoCompactTokenLimit: 900_000,
-}
-const APPLY_PAYLOAD: AgentModelContextApplyPayload = {
-  threadId: 'db-thread-1',
-  model: 'gpt-5.6-sol',
-  contextWindow: 1_000_000,
-  requestVersion: 7,
-}
-
-interface Deferred<T> {
-  promise: Promise<T>
-  resolve: (value: T | PromiseLike<T>) => void
-  reject: (reason?: unknown) => void
-}
-
-function deferred<T = void>(): Deferred<T> {
-  let resolve!: Deferred<T>['resolve']
-  let reject!: Deferred<T>['reject']
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
-}
-
-interface ContextBackend extends IAgentBackend {
-  epoch: number
-  inFlight: boolean
-  operations: string[]
-  restartCalls: number
-  resumeCalls: string[]
-  refreshCalls: number
-  sendCalls: number
-  steerCalls: number
-}
-
-interface BackendOptions {
-  exposeEpoch?: boolean
-  exposeHealth?: boolean
-  currentEpoch?: (backend: ContextBackend) => number | undefined
-  healthy?: (backend: ContextBackend) => boolean
-  restart?: (backend: ContextBackend, call: number) => Promise<void>
-  resume?: (backend: ContextBackend, threadId: string, call: number) => Promise<void>
-  refresh?: (backend: ContextBackend, call: number) => Promise<void>
-}
-
-function makeBackend(options: BackendOptions = {}): ContextBackend {
-  const backend: ContextBackend = {
-    epoch: 1,
-    inFlight: false,
-    operations: [],
-    restartCalls: 0,
-    resumeCalls: [],
-    refreshCalls: 0,
-    sendCalls: 0,
-    steerCalls: 0,
-    async start() {},
-    async stop() {},
-    isHealthy() { return options.healthy?.(backend) ?? true },
-    hasInFlightWork() { return backend.inFlight },
-    async cancel() {},
-    async restartCodex() {
-      backend.restartCalls += 1
-      backend.operations.push('restart')
-      if (options.restart) {
-        await options.restart(backend, backend.restartCalls)
-      } else {
-        backend.epoch += 1
-      }
-    },
-    async resumeThread(threadId) {
-      backend.resumeCalls.push(threadId)
-      backend.operations.push(`resume:${threadId}`)
-      if (options.resume) {
-        await options.resume(backend, threadId, backend.resumeCalls.length)
-      }
-    },
-    async listModels() {
-      backend.refreshCalls += 1
-      backend.operations.push('refresh-models')
-      await options.refresh?.(backend, backend.refreshCalls)
-      return { data: [], nextCursor: null }
-    },
-    async *send(_threadId: string | undefined, _input: AgentInput): AsyncIterable<AgentStreamEvent> {
-      backend.sendCalls += 1
-    },
-    async steer() {
-      backend.steerCalls += 1
-      return 'turn-1'
-    },
-  }
-  if (options.exposeEpoch !== false) {
-    backend.currentEpoch = () => options.currentEpoch
-      ? options.currentEpoch(backend)
-      : backend.epoch
-  }
-  if (options.exposeHealth === false) {
-    delete (backend as { isHealthy?: () => boolean }).isHealthy
-  }
-  return backend
-}
-
-interface RuntimeStoreHarness {
-  store: CodexRuntimeSettingsStore
-  snapshots: PersistedCodexRuntimeSettingsV1[]
-  failReplace: (call: number, error: Error) => void
-}
-
-function makeRuntimeStore(operations: string[]): RuntimeStoreHarness {
-  const store = new CodexRuntimeSettingsStore(tmpDir)
-  const snapshots: PersistedCodexRuntimeSettingsV1[] = []
-  const failures = new Map<number, Error>()
-  const replace = store.replace.bind(store)
-  let calls = 0
-  vi.spyOn(store, 'replace').mockImplementation(async (next) => {
-    calls += 1
-    snapshots.push(structuredClone(next))
-    operations.push(next.pending ? 'persist-pending' : 'persist-confirmed')
-    const failure = failures.get(calls)
-    if (failure) throw failure
-    await replace(next)
-  })
-  return {
-    store,
-    snapshots,
-    failReplace(call, error) {
-      failures.set(call, error)
-    },
-  }
-}
-
-interface ManagerHarness {
-  manager: AgentManager
-  backend: ContextBackend
-  runtime: RuntimeStoreHarness
-  events: AgentStreamEvent[]
-  threadStore: {
-    getCodexThreadId: ReturnType<typeof vi.fn>
-    setCodexThreadId: ReturnType<typeof vi.fn>
-    createThread: ReturnType<typeof vi.fn>
-    addMessage: ReturnType<typeof vi.fn>
-    updateLastMessageAt: ReturnType<typeof vi.fn>
-  }
-  attachmentService: {
-    ingest: ReturnType<typeof vi.fn>
-  }
-}
-
-function makeManager(options: BackendOptions & { codexThreadId?: string | null } = {}): ManagerHarness {
-  const backend = makeBackend(options)
-  const runtime = makeRuntimeStore(backend.operations)
-  const events: AgentStreamEvent[] = []
-  const threadStore = {
-    getCodexThreadId: vi.fn().mockResolvedValue(
-      options.codexThreadId === undefined ? 'codex-thread-1' : options.codexThreadId,
-    ),
-    setCodexThreadId: vi.fn().mockResolvedValue(undefined),
-    createThread: vi.fn().mockResolvedValue({ id: 'db-thread-created' }),
-    addMessage: vi.fn().mockResolvedValue({ id: 'message-1' }),
-    updateLastMessageAt: vi.fn().mockResolvedValue(undefined),
-  }
-  const attachmentService = {
-    ingest: vi.fn().mockResolvedValue([]),
-  }
-  const manager = new AgentManager({
-    userDataDir: tmpDir,
-    backend,
-    runtimeSettingsStore: runtime.store,
-    store: threadStore as never,
-    attachments: attachmentService as never,
-    eventSink: (event) => events.push(event),
-  })
-  return { manager, backend, runtime, events, threadStore, attachmentService }
-}
-
-function expectFailure(
-  result: AgentModelContextApplyResult,
-  stage: Extract<AgentModelContextApplyResult, { ok: false }>['stage'],
-  requestVersion = APPLY_PAYLOAD.requestVersion,
-): asserts result is Extract<AgentModelContextApplyResult, { ok: false }> {
-  expect(result.ok).toBe(false)
-  if (result.ok) throw new Error('Expected context apply failure')
-  expect(result.stage).toBe(stage)
-  expect(result.previousConfig).toEqual(PREVIOUS_CONFIG)
-  expect(result.attemptedConfig).toEqual(TARGET_CONFIG)
-  expect(result.requestVersion).toBe(requestVersion)
-}
-
-async function flushMicrotasks(times = 10): Promise<void> {
-  let promise = Promise.resolve()
-  for (let i = 0; i < times; i += 1) promise = promise.then(() => undefined)
-  await promise
 }
 
 let tmpDir: string
 
+function deferred(): {
+  promise: Promise<void>
+  resolve: () => void
+} {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-context-saga-'))
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-model-context-'))
 })
 
 afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
-describe('AgentManager transactional model context apply', () => {
-  it('rejects a context window above the active Provider limit', async () => {
-    const { manager, backend } = makeManager()
-    await manager.setActiveProvider('apiyi-grok')
-    backend.operations.length = 0
+function makeBackend(options: {
+  restart?: (call: number) => Promise<void>
+} = {}) {
+  const operations: string[] = []
+  let epoch = 1
+  let restartCalls = 0
+  const backend = {
+    async start() {},
+    async stop() {},
+    isHealthy: () => true,
+    currentEpoch: () => epoch,
+    setProvider: (provider: { id: string } | undefined) => {
+      operations.push(`channel:${provider?.id ?? 'none'}`)
+    },
+    async restartCodex() {
+      restartCalls += 1
+      operations.push('restart')
+      if (options.restart) {
+        await options.restart(restartCalls)
+      }
+      epoch += 1
+    },
+    async resumeThread(threadId: string) {
+      operations.push(`resume:${threadId}`)
+    },
+    async cancel() {},
+    async *send(): AsyncIterable<AgentStreamEvent> {},
+  } satisfies IAgentBackend
+  return {
+    backend,
+    operations,
+    get restartCalls() {
+      return restartCalls
+    },
+  }
+}
+
+async function createManager(options: {
+  restart?: (call: number) => Promise<void>
+} = {}) {
+  const fixture = makeBackend(options)
+  const runtimeStore = new CodexRuntimeSettingsStore(tmpDir)
+  const setThreadModel = vi.fn(async () => undefined)
+  const manager = new AgentManager({
+    userDataDir: tmpDir,
+    backend: fixture.backend,
+    runtimeSettingsStore: runtimeStore,
+    store: {
+      getCodexThreadId: vi.fn(async () => 'codex-thread-1'),
+      setCodexThreadId: vi.fn(async () => undefined),
+      setThreadModel,
+    } as never,
+  })
+  await manager.setCodexApiKey('test-key')
+  fixture.operations.length = 0
+  const catalogResult = await manager.getModelSettingsCatalogRpc()
+  if (!catalogResult.ok) throw new Error(catalogResult.error)
+  return {
+    ...fixture,
+    manager,
+    runtimeStore,
+    catalog: catalogResult.data,
+    setThreadModel,
+  }
+}
+
+describe('AgentManager model-context compatibility adapter', () => {
+  it('maps Context IPC onto the selection transaction', async () => {
+    const { manager, operations, runtimeStore, setThreadModel } = await createManager()
 
     const result = await manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      model: 'grok-4.5',
+      threadId: 'db-thread-1',
+      model: 'gpt-5.6-sol',
+      contextWindow: TARGET_CONTEXT.modelContextWindow,
+      requestVersion: 7,
     })
 
-    expectFailure(result, 'validate')
-    expect(backend.operations).toEqual([])
-  })
-
-  it('applies pending, restart, strict resume, refresh, and confirmation in exact order', async () => {
-    const { manager, backend, runtime, threadStore } = makeManager()
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expect(backend.operations).toEqual([
-      'persist-pending',
-      'restart',
-      'resume:codex-thread-1',
-      'refresh-models',
-      'persist-confirmed',
-    ])
     expect(result).toEqual({
       ok: true,
       data: {
         model: 'gpt-5.6-sol',
-        contextWindow: 1_000_000,
-        autoCompactTokenLimit: 900_000,
+        contextWindow: TARGET_CONTEXT.modelContextWindow,
+        autoCompactTokenLimit: TARGET_CONTEXT.modelAutoCompactTokenLimit,
         threadRestored: true,
         requestVersion: 7,
       },
     })
-    expect(threadStore.setCodexThreadId).toHaveBeenCalledWith(
-      'db-thread-1',
-      'codex-thread-1',
-    )
-    expect(runtime.store.loadSync()).toEqual({
+    expect(operations).toEqual(['restart', 'resume:codex-thread-1'])
+    expect(setThreadModel).toHaveBeenCalledWith('db-thread-1', 'gpt-5.6-sol')
+    expect(runtimeStore.loadSync()).toEqual({
       version: 1,
-      confirmed: TARGET_CONFIG,
-    })
+      confirmed: TARGET_CONTEXT,
+    } satisfies PersistedCodexRuntimeSettingsV1)
   })
 
-  it('wires the default backend getter to pending target only after durable persistence', async () => {
-    let backendOptions: CodexLocalBackendOptions | undefined
-    const backend = makeBackend({
-      restart: async (instance) => {
-        expect(backendOptions?.getModelContextConfig?.()).toEqual(TARGET_CONFIG)
-        instance.epoch += 1
-      },
-    })
-    const runtime = makeRuntimeStore(backend.operations)
-    const manager = new AgentManager({
-      userDataDir: tmpDir,
-      backendFactory: (options) => {
-        backendOptions = options
-        return backend
-      },
-      runtimeSettingsStore: runtime.store,
-    })
-    expect(backendOptions?.getModelContextConfig?.()).toEqual(PREVIOUS_CONFIG)
-
-    await expect(manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      threadId: undefined,
-    })).resolves.toMatchObject({ ok: true })
-    expect(backendOptions?.getModelContextConfig?.()).toEqual(TARGET_CONFIG)
-  })
-
-  it('rejects a busy backend before persistence or restart', async () => {
-    const { manager, backend } = makeManager()
-    backend.inFlight = true
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'busy')
-    expect(backend.operations).toEqual([])
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-  })
-
-  it('returns a successful no-op for the same confirmed context', async () => {
-    const { manager, backend } = makeManager()
+  it('rejects a context absent from the current catalog before mutation', async () => {
+    const { manager, operations } = await createManager()
 
     const result = await manager.applyModelContextRpc({
       model: 'gpt-5.5',
-      contextWindow: 272_000,
-      requestVersion: 8,
+      contextWindow: 123_456,
+      requestVersion: 1,
     })
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
+      ok: false,
+      stage: 'catalog',
+      rollback: { ok: true, activeConfig: PREVIOUS_CONTEXT },
+    })
+    expect(operations).toEqual([])
+  })
+
+  it('rolls the runtime context and persistence back when restart fails', async () => {
+    const { manager, operations, runtimeStore } = await createManager({
+      restart: async (call) => {
+        // The first restart belongs to API-key setup; the selection's context
+        // restart is the second and its compensating retry is the third.
+        if (call === 2) throw new Error('replacement failed')
+      },
+    })
+
+    const result = await manager.applyModelContextRpc({
+      model: 'gpt-5.6-sol',
+      contextWindow: TARGET_CONTEXT.modelContextWindow,
+      requestVersion: 1,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      stage: 'restart',
+      rollback: { ok: true, activeConfig: PREVIOUS_CONTEXT },
+    })
+    expect(operations).toEqual(['restart', 'restart'])
+    expect(runtimeStore.loadSync()).toEqual({
+      version: 1,
+      confirmed: PREVIOUS_CONTEXT,
+    } satisfies PersistedCodexRuntimeSettingsV1)
+  })
+
+  it('does not restart when the context is already confirmed', async () => {
+    const { manager, operations } = await createManager()
+
+    const result = await manager.applyModelContextRpc({
+      model: 'gpt-5.5',
+      contextWindow: PREVIOUS_CONTEXT.modelContextWindow,
+      requestVersion: 2,
+    })
+
+    expect(result).toMatchObject({
       ok: true,
       data: {
         model: 'gpt-5.5',
-        contextWindow: 272_000,
-        autoCompactTokenLimit: 244_800,
-        threadRestored: false,
-        requestVersion: 8,
+        contextWindow: PREVIOUS_CONTEXT.modelContextWindow,
+        requestVersion: 2,
       },
     })
-    expect(backend.operations).toEqual([])
+    expect(operations).toEqual([])
   })
 
-  it('keeps the original configuration when pending persistence fails', async () => {
-    const { manager, backend, runtime } = makeManager()
-    runtime.failReplace(1, new Error('disk unavailable'))
-    const rollback = vi.spyOn(manager as never, 'rollbackModelContextOnce' as never)
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'persist')
-    expect(result.error).toContain('disk unavailable')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(backend.operations).toEqual(['persist-pending'])
-    expect(rollback).not.toHaveBeenCalled()
-    expect(runtime.store.loadSync()).toEqual({
-      version: 1,
-      confirmed: PREVIOUS_CONFIG,
-    })
-  })
-
-  it('rolls back once when restart changed generation before failing', async () => {
-    const { manager, backend, runtime } = makeManager({
-      restart: async (instance, call) => {
-        instance.epoch += 1
-        if (call === 1) throw new Error('replacement audit failed')
-      },
-    })
-    const rollback = vi.spyOn(manager as never, 'rollbackModelContextOnce' as never)
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'restart')
-    expect(result.error).toContain('replacement audit failed')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(rollback).toHaveBeenCalledTimes(1)
-    expect(backend.restartCalls).toBe(2)
-    expect(runtime.store.loadSync()).toEqual({
-      version: 1,
-      confirmed: PREVIOUS_CONFIG,
-    })
-  })
-
-  it('does not restart a healthy previous replacement-first backend after an unchanged-epoch restart failure', async () => {
-    const { manager, backend } = makeManager({
-      restart: async (_instance, call) => {
-        if (call === 1) throw new Error('replacement spawn failed')
-      },
+  it('retains an active supported Context during model selection', async () => {
+    const { manager, operations } = await createManager()
+    const selected = await manager.applyModelContextRpc({
+      model: 'gpt-5.4',
+      contextWindow: 1_000_000,
+      requestVersion: 21,
     })
 
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'restart')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(backend.restartCalls).toBe(1)
-  })
-
-  it('compensates an unchanged-epoch forward restart failure when the backend is unhealthy', async () => {
-    const { manager, backend } = makeManager({
-      healthy: (instance) => instance.restartCalls !== 1,
-      restart: async (instance, call) => {
-        if (call === 1) throw new Error('stop-first reconnect failed')
-        instance.epoch += 1
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'restart')
-    expect(result.error).toContain('stop-first reconnect failed')
-    expect(result.rollback).toEqual({
+    expect(selected).toMatchObject({
       ok: true,
-      activeConfig: PREVIOUS_CONFIG,
+      data: {
+        model: 'gpt-5.4',
+        contextWindow: PREVIOUS_CONTEXT.modelContextWindow,
+      },
     })
-    expect(backend.restartCalls).toBe(2)
+    expect(operations).toEqual([])
   })
 
-  it('reports rollback failure when unhealthy unchanged-epoch recovery cannot restart', async () => {
-    const { manager, backend } = makeManager({
-      healthy: () => false,
-      restart: async () => {
-        throw new Error('restart transport unavailable')
+  it('restarts for an explicit Context adjustment on the persisted model', async () => {
+    const { manager, operations } = await createManager()
+
+    const result = await manager.applyModelContextRpc({
+      model: 'gpt-5.5',
+      contextWindow: TARGET_CONTEXT.modelContextWindow,
+      requestVersion: 22,
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        model: 'gpt-5.5',
+        contextWindow: TARGET_CONTEXT.modelContextWindow,
+      },
+    })
+    expect(operations).toEqual(['restart'])
+  })
+
+  it('keeps confirmed Context public while a replacement restart is pending', async () => {
+    const restartStarted = deferred()
+    const releaseRestart = deferred()
+    const { manager, runtimeStore } = await createManager({
+      restart: async (call) => {
+        if (call !== 2) return
+        restartStarted.resolve()
+        await releaseRestart.promise
       },
     })
 
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'restart')
-    expect(result.error).toContain('restart transport unavailable')
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringContaining('restart transport unavailable'),
-      effectiveConfig: null,
+    const applying = manager.applyModelContextRpc({
+      model: 'gpt-5.6-sol',
+      contextWindow: TARGET_CONTEXT.modelContextWindow,
+      requestVersion: 11,
     })
-    expect(backend.restartCalls).toBe(2)
-  })
+    await restartStarted.promise
 
-  it('reapplies the confirmed value after rollback failure instead of taking the no-op path', async () => {
-    let failResume = true
-    const { manager, backend } = makeManager({
-      resume: async () => {
-        if (failResume) throw new Error('resume transport unavailable')
-      },
-    })
-
-    const failed = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-    expectFailure(failed, 'resume')
-    expect(failed.rollback).toEqual({
-      ok: false,
-      error: expect.stringContaining('resume transport unavailable'),
-      effectiveConfig: null,
-    })
-    expect((manager as unknown as { contextRecoveryRequired: boolean })
-      .contextRecoveryRequired).toBe(true)
     await expect(manager.getModelContextConfigRpc()).resolves.toEqual({
       ok: true,
       data: {
-        ...PREVIOUS_CONFIG,
-        recoveryRequired: true,
-        recoveryError: expect.stringMatching(
-          /resume transport unavailable.*resume transport unavailable/i,
-        ),
-      },
-    })
-
-    failResume = false
-    const recovered = await manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      contextWindow: PREVIOUS_CONFIG.modelContextWindow,
-      requestVersion: 8,
-    })
-
-    expect(recovered).toMatchObject({
-      ok: true,
-      data: {
-        contextWindow: PREVIOUS_CONFIG.modelContextWindow,
-        requestVersion: 8,
-      },
-    })
-    expect(backend.restartCalls).toBe(3)
-    expect((manager as unknown as { contextRecoveryRequired: boolean })
-      .contextRecoveryRequired).toBe(false)
-    await expect(manager.getModelContextConfigRpc()).resolves.toEqual({
-      ok: true,
-      data: {
-        ...PREVIOUS_CONFIG,
+        ...PREVIOUS_CONTEXT,
         recoveryRequired: false,
       },
     })
-  })
-
-  it('keeps recovery required when an explicit recovery apply also cannot prove rollback', async () => {
-    const { manager } = makeManager({
-      restart: async (instance, call) => {
-        if (call === 3) throw new Error('recovery replacement failed')
-        instance.epoch += 1
-      },
-      resume: async (_instance, _threadId, call) => {
-        if (call <= 2) throw new Error('initial resume remains unavailable')
-      },
-    })
-
-    await manager.applyModelContextRpc(APPLY_PAYLOAD)
-    const recovery = await manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      contextWindow: PREVIOUS_CONFIG.modelContextWindow,
-      requestVersion: 8,
-    })
-
-    expect(recovery).toMatchObject({
-      ok: false,
-      stage: 'restart',
-      error: expect.stringContaining('recovery replacement failed'),
-      previousConfig: PREVIOUS_CONFIG,
-      attemptedConfig: PREVIOUS_CONFIG,
-      requestVersion: 8,
-    })
-    if (recovery.ok) throw new Error('Expected recovery failure')
-    expect(recovery.rollback).toEqual({
-      ok: true,
-      activeConfig: PREVIOUS_CONFIG,
-    })
-    expect((manager as unknown as { contextRecoveryRequired: boolean })
-      .contextRecoveryRequired).toBe(true)
-  })
-
-  it('compensates unchanged-epoch failure when backend health cannot be proven', async () => {
-    const { manager, backend } = makeManager({
-      exposeHealth: false,
-      restart: async (instance, call) => {
-        if (call === 1) throw new Error('legacy restart failed')
-        instance.epoch += 1
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'restart')
-    expect(result.rollback).toEqual({
-      ok: true,
-      activeConfig: PREVIOUS_CONFIG,
-    })
-    expect(backend.restartCalls).toBe(2)
-  })
-
-  it('treats an unchanged restart epoch as verify failure and rolls back', async () => {
-    const { manager, backend } = makeManager({
-      restart: async (instance, call) => {
-        if (call === 2) instance.epoch += 1
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'verify')
-    expect(result.error).toMatch(/generation|epoch/i)
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(backend.restartCalls).toBe(2)
-  })
-
-  it('uses strict resume and never falls back to a fresh thread', async () => {
-    const { manager, backend } = makeManager({
-      resume: async (_instance, _threadId, call) => {
-        if (call === 1) throw new Error('rollout missing')
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'resume')
-    expect(result.error).toContain('rollout missing')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(backend.resumeCalls).toEqual(['codex-thread-1', 'codex-thread-1'])
-    expect(backend.sendCalls).toBe(0)
-  })
-
-  it('rolls back a model refresh failure as verify', async () => {
-    const { manager, backend } = makeManager({
-      refresh: async (_instance, call) => {
-        if (call === 1) throw new Error('model list unavailable')
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'verify')
-    expect(result.error).toContain('model list unavailable')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(backend.refreshCalls).toBe(2)
-  })
-
-  it('rolls back when confirmed persistence fails without publishing a false in-memory confirmation', async () => {
-    const { manager, runtime } = makeManager()
-    runtime.failReplace(2, new Error('confirm rename failed'))
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'persist')
-    expect(result.error).toContain('confirm rename failed')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(runtime.store.loadSync()).toEqual({
+    expect(runtimeStore.loadSync()).toEqual({
       version: 1,
-      confirmed: PREVIOUS_CONFIG,
-    })
-  })
-
-  it('returns the original error plus rollback failure and no effective config', async () => {
-    const { manager } = makeManager({
-      resume: async () => {
-        throw new Error('resume always fails')
-      },
+      confirmed: PREVIOUS_CONTEXT,
     })
 
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'resume')
-    expect(result.error).toContain('resume always fails')
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringContaining('resume always fails'),
-      effectiveConfig: null,
-    })
-  })
-
-  it('preserves the original failure when rollback persistence of previous config fails', async () => {
-    const { manager, runtime } = makeManager({
-      resume: async (_instance, _threadId, call) => {
-        if (call === 1) throw new Error('forward resume failed')
-      },
-    })
-    runtime.failReplace(2, new Error('rollback previous rename failed'))
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'resume')
-    expect(result.error).toContain('forward resume failed')
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringContaining('rollback previous rename failed'),
-      effectiveConfig: null,
-    })
-  })
-
-  it('invokes the private rollback compensator only once and never recursively calls public apply', async () => {
-    const { manager } = makeManager({
-      refresh: async (_instance, call) => {
-        if (call === 1) throw new Error('refresh failed')
-      },
-    })
-    const apply = vi.spyOn(manager, 'applyModelContextRpc')
-    const rollback = vi.spyOn(manager as never, 'rollbackModelContextOnce' as never)
-
-    await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expect(apply).toHaveBeenCalledTimes(1)
-    expect(rollback).toHaveBeenCalledTimes(1)
-  })
-
-  it('skips strict resume when there is no current thread but still restarts, refreshes, and confirms', async () => {
-    const { manager, backend } = makeManager({ codexThreadId: null })
-
-    const result = await manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      threadId: undefined,
-    })
-
-    expect(result).toEqual({
+    releaseRestart.resolve()
+    await expect(applying).resolves.toMatchObject({
       ok: true,
       data: {
-        model: 'gpt-5.6-sol',
-        contextWindow: 1_000_000,
-        autoCompactTokenLimit: 900_000,
-        threadRestored: false,
-        requestVersion: 7,
+        contextWindow: TARGET_CONTEXT.modelContextWindow,
       },
     })
-    expect(backend.operations).toEqual([
-      'persist-pending',
-      'restart',
-      'refresh-models',
-      'persist-confirmed',
-    ])
-  })
-
-  it('rejects send, steer, and a second context request immediately while the saga owns lifecycle', async () => {
-    const restartGate = deferred<void>()
-    const restartStarted = deferred<void>()
-    const { manager, backend, events, threadStore, attachmentService } = makeManager({
-      restart: async (instance, call) => {
-        if (call === 1) {
-          restartStarted.resolve()
-          await restartGate.promise
-        }
-        instance.epoch += 1
-      },
-    })
-
-    const applying = manager.applyModelContextRpc(APPLY_PAYLOAD)
-    const send = manager.sendMessage({ content: 'must reject', attachments: [] })
-    const steer = manager.steer({
-      threadId: 'db-thread-1',
-      content: 'must reject',
-      attachments: [],
-    })
-    const second = manager.applyModelContextRpc({ ...APPLY_PAYLOAD, requestVersion: 8 })
-
-    await expect(send).rejects.toThrow('模型上下文配置正在切换，请稍后重试。')
-    await expect(steer).rejects.toThrow('模型上下文配置正在切换，请稍后重试。')
-    const secondResult = await second
-    expectFailure(secondResult, 'busy', 8)
-    expect(threadStore.addMessage).not.toHaveBeenCalled()
-    expect(attachmentService.ingest).not.toHaveBeenCalled()
-    expect(backend.sendCalls).toBe(0)
-    expect(backend.steerCalls).toBe(0)
-    expect(events.filter((event) => event.type === 'error')).toHaveLength(2)
-
-    await restartStarted.promise
-    restartGate.resolve()
-    await applying
-  })
-
-  it('releases Context ownership after success so a later apply succeeds', async () => {
-    const { manager, backend } = makeManager()
-
-    await expect(manager.applyModelContextRpc(APPLY_PAYLOAD))
-      .resolves.toMatchObject({ ok: true })
-    await expect(manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      requestVersion: 8,
-    })).resolves.toMatchObject({ ok: true })
-
-    expect(backend.restartCalls).toBe(1)
-  })
-
-  it('releases Context ownership and lifecycle tail after failure so retry succeeds', async () => {
-    const { manager, backend } = makeManager({
-      refresh: async (_instance, call) => {
-        if (call === 1) throw new Error('transient refresh failure')
-      },
-    })
-
-    const failed = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-    expectFailure(failed, 'verify')
-    expect(failed.rollback).toEqual({
-      ok: true,
-      activeConfig: PREVIOUS_CONFIG,
-    })
-
-    await expect(manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      requestVersion: 8,
-    })).resolves.toMatchObject({ ok: true })
-    expect(backend.restartCalls).toBe(3)
-  })
-
-  it('serializes Provider mutation after the complete context saga without interleaving', async () => {
-    const restartGate = deferred<void>()
-    const restartStarted = deferred<void>()
-    const { manager, backend } = makeManager({
-      restart: async (instance, call) => {
-        if (call === 1) {
-          restartStarted.resolve()
-          await restartGate.promise
-        }
-        instance.epoch += 1
-      },
-    })
-
-    const applying = manager.applyModelContextRpc(APPLY_PAYLOAD)
-    await restartStarted.promise
-    const provider = manager.setActiveProvider('rightcode')
-    await flushMicrotasks()
-
-    expect(backend.operations).toEqual(['persist-pending', 'restart'])
-    restartGate.resolve()
-    await expect(applying).resolves.toMatchObject({ ok: true })
-    await expect(provider).resolves.toMatchObject({ activeId: 'rightcode' })
-
-    const confirmedIndex = backend.operations.indexOf('persist-confirmed')
-    const providerRestartIndex = backend.operations.lastIndexOf('restart')
-    expect(confirmedIndex).toBeGreaterThan(-1)
-    expect(providerRestartIndex).toBeGreaterThan(confirmedIndex)
-  })
-
-  it('queues Context behind an existing Provider transition without deadlock or interleaving', async () => {
-    const providerGate = deferred<void>()
-    const providerStarted = deferred<void>()
-    const { manager, backend } = makeManager({
-      restart: async (instance, call) => {
-        if (call === 1) {
-          providerStarted.resolve()
-          await providerGate.promise
-        }
-        instance.epoch += 1
-      },
-    })
-
-    const provider = manager.setActiveProvider('rightcode')
-    await providerStarted.promise
-    const applying = manager.applyModelContextRpc(APPLY_PAYLOAD)
-    await flushMicrotasks()
-    expect(backend.operations).toEqual(['restart'])
-
-    providerGate.resolve()
-    await expect(provider).resolves.toMatchObject({ activeId: 'rightcode' })
-    await expect(applying).resolves.toMatchObject({ ok: true })
-    expect(backend.operations).toEqual([
-      'restart',
-      'persist-pending',
-      'restart',
-      'resume:codex-thread-1',
-      'refresh-models',
-      'persist-confirmed',
-    ])
-  })
-
-  it('rejects Context apply before persistence when the backend exposes no epoch API', async () => {
-    const { manager, backend, runtime } = makeManager({ exposeEpoch: false })
-
-    const result = await manager.applyModelContextRpc({
-      ...APPLY_PAYLOAD,
-      requestVersion: 0,
-    })
-
-    expectFailure(result, 'verify', 0)
-    expect(result.error).toMatch(/epoch/i)
-    expect(result.rollback).toEqual({
-      ok: true,
-      activeConfig: PREVIOUS_CONFIG,
-    })
-    expect(backend.operations).toEqual([])
-    expect(runtime.snapshots).toEqual([])
-  })
-
-  it.each([
-    ['undefined', undefined],
-    ['NaN', Number.NaN],
-    ['negative', -1],
-    ['fractional', 1.5],
-    ['unsafe', Number.MAX_SAFE_INTEGER + 1],
-  ])('rejects an initially invalid %s epoch before persistence', async (_label, epoch) => {
-    const { manager, backend, runtime } = makeManager({
-      currentEpoch: () => epoch,
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'verify')
-    expect(result.error).toMatch(/epoch/i)
-    expect(result.rollback).toEqual({
-      ok: true,
-      activeConfig: PREVIOUS_CONFIG,
-    })
-    expect(backend.operations).toEqual([])
-    expect(runtime.snapshots).toEqual([])
-  })
-
-  it.each([
-    ['undefined', undefined],
-    ['NaN', Number.NaN],
-  ])('fails verify and rollback when epoch becomes %s after forward restart', async (_label, epoch) => {
-    let restarted = false
-    const { manager, runtime } = makeManager({
-      currentEpoch: (backend) => restarted ? epoch : backend.epoch,
-      restart: async (backend) => {
-        backend.epoch += 1
-        restarted = true
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'verify')
-    expect(result.error).toMatch(/epoch/i)
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringMatching(/epoch/i),
-      effectiveConfig: null,
-    })
-    expect(runtime.store.loadSync()).toEqual({
-      version: 1,
-      confirmed: PREVIOUS_CONFIG,
-    })
-  })
-
-  it('does not claim previous active when rollback starts without a valid epoch', async () => {
-    let rollbackStarted = false
-    const { manager, backend } = makeManager({
-      currentEpoch: (instance) => rollbackStarted ? undefined : instance.epoch,
-      restart: async (instance) => {
-        instance.epoch += 1
-      },
-      resume: async (_instance, _threadId, call) => {
-        if (call === 1) {
-          rollbackStarted = true
-          throw new Error('forward resume failed')
-        }
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'resume')
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringMatching(/epoch/i),
-      effectiveConfig: null,
-    })
-    expect(backend.restartCalls).toBe(1)
-  })
-
-  it('does not claim previous active when rollback restart epoch does not change', async () => {
-    const { manager, backend } = makeManager({
-      restart: async (instance, call) => {
-        if (call === 1) instance.epoch += 1
-      },
-      resume: async (_instance, _threadId, call) => {
-        if (call === 1) throw new Error('forward resume failed')
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'resume')
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringMatching(/generation|epoch/i),
-      effectiveConfig: null,
-    })
-    expect(backend.restartCalls).toBe(2)
-  })
-
-  it('does not claim previous active when rollback restart loses its epoch', async () => {
-    const { manager, backend } = makeManager({
-      currentEpoch: (instance) =>
-        instance.restartCalls >= 2 ? undefined : instance.epoch,
-      restart: async (instance) => {
-        instance.epoch += 1
-      },
-      resume: async (_instance, _threadId, call) => {
-        if (call === 1) throw new Error('forward resume failed')
-      },
-    })
-
-    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
-
-    expectFailure(result, 'resume')
-    expect(result.rollback).toEqual({
-      ok: false,
-      error: expect.stringMatching(/epoch/i),
-      effectiveConfig: null,
-    })
-    expect(backend.restartCalls).toBe(2)
-  })
-
-  it.each([
-    ['empty model', { ...APPLY_PAYLOAD, model: '  ' }],
-    ['negative version', { ...APPLY_PAYLOAD, requestVersion: -1 }],
-    ['NaN version', { ...APPLY_PAYLOAD, requestVersion: Number.NaN }],
-    ['fractional version', { ...APPLY_PAYLOAD, requestVersion: 1.5 }],
-    ['unsafe version', { ...APPLY_PAYLOAD, requestVersion: Number.MAX_SAFE_INTEGER + 1 }],
-    ['NaN context', { ...APPLY_PAYLOAD, contextWindow: Number.NaN }],
-    ['negative context', { ...APPLY_PAYLOAD, contextWindow: -1 }],
-    ['unknown context option', { ...APPLY_PAYLOAD, contextWindow: 123_456 }],
-  ])('rejects invalid payload before any write: %s', async (_label, payload) => {
-    const { manager, backend, runtime } = makeManager()
-
-    const result = await manager.applyModelContextRpc(payload)
-
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('Expected validation failure')
-    expect(result.stage).toBe('validate')
-    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
-    expect(backend.operations).toEqual([])
-    expect(runtime.snapshots).toEqual([])
   })
 })

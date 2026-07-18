@@ -6,11 +6,15 @@ import {
   UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
   isConcreteModelReasoningEffort,
+  isModelContextWindowSupported,
   isModelReasoningEffort,
   mergeModelSettingsCapabilities,
   migrateLegacyModelSelection,
   modelAutoCompactTokenLimit,
   modelContextOptions,
+  modelContextPinsEqual,
+  resolveModelContextPin,
+  supportedReasoningEfforts,
 } from '../modelSettings'
 
 describe('model settings capabilities', () => {
@@ -26,35 +30,57 @@ describe('model settings capabilities', () => {
     })
   })
 
-  it('uses Provider-specific Grok 4.5 context limits', () => {
+  it('uses Gateway + Channel Grok 4.5 context limits', () => {
     expect(defaultContextWindowForModel('grok-4.5')).toBe(GROK_4_5_CONTEXT_WINDOW)
-    expect(defaultContextWindowForModel('grok-4.5', 'apiyi')).toBe(
+    expect(defaultContextWindowForModel('grok-4.5', 'apiyi', 'apiyi-grok')).toBe(
       GROK_4_5_CONTEXT_WINDOW,
     )
-    expect(defaultContextWindowForModel('grok-4.5', 'apiyi-grok')).toBe(
-      GROK_4_5_CONTEXT_WINDOW,
-    )
-    expect(defaultContextWindowForModel('grok-4.5', 'rightcode-grok')).toBe(
+    expect(defaultContextWindowForModel('grok-4.5', 'rightcode', 'rightcode-grok')).toBe(
       EXPERIMENTAL_CONTEXT_WINDOW,
     )
-    expect(modelContextOptions('grok-4.5', 'apiyi-grok')).toEqual([
-      { value: GROK_4_5_CONTEXT_WINDOW, experimental: false },
-    ])
-    expect(modelContextOptions('grok-4.5', 'rightcode-grok')).toEqual([
-      { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: false },
-    ])
+    expect(modelContextOptions('grok-4.5', 'apiyi', 'apiyi-grok')).toContainEqual({
+      value: 500_000,
+      experimental: false,
+    })
+    expect(modelContextOptions('grok-4.5', 'rightcode', 'rightcode-grok')).toContainEqual({
+      value: 1_000_000,
+      experimental: false,
+    })
+  })
+
+  it('rejects partial gateway scope instead of silently using model-only policy', () => {
+    const contextOptions = modelContextOptions as (...args: string[]) => unknown
+    const defaultWindow = defaultContextWindowForModel as (...args: string[]) => unknown
+    const isSupported = isModelContextWindowSupported as (
+      model: string,
+      contextWindow: number,
+      gatewayId?: string,
+    ) => unknown
+
+    expect(() => contextOptions('grok-4.5', 'rightcode')).toThrow(
+      'Gateway and channel ids must be provided together',
+    )
+    expect(() => defaultWindow('grok-4.5', 'rightcode')).toThrow(
+      'Gateway and channel ids must be provided together',
+    )
+    expect(() => isSupported('grok-4.5', 500_000, 'rightcode')).toThrow(
+      'Gateway and channel ids must be provided together',
+    )
   })
 
   it.each([
-    ['apiyi', GROK_4_5_CONTEXT_WINDOW],
-    ['apiyi-grok', GROK_4_5_CONTEXT_WINDOW],
-    ['rightcode-grok', EXPERIMENTAL_CONTEXT_WINDOW],
-  ])('uses verified Grok reasoning capabilities for %s', (provider, contextWindow) => {
+    ['apiyi', 'apiyi-grok', GROK_4_5_CONTEXT_WINDOW],
+    ['rightcode', 'rightcode-grok', EXPERIMENTAL_CONTEXT_WINDOW],
+  ])('uses verified Grok reasoning capabilities for %s/%s', (
+    gatewayId,
+    channelId,
+    contextWindow,
+  ) => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'grok-4.5',
-        provider,
-        supportedReasoningEfforts: [],
+        gatewayId,
+        channelId,
       }),
     ).toMatchObject({
       defaultContextWindow: contextWindow,
@@ -62,13 +88,17 @@ describe('model settings capabilities', () => {
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['low', 'medium', 'high'],
     })
+    expect(
+      supportedReasoningEfforts('grok-4.5', gatewayId, channelId),
+    ).toEqual(['low', 'medium', 'high'])
   })
 
   it('keeps max and filters ultra for Right Code gpt-5.6-sol', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'gpt-5.6-sol',
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
         defaultReasoningEffort: 'low',
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       }),
@@ -89,7 +119,8 @@ describe('model settings capabilities', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'gpt-5.5',
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
         defaultReasoningEffort: 'medium',
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       }),
@@ -110,7 +141,8 @@ describe('model settings capabilities', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'gpt-5.5',
-        provider: 'apiyi',
+        gatewayId: 'apiyi',
+        channelId: 'apiyi-standard',
         supportedReasoningEfforts: ['max', 'ultra'],
       }).supportedReasoningEfforts,
     ).toEqual(['max'])
@@ -120,7 +152,8 @@ describe('model settings capabilities', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'custom-model',
-        provider: 'custom',
+        gatewayId: 'custom',
+        channelId: 'custom:custom',
         supportedReasoningEfforts: ['ultra', 'xhigh', 'low', 'low', 'future-level'],
       }).supportedReasoningEfforts,
     ).toEqual(['low', 'xhigh'])
@@ -243,5 +276,74 @@ describe('model settings capabilities', () => {
     [1_000_000, 900_000],
   ])('uses a floor 90 percent compact limit for %i', (window, expected) => {
     expect(modelAutoCompactTokenLimit(window)).toBe(expected)
+  })
+})
+
+describe('model context pin', () => {
+  it.each([
+    ['gpt-5.5', 272_000],
+    ['gpt-5.6-sol', 372_000],
+    ['gpt-5.6-terra', 372_000],
+    ['gpt-5.6-luna', 372_000],
+    ['gpt-5.4', 272_000],
+    ['gpt-5.4-mini', 272_000],
+    ['gpt-5.2', 272_000],
+  ])('does not pin %s at its Codex-native window', (model, native) => {
+    expect(resolveModelContextPin(model, native)).toBeNull()
+  })
+
+  it('pins a Codex-native model at a non-native window', () => {
+    expect(resolveModelContextPin('gpt-5.6-sol', EXPERIMENTAL_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+    expect(resolveModelContextPin('gpt-5.5', EXPERIMENTAL_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+  })
+
+  it('always pins models without Codex-native metadata', () => {
+    expect(resolveModelContextPin('grok-4.5', GROK_4_5_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 500_000,
+      modelAutoCompactTokenLimit: 450_000,
+    })
+    expect(resolveModelContextPin('custom-model', UNKNOWN_MODEL_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 200_000,
+      modelAutoCompactTokenLimit: 180_000,
+    })
+  })
+
+  it.each(['constructor', 'toString', '__proto__'])(
+    'treats Object.prototype key %s as a model without native metadata',
+    (model) => {
+      expect(resolveModelContextPin(model, 272_000)).toEqual({
+        modelContextWindow: 272_000,
+        modelAutoCompactTokenLimit: 244_800,
+      })
+    },
+  )
+
+  it('compares pins structurally including the unpinned state', () => {
+    expect(modelContextPinsEqual(null, null)).toBe(true)
+    expect(modelContextPinsEqual(
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+    )).toBe(true)
+    expect(modelContextPinsEqual(
+      null,
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+    )).toBe(false)
+    expect(modelContextPinsEqual(
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+      { modelContextWindow: 372_000, modelAutoCompactTokenLimit: 334_800 },
+    )).toBe(false)
+  })
+
+  it('keeps the 5.5 to 5.6 switch pin-free in both directions', () => {
+    expect(modelContextPinsEqual(
+      resolveModelContextPin('gpt-5.5', 272_000),
+      resolveModelContextPin('gpt-5.6-sol', 372_000),
+    )).toBe(true)
   })
 })
