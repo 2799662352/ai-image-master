@@ -354,7 +354,10 @@ describe('useAgentChatStore selected model', () => {
     expect(Object.prototype.hasOwnProperty.call(payload, 'reasoningEffort')).toBe(false)
   })
 
-  it('restores a new-thread draft when send is rejected before admission', async () => {
+  it('keeps a failed new-thread send in the timeline with a retry snapshot (batch 3-A)', async () => {
+    // Contract change (docs/plans/2026-07-19-turn-notifications-and-send-status.md):
+    // a rejected send no longer vanishes back into the composer — the bubble
+    // stays marked `failed` and 重试 replays the captured snapshot.
     const sendMessage = vi.fn().mockRejectedValue(
       new Error('Codex context settings are being applied'),
     )
@@ -372,17 +375,21 @@ describe('useAgentChatStore selected model', () => {
       isRunning: false,
       selectedModelId: 'gpt-5.6-sol',
       modelReasoningEffortByModel: {},
+      failedSendSnapshots: {},
     })
 
     await useAgentChatStore.getState().send()
 
-    expect(useAgentChatStore.getState()).toMatchObject({
+    const state = useAgentChatStore.getState()
+    expect(state).toMatchObject({
       threadId: undefined,
-      input: 'keep this draft',
-      messages: [],
+      input: '',
       isRunning: false,
       error: 'Codex context settings are being applied',
     })
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]).toMatchObject({ role: 'user', sendState: 'failed' })
+    expect(state.failedSendSnapshots[state.messages[0].id]?.content).toBe('keep this draft')
   })
 
   it('removes the optimistic steer bubble when admission is rejected', async () => {

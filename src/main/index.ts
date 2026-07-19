@@ -312,6 +312,14 @@ let attachmentDirWatcher: AttachmentDirWatcher | null = null
 let agentRuntimeCleanedUp = false
 let isQuittingAfterAgentCleanup = false
 
+// Windows toast prerequisite: the App User Model ID must be set before any
+// Notification is shown, and must match electron-builder's `appId` so packaged
+// builds attribute toasts to the Start-menu shortcut. Dev builds fall back to
+// the exe path (Electron's default identity) — toasts still work there.
+if (process.platform === 'win32') {
+  app.setAppUserModelId(app.isPackaged ? 'com.catimation.cyberpunk-master' : process.execPath)
+}
+
 // Single-instance lock — defends against the PGlite #884 dual-instance
 // corruption pathway. PGlite is "Postgres in single-user mode" (per upstream
 // docs/filesystems.md) and concurrent opens of the same dataDir reliably

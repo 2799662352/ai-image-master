@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { app, dialog, shell } from 'electron'
+import { app, dialog, Notification, shell } from 'electron'
 import {
   CodexLocalBackend,
   resolveStableCodexHome,
@@ -58,6 +58,7 @@ import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codex
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import { SessionConfigStore } from './SessionConfigStore'
+import { TurnNotifier, type TurnNotification } from './TurnNotifier'
 import {
   resolvePlanReasoningEffort,
   type CollaborationModeKind,
@@ -427,6 +428,7 @@ export class AgentManager {
    */
   private sessionConfigStore!: SessionConfigStore
   private sessionConfigPersisted = false
+  private readonly turnNotifier: TurnNotifier
   private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
@@ -512,6 +514,18 @@ export class AgentManager {
     if (this.sessionConfigPersisted) {
       this.sessionConfig = { ...this.sessionConfig, ...persistedSessionOverrides }
     }
+    // Turn-terminal OS notifications (batch 3-A): client-side toast when a
+    // turn finishes/fails while the window is unfocused, mirroring the
+    // official Codex desktop app (openai/codex#13019). Deps read live state
+    // so panel toggles and window focus apply per event without re-wiring.
+    this.turnNotifier = new TurnNotifier({
+      isEnabled: () => this.sessionConfig.notifyOnTurnComplete,
+      isWindowFocused: () => {
+        const win = this.win
+        return Boolean(win && !win.isDestroyed() && win.isFocused())
+      },
+      notify: (notification) => this.showSystemNotification(notification),
+    })
     this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
     this.runtimeSettingsStore = opts.runtimeSettingsStore
       ?? new CodexRuntimeSettingsStore(opts.userDataDir)
@@ -1377,6 +1391,7 @@ export class AgentManager {
       reasoningSummary: this.sessionConfig.reasoningSummary,
       showRawReasoning: this.sessionConfig.showRawReasoning,
       modelVerbosity: this.sessionConfig.modelVerbosity,
+      notifyOnTurnComplete: this.sessionConfig.notifyOnTurnComplete,
       persistedDefaults: this.sessionConfigPersisted,
       writableRoots: [...this.sessionConfig.writableRoots],
     }
@@ -3772,6 +3787,13 @@ export class AgentManager {
   }
 
   private emitEvent(event: AgentStreamEvent): void {
+    // Fire-and-forget: notification failures must never break event delivery.
+    try {
+      this.turnNotifier.handleEvent(event)
+    } catch {
+      // OS notification stacks can throw (unsupported platform, dead COM
+      // server on Windows); the chat stream must keep flowing regardless.
+    }
     if (this.eventSink) {
       this.eventSink(event)
       return
@@ -3779,6 +3801,28 @@ export class AgentManager {
     const win = this.win
     if (!win || win.isDestroyed()) return
     win.webContents.send('agent:event', event)
+  }
+
+  /**
+   * Raise an OS toast for a terminal turn event. Clicking it restores focus
+   * to the main window. Guarded because `Notification` may be missing in
+   * slim test mocks and unsupported on some platforms.
+   */
+  private showSystemNotification(notification: TurnNotification): void {
+    if (typeof Notification !== 'function' || !Notification.isSupported()) return
+    const toast = new Notification({
+      title: notification.title,
+      body: notification.body,
+      silent: false,
+    })
+    toast.on('click', () => {
+      const win = this.win
+      if (!win || win.isDestroyed()) return
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+    })
+    toast.show()
   }
 
   private emitApprovalRequest(request: CodexApprovalRequest): void {

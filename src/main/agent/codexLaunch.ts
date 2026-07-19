@@ -30,6 +30,9 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   reasoningSummary: 'auto',
   showRawReasoning: true,
   modelVerbosity: 'default',
+  // Client-side only (turn-completion toast); on by default because there is
+  // no prior behavior to preserve — the capability didn't exist before.
+  notifyOnTurnComplete: true,
   writableRoots: [],
 }
 
@@ -231,6 +234,7 @@ export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): 
     reasoningSummary: (input?.reasoningSummary ?? DEFAULT_CODEX_SESSION_CONFIG.reasoningSummary) as CodexReasoningSummaryMode,
     showRawReasoning: input?.showRawReasoning ?? DEFAULT_CODEX_SESSION_CONFIG.showRawReasoning,
     modelVerbosity: (input?.modelVerbosity ?? DEFAULT_CODEX_SESSION_CONFIG.modelVerbosity) as CodexModelVerbosity,
+    notifyOnTurnComplete: input?.notifyOnTurnComplete ?? DEFAULT_CODEX_SESSION_CONFIG.notifyOnTurnComplete,
     writableRoots: [...(input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots)],
   }
 }

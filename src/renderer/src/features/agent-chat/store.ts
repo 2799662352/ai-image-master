@@ -600,6 +600,17 @@ export interface RewoundTurn {
   preview: string
 }
 
+/**
+ * Composer state captured when a send fails, so 重试 can replay the exact
+ * payload through `send()` without the user retyping anything.
+ */
+export interface FailedSendSnapshot {
+  content: string
+  attachments: AgentAttachmentInput[]
+  references: AgentReference[]
+  canvasContext: string | null
+}
+
 type CollabModeCompatibility = 'immediate' | 'next-turn'
 
 interface AgentChatState extends ModelRoutingSlice {
@@ -657,6 +668,13 @@ interface AgentChatState extends ModelRoutingSlice {
    * Newest first.
    */
   rewoundTurns: RewoundTurn[]
+  /**
+   * Composer snapshots of FAILED sends, keyed by the optimistic message id.
+   * Powers the Cursor-style failed bubble: the message stays in the timeline
+   * marked `sendState: 'failed'` and 重试 replays the snapshot through the
+   * full `send()` pipeline (skills/mentions resolution included).
+   */
+  failedSendSnapshots: Record<string, FailedSendSnapshot>
   isRunning: boolean
   error?: string
   /** Ordinary/default-mode reasoning preference, independently persisted per model. */
@@ -827,6 +845,13 @@ interface AgentChatState extends ModelRoutingSlice {
   /** Kick off real native history compaction (thread/compact/start). */
   compact: () => Promise<void>
   send: () => Promise<void>
+  /**
+   * Replay a failed send: drops the failed bubble + snapshot, seeds the
+   * composer from the snapshot, and re-runs the full `send()` pipeline
+   * (skills/mentions resolution included). Whatever the user had drafted in
+   * the composer before pressing 重试 is restored afterwards.
+   */
+  retryFailedMessage: (messageId: string) => Promise<void>
   /**
    * Append the composer input to the CURRENTLY RUNNING turn (Codex
    * `turn/steer`) instead of starting a new one — the app's "运行中插话".
@@ -1662,6 +1687,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   pendingReferences: [],
   pendingCanvasContext: null,
   pendingApprovals: [],
+  failedSendSnapshots: {},
   notices: [],
   goalByThread: {},
   rewoundTurns: [],
@@ -2606,7 +2632,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (content.length > 0) {
       items.push({ type: 'text', id: createId(), startedAt: now, content })
     }
-    const userMsg: Message = { id: createId(), role: 'user', createdAt: now, items }
+    const userMsg: Message = {
+      id: createId(),
+      role: 'user',
+      createdAt: now,
+      items,
+      // Delivery indicator (batch 3-A): flips to 'sent' once main admits the
+      // turn, or 'failed' (bubble stays with a retry button) on IPC rejection.
+      sendState: 'sending',
+    }
 
     set((current) => ({
       input: '',
@@ -2738,11 +2772,22 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       // attachments became clickable. Matches Cursor/VSCode's pattern of
       // immediately reflecting server-canonicalized state in the optimistic
       // message — see microsoft/vscode#196782.
-      if (result.userMessageItems && result.userMessageItems.length > 0) {
-        const canonicalItems = result.userMessageItems
+      {
+        const canonicalItems =
+          result.userMessageItems && result.userMessageItems.length > 0
+            ? result.userMessageItems
+            : undefined
+        // Also settle the delivery indicator: main admitted the turn, so the
+        // bubble flips from "发送中" to "已送达" in the same pass.
         set((current) => ({
           messages: current.messages.map((m) =>
-            m.id === userMsg.id ? { ...m, items: canonicalItems } : m,
+            m.id === userMsg.id
+              ? {
+                  ...m,
+                  sendState: 'sent' as const,
+                  ...(canonicalItems ? { items: canonicalItems } : {}),
+                }
+              : m,
           ),
         }))
       }
@@ -2751,20 +2796,67 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       get().clearPendingReferences()
       void useFileExplorerStore.getState().refreshAttachmentsTree().catch(() => undefined)
     } catch (error) {
+      // Cursor-style failure UX (batch 3-A): the bubble STAYS in the timeline
+      // marked failed (red badge + 重试), instead of silently vanishing with
+      // the text dumped back into the composer. The exact composer state is
+      // snapshotted so retry replays it through the full send() pipeline.
       set((current) => {
         const runningByThread = { ...current.runningByThread }
         if (state.threadId) delete runningByThread[state.threadId]
         return {
-          input: content,
-          attachments,
-          pendingReferences: state.pendingReferences,
           isRunning: false,
           error: error instanceof Error ? error.message : String(error),
-          messages: current.messages.slice(0, -1),
+          // The reference chips now belong to the failed bubble's snapshot;
+          // leaving them in the composer would double-attach them if the user
+          // typed a fresh message before retrying.
+          pendingReferences: [],
+          messages: current.messages.map((m) =>
+            m.id === userMsg.id ? { ...m, sendState: 'failed' as const } : m,
+          ),
+          failedSendSnapshots: {
+            ...current.failedSendSnapshots,
+            [userMsg.id]: {
+              content,
+              attachments,
+              references: state.pendingReferences,
+              canvasContext,
+            },
+          },
           runningByThread,
         }
       })
     }
+  },
+  retryFailedMessage: async (messageId) => {
+    const state = get()
+    if (state.isRunning) return
+    const snapshot = state.failedSendSnapshots[messageId]
+    if (!snapshot) return
+    // Preserve whatever the user was drafting before pressing 重试.
+    const draft = {
+      input: state.input,
+      attachments: state.attachments,
+      pendingReferences: state.pendingReferences,
+    }
+    set((current) => {
+      const nextSnapshots = { ...current.failedSendSnapshots }
+      delete nextSnapshots[messageId]
+      return {
+        failedSendSnapshots: nextSnapshots,
+        messages: current.messages.filter((m) => m.id !== messageId),
+        input: snapshot.content,
+        attachments: snapshot.attachments,
+        pendingReferences: snapshot.references,
+        pendingCanvasContext: snapshot.canvasContext,
+        error: undefined,
+      }
+    })
+    await get().send()
+    set({
+      input: draft.input,
+      attachments: draft.attachments,
+      pendingReferences: draft.pendingReferences,
+    })
   },
   steer: async () => {
     const state = get()

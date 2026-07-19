@@ -74,6 +74,7 @@ type Draft = Pick<
   | 'reasoningSummary'
   | 'showRawReasoning'
   | 'modelVerbosity'
+  | 'notifyOnTurnComplete'
 >
 
 export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermissionsPanelProps) {
@@ -99,6 +100,7 @@ export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermiss
     if (draft.reasoningSummary !== baseline.reasoningSummary) next.reasoningSummary = draft.reasoningSummary
     if (draft.showRawReasoning !== baseline.showRawReasoning) next.showRawReasoning = draft.showRawReasoning
     if (draft.modelVerbosity !== baseline.modelVerbosity) next.modelVerbosity = draft.modelVerbosity
+    if (draft.notifyOnTurnComplete !== baseline.notifyOnTurnComplete) next.notifyOnTurnComplete = draft.notifyOnTurnComplete
     return next
   }, [draft, status])
 
@@ -224,6 +226,23 @@ export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermiss
             关闭后,新会话的 Thought 卡将不再展示思维链内容。
           </p>
         </fieldset>
+        <fieldset className="rounded-lg border border-zinc-800/80 bg-black/20 p-2">
+          <legend className="px-1 text-[11px] font-medium text-zinc-400">
+            完成通知 <span className="font-mono text-[10px] text-zinc-600">Notifications</span>
+          </legend>
+          <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[11px] text-zinc-300 transition-colors duration-200 hover:bg-cyan-400/5">
+            <input
+              type="checkbox"
+              checked={draft.notifyOnTurnComplete}
+              onChange={() => setDraft({ ...draft, notifyOnTurnComplete: !draft.notifyOnTurnComplete })}
+              className="h-3 w-3 cursor-pointer accent-cyan-300"
+            />
+            <span>回合完成时弹系统通知</span>
+          </label>
+          <p className="mt-1 px-0.5 text-[10px] leading-4 text-zinc-500">
+            仅在窗口未聚焦时提醒;任务完成或失败都会通知,点击通知返回应用。
+          </p>
+        </fieldset>
       </div>
 
       {status.writableRoots.length > 0 ? (
@@ -287,6 +306,7 @@ function statusToDraft(status?: CodexSessionStatus): Draft | undefined {
     reasoningSummary: status.reasoningSummary ?? 'auto',
     showRawReasoning: status.showRawReasoning ?? true,
     modelVerbosity: status.modelVerbosity ?? 'default',
+    notifyOnTurnComplete: status.notifyOnTurnComplete ?? true,
   }
 }
 
