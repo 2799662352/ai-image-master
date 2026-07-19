@@ -243,6 +243,14 @@ export interface Message {
   role: 'user' | 'assistant'
   createdAt: number
   items: TimelineItem[]
+  /**
+   * Renderer-only delivery state for user messages sent in THIS session
+   * (never persisted; DB-loaded history has no field = settled long ago).
+   * `sending` = IPC in flight; `sent` = main accepted the turn (backend
+   * admitted it); `failed` = send rejected — the bubble stays in the
+   * timeline with a retry affordance instead of silently vanishing.
+   */
+  sendState?: 'sending' | 'sent' | 'failed'
 }
 
 export function getMessageText(msg: Message): string {

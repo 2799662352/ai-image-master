@@ -439,6 +439,13 @@ export interface CodexSessionConfig {
    * per-thread composer preference handled by CollabModeControl.)
    */
   modelVerbosity: CodexModelVerbosity
+  /**
+   * Client-side toast when a turn reaches a terminal state while the window
+   * is unfocused (batch 3-A). Mirrors the official Codex desktop app's own
+   * notification mechanism (openai/codex#13019) — never forwarded to codex
+   * (thread/start overlay and launch args read keys explicitly).
+   */
+  notifyOnTurnComplete: boolean
   writableRoots: string[]
 }
 
@@ -456,6 +463,7 @@ export interface CodexSessionStatus {
   reasoningSummary?: CodexReasoningSummaryMode
   showRawReasoning?: boolean
   modelVerbosity?: CodexModelVerbosity
+  notifyOnTurnComplete?: boolean
   /**
    * True when the CURRENT defaults come from a user-saved snapshot
    * (electron-store persistence). Lets the settings panel show a

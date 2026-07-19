@@ -29,6 +29,7 @@ const PERSISTABLE_KEYS = [
   'reasoningSummary',
   'showRawReasoning',
   'modelVerbosity',
+  'notifyOnTurnComplete',
 ] as const
 
 type PersistableKey = (typeof PERSISTABLE_KEYS)[number]

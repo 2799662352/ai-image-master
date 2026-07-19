@@ -104,6 +104,13 @@ export function validateSessionConfigPatch(
     patch.modelVerbosity = source.modelVerbosity as CodexModelVerbosity
   }
 
+  if ('notifyOnTurnComplete' in source) {
+    if (typeof source.notifyOnTurnComplete !== 'boolean') {
+      throw new Error('invalid notifyOnTurnComplete')
+    }
+    patch.notifyOnTurnComplete = source.notifyOnTurnComplete
+  }
+
   if ('writableRoots' in source) {
     if (!Array.isArray(source.writableRoots)) {
       throw new Error('writableRoots must be a string array')

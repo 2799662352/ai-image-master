@@ -40,6 +40,42 @@ function MessageTimestamp({ createdAt }: { createdAt: number }) {
   )
 }
 
+/**
+ * Delivery indicator next to the timestamp (batch 3-A). Only messages sent in
+ * THIS session carry `sendState`; DB-loaded history renders nothing here.
+ * Answers "did the backend actually receive my message?" — the gap Cursor
+ * forum threads complain about when sends silently die in a queue.
+ */
+function SendStateBadge({ state }: { state: NonNullable<Message['sendState']> }) {
+  if (state === 'sending') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500" role="status">
+        <span className="h-2 w-2 animate-spin rounded-full border border-zinc-500 border-t-transparent" aria-hidden />
+        发送中
+      </span>
+    )
+  }
+  if (state === 'sent') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400/80" role="status">
+        <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3 8.5l3.5 3.5L13 4.5" />
+        </svg>
+        已送达
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-red-400" role="alert">
+      <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="M8 5v3.6M8 11h.01" />
+      </svg>
+      发送失败
+    </span>
+  )
+}
+
 function CopyIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
@@ -74,6 +110,7 @@ function MessageBubbleImpl({ message }: { message: Message }) {
   const [copied, setCopied] = useState(false)
   const startEditMessage = useAgentChatStore((s) => s.startEditMessage)
   const rewindMessageTurn = useAgentChatStore((s) => s.rewindMessageTurn)
+  const retryFailedMessage = useAgentChatStore((s) => s.retryFailedMessage)
   const isRunning = useAgentChatStore((s) => s.isRunning)
   const editingMessageId = useAgentChatStore((s) => s.editingMessageId)
 
@@ -147,9 +184,16 @@ function MessageBubbleImpl({ message }: { message: Message }) {
 
   // ---- User message: card style (per the user's reference image) ----
   if (isUser) {
+    const failed = message.sendState === 'failed'
     return (
       <article className="group/msg relative mb-4">
-        <div className="rounded-lg border border-cyan-400/15 bg-zinc-800/60 px-3 py-2.5 leading-[1.55] transition-colors duration-150 hover:border-cyan-400/30">
+        <div
+          className={
+            failed
+              ? 'rounded-lg border border-red-400/40 bg-zinc-800/60 px-3 py-2.5 leading-[1.55] transition-colors duration-150'
+              : 'rounded-lg border border-cyan-400/15 bg-zinc-800/60 px-3 py-2.5 leading-[1.55] transition-colors duration-150 hover:border-cyan-400/30'
+          }
+        >
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <div className="flex items-baseline gap-2">
               <span
@@ -160,6 +204,7 @@ function MessageBubbleImpl({ message }: { message: Message }) {
                 {label}
               </span>
               <MessageTimestamp createdAt={message.createdAt} />
+              {message.sendState ? <SendStateBadge state={message.sendState} /> : null}
             </div>
             {toolbar}
           </div>
@@ -175,6 +220,20 @@ function MessageBubbleImpl({ message }: { message: Message }) {
               <span className="italic text-zinc-500">Empty message</span>
             )}
           </div>
+          {failed ? (
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-red-400/25 bg-red-500/5 px-2 py-1.5">
+              <span className="text-[11px] text-red-200/90">消息未送达,上游未收到这条消息。</span>
+              <button
+                type="button"
+                aria-label="重试发送"
+                onClick={() => void retryFailedMessage(message.id)}
+                disabled={isRunning}
+                className="cursor-pointer rounded-md border border-red-400/40 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-100 transition-colors duration-150 hover:border-red-300/70 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                重试
+              </button>
+            </div>
+          ) : null}
         </div>
       </article>
     )
