@@ -243,6 +243,7 @@ const IPC_CHANNELS = {
     TEST_CONNECTION: 'agent:test-connection',
     GET_SESSION_STATUS: 'agent:get-session-status',
     SET_SESSION_CONFIG: 'agent:set-session-config',
+    RESET_SESSION_CONFIG: 'agent:reset-session-config',
     SET_ALLOWED_ROOTS: 'agent:set-allowed-roots',
     RESPOND_APPROVAL: 'agent:respond-approval',
     GET_MCP_SUMMARY: 'agent:get-mcp-summary',
@@ -537,7 +538,11 @@ export interface ElectronAPI {
     setApiKey: (key: string) => Promise<AgentApiResult>
     testConnection: () => Promise<AgentApiResult>
     getSessionStatus: () => Promise<CodexSessionStatus>
-    setSessionConfig: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus>
+    setSessionConfig: (
+      patch: Partial<CodexSessionConfig>,
+      options?: { persist?: boolean },
+    ) => Promise<CodexSessionStatus>
+    resetSessionConfig: () => Promise<CodexSessionStatus>
     getCollaborationCapabilities: (
       model: string,
     ) => Promise<AgentCollaborationCapabilitiesResult>
@@ -1151,8 +1156,11 @@ const electronAPI: ElectronAPI = {
     getSessionStatus: () =>
       safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.GET_SESSION_STATUS),
 
-    setSessionConfig: (patch: Partial<CodexSessionConfig>) =>
-      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.SET_SESSION_CONFIG, patch),
+    setSessionConfig: (patch: Partial<CodexSessionConfig>, options?: { persist?: boolean }) =>
+      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.SET_SESSION_CONFIG, patch, options),
+
+    resetSessionConfig: () =>
+      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.RESET_SESSION_CONFIG),
 
     getCollaborationCapabilities: (model: string) =>
       safeInvoke<AgentCollaborationCapabilitiesResult>(

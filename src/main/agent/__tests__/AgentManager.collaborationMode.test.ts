@@ -123,6 +123,9 @@ function modelRow(overrides: Partial<CodexModel> = {}): CodexModel {
     supportsPersonality: false,
     isDefault: true,
     upgrade: null,
+    additionalSpeedTiers: [],
+    defaultServiceTier: null,
+    serviceTiers: [],
     ...overrides,
   }
 }
@@ -822,6 +825,7 @@ describe('AgentManager collaboration capabilities', () => {
       ok: true,
       data: {
         providerId: 'rightcode-standard',
+        gatewayId: 'rightcode',
         backendEpoch: 2,
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['medium'],
@@ -881,6 +885,7 @@ describe('AgentManager collaboration capabilities', () => {
       ok: true,
       data: {
         providerId: 'rightcode-standard',
+        gatewayId: 'rightcode',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         source: 'codex',
@@ -914,6 +919,7 @@ describe('AgentManager collaboration capabilities', () => {
       ok: true,
       data: {
         providerId: 'rightcode-standard',
+        gatewayId: 'rightcode',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
         source: 'codex',
@@ -935,6 +941,7 @@ describe('AgentManager collaboration capabilities', () => {
       ok: true,
       data: {
         providerId: 'apiyi-standard',
+        gatewayId: 'apiyi',
         planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
@@ -960,6 +967,7 @@ describe('AgentManager collaboration capabilities', () => {
       ok: true,
       data: {
         providerId: 'apiyi-standard',
+        gatewayId: 'apiyi',
         planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
@@ -997,9 +1005,58 @@ describe('AgentManager collaboration capabilities', () => {
       ok: true,
       data: {
         providerId: 'rightcode-standard',
+        gatewayId: 'rightcode',
         planDefaultEffort: 'max',
         supportedPlanEfforts: ['max'],
         source: 'codex',
+      },
+    })
+  })
+
+  it('resolves channel-declared models (grok-4.5) missing from model/list via verified policies', async () => {
+    // grok-4.5 is pinned through the sibling Channel's `allowedModels`
+    // declaration and never appears in codex `model/list` rows. Plan effort
+    // options must come from the shared provider reasoning policy instead of
+    // collapsing to the Auto-only fallback after an in-process switch.
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({ id: 'gpt-5.5', model: 'gpt-5.5' })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+
+    await expect(manager.getCollaborationCapabilitiesRpc('grok-4.5')).resolves.toEqual({
+      ok: true,
+      data: {
+        providerId: 'apiyi-standard',
+        gatewayId: 'apiyi',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high'],
+        source: 'codex',
+      },
+    })
+  })
+
+  it('still falls back for models neither listed nor declared by any channel', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({ id: 'gpt-5.5', model: 'gpt-5.5' })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+
+    await expect(manager.getCollaborationCapabilitiesRpc('made-up-model')).resolves.toEqual({
+      ok: true,
+      data: {
+        providerId: 'apiyi-standard',
+        gatewayId: 'apiyi',
+        planDefaultEffort: null,
+        supportedPlanEfforts: [],
+        source: 'fallback',
       },
     })
   })
@@ -1009,6 +1066,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
     }), {
       providerId: 'apiyi-standard',
+      gatewayId: 'apiyi',
       planDefaultEffort: 'low',
       supportedPlanEfforts: ['low', 'high'],
       source: 'codex',
@@ -1017,6 +1075,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModes: async () => UPSTREAM_PRESETS,
     }), {
       providerId: 'apiyi-standard',
+      gatewayId: 'apiyi',
       planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',
@@ -1026,6 +1085,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
     }), {
       providerId: 'apiyi-standard',
+      gatewayId: 'apiyi',
       planDefaultEffort: 'low',
       supportedPlanEfforts: ['low', 'high'],
       source: 'codex',
@@ -1035,6 +1095,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModels: async () => { throw new Error('models failed') },
     }), {
       providerId: 'apiyi-standard',
+      gatewayId: 'apiyi',
       planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',
@@ -1216,7 +1277,7 @@ describe('AgentManager collaboration mode updates', () => {
       data: { compatibility: 'immediate', requestVersion: 7 },
     })
     expect(backend.updateCalls).toHaveLength(1)
-    expect(backend.updateCalls[0].collaborationMode.settings.reasoning_effort).toBe('max')
+    expect(backend.updateCalls[0]?.collaborationMode?.settings.reasoning_effort).toBe('max')
   })
 
   it('maps an existing DB thread to Codex and updates complete settings immediately', async () => {

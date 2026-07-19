@@ -32,6 +32,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:test-connection',
   'agent:get-session-status',
   'agent:set-session-config',
+  'agent:reset-session-config',
   'agent:set-allowed-roots',
   'agent:respond-approval',
   'agent:get-mcp-summary',
@@ -196,8 +197,18 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   })
   ipcMain.handle('agent:test-connection', async () => (await getManager()).testConnection())
   ipcMain.handle('agent:get-session-status', async () => (await getManager()).getSessionStatus())
-  ipcMain.handle('agent:set-session-config', async (_event, patch: unknown) =>
-    (await getManager()).setSessionConfigPatch(patch),
+  ipcMain.handle('agent:set-session-config', async (_event, patch: unknown, options?: unknown) =>
+    (await getManager()).setSessionConfigPatch(
+      patch,
+      // `persist` must be an explicit boolean true; anything else is treated
+      // as the historical in-memory Apply.
+      options && typeof options === 'object' && (options as { persist?: unknown }).persist === true
+        ? { persist: true }
+        : undefined,
+    ),
+  )
+  ipcMain.handle('agent:reset-session-config', async () =>
+    (await getManager()).resetSessionConfigToFactory(),
   )
   ipcMain.handle('agent:set-allowed-roots', async (_event, roots: unknown) =>
     (await getManager()).setAllowedRoots(roots),

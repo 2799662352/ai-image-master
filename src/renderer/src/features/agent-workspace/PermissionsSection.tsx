@@ -6,7 +6,11 @@ import { CodexPermissionsPanel } from '../agent-chat/CodexPermissionsPanel'
 type PermissionsApi = {
   agent?: {
     getSessionStatus?: () => Promise<CodexSessionStatus>
-    setSessionConfig?: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus | void>
+    setSessionConfig?: (
+      patch: Partial<CodexSessionConfig>,
+      options?: { persist?: boolean },
+    ) => Promise<CodexSessionStatus | void>
+    resetSessionConfig?: () => Promise<CodexSessionStatus | void>
   }
 }
 
@@ -43,7 +47,10 @@ export function PermissionsSection() {
     }
   }, [])
 
-  async function applyPermissions(patch: Partial<CodexSessionConfig>): Promise<void> {
+  async function applyPermissions(
+    patch: Partial<CodexSessionConfig>,
+    options?: { persist?: boolean },
+  ): Promise<void> {
     const api = getPermissionsApi()
     if (!api?.setSessionConfig || !api.getSessionStatus) {
       setError('Codex permissions API is unavailable.')
@@ -51,10 +58,31 @@ export function PermissionsSection() {
     }
 
     try {
-      const nextStatus = await api.setSessionConfig(patch)
+      const nextStatus = options
+        ? await api.setSessionConfig(patch, options)
+        : await api.setSessionConfig(patch)
       const resolvedStatus = nextStatus ?? (await api.getSessionStatus())
       if (mountedRef.current) {
         setStatus(resolvedStatus)
+        setError(undefined)
+      }
+    } catch (reason) {
+      if (mountedRef.current) setError(errorMessage(reason))
+    }
+  }
+
+  async function resetPermissions(): Promise<void> {
+    const api = getPermissionsApi()
+    if (!api?.resetSessionConfig) {
+      setError('Codex permissions API is unavailable.')
+      return
+    }
+
+    try {
+      const nextStatus = await api.resetSessionConfig()
+      const resolvedStatus = nextStatus ?? (await api.getSessionStatus?.())
+      if (mountedRef.current) {
+        if (resolvedStatus) setStatus(resolvedStatus)
         setError(undefined)
       }
     } catch (reason) {
@@ -85,7 +113,7 @@ export function PermissionsSection() {
           {error}
         </section>
       ) : null}
-      <CodexPermissionsPanel status={status} onApply={applyPermissions} />
+      <CodexPermissionsPanel status={status} onApply={applyPermissions} onReset={resetPermissions} />
     </>
   )
 }

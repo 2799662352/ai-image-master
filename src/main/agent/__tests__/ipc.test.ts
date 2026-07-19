@@ -46,6 +46,7 @@ interface FakeManager {
   testConnection: ReturnType<typeof vi.fn>
   getSessionStatus: ReturnType<typeof vi.fn>
   setSessionConfigPatch: ReturnType<typeof vi.fn>
+  resetSessionConfigToFactory: ReturnType<typeof vi.fn>
   setAllowedRoots: ReturnType<typeof vi.fn>
   respondToApprovalResponse: ReturnType<typeof vi.fn>
   listCodexThreads: ReturnType<typeof vi.fn>
@@ -73,6 +74,7 @@ function makeManager(): FakeManager {
     testConnection: vi.fn(),
     getSessionStatus: vi.fn(),
     setSessionConfigPatch: vi.fn(),
+    resetSessionConfigToFactory: vi.fn(),
     setAllowedRoots: vi.fn(),
     respondToApprovalResponse: vi.fn().mockResolvedValue({ ok: true }),
     listCodexThreads: vi.fn().mockResolvedValue([]),
@@ -280,6 +282,36 @@ describe('registerAgentIpc thread management handlers', () => {
 
     await expect(handler!({}, { id: '', approved: true })).rejects.toThrow(/id/)
     expect(manager.respondToApprovalResponse).not.toHaveBeenCalled()
+  })
+
+  it('agent:set-session-config forwards the patch and a normalized persist flag', async () => {
+    const handler = get('agent:set-session-config')!
+
+    await handler({}, { webSearch: 'disabled' }, { persist: true })
+    expect(manager.setSessionConfigPatch).toHaveBeenLastCalledWith(
+      { webSearch: 'disabled' },
+      { persist: true },
+    )
+
+    await handler({}, { webSearch: 'disabled' })
+    expect(manager.setSessionConfigPatch).toHaveBeenLastCalledWith(
+      { webSearch: 'disabled' },
+      undefined,
+    )
+
+    // Truthy-but-not-true persist flags never persist (flag rides raw IPC).
+    await handler({}, { webSearch: 'disabled' }, { persist: 'yes' })
+    expect(manager.setSessionConfigPatch).toHaveBeenLastCalledWith(
+      { webSearch: 'disabled' },
+      undefined,
+    )
+  })
+
+  it('agent:reset-session-config forwards to the manager', async () => {
+    const handler = get('agent:reset-session-config')
+    expect(handler).toBeTypeOf('function')
+    await handler!({})
+    expect(manager.resetSessionConfigToFactory).toHaveBeenCalledTimes(1)
   })
 
   it('registers agent:list-codex-threads and forwards to manager', async () => {

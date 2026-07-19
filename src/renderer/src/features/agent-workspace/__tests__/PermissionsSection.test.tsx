@@ -58,10 +58,10 @@ describe('PermissionsSection', () => {
     expect(await screen.findByText(/Sandbox/i)).toBeTruthy()
 
     fireEvent.click(screen.getByText('danger-full-access'))
-    fireEvent.click(screen.getByText('Apply permissions'))
+    fireEvent.click(screen.getByText('应用设置'))
 
     expect(await screen.findByText('session config change cancelled')).toBeTruthy()
     expect(screen.getByText(/Sandbox/i)).toBeTruthy()
-    expect(screen.getByText('Apply permissions')).toBeTruthy()
+    expect(screen.getByText('应用设置')).toBeTruthy()
   })
 })

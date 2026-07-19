@@ -757,6 +757,13 @@ export class CodexProtocolClient {
         sandbox_workspace_write: {
           writable_roots: sessionConfig.writableRoots,
         },
+        // Session tuning (smoke-verified overlay keys): new threads pick up
+        // the CURRENT settings without a codex restart; the launch `-c` args
+        // only serve as the process-level fallback.
+        model_reasoning_summary: sessionConfig.reasoningSummary,
+        show_raw_agent_reasoning: sessionConfig.showRawReasoning,
+        ...(sessionConfig.personality !== 'default' ? { personality: sessionConfig.personality } : {}),
+        ...(sessionConfig.modelVerbosity !== 'default' ? { model_verbosity: sessionConfig.modelVerbosity } : {}),
         ...(developerInstructions ? { developer_instructions: developerInstructions } : {}),
         ...(pin
           ? {

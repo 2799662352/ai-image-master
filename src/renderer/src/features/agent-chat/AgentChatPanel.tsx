@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatScroll } from './useChatScroll'
 import { AttachmentChips } from './AttachmentChips'
-import { CloseIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
+import { CloseIcon, GearIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
 import { Lightbox } from './Lightbox'
 import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
@@ -12,6 +12,7 @@ import { ThreadSidebar } from './ThreadSidebar'
 import { GoalChip } from './GoalChip'
 import { TokenUsageMeter } from './TokenUsageMeter'
 import { CodexApprovalPrompt } from './CodexApprovalPrompt'
+import { CodexPermissionsPanel } from './CodexPermissionsPanel'
 import { CodexStatusPanel } from './CodexStatusPanel'
 import { NoticesBanner } from './NoticesBanner'
 import { defaultContextWindowForModel } from '../../../../shared/modelSettings'
@@ -26,6 +27,7 @@ import { useTabStore } from '../../stores/useTabStore'
 import type {
   AgentStreamEvent,
   CodexApprovalRequest,
+  CodexSessionConfig,
   CodexSessionStatus,
 } from '../../../../types/agent'
 
@@ -35,6 +37,11 @@ type AgentEventApi = {
     onApprovalRequest?: (handler: (request: CodexApprovalRequest) => void) => () => void
     onGoal?: (handler: (event: AgentStreamEvent) => void) => () => void
     getSessionStatus?: () => Promise<CodexSessionStatus>
+    setSessionConfig?: (
+      patch: Partial<CodexSessionConfig>,
+      options?: { persist?: boolean },
+    ) => Promise<CodexSessionStatus | void>
+    resetSessionConfig?: () => Promise<CodexSessionStatus | void>
     restartCodex?: () => Promise<{ ok: boolean; error?: string }>
   }
 }
@@ -88,6 +95,9 @@ export function AgentChatPanel() {
   const toggleFx = useFileExplorerStore((state) => state.toggleFx)
   const setFxOpen = useFileExplorerStore((state) => state.setFxOpen)
   const [codexStatus, setCodexStatus] = useState<CodexSessionStatus | undefined>(undefined)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsPopoverRef = useRef<HTMLDivElement | null>(null)
+  const settingsButtonRef = useRef<HTMLButtonElement | null>(null)
   const configDirty = useAgentWorkspaceStore((state) => state.configDirty)
 
   // The agent:event subscription is bound to the AgentChatPanel mount, NOT to
@@ -143,6 +153,74 @@ export function AgentChatPanel() {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
     void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
   }, [isOpen])
+
+  // Re-read the status whenever the gear popover opens so the draft reflects
+  // changes applied elsewhere (e.g. the Agent Workspace Permissions tab).
+  useEffect(() => {
+    if (!settingsOpen) return
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
+  }, [settingsOpen])
+
+  // Light-dismiss for the settings popover: clicking anywhere outside the
+  // popover (and outside its toggle button, which handles its own toggling)
+  // closes it.
+  useEffect(() => {
+    if (!settingsOpen) return undefined
+    function onMouseDown(event: MouseEvent): void {
+      const target = event.target as Node
+      if (settingsPopoverRef.current?.contains(target)) return
+      if (settingsButtonRef.current?.contains(target)) return
+      setSettingsOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [settingsOpen])
+
+  async function applySessionConfig(
+    patch: Partial<CodexSessionConfig>,
+    options?: { persist?: boolean },
+  ): Promise<void> {
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    if (!agent?.setSessionConfig) {
+      setError('Electron session config API is unavailable')
+      return
+    }
+    try {
+      // Forward options only when present — a trailing explicit `undefined`
+      // would break strict call-shape assertions and older preload builds.
+      const next = options
+        ? await agent.setSessionConfig(patch, options)
+        : await agent.setSessionConfig(patch)
+      if (next) {
+        setCodexStatus(next)
+      } else {
+        await agent.getSessionStatus?.().then(setCodexStatus)
+      }
+      setError(undefined)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function resetSessionConfig(): Promise<void> {
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    if (!agent?.resetSessionConfig) {
+      setError('Electron session config API is unavailable')
+      return
+    }
+    try {
+      const next = await agent.resetSessionConfig()
+      if (next) {
+        setCodexStatus(next)
+      } else {
+        await agent.getSessionStatus?.().then(setCodexStatus)
+      }
+      setError(undefined)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   async function restartCodex(): Promise<void> {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
@@ -259,6 +337,20 @@ export function AgentChatPanel() {
                 fallbackContextWindow={fallbackContextWindow}
               />
               <button
+                ref={settingsButtonRef}
+                type="button"
+                aria-label="Codex 设置"
+                title="Codex 设置"
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+                className={
+                  'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-zinc-700/60 bg-zinc-900/60 transition-colors duration-200 hover:border-cyan-300/50 hover:bg-cyan-400/10 hover:text-cyan-100 ' +
+                  (settingsOpen ? 'border-cyan-300/50 text-cyan-100' : 'text-zinc-400')
+                }
+              >
+                <GearIcon className="h-4 w-4" />
+              </button>
+              <button
                 type="button"
                 aria-label={fxOpen ? 'Hide files' : 'Show files'}
                 title={`${fxOpen ? 'Hide' : 'Show'} files (Ctrl/Cmd+Shift+I)`}
@@ -337,6 +429,25 @@ export function AgentChatPanel() {
           ) : null}
           {activeGoal ? <GoalChip goal={activeGoal} /> : null}
         </header>
+
+        {/* Gear popover: zero-height relative wrapper keeps the overlay glued
+            to the header's bottom edge no matter how many banner rows the
+            header currently shows (configDirty / goal chip). */}
+        {settingsOpen ? (
+          <div className="relative z-30 h-0">
+            <div
+              ref={settingsPopoverRef}
+              data-testid="codex-settings-popover"
+              className="absolute right-3 top-2 max-h-[70vh] w-[min(560px,calc(100%-24px))] overflow-y-auto rounded-xl border border-cyan-400/25 bg-zinc-950/95 p-3 pt-1 shadow-[0_16px_48px_rgba(0,0,0,0.6),0_0_0_1px_rgba(34,211,238,0.08)] backdrop-blur"
+            >
+              <CodexPermissionsPanel
+                status={codexStatus}
+                onApply={applySessionConfig}
+                onReset={resetSessionConfig}
+              />
+            </div>
+          </div>
+        ) : null}
 
         <div
           ref={chatScrollRef}

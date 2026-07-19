@@ -4,6 +4,9 @@ import { CINEMATOGRAPHY_KB_ENV_SCAFFOLD } from './cinematographyKbMcpLauncher'
 import type {
   CodexApprovalPolicy,
   CodexModelContextConfig,
+  CodexModelVerbosity,
+  CodexPersonality,
+  CodexReasoningSummaryMode,
   CodexSandboxMode,
   CodexSessionConfig,
   CodexWebSearchMode,
@@ -21,6 +24,12 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   approvalPolicy: 'never',
   sandboxMode: 'danger-full-access',
   webSearch: 'live',
+  // Session tuning defaults mirror the previously hardcoded launch args so
+  // fresh installs behave byte-identically until the user opts in.
+  personality: 'default',
+  reasoningSummary: 'auto',
+  showRawReasoning: true,
+  modelVerbosity: 'default',
   writableRoots: [],
 }
 
@@ -218,6 +227,10 @@ export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): 
     approvalPolicy: (input?.approvalPolicy ?? DEFAULT_CODEX_SESSION_CONFIG.approvalPolicy) as CodexApprovalPolicy,
     sandboxMode: (input?.sandboxMode ?? DEFAULT_CODEX_SESSION_CONFIG.sandboxMode) as CodexSandboxMode,
     webSearch: (input?.webSearch ?? DEFAULT_CODEX_SESSION_CONFIG.webSearch) as CodexWebSearchMode,
+    personality: (input?.personality ?? DEFAULT_CODEX_SESSION_CONFIG.personality) as CodexPersonality,
+    reasoningSummary: (input?.reasoningSummary ?? DEFAULT_CODEX_SESSION_CONFIG.reasoningSummary) as CodexReasoningSummaryMode,
+    showRawReasoning: input?.showRawReasoning ?? DEFAULT_CODEX_SESSION_CONFIG.showRawReasoning,
+    modelVerbosity: (input?.modelVerbosity ?? DEFAULT_CODEX_SESSION_CONFIG.modelVerbosity) as CodexModelVerbosity,
     writableRoots: [...(input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots)],
   }
 }
@@ -346,9 +359,11 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // when `tokenUsage.reasoningOutputTokens > 0`. Both flags are documented
     // at https://developers.openai.com/codex/config-advanced — we accept the
     // tradeoff that raw reasoning may include sensitive scratchpad content
-    // since this is a local dev/agent surface.
-    '-c', 'show_raw_agent_reasoning=true',
-    '-c', 'model_reasoning_summary="auto"',
+    // since this is a local dev/agent surface. Since 2026-07 both are user
+    // settings (session tuning) whose DEFAULTS reproduce the old hardcoded
+    // values (`true` / `"auto"`).
+    '-c', `show_raw_agent_reasoning=${sessionConfig.showRawReasoning}`,
+    '-c', `model_reasoning_summary=${quote(sessionConfig.reasoningSummary)}`,
     // Official per-tool-call output budget. codex-rs/models-manager/
     // models.json pins truncation at 10_000 tokens for gpt-5.6/5.5/5.4
     // (10_000 bytes for 5.2 and unknown slugs). Without this pin a
@@ -431,6 +446,20 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // `memory/reset` RPCs (exposed on the protocol client) without a relaunch.
     '-c', 'features.memories=true',
   ]
+
+  // Assistant personality (session tuning). 'default' means "let codex
+  // resolve its built-in default" — the key is intentionally NOT sent so the
+  // wire shape stays identical to pre-setting builds until the user opts in.
+  if (sessionConfig.personality !== 'default') {
+    args.push('-c', `personality=${quote(sessionConfig.personality)}`)
+  }
+
+  // GPT-5 output verbosity (session tuning, batch 2). Same omit-on-'default'
+  // posture as personality: codex resolves its own default until the user
+  // opts in. Smoke-verified in scripts/smoke-batch2-overlay.ts.
+  if (sessionConfig.modelVerbosity !== 'default') {
+    args.push('-c', `model_verbosity=${quote(sessionConfig.modelVerbosity)}`)
+  }
 
   // Register the local in-process catimation MCP server so the Codex
   // subprocess can call our `generate_image` (vip channel) and other renderer

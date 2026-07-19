@@ -1,6 +1,9 @@
 import path from 'node:path'
 import type {
   CodexApprovalPolicy,
+  CodexModelVerbosity,
+  CodexPersonality,
+  CodexReasoningSummaryMode,
   CodexSandboxMode,
   CodexSessionConfig,
   CodexWebSearchMode,
@@ -19,7 +22,26 @@ const APPROVAL_POLICIES = new Set<CodexApprovalPolicy>([
 const WEB_SEARCH_MODES = new Set<CodexWebSearchMode>([
   'cached',
   'live',
+  'indexed',
   'disabled',
+])
+const PERSONALITIES = new Set<CodexPersonality>([
+  'default',
+  'none',
+  'friendly',
+  'pragmatic',
+])
+const REASONING_SUMMARY_MODES = new Set<CodexReasoningSummaryMode>([
+  'auto',
+  'concise',
+  'detailed',
+  'none',
+])
+const MODEL_VERBOSITIES = new Set<CodexModelVerbosity>([
+  'default',
+  'low',
+  'medium',
+  'high',
 ])
 
 export function validateSessionConfigPatch(
@@ -52,6 +74,34 @@ export function validateSessionConfigPatch(
       throw new Error('invalid webSearch')
     }
     patch.webSearch = source.webSearch as CodexWebSearchMode
+  }
+
+  if ('personality' in source) {
+    if (!PERSONALITIES.has(source.personality as CodexPersonality)) {
+      throw new Error('invalid personality')
+    }
+    patch.personality = source.personality as CodexPersonality
+  }
+
+  if ('reasoningSummary' in source) {
+    if (!REASONING_SUMMARY_MODES.has(source.reasoningSummary as CodexReasoningSummaryMode)) {
+      throw new Error('invalid reasoningSummary')
+    }
+    patch.reasoningSummary = source.reasoningSummary as CodexReasoningSummaryMode
+  }
+
+  if ('showRawReasoning' in source) {
+    if (typeof source.showRawReasoning !== 'boolean') {
+      throw new Error('invalid showRawReasoning')
+    }
+    patch.showRawReasoning = source.showRawReasoning
+  }
+
+  if ('modelVerbosity' in source) {
+    if (!MODEL_VERBOSITIES.has(source.modelVerbosity as CodexModelVerbosity)) {
+      throw new Error('invalid modelVerbosity')
+    }
+    patch.modelVerbosity = source.modelVerbosity as CodexModelVerbosity
   }
 
   if ('writableRoots' in source) {

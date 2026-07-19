@@ -111,10 +111,63 @@ describe('CodexProtocolClient session config', () => {
         sandbox_workspace_write: {
           writable_roots: ['D:/repo'],
         },
+        // Session tuning defaults ride the overlay so settings changes reach
+        // NEW threads without a codex restart. `personality` is omitted while
+        // the user keeps 'default'.
+        model_reasoning_summary: 'auto',
+        show_raw_agent_reasoning: true,
       },
     })
     expect(JSON.stringify(threadStart?.params)).not.toContain('danger-full-access')
     expect(JSON.stringify(threadStart?.params)).not.toContain('"never"')
+  })
+
+  it('rides non-default session tuning (personality/summary/raw) on the thread/start overlay', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+      sessionConfig: {
+        personality: 'pragmatic',
+        reasoningSummary: 'detailed',
+        showRawReasoning: false,
+      },
+    })
+    await client.start()
+
+    for await (const _event of client.send(undefined, input)) {
+      // Drain the turn.
+    }
+
+    const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+    expect(threadStart?.params.config).toMatchObject({
+      personality: 'pragmatic',
+      model_reasoning_summary: 'detailed',
+      show_raw_agent_reasoning: false,
+    })
+    // 'default' verbosity keeps the key off the wire entirely.
+    expect(JSON.stringify(threadStart?.params.config)).not.toContain('model_verbosity')
+  })
+
+  it('rides non-default model_verbosity on the thread/start overlay (batch 2)', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+      sessionConfig: {
+        modelVerbosity: 'high',
+      },
+    })
+    await client.start()
+
+    for await (const _event of client.send(undefined, input)) {
+      // Drain the turn.
+    }
+
+    const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+    expect(threadStart?.params.config).toMatchObject({
+      model_verbosity: 'high',
+    })
   })
 
   it('routes a new thread to its own provider + context pin via thread/start (Plan B)', async () => {
