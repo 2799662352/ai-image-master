@@ -49,7 +49,14 @@ export interface AgentMentionRef {
 }
 
 export interface AgentCollaborationCapabilities {
+  /** Internal Channel id owning the resolution (e.g. `apiyi-standard`). */
   providerId: string
+  /**
+   * User-facing Gateway id (e.g. `apiyi`). Renderer callers pass Gateway ids
+   * when requesting capabilities, so ownership reconciliation must compare
+   * this field — `providerId` is the internal Channel id since v4.4.2.
+   */
+  gatewayId?: string
   backendEpoch?: number
   planDefaultEffort: string | null
   supportedPlanEfforts: string[]
@@ -163,7 +170,21 @@ export interface AgentSendMessageResult {
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
-export type CodexWebSearchMode = 'cached' | 'live' | 'disabled'
+export type CodexWebSearchMode = 'cached' | 'live' | 'indexed' | 'disabled'
+/**
+ * Codex assistant personality (`-c personality` / per-thread config overlay).
+ * `'default'` means "don't send the key" — codex resolves its own built-in
+ * default, which keeps today's behavior byte-identical until the user opts in.
+ */
+export type CodexPersonality = 'default' | 'none' | 'friendly' | 'pragmatic'
+/** Mirrors upstream `model_reasoning_summary` (config-advanced docs). */
+export type CodexReasoningSummaryMode = 'auto' | 'concise' | 'detailed' | 'none'
+/**
+ * Mirrors upstream `model_verbosity` (GPT-5 Responses API output length).
+ * `'default'` = don't send the key (codex resolves its own default, currently
+ * `medium`), keeping the wire shape identical until the user opts in.
+ */
+export type CodexModelVerbosity = 'default' | 'low' | 'medium' | 'high'
 
 export interface CodexModelContextConfig {
   modelContextWindow: number
@@ -400,6 +421,24 @@ export interface CodexSessionConfig {
   sandboxMode: CodexSandboxMode
   approvalPolicy: CodexApprovalPolicy
   webSearch: CodexWebSearchMode
+  /**
+   * Session tuning knobs (2026-07): defaults preserve the previous hardcoded
+   * behavior (`personality: 'default'` → key omitted, `reasoningSummary:
+   * 'auto'`, `showRawReasoning: true`). Applied to NEW threads via the
+   * `thread/start.config` overlay (smoke-verified) and to the launch `-c`
+   * args on the next codex restart.
+   */
+  personality: CodexPersonality
+  reasoningSummary: CodexReasoningSummaryMode
+  showRawReasoning: boolean
+  /**
+   * Batch-2 tuning knob (2026-07): `'default'` means "send nothing",
+   * reproducing pre-setting behavior. Rides launch `-c` +
+   * `thread/start.config` overlay (smoke-batch2-overlay.ts).
+   * (Plan reasoning effort deliberately does NOT live here — it is a
+   * per-thread composer preference handled by CollabModeControl.)
+   */
+  modelVerbosity: CodexModelVerbosity
   writableRoots: string[]
 }
 
@@ -408,6 +447,21 @@ export interface CodexSessionStatus {
   sandboxMode: CodexSandboxMode
   approvalPolicy: CodexApprovalPolicy
   webSearch: CodexWebSearchMode
+  /**
+   * Session tuning snapshot. Optional on the wire so status objects produced
+   * by older builds (or slim test fixtures) stay assignable; consumers fall
+   * back to the historical hardcoded defaults ('default' / 'auto' / true).
+   */
+  personality?: CodexPersonality
+  reasoningSummary?: CodexReasoningSummaryMode
+  showRawReasoning?: boolean
+  modelVerbosity?: CodexModelVerbosity
+  /**
+   * True when the CURRENT defaults come from a user-saved snapshot
+   * (electron-store persistence). Lets the settings panel show a
+   * "defaults come from your saved settings" hint + the reset action.
+   */
+  persistedDefaults?: boolean
   writableRoots: string[]
 }
 

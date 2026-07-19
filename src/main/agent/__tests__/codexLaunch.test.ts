@@ -470,6 +470,49 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('web_search="disabled"')
   })
 
+  it('keeps the default launch args free of a personality key (session tuning defaults = old hardcoded behavior)', () => {
+    const args = buildCodexLaunchArgs({ listenUrl: 'ws://127.0.0.1:1234' })
+
+    expect(args.some((a) => a.startsWith('personality='))).toBe(false)
+    expect(args).toContain('show_raw_agent_reasoning=true')
+    expect(args).toContain('model_reasoning_summary="auto"')
+  })
+
+  it('forwards non-default session tuning (personality/summary/raw) as -c overrides', () => {
+    const args = buildCodexLaunchArgs({
+      listenUrl: 'ws://127.0.0.1:1234',
+      sessionConfig: {
+        personality: 'pragmatic',
+        reasoningSummary: 'detailed',
+        showRawReasoning: false,
+        webSearch: 'indexed',
+      },
+    })
+
+    expect(args).toContain('personality="pragmatic"')
+    expect(args).toContain('model_reasoning_summary="detailed"')
+    expect(args).toContain('show_raw_agent_reasoning=false')
+    expect(args).toContain('web_search="indexed"')
+  })
+
+  it('keeps the default launch args free of a model_verbosity key (batch-2 default = omit)', () => {
+    const args = buildCodexLaunchArgs({ listenUrl: 'ws://127.0.0.1:1234' })
+
+    expect(args.some((a) => a.startsWith('model_verbosity='))).toBe(false)
+  })
+
+  it('forwards non-default model_verbosity as a -c override without any reasoning_effort key', () => {
+    const args = buildCodexLaunchArgs({
+      listenUrl: 'ws://127.0.0.1:1234',
+      sessionConfig: {
+        modelVerbosity: 'high',
+      },
+    })
+
+    expect(args).toContain('model_verbosity="high"')
+    expect(args.join(' ')).not.toContain('reasoning_effort')
+  })
+
   it('forwards writableRoots via sandbox_workspace_write.writable_roots config', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',

@@ -57,6 +57,7 @@ import {
 import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
+import { SessionConfigStore } from './SessionConfigStore'
 import {
   resolvePlanReasoningEffort,
   type CollaborationModeKind,
@@ -418,6 +419,14 @@ export class AgentManager {
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
+  /**
+   * User-confirmed session-config defaults (batch 2 persistence). Loaded once
+   * in the constructor BEFORE the backend is created so the launch `-c` args
+   * of the very first codex spawn already reflect the saved defaults. Written
+   * only when a settings Apply carries `persist: true`.
+   */
+  private sessionConfigStore!: SessionConfigStore
+  private sessionConfigPersisted = false
   private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
@@ -494,6 +503,15 @@ export class AgentManager {
     this.attachments = opts.attachments
     this.eventSink = opts.eventSink
     this.userDataDir = opts.userDataDir
+    // Restore user-saved session defaults before the backend snapshot below
+    // captures `this.sessionConfig`. Corrupt/invalid stores resolve to `{}`
+    // (factory defaults) inside the store — boot never fails on this.
+    this.sessionConfigStore = new SessionConfigStore(opts.userDataDir)
+    const persistedSessionOverrides = this.sessionConfigStore.loadSync()
+    this.sessionConfigPersisted = Object.keys(persistedSessionOverrides).length > 0
+    if (this.sessionConfigPersisted) {
+      this.sessionConfig = { ...this.sessionConfig, ...persistedSessionOverrides }
+    }
     this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
     this.runtimeSettingsStore = opts.runtimeSettingsStore
       ?? new CodexRuntimeSettingsStore(opts.userDataDir)
@@ -1307,7 +1325,10 @@ export class AgentManager {
     return [...validated]
   }
 
-  async setSessionConfigPatch(input: unknown): Promise<CodexSessionStatus> {
+  async setSessionConfigPatch(
+    input: unknown,
+    options?: { persist?: boolean },
+  ): Promise<CodexSessionStatus> {
     const patch = validateSessionConfigPatch(input, this.allowedRoots)
     await this.confirmUnsafeSessionConfigChange(patch)
     this.sessionConfig = {
@@ -1315,6 +1336,33 @@ export class AgentManager {
       ...patch,
       writableRoots: patch.writableRoots ? [...patch.writableRoots] : [...this.sessionConfig.writableRoots],
     }
+    this.backend.setSessionConfig?.(patch)
+    // "保存为默认": snapshot the FULL post-patch config (not just this patch)
+    // so earlier in-memory-only tweaks are captured too. `persist` must be an
+    // explicit boolean true — the flag rides IPC, so no truthy coercion.
+    if (options && typeof options === 'object' && options.persist === true) {
+      this.sessionConfigStore.saveSync(this.sessionConfig)
+      this.sessionConfigPersisted = this.sessionConfigStore.hasPersistedOverrides()
+    }
+    return this.getSessionStatus()
+  }
+
+  /**
+   * "恢复出厂默认": drop the persisted snapshot and restore the shipped
+   * defaults in memory + backend. Exempt from the unsafe-edge confirmation
+   * dialog (same exemption as boot — it restores the values a pristine
+   * install already runs with; the renderer gates it behind a two-step
+   * confirm). Workspace-derived `writableRoots` are preserved.
+   */
+  async resetSessionConfigToFactory(): Promise<CodexSessionStatus> {
+    this.sessionConfigStore.clearSync()
+    this.sessionConfigPersisted = false
+    this.sessionConfig = {
+      ...DEFAULT_CODEX_SESSION_CONFIG,
+      writableRoots: [...this.sessionConfig.writableRoots],
+    }
+    const patch: Partial<CodexSessionConfig> = { ...DEFAULT_CODEX_SESSION_CONFIG }
+    delete patch.writableRoots
     this.backend.setSessionConfig?.(patch)
     return this.getSessionStatus()
   }
@@ -1325,6 +1373,11 @@ export class AgentManager {
       sandboxMode: this.sessionConfig.sandboxMode,
       approvalPolicy: this.sessionConfig.approvalPolicy,
       webSearch: this.sessionConfig.webSearch,
+      personality: this.sessionConfig.personality,
+      reasoningSummary: this.sessionConfig.reasoningSummary,
+      showRawReasoning: this.sessionConfig.showRawReasoning,
+      modelVerbosity: this.sessionConfig.modelVerbosity,
+      persistedDefaults: this.sessionConfigPersisted,
       writableRoots: [...this.sessionConfig.writableRoots],
     }
   }
@@ -2048,6 +2101,7 @@ export class AgentManager {
   ): AgentCollaborationCapabilities {
     return {
       providerId,
+      gatewayId: this.activeGatewayId,
       ...(backendEpoch === undefined ? {} : { backendEpoch }),
       planDefaultEffort: null,
       supportedPlanEfforts: [],
@@ -2127,18 +2181,40 @@ export class AgentManager {
       const modelRow =
         models.data.find((row) => row.id === modelId)
         ?? models.data.find((row) => row.model === modelId)
-      if (!modelRow) return fallback()
-
-      const model = modelRow.model
+      // Channel-declared models (e.g. grok-4.5 pinned via `allowedModels`)
+      // never appear in codex `model/list` rows. Mirror the model settings
+      // catalog's declared-model path so their verified reasoning policies
+      // still surface as Plan effort options instead of a hard fallback.
+      let model: string
+      let dynamicReasoning: {
+        defaultReasoningEffort?: string
+        supportedReasoningEfforts?: readonly string[]
+      }
+      if (modelRow) {
+        model = modelRow.model
+        dynamicReasoning = {
+          defaultReasoningEffort: modelRow.defaultReasoningEffort,
+          supportedReasoningEfforts: modelRow.supportedReasoningEfforts.map(
+            (effort) => effort.reasoningEffort,
+          ),
+        }
+      } else {
+        model = modelId.trim()
+        dynamicReasoning = {}
+      }
       const route = this.modelRoute(providerId, model)
+      if (!modelRow) {
+        const declaredChannel = resolveProviderChannel(
+          route.channelId,
+          this.providerStore.loadSync().customProviders,
+        )
+        if (!declaredChannel.allowedModels?.includes(model)) return fallback()
+      }
       const modelSettings = mergeModelSettingsCapabilities({
         model,
         gatewayId: route.gatewayId,
         channelId: route.channelId,
-        defaultReasoningEffort: modelRow.defaultReasoningEffort,
-        supportedReasoningEfforts: modelRow.supportedReasoningEfforts.map(
-          (effort) => effort.reasoningEffort,
-        ),
+        ...dynamicReasoning,
       })
       const supportedPlanEfforts = modelSettings.supportedReasoningEfforts
       const preferredDefault = resolvePlanReasoningEffort('auto', planPresetEffort)
@@ -2153,6 +2229,7 @@ export class AgentManager {
         model,
         capabilities: {
           providerId,
+          gatewayId: route.gatewayId,
           ...(backendEpoch === undefined ? {} : { backendEpoch }),
           planDefaultEffort,
           supportedPlanEfforts,

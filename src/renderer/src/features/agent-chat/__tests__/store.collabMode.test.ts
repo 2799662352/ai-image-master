@@ -826,6 +826,43 @@ describe('Plan effort ownership and capabilities', () => {
     })
   })
 
+  it('commits capabilities whose providerId is an internal Channel id of the requested Gateway', async () => {
+    // Regression: after the Gateway/Channel split, main reports the internal
+    // Channel id (e.g. `apiyi-standard`) as `providerId` while renderer
+    // callers pass the user-facing Gateway id (`apiyi`). The ownership guard
+    // must reconcile via `gatewayId`, not drop every post-switch response.
+    useAgentChatStore.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      collaborationCapabilities: {
+        providerId: 'apiyi-standard',
+        gatewayId: 'apiyi',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
+        source: 'codex',
+      },
+      collaborationCapabilitiesModel: 'gpt-5.5',
+    } as never)
+    getCollaborationCapabilities.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        providerId: 'apiyi-standard',
+        gatewayId: 'apiyi',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'codex',
+      },
+    })
+
+    await useAgentChatStore.getState().loadCollaborationCapabilities('apiyi')
+
+    expect(useAgentChatStore.getState().collaborationCapabilitiesModel).toBe('gpt-5.6-sol')
+    expect(useAgentChatStore.getState().collaborationCapabilities).toMatchObject({
+      providerId: 'apiyi-standard',
+      supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      source: 'codex',
+    })
+  })
+
   it('invalidates old Provider capabilities and drops its late response before reloading', async () => {
     const apiyiCapabilities = deferred<AgentCollaborationCapabilitiesResult>()
     const rightcodeCapabilities = deferred<AgentCollaborationCapabilitiesResult>()

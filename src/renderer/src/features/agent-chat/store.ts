@@ -185,6 +185,18 @@ function fallbackCollaborationCapabilities(providerId: string): AgentCollaborati
     source: 'fallback',
   }
 }
+
+/**
+ * Owner id used to reconcile a capabilities payload against the Gateway id
+ * that renderer callers pass to `loadCollaborationCapabilities`. Main reports
+ * the internal Channel id (e.g. `apiyi-standard`) as `providerId` since the
+ * Gateway/Channel split, so ownership must compare `gatewayId` when present.
+ */
+function capabilitiesOwnerGatewayId(
+  capabilities: Pick<AgentCollaborationCapabilities, 'providerId' | 'gatewayId'>,
+): string {
+  return capabilities.gatewayId ?? capabilities.providerId
+}
 const deletedCollaborationThreadTombstones = new Map<string, number>()
 
 function addDeletedThreadTombstone(threadId: string, generation: number): void {
@@ -2198,7 +2210,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           && state.collaborationCapabilities?.source === 'codex'
           && (
             providerId === undefined
-            || state.collaborationCapabilities.providerId === providerId
+            || capabilitiesOwnerGatewayId(state.collaborationCapabilities) === providerId
           )
         const errors = { ...state.collaborationErrorByThread }
         if (ownerThreadId) {
@@ -2250,7 +2262,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         return
       }
       if (resolveModelSelection(get().selectedModelId).model !== model) return
-      if (providerId !== undefined && result.data.providerId !== providerId) return
+      if (
+        providerId !== undefined
+        && capabilitiesOwnerGatewayId(result.data) !== providerId
+      ) return
       if (result.data.source !== 'codex') {
         applyFallback()
         return

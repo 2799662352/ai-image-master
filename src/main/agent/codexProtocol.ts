@@ -63,6 +63,21 @@ export interface ThreadStartParams {
      */
     model_context_window?: number
     model_auto_compact_token_limit?: number
+    /**
+     * Session tuning overlay (smoke-verified in
+     * scripts/smoke-session-tuning-overlay.ts): riding these on thread/start
+     * makes settings changes take effect for NEW threads immediately, without
+     * a codex restart. `personality` is spread-omitted when the user keeps
+     * the 'default' choice so codex resolves its own built-in default.
+     */
+    personality?: string
+    model_reasoning_summary?: string
+    show_raw_agent_reasoning?: boolean
+    /**
+     * GPT-5 output verbosity (batch 2, smoke-batch2-overlay.ts). Spread-omitted
+     * when the user keeps 'default' so codex resolves its own default.
+     */
+    model_verbosity?: string
   }
 }
 export interface ThreadStartResponse { thread: Thread }

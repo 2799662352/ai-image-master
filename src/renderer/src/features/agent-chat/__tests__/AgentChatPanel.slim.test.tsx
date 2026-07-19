@@ -19,6 +19,13 @@ const fakeAgent = {
   listThreads: vi.fn().mockResolvedValue([]),
   listCodexThreads: vi.fn().mockResolvedValue([]),
   restartCodex: vi.fn().mockResolvedValue({ ok: true }),
+  setSessionConfig: vi.fn().mockResolvedValue({
+    model: 'codex-test',
+    sandboxMode: 'workspace-write',
+    approvalPolicy: 'never',
+    webSearch: 'live',
+    writableRoots: [],
+  }),
 }
 
 afterEach(() => {
@@ -61,6 +68,25 @@ describe('AgentChatPanel slim-down', () => {
 
     expect(useTabStore.getState().activeTab).toBe('agentWorkspace')
     expect(useAgentChatStore.getState().isOpen).toBe(false)
+  })
+
+  it('opens the Codex settings popover from the gear button and applies a patch', async () => {
+    renderOpenPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex 设置' }))
+
+    expect(await screen.findByTestId('codex-settings-popover')).toBeTruthy()
+    // Session status loads into the popover form (danger-full-access checked).
+    expect(
+      await screen.findByRole('radio', { name: /danger-full-access/ }),
+    ).toHaveProperty('checked', true)
+
+    fireEvent.click(screen.getByRole('radio', { name: /workspace-write/ }))
+    fireEvent.click(screen.getByRole('button', { name: /应用设置/ }))
+
+    await waitFor(() =>
+      expect(fakeAgent.setSessionConfig).toHaveBeenCalledWith({ sandboxMode: 'workspace-write' }),
+    )
   })
 
   it('restarts Codex from the config dirty banner', async () => {
