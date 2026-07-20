@@ -31,22 +31,17 @@ export interface ImageChannel {
 }
 
 /**
- * Ordered exactly as requested: VIP (default) → Image2 官方 → 腾讯 → Nano Banana 2 → 万相 2.7 pro → Seedream 5.0 Pro.
+ * Ordered exactly as requested (2026-07-20): Seedream 5.0 Pro → 腾讯 → Nano2 →
+ * 万相 2.7 pro → Image2 官方 → VIP. The DEFAULT channel stays VIP — order is
+ * display-only and does not change the fallback.
  */
 export const IMAGE_CHANNELS: readonly ImageChannel[] = [
   {
-    id: 'gpt-image-2-vip',
-    label: 'VIP',
-    fullLabel: 'VIP image2',
-    description: 'OpenAI 官逆，稳定。默认渠道。',
-    miauOnly: false,
-  },
-  {
-    id: 'gpt-image-2',
-    label: 'Image2',
-    fullLabel: 'GPT Image 2 官方',
-    description: 'API易 OpenAI 官方旗舰 — 按 token 计费，慢但质量上限最高，4K+mask 重绘。',
-    miauOnly: false,
+    id: 'doubao-seedream-5-0-pro-260628',
+    label: 'SD5',
+    fullLabel: 'Seedream 5.0 Pro',
+    description: '火山豆包 Seedream 5.0 Pro — 多图融合(≤10 参考图)，1K/2K 单图，经 Miau 代理。',
+    miauOnly: true,
   },
   {
     id: 'custom-imagemodel-gt',
@@ -70,11 +65,18 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     miauOnly: true,
   },
   {
-    id: 'doubao-seedream-5-0-pro-260628',
-    label: 'SD5',
-    fullLabel: 'Seedream 5.0 Pro',
-    description: '火山豆包 Seedream 5.0 Pro — 多图融合(≤10 参考图)，1K/2K 单图，经 Miau 代理。',
-    miauOnly: true,
+    id: 'gpt-image-2',
+    label: 'Image2',
+    fullLabel: 'GPT Image 2 官方',
+    description: 'API易 OpenAI 官方旗舰 — 按 token 计费，慢但质量上限最高，4K+mask 重绘。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2-vip',
+    label: 'VIP',
+    fullLabel: 'VIP image2',
+    description: 'OpenAI 官逆，稳定。默认渠道。',
+    miauOnly: false,
   },
 ] as const
 

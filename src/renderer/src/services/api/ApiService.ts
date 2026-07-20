@@ -832,6 +832,32 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   }
 }
 
+/**
+ * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
+ * 其次 腾讯 → Nano2 → 万相 2.7 pro → Image2 官方 → VIP;未列出的模型保持
+ * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
+ * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
+ */
+const MODEL_DISPLAY_ORDER: readonly string[] = [
+  'doubao-seedream-5-0-pro-260628',
+  'custom-imagemodel-gt',
+  'gemini-3.1-flash-image',
+  'wan2.7-image-pro',
+  'gpt-image-2',
+  'gpt-image-2-vip',
+]
+
+function orderModelsForDisplay(models: Record<string, ModelConfig>): Record<string, ModelConfig> {
+  const ordered: Record<string, ModelConfig> = {}
+  for (const key of MODEL_DISPLAY_ORDER) {
+    if (models[key]) ordered[key] = models[key]
+  }
+  for (const [key, value] of Object.entries(models)) {
+    if (!(key in ordered)) ordered[key] = value
+  }
+  return ordered
+}
+
 export class ApiService {
   private apiSites: Record<string, ApiSite>
   private customSites: Record<string, ApiSite>
@@ -844,7 +870,7 @@ export class ApiService {
   constructor() {
     this.customSites = this.loadCustomSites()
     this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
-    this.models = { ...DEFAULT_MODELS }
+    this.models = orderModelsForDisplay({ ...DEFAULT_MODELS })
     this.currentSite = this.getStoredSite() || 'b-apiyi'
     this.currentModel = this.resolveModelKey(this.getStoredModel() || 'gemini-3-pro-image')
     this.apiKey = this.getStoredApiKey(this.currentSite)

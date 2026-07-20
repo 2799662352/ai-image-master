@@ -14,14 +14,14 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: VIP → Image2 官方 → 腾讯 → Nano2 → Wan2.7 → SD5', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 → Nano2 → Wan2.7 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
-      'gpt-image-2-vip',
-      'gpt-image-2',
+      'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
       'gemini-3.1-flash-image',
       'wan2.7-image-pro',
-      'doubao-seedream-5-0-pro-260628',
+      'gpt-image-2',
+      'gpt-image-2-vip',
     ])
   })
 

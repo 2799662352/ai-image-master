@@ -30,6 +30,22 @@ describe('ApiService Seedream 5.0 Pro model config', () => {
     expect(cfg.defaultParams?.sequential_image_generation).toBeUndefined()
     expect(cfg.defaultParams?.stream).toBeUndefined()
   })
+
+  it('orders the model dropdown: SD5 → 腾讯 → Nano2 → 万相 → Image2 → VIP, rest untouched after', () => {
+    const keys = Object.keys(service.getAllModels())
+    expect(keys.slice(0, 6)).toEqual([
+      'doubao-seedream-5-0-pro-260628',
+      'custom-imagemodel-gt',
+      'gemini-3.1-flash-image',
+      'wan2.7-image-pro',
+      'gpt-image-2',
+      'gpt-image-2-vip',
+    ])
+    // 未指定顺序的模型仍在列表里(相对顺序不变),没有丢失。
+    expect(keys).toContain('seedream-4-5-251128')
+    expect(keys).toContain('gpt-image-2-all')
+    expect(keys).toContain('sora_image')
+  })
 })
 
 describe('ApiService Seedream 5.0 Pro request payload', () => {
