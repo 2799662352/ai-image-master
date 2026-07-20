@@ -701,6 +701,61 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       resolutionControl: true
     }
   },
+  'doubao-seedream-5-0-pro-260628': {
+    name: 'Seedream 5.0 Pro',
+    displayName: '20s出图，火山豆包 Seedream 5.0 Pro，文生图/图生图/多图融合(最多10张参考图)，1K/2K分辨率，仅单图（经 Miau API 代理，OpenAI 兼容端点）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'http://175.178.198.17:3000/v1/images/generations',
+    apiType: 'image-generation',
+    sizeStrategy: 'seedream',
+    ratios: [
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' }
+    ],
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '快速出图' },
+      { key: '2K', label: '2K 高清', description: '标准分辨率' }
+    ],
+    defaultResolution: '2K',
+    // 像素映射来自 Miau 网关接入文档 §7(SEEDREAM_50_RESOLUTION_MAP)。5.0 Pro 无 4K 档;
+    // getImageSize 优先读本表(通用硬编码表缺 4:5/5:4,且 1K 边长与本表不同)。
+    resolutionMap: {
+      '1:1':  { '1K': '1024x1024', '2K': '2048x2048' },
+      '2:3':  { '1K': '848x1264',  '2K': '1664x2496' },
+      '3:2':  { '1K': '1264x848',  '2K': '2496x1664' },
+      '3:4':  { '1K': '896x1200',  '2K': '1728x2304' },
+      '4:3':  { '1K': '1200x896',  '2K': '2304x1728' },
+      '4:5':  { '1K': '928x1152',  '2K': '1792x2240' },
+      '5:4':  { '1K': '1152x928',  '2K': '2240x1792' },
+      '9:16': { '1K': '768x1376',  '2K': '1440x2560' },
+      '16:9': { '1K': '1376x768',  '2K': '2560x1440' },
+      '21:9': { '1K': '1584x672',  '2K': '3024x1296' }
+    },
+    // Pro 版不支持 sequential_image_generation / stream / tools / n(网关自动剔除),
+    // 这里从源头就不发;watermark 不传时网关也会自动补 false,显式写上求明确。
+    defaultParams: {
+      response_format: 'url',
+      watermark: false
+    },
+    responseFormats: ['url', 'b64_json'],
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true
+    }
+  },
   'sora_image': {
     name: 'Sora Image',
     displayName: '90s出图，Sora网页版出图，同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】',
@@ -2148,8 +2203,24 @@ export class ApiService {
 
   /**
    * 获取图片尺寸
+   *
+   * 优先读模型自己的 resolutionMap(resolveImageSizeFromMap 已做 ×→x 归一化):
+   * Seedream 5.0 Pro 等模型的像素档位与下方通用表不同(1K 边长更小)且含 4:5/5:4,
+   * 必须按各自文档映射。查不到(模型没配表 / 比例缺档)再回落通用硬编码表,
+   * 保持 SeeDream 4.5、万相等既有模型行为不变。
    */
   private getImageSize(modelConfig: ModelConfig, ratio?: string, resolution?: string): string | null {
+    const fromModelMap = this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
+    if (fromModelMap) return fromModelMap
+
+    // 模型配了自己的映射表、比例有档但请求的分辨率档缺失(如 5.0 Pro 无 4K、
+    // SeeDream 4.5 无 1K):收敛到模型 defaultResolution,绝不回落通用表——
+    // 通用表会给出模型根本不支持的档位像素,直接把无效 size 发给上游。
+    if (ratio && ratio !== 'auto' && modelConfig.resolutionMap?.[ratio]) {
+      const clamped = this.resolveImageSizeFromMap(modelConfig, ratio, undefined)
+      if (clamped) return clamped
+    }
+
     // 预定义尺寸映射
     const sizeMap: Record<string, Record<string, string>> = {
       '1:1': { '2K': '2048x2048', '4K': '4096x4096', '1K': '1024x1024' },

@@ -31,7 +31,7 @@ export interface ImageChannel {
 }
 
 /**
- * Ordered exactly as requested: VIP (default) → Image2 官方 → 腾讯 → Nano Banana 2 → 万相 2.7 pro.
+ * Ordered exactly as requested: VIP (default) → Image2 官方 → 腾讯 → Nano Banana 2 → 万相 2.7 pro → Seedream 5.0 Pro.
  */
 export const IMAGE_CHANNELS: readonly ImageChannel[] = [
   {
@@ -67,6 +67,13 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     label: 'Wan2.7',
     fullLabel: '万相 2.7 pro',
     description: '阿里万相 2.7 pro — 超清/组图，经 Miau 代理。',
+    miauOnly: true,
+  },
+  {
+    id: 'doubao-seedream-5-0-pro-260628',
+    label: 'SD5',
+    fullLabel: 'Seedream 5.0 Pro',
+    description: '火山豆包 Seedream 5.0 Pro — 多图融合(≤10 参考图)，1K/2K 单图，经 Miau 代理。',
     miauOnly: true,
   },
 ] as const

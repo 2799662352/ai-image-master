@@ -74,6 +74,8 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
      - `gpt-image-2` — API易 OpenAI 官方旗舰 Image2（按 token 计费，慢但质量上限最高，4K+mask 重绘）.
      - `wan2.7-image-pro` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
      - `gemini-3.1-flash-image` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
+     - `doubao-seedream-5-0-pro-260628` — 火山豆包 Seedream 5.0 Pro（多图融合最强，
+       最多 10 张参考图；1K/2K、仅单图）.
      站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
    - `ratio` (optional): aspect ratio, e.g. `1:1`, `16:9`, `9:16`, `4:3`, `3:2`.
      Omit or `auto` lets the model decide.
@@ -141,8 +143,9 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
 
 The `model` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (VIP / Image2 官方 / 腾讯 /
-Nano2 / 万相 2.7 pro; default VIP) — 所有渠道同一套 ratio × resolution(1K/2K/4K) ×
-quality 参数。
+Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default VIP) — 各渠道共用同一套 ratio ×
+resolution × quality 参数面(Seedream 5.0 Pro 只有 1K/2K、无 quality 轴,多传会被
+网关安全剔除)。
 Omitting `model` honors the user's pick — do this for ordinary requests. Set `model`
 only when you have a concrete reason to override:
 
@@ -162,14 +165,19 @@ only when you have a concrete reason to override:
 - **`gemini-3.1-flash-image` (Nano Banana 2)** — pick when the user says nano /
   nano2 / nano banana / gemini / 谷歌. 谷歌 Gemini 原生端点，出图快(~15s)、支持
   超多宽高比与 4K，中文/文字与一致性也不错。
-- All five accept `referenceImages` for image-to-image / editing.
+- **`doubao-seedream-5-0-pro-260628` (火山豆包 Seedream 5.0 Pro)** — pick when the
+  user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
+  **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
+  参考图,这是它的强项). 注意:仅单图输出(`count` 无效)、分辨率只有 1K/2K
+  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。
+- All six accept `referenceImages` for image-to-image / editing.
 
 ### 站点要求(已自动处理 — 无需手动切站点)
 
-`custom-imagemodel-gt`(腾讯 image2)和 `wan2.7-image-pro`(阿里万相 2.7 pro)
-**都只经 Miau API 代理提供**。出图时应用会**自动把这两个渠道的请求固定走 Miau API
-站点**(无论用户当前在「API 设置」里选了哪个站点),所以你**不需要**让用户手动切站点——
-直接调用即可。
+`custom-imagemodel-gt`(腾讯 image2)、`wan2.7-image-pro`(阿里万相 2.7 pro)和
+`doubao-seedream-5-0-pro-260628`(Seedream 5.0 Pro)**都只经 Miau API 代理提供**。
+出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
+里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
 
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
@@ -179,8 +187,9 @@ only when you have a concrete reason to override:
 
 When the user does not name a channel, **do not guess** — just omit `model` so the
 render honors the user's composer picker (default VIP). Set `model` only for a
-concrete reason (组图 → `wan2.7-image-pro`, or a channel the user named). Never
-invent a model name; only these five values are valid.
+concrete reason (组图 → `wan2.7-image-pro`, 多参考图融合 →
+`doubao-seedream-5-0-pro-260628`, or a channel the user named). Never invent a
+model name; only these six values are valid.
 
 ## Reference images — reuse the user's material (important)
 
@@ -246,10 +255,11 @@ directory and give it a descriptive, ordered name — e.g.
 
 - 用户给了图却忘传 `referenceImages`,改成从零文生图。
 - 多张图却逐个调 `generate_image`,而不是一次 `generate_images`。
-- 凭空编造 `model` 名;只有五个合法值。用户没点名就省略 `model`(交给用户在 composer 选的渠道,默认 VIP)。
+- 凭空编造 `model` 名;只有六个合法值。用户没点名就省略 `model`(交给用户在 composer 选的渠道,默认 VIP)。
 - 用户点名某渠道却不显式传 `model`(应显式传:vip/官逆 → `gpt-image-2-vip`、
   官方/旗舰/image2 官方 → `gpt-image-2`、nano/nano2 → `gemini-3.1-flash-image`、
-  万相/组图 → `wan2.7-image-pro`)。
+  万相/组图 → `wan2.7-image-pro`、seedream/即梦/豆包/多参考图融合 →
+  `doubao-seedream-5-0-pro-260628`)。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
 
 ## Notes
