@@ -237,7 +237,10 @@ describe('CodexProtocolClient collaborationMode', () => {
     }
     const input = { items: [{ type: 'text', text: 'hi' }], collaborationMode } as unknown as AgentInput
     const iterator = client.send('thread-A', input)[Symbol.asyncIterator]()
-    void iterator.next()
+    // Fake server never emits turn/completed, so this pending next() gets
+    // rejected by afterEach's client.stop() — swallow it or Vitest records an
+    // unhandled rejection and fails the whole run (flaky by timing).
+    iterator.next().catch(() => {})
     await waitUntil(() => server!.receivedFromClient.some((m) => m.method === 'turn/start'))
 
     const turnStart = server.receivedFromClient.find((m) => m.method === 'turn/start')
@@ -251,7 +254,8 @@ describe('CodexProtocolClient collaborationMode', () => {
 
     const input = { items: [{ type: 'text', text: 'hi' }] } as unknown as AgentInput
     const iterator = client.send('thread-B', input)[Symbol.asyncIterator]()
-    void iterator.next()
+    // Same unhandled-rejection guard as the test above.
+    iterator.next().catch(() => {})
     await waitUntil(() => server!.receivedFromClient.some((m) => m.method === 'turn/start'))
 
     const turnStart = server.receivedFromClient.find((m) => m.method === 'turn/start')

@@ -100,6 +100,18 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(result.model).toBe('gpt-image-2-vip')
   })
 
+  it('renders on the user-picked Seedream 5.0 Pro channel and pins the Miau site', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('doubao-seedream-5-0-pro-260628')
+
+    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('doubao-seedream-5-0-pro-260628')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
+    expect(result.model).toBe('doubao-seedream-5-0-pro-260628')
+  })
+
   it('renders on the user-picked nano2 channel (gemini-3.1-flash-image), no site pin', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())

@@ -322,21 +322,30 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     )
 
   // Optional channel OVERRIDE. Default = the channel the user picked in the chat
-  // composer (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro). Omit to honor the
+  // composer (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro). Omit to honor the
   // user's pick; set it only when you have a concrete reason to override (e.g. 万相
   // for a 组图 series, or the user asked for a specific channel this turn).
   const modelSchema = z
-    .enum(['custom-imagemodel-gt', 'gpt-image-2-vip', 'gpt-image-2', 'wan2.7-image-pro', 'gemini-3.1-flash-image'])
+    .enum([
+      'custom-imagemodel-gt',
+      'gpt-image-2-vip',
+      'gpt-image-2',
+      'wan2.7-image-pro',
+      'gemini-3.1-flash-image',
+      'doubao-seedream-5-0-pro-260628',
+    ])
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro; default VIP) — OMIT this to ' +
-      "honor the user's pick. Set it ONLY when you have a concrete reason to override: pass " +
-      '"wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific channel the user ' +
-      'explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, gpt-image-2 = API易 ' +
-      'OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ceiling, ' +
-      'custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2). The result reports ' +
-      'the actual channel used in its `model` field.',
+      'composer picker (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default ' +
+      "VIP) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
+      'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
+      'channel the user explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, ' +
+      'gpt-image-2 = API易 OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ' +
+      'ceiling, custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2, ' +
+      'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
+      'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call). The ' +
+      'result reports the actual channel used in its `model` field.',
     )
 
   server.registerTool('generate_image', {
