@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 
 import {
+  CATIMATION_AUDIO_SKILL_CONTENT,
   CATIMATION_BRAINSTORM_SKILL_CONTENT,
   CATIMATION_CANVAS_SKILL_CONTENT,
   CATIMATION_DIRECTOR_STAGE_SKILL_CONTENT,
@@ -229,6 +230,11 @@ export const CATIMATION_VIDEO_SKILL: FirstPartySkill = {
   content: CATIMATION_VIDEO_SKILL_CONTENT,
 }
 
+export const CATIMATION_AUDIO_SKILL: FirstPartySkill = {
+  name: 'catimation-audio',
+  content: CATIMATION_AUDIO_SKILL_CONTENT,
+}
+
 export const CATIMATION_PORTRAIT_LIBRARY_SKILL: FirstPartySkill = {
   name: 'catimation-portrait-library',
   content: CATIMATION_PORTRAIT_LIBRARY_SKILL_CONTENT,
@@ -270,6 +276,7 @@ const RETIRED_FIRST_PARTY_SKILL_NAMES = ['catimation-subagents', 'mediakit-cli']
 export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_IMAGE_SKILL,
   CATIMATION_VIDEO_SKILL,
+  CATIMATION_AUDIO_SKILL,
   CATIMATION_PORTRAIT_LIBRARY_SKILL,
   CATIMATION_BRAINSTORM_SKILL,
   CATIMATION_CANVAS_SKILL,

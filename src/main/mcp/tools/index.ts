@@ -1,4 +1,5 @@
 import { registerAskTools } from './askTools'
+import { registerAudioTools } from './audioTools'
 import { registerCanvasTools } from './canvasTools'
 import { registerDirectorTools } from './directorTools'
 import { registerHistoryTools } from './historyTools'
@@ -13,6 +14,7 @@ import type { ToolRouter } from '../ToolRouter'
 export function registerTools(server: McpServer, router: ToolRouter): void {
   registerImageTools(server, router)
   registerVideoTools(server, router)
+  registerAudioTools(server, router)
   registerPortraitTools(server, router)
   registerHistoryTools(server, router)
   registerUiTools(server, router)

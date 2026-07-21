@@ -14,6 +14,8 @@ export type {
   ModelCapabilities,
   GenerateImageParams,
   GenerateResult,
+  GenerateAudioParams,
+  GenerateAudioResult,
   VisionParams,
   VisionResult,
   UnderstandInput

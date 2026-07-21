@@ -36,6 +36,7 @@ import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket } from './services/tencent/cosClient'
+import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } from './services/audioHistoryFiles'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
@@ -2107,6 +2108,88 @@ ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggested
 ipcMain.handle('shell:show-item-in-folder', async (_event, filePath: string) => {
   shell.showItemInFolder(filePath)
 })
+
+// ==================== 音频作品库本地文件 (AudioPage) ====================
+// 音频字节落 userData/audio-history/,IndexedDB 只存元数据(方案 A)。
+// read/delete 在 service 层做目录包含校验,渲染进程碰不到目录外文件。
+
+ipcMain.handle('audio-history:save', async (_event, payload: { base64: string; format: string }) =>
+  saveAudioHistoryFile(app.getPath('userData'), payload?.base64, payload?.format ?? 'mp3'))
+
+ipcMain.handle('audio-history:read', async (_event, filePath: string) =>
+  readAudioHistoryFile(app.getPath('userData'), filePath))
+
+ipcMain.handle('audio-history:delete', async (_event, filePath: string) =>
+  deleteAudioHistoryFile(app.getPath('userData'), filePath))
+
+/**
+ * 音频作品的 COS key。**必须放在 `image-history/` 前缀下** —— STS 临时凭证
+ * (serverless/sts-cos)只授权 `image-history/*` 的 PutObject,放别的前缀会 403;
+ * 用 `image-history/audio/` 子路径既复用现有授权(零 SCF 改动),又和图片资产分开。
+ */
+function generateAudioHistoryKey(format: string): string {
+  const ext = audioExtensionForCos(format)
+  const now = new Date()
+  const yyyy = String(now.getFullYear())
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const dd = String(now.getDate()).padStart(2, '0')
+  const id = randomBytes(8).toString('hex')
+  return `image-history/audio/${yyyy}/${mm}/${dd}/${id}.${ext}`
+}
+
+function audioExtensionForCos(format: string): string {
+  const f = (format || '').toLowerCase()
+  if (f.includes('opus') || f.includes('ogg')) return 'ogg'
+  if (f.includes('wav')) return 'wav'
+  if (f.includes('pcm')) return 'pcm'
+  return 'mp3'
+}
+
+function audioContentType(format: string): string {
+  switch (audioExtensionForCos(format)) {
+    case 'ogg': return 'audio/ogg'
+    case 'wav': return 'audio/wav'
+    case 'pcm': return 'audio/pcm'
+    default: return 'audio/mpeg'
+  }
+}
+
+// 音频上传 COS(方案 B):复用图片历史 bucket + STS,上传成功回权威 https URL。
+// 与图片历史一致:走 enqueueUpload 占并发槽,base64 大小闸门复用 rejectOversizedBase64。
+ipcMain.handle(
+  'audio-history:upload-cos',
+  async (
+    _event,
+    payload: { base64: string; format: string },
+  ): Promise<
+    | { success: true; url: string; key: string }
+    | { success: false; error: string }
+  > => {
+    try {
+      const { base64, format } = payload || ({} as { base64: string; format: string })
+      if (typeof base64 !== 'string' || !base64) {
+        return { success: false, error: 'invalid base64 payload' }
+      }
+      const oversized = rejectOversizedBase64(base64)
+      if (oversized) return { success: false, error: oversized }
+      const body = Buffer.from(base64, 'base64')
+      if (body.length === 0) return { success: false, error: 'empty buffer after base64 decode' }
+
+      const key = generateAudioHistoryKey(format)
+      const url = await enqueueUpload({
+        bucket: IMAGE_HISTORY_BUCKET,
+        region: IMAGE_HISTORY_REGION,
+        key,
+        body,
+        contentType: audioContentType(format),
+      })
+      return { success: true, url, key }
+    } catch (err: any) {
+      console.error('[audio-history:upload-cos] failed:', err)
+      return { success: false, error: err?.message ?? String(err) ?? 'upload failed' }
+    }
+  },
+)
 
 function validateExternalUrlMain(input: string): { ok: true; url: string } | { ok: false } {
   try {

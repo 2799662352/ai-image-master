@@ -658,6 +658,19 @@ export interface ElectronAPI {
     showItemInFolder: (p: string) => Promise<void>
     openExternal: (url: string) => Promise<IpcResponse>
   }
+  // 音频作品库存储(AudioPage):方案 A 本地文件 + 方案 B COS 桶备份
+  audioHistory: {
+    save: (base64: string, format: string) => Promise<
+      { success: true; filePath: string } | { success: false; error: string }
+    >
+    read: (filePath: string) => Promise<
+      { success: true; base64: string } | { success: false; error: string }
+    >
+    delete: (filePath: string) => Promise<{ success: true } | { success: false; error: string }>
+    uploadCos: (base64: string, format: string) => Promise<
+      { success: true; url: string; key: string } | { success: false; error: string }
+    >
+  }
   // Tencent COS uploads for renderer-side flows (image history, etc.).
   // Routed through the main process so the COS SecretId/SecretKey never
   // leak into renderer-land. Bucket selection is determined by the IPC
@@ -1430,6 +1443,29 @@ const electronAPI: ElectronAPI = {
       safeInvoke<void>(IPC_CHANNELS.SHELL.SHOW_ITEM_IN_FOLDER, p),
     openExternal: (url: string) =>
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.OPEN_EXTERNAL, url),
+  },
+
+  // ============ 音频作品库本地文件 (AudioPage) ============
+  audioHistory: {
+    save: (base64: string, format: string) =>
+      safeInvoke<{ success: true; filePath: string } | { success: false; error: string }>(
+        'audio-history:save',
+        { base64, format },
+      ),
+    read: (filePath: string) =>
+      safeInvoke<{ success: true; base64: string } | { success: false; error: string }>(
+        'audio-history:read',
+        filePath,
+      ),
+    delete: (filePath: string) =>
+      safeInvoke<{ success: true } | { success: false; error: string }>(
+        'audio-history:delete',
+        filePath,
+      ),
+    uploadCos: (base64: string, format: string) =>
+      safeInvoke<
+        { success: true; url: string; key: string } | { success: false; error: string }
+      >('audio-history:upload-cos', { base64, format }),
   },
 
   // ============ Tencent COS uploads (renderer-facing) ============

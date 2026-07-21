@@ -26,6 +26,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 export const FIRST_PARTY_SKILL_SOURCES = [
   { name: 'catimation-image', source: 'resources/plugins/catimation-core/skills/catimation-image/SKILL.md' },
   { name: 'catimation-video', source: 'resources/plugins/catimation-video/skills/catimation-video/SKILL.md' },
+  { name: 'catimation-audio', source: 'resources/first-party-skills/catimation-audio/SKILL.md' },
   {
     name: 'catimation-portrait-library',
     source: 'resources/plugins/catimation-core/skills/catimation-portrait-library/SKILL.md',

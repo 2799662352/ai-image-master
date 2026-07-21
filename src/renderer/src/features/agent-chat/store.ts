@@ -913,7 +913,7 @@ interface AgentChatState extends ModelRoutingSlice {
    * background turn's image never lands in whatever chat happens to be active
    * when it finishes (parallel-chat contamination). Omit for the active view.
    */
-  beginImageGeneration: (prompt: string, threadId?: string, mediaKind?: 'image' | 'video') => string
+  beginImageGeneration: (prompt: string, threadId?: string, mediaKind?: 'image' | 'video' | 'audio') => string
   resolveImageGeneration: (itemId: string, artifacts: AttachmentRef[], threadId?: string) => void
   failImageGeneration: (itemId: string, error: string, threadId?: string) => void
 

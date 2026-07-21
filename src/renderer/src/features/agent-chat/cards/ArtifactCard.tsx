@@ -22,6 +22,37 @@ function isRenderableMedia(ref: AttachmentRef): boolean {
 }
 
 /**
+ * Audio isn't in `AttachmentRef.kind` (that union stays image/video/file);
+ * detect it by mime / extension so a generated音频 renders an inline player
+ * instead of the generic file chip. Uri may be a COS https URL or a local path.
+ */
+const AUDIO_EXT = new Set(['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac'])
+
+function isAudioRef(ref: AttachmentRef): boolean {
+  if ((ref.mime ?? '').startsWith('audio/')) return true
+  const name = (ref.name ?? '').toLowerCase()
+  const ext = name.includes('.') ? (name.split('.').pop() ?? '') : ''
+  return AUDIO_EXT.has(ext)
+}
+
+/** Inline audio player bubble — the audio counterpart of the image/video thumbnail. */
+// NOTE: the prop must NOT be called `ref` — that's a reserved React prop and
+// only reaches function-component props via React 19's ref-as-prop behavior.
+function AudioArtifact({ artifact }: { artifact: AttachmentRef }) {
+  const src = toRenderableUri(artifact.uri)
+  return (
+    <div className="flex w-full max-w-[360px] flex-col gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2.5">
+      <div className="flex items-center gap-2 text-[11px] text-cyan-200/80">
+        <span aria-hidden className="text-[13px] leading-none">🎵</span>
+        <span className="truncate font-mono" title={artifact.name}>{artifact.name}</span>
+      </div>
+      {/* controls-only native player: play/seek/volume, no download button noise */}
+      <audio src={src} controls preload="metadata" className="h-9 w-full" controlsList="nodownload" />
+    </div>
+  )
+}
+
+/**
  * Source for the small 80px bubble.
  *
  *  - **image**: prefer an explicit `thumbnailUri`; otherwise derive a 数据万象
@@ -117,7 +148,12 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
   // while the request is in flight, and an error card on failure. Plain
   // attachment artifacts have no `status` and fall through to the grid below.
   if (item.status === 'generating') {
-    const fallback = item.mediaKind === 'video' ? '正在生成视频…' : '正在生成图片…'
+    const fallback =
+      item.mediaKind === 'video'
+        ? '正在生成视频…'
+        : item.mediaKind === 'audio'
+          ? '正在生成音频…'
+          : '正在生成图片…'
     return (
       <div className="my-1 flex items-center gap-3 rounded border border-cyan-400/30 bg-cyan-400/5 px-3 py-2.5">
         <span
@@ -142,7 +178,11 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
         <span aria-hidden className="text-[13px] leading-none text-red-300">⚠</span>
         <div className="flex min-w-0 flex-col">
           <span className="font-mono text-[12px] text-red-200">
-            {item.mediaKind === 'video' ? '视频生成失败' : '图片生成失败'}
+            {item.mediaKind === 'video'
+              ? '视频生成失败'
+              : item.mediaKind === 'audio'
+                ? '音频生成失败'
+                : '图片生成失败'}
           </span>
           {item.error ? (
             <span className="max-w-[260px] break-words text-[11px] text-red-300/70">{item.error}</span>
@@ -178,6 +218,9 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
     <div className="my-1">
       <div className="flex flex-wrap gap-2">
         {item.artifacts.map((ref) => {
+        if (isAudioRef(ref) && typeof ref.uri === 'string' && ref.uri.length > 0) {
+          return <AudioArtifact key={ref.id} artifact={ref} />
+        }
         const kind = mediaKindOf(ref)
         if (kind != null && isRenderableMedia(ref)) {
           return (

@@ -67,6 +67,29 @@
 背景:MCP `generate_image` 的 `resolution` 参数是全局 enum(1K/2K/4K),
 agent 可能对任何渠道传 4K,收敛逻辑是必须的兜底。
 
+## 音频页存储演进(2026-07-21)
+
+seed-audio 音频作品的存储从「IndexedDB 存 base64」升级为**三级持久化**
+(方案 A 本地 + 方案 B COS,用户最终选 B 为主):
+
+1. **COS 桶(主持久层,方案 B)**:生成后 `audioHistory.uploadCos` 把字节
+   PUT 到图片历史 bucket 的 `image-history/audio/YYYY/MM/DD/<id>.<ext>` 前缀。
+   - **复用现有 STS 授权**:`serverless/sts-cos` 只放行 `image-history/*` 的
+     PutObject,所以 key 必须挂在该前缀下(用 `audio/` 子路径与图片分开),
+     **零 SCF 改动**。ContentType 按格式给 `audio/mpeg|ogg|wav|pcm`。
+   - 上传走 `enqueueUpload`(占并发槽)+ `rejectOversizedBase64` 大小闸门,
+     与图片历史同一条通道。回权威 `https://<bucket>.cos.<region>.myqcloud.com/…`
+     URL,跨设备、可分享、不失效。
+2. **本地文件(缓存/离线,方案 A)**:同时落 `userData/audio-history/`,播放
+   优先 `local-file://`(秒开、免网络);read/delete IPC 做目录包含校验。
+3. **base64(最后兜底)**:仅当 COS 和本地都失败时才写进 IndexedDB,保证音频
+   永不丢。
+
+播放/波形/下载源优先级统一为 **本地文件 → COS URL → base64**;元数据(路径/
+URL/时长/波形峰值)存 IndexedDB,不再背大字节。相关代码:
+`src/main/services/audioHistoryFiles.ts`(本地文件)、`index.ts` 的
+`audio-history:upload-cos`(COS)、`AudioPage.ts`(三级消费)。
+
 ## 与桶端图片处理的关系(2026-07-20 同日配置)
 
 - COS 桶 `image-master-1345773498` 已开**自动极智压缩**:参考图 COS URL 被上
