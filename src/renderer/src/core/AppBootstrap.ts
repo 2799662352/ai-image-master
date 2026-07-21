@@ -15,6 +15,7 @@ export interface PageRegistry {
   batch?: any
   history?: any
   compare?: any
+  audio?: any
   understand?: any
   director?: any
   promptTemplates?: any
@@ -489,7 +490,8 @@ export class AppBootstrap {
       generate: w.createGeneratePageTS?.(this.createAppProxy()),
       batch: w.createBatchPageTS?.(this.createAppProxy()),
       history: w.createHistoryPageTS?.(this.createAppProxy()),
-      compare: w.createComparePageTS?.(this.createAppProxy()),
+      // compare 已被 audio(音频生成)替换;ComparePage 代码暂留未注册
+      audio: w.createAudioPageTS?.(this.createAppProxy()),
       understand: w.createUnderstandPageTS?.(this.createAppProxy()),
       director: w.createDirectorPageTS?.(this.createAppProxy())
     }
@@ -500,7 +502,7 @@ export class AppBootstrap {
     // 设置全局引用便于其他模块访问 (过渡期)
     w.generatePage = this.pages.generate
     w.batchPage = this.pages.batch
-    w.comparePage = this.pages.compare
+    w.audioPage = this.pages.audio
     w.understandPage = this.pages.understand
     w.directorPage = this.pages.director
     w.promptTemplates = this.pages.promptTemplates

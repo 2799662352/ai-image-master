@@ -40,6 +40,8 @@
     "batchShort": "Batch",
     "modelCompare": "Model Compare",
     "compareShort": "Compare",
+    "audioGenerate": "Audio Generate",
+    "audioShort": "Audio",
     "historyRecords": "History Records",
     "historyShort": "History",
     "imageUnderstand": "Image Understanding",
@@ -63,7 +65,8 @@
       "configured": "Configured"
     },
     "badge": {
-      "lottery": "Lucky Draw"
+      "lottery": "Lucky Draw",
+      "new": "NEW"
     },
     "skipToContent": "Skip to main content",
     "mainNavigation": "Main navigation",
@@ -376,6 +379,40 @@
       "4": "4 threads",
       "5": "5 threads",
       "6": "6 threads"
+    }
+  },
+  "audio": {
+    "labels": {
+      "prompt": "Describe the audio you want",
+      "promptPlaceholder": "e.g. A middle-aged man says calmly: the project is live. Soft keyboard sounds in the background, with a short chime at the end.",
+      "promptHint": "Single output caps at ~120 seconds; split long dialogue into segments",
+      "styleChips": "Quick Styles",
+      "referenceAudios": "Reference audio (optional, up to 2, style fusion)",
+      "refHint": "Click or drag to upload reference audio (MP3/WAV, ≤10MB)",
+      "format": "Format",
+      "speed": "Speed",
+      "billingNote": "Billed by output seconds, ~¥1/minute",
+      "library": "Library",
+      "empty": "No tracks yet — describe a scene on the left to generate your first audio"
+    },
+    "buttons": {
+      "generate": "Generate Audio",
+      "generating": "Generating…",
+      "clear": "Clear"
+    },
+    "card": {
+      "generating": "Generating, usually takes ~15s…",
+      "download": "Download",
+      "copyPrompt": "Copy Prompt",
+      "delete": "Delete",
+      "dismiss": "Dismiss"
+    },
+    "toast": {
+      "done": "Audio generated",
+      "busy": "Still generating, please wait",
+      "emptyPrompt": "Please describe the audio first",
+      "refLimit": "Up to 2 reference audios",
+      "promptCopied": "Prompt copied"
     }
   },
   "compare": {

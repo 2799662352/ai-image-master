@@ -1,6 +1,10 @@
 // e2e/compare.pom.e2e.ts
 /**
  * 模型对比页面 E2E 测试 - 使用 Page Object Model
+ *
+ * 2026-07-20:模型对比 tab 已被「音频生成」(audio,seed-audio-1.0)替换,
+ * nav 无入口、comparePanel 已移除;ComparePage 代码暂留未注册。整套跳过,
+ * 待下个版本彻底删除 ComparePage 时一并清理本文件。
  */
 
 import { test, expect } from '@playwright/test'
@@ -9,7 +13,7 @@ import { ComparePage } from './pages'
 
 let comparePage: ComparePage
 
-test.describe('ComparePage E2E Tests', () => {
+test.describe.skip('ComparePage E2E Tests', () => {
   test.beforeAll(async () => {
     await electronApp.launch()
   })

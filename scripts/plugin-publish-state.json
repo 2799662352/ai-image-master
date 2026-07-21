@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-20T09:56:42.559Z",
+  "generatedAt": "2026-07-21T06:26:27.550Z",
   "plugins": {
     "catimation-director": {
       "sig": "7609df5b33e3b40cf89ebddf64df122dd751a686a6b4b6de267156877c105cc6",
@@ -22,8 +22,8 @@
       "version": "1.0.23"
     },
     "catimation-core": {
-      "sig": "9a1d9c11dd3788ab884d182923b8690ce29811774434331e1137557ce9828731",
-      "version": "1.0.19"
+      "sig": "033a73d949464cbad501bf6298d4baab451b0237d11f6c31af0ab065badc0f3a",
+      "version": "1.0.20"
     }
   }
 }

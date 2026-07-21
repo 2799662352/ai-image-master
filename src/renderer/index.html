@@ -1405,10 +1405,11 @@
                     <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.batchGenerate">批量生成</span>
                     <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.batchShort">批量</span>
                 </button>
-                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="compare">
-                    <i class="fas fa-balance-scale text-sm"></i>
-                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.modelCompare">模型对比</span>
-                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.compareShort">对比</span>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap relative" data-tab="audio">
+                    <span class="tab-btn-badge" data-i18n="nav.badge.new">NEW</span>
+                    <i class="fas fa-music text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.audioGenerate">音频生成</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.audioShort">音频</span>
                 </button>
                 <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="history">
                     <i class="fas fa-history text-sm"></i>
@@ -1899,112 +1900,72 @@
         </div>
 
         <!-- 模型对比面板 -->
-        <div id="comparePanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+        <!-- 音频生成面板 (seed-audio-1.0,替换原模型对比 tab;Suno 式布局:左创作/右作品库) -->
+        <div id="audioPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
             <!-- Kinetic Typography - 装饰性背景数字 -->
             <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">03</div>
-            <!-- 模型选择区域 -->
-            <div class="mb-6">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-                    <!-- 左侧模型选择 -->
-                    <div class="space-y-2">
-                        <label for="leftModelSelect" class="block text-white text-sm font-medium" data-i18n="compare.labels.leftModel">左侧模型</label>
-                        <select id="leftModelSelect" class="w-full bg-[#09090B] border border-[#3F3F46] text-white rounded-none px-4 py-2.5 border border-white border-opacity-20 focus:border-opacity-40 focus:bg-opacity-20 transition-all">
-                            <option value="" data-i18n="compare.labels.selectModel">选择模型</option>
-                        </select>
-                        <div id="leftModelInfo" class="mt-1"></div>
-                    </div>
-
-                    <!-- VS 标识 -->
-                    <div class="flex justify-center items-center">
-                        <div class="bg-[#FCE300] text-black rounded-none w-12 h-12 flex items-center justify-center font-bold text-lg">
-                            VS
-                        </div>
-                    </div>
-
-                    <!-- 右侧模型选择 -->
-                    <div class="space-y-2">
-                        <label for="rightModelSelect" class="block text-white text-sm font-medium" data-i18n="compare.labels.rightModel">右侧模型</label>
-                        <select id="rightModelSelect" class="w-full bg-[#09090B] border border-[#3F3F46] text-white rounded-none px-4 py-2.5 border border-white border-opacity-20 focus:border-opacity-40 focus:bg-opacity-20 transition-all">
-                            <option value="" data-i18n="compare.labels.selectModel">选择模型</option>
-                        </select>
-                        <div id="rightModelInfo" class="mt-1"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 输入区域 -->
-            <div class="space-y-6 mb-6">
-                <!-- 上部：提示词和参考图片 -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                    <!-- 左列：提示词和尺寸 -->
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-white text-sm font-medium mb-2" data-i18n="compare.labels.prompt">提示词</label>
-                            <textarea id="comparePrompt" rows="4" class="w-full bg-[#09090B] border border-[#3F3F46] text-white placeholder-white placeholder-opacity-50 rounded-none p-3 border border-white border-opacity-20 focus:border-opacity-40 focus:bg-opacity-20 transition-all resize-none"
-                                      placeholder="描述你想要生成的图片..." data-i18n-attr="placeholder:compare.labels.promptPlaceholder"></textarea>
-                            <!-- React Island: 视觉 prompt 辅助 [多角度] [打光] -->
-                            <div id="compare-prompt-helper-mount"></div>
-                        </div>
-
-                        <!-- 尺寸选择 -->
-                        <div>
-                            <label class="block text-white text-sm font-medium mb-2" data-i18n="compare.labels.commonRatios">共同支持的尺寸</label>
-                            <div id="compareRatioButtons" class="flex flex-wrap gap-2">
-                                <!-- 动态生成比例按钮 -->
-                                <div class="text-white opacity-50 text-sm w-full text-center py-4" data-i18n="compare.labels.selectModelsFirst">
-                                    请先选择两个模型
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 右列：参考图片 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
+                <!-- 左侧:创作面板 -->
+                <div class="lg:col-span-1 space-y-4">
                     <div>
-                        <label class="block text-white text-sm font-medium mb-2" data-i18n="compare.labels.referenceImages">参考图片（可选，最多8张）</label>
-                        <div id="compareReferenceImageArea" class="border-2 border-dashed border-white border-opacity-20 rounded-none p-4 cursor-pointer hover:border-opacity-30 transition-all min-h-[120px] flex items-center justify-center">
-                            <div id="compareReferenceUploadPrompt" class="space-y-2 text-center w-full">
-                                <i class="fas fa-cloud-upload-alt text-2xl text-white opacity-50"></i>
-                                <p class="text-white opacity-70 text-sm" data-i18n="compare.labels.uploadHint">点击或拖拽上传参考图片</p>
-                                <p class="text-white opacity-50 text-xs" data-i18n="compare.labels.formatHint">支持 JPG、PNG、GIF 格式</p>
-                            </div>
+                        <label class="block text-white text-sm font-medium mb-2" data-i18n="audio.labels.prompt">描述你想要的音频</label>
+                        <textarea id="audioPrompt" rows="6" class="w-full bg-[#09090B] border border-[#3F3F46] text-white placeholder-white placeholder-opacity-40 rounded-none p-3 focus:border-[#FCE300] transition-all resize-none"
+                                  placeholder="例:一位中年男性用沉稳语气说:项目已上线。背景有轻微键盘声,结尾加短促提示音。" data-i18n-attr="placeholder:audio.labels.promptPlaceholder"></textarea>
+                        <p id="audioPromptHint" class="hidden text-yellow-400 text-xs mt-1" data-i18n="audio.labels.promptHint">单次输出上限约 120 秒,过长对白建议分段生成</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-white text-sm font-medium mb-2" data-i18n="audio.labels.styleChips">快捷风格</label>
+                        <div id="audioStyleChips" class="flex flex-wrap gap-2"></div>
+                    </div>
+
+                    <div>
+                        <label class="block text-white text-sm font-medium mb-2" data-i18n="audio.labels.referenceAudios">参考音频（可选，最多2个，风格融合）</label>
+                        <div id="audioRefArea" class="border-2 border-dashed border-white border-opacity-20 rounded-none p-4 cursor-pointer hover:border-opacity-40 transition-all text-center">
+                            <i class="fas fa-file-audio text-xl text-white opacity-50"></i>
+                            <p class="text-white opacity-60 text-xs mt-1" data-i18n="audio.labels.refHint">点击或拖拽上传参考音频（MP3/WAV，≤10MB）</p>
+                        </div>
+                        <input type="file" id="audioRefInput" accept="audio/*" multiple class="hidden" />
+                        <div id="audioRefList" class="space-y-1.5 mt-2"></div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-white text-sm font-medium mb-2" data-i18n="audio.labels.format">格式</label>
+                            <select id="audioFormat" class="w-full bg-[#09090B] border border-[#3F3F46] text-white rounded-none px-3 py-2 focus:border-[#FCE300] transition-all">
+                                <option value="mp3" selected>MP3</option>
+                                <option value="wav">WAV</option>
+                                <option value="opus">OGG Opus</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-white text-sm font-medium mb-2"><span data-i18n="audio.labels.speed">语速</span> <span id="audioSpeedValue" class="text-[#FCE300]">1.00x</span></label>
+                            <input type="range" id="audioSpeed" min="0.5" max="2" step="0.05" value="1" class="w-full h-1 accent-[#FCE300] mt-3" />
                         </div>
                     </div>
-                </div>
 
-                <!-- 下部：按钮组 -->
-                <div class="flex justify-center items-center gap-3 mt-6">
-                    <button id="clearCompareInputBtn" type="button" class="bg-gray-500 bg-opacity-60 hover:bg-opacity-80 text-white py-3 px-4 rounded-none font-medium transition-all">
-                        <i class="fas fa-eraser"></i>
-                        <span class="ml-2" data-i18n="compare.buttons.clear">清空</span>
-                    </button>
-                    <button id="compareBtn" type="button" class="bg-[#FCE300] text-black py-3 px-6 rounded-none font-bold uppercase tracking-tighter transition-all transform hover:scale-105 active:scale-95">
-                        <i class="fas fa-balance-scale mr-2"></i>
-                        <span data-i18n="compare.buttons.startCompare">开始对比</span>
-                    </button>
-                </div>
-            </div>
+                    <p class="text-white text-opacity-40 text-xs" data-i18n="audio.labels.billingNote">按输出秒数计费,约 ¥1/分钟</p>
 
-            <!-- 对比结果区域 -->
-            <div id="compareResults" class="relative"></div>
-
-            <!-- 评价按钮区域 -->
-            <div id="evaluationArea" class="mt-6 hidden">
-                <div class="bg-[#09090B] border border-[#3F3F46] rounded-none p-4">
-                    <p class="text-white text-center mb-4" data-i18n="compare.evaluation.question">您认为哪个模型生成的图片更好？</p>
-                    <div class="flex flex-wrap justify-center gap-2">
-                        <button type="button" class="evaluation-btn bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-none transition-all" data-evaluation="left">
-                            <i class="fas fa-chevron-left mr-2"></i><span data-i18n="compare.evaluation.leftButton">左边更好</span>
+                    <div class="flex items-center gap-3">
+                        <button id="audioClearBtn" type="button" class="bg-gray-500 bg-opacity-60 hover:bg-opacity-80 text-white py-3 px-4 rounded-none font-medium transition-all">
+                            <i class="fas fa-eraser"></i>
+                            <span class="ml-2" data-i18n="audio.buttons.clear">清空</span>
                         </button>
-                        <button type="button" class="evaluation-btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-none transition-all" data-evaluation="equal_good">
-                            <i class="fas fa-equals mr-2"></i><span data-i18n="compare.evaluation.equalGood">一样好</span>
-                        </button>
-                        <button type="button" class="evaluation-btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-none transition-all" data-evaluation="equal_bad">
-                            <i class="fas fa-thumbs-down mr-2"></i><span data-i18n="compare.evaluation.equalBad">一样糟糕</span>
-                        </button>
-                        <button type="button" class="evaluation-btn bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-none transition-all" data-evaluation="right">
-                            <span data-i18n="compare.evaluation.rightButton">右边更好</span><i class="fas fa-chevron-right ml-2"></i>
+                        <button id="audioGenerateBtn" type="button" class="flex-1 bg-[#FCE300] text-black py-3 px-6 rounded-none font-bold uppercase tracking-tighter transition-all transform hover:scale-105 active:scale-95">
+                            <i class="fas fa-music mr-2"></i>
+                            <span data-role="label" data-i18n="audio.buttons.generate">生成音频</span>
                         </button>
                     </div>
+                </div>
+
+                <!-- 右侧:作品库 -->
+                <div class="lg:col-span-2">
+                    <label class="block text-white text-sm font-medium mb-3" data-i18n="audio.labels.library">作品库</label>
+                    <div id="audioLibraryEmpty" class="hidden border border-dashed border-[#3F3F46] p-10 text-center">
+                        <i class="fas fa-headphones text-3xl text-white opacity-20"></i>
+                        <p class="text-white opacity-40 text-sm mt-3" data-i18n="audio.labels.empty">还没有作品 — 在左侧描述场景,生成你的第一段音频</p>
+                    </div>
+                    <div id="audioLibrary" class="space-y-3"></div>
                 </div>
             </div>
         </div>

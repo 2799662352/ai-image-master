@@ -40,6 +40,8 @@
     "batchShort": "批量",
     "modelCompare": "模型对比",
     "compareShort": "对比",
+    "audioGenerate": "音频生成",
+    "audioShort": "音频",
     "historyRecords": "历史记录",
     "historyShort": "记录",
     "imageUnderstand": "图像理解",
@@ -63,7 +65,8 @@
       "configured": "已设置"
     },
     "badge": {
-      "lottery": "抽卡"
+      "lottery": "抽卡",
+      "new": "NEW"
     },
     "skipToContent": "跳转到主内容",
     "mainNavigation": "主导航",
@@ -390,6 +393,40 @@
       "4": "4个",
       "5": "5个",
       "6": "6个"
+    }
+  },
+  "audio": {
+    "labels": {
+      "prompt": "描述你想要的音频",
+      "promptPlaceholder": "例:一位中年男性用沉稳语气说:项目已上线。背景有轻微键盘声,结尾加短促提示音。",
+      "promptHint": "单次输出上限约 120 秒,过长对白建议分段生成",
+      "styleChips": "快捷风格",
+      "referenceAudios": "参考音频（可选，最多2个，风格融合）",
+      "refHint": "点击或拖拽上传参考音频（MP3/WAV，≤10MB）",
+      "format": "格式",
+      "speed": "语速",
+      "billingNote": "按输出秒数计费,约 ¥1/分钟",
+      "library": "作品库",
+      "empty": "还没有作品 — 在左侧描述场景,生成你的第一段音频"
+    },
+    "buttons": {
+      "generate": "生成音频",
+      "generating": "生成中…",
+      "clear": "清空"
+    },
+    "card": {
+      "generating": "生成中,通常十几秒…",
+      "download": "下载",
+      "copyPrompt": "复制描述",
+      "delete": "删除",
+      "dismiss": "关闭"
+    },
+    "toast": {
+      "done": "音频已生成",
+      "busy": "正在生成中,请稍候",
+      "emptyPrompt": "请先描述你想要的音频",
+      "refLimit": "参考音频最多 2 个",
+      "promptCopied": "描述已复制"
     }
   },
   "compare": {

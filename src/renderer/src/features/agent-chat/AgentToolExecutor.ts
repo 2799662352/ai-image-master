@@ -18,6 +18,15 @@ import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../..
 import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
 import { directorBridge } from '../../components/shared/image-editors/director/directorBridge'
 import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMediaSrc'
+import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
+import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
+
+type GenerateAudioToolParams = {
+  input?: unknown
+  format?: unknown
+  speed?: unknown
+  referenceAudios?: unknown
+}
 
 type GenerateImageToolParams = GenerateImageParams
 
@@ -288,8 +297,81 @@ export class AgentToolExecutor {
       case 'understand_document':
       case 'web_research':
         return this.callUnderstand(toolName, params)
+      case 'generate_audio':
+        return this.generateAudio(params as GenerateAudioToolParams, threadId)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
+    }
+  }
+
+  /**
+   * generate_audio(seed-audio-1.0):codex MCP 出音频。薄层 —— 复用与音频页
+   * 完全相同的「生成 + 三级持久化 + 落库」共享核心(features/audio/audioGeneration),
+   * 所以 agent 出的音频和用户手动出的音频进同一个作品库、同一套存储/播放语义。
+   * main 端 audioTools 把这里的结构体包成 banner;不抛异常。
+   */
+  private async generateAudio(
+    params: GenerateAudioToolParams,
+    requestThreadId?: string,
+  ): Promise<
+    | { success: true; prompt: string; format: string; duration: number; billedSeconds: number; filePath?: string; remoteUrl?: string }
+    | { success: false; error: string }
+  > {
+    const api = ServiceRegistry.getRequired<AudioGenerationApi>(SERVICE_KEYS.API)
+    const prompt = typeof params.input === 'string' ? params.input : ''
+    const format = params.format === 'wav' || params.format === 'opus' ? params.format : 'mp3'
+    const speed = typeof params.speed === 'number' ? params.speed : undefined
+    const referenceAudios = Array.isArray(params.referenceAudios)
+      ? params.referenceAudios.filter((s): s is string => typeof s === 'string')
+      : undefined
+
+    // Show a chat bubble (spinner → audio player) like generate_image/video, so
+    // agent-generated audio is visible IN THE CONVERSATION, not only in the
+    // 音频生成 library. Route to the requesting thread (parallel-chat safe).
+    const chat = useAgentChatStore.getState()
+    const reqThreadId = requestThreadId ?? chat.threadId
+    const genId = chat.beginImageGeneration(prompt, reqThreadId, 'audio')
+
+    const outcome = await generateAudioToLibrary(
+      { prompt, format, speed, referenceAudios },
+      api,
+      getAudioLibraryStore(),
+    )
+    if (!outcome.success) {
+      useAgentChatStore.getState().failImageGeneration(genId, outcome.error, reqThreadId)
+      return { success: false, error: outcome.error }
+    }
+    const { item } = outcome
+    // Prefer the network COS URL for the in-chat player (always renderable);
+    // fall back to the local file path (toRenderableUri → local-file://).
+    const playbackUri = item.remoteUrl || item.filePath || ''
+    if (playbackUri) {
+      useAgentChatStore.getState().resolveImageGeneration(
+        genId,
+        [{
+          id: item.id,
+          kind: 'file',
+          name: `${item.prompt.slice(0, 24) || 'audio'}.${item.format.includes('opus') || item.format.includes('ogg') ? 'ogg' : item.format.includes('wav') ? 'wav' : 'mp3'}`,
+          mime: item.format.includes('opus') || item.format.includes('ogg') ? 'audio/ogg' : item.format.includes('wav') ? 'audio/wav' : 'audio/mpeg',
+          size: 0,
+          uri: playbackUri,
+        }],
+        reqThreadId,
+      )
+    } else {
+      // No renderable source (base64-only fallback) — settle the bubble as done
+      // with no artifacts rather than leaving it spinning.
+      useAgentChatStore.getState().resolveImageGeneration(genId, [], reqThreadId)
+    }
+
+    return {
+      success: true,
+      prompt: item.prompt,
+      format: item.format,
+      duration: item.duration,
+      billedSeconds: item.billedSeconds,
+      ...(item.filePath ? { filePath: item.filePath } : {}),
+      ...(item.remoteUrl ? { remoteUrl: item.remoteUrl } : {}),
     }
   }
 

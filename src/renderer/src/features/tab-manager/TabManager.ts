@@ -38,7 +38,8 @@ export class TabManager {
   private readonly DEFAULT_VALID_TABS = [
     'generate',
     'batch',
-    'compare',
+    // 'compare' 已被 'audio'(音频生成,seed-audio-1.0)替换;ComparePage 代码暂留未注册
+    'audio',
     'history',
     'understand',
     'director',

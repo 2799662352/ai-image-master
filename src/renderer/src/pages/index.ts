@@ -37,9 +37,12 @@ export type { HistoryItem, StorageInfo } from './HistoryPage'
 export { BatchPage, createBatchPage, getBatchPage } from './BatchPage'
 export type { BatchMode, BatchReferenceImage, BatchResult, BatchPageState } from './BatchPage'
 
-// ComparePage
+// ComparePage(UI 已被 AudioPage 替换,代码暂留未注册)
 export { ComparePage, createComparePage, getComparePage } from './ComparePage'
 export type { CompareReferenceImage, CompareModel, CompareResult, ComparisonData, ComparePageState } from './ComparePage'
+
+// AudioPage(音频生成,seed-audio-1.0,占用原 compare tab 位)
+export { AudioPage, createAudioPage, getAudioPage } from './AudioPage'
 
 // PromptTemplates
 export { PromptTemplates, createPromptTemplates, getPromptTemplates } from './PromptTemplates'

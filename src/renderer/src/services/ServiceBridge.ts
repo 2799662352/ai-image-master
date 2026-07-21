@@ -38,6 +38,7 @@ import { type GeneratePage, createGeneratePage, getGeneratePage } from '../pages
 import { type HistoryPage, createHistoryPage, getHistoryPage } from '../pages/HistoryPage'
 import { type BatchPage, createBatchPage, getBatchPage } from '../pages/BatchPage'
 import { type ComparePage, createComparePage, getComparePage } from '../pages/ComparePage'
+import { type AudioPage, createAudioPage, getAudioPage } from '../pages/AudioPage'
 import { type PromptTemplates, createPromptTemplates, getPromptTemplates } from '../pages/PromptTemplates'
 import { type UnderstandPage, createUnderstandPage, getUnderstandPage } from '../pages/UnderstandPage'
 type DirectorPage = any
@@ -583,6 +584,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       window.createHistoryPageTS = createHistoryPage
       window.createBatchPageTS = createBatchPage
       window.createComparePageTS = createComparePage
+      window.createAudioPageTS = createAudioPage
       window.createPromptTemplatesTS = createPromptTemplates
       window.createUnderstandPageTS = createUnderstandPage
       window.createDirectorPageTS = (_app: AppInterface) => ({
@@ -593,6 +595,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       window.getHistoryPageTS = getHistoryPage
       window.getBatchPageTS = getBatchPage
       window.getComparePageTS = getComparePage
+      window.getAudioPageTS = getAudioPage
       window.getPromptTemplatesTS = getPromptTemplates
       window.getUnderstandPageTS = getUnderstandPage
       window.getDirectorPageTS = () => null
@@ -644,6 +647,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         createHistory: window.createHistoryPageTS!,
         createBatch: window.createBatchPageTS!,
         createCompare: window.createComparePageTS!,
+        createAudio: window.createAudioPageTS!,
         createPromptTemplates: window.createPromptTemplatesTS!,
         createUnderstand: window.createUnderstandPageTS!,
         createDirector: window.createDirectorPageTS!,
@@ -651,6 +655,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         getHistory: window.getHistoryPageTS!,
         getBatch: window.getBatchPageTS!,
         getCompare: window.getComparePageTS!,
+        getAudio: window.getAudioPageTS!,
         getPromptTemplates: window.getPromptTemplatesTS!,
         getUnderstand: window.getUnderstandPageTS!,
         getDirector: window.getDirectorPageTS!
@@ -704,6 +709,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       generateImageWithReference: (prompt: string, referenceImages: any[], ratio?: string, count?: number, resolution?: string) => 
         apiService.generateImageWithReference(prompt, referenceImages, ratio || '1:1', count || 1, resolution),
       getModelCapabilities: (modelKey?: string) => apiService.getModelCapabilities(modelKey),
+
+      // 音频生成(seed-audio-1.0,AudioPage 用)
+      generateAudio: (params: any) => apiService.generateAudio(params),
 
       // 批量生成
       batchGenerate: (prompts: string[], ratio?: string, concurrency?: number, n?: number, resolution?: string | null) => 
@@ -1344,6 +1352,7 @@ export interface AppServicesNamespace {
     createHistory: (app: AppInterface) => HistoryPage
     createBatch: (app: AppInterface) => BatchPage
     createCompare: (app: AppInterface) => ComparePage
+    createAudio: (app: AppInterface) => AudioPage
     createPromptTemplates: (app: AppInterface) => PromptTemplates
     createUnderstand: (app: AppInterface) => UnderstandPage
     createDirector: (app: AppInterface) => DirectorPage
@@ -1351,6 +1360,7 @@ export interface AppServicesNamespace {
     getHistory: () => HistoryPage | null
     getBatch: () => BatchPage | null
     getCompare: () => ComparePage | null
+    getAudio: () => AudioPage | null
     getPromptTemplates: () => PromptTemplates | null
     getUnderstand: () => UnderstandPage | null
     getDirector: () => DirectorPage | null
@@ -1394,6 +1404,7 @@ declare global {
     createHistoryPageTS?: (app: AppInterface) => HistoryPage
     createBatchPageTS?: (app: AppInterface) => BatchPage
     createComparePageTS?: (app: AppInterface) => ComparePage
+    createAudioPageTS?: (app: AppInterface) => AudioPage
     createPromptTemplatesTS?: (app: AppInterface) => PromptTemplates
     createUnderstandPageTS?: (app: AppInterface) => UnderstandPage
     createDirectorPageTS?: (app: AppInterface) => DirectorPage
@@ -1401,6 +1412,7 @@ declare global {
     getHistoryPageTS?: () => HistoryPage | null
     getBatchPageTS?: () => BatchPage | null
     getComparePageTS?: () => ComparePage | null
+    getAudioPageTS?: () => AudioPage | null
     getPromptTemplatesTS?: () => PromptTemplates | null
     getUnderstandPageTS?: () => UnderstandPage | null
     getDirectorPageTS?: () => DirectorPage | null
@@ -1409,6 +1421,7 @@ declare global {
     historyPageTS?: HistoryPage
     batchPageTS?: BatchPage
     comparePageTS?: ComparePage
+    audioPageTS?: AudioPage
     promptTemplatesTS?: PromptTemplates
     understandPageTS?: UnderstandPage
     directorPageTS?: DirectorPage

@@ -202,6 +202,9 @@ export default defineConfig({
             if (id.includes('src/renderer/src/pages/ComparePage')) {
               return 'page-compare'
             }
+            if (id.includes('src/renderer/src/pages/AudioPage') || id.includes('src/renderer/src/features/audio/')) {
+              return 'page-audio'
+            }
             if (id.includes('src/renderer/src/pages/PromptTemplates')) {
               return 'page-prompt-templates'
             }

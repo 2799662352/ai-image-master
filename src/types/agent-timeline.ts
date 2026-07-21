@@ -74,7 +74,7 @@ export interface FileEditItem extends BaseItem {
 
 export interface AttachmentRef {
   id: string
-  kind: 'image' | 'video' | 'file'
+  kind: 'image' | 'video' | 'audio' | 'file'
   name: string
   mime: string
   size: number
@@ -123,10 +123,12 @@ export interface ArtifactItem extends BaseItem {
   progressText?: string
   /**
    * What kind of media this generation produces. Drives the card copy
-   * ("正在生成视频…" vs "正在生成图片…") for states where `artifacts` is
-   * still empty (generating / error). Defaults to image.
+   * ("正在生成视频…" vs "正在生成图片…" vs "正在生成音频…") for states where
+   * `artifacts` is still empty (generating / error). Defaults to image.
+   * Audio artifacts keep `AttachmentRef.kind: 'file'` + `mime: 'audio/*'`
+   * (the ref union isn't widened); the card detects audio by mime.
    */
-  mediaKind?: 'image' | 'video'
+  mediaKind?: 'image' | 'video' | 'audio'
   /** Failure message when `status === 'error'`. */
   error?: string
   /** Save-status banner (codex `generate_image` tool); absent for plain attachments. */

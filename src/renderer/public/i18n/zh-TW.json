@@ -37,6 +37,8 @@
     "batchShort": "批量",
     "modelCompare": "模型對比",
     "compareShort": "對比",
+    "audioGenerate": "音頻生成",
+    "audioShort": "音頻",
     "historyRecords": "歷史記錄",
     "historyShort": "記錄",
     "imageUnderstand": "圖像理解",
@@ -60,7 +62,8 @@
       "configured": "已設定"
     },
     "badge": {
-      "lottery": "抽卡"
+      "lottery": "抽卡",
+      "new": "NEW"
     },
     "skipToContent": "跳轉到主內容",
     "mainNavigation": "主導航",
@@ -504,6 +507,40 @@
     "placeholders": {
       "cardMode": "設计一張圖文店促销活動傳單，宣傳年終大促销活動。\n設计風格：活力促销風格，吸引眼球\n配色方案：橙红色为主色調，营造熱烈促销氛围",
       "multiMode": "設计一張圖文店促销活動傳單，宣傳年終大促销活動。\n設计風格：活力促销風格，吸引眼球\n配色方案：橙红色为主色調\n\n一只可爱的小猫咪坐在花园裡，\n油畫風格，高清，細節豐富，\n温暖的午后阳光\n\n现代簡约風格的客厅設计"
+    }
+  },
+  "audio": {
+    "labels": {
+      "prompt": "描述你想要的音頻",
+      "promptPlaceholder": "例:一位中年男性用沉穩語氣說:項目已上線。背景有輕微鍵盤聲,結尾加短促提示音。",
+      "promptHint": "單次輸出上限約 120 秒,過長對白建議分段生成",
+      "styleChips": "快捷風格",
+      "referenceAudios": "參考音頻（可選,最多2個,風格融合）",
+      "refHint": "點擊或拖拽上傳參考音頻（MP3/WAV,≤10MB）",
+      "format": "格式",
+      "speed": "語速",
+      "billingNote": "按輸出秒數計費,約 ¥1/分鐘",
+      "library": "作品庫",
+      "empty": "還沒有作品 — 在左側描述場景,生成你的第一段音頻"
+    },
+    "buttons": {
+      "generate": "生成音頻",
+      "generating": "生成中…",
+      "clear": "清空"
+    },
+    "card": {
+      "generating": "生成中,通常十幾秒…",
+      "download": "下載",
+      "copyPrompt": "複製描述",
+      "delete": "刪除",
+      "dismiss": "關閉"
+    },
+    "toast": {
+      "done": "音頻已生成",
+      "busy": "正在生成中,請稍候",
+      "emptyPrompt": "請先描述你想要的音頻",
+      "refLimit": "參考音頻最多 2 個",
+      "promptCopied": "描述已複製"
     }
   },
   "compare": {

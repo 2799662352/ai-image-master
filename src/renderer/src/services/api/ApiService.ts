@@ -194,6 +194,48 @@ export interface GenerateResult {
   isFluxTemporary?: boolean  // Flux 图片 10 分钟后失效
 }
 
+/**
+ * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
+ * 仅经 Miau API 提供 —— 调用方(AudioPage)固定传 siteKey='antigravity'。
+ * 文档:docs/seed-audio-1.0-api-guide.md(计费按输出秒数,约 ¥1/分钟;单次 ~120s 上限)。
+ */
+export const SEED_AUDIO_MODEL = 'seed-audio-1.0'
+/** seed-audio 仅经 Miau API 网关提供,页面调用时固定 pin 该站点。 */
+export const SEED_AUDIO_SITE_KEY = 'antigravity'
+
+export interface GenerateAudioParams {
+  /** 自然语言场景描述(多角色/口音/环境音/配乐),映射上游 text_prompt。 */
+  input: string
+  model?: string
+  /** mp3(默认) / wav / opus。aac/flac 上游回退 mp3,不暴露。 */
+  responseFormat?: 'mp3' | 'wav' | 'opus'
+  /** OpenAI speed 0.25~4.0(网关线性映射火山 speech_rate 并截断);UI 限 0.5~2.0。 */
+  speed?: number
+  /**
+   * 参考音频(风格融合),最多 2 个:http(s) URL → metadata.references[].audio_url;
+   * data:audio/...;base64 → audio_data(裸 base64)。不与 voice 混用(speaker 体系不兼容)。
+   */
+  referenceAudios?: string[]
+  signal?: AbortSignal
+  /** 按本次请求强制站点(镜像 GenerateImageParams.siteKey 语义)。 */
+  siteKey?: string
+}
+
+export interface GenerateAudioResult {
+  success: boolean
+  /** 裸 base64 音频(无 data: 前缀),来自 JSON 模式响应。 */
+  audioBase64?: string
+  /** 实际编码格式(mp3 / ogg_opus / wav)。 */
+  format?: string
+  /** 音频时长(秒)。 */
+  duration?: number
+  /** 计费依据的输出时长(秒)。 */
+  originalDuration?: number
+  /** 上游音频 URL(可能为空字符串)。 */
+  url?: string
+  error?: string
+}
+
 export interface VisionParams {
   images: string[]  // 图片 URL 或 base64
   prompt?: string
@@ -960,6 +1002,125 @@ export class ApiService {
         success: false,
         error: this.formatErrorMessage(error as Error)
       }
+    }
+  }
+
+  /**
+   * 生成音频(seed-audio-1.0,POST /v1/audio/speech,OpenAI Audio Speech 兼容)。
+   *
+   * 固定带 `Accept: application/json` 走 JSON 模式:一次拿到 base64 音频 + 时长
+   * (originalDuration=计费秒数,可直接展示)+ 可选上游 URL,比二进制流好持久化。
+   * 站点/Key 解析与 generateImage 同款:siteKey 强制 pin(seed-audio 仅经 Miau),
+   * 绝不动实例级 currentSite/apiKey。不发 voice(speaker 体系与旧 TTS 不兼容,
+   * 官方推荐纯自然语言 input 或参考音频)。
+   */
+  async generateAudio(params: GenerateAudioParams): Promise<GenerateAudioResult> {
+    const { input, model, responseFormat, speed, referenceAudios, signal, siteKey } = params
+
+    const effectiveSiteKey = siteKey && this.apiSites[siteKey] ? siteKey : this.currentSite
+    const site = this.apiSites[effectiveSiteKey]
+    const apiKey =
+      effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
+
+    if (!apiKey) {
+      return {
+        success: false,
+        error:
+          effectiveSiteKey !== this.currentSite
+            ? `未配置「${site?.name || effectiveSiteKey}」站点的 API Key —— 音频生成经此站点提供，请到设置页为该站点填入 API Key 后重试。`
+            : '请先设置 API Key',
+      }
+    }
+    if (!input || !input.trim()) {
+      return { success: false, error: '请输入音频描述' }
+    }
+
+    const body: Record<string, unknown> = {
+      model: model || SEED_AUDIO_MODEL,
+      input: input.trim(),
+      response_format: responseFormat || 'mp3',
+    }
+    if (typeof speed === 'number' && speed !== 1) {
+      body.speed = Math.min(4, Math.max(0.25, speed))
+    }
+    const references = (referenceAudios || [])
+      .map((src): Record<string, string> | null => {
+        const s = typeof src === 'string' ? src.trim() : ''
+        if (!s) return null
+        if (/^https?:\/\//i.test(s)) return { audio_url: s }
+        // data:audio/...;base64,xxx → 上游要裸 base64 的 audio_data
+        const m = s.match(/^data:audio\/[^;]+;base64,(.+)$/i)
+        if (m) return { audio_data: m[1] }
+        return null
+      })
+      .filter((r): r is Record<string, string> => r !== null)
+      .slice(0, 2)
+    if (references.length > 0) {
+      body.metadata = { references }
+    }
+
+    try {
+      const url = `${site.baseURL}/v1/audio/speech`
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        // 必须带 Accept 才走 JSON 响应(只改 Content-Type 不行,见接入文档 §7)
+        'Accept': 'application/json',
+      }
+      if (site.authType === 'bearer') headers['Authorization'] = `Bearer ${apiKey}`
+      else headers['x-api-key'] = apiKey
+
+      const response = await this.withRetry(
+        async () => {
+          // 生成耗时随文本长度增长(上限 ~120s 音频),给 10 分钟软天花板
+          const resp = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: this.composeTimeoutSignal(signal, 600_000),
+          })
+          if ([429, 500, 502, 503, 504].includes(resp.status)) {
+            const errText = await resp.clone().text().catch(() => '')
+            const err = new Error(
+              `音频服务暂时不可用（HTTP ${resp.status}）${errText ? `：${errText.slice(0, 200)}` : ''}`,
+            ) as Error & { status?: number }
+            err.status = resp.status
+            throw err
+          }
+          return resp
+        },
+        { maxRetries: 1, retryDelay: 2000 },
+      )
+
+      const rawText = await response.text().catch(() => '')
+      let data: any = null
+      try { data = rawText.trim() ? JSON.parse(rawText) : null } catch { /* 非 JSON,走下方错误分支 */ }
+
+      if (!response.ok) {
+        const apiMsg = data?.error?.message || data?.message
+        return {
+          success: false,
+          error: `${apiMsg || '音频生成失败'}（HTTP ${response.status}）`,
+        }
+      }
+      if (!data || typeof data.audio !== 'string' || data.audio.length === 0) {
+        return {
+          success: false,
+          error: `音频服务返回了非预期响应：${rawText.replace(/\s+/g, ' ').slice(0, 200) || '(空)'}`,
+        }
+      }
+
+      return {
+        success: true,
+        audioBase64: data.audio,
+        format: typeof data.format === 'string' ? data.format : (responseFormat || 'mp3'),
+        duration: typeof data.duration === 'number' ? data.duration : undefined,
+        originalDuration: typeof data.original_duration === 'number' ? data.original_duration : undefined,
+        url: typeof data.url === 'string' && data.url ? data.url : undefined,
+      }
+    } catch (error) {
+      if (signal?.aborted) return { success: false, error: '操作已取消' }
+      console.error('[ApiService] generateAudio 失败:', error)
+      return { success: false, error: this.formatErrorMessage(error as Error) }
     }
   }
 
