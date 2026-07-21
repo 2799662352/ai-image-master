@@ -14,6 +14,8 @@ import type { FileNode } from '../file-explorer/types'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
 import { INIT_AGENTS_MD_PROMPT } from './initPrompt'
 import { parseGoalCommand } from './goalCommand'
+import { usePetStore } from './pets/petStore'
+import { PetPickerButton } from './pets/PetPickerButton'
 
 /**
  * Find the active `$skill-name` token at `caret`, if any. Mirrors the
@@ -140,7 +142,7 @@ export function scoreFileMatch(query: string, relPath: string, name: string): nu
 // ---------------------------------------------------------------------------
 
 /** Discriminated action key — keeps SLASH_COMMANDS pure data (testable). */
-export type SlashCommandAction = 'clear' | 'cancel' | 'help' | 'compact' | 'init' | 'goal'
+export type SlashCommandAction = 'clear' | 'cancel' | 'help' | 'compact' | 'init' | 'goal' | 'pets'
 
 export interface SlashCommand {
   id: string
@@ -190,6 +192,12 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
     label: '/goal',
     description: '长期目标 · /goal 目标 · pause|resume|edit|clear · budget <n>(对齐 codex /goal)',
     action: 'goal',
+  },
+  {
+    id: 'pets',
+    label: '/pets',
+    description: '选择环境宠物 · 首行可关闭(对齐 codex /pets)',
+    action: 'pets',
   },
 ]
 
@@ -690,6 +698,11 @@ export function MentionInput() {
         setInput(INIT_AGENTS_MD_PROMPT)
         void send()
         break
+      case 'pets':
+        // Native `/pets` (codex parity): open the pet picker rendered by
+        // PetOverlay above the composer. Selection state lives in petStore.
+        usePetStore.getState().openPicker()
+        break
       // No `goal` case: `/goal` is intercepted above (prefill `/goal ` + early
       // return), so TS narrows it out of the union before this switch.
       default: {
@@ -1166,7 +1179,19 @@ export function MentionInput() {
     return true
   }
 
+  // Native `/pets` intercept: typed-out `/pets` (or `/pet`) + Enter opens the
+  // picker instead of being sent to the model as chat text — the exact failure
+  // mode reported against the official app (openai/codex#20836).
+  function tryHandlePetsCommand(): boolean {
+    if (isEditing) return false
+    if (!/^\/pets?$/i.test(input.trim())) return false
+    setInput('')
+    usePetStore.getState().openPicker()
+    return true
+  }
+
   function runSubmit(): void {
+    if (tryHandlePetsCommand()) return
     if (tryHandleGoalCommand()) return
     void submitAction()
   }
@@ -1600,6 +1625,7 @@ export function MentionInput() {
         <ModelPicker disabled={isRunning} />
         <CollabModeControl disabled={isRunning || modelSelectionPending} />
         <ImageChannelPicker disabled={isRunning || modelSelectionPending} />
+        <PetPickerButton />
         <div className="flex-1" />
         {isEditing ? (
           <button

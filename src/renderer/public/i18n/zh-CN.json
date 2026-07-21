@@ -416,10 +416,12 @@
     },
     "card": {
       "generating": "生成中,通常十几秒…",
+      "queued": "排队中…",
       "download": "下载",
       "copyPrompt": "复制描述",
       "delete": "删除",
-      "dismiss": "关闭"
+      "dismiss": "关闭",
+      "retry": "重试"
     },
     "toast": {
       "done": "音频已生成",

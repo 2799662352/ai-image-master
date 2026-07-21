@@ -530,10 +530,12 @@
     },
     "card": {
       "generating": "生成中,通常十幾秒…",
+      "queued": "排隊中…",
       "download": "下載",
       "copyPrompt": "複製描述",
       "delete": "刪除",
-      "dismiss": "關閉"
+      "dismiss": "關閉",
+      "retry": "重試"
     },
     "toast": {
       "done": "音頻已生成",

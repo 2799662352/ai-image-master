@@ -18,6 +18,7 @@ import {
   type AudioLibraryStore,
 } from '../features/audio/AudioLibraryStore'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../features/audio/audioGeneration'
+import { toRenderableUri } from '../features/file-explorer/uri'
 
 /** 风格 chips:点击往 prompt 里追加描述片段(纯前端拼 prompt,零协议成本)。 */
 const STYLE_CHIPS: ReadonlyArray<{ label: string; append: string }> = [
@@ -43,17 +44,30 @@ interface PendingCard {
   el: HTMLElement
 }
 
+/** 一次生成任务的完整快照(提交时定格,重试直接复用)。 */
+interface GenerationTask {
+  prompt: string
+  format: 'mp3' | 'wav' | 'opus'
+  speed: number
+  referenceAudios: string[]
+  api: AudioGenerationApi
+  pending: PendingCard
+}
+
 export class AudioPage extends BasePage {
   private store: AudioLibraryStore
   private referenceAudios: Array<{ name: string; dataUrl: string }> = []
-  private generating = false
-  private abortController: AbortController | null = null
+  // 并发生成:每个任务独立 AbortController;上限内并行,超出排队(FIFO)
+  private activeGenerations = new Map<string, AbortController>()
+  private generationQueue: Array<() => void> = []
 
   // 全局播放器:单例 Audio 对象(不进 DOM)+ 挂 body 的播放条,切 tab 不断播
   private audioEl: HTMLAudioElement | null = null
   private playingItemId: string | null = null
   private playerBar: HTMLElement | null = null
   private playerRaf: number | null = null
+  // 播放代次:换曲/停播后旧源的迟到 error/reject 不得再触发回落
+  private playToken = 0
 
   constructor(app: AppInterface, store?: AudioLibraryStore) {
     super(app)
@@ -71,7 +85,7 @@ export class AudioPage extends BasePage {
   }
 
   bindEvents(): void {
-    this.addEventListenerSafe('audioGenerateBtn', 'click', () => void this.handleGenerate())
+    this.addEventListenerSafe('audioGenerateBtn', 'click', () => this.handleGenerate())
     this.addEventListenerSafe('audioClearBtn', 'click', () => this.clearComposer())
     this.addEventListenerSafe('audioPrompt', 'input', () => {
       this.saveDraft()
@@ -120,6 +134,10 @@ export class AudioPage extends BasePage {
     this.stopPlayback()
     this.playerBar?.remove()
     this.playerBar = null
+    // 中断所有进行中的生成并清空排队(页面销毁后无人消费结果)
+    for (const controller of this.activeGenerations.values()) controller.abort()
+    this.activeGenerations.clear()
+    this.generationQueue = []
     super.destroy()
   }
 
@@ -242,11 +260,14 @@ export class AudioPage extends BasePage {
 
   // ---------------------------------------------------------------- generate
 
-  private async handleGenerate(): Promise<void> {
-    if (this.generating) {
-      this.showToast(this.t('audio.toast.busy') || '正在生成中,请稍候', 'info')
-      return
-    }
+  /** 同时进行的生成上限;超出的任务排队(FIFO),前面有任务完成即启动。 */
+  private static readonly MAX_CONCURRENT_GENERATIONS = 3
+
+  /**
+   * 点「生成」:立即插 pending 卡并返回,不阻塞后续提交。每个任务独立
+   * AbortController,并发跑;上限内直接启动,超出排队。
+   */
+  private handleGenerate(): void {
     const textarea = this.getElement<HTMLTextAreaElement>('audioPrompt')
     const prompt = textarea?.value.trim() ?? ''
     if (!prompt) {
@@ -263,28 +284,51 @@ export class AudioPage extends BasePage {
     const format = (this.getElement<HTMLSelectElement>('audioFormat')?.value || 'mp3') as 'mp3' | 'wav' | 'opus'
     const speed = Number(this.getElement<HTMLInputElement>('audioSpeed')?.value || '1') || 1
 
-    this.generating = true
-    this.setGenerateButtonBusy(true)
-    const pending = this.insertPendingCard(prompt)
-    this.abortController = new AbortController()
+    const task: GenerationTask = {
+      prompt,
+      format,
+      speed,
+      // 提交瞬间快照参考音频:之后用户改输入区不影响已提交任务
+      referenceAudios: this.referenceAudios.map((r) => r.dataUrl),
+      api: api as AudioGenerationApi,
+      pending: this.insertPendingCard(prompt),
+    }
+    this.startGeneration(task)
+  }
+
+  private startGeneration(task: GenerationTask): void {
+    if (this.activeGenerations.size >= AudioPage.MAX_CONCURRENT_GENERATIONS) {
+      this.setPendingCardStatus(task.pending, this.t('audio.card.queued') || '排队中…')
+      this.generationQueue.push(() => this.startGeneration(task))
+      return
+    }
+    void this.runGeneration(task)
+  }
+
+  private async runGeneration(task: GenerationTask): Promise<void> {
+    const { pending } = task
+    const controller = new AbortController()
+    this.activeGenerations.set(pending.id, controller)
+    this.setPendingCardStatus(pending, this.t('audio.card.generating') || '生成中,通常十几秒…')
+    this.updateGenerateButtonLabel()
 
     try {
       // 生成 + 三级持久化 + 落库走共享核心(与 codex MCP generate_audio 同一条路)
       const outcome = await generateAudioToLibrary(
         {
-          prompt,
-          format,
-          speed,
-          referenceAudios: this.referenceAudios.map((r) => r.dataUrl),
-          signal: this.abortController.signal,
+          prompt: task.prompt,
+          format: task.format,
+          speed: task.speed,
+          referenceAudios: task.referenceAudios,
+          signal: controller.signal,
           id: pending.id,
         },
-        api as AudioGenerationApi,
+        task.api,
         this.store,
       )
 
       if (!outcome.success) {
-        this.settlePendingCardError(pending, outcome.error)
+        this.settlePendingCardError(pending, outcome.error, task)
         return
       }
 
@@ -295,25 +339,23 @@ export class AudioPage extends BasePage {
       void this.drawWaveformFor(outcome.item, card)
       this.showToast(this.t('audio.toast.done') || '音频已生成', 'success')
     } catch (error) {
-      this.settlePendingCardError(pending, error instanceof Error ? error.message : String(error))
+      this.settlePendingCardError(pending, error instanceof Error ? error.message : String(error), task)
     } finally {
-      this.generating = false
-      this.setGenerateButtonBusy(false)
-      this.abortController = null
+      this.activeGenerations.delete(pending.id)
+      this.updateGenerateButtonLabel()
+      // 出队下一个等待任务(如有)
+      this.generationQueue.shift()?.()
     }
   }
 
-  private setGenerateButtonBusy(busy: boolean): void {
+  /** 按钮不再禁用(可连续提交并发生成),仅在有任务时把进行数标在文案上。 */
+  private updateGenerateButtonLabel(): void {
     const btn = this.getElement<HTMLButtonElement>('audioGenerateBtn')
-    if (!btn) return
-    btn.disabled = busy
-    btn.classList.toggle('opacity-60', busy)
-    const label = btn.querySelector('[data-role="label"]')
-    if (label) {
-      label.textContent = busy
-        ? (this.t('audio.buttons.generating') || '生成中…')
-        : (this.t('audio.buttons.generate') || '生成音频')
-    }
+    const label = btn?.querySelector('[data-role="label"]')
+    if (!label) return
+    const active = this.activeGenerations.size + this.generationQueue.length
+    const base = this.t('audio.buttons.generate') || '生成音频'
+    label.textContent = active > 0 ? `${base}(${active} 进行中)` : base
   }
 
   // ----------------------------------------------------------------- library
@@ -355,29 +397,55 @@ export class AudioPage extends BasePage {
   private insertPendingCard(prompt: string): PendingCard {
     const id = `audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const el = document.createElement('div')
-    el.className = 'border border-[#3F3F46] bg-[#111113] p-4 space-y-2'
     el.dataset.itemId = id
     el.dataset.transient = '1'
-    el.innerHTML = `
-      <div class="flex items-center gap-3">
-        <div class="w-8 h-8 border-2 border-[#FCE300] border-t-transparent rounded-full animate-spin shrink-0"></div>
-        <div class="min-w-0">
-          <p class="text-white text-sm truncate">${escapeHtml(prompt)}</p>
-          <p class="text-white text-opacity-50 text-xs" data-role="status">${escapeHtml(this.t('audio.card.generating') || '生成中,通常十几秒…')}</p>
-        </div>
-      </div>`
+    const pending: PendingCard = { id, prompt, el }
+    this.renderPendingCardBody(pending)
     const host = this.getElement('audioLibrary')
     host?.prepend(el)
     this.hideLibraryEmptyState()
-    return { id, prompt, el }
+    return pending
   }
 
-  private settlePendingCardError(pending: PendingCard, message: string): void {
+  /** pending 卡的「转圈 + 状态文案」形态(初始插入与失败后重试共用)。 */
+  private renderPendingCardBody(pending: PendingCard): void {
+    pending.el.className = 'border border-[#3F3F46] bg-[#111113] p-4 space-y-2'
+    pending.el.innerHTML = `
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 border-2 border-[#FCE300] border-t-transparent rounded-full animate-spin shrink-0"></div>
+        <div class="min-w-0">
+          <p class="text-white text-sm truncate">${escapeHtml(pending.prompt)}</p>
+          <p class="text-white text-opacity-50 text-xs" data-role="status">${escapeHtml(this.t('audio.card.generating') || '生成中,通常十几秒…')}</p>
+        </div>
+      </div>`
+  }
+
+  private setPendingCardStatus(pending: PendingCard, text: string): void {
+    const status = pending.el.querySelector('[data-role="status"]')
+    if (status) status.textContent = text
+  }
+
+  /**
+   * pending 卡切失败态:留错误信息 + 重试/关闭。重试直接复用同一张卡和任务
+   * 快照重新排队(参数是提交瞬间定格的,不受之后输入区变化影响)。
+   */
+  private settlePendingCardError(pending: PendingCard, message: string, task?: GenerationTask): void {
     pending.el.className = 'border border-red-500/60 bg-[#111113] p-4 space-y-2'
     pending.el.innerHTML = `
       <p class="text-white text-sm truncate">${escapeHtml(pending.prompt)}</p>
       <p class="text-red-400 text-xs break-all">${escapeHtml(message)}</p>
-      <button type="button" data-action="dismiss-error" class="text-xs text-white text-opacity-60 hover:text-white border border-[#3F3F46] px-2 py-1">${escapeHtml(this.t('audio.card.dismiss') || '关闭')}</button>`
+      <div class="flex items-center gap-2">
+        ${task ? `<button type="button" data-action="retry-generation" class="text-xs text-black bg-[#FCE300] hover:opacity-80 px-2 py-1">${escapeHtml(this.t('audio.card.retry') || '重试')}</button>` : ''}
+        <button type="button" data-action="dismiss-error" class="text-xs text-white text-opacity-60 hover:text-white border border-[#3F3F46] px-2 py-1">${escapeHtml(this.t('audio.card.dismiss') || '关闭')}</button>
+      </div>`
+    // 重试按钮持有任务闭包,不走 store(pending 卡不在库里),所以直接绑定
+    if (task) {
+      pending.el.querySelector('[data-action="retry-generation"]')?.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.renderPendingCardBody(pending)
+        this.startGeneration(task)
+      })
+    }
     this.showToast(message, 'error')
   }
 
@@ -526,14 +594,19 @@ export class AudioPage extends BasePage {
   }
 
   /**
-   * 播放源。优先级:本地文件(local-file://,免网络、秒开) > COS 远程 URL
-   * (跨设备/清缓存后仍可播) > base64 降级。
+   * 播放源候选列表(按优先级):本地文件(local-file://,免网络、秒开) >
+   * COS 远程 URL(跨设备/清缓存后仍可播) > base64 降级。
+   *
+   * 本地路径必须过 toRenderableUri:local-file 是 standard scheme,Windows
+   * 盘符冒号不编码(C: → 应为 C%3A)会被 URL 解析吞成 host,协议处理器拿不到
+   * 盘符,直接 NotSupportedError(与聊天卡片 ArtifactCard 同一条已修路径)。
    */
-  private playUrlFor(item: AudioLibraryItem): string | null {
-    if (item.filePath) return 'local-file:///' + item.filePath.replace(/\\/g, '/')
-    if (item.remoteUrl) return item.remoteUrl
-    if (item.audioBase64) return toAudioDataUrl(item.audioBase64, item.format)
-    return null
+  private playSourcesFor(item: AudioLibraryItem): string[] {
+    const sources: string[] = []
+    if (item.filePath) sources.push(toRenderableUri(item.filePath))
+    if (item.remoteUrl) sources.push(item.remoteUrl)
+    if (item.audioBase64) sources.push(toAudioDataUrl(item.audioBase64, item.format))
+    return sources
   }
 
   // ------------------------------------------------------------------ player
@@ -562,22 +635,47 @@ export class AudioPage extends BasePage {
 
     // 换曲
     if (this.playingItemId) this.updatePlayButtonIcon(this.playingItemId, false)
-    const src = this.playUrlFor(item)
-    if (!src) {
+    const sources = this.playSourcesFor(item)
+    if (sources.length === 0) {
       this.showToast('音频源不可用', 'error')
       return
     }
-    audio.src = src
-    void audio.play().catch((e) => {
-      console.warn('[AudioPage] 播放失败:', e)
-      this.showToast('播放失败', 'error')
-    })
     this.playingItemId = item.id
     this.updatePlayButtonIcon(item.id, true)
     this.showPlayerBar(item)
+    this.playFromSource(item, sources, 0, ++this.playToken)
+  }
+
+  /**
+   * 从第 index 个候选源开始播;失败(play() reject 或 error 事件)自动回落
+   * 下一级(本地文件丢失/损坏 → COS → base64),全部失败才报「播放失败」。
+   * token 防换曲/停播后的迟到回调把新播放顶掉。
+   */
+  private playFromSource(item: AudioLibraryItem, sources: string[], index: number, token: number): void {
+    if (token !== this.playToken) return
+    if (index >= sources.length) {
+      console.warn('[AudioPage] 所有播放源均失败:', item.id)
+      this.showToast('播放失败', 'error')
+      this.stopPlayback()
+      return
+    }
+    const audio = this.ensureAudioEl()
+    // play() reject 和 error 事件对同一次失败可能都触发,advanced 防重复回落
+    let advanced = false
+    const tryNext = (e: unknown): void => {
+      if (advanced || token !== this.playToken) return
+      advanced = true
+      console.warn(`[AudioPage] 播放源失败(${index + 1}/${sources.length}),回落下一级:`, e)
+      this.playFromSource(item, sources, index + 1, token)
+    }
+    audio.addEventListener('error', () => tryNext(audio.error), { once: true })
+    audio.src = sources[index]
+    void audio.play().catch(tryNext)
   }
 
   private stopPlayback(): void {
+    // 令牌失效:src='' 会触发一次 error 事件,不能让它误触回落重试
+    this.playToken++
     if (this.audioEl) {
       this.audioEl.pause()
       this.audioEl.src = ''
