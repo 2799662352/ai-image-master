@@ -4,6 +4,7 @@ import { AttachmentChips } from './AttachmentChips'
 import { CloseIcon, GearIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
 import { Lightbox } from './Lightbox'
 import { MentionInput } from './MentionInput'
+import { PetOverlay } from './pets/PetOverlay'
 import { MessageBubble } from './MessageBubble'
 import { ResizableHandle } from './ResizableHandle'
 import { RewoundTurnsDrawer } from './RewoundTurnsDrawer'
@@ -508,7 +509,9 @@ export function AgentChatPanel() {
             above the composer so users can find their stash without
             scrolling away from the input. */}
         {editingMessageId ? null : (
-          <footer className="border-t border-cyan-400/20 p-3">
+          <footer className="relative border-t border-cyan-400/20 p-3">
+            {/* Codex 风格环境宠物:蹲在 composer 上方,随 agent 状态换动画 */}
+            <PetOverlay />
             <RewoundTurnsDrawer />
             <AttachmentChips />
             <MentionInput />

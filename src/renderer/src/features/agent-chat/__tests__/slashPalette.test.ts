@@ -89,6 +89,12 @@ describe('SLASH_COMMANDS canon', () => {
     expect(init?.action).toBe('init')
   })
 
+  it('wires /pets to the pets action (opens the pet picker, codex /pets parity)', () => {
+    const pets = SLASH_COMMANDS.find((c) => c.id === 'pets')
+    expect(pets).toBeDefined()
+    expect(pets?.action).toBe('pets')
+  })
+
   it('every command has a label, description, and a trigger handler', () => {
     for (const cmd of SLASH_COMMANDS) {
       expect(cmd.id.length).toBeGreaterThan(0)

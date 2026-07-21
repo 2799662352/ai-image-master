@@ -313,6 +313,214 @@ describe('AudioPage', () => {
   })
 })
 
+describe('AudioPage playback (盘符编码 + 逐级回落)', () => {
+  let page: AudioPage
+  let store: AudioLibraryStore
+  /** 每次 play() 时的 audio.src(jsdom 不实现 play,必须 mock) */
+  let playedSrcs: string[]
+
+  function mockPlay(rejectWhen?: (src: string) => boolean): void {
+    playedSrcs = []
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLAudioElement) {
+      playedSrcs.push(this.src)
+      if (rejectWhen?.(this.src)) {
+        return Promise.reject(new DOMException('no supported source', 'NotSupportedError'))
+      }
+      return Promise.resolve()
+    })
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    mountAudioPanelDom()
+    store = new AudioLibraryStore()
+  })
+
+  afterEach(() => {
+    page?.destroy()
+    vi.restoreAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  it('encodes the Windows drive colon in local-file:// playback src (C: → C%3A)', async () => {
+    // 回归:未编码盘符冒号会被 standard scheme 解析吞成 host → NotSupportedError
+    mockPlay()
+    await store.add({
+      id: 'p1', prompt: '本地播放', format: 'mp3', duration: 3, billedSeconds: 3,
+      createdAt: Date.now(), filePath: 'C:\\ud\\audio-history\\x.mp3',
+    })
+    page = new AudioPage(makeApp(), store)
+    page.init()
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-action="play"]')).toBeTruthy()
+    })
+
+    document.querySelector<HTMLButtonElement>('[data-action="play"]')!.click()
+    await vi.waitFor(() => {
+      expect(playedSrcs).toEqual(['local-file:///C%3A/ud/audio-history/x.mp3'])
+    })
+  })
+
+  it('falls back to remoteUrl when local-file playback fails, then to base64', async () => {
+    mockPlay((src) => src.startsWith('local-file:'))
+    await store.add({
+      id: 'p2', prompt: '回落播放', format: 'mp3', duration: 3, billedSeconds: 3,
+      createdAt: Date.now(),
+      filePath: 'C:\\ud\\audio-history\\gone.mp3',
+      remoteUrl: 'https://cos.example.com/audio/a.mp3',
+    })
+    page = new AudioPage(makeApp(), store)
+    page.init()
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-action="play"]')).toBeTruthy()
+    })
+
+    document.querySelector<HTMLButtonElement>('[data-action="play"]')!.click()
+    await vi.waitFor(() => {
+      expect(playedSrcs).toEqual([
+        'local-file:///C%3A/ud/audio-history/gone.mp3',
+        'https://cos.example.com/audio/a.mp3',
+      ])
+    })
+  })
+
+  it('shows a toast when every playback source fails', async () => {
+    const app = makeApp()
+    mockPlay(() => true)
+    await store.add({
+      id: 'p3', prompt: '全部失败', format: 'mp3', duration: 3, billedSeconds: 3,
+      createdAt: Date.now(),
+      filePath: 'C:\\ud\\audio-history\\bad.mp3',
+      remoteUrl: 'https://cos.example.com/audio/bad.mp3',
+      audioBase64: 'QUJD',
+    })
+    page = new AudioPage(app, store)
+    page.init()
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-action="play"]')).toBeTruthy()
+    })
+
+    document.querySelector<HTMLButtonElement>('[data-action="play"]')!.click()
+    await vi.waitFor(() => {
+      expect(app.toasts.some((t) => t.type === 'error' && t.msg.includes('播放失败'))).toBe(true)
+    })
+    // 三级源都试过
+    expect(playedSrcs.length).toBe(3)
+    expect(playedSrcs[2].startsWith('data:audio/mpeg;base64,')).toBe(true)
+  })
+})
+
+describe('AudioPage concurrent generation (不阻塞 + 上限排队 + 失败重试)', () => {
+  let page: AudioPage
+  let store: AudioLibraryStore
+
+  /** 手动控制 resolve 时机的 generateAudio mock。 */
+  function deferredApi(): {
+    generateAudio: ReturnType<typeof vi.fn>
+    resolveNth: (n: number, result: unknown) => void
+  } {
+    const resolvers: Array<(v: unknown) => void> = []
+    const generateAudio = vi.fn(
+      () => new Promise((resolve) => { resolvers.push(resolve) }),
+    )
+    return { generateAudio, resolveNth: (n, result) => resolvers[n](result) }
+  }
+
+  function submit(prompt: string): void {
+    ;(document.getElementById('audioPrompt') as HTMLTextAreaElement).value = prompt
+    ;(document.getElementById('audioGenerateBtn') as HTMLButtonElement).click()
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    mountAudioPanelDom()
+    store = new AudioLibraryStore()
+  })
+
+  afterEach(() => {
+    page?.destroy()
+    delete (window as any).aiImageAPI
+    document.body.innerHTML = ''
+  })
+
+  it('allows submitting again while a generation is in flight (button not disabled)', async () => {
+    const { generateAudio, resolveNth } = deferredApi()
+    setApiMock(generateAudio)
+    page = new AudioPage(makeApp(), store)
+    page.init()
+
+    submit('第一段')
+    const btn = document.getElementById('audioGenerateBtn') as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+    submit('第二段')
+
+    // 两个请求并行在飞,两张 pending 卡都在
+    expect(generateAudio).toHaveBeenCalledTimes(2)
+    expect(document.querySelectorAll('#audioLibrary [data-transient="1"]').length).toBe(2)
+
+    resolveNth(0, { success: true, audioBase64: 'QUJD', format: 'mp3', duration: 5 })
+    resolveNth(1, { success: true, audioBase64: 'REVG', format: 'mp3', duration: 6 })
+    await vi.waitFor(async () => {
+      expect((await store.list()).length).toBe(2)
+    })
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#audioLibrary .audio-item-card').length).toBe(2)
+      expect(document.querySelectorAll('#audioLibrary [data-transient="1"]').length).toBe(0)
+    })
+  })
+
+  it('queues the 4th task beyond the concurrency limit and starts it when a slot frees', async () => {
+    const { generateAudio, resolveNth } = deferredApi()
+    setApiMock(generateAudio)
+    page = new AudioPage(makeApp(), store)
+    page.init()
+
+    submit('任务1'); submit('任务2'); submit('任务3'); submit('任务4')
+
+    // 上限 3:第 4 个不发请求,卡片显示排队中(jsdom 无 i18n,t() 回显 key)
+    expect(generateAudio).toHaveBeenCalledTimes(3)
+    expect(document.querySelectorAll('#audioLibrary [data-transient="1"]').length).toBe(4)
+    const statuses = [...document.querySelectorAll('#audioLibrary [data-role="status"]')]
+      .map((el) => el.textContent)
+    expect(statuses.filter((s) => s?.includes('queued') || s?.includes('排队')).length).toBe(1)
+
+    // 释放一个槽位 → 排队任务启动
+    resolveNth(0, { success: true, audioBase64: 'QUJD', format: 'mp3', duration: 5 })
+    await vi.waitFor(() => {
+      expect(generateAudio).toHaveBeenCalledTimes(4)
+    })
+  })
+
+  it('failed pending card offers retry which re-runs the same task', async () => {
+    let calls = 0
+    const generateAudio = vi.fn(async () => {
+      calls += 1
+      return calls === 1
+        ? { success: false, error: '服务超时' }
+        : { success: true, audioBase64: 'QUJD', format: 'mp3', duration: 5 }
+    })
+    setApiMock(generateAudio)
+    page = new AudioPage(makeApp(), store)
+    page.init()
+
+    submit('重试任务')
+    await vi.waitFor(() => {
+      expect(document.querySelector('#audioLibrary [data-action="retry-generation"]')).toBeTruthy()
+    })
+
+    document.querySelector<HTMLButtonElement>('[data-action="retry-generation"]')!.click()
+    await vi.waitFor(async () => {
+      expect((await store.list()).length).toBe(1)
+    })
+    expect(generateAudio).toHaveBeenCalledTimes(2)
+    // 重试用的是同一次提交的 prompt 快照
+    expect(generateAudio.mock.calls[1][0].input).toBe('重试任务')
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#audioLibrary .audio-item-card').length).toBe(1)
+    })
+  })
+})
+
 describe('AudioLibraryStore (memory fallback)', () => {
   it('add/list/update/remove round-trip, newest first', async () => {
     const store = new AudioLibraryStore()

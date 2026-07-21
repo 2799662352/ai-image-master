@@ -402,10 +402,12 @@
     },
     "card": {
       "generating": "Generating, usually takes ~15s…",
+      "queued": "Queued…",
       "download": "Download",
       "copyPrompt": "Copy Prompt",
       "delete": "Delete",
-      "dismiss": "Dismiss"
+      "dismiss": "Dismiss",
+      "retry": "Retry"
     },
     "toast": {
       "done": "Audio generated",
