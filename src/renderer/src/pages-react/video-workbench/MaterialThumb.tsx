@@ -14,6 +14,12 @@ import {
   resolveMediaSrcOnce,
   useResolvedMediaSrc,
 } from '../../components/shared/media/useResolvedMediaSrc'
+import {
+  extractAssetId,
+  getCachedAssetPreview,
+  resolveAssetPreviews,
+  withCachedAssetPreview,
+} from '../../features/video-workbench/assetPreview'
 import type { MediaTokenKind } from '../../features/video-workbench/promptTokens'
 
 /**
@@ -33,6 +39,29 @@ export function materialThumbTarget(
   return m.src
 }
 
+/**
+ * asset:// 且缺 previewUrl 的素材(agent 经 MCP 挂上的旧数据)→ 惰性经
+ * seedance.listAssets 解析 previewUrl(assetPreview 会话级缓存,同一
+ * assetId 只查一次;多素材共享一轮全量拉取)。命中后返回补了 previewUrl
+ * 的素材;未命中/解析中返回原素材(调用方保持文件名占位)。
+ */
+export function useAssetPreviewMaterial(material: VideoWorkbenchMaterial): VideoWorkbenchMaterial {
+  const assetId = material.previewUrl ? null : extractAssetId(material.src)
+  const needsResolve = assetId !== null && getCachedAssetPreview(assetId) === undefined
+  const [, setVersion] = useState(0)
+  useEffect(() => {
+    if (!assetId || !needsResolve) return
+    let cancelled = false
+    void resolveAssetPreviews([assetId]).then(() => {
+      if (!cancelled) setVersion((v) => v + 1)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [assetId, needsResolve])
+  return withCachedAssetPreview(material)
+}
+
 export interface MaterialThumbProps {
   kind: MediaTokenKind
   material: VideoWorkbenchMaterial
@@ -43,10 +72,12 @@ export interface MaterialThumbProps {
 
 /**
  * 单素材缩略图:本地路径经 useResolvedMediaSrc(IPC → blob:)解析;
- * data:/https 直通;解析失败或 <img> onError 时渲染 fallback。
+ * data:/https 直通;asset:// 缺 previewUrl 时惰性查人像库列表补图;
+ * 解析失败或 <img> onError 时渲染 fallback。
  */
 export function MaterialThumb({ kind, material, fallback, imgClassName }: MaterialThumbProps) {
-  const target = materialThumbTarget(kind, material) ?? ''
+  const effective = useAssetPreviewMaterial(material)
+  const target = materialThumbTarget(kind, effective) ?? ''
   const resolved = useResolvedMediaSrc(target, 'image')
   const [erroredSrc, setErroredSrc] = useState<string | null>(null)
   if (!resolved || erroredSrc === resolved) return <>{fallback}</>
@@ -77,7 +108,32 @@ export interface MaterialThumbEntry {
  * (会打断正在输入的光标)。
  */
 export function useMaterialThumbSrcs(entries: MaterialThumbEntry[]): Array<string | undefined> {
-  const targets = entries.map((e) => materialThumbTarget(e.kind, e.material))
+  // asset:// 缺 previewUrl 的条目:批量收集 assetId 一次性解析(共享一轮
+  // 全量拉取,绝不按素材各发一次 list),命中后经缓存补进 previewUrl →
+  // targets 变化触发下面的常规解析。
+  const pendingAssetIds = [
+    ...new Set(
+      entries
+        .map((e) => (e.material.previewUrl ? null : extractAssetId(e.material.src)))
+        .filter((id): id is string => id !== null && getCachedAssetPreview(id) === undefined),
+    ),
+  ]
+  const assetKey = pendingAssetIds.join('\n')
+  const [, setAssetVersion] = useState(0)
+  useEffect(() => {
+    if (pendingAssetIds.length === 0) return
+    let cancelled = false
+    void resolveAssetPreviews(pendingAssetIds).then(() => {
+      if (!cancelled) setAssetVersion((v) => v + 1)
+    })
+    return () => {
+      cancelled = true
+    }
+    // pendingAssetIds 内容全部编码进 assetKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetKey])
+
+  const targets = entries.map((e) => materialThumbTarget(e.kind, withCachedAssetPreview(e.material)))
   const depKey = targets.join('\n')
   // 会话级缓存(target → 可渲染地址):素材增删只补差量,不重解析已有项,
   // 更不 revoke 仍在 DOM 里的 blob: —— 中途 revoke 会让已渲染的 chip 裂图。

@@ -3,9 +3,12 @@
 // 尾部虚线「+」添加卡淡入平移到队尾。配色换成 zinc/黄黑。
 // 素材缩略图支持 HTML5 拖拽换位(onReorder):拖起项半透明,目标位置
 // 显示黄色插入指示线,松手写回 store。
+// 单击素材弹出预览(图片大图 / 视频播放 / 音频播放,MaterialPreviewModal);
+// 拖拽换位后的 click 用 ref 抑制一拍,两种手势不打架。
 
 import { useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
+import { MaterialPreviewModal } from './MaterialPreviewModal'
 import { MaterialThumb } from './MaterialThumb'
 
 const STEP_PX = 64
@@ -69,9 +72,18 @@ export function MaterialStack({
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropPos, setDropPos] = useState<{ index: number; before: boolean } | null>(null)
 
+  // ---- 点击预览(与拖拽换位共存)----
+  // 浏览器通常不会在一次真实拖拽后派发 click,但 jsdom / 某些边界会:
+  // dragstart 时立起抑制位,dragend 后微任务清除,保证「拖动排序不误开预览」。
+  const [previewIdx, setPreviewIdx] = useState<number | null>(null)
+  const suppressClickRef = useRef(false)
+
   const clearDragState = () => {
     setDragIdx(null)
     setDropPos(null)
+    setTimeout(() => {
+      suppressClickRef.current = false
+    }, 0)
   }
 
   const handleItemDragOver = (e: DragEvent, idx: number) => {
@@ -130,10 +142,17 @@ export function MaterialStack({
                 ['--stack-ty' as string]: `${ty}px`,
                 ['--expand-left' as string]: `${idx * STEP_PX}px`,
               }}
+              role="button"
+              aria-label={`预览 ${m.name}`}
+              onClick={() => {
+                if (suppressClickRef.current) return
+                setPreviewIdx(idx)
+              }}
               onDragStart={(e) => {
                 if (disabled || !onReorder) return
                 e.dataTransfer.setData(dragMime, String(idx))
                 e.dataTransfer.effectAllowed = 'move'
+                suppressClickRef.current = true
                 setDragIdx(idx)
               }}
               onDragEnd={clearDragState}
@@ -191,6 +210,13 @@ export function MaterialStack({
           }}
         />
       </div>
+      {previewIdx !== null && materials[previewIdx] && (
+        <MaterialPreviewModal
+          kind={kind}
+          material={materials[previewIdx]}
+          onClose={() => setPreviewIdx(null)}
+        />
+      )}
     </div>
   )
 }
