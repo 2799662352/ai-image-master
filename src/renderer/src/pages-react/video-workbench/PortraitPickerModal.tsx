@@ -14,6 +14,7 @@ import type {
   SeedanceOfficialMaterialsResult,
 } from '../../../../types/seedance'
 import { usePortraitLibraryOverlay } from '../../hooks/usePortraitLibraryOverlay'
+import { uploadFilesToPortraitLibrary } from '../../features/portrait-library/portraitUpload'
 import { MaterialThumb } from './MaterialThumb'
 
 const PAGE_SIZE = 60
@@ -86,8 +87,10 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
   const [kind, setKind] = useState<SeedanceAssetKindFilter>('image_people')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Record<string, SeedanceAssetItem>>({})
+  const [uploading, setUploading] = useState(false)
   const overlay = usePortraitLibraryOverlay()
   const loadSeq = useRef(0)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
 
   const displayName = useCallback(
     (a: SeedanceAssetItem): string => overlay.entries[a.assetId]?.name || a.name,
@@ -140,6 +143,35 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
       setQuery('')
     }
   }, [open])
+
+  /**
+   * 弹窗内直接上传:走共享上传逻辑(校验 / 按当前类型 tab 定 imageCategory /
+   * 失败 toast 均由模块处理),成功后刷新列表并自动选中新入库素材,
+   * 用户可直接点「使用选中素材」。
+   */
+  const handleUpload = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return
+      setUploading(true)
+      try {
+        const result = await uploadFilesToPortraitLibrary(Array.from(files), { kindTab: kind })
+        if (result.assets.length > 0) {
+          await load('mine', kind, query.trim())
+          setSelected((prev) => {
+            const next = { ...prev }
+            for (const asset of result.assets) {
+              if (asset.assetId) next[asset.assetId] = asset
+            }
+            return next
+          })
+        }
+      } finally {
+        setUploading(false)
+        if (uploadInputRef.current) uploadInputRef.current.value = ''
+      }
+    },
+    [kind, query, load],
+  )
 
   // 叠加层隐藏(软删除)只作用于「我的素材」;官方素材原样展示。
   const visible = useMemo(
@@ -272,8 +304,32 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
           )}
         </div>
 
-        {/* 底部:确认 */}
+        {/* 底部:上传(仅我的素材) + 确认 */}
         <div className="flex items-center gap-2 px-4 py-3 border-t border-[#27272A]">
+          {source === 'mine' && (
+            <>
+              <input
+                ref={uploadInputRef}
+                data-testid="vw-picker-upload-input"
+                type="file"
+                accept="image/*,video/*,audio/*"
+                multiple
+                className="hidden"
+                onChange={(e) => void handleUpload(e.target.files)}
+              />
+              <button
+                type="button"
+                disabled={uploading}
+                className="text-xs border border-[#FCE300]/60 text-[#FCE300] px-3 py-1.5 hover:bg-[#FCE300]/10 disabled:opacity-40 inline-flex items-center gap-1.5"
+                onClick={() => uploadInputRef.current?.click()}
+              >
+                {uploading && (
+                  <span className="w-3 h-3 border-2 border-[#FCE300] border-t-transparent rounded-full animate-spin" />
+                )}
+                {uploading ? '上传中…' : '⬆ 上传素材'}
+              </button>
+            </>
+          )}
           <span className="text-white/40 text-xs">{selectedList.length > 0 ? `已选 ${selectedList.length} 个` : '点击素材多选'}</span>
           <button
             type="button"
