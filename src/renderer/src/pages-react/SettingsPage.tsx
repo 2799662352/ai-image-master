@@ -118,6 +118,11 @@ function SeedanceSection() {
     api?.seedance?.getConfig?.().then((state: any) => {
       if (state) setKeyState(state)
     })
+    // 站点也可能在「生成视频」工作台被切换 —— 订阅广播保持两处 UI 一致
+    const unsub = api?.seedance?.onConfigChanged?.((state: any) => {
+      if (state) setKeyState(state)
+    })
+    return () => unsub?.()
   }, [])
 
   const handleSave = async (

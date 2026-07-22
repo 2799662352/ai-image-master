@@ -146,6 +146,12 @@ export type CodexUserInput =
  * `settings.developer_instructions: null` means "use the built-in
  * instructions for the selected mode" — exactly what we want for Plan mode.
  */
+// 0.145.0's serde enum accepts `plan | code | custom | default | execute |
+// pair_programming` (verified by the bogus-variant probe in
+// scripts/smoke-collaboration-mode.ts), but `collaborationMode/list` still
+// only advertises the Plan/Default presets and we only ever SEND these two —
+// keep the union narrow so a typo can't smuggle an unreviewed mode onto the
+// wire.
 export type CodexCollaborationModeKind = 'plan' | 'default'
 
 export interface CodexCollaborationMode {
