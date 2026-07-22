@@ -18,12 +18,17 @@ import type {
 } from '../../../../types/videoWorkbench'
 import { toRenderableUri } from '../../features/file-explorer/uri'
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
+import { autoImportFilesToPortraitLibrary } from '../../features/video-workbench/portraitAutoImport'
 import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
-import { removeTokenAndReindex, type MediaTokenKind } from '../../features/video-workbench/promptTokens'
+import {
+  remapTokensForMove,
+  removeTokenAndReindex,
+  type MediaTokenKind,
+} from '../../features/video-workbench/promptTokens'
 import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { PortraitPickerModal } from './PortraitPickerModal'
-import { RichPromptInput, type PromptMediaRef } from './RichPromptInput'
+import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
@@ -139,6 +144,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   const moveCard = useVideoWorkbenchStore((s) => s.moveCard)
   const addMaterials = useVideoWorkbenchStore((s) => s.addMaterials)
   const removeMaterial = useVideoWorkbenchStore((s) => s.removeMaterial)
+  const moveMaterial = useVideoWorkbenchStore((s) => s.moveMaterial)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
 
   const busy = card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
@@ -200,12 +206,23 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
     const { images, videos, audios } = classifyFiles(files)
     const toMaterials = async (list: File[]) =>
       (await Promise.all(list.map(fileToMaterial))).filter((m): m is VideoWorkbenchMaterial => m !== null)
-    if (images.length && modeLimit(card.mode, 'image') > 0)
+    const accepted: File[] = []
+    if (images.length && modeLimit(card.mode, 'image') > 0) {
       addMaterials(card.id, 'referenceImages', await toMaterials(images))
-    if (videos.length && modeLimit(card.mode, 'video') > 0)
+      accepted.push(...images)
+    }
+    if (videos.length && modeLimit(card.mode, 'video') > 0) {
       addMaterials(card.id, 'referenceVideos', await toMaterials(videos))
-    if (audios.length && modeLimit(card.mode, 'audio') > 0)
+      accepted.push(...videos)
+    }
+    if (audios.length && modeLimit(card.mode, 'audio') > 0) {
       addMaterials(card.id, 'referenceAudios', await toMaterials(audios))
+      accepted.push(...audios)
+    }
+    // 「默认上传人像库」开着 → 后台顺带导入人像库(失败只 toast,不阻断卡片)
+    if (accepted.length > 0 && useVideoWorkbenchStore.getState().autoImportPortrait) {
+      void autoImportFilesToPortraitLibrary(accepted)
+    }
   }
 
   // ---- 富文本输入的媒体引用(chip 缩略图 / @ 建议数据源)----
@@ -279,6 +296,66 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       if (nextPrompt !== current.prompt) updateCard(card.id, { prompt: nextPrompt })
     },
     [card.id, removeMaterial, updateCard],
+  )
+
+  /** 素材拖拽换位:同步重映射提示词 token 序号,chip 引用不受顺序调整影响。 */
+  const handleReorderMaterial = useCallback(
+    (kind: MediaTokenKind, fromIndex: number, toIndex: number) => {
+      moveMaterial(card.id, KIND_TO_FIELD[kind], fromIndex, toIndex)
+      const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
+      if (!current) return
+      const nextPrompt = remapTokensForMove(current.prompt, kind, fromIndex + 1, toIndex + 1)
+      if (nextPrompt !== current.prompt) updateCard(card.id, { prompt: nextPrompt })
+    },
+    [card.id, moveMaterial, updateCard],
+  )
+
+  /** @ 建议「本页素材」分组:页面其他卡片素材(弹层打开时快照,去重排除本卡已有)。 */
+  const getPageMaterials = useCallback((): PageMaterialRef[] => {
+    const state = useVideoWorkbenchStore.getState()
+    const current = state.cards.find((c) => c.id === card.id)
+    const own = new Set(
+      [
+        ...(current?.referenceImages ?? []),
+        ...(current?.referenceVideos ?? []),
+        ...(current?.referenceAudios ?? []),
+      ].map((m) => m.src),
+    )
+    const seen = new Set<string>()
+    const out: PageMaterialRef[] = []
+    for (const c of state.cards) {
+      if (c.id === card.id) continue
+      const collect = (kind: MediaTokenKind, list: VideoWorkbenchMaterial[]) => {
+        for (const m of list) {
+          if (own.has(m.src) || seen.has(m.src)) continue
+          seen.add(m.src)
+          // 只有可直连地址(previewUrl / data: / https)才出缩略图,本地路径回落 emoji
+          const direct =
+            m.previewUrl ?? (m.src.startsWith('data:') || m.src.startsWith('http') ? m.src : undefined)
+          out.push({ kind, material: m, ...(direct ? { thumbSrc: direct } : {}) })
+        }
+      }
+      collect('image', c.referenceImages)
+      collect('video', c.referenceVideos)
+      collect('audio', c.referenceAudios)
+    }
+    return out
+  }, [card.id])
+
+  /** @ 建议选中其他卡片素材:入本卡素材并返回 token 序号(超限返回 null)。 */
+  const handlePickMaterial = useCallback(
+    (ref: PageMaterialRef): { kind: MediaTokenKind; index1: number } | null => {
+      const field = KIND_TO_FIELD[ref.kind]
+      const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
+      if (!current) return null
+      const list = current[field]
+      const existing = list.findIndex((m) => m.src === ref.material.src)
+      if (existing >= 0) return { kind: ref.kind, index1: existing + 1 }
+      if (list.length >= modeLimit(current.mode, ref.kind)) return null
+      addMaterials(card.id, field, [ref.material])
+      return { kind: ref.kind, index1: list.length + 1 }
+    },
+    [card.id, addMaterials],
   )
 
   // 人像库选择器
@@ -393,7 +470,13 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
         {/* 参考素材(soraui 布局:素材区在提示词上方) */}
         {(modeSpec.maxImages > 0 || modeSpec.maxVideos > 0 || modeSpec.maxAudios > 0) && (
           <div className="space-y-2 border border-dashed border-[#27272A] px-3 py-2">
-            <MaterialStackRow card={card} busy={busy} addFiles={addFiles} onRemove={handleRemoveMaterial} />
+            <MaterialStackRow
+              card={card}
+              busy={busy}
+              addFiles={addFiles}
+              onRemove={handleRemoveMaterial}
+              onReorder={handleReorderMaterial}
+            />
             <div className="flex items-center gap-3">
               <p className="text-white/25 text-[10px] flex-1">
                 {card.mode === 'first_frame'
@@ -426,6 +509,8 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           onChange={(v) => updateCard(card.id, { prompt: v })}
           onPickAsset={handlePickAsset}
           searchAssets={searchAssets}
+          getPageMaterials={getPageMaterials}
+          onPickMaterial={handlePickMaterial}
         />
 
         {/* 规格胶囊排 */}
@@ -633,11 +718,13 @@ function MaterialStackRow({
   busy,
   addFiles,
   onRemove,
+  onReorder,
 }: {
   card: VideoWorkbenchCard
   busy: boolean
   addFiles: (files: File[]) => Promise<void>
   onRemove: (kind: MediaTokenKind, index: number) => void
+  onReorder: (kind: MediaTokenKind, fromIndex: number, toIndex: number) => void
 }) {
   // MaterialStack 的 onAdd 直接复用整卡 addFiles(自动按 MIME 分流),
   // 这样点「+」和拖放走同一条入库路径。素材上限跟随生成模式。
@@ -659,6 +746,7 @@ function MaterialStackRow({
           disabled={busy}
           onAdd={onAdd}
           onRemove={(i) => onRemove('image', i)}
+          onReorder={(f, t) => onReorder('image', f, t)}
         />
       )}
       {videoLimit > 0 && (
@@ -671,6 +759,7 @@ function MaterialStackRow({
           disabled={busy}
           onAdd={onAdd}
           onRemove={(i) => onRemove('video', i)}
+          onReorder={(f, t) => onReorder('video', f, t)}
         />
       )}
       {audioLimit > 0 && (
@@ -683,6 +772,7 @@ function MaterialStackRow({
           disabled={busy}
           onAdd={onAdd}
           onRemove={(i) => onRemove('audio', i)}
+          onReorder={(f, t) => onReorder('audio', f, t)}
         />
       )}
     </div>

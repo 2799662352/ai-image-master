@@ -25,6 +25,8 @@ export default function VideoWorkbenchPage() {
   const ensureHydrated = useVideoWorkbenchStore((s) => s.ensureHydrated)
   const addCards = useVideoWorkbenchStore((s) => s.addCards)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
+  const autoImportPortrait = useVideoWorkbenchStore((s) => s.autoImportPortrait)
+  const setAutoImportPortrait = useVideoWorkbenchStore((s) => s.setAutoImportPortrait)
 
   useEffect(() => {
     void ensureHydrated()
@@ -57,6 +59,21 @@ export default function VideoWorkbenchPage() {
           <div className="ml-auto flex items-center gap-2">
             {/* 海外/国内站点切换:与设置页共享同一份 region 配置,提交按此路由 */}
             <RegionSwitch />
+            {/* 全局开关:本地上传素材加入卡片的同时顺带导入人像库(失败只 toast) */}
+            <button
+              type="button"
+              aria-pressed={autoImportPortrait}
+              title="开启后,任何卡片上本地上传的素材会自动同步导入人像库(导入失败不影响卡片)"
+              className={[
+                'text-xs px-3 py-2 border transition-colors',
+                autoImportPortrait
+                  ? 'border-[#FCE300] bg-[#FCE300]/15 text-[#FCE300]'
+                  : 'border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300]',
+              ].join(' ')}
+              onClick={() => setAutoImportPortrait(!autoImportPortrait)}
+            >
+              {autoImportPortrait ? '◉' : '○'} 默认上传人像库
+            </button>
             <button
               type="button"
               className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors disabled:opacity-40"

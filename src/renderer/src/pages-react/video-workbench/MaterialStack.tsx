@@ -1,13 +1,20 @@
 // 参考素材「扑克牌堆叠」组件 —— 移植自 soraui JimengStyleEditor 的
 // jm-stack 交互:收起时扇形微旋转叠放,hover 横向展开(64px 步进),
 // 尾部虚线「+」添加卡淡入平移到队尾。配色换成 zinc/黄黑。
+// 素材缩略图支持 HTML5 拖拽换位(onReorder):拖起项半透明,目标位置
+// 显示黄色插入指示线,松手写回 store。
 
-import { useRef, type ReactNode } from 'react'
+import { useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
 import { MaterialThumb } from './MaterialThumb'
 
 const STEP_PX = 64
 const MAX_VISIBLE = 12
+
+/** 素材换位拖拽 mime(带 kind,跨堆叠不生效)。 */
+export function materialDragMime(kind: 'image' | 'video' | 'audio'): string {
+  return `application/x-vw-material-${kind}`
+}
 
 interface MaterialStackProps {
   kind: 'image' | 'video' | 'audio'
@@ -18,6 +25,8 @@ interface MaterialStackProps {
   disabled?: boolean
   onAdd: (files: File[]) => void
   onRemove: (index: number) => void
+  /** 拖拽换位:把 fromIndex 的素材挪到 toIndex(0 起)。 */
+  onReorder?: (fromIndex: number, toIndex: number) => void
 }
 
 /**
@@ -40,10 +49,53 @@ function materialThumb(kind: 'image' | 'video' | 'audio', material: VideoWorkben
   return <MaterialThumb kind={kind} material={material} fallback={fallback} />
 }
 
-export function MaterialStack({ kind, label, materials, limit, accept, disabled, onAdd, onRemove }: MaterialStackProps) {
+export function MaterialStack({
+  kind,
+  label,
+  materials,
+  limit,
+  accept,
+  disabled,
+  onAdd,
+  onRemove,
+  onReorder,
+}: MaterialStackProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const visible = materials.slice(0, MAX_VISIBLE)
   const expandedWidth = (Math.min(materials.length, MAX_VISIBLE) + 1) * STEP_PX + 8
+
+  // ---- 素材换位拖拽 ----
+  const dragMime = materialDragMime(kind)
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [dropPos, setDropPos] = useState<{ index: number; before: boolean } | null>(null)
+
+  const clearDragState = () => {
+    setDragIdx(null)
+    setDropPos(null)
+  }
+
+  const handleItemDragOver = (e: DragEvent, idx: number) => {
+    if (!onReorder || !e.dataTransfer.types.includes(dragMime)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setDropPos({ index: idx, before: e.clientX < rect.left + rect.width / 2 })
+  }
+
+  const handleItemDrop = (e: DragEvent, idx: number) => {
+    if (!onReorder || !e.dataTransfer.types.includes(dragMime)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const from = parseInt(e.dataTransfer.getData(dragMime), 10)
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const before = e.clientX < rect.left + rect.width / 2
+    clearDragState()
+    if (!Number.isInteger(from) || from < 0 || from >= materials.length) return
+    let target = before ? idx : idx + 1
+    if (from < target) target -= 1
+    if (from !== target) onReorder(from, target)
+  }
 
   return (
     <div className="flex items-center gap-3 min-w-0">
@@ -52,7 +104,7 @@ export function MaterialStack({ kind, label, materials, limit, accept, disabled,
         <span className="block text-[10px] text-white/30">{materials.length}/{limit}</span>
       </span>
       <div
-        className={`vw-stack-container ${materials.length === 0 ? 'vw-empty' : ''}`}
+        className={`vw-stack-container ${materials.length === 0 ? 'vw-empty' : ''} ${dragIdx !== null ? 'vw-reordering' : ''}`}
         style={{ width: expandedWidth }}
         data-testid={`vw-stack-${kind}`}
       >
@@ -63,8 +115,14 @@ export function MaterialStack({ kind, label, materials, limit, accept, disabled,
           return (
             <div
               key={`${m.src.slice(0, 64)}-${idx}`}
-              className="vw-stack-item"
+              className={[
+                'vw-stack-item',
+                dragIdx === idx ? 'vw-mat-dragging' : '',
+                dropPos?.index === idx ? (dropPos.before ? 'vw-mat-drop-before' : 'vw-mat-drop-after') : '',
+              ].join(' ')}
               title={m.name}
+              draggable={!disabled && !!onReorder}
+              data-testid={`vw-stack-item-${kind}-${idx}`}
               style={{
                 zIndex: visible.length - idx,
                 ['--stack-rotate' as string]: `${rot}deg`,
@@ -72,6 +130,16 @@ export function MaterialStack({ kind, label, materials, limit, accept, disabled,
                 ['--stack-ty' as string]: `${ty}px`,
                 ['--expand-left' as string]: `${idx * STEP_PX}px`,
               }}
+              onDragStart={(e) => {
+                if (disabled || !onReorder) return
+                e.dataTransfer.setData(dragMime, String(idx))
+                e.dataTransfer.effectAllowed = 'move'
+                setDragIdx(idx)
+              }}
+              onDragEnd={clearDragState}
+              onDragOver={(e) => handleItemDragOver(e, idx)}
+              onDragLeave={() => setDropPos((p) => (p?.index === idx ? null : p))}
+              onDrop={(e) => handleItemDrop(e, idx)}
             >
               {materialThumb(kind, m)}
               {!disabled && (

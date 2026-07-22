@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SeedanceTaskUpdate } from '../../../../types/seedance'
 import {
+  AUTO_IMPORT_PORTRAIT_KEY,
   buildCard,
   canStart,
   resetWorkbenchStoreForTest,
@@ -106,6 +107,31 @@ describe('updateCard / removeCard / moveCard', () => {
     const cards = useVideoWorkbenchStore.getState().cards
     expect(cards.map((x) => x.id)).toEqual([c, a, b])
     expect(cards.map((x) => x.order)).toEqual([0, 1, 2])
+  })
+
+  it('moveMaterial 同类列表内换位;越界下标收敛;非法 fromIndex 不动', () => {
+    const store = useVideoWorkbenchStore.getState()
+    const [id] = store.addCards([
+      { referenceImages: ['C:/a.png', 'C:/b.png', 'C:/c.png'], referenceVideos: ['C:/v.mp4'] },
+    ])
+    store.moveMaterial(id, 'referenceImages', 0, 2)
+    let card = useVideoWorkbenchStore.getState().cards[0]
+    expect(card.referenceImages.map((m) => m.name)).toEqual(['b.png', 'c.png', 'a.png'])
+    // 视频列表不受影响
+    expect(card.referenceVideos.map((m) => m.name)).toEqual(['v.mp4'])
+
+    // toIndex 越界收敛到尾部
+    store.moveMaterial(id, 'referenceImages', 0, 99)
+    card = useVideoWorkbenchStore.getState().cards[0]
+    expect(card.referenceImages.map((m) => m.name)).toEqual(['c.png', 'a.png', 'b.png'])
+
+    // 非法 fromIndex 原样不动
+    store.moveMaterial(id, 'referenceImages', 9, 0)
+    expect(useVideoWorkbenchStore.getState().cards[0].referenceImages.map((m) => m.name)).toEqual([
+      'c.png',
+      'a.png',
+      'b.png',
+    ])
   })
 
   it('removeCard 删除并压实 order', () => {
@@ -233,6 +259,21 @@ describe('applyTaskUpdate 广播对齐', () => {
     expect(snap.prompt.length).toBeLessThanOrEqual(121)
     expect(snap.referenceCounts).toEqual({ images: 2, videos: 0, audios: 0 })
     expect(snap).toMatchObject({ cardId: card.id, order: 3, taskId: 't-9', localPath: 'C:/v.mp4' })
+  })
+})
+
+describe('autoImportPortrait 全局开关', () => {
+  it('默认关闭;setAutoImportPortrait 写 localStorage 持久化', () => {
+    localStorage.removeItem(AUTO_IMPORT_PORTRAIT_KEY)
+    resetWorkbenchStoreForTest()
+    expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(false)
+
+    useVideoWorkbenchStore.getState().setAutoImportPortrait(true)
+    expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(true)
+    expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('1')
+
+    useVideoWorkbenchStore.getState().setAutoImportPortrait(false)
+    expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('0')
   })
 })
 
