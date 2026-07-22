@@ -16,7 +16,6 @@ import type {
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
 } from '../../../../types/videoWorkbench'
-import { toRenderableUri } from '../../features/file-explorer/uri'
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
 import { autoImportFilesToPortraitLibrary } from '../../features/video-workbench/portraitAutoImport'
 import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
@@ -28,6 +27,7 @@ import {
 import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { PortraitPickerModal } from './PortraitPickerModal'
+import { ResultVideoPlayer, hasPlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
@@ -124,13 +124,6 @@ function statusLabel(card: VideoWorkbenchCard, elapsed: number): string {
   }
 }
 
-/** 播放源优先级:本地 mp4(秒开) > COS 永久 URL > 上游临时地址。 */
-function playbackSrc(card: VideoWorkbenchCard): string | null {
-  if (card.localPath) return toRenderableUri(card.localPath)
-  if (card.remoteUrl) return card.remoteUrl
-  if (card.videoUrl) return card.videoUrl
-  return null
-}
 
 interface WorkbenchCardProps {
   card: VideoWorkbenchCard
@@ -376,7 +369,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   )
 
   const modeSpec = getModeSpec(card.mode)
-  const src = playbackSrc(card)
+  const hasResultVideo = hasPlaybackSource(card)
 
   return (
     <div
@@ -638,10 +631,11 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           <p className="text-red-400 text-xs break-all border border-red-500/40 px-2 py-1.5">{card.error ?? '生成失败'}</p>
         )}
 
-        {card.status === 'succeeded' && src && (
+        {card.status === 'succeeded' && hasResultVideo && (
           <div className="space-y-2">
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <video controls preload="metadata" src={src} className="w-full max-h-[420px] bg-black border border-[#27272A]" />
+            {/* 本地字节经 IPC 转 blob: 播放(local-file:// 直塞 <video> 会空白,
+                见 ResultVideoPlayer 注释);失败自动降级远程源/错误兜底 */}
+            <ResultVideoPlayer card={card} />
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/40">
               {card.persistence === 'done' && card.localPath ? (
                 <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
