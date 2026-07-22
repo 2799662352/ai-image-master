@@ -179,6 +179,7 @@ describe('importSeedanceAsset', () => {
     expect(result.asset.assetId).toBe('v0c777')
     expect(result.asset.assetUrl).toBe('asset://v0c777')
     expect(result.duplicated).toBe(false)
+    expect(result.referenceable).toBe(true)
     // 第二次调用是按 input.kind 过滤的大页 list
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const [listUrl, listInit] = fetchMock.mock.calls[1] as [string, RequestInit]
@@ -187,7 +188,7 @@ describe('importSeedanceAsset', () => {
     expect(listUrl).toContain('kind=image_people')
   })
 
-  it('list 里也找不到匹配 id 时保留 id 兜底(不阻断导入)', async () => {
+  it('list 里也找不到匹配 id 时保留 id 兜底并标记不可引用(不阻断导入)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 50, totalPages: 1 }),
@@ -195,20 +196,46 @@ describe('importSeedanceAsset', () => {
     const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
     expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
     expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
+    // 不可引用:调用方(runtime)应保留 https 直传,不能换成 asset://dla-xxx
+    expect(result.referenceable).toBe(false)
   })
 
-  it('追加 list 请求失败时保留 id 兜底(不阻断导入)', async () => {
+  it('id 匹配不到但 name 命中时用 name 解析出真 assetId', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [
+          // list 条目 id 与导入行 id 不同(上游两侧 id 空间不一致),但名字一致
+          { id: 'row-999', kind: 'image', name: '0EE9F213.png', assetId: 'v0c888', assetUrl: 'asset://v0c888' },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      }),
+    )
+    const result = await importSeedanceAsset(
+      { kind: 'image', url: 'data:image/png;base64,xx', name: '0EE9F213.png' },
+      CREDS,
+    )
+    expect(result.asset.assetId).toBe('v0c888')
+    expect(result.referenceable).toBe(true)
+  })
+
+  it('追加 list 请求失败时保留 id 兜底并标记不可引用(不阻断导入)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
     fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500))
     const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
     expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
     expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
+    expect(result.referenceable).toBe(false)
   })
 
   it('响应带真实 assetId 时不追加 list 调用', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ duplicated: false, asset: ASSET }, 201))
     const result = await importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS)
     expect(result.asset.assetId).toBe('v0c001')
+    expect(result.referenceable).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 

@@ -149,7 +149,8 @@ function extractAsset(raw: unknown): { asset: SeedanceAssetItem; viaIdFallback: 
 }
 
 /**
- * 导入响应只回内部行 id 时，追加一次 list 按 `id` 匹配出真实 assetId/assetUrl。
+ * 导入响应只回内部行 id 时，追加一次 list 匹配出真实 assetId/assetUrl。
+ * 匹配优先级:内部 `id` 相同 → `name` 相同(导入名含时间戳基本唯一)。
  * 找不到/list 失败时返回 null，调用方保留 id 兜底（不阻断导入）。
  */
 async function resolveAssetViaList(
@@ -165,8 +166,12 @@ async function resolveAssetViaList(
       { page: 1, pageSize: 50, ...(kind ? { kind } : {}) },
       creds,
     )
-    const hit = items.find((it) => it.id === rowId)
-    if (hit && typeof hit.assetId === 'string' && hit.assetId && hit.assetId !== rowId) {
+    const usable = (it: SeedanceAssetItem): boolean =>
+      typeof it.assetId === 'string' && !!it.assetId && it.assetId !== rowId
+    const hit =
+      items.find((it) => it.id === rowId && usable(it)) ??
+      (input.name ? items.find((it) => it.name === input.name && usable(it)) : undefined)
+    if (hit) {
       return { ...hit, assetUrl: hit.assetUrl || `asset://${hit.assetId}` }
     }
   } catch (e) {
@@ -193,13 +198,17 @@ export async function importSeedanceAsset(
     throw new Error(`Seedance assets: import response missing assetId/assetUrl, got: ${snippet}`)
   }
   let asset = extracted.asset
+  let referenceable = !extracted.viaIdFallback
   // 兜底出的 dla-xxx 行 id 不是可引用的 assetId(直接引用会 400
-  // LOCAL_ASSET_NOT_FOUND)——追加 list 找同 id 条目换成真 assetId/assetUrl。
+  // LOCAL_ASSET_NOT_FOUND)——追加 list 找同 id/同 name 条目换成真 assetId/assetUrl。
   if (extracted.viaIdFallback) {
     const resolved = await resolveAssetViaList(asset.assetId, input, creds)
-    if (resolved) asset = resolved
+    if (resolved) {
+      asset = resolved
+      referenceable = true
+    }
   }
-  return { duplicated: !!(result.duplicated ?? result.data?.duplicated), asset }
+  return { duplicated: !!(result.duplicated ?? result.data?.duplicated), asset, referenceable }
 }
 
 /** 拉取素材列表（默认人像分类由调用方传 kind）。 */
