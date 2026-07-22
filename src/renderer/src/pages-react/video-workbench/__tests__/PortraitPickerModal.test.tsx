@@ -201,6 +201,100 @@ describe('PortraitPickerModal', () => {
     expect(assets.map((a) => a.assetId)).toEqual(['new1'])
   })
 
+  // 2026-07-23 线上症状:上游列表部分条目 assetId 为 null → 网格 key 撞
+  // 'null'(React 重复/漏渲染)、多选字典共享一个槽位(点一张全带 ✓)。
+  // 主进程已归一,这里渲染层再兜一层:稳定键 assetId || id。
+  it('assetId 为 null 的条目按内部 id 兜底稳定键:无 key 告警、多选互不串', async () => {
+    const brokenAsset = (id: string, name: string): SeedanceAssetItem => ({
+      id: `row-${id}`,
+      kind: 'image',
+      name,
+      assetUrl: '',
+      assetId: null as unknown as string,
+      previewUrl: `https://cdn.example.com/${id}.jpg`,
+    })
+    mockApi([brokenAsset('b1', '甲'), brokenAsset('b2', '乙')])
+    const errorSpy = vi.spyOn(console, 'error')
+    const onConfirm = vi.fn()
+    render(<PortraitPickerModal open onClose={() => {}} onConfirm={onConfirm} />)
+
+    const first = await screen.findByTitle('甲')
+    expect(screen.getByTitle('乙')).toBeTruthy()
+    expect(
+      errorSpy.mock.calls.some((c) => String(c[0]).includes('same key')),
+    ).toBe(false)
+    errorSpy.mockRestore()
+
+    // 只点「甲」→ 只有一个 ✓,确认只回填一条(null key 时代两条会共享选中槽位)
+    await act(async () => {
+      first.click()
+    })
+    expect(screen.getAllByText('✓')).toHaveLength(1)
+    await act(async () => {
+      screen.getByRole('button', { name: /使用选中素材/ }).click()
+    })
+    const assets = onConfirm.mock.calls[0][0] as SeedanceAssetItem[]
+    expect(assets).toHaveLength(1)
+    expect(assets[0].name).toBe('甲')
+  })
+
+  it('上游返回重复行(同 assetId)→ 按稳定键去重只渲染一条', async () => {
+    mockApi([makeAsset('a1', '赛博猫'), { ...makeAsset('a1', '赛博猫') }])
+    render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
+    await screen.findByTitle('赛博猫')
+    expect(screen.getAllByTitle('赛博猫')).toHaveLength(1)
+  })
+
+  it('上传中网格显示加载占位;上游临时 preview- 行经延迟重拉落定为一条完整条目', async () => {
+    const a1 = makeAsset('a1', '赛博猫')
+    const real = makeAsset('new1', '新素材.png')
+    // 上游导入后立刻 list 会短暂返回「临时 preview- 行 + 正式行」两条,
+    // 稍后再 list 才落定为一条 —— 按 listAssets 调用次数模拟。
+    const tempRow = {
+      id: 'dla-temp-1',
+      kind: 'image',
+      name: 'preview-123.png',
+      assetUrl: null,
+      assetId: null,
+      previewUrl: null,
+    } as unknown as SeedanceAssetItem
+    const api = mockApi([a1])
+    api.listAssets.mockImplementation(async () => {
+      const n = api.listAssets.mock.calls.length
+      const items = n <= 1 ? [a1] : n === 2 ? [a1, tempRow, real] : [a1, real]
+      return { items, total: items.length, page: 1, pageSize: 60, totalPages: 1 }
+    })
+    let resolveImport!: (v: { duplicated: boolean; asset: SeedanceAssetItem }) => void
+    api.importAsset.mockImplementation(
+      () => new Promise((r) => (resolveImport = r)) as never,
+    )
+    render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
+    await screen.findByTitle('赛博猫')
+
+    const input = screen.getByTestId('vw-picker-upload-input')
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [new File(['x'], '新素材.png', { type: 'image/png' })] } })
+    })
+    // 导入进行中:网格出现「上传中…」占位卡
+    await waitFor(() => expect(screen.getByTestId('vw-picker-uploading-tile')).toBeTruthy())
+
+    await act(async () => {
+      resolveImport({ duplicated: false, asset: real })
+    })
+    // 最终视图:一条完整条目,临时 preview- 行被延迟重拉替换掉,占位卡消失
+    await waitFor(
+      () => {
+        expect(screen.getAllByTitle('新素材.png')).toHaveLength(1)
+        expect(screen.queryByTitle('preview-123.png')).toBeNull()
+        expect(screen.queryByTestId('vw-picker-uploading-tile')).toBeNull()
+      },
+      { timeout: 3000 },
+    )
+    // 自动选中仍生效
+    const confirmBtn = screen.getByRole('button', { name: /使用选中素材/ }) as HTMLButtonElement
+    expect(confirmBtn.disabled).toBe(false)
+  })
+
   it('弹窗内上传失败 → toast 错误,不选中任何素材', async () => {
     const api = mockApi([makeAsset('a1', '赛博猫')])
     api.importAsset.mockImplementation(async () => {

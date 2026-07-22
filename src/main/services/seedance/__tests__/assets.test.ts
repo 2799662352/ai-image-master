@@ -276,6 +276,62 @@ describe('listSeedanceAssets', () => {
     expect(result.items).toHaveLength(1)
     expect(result.total).toBe(1)
   })
+
+  // 2026-07-23 线上实测:列表接口部分条目 assetId 实际为 null(类型标 string
+  // 但上游会给 null,与导入接口只回 dla-xxx 内部 id 是同一类毛病)。原样透传
+  // 会让渲染层 key/多选字典撞 null key(重复渲染、点一张全带 ✓)。这里按
+  // extractAsset 同款兜底顺序归一:assetId → assetUrl 反推 → 内部 id。
+  it('归一化:assetId 为 null 时从 assetUrl(asset:// 前缀)反推', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [{ ...ASSET, assetId: null, assetUrl: 'asset://v0c123' }],
+        total: 1,
+        page: 1,
+        pageSize: 24,
+        totalPages: 1,
+      }),
+    )
+    const result = await listSeedanceAssets({}, CREDS)
+    expect(result.items[0].assetId).toBe('v0c123')
+    expect(result.items[0].assetUrl).toBe('asset://v0c123')
+  })
+
+  it('归一化:assetId/assetUrl 均缺时用内部行 id 兜底并拼出 assetUrl', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [{ id: 'dla-temp-1', kind: 'image', name: '圖片1.png', assetId: null, assetUrl: null }],
+        total: 1,
+        page: 1,
+        pageSize: 24,
+        totalPages: 1,
+      }),
+    )
+    const result = await listSeedanceAssets({}, CREDS)
+    expect(result.items[0].assetId).toBe('dla-temp-1')
+    expect(result.items[0].assetUrl).toBe('asset://dla-temp-1')
+  })
+
+  it('归一化:有 assetId 缺 assetUrl 时由 assetId 拼出 asset://', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [{ id: 'dla-9', kind: 'image', name: 'x.png', assetId: 'v0c999' }],
+        total: 1,
+        page: 1,
+        pageSize: 24,
+        totalPages: 1,
+      }),
+    )
+    const result = await listSeedanceAssets({}, CREDS)
+    expect(result.items[0].assetUrl).toBe('asset://v0c999')
+  })
+
+  it('归一化:字段齐全的条目原样保留(不改写既有 assetId/assetUrl)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 24, totalPages: 1 }),
+    )
+    const result = await listSeedanceAssets({}, CREDS)
+    expect(result.items[0]).toMatchObject({ assetId: 'v0c001', assetUrl: 'asset://v0c001' })
+  })
 })
 
 describe('verifyContentAssetReferences', () => {

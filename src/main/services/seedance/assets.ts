@@ -211,6 +211,29 @@ export async function importSeedanceAsset(
   return { duplicated: !!(result.duplicated ?? result.data?.duplicated), asset, referenceable }
 }
 
+/**
+ * 列表条目归一。线上实测:部分条目 `assetId` 实际为 null(类型标 string 但
+ * 上游会给 null,与导入接口只回 dla-xxx 内部 id 是同一类毛病)。原样透传会
+ * 让所有消费方(选择弹窗、人像库页、提交前引用校验)拿到 null assetId ——
+ * 渲染层 key/多选字典撞 null key,表现为网格重复渲染 + 点一张全带 ✓。
+ * 兜底顺序与 extractAsset 一致:assetId → asset_id → assetUrl(asset://
+ * 反推)→ 内部行 id;assetUrl 缺失时由归一后的 assetId 拼出。
+ * 完全没有可用标识的条目原样保留(不臆造)。
+ */
+function normalizeListedAsset(item: SeedanceAssetItem): SeedanceAssetItem {
+  const a = item as unknown as Record<string, unknown>
+  const rawUrl = (a.assetUrl ?? a.asset_url) as string | null | undefined
+  const directId =
+    ((typeof a.assetId === 'string' && a.assetId ? a.assetId : null) ??
+      (typeof a.asset_id === 'string' && a.asset_id ? a.asset_id : null)) ||
+    (typeof rawUrl === 'string' && rawUrl.startsWith('asset://')
+      ? rawUrl.slice('asset://'.length)
+      : null)
+  const assetId = directId || (typeof a.id === 'string' && a.id ? a.id : null)
+  if (!assetId) return item
+  return { ...item, assetId, assetUrl: rawUrl || `asset://${assetId}` }
+}
+
 /** 拉取素材列表（默认人像分类由调用方传 kind）。 */
 export async function listSeedanceAssets(
   query: SeedanceAssetListQuery,
@@ -232,7 +255,7 @@ export async function listSeedanceAssets(
   // 兼容 `data` 包裹一层的部署
   const result = !Array.isArray(raw.items) && Array.isArray(raw.data?.items) ? raw.data! : raw
   return {
-    items: Array.isArray(result.items) ? result.items : [],
+    items: Array.isArray(result.items) ? result.items.map(normalizeListedAsset) : [],
     total: result.total ?? 0,
     page: result.page ?? query.page ?? 1,
     pageSize: result.pageSize ?? query.pageSize ?? 12,
