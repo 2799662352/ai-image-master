@@ -17,7 +17,7 @@ import type {
   SeedanceAssetListQuery,
   SeedanceAssetListResult,
 } from '../../../types/seedance'
-import { SEEDANCE_BASE_URL } from './client'
+import { getSeedanceBaseUrl } from './client'
 
 const ASSETS_PATH = '/api/open/v1/local-assets'
 
@@ -53,7 +53,7 @@ async function assetRequest<T>(
   // GET 签空 body；POST/DELETE 签 JSON body（批量删除把 assetIds 放在 DELETE 的 body 里）。
   const bodyText = method === 'GET' ? '' : JSON.stringify(body ?? {})
   const { timestamp, signature } = signAssetRequest(method, requestPath, bodyText, creds.apiSecret)
-  const res = await net.fetch(`${SEEDANCE_BASE_URL}${requestPath}${query}`, {
+  const res = await net.fetch(`${getSeedanceBaseUrl()}${requestPath}${query}`, {
     method,
     headers: {
       'Content-Type': 'application/json',

@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
 }))
 
 import { seedanceClient, ARK_REQUEST_TIMEOUT_MS } from '../client'
+import { setSeedanceRegionMemory } from '../region'
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -22,6 +23,13 @@ function jsonResponse(body: unknown, status = 200) {
 
 beforeEach(() => {
   fetchMock.mockReset()
+  setSeedanceRegionMemory('global')
+  delete process.env.SEEDANCE_BASE_URL
+})
+
+afterEach(() => {
+  setSeedanceRegionMemory('global')
+  delete process.env.SEEDANCE_BASE_URL
 })
 
 describe('seedanceClient.createTask', () => {
@@ -36,7 +44,7 @@ describe('seedanceClient.createTask', () => {
     const res = await seedanceClient.createTask({} as never, 'key')
     expect(res.id).toBe('task-200')
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://vvdance.yongmuai.com/api/v3/contents/generations/ark/tasks')
+    expect(url).toBe('https://vvdance.ai/api/v3/contents/generations/ark/tasks')
     expect(init.method).toBe('POST')
   })
 
@@ -100,7 +108,24 @@ describe('seedanceClient.queryTask', () => {
     fetchMock.mockResolvedValue(jsonResponse({ id: 't3', status: 'succeeded' }))
     await seedanceClient.queryTask('t3', 'key')
     const [url] = fetchMock.mock.calls[0] as [string]
-    expect(url).toBe('https://vvdance.yongmuai.com/api/v3/contents/generations/tasks/t3')
+    expect(url).toBe('https://vvdance.ai/api/v3/contents/generations/tasks/t3')
+  })
+
+  it('region=cn 时 create/query 打国内 Base', async () => {
+    setSeedanceRegionMemory('cn')
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'task-cn', status: 'queued' }, 200))
+    await seedanceClient.createTask({} as never, 'key')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toBe('https://vvdance.yongmuai.com/api/v3/contents/generations/ark/tasks')
+  })
+
+  it('env SEEDANCE_BASE_URL 覆盖 region', async () => {
+    process.env.SEEDANCE_BASE_URL = 'https://override.example'
+    setSeedanceRegionMemory('cn')
+    fetchMock.mockResolvedValue(jsonResponse({ id: 't-env', status: 'queued' }, 200))
+    await seedanceClient.createTask({} as never, 'key')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toBe('https://override.example/api/v3/contents/generations/ark/tasks')
   })
 })
 

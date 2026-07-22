@@ -21,7 +21,7 @@ import type {
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
 } from './types'
-import { SEEDANCE_MODEL_IDS } from './types'
+import { resolveSeedanceModelId } from './types'
 
 /** 上游轮询间隔。文档建议 5~10s。 */
 const POLL_INTERVAL_MS = 6_000
@@ -78,7 +78,7 @@ export class SeedanceTaskManager {
     const duration = input.duration ?? 5
 
     const body: SeedanceCreateTaskBody = {
-      model: SEEDANCE_MODEL_IDS[model],
+      model: resolveSeedanceModelId(model),
       content,
       ratio,
       resolution,

@@ -10,6 +10,9 @@ export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
 /** 对外暴露的友好模型名。 */
 export type SeedanceModelAlias = '2.0' | '2.0-fast'
 
+/** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
+export type SeedanceRegion = 'global' | 'cn'
+
 /** 任务快照（也是 `seedance:task-update` IPC 的载荷）。 */
 export interface SeedanceTaskState {
   taskId: string
@@ -68,6 +71,8 @@ export interface SeedanceKeyState {
   /** 素材库（人像库）接口需要 API Secret 做 HMAC 签名。 */
   hasSecret: boolean
   secretMasked?: string
+  /** 当前站点预设（env `SEEDANCE_BASE_URL` 可覆盖实际 Base，不改此字段）。 */
+  region: SeedanceRegion
 }
 
 // ==================== 素材库（人像库） ====================

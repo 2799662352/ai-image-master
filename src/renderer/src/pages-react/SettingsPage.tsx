@@ -108,6 +108,7 @@ function SeedanceSection() {
     source: 'store' | 'env' | 'none'
     hasSecret?: boolean
     secretMasked?: string
+    region?: 'global' | 'cn'
   } | null>(null)
   const [saving, setSaving] = React.useState(false)
 
@@ -119,17 +120,36 @@ function SeedanceSection() {
     })
   }, [])
 
-  const handleSave = async (field: 'apiKey' | 'apiSecret', value: string) => {
+  const handleSave = async (
+    field: 'apiKey' | 'apiSecret' | 'region',
+    value: string,
+  ) => {
     setSaving(true)
-    const label = field === 'apiKey' ? 'API Key' : 'API Secret'
+    const label =
+      field === 'apiKey' ? 'API Key' : field === 'apiSecret' ? 'API Secret' : '站点'
     try {
-      const state = await api?.seedance?.setConfig?.({ [field]: value })
+      // 防御：区分「preload 未注入 setConfig（旧窗口/旧实例，需重启 pnpm dev）」
+      // 和「主进程返回异常」，否则两者都只显示笼统的「接口不可用」没法排查。
+      if (typeof api?.seedance?.setConfig !== 'function') {
+        addToast({
+          message:
+            '保存失败：当前窗口的 preload 缺少 Seedance 接口（可能是旧实例），请重启应用（pnpm dev）',
+          type: 'error',
+        })
+        return
+      }
+      const state = await api.seedance.setConfig({ [field]: value })
       if (state) {
         setKeyState(state)
         if (field === 'apiKey') setApiKeyInput('')
-        else setApiSecretInput('')
+        else if (field === 'apiSecret') setApiSecretInput('')
         addToast({
-          message: value ? `Seedance ${label} 已保存` : `Seedance ${label} 已清除`,
+          message:
+            field === 'region'
+              ? `Seedance 站点已切换为 ${value === 'cn' ? '国内' : '海外 GLOBAL'}`
+              : value
+                ? `Seedance ${label} 已保存`
+                : `Seedance ${label} 已清除`,
           type: 'success',
         })
       } else {
@@ -149,6 +169,8 @@ function SeedanceSection() {
         ? `已保存 ${keyState.keyMasked ?? ''}`
         : null
 
+  const region = keyState?.region ?? 'global'
+
   return (
     <section className="space-y-3 pt-4 border-t border-zinc-700">
       <div className="flex items-center gap-2">
@@ -157,15 +179,47 @@ function SeedanceSection() {
         {sourceLabel && <span className="text-xs text-green-400">({sourceLabel})</span>}
       </div>
       <p className="text-xs text-zinc-500">
-        用于 Agent 的 generate_video 工具（Seedance 2.0 / 2.0 Fast）。API Key 用于视频任务；
-        API Secret 用于人像库（素材）接口签名，配置后视频参考图会自动入库并复用。留空保存可清除。
+        直连 VVDance（默认海外 GLOBAL / vvdance.ai）。API Key = 视频任务 Bearer；API Secret =
+        人像库 HMAC 签名。与 Miau / antigravity 出图 Key 无关。换站后请使用对应站点的开发者凭证。
       </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs text-zinc-400 shrink-0">站点</span>
+        <div className="inline-flex rounded border border-zinc-600 overflow-hidden text-sm">
+          <button
+            type="button"
+            disabled={saving || region === 'global'}
+            onClick={() => handleSave('region', 'global')}
+            className={`px-3 py-1.5 transition-all ${
+              region === 'global'
+                ? 'bg-cyberpunk-yellow text-cyberpunk-black font-bold'
+                : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50'
+            }`}
+          >
+            海外 GLOBAL
+          </button>
+          <button
+            type="button"
+            disabled={saving || region === 'cn'}
+            onClick={() => handleSave('region', 'cn')}
+            className={`px-3 py-1.5 transition-all border-l border-zinc-600 ${
+              region === 'cn'
+                ? 'bg-cyberpunk-yellow text-cyberpunk-black font-bold'
+                : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50'
+            }`}
+          >
+            国内
+          </button>
+        </div>
+        <span className="text-xs text-zinc-500">
+          {region === 'cn' ? 'vvdance.yongmuai.com · doubao-*' : 'vvdance.ai · dreamina-*'}
+        </span>
+      </div>
       <div className="flex gap-3">
         <input
           type="password"
           value={apiKey}
           onChange={(e) => setApiKeyInput(e.target.value)}
-          placeholder={keyState?.hasKey ? '已配置，输入新 Key 可覆盖' : '请输入 Seedance (Ark) API Key'}
+          placeholder={keyState?.hasKey ? '已配置，输入新 Key 可覆盖' : '请输入 VVDance 开发者 API Key'}
           className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
         />
         <button
@@ -184,7 +238,7 @@ function SeedanceSection() {
           placeholder={
             keyState?.hasSecret
               ? `已配置 ${keyState.secretMasked ?? ''}，输入新 Secret 可覆盖`
-              : '请输入 Seedance API Secret（人像库需要）'
+              : '请输入 API Secret（人像库签名，可选）'
           }
           className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
         />
@@ -508,7 +562,7 @@ export default function SettingsPage() {
           <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT</span>
         </div>
         <p className="text-xs text-zinc-500">
-          用于 AI Agent (Ctrl+Shift+A)。选择 Codex Gateway（API Yi / Right.Codes）或添加自定义网关，每个 Gateway 只需保存一份共享 Key，GPT 与 Grok 模型在聊天里直接切换。
+          用于 AI Agent (Ctrl+Shift+A)。选择内置 provider 或添加自定义网关，每个 provider 单独存储 key。
         </p>
         <CodexProviderManager />
         <button

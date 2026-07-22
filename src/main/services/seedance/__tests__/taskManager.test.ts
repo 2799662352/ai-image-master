@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
 import type { SeedanceClient, SeedanceQueryResult } from '../client'
 import type { CreateVideoTaskInput, SeedanceTaskUpdate } from '../types'
+import { setSeedanceRegionMemory } from '../region'
 
 const INPUT: CreateVideoTaskInput = { prompt: '一只猫在雨里跳舞' }
 
@@ -22,10 +23,12 @@ describe('SeedanceTaskManager', () => {
     vi.useFakeTimers()
     broadcasts = []
     persistVideo = vi.fn(async () => ({ localPath: 'D:/save/video.mp4', remoteUrl: 'https://cos/v.mp4' }))
+    setSeedanceRegionMemory('global')
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    setSeedanceRegionMemory('global')
   })
 
   function makeManager(client: SeedanceClient) {
@@ -44,6 +47,23 @@ describe('SeedanceTaskManager', () => {
     expect(state.status).toBe('queued')
     expect(state.threadId).toBe('th-1')
     expect(broadcasts).toHaveLength(1)
+    mgr.dispose()
+  })
+
+  it('submit 按 region 选择上游模型 ID（默认 global=dreamina）', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({ input: { ...INPUT, model: '2.0' }, content: [] })
+    expect(client.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'dreamina-seedance-2-0-260128' }),
+      'sk-test',
+    )
+    setSeedanceRegionMemory('cn')
+    await mgr.submit({ input: { ...INPUT, model: '2.0-fast' }, content: [] })
+    expect(client.createTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ model: 'doubao-seedance-2-0-fast-260128' }),
+      'sk-test',
+    )
     mgr.dispose()
   })
 
