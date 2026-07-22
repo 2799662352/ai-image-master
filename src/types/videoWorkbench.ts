@@ -109,6 +109,8 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   actualSeed?: number
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径）。 */
   completionTokens?: number
+  /** 该任务的成功结果已写入「历史记录」(防重:重载/重复广播不再入库)。 */
+  historyRecorded?: boolean
 }
 
 /** MCP / IPC 写入卡片时的字段集（全部可选，缺省用默认值）。 */

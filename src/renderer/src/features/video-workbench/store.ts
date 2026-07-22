@@ -26,6 +26,8 @@ import type {
   VideoWorkbenchSubmitPayload,
   VideoWorkbenchSubmitResult,
 } from '../../../../types/videoWorkbench'
+import type { HistoryDataService } from '../history'
+import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { WORKBENCH_MODES, modeLimit } from './modes'
 import { getWorkbenchDb } from './WorkbenchDb'
 
@@ -344,6 +346,34 @@ function writeActiveBoard(id: string): void {
   }
 }
 
+function toFileUrl(filePath: string): string {
+  return `file:///${filePath.replace(/\\/g, '/')}`
+}
+
+/** 历史条目 model 字段:带上分辨率/时长,历史页徽章一眼可见规格。 */
+function workbenchHistoryModel(card: VideoWorkbenchCard): string {
+  const dur = card.duration === -1 ? '智能时长' : `${card.duration}s`
+  return `seedance-${card.model} · ${card.resolution} · ${dur}`
+}
+
+/**
+ * 生成成功(persistence=done)→ 写一条「历史记录」(type codex-video,与聊天
+ * generate_video 的 SeedanceTaskListener 同口径)。优先 COS 永久 URL,本地
+ * file:// 兜底。防重由卡片上的 historyRecorded 标记保证(applyTaskUpdate 里
+ * 与状态更新同步落下并持久化),这里只管写。best-effort:失败不影响卡片。
+ */
+async function recordCardHistory(card: VideoWorkbenchCard): Promise<void> {
+  const durableUrl = card.remoteUrl ?? (card.localPath ? toFileUrl(card.localPath) : undefined)
+  if (!durableUrl) return
+  try {
+    const history = ServiceRegistry.get<HistoryDataService>(SERVICE_KEYS.HISTORY_DATA)
+    if (!history) return
+    await history.init()
+    await history.addToHistory('codex-video', card.prompt, [durableUrl], card.ratio, workbenchHistoryModel(card))
+  } catch (error) {
+    console.error('[VideoWorkbench] 写入历史记录失败(忽略):', error)
+  }
+}
 
 function readAutoImportPortrait(): boolean {
   try {
@@ -760,13 +790,14 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   applyTaskUpdate: (update) => {
     if (update.source !== 'workbench') return
     let after: VideoWorkbenchCard | null = null
+    let shouldRecordHistory = false
     set((state) => ({
       cards: state.cards.map((card) => {
         const match =
           (update.clientId && card.clientId === update.clientId) ||
           (card.taskId && card.taskId === update.taskId)
         if (!match) return card
-        after = {
+        let next: VideoWorkbenchCard = {
           ...card,
           status: update.status,
           taskId: update.taskId,
@@ -779,10 +810,23 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...(update.error ? { error: update.error } : {}),
           updatedAt: Date.now(),
         }
-        return after
+        // 生成成功且落盘完成 → 写一条历史记录。防重标记与状态更新同一次
+        // set 落下(并随 persistNow 持久化),重复 done 广播 / 重载后再广播都不重写。
+        if (
+          next.status === 'succeeded' &&
+          next.persistence === 'done' &&
+          !card.historyRecorded &&
+          (next.remoteUrl || next.localPath)
+        ) {
+          next = { ...next, historyRecorded: true }
+          shouldRecordHistory = true
+        }
+        after = next
+        return next
       }),
     }))
     if (after) persistNow(after)
+    if (after && shouldRecordHistory) void recordCardHistory(after)
   },
 }))
 
