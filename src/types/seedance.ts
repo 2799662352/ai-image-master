@@ -189,6 +189,14 @@ export interface SeedanceAssetImportInput {
 export interface SeedanceAssetImportResult {
   duplicated: boolean
   asset: SeedanceAssetItem
+  /**
+   * assetUrl 是否可用于创建任务的 `asset://` 引用。
+   * 上游导入响应有时只回内部行 id(dla-xxx,不可引用,提交会 400
+   * LOCAL_ASSET_NOT_FOUND)且 list 二次解析也可能找不到真 assetId——
+   * 此时为 false,调用方应保留 https 直传而非替换成 asset:// 引用。
+   * 主进程实现总会填;类型上可选是为了不破坏渲染层测试 mock。
+   */
+  referenceable?: boolean
 }
 
 // ==================== 官方素材库（文档 5） ====================

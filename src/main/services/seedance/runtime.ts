@@ -174,7 +174,7 @@ async function importImagesToPortraitLibrary(content: SeedanceContentItem[]): Pr
         url = await relayDataUrlToCos(url)
         item.image_url.url = url
       }
-      const { asset } = await importSeedanceAsset(
+      const { asset, referenceable } = await importSeedanceAsset(
         {
           kind: 'image',
           imageCategory: 'image_people',
@@ -184,8 +184,17 @@ async function importImagesToPortraitLibrary(content: SeedanceContentItem[]): Pr
         },
         { apiKey, apiSecret },
       )
-      item.image_url.url = asset.assetUrl
-      item.assetId = asset.assetId
+      // 上游导入有时只回不可引用的内部行 id(dla-xxx)且 list 也解析不出真
+      // assetId——此时**保留 https 直传**(COS 中转地址照样能生成),只把素材
+      // 留在人像库供展示;硬换成 asset://dla-xxx 会被创建任务 400 拒掉。
+      if (referenceable !== false) {
+        item.image_url.url = asset.assetUrl
+        item.assetId = asset.assetId
+      } else {
+        console.warn(
+          `[seedance] 导入素材未解析出可引用 assetId(${asset.assetId}),该图保留 URL 直传`,
+        )
+      }
     } catch (e) {
       console.warn('[seedance] portrait-library import failed, falling back to direct URL:', e)
     }
