@@ -80,6 +80,8 @@ import type {
   SeedanceAssetListQuery,
   SeedanceAssetListResult,
   SeedanceKeyState,
+  SeedanceOfficialMaterialsQuery,
+  SeedanceOfficialMaterialsResult,
   SeedanceRegion,
   SeedanceTaskUpdate,
 } from '../types/seedance'
@@ -720,6 +722,10 @@ export interface ElectronAPI {
     importAsset: (input: SeedanceAssetImportInput) => Promise<SeedanceAssetImportResult>
     getAssetCapacity: () => Promise<SeedanceAssetCapacity>
     deleteAssets: (assetIds: string[]) => Promise<SeedanceAssetDeleteResult>
+    /** 官方素材库（平台内置图片/视频/音频/虚拟人像,只读,文档 5）。 */
+    listOfficialMaterials: (
+      query: SeedanceOfficialMaterialsQuery,
+    ) => Promise<SeedanceOfficialMaterialsResult>
     /** 人像库本地叠加层（改名/分组/隐藏）：主进程单一真相源，与 MCP agent 共享。 */
     getOverlay: () => Promise<PortraitOverlayState>
     mutateOverlay: (mutation: PortraitOverlayMutation) => Promise<PortraitOverlayState>
@@ -1571,6 +1577,8 @@ const electronAPI: ElectronAPI = {
     getAssetCapacity: () => safeInvoke<SeedanceAssetCapacity>('seedance:assets-capacity'),
     deleteAssets: (assetIds: string[]) =>
       safeInvoke<SeedanceAssetDeleteResult>('seedance:assets-delete', { assetIds }),
+    listOfficialMaterials: (query: SeedanceOfficialMaterialsQuery) =>
+      safeInvoke<SeedanceOfficialMaterialsResult>('seedance:official-materials', query),
     getOverlay: () => safeInvoke<PortraitOverlayState>('seedance:overlay-get'),
     mutateOverlay: (mutation: PortraitOverlayMutation) =>
       safeInvoke<PortraitOverlayState>('seedance:overlay-mutate', mutation),

@@ -7,8 +7,8 @@ export type SeedanceTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 /** 落盘 bookkeeping 阶段 —— 与任务成功与否解耦。 */
 export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
 
-/** 对外暴露的友好模型名。 */
-export type SeedanceModelAlias = '2.0' | '2.0-fast'
+/** 对外暴露的友好模型名（mini = 最便宜档,仅 480p/720p）。 */
+export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini'
 
 /** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
 export type SeedanceRegion = 'global' | 'cn'
@@ -38,6 +38,10 @@ export interface SeedanceTaskState {
   persistence: SeedancePersistence
   /** failed 时的上游错误（code: message）。 */
   error?: string
+  /** succeeded 时上游回传的**实际使用**种子（含随机 seed 的最终值,可复现）。 */
+  actualSeed?: number
+  /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
+  completionTokens?: number
   /**
    * 渲染端用的「气泡身份」。generate_video 在真正 createTask 之前先用一个临时
    * clientId 广播一张「准备中」卡片；createTask 成功后真实任务的每条广播都带
@@ -185,4 +189,46 @@ export interface SeedanceAssetImportInput {
 export interface SeedanceAssetImportResult {
   duplicated: boolean
   asset: SeedanceAssetItem
+}
+
+// ==================== 官方素材库（文档 5） ====================
+// GET /api/open/v1/official-materials —— 平台内置官方图片/视频/音频/虚拟人像。
+// 只读列表,不写入开发者素材库;引用时直接用返回的 assetUrl（https）。
+
+export interface SeedanceOfficialMaterialItem {
+  id: string
+  /** image / video / audio / virtual_portrait。 */
+  kind: string
+  name: string
+  previewUrl?: string
+  sourceUrl?: string
+  /** 创建任务时直接作为素材 url（https,非 asset://）。 */
+  assetUrl?: string
+  assetId?: string | null
+  mediaType?: string | null
+  tab?: string | null
+  category?: string | null
+  description?: string | null
+  gender?: string | null
+  age?: number | null
+  sourceKind?: string
+}
+
+export interface SeedanceOfficialMaterialsQuery {
+  /** materials（普通官方素材,默认）或 avatars（虚拟人像）。 */
+  library?: 'materials' | 'avatars'
+  page?: number
+  pageSize?: number
+  q?: string
+  kind?: string
+  gender?: string
+  country?: string
+}
+
+export interface SeedanceOfficialMaterialsResult {
+  items: SeedanceOfficialMaterialItem[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
 }

@@ -19,10 +19,12 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
   global: {
     '2.0': 'dreamina-seedance-2-0-260128',
     '2.0-fast': 'dreamina-seedance-2-0-fast-260128',
+    '2.0-mini': 'dreamina-seedance-2-0-mini-260615',
   },
   cn: {
     '2.0': 'doubao-seedance-2-0-260128',
     '2.0-fast': 'doubao-seedance-2-0-fast-260128',
+    '2.0-mini': 'doubao-seedance-2-0-mini-260615',
   },
 }
 

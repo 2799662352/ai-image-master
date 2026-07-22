@@ -23,6 +23,8 @@ export interface SeedanceQueryResult {
   status: SeedanceTaskStatus
   content?: { video_url?: string }
   usage?: { completion_tokens?: number; total_tokens?: number }
+  /** 上游实际使用的随机种子（文档 3.1;含随机 seed 的最终值,可复现）。 */
+  seed?: number
   error?: { code?: string; message?: string }
 }
 

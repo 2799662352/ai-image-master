@@ -20,9 +20,10 @@ interface MaterialStackProps {
   onRemove: (index: number) => void
 }
 
-/** 素材源 → 可预览缩略内容。 */
+/** 素材源 → 可预览缩略内容(人像库 asset:// 源用 previewUrl 兜底展示)。 */
 function materialThumb(kind: 'image' | 'video' | 'audio', material: VideoWorkbenchMaterial): ReactNode {
-  const { src } = material
+  const { src, previewUrl } = material
+  if (previewUrl) return <img src={previewUrl} alt={material.name} draggable={false} />
   if (kind === 'image') {
     const uri = src.startsWith('data:') || /^https?:/.test(src) ? src : src.startsWith('asset://') ? '' : toRenderableUri(src)
     if (uri) return <img src={uri} alt={material.name} draggable={false} />

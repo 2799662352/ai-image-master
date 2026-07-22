@@ -21,9 +21,11 @@ import type {
   VideoWorkbenchCard,
   VideoWorkbenchCardInput,
   VideoWorkbenchMaterial,
+  VideoWorkbenchMode,
   VideoWorkbenchSubmitPayload,
   VideoWorkbenchSubmitResult,
 } from '../../../../types/videoWorkbench'
+import { WORKBENCH_MODES, modeLimit } from './modes'
 import { getWorkbenchDb } from './WorkbenchDb'
 
 export const MAX_REFERENCE_IMAGES = 9
@@ -59,12 +61,33 @@ function createId(): string {
 }
 
 /** 字符串源 → Material(展示名从路径/URL 猜)。 */
-export function toMaterial(src: string): VideoWorkbenchMaterial {
+export function toMaterial(src: string | VideoWorkbenchMaterial): VideoWorkbenchMaterial {
+  if (typeof src !== 'string') return src
   if (src.startsWith('data:')) return { name: '(内嵌素材)', src }
   if (src.startsWith('asset://')) return { name: `素材库 ${src.slice(8, 20)}…`, src }
   const clean = src.split(/[?#]/)[0]
   const base = clean.split(/[\\/]/).pop() || src.slice(0, 32)
   return { name: base, src }
+}
+
+/** 归一化 mode 输入(未知值回退全能参考)。 */
+function normalizeMode(mode: unknown): VideoWorkbenchMode {
+  return (WORKBENCH_MODES.find((m) => m.value === mode)?.value ?? 'multimodal_ref') as VideoWorkbenchMode
+}
+
+/** seed 归一化:非法/负数 → undefined(随机)。 */
+function normalizeSeed(seed: unknown): number | undefined {
+  const n = Number(seed)
+  if (!Number.isFinite(n) || n < 0) return undefined
+  return Math.min(4294967295, Math.round(n))
+}
+
+/** 时长归一化:-1 = 智能时长(模型自动决定,文档 8.1);其余收敛 4–15;非法回退 5。 */
+function normalizeDuration(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 5
+  if (n === -1) return -1
+  return Math.min(15, Math.max(4, Math.round(n)))
 }
 
 function clampMaterials(list: VideoWorkbenchMaterial[], kind: MaterialKind): VideoWorkbenchMaterial[] {
@@ -84,10 +107,11 @@ export function buildCard(input: VideoWorkbenchCardInput, order: number): VideoW
     model: input.model ?? '2.0',
     resolution: input.resolution ?? '720p',
     ratio: input.ratio ?? '16:9',
-    duration: Number.isFinite(Number(input.duration))
-      ? Math.min(15, Math.max(4, Math.round(Number(input.duration))))
-      : 5,
+    duration: normalizeDuration(input.duration ?? 5),
     generateAudio: input.generateAudio !== false,
+    mode: normalizeMode(input.mode),
+    ...(normalizeSeed(input.seed) !== undefined ? { seed: normalizeSeed(input.seed) } : {}),
+    webSearch: input.webSearch === true,
     referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages'),
     referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos'),
     referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios'),
@@ -104,6 +128,9 @@ export interface WorkbenchCardSnapshot {
   ratio: string
   duration: number
   generateAudio: boolean
+  mode: string
+  seed?: number
+  webSearch: boolean
   referenceCounts: { images: number; videos: number; audios: number }
   status: string
   taskId?: string
@@ -122,6 +149,9 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     ratio: card.ratio,
     duration: card.duration,
     generateAudio: card.generateAudio,
+    mode: card.mode,
+    ...(card.seed !== undefined ? { seed: card.seed } : {}),
+    webSearch: card.webSearch === true,
     referenceCounts: {
       images: card.referenceImages.length,
       videos: card.referenceVideos.length,
@@ -162,11 +192,70 @@ export interface VideoWorkbenchState {
   applyTaskUpdate: (update: SeedanceTaskUpdate) => void
 }
 
+/**
+ * 按生成模式把卡片素材拆成提交载荷的媒体字段:
+ * - text2video 不携带任何素材;
+ * - first_frame / first_last_frame 把参考图第 1/2 张拆成 firstFrame/lastFrame
+ *   (主进程 buildContent 据此打 first_frame/last_frame role);
+ * - extend_video 只带视频;reference_images 只带图;其余模式全量。
+ */
+export function buildModeMedia(card: VideoWorkbenchCard): Pick<
+  VideoWorkbenchSubmitPayload,
+  'firstFrame' | 'lastFrame' | 'referenceImages' | 'referenceVideos' | 'referenceAudios'
+> {
+  const images = card.referenceImages.map((m) => m.src)
+  const videos = card.referenceVideos.map((m) => m.src)
+  const audios = card.referenceAudios.map((m) => m.src)
+  switch (card.mode) {
+    case 'text2video':
+      return { referenceImages: [], referenceVideos: [], referenceAudios: [] }
+    case 'first_frame':
+      return {
+        ...(images[0] ? { firstFrame: images[0] } : {}),
+        referenceImages: [],
+        referenceVideos: [],
+        referenceAudios: [],
+      }
+    case 'first_last_frame':
+      return {
+        ...(images[0] ? { firstFrame: images[0] } : {}),
+        ...(images[1] ? { lastFrame: images[1] } : {}),
+        referenceImages: [],
+        referenceVideos: [],
+        referenceAudios: [],
+      }
+    case 'reference_images':
+      return { referenceImages: images, referenceVideos: [], referenceAudios: [] }
+    case 'extend_video':
+      return { referenceImages: [], referenceVideos: videos, referenceAudios: [] }
+    case 'multimodal_ref':
+    case 'edit_video':
+      return { referenceImages: images, referenceVideos: videos, referenceAudios: audios }
+    default: {
+      const exhaustive: never = card.mode
+      void exhaustive
+      return { referenceImages: images, referenceVideos: videos, referenceAudios: audios }
+    }
+  }
+}
+
 /** 卡片当前是否允许(重新)提交生成。 */
 export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: string } {
   if (!card.prompt.trim()) return { ok: false, reason: '提示词为空' }
   if (card.status === 'preparing' || card.status === 'queued' || card.status === 'running') {
     return { ok: false, reason: '任务进行中' }
+  }
+  // 上游硬约束(文档 2.2):音频不能单独作为唯一参考输入。
+  const media = buildModeMedia(card)
+  const hasAudio = (media.referenceAudios?.length ?? 0) > 0
+  const hasVisual =
+    !!media.firstFrame || (media.referenceImages?.length ?? 0) > 0 || (media.referenceVideos?.length ?? 0) > 0
+  if (hasAudio && !hasVisual) {
+    return { ok: false, reason: '音频不能单独作参考,请再加至少一张图片或一段视频' }
+  }
+  // mini/fast 不支持 1080p(文档 9.2 价格表仅 480p/720p 档)。
+  if (card.resolution === '1080p' && card.model !== '2.0') {
+    return { ok: false, reason: '1080p 仅 Seedance 2.0 满血支持' }
   }
   return { ok: true }
 }
@@ -215,11 +304,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         const stored = await getWorkbenchDb().list()
         // 重启后「进行中」状态已无人推进(任务在主进程内存里,重启即丢),
         // 统一落成 failed 并给出可读原因,可一键重试。
-        const normalized = stored.map((card) =>
-          card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
+        // 旧库卡片没有 mode/webSearch 字段(本轮新增),读出时补默认值。
+        const normalized = stored.map((raw) => {
+          const card = { ...raw, mode: normalizeMode(raw.mode), webSearch: raw.webSearch === true }
+          return card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
             ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启,任务状态丢失(可重试)' }
-            : card,
-        )
+            : card
+        })
         set((state) => ({
           // hydrate 与首个 addCards 竞态时,保留内存中已有的新卡(排在恢复卡之后)
           cards: reorder([...normalized, ...state.cards.filter((c) => !normalized.some((n) => n.id === c.id))]),
@@ -258,10 +349,16 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...(patch.model !== undefined ? { model: patch.model } : {}),
           ...(patch.resolution !== undefined ? { resolution: patch.resolution } : {}),
           ...(patch.ratio !== undefined ? { ratio: patch.ratio } : {}),
-          ...(patch.duration !== undefined
-            ? { duration: Math.min(15, Math.max(4, Math.round(Number(patch.duration) || 5))) }
-            : {}),
+          ...(patch.duration !== undefined ? { duration: normalizeDuration(patch.duration) } : {}),
           ...(patch.generateAudio !== undefined ? { generateAudio: patch.generateAudio } : {}),
+          ...(patch.mode !== undefined ? { mode: normalizeMode(patch.mode) } : {}),
+          // seed: null=清除(恢复随机);undefined=不动
+          ...(patch.seed === null
+            ? { seed: undefined }
+            : patch.seed !== undefined
+              ? { seed: normalizeSeed(patch.seed) }
+              : {}),
+          ...(patch.webSearch !== undefined ? { webSearch: patch.webSearch === true } : {}),
           ...(patch.referenceImages !== undefined
             ? { referenceImages: clampMaterials(patch.referenceImages.map(toMaterial), 'referenceImages') }
             : {}),
@@ -272,6 +369,15 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             ? { referenceAudios: clampMaterials(patch.referenceAudios.map(toMaterial), 'referenceAudios') }
             : {}),
           updatedAt: Date.now(),
+        }
+        // 模式切换后按新模式截断超限素材(soraui 是清空,这里保守只截断)
+        if (patch.mode !== undefined) {
+          updated = {
+            ...updated,
+            referenceImages: updated.referenceImages.slice(0, modeLimit(updated.mode, 'image')),
+            referenceVideos: updated.referenceVideos.slice(0, modeLimit(updated.mode, 'video')),
+            referenceAudios: updated.referenceAudios.slice(0, modeLimit(updated.mode, 'audio')),
+          }
         }
         return updated
       }),
@@ -391,9 +497,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         ratio: card.ratio,
         duration: card.duration,
         generateAudio: card.generateAudio,
-        referenceImages: card.referenceImages.map((m) => m.src),
-        referenceVideos: card.referenceVideos.map((m) => m.src),
-        referenceAudios: card.referenceAudios.map((m) => m.src),
+        ...(card.seed !== undefined ? { seed: card.seed } : {}),
+        ...(card.webSearch ? { webSearch: true } : {}),
+        ...buildModeMedia(card),
       }
 
       submissions.push(
@@ -454,6 +560,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...(update.videoUrl ? { videoUrl: update.videoUrl } : {}),
           ...(update.localPath ? { localPath: update.localPath } : {}),
           ...(update.remoteUrl ? { remoteUrl: update.remoteUrl } : {}),
+          ...(typeof update.actualSeed === 'number' ? { actualSeed: update.actualSeed } : {}),
+          ...(typeof update.completionTokens === 'number' ? { completionTokens: update.completionTokens } : {}),
           persistence: update.persistence,
           ...(update.error ? { error: update.error } : {}),
           updatedAt: Date.now(),

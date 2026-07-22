@@ -16,10 +16,13 @@ import type {
   SeedanceAssetItem,
   SeedanceAssetListQuery,
   SeedanceAssetListResult,
+  SeedanceOfficialMaterialsQuery,
+  SeedanceOfficialMaterialsResult,
 } from '../../../types/seedance'
 import { getSeedanceBaseUrl } from './client'
 
 const ASSETS_PATH = '/api/open/v1/local-assets'
+const OFFICIAL_MATERIALS_PATH = '/api/open/v1/official-materials'
 
 export interface SeedanceAssetCredentials {
   apiKey: string
@@ -39,17 +42,16 @@ export function signAssetRequest(
   return { timestamp, signature }
 }
 
-async function assetRequest<T>(
+async function openApiRequest<T>(
   method: 'GET' | 'POST' | 'DELETE',
-  subPath: string,
+  requestPath: string,
   query: string,
   body: unknown,
   creds: SeedanceAssetCredentials,
 ): Promise<T> {
   if (!creds.apiKey) throw new Error('Seedance assets: API Key 未配置')
   if (!creds.apiSecret) throw new Error('Seedance assets: API Secret 未配置（素材库接口需要签名）')
-  // 签名只签**路径**（含 /capacity 这类子路径），永远不含 query string（文档 4.2.2）。
-  const requestPath = `${ASSETS_PATH}${subPath}`
+  // 签名只签**路径**（含 /capacity 这类子路径），永远不含 query string（文档 4.2.2/5.1）。
   // GET 签空 body；POST/DELETE 签 JSON body（批量删除把 assetIds 放在 DELETE 的 body 里）。
   const bodyText = method === 'GET' ? '' : JSON.stringify(body ?? {})
   const { timestamp, signature } = signAssetRequest(method, requestPath, bodyText, creds.apiSecret)
@@ -79,6 +81,17 @@ async function assetRequest<T>(
     throw new Error(`Seedance assets API ${res.status}: ${detail}`)
   }
   return json as T
+}
+
+/** local-assets 请求（旧调用面:subPath 相对 ASSETS_PATH）。 */
+function assetRequest<T>(
+  method: 'GET' | 'POST' | 'DELETE',
+  subPath: string,
+  query: string,
+  body: unknown,
+  creds: SeedanceAssetCredentials,
+): Promise<T> {
+  return openApiRequest<T>(method, `${ASSETS_PATH}${subPath}`, query, body, creds)
 }
 
 /**
@@ -201,5 +214,35 @@ export async function deleteSeedanceAssets(
     deletedCount: typeof r.deletedCount === 'number' ? r.deletedCount : items.length,
     items,
     summary: r.summary,
+  }
+}
+
+/**
+ * 查询平台官方素材/虚拟人像（文档 5）。只读列表,不写入开发者素材库;
+ * 引用时直接用返回条目的 assetUrl（https 地址,非 asset://）。
+ * 兼容 `data` 包裹一层的部署。
+ */
+export async function listSeedanceOfficialMaterials(
+  query: SeedanceOfficialMaterialsQuery,
+  creds: SeedanceAssetCredentials,
+): Promise<SeedanceOfficialMaterialsResult> {
+  const params = new URLSearchParams()
+  params.set('library', query.library ?? 'materials')
+  if (query.page) params.set('page', String(query.page))
+  if (query.pageSize) params.set('pageSize', String(query.pageSize))
+  if (query.q) params.set('q', query.q)
+  if (query.kind) params.set('kind', query.kind)
+  if (query.gender) params.set('gender', query.gender)
+  if (query.country) params.set('country', query.country)
+  const raw = await openApiRequest<
+    Partial<SeedanceOfficialMaterialsResult> & { data?: Partial<SeedanceOfficialMaterialsResult> }
+  >('GET', OFFICIAL_MATERIALS_PATH, `?${params.toString()}`, undefined, creds)
+  const result = !Array.isArray(raw.items) && Array.isArray(raw.data?.items) ? raw.data! : raw
+  return {
+    items: Array.isArray(result.items) ? result.items : [],
+    total: result.total ?? 0,
+    page: result.page ?? query.page ?? 1,
+    pageSize: result.pageSize ?? query.pageSize ?? 12,
+    totalPages: result.totalPages ?? 1,
   }
 }
