@@ -6,16 +6,22 @@
 import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VideoWorkbenchMaterial } from '../../../../../types/videoWorkbench'
+import { resetAssetPreviewCacheForTest } from '../../../features/video-workbench/assetPreview'
 import { MaterialThumb, materialThumbTarget, useMaterialThumbSrcs } from '../MaterialThumb'
 
 const readMediaThumb = vi.fn()
 const readThumb = vi.fn()
+const listAssets = vi.fn()
 
 beforeEach(() => {
   readMediaThumb.mockReset()
   readThumb.mockReset()
+  listAssets.mockReset()
+  listAssets.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 50, totalPages: 1 })
+  resetAssetPreviewCacheForTest()
   ;(globalThis as unknown as { electronAPI?: unknown }).electronAPI = {
     attachments: { readMediaThumb, readThumb },
+    seedance: { listAssets },
   }
   let n = 0
   ;(globalThis.URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () =>
@@ -141,5 +147,62 @@ describe('useMaterialThumbSrcs(chip / @ 建议数据源)', () => {
     const { result } = renderHook(() => useMaterialThumbSrcs(entries))
     await waitFor(() => expect(readMediaThumb).toHaveBeenCalled())
     expect(result.current[0]).toBeUndefined()
+  })
+})
+
+describe('asset:// 缺 previewUrl 的惰性解析(agent 挂上的旧数据兜底)', () => {
+  const mockLibrary = () =>
+    listAssets.mockResolvedValue({
+      items: [
+        { id: 'a1', kind: 'image', name: '主角', assetId: 'a1', assetUrl: 'asset://a1', previewUrl: 'https://cdn/a1.jpg' },
+        { id: 'a2', kind: 'video', name: '素材片段', assetId: 'a2', assetUrl: 'asset://a2', previewUrl: 'https://cdn/a2.jpg' },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+    })
+
+  it('MaterialThumb:惰性查 listAssets 补 previewUrl 出图;同 assetId 多实例只查一次', async () => {
+    mockLibrary()
+    render(
+      <>
+        <MaterialThumb kind="image" material={{ name: 'x', src: 'asset://a1' }} fallback={<span>ph1</span>} />
+        <MaterialThumb kind="image" material={{ name: 'y', src: 'asset://a1' }} fallback={<span>ph2</span>} />
+      </>,
+    )
+    const imgs = await screen.findAllByRole('img')
+    expect(imgs).toHaveLength(2)
+    expect(imgs[0].getAttribute('src')).toBe('https://cdn/a1.jpg')
+    expect(listAssets).toHaveBeenCalledTimes(1)
+  })
+
+  it('MaterialThumb:库里查不到 → 保持 fallback 占位,不再重查', async () => {
+    render(
+      <MaterialThumb kind="image" material={{ name: '孤儿.png', src: 'asset://ghost' }} fallback={<span>孤儿.png</span>} />,
+    )
+    await waitFor(() => expect(listAssets).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('孤儿.png')).toBeTruthy()
+    expect(screen.queryByRole('img')).toBeNull()
+    cleanup()
+    render(
+      <MaterialThumb kind="image" material={{ name: '孤儿.png', src: 'asset://ghost' }} fallback={<span>孤儿.png</span>} />,
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    expect(listAssets).toHaveBeenCalledTimes(1)
+  })
+
+  it('useMaterialThumbSrcs:批量收集 assetId 共享一轮拉取(不按素材各发一次)', async () => {
+    mockLibrary()
+    const entries = [
+      { kind: 'image' as const, material: { name: 'a', src: 'asset://a1' } },
+      { kind: 'video' as const, material: { name: 'v', src: 'asset://a2' } },
+      { kind: 'image' as const, material: { name: 'b', src: 'data:image/png;base64,BBB' } },
+    ]
+    const { result } = renderHook(() => useMaterialThumbSrcs(entries))
+    await waitFor(() => expect(result.current[0]).toBe('https://cdn/a1.jpg'))
+    expect(result.current[1]).toBe('https://cdn/a2.jpg')
+    expect(result.current[2]).toBe('data:image/png;base64,BBB')
+    expect(listAssets).toHaveBeenCalledTimes(1)
   })
 })

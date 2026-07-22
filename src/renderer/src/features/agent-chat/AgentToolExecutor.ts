@@ -21,6 +21,7 @@ import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMe
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { snapshotCard, useVideoWorkbenchStore } from '../video-workbench/store'
+import { enrichAssetReferences } from '../video-workbench/assetPreview'
 
 type GenerateAudioToolParams = {
   input?: unknown
@@ -330,8 +331,11 @@ export class AgentToolExecutor {
 
     switch (toolName) {
       case 'video_workbench_add_tasks': {
-        const tasks = Array.isArray(params.tasks) ? (params.tasks as Record<string, unknown>[]) : []
-        if (tasks.length === 0) throw new Error('video_workbench_add_tasks: tasks is empty')
+        const rawTasks = Array.isArray(params.tasks) ? (params.tasks as Record<string, unknown>[]) : []
+        if (rawTasks.length === 0) throw new Error('video_workbench_add_tasks: tasks is empty')
+        // asset:// 引用 → 带 previewUrl 的 Material(人像库列表批量解析,
+        // 失败/查不到保持字符串原样),新挂的素材缩略图直接有图。
+        const tasks = await enrichAssetReferences(rawTasks)
         const cardIds = store.addCards(tasks)
         if (params.navigate !== false) {
           useTabStore.getState().switchTab('videoWorkbench')
@@ -349,7 +353,8 @@ export class AgentToolExecutor {
       case 'video_workbench_update_task': {
         const cardId = typeof params.cardId === 'string' ? params.cardId : ''
         if (!cardId) throw new Error('video_workbench_update_task: cardId is required')
-        const ok = store.updateCard(cardId, params)
+        const [patch] = await enrichAssetReferences([params])
+        const ok = store.updateCard(cardId, patch)
         const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
         if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
         if (!ok) throw new Error(`video_workbench_update_task: card is rendering and cannot be edited: ${cardId}`)

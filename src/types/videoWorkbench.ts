@@ -125,10 +125,13 @@ export interface VideoWorkbenchCardInput {
   /** 随机种子;传 null 表示清除（恢复随机）。 */
   seed?: number | null
   webSearch?: boolean
-  /** 字符串源（本地路径 / https / asset:// / data:），会包成 Material。 */
-  referenceImages?: string[]
-  referenceVideos?: string[]
-  referenceAudios?: string[]
+  /**
+   * 字符串源（本地路径 / https / asset:// / data:，会包成 Material），
+   * 或已解析好的 Material 对象（MCP 写入侧给 asset:// 引用带 previewUrl）。
+   */
+  referenceImages?: Array<string | VideoWorkbenchMaterial>
+  referenceVideos?: Array<string | VideoWorkbenchMaterial>
+  referenceAudios?: Array<string | VideoWorkbenchMaterial>
 }
 
 /** `video-workbench:submit` IPC 载荷（渲染端 → 主进程）。 */
