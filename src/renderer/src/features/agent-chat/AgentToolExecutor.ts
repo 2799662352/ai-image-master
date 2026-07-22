@@ -20,6 +20,7 @@ import { directorBridge } from '../../components/shared/image-editors/director/d
 import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMediaSrc'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
+import { snapshotCard, useVideoWorkbenchStore } from '../video-workbench/store'
 
 type GenerateAudioToolParams = {
   input?: unknown
@@ -299,8 +300,80 @@ export class AgentToolExecutor {
         return this.callUnderstand(toolName, params)
       case 'generate_audio':
         return this.generateAudio(params as GenerateAudioToolParams, threadId)
+      case 'video_workbench_add_tasks':
+      case 'video_workbench_update_task':
+      case 'video_workbench_start':
+      case 'video_workbench_status':
+      case 'video_workbench_remove_tasks':
+        return this.callVideoWorkbench(toolName, params)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
+    }
+  }
+
+  /**
+   * video_workbench_*(生成视频工作台):AI 与用户操作同一个 zustand store
+   * (useVideoWorkbenchStore),页面卡片实时反映 agent 的填写/启动。
+   * 生成本身经 video-workbench:submit IPC 复用主进程 Seedance 链路。
+   */
+  private async callVideoWorkbench(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+    const store = useVideoWorkbenchStore.getState()
+    await store.ensureHydrated()
+
+    const pickCards = (cardIds?: unknown) => {
+      const ids = Array.isArray(cardIds)
+        ? cardIds.filter((x): x is string => typeof x === 'string')
+        : null
+      const cards = useVideoWorkbenchStore.getState().cards
+      return ids ? cards.filter((c) => ids.includes(c.id)) : cards
+    }
+
+    switch (toolName) {
+      case 'video_workbench_add_tasks': {
+        const tasks = Array.isArray(params.tasks) ? (params.tasks as Record<string, unknown>[]) : []
+        if (tasks.length === 0) throw new Error('video_workbench_add_tasks: tasks is empty')
+        const cardIds = store.addCards(tasks)
+        if (params.navigate !== false) {
+          useTabStore.getState().switchTab('videoWorkbench')
+        }
+        let start: unknown
+        if (params.autoStart === true) {
+          start = await useVideoWorkbenchStore.getState().startCards(cardIds)
+        }
+        return {
+          cardIds,
+          total: useVideoWorkbenchStore.getState().cards.length,
+          ...(start ? { start } : {}),
+        }
+      }
+      case 'video_workbench_update_task': {
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        if (!cardId) throw new Error('video_workbench_update_task: cardId is required')
+        const ok = store.updateCard(cardId, params)
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
+        if (!ok) throw new Error(`video_workbench_update_task: card is rendering and cannot be edited: ${cardId}`)
+        return { ok: true, card: snapshotCard(card) }
+      }
+      case 'video_workbench_start': {
+        const ids = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : undefined
+        return store.startCards(ids)
+      }
+      case 'video_workbench_status': {
+        const cards = pickCards(params.cardIds)
+        return { total: cards.length, cards: cards.map(snapshotCard) }
+      }
+      case 'video_workbench_remove_tasks': {
+        const ids = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : []
+        for (const id of ids) store.removeCard(id)
+        return { removed: ids, total: useVideoWorkbenchStore.getState().cards.length }
+      }
+      default:
+        throw new Error(`Unknown video workbench tool: ${toolName}`)
     }
   }
 

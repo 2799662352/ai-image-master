@@ -244,7 +244,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
   server.registerTool('generate_video', {
     description:
       'FIRST-CHOICE video generation tool inside the CATIMATION app (Seedance 2.0 / 2.0 Fast) — use ' +
-      'for ANY video/clip/animation/视频/生成视频/动起来 request. Submits the render and blocks ' +
+      'for ANY video/clip/animation/视频/生成视频/动起来 request. Default upstream is VVDance GLOBAL ' +
+      '(vvdance.ai / dreamina-seedance-*); settings can switch to CN (yongmuai / doubao-*). Submits the render and blocks ' +
       '~75s for fast results/early failures; a normal render takes 1–3 minutes, so it COMMONLY ' +
       'returns ⏳ STILL RUNNING with a taskId — then just keep calling check_video_task (server ' +
       'long-polls ~25s, returns the moment status changes) until DONE or FAILED. Do NOT resubmit ' +
@@ -275,7 +276,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'parameters appended at the end.',
       ),
       model: z.enum(['2.0', '2.0-fast']).optional().describe(
-        'Seedance model. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). Only use "2.0-fast" when the user explicitly wants fast/cheap/draft.',
+        'Seedance model alias (MCP keeps 2.0 / 2.0-fast). Upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). Only use "2.0-fast" when the user explicitly wants fast/cheap/draft.',
       ),
       resolution: z.enum(['480p', '720p', '1080p']).optional().describe(
         'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0".',

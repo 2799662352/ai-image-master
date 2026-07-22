@@ -1416,21 +1416,23 @@
                     <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.historyRecords">历史记录</span>
                     <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.historyShort">记录</span>
                 </button>
-                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="understand">
-                    <i class="fas fa-eye text-sm"></i>
-                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.imageUnderstand">图像理解</span>
-                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.understandShort">识图</span>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap relative" data-tab="videoWorkbench">
+                    <span class="tab-btn-badge" data-i18n="nav.badge.new">NEW</span>
+                    <i class="fas fa-video text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.videoWorkbench">生成视频</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.videoWorkbenchShort">视频</span>
                 </button>
                 <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="director">
                     <i class="fas fa-film text-sm"></i>
                     <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.director">导演模式</span>
                     <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.directorShort">导演</span>
                 </button>
-                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="storyboardSplit">
-                    <i class="fas fa-th text-sm"></i>
-                    <span class="text-base whitespace-nowrap desktop-text font-bold">宫格拆图</span>
-                    <span class="text-sm whitespace-nowrap mobile-text">拆图</span>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="understand">
+                    <i class="fas fa-eye text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.imageUnderstand">图像理解</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.understandShort">识图</span>
                 </button>
+                <!-- 「宫格拆图」tab 已从导航隐藏（页面代码/面板保留，可经 #storyboardSplit hash 直达） -->
                 <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="smartErase">
                     <i class="fas fa-eraser text-sm"></i>
                     <span class="text-base whitespace-nowrap desktop-text font-bold">智能去字幕</span>
@@ -2170,6 +2172,11 @@
         <!-- 宫格拆图面板 -->
         <div id="storyboardSplitPanel" class="tab-panel hidden relative p-0 bg-transparent border-0">
             <div id="storyboard-split-react-root"></div>
+        </div>
+
+        <!-- 「生成视频」工作台面板（卷轴式并发视频任务卡片，React 接管） -->
+        <div id="videoWorkbenchPanel" class="tab-panel hidden relative p-0 bg-transparent border-0">
+            <div id="video-workbench-react-root"></div>
         </div>
 
         <!-- 智能去字幕面板 -->

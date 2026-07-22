@@ -1,20 +1,28 @@
-// Seedance API Key/Secret 安全存储 —— 与 tencent/credentials.ts 同款 safeStorage 模式。
-// 文件内容是加密后的 JSON `{ apiKey, apiSecret }`；旧版本只存纯 Key 字符串，
+// Seedance API Key/Secret/region 安全存储 —— 与 tencent/credentials.ts 同款 safeStorage 模式。
+// 文件内容是加密后的 JSON `{ apiKey, apiSecret, region? }`；旧版本只存纯 Key 字符串，
 // 读取时向后兼容。
 // 优先级：safeStorage 持久化 > 环境变量 SEEDANCE_API_KEY / SEEDANCE_API_SECRET。
+// region 默认 global（海外 VVDance GLOBAL）；Base URL 另可由 SEEDANCE_BASE_URL 覆盖。
 
 import { app, safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import type { SeedanceKeyState } from '../../../types/seedance'
+import type { SeedanceKeyState, SeedanceRegion } from '../../../types/seedance'
+import {
+  getSeedanceRegion,
+  parseSeedanceRegion,
+  setSeedanceRegionMemory,
+} from './region'
 
 export type { SeedanceKeyState }
 
 const SAFE_STORAGE_FILENAME = 'seedance-credentials.bin'
+const DEFAULT_REGION: SeedanceRegion = 'global'
 
 interface SeedanceCredentials {
   apiKey: string
   apiSecret: string
+  region: SeedanceRegion
 }
 
 let cached: { creds: SeedanceCredentials; source: SeedanceKeyState['source'] } | null = null
@@ -33,14 +41,18 @@ function parseStored(plain: string): SeedanceCredentials | null {
       const obj = JSON.parse(text) as Partial<SeedanceCredentials>
       const apiKey = typeof obj.apiKey === 'string' ? obj.apiKey.trim() : ''
       const apiSecret = typeof obj.apiSecret === 'string' ? obj.apiSecret.trim() : ''
-      if (!apiKey && !apiSecret) return null
-      return { apiKey, apiSecret }
+      const region = parseSeedanceRegion(obj.region) ?? DEFAULT_REGION
+      if (!apiKey && !apiSecret) {
+        // 允许只存 region（用户尚未填 Key）
+        return { apiKey: '', apiSecret: '', region }
+      }
+      return { apiKey, apiSecret, region }
     } catch {
       /* 落到旧格式分支 */
     }
   }
   // 旧格式：文件里只有纯 API Key 字符串
-  return { apiKey: text, apiSecret: '' }
+  return { apiKey: text, apiSecret: '', region: DEFAULT_REGION }
 }
 
 function readFromSafeStorage(): SeedanceCredentials | null {
@@ -60,11 +72,21 @@ function writeToSafeStorage(creds: SeedanceCredentials): boolean {
   try {
     if (!safeStorage.isEncryptionAvailable()) return false
     const p = binPath()
-    if (!creds.apiKey && !creds.apiSecret) {
+    if (!creds.apiKey && !creds.apiSecret && creds.region === DEFAULT_REGION) {
+      // 默认 region + 无密钥：清文件，避免空壳残留
       if (fs.existsSync(p)) fs.unlinkSync(p)
       return true
     }
-    fs.writeFileSync(p, safeStorage.encryptString(JSON.stringify(creds)))
+    fs.writeFileSync(
+      p,
+      safeStorage.encryptString(
+        JSON.stringify({
+          apiKey: creds.apiKey,
+          apiSecret: creds.apiSecret,
+          region: creds.region,
+        }),
+      ),
+    )
     return true
   } catch (e) {
     console.warn('[seedance/credentials] safeStorage write failed:', e)
@@ -78,27 +100,43 @@ function resolve(): { creds: SeedanceCredentials; source: SeedanceKeyState['sour
     return { creds: inMemoryFallback, source: has ? 'store' : 'none' }
   }
   const stored = readFromSafeStorage()
-  if (stored) return { creds: stored, source: 'store' }
+  if (stored) return { creds: stored, source: stored.apiKey || stored.apiSecret ? 'store' : 'none' }
   const envKey = (process.env.SEEDANCE_API_KEY || '').trim()
   const envSecret = (process.env.SEEDANCE_API_SECRET || '').trim()
   if (envKey || envSecret) {
-    return { creds: { apiKey: envKey, apiSecret: envSecret }, source: 'env' }
+    return {
+      creds: { apiKey: envKey, apiSecret: envSecret, region: getSeedanceRegion() || DEFAULT_REGION },
+      source: 'env',
+    }
   }
-  return { creds: { apiKey: '', apiSecret: '' }, source: 'none' }
+  return { creds: { apiKey: '', apiSecret: '', region: DEFAULT_REGION }, source: 'none' }
+}
+
+function syncRegionMemory(region: SeedanceRegion): void {
+  setSeedanceRegionMemory(region)
 }
 
 export function getSeedanceApiKey(): string {
-  if (!cached) cached = resolve()
+  if (!cached) {
+    cached = resolve()
+    syncRegionMemory(cached.creds.region)
+  }
   return cached.creds.apiKey
 }
 
 export function getSeedanceApiSecret(): string {
-  if (!cached) cached = resolve()
+  if (!cached) {
+    cached = resolve()
+    syncRegionMemory(cached.creds.region)
+  }
   return cached.creds.apiSecret
 }
 
 export function getSeedanceKeyState(): SeedanceKeyState {
-  if (!cached) cached = resolve()
+  if (!cached) {
+    cached = resolve()
+    syncRegionMemory(cached.creds.region)
+  }
   const { creds, source } = cached
   return {
     hasKey: !!creds.apiKey,
@@ -106,17 +144,26 @@ export function getSeedanceKeyState(): SeedanceKeyState {
     source,
     hasSecret: !!creds.apiSecret,
     secretMasked: creds.apiSecret ? `${creds.apiSecret.slice(0, 5)}****` : undefined,
+    region: creds.region,
   }
 }
 
 /**
- * 写入凭证。字段传 `undefined` 表示保持原值，传空字符串表示清除。
+ * 写入凭证。字段传 `undefined` 表示保持原值，传空字符串表示清除（region 除外）。
  */
-export function setSeedanceCredentials(next: { apiKey?: string; apiSecret?: string }): void {
-  if (!cached) cached = resolve()
+export function setSeedanceCredentials(next: {
+  apiKey?: string
+  apiSecret?: string
+  region?: SeedanceRegion
+}): void {
+  if (!cached) {
+    cached = resolve()
+    syncRegionMemory(cached.creds.region)
+  }
   const merged: SeedanceCredentials = {
     apiKey: next.apiKey !== undefined ? next.apiKey.trim() : cached.creds.apiKey,
     apiSecret: next.apiSecret !== undefined ? next.apiSecret.trim() : cached.creds.apiSecret,
+    region: next.region !== undefined ? next.region : cached.creds.region,
   }
   if (!writeToSafeStorage(merged)) {
     inMemoryFallback = merged
@@ -124,6 +171,7 @@ export function setSeedanceCredentials(next: { apiKey?: string; apiSecret?: stri
   } else {
     inMemoryFallback = null
   }
+  syncRegionMemory(merged.region)
   cached = null
 }
 

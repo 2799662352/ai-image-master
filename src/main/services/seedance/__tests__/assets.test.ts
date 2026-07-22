@@ -14,6 +14,7 @@ import {
   getSeedanceAssetCapacity,
   deleteSeedanceAssets,
 } from '../assets'
+import { setSeedanceRegionMemory } from '../region'
 
 const CREDS = { apiKey: 'sd_key', apiSecret: 'sd_secret' }
 
@@ -38,6 +39,8 @@ function jsonResponse(body: unknown, status = 200) {
 
 beforeEach(() => {
   fetchMock.mockReset()
+  setSeedanceRegionMemory('global')
+  delete process.env.SEEDANCE_BASE_URL
 })
 
 describe('signAssetRequest', () => {
@@ -74,7 +77,7 @@ describe('importSeedanceAsset', () => {
     expect(result.duplicated).toBe(false)
     expect(result.asset.assetUrl).toBe('asset://v0c001')
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://vvdance.yongmuai.com/api/open/v1/local-assets')
+    expect(url).toBe('https://vvdance.ai/api/open/v1/local-assets')
     const headers = init.headers as Record<string, string>
     expect(headers['X-API-Key']).toBe('sd_key')
     expect(headers['X-Timestamp']).toMatch(/^\d+$/)
@@ -161,7 +164,7 @@ describe('getSeedanceAssetCapacity', () => {
     const result = await getSeedanceAssetCapacity(CREDS)
     expect(result).toEqual({ used: 1, limit: 100, remaining: 99 })
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://vvdance.yongmuai.com/api/open/v1/local-assets/capacity')
+    expect(url).toBe('https://vvdance.ai/api/open/v1/local-assets/capacity')
     expect(init.method).toBe('GET')
     expect(init.body).toBeUndefined()
     const headers = init.headers as Record<string, string>
@@ -194,7 +197,7 @@ describe('deleteSeedanceAssets', () => {
     expect(result.items[0].assetId).toBe('v0c001')
     expect(result.summary?.remaining).toBe(100)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://vvdance.yongmuai.com/api/open/v1/local-assets')
+    expect(url).toBe('https://vvdance.ai/api/open/v1/local-assets')
     expect(init.method).toBe('DELETE')
     expect(init.body).toBe(JSON.stringify({ assetIds: ['v0c001'] }))
     const headers = init.headers as Record<string, string>

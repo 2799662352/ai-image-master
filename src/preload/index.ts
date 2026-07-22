@@ -80,8 +80,13 @@ import type {
   SeedanceAssetListQuery,
   SeedanceAssetListResult,
   SeedanceKeyState,
+  SeedanceRegion,
   SeedanceTaskUpdate,
 } from '../types/seedance'
+import type {
+  VideoWorkbenchSubmitPayload,
+  VideoWorkbenchSubmitResult,
+} from '../types/videoWorkbench'
 import type {
   AppsListParams,
   AppsListResponse,
@@ -702,7 +707,11 @@ export interface ElectronAPI {
   // 推送驱动聊天气泡。
   seedance: {
     getConfig: () => Promise<SeedanceKeyState>
-    setConfig: (config: { apiKey?: string; apiSecret?: string }) => Promise<SeedanceKeyState>
+    setConfig: (config: {
+      apiKey?: string
+      apiSecret?: string
+      region?: SeedanceRegion
+    }) => Promise<SeedanceKeyState>
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
     /** 素材库（人像库）：列表 / 导入 / 额度 / 批量删除。需要 API Secret。 */
     listAssets: (query: SeedanceAssetListQuery) => Promise<SeedanceAssetListResult>
@@ -713,6 +722,11 @@ export interface ElectronAPI {
     getOverlay: () => Promise<PortraitOverlayState>
     mutateOverlay: (mutation: PortraitOverlayMutation) => Promise<PortraitOverlayState>
     onOverlayChanged: (cb: (state: PortraitOverlayState) => void) => () => void
+  }
+  // 「生成视频」工作台：提交复用 Seedance 生成链路（buildContent → 提交 →
+  // 后台轮询 → 本地落盘 + COS），进度经 seedance.onTaskUpdate 回流。
+  videoWorkbench: {
+    submit: (payload: VideoWorkbenchSubmitPayload) => Promise<VideoWorkbenchSubmitResult>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1536,7 +1550,7 @@ const electronAPI: ElectronAPI = {
   // ============ Seedance 视频生成 ============
   seedance: {
     getConfig: () => safeInvoke<SeedanceKeyState>('seedance:get-config'),
-    setConfig: (config: { apiKey?: string; apiSecret?: string }) =>
+    setConfig: (config: { apiKey?: string; apiSecret?: string; region?: SeedanceRegion }) =>
       safeInvoke<SeedanceKeyState>('seedance:set-config', config),
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => {
       const handler = (_evt: IpcRendererEvent, data: SeedanceTaskUpdate): void => cb(data)
@@ -1558,6 +1572,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on('seedance:overlay-changed', handler)
       return () => ipcRenderer.removeListener('seedance:overlay-changed', handler)
     },
+  },
+
+  // ============ 「生成视频」工作台 ============
+  videoWorkbench: {
+    submit: (payload: VideoWorkbenchSubmitPayload) =>
+      safeInvoke<VideoWorkbenchSubmitResult>('video-workbench:submit', payload),
   },
 
   fs: {

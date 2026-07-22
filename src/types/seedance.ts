@@ -10,6 +10,9 @@ export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
 /** 对外暴露的友好模型名。 */
 export type SeedanceModelAlias = '2.0' | '2.0-fast'
 
+/** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
+export type SeedanceRegion = 'global' | 'cn'
+
 /** 任务快照（也是 `seedance:task-update` IPC 的载荷）。 */
 export interface SeedanceTaskState {
   taskId: string
@@ -49,6 +52,12 @@ export interface SeedanceTaskState {
    * 仍显示「排队中」。不进入 `SeedanceTaskStatus`（那是 Ark 上游状态原样）。
    */
   phase?: 'preparing'
+  /**
+   * 任务来源。`workbench` = 「生成视频」工作台页提交（渲染端工作台卡片自行
+   * 消费 `seedance:task-update`，SeedanceTaskListener 跳过它们，不产生聊天
+   * 气泡/聊天历史）。缺省 = 聊天/MCP `generate_video` 链路，行为不变。
+   */
+  source?: 'workbench'
 }
 
 export type SeedanceTaskUpdate = SeedanceTaskState
@@ -62,6 +71,8 @@ export interface SeedanceKeyState {
   /** 素材库（人像库）接口需要 API Secret 做 HMAC 签名。 */
   hasSecret: boolean
   secretMasked?: string
+  /** 当前站点预设（env `SEEDANCE_BASE_URL` 可覆盖实际 Base，不改此字段）。 */
+  region: SeedanceRegion
 }
 
 // ==================== 素材库（人像库） ====================

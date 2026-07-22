@@ -5,20 +5,30 @@
 // docs/superpowers/specs/2026-06-12-seedance-video-mcp-design.md
 
 import type { SeedanceModelAlias } from '../../../types/seedance'
+import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
 
 export type {
   SeedanceTaskStatus,
   SeedancePersistence,
   SeedanceModelAlias,
+  SeedanceRegion,
   SeedanceTaskState,
   SeedanceTaskUpdate,
   SeedanceKeyState,
 } from '../../../types/seedance'
 
-export const SEEDANCE_MODEL_IDS: Record<SeedanceModelAlias, string> = {
-  '2.0': 'doubao-seedance-2-0-260128',
-  '2.0-fast': 'doubao-seedance-2-0-fast-260128',
-}
+export {
+  getSeedanceRegion,
+  resolveSeedanceModelId,
+  SEEDANCE_MODEL_IDS_BY_REGION,
+} from './region'
+
+/**
+ * 默认（海外 GLOBAL）上游模型 ID。提交任务请用 `resolveSeedanceModelId(alias)`，
+ * 以跟随设置页当前 region（cn → doubao-*）。
+ */
+export const SEEDANCE_MODEL_IDS: Record<SeedanceModelAlias, string> =
+  SEEDANCE_MODEL_IDS_BY_REGION.global
 
 /** 创建任务的 content[] 条目（仅建模我们会发出的形态）。 */
 export type SeedanceContentItem =

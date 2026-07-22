@@ -21,7 +21,7 @@ import type {
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
 } from './types'
-import { SEEDANCE_MODEL_IDS } from './types'
+import { resolveSeedanceModelId } from './types'
 
 /** 上游轮询间隔。文档建议 5~10s。 */
 const POLL_INTERVAL_MS = 6_000
@@ -52,6 +52,8 @@ export interface SubmitParams {
   threadId?: string
   /** generate_video 预备卡片的临时 id；真实任务广播会带上它做气泡对齐。 */
   clientId?: string
+  /** 任务来源（'workbench' = 生成视频工作台页；缺省 = 聊天/MCP 链路）。 */
+  source?: 'workbench'
 }
 
 export class SeedanceTaskManager {
@@ -76,7 +78,7 @@ export class SeedanceTaskManager {
     const duration = input.duration ?? 5
 
     const body: SeedanceCreateTaskBody = {
-      model: SEEDANCE_MODEL_IDS[model],
+      model: resolveSeedanceModelId(model),
       content,
       ratio,
       resolution,
@@ -88,6 +90,7 @@ export class SeedanceTaskManager {
     const state: SeedanceTaskState = {
       taskId: id,
       clientId: params.clientId,
+      ...(params.source ? { source: params.source } : {}),
       threadId,
       prompt: input.prompt,
       model,

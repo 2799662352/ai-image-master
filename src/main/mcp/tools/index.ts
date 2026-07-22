@@ -8,12 +8,14 @@ import { registerPortraitTools } from './portraitTools'
 import { registerUiTools } from './uiTools'
 import { registerUnderstandTools } from './understandTools'
 import { registerVideoTools } from './videoTools'
+import { registerVideoWorkbenchTools } from './videoWorkbenchTools'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 
 export function registerTools(server: McpServer, router: ToolRouter): void {
   registerImageTools(server, router)
   registerVideoTools(server, router)
+  registerVideoWorkbenchTools(server, router)
   registerAudioTools(server, router)
   registerPortraitTools(server, router)
   registerHistoryTools(server, router)

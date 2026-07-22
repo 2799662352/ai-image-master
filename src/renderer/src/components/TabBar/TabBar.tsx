@@ -15,9 +15,11 @@ const TABS: TabDef[] = [
   { key: 'batch', label: '批量', icon: '📦' },
   { key: 'compare', label: '对比', icon: '🔍' },
   { key: 'history', label: '历史', icon: '📜' },
-  { key: 'understand', label: '理解', icon: '🧠' },
+  { key: 'videoWorkbench', label: '生成视频', icon: '🎥' },
   { key: 'director', label: '导演', icon: '🎬' },
-  { key: 'storyboardSplit', label: '拆图', icon: '🧩' },
+  { key: 'understand', label: '理解', icon: '🧠' },
+  // storyboardSplit（宫格拆图）已从导航隐藏，页面代码保留
+
   { key: 'smartErase', label: '去字幕', icon: '✂️' },
   { key: 'portraitLibrary', label: '人像库', icon: '👤' },
   { key: 'promptTemplates', label: '模板', icon: '📝' },

@@ -8,6 +8,7 @@ import BatchPage from '../pages-react/BatchPage'
 import GeneratePage from '../pages-react/GeneratePage'
 import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
 import SmartErasePage from '../pages-react/SmartErasePage'
+import VideoWorkbenchPage from '../pages-react/VideoWorkbenchPage'
 import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
 import { GeneratePromptHelperBar } from './components/GeneratePromptHelperBar'
@@ -24,6 +25,7 @@ let historyRoot: Root | null = null
 let batchRoot: Root | null = null
 let generateRoot: Root | null = null
 let storyboardSplitRoot: Root | null = null
+let videoWorkbenchRoot: Root | null = null
 let smartEraseRoot: Root | null = null
 let agentWorkspaceRoot: Root | null = null
 let marketplaceRoot: Root | null = null
@@ -324,6 +326,35 @@ export function mountStoryboardSplitReact(): void {
 
 export function unmountStoryboardSplitReact(): void {
   const container = document.getElementById('storyboard-split-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+/**
+ * 「生成视频」工作台：只渲染一次，之后切 tab 只切 display 可见性
+ * （卡片里可能有正在播放/生成中的任务，unmount 会丢 UI 状态）。
+ */
+export function mountVideoWorkbenchReact(): void {
+  const container = document.getElementById('video-workbench-react-root')
+  if (!container) {
+    console.warn('[React] video-workbench-react-root not found')
+    return
+  }
+  if (!videoWorkbenchRoot) {
+    videoWorkbenchRoot = createRoot(container)
+    videoWorkbenchRoot.render(
+      <Suspense fallback={null}>
+        <VideoWorkbenchPage />
+      </Suspense>
+    )
+    console.log('[React] VideoWorkbenchPage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountVideoWorkbenchReact(): void {
+  const container = document.getElementById('video-workbench-react-root')
   if (container) {
     container.style.display = 'none'
   }

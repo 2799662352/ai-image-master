@@ -18,13 +18,14 @@ export function registerUiTools(server: McpServer, router: ToolRouter): void {
   // 此前 MCP 侧从未注册 —— 这里补上,agent 即可切主界面页签。
   server.registerTool('navigate_page', {
     description:
-      "Switch the main app to a page tab. Tabs: generate(出图) | batch(批量) | compare(对比) | history(历史) | understand(理解) | director(分镜/故事板页 — NOT the 3D Director Stage; for the 3D stage use director_open) | storyboardSplit | smartErase | portraitLibrary | promptTemplates | agentWorkspace | marketplace | settings.",
+      "Switch the main app to a page tab. Tabs: generate(出图) | batch(批量) | compare(对比) | history(历史) | videoWorkbench(生成视频工作台) | understand(理解) | director(分镜/故事板页 — NOT the 3D Director Stage; for the 3D stage use director_open) | storyboardSplit | smartErase | portraitLibrary | promptTemplates | agentWorkspace | marketplace | settings.",
     inputSchema: z.object({
       tab: z.enum([
         'generate',
         'batch',
         'compare',
         'history',
+        'videoWorkbench',
         'understand',
         'director',
         'storyboardSplit',
