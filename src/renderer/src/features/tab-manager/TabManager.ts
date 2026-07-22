@@ -243,7 +243,7 @@ export class TabManager {
   /**
    * 激活页面
    */
-  private static readonly REACT_MANAGED_TABS = new Set(['agentWorkspace', 'director'])
+  private static readonly REACT_MANAGED_TABS = new Set(['agentWorkspace', 'director', 'videoWorkbench'])
 
   private activatePage(tabName: string): void {
     const page = this.pages[tabName]

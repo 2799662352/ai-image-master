@@ -1,0 +1,251 @@
+// 工作台 store 单测:卡片状态机 / 提交编排 / 广播对齐。
+// mock 哲学与音频页一致:IndexedDB 在 jsdom 缺失 → WorkbenchDb 自动内存降级;
+// IPC 入口收敛在 window.electronAPI.videoWorkbench.submit,直接替换。
+
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SeedanceTaskUpdate } from '../../../../types/seedance'
+import {
+  buildCard,
+  canStart,
+  resetWorkbenchStoreForTest,
+  snapshotCard,
+  toMaterial,
+  useVideoWorkbenchStore,
+} from '../store'
+import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
+
+function mockSubmit(impl?: (payload: Record<string, unknown>) => Promise<unknown>) {
+  const submit = vi.fn(
+    impl ?? (async () => ({ success: true, taskId: 'task-1' })),
+  )
+  ;(window as any).electronAPI = { videoWorkbench: { submit } }
+  return submit
+}
+
+function makeUpdate(patch: Partial<SeedanceTaskUpdate>): SeedanceTaskUpdate {
+  return {
+    taskId: 'task-1',
+    prompt: 'p',
+    model: '2.0',
+    resolution: '720p',
+    ratio: '16:9',
+    duration: 5,
+    status: 'running',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    persistence: 'idle',
+    source: 'workbench',
+    ...patch,
+  }
+}
+
+beforeEach(() => {
+  resetWorkbenchStoreForTest()
+  resetWorkbenchDbForTest()
+  delete (window as any).electronAPI
+})
+
+describe('addCards / buildCard 默认值', () => {
+  it('空输入用 Seedance 默认规格,批量追加保持顺序', () => {
+    const store = useVideoWorkbenchStore.getState()
+    const ids = store.addCards([{}, { prompt: '猫', model: '2.0-fast', duration: 8 }])
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(ids).toHaveLength(2)
+    expect(cards[0]).toMatchObject({
+      status: 'draft',
+      model: '2.0',
+      resolution: '720p',
+      ratio: '16:9',
+      duration: 5,
+      generateAudio: true,
+      order: 0,
+    })
+    expect(cards[1]).toMatchObject({ prompt: '猫', model: '2.0-fast', duration: 8, order: 1 })
+  })
+
+  it('duration 越界收敛到 4–15,参考素材截断到上限', () => {
+    const card = buildCard(
+      {
+        duration: 99,
+        referenceImages: Array.from({ length: 12 }, (_, i) => `C:/img${i}.png`),
+        referenceVideos: ['a.mp4', 'b.mp4', 'c.mp4', 'd.mp4'],
+      },
+      0,
+    )
+    expect(card.duration).toBe(15)
+    expect(card.referenceImages).toHaveLength(9)
+    expect(card.referenceVideos).toHaveLength(3)
+  })
+
+  it('toMaterial 从路径/URL/asset 提取展示名', () => {
+    expect(toMaterial('C:\\dir\\猫咪.png').name).toBe('猫咪.png')
+    expect(toMaterial('https://cos.example.com/a/b/video.mp4?sig=1').name).toBe('video.mp4')
+    expect(toMaterial('data:image/png;base64,AAA').name).toBe('(内嵌素材)')
+    expect(toMaterial('asset://abcdef1234567890').src).toBe('asset://abcdef1234567890')
+  })
+})
+
+describe('updateCard / removeCard / moveCard', () => {
+  it('draft 卡可编辑;进行中的卡拒绝编辑', () => {
+    const store = useVideoWorkbenchStore.getState()
+    const [id] = store.addCards([{ prompt: '旧' }])
+    expect(store.updateCard(id, { prompt: '新', resolution: '1080p' })).toBe(true)
+    expect(useVideoWorkbenchStore.getState().cards[0]).toMatchObject({ prompt: '新', resolution: '1080p' })
+
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? { ...c, status: 'running' as const } : c)),
+    }))
+    expect(useVideoWorkbenchStore.getState().updateCard(id, { prompt: '不该生效' })).toBe(false)
+    expect(useVideoWorkbenchStore.getState().cards[0].prompt).toBe('新')
+  })
+
+  it('moveCard 重排并回写连续 order', () => {
+    const store = useVideoWorkbenchStore.getState()
+    const [a, b, c] = store.addCards([{ prompt: 'A' }, { prompt: 'B' }, { prompt: 'C' }])
+    store.moveCard(c, 0)
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.map((x) => x.id)).toEqual([c, a, b])
+    expect(cards.map((x) => x.order)).toEqual([0, 1, 2])
+  })
+
+  it('removeCard 删除并压实 order', () => {
+    const store = useVideoWorkbenchStore.getState()
+    const [a, b, c] = store.addCards([{}, {}, {}])
+    store.removeCard(b)
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.map((x) => x.id)).toEqual([a, c])
+    expect(cards.map((x) => x.order)).toEqual([0, 1])
+  })
+})
+
+describe('startCards 提交编排', () => {
+  it('并发提交全部可启动卡;空提示词草稿静默跳过;成功后落 taskId', async () => {
+    const submit = mockSubmit()
+    const store = useVideoWorkbenchStore.getState()
+    store.addCards([{ prompt: '猫在跳舞' }, {}])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toHaveLength(1)
+    expect(result.skipped).toHaveLength(0)
+    expect(submit).toHaveBeenCalledTimes(1)
+    const payload = submit.mock.calls[0][0] as Record<string, unknown>
+    expect(payload).toMatchObject({ prompt: '猫在跳舞', model: '2.0', resolution: '720p' })
+    expect(String(payload.clientId)).toMatch(/^wb-/)
+    const card = useVideoWorkbenchStore.getState().cards[0]
+    expect(card.taskId).toBe('task-1')
+    expect(card.status).toBe('queued')
+  })
+
+  it('显式指定空提示词卡时报告 skip 原因;提交失败落 failed + error', async () => {
+    mockSubmit(async () => ({ success: false, error: 'SEEDANCE_KEY_MISSING' }))
+    const store = useVideoWorkbenchStore.getState()
+    const [a, b] = store.addCards([{ prompt: '猫' }, {}])
+    const result = await useVideoWorkbenchStore.getState().startCards([a, b, 'ghost'])
+    expect(result.started).toEqual([a])
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        { cardId: b, reason: '提示词为空' },
+        { cardId: 'ghost', reason: '卡片不存在' },
+      ]),
+    )
+    const card = useVideoWorkbenchStore.getState().cards[0]
+    expect(card.status).toBe('failed')
+    expect(card.error).toBe('SEEDANCE_KEY_MISSING')
+  })
+
+  it('preload 桥缺失时全部 skip 且不抛', async () => {
+    const store = useVideoWorkbenchStore.getState()
+    const [a] = store.addCards([{ prompt: '猫' }])
+    const result = await store.startCards([a])
+    expect(result.started).toHaveLength(0)
+    expect(result.skipped[0].reason).toContain('未就绪')
+  })
+
+  it('进行中的卡不可重复启动(canStart 状态门)', () => {
+    const card = buildCard({ prompt: 'x' }, 0)
+    expect(canStart(card).ok).toBe(true)
+    expect(canStart({ ...card, status: 'running' }).ok).toBe(false)
+    expect(canStart({ ...card, status: 'failed' }).ok).toBe(true)
+    expect(canStart({ ...card, status: 'succeeded' }).ok).toBe(true)
+    expect(canStart({ ...card, prompt: ' ' }).ok).toBe(false)
+  })
+})
+
+describe('applyTaskUpdate 广播对齐', () => {
+  it('按 clientId 对齐卡片并推进状态;非 workbench 来源忽略', async () => {
+    mockSubmit(async () => ({ success: true, taskId: 'task-1' }))
+    const store = useVideoWorkbenchStore.getState()
+    store.addCards([{ prompt: '猫' }])
+    await useVideoWorkbenchStore.getState().startCards()
+    const clientId = useVideoWorkbenchStore.getState().cards[0].clientId!
+
+    // 非 workbench 来源(聊天 generate_video)绝不动工作台卡片
+    useVideoWorkbenchStore.getState().applyTaskUpdate(
+      makeUpdate({ clientId, status: 'failed', error: '别人的任务', source: undefined }),
+    )
+    expect(useVideoWorkbenchStore.getState().cards[0].status).toBe('queued')
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'running' }))
+    expect(useVideoWorkbenchStore.getState().cards[0].status).toBe('running')
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(
+      makeUpdate({
+        clientId,
+        status: 'succeeded',
+        videoUrl: 'https://upstream/v.mp4',
+        localPath: 'C:\\videos\\v.mp4',
+        remoteUrl: 'https://cos/v.mp4',
+        persistence: 'done',
+      }),
+    )
+    const card = useVideoWorkbenchStore.getState().cards[0]
+    expect(card.status).toBe('succeeded')
+    expect(card.localPath).toBe('C:\\videos\\v.mp4')
+    expect(card.remoteUrl).toBe('https://cos/v.mp4')
+    expect(card.persistence).toBe('done')
+  })
+
+  it('广播先于 submit 返回到达也能对齐(clientId 提交前已定格)', async () => {
+    // submit 挂起,先送广播再 resolve —— 模拟 IPC 返回慢于 webContents.send
+    let release: (v: { success: true; taskId: string }) => void = () => {}
+    mockSubmit(() => new Promise((r) => { release = r as typeof release }))
+    const store = useVideoWorkbenchStore.getState()
+    store.addCards([{ prompt: '猫' }])
+    const pending = useVideoWorkbenchStore.getState().startCards()
+    const clientId = useVideoWorkbenchStore.getState().cards[0].clientId!
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'running' }))
+    expect(useVideoWorkbenchStore.getState().cards[0].status).toBe('running')
+
+    release({ success: true, taskId: 'task-1' })
+    await pending
+    // submit 返回不把已 running 的状态倒回 queued
+    const card = useVideoWorkbenchStore.getState().cards[0]
+    expect(card.status).toBe('running')
+    expect(card.taskId).toBe('task-1')
+  })
+
+  it('snapshotCard 截断长 prompt 并带引用计数', () => {
+    const card = buildCard(
+      { prompt: 'x'.repeat(300), referenceImages: ['a.png', 'b.png'] },
+      3,
+    )
+    const snap = snapshotCard({ ...card, taskId: 't-9', localPath: 'C:/v.mp4' })
+    expect(snap.prompt.length).toBeLessThanOrEqual(121)
+    expect(snap.referenceCounts).toEqual({ images: 2, videos: 0, audios: 0 })
+    expect(snap).toMatchObject({ cardId: card.id, order: 3, taskId: 't-9', localPath: 'C:/v.mp4' })
+  })
+})
+
+describe('ensureHydrated', () => {
+  it('重启后进行中的卡归一为 failed(状态在主进程内存,重启即丢)', async () => {
+    const db = getWorkbenchDb()
+    await db.put({ ...buildCard({ prompt: '断电前在跑' }, 0), id: 'c-run', status: 'running', taskId: 't1' })
+    await db.put({ ...buildCard({ prompt: '完好' }, 1), id: 'c-done', status: 'succeeded', localPath: 'C:/v.mp4' })
+
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.find((c) => c.id === 'c-run')).toMatchObject({ status: 'failed' })
+    expect(cards.find((c) => c.id === 'c-run')!.error).toContain('重启')
+    expect(cards.find((c) => c.id === 'c-done')).toMatchObject({ status: 'succeeded' })
+  })
+})
