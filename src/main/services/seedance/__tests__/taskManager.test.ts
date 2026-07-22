@@ -67,6 +67,40 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  it('submit 支持 2.0-mini 别名与智能时长 duration=-1', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({ input: { ...INPUT, model: '2.0-mini', duration: -1 }, content: [] })
+    expect(client.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'dreamina-seedance-2-0-mini-260615', duration: -1 }),
+      'sk-test',
+    )
+    mgr.dispose()
+  })
+
+  it('succeeded 透传上游实际 seed 与 completion_tokens(计费口径)', async () => {
+    const mgr = makeManager(
+      makeClient([
+        {
+          id: 'task-1',
+          status: 'succeeded',
+          content: { video_url: 'https://cdn/v.mp4' },
+          seed: 123456789,
+          usage: { completion_tokens: 81234, total_tokens: 81234 },
+        },
+      ]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    const t = mgr.get('task-1')!
+    expect(t.actualSeed).toBe(123456789)
+    expect(t.completionTokens).toBe(81234)
+    // succeeded 那条广播也带上(渲染端卡片直接消费)
+    const succeededBroadcast = broadcasts.find((b) => b.status === 'succeeded')
+    expect(succeededBroadcast).toMatchObject({ actualSeed: 123456789, completionTokens: 81234 })
+    mgr.dispose()
+  })
+
   it('announcePreparing 广播 queued 预备卡片并返回 clientId，不创建轮询任务', () => {
     const mgr = makeManager(makeClient([]))
     const clientId = mgr.announcePreparing({ input: INPUT, threadId: 'th-1' })

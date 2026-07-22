@@ -84,6 +84,9 @@ export class SeedanceTaskManager {
       resolution,
       duration,
       generate_audio: input.generateAudio ?? true,
+      // seed / 联网搜索:spread-omit,不传时字段完全不出现(兼容旧上游)。
+      ...(typeof input.seed === 'number' && Number.isFinite(input.seed) ? { seed: Math.round(input.seed) } : {}),
+      ...(input.webSearch ? { tools: [{ type: 'web_search' as const }] } : {}),
     }
 
     const { id } = await this.deps.client.createTask(body, apiKey)
@@ -268,7 +271,16 @@ export class SeedanceTaskManager {
           return
         }
         // 成功即成功 —— 先广播 succeeded，再做落盘 bookkeeping。
-        this.update(taskId, { status: 'succeeded', videoUrl, persistence: 'running' })
+        // 顺带透传上游回传的实际 seed（可复现）与 completion_tokens（计费口径）。
+        this.update(taskId, {
+          status: 'succeeded',
+          videoUrl,
+          persistence: 'running',
+          ...(typeof result.seed === 'number' ? { actualSeed: result.seed } : {}),
+          ...(typeof result.usage?.completion_tokens === 'number'
+            ? { completionTokens: result.usage.completion_tokens }
+            : {}),
+        })
         try {
           const { localPath, remoteUrl } = await this.deps.persistVideo({ ...this.tasks.get(taskId)! })
           this.update(taskId, { persistence: 'done', localPath, remoteUrl })

@@ -11,15 +11,35 @@
 
 import type { SeedanceModelAlias, SeedancePersistence, SeedanceTaskStatus } from './seedance'
 
+/**
+ * 生成模式（移植自 soraui 旧工作台 VolcengineArkVideoMode）：
+ * 文生视频 / 首帧 / 首尾帧 / 参考图 / 全能参考(多模态) / 编辑视频 / 延长视频。
+ * 模式决定素材上限与提交时的 role 语义（首帧/尾帧 vs reference_*）。
+ */
+export type VideoWorkbenchMode =
+  | 'text2video'
+  | 'first_frame'
+  | 'first_last_frame'
+  | 'reference_images'
+  | 'multimodal_ref'
+  | 'edit_video'
+  | 'extend_video'
+
 /** 工作台卡片可编辑的视频规格（Seedance 支持的参数面）。 */
 export interface VideoWorkbenchSpec {
   prompt: string
   model: SeedanceModelAlias
   resolution: '480p' | '720p' | '1080p'
   ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
-  /** 视频时长（秒，4–15）。 */
+  /** 视频时长（秒，4–15;-1 = 智能时长,模型自动决定,文档 8.1）。 */
   duration: number
   generateAudio: boolean
+  /** 生成模式（缺省 multimodal_ref 全能参考,与旧卡片行为一致）。 */
+  mode: VideoWorkbenchMode
+  /** 随机种子（0–4294967295;undefined=随机）。仅 Seedance 2.0。 */
+  seed?: number
+  /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。仅 Seedance 2.0。 */
+  webSearch: boolean
   /** 参考图（≤9）：data: URL / 本地路径 / https / asset://。 */
   referenceImages: VideoWorkbenchMaterial[]
   /** 参考视频（≤3，总时长 ≤15s）。 */
@@ -34,6 +54,11 @@ export interface VideoWorkbenchMaterial {
   name: string
   /** 可提交上游的源：data: URL / 本地绝对路径 / https URL / asset://assetId。 */
   src: string
+  /**
+   * 展示用预览地址（asset:// 源无法直接渲染,人像库回填时带上游 previewUrl;
+   * 其余源缺省用 src 本身展示）。
+   */
+  previewUrl?: string
 }
 
 /**
@@ -66,6 +91,10 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   remoteUrl?: string
   persistence?: SeedancePersistence
   error?: string
+  /** succeeded 时上游回传的实际种子（含随机 seed 的最终值,填回可复现）。 */
+  actualSeed?: number
+  /** succeeded 时上游回传的 usage.completion_tokens（计费口径）。 */
+  completionTokens?: number
 }
 
 /** MCP / IPC 写入卡片时的字段集（全部可选，缺省用默认值）。 */
@@ -76,6 +105,10 @@ export interface VideoWorkbenchCardInput {
   ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
   duration?: number
   generateAudio?: boolean
+  mode?: VideoWorkbenchMode
+  /** 随机种子;传 null 表示清除（恢复随机）。 */
+  seed?: number | null
+  webSearch?: boolean
   /** 字符串源（本地路径 / https / asset:// / data:），会包成 Material。 */
   referenceImages?: string[]
   referenceVideos?: string[]
@@ -92,6 +125,14 @@ export interface VideoWorkbenchSubmitPayload {
   ratio: string
   duration: number
   generateAudio: boolean
+  /** 首帧图（图生视频/首尾帧模式,渲染端按 mode 从参考图拆出）。 */
+  firstFrame?: string
+  /** 尾帧图（首尾帧模式）。 */
+  lastFrame?: string
+  /** 随机种子（缺省=上游随机）。 */
+  seed?: number
+  /** 联网搜索增强。 */
+  webSearch?: boolean
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]

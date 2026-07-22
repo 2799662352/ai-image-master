@@ -14,10 +14,14 @@ import type { ToolRouter } from '../ToolRouter'
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
-  model: z.enum(['2.0', '2.0-fast']).optional().describe('Seedance model. Default "2.0" (full quality).'),
+  model: z.enum(['2.0', '2.0-fast', '2.0-mini']).optional().describe(
+    'Seedance model. Default "2.0" (full quality); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only).',
+  ),
   resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0".'),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
-  duration: z.number().int().min(4).max(15).optional().describe('Seconds (4-15). Default 5.'),
+  duration: z.union([z.literal(-1), z.number().int().min(4).max(15)]).optional().describe(
+    'Seconds (4-15), or -1 = smart duration (model decides). Default 5.',
+  ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   referenceImages: z.array(z.string()).max(9).optional().describe(
     'Up to 9 reference images: local path / https URL / asset://assetId (portrait library) / data: URL.',

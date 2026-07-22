@@ -51,6 +51,10 @@ export interface SeedanceCreateTaskBody {
   resolution: string
   duration: number
   generate_audio: boolean
+  /** 随机种子（soraui relay 同款字段;缺省=上游随机）。 */
+  seed?: number
+  /** 联网搜索增强（Seedance 2.0;soraui relay: webSearch → tools）。 */
+  tools?: Array<{ type: 'web_search' }>
 }
 
 /** generate_video main handler 的入参（videoTools zod 校验后的形状）。 */
@@ -73,4 +77,8 @@ export interface CreateVideoTaskInput {
   referenceVideo?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceAudios。 */
   referenceAudio?: string
+  /** 随机种子（0–4294967295;缺省=上游随机）。 */
+  seed?: number
+  /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。 */
+  webSearch?: boolean
 }

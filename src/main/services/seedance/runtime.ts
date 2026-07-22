@@ -19,6 +19,7 @@ import {
   getSeedanceAssetCapacity,
   importSeedanceAsset,
   listSeedanceAssets,
+  listSeedanceOfficialMaterials,
 } from './assets'
 import {
   getPortraitOverlay,
@@ -36,6 +37,7 @@ import type {
   SeedanceAssetItem,
   SeedanceAssetKindFilter,
   SeedanceAssetListQuery,
+  SeedanceOfficialMaterialsQuery,
 } from '../../../types/seedance'
 
 /**
@@ -295,6 +297,11 @@ export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | nul
       : []
     return deleteSeedanceAssets(ids, assetCreds())
   })
+  // 官方素材库（文档 5,只读):工作台素材选择器的「官方素材/虚拟人像」tab。
+  ipcMain.removeHandler('seedance:official-materials')
+  ipcMain.handle('seedance:official-materials', (_event, query: SeedanceOfficialMaterialsQuery) =>
+    listSeedanceOfficialMaterials(query ?? {}, assetCreds()),
+  )
 
   // ============ 叠加层(改名/分组/隐藏)IPC + 广播 ============
   // 主进程是单一真相源:渲染端 UI 与 MCP agent 共享同一份。任何变更都广播给
@@ -398,15 +405,26 @@ export function initSeedanceRuntime(opts: {
     const clientId = String(payload?.clientId ?? '')
     const asStringArray = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
+    const seedRaw = Number(payload?.seed)
+    const durationRaw = Number(payload?.duration)
     const input: CreateVideoTaskInput = {
       prompt: String(payload?.prompt ?? ''),
-      model: payload?.model === '2.0-fast' ? '2.0-fast' : '2.0',
+      model:
+        payload?.model === '2.0-fast' || payload?.model === '2.0-mini' ? payload.model : '2.0',
       resolution: (['480p', '720p', '1080p'] as const).find((r) => r === payload?.resolution) ?? '720p',
       ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
-      duration: Number.isFinite(Number(payload?.duration))
-        ? Math.min(15, Math.max(4, Math.round(Number(payload?.duration))))
-        : 5,
+      // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余收敛到 4–15。
+      duration: !Number.isFinite(durationRaw)
+        ? 5
+        : durationRaw === -1
+          ? -1
+          : Math.min(15, Math.max(4, Math.round(durationRaw))),
       generateAudio: payload?.generateAudio !== false,
+      // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
+      ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
+      ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
+      ...(Number.isFinite(seedRaw) && seedRaw >= 0 ? { seed: Math.round(seedRaw) } : {}),
+      ...(payload?.webSearch === true ? { webSearch: true } : {}),
       referenceImages: asStringArray(payload?.referenceImages),
       referenceVideos: asStringArray(payload?.referenceVideos),
       referenceAudios: asStringArray(payload?.referenceAudios),

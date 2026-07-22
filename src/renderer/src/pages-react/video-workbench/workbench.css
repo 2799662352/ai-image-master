@@ -173,8 +173,163 @@
   animation: vw-progress-slide 1.6s ease-in-out infinite;
 }
 
+/* ---------- 富文本提示词输入(移植自 soraui JimengRichInput) ---------- */
+.vw-rich-input {
+  width: 100%;
+  min-height: 120px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  color: #fafafa;
+  font-size: 14px;
+  line-height: 1.8;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+
+.vw-rich-input:focus {
+  border-color: #fce300;
+}
+
+.vw-rich-input:empty::before {
+  content: attr(data-placeholder);
+  color: #71717a;
+  pointer-events: none;
+}
+
+/* 内联素材 chip:缩略图 + 标签,整体不可编辑、整体删除 */
+.vw-token-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 2px;
+  margin: 0 1px;
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  vertical-align: middle;
+  user-select: none;
+  cursor: default;
+  line-height: 1.4;
+}
+
+.vw-token-node:hover {
+  border-color: #fce300;
+}
+
+.vw-token-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.vw-token-emoji {
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.vw-token-label {
+  font-size: 12px;
+  color: #fce300;
+  white-space: nowrap;
+}
+
+/* @ 建议弹层 */
+.vw-at-popup {
+  position: fixed;
+  z-index: 90;
+  min-width: 260px;
+  max-width: 420px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #111113;
+  border: 1px solid #3f3f46;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.vw-at-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vw-at-item.vw-at-active {
+  background: rgba(252, 227, 0, 0.12);
+}
+
+.vw-at-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.vw-at-emoji {
+  width: 28px;
+  text-align: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.vw-at-label {
+  color: #fce300;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.vw-at-detail {
+  color: rgba(255, 255, 255, 0.4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* chip 悬停预览浮层 */
+.vw-chip-preview {
+  position: fixed;
+  z-index: 95;
+  width: 220px;
+  background: #111113;
+  border: 1px solid #3f3f46;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+  animation: vw-card-in 0.15s ease;
+}
+
+.vw-chip-preview img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+.vw-chip-preview-label {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vw-generate-btn { animation: none; }
   .vw-progress-bar { animation: none; width: 100%; opacity: 0.5; }
   .vw-card { animation: none; }
+  .vw-chip-preview { animation: none; }
 }

@@ -275,14 +275,16 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'Video description. Supports shot language (运镜/景别), dialogue lines, and -- style ' +
         'parameters appended at the end.',
       ),
-      model: z.enum(['2.0', '2.0-fast']).optional().describe(
-        'Seedance model alias (MCP keeps 2.0 / 2.0-fast). Upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). Only use "2.0-fast" when the user explicitly wants fast/cheap/draft.',
+      model: z.enum(['2.0', '2.0-fast', '2.0-mini']).optional().describe(
+        'Seedance model alias. Upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only).',
       ),
       resolution: z.enum(['480p', '720p', '1080p']).optional().describe(
         'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0".',
       ),
       ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
-      duration: z.number().int().min(4).max(15).optional().describe('Video length in seconds (4–15). Default 5. Longer = more expensive.'),
+      duration: z.union([z.literal(-1), z.number().int().min(4).max(15)]).optional().describe(
+        'Video length in seconds (4–15), or -1 = smart duration (model auto-decides; result shows actual length). Default 5. Longer = more expensive.',
+      ),
       generateAudio: z.boolean().optional().describe('Generate soundtrack/voice audio. Default true (no extra cost).'),
       firstFrame: z.string().optional().describe('STRICT first/last-frame mode only — use ONLY when the user explicitly wants a fixed first frame. First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). Local images ≤30MB (large files are relayed automatically).'),
       lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too, strict mode only). Same formats/limits as firstFrame.'),
@@ -303,7 +305,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceAudio: z.string().optional().describe('Deprecated single alias for referenceAudios — prefer referenceAudios.'),
     }),
   }, async (params, ctx?: unknown) => {
-    const p = params as { model?: '2.0' | '2.0-fast'; resolution?: string }
+    const p = params as { model?: '2.0' | '2.0-fast' | '2.0-mini'; resolution?: string }
     if (p.resolution === '1080p' && (p.model ?? '2.0') !== '2.0') {
       return textResult(buildErrorBanner('generate_video', new Error('1080p requires model "2.0" — either set model:"2.0" or drop to 720p.')))
     }

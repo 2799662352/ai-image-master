@@ -62,6 +62,13 @@ describe('resolveSeedanceModelId', () => {
     )
   })
 
+  it('2.0-mini（文档 9.2 最省档）双 region 映射', () => {
+    expect(resolveSeedanceModelId('2.0-mini', 'global')).toBe(
+      'dreamina-seedance-2-0-mini-260615',
+    )
+    expect(resolveSeedanceModelId('2.0-mini', 'cn')).toBe('doubao-seedance-2-0-mini-260615')
+  })
+
   it('跟随内存 region（taskManager 提交路径）', () => {
     setSeedanceRegionMemory('cn')
     expect(resolveSeedanceModelId('2.0')).toBe('doubao-seedance-2-0-260128')
