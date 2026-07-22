@@ -12,17 +12,13 @@ import type {
 import { useToastStore, useTabStore } from '../stores'
 import { useAgentChatStore } from '../features/agent-chat'
 import { usePortraitLibraryOverlay } from '../hooks/usePortraitLibraryOverlay'
+import { fileUploadKind, uploadFilesToPortraitLibrary } from '../features/portrait-library/portraitUpload'
 
 const PAGE_SIZE = 24
 /** 分组过滤的特殊伪分组值（与用户自定义分组名共用一个 string 状态）。 */
 const GROUP_ALL = '__all__'
 const GROUP_UNGROUPED = '__ungrouped__'
 const GROUP_HIDDEN = '__hidden__'
-/** 上游素材库限制：图片单张 ≤30MB；视频 ≤50MB 且 4-15s；音频 4-15s。 */
-const MAX_IMAGE_BYTES = 30 * 1024 * 1024
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024
-const MEDIA_MIN_SECONDS = 4
-const MEDIA_MAX_SECONDS = 15
 
 const KIND_FILTERS: Array<{ value: SeedanceAssetKindFilter; label: string }> = [
   { value: 'image_people', label: '👤 人像' },
@@ -59,15 +55,6 @@ function formatBytes(bytes?: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
-    reader.readAsDataURL(file)
-  })
-}
-
 /** URL 去掉 query/hash 后以视频扩展名结尾 —— 用来识别"假 poster"(上游把视频
  *  地址塞进 previewUrl 时,拿它当 <img> 会渲染成碎图)。 */
 const VIDEO_URL_RE = /\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i
@@ -86,45 +73,6 @@ function seekVideoToFirstFrame(e: React.SyntheticEvent<HTMLVideoElement>): void 
   } catch {
     /* seek 失败不致命,退化为黑屏占位 */
   }
-}
-
-/** 读取视频/音频时长（秒），读取失败返回 null（不阻断上传，交给上游校验）。 */
-function probeMediaDuration(file: File): Promise<number | null> {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file)
-    const el = document.createElement(file.type.startsWith('audio/') ? 'audio' : 'video')
-    el.preload = 'metadata'
-    el.onloadedmetadata = () => {
-      URL.revokeObjectURL(url)
-      resolve(Number.isFinite(el.duration) ? el.duration : null)
-    }
-    el.onerror = () => {
-      URL.revokeObjectURL(url)
-      resolve(null)
-    }
-    el.src = url
-  })
-}
-
-/**
- * 按上游限制校验文件；返回 null 表示通过，否则返回错误文案。
- * 图片 ≤30MB；视频 ≤50MB 且 4-15s；音频 4-15s。
- */
-async function validateUploadFile(file: File): Promise<string | null> {
-  if (file.type.startsWith('image/')) {
-    if (file.size > MAX_IMAGE_BYTES) return `${file.name} 超过图片 30MB 上限`
-    return null
-  }
-  if (file.type.startsWith('video/')) {
-    if (file.size > MAX_VIDEO_BYTES) return `${file.name} 超过视频 50MB 上限`
-  } else if (!file.type.startsWith('audio/')) {
-    return `跳过不支持的文件: ${file.name}（仅支持图片/视频/音频）`
-  }
-  const duration = await probeMediaDuration(file)
-  if (duration != null && (duration < MEDIA_MIN_SECONDS || duration > MEDIA_MAX_SECONDS)) {
-    return `${file.name} 时长 ${duration.toFixed(1)}s 不在 4-15s 范围内`
-  }
-  return null
 }
 
 /**
@@ -346,19 +294,20 @@ export default function PortraitLibraryPage() {
     setQuery(searchInput.trim())
   }
 
+  /** 当前选中的真实分组名(伪分组「全部/未分组/已隐藏」不算);上传时新素材自动归入。 */
+  const uploadTargetGroup =
+    groupFilter !== GROUP_ALL && groupFilter !== GROUP_UNGROUPED && groupFilter !== GROUP_HIDDEN
+      ? groupFilter
+      : undefined
+
   const handleUpload = async (files: FileList | null) => {
-    const api = seedanceApi()
-    if (!files || files.length === 0 || !api?.importAsset) return
+    if (!files || files.length === 0) return
     const fileList = Array.from(files)
     setUploading(true)
 
     // 先为每个文件铺一个乐观占位（图片带本地缩略图），让网格立即有反馈。
     const placeholders = fileList.map((file, i) => {
-      const kind = file.type.startsWith('video/')
-        ? ('video' as const)
-        : file.type.startsWith('audio/')
-          ? ('audio' as const)
-          : ('image' as const)
+      const kind = fileUploadKind(file) ?? ('image' as const)
       return {
         tempId: `pending-${Date.now()}-${i}`,
         name: file.name,
@@ -368,46 +317,17 @@ export default function PortraitLibraryPage() {
     })
     setPendingUploads(placeholders)
 
-    let imported = 0
-    let duplicated = 0
-    let failed = 0
     try {
-      for (let i = 0; i < fileList.length; i++) {
-        const file = fileList[i]
-        const ph = placeholders[i]
-        const problem = await validateUploadFile(file)
-        if (problem) {
-          addToast({ message: problem, type: 'error' })
-          failed += 1
-          setPendingUploads((prev) => prev.filter((p) => p.tempId !== ph.tempId))
-          continue
-        }
-        try {
-          const dataUrl = await readFileAsDataUrl(file)
-          const result = await api.importAsset({
-            kind: ph.kind,
-            ...(ph.kind === 'image' ? { imageCategory: 'image_people' as const } : {}),
-            url: dataUrl,
-            name: file.name,
-            mimeType: file.type,
-          })
-          if (result.duplicated) duplicated += 1
-          else imported += 1
-          setPendingUploads((prev) => prev.map((p) => (p.tempId === ph.tempId ? { ...p, done: true } : p)))
-        } catch (e) {
-          failed += 1
-          addToast({ message: `${file.name} 上传失败: ${e instanceof Error ? e.message : String(e)}`, type: 'error' })
-          setPendingUploads((prev) => prev.filter((p) => p.tempId !== ph.tempId))
-        }
-      }
-      const parts = [
-        imported > 0 ? `新增 ${imported} 个` : '',
-        duplicated > 0 ? `${duplicated} 个已存在（按内容去重）` : '',
-        failed > 0 ? `${failed} 个失败` : '',
-      ].filter(Boolean)
-      if (parts.length > 0) {
-        addToast({ message: `人像库上传完成：${parts.join('，')}`, type: failed > 0 && imported + duplicated === 0 ? 'error' : 'success' })
-      }
+      // 共享上传逻辑(校验/imageCategory 按当前类型 tab/归组/toast 汇总)。
+      await uploadFilesToPortraitLibrary(
+        fileList,
+        { kindTab: kind, ...(uploadTargetGroup ? { group: uploadTargetGroup } : {}) },
+        {
+          onFileDone: (i) =>
+            setPendingUploads((prev) => prev.map((p) => (p.tempId === placeholders[i].tempId ? { ...p, done: true } : p))),
+          onFileFailed: (i) => setPendingUploads((prev) => prev.filter((p) => p.tempId !== placeholders[i].tempId)),
+        },
+      )
       // 上传改变了列表,缓存全部失效 → 清空后强制回源。
       cacheRef.current.clear()
       setPage(1)
@@ -541,8 +461,17 @@ export default function PortraitLibraryPage() {
           <span className="text-xs text-zinc-500">{total} 个素材 · 配额无限</span>
         </div>
         <div className="flex items-center gap-2">
+          {uploadTargetGroup && (
+            <span
+              className="text-xs text-cyberpunk-yellow bg-cyberpunk-yellow/10 border border-cyberpunk-yellow/40 rounded-full px-2.5 py-1"
+              title="在分组视图里上传的素材会自动归入该分组;切到「全部/未分组」可取消"
+            >
+              上传将归入分组:🏷 {uploadTargetGroup}
+            </span>
+          )}
           <input
             ref={fileInputRef}
+            data-testid="portrait-upload-input"
             type="file"
             accept="image/*,video/*,audio/*"
             multiple
