@@ -14,6 +14,7 @@ import type {
   SeedanceOfficialMaterialsResult,
 } from '../../../../types/seedance'
 import { usePortraitLibraryOverlay } from '../../hooks/usePortraitLibraryOverlay'
+import { MaterialThumb } from './MaterialThumb'
 
 const PAGE_SIZE = 60
 
@@ -243,13 +244,21 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
                       })
                     }
                   >
-                    {asset.previewUrl ? (
-                      <img src={asset.previewUrl} alt={displayName(asset)} className="w-full h-full object-cover" draggable={false} />
-                    ) : (
-                      <span className="flex items-center justify-center w-full h-full text-2xl bg-[#18181B]">
-                        {String(asset.kind) === 'video' ? '🎬' : String(asset.kind) === 'audio' ? '🎵' : '🖼'}
-                      </span>
-                    )}
+                    {/* previewUrl 为 https 直通;加载失败时 MaterialThumb 兜底显示类型图标而非裂图 */}
+                    <MaterialThumb
+                      kind={String(asset.kind) === 'video' ? 'video' : String(asset.kind) === 'audio' ? 'audio' : 'image'}
+                      material={{
+                        name: displayName(asset),
+                        src: '',
+                        ...(asset.previewUrl ? { previewUrl: asset.previewUrl } : {}),
+                      }}
+                      imgClassName="w-full h-full object-cover"
+                      fallback={
+                        <span className="flex items-center justify-center w-full h-full text-2xl bg-[#18181B]">
+                          {String(asset.kind) === 'video' ? '🎬' : String(asset.kind) === 'audio' ? '🎵' : '🖼'}
+                        </span>
+                      }
+                    />
                     <span className="absolute inset-x-0 bottom-0 bg-black/70 text-white/80 text-[9px] px-1 py-0.5 truncate text-left">
                       {displayName(asset)}
                     </span>
