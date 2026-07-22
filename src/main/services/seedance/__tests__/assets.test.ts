@@ -119,6 +119,43 @@ describe('importSeedanceAsset', () => {
     expect(result.asset.assetUrl).toBe('asset://v0c001')
   })
 
+  it('兼容 data 被二次字符串化的响应（明明成功不该报失败）', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ success: true, data: JSON.stringify({ duplicated: true, asset: ASSET }) }, 201),
+    )
+    const result = await importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS)
+    expect(result.asset.assetId).toBe('v0c001')
+    expect(result.duplicated).toBe(true)
+  })
+
+  it('兼容 asset 只回 id 不回 assetId 的线上响应（2026-07-22 实测）', async () => {
+    // 真实形态:{"success":true,"data":{"duplicated":false,"asset":{"id":"dla-...","kind":"image",...}}}
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          success: true,
+          data: {
+            duplicated: false,
+            asset: {
+              id: 'dla-mrwc058u-e8mr7x',
+              developerId: 'cmrolxpd904z7y7mb3m7resh0',
+              kind: 'image',
+              createdBy: 'openapi_asset_import',
+              imageCategory: 'image_people',
+              name: '0EE9F213.png',
+              previewUrl: null,
+            },
+          },
+        },
+        201,
+      ),
+    )
+    const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
+    expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
+    expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
+    expect(result.duplicated).toBe(false)
+  })
+
   it('解析失败时错误信息带响应片段便于排查', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, weird: 'shape' }, 201))
     await expect(
