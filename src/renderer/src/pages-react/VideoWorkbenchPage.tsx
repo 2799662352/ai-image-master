@@ -12,6 +12,7 @@ import {
   mountWorkbenchTaskListener,
   useVideoWorkbenchStore,
 } from '../features/video-workbench/store'
+import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
 
@@ -54,6 +55,8 @@ export default function VideoWorkbenchPage() {
             {cards.length} 张卡片{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>
           <div className="ml-auto flex items-center gap-2">
+            {/* 海外/国内站点切换:与设置页共享同一份 region 配置,提交按此路由 */}
+            <RegionSwitch />
             <button
               type="button"
               className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors disabled:opacity-40"

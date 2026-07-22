@@ -712,6 +712,8 @@ export interface ElectronAPI {
       apiSecret?: string
       region?: SeedanceRegion
     }) => Promise<SeedanceKeyState>
+    /** 配置变更广播（设置页 / 工作台任一处改动，全端对齐 region 等状态）。 */
+    onConfigChanged: (cb: (state: SeedanceKeyState) => void) => () => void
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
     /** 素材库（人像库）：列表 / 导入 / 额度 / 批量删除。需要 API Secret。 */
     listAssets: (query: SeedanceAssetListQuery) => Promise<SeedanceAssetListResult>
@@ -1552,6 +1554,11 @@ const electronAPI: ElectronAPI = {
     getConfig: () => safeInvoke<SeedanceKeyState>('seedance:get-config'),
     setConfig: (config: { apiKey?: string; apiSecret?: string; region?: SeedanceRegion }) =>
       safeInvoke<SeedanceKeyState>('seedance:set-config', config),
+    onConfigChanged: (cb: (state: SeedanceKeyState) => void) => {
+      const handler = (_evt: IpcRendererEvent, data: SeedanceKeyState): void => cb(data)
+      ipcRenderer.on('seedance:config-changed', handler)
+      return () => ipcRenderer.removeListener('seedance:config-changed', handler)
+    },
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => {
       const handler = (_evt: IpcRendererEvent, data: SeedanceTaskUpdate): void => cb(data)
       ipcRenderer.on('seedance:task-update', handler)

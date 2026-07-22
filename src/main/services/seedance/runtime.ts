@@ -257,7 +257,19 @@ export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | nul
         // 「接口不可用」——细节进主进程日志，仍返回当前 keyState 供 UI 对账。
         console.error('[seedance] set-config failed:', e)
       }
-      return getSeedanceKeyState()
+      const state = getSeedanceKeyState()
+      // 配置（尤其站点 region）可能同时被设置页和「生成视频」工作台修改——
+      // 两边各自缓存 keyState 会漂移。广播变更让所有已挂载的消费者即时对齐
+      // （工作台页 mount-once 只切 display,不会靠 remount 重新拉取）。
+      const win = getWindow()
+      if (win && !win.isDestroyed()) {
+        try {
+          win.webContents.send('seedance:config-changed', state)
+        } catch (e) {
+          console.warn('[seedance] config-changed broadcast failed:', e)
+        }
+      }
+      return state
     },
   )
 
