@@ -2,10 +2,13 @@
 //
 // 机制:对外 value 始终是**纯文本**(内含 `【@图片1】` 等 token);渲染时 token
 // 换成不可编辑的内联 chip(缩略图+标签),编辑时再从 DOM 反解析回纯文本。
-// `@` 触发建议弹层:先列本卡已有素材(插 token),再列人像库匹配素材
-// (选中= onPickAsset 入素材 + 插 token)。chip 悬停显示大图预览。
+// `@` 触发建议弹层,两个分组:「本页素材」= 本卡已有素材(直接插 token)+
+// 页面其他卡片素材(onPickMaterial 入素材 + 插 token);「人像库」= 远程匹配
+// 素材(onPickAsset 入素材 + 插 token)。键盘上下键跨组移动高亮。
+// chip 悬停显示大图预览。弹层滚轮只滚列表本身,不带动页面(wheel 边界拦截)。
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -16,6 +19,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { SeedanceAssetItem } from '../../../../types/seedance'
+import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
 import {
   applyTokenAtCursor,
   detectAtTrigger,
@@ -34,15 +38,27 @@ export interface PromptMediaRef {
   thumbSrc?: string
 }
 
+/** 页面其他卡片的素材(建议弹层「本页素材」分组的跨卡条目)。 */
+export interface PageMaterialRef {
+  kind: MediaTokenKind
+  material: VideoWorkbenchMaterial
+  /** 可渲染的缩略图地址;无则 emoji 占位。 */
+  thumbSrc?: string
+}
+
 interface SuggestionItem {
   key: string
   label: string
   detail: string
   thumbSrc?: string
   emoji: string
-  /** existing = 已有素材插 token;asset = 人像库素材(先入素材再插 token)。 */
-  source: 'existing' | 'asset'
+  /**
+   * existing = 本卡已有素材插 token;material = 页面其他卡片素材(先入本卡再插
+   * token);asset = 人像库素材(先入素材再插 token)。
+   */
+  source: 'existing' | 'material' | 'asset'
   asset?: SeedanceAssetItem
+  pageMaterial?: PageMaterialRef
 }
 
 interface RichPromptInputProps {
@@ -56,8 +72,12 @@ interface RichPromptInputProps {
    * (1 起;返回 null 表示入库失败/超限,不插 token)。
    */
   onPickAsset?: (asset: SeedanceAssetItem) => { kind: MediaTokenKind; index1: number } | null
-  /** 搜索人像库(建议弹层数据源);未提供则只建议已有素材。 */
+  /** 搜索人像库(建议弹层「人像库」分组数据源);未提供则不出该分组。 */
   searchAssets?: (q: string) => Promise<SeedanceAssetItem[]>
+  /** 弹层打开时取页面其他卡片素材(「本页素材」分组的跨卡条目)。 */
+  getPageMaterials?: () => PageMaterialRef[]
+  /** 跨卡素材被选中:入本卡素材并返回 token 序号(超限返回 null)。 */
+  onPickMaterial?: (ref: PageMaterialRef) => { kind: MediaTokenKind; index1: number } | null
 }
 
 const KIND_EMOJI: Record<MediaTokenKind, string> = { image: '🖼', video: '🎬', audio: '🎵' }
@@ -213,6 +233,8 @@ export function RichPromptInput({
   onChange,
   onPickAsset,
   searchAssets,
+  getPageMaterials,
+  onPickMaterial,
 }: RichPromptInputProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const skipSync = useRef(false)
@@ -224,10 +246,12 @@ export function RichPromptInput({
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 })
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [assetHits, setAssetHits] = useState<SeedanceAssetItem[]>([])
+  const [pageHits, setPageHits] = useState<PageMaterialRef[]>([])
   const [prefix, setPrefix] = useState('')
   const cursorRef = useRef(0)
   const textRef = useRef(value)
   const searchSeq = useRef(0)
+  const popupRef = useRef<HTMLDivElement>(null)
 
   // ---- chip 悬停预览 ----
   const [hoverRef, setHoverRef] = useState<PromptMediaRef | null>(null)
@@ -256,8 +280,10 @@ export function RichPromptInput({
   const closePopup = useCallback(() => {
     setPopupOpen(false)
     setAssetHits([])
+    setPageHits([])
     setSelectedIdx(0)
   }, [])
+
 
   /** 输入后驱动 @ 检测。 */
   const runDetection = useCallback(() => {
@@ -277,6 +303,8 @@ export function RichPromptInput({
     if (caret) setPopupPos({ top: caret.top + 24, left: caret.left })
     setPopupOpen(true)
     setSelectedIdx(0)
+    // 页面其他卡片素材(同步取,弹层打开时快照)
+    setPageHits(getPageMaterials?.() ?? [])
     // 人像库远程建议(带序号防乱序回填)
     if (searchAssets) {
       const seq = ++searchSeq.current
@@ -284,7 +312,7 @@ export function RichPromptInput({
         if (seq === searchSeq.current) setAssetHits(items)
       }).catch(() => {})
     }
-  }, [closePopup, searchAssets])
+  }, [closePopup, searchAssets, getPageMaterials])
 
   const handleInput = useCallback(() => {
     const el = editorRef.current
@@ -296,7 +324,11 @@ export function RichPromptInput({
     runDetection()
   }, [onChange, runDetection])
 
-  /** 建议列表(已有素材优先,再人像库;按前缀过滤)。 */
+  /**
+   * 建议列表(扁平数组,分组渲染时按 source 切段):
+   * 主分组「本页素材」= 本卡已有素材 + 页面其他卡片素材;
+   * 次分组「人像库」排在后面。按前缀过滤;键盘上下键在扁平索引上跨组移动。
+   */
   const suggestions = useMemo<SuggestionItem[]>(() => {
     if (!popupOpen) return []
     const list: SuggestionItem[] = []
@@ -314,6 +346,20 @@ export function RichPromptInput({
         })
       }
     }
+    for (const hit of pageHits) {
+      if (list.length >= 8) break
+      const name = hit.material.name
+      if (prefix && !name.toLowerCase().includes(prefix) && !hit.kind.includes(prefix)) continue
+      list.push({
+        key: `material:${hit.kind}:${hit.material.src.slice(0, 128)}`,
+        label: name,
+        detail: '其他卡片素材 · 选中后加入本卡并引用',
+        thumbSrc: hit.thumbSrc,
+        emoji: KIND_EMOJI[hit.kind],
+        source: 'material',
+        pageMaterial: hit,
+      })
+    }
     const existingCount = list.length
     for (const asset of assetHits.slice(0, Math.max(2, 8 - existingCount))) {
       list.push({
@@ -326,8 +372,27 @@ export function RichPromptInput({
         asset,
       })
     }
-    return list.slice(0, 10)
-  }, [popupOpen, mediaRefs, prefix, assetHits])
+    return list.slice(0, 12)
+  }, [popupOpen, mediaRefs, prefix, pageHits, assetHits])
+
+  const popupVisible = popupOpen && suggestions.length > 0
+
+  // 弹层滚轮只滚列表本身:到顶/到底继续滚时 preventDefault(阻止滚动链回
+  // 页面),且一律 stopPropagation 不冒泡到页面滚动容器。React 的 onWheel
+  // 是 passive 监听,preventDefault 无效,必须原生 non-passive 监听。
+  useEffect(() => {
+    const el = popupRef.current
+    if (!popupVisible || !el) return
+    const onWheel = (e: WheelEvent) => {
+      const { scrollTop, scrollHeight, clientHeight } = el
+      const atTop = e.deltaY < 0 && scrollTop <= 0
+      const atBottom = e.deltaY > 0 && scrollTop + clientHeight >= scrollHeight - 1
+      if (atTop || atBottom) e.preventDefault()
+      e.stopPropagation()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [popupVisible])
 
   /** 应用新文本 + 光标(token 插入路径)。 */
   const applyText = useCallback(
@@ -358,12 +423,19 @@ export function RichPromptInput({
           return
         }
         token = mediaToken(placed.kind, placed.index1)
+      } else if (item.source === 'material' && item.pageMaterial) {
+        const placed = onPickMaterial?.(item.pageMaterial)
+        if (!placed) {
+          closePopup()
+          return
+        }
+        token = mediaToken(placed.kind, placed.index1)
       }
       const { text, cursor } = applyTokenAtCursor(textRef.current, cursorRef.current, token)
       applyText(text, cursor)
       closePopup()
     },
-    [onPickAsset, applyText, closePopup],
+    [onPickAsset, onPickMaterial, applyText, closePopup],
   )
 
   const handleKeyDown = useCallback(
@@ -444,31 +516,44 @@ export function RichPromptInput({
         onMouseOut={handleMouseOut}
       />
 
-      {popupOpen && suggestions.length > 0 &&
+      {popupVisible &&
         createPortal(
           <div
+            ref={popupRef}
             className="vw-at-popup"
             style={{ top: popupPos.top, left: popupPos.left }}
             data-testid="vw-at-popup"
             onMouseDown={(e) => e.preventDefault() /* 防编辑器失焦 */}
           >
-            {suggestions.map((s, i) => (
-              <button
-                key={s.key}
-                type="button"
-                className={`vw-at-item ${i === selectedIdx ? 'vw-at-active' : ''}`}
-                onMouseEnter={() => setSelectedIdx(i)}
-                onClick={() => commitSuggestion(s)}
-              >
-                {s.thumbSrc ? (
-                  <img src={s.thumbSrc} alt="" className="vw-at-thumb" draggable={false} />
-                ) : (
-                  <span className="vw-at-emoji">{s.emoji}</span>
-                )}
-                <span className="vw-at-label">{s.label}</span>
-                <span className="vw-at-detail">{s.detail}</span>
-              </button>
-            ))}
+            {suggestions.map((s, i) => {
+              // 分组标题:「本页素材」在首个非 asset 条目前,「人像库」在首个 asset 条目前
+              const prev = suggestions[i - 1]
+              const header =
+                s.source === 'asset'
+                  ? (!prev || prev.source !== 'asset') && (
+                      <div className="vw-at-group-label" key={`hdr-asset-${i}`}>人像库</div>
+                    )
+                  : i === 0 && <div className="vw-at-group-label" key="hdr-page">本页素材</div>
+              return (
+                <Fragment key={s.key}>
+                  {header}
+                  <button
+                    type="button"
+                    className={`vw-at-item ${i === selectedIdx ? 'vw-at-active' : ''}`}
+                    onMouseEnter={() => setSelectedIdx(i)}
+                    onClick={() => commitSuggestion(s)}
+                  >
+                    {s.thumbSrc ? (
+                      <img src={s.thumbSrc} alt="" className="vw-at-thumb" draggable={false} />
+                    ) : (
+                      <span className="vw-at-emoji">{s.emoji}</span>
+                    )}
+                    <span className="vw-at-label">{s.label}</span>
+                    <span className="vw-at-detail">{s.detail}</span>
+                  </button>
+                </Fragment>
+              )
+            })}
           </div>,
           document.body,
         )}

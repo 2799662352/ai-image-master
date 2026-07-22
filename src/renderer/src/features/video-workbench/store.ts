@@ -186,6 +186,11 @@ export interface VideoWorkbenchState {
   /** 追加参考素材(拖放/文件选择,自动截断到上限)。 */
   addMaterials: (id: string, kind: MaterialKind, materials: VideoWorkbenchMaterial[]) => void
   removeMaterial: (id: string, kind: MaterialKind, index: number) => void
+  /** 素材拖拽换位:同类列表内把 fromIndex 挪到 toIndex(0 起,越界收敛)。 */
+  moveMaterial: (id: string, kind: MaterialKind, fromIndex: number, toIndex: number) => void
+  /** 「默认上传人像库」全局开关(localStorage 持久化,默认关)。 */
+  autoImportPortrait: boolean
+  setAutoImportPortrait: (enabled: boolean) => void
   /** 启动生成:缺省=全部可启动卡片;可指定 id 列表。并发提交。 */
   startCards: (ids?: string[]) => Promise<StartResult>
   /** seedance:task-update 广播入口(仅消费 source==='workbench')。 */
@@ -293,9 +298,30 @@ function reorder(cards: VideoWorkbenchCard[]): VideoWorkbenchCard[] {
 
 let hydrationPromise: Promise<void> | null = null
 
+/** 「默认上传人像库」开关的 localStorage 键。 */
+export const AUTO_IMPORT_PORTRAIT_KEY = 'vw-auto-import-portrait'
+
+function readAutoImportPortrait(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(AUTO_IMPORT_PORTRAIT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) => ({
   cards: [],
   hydrated: false,
+  autoImportPortrait: readAutoImportPortrait(),
+
+  setAutoImportPortrait: (enabled) => {
+    set({ autoImportPortrait: enabled })
+    try {
+      globalThis.localStorage?.setItem(AUTO_IMPORT_PORTRAIT_KEY, enabled ? '1' : '0')
+    } catch {
+      // localStorage 不可用(隐私模式等)时仅内存生效
+    }
+  },
 
   ensureHydrated: async () => {
     if (get().hydrated) return
@@ -422,6 +448,25 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           [kind]: clampMaterials([...card[kind], ...materials], kind),
           updatedAt: Date.now(),
         }
+        return updated
+      }),
+    }))
+    if (updated) schedulePersist(updated)
+  },
+
+  moveMaterial: (id, kind, fromIndex, toIndex) => {
+    let updated: VideoWorkbenchCard | null = null
+    set((state) => ({
+      cards: state.cards.map((card) => {
+        if (card.id !== id) return card
+        const list = card[kind]
+        if (fromIndex < 0 || fromIndex >= list.length) return card
+        const clamped = Math.max(0, Math.min(list.length - 1, toIndex))
+        if (fromIndex === clamped) return card
+        const next = [...list]
+        const [moved] = next.splice(fromIndex, 1)
+        next.splice(clamped, 0, moved)
+        updated = { ...card, [kind]: next, updatedAt: Date.now() }
         return updated
       }),
     }))
@@ -599,5 +644,5 @@ export function resetWorkbenchStoreForTest(): void {
   taskSubscription = null
   for (const t of persistTimers.values()) clearTimeout(t)
   persistTimers.clear()
-  useVideoWorkbenchStore.setState({ cards: [], hydrated: false })
+  useVideoWorkbenchStore.setState({ cards: [], hydrated: false, autoImportPortrait: false })
 }

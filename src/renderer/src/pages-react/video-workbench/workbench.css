@@ -37,9 +37,25 @@
 }
 
 .vw-stack-container:hover .vw-stack-item,
-.vw-stack-container.vw-expanded .vw-stack-item {
-  /* 展开:横排,回正旋转 */
+.vw-stack-container.vw-expanded .vw-stack-item,
+.vw-stack-container.vw-reordering .vw-stack-item {
+  /* 展开:横排,回正旋转(拖拽换位中也保持展开) */
   transform: translateX(var(--expand-left, 0)) rotate(0deg);
+}
+
+/* ---------- 素材拖拽换位视觉 ---------- */
+.vw-stack-item.vw-mat-dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+
+/* 目标位置插入指示线(左/右边缘黄色竖线) */
+.vw-stack-item.vw-mat-drop-before {
+  box-shadow: -3px 0 0 0 #fce300;
+}
+
+.vw-stack-item.vw-mat-drop-after {
+  box-shadow: 3px 0 0 0 #fce300;
 }
 
 .vw-stack-container:hover .vw-stack-item:hover {
@@ -248,9 +264,28 @@
   max-width: 420px;
   max-height: 280px;
   overflow-y: auto;
+  /* 列表到顶/到底继续滚时不把滚动链回页面(滚轮穿透兜底,配合 wheel 处理) */
+  overscroll-behavior: contain;
   background: #111113;
   border: 1px solid #3f3f46;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* @ 建议分组标题(本页素材 / 人像库) */
+.vw-at-group-label {
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  user-select: none;
+}
+
+.vw-at-group-label + .vw-at-group-label,
+.vw-at-item + .vw-at-group-label {
+  border-top: 1px solid #27272a;
+  margin-top: 4px;
 }
 
 .vw-at-item {

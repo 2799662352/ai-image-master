@@ -45,6 +45,38 @@ export function removeTokenAndReindex(prompt: string, kind: MediaTokenKind, remo
   return next
 }
 
+/**
+ * 素材在同类列表内从 fromIndex1 挪到 toIndex1(拖拽换位)后,重映射提示词里
+ * 的同类 token 序号,让每个 chip 仍指向拖拽前的那份素材(顺序调整不影响引用)。
+ * 占位符法防连环替换,与 removeTokenAndReindex 同款。
+ */
+export function remapTokensForMove(
+  prompt: string,
+  kind: MediaTokenKind,
+  fromIndex1: number,
+  toIndex1: number,
+): string {
+  if (fromIndex1 === toIndex1) return prompt
+  const zh = KIND_ZH[kind]
+  const lo = Math.min(fromIndex1, toIndex1)
+  const hi = Math.max(fromIndex1, toIndex1)
+  /** 旧序号 → 新序号(区间外不动)。 */
+  const mapIndex = (i: number): number => {
+    if (i === fromIndex1) return toIndex1
+    if (fromIndex1 < toIndex1) return i > fromIndex1 && i <= toIndex1 ? i - 1 : i
+    return i >= toIndex1 && i < fromIndex1 ? i + 1 : i
+  }
+  const PH = (i: number) => `\u0000MV_${zh}_${i}\u0000`
+  let next = prompt
+  for (let i = lo; i <= hi; i++) {
+    next = next.split(`【@${zh}${i}】`).join(PH(mapIndex(i)))
+  }
+  for (let i = lo; i <= hi; i++) {
+    next = next.split(PH(i)).join(`【@${zh}${i}】`)
+  }
+  return next
+}
+
 export interface AtDetection {
   /** `@` 在纯文本中的下标。 */
   atPosition: number

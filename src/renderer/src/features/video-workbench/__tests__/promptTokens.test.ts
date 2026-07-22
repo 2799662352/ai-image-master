@@ -6,6 +6,7 @@ import {
   detectAtTrigger,
   mediaToken,
   parseTokenZh,
+  remapTokensForMove,
   removeTokenAndReindex,
 } from '../promptTokens'
 
@@ -80,5 +81,32 @@ describe('removeTokenAndReindex(soraui removeMedia 语义)', () => {
 
   it('prompt 中无该 token 时只做序号重排(幂等)', () => {
     expect(removeTokenAndReindex('纯文本', 'image', 1)).toBe('纯文本')
+  })
+})
+
+describe('remapTokensForMove(素材拖拽换位后 chip 引用跟随素材)', () => {
+  it('向后挪:被挪项 token 改为目标序号,途经项 -1', () => {
+    const prompt = 'A【@图片1】B【@图片2】C【@图片3】'
+    // 图片1 挪到位置 3:原图片1→图片3,原图片2→图片1,原图片3→图片2
+    expect(remapTokensForMove(prompt, 'image', 1, 3)).toBe('A【@图片3】B【@图片1】C【@图片2】')
+  })
+
+  it('向前挪:被挪项 token 改为目标序号,途经项 +1', () => {
+    const prompt = '【@图片1】【@图片2】【@图片3】'
+    // 图片3 挪到位置 1
+    expect(remapTokensForMove(prompt, 'image', 3, 1)).toBe('【@图片2】【@图片3】【@图片1】')
+  })
+
+  it('相邻交换(占位符法防连环替换)', () => {
+    expect(remapTokensForMove('【@图片1】【@图片2】', 'image', 1, 2)).toBe('【@图片2】【@图片1】')
+  })
+
+  it('不影响其他类型 token 与区间外序号', () => {
+    const prompt = '【@视频1】【@图片1】【@图片2】【@图片4】'
+    expect(remapTokensForMove(prompt, 'image', 1, 2)).toBe('【@视频1】【@图片2】【@图片1】【@图片4】')
+  })
+
+  it('from === to 原样返回', () => {
+    expect(remapTokensForMove('【@图片1】', 'image', 1, 1)).toBe('【@图片1】')
   })
 })
