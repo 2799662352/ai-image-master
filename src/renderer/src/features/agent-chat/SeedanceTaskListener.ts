@@ -117,6 +117,10 @@ async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Pr
 }
 
 export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
+  // 「生成视频」工作台提交的任务不产生聊天气泡/聊天历史 —— 进度与结果由
+  // 工作台页自己的卡片消费（useVideoWorkbenchStore 同样订阅 seedance:task-update）。
+  if (update.source === 'workbench') return
+
   const chat = useAgentChatStore.getState()
 
   // 气泡身份优先用稳定的 clientId：generate_video 的「预备卡片」与之后真实

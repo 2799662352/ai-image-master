@@ -17,6 +17,7 @@ import {
   DirectorPage,
   PromptTemplatesPage,
   StoryboardSplitPage,
+  VideoWorkbenchPage,
   SmartErasePage,
   AgentWorkspacePage,
   MarketplacePage,
@@ -35,6 +36,7 @@ const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
   agentWorkspace: AgentWorkspacePage,
   marketplace: MarketplacePage,
   storyboardSplit: StoryboardSplitPage,
+  videoWorkbench: VideoWorkbenchPage,
   smartErase: SmartErasePage,
   portraitLibrary: PortraitLibraryPage,
 }

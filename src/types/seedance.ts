@@ -49,6 +49,12 @@ export interface SeedanceTaskState {
    * 仍显示「排队中」。不进入 `SeedanceTaskStatus`（那是 Ark 上游状态原样）。
    */
   phase?: 'preparing'
+  /**
+   * 任务来源。`workbench` = 「生成视频」工作台页提交（渲染端工作台卡片自行
+   * 消费 `seedance:task-update`，SeedanceTaskListener 跳过它们，不产生聊天
+   * 气泡/聊天历史）。缺省 = 聊天/MCP `generate_video` 链路，行为不变。
+   */
+  source?: 'workbench'
 }
 
 export type SeedanceTaskUpdate = SeedanceTaskState

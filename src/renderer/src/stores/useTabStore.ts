@@ -6,6 +6,7 @@ export const VALID_TABS = [
   'batch',
   'compare',
   'history',
+  'videoWorkbench',
   'understand',
   'director',
   'storyboardSplit',

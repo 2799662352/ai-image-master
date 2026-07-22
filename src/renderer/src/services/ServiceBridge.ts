@@ -53,6 +53,8 @@ import {
   unmountGenerateReact,
   mountStoryboardSplitReact,
   unmountStoryboardSplitReact,
+  mountVideoWorkbenchReact,
+  unmountVideoWorkbenchReact,
   mountSmartEraseReact,
   unmountSmartEraseReact,
   mountAgentWorkspaceReact,
@@ -309,6 +311,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'generate') mountGenerateReact()
         if (oldTab === 'storyboardSplit') unmountStoryboardSplitReact()
         if (newTab === 'storyboardSplit') mountStoryboardSplitReact()
+        if (oldTab === 'videoWorkbench') unmountVideoWorkbenchReact()
+        if (newTab === 'videoWorkbench') mountVideoWorkbenchReact()
         if (oldTab === 'smartErase') unmountSmartEraseReact()
         if (newTab === 'smartErase') mountSmartEraseReact()
         if (oldTab === 'agentWorkspace') unmountAgentWorkspaceReact()
@@ -350,6 +354,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountStoryboardSplitReact()
       if (activeTab !== 'storyboardSplit') unmountStoryboardSplitReact()
+
+      mountVideoWorkbenchReact()
+      if (activeTab !== 'videoWorkbench') unmountVideoWorkbenchReact()
 
       mountSmartEraseReact()
       if (activeTab !== 'smartErase') unmountSmartEraseReact()

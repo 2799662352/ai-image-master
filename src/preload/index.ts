@@ -83,6 +83,10 @@ import type {
   SeedanceTaskUpdate,
 } from '../types/seedance'
 import type {
+  VideoWorkbenchSubmitPayload,
+  VideoWorkbenchSubmitResult,
+} from '../types/videoWorkbench'
+import type {
   AppsListParams,
   AppsListResponse,
   ExternalAgentConfigDetectParams,
@@ -713,6 +717,11 @@ export interface ElectronAPI {
     getOverlay: () => Promise<PortraitOverlayState>
     mutateOverlay: (mutation: PortraitOverlayMutation) => Promise<PortraitOverlayState>
     onOverlayChanged: (cb: (state: PortraitOverlayState) => void) => () => void
+  }
+  // 「生成视频」工作台：提交复用 Seedance 生成链路（buildContent → 提交 →
+  // 后台轮询 → 本地落盘 + COS），进度经 seedance.onTaskUpdate 回流。
+  videoWorkbench: {
+    submit: (payload: VideoWorkbenchSubmitPayload) => Promise<VideoWorkbenchSubmitResult>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1558,6 +1567,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on('seedance:overlay-changed', handler)
       return () => ipcRenderer.removeListener('seedance:overlay-changed', handler)
     },
+  },
+
+  // ============ 「生成视频」工作台 ============
+  videoWorkbench: {
+    submit: (payload: VideoWorkbenchSubmitPayload) =>
+      safeInvoke<VideoWorkbenchSubmitResult>('video-workbench:submit', payload),
   },
 
   fs: {

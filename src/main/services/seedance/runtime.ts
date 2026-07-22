@@ -359,6 +359,47 @@ export function initSeedanceRuntime(opts: {
     }
   })
 
+  // ============ 「生成视频」工作台提交通道 ============
+  // 与 generate_video 完全同一条生成链路（buildContent → 人像库导入 → 提交 →
+  // 后台轮询 → persistVideo 本地落盘 + COS 转存），差异仅两点：
+  // 1. clientId 由渲染端生成并透传 —— 广播先于 invoke 返回到达也能对齐卡片；
+  // 2. source: 'workbench' —— SeedanceTaskListener 据此跳过聊天气泡，
+  //    进度由工作台页自己消费 `seedance:task-update`。
+  // 失败直接把错误带回渲染端（卡片落 failed），不走 announce* 合成广播。
+  ipcMain.removeHandler('video-workbench:submit')
+  ipcMain.handle('video-workbench:submit', async (_event, payload: Record<string, unknown>) => {
+    const clientId = String(payload?.clientId ?? '')
+    const asStringArray = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
+    const input: CreateVideoTaskInput = {
+      prompt: String(payload?.prompt ?? ''),
+      model: payload?.model === '2.0-fast' ? '2.0-fast' : '2.0',
+      resolution: (['480p', '720p', '1080p'] as const).find((r) => r === payload?.resolution) ?? '720p',
+      ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
+      duration: Number.isFinite(Number(payload?.duration))
+        ? Math.min(15, Math.max(4, Math.round(Number(payload?.duration))))
+        : 5,
+      generateAudio: payload?.generateAudio !== false,
+      referenceImages: asStringArray(payload?.referenceImages),
+      referenceVideos: asStringArray(payload?.referenceVideos),
+      referenceAudios: asStringArray(payload?.referenceAudios),
+    }
+    try {
+      if (!input.prompt.trim()) throw new Error('提示词不能为空')
+      const content = await buildContent(input)
+      await importImagesToPortraitLibrary(content)
+      const state = await taskManager.submit({
+        input,
+        content,
+        source: 'workbench',
+        ...(clientId ? { clientId } : {}),
+      })
+      return { success: true, taskId: state.taskId }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   router.registerMain('check_video_task', async (params) => {
     const taskId = String((params as { taskId?: unknown }).taskId ?? '')
     // 可选短轮询窗口：generate_video 在「已成功、落盘仍在跑」时用它做几秒的

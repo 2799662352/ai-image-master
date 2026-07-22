@@ -52,6 +52,8 @@ export interface SubmitParams {
   threadId?: string
   /** generate_video 预备卡片的临时 id；真实任务广播会带上它做气泡对齐。 */
   clientId?: string
+  /** 任务来源（'workbench' = 生成视频工作台页；缺省 = 聊天/MCP 链路）。 */
+  source?: 'workbench'
 }
 
 export class SeedanceTaskManager {
@@ -88,6 +90,7 @@ export class SeedanceTaskManager {
     const state: SeedanceTaskState = {
       taskId: id,
       clientId: params.clientId,
+      ...(params.source ? { source: params.source } : {}),
       threadId,
       prompt: input.prompt,
       model,

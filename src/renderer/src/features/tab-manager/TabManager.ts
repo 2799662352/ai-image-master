@@ -41,8 +41,10 @@ export class TabManager {
     // 'compare' 已被 'audio'(音频生成,seed-audio-1.0)替换;ComparePage 代码暂留未注册
     'audio',
     'history',
+    'videoWorkbench',
     'understand',
     'director',
+    // 'storyboardSplit' 按钮已从导航隐藏,tab 仍合法(hash 直达/代码保留)
     'storyboardSplit',
     'smartErase',
     'agentWorkspace',
