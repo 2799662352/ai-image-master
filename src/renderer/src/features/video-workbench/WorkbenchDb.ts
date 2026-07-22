@@ -11,11 +11,13 @@
  * userData 目录,远端在 COS,这里只背两个地址。
  */
 
-import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
+import type { VideoWorkbenchBoard, VideoWorkbenchCard } from '../../../../types/videoWorkbench'
 
 const DB_NAME = 'catimation-video-workbench'
-const DB_VERSION = 1
+// v2:新增 boards object store(多「页」工作区)。v1 老库 onupgradeneeded 原地补建,cards 数据不动。
+const DB_VERSION = 2
 const STORE = 'cards'
+const BOARD_STORE = 'boards'
 
 /** 卡片总量上限:超出后删最旧的已终态卡(防素材 data: URL 无限膨胀)。 */
 export const WORKBENCH_MAX_CARDS = 200
@@ -23,6 +25,7 @@ export const WORKBENCH_MAX_CARDS = 200
 export class WorkbenchDb {
   private dbPromise: Promise<IDBDatabase | null> | null = null
   private memory = new Map<string, VideoWorkbenchCard>()
+  private memoryBoards = new Map<string, VideoWorkbenchBoard>()
   private useMemory = typeof indexedDB === 'undefined'
 
   private openDb(): Promise<IDBDatabase | null> {
@@ -36,6 +39,9 @@ export class WorkbenchDb {
           if (!db.objectStoreNames.contains(STORE)) {
             const store = db.createObjectStore(STORE, { keyPath: 'id' })
             store.createIndex('order', 'order')
+          }
+          if (!db.objectStoreNames.contains(BOARD_STORE)) {
+            db.createObjectStore(BOARD_STORE, { keyPath: 'id' })
           }
         }
         req.onsuccess = () => resolve(req.result)
@@ -53,8 +59,8 @@ export class WorkbenchDb {
     return this.dbPromise
   }
 
-  private tx(db: IDBDatabase, mode: IDBTransactionMode): IDBObjectStore {
-    return db.transaction(STORE, mode).objectStore(STORE)
+  private tx(db: IDBDatabase, mode: IDBTransactionMode, store: string = STORE): IDBObjectStore {
+    return db.transaction(store, mode).objectStore(store)
   }
 
   private request<T>(req: IDBRequest<T>): Promise<T> {
@@ -88,6 +94,35 @@ export class WorkbenchDb {
     const items = db
       ? await this.request<VideoWorkbenchCard[]>(this.tx(db, 'readonly').getAll())
       : [...this.memory.values()]
+    return items.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+  }
+
+  // ==================== 「页」(board) ====================
+
+  async putBoard(board: VideoWorkbenchBoard): Promise<void> {
+    const db = await this.openDb()
+    if (!db) {
+      this.memoryBoards.set(board.id, board)
+      return
+    }
+    await this.request(this.tx(db, 'readwrite', BOARD_STORE).put(board))
+  }
+
+  async removeBoard(id: string): Promise<void> {
+    const db = await this.openDb()
+    if (!db) {
+      this.memoryBoards.delete(id)
+      return
+    }
+    await this.request(this.tx(db, 'readwrite', BOARD_STORE).delete(id))
+  }
+
+  /** 全部页,按 order 升序(页签从左到右)。 */
+  async listBoards(): Promise<VideoWorkbenchBoard[]> {
+    const db = await this.openDb()
+    const items = db
+      ? await this.request<VideoWorkbenchBoard[]>(this.tx(db, 'readonly', BOARD_STORE).getAll())
+      : [...this.memoryBoards.values()]
     return items.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
   }
 

@@ -181,11 +181,15 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       const before = rect ? e.clientY < rect.top + rect.height / 2 : true
       setDropEdge(null)
       if (draggedId !== card.id) {
-        const cards = useVideoWorkbenchStore.getState().cards
-        const fromIndex = cards.findIndex((c) => c.id === draggedId)
+        // index / moveCard 都是「本页内」下标:同页卡片按 order 排序后计算来源位。
+        const boardCards = useVideoWorkbenchStore
+          .getState()
+          .cards.filter((c) => c.boardId === card.boardId)
+          .sort((a, b) => a.order - b.order)
+        const fromIndex = boardCards.findIndex((c) => c.id === draggedId)
         let target = before ? index : index + 1
         if (fromIndex >= 0 && fromIndex < target) target -= 1
-        moveCard(draggedId, target)
+        if (fromIndex >= 0) moveCard(draggedId, target)
       }
       return
     }
@@ -317,7 +321,8 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
     const seen = new Set<string>()
     const out: PageMaterialRef[] = []
     for (const c of state.cards) {
-      if (c.id === card.id) continue
+      // 「本页素材」只收当前页的其他卡片(页与页之间素材隔离)
+      if (c.id === card.id || c.boardId !== card.boardId) continue
       const collect = (kind: MediaTokenKind, list: VideoWorkbenchMaterial[]) => {
         for (const m of list) {
           if (own.has(m.src) || seen.has(m.src)) continue
