@@ -20,6 +20,8 @@ import {
   importSeedanceAsset,
   listSeedanceAssets,
   listSeedanceOfficialMaterials,
+  translateSeedanceTaskError,
+  verifyContentAssetReferences,
 } from './assets'
 import {
   getPortraitOverlay,
@@ -379,17 +381,21 @@ export function initSeedanceRuntime(opts: {
     try {
       const content = await buildContent(input)
       await importImagesToPortraitLibrary(content)
+      // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
+      // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
+      await verifyContentAssetReferences(content, {
+        apiKey: getSeedanceApiKey(),
+        apiSecret: getSeedanceApiSecret(),
+      })
       return await taskManager.submit({ input, content, threadId, clientId })
     } catch (e) {
       // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
       // 把预备卡片落成 failed，避免气泡永远转圈；随后照旧把错误抛给工具层出横幅。
-      taskManager.announceFailed({
-        clientId,
-        input,
-        threadId,
-        error: e instanceof Error ? e.message : String(e),
-      })
-      throw e
+      // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)先翻译成人话再透出。
+      const raw = e instanceof Error ? e.message : String(e)
+      const message = translateSeedanceTaskError(raw)
+      taskManager.announceFailed({ clientId, input, threadId, error: message })
+      throw message === raw && e instanceof Error ? e : new Error(message)
     }
   })
 
@@ -433,6 +439,12 @@ export function initSeedanceRuntime(opts: {
       if (!input.prompt.trim()) throw new Error('提示词不能为空')
       const content = await buildContent(input)
       await importImagesToPortraitLibrary(content)
+      // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
+      // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
+      await verifyContentAssetReferences(content, {
+        apiKey: getSeedanceApiKey(),
+        apiSecret: getSeedanceApiSecret(),
+      })
       const state = await taskManager.submit({
         input,
         content,
@@ -441,7 +453,11 @@ export function initSeedanceRuntime(opts: {
       })
       return { success: true, taskId: state.taskId }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。
+      return {
+        success: false,
+        error: translateSeedanceTaskError(e instanceof Error ? e.message : String(e)),
+      }
     }
   })
 

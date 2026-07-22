@@ -13,8 +13,11 @@ import {
   listSeedanceAssets,
   getSeedanceAssetCapacity,
   deleteSeedanceAssets,
+  verifyContentAssetReferences,
+  translateSeedanceTaskError,
 } from '../assets'
 import { setSeedanceRegionMemory } from '../region'
+import type { SeedanceContentItem } from '../types'
 
 const CREDS = { apiKey: 'sd_key', apiSecret: 'sd_secret' }
 
@@ -128,32 +131,85 @@ describe('importSeedanceAsset', () => {
     expect(result.duplicated).toBe(true)
   })
 
-  it('兼容 asset 只回 id 不回 assetId 的线上响应（2026-07-22 实测）', async () => {
-    // 真实形态:{"success":true,"data":{"duplicated":false,"asset":{"id":"dla-...","kind":"image",...}}}
+  // 2026-07-22 线上实测:导入响应的 asset 只回内部行 id(dla-xxx),没有可引用的
+  // assetId/assetUrl。dla 形态直接拿去创建任务会被上游 400 LOCAL_ASSET_NOT_FOUND
+  // 拒掉,所以导入后必须追加一次 list,用 id 匹配出真实 assetId/assetUrl。
+  const ID_ONLY_IMPORT_RESPONSE = {
+    success: true,
+    data: {
+      duplicated: false,
+      asset: {
+        id: 'dla-mrwc058u-e8mr7x',
+        developerId: 'cmrolxpd904z7y7mb3m7resh0',
+        kind: 'image',
+        createdBy: 'openapi_asset_import',
+        imageCategory: 'image_people',
+        name: '0EE9F213.png',
+        previewUrl: null,
+      },
+    },
+  }
+
+  it('导入响应仅回 id 时,追加 list 二次解析出真实 assetId/assetUrl', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(
-        {
-          success: true,
-          data: {
-            duplicated: false,
-            asset: {
-              id: 'dla-mrwc058u-e8mr7x',
-              developerId: 'cmrolxpd904z7y7mb3m7resh0',
-              kind: 'image',
-              createdBy: 'openapi_asset_import',
-              imageCategory: 'image_people',
-              name: '0EE9F213.png',
-              previewUrl: null,
-            },
+      jsonResponse({
+        items: [
+          { ...ASSET, id: 'dla-other', assetId: 'v0c000', assetUrl: 'asset://v0c000' },
+          {
+            id: 'dla-mrwc058u-e8mr7x',
+            kind: 'image',
+            imageCategory: 'image_people',
+            name: '0EE9F213.png',
+            previewUrl: 'https://cdn.example/preview.png',
+            assetId: 'v0c777',
+            assetUrl: 'asset://v0c777',
           },
-        },
-        201,
-      ),
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      }),
+    )
+    const result = await importSeedanceAsset(
+      { kind: 'image', imageCategory: 'image_people', url: 'data:image/png;base64,xx' },
+      CREDS,
+    )
+    expect(result.asset.assetId).toBe('v0c777')
+    expect(result.asset.assetUrl).toBe('asset://v0c777')
+    expect(result.duplicated).toBe(false)
+    // 第二次调用是按 input.kind 过滤的大页 list
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [listUrl, listInit] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(listInit.method).toBe('GET')
+    expect(listUrl).toContain('pageSize=50')
+    expect(listUrl).toContain('kind=image_people')
+  })
+
+  it('list 里也找不到匹配 id 时保留 id 兜底(不阻断导入)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 50, totalPages: 1 }),
     )
     const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
     expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
     expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
-    expect(result.duplicated).toBe(false)
+  })
+
+  it('追加 list 请求失败时保留 id 兜底(不阻断导入)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500))
+    const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
+    expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
+    expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
+  })
+
+  it('响应带真实 assetId 时不追加 list 调用', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ duplicated: false, asset: ASSET }, 201))
+    const result = await importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS)
+    expect(result.asset.assetId).toBe('v0c001')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('解析失败时错误信息带响应片段便于排查', async () => {
@@ -192,6 +248,97 @@ describe('listSeedanceAssets', () => {
     const result = await listSeedanceAssets({}, CREDS)
     expect(result.items).toHaveLength(1)
     expect(result.total).toBe(1)
+  })
+})
+
+describe('verifyContentAssetReferences', () => {
+  const contentWith = (...urls: string[]): SeedanceContentItem[] => [
+    { type: 'text', text: 'prompt' },
+    ...urls.map((url): SeedanceContentItem => ({ type: 'image_url', image_url: { url } })),
+  ]
+
+  it('引用在列表里(按 assetId 命中)则通过', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 50, totalPages: 1 }),
+    )
+    await expect(
+      verifyContentAssetReferences(contentWith('asset://v0c001'), CREDS),
+    ).resolves.toBeUndefined()
+  })
+
+  it('引用命中条目的内部 id 也算存在(宽容,避免误拦)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 50, totalPages: 1 }),
+    )
+    await expect(
+      verifyContentAssetReferences(contentWith('asset://dla-1'), CREDS),
+    ).resolves.toBeUndefined()
+  })
+
+  it('提交前校验失败 → 清晰中文报错(提示站点切换场景)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 50, totalPages: 1 }),
+    )
+    await expect(
+      verifyContentAssetReferences(contentWith('asset://dla-mrwfjyet-1wyimm'), CREDS),
+    ).rejects.toThrow(/素材在当前站点.*不存在.*dla-mrwfjyet-1wyimm/s)
+  })
+
+  it('跨页扫描:第 2 页命中则通过', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [ASSET], total: 51, page: 1, pageSize: 50, totalPages: 2 }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [{ ...ASSET, id: 'dla-2', assetId: 'v0c002', assetUrl: 'asset://v0c002' }],
+        total: 51,
+        page: 2,
+        pageSize: 50,
+        totalPages: 2,
+      }),
+    )
+    await expect(
+      verifyContentAssetReferences(contentWith('asset://v0c002'), CREDS),
+    ).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('list 调用失败时放行(fail-open,校验是防线不是闸门)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500))
+    await expect(
+      verifyContentAssetReferences(contentWith('asset://v0c001'), CREDS),
+    ).resolves.toBeUndefined()
+  })
+
+  it('content 无 asset:// 引用时不发请求', async () => {
+    await expect(
+      verifyContentAssetReferences(contentWith('https://cdn.example/a.png'), CREDS),
+    ).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('凭证缺失时直接放行(无法校验)', async () => {
+    await expect(
+      verifyContentAssetReferences(contentWith('asset://v0c001'), { apiKey: '', apiSecret: '' }),
+    ).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('translateSeedanceTaskError', () => {
+  it('把上游 LOCAL_ASSET_NOT_FOUND 400 翻译成中文人话', () => {
+    const raw =
+      'Seedance API 400: [LOCAL_ASSET_NOT_FOUND] content[1] referenced local asset is missing: asset://dla-mrwfjyet-1wyimm'
+    const msg = translateSeedanceTaskError(raw)
+    expect(msg).toMatch(/素材在当前站点.*不存在/s)
+    expect(msg).toContain('asset://dla-mrwfjyet-1wyimm')
+    expect(msg).toMatch(/切换了站点|切回原站点/)
+  })
+
+  it('其他错误原样返回', () => {
+    expect(translateSeedanceTaskError('Seedance API 429: quota exceeded')).toBe(
+      'Seedance API 429: quota exceeded',
+    )
   })
 })
 
