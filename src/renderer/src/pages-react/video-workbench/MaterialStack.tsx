@@ -4,7 +4,7 @@
 
 import { useRef, type ReactNode } from 'react'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
-import { toRenderableUri } from '../../features/file-explorer/uri'
+import { MaterialThumb } from './MaterialThumb'
 
 const STEP_PX = 64
 const MAX_VISIBLE = 12
@@ -20,22 +20,24 @@ interface MaterialStackProps {
   onRemove: (index: number) => void
 }
 
-/** 素材源 → 可预览缩略内容(人像库 asset:// 源用 previewUrl 兜底展示)。 */
+/**
+ * 素材源 → 可预览缩略内容。本地路径不能直接塞 <img src>(local-file://
+ * 协议在渲染端有盘符解析缺陷,见 MaterialThumb 注释),统一交给
+ * MaterialThumb 走 useResolvedMediaSrc(IPC → blob:);解析失败/图片加载
+ * 失败时兜底显示文件名(图片)或类型图标(视频/音频),不出裂图。
+ */
 function materialThumb(kind: 'image' | 'video' | 'audio', material: VideoWorkbenchMaterial): ReactNode {
-  const { src, previewUrl } = material
-  if (previewUrl) return <img src={previewUrl} alt={material.name} draggable={false} />
-  if (kind === 'image') {
-    const uri = src.startsWith('data:') || /^https?:/.test(src) ? src : src.startsWith('asset://') ? '' : toRenderableUri(src)
-    if (uri) return <img src={uri} alt={material.name} draggable={false} />
-    return <span className="text-[10px] text-white/60 px-1 break-all leading-tight">{material.name}</span>
-  }
-  const icon = kind === 'video' ? '🎬' : '🎵'
-  return (
-    <span className="flex flex-col items-center justify-center w-full h-full gap-0.5">
-      <span className="text-base leading-none">{icon}</span>
-      <span className="text-[9px] text-white/60 px-0.5 truncate max-w-full">{material.name}</span>
-    </span>
-  )
+  const icon = kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼'
+  const fallback =
+    kind === 'image' && !material.previewUrl ? (
+      <span className="text-[10px] text-white/60 px-1 break-all leading-tight">{material.name}</span>
+    ) : (
+      <span className="flex flex-col items-center justify-center w-full h-full gap-0.5">
+        <span className="text-base leading-none">{icon}</span>
+        <span className="text-[9px] text-white/60 px-0.5 truncate max-w-full">{material.name}</span>
+      </span>
+    )
+  return <MaterialThumb kind={kind} material={material} fallback={fallback} />
 }
 
 export function MaterialStack({ kind, label, materials, limit, accept, disabled, onAdd, onRemove }: MaterialStackProps) {

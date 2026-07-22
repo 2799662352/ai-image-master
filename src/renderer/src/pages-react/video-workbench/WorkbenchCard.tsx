@@ -21,6 +21,7 @@ import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-wo
 import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
 import { removeTokenAndReindex, type MediaTokenKind } from '../../features/video-workbench/promptTokens'
 import { MaterialStack } from './MaterialStack'
+import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { PortraitPickerModal } from './PortraitPickerModal'
 import { RichPromptInput, type PromptMediaRef } from './RichPromptInput'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
@@ -83,15 +84,6 @@ function classifyFiles(files: File[]): { images: File[]; videos: File[]; audios:
     else if (f.type.startsWith('audio/')) audios.push(f)
   }
   return { images, videos, audios }
-}
-
-/** 素材 → 输入框 chip / 建议弹层可渲染的缩略图地址(asset:// 用 previewUrl 兜底)。 */
-function materialThumbSrc(kind: MediaTokenKind, m: VideoWorkbenchMaterial): string | undefined {
-  if (m.previewUrl) return m.previewUrl
-  if (kind !== 'image') return undefined
-  if (m.src.startsWith('data:') || /^https?:/.test(m.src)) return m.src
-  if (m.src.startsWith('asset://')) return undefined
-  return toRenderableUri(m.src)
 }
 
 /** 人像库素材项 → 工作台素材(展示名 + asset:// 源 + 预览地址)。 */
@@ -217,19 +209,32 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   }
 
   // ---- 富文本输入的媒体引用(chip 缩略图 / @ 建议数据源)----
+  // chip 是 HTML 字符串渲染,跑不了 hook,缩略图地址必须先在这里统一解析:
+  // 本地路径经 useMaterialThumbSrcs(IPC → blob:)转可渲染地址(直接塞
+  // local-file:// 会裂图,见 MaterialThumb 注释),解析完成前回落 emoji。
+  const thumbEntries = useMemo<MaterialThumbEntry[]>(() => {
+    const entries: MaterialThumbEntry[] = []
+    card.referenceImages.forEach((m) => entries.push({ kind: 'image', material: m }))
+    card.referenceVideos.forEach((m) => entries.push({ kind: 'video', material: m }))
+    card.referenceAudios.forEach((m) => entries.push({ kind: 'audio', material: m }))
+    return entries
+  }, [card.referenceImages, card.referenceVideos, card.referenceAudios])
+  const thumbSrcs = useMaterialThumbSrcs(thumbEntries)
   const mediaRefs = useMemo<PromptMediaRef[]>(() => {
     const refs: PromptMediaRef[] = []
+    const imageCount = card.referenceImages.length
+    const videoCount = card.referenceVideos.length
     card.referenceImages.forEach((m, i) =>
-      refs.push({ kind: 'image', index1: i + 1, name: m.name, thumbSrc: materialThumbSrc('image', m) }),
+      refs.push({ kind: 'image', index1: i + 1, name: m.name, thumbSrc: thumbSrcs[i] }),
     )
     card.referenceVideos.forEach((m, i) =>
-      refs.push({ kind: 'video', index1: i + 1, name: m.name, thumbSrc: materialThumbSrc('video', m) }),
+      refs.push({ kind: 'video', index1: i + 1, name: m.name, thumbSrc: thumbSrcs[imageCount + i] }),
     )
     card.referenceAudios.forEach((m, i) =>
-      refs.push({ kind: 'audio', index1: i + 1, name: m.name, thumbSrc: materialThumbSrc('audio', m) }),
+      refs.push({ kind: 'audio', index1: i + 1, name: m.name, thumbSrc: thumbSrcs[imageCount + videoCount + i] }),
     )
     return refs
-  }, [card.referenceImages, card.referenceVideos, card.referenceAudios])
+  }, [card.referenceImages, card.referenceVideos, card.referenceAudios, thumbSrcs])
 
   /** @ 建议选中人像库素材:入卡片素材并返回 token 序号(超限返回 null)。 */
   const handlePickAsset = useCallback(

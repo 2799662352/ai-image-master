@@ -72,6 +72,19 @@ async function openApiRequest<T>(
   } catch {
     /* 非 JSON 响应走统一报错 */
   }
+  // 部分部署把 data 字段再 JSON.stringify 了一层（`{"success":true,"data":"{...}"}`），
+  // 导致下游 extractAsset 解不出 assetId、明明导入成功却报失败。这里统一解开。
+  if (json && typeof json === 'object') {
+    const obj = json as Record<string, unknown>
+    if (typeof obj.data === 'string') {
+      try {
+        const inner: unknown = JSON.parse(obj.data)
+        if (inner && typeof inner === 'object') obj.data = inner
+      } catch {
+        /* data 不是 JSON 字符串则保留原样 */
+      }
+    }
+  }
   if (!res.ok || json == null) {
     const detail =
       (json as { error?: { message?: string }; message?: string } | null)?.error?.message ||
@@ -111,9 +124,15 @@ function extractAsset(raw: unknown): SeedanceAssetItem | null {
   for (const candidate of candidates) {
     const a = candidate as Record<string, unknown> | undefined
     if (!a || typeof a !== 'object') continue
-    const assetId = (a.assetId ?? a.asset_id) as string | undefined
+    // 线上导入接口实测只回 `id`（如 dla-xxx），没有 assetId/assetUrl 字段，
+    // 依次兜底:assetId → asset_id → 从 assetUrl 反推 → id（必须像素材记录,有 kind/name 才认）。
+    const rawUrl = (a.assetUrl ?? a.asset_url) as string | undefined
+    const assetId =
+      ((a.assetId ?? a.asset_id) as string | undefined) ||
+      (rawUrl?.startsWith('asset://') ? rawUrl.slice('asset://'.length) : undefined) ||
+      (typeof a.id === 'string' && (a.kind || a.name) ? a.id : undefined)
     if (!assetId) continue
-    const assetUrl = ((a.assetUrl ?? a.asset_url) as string | undefined) || `asset://${assetId}`
+    const assetUrl = rawUrl || `asset://${assetId}`
     return { ...(a as unknown as SeedanceAssetItem), assetId, assetUrl }
   }
   return null
@@ -124,13 +143,19 @@ export async function importSeedanceAsset(
   input: SeedanceAssetImportInput,
   creds: SeedanceAssetCredentials,
 ): Promise<SeedanceAssetImportResult> {
-  const result = await assetRequest<{ duplicated?: boolean }>('POST', '', '', input, creds)
+  const result = await assetRequest<{ duplicated?: boolean; data?: { duplicated?: boolean } }>(
+    'POST',
+    '',
+    '',
+    input,
+    creds,
+  )
   const asset = extractAsset(result)
   if (!asset) {
     const snippet = JSON.stringify(result).slice(0, 400)
     throw new Error(`Seedance assets: import response missing assetId/assetUrl, got: ${snippet}`)
   }
-  return { duplicated: !!result.duplicated, asset }
+  return { duplicated: !!(result.duplicated ?? result.data?.duplicated), asset }
 }
 
 /** 拉取素材列表（默认人像分类由调用方传 kind）。 */
