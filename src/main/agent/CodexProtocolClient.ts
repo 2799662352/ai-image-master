@@ -612,7 +612,7 @@ export class CodexProtocolClient {
   // ─── Native Plugin / Marketplace / Connectors RPC (app-server v2, ≥0.140) ──
   // Method strings pinned from openai/codex
   // `app-server-protocol/src/protocol/common.rs` (client_request_definitions!),
-  // originally at rust-v0.141.0 and revalidated at rust-v0.144.1. These require
+  // originally at rust-v0.141.0 and revalidated at rust-v0.145.0. These require
   // a Codex binary ≥0.140; remote catalogs
   // (`vertical` / `created-by-me-remote`) and `app/list` are additionally
   // gated behind ChatGPT auth / experimental feature flags server-side.
@@ -926,7 +926,9 @@ export class CodexProtocolClient {
     if (!event) {
       // Log each unhandled method once per session so we can diagnose missing
       // UI features without flooding the log. Examples that legitimately drop:
-      // thread/started, turn/started, warning, item/fileChange/outputDelta.
+      // thread/started, turn/started, warning, item/fileChange/outputDelta,
+      // remoteControl/status/changed (0.145+ remote-control daemon status —
+      // we never pair a remote controller, so it is always "disabled" noise).
       // If a NEW method (e.g. an undocumented mcp progress notification) shows
       // up here, this single line points us at exactly what to add.
       if (!this.unhandledMethodsLogged.has(method)) {

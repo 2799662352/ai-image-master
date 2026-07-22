@@ -114,7 +114,20 @@ async function resolveAndValidateResourceRoot(): Promise<string> {
 }
 
 async function removeTempHome(codexHome: string): Promise<void> {
-  await rm(codexHome, { recursive: true, force: true })
+  try {
+    await rm(codexHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (error) {
+    // Windows can briefly retain a handle on `.tmp/plugins-clone-*` after
+    // app-server exits (observed on 0.145.0's concurrent plugin discovery),
+    // which surfaces as EBUSY here. The probe result is already decided at
+    // this point; leave OS temp cleanup to reap the directory instead of
+    // turning a successful smoke into a false FAIL. Mirrors the deferred
+    // cleanup posture in smoke-codex-start.ts.
+    console.warn(
+      `[smoke] temp CODEX_HOME cleanup deferred (${errorMessage(error)}): ${codexHome}`,
+    )
+    return
+  }
   try {
     await stat(codexHome)
   } catch (error) {
