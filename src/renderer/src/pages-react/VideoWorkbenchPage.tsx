@@ -12,6 +12,7 @@ import {
   mountWorkbenchTaskListener,
   useVideoWorkbenchStore,
 } from '../features/video-workbench/store'
+import { BoardTabs } from './video-workbench/BoardTabs'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
@@ -20,7 +21,8 @@ import './video-workbench/workbench.css'
 const NOOP_DRAG_STATE = () => {}
 
 export default function VideoWorkbenchPage() {
-  const cards = useVideoWorkbenchStore((s) => s.cards)
+  const allCards = useVideoWorkbenchStore((s) => s.cards)
+  const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const hydrated = useVideoWorkbenchStore((s) => s.hydrated)
   const ensureHydrated = useVideoWorkbenchStore((s) => s.ensureHydrated)
   const addCards = useVideoWorkbenchStore((s) => s.addCards)
@@ -32,6 +34,11 @@ export default function VideoWorkbenchPage() {
     void ensureHydrated()
     return mountWorkbenchTaskListener()
   }, [ensureHydrated])
+
+  // 只展示当前页的卡片;其他页卡片仍在 store 里(任务回流跨页可达)。
+  const cards = allCards
+    .filter((c) => c.boardId === activeBoardId)
+    .sort((a, b) => a.order - b.order)
 
   const activeCount = cards.filter(
     (c) => c.status === 'preparing' || c.status === 'queued' || c.status === 'running',
@@ -48,11 +55,12 @@ export default function VideoWorkbenchPage() {
       </div>
 
       <div className="relative z-10 max-w-4xl mx-auto space-y-4">
-        {/* 顶部工具条 */}
-        <div className="flex items-center gap-3 border-b-2 border-[#3F3F46] pb-3">
+        {/* 顶部工具条(页签紧跟标题:每页一套独立卡片集合) */}
+        <div className="flex items-center gap-3 border-b-2 border-[#3F3F46] pb-3 flex-wrap">
           <h2 className="text-white font-bold tracking-wider text-lg">
             <span className="text-[#FCE300]">▶</span> 生成视频工作台
           </h2>
+          <BoardTabs />
           <span className="text-white/40 text-xs">
             {cards.length} 张卡片{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>

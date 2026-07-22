@@ -71,10 +71,24 @@ export type VideoWorkbenchCardStatus =
   | 'preparing'
   | SeedanceTaskStatus
 
+/**
+ * 工作台「页」(board / 工作区):每页一套独立的卡片集合,页签在顶部工具栏切换。
+ * IndexedDB `boards` object store 持久化;老数据(无 boards)迁移进第一页。
+ */
+export interface VideoWorkbenchBoard {
+  id: string
+  name: string
+  /** 页签排序(小在左)。 */
+  order: number
+  createdAt: number
+}
+
 /** 一张工作台任务卡片（渲染端真相源 + IndexedDB 持久化形状）。 */
 export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   id: string
-  /** 卷轴内排序（小在上）。 */
+  /** 所属「页」id;老数据缺省,hydrate 时迁入第一页。 */
+  boardId?: string
+  /** 页内卷轴排序（小在上,按页独立计数）。 */
   order: number
   status: VideoWorkbenchCardStatus
   createdAt: number

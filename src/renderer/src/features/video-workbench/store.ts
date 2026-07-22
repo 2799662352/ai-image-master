@@ -18,6 +18,7 @@
 import { create } from 'zustand'
 import type { SeedanceTaskUpdate } from '../../../../types/seedance'
 import type {
+  VideoWorkbenchBoard,
   VideoWorkbenchCard,
   VideoWorkbenchCardInput,
   VideoWorkbenchMaterial,
@@ -94,11 +95,12 @@ function clampMaterials(list: VideoWorkbenchMaterial[], kind: MaterialKind): Vid
   return list.slice(0, MATERIAL_LIMITS[kind])
 }
 
-/** CardInput → 新卡片(缺省用 Seedance 默认规格)。 */
-export function buildCard(input: VideoWorkbenchCardInput, order: number): VideoWorkbenchCard {
+/** CardInput → 新卡片(缺省用 Seedance 默认规格;boardId 缺省由 addCards 填当前页)。 */
+export function buildCard(input: VideoWorkbenchCardInput, order: number, boardId?: string): VideoWorkbenchCard {
   const now = Date.now()
   return {
     id: createId(),
+    ...(boardId ? { boardId } : {}),
     order,
     status: 'draft',
     createdAt: now,
@@ -171,12 +173,23 @@ export interface StartResult {
 }
 
 export interface VideoWorkbenchState {
+  /** 全部页的卡片扁平存放(跨页任务回流仍能按 clientId/taskId 对齐);页面按 boardId 过滤展示。 */
   cards: VideoWorkbenchCard[]
+  /** 「页」(工作区)列表,按 order 排。 */
+  boards: VideoWorkbenchBoard[]
+  activeBoardId: string
   hydrated: boolean
 
   /** 首次进入页面 / 首个 MCP 调用时从 IndexedDB 恢复(幂等)。 */
   ensureHydrated: () => Promise<void>
-  /** 批量追加卡片(UI 的「+」= addCards([{}]))。返回新卡 id 列表。 */
+  /** 新建页并切换过去(缺省自动命名「页面 N」)。返回新页 id。 */
+  addBoard: (name?: string) => string
+  switchBoard: (id: string) => void
+  /** 重命名页(trim 后为空拒绝)。 */
+  renameBoard: (id: string, name: string) => boolean
+  /** 删除页(连带删卡)。仅剩一页时拒绝;删的是当前页则切到相邻页。 */
+  removeBoard: (id: string) => boolean
+  /** 批量追加卡片到当前页(UI 的「+」= addCards([{}]))。返回新卡 id 列表。 */
   addCards: (inputs: VideoWorkbenchCardInput[]) => string[]
   /** 更新卡片可编辑字段(生成中的卡片拒绝编辑)。 */
   updateCard: (id: string, patch: VideoWorkbenchCardInput) => boolean
@@ -292,14 +305,45 @@ function persistNow(card: VideoWorkbenchCard): void {
   })
 }
 
-function reorder(cards: VideoWorkbenchCard[]): VideoWorkbenchCard[] {
-  return cards.map((c, i) => (c.order === i ? c : { ...c, order: i }))
+/** 页内 order 压实(只动指定页的卡,其他页原样)。 */
+function reorderBoard(cards: VideoWorkbenchCard[], boardId: string | undefined): VideoWorkbenchCard[] {
+  let i = 0
+  return cards.map((c) => {
+    if (c.boardId !== boardId) return c
+    const next = c.order === i ? c : { ...c, order: i }
+    i += 1
+    return next
+  })
 }
 
 let hydrationPromise: Promise<void> | null = null
 
 /** 「默认上传人像库」开关的 localStorage 键。 */
 export const AUTO_IMPORT_PORTRAIT_KEY = 'vw-auto-import-portrait'
+
+/** 当前激活「页」的 localStorage 键(轻量元数据,不进 IndexedDB)。 */
+export const ACTIVE_BOARD_KEY = 'vw-active-board'
+
+function createDefaultBoard(order = 0, name?: string): VideoWorkbenchBoard {
+  return { id: createId(), name: name ?? `页面 ${order + 1}`, order, createdAt: Date.now() }
+}
+
+/** 自动命名「页面 N」:从 boards.length+1 起找未占用的编号。 */
+function nextBoardName(boards: VideoWorkbenchBoard[]): string {
+  const taken = new Set(boards.map((b) => b.name))
+  let n = boards.length + 1
+  while (taken.has(`页面 ${n}`)) n += 1
+  return `页面 ${n}`
+}
+
+function writeActiveBoard(id: string): void {
+  try {
+    globalThis.localStorage?.setItem(ACTIVE_BOARD_KEY, id)
+  } catch {
+    // localStorage 不可用时仅内存生效
+  }
+}
+
 
 function readAutoImportPortrait(): boolean {
   try {
@@ -309,8 +353,12 @@ function readAutoImportPortrait(): boolean {
   }
 }
 
+const initialBoard = createDefaultBoard()
+
 export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) => ({
   cards: [],
+  boards: [initialBoard],
+  activeBoardId: initialBoard.id,
   hydrated: false,
   autoImportPortrait: readAutoImportPortrait(),
 
@@ -327,21 +375,53 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (get().hydrated) return
     hydrationPromise ??= (async () => {
       try {
-        const stored = await getWorkbenchDb().list()
+        const db = getWorkbenchDb()
+        const [stored, storedBoards] = await Promise.all([db.list(), db.listBoards()])
+
+        // 页列表:db 有则以 db 为准;没有(全新用户 / v1 老库)则把内存默认页
+        // 落库 —— 老用户的单页草稿数据由下面的 boardId 迁移进这第一页。
+        let boards = storedBoards
+        if (boards.length === 0) {
+          boards = get().boards
+          for (const b of boards) void db.putBoard(b).catch(() => {})
+        }
+        const firstBoardId = boards[0].id
+        const boardIds = new Set(boards.map((b) => b.id))
+
         // 重启后「进行中」状态已无人推进(任务在主进程内存里,重启即丢),
         // 统一落成 failed 并给出可读原因,可一键重试。
-        // 旧库卡片没有 mode/webSearch 字段(本轮新增),读出时补默认值。
+        // 旧库卡片没有 mode/webSearch/boardId 字段(渐进新增),读出时补默认值;
+        // boardId 缺失/失效 → 迁入第一页(单页老数据自动迁移,不丢卡)。
         const normalized = stored.map((raw) => {
-          const card = { ...raw, mode: normalizeMode(raw.mode), webSearch: raw.webSearch === true }
-          return card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
-            ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启,任务状态丢失(可重试)' }
-            : card
+          const boardId = raw.boardId && boardIds.has(raw.boardId) ? raw.boardId : firstBoardId
+          const card = { ...raw, boardId, mode: normalizeMode(raw.mode), webSearch: raw.webSearch === true }
+          const next =
+            card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
+              ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启,任务状态丢失(可重试)' }
+              : card
+          if (next.boardId !== raw.boardId) void db.put(next).catch(() => {})
+          return next
         })
-        set((state) => ({
-          // hydrate 与首个 addCards 竞态时,保留内存中已有的新卡(排在恢复卡之后)
-          cards: reorder([...normalized, ...state.cards.filter((c) => !normalized.some((n) => n.id === c.id))]),
-          hydrated: true,
-        }))
+
+        // 当前页:localStorage 记忆,失效则回第一页
+        let activeBoardId = firstBoardId
+        try {
+          const saved = globalThis.localStorage?.getItem(ACTIVE_BOARD_KEY)
+          if (saved && boardIds.has(saved)) activeBoardId = saved
+        } catch {
+          // localStorage 不可用则回第一页
+        }
+
+        set((state) => {
+          // hydrate 与首个 addCards 竞态时,保留内存中已有的新卡(排在恢复卡之后);
+          // 其 boardId 若指向被替换掉的临时默认页,归并到第一页。
+          const extras = state.cards
+            .filter((c) => !normalized.some((n) => n.id === c.id))
+            .map((c) => (c.boardId && boardIds.has(c.boardId) ? c : { ...c, boardId: firstBoardId }))
+          let cards = [...normalized, ...extras]
+          for (const b of boards) cards = reorderBoard(cards, b.id)
+          return { cards, boards, activeBoardId, hydrated: true }
+        })
       } catch (e) {
         console.warn('[VideoWorkbench] 历史卡片恢复失败(忽略):', e)
         set({ hydrated: true })
@@ -350,11 +430,78 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     await hydrationPromise
   },
 
+  addBoard: (name) => {
+    const boards = get().boards
+    const trimmed = name?.trim()
+    const board: VideoWorkbenchBoard = {
+      id: createId(),
+      name: trimmed || nextBoardName(boards),
+      order: boards.length,
+      createdAt: Date.now(),
+    }
+    set((state) => ({ boards: [...state.boards, board], activeBoardId: board.id }))
+    writeActiveBoard(board.id)
+    void getWorkbenchDb().putBoard(board).catch((e) => {
+      console.warn('[VideoWorkbench] 页持久化失败(忽略):', e)
+    })
+    return board.id
+  },
+
+  switchBoard: (id) => {
+    if (!get().boards.some((b) => b.id === id)) return
+    set({ activeBoardId: id })
+    writeActiveBoard(id)
+  },
+
+  renameBoard: (id, name) => {
+    const trimmed = name.trim()
+    if (!trimmed) return false
+    let renamed: VideoWorkbenchBoard | null = null
+    set((state) => ({
+      boards: state.boards.map((b) => {
+        if (b.id !== id) return b
+        renamed = { ...b, name: trimmed }
+        return renamed
+      }),
+    }))
+    if (!renamed) return false
+    void getWorkbenchDb().putBoard(renamed).catch(() => {})
+    return true
+  },
+
+  removeBoard: (id) => {
+    const state = get()
+    if (state.boards.length <= 1 || !state.boards.some((b) => b.id === id)) return false
+    const removedCards = state.cards.filter((c) => c.boardId === id)
+    const boards = state.boards
+      .filter((b) => b.id !== id)
+      .map((b, i) => (b.order === i ? b : { ...b, order: i }))
+    const activeBoardId = state.activeBoardId === id ? boards[0].id : state.activeBoardId
+    set({
+      boards,
+      activeBoardId,
+      cards: state.cards.filter((c) => c.boardId !== id),
+    })
+    writeActiveBoard(activeBoardId)
+    const db = getWorkbenchDb()
+    void db.removeBoard(id).catch(() => {})
+    for (const b of boards) void db.putBoard(b).catch(() => {})
+    for (const card of removedCards) {
+      const timer = persistTimers.get(card.id)
+      if (timer) {
+        clearTimeout(timer)
+        persistTimers.delete(card.id)
+      }
+      void db.remove(card.id).catch(() => {})
+    }
+    return true
+  },
+
   addCards: (inputs) => {
     const created: VideoWorkbenchCard[] = []
     set((state) => {
-      const base = state.cards.length
-      inputs.forEach((input, i) => created.push(buildCard(input, base + i)))
+      const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
+      inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
       return { cards: [...state.cards, ...created] }
     })
     for (const card of created) persistNow(card)
@@ -413,7 +560,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   },
 
   removeCard: (id) => {
-    set((state) => ({ cards: reorder(state.cards.filter((c) => c.id !== id)) }))
+    set((state) => {
+      const removed = state.cards.find((c) => c.id === id)
+      if (!removed) return state
+      return { cards: reorderBoard(state.cards.filter((c) => c.id !== id), removed.boardId) }
+    })
     const timer = persistTimers.get(id)
     if (timer) {
       clearTimeout(timer)
@@ -425,15 +576,29 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   },
 
   moveCard: (id, toIndex) => {
+    // toIndex 为卡片所属页内的目标下标;只重排该页,其他页原样。
     set((state) => {
-      const from = state.cards.findIndex((c) => c.id === id)
-      if (from < 0) return state
-      const clamped = Math.max(0, Math.min(state.cards.length - 1, toIndex))
+      const moved = state.cards.find((c) => c.id === id)
+      if (!moved) return state
+      const positions: number[] = []
+      const boardCards: VideoWorkbenchCard[] = []
+      state.cards.forEach((c, idx) => {
+        if (c.boardId === moved.boardId) {
+          positions.push(idx)
+          boardCards.push(c)
+        }
+      })
+      const from = boardCards.findIndex((c) => c.id === id)
+      const clamped = Math.max(0, Math.min(boardCards.length - 1, toIndex))
       if (from === clamped) return state
+      const reordered = [...boardCards]
+      const [item] = reordered.splice(from, 1)
+      reordered.splice(clamped, 0, item)
       const next = [...state.cards]
-      const [moved] = next.splice(from, 1)
-      next.splice(clamped, 0, moved)
-      return { cards: reorder(next) }
+      positions.forEach((pos, i) => {
+        next[pos] = reordered[i]
+      })
+      return { cards: reorderBoard(next, moved.boardId) }
     })
     for (const card of get().cards) schedulePersist(card)
   },
@@ -495,7 +660,10 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       return result
     }
 
-    const targets = get().cards.filter((c) => (ids ? ids.includes(c.id) : true))
+    // 缺省(不带 ids)只启动当前页的卡片 —— 页与页之间互相隔离
+    const targets = get().cards.filter((c) =>
+      ids ? ids.includes(c.id) : c.boardId === get().activeBoardId,
+    )
     if (ids) {
       for (const id of ids) {
         if (!targets.some((c) => c.id === id)) result.skipped.push({ cardId: id, reason: '卡片不存在' })
@@ -644,5 +812,12 @@ export function resetWorkbenchStoreForTest(): void {
   taskSubscription = null
   for (const t of persistTimers.values()) clearTimeout(t)
   persistTimers.clear()
-  useVideoWorkbenchStore.setState({ cards: [], hydrated: false, autoImportPortrait: false })
+  const board = createDefaultBoard()
+  useVideoWorkbenchStore.setState({
+    cards: [],
+    boards: [board],
+    activeBoardId: board.id,
+    hydrated: false,
+    autoImportPortrait: false,
+  })
 }
