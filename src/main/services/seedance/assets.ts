@@ -14,12 +14,15 @@ import type {
   SeedanceAssetImportInput,
   SeedanceAssetImportResult,
   SeedanceAssetItem,
+  SeedanceAssetKindFilter,
   SeedanceAssetListQuery,
   SeedanceAssetListResult,
   SeedanceOfficialMaterialsQuery,
   SeedanceOfficialMaterialsResult,
 } from '../../../types/seedance'
+import type { SeedanceContentItem } from './types'
 import { getSeedanceBaseUrl } from './client'
+import { getSeedanceRegion } from './region'
 
 const ASSETS_PATH = '/api/open/v1/local-assets'
 const OFFICIAL_MATERIALS_PATH = '/api/open/v1/official-materials'
@@ -111,8 +114,11 @@ function assetRequest<T>(
  * 从导入/列表响应里提取 asset 记录。
  * 上游文档口径是 `{ duplicated, asset: {...} }`，但实际部署可能包一层
  * `data`，或把字段平铺在顶层，这里做宽容解析；assetUrl 缺失时由 assetId 拼出。
+ * `viaIdFallback=true` 表示响应里没有真 assetId/assetUrl，用内部行 `id`
+ * (dla-xxx 形态)兜底 —— 这种 id **不可直接引用**（提交任务会被上游
+ * 400 LOCAL_ASSET_NOT_FOUND 拒掉），调用方需再走 list 二次解析。
  */
-function extractAsset(raw: unknown): SeedanceAssetItem | null {
+function extractAsset(raw: unknown): { asset: SeedanceAssetItem; viaIdFallback: boolean } | null {
   const root = raw as Record<string, unknown> | null
   if (!root) return null
   const candidates = [
@@ -127,13 +133,44 @@ function extractAsset(raw: unknown): SeedanceAssetItem | null {
     // 线上导入接口实测只回 `id`（如 dla-xxx），没有 assetId/assetUrl 字段，
     // 依次兜底:assetId → asset_id → 从 assetUrl 反推 → id（必须像素材记录,有 kind/name 才认）。
     const rawUrl = (a.assetUrl ?? a.asset_url) as string | undefined
-    const assetId =
+    const directId =
       ((a.assetId ?? a.asset_id) as string | undefined) ||
-      (rawUrl?.startsWith('asset://') ? rawUrl.slice('asset://'.length) : undefined) ||
-      (typeof a.id === 'string' && (a.kind || a.name) ? a.id : undefined)
+      (rawUrl?.startsWith('asset://') ? rawUrl.slice('asset://'.length) : undefined)
+    const fallbackId = typeof a.id === 'string' && (a.kind || a.name) ? a.id : undefined
+    const assetId = directId || fallbackId
     if (!assetId) continue
     const assetUrl = rawUrl || `asset://${assetId}`
-    return { ...(a as unknown as SeedanceAssetItem), assetId, assetUrl }
+    return {
+      asset: { ...(a as unknown as SeedanceAssetItem), assetId, assetUrl },
+      viaIdFallback: !directId,
+    }
+  }
+  return null
+}
+
+/**
+ * 导入响应只回内部行 id 时，追加一次 list 按 `id` 匹配出真实 assetId/assetUrl。
+ * 找不到/list 失败时返回 null，调用方保留 id 兜底（不阻断导入）。
+ */
+async function resolveAssetViaList(
+  rowId: string,
+  input: SeedanceAssetImportInput,
+  creds: SeedanceAssetCredentials,
+): Promise<SeedanceAssetItem | null> {
+  // list 的 kind 过滤项没有裸 'image'——图片按 imageCategory 过滤,缺省不过滤。
+  const kind: SeedanceAssetKindFilter | undefined =
+    input.kind === 'image' ? input.imageCategory : input.kind
+  try {
+    const { items } = await listSeedanceAssets(
+      { page: 1, pageSize: 50, ...(kind ? { kind } : {}) },
+      creds,
+    )
+    const hit = items.find((it) => it.id === rowId)
+    if (hit && typeof hit.assetId === 'string' && hit.assetId && hit.assetId !== rowId) {
+      return { ...hit, assetUrl: hit.assetUrl || `asset://${hit.assetId}` }
+    }
+  } catch (e) {
+    console.warn('[seedance/assets] import 后 list 二次解析 assetId 失败(保留 id 兜底):', e)
   }
   return null
 }
@@ -150,10 +187,17 @@ export async function importSeedanceAsset(
     input,
     creds,
   )
-  const asset = extractAsset(result)
-  if (!asset) {
+  const extracted = extractAsset(result)
+  if (!extracted) {
     const snippet = JSON.stringify(result).slice(0, 400)
     throw new Error(`Seedance assets: import response missing assetId/assetUrl, got: ${snippet}`)
+  }
+  let asset = extracted.asset
+  // 兜底出的 dla-xxx 行 id 不是可引用的 assetId(直接引用会 400
+  // LOCAL_ASSET_NOT_FOUND)——追加 list 找同 id 条目换成真 assetId/assetUrl。
+  if (extracted.viaIdFallback) {
+    const resolved = await resolveAssetViaList(asset.assetId, input, creds)
+    if (resolved) asset = resolved
   }
   return { duplicated: !!(result.duplicated ?? result.data?.duplicated), asset }
 }
@@ -186,6 +230,99 @@ export async function listSeedanceAssets(
     totalPages: result.totalPages ?? 1,
     summary: result.summary,
   }
+}
+
+// ==================== 提交前 asset:// 引用校验 ====================
+
+/** 引用校验的分页扫描参数:pageSize 取上游允许的大页,页数设上限防大库拖死提交。 */
+const ASSET_REF_SCAN_PAGE_SIZE = 50
+const ASSET_REF_SCAN_MAX_PAGES = 10
+
+function seedanceRegionLabel(): string {
+  return getSeedanceRegion() === 'cn' ? '国内' : '海外 GLOBAL'
+}
+
+/** 从 content[] 里收集 asset:// 引用的 id（去重）。 */
+export function extractAssetReferenceIds(content: SeedanceContentItem[]): string[] {
+  const ids = new Set<string>()
+  for (const item of content) {
+    const url =
+      item.type === 'image_url'
+        ? item.image_url.url
+        : item.type === 'video_url'
+          ? item.video_url.url
+          : item.type === 'audio_url'
+            ? item.audio_url.url
+            : null
+    if (url?.startsWith('asset://')) ids.add(url.slice('asset://'.length))
+  }
+  return [...ids]
+}
+
+function missingAssetReferencesMessage(ids: string[]): string {
+  const refs = ids.map((id) => `asset://${id}`).join('、')
+  return (
+    `引用的素材在当前站点(${seedanceRegionLabel()})不存在:${refs}。` +
+    '素材是按「海外/国内」站点隔离的,可能是导入素材后切换了站点 —— ' +
+    '请切回原站点,或重新从人像库选择素材后再生成。'
+  )
+}
+
+/**
+ * 提交生成任务前的防线:核对 content 里的 asset:// 引用在**当前站点**的
+ * 素材列表里真实存在,不存在则以清晰中文报错拦下(而非把上游裸 400
+ * LOCAL_ASSET_NOT_FOUND 抛给用户)。校验只在能**确认**缺失时才拦:
+ * - list 调用失败 → 放行(fail-open,校验是防线不是闸门);
+ * - 库太大扫描页数达到上限仍未扫完 → 放行(无法确认);
+ * - 全库扫完仍未命中 → 抛中文错误。
+ */
+export async function verifyContentAssetReferences(
+  content: SeedanceContentItem[],
+  creds: SeedanceAssetCredentials,
+): Promise<void> {
+  const pending = new Set(extractAssetReferenceIds(content))
+  if (pending.size === 0) return
+  if (!creds.apiKey || !creds.apiSecret) return
+  for (let page = 1; page <= ASSET_REF_SCAN_MAX_PAGES; page++) {
+    let res: SeedanceAssetListResult
+    try {
+      res = await listSeedanceAssets({ page, pageSize: ASSET_REF_SCAN_PAGE_SIZE }, creds)
+    } catch (e) {
+      console.warn('[seedance/assets] 提交前引用校验 list 失败,放行交由上游判定:', e)
+      return
+    }
+    for (const it of res.items) {
+      // assetId / 内部行 id / assetUrl 反推形态都认——校验宁松勿紧,误拦比漏拦更伤。
+      if (typeof it.assetId === 'string') pending.delete(it.assetId)
+      if (typeof it.id === 'string') pending.delete(it.id)
+      if (typeof it.assetUrl === 'string' && it.assetUrl.startsWith('asset://')) {
+        pending.delete(it.assetUrl.slice('asset://'.length))
+      }
+    }
+    if (pending.size === 0) return
+    if (page >= (res.totalPages || 1)) {
+      throw new Error(missingAssetReferencesMessage([...pending]))
+    }
+  }
+  // 扫描页数达上限仍没扫完全库:无法确认缺失,放行。
+}
+
+/**
+ * 把上游创建任务的裸错误翻译成人话(目前只映射 LOCAL_ASSET_NOT_FOUND ——
+ * 典型场景是导入素材后切换「海外/国内」站点,素材按站点隔离必然找不到)。
+ * 未识别的错误原样返回。
+ */
+export function translateSeedanceTaskError(message: string): string {
+  if (message.includes('LOCAL_ASSET_NOT_FOUND')) {
+    const refs = message.match(/asset:\/\/[\w-]+/g) ?? []
+    const refText = refs.length > 0 ? `:${refs.join('、')}` : ''
+    return (
+      `引用的素材在当前站点(${seedanceRegionLabel()})不存在${refText}。` +
+      '素材是按「海外/国内」站点隔离的,可能是导入素材后切换了站点 —— ' +
+      '请切回原站点,或重新从人像库选择素材后再生成。'
+    )
+  }
+  return message
 }
 
 /**
