@@ -99,3 +99,24 @@ $j.skills | Where-Object { $_.name -eq 'ffmpeg-win' } | ConvertTo-Json
 
 - catalog:`https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/plugins/plugins-catalog.json` / `…/skills/catalog.json`
 - 校验:发布脚本内置 sha256 内容寻址 + 对齐审计,发布日志见上方脚本输出。
+
+### 2026-07-23 — `catimation-core` 1.0.21(Seedream 5.0 出图指引 + 音频链路),随 app v4.4.9 发版同日发布
+
+一键 `npm run publish:marketplace` 自动升版并发布(内容签名比对触发)。本次差异极小:
+**仅 `catimation-core` 1.0.20 → 1.0.21**,其余 5 个插件与全部 51 个单技能内容无变化
+(单技能通道 ADD 0 / CHANGED 0,catalog 仅刷新 generatedAt)。
+
+| 通道 | 升版条目 |
+|------|----------|
+| 插件 `plugins-catalog.json`(6 插件) | `catimation-core` 1.0.21(28.4 KB,4 skills + 2 cmds) |
+| 单技能 `catalog.json`(52 项) | 无升版,仅重建 catalog |
+
+**内容**:`catimation-image` SKILL.md 补齐 **Seedream 5.0 Pro 出图渠道指引**(对应 app
+v4.4.5 接入)与**音频生成链路配套说明**(对应 v4.4.6 `generate_audio`/`catimation-audio`),
+`commands/gen-image.md` 同步微调。共 5 文件、+25/−15 行(见 commit `6e96cd4`、`937cd6e`)。
+
+- 版本状态回写:PR #101(3 份 plugin.json + marketplace.json + plugin-publish-state.json +
+  skill-versions.json),CI 全绿后合入 main。
+- 排障备忘:git worktree 不共享 untracked 的 `.env`,在新 worktree 真发前需从主 checkout
+  复制 `.env`(含 `COS_SECRET_ID/KEY`),否则发布器在「Publish plugin catalog」步骤报缺密钥中止
+  (dry-run 不受影响)。
