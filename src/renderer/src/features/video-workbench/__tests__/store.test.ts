@@ -10,6 +10,7 @@ import {
   canStart,
   resetWorkbenchStoreForTest,
   snapshotCard,
+  snapshotWorkbench,
   toMaterial,
   useVideoWorkbenchStore,
 } from '../store'
@@ -259,6 +260,82 @@ describe('applyTaskUpdate 广播对齐', () => {
     expect(snap.prompt.length).toBeLessThanOrEqual(121)
     expect(snap.referenceCounts).toEqual({ images: 2, videos: 0, audios: 0 })
     expect(snap).toMatchObject({ cardId: card.id, order: 3, taskId: 't-9', localPath: 'C:/v.mp4' })
+  })
+
+  it('snapshotCard 带 boardId 与紧凑素材清单(名截 40 字符,不倒 URL 全文)', () => {
+    const longName = `${'n'.repeat(60)}.png`
+    const card = buildCard(
+      {
+        prompt: 'p',
+        referenceImages: [{ name: longName, src: `D:/x/${longName}` }],
+        referenceAudios: ['https://cdn.example.com/very/long/path/bgm-final-mix-v2.mp3?sig=abcdef123456'],
+      },
+      0,
+      'board-1',
+    )
+    const snap = snapshotCard(card)
+    expect(snap.boardId).toBe('board-1')
+    expect(snap.references.images).toHaveLength(1)
+    // 40 字符截断 + 省略号
+    expect(snap.references.images[0].name.length).toBeLessThanOrEqual(41)
+    expect(snap.references.images[0].name.endsWith('…')).toBe(true)
+    // https 源只留文件名,不携带 URL 全文
+    expect(snap.references.audios[0].name).toBe('bgm-final-mix-v2.mp3')
+    expect(JSON.stringify(snap.references)).not.toContain('https://')
+  })
+
+  it('snapshotCard:asset:// 素材清单带简短 assetId 尾缀(人像库可反查)', () => {
+    const card = buildCard(
+      {
+        prompt: 'p',
+        referenceImages: [
+          // 已回填真实名字的人像库素材 → 名字后补 @assetId 尾缀
+          { name: '主角立绘', src: 'asset://portrait-42abc' },
+          // 未回填的占位名(toMaterial 已含 id)→ 不重复加尾缀
+          'asset://asset-1234567890',
+        ],
+      },
+      0,
+    )
+    const snap = snapshotCard(card)
+    expect(snap.references.images[0].name).toBe('主角立绘@portrait-42a')
+    expect(snap.references.images[1].name).toContain('asset-123456')
+    expect(snap.references.images[1].name.match(/asset-123456/g)).toHaveLength(1)
+  })
+})
+
+describe('snapshotWorkbench 全局摘要', () => {
+  it('聚合 boards 卡数与全局状态计数(boards 按 order 排)', () => {
+    const boards = [
+      { id: 'b2', name: '分镜', order: 1, createdAt: 2 },
+      { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
+    ]
+    const cards = [
+      buildCard({ prompt: 'a' }, 0, 'b1'),
+      { ...buildCard({ prompt: 'b' }, 1, 'b1'), status: 'running' as const },
+      { ...buildCard({ prompt: 'c' }, 0, 'b2'), status: 'succeeded' as const },
+      { ...buildCard({ prompt: 'd' }, 1, 'b2'), status: 'failed' as const },
+    ]
+    const summary = snapshotWorkbench({ cards, boards, activeBoardId: 'b2' })
+    expect(summary).toEqual({
+      activeBoardId: 'b2',
+      boards: [
+        { id: 'b1', name: '页面 1', cardCount: 2 },
+        { id: 'b2', name: '分镜', cardCount: 2 },
+      ],
+      statusCounts: { draft: 1, preparing: 0, queued: 0, running: 1, succeeded: 1, failed: 1 },
+    })
+  })
+
+  it('空页计数为 0;未知状态不计入但不抛错', () => {
+    const boards = [{ id: 'b1', name: '页面 1', order: 0, createdAt: 1 }]
+    const summary = snapshotWorkbench({
+      cards: [{ ...buildCard({ prompt: 'x' }, 0, 'b1'), status: 'weird' as never }],
+      boards,
+      activeBoardId: 'b1',
+    })
+    expect(summary.boards).toEqual([{ id: 'b1', name: '页面 1', cardCount: 1 }])
+    expect(summary.statusCounts).toEqual({ draft: 0, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 })
   })
 })
 

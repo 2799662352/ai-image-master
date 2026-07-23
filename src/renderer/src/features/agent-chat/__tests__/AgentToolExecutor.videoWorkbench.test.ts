@@ -160,6 +160,69 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     })
   })
 
+  it('status:返回 boards/activeBoardId,卡片带 boardId,可按 boardId 过滤', async () => {
+    const { cardIds } = await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '第一页的卡' }],
+      navigate: false,
+    })
+    const firstBoardId = useVideoWorkbenchStore.getState().activeBoardId
+    const secondBoardId = useVideoWorkbenchStore.getState().addBoard('分镜页')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: '第二页的卡' }], navigate: false })
+
+    const all = await callTool('video_workbench_status', {})
+    expect(all.total).toBe(2)
+    expect(all.activeBoardId).toBe(secondBoardId)
+    expect(all.boards).toEqual([
+      { id: firstBoardId, name: expect.any(String), cardCount: 1 },
+      { id: secondBoardId, name: '分镜页', cardCount: 1 },
+    ])
+    expect(all.cards.map((c: any) => c.boardId).sort()).toEqual([firstBoardId, secondBoardId].sort())
+    // 卡片快照带紧凑素材清单字段
+    expect(all.cards[0].references).toEqual({ images: [], videos: [], audios: [] })
+
+    const filtered = await callTool('video_workbench_status', { boardId: firstBoardId })
+    expect(filtered.total).toBe(1)
+    expect(filtered.cards[0].cardId).toBe(cardIds[0])
+  })
+
+  it('status:boardId 不存在时抛可读错误(agent 可据 boards 自纠)', async () => {
+    await expect(callTool('video_workbench_status', { boardId: 'ghost-board' })).rejects.toThrow(
+      'board not found',
+    )
+  })
+
+  it('写操作统一回带 workbench 全局摘要(boards + statusCounts)', async () => {
+    const added = await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '第一张' }, { prompt: '第二张' }],
+      navigate: false,
+    })
+    const activeBoardId = useVideoWorkbenchStore.getState().activeBoardId
+    expect(added.workbench).toEqual({
+      activeBoardId,
+      boards: [{ id: activeBoardId, name: expect.any(String), cardCount: 2 }],
+      statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },
+    })
+
+    const updated = await callTool('video_workbench_update_task', {
+      cardId: added.cardIds[0],
+      prompt: '改写',
+    })
+    expect(updated.workbench.statusCounts.draft).toBe(2)
+
+    const submit = vi.fn(async () => ({ success: true, taskId: 't-1' }))
+    ;(window as any).electronAPI = { videoWorkbench: { submit } }
+    const started = await callTool('video_workbench_start', { cardIds: [added.cardIds[0]] })
+    expect(started.started).toEqual([added.cardIds[0]])
+    const busy =
+      started.workbench.statusCounts.preparing +
+      started.workbench.statusCounts.queued +
+      started.workbench.statusCounts.running
+    expect(busy).toBe(1)
+
+    const removed = await callTool('video_workbench_remove_tasks', { cardIds: [added.cardIds[1]] })
+    expect(removed.workbench.boards[0].cardCount).toBe(1)
+  })
+
   it('remove_tasks 删卡并返回剩余数;未知工具抛错', async () => {
     const { cardIds } = await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: 'a' }, { prompt: 'b' }],

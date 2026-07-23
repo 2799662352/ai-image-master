@@ -122,9 +122,35 @@ export function buildCard(input: VideoWorkbenchCardInput, order: number, boardId
   }
 }
 
+/** 快照里素材展示名的截断上限(防长文件名撑上下文)。 */
+const SNAPSHOT_MATERIAL_NAME_MAX = 40
+
+/** 快照素材条目:只带展示名,绝不携带 URL/base64 全文(Codex #5544/#6426 教训)。 */
+export interface WorkbenchMaterialBrief {
+  name: string
+}
+
+/**
+ * Material → 紧凑清单条目:名字截 40 字符;asset:// 来源补简短 assetId 尾缀
+ * (人像库可反查),名字里已含 id(toMaterial 占位名)则不重复加。
+ */
+function materialBrief(material: VideoWorkbenchMaterial): WorkbenchMaterialBrief {
+  let name =
+    material.name.length > SNAPSHOT_MATERIAL_NAME_MAX
+      ? `${material.name.slice(0, SNAPSHOT_MATERIAL_NAME_MAX)}…`
+      : material.name
+  if (material.src.startsWith('asset://')) {
+    const shortId = material.src.slice(8, 20)
+    if (shortId && !name.includes(shortId)) name = `${name}@${shortId}`
+  }
+  return { name }
+}
+
 /** MCP status 工具返回的单卡快照(截断 prompt,别撑爆模型上下文)。 */
 export interface WorkbenchCardSnapshot {
   cardId: string
+  /** 所属「页」id(页名从 status 顶层 boards 表查,卡上不重复带,省 token)。 */
+  boardId?: string
   order: number
   prompt: string
   model: string
@@ -136,6 +162,12 @@ export interface WorkbenchCardSnapshot {
   seed?: number
   webSearch: boolean
   referenceCounts: { images: number; videos: number; audios: number }
+  /** 紧凑素材清单(每类本就有 9/3/3 上限,只列名字)。 */
+  references: {
+    images: WorkbenchMaterialBrief[]
+    videos: WorkbenchMaterialBrief[]
+    audios: WorkbenchMaterialBrief[]
+  }
   status: string
   taskId?: string
   error?: string
@@ -146,6 +178,7 @@ export interface WorkbenchCardSnapshot {
 export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
   return {
     cardId: card.id,
+    ...(card.boardId ? { boardId: card.boardId } : {}),
     order: card.order,
     prompt: card.prompt.length > 120 ? `${card.prompt.slice(0, 120)}…` : card.prompt,
     model: card.model,
@@ -161,11 +194,73 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
       videos: card.referenceVideos.length,
       audios: card.referenceAudios.length,
     },
+    references: {
+      images: card.referenceImages.map(materialBrief),
+      videos: card.referenceVideos.map(materialBrief),
+      audios: card.referenceAudios.map(materialBrief),
+    },
     status: card.status,
     ...(card.taskId ? { taskId: card.taskId } : {}),
     ...(card.error ? { error: card.error } : {}),
     ...(card.localPath ? { localPath: card.localPath } : {}),
     ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
+  }
+}
+
+/** 全局摘要里的单页概览。 */
+export interface WorkbenchBoardBrief {
+  id: string
+  name: string
+  cardCount: number
+}
+
+/** 全局状态计数(跨页聚合)。 */
+export interface WorkbenchStatusCounts {
+  draft: number
+  preparing: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+}
+
+/**
+ * 工作台全局摘要:写操作(add/update/start/remove)统一回带,等于每次
+ * 写操作强制观测一次全局现状(Codex prompting 指南:工具输出是 agent
+ * 最强的事实来源,大结果压缩成紧凑 schema)。体积 O(页数),极小。
+ */
+export interface WorkbenchSummary {
+  activeBoardId: string
+  boards: WorkbenchBoardBrief[]
+  statusCounts: WorkbenchStatusCounts
+}
+
+export function snapshotWorkbench(
+  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId'>,
+): WorkbenchSummary {
+  const statusCounts: WorkbenchStatusCounts = {
+    draft: 0,
+    preparing: 0,
+    queued: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+  }
+  const cardCountByBoard = new Map<string, number>()
+  for (const card of state.cards) {
+    if (card.status in statusCounts) {
+      statusCounts[card.status as keyof WorkbenchStatusCounts] += 1
+    }
+    if (card.boardId) {
+      cardCountByBoard.set(card.boardId, (cardCountByBoard.get(card.boardId) ?? 0) + 1)
+    }
+  }
+  return {
+    activeBoardId: state.activeBoardId,
+    boards: [...state.boards]
+      .sort((a, b) => a.order - b.order)
+      .map((b) => ({ id: b.id, name: b.name, cardCount: cardCountByBoard.get(b.id) ?? 0 })),
+    statusCounts,
   }
 }
 

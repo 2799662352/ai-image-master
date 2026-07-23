@@ -20,7 +20,7 @@ import { directorBridge } from '../../components/shared/image-editors/director/d
 import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMediaSrc'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
-import { snapshotCard, useVideoWorkbenchStore } from '../video-workbench/store'
+import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 
 type GenerateAudioToolParams = {
@@ -329,6 +329,10 @@ export class AgentToolExecutor {
       return ids ? cards.filter((c) => ids.includes(c.id)) : cards
     }
 
+    // 写操作统一回带的全局摘要(boards + 状态计数):每次写操作等于强制观测
+    // 一次全局现状,agent 无需追加 status 调用。体积 O(页数),紧凑。
+    const workbenchSummary = () => snapshotWorkbench(useVideoWorkbenchStore.getState())
+
     switch (toolName) {
       case 'video_workbench_add_tasks': {
         const rawTasks = Array.isArray(params.tasks) ? (params.tasks as Record<string, unknown>[]) : []
@@ -348,6 +352,7 @@ export class AgentToolExecutor {
           cardIds,
           total: useVideoWorkbenchStore.getState().cards.length,
           ...(start ? { start } : {}),
+          workbench: workbenchSummary(),
         }
       }
       case 'video_workbench_update_task': {
@@ -358,24 +363,43 @@ export class AgentToolExecutor {
         const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
         if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
         if (!ok) throw new Error(`video_workbench_update_task: card is rendering and cannot be edited: ${cardId}`)
-        return { ok: true, card: snapshotCard(card) }
+        return { ok: true, card: snapshotCard(card), workbench: workbenchSummary() }
       }
       case 'video_workbench_start': {
         const ids = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : undefined
-        return store.startCards(ids)
+        const result = await store.startCards(ids)
+        return { ...result, workbench: workbenchSummary() }
       }
       case 'video_workbench_status': {
-        const cards = pickCards(params.cardIds)
-        return { total: cards.length, cards: cards.map(snapshotCard) }
+        const state = useVideoWorkbenchStore.getState()
+        const boardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (boardId && !state.boards.some((b) => b.id === boardId)) {
+          throw new Error(
+            `video_workbench_status: board not found: ${boardId} (existing: ${state.boards.map((b) => b.id).join(', ')})`,
+          )
+        }
+        let cards = pickCards(params.cardIds)
+        if (boardId) cards = cards.filter((c) => c.boardId === boardId)
+        const summary = snapshotWorkbench(state)
+        return {
+          total: cards.length,
+          activeBoardId: summary.activeBoardId,
+          boards: summary.boards,
+          cards: cards.map(snapshotCard),
+        }
       }
       case 'video_workbench_remove_tasks': {
         const ids = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : []
         for (const id of ids) store.removeCard(id)
-        return { removed: ids, total: useVideoWorkbenchStore.getState().cards.length }
+        return {
+          removed: ids,
+          total: useVideoWorkbenchStore.getState().cards.length,
+          workbench: workbenchSummary(),
+        }
       }
       default:
         throw new Error(`Unknown video workbench tool: ${toolName}`)
