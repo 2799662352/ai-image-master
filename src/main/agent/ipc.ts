@@ -47,6 +47,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:list-codex-threads',
   'agent:read-codex-thread',
   'agent:fork-codex-thread',
+  'agent:thread-branch-before-message',
   'agent:archive-codex-thread',
   'agent:unarchive-codex-thread',
   'agent:codex-doctor',
@@ -263,6 +264,25 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   )
   ipcMain.handle('agent:fork-codex-thread', async (_event, threadId: unknown) =>
     (await getManager()).forkCodexThread(validateThreadId(threadId)),
+  )
+  // Edit-and-resend server-side context branch: fork the codex thread before
+  // the edited message's turn + truncate DB rows at/after the edit point.
+  // Failures inside the manager come back as `{ branched:false }` data (with
+  // a warning notice already emitted); this envelope's `ok:false` is only for
+  // arg-validation and transport-level errors.
+  ipcMain.handle(
+    'agent:thread-branch-before-message',
+    async (_event, threadId: unknown, messageId: unknown) => {
+      try {
+        const data = await (await getManager()).branchThreadBeforeMessage(
+          validateWorkspaceId(threadId, 'Thread id'),
+          validateWorkspaceId(messageId, 'Message id'),
+        )
+        return { ok: true as const, data }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
   )
   ipcMain.handle('agent:archive-codex-thread', async (_event, threadId: unknown) => {
     try {

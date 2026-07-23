@@ -166,6 +166,31 @@ export interface AgentSendMessagePayload {
 export interface AgentSendMessageResult {
   threadId: string
   userMessageItems?: TimelineItem[]
+  /**
+   * Persisted AgentMessage row id of THIS turn's user message (the same value
+   * sent to codex as `clientUserMessageId`). The renderer stores it on the
+   * optimistic bubble (`Message.dbRowId`) so a later edit-and-resend can hand
+   * the main process a real DB row id — live-session bubbles otherwise only
+   * have renderer-local ids that the branch API could never locate.
+   */
+  userMessageId?: string
+}
+
+/**
+ * Result of `agent:thread-branch-before-message` (edit-and-resend server-side
+ * context branch). `branched: false` = degraded to legacy same-thread resend;
+ * the renderer proceeds unchanged and main has already emitted an
+ * `editBranchDegraded` warning notice where appropriate.
+ */
+export interface AgentThreadBranchResult {
+  branched: boolean
+  /**
+   * `fork` = codex thread forked through the previous turn (context now
+   * matches the truncated UI); `fresh` = codex mapping dropped, the next send
+   * starts a brand-new codex thread (first-message edit / mapping-less thread).
+   */
+  mode?: 'fork' | 'fresh'
+  reason?: string
 }
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
@@ -680,6 +705,12 @@ export type AgentNoticeKind =
    * turn instead. Informational — the conversation keeps flowing.
    */
   | 'steerFallback'
+  /**
+   * Edit-and-resend could NOT branch the server-side context (missing turn
+   * mapping / fork failure / unsupported backend), so the edit was resent on
+   * the SAME codex thread — the model may still remember the dropped turns.
+   */
+  | 'editBranchDegraded'
   /**
    * Auto-recovery from PGlite NODEFS abort (upstream PGlite #884 / #794):
    * the local pgdata couldn't be reopened (crash, force-quit, dual instance,

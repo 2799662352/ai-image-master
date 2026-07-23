@@ -673,9 +673,10 @@ export class CodexLocalBackend implements IAgentBackend {
   async forkThread(
     threadId: string,
     overrides?: CodexThreadConfigOverrides,
+    lastTurnId?: string,
   ): Promise<CodexThreadSummary> {
     if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
-    return this.client.forkThread(threadId, overrides ?? this.threadConfigOverrides())
+    return this.client.forkThread(threadId, overrides ?? this.threadConfigOverrides(), lastTurnId)
   }
 
   async unsubscribeThread(threadId: string): Promise<void> {

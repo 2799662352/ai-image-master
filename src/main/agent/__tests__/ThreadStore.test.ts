@@ -70,6 +70,45 @@ describe('ThreadStore.attachCodexReconcile', () => {
   })
 })
 
+describe('ThreadStore branch helpers (edit-and-resend server-side context branch)', () => {
+  it('listMessagesForBranch reads the thread rows in createdAt order with the branch-relevant fields', async () => {
+    const rows = [
+      { id: 'm1', role: 'user', items: [{ type: 'text', codexReconcile: { turnId: 't-1' } }] },
+      { id: 'm2', role: 'assistant', items: [] },
+    ]
+    const findMany = vi.fn().mockResolvedValue(rows)
+    const prisma = { agentMessage: { findMany } } as any
+    const store = new ThreadStore(prisma)
+
+    await expect(store.listMessagesForBranch('thread-1')).resolves.toEqual(rows)
+    expect(findMany).toHaveBeenCalledWith({
+      where: { threadId: 'thread-1' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, role: true, items: true },
+    })
+  })
+
+  it('deleteMessages removes exactly the given rows scoped to the thread', async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 2 })
+    const prisma = { agentMessage: { deleteMany } } as any
+    const store = new ThreadStore(prisma)
+
+    await store.deleteMessages('thread-1', ['m2', 'm3'])
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { threadId: 'thread-1', id: { in: ['m2', 'm3'] } },
+    })
+  })
+
+  it('deleteMessages is a no-op for an empty id list', async () => {
+    const deleteMany = vi.fn()
+    const prisma = { agentMessage: { deleteMany } } as any
+    const store = new ThreadStore(prisma)
+
+    await store.deleteMessages('thread-1', [])
+    expect(deleteMany).not.toHaveBeenCalled()
+  })
+})
+
 describe('ThreadStore.setThreadModel', () => {
   it('updates the persisted thread model after confirmed selection', async () => {
     const update = vi.fn().mockResolvedValue(undefined)

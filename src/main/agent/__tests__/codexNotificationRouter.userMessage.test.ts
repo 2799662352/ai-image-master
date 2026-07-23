@@ -38,9 +38,39 @@ describe('CodexNotificationRouter userMessage reconcile', () => {
       reconcile: {
         codexItemId: 'item-9',
         clientId: 'msg-42',
+        // Edit-and-resend branching ("服务端上下文分支") needs the row→turn
+        // mapping persisted: thread/fork's lastTurnId references codex turn
+        // ids, and this reconcile block is the only place we learn them.
+        turnId: 'u-1',
         localImages: ['C:\\uploads\\a.png'],
         textElements: [{ byteRange: { start: 8, end: 12 }, placeholder: 'Foo Plugin' }],
       },
+    })
+  })
+
+  it('omits reconcile.turnId when the notification carries none (old gateways)', () => {
+    const router = new CodexNotificationRouter()
+    const event = router.route('item/completed', {
+      threadId: 't-1',
+      item: { type: 'userMessage', id: 'item-9', clientId: 'msg-42', content: [] },
+    })
+    expect(event).toMatchObject({ type: 'user_message_reconciled' })
+    expect(
+      (event as { reconcile: { turnId?: string } }).reconcile.turnId,
+    ).toBeUndefined()
+    expect('turnId' in (event as { reconcile: object }).reconcile).toBe(false)
+  })
+
+  it('accepts snake_case turn_id from gateway rewrites', () => {
+    const router = new CodexNotificationRouter()
+    const event = router.route('item/completed', {
+      threadId: 't-1',
+      turn_id: 'turn-7',
+      item: { type: 'userMessage', id: 'item-9', clientId: 'msg-42', content: [] },
+    })
+    expect(event).toMatchObject({
+      type: 'user_message_reconciled',
+      reconcile: { turnId: 'turn-7' },
     })
   })
 

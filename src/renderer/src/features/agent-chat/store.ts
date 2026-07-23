@@ -455,6 +455,15 @@ type AgentElectronApi = {
     respondApproval?: (response: CodexApprovalResponse) => Promise<AgentApiResult>
     listCodexThreads?: () => Promise<CodexThreadSummary[]>
     forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
+    /**
+     * Edit-and-resend server-side context branch (codex 0.145 thread/fork +
+     * lastTurnId). `data.branched === false` = main degraded to same-thread
+     * resend and already emitted a warning notice; proceed unchanged.
+     */
+    branchThreadBeforeMessage?: (
+      threadId: string,
+      messageId: string,
+    ) => Promise<{ ok: boolean; error?: string; data?: { branched: boolean; mode?: 'fork' | 'fresh'; reason?: string } }>
     getSkillsSummary?: () => Promise<CodexSkillsSummary>
     getCollaborationCapabilities?: (
       model: string,
@@ -659,6 +668,12 @@ interface AgentChatState extends ModelRoutingSlice {
     attachments: AgentAttachmentInput[]
     pendingReferences: AgentReference[]
   }
+  /**
+   * True while `submitEditMessage` is awaiting the main-process context
+   * branch (`agent:thread-branch-before-message`). Guards against a double
+   * submit racing two forks / two sends off the same edit.
+   */
+  editBranchPending: boolean
   /**
    * Stash of "rewound" turns (a user message + every assistant message
    * that followed it, up to but not including the next user message).
@@ -1691,6 +1706,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   notices: [],
   goalByThread: {},
   rewoundTurns: [],
+  editBranchPending: false,
   messages: [],
   isRunning: false,
   threadSlices: {},
@@ -2786,6 +2802,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
                   ...m,
                   sendState: 'sent' as const,
                   ...(canonicalItems ? { items: canonicalItems } : {}),
+                  // Backfill the persisted row id so a later edit-and-resend
+                  // can hand the context-branch API a real DB row id.
+                  ...(result.userMessageId ? { dbRowId: result.userMessageId } : {}),
                 }
               : m,
           ),
@@ -2943,7 +2962,13 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         const canonicalItems = result.userMessageItems
         set((current) => ({
           messages: current.messages.map((m) =>
-            m.id === userMsg.id ? { ...m, items: canonicalItems } : m,
+            m.id === userMsg.id
+              ? {
+                  ...m,
+                  items: canonicalItems,
+                  ...(result.userMessageId ? { dbRowId: result.userMessageId } : {}),
+                }
+              : m,
           ),
         }))
       }
@@ -3010,7 +3035,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   submitEditMessage: async () => {
     const state = get()
     const editingId = state.editingMessageId
-    if (!editingId || state.isRunning) return
+    if (!editingId || state.isRunning || state.editBranchPending) return
 
     const idx = state.messages.findIndex((m) => m.id === editingId)
     if (idx === -1) {
@@ -3019,8 +3044,36 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       return
     }
 
+    // Server-side context branch (codex 0.145 thread/fork + lastTurnId):
+    // ask main to fork the codex thread BEFORE the edited message's turn and
+    // to truncate the DB rows at/after the edit point, so the model actually
+    // forgets the dropped turns instead of only the UI forgetting them.
+    // Every failure degrades to today's same-thread resend — main emits an
+    // `editBranchDegraded` warning notice where appropriate, so this path
+    // never blocks the edit itself.
+    const threadId = state.threadId
+    const target = state.messages[idx]
+    const branchApi = (window as Window & { electronAPI?: AgentElectronApi })
+      .electronAPI?.agent?.branchThreadBeforeMessage
+    if (threadId && branchApi) {
+      set({ editBranchPending: true })
+      try {
+        // Live-session bubbles carry the persisted row id in `dbRowId`
+        // (backfilled from send()); DB-reloaded messages' `id` IS the row id.
+        await branchApi(threadId, target.dbRowId ?? target.id)
+      } catch {
+        // IPC/transport failure — silent degrade to same-thread resend.
+      } finally {
+        set({ editBranchPending: false })
+      }
+    }
+
+    // Re-read state after the await: the branch RPC yielded the event loop,
+    // so truncate against the CURRENT timeline instead of a stale snapshot.
+    const current = get()
+    const currentIdx = current.messages.findIndex((m) => m.id === editingId)
     set({
-      messages: state.messages.slice(0, idx),
+      messages: currentIdx === -1 ? current.messages : current.messages.slice(0, currentIdx),
       editingMessageId: undefined,
       draftBackup: undefined,
     })

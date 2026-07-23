@@ -19,6 +19,14 @@ export interface CodexReconcileTextElement {
 export interface CodexUserMessageReconcile {
   codexItemId: string
   clientId?: string
+  /**
+   * Codex turn id the userMessage echo arrived under. This is the persisted
+   * "message row → codex turn" mapping that edit-and-resend branching
+   * (`thread/fork` + `lastTurnId`, codex 0.145) resolves the branch point
+   * from. Absent on rows written before this field existed or when a gateway
+   * strips the turn scope — those degrade to same-thread resend.
+   */
+  turnId?: string
   localImages: string[]
   textElements: CodexReconcileTextElement[]
 }
@@ -253,6 +261,15 @@ export interface Message {
    * timeline with a retry affordance instead of silently vanishing.
    */
   sendState?: 'sending' | 'sent' | 'failed'
+  /**
+   * Persisted AgentMessage row id backing this bubble. Live-session user
+   * bubbles are created with a renderer-local `id` and get this backfilled
+   * from `AgentSendMessageResult.userMessageId`; DB-reloaded messages don't
+   * need it (their `id` IS the row id). Edit-and-resend passes
+   * `dbRowId ?? id` to the server-side context-branch API so the main
+   * process can locate the edit point in the DB.
+   */
+  dbRowId?: string
 }
 
 export function getMessageText(msg: Message): string {

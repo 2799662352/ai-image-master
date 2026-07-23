@@ -45,9 +45,13 @@ type CodexItem = {
  * silently drop anything malformed — reconcile data is an enhancement, never
  * worth crashing the stream over.
  */
-function parseUserMessageReconcile(item: CodexItem): CodexUserMessageReconcile {
+function parseUserMessageReconcile(item: CodexItem, turnIdRaw: unknown): CodexUserMessageReconcile {
   const clientIdRaw = item.clientId ?? item.client_id
   const clientId = typeof clientIdRaw === 'string' && clientIdRaw.length > 0 ? clientIdRaw : undefined
+  // Turn scope of the echo — persisted so edit-and-resend can later resolve
+  // "fork through the PREVIOUS turn" (`thread/fork.lastTurnId`). Spread-omit:
+  // an absent turn (old binary / gateway strip) must not write `turnId: undefined`.
+  const turnId = typeof turnIdRaw === 'string' && turnIdRaw.length > 0 ? turnIdRaw : undefined
 
   const localImages: string[] = []
   const textElements: CodexReconcileTextElement[] = []
@@ -74,7 +78,13 @@ function parseUserMessageReconcile(item: CodexItem): CodexUserMessageReconcile {
       })
     }
   }
-  return { codexItemId: String(item.id), ...(clientId ? { clientId } : {}), localImages, textElements }
+  return {
+    codexItemId: String(item.id),
+    ...(clientId ? { clientId } : {}),
+    ...(turnId ? { turnId } : {}),
+    localImages,
+    textElements,
+  }
 }
 
 /**
@@ -1020,7 +1030,7 @@ export class CodexNotificationRouter {
               type: 'user_message_reconciled',
               threadId: params.threadId,
               turnId: params.turnId,
-              reconcile: parseUserMessageReconcile(item),
+              reconcile: parseUserMessageReconcile(item, params.turnId ?? params.turn_id),
             }
           case 'agentMessage': {
             const key = itemStateKey(params.threadId, item.id)

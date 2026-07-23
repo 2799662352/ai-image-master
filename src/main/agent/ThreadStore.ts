@@ -193,6 +193,34 @@ export class ThreadStore {
     await this.prisma.agentMessage.update({ where: { id: messageId }, data: { items } })
   }
 
+  /**
+   * Lean, ordered view of a thread's message rows for edit-and-resend
+   * branching: `items` is included because the codex turn mapping lives in
+   * the first item's `codexReconcile.turnId`. Ordered by createdAt asc to
+   * match both the renderer timeline and `loadThread`.
+   */
+  async listMessagesForBranch(threadId: string) {
+    return this.prisma.agentMessage.findMany({
+      where: { threadId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, role: true, items: true },
+    })
+  }
+
+  /**
+   * Hard-delete message rows (edit-and-resend truncation: DB follows the
+   * renderer's UI semantics — rows at/after the edit point must not
+   * resurrect on the next thread reload). Scoped to the thread so a stale
+   * renderer id can never delete another conversation's rows; AgentToolCall
+   * children go with them via the schema's onDelete: Cascade.
+   */
+  async deleteMessages(threadId: string, messageIds: string[]): Promise<void> {
+    if (messageIds.length === 0) return
+    await this.prisma.agentMessage.deleteMany({
+      where: { threadId, id: { in: messageIds } },
+    })
+  }
+
   /** Read the persisted Codex thread UUID for a DB thread (null if none yet). */
   async getCodexThreadId(threadId: string): Promise<string | null> {
     const row = await this.prisma.agentThread.findUnique({

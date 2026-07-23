@@ -431,10 +431,16 @@ export class CodexProtocolClient {
   async forkThread(
     threadId: string,
     overrides?: CodexThreadConfigOverrides,
+    lastTurnId?: string,
   ): Promise<CodexThreadSummary> {
+    // `lastTurnId` (codex 0.145 ThreadForkParams, camelCase on the wire):
+    // "Optional last turn id to fork through, inclusive. When specified,
+    // turns after last_turn_id are omitted from the fork." Spread-omit so
+    // the legacy no-branch wire shape stays byte-identical for old binaries.
     const response = await this.rpc<unknown>('thread/fork', {
       threadId,
       ...threadConfigOverrideParams(overrides),
+      ...(lastTurnId ? { lastTurnId } : {}),
     })
     return normalizeThreadSummary(extractThreadRecord(response))
   }

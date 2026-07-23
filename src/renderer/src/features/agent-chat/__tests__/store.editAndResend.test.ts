@@ -366,6 +366,133 @@ describe('submitEditMessage', () => {
   })
 })
 
+describe('submitEditMessage server-side context branch (codex 0.145 thread/fork + lastTurnId)', () => {
+  beforeEach(() => {
+    useAgentChatStore.setState({
+      threadId: 'thread-1',
+      messages: makeMsgs(5),
+      isRunning: false,
+      input: '',
+      attachments: [],
+      pendingReferences: [],
+      availableSkills: [],
+      selectedModelId: 'gpt-4.1-mini',
+      editingMessageId: undefined,
+      draftBackup: undefined,
+      editBranchPending: false,
+    })
+  })
+
+  it('awaits the branch API (preferring dbRowId) BEFORE truncating and resending', async () => {
+    const calls: string[] = []
+    const branchThreadBeforeMessage = vi.fn(async (threadId: string, messageId: string) => {
+      calls.push(`branch:${threadId}:${messageId}`)
+      return { ok: true, data: { branched: true, mode: 'fork' as const } }
+    })
+    mockSendMessage.mockImplementation(async () => {
+      calls.push('send')
+      return { threadId: 'thread-1' }
+    })
+    ;(window as any).electronAPI.agent.branchThreadBeforeMessage = branchThreadBeforeMessage
+    // Simulate a live-session bubble whose DB row id came back from send().
+    useAgentChatStore.setState({
+      messages: useAgentChatStore
+        .getState()
+        .messages.map((m) => (m.id === 'msg-2' ? { ...m, dbRowId: 'row-2' } : m)),
+    })
+
+    useAgentChatStore.getState().startEditMessage('msg-2')
+    useAgentChatStore.setState({ input: 'rewritten' })
+    await useAgentChatStore.getState().submitEditMessage()
+
+    expect(calls).toEqual(['branch:thread-1:row-2', 'send'])
+    // UI truncation semantics unchanged.
+    const after = useAgentChatStore.getState().messages
+    expect(after.slice(0, 2).map((m) => m.id)).toEqual(['msg-0', 'msg-1'])
+    expect(useAgentChatStore.getState().editBranchPending).toBe(false)
+  })
+
+  it('falls back to the renderer message id when no dbRowId exists (reloaded threads: id IS the row id)', async () => {
+    const branchThreadBeforeMessage = vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { branched: true, mode: 'fork' } })
+    ;(window as any).electronAPI.agent.branchThreadBeforeMessage = branchThreadBeforeMessage
+
+    useAgentChatStore.getState().startEditMessage('msg-2')
+    useAgentChatStore.setState({ input: 'rewritten' })
+    await useAgentChatStore.getState().submitEditMessage()
+
+    expect(branchThreadBeforeMessage).toHaveBeenCalledWith('thread-1', 'msg-2')
+    expect(mockSendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('degrades to same-thread resend when the branch IPC rejects', async () => {
+    const branchThreadBeforeMessage = vi.fn().mockRejectedValue(new Error('ipc down'))
+    ;(window as any).electronAPI.agent.branchThreadBeforeMessage = branchThreadBeforeMessage
+
+    useAgentChatStore.getState().startEditMessage('msg-2')
+    useAgentChatStore.setState({ input: 'rewritten' })
+    await useAgentChatStore.getState().submitEditMessage()
+
+    expect(mockSendMessage).toHaveBeenCalledTimes(1)
+    expect(mockSendMessage.mock.calls[0][0].content).toBe('rewritten')
+    expect(useAgentChatStore.getState().editBranchPending).toBe(false)
+  })
+
+  it('blocks re-entry while the branch RPC is still pending (double-submit guard)', async () => {
+    let release!: (v: { ok: boolean }) => void
+    const gate = new Promise<{ ok: boolean }>((resolve) => {
+      release = resolve
+    })
+    const branchThreadBeforeMessage = vi.fn().mockReturnValue(gate)
+    ;(window as any).electronAPI.agent.branchThreadBeforeMessage = branchThreadBeforeMessage
+
+    useAgentChatStore.getState().startEditMessage('msg-2')
+    useAgentChatStore.setState({ input: 'rewritten' })
+    const first = useAgentChatStore.getState().submitEditMessage()
+    // Re-entry while pending must be a no-op (no second branch / send).
+    await useAgentChatStore.getState().submitEditMessage()
+    release({ ok: true })
+    await first
+
+    expect(branchThreadBeforeMessage).toHaveBeenCalledTimes(1)
+    expect(mockSendMessage).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('send() backfills Message.dbRowId from the persisted row id', () => {
+  beforeEach(() => {
+    useAgentChatStore.setState({
+      threadId: 'thread-1',
+      messages: [],
+      isRunning: false,
+      input: 'hello there',
+      attachments: [],
+      pendingReferences: [],
+      availableSkills: [],
+      selectedModelId: 'gpt-4.1-mini',
+    })
+  })
+
+  it('stamps the optimistic user bubble with result.userMessageId', async () => {
+    mockSendMessage.mockResolvedValueOnce({ threadId: 'thread-1', userMessageId: 'row-42' })
+
+    await useAgentChatStore.getState().send()
+
+    const userMsg = useAgentChatStore.getState().messages.find((m) => m.role === 'user')
+    expect(userMsg?.dbRowId).toBe('row-42')
+  })
+
+  it('leaves dbRowId absent when main did not persist a row', async () => {
+    mockSendMessage.mockResolvedValueOnce({ threadId: 'thread-1' })
+
+    await useAgentChatStore.getState().send()
+
+    const userMsg = useAgentChatStore.getState().messages.find((m) => m.role === 'user')
+    expect(userMsg?.dbRowId).toBeUndefined()
+  })
+})
+
 describe('deleteMessage', () => {
   beforeEach(() => {
     useAgentChatStore.setState({

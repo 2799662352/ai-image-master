@@ -82,5 +82,7 @@ function labelFor(kind: AgentNotice['kind']): string {
       return 'context reset'
     case 'steerFallback':
       return 'new turn'
+    case 'editBranchDegraded':
+      return 'edit'
   }
 }

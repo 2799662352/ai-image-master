@@ -108,6 +108,7 @@ import type {
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
+  AgentThreadBranchResult,
   AgentThreadRoutingSnapshot,
   CodexApprovalRequest,
   CodexApprovalResponse,
@@ -3037,7 +3038,13 @@ export class AgentManager {
     const cloneableItems = userTimelineItems.length > 0
       ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
       : undefined
-    return { threadId, userMessageItems: cloneableItems }
+    return {
+      threadId,
+      userMessageItems: cloneableItems,
+      // Persisted row id → renderer `Message.dbRowId`, so a later
+      // edit-and-resend can hand the branch API a real DB row id.
+      ...(assembled.userMessageRowId ? { userMessageId: assembled.userMessageRowId } : {}),
+    }
   }
 
   /**
@@ -3161,7 +3168,11 @@ export class AgentManager {
     const cloneableItems = userTimelineItems.length > 0
       ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
       : undefined
-    return { threadId, userMessageItems: cloneableItems }
+    return {
+      threadId,
+      userMessageItems: cloneableItems,
+      ...(assembled.userMessageRowId ? { userMessageId: assembled.userMessageRowId } : {}),
+    }
   }
 
   /**
@@ -3179,6 +3190,8 @@ export class AgentManager {
     model: string
     input: AgentInput
     userTimelineItems: TimelineItem[]
+    /** Persisted AgentMessage row id of this turn's user message (= clientUserMessageId). */
+    userMessageRowId?: string
     collaborationModeOwner?: CollaborationCapabilityOwner
   }> {
     if (!this.store || !this.attachments) {
@@ -3418,6 +3431,7 @@ export class AgentManager {
       model,
       input,
       userTimelineItems,
+      ...(clientUserMessageId ? { userMessageRowId: clientUserMessageId } : {}),
       collaborationModeOwner: builtCollaborationMode?.owner,
     }
   }
@@ -3726,6 +3740,153 @@ export class AgentManager {
     if (!this.backend.isHealthy()) throw new Error('Codex backend is not healthy')
     if (!this.backend.forkThread) throw new Error('Codex thread fork API is unavailable')
     return this.backend.forkThread(id)
+  }
+
+  /**
+   * Edit-and-resend server-side context branch (codex 0.145 `thread/fork` +
+   * `lastTurnId`; upstream TUI semantics from openai/codex PR #33201):
+   * fork the codex thread THROUGH the turn of the last user message BEFORE
+   * the edited row, so the branch's server context exactly matches the
+   * renderer's truncated timeline; the original thread stays untouched on
+   * disk. Editing the first prompt (or a thread with no codex mapping)
+   * degrades gracefully to fresh-thread semantics, and EVERY failure path
+   * returns a `branched: false` marker instead of throwing — the renderer
+   * then falls back to today's same-thread resend.
+   *
+   * `thread/rollback` is deliberately NOT used: it is marked DEPRECATED
+   * ("will be removed soon") in the 0.145 schema.
+   *
+   * In every path where the edit point is located in the DB, rows at/after
+   * it are deleted so a thread reload can never resurrect the truncated tail
+   * (DB follows the UI's edit semantics).
+   */
+  async branchThreadBeforeMessage(
+    dbThreadId: string,
+    messageRowId: string,
+  ): Promise<AgentThreadBranchResult> {
+    const degrade = (reason: string): AgentThreadBranchResult => {
+      this.emitEvent({
+        type: 'notice',
+        notice: {
+          id: `edit-branch-degraded:${dbThreadId}:${Date.now()}`,
+          kind: 'editBranchDegraded',
+          level: 'warning',
+          threadId: dbThreadId,
+          message: '本次编辑未能分支服务端上下文,已在原会话上重发——模型可能仍记得被删除的旧内容。',
+          details: { reason },
+        },
+      })
+      return { branched: false, reason }
+    }
+    const store = this.store
+    if (
+      !store
+      || typeof store.listMessagesForBranch !== 'function'
+      || typeof store.deleteMessages !== 'function'
+    ) {
+      return degrade('store-unsupported')
+    }
+    let rows: Awaited<ReturnType<ThreadStore['listMessagesForBranch']>>
+    try {
+      rows = await store.listMessagesForBranch(dbThreadId)
+    } catch (error) {
+      return degrade(
+        `store-read-failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+    const editIdx = rows.findIndex((row) => row.id === messageRowId)
+    if (editIdx === -1) {
+      // Renderer-local bubble id (pre-`dbRowId` sessions) or an already-gone
+      // row: we can't even locate the truncation point, so leave BOTH the
+      // server context and the DB untouched — pure legacy behaviour.
+      return degrade('message-not-found')
+    }
+    const idsFromEditPoint = rows.slice(editIdx).map((row) => row.id)
+    const truncateDb = async (): Promise<void> => {
+      try {
+        await store.deleteMessages(dbThreadId, idsFromEditPoint)
+      } catch (error) {
+        console.warn(
+          '[AgentManager] edit-branch DB truncation failed (rows may resurrect on reload):',
+          error,
+        )
+      }
+    }
+
+    // Branch point = the codex turn of the LAST KEPT user message (the one
+    // immediately before the edit). `thread/fork` keeps turns THROUGH
+    // `lastTurnId` inclusive, which drops the edited turn and everything
+    // after it. Only the nearest prior user row counts: forking through an
+    // OLDER turn would silently drop turns the UI still shows.
+    let lastTurnId: string | undefined
+    let hasPriorUserRow = false
+    for (let i = editIdx - 1; i >= 0; i -= 1) {
+      const row = rows[i]
+      if (row.role !== 'user') continue
+      hasPriorUserRow = true
+      const items = Array.isArray(row.items) ? (row.items as unknown[]) : []
+      const first = items[0]
+      const reconcile = first && typeof first === 'object'
+        ? (first as { codexReconcile?: { turnId?: unknown } }).codexReconcile
+        : undefined
+      const turnId = reconcile?.turnId
+      if (typeof turnId === 'string' && turnId.length > 0) lastTurnId = turnId
+      break
+    }
+
+    if (!hasPriorUserRow) {
+      // Editing the very first prompt = upstream's "open a brand-new
+      // session": drop the codex mapping so the next send runs a fresh
+      // thread/start; the abandoned source thread stays archived on disk.
+      this.forgetCodexThread(dbThreadId)
+      await truncateDb()
+      return { branched: true, mode: 'fresh' }
+    }
+
+    let codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (!codexThreadId && typeof store.getCodexThreadId === 'function') {
+      try {
+        codexThreadId = (await store.getCodexThreadId(dbThreadId)) ?? undefined
+      } catch {
+        codexThreadId = undefined
+      }
+    }
+    if (!codexThreadId) {
+      // No codex thread = no server-side context exists at all; the next
+      // send starts fresh anyway, so UI and (empty) server already agree.
+      await truncateDb()
+      return { branched: true, mode: 'fresh' }
+    }
+    if (!lastTurnId) {
+      // Legacy rows written before reconcile.turnId existed (or a gateway
+      // stripped the turn scope) — we can't compute a safe branch point.
+      await truncateDb()
+      return degrade('no-turn-mapping')
+    }
+    if (!this.backend.forkThread) {
+      await truncateDb()
+      return degrade('fork-unsupported')
+    }
+    let forked: CodexThreadSummary
+    try {
+      // Same-provider fork: reuse the thread's own Plan B routing overrides
+      // so the branch doesn't silently migrate to the process-active Channel.
+      const overrides = await this.threadRoutingResumeOverrides(dbThreadId)
+      forked = await this.backend.forkThread(codexThreadId, overrides, lastTurnId)
+    } catch (error) {
+      await truncateDb()
+      return degrade(error instanceof Error ? error.message : String(error))
+    }
+    // Mirror rebindThreadInProcess: release the abandoned source thread so
+    // codex can unload it after its idle window, then re-point the
+    // conversation (map + epoch tag + persistence) at the branch.
+    void Promise.resolve(this.backend.unsubscribeThread?.(codexThreadId))
+      .catch((err: unknown) => {
+        console.warn('[AgentManager] thread/unsubscribe after edit-branch fork failed:', err)
+      })
+    this.rememberCodexThread(dbThreadId, forked.id)
+    await truncateDb()
+    return { branched: true, mode: 'fork' }
   }
 
   async archiveCodexThread(threadId: string): Promise<void> {
