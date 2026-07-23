@@ -35,6 +35,26 @@ describe('makeFileReference', () => {
     const ref = makeFileReference({ path: 'D:/repo/spec.pdf' })
     expect(ref.openBehavior).toBe('pdf')
   })
+
+  it('routes audio by mime', () => {
+    const ref = makeFileReference({ path: 'D:/repo/voice.bin', mime: 'audio/mpeg' })
+    expect(ref.openBehavior).toBe('audio')
+  })
+
+  it('routes audio by extension when mime is missing', () => {
+    const ref = makeFileReference({ path: 'D:/repo/voice.mp3' })
+    expect(ref.openBehavior).toBe('audio')
+  })
+
+  it('keeps .webm as video without an explicit audio mime', () => {
+    const ref = makeFileReference({ path: 'D:/repo/clip.webm' })
+    expect(ref.openBehavior).toBe('video')
+  })
+
+  it('routes .webm with an audio mime to audio (mime wins over extension)', () => {
+    const ref = makeFileReference({ path: 'D:/repo/clip.webm', mime: 'audio/webm' })
+    expect(ref.openBehavior).toBe('audio')
+  })
 })
 
 describe('makeUrlReference', () => {

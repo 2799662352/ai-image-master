@@ -121,6 +121,18 @@ export type CodexUserInput =
   | { type: 'image'; url: string }
   | { type: 'localImage'; path: string }
   /**
+   * Codex 0.145 audio inputs (app-server v2 UserInput):
+   *  - `audio`      — remote URL or pre-encoded data URI.
+   *  - `localAudio` — on-disk path; codex reads the file and builds the data
+   *    URI itself at serialization time.
+   * Upstream (audio_preparation.rs) accepts wav/mpeg/mp4/webm/ogg audio;
+   * unsupported formats or oversized files are replaced with a text
+   * placeholder (#33982, gated on model input modality) — never an error —
+   * so the send side does not gate on modality.
+   */
+  | { type: 'audio'; url: string }
+  | { type: 'localAudio'; path: string }
+  /**
    * Skill invocation: codex app-server reads `name` + `path` and injects the
    * full SKILL.md instructions for the model. Per README:
    *   "If you omit the `skill` item, the model will still parse the `$ `

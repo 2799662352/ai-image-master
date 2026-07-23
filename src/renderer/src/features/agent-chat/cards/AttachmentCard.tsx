@@ -70,6 +70,8 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
           }
           const reference = referenceByAttachmentId.get(ref.id)
           const clickable = reference != null
+          // 音频没有缩略图 —— 走文件 chip 分支,但用 🎵 替代通用文件图标。
+          const isAudio = ref.kind === 'audio' || (ref.mime ?? '').startsWith('audio/')
           return (
             <button
               key={ref.id}
@@ -87,7 +89,11 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
               disabled={!clickable}
               aria-label={clickable ? `Open ${ref.name} in file panel` : ref.name}
             >
-              <FileIcon className={clickable ? 'text-cyan-300/70 group-hover:text-cyan-200' : 'text-zinc-500'} />
+              {isAudio ? (
+                <span aria-hidden="true" className="text-sm leading-none">🎵</span>
+              ) : (
+                <FileIcon className={clickable ? 'text-cyan-300/70 group-hover:text-cyan-200' : 'text-zinc-500'} />
+              )}
               <span className="max-w-[120px] truncate font-mono">{ref.name}</span>
               {clickable && (
                 <OpenInPanelIcon

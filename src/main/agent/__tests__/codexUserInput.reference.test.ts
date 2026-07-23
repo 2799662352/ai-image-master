@@ -431,6 +431,206 @@ describe('Codex structured reference inputs', () => {
     expect(notice?.notice.message).toContain('other-machine.png')
   })
 
+  // ── Codex 0.145 audio input variants ────────────────────────────────────
+  // Upstream app-server v2 UserInput adds `{ type: 'audio', url }` (remote /
+  // data URI) and `{ type: 'localAudio', path }` (codex reads the file and
+  // builds the data URI itself). Unsupported formats / oversized files are
+  // replaced by a TEXT PLACEHOLDER upstream (#33982, gated on model input
+  // modality) — never an error — so the send side does NOT gate on modality.
+
+  it('maps local audio references (mime) to localAudio items', async () => {
+    const audioPath = path.join(workspaceDir, 'voice.mp3')
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await fs.writeFile(audioPath, 'audio')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'transcribe this',
+      attachments: [],
+      references: [localReference(audioPath, { preview: { mime: 'audio/mpeg' } })],
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.items).toContainEqual({ type: 'localAudio', path: path.resolve(audioPath) })
+  })
+
+  it('maps local audio references by extension when mime is missing', async () => {
+    const audioPath = path.join(workspaceDir, 'voice.wav')
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await fs.writeFile(audioPath, 'audio')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'transcribe this',
+      attachments: [],
+      references: [localReference(audioPath, { preview: { mime: 'application/octet-stream' } })],
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.items).toContainEqual({ type: 'localAudio', path: path.resolve(audioPath) })
+  })
+
+  it('dedupes duplicate local audio reference paths', async () => {
+    const audioPath = path.join(workspaceDir, 'voice.mp3')
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await fs.writeFile(audioPath, 'audio')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'transcribe this',
+      attachments: [],
+      references: [
+        localReference(audioPath, { preview: { mime: 'audio/mpeg' } }),
+        localReference(audioPath, { id: 'ref:dup', preview: { mime: 'audio/mpeg' } }),
+      ],
+    })
+    await flushMicrotasks()
+
+    const localAudioPaths = backend.calls[0].input.items
+      .filter((item): item is Extract<typeof item, { type: 'localAudio' }> => item.type === 'localAudio')
+      .map((item) => item.path)
+    expect(localAudioPaths).toEqual([path.resolve(audioPath)])
+  })
+
+  it('treats a .webm file with an audio mime as audio (mime wins over extension)', async () => {
+    const audioPath = path.join(workspaceDir, 'clip.webm')
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await fs.writeFile(audioPath, 'audio')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'transcribe this',
+      attachments: [],
+      references: [localReference(audioPath, { preview: { mime: 'audio/webm' } })],
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.items).toContainEqual({ type: 'localAudio', path: path.resolve(audioPath) })
+  })
+
+  it('does NOT treat a .webm file without an audio mime as audio', async () => {
+    // .webm / .mp4 are more commonly VIDEO containers — extension alone must
+    // never classify them as audio; only an explicit audio/* mime does.
+    const videoPath = path.join(workspaceDir, 'clip.webm')
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await fs.writeFile(videoPath, 'video')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'look at this',
+      attachments: [],
+      references: [localReference(videoPath, { preview: { mime: 'application/octet-stream' } })],
+    })
+    await flushMicrotasks()
+
+    const items = backend.calls[0].input.items
+    expect(items.some((item) => item.type === 'localAudio')).toBe(false)
+    const textItem = items.find((item): item is Extract<typeof item, { type: 'text' }> => item.type === 'text')
+    expect(textItem?.text).toContain(videoPath)
+  })
+
+  it('maps remote HTTPS audio references to audio items', async () => {
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'transcribe this',
+      attachments: [],
+      references: [
+        remoteReference('https://example.com/voice.mp3', {
+          preview: { mime: 'audio/mpeg' },
+        }),
+      ],
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.items).toContainEqual({ type: 'audio', url: 'https://example.com/voice.mp3' })
+  })
+
+  it('maps saved audio attachments to localAudio items (picker/drop flow)', async () => {
+    const uploadedPath = path.join(tmpDir, 'uploads', 'sha-voice.mp3')
+    const backend = makeBackend()
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage: async () => ({ id: 'msg-1' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => [{
+          id: 'att-1',
+          originalName: 'voice.mp3',
+          localPath: uploadedPath,
+          mime: 'audio/mpeg',
+          size: 12,
+        }],
+      } as any,
+    })
+    await mgr.setCodexApiKey('sk-test')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: '这段音频说了什么',
+      attachments: [{ name: 'voice.mp3', mime: 'audio/mpeg', path: path.join(workspaceDir, 'voice.mp3'), size: 12 }],
+      references: [],
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.items).toContainEqual({ type: 'localAudio', path: uploadedPath })
+  })
+
+  it('dedupes an audio attachment against its own localAudio reference', async () => {
+    const audioPath = path.join(workspaceDir, 'voice.mp3')
+    const backend = makeBackend()
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage: async () => ({ id: 'msg-1' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => [{
+          id: 'att-1',
+          originalName: 'voice.mp3',
+          localPath: audioPath,
+          mime: 'audio/mpeg',
+          size: 12,
+        }],
+      } as any,
+    })
+    await mgr.setCodexApiKey('sk-test')
+    await fs.writeFile(audioPath, 'audio')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'transcribe this',
+      attachments: [{ name: 'voice.mp3', mime: 'audio/mpeg', path: audioPath, size: 12 }],
+      references: [localReference(audioPath, { preview: { mime: 'audio/mpeg' } })],
+    })
+    await flushMicrotasks()
+
+    const localAudioPaths = backend.calls[0].input.items
+      .filter((item): item is Extract<typeof item, { type: 'localAudio' }> => item.type === 'localAudio')
+      .map((item) => item.path)
+    expect(localAudioPaths).toEqual([path.resolve(audioPath)])
+  })
+
   it('rejects local reference paths that symlink outside allowed roots', async () => {
     const outsideDir = path.join(tmpDir, 'outside-target')
     const outsideImage = path.join(outsideDir, 'secret.png')

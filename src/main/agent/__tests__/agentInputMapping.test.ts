@@ -39,6 +39,22 @@ describe('mapUserInput (AgentInput.items -> CodexUserInput[])', () => {
     ])
   })
 
+  it('maps a localAudio item to Codex localAudio carrying the filesystem path verbatim', () => {
+    // Codex 0.145 app-server v2 UserInput: { "type": "localAudio", "path": string }
+    const items: AgentInput['items'] = [{ type: 'localAudio', path: '/tmp/voice.mp3' }]
+    expect(mapUserInput(items)).toEqual([
+      { type: 'localAudio', path: '/tmp/voice.mp3' },
+    ])
+  })
+
+  it('maps an audio item to Codex audio with `url`', () => {
+    // Codex 0.145 app-server v2 UserInput: { "type": "audio", "url": string }
+    const items: AgentInput['items'] = [{ type: 'audio', url: 'https://example.com/voice.mp3' }]
+    expect(mapUserInput(items)).toEqual([
+      { type: 'audio', url: 'https://example.com/voice.mp3' },
+    ])
+  })
+
   it('maps a skill item with name + path verbatim (codex app-server $skill protocol)', () => {
     // Per codex-rs/app-server README:
     //   { "type": "skill", "name": "skill-creator", "path": "/Users/me/.codex/skills/skill-creator/SKILL.md" }

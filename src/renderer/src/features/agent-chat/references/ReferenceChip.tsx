@@ -7,6 +7,7 @@ const TYPE_LABELS: Record<AgentReference['type'], string> = {
   mcp: 'mcp',
   image: 'image',
   video: 'video',
+  audio: 'audio',
   artifact: 'artifact',
   activity: 'activity',
 }

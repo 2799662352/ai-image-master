@@ -80,6 +80,15 @@ export function ReferencePreview({ reference }: { reference: AgentReference }) {
       return <ImageReferencePreview reference={reference} />
     case 'video':
       return <VideoReferencePreview reference={reference} />
+    case 'audio':
+      // 最小音频兜底:图标 + 文件名(不做播放器)。音频字节由 codex 端的
+      // `localAudio` 输入项承运,预览面板只需可辨识。
+      return (
+        <div className="flex h-full items-center justify-center gap-2 p-4 text-xs text-zinc-300">
+          <span aria-hidden="true">🎵</span>
+          <span className="max-w-full truncate font-mono">{reference.label}</span>
+        </div>
+      )
     case 'code':
     case 'markdown':
     case 'pdf':

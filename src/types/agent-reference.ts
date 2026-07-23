@@ -7,6 +7,7 @@ export type AgentReferenceType =
   | 'mcp'
   | 'image'
   | 'video'
+  | 'audio'
   | 'artifact'
   | 'activity'
 
@@ -22,6 +23,7 @@ export type AgentReferenceOpenBehavior =
   | 'markdown'
   | 'image'
   | 'video'
+  | 'audio'
   | 'pdf'
   | 'url'
   | 'shellOutput'
