@@ -93,6 +93,8 @@ export interface AgentInput extends AgentSendMessagePayload {
     | { type: 'text'; text: string }
     | { type: 'localImage'; path: string }
     | { type: 'image'; url: string }
+    | { type: 'localAudio'; path: string }
+    | { type: 'audio'; url: string }
     | { type: 'skill'; name: string; path: string }
     | { type: 'mention'; name: string; path: string }
   >

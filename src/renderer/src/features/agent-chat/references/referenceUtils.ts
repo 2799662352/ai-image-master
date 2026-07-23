@@ -34,15 +34,20 @@ function labelForUrl(url: string): string {
 }
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi'])
+// `.webm`/`.mp4` deliberately absent — they are more commonly video
+// containers, so they only count as audio with an explicit audio/* mime.
+const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.m4a', '.ogg', '.oga', '.opus'])
 
 function openBehaviorForFile(name: string, mime?: string): AgentReferenceOpenBehavior {
   const lower = name.toLowerCase()
   if (mime?.startsWith('image/')) return 'image'
   if (mime?.startsWith('video/')) return 'video'
+  if (mime?.startsWith('audio/')) return 'audio'
   if (mime === 'application/pdf' || lower.endsWith('.pdf')) return 'pdf'
   if (lower.endsWith('.md') || lower.endsWith('.mdx')) return 'markdown'
   const ext = lower.slice(lower.lastIndexOf('.'))
   if (VIDEO_EXTENSIONS.has(ext)) return 'video'
+  if (AUDIO_EXTENSIONS.has(ext)) return 'audio'
   return 'code'
 }
 
@@ -246,7 +251,7 @@ function referenceFromAttachmentRef(prefix: 'attachment' | 'artifact', ref: Atta
   if (!localPath) return null
 
   const type: AgentReference['type'] =
-    ref.kind === 'image' ? 'image' : ref.kind === 'video' ? 'video' : 'file'
+    ref.kind === 'image' ? 'image' : ref.kind === 'video' ? 'video' : ref.kind === 'audio' ? 'audio' : 'file'
 
   return {
     id: createReferenceId(prefix, ref.id),

@@ -107,6 +107,48 @@ describe('startEditMessage', () => {
     ])
   })
 
+  it('rehydrates audio attachment rows without exploding (Codex 0.145 localAudio flow)', () => {
+    useAgentChatStore.setState({
+      messages: [
+        {
+          id: 'msg-with-audio',
+          role: 'user',
+          createdAt: Date.now(),
+          items: [
+            {
+              type: 'attachment',
+              id: 'att-item',
+              startedAt: Date.now(),
+              attachments: [
+                {
+                  id: 'audio-1',
+                  kind: 'audio',
+                  name: 'voice.mp3',
+                  mime: 'audio/mpeg',
+                  size: 789,
+                  uri: 'local-file:///C:/Users/me/AppData/Roaming/app/agent/uploads/voice.mp3',
+                },
+              ],
+            },
+            { type: 'text', id: 'txt', startedAt: Date.now(), content: '这段音频说了什么' },
+          ],
+        },
+      ],
+    })
+
+    useAgentChatStore.getState().startEditMessage('msg-with-audio')
+
+    expect(useAgentChatStore.getState().input).toBe('这段音频说了什么')
+    const restored = useAgentChatStore.getState().attachments
+    expect(restored).toHaveLength(1)
+    expect(restored[0]).toMatchObject({
+      name: 'voice.mp3',
+      mime: 'audio/mpeg',
+      size: 789,
+      path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/voice.mp3',
+    })
+  })
+
   it('restores chips from codexReconcile.localImages when the DB attachment item is missing (rollout-canonical fallback)', () => {
     useAgentChatStore.setState({
       messages: [

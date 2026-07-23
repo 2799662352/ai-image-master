@@ -55,7 +55,7 @@ import {
   saveSkill,
 } from './codexConfigStore'
 import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
-import { mapReferencesToInputItems } from './codexUserInput'
+import { AUDIO_EXTENSIONS, mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import { SessionConfigStore } from './SessionConfigStore'
 import { TurnNotifier, type TurnNotification } from './TurnNotifier'
@@ -240,14 +240,14 @@ function mapDuplicateAttachmentReferencesToUploadedPaths(
   attachmentInputs.forEach((attachment, index) => {
     if (!attachment.path) return
     const saved = savedAttachments[index]
-    if (!saved || !saved.mime.startsWith('image/')) return
+    if (!saved || !(saved.mime.startsWith('image/') || saved.mime.startsWith('audio/'))) return
     if (attachment.name !== saved.originalName || attachment.mime !== saved.mime) return
     uploadedPathByOriginalPath.set(path.resolve(attachment.path), saved.localPath)
   })
 
   if (uploadedPathByOriginalPath.size === 0) return items
   return items.map((item) => {
-    if (item.type !== 'localImage') return item
+    if (item.type !== 'localImage' && item.type !== 'localAudio') return item
     return {
       ...item,
       path: uploadedPathByOriginalPath.get(path.resolve(item.path)) ?? item.path,
@@ -3310,6 +3310,11 @@ export class AgentManager {
         .filter((item): item is Extract<typeof item, { type: 'localImage' }> => item.type === 'localImage')
         .map((item) => path.resolve(item.path)),
     )
+    const localAudioPaths = new Set(
+      referenceItems
+        .filter((item): item is Extract<typeof item, { type: 'localAudio' }> => item.type === 'localAudio')
+        .map((item) => path.resolve(item.path)),
+    )
     const skillItems: AgentInput['items'] = (payload.skills ?? [])
       // Defensive dedupe — if the renderer detected `$foo $foo` we still want
       // a single `skill` input item, otherwise codex injects the SKILL.md
@@ -3336,6 +3341,22 @@ export class AgentManager {
           return true
         })
         .map((item) => ({ type: 'localImage' as const, path: item.localPath })),
+      // Codex 0.145 audio inputs: attached audio files travel as native
+      // `localAudio` items (codex reads the file and builds the data URI at
+      // serialization time) instead of degrading to a path-text mention.
+      // Extension fallback covers sources that stat audio files as
+      // application/octet-stream; .webm/.mp4 need an explicit audio/* mime.
+      ...savedAttachments
+        .filter((item) =>
+          item.mime.startsWith('audio/') ||
+          AUDIO_EXTENSIONS.has(path.extname(item.localPath).toLowerCase()))
+        .filter((item) => {
+          const resolved = path.resolve(item.localPath)
+          if (localAudioPaths.has(resolved)) return false
+          localAudioPaths.add(resolved)
+          return true
+        })
+        .map((item) => ({ type: 'localAudio' as const, path: item.localPath })),
     ]
 
     // Persist the user turn before kicking off the backend so that:
@@ -3638,7 +3659,9 @@ export class AgentManager {
           ? 'image'
           : a.mime.startsWith('video/')
             ? 'video'
-            : 'file',
+            : a.mime.startsWith('audio/')
+              ? 'audio'
+              : 'file',
         name: a.originalName,
         mime: a.mime,
         size: a.size,

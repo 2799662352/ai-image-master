@@ -36,6 +36,14 @@ const MIME_BY_EXT: Record<string, string> = {
   ogv: 'video/ogg',
   mov: 'video/quicktime',
   m4v: 'video/mp4',
+  // Audio (Codex 0.145 native audio inputs). `.ogg` stays mapped to
+  // video/ogg above for the thumbnail pipeline; the agent send side has its
+  // own extension fallback for it.
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  oga: 'audio/ogg',
+  opus: 'audio/opus',
   pdf: 'application/pdf',
   txt: 'text/plain',
   md: 'text/markdown',

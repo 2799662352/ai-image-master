@@ -967,15 +967,19 @@ export function MentionInput() {
   }
 
   async function onPaste(event: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> {
+    // Images AND audio ride the paste path — audio files travel to codex as
+    // native `localAudio`/`audio` input items (Codex 0.145).
+    const isMediaMime = (mime: string): boolean =>
+      mime.startsWith('image/') || mime.startsWith('audio/')
     const itemImages = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .filter((item) => item.kind === 'file' && isMediaMime(item.type))
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null)
     // Chromium normally exposes screenshots through `items`; `files` is a
     // compatibility fallback for clipboard providers that omit item entries.
     const imageFiles = itemImages.length > 0
       ? itemImages
-      : Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'))
+      : Array.from(event.clipboardData.files).filter((file) => isMediaMime(file.type))
     if (imageFiles.length === 0) return
 
     // Stop Chromium from also inserting an image URL/HTML representation into

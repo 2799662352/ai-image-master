@@ -19,6 +19,20 @@ const IMAGE_EXTENSIONS = new Set([
 ])
 
 /**
+ * Extensions that are safely audio-only. `.webm` / `.mp4` are deliberately
+ * ABSENT: they are more commonly video containers, so they only count as
+ * audio when the reference carries an explicit `audio/*` mime.
+ */
+export const AUDIO_EXTENSIONS = new Set([
+  '.wav',
+  '.mp3',
+  '.m4a',
+  '.ogg',
+  '.oga',
+  '.opus',
+])
+
+/**
  * Translate the renderer-facing AgentInput.items shape into the wire-format
  * CodexUserInput[] expected by the bundled `codex app-server`. Field names
  * follow the protocol exactly: `text_elements` is snake_case, image references
@@ -36,6 +50,10 @@ export function mapUserInput(items: AgentInput['items']): CodexUserInput[] {
         return { type: 'localImage', path: item.path }
       case 'image':
         return { type: 'image', url: item.url }
+      case 'localAudio':
+        return { type: 'localAudio', path: item.path }
+      case 'audio':
+        return { type: 'audio', url: item.url }
       case 'skill':
         return { type: 'skill', name: item.name, path: item.path }
       case 'mention':
@@ -113,6 +131,7 @@ export async function mapReferencesToInputItems(
   const textMentions: string[] = []
   const skippedReferences: string[] = []
   const seenLocalImages = new Set<string>()
+  const seenLocalAudio = new Set<string>()
   const normalizedAllowedRoots = await Promise.all(allowedRoots.map((root) => fs.realpath(root).catch(() => undefined)))
   const realAllowedRoots = normalizedAllowedRoots.filter((root): root is string => typeof root === 'string')
 
@@ -139,6 +158,11 @@ export async function mapReferencesToInputItems(
           seenLocalImages.add(resolvedPath)
           items.push({ type: 'localImage', path: resolvedPath })
         }
+      } else if (isAudioReference(reference, resolvedPath)) {
+        if (!seenLocalAudio.has(resolvedPath)) {
+          seenLocalAudio.add(resolvedPath)
+          items.push({ type: 'localAudio', path: resolvedPath })
+        }
       } else {
         textMentions.push(`${reference.label}: ${resolvedPath}`)
       }
@@ -152,6 +176,8 @@ export async function mapReferencesToInputItems(
       }
       if (isImageReference(reference, safeUrl.pathname)) {
         items.push({ type: 'image', url: safeUrl.toString() })
+      } else if (isAudioReference(reference, safeUrl.pathname)) {
+        items.push({ type: 'audio', url: safeUrl.toString() })
       }
     }
   }
@@ -187,5 +213,14 @@ function isImageReference(reference: AgentReference, nameOrPath: string): boolea
     reference.openBehavior === 'image' ||
     reference.preview?.mime?.startsWith('image/') === true ||
     IMAGE_EXTENSIONS.has(path.extname(nameOrPath).toLowerCase())
+  )
+}
+
+function isAudioReference(reference: AgentReference, nameOrPath: string): boolean {
+  return (
+    reference.type === 'audio' ||
+    reference.openBehavior === 'audio' ||
+    reference.preview?.mime?.startsWith('audio/') === true ||
+    AUDIO_EXTENSIONS.has(path.extname(nameOrPath).toLowerCase())
   )
 }
