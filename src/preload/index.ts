@@ -40,6 +40,7 @@ import type {
   AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
+  AgentThreadBranchResult,
   AgentStreamEvent,
   AgentThreadSummary,
   AgentToolRequest,
@@ -265,6 +266,7 @@ const IPC_CHANNELS = {
     LIST_CODEX_THREADS: 'agent:list-codex-threads',
     READ_CODEX_THREAD: 'agent:read-codex-thread',
     FORK_CODEX_THREAD: 'agent:fork-codex-thread',
+    THREAD_BRANCH_BEFORE_MESSAGE: 'agent:thread-branch-before-message',
     ARCHIVE_CODEX_THREAD: 'agent:archive-codex-thread',
     UNARCHIVE_CODEX_THREAD: 'agent:unarchive-codex-thread',
     CODEX_DOCTOR: 'agent:codex-doctor',
@@ -587,6 +589,16 @@ export interface ElectronAPI {
     listCodexThreads: (params?: { archived?: boolean; searchTerm?: string }) => Promise<CodexThreadSummary[]>
     readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
     forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
+    /**
+     * Edit-and-resend server-side context branch: fork the codex thread
+     * before the edited message's turn (`thread/fork` + `lastTurnId`) and
+     * truncate DB rows at/after the edit point. `data.branched === false`
+     * = degraded to legacy same-thread resend (renderer proceeds unchanged).
+     */
+    branchThreadBeforeMessage: (
+      threadId: string,
+      messageId: string,
+    ) => Promise<{ ok: boolean; error?: string; data?: AgentThreadBranchResult }>
     archiveCodexThread: (threadId: string) => Promise<AgentApiResult>
     unarchiveCodexThread: (threadId: string) => Promise<{ ok: boolean; error?: string; thread?: CodexThreadSummary }>
     codexDoctor: () => Promise<{ ok: boolean; error?: string; report?: DoctorReport }>
@@ -1290,6 +1302,13 @@ const electronAPI: ElectronAPI = {
 
     forkCodexThread: (threadId: string) =>
       safeInvoke<CodexThreadSummary>(IPC_CHANNELS.AGENT.FORK_CODEX_THREAD, threadId),
+
+    branchThreadBeforeMessage: (threadId: string, messageId: string) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: AgentThreadBranchResult }>(
+        IPC_CHANNELS.AGENT.THREAD_BRANCH_BEFORE_MESSAGE,
+        threadId,
+        messageId,
+      ),
 
     archiveCodexThread: (threadId: string) =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.ARCHIVE_CODEX_THREAD, threadId),

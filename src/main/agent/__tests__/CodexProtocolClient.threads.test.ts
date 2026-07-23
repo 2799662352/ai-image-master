@@ -221,6 +221,28 @@ describe('CodexProtocolClient thread history wrappers', () => {
     })
   })
 
+  it('forkThread forwards lastTurnId (edit-and-resend branch point, codex 0.145 ThreadForkParams)', async () => {
+    await startClient()
+
+    await client!.forkThread('codex-thread-1', undefined, 'turn-3')
+
+    const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/fork')
+    expect(request?.params).toEqual({
+      threadId: 'codex-thread-1',
+      lastTurnId: 'turn-3',
+    })
+  })
+
+  it('forkThread keeps lastTurnId completely absent from the wire when not given (old-binary compat)', async () => {
+    await startClient()
+
+    await client!.forkThread('codex-thread-1')
+
+    const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/fork')
+    expect(request?.params).toEqual({ threadId: 'codex-thread-1' })
+    expect(Object.keys(request?.params as object)).not.toContain('lastTurnId')
+  })
+
   it('resumeThread forwards the per-thread context pin via config (Plan B)', async () => {
     await startClient()
 

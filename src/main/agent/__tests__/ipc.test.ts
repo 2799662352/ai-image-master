@@ -52,6 +52,7 @@ interface FakeManager {
   listCodexThreads: ReturnType<typeof vi.fn>
   readCodexThread: ReturnType<typeof vi.fn>
   forkCodexThread: ReturnType<typeof vi.fn>
+  branchThreadBeforeMessage: ReturnType<typeof vi.fn>
   getProvidersSnapshot: ReturnType<typeof vi.fn>
   setActiveProvider: ReturnType<typeof vi.fn>
   setProviderApiKey: ReturnType<typeof vi.fn>
@@ -80,6 +81,7 @@ function makeManager(): FakeManager {
     listCodexThreads: vi.fn().mockResolvedValue([]),
     readCodexThread: vi.fn().mockResolvedValue({ id: 'codex-1' }),
     forkCodexThread: vi.fn().mockResolvedValue({ id: 'codex-fork-1' }),
+    branchThreadBeforeMessage: vi.fn().mockResolvedValue({ branched: true, mode: 'fork' }),
     getProvidersSnapshot: vi.fn().mockResolvedValue({
       builtins: [{ id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' }],
       custom: [],
@@ -334,6 +336,30 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(manager.forkCodexThread).toHaveBeenCalledWith('codex-1')
     await expect(readHandler!({}, '')).rejects.toThrow(/non-empty/)
     await expect(forkHandler!({}, '   ')).rejects.toThrow(/non-empty/)
+  })
+
+  it('agent:thread-branch-before-message validates args and wraps the result in the {ok,data} envelope', async () => {
+    const handler = get('agent:thread-branch-before-message')
+    expect(handler).toBeTypeOf('function')
+
+    const result = (await handler!({}, 'db-t1', 'row-9')) as {
+      ok: boolean
+      data?: { branched: boolean; mode?: string }
+    }
+    expect(manager.branchThreadBeforeMessage).toHaveBeenCalledWith('db-t1', 'row-9')
+    expect(result).toEqual({ ok: true, data: { branched: true, mode: 'fork' } })
+
+    const badThread = (await handler!({}, '', 'row-9')) as { ok: boolean; error?: string }
+    expect(badThread.ok).toBe(false)
+    expect(badThread.error).toMatch(/non-empty/)
+
+    const badMessage = (await handler!({}, 'db-t1', '  ')) as { ok: boolean; error?: string }
+    expect(badMessage.ok).toBe(false)
+    expect(badMessage.error).toMatch(/non-empty/)
+
+    manager.branchThreadBeforeMessage.mockRejectedValueOnce(new Error('boom'))
+    const failed = (await handler!({}, 'db-t1', 'row-9')) as { ok: boolean; error?: string }
+    expect(failed).toEqual({ ok: false, error: 'boom' })
   })
 
   it('agent:get-providers wraps the snapshot with ok:true', async () => {

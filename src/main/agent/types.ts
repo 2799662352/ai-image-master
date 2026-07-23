@@ -177,7 +177,16 @@ export interface IAgentBackend {
   respondToApprovalResponse?(response: CodexApprovalResponse): Promise<void> | void
   listThreads?(params?: ListThreadsParams): Promise<CodexThreadSummary[]>
   readThread?(threadId: string): Promise<CodexThreadDetail>
-  forkThread?(threadId: string, overrides?: CodexThreadConfigOverrides): Promise<CodexThreadSummary>
+  /**
+   * `lastTurnId` = fork through that turn INCLUSIVE, omitting everything
+   * after it (codex 0.145 ThreadForkParams) — the edit-and-resend
+   * "server-side context branch" primitive. Omitted = full-history fork.
+   */
+  forkThread?(
+    threadId: string,
+    overrides?: CodexThreadConfigOverrides,
+    lastTurnId?: string,
+  ): Promise<CodexThreadSummary>
   /**
    * Drop this connection's turn/item-event subscription for a codex thread
    * (`thread/unsubscribe`). Used after an in-process provider switch forks a
