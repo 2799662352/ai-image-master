@@ -9,6 +9,7 @@ import { classify } from './classify'
 const FX_WIDTH_KEY = 'agent-chat:fx-tree-width'
 const FX_WORKSPACE_KEY = 'agent-chat:fx-workspace-root'
 const FX_OPEN_KEY = 'agent-chat:fx-open'
+const FX_COLLAPSED_KEY = 'agent-chat:fx-collapsed'
 
 const clampWidth = (w: number): number => Math.max(200, Math.min(360, w))
 
@@ -60,6 +61,12 @@ type FileWatchEvent = {
 
 type State = {
   fxOpen: boolean
+  /**
+   * 「收起但保持挂载」:面板用 CSS 滑出屏幕左侧,左缘留一个把手。与
+   * fxOpen=false(整个卸载)不同 —— tldraw 画布是 agent canvas_* 工具的
+   * 运行时(见 ViewerHost keep-alive 注释),收起绝不能触发卸载。
+   */
+  fxCollapsed: boolean
   fxTreeWidth: number
   workspaceRoot: string | null
   workspaceTree: FileNode[]
@@ -87,6 +94,7 @@ type State = {
 type Actions = {
   toggleFx: () => void
   setFxOpen: (open: boolean) => void
+  toggleFxCollapsed: () => void
   setFxTreeWidth: (w: number) => void
   loadWorkspaceFolders: () => Promise<void>
   pickWorkspaceFolder: () => Promise<void>
@@ -412,6 +420,7 @@ function makeInitialState(): State {
   const workspaceRoots = readWorkspaceRoots()
   return {
     fxOpen: readStorage(FX_OPEN_KEY) === '1',
+    fxCollapsed: readStorage(FX_COLLAPSED_KEY) === '1',
     fxTreeWidth: clampWidth(Number.isFinite(rawWidth) ? rawWidth : 240),
     workspaceRoot: workspaceRoots[0] ?? null,
     workspaceTree: [],
@@ -429,6 +438,17 @@ function makeInitialState(): State {
   }
 }
 
+/**
+ * 「自动打开面板」的路径(openCanvasTab / openAiChange / openReference 等)
+ * 统一走这里:置 fxOpen 并解除 fxCollapsed(否则 agent 打开文件时面板还
+ * 收在左边,用户什么都看不见),两个标记同时持久化。
+ */
+function fxPanelVisibleState(): { fxOpen: true; fxCollapsed: false } {
+  writeStorage(FX_OPEN_KEY, '1')
+  writeStorage(FX_COLLAPSED_KEY, '0')
+  return { fxOpen: true, fxCollapsed: false }
+}
+
 let pendingDoc = ''
 
 export const useFileExplorerStore = create<State & Actions>((set, get) => ({
@@ -438,13 +458,31 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     set((s) => {
       const next = !s.fxOpen
       writeStorage(FX_OPEN_KEY, next ? '1' : '0')
+      // 打开永远展示完整面板:否则「收着的面板被打开」= 用户看到一片空。
+      if (next && s.fxCollapsed) {
+        writeStorage(FX_COLLAPSED_KEY, '0')
+        return { fxOpen: next, fxCollapsed: false }
+      }
       return { fxOpen: next }
     })
   },
 
   setFxOpen: (open) => {
     writeStorage(FX_OPEN_KEY, open ? '1' : '0')
+    if (open) {
+      writeStorage(FX_COLLAPSED_KEY, '0')
+      set({ fxOpen: open, fxCollapsed: false })
+      return
+    }
     set({ fxOpen: open })
+  },
+
+  toggleFxCollapsed: () => {
+    set((s) => {
+      const next = !s.fxCollapsed
+      writeStorage(FX_COLLAPSED_KEY, next ? '1' : '0')
+      return { fxCollapsed: next }
+    })
   },
 
   setFxTreeWidth: (w) => {
@@ -609,8 +647,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   openCanvasTab: () => {
     const existing = get().tabs.find((t) => t.kind === 'canvas')
     if (existing) {
-      set((s) => ({ fxOpen: true, activeTabId: existing.id, scrollActiveTabToken: s.scrollActiveTabToken + 1 }))
-      writeStorage(FX_OPEN_KEY, '1')
+      set((s) => ({ ...fxPanelVisibleState(), activeTabId: existing.id, scrollActiveTabToken: s.scrollActiveTabToken + 1 }))
       return
     }
     const tab: FileTab = {
@@ -624,8 +661,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       diskMtime: 0,
       dirty: false,
     }
-    set((s) => ({ fxOpen: true, activeTabId: tab.id, tabs: [...s.tabs, tab] }))
-    writeStorage(FX_OPEN_KEY, '1')
+    set((s) => ({ ...fxPanelVisibleState(), activeTabId: tab.id, tabs: [...s.tabs, tab] }))
   },
 
   openAiChange: async (change) => {
@@ -633,11 +669,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     const existing = get().tabs.find((t) => t.kind === 'ai-change' && t.aiChangeKey === key)
     if (existing) {
       set((s) => ({
+        ...fxPanelVisibleState(),
         activeTabId: existing.id,
-        fxOpen: true,
         scrollActiveTabToken: s.scrollActiveTabToken + 1,
       }))
-      writeStorage(FX_OPEN_KEY, '1')
       return
     }
 
@@ -663,11 +698,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
 
     set((s) => ({
-      fxOpen: true,
+      ...fxPanelVisibleState(),
       activeTabId: id,
       tabs: [...s.tabs, tab],
     }))
-    writeStorage(FX_OPEN_KEY, '1')
   },
 
   openReference: async (reference) => {
@@ -686,8 +720,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
           (tab) => tab.kind !== 'reference' && tab.path === localPath,
         )
         if (openedTab && get().activeTabId === openedTab.id) {
-          set({ fxOpen: true })
-          writeStorage(FX_OPEN_KEY, '1')
+          set(fxPanelVisibleState())
           return
         }
       } catch {
@@ -698,11 +731,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     const existing = get().tabs.find((t) => t.referenceKey === reference.id)
     if (existing) {
       set((s) => ({
+        ...fxPanelVisibleState(),
         activeTabId: existing.id,
-        fxOpen: true,
         scrollActiveTabToken: s.scrollActiveTabToken + 1,
       }))
-      writeStorage(FX_OPEN_KEY, '1')
       return
     }
 
@@ -722,11 +754,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
 
     set((s) => ({
-      fxOpen: true,
+      ...fxPanelVisibleState(),
       activeTabId: id,
       tabs: [...s.tabs, tab],
     }))
-    writeStorage(FX_OPEN_KEY, '1')
   },
 
   closeTab: async (tabId, options) => {

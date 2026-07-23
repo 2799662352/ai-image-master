@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useAgentChatStore } from '../store'
 import {
   BUILT_IN_PETS,
@@ -398,21 +399,94 @@ function PetPicker() {
   )
 }
 
+/**
+ * 层级适配(2026-07):聊天面板 <aside> 自身是 z-[40000] + backdrop-blur 的
+ * stacking context,且 DOM 顺序在 FileExplorerPanel(同 z-[40000])之前 ——
+ * 宠物留在 aside 内部时,无论内部 z 多大都会被工作区展示栏浮层盖住(被
+ * 祖先 stacking context 钳制)。因此本体/选择器 createPortal 到
+ * document.body,fixed 容器镜像原挂载点(composer 上方)的几何位置,
+ * z 取 40001 压过工作区浮层;原位置留一个零高锚点用于测量。
+ * 外层保持 pointer-events-none、仅精灵与选择器 pointer-events-auto,
+ * 拖拽/动画/选择器语义不变。
+ */
 export function PetOverlay() {
   const petId = usePetStore((s) => s.petId)
   const pickerOpen = usePetStore((s) => s.pickerOpen)
   const state = usePetState()
   const pet = petId ? BUILT_IN_PETS.find((p) => p.id === petId) : undefined
 
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null)
+  const active = Boolean(pet) || pickerOpen
+
+  useEffect(() => {
+    if (!active) {
+      setRect(null)
+      return undefined
+    }
+    const anchor = anchorRef.current
+    if (!anchor) return undefined
+    const measure = () => {
+      const r = anchor.getBoundingClientRect()
+      setRect((prev) =>
+        prev && prev.left === r.left && prev.top === r.top && prev.width === r.width
+          ? prev
+          : { left: r.left, top: r.top, width: r.width },
+      )
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    // 锚点/footer 尺寸变化(面板拖宽、composer 长高)→ 重测。
+    let ro: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measure)
+      ro.observe(anchor)
+      if (anchor.parentElement) ro.observe(anchor.parentElement)
+    }
+    // 线程侧栏开合只平移面板(尺寸不变,RO 不触发),面板 right 有 200ms
+    // 过渡 —— 监听 store 变化,立即 + 过渡结束后各补测一次。
+    const timers = new Set<number>()
+    const unsubscribe = useAgentChatStore.subscribe((s, prev) => {
+      if (s.sidebarOpen === prev.sidebarOpen && s.isOpen === prev.isOpen) return
+      measure()
+      const t = window.setTimeout(() => {
+        timers.delete(t)
+        measure()
+      }, 260)
+      timers.add(t)
+    })
+    return () => {
+      window.removeEventListener('resize', measure)
+      ro?.disconnect()
+      unsubscribe()
+      for (const t of timers) window.clearTimeout(t)
+    }
+  }, [active])
+
   if (!pet && !pickerOpen) return null
 
   return (
-    <div className="pointer-events-none relative flex items-end justify-end">
-      {/* 宠物本体:默认蹲在 composer 右上,可抓取拖走 */}
-      {pet ? <DraggablePet pet={pet} state={state} /> : null}
+    <>
+      {/* 原挂载位置的零高测量锚点:portal 容器镜像它的 left/top/width */}
+      <div ref={anchorRef} data-testid="agent-pet-anchor" aria-hidden className="pointer-events-none relative h-0" />
+      {rect
+        ? createPortal(
+            <div
+              data-testid="agent-pet-overlay-root"
+              className="pointer-events-none fixed z-[40001]"
+              style={{ left: rect.left, top: rect.top, width: rect.width }}
+            >
+              <div className="pointer-events-none relative flex items-end justify-end">
+                {/* 宠物本体:默认蹲在 composer 右上,可抓取拖走 */}
+                {pet ? <DraggablePet pet={pet} state={state} /> : null}
 
-      {/* `/pets` 选择器(官方入口,无独立按钮) */}
-      {pickerOpen ? <PetPicker /> : null}
-    </div>
+                {/* `/pets` 选择器(官方入口,无独立按钮) */}
+                {pickerOpen ? <PetPicker /> : null}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   )
 }
