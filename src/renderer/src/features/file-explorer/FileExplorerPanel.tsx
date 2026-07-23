@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { useFileExplorerStore } from './store'
 import { FileTree } from './FileTree'
-import { FileTreeIcon, CloseIcon } from './icons'
+import { FileTreeIcon, CloseIcon, ChevronLeftIcon, ChevronRightIcon } from './icons'
 import { FileTabStrip } from './FileTabStrip'
 import { LatestPreviewBanner } from './LatestPreviewBanner'
 import { FileViewer } from './FileViewer'
@@ -119,6 +119,8 @@ function ActiveViewer({ tab }: { tab: FileTab | undefined }) {
 
 export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
   const fxOpen = useFileExplorerStore((s) => s.fxOpen)
+  const fxCollapsed = useFileExplorerStore((s) => s.fxCollapsed)
+  const toggleFxCollapsed = useFileExplorerStore((s) => s.toggleFxCollapsed)
   const fxTreeWidth = useFileExplorerStore((s) => s.fxTreeWidth)
   const setFxTreeWidth = useFileExplorerStore((s) => s.setFxTreeWidth)
   const setFxOpen = useFileExplorerStore((s) => s.setFxOpen)
@@ -266,36 +268,64 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
   }, [])
 
   useEffect(() => {
-    if (!fxOpen) return undefined
+    // 收起时同样不抢键 —— 面板视觉上不存在,快捷键应回到底下的经典界面。
+    if (!fxOpen || fxCollapsed) return undefined
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [fxOpen, handleKeyDown])
+  }, [fxOpen, fxCollapsed, handleKeyDown])
 
   if (!fxOpen) return null
 
   return (
+    <>
     <div
       role="region"
       aria-label="File Explorer"
       data-file-explorer-root="true"
+      data-collapsed={fxCollapsed ? 'true' : 'false'}
+      aria-hidden={fxCollapsed}
       tabIndex={-1}
-      style={{ right: rightOffset }}
-      className="fixed bottom-0 left-0 top-0 z-[40000] flex flex-col border-r border-cyan-400/25 bg-zinc-950 shadow-[24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur outline-none"
+      // 收起 = 保持挂载,仅 CSS 滑出左侧。不能走 return null 卸载:tldraw
+      // 画布(ViewerHost keep-alive 层)是 agent canvas_* 工具的运行时,
+      // 卸载会把 editor 置空,mid-flight 工具调用报 "Canvas is not open"。
+      // translateX(-100%) 保住容器尺寸(tldraw viewport 不塌成 0×0),
+      // visibility:hidden + pointer-events-none 让底下经典生图/生视频界面
+      // 完全可交互。transform 仅在收起时内联注入 —— 展开态不留 transform,
+      // 避免给面板内 fixed 定位后代(tldraw 菜单等)造出 containing block。
+      style={{
+        right: rightOffset,
+        ...(fxCollapsed ? { transform: 'translateX(-100%)', visibility: 'hidden' as const } : {}),
+      }}
+      className={`fixed bottom-0 left-0 top-0 z-[40000] flex flex-col border-r border-cyan-400/25 bg-zinc-950 shadow-[24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur outline-none ${
+        fxCollapsed ? 'pointer-events-none' : ''
+      }`}
     >
       <header className="flex h-9 items-center justify-between border-b border-cyan-500/15 px-3">
         <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-cyan-200/70">
           <FileTreeIcon />
           Files
         </div>
-        <button
-          type="button"
-          onClick={() => setFxOpen(false)}
-          className="rounded p-1 text-cyan-300/60 hover:bg-white/5 hover:text-cyan-200"
-          aria-label="Close file explorer"
-          title="Close (Ctrl/Cmd+Shift+I)"
-        >
-          <CloseIcon />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="fx-collapse-button"
+            onClick={() => toggleFxCollapsed()}
+            className="rounded p-1 text-cyan-300/60 hover:bg-white/5 hover:text-cyan-200"
+            aria-label="Collapse file explorer"
+            title="收起(画布保持在后台,点左缘把手恢复)"
+          >
+            <ChevronLeftIcon />
+          </button>
+          <button
+            type="button"
+            onClick={() => setFxOpen(false)}
+            className="rounded p-1 text-cyan-300/60 hover:bg-white/5 hover:text-cyan-200"
+            aria-label="Close file explorer"
+            title="Close (Ctrl/Cmd+Shift+I)"
+          >
+            <CloseIcon />
+          </button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -329,5 +359,22 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
       </div>
       <ConflictModal />
     </div>
+
+    {/* 收起后的左缘把手:细长竖条,点击恢复面板。与面板同层 z,面板本体
+        已 visibility:hidden,把手是收起态下唯一可命中的浮层元素。 */}
+    {fxCollapsed ? (
+      <button
+        type="button"
+        data-testid="fx-collapsed-handle"
+        onClick={() => toggleFxCollapsed()}
+        aria-label="Expand file explorer"
+        title="展开工作区面板"
+        className="fixed bottom-0 left-0 top-0 z-[40000] flex w-7 cursor-pointer flex-col items-center justify-center gap-3 border-r border-cyan-400/25 bg-zinc-950/95 text-cyan-300/60 shadow-[8px_0_24px_rgba(34,211,238,0.12)] backdrop-blur transition-colors hover:bg-cyan-400/10 hover:text-cyan-100"
+      >
+        <ChevronRightIcon />
+        <span className="text-[10px] uppercase tracking-[0.25em] [writing-mode:vertical-rl]">Files</span>
+      </button>
+    ) : null}
+    </>
   )
 }

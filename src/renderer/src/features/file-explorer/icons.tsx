@@ -47,6 +47,12 @@ export const ChevronRightIcon = (p: { className?: string }) => (
   </svg>
 )
 
+export const ChevronLeftIcon = (p: { className?: string }) => (
+  <svg width="12" height="12" viewBox="0 0 24 24" {...stroke} className={p.className}>
+    <path d="M15 6l-6 6 6 6" />
+  </svg>
+)
+
 export const CloseIcon = (p: { className?: string }) => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...stroke} className={p.className}>
     <path d="M6 6l12 12M6 18L18 6" />
