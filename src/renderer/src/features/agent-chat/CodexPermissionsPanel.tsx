@@ -63,6 +63,11 @@ interface CodexPermissionsPanelProps {
   ) => Promise<void> | void
   /** Optional factory reset (clears the persisted snapshot). Hidden when absent. */
   onReset?: () => Promise<void> | void
+  /**
+   * Optional global memory wipe (`memory/reset` RPC). Hidden when absent.
+   * Gated behind a two-step inline confirm (jsdom forbids window.confirm).
+   */
+  onResetMemory?: () => Promise<{ ok: boolean; error?: string }>
 }
 
 type Draft = Pick<
@@ -75,12 +80,16 @@ type Draft = Pick<
   | 'showRawReasoning'
   | 'modelVerbosity'
   | 'notifyOnTurnComplete'
+  | 'memoriesEnabled'
 >
 
-export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermissionsPanelProps) {
+export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory }: CodexPermissionsPanelProps) {
   const [draft, setDraft] = useState<Draft | undefined>(() => statusToDraft(status))
   const [applying, setApplying] = useState(false)
   const [persist, setPersist] = useState(false)
+  const [memoryResetArmed, setMemoryResetArmed] = useState(false)
+  const [memoryResetBusy, setMemoryResetBusy] = useState(false)
+  const [memoryNotice, setMemoryNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
     setDraft(statusToDraft(status))
@@ -101,6 +110,7 @@ export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermiss
     if (draft.showRawReasoning !== baseline.showRawReasoning) next.showRawReasoning = draft.showRawReasoning
     if (draft.modelVerbosity !== baseline.modelVerbosity) next.modelVerbosity = draft.modelVerbosity
     if (draft.notifyOnTurnComplete !== baseline.notifyOnTurnComplete) next.notifyOnTurnComplete = draft.notifyOnTurnComplete
+    if (draft.memoriesEnabled !== baseline.memoriesEnabled) next.memoriesEnabled = draft.memoriesEnabled
     return next
   }, [draft, status])
 
@@ -143,6 +153,28 @@ export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermiss
       setPersist(false)
     } finally {
       setApplying(false)
+    }
+  }
+
+  async function confirmMemoryReset(): Promise<void> {
+    if (!onResetMemory) return
+    setMemoryResetArmed(false)
+    setMemoryResetBusy(true)
+    setMemoryNotice(null)
+    try {
+      const result = await onResetMemory()
+      if (result?.ok) {
+        setMemoryNotice({ tone: 'ok', text: '记忆已清除。' })
+      } else {
+        setMemoryNotice({ tone: 'error', text: result?.error ?? '清除记忆失败。' })
+      }
+    } catch (error) {
+      setMemoryNotice({
+        tone: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setMemoryResetBusy(false)
     }
   }
 
@@ -243,6 +275,64 @@ export function CodexPermissionsPanel({ status, onApply, onReset }: CodexPermiss
             仅在窗口未聚焦时提醒;任务完成或失败都会通知,点击通知返回应用。
           </p>
         </fieldset>
+        <fieldset className="rounded-lg border border-zinc-800/80 bg-black/20 p-2">
+          <legend className="px-1 text-[11px] font-medium text-zinc-400">
+            跨会话记忆 <span className="font-mono text-[10px] text-zinc-600">Memories</span>
+          </legend>
+          <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[11px] text-zinc-300 transition-colors duration-200 hover:bg-cyan-400/5">
+            <input
+              type="checkbox"
+              checked={draft.memoriesEnabled}
+              onChange={() => setDraft({ ...draft, memoriesEnabled: !draft.memoriesEnabled })}
+              className="h-3 w-3 cursor-pointer accent-cyan-300"
+            />
+            <span>启用跨会话记忆</span>
+          </label>
+          <p className="mt-1 px-0.5 text-[10px] leading-4 text-zinc-500">
+            让助手跨聊天记住你的偏好与决定;开关在重启应用后生效。
+          </p>
+          {onResetMemory ? (
+            <div className="mt-1.5 flex items-center gap-1.5 px-0.5">
+              {memoryResetArmed ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={memoryResetBusy}
+                    onClick={() => void confirmMemoryReset()}
+                    className="cursor-pointer rounded-md border border-rose-500/40 px-2 py-0.5 text-[10px] text-rose-100 transition-colors duration-200 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    确认清除
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMemoryResetArmed(false)}
+                    className="cursor-pointer rounded-md border border-zinc-700/70 px-2 py-0.5 text-[10px] text-zinc-300 transition-colors duration-200 hover:bg-zinc-800/60"
+                  >
+                    取消
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={memoryResetBusy}
+                  onClick={() => setMemoryResetArmed(true)}
+                  className="cursor-pointer rounded-md border border-zinc-700/70 px-2 py-0.5 text-[10px] text-zinc-300 transition-colors duration-200 hover:border-rose-400/50 hover:text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  清除记忆
+                </button>
+              )}
+            </div>
+          ) : null}
+          {memoryNotice ? (
+            <p
+              className={`mt-1 px-0.5 text-[10px] leading-4 ${
+                memoryNotice.tone === 'ok' ? 'text-emerald-300' : 'text-rose-300'
+              }`}
+            >
+              {memoryNotice.text}
+            </p>
+          ) : null}
+        </fieldset>
       </div>
 
       {status.writableRoots.length > 0 ? (
@@ -307,6 +397,9 @@ function statusToDraft(status?: CodexSessionStatus): Draft | undefined {
     showRawReasoning: status.showRawReasoning ?? true,
     modelVerbosity: status.modelVerbosity ?? 'default',
     notifyOnTurnComplete: status.notifyOnTurnComplete ?? true,
+    // Older main-process builds omit the field; ON mirrors the historical
+    // hardcoded `features.memories=true` launch pin.
+    memoriesEnabled: status.memoriesEnabled ?? true,
   }
 }
 

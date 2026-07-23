@@ -471,6 +471,15 @@ export interface CodexSessionConfig {
    * (thread/start overlay and launch args read keys explicitly).
    */
   notifyOnTurnComplete: boolean
+  /**
+   * Cross-session memory (Codex native memories subsystem, 2026-07). Rides
+   * the launch `-c features.memories=<bool>` arg ONLY — always emitted
+   * explicitly (never omitted) so a future upstream default flip can't
+   * override the user's choice. Default `true` preserves the previously
+   * hardcoded `features.memories=true` behavior; changes take effect on the
+   * next codex restart (the feature is evaluated at engine session start).
+   */
+  memoriesEnabled: boolean
   writableRoots: string[]
 }
 
@@ -489,6 +498,7 @@ export interface CodexSessionStatus {
   showRawReasoning?: boolean
   modelVerbosity?: CodexModelVerbosity
   notifyOnTurnComplete?: boolean
+  memoriesEnabled?: boolean
   /**
    * True when the CURRENT defaults come from a user-saved snapshot
    * (electron-store persistence). Lets the settings panel show a

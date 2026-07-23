@@ -212,6 +212,14 @@ export interface CodexCollaborationModeMask {
 
 export interface CollaborationModeListResponse { data: CodexCollaborationModeMask[] }
 
+/**
+ * Per-thread memory eligibility (`thread/memoryMode/set.mode`). Mirrors
+ * upstream `ThreadMemoryMode` @ v2/thread.rs rust-v0.145.0 —
+ * `#[serde(rename_all = "lowercase")]`, so the wire values are exactly
+ * `enabled` / `disabled`.
+ */
+export type CodexThreadMemoryMode = 'enabled' | 'disabled'
+
 /** Stable app-server v2 `model/list` catalog row (Codex 0.144.1 schema). */
 export interface CodexModelServiceTier {
   id: string

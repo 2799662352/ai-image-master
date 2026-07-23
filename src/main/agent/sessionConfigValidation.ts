@@ -111,6 +111,13 @@ export function validateSessionConfigPatch(
     patch.notifyOnTurnComplete = source.notifyOnTurnComplete
   }
 
+  if ('memoriesEnabled' in source) {
+    if (typeof source.memoriesEnabled !== 'boolean') {
+      throw new Error('invalid memoriesEnabled')
+    }
+    patch.memoriesEnabled = source.memoriesEnabled
+  }
+
   if ('writableRoots' in source) {
     if (!Array.isArray(source.writableRoots)) {
       throw new Error('writableRoots must be a string array')

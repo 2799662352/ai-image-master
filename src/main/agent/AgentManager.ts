@@ -76,6 +76,7 @@ import type {
   CodexCollaborationModeMask,
   CodexModelListResponse,
   CodexThreadConfigOverrides,
+  CodexThreadMemoryMode,
 } from './codexProtocol'
 import {
   CodexRuntimeSettingsStore,
@@ -1393,6 +1394,7 @@ export class AgentManager {
       showRawReasoning: this.sessionConfig.showRawReasoning,
       modelVerbosity: this.sessionConfig.modelVerbosity,
       notifyOnTurnComplete: this.sessionConfig.notifyOnTurnComplete,
+      memoriesEnabled: this.sessionConfig.memoriesEnabled,
       persistedDefaults: this.sessionConfigPersisted,
       writableRoots: [...this.sessionConfig.writableRoots],
     }
@@ -2514,6 +2516,48 @@ export class AgentManager {
       }
       await this.backend.compactThread(codexThreadId)
       return { ok: true, data: { started: true } }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // ─── Cross-session memory (thread/memoryMode/set + memory/reset) ──────────
+  // Both are `#[experimental]` @ rust-v0.145.0 and reachable because the
+  // production backend announces `experimentalApi: true` at initialize.
+
+  /**
+   * Toggle memory eligibility for ONE thread. `mode` crosses the IPC boundary
+   * as untrusted input, so it is validated here before touching the backend.
+   */
+  async setThreadMemoryModeRpc(
+    dbThreadId: string,
+    mode: CodexThreadMemoryMode,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (mode !== 'enabled' && mode !== 'disabled') {
+        return { ok: false, error: `invalid memory mode: ${String(mode)}` }
+      }
+      if (!this.backend.setThreadMemoryMode) throw new Error('Memory mode API unavailable')
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
+      if (!codexThreadId) {
+        return { ok: false, error: '先发一条消息创建会话,再调整该会话的记忆模式。' }
+      }
+      await this.backend.setThreadMemoryMode(codexThreadId, mode)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /**
+   * Wipe the global `$CODEX_HOME/memories/` store (`memory/reset`). Global —
+   * no thread id; the settings panel gates it behind a two-step confirm.
+   */
+  async resetMemoryRpc(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!this.backend.resetMemory) throw new Error('Memory reset API unavailable')
+      await this.backend.resetMemory()
+      return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

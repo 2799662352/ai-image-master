@@ -126,9 +126,11 @@ describe('buildCodexLaunchArgs', () => {
   })
 
   it('enables native cross-session memory via the verified `memories` feature key', () => {
-    // Feature key confirmed against the shipped 0.142.2 binary
-    // (experimentalFeature/list → `memories`, stage=beta, default off). The
-    // docs-implied `memory` key does NOT exist; using it would silently no-op.
+    // Feature key originally confirmed against the shipped 0.142.2 binary and
+    // RE-verified on 0.145.0 (scripts/smoke-codex-memories.ts:
+    // experimentalFeature/list → name=`memories`, stage=stable,
+    // defaultEnabled=false). The docs-implied `memory` key does NOT exist;
+    // using it would silently no-op.
     const args = buildCodexLaunchArgs()
     expect(args).toContain('features.memories=true')
     // Must NOT use the wrong (non-existent) key.
@@ -139,6 +141,22 @@ describe('buildCodexLaunchArgs', () => {
       catimationMcp: { port: 7842, token: 'deadbeef' },
     })
     expect(withMcp).toContain('features.memories=true')
+  })
+
+  it('emits an EXPLICIT features.memories=false when the user turns memory off', () => {
+    // Explicit false rather than omitting the key: the flag is Stable with
+    // default_enabled=false on 0.145 (PR #31804), but a future binary may
+    // flip the default — an explicit `-c` keeps the user's OFF choice
+    // authoritative regardless of upstream defaults.
+    const args = buildCodexLaunchArgs({ sessionConfig: { memoriesEnabled: false } })
+    expect(args).toContain('features.memories=false')
+    expect(args).not.toContain('features.memories=true')
+  })
+
+  it('keeps features.memories=true when memoriesEnabled is explicitly true', () => {
+    const args = buildCodexLaunchArgs({ sessionConfig: { memoriesEnabled: true } })
+    expect(args).toContain('features.memories=true')
+    expect(args).not.toContain('features.memories=false')
   })
 
   it('pins memories side-request models to the channel model (grok 400 fix)', () => {

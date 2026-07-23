@@ -43,6 +43,7 @@ type AgentEventApi = {
       options?: { persist?: boolean },
     ) => Promise<CodexSessionStatus | void>
     resetSessionConfig?: () => Promise<CodexSessionStatus | void>
+    resetMemory?: () => Promise<{ ok: boolean; error?: string }>
     restartCodex?: () => Promise<{ ok: boolean; error?: string }>
   }
 }
@@ -220,6 +221,18 @@ export function AgentChatPanel() {
       setError(undefined)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function resetMemory(): Promise<{ ok: boolean; error?: string }> {
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    if (!agent?.resetMemory) {
+      return { ok: false, error: 'Electron memory reset API is unavailable' }
+    }
+    try {
+      return await agent.resetMemory()
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   }
 
@@ -445,6 +458,7 @@ export function AgentChatPanel() {
                 status={codexStatus}
                 onApply={applySessionConfig}
                 onReset={resetSessionConfig}
+                onResetMemory={resetMemory}
               />
             </div>
           </div>

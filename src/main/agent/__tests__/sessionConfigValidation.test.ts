@@ -81,6 +81,18 @@ describe('validateSessionConfigPatch', () => {
       .toEqual({})
   })
 
+  it('accepts the memoriesEnabled boolean (cross-session memory toggle)', () => {
+    expect(validateSessionConfigPatch({ memoriesEnabled: false }, []))
+      .toEqual({ memoriesEnabled: false })
+    expect(validateSessionConfigPatch({ memoriesEnabled: true }, []))
+      .toEqual({ memoriesEnabled: true })
+  })
+
+  it('rejects non-boolean memoriesEnabled values', () => {
+    expect(() => validateSessionConfigPatch({ memoriesEnabled: 'on' }, [])).toThrow(/memoriesEnabled/i)
+    expect(() => validateSessionConfigPatch({ memoriesEnabled: 1 }, [])).toThrow(/memoriesEnabled/i)
+  })
+
   it('returns writableRoots that cannot be mutated through the input array', () => {
     const root = path.resolve('D:/workspace')
     const inputRoots = [root]

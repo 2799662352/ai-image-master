@@ -282,6 +282,8 @@ const IPC_CHANNELS = {
     GOAL_GET: 'agent:goal-get',
     GOAL_CLEAR: 'agent:goal-clear',
     COMPACT_START: 'agent:compact-start',
+    MEMORY_MODE_SET: 'agent:memory-mode-set',
+    MEMORY_RESET: 'agent:memory-reset',
     COLLABORATION_CAPABILITIES: 'agent:collaboration-capabilities',
     COLLABORATION_UPDATE: 'agent:collaboration-update',
     MODEL_SETTINGS_CATALOG: 'agent:model-settings-catalog',
@@ -629,6 +631,13 @@ export interface ElectronAPI {
     clearGoal: (threadId: string) => Promise<GoalRpcResult<{ cleared: boolean }>>
     onGoal: (handler: (event: any) => void) => () => void
     compactThread: (threadId: string) => Promise<GoalRpcResult<{ started: boolean }>>
+    // Cross-session memory (thread/memoryMode/set + memory/reset, 0.145
+    // experimental surface). threadId = DB thread id; reset is global.
+    setThreadMemoryMode: (
+      threadId: string,
+      mode: 'enabled' | 'disabled',
+    ) => Promise<{ ok: boolean; error?: string }>
+    resetMemory: () => Promise<{ ok: boolean; error?: string }>
     // Codex native plugin / marketplace / apps / external-agent-import (≥0.140)
     listPlugins: (params?: PluginListParams) => Promise<{ ok: boolean; error?: string; data?: PluginListResponse }>
     listInstalledPlugins: (params?: PluginInstalledParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>
@@ -1392,6 +1401,13 @@ const electronAPI: ElectronAPI = {
 
     compactThread: (threadId: string) =>
       safeInvoke<GoalRpcResult<{ started: boolean }>>(IPC_CHANNELS.AGENT.COMPACT_START, threadId),
+
+    // ----- Cross-session memory (thread/memoryMode/set + memory/reset) -----
+    setThreadMemoryMode: (threadId: string, mode: 'enabled' | 'disabled') =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MEMORY_MODE_SET, threadId, mode),
+
+    resetMemory: () =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MEMORY_RESET),
 
     onGoal: (handler: (event: any) => void) =>
       safeOnWithCleanup<any>('agent:goal', handler, IPC_CHANNELS.AGENT_GOAL_EVENTS),

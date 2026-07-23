@@ -16,6 +16,7 @@ import {
   type CodexModelListParams,
   type CodexModelListResponse,
   type CodexThreadConfigOverrides,
+  type CodexThreadMemoryMode,
   type ServerMessage,
   type ThreadSettingsUpdateParams,
   type ThreadSettingsUpdateResponse,
@@ -538,17 +539,27 @@ export class CodexProtocolClient {
   /**
    * List Codex feature flags with stage metadata + enabled/default state
    * (`experimentalFeature/list`, app-server v2). Used to discover the exact
-   * feature key for gated capabilities (e.g. `memory`) instead of guessing,
-   * and to drive a future memory/goals toggle surface. `threadId` computes
-   * `enabled` from that thread's refreshed config; omit for the server default.
+   * feature key for gated capabilities (e.g. `memories`) instead of guessing.
+   * `threadId` computes `enabled` from that thread's refreshed config; omit
+   * for the server default. Response shape re-pinned against
+   * v2/experimental_feature.rs @ rust-v0.145.0: rows live under `data` with a
+   * `name` key (the old `features`/`id` shape predates 0.145 and never
+   * matched the shipped wire format).
    */
   async experimentalFeatureList(params?: {
     threadId?: string
     cursor?: string
     limit?: number
   }): Promise<{
-    features: Array<{ id: string; stage: string; enabled: boolean; defaultEnabled: boolean }>
-    nextCursor?: string
+    data: Array<{
+      name: string
+      stage: string
+      enabled: boolean
+      defaultEnabled: boolean
+      displayName?: string | null
+      description?: string | null
+    }>
+    nextCursor?: string | null
   }> {
     return this.rpc('experimentalFeature/list', params ?? {})
   }
@@ -613,6 +624,36 @@ export class CodexProtocolClient {
   // a client-side prompt trick.
   async compactThread(threadId: string): Promise<Record<string, never>> {
     return this.rpc<Record<string, never>>('thread/compact/start', { threadId })
+  }
+
+  // ─── Cross-session memory (memories feature, app-server v2) ───────────────
+  // Method strings + wire shapes pinned from openai/codex
+  // `client_request_definitions!` @ common.rs and v2/thread.rs at
+  // rust-v0.145.0. Both are `#[experimental(...)]`-gated, so they require the
+  // `experimentalApi: true` constructor option (same gate as
+  // collaborationMode/list). They act on `$CODEX_HOME/memories/` maintained by
+  // the engine when `features.memories=true`.
+
+  /**
+   * Toggle memory eligibility for ONE thread (`thread/memoryMode/set`).
+   * `mode` serializes lowercase per upstream `#[serde(rename_all =
+   * "lowercase")]` on `ThreadMemoryMode`. Returns `{}`.
+   */
+  async setThreadMemoryMode(
+    params: { threadId: string; mode: CodexThreadMemoryMode },
+  ): Promise<Record<string, never>> {
+    return this.rpc<Record<string, never>>('thread/memoryMode/set', params)
+  }
+
+  /**
+   * Wipe the global memory store (`memory/reset`). Upstream declares params
+   * as `Option<()>` with `skip_serializing_if = "Option::is_none"` — an empty
+   * object would fail unit deserialization, so we pass `undefined` and rely
+   * on JSON.stringify dropping the key so the request carries NO params
+   * member at all. Returns `{}`.
+   */
+  async resetMemory(): Promise<Record<string, never>> {
+    return this.rpc<Record<string, never>>('memory/reset', undefined)
   }
 
   // ─── Native Plugin / Marketplace / Connectors RPC (app-server v2, ≥0.140) ──

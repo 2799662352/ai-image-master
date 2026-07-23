@@ -11,6 +11,7 @@ type PermissionsApi = {
       options?: { persist?: boolean },
     ) => Promise<CodexSessionStatus | void>
     resetSessionConfig?: () => Promise<CodexSessionStatus | void>
+    resetMemory?: () => Promise<{ ok: boolean; error?: string }>
   }
 }
 
@@ -71,6 +72,18 @@ export function PermissionsSection() {
     }
   }
 
+  async function resetMemory(): Promise<{ ok: boolean; error?: string }> {
+    const api = getPermissionsApi()
+    if (!api?.resetMemory) {
+      return { ok: false, error: 'Codex memory reset API is unavailable.' }
+    }
+    try {
+      return await api.resetMemory()
+    } catch (reason) {
+      return { ok: false, error: errorMessage(reason) }
+    }
+  }
+
   async function resetPermissions(): Promise<void> {
     const api = getPermissionsApi()
     if (!api?.resetSessionConfig) {
@@ -113,7 +126,12 @@ export function PermissionsSection() {
           {error}
         </section>
       ) : null}
-      <CodexPermissionsPanel status={status} onApply={applyPermissions} onReset={resetPermissions} />
+      <CodexPermissionsPanel
+        status={status}
+        onApply={applyPermissions}
+        onReset={resetPermissions}
+        onResetMemory={resetMemory}
+      />
     </>
   )
 }

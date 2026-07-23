@@ -44,6 +44,14 @@ describe('SessionConfigStore', () => {
     })
   })
 
+  it('persists the memoriesEnabled=false override and round-trips it', () => {
+    const store = new SessionConfigStore(tmpDir)
+    store.saveSync(fullConfig({ memoriesEnabled: false }))
+
+    const reloaded = new SessionConfigStore(tmpDir).loadSync()
+    expect(reloaded).toEqual({ memoriesEnabled: false })
+  })
+
   it('never persists writableRoots (workspace-scoped, runtime-owned)', () => {
     const store = new SessionConfigStore(tmpDir)
     store.saveSync(fullConfig({
