@@ -13,6 +13,7 @@ import type {
   CodexModelListParams,
   CodexModelListResponse,
   CodexThreadConfigOverrides,
+  CodexThreadMemoryMode,
   CollaborationModeListResponse,
   ThreadSettingsUpdateParams,
   ThreadSettingsUpdateResponse,
@@ -220,6 +221,13 @@ export interface IAgentBackend {
   // Native manual context compaction (thread/compact/start, app-server v2).
   // Optional — non-Codex backends omit it; the AgentManager RPC wrapper guards.
   compactThread?(threadId: string): Promise<Record<string, never>>
+
+  // Cross-session memory (memories feature; `thread/memoryMode/set` +
+  // `memory/reset`, both `#[experimental]` @ rust-v0.145.0 — need the
+  // `experimentalApi` initialize capability). Optional — non-Codex backends
+  // omit them; the AgentManager RPC wrappers guard on presence.
+  setThreadMemoryMode?(threadId: string, mode: CodexThreadMemoryMode): Promise<Record<string, never>>
+  resetMemory?(): Promise<Record<string, never>>
 
   /**
    * `collaborationMode/list` (EXPERIMENTAL, needs `experimentalApi`). Returns

@@ -31,6 +31,7 @@ import type {
   CodexModelListParams,
   CodexModelListResponse,
   CodexThreadConfigOverrides,
+  CodexThreadMemoryMode,
   CollaborationModeListResponse,
   ThreadSettingsUpdateParams,
   ThreadSettingsUpdateResponse,
@@ -825,14 +826,13 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.listModels(params)
   }
 
+  // Response shape re-pinned against v2/experimental_feature.rs @
+  // rust-v0.145.0 (`{ data: [{ name, stage, enabled, defaultEnabled, … }] }`).
   async experimentalFeatureList(params?: {
     threadId?: string
     cursor?: string
     limit?: number
-  }): Promise<{
-    features: Array<{ id: string; stage: string; enabled: boolean; defaultEnabled: boolean }>
-    nextCursor?: string
-  }> {
+  }): Promise<Awaited<ReturnType<CodexProtocolClient['experimentalFeatureList']>>> {
     if (!this.client) throw new Error('CodexLocalBackend.experimentalFeatureList called before start')
     return this.client.experimentalFeatureList(params)
   }
@@ -869,6 +869,16 @@ export class CodexLocalBackend implements IAgentBackend {
   async compactThread(threadId: string): Promise<Record<string, never>> {
     if (!this.client) throw new Error('CodexLocalBackend.compactThread called before start')
     return this.client.compactThread(threadId)
+  }
+
+  async setThreadMemoryMode(threadId: string, mode: CodexThreadMemoryMode): Promise<Record<string, never>> {
+    if (!this.client) throw new Error('CodexLocalBackend.setThreadMemoryMode called before start')
+    return this.client.setThreadMemoryMode({ threadId, mode })
+  }
+
+  async resetMemory(): Promise<Record<string, never>> {
+    if (!this.client) throw new Error('CodexLocalBackend.resetMemory called before start')
+    return this.client.resetMemory()
   }
 
   async listPlugins(params?: PluginListParams): Promise<PluginListResponse> {

@@ -33,6 +33,9 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   // Client-side only (turn-completion toast); on by default because there is
   // no prior behavior to preserve — the capability didn't exist before.
   notifyOnTurnComplete: true,
+  // Cross-session memory default ON — mirrors the previously hardcoded
+  // `features.memories=true` launch pin so fresh installs behave identically.
+  memoriesEnabled: true,
   writableRoots: [],
 }
 
@@ -235,6 +238,7 @@ export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): 
     showRawReasoning: input?.showRawReasoning ?? DEFAULT_CODEX_SESSION_CONFIG.showRawReasoning,
     modelVerbosity: (input?.modelVerbosity ?? DEFAULT_CODEX_SESSION_CONFIG.modelVerbosity) as CodexModelVerbosity,
     notifyOnTurnComplete: input?.notifyOnTurnComplete ?? DEFAULT_CODEX_SESSION_CONFIG.notifyOnTurnComplete,
+    memoriesEnabled: input?.memoriesEnabled ?? DEFAULT_CODEX_SESSION_CONFIG.memoriesEnabled,
     writableRoots: [...(input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots)],
   }
 }
@@ -430,12 +434,14 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
     // ─────────────────────────────────────────────────────────────────────────
     // Native cross-session MEMORY. Codex ships a first-party memory subsystem
-    // (codex-rs/memories/) gated behind the `memories` feature flag — verified
-    // against the shipped 0.142.2 binary via `experimentalFeature/list`
-    // (`memories`, stage=beta, default_enabled=false; NOT the docs-implied
-    // `memory`). Enabling it makes the engine, on every NON-ephemeral root
-    // session start, run a background two-phase pipeline that distills prior
-    // rollouts into `$CODEX_HOME/memories/` — `MEMORY.md` (searchable registry),
+    // (codex-rs/memories/) gated behind the `memories` feature flag —
+    // originally verified against the shipped 0.142.2 binary and RE-verified
+    // on 0.145.0 via scripts/smoke-codex-memories.ts (`experimentalFeature/
+    // list` → name=`memories`, stage=stable since PR #31804,
+    // default_enabled=false; NOT the docs-implied `memory`). Enabling it makes
+    // the engine, on every NON-ephemeral root session start, run a background
+    // two-phase pipeline that distills prior rollouts into
+    // `$CODEX_HOME/memories/` — `MEMORY.md` (searchable registry),
     // `memory_summary.md` (injected into context at session start), and
     // `rollout_summaries/` (per-session recaps + evidence). So the agent
     // "remembers" the user's preferences/decisions across chats without us
@@ -445,10 +451,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // and cloud gates, above code-default per the documented precedence), and
     // `$CODEX_HOME/memories` is already inside Codex's writable roots — doubly
     // so for us since we run `sandbox_mode="danger-full-access"`, so memory
-    // maintenance never triggers an approval. Per-thread eligibility can still
-    // be toggled later via the experimental `thread/memoryMode/set` /
-    // `memory/reset` RPCs (exposed on the protocol client) without a relaunch.
-    '-c', 'features.memories=true',
+    // maintenance never triggers an approval.
+    //
+    // User-facing toggle (设置 → 跨会话记忆): ALWAYS emitted explicitly —
+    // `true` or `false`, never omitted — so a future upstream default flip
+    // can't silently override the user's OFF choice. Takes effect on the next
+    // codex restart. The companion experimental RPCs `thread/memoryMode/set`
+    // (per-thread eligibility) and `memory/reset` (wipe the store) are wired
+    // through CodexProtocolClient.setThreadMemoryMode / resetMemory
+    // (smoke-verified on the 0.145.0 binary).
+    '-c', `features.memories=${sessionConfig.memoriesEnabled}`,
   ]
 
   // Assistant personality (session tuning). 'default' means "let codex

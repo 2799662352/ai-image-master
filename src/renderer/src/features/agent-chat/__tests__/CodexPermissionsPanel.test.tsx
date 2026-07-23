@@ -140,4 +140,77 @@ describe('CodexPermissionsPanel', () => {
     expect(screen.getByText(/设置不可用/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /应用设置/ })).toBeNull()
   })
+
+  it('defaults the 跨会话记忆 toggle to ON when the status omits the field', () => {
+    render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    expect(screen.getByRole('checkbox', { name: /启用跨会话记忆/ })).toHaveProperty('checked', true)
+  })
+
+  it('reflects memoriesEnabled=false from the status snapshot', () => {
+    render(
+      <CodexPermissionsPanel
+        status={{ ...baseStatus, memoriesEnabled: false }}
+        onApply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('checkbox', { name: /启用跨会话记忆/ })).toHaveProperty('checked', false)
+  })
+
+  it('includes memoriesEnabled in the patch when toggled off', () => {
+    const onApply = vi.fn()
+    render(<CodexPermissionsPanel status={baseStatus} onApply={onApply} />)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /启用跨会话记忆/ }))
+    fireEvent.click(screen.getByRole('button', { name: /应用设置/ }))
+
+    expect(onApply).toHaveBeenCalledWith({ memoriesEnabled: false })
+  })
+
+  it('hides 清除记忆 when onResetMemory is absent', () => {
+    render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: /清除记忆/ })).toBeNull()
+  })
+
+  it('清除记忆 requires a two-step confirm before calling onResetMemory', async () => {
+    const onResetMemory = vi.fn().mockResolvedValue({ ok: true })
+    render(
+      <CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} onResetMemory={onResetMemory} />,
+    )
+
+    // First click only arms the confirm — no RPC yet.
+    fireEvent.click(screen.getByRole('button', { name: /清除记忆/ }))
+    expect(onResetMemory).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /确认清除/ }))
+    expect(onResetMemory).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText(/记忆已清除/)).toBeTruthy()
+  })
+
+  it('清除记忆 confirm can be cancelled without firing the RPC', () => {
+    const onResetMemory = vi.fn().mockResolvedValue({ ok: true })
+    render(
+      <CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} onResetMemory={onResetMemory} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /清除记忆/ }))
+    fireEvent.click(screen.getByRole('button', { name: /取消/ }))
+
+    expect(onResetMemory).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /清除记忆/ })).toBeTruthy()
+  })
+
+  it('清除记忆 surfaces the error when the RPC fails', async () => {
+    const onResetMemory = vi.fn().mockResolvedValue({ ok: false, error: 'Memory reset API unavailable' })
+    render(
+      <CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} onResetMemory={onResetMemory} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /清除记忆/ }))
+    fireEvent.click(screen.getByRole('button', { name: /确认清除/ }))
+
+    expect(await screen.findByText(/Memory reset API unavailable/)).toBeTruthy()
+  })
 })

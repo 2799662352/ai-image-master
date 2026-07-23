@@ -63,6 +63,8 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:goal-get',
   'agent:goal-clear',
   'agent:compact-start',
+  'agent:memory-mode-set',
+  'agent:memory-reset',
   'agent:collaboration-capabilities',
   'agent:collaboration-update',
   'agent:model-settings-catalog',
@@ -344,6 +346,17 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   // ----- Native `/compact` (thread/compact/start) -----
   ipcMain.handle('agent:compact-start', async (_event, threadId: string) =>
     (await getManager()).compactThreadRpc(threadId),
+  )
+
+  // ----- Cross-session memory (thread/memoryMode/set + memory/reset) -----
+  ipcMain.handle('agent:memory-mode-set', async (_event, threadId: string, mode: unknown) =>
+    (await getManager()).setThreadMemoryModeRpc(
+      threadId,
+      mode as Parameters<AgentManager['setThreadMemoryModeRpc']>[1],
+    ),
+  )
+  ipcMain.handle('agent:memory-reset', async () =>
+    (await getManager()).resetMemoryRpc(),
   )
 
   // ----- Codex collaboration mode settings -----
