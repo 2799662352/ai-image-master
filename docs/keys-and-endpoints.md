@@ -46,9 +46,15 @@
 - MPS/COS 客户端在票据临近过期(<5 分钟)时自动换新;长任务轮询每轮
   重新取 client,25 分钟以上的去字幕任务不断票。
 - **优先级不变**:用户填了自己的密钥(设置页/.env)永远优先,STS 只是
-  零配置兜底。
-- 已知限制:STS 模式下签名 URL 的实际有效期受票据寿命限制(≤30 分钟),
-  历史记录里过期的结果链接需重新打开任务刷新。
+  零配置兜底。**格式畸形的密钥(非 `AKID` 开头,通常是误粘别家 key)会被
+  自动忽略并降级到免密钥通道**(`mediaAuth.ts`),设置页有「清除密钥」
+  按钮可一键切回免密钥模式。
+- **结果永不过期(2026-07-24)**:任务完成后,结果(去字幕视频 / 全部切片)
+  自动从媒体桶转存到历史记录页使用的公开读桶
+  (`image-master-1345773498` 的 `image-history/smart-erase/*` 与
+  `image-history/storyboard-split/*` 前缀,`tencent/historyBucketTransfer.ts`),
+  历史记录里保存的是**永久公网 URL**(`expiresAt=0`,界面显示「永久/PERM」)。
+  转存失败时退回签名 URL + 原过期时间,不影响任务成功。
 - 冒烟脚本:`pnpm exec tsx scripts/smoke-sts-media.ts`(STS 票据 → MPS
   鉴权 → COS 写删 三层实测)。
 - 云函数源码:`serverless/sts-cos/`(scope=image-history 旧行为不变,

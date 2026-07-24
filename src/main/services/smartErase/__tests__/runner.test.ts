@@ -24,11 +24,13 @@ vi.mock('../../tencent/mpsClient', () => ({
 
 vi.mock('../../tencent/credentials', () => ({
   getCredentials: () => ({
-    secretId: 'id',
+    secretId: 'AKIDtestpermanent0001',
     secretKey: 'k',
     bucket: 'demo-1300000000',
     region: 'ap-shanghai',
   }),
+  isLikelyValidSecretId: (id: string) =>
+    typeof id === 'string' && id.startsWith('AKID') && id.length >= 20,
 }))
 
 function freshJob(overrides: Record<string, any> = {}) {

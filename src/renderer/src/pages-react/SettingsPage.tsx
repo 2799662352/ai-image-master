@@ -35,6 +35,12 @@ function TencentCloudSection() {
   }, [])
 
   const handleSave = async () => {
+    // 腾讯云永久 SecretId 恒为 AKID 开头;别家 key 粘进来只会导致
+    // InvalidAccessKeyId,提前拦下。
+    if (secretId.trim() && !secretId.trim().startsWith('AKID')) {
+      addToast({ message: 'SecretId 格式不对:腾讯云永久密钥以 AKID 开头。不填则自动走免密钥通道。', type: 'error' })
+      return
+    }
     setSaving(true)
     try {
       const res = await api?.storyboardSplitSetCredentials?.({ secretId, secretKey, bucket, region })
@@ -44,6 +50,25 @@ function TencentCloudSection() {
         setSecretKey('')
       } else {
         addToast({ message: res?.error || '保存失败', type: 'error' })
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleClear = async () => {
+    setSaving(true)
+    try {
+      const res = await api?.storyboardSplitSetCredentials?.({ secretId: '', secretKey: '', bucket: '', region: '' })
+      if (res?.success) {
+        setSecretId('')
+        setSecretKey('')
+        setBucket('')
+        setRegion('ap-guangzhou')
+        setSource('sts')
+        addToast({ message: '已清除密钥,切换到免密钥 · 云端临时授权', type: 'success' })
+      } else {
+        addToast({ message: res?.error || '清除失败', type: 'error' })
       }
     } finally {
       setSaving(false)
@@ -91,13 +116,23 @@ function TencentCloudSection() {
           className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
         />
       </div>
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="w-full py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
-      >
-        {saving ? '保存中...' : '💾 保存腾讯云配置'}
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex-1 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+        >
+          {saving ? '保存中...' : '💾 保存腾讯云配置'}
+        </button>
+        <button
+          onClick={handleClear}
+          disabled={saving}
+          title="清空已保存的密钥,分镜切图 / 智能去字幕改走云端临时授权(免密钥)"
+          className="px-4 py-2 border border-zinc-600 text-zinc-300 hover:border-cyan-400 hover:text-cyan-400 text-sm font-bold uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+        >
+          清除密钥
+        </button>
+      </div>
     </section>
   )
 }

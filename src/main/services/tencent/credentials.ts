@@ -24,6 +24,16 @@ function maskSecretId(id: string): string | undefined {
   return `${id.slice(0, 4)}****`
 }
 
+/**
+ * 腾讯云永久 SecretId 恒为 `AKID` 开头的 36 位字符串。用户误把别家 API key
+ * 粘进设置页时(实测触发 COS `InvalidAccessKeyId: The access key Id format
+ * you provided is invalid`),媒体链路应视为「未配置」自动落回免密钥 STS
+ * 通道,而不是拿畸形密钥去签名。宽松校验:AKID 前缀 + 总长 ≥20。
+ */
+export function isLikelyValidSecretId(id: string): boolean {
+  return typeof id === 'string' && id.startsWith('AKID') && id.length >= 20
+}
+
 interface Resolved {
   creds: Credentials
   source: CredentialState['credentialSource']
@@ -180,9 +190,10 @@ export function getCredentials(): Credentials {
 
 export function getCredentialState(): CredentialState {
   const { creds, source } = getResolved()
-  if (!creds.secretId) {
-    // 免密钥通道:没有永久密钥时,媒体功能仍可经 SCF 云函数 STS 临时票据
-    // 运行(桶/区域随票据下发)。端点故障会在任务运行时以正常失败面呈现。
+  if (!creds.secretId || !isLikelyValidSecretId(creds.secretId)) {
+    // 免密钥通道:没有永久密钥(或存的密钥格式明显不对,会被媒体链路忽略)
+    // 时,媒体功能仍可经 SCF 云函数 STS 临时票据运行(桶/区域随票据下发)。
+    // 端点故障会在任务运行时以正常失败面呈现。
     return { hasCredentials: true, credentialSource: 'sts' }
   }
   return {

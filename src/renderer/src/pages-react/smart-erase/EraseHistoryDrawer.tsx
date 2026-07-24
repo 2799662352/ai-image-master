@@ -239,14 +239,18 @@ function HistoryRow({
   onSelect: () => void
   onRemove: (item: EraseHistoryItem) => void
 }) {
+  // videoExpiresAt === 0 ⇒ 结果已转存历史桶(公开读),URL 永不过期。
+  const permanent = item.videoExpiresAt === 0
   const expired = item.videoExpiresAt > 0 && item.videoExpiresAt < Date.now()
   const expiryMs = item.videoExpiresAt - Date.now()
 
-  const expiryBadge = expired
-    ? { text: 'EXP', cls: 'd-status-tag--fail' }
-    : expiryMs < 24 * 60 * 60 * 1000
-      ? { text: `${Math.ceil(expiryMs / 3_600_000)}H`, cls: 'd-status-tag--pending' }
-      : { text: `${Math.ceil(expiryMs / 86_400_000)}D`, cls: 'd-status-tag--ok' }
+  const expiryBadge = permanent
+    ? { text: 'PERM', cls: 'd-status-tag--ok' }
+    : expired
+      ? { text: 'EXP', cls: 'd-status-tag--fail' }
+      : expiryMs < 24 * 60 * 60 * 1000
+        ? { text: `${Math.ceil(expiryMs / 3_600_000)}H`, cls: 'd-status-tag--pending' }
+        : { text: `${Math.ceil(expiryMs / 86_400_000)}D`, cls: 'd-status-tag--ok' }
 
   return (
     <li

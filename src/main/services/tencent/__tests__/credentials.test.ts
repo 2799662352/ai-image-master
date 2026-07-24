@@ -160,16 +160,31 @@ describe('tencent/credentials', () => {
     expect(s.secretIdMasked).toBeUndefined()
   })
 
+  it('存了格式畸形的密钥(非 AKID 开头)→ 视为未配置,报告 STS 免密钥通道', async () => {
+    // 用户误把别家 API key 粘进设置页(实测导致 COS InvalidAccessKeyId)。
+    // 媒体链路应忽略它并降级免密钥,而不是拿去签名。
+    mockExistsSync.mockImplementation((p: string) => p.endsWith('.bin'))
+    mockReadFileSync.mockReturnValue(Buffer.from('enc:{"secretId":"sk-wrong-vendor-key-123456","secretKey":"k","bucket":"b","region":"ap-shanghai"}'))
+
+    const { getCredentialState, isLikelyValidSecretId } = await import('../credentials')
+    expect(isLikelyValidSecretId('sk-wrong-vendor-key-123456')).toBe(false)
+    expect(isLikelyValidSecretId('AKIDxxxxxxxxxxxxxxxxxx')).toBe(true)
+
+    const s = getCredentialState()
+    expect(s.hasCredentials).toBe(true)
+    expect(s.credentialSource).toBe('sts')
+  })
+
   it('reports credentialSource: "memory" when safeStorage unavailable and creds set in-session', async () => {
     mockSafeStorage.isEncryptionAvailable.mockReturnValue(false)
     const { setCredentials, getCredentialState } = await import('../credentials')
 
-    setCredentials({ secretId: 'mem-id', secretKey: 'mem-key', bucket: 'b', region: 'ap-shanghai' })
+    // AKID 格式才会被认作可用永久密钥(否则 getCredentialState 报 sts)
+    setCredentials({ secretId: 'AKIDmemoryfallback01', secretKey: 'mem-key', bucket: 'b', region: 'ap-shanghai' })
     const s = getCredentialState()
     expect(s.hasCredentials).toBe(true)
     expect(s.credentialSource).toBe('memory')
-    // 'mem-id' is 6 chars, so maskSecretId returns '****' (length<8 branch)
-    expect(s.secretIdMasked).toBe('****')
+    expect(s.secretIdMasked).toBe('AKID****')
   })
 
   it('migration is idempotent across repeated getCredentials calls in the same session', async () => {

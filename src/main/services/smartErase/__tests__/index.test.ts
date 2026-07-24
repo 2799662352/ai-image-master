@@ -6,6 +6,7 @@ const runUploadMock = vi.fn()
 const runProcessAndPollMock = vi.fn()
 const trackForReapingMock = vi.fn()
 const deleteObjectsMock = vi.fn()
+const transferUrlToHistoryBucketMock = vi.fn()
 const getCredentialsMock = vi.fn(() => ({
   secretId: 'sid',
   secretKey: 'sk',
@@ -26,6 +27,10 @@ vi.mock('../reaper', () => ({
 
 vi.mock('../../tencent/cosClient', () => ({
   deleteObjects: deleteObjectsMock,
+}))
+
+vi.mock('../../tencent/historyBucketTransfer', () => ({
+  transferUrlToHistoryBucket: transferUrlToHistoryBucketMock,
 }))
 
 vi.mock('../../tencent/credentials', () => ({
@@ -64,6 +69,7 @@ describe('smartErase service composer', () => {
     runProcessAndPollMock.mockReset()
     trackForReapingMock.mockReset()
     deleteObjectsMock.mockReset()
+    transferUrlToHistoryBucketMock.mockReset()
     sendSpy.mockClear()
 
     runUploadMock.mockResolvedValue({ inputCosKey: 'smart-erase/x/input/test.mp4' })
@@ -73,6 +79,9 @@ describe('smartErase service composer', () => {
       outputCosKey: 'smart-erase/x/output/done.mp4',
       mpsTaskId: 'mps-123',
     })
+    transferUrlToHistoryBucketMock.mockResolvedValue(
+      'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/smart-erase/x.mp4',
+    )
 
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
@@ -171,6 +180,43 @@ describe('smartErase service composer', () => {
     // Reaper is NOT touched by cancelAll — only by individual cancels during processing
     // (these tasks are in upload phase, no MPS submitted yet, so trackForReaping should NOT fire)
     expect(trackForReapingMock).not.toHaveBeenCalled()
+  })
+
+  it('Test 4: 完成后转存历史桶 → erase:finished 带永久 URL 且 videoExpiresAt=0', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+
+    const ret = await svc.submitErase(SUBMIT_PAYLOAD)
+    // upload → process → transfer 三段都是 microtask/immediate 链
+    await flush(); await flush(); await flush(); await flush()
+
+    expect(transferUrlToHistoryBucketMock).toHaveBeenCalledWith({
+      sourceUrl: 'https://cos.example/output.mp4?sig=abc',
+      key: `image-history/smart-erase/${ret.taskId}.mp4`,
+      contentType: 'video/mp4',
+    })
+
+    const finished = sendSpy.mock.calls.find((c) => c[0] === 'erase:finished')
+    expect(finished).toBeDefined()
+    expect(finished![1].videoUrl).toBe(
+      'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/smart-erase/x.mp4',
+    )
+    expect(finished![1].videoExpiresAt).toBe(0)
+  })
+
+  it('Test 5: 转存失败不影响任务成功 → 退回签名 URL + 原过期时间', async () => {
+    transferUrlToHistoryBucketMock.mockRejectedValueOnce(new Error('bucket down'))
+
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+
+    await svc.submitErase(SUBMIT_PAYLOAD)
+    await flush(); await flush(); await flush(); await flush()
+
+    const finished = sendSpy.mock.calls.find((c) => c[0] === 'erase:finished')
+    expect(finished).toBeDefined()
+    expect(finished![1].videoUrl).toBe('https://cos.example/output.mp4?sig=abc')
+    expect(finished![1].videoExpiresAt).toBeGreaterThan(0)
   })
 
 })
