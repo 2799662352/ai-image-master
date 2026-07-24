@@ -2,11 +2,11 @@
 
 import { JobQueue } from '../tencent/jobQueue'
 import {
-  getCredentials,
   getCredentialState,
   setCredentials,
 } from '../tencent/credentials'
 import { deleteObjects } from '../tencent/cosClient'
+import { transferUrlToHistoryBucket } from '../tencent/historyBucketTransfer'
 import { runImageJob } from './runner'
 import type { ImageJobInput, ImageJobOutput } from './runner'
 import type {
@@ -43,10 +43,42 @@ export function setDefaultConfig(config: SplitConfig): void {
   defaultConfig = { ...config }
 }
 
+/**
+ * 每张切片从媒体桶转存到历史桶(公开读)拿永久 URL —— STS 免密钥模式下
+ * 签名 URL 只活到票据过期(≤30 分钟),转存后 expiresAt=0 表示永不过期。
+ * 单张失败退回该张的签名 URL,不影响任务成功。
+ */
+async function persistSplitResults(
+  taskId: string,
+  output: ImageJobOutput,
+): Promise<ImageJobOutput> {
+  const results = await Promise.all(
+    output.results.map(async (r) => {
+      try {
+        const ext = (r.cosPath.split('.').pop() || 'jpg').toLowerCase()
+        const contentType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+        const permanentUrl = await transferUrlToHistoryBucket({
+          sourceUrl: r.url,
+          key: `image-history/storyboard-split/${taskId}/${r.index + 1}.${ext}`,
+          contentType,
+        })
+        return { ...r, url: permanentUrl, expiresAt: 0 }
+      } catch (err: any) {
+        console.warn(`[SplitService] transfer #${r.index} to history bucket failed; keeping presigned URL:`, err?.message ?? err)
+        return r
+      }
+    }),
+  )
+  return { ...output, results }
+}
+
 const queue = new JobQueue<ImageJobInput, ImageJobOutput>({
   name: 'storyboard-split',
   maxConcurrent: MAX_CONCURRENT,
-  runner: runImageJob,
+  runner: async (job, signal, events) => {
+    const output = await runImageJob(job, signal, events)
+    return persistSplitResults(job.taskId, output)
+  },
   events: {
     onProgress: (job, patch) => {
       const progressEvent: SplitProgressEvent = {
@@ -82,11 +114,8 @@ const queue = new JobQueue<ImageJobInput, ImageJobOutput>({
 })
 
 export async function submitSplit(payload: SplitSubmitPayload) {
-  const creds = getCredentials()
-  if (!creds.secretId || !creds.secretKey) {
-    return { success: false, error: '未配置腾讯云密钥', errorCode: 'NO_CREDENTIALS' }
-  }
-
+  // 不再要求永久密钥:未配置时 runner 侧 getMediaAuth() 自动走 SCF 云函数
+  // 的 scope=media 免密钥临时票据。端点故障会以正常任务失败面呈现。
   const base64 = payload.base64Data.replace(/^data:image\/\w+;base64,/, '')
   const buffer = Buffer.from(base64, 'base64')
 

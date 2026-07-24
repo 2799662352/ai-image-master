@@ -14,13 +14,17 @@ export function EraseResultCard({
   // 海报卡同时进入视口时主线程仍会被 base64 解码顶住, 走 blob: 异步解码更稳。
   const posterImgSrc = useDisplaySrc(item.posterDataUrl)
 
+  // videoExpiresAt === 0 ⇒ 结果已转存历史桶(公开读),URL 永不过期。
+  const permanent = item.videoExpiresAt === 0
   const expired = item.videoExpiresAt > 0 && item.videoExpiresAt < Date.now()
   const expiryMs = item.videoExpiresAt - Date.now()
-  const expiryBadge = expired
-    ? { text: '已过期', color: 'var(--donor-red)' }
-    : expiryMs < 24 * 60 * 60 * 1000
-      ? { text: `${Math.ceil(expiryMs / 3_600_000)}h`, color: 'var(--donor-yellow)' }
-      : { text: `${Math.ceil(expiryMs / 86_400_000)}d`, color: 'var(--donor-ink-mute)' }
+  const expiryBadge = permanent
+    ? { text: '永久', color: 'var(--donor-green)' }
+    : expired
+      ? { text: '已过期', color: 'var(--donor-red)' }
+      : expiryMs < 24 * 60 * 60 * 1000
+        ? { text: `${Math.ceil(expiryMs / 3_600_000)}h`, color: 'var(--donor-yellow)' }
+        : { text: `${Math.ceil(expiryMs / 86_400_000)}d`, color: 'var(--donor-ink-mute)' }
 
   const ts = item.finishedAt ?? item.createdAt
   const dateStr = new Date(ts).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })

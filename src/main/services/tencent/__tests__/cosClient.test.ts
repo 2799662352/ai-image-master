@@ -24,7 +24,9 @@ vi.mock('cos-nodejs-sdk-v5', () => ({
 }))
 
 vi.mock('../credentials', () => ({
-  getCredentials: () => ({ secretId: 'id', secretKey: 'k', bucket: 'b', region: 'ap-shanghai' }),
+  getCredentials: () => ({ secretId: 'AKIDtestpermanent0001', secretKey: 'k', bucket: 'b', region: 'ap-shanghai' }),
+  isLikelyValidSecretId: (id: string) =>
+    typeof id === 'string' && id.startsWith('AKID') && id.length >= 20,
   onCredentialsInvalidated: vi.fn(),
 }))
 
@@ -52,7 +54,9 @@ describe('tencent/cosClient', () => {
   it('credentials invalidation drops the cached instance', async () => {
     const invalidatedCallbacks: Array<() => void> = []
     vi.doMock('../credentials', () => ({
-      getCredentials: () => ({ secretId: 'id', secretKey: 'k', bucket: 'b', region: 'ap-shanghai' }),
+      getCredentials: () => ({ secretId: 'AKIDtestpermanent0001', secretKey: 'k', bucket: 'b', region: 'ap-shanghai' }),
+      isLikelyValidSecretId: (id: string) =>
+        typeof id === 'string' && id.startsWith('AKID') && id.length >= 20,
       onCredentialsInvalidated: (cb: () => void) => invalidatedCallbacks.push(cb),
     }))
 

@@ -47,7 +47,8 @@ export function HistoryDrawer({ open, history, onClose, onPreview, onDelete }: P
           </div>
         )}
         {history.map((item) => {
-          const allExpired = item.results.every((r) => Date.now() > r.expiresAt)
+          // expiresAt === 0 ⇒ 已转存历史桶(公开读),永不过期。
+          const allExpired = item.results.every((r) => r.expiresAt > 0 && Date.now() > r.expiresAt)
           const ts = formatRelativeTime(item.finishedAt)
           const primaryUrl = item.results[0]?.url
 

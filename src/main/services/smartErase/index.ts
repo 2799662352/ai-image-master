@@ -1,6 +1,7 @@
 import { JobQueue } from '../tencent/jobQueue'
-import { getCredentials, getCredentialState, setCredentials } from '../tencent/credentials'
+import { getCredentialState, setCredentials } from '../tencent/credentials'
 import { deleteObjects } from '../tencent/cosClient'
+import { transferUrlToHistoryBucket } from '../tencent/historyBucketTransfer'
 import {
   runUpload,
   runProcessAndPoll,
@@ -153,7 +154,7 @@ const processQueue = new JobQueue<ProcessPhaseInput, ProcessPhaseOutput>({
   runner: async (job, signal) => {
     const meta = taskRegistry.get(job.taskId)
     if (meta) meta.phase = 'processing'
-    return runProcessAndPoll(job, signal, {
+    const result = await runProcessAndPoll(job, signal, {
       onProgress: (p) => {
         if (meta && p.mpsTaskId) meta.mpsTaskId = p.mpsTaskId
         safeSend('erase:progress', {
@@ -170,6 +171,21 @@ const processQueue = new JobQueue<ProcessPhaseInput, ProcessPhaseOutput>({
         } satisfies EraseProgressEvent)
       },
     })
+
+    // 转存历史桶(公开读)拿永久 URL —— 媒体桶里的签名 URL 在 STS 模式下
+    // 只活到票据过期(≤30 分钟),转存后 videoExpiresAt=0 表示永不过期。
+    // 转存失败不影响任务成功,退回签名 URL + 原过期时间。
+    try {
+      const permanentUrl = await transferUrlToHistoryBucket({
+        sourceUrl: result.videoUrl,
+        key: `image-history/smart-erase/${job.taskId}.mp4`,
+        contentType: 'video/mp4',
+      })
+      return { ...result, videoUrl: permanentUrl, videoExpiresAt: 0 }
+    } catch (err: any) {
+      console.warn('[smart-erase] transfer to history bucket failed; falling back to presigned URL:', err?.message ?? err)
+      return result
+    }
   },
   events: {
     onFinished: (job, result) => {
@@ -263,11 +279,8 @@ export function setEraseCredentialsFromUI(creds: {
 export async function submitErase(
   payload: EraseSubmitPayload,
 ): Promise<{ success: boolean; taskId?: string; posterDataUrl?: string; error?: string; errorCode?: string }> {
-  const creds = getCredentials()
-  if (!creds.secretId || !creds.secretKey) {
-    return { success: false, error: '未配置腾讯云密钥', errorCode: 'NO_CREDENTIALS' }
-  }
-
+  // 不再要求永久密钥:未配置时 runner 侧 getMediaAuth() 自动走 SCF 云函数
+  // 的 scope=media 免密钥临时票据。端点故障会以正常任务失败面呈现。
   const posterDataUrl = payload.posterDataUrl ?? ''
 
   const taskId = `erase-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
