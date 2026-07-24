@@ -53,6 +53,22 @@ export const ChevronLeftIcon = (p: { className?: string }) => (
   </svg>
 )
 
+export const PanelRightCollapseIcon = (p: { className?: string }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" {...stroke} className={p.className}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M10 5v14" />
+    <path d="M17.5 9.5L15 12l2.5 2.5" />
+  </svg>
+)
+
+export const PanelRightExpandIcon = (p: { className?: string }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" {...stroke} className={p.className}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M10 5v14" />
+    <path d="M14.5 9.5L17 12l-2.5 2.5" />
+  </svg>
+)
+
 export const CloseIcon = (p: { className?: string }) => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...stroke} className={p.className}>
     <path d="M6 6l12 12M6 18L18 6" />

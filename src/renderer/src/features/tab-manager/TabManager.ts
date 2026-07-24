@@ -44,7 +44,7 @@ export class TabManager {
     'videoWorkbench',
     'understand',
     'director',
-    // 'storyboardSplit' 按钮已从导航隐藏,tab 仍合法(hash 直达/代码保留)
+    // 'storyboardSplit'(分镜切图)导航按钮已恢复,挨着 smartErase
     'storyboardSplit',
     'smartErase',
     'agentWorkspace',

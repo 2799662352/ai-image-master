@@ -10,6 +10,7 @@ const FX_WIDTH_KEY = 'agent-chat:fx-tree-width'
 const FX_WORKSPACE_KEY = 'agent-chat:fx-workspace-root'
 const FX_OPEN_KEY = 'agent-chat:fx-open'
 const FX_COLLAPSED_KEY = 'agent-chat:fx-collapsed'
+const FX_VIEWER_COLLAPSED_KEY = 'agent-chat:fx-viewer-collapsed'
 
 const clampWidth = (w: number): number => Math.max(200, Math.min(360, w))
 
@@ -67,6 +68,12 @@ type State = {
    * 运行时(见 ViewerHost keep-alive 注释),收起绝不能触发卸载。
    */
   fxCollapsed: boolean
+  /**
+   * 「只收中间查看器」:保留左侧文件树,仅隐藏中间查看器列(invisible 保
+   * 尺寸,tldraw keep-alive 不受影响),露出底下的经典生图/生视频界面。
+   * 与 fxCollapsed(整栏收起)互不冲突,整栏收起优先。
+   */
+  fxViewerCollapsed: boolean
   fxTreeWidth: number
   workspaceRoot: string | null
   workspaceTree: FileNode[]
@@ -95,6 +102,7 @@ type Actions = {
   toggleFx: () => void
   setFxOpen: (open: boolean) => void
   toggleFxCollapsed: () => void
+  toggleFxViewerCollapsed: () => void
   setFxTreeWidth: (w: number) => void
   loadWorkspaceFolders: () => Promise<void>
   pickWorkspaceFolder: () => Promise<void>
@@ -421,6 +429,7 @@ function makeInitialState(): State {
   return {
     fxOpen: readStorage(FX_OPEN_KEY) === '1',
     fxCollapsed: readStorage(FX_COLLAPSED_KEY) === '1',
+    fxViewerCollapsed: readStorage(FX_VIEWER_COLLAPSED_KEY) === '1',
     fxTreeWidth: clampWidth(Number.isFinite(rawWidth) ? rawWidth : 240),
     workspaceRoot: workspaceRoots[0] ?? null,
     workspaceTree: [],
@@ -443,10 +452,11 @@ function makeInitialState(): State {
  * 统一走这里:置 fxOpen 并解除 fxCollapsed(否则 agent 打开文件时面板还
  * 收在左边,用户什么都看不见),两个标记同时持久化。
  */
-function fxPanelVisibleState(): { fxOpen: true; fxCollapsed: false } {
+function fxPanelVisibleState(): { fxOpen: true; fxCollapsed: false; fxViewerCollapsed: false } {
   writeStorage(FX_OPEN_KEY, '1')
   writeStorage(FX_COLLAPSED_KEY, '0')
-  return { fxOpen: true, fxCollapsed: false }
+  writeStorage(FX_VIEWER_COLLAPSED_KEY, '0')
+  return { fxOpen: true, fxCollapsed: false, fxViewerCollapsed: false }
 }
 
 let pendingDoc = ''
@@ -459,9 +469,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       const next = !s.fxOpen
       writeStorage(FX_OPEN_KEY, next ? '1' : '0')
       // 打开永远展示完整面板:否则「收着的面板被打开」= 用户看到一片空。
-      if (next && s.fxCollapsed) {
+      if (next && (s.fxCollapsed || s.fxViewerCollapsed)) {
         writeStorage(FX_COLLAPSED_KEY, '0')
-        return { fxOpen: next, fxCollapsed: false }
+        writeStorage(FX_VIEWER_COLLAPSED_KEY, '0')
+        return { fxOpen: next, fxCollapsed: false, fxViewerCollapsed: false }
       }
       return { fxOpen: next }
     })
@@ -471,7 +482,8 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     writeStorage(FX_OPEN_KEY, open ? '1' : '0')
     if (open) {
       writeStorage(FX_COLLAPSED_KEY, '0')
-      set({ fxOpen: open, fxCollapsed: false })
+      writeStorage(FX_VIEWER_COLLAPSED_KEY, '0')
+      set({ fxOpen: open, fxCollapsed: false, fxViewerCollapsed: false })
       return
     }
     set({ fxOpen: open })
@@ -482,6 +494,14 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       const next = !s.fxCollapsed
       writeStorage(FX_COLLAPSED_KEY, next ? '1' : '0')
       return { fxCollapsed: next }
+    })
+  },
+
+  toggleFxViewerCollapsed: () => {
+    set((s) => {
+      const next = !s.fxViewerCollapsed
+      writeStorage(FX_VIEWER_COLLAPSED_KEY, next ? '1' : '0')
+      return { fxViewerCollapsed: next }
     })
   },
 
@@ -610,6 +630,11 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   },
 
   openTab: async (p, source) => {
+    // 查看器收起时点开文件必须先把查看器露出来,否则「点了没反应」。
+    if (get().fxViewerCollapsed) {
+      writeStorage(FX_VIEWER_COLLAPSED_KEY, '0')
+      set({ fxViewerCollapsed: false })
+    }
     const existing = get().tabs.find((t) => t.path === p)
     if (existing) {
       // Bump the scroll token even when the tab is already active — otherwise

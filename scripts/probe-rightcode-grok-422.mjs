@@ -1,12 +1,12 @@
 // Diagnostic probe: reproduce the second-turn 422 "untagged enum ModelInput"
-// against right.codes/grok/v1/responses and bisect WHICH history item variant
+// against rightapi.ai/grok/v1/responses and bisect WHICH history item variant
 // the gateway rejects. Turn 1 collects real output items; turn 2 replays them
 // verbatim (codex-style stateless history), then variants strip one suspect
 // at a time.
 //
 // Usage: node scripts/probe-rightcode-grok-422.mjs <API_KEY>
 
-const BASE = 'https://right.codes/grok/v1'
+const BASE = 'https://rightapi.ai/grok/v1'
 const KEY = process.argv[2]
 if (!KEY) {
   console.error('usage: node scripts/probe-rightcode-grok-422.mjs <API_KEY>')

@@ -1,7 +1,14 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { useFileExplorerStore } from './store'
 import { FileTree } from './FileTree'
-import { FileTreeIcon, CloseIcon, ChevronLeftIcon, ChevronRightIcon } from './icons'
+import {
+  FileTreeIcon,
+  CloseIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PanelRightCollapseIcon,
+  PanelRightExpandIcon,
+} from './icons'
 import { FileTabStrip } from './FileTabStrip'
 import { LatestPreviewBanner } from './LatestPreviewBanner'
 import { FileViewer } from './FileViewer'
@@ -120,7 +127,9 @@ function ActiveViewer({ tab }: { tab: FileTab | undefined }) {
 export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
   const fxOpen = useFileExplorerStore((s) => s.fxOpen)
   const fxCollapsed = useFileExplorerStore((s) => s.fxCollapsed)
+  const fxViewerCollapsed = useFileExplorerStore((s) => s.fxViewerCollapsed)
   const toggleFxCollapsed = useFileExplorerStore((s) => s.toggleFxCollapsed)
+  const toggleFxViewerCollapsed = useFileExplorerStore((s) => s.toggleFxViewerCollapsed)
   const fxTreeWidth = useFileExplorerStore((s) => s.fxTreeWidth)
   const setFxTreeWidth = useFileExplorerStore((s) => s.setFxTreeWidth)
   const setFxOpen = useFileExplorerStore((s) => s.setFxOpen)
@@ -276,6 +285,11 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
 
   if (!fxOpen) return null
 
+  // 「只收查看器」:保留左侧文件树可见可交互,中间查看器列 invisible
+  // (保尺寸,tldraw keep-alive 不塌)+ 容器整体不再涂底色/吃鼠标,
+  // 让底下经典生图/生视频界面在中间区域完全可见可点。整栏收起优先。
+  const viewerOnly = fxViewerCollapsed && !fxCollapsed
+
   return (
     <>
     <div
@@ -283,6 +297,7 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
       aria-label="File Explorer"
       data-file-explorer-root="true"
       data-collapsed={fxCollapsed ? 'true' : 'false'}
+      data-viewer-collapsed={viewerOnly ? 'true' : 'false'}
       aria-hidden={fxCollapsed}
       tabIndex={-1}
       // 收起 = 保持挂载,仅 CSS 滑出左侧。不能走 return null 卸载:tldraw
@@ -296,16 +311,33 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
         right: rightOffset,
         ...(fxCollapsed ? { transform: 'translateX(-100%)', visibility: 'hidden' as const } : {}),
       }}
-      className={`fixed bottom-0 left-0 top-0 z-[40000] flex flex-col border-r border-cyan-400/25 bg-zinc-950 shadow-[24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur outline-none ${
-        fxCollapsed ? 'pointer-events-none' : ''
-      }`}
+      className={`fixed bottom-0 left-0 top-0 z-[40000] flex flex-col outline-none ${
+        viewerOnly
+          ? 'pointer-events-none bg-transparent'
+          : 'border-r border-cyan-400/25 bg-zinc-950 shadow-[24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur'
+      } ${fxCollapsed ? 'pointer-events-none' : ''}`}
     >
-      <header className="flex h-9 items-center justify-between border-b border-cyan-500/15 px-3">
+      <header
+        style={viewerOnly ? { width: fxTreeWidth } : undefined}
+        className={`flex h-9 items-center justify-between border-b border-cyan-500/15 px-3 ${
+          viewerOnly ? 'pointer-events-auto border-r border-cyan-400/25 bg-zinc-950 backdrop-blur' : ''
+        }`}
+      >
         <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-cyan-200/70">
           <FileTreeIcon />
           Files
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="fx-viewer-collapse-button"
+            onClick={() => toggleFxViewerCollapsed()}
+            className="rounded p-1 text-cyan-300/60 hover:bg-white/5 hover:text-cyan-200"
+            aria-label={viewerOnly ? 'Expand viewer' : 'Collapse viewer only'}
+            title={viewerOnly ? '展开中间查看器' : '只收中间查看器(保留文件树)'}
+          >
+            {viewerOnly ? <PanelRightExpandIcon /> : <PanelRightCollapseIcon />}
+          </button>
           <button
             type="button"
             data-testid="fx-collapse-button"
@@ -331,7 +363,11 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
       <div className="flex min-h-0 flex-1">
         <div
           style={{ width: fxTreeWidth }}
-          className="overflow-hidden border-r border-cyan-500/10"
+          className={`overflow-hidden border-r ${
+            viewerOnly
+              ? 'pointer-events-auto border-cyan-400/25 bg-zinc-950 backdrop-blur'
+              : 'border-cyan-500/10'
+          }`}
           onDragOver={onRootDragOver}
           onDrop={(e) => void onRootDrop(e)}
         >
@@ -346,10 +382,14 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
             startW.current = fxTreeWidth
             setDragging(true)
           }}
-          className="w-1 cursor-col-resize hover:bg-cyan-400/30"
+          className={`w-1 cursor-col-resize hover:bg-cyan-400/30 ${viewerOnly ? 'pointer-events-auto' : ''}`}
         />
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div
+          data-testid="fx-viewer-column"
+          aria-hidden={viewerOnly}
+          className={`flex min-w-0 flex-1 flex-col ${viewerOnly ? 'pointer-events-none invisible' : ''}`}
+        >
           <LatestPreviewBanner />
           <FileTabStrip />
           <div className="min-h-0 flex-1 overflow-auto bg-black/40">
@@ -357,7 +397,9 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
           </div>
         </div>
       </div>
-      <ConflictModal />
+      <div className={viewerOnly ? 'pointer-events-auto' : undefined}>
+        <ConflictModal />
+      </div>
     </div>
 
     {/* 收起后的左缘把手:细长竖条,点击恢复面板。与面板同层 z,面板本体

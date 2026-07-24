@@ -1,4 +1,4 @@
-// Capture the EXACT JSON codex sends to right.codes/grok on a 2-turn chat.
+// Capture the EXACT JSON codex sends to rightapi.ai/grok on a 2-turn chat.
 // Spawns the real bundled codex app-server through CodexLocalBackend with the
 // rightcode-grok channel config, but base_url pointed at a local logging proxy
 // that forwards to the real gateway and dumps every request body + upstream
@@ -22,7 +22,7 @@ if (!KEY) {
   process.exit(1)
 }
 
-const UPSTREAM = 'https://right.codes/grok/v1'
+const UPSTREAM = 'https://rightapi.ai/grok/v1'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '..')
 const outDir = path.join(projectRoot, 'scripts', '.diag-grok')
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
       model: 'grok-4.5',
       requiresOpenaiAuth: true,
       // Production channel policy: codex → compat proxy (null-sanitize +
-      // namespace flatten) → capture proxy → right.codes.
+      // namespace flatten) → capture proxy → rightapi.ai.
       compatibilityPolicy: 'responses-namespace-bridge',
     },
   })

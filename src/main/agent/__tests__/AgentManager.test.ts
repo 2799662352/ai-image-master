@@ -169,7 +169,7 @@ describe('AgentManager persisted Gateway/model startup routing', () => {
     {
       gatewayId: 'rightcode',
       expectedChannelId: 'rightcode-grok',
-      expectedBaseUrl: 'https://right.codes/grok/v1',
+      expectedBaseUrl: 'https://rightapi.ai/grok/v1',
     },
   ])(
     'restores $gatewayId + grok-4.5 through its Grok channel',
@@ -479,7 +479,7 @@ describe('AgentManager transactional provider application', () => {
       id: 'rightcode-grok',
       gatewayId: 'rightcode',
       model: 'grok-4.5',
-      baseUrl: 'https://right.codes/grok/v1',
+      baseUrl: 'https://rightapi.ai/grok/v1',
     })
     await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
       activeId: 'rightcode',
@@ -511,12 +511,12 @@ describe('AgentManager transactional provider application', () => {
     expect(backend.configuredProviderConfigs[0]).toMatchObject({
       id: 'rightcode-grok',
       model: 'grok-4.5',
-      baseUrl: 'https://right.codes/grok/v1',
+      baseUrl: 'https://rightapi.ai/grok/v1',
     })
     expect(backend.configuredProviderConfigs[1]).toMatchObject({
       id: 'rightcode-grok',
       model: 'grok-4.5',
-      baseUrl: 'https://right.codes/grok/v1',
+      baseUrl: 'https://rightapi.ai/grok/v1',
     })
     expect(manager.getCodexApiKey()).toBe('sk-old')
     await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({

@@ -70,7 +70,7 @@ export type ProviderCompatibilityPolicy =
  * provider like Right.Codes — which requires `model="gpt-5.2"`,
  * `model_reasoning_effort="xhigh"`, `disable_response_storage=true`, and
  * `windows_wsl_setup_acknowledged=true` per its docs
- * (https://docs.right.codes/docs/rc_cli_config/codex.html) — works out of the
+ * (https://docs.rightapi.ai/docs/rc_cli_config/codex.html) — works out of the
  * box without forcing the user to hand-edit `~/.codex/config.toml`.
  */
 export interface CodexProviderConfig {
@@ -292,7 +292,7 @@ export function appendProviderArgs(
   // Memories side requests (extraction "Phase 1" + consolidation "Phase 2")
   // default to codex's own memory models (gpt-5.4 in the bundled build) and
   // are POSTed to the ACTIVE provider's endpoint. On single-model gateways
-  // like right.codes/grok that 400s ("端点未配置模型gpt-5.4") on every thread
+  // like rightapi.ai/grok that 400s ("端点未配置模型gpt-5.4") on every thread
   // start — non-fatal but wasteful. Pin both documented override keys
   // (developers.openai.com/codex/memories; string table verified in the
   // bundled binary) to `memoriesModel` (the smartest model the endpoint

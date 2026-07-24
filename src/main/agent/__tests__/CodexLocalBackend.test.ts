@@ -251,7 +251,7 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
       provider: {
         id: 'rightcode-grok',
         name: 'Right.Codes Grok',
-        baseUrl: 'https://right.codes/grok/v1',
+        baseUrl: 'https://rightapi.ai/grok/v1',
         envKey: 'OPENAI_API_KEY',
         model: 'grok-4.5',
       },
@@ -263,7 +263,7 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     backend.setProvider({
       id: 'rightcode-standard',
       name: 'Right.Codes',
-      baseUrl: 'https://right.codes/codex/v1',
+      baseUrl: 'https://rightapi.ai/codex/v1',
       envKey: 'OPENAI_API_KEY',
       model: 'gpt-5.6-sol',
     })
@@ -803,7 +803,7 @@ describe('CodexLocalBackend spawn env injection', () => {
       provider: {
         id: 'rightcode-standard',
         name: 'Right.Codes',
-        baseUrl: 'https://right.codes/codex/v1',
+        baseUrl: 'https://rightapi.ai/codex/v1',
         envKey: 'OPENAI_API_KEY',
         model: 'gpt-5.5',
         requiresOpenaiAuth: true,
@@ -815,7 +815,7 @@ describe('CodexLocalBackend spawn env injection', () => {
         {
           id: 'rightcode-standard',
           name: 'Right.Codes',
-          baseUrl: 'https://right.codes/codex/v1',
+          baseUrl: 'https://rightapi.ai/codex/v1',
           envKey: 'OPENAI_API_KEY',
           model: 'gpt-5.5',
           requiresOpenaiAuth: true,
@@ -824,7 +824,7 @@ describe('CodexLocalBackend spawn env injection', () => {
         {
           id: 'rightcode-grok',
           name: 'Right.Codes Grok',
-          baseUrl: 'https://right.codes/grok/v1',
+          baseUrl: 'https://rightapi.ai/grok/v1',
           envKey: 'OPENAI_API_KEY',
           model: 'grok-4.5',
           requiresOpenaiAuth: true,
@@ -845,7 +845,7 @@ describe('CodexLocalBackend spawn env injection', () => {
       // Active channel stays the top-level model_provider on its direct URL.
       expect(capturedArgs).toContain('model_provider="rightcode-standard"')
       expect(capturedArgs).toContain(
-        'model_providers.rightcode-standard.base_url="https://right.codes/codex/v1"',
+        'model_providers.rightcode-standard.base_url="https://rightapi.ai/codex/v1"',
       )
       // The sibling Grok channel is REGISTERED (extra table) but never seizes
       // the active provider slot.
