@@ -2,7 +2,7 @@
 
 import { uploadBuffer, getPresignedUrl } from '../tencent/cosClient'
 import { getMpsClient } from '../tencent/mpsClient'
-import { getCredentials } from '../tencent/credentials'
+import { getMediaAuth } from '../tencent/mediaAuth'
 import type { JobLifecycleEvents } from '../tencent/types'
 import type { SplitConfig, SplitResult } from '../../../types/storyboardSplit'
 
@@ -49,8 +49,9 @@ export async function submitProcessImage(
   config: SplitConfig,
   outputDir: string,
 ): Promise<string> {
-  const creds = getCredentials()
-  const client = getMpsClient()
+  // 永久密钥优先,未配置时走 STS 免密钥通道(桶/区域随票据下发)。
+  const auth = await getMediaAuth()
+  const client = await getMpsClient()
 
   const stdExtInfo: Record<string, any> = {
     StoryboardConfig: { ModelSamplingAuraFlow: config.modelSamplingAuraFlow },
@@ -61,7 +62,7 @@ export async function submitProcessImage(
 
   const resp = await client.ProcessImage({
     InputInfo: { Type: 'URL', UrlInputInfo: { Url: presignedUrl } },
-    OutputStorage: { Type: 'COS', CosOutputStorage: { Bucket: creds.bucket, Region: creds.region } },
+    OutputStorage: { Type: 'COS', CosOutputStorage: { Bucket: auth.bucket, Region: auth.region } },
     OutputDir: outputDir,
     ScheduleId: config.scheduleId,
     StdExtInfo: JSON.stringify(stdExtInfo),
@@ -76,7 +77,6 @@ export async function pollImageUntilFinish(
   onProgress: (attempt: number, maxAttempts: number) => void,
   maxDurationMs = 10 * 60 * 1000,
 ): Promise<{ results: SplitResult[]; rows: number; cols: number }> {
-  const client = getMpsClient()
   const deadline = Date.now() + maxDurationMs
   let attempt = 0
   const estimatedAttempts = 120
@@ -84,6 +84,8 @@ export async function pollImageUntilFinish(
   while (Date.now() < deadline) {
     if (signal.aborted) throw makeError('TASK_CANCELLED', 'Cancelled', 'poll')
 
+    // 每轮重新取 client:STS 模式下票据到期时 getMpsClient 自动重建。
+    const client = await getMpsClient()
     const resp = await client.DescribeImageTaskDetail({ TaskId: taskId })
     attempt++
     onProgress(attempt, estimatedAttempts)

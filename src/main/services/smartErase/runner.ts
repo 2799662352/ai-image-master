@@ -1,6 +1,6 @@
 import { uploadStream, getPresignedUrl, cancelUpload } from '../tencent/cosClient'
 import { getMpsClient } from '../tencent/mpsClient'
-import { getCredentials } from '../tencent/credentials'
+import { getMediaAuth } from '../tencent/mediaAuth'
 import type { EraseConfig, EraseTaskDetailSnapshot } from '../../../types/smartErase'
 
 // Re-export so existing callers (and unit tests) keep working without
@@ -212,19 +212,20 @@ export async function runProcessAndPoll(
   events: { onProgress?: (p: { stage: 'submitting' | 'processing'; mpsTaskId?: string }) => void } = {},
 ): Promise<ProcessPhaseOutput> {
   events.onProgress?.({ stage: 'submitting' })
-  const creds = getCredentials()
-  const client = getMpsClient()
+  // 永久密钥优先,未配置时走 STS 免密钥通道(桶/区域随票据下发)。
+  const auth = await getMediaAuth()
+  const client = await getMpsClient()
 
   let mpsTaskId: string
   try {
     const resp = await client.ProcessMedia({
       InputInfo: {
         Type: 'COS',
-        CosInputInfo: { Bucket: creds.bucket, Region: creds.region, Object: '/' + job.inputCosKey },
+        CosInputInfo: { Bucket: auth.bucket, Region: auth.region, Object: '/' + job.inputCosKey },
       },
       OutputStorage: {
         Type: 'COS',
-        CosOutputStorage: { Bucket: creds.bucket, Region: creds.region },
+        CosOutputStorage: { Bucket: auth.bucket, Region: auth.region },
       },
       OutputDir: `/smart-erase/${job.taskId}/output/`,
       // SmartEraseTask is a TOP-LEVEL sibling of MediaProcessTask in
@@ -263,7 +264,10 @@ export async function runProcessAndPoll(
     if (signal.aborted) throw makeError('TASK_CANCELLED', 'Cancelled during poll', 'poll')
 
     attempt++
-    const taskResp = await client.DescribeTaskDetail({ TaskId: mpsTaskId })
+    // 每轮重新取 client:STS 模式下长任务(>25min)票据会到期,
+    // getMpsClient 内部按到期时间自动重建;永久密钥模式命中缓存零开销。
+    const pollClient = await getMpsClient()
+    const taskResp = await pollClient.DescribeTaskDetail({ TaskId: mpsTaskId })
     const detail = summarizeTaskDetail(taskResp)
 
     // Always emit the latest detail snapshot so the renderer's "查看详情"

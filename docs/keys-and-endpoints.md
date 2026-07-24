@@ -21,12 +21,38 @@
    (`userData/tencent-credentials.bin`),渲染进程只见掩码。
 2. **环境变量**(`.env` 或系统环境):
    `COS_SECRET_ID` / `COS_SECRET_KEY` / `COS_BUCKET`(或 `COS_BUCKET_NAME`)/
-   `COS_REGION`。设置页留空时生效——即设置卡上那句「留空则使用 .env 环境变量」。
+   `COS_REGION`。设置页留空时生效。
 3. **可选本地凭证文件** `cos-credentials.json`(仓库根 / 打包后
    `resources/` 下):`.gitignore` 已排除、`electron-builder.yml` 的
    `extraResources` **不打包它**——安装包里不存在任何密钥,只是给部署方
    一个「手动放文件」的口子。
-4. 都没有 → 功能不可用,设置页显示未配置。
+4. **都没有 → 自动走免密钥 STS 通道**(见下节),功能照常可用;
+   设置页显示「免密钥 · 云端临时授权」。
+
+### 免密钥通道(STS scope=media,2026-07-24 上线)
+
+用户一个密钥都不填时,分镜切图/智能去字幕自动切到 **SCF 云函数临时授权**:
+
+- 客户端(`tencent/mediaAuth.ts`)向 `sts-cos` 云函数请求 `scope=media`
+  的 **30 分钟临时票据**;桶/区域随票据下发(默认
+  `map-tiles-bucket-1345773498` / `ap-guangzhou`),永久密钥只存在云函数
+  环境变量里,永不落客户端。
+- 票据权限被压到最小:COS 仅 `smart-erase/*` + `storyboard-split/*`
+  两个前缀的读写删 + MPS 提交/查询四个 action(`ProcessMedia` /
+  `ProcessImage` / `DescribeTaskDetail` / `DescribeImageTaskDetail`)。
+- 有效权限 = 票据策略 ∩ 云函数子账号(`sts-image-history`)权限;该子账号
+  已授 `QcloudMPSFullAccess` + 自定义策略 `sts-media-cos-rw`(仅上述两个
+  COS 前缀)。
+- MPS/COS 客户端在票据临近过期(<5 分钟)时自动换新;长任务轮询每轮
+  重新取 client,25 分钟以上的去字幕任务不断票。
+- **优先级不变**:用户填了自己的密钥(设置页/.env)永远优先,STS 只是
+  零配置兜底。
+- 已知限制:STS 模式下签名 URL 的实际有效期受票据寿命限制(≤30 分钟),
+  历史记录里过期的结果链接需重新打开任务刷新。
+- 冒烟脚本:`pnpm exec tsx scripts/smoke-sts-media.ts`(STS 票据 → MPS
+  鉴权 → COS 写删 三层实测)。
+- 云函数源码:`serverless/sts-cos/`(scope=image-history 旧行为不变,
+  `?scope=media` 新增;部署在广州 `sts-cos` 函数)。
 
 ### 需要的云资源
 

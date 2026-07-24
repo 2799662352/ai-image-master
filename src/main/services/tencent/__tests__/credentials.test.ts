@@ -151,6 +151,15 @@ describe('tencent/credentials', () => {
     expect(s.secretIdMasked).toBe('AKID****')
   })
 
+  it('无永久密钥时报告免密钥 STS 通道(hasCredentials=true, source=sts)', async () => {
+    // store/env/builtin 全空 → 媒体功能仍可经云函数临时票据运行
+    const { getCredentialState } = await import('../credentials')
+    const s = getCredentialState()
+    expect(s.hasCredentials).toBe(true)
+    expect(s.credentialSource).toBe('sts')
+    expect(s.secretIdMasked).toBeUndefined()
+  })
+
   it('reports credentialSource: "memory" when safeStorage unavailable and creds set in-session', async () => {
     mockSafeStorage.isEncryptionAvailable.mockReturnValue(false)
     const { setCredentials, getCredentialState } = await import('../credentials')

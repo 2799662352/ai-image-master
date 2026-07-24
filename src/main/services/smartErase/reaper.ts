@@ -57,7 +57,7 @@ async function reapOne(mpsTaskId: string): Promise<void> {
 
   let resp: any
   try {
-    resp = await getMpsClient().DescribeTaskDetail({ TaskId: mpsTaskId })
+    resp = await (await getMpsClient()).DescribeTaskDetail({ TaskId: mpsTaskId })
   } catch (err: any) {
     // Transient API failure — keep the entry, retry next interval.
     console.warn(`[smart-erase/reaper] DescribeTaskDetail failed for ${mpsTaskId}:`, err?.message ?? err)

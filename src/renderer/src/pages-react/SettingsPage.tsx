@@ -56,10 +56,14 @@ function TencentCloudSection() {
         <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">☁</span>
         <span className="font-bold text-white uppercase tracking-tight">腾讯云 COS / MPS</span>
         {source && source !== 'none' && (
-          <span className="text-xs text-green-400">({source === 'env' ? '.env 已配置' : '已保存'})</span>
+          <span className={`text-xs ${source === 'sts' ? 'text-cyan-400' : 'text-green-400'}`}>
+            ({source === 'env' ? '.env 已配置' : source === 'sts' ? '免密钥 · 云端临时授权' : '已保存'})
+          </span>
         )}
       </div>
-      <p className="text-xs text-zinc-500">用于宫格拆图功能。留空则使用 .env 环境变量。</p>
+      <p className="text-xs text-zinc-500">
+        用于分镜切图 / 智能去字幕。不填也能用(自动走云端临时授权);填自己的密钥则优先生效,留空退回 .env 环境变量。
+      </p>
       <div className="grid grid-cols-2 gap-3">
         <input
           value={secretId}

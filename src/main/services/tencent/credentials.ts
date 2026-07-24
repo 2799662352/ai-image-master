@@ -180,8 +180,13 @@ export function getCredentials(): Credentials {
 
 export function getCredentialState(): CredentialState {
   const { creds, source } = getResolved()
+  if (!creds.secretId) {
+    // 免密钥通道:没有永久密钥时,媒体功能仍可经 SCF 云函数 STS 临时票据
+    // 运行(桶/区域随票据下发)。端点故障会在任务运行时以正常失败面呈现。
+    return { hasCredentials: true, credentialSource: 'sts' }
+  }
   return {
-    hasCredentials: !!creds.secretId,
+    hasCredentials: true,
     credentialSource: source,
     secretIdMasked: maskSecretId(creds.secretId),
     bucket: creds.bucket || undefined,

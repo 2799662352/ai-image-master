@@ -1,6 +1,7 @@
 import COS from 'cos-nodejs-sdk-v5'
 import { getCredentials, onCredentialsInvalidated } from './credentials'
-import { getStsCredentials } from './stsCredentials'
+import { getStsCredentials, getMediaStsCredentials } from './stsCredentials'
+import { getMediaAuth } from './mediaAuth'
 
 type CosInstance = {
   putObject: (params: any, cb: any) => void
@@ -12,6 +13,7 @@ type CosInstance = {
 
 let cosInstance: CosInstance | null = null
 let stsCosInstance: CosInstance | null = null
+let mediaStsCosInstance: CosInstance | null = null
 
 onCredentialsInvalidated(() => {
   cosInstance = null
@@ -71,9 +73,47 @@ function getStsCosInstance(): CosInstance {
   return stsCosInstance!
 }
 
-function getBucketAndRegion() {
-  const creds = getCredentials()
-  return { Bucket: creds.bucket, Region: creds.region }
+/**
+ * Media-scope STS COS instance (智能去字幕 / 分镜切图 免密钥通道)。与
+ * getStsCosInstance 相同的 getAuthorization 结构,但票据是 scope=media
+ * (smart-erase/* + storyboard-split/* 读写删)。
+ */
+function getMediaStsCosInstance(): CosInstance {
+  if (!mediaStsCosInstance) {
+    mediaStsCosInstance = new (COS as any)({
+      Protocol: 'https:',
+      Timeout: 120000,
+      getAuthorization: (_options: any, callback: any) => {
+        getMediaStsCredentials()
+          .then((c) => {
+            callback({
+              TmpSecretId: c.tmpSecretId,
+              TmpSecretKey: c.tmpSecretKey,
+              SecurityToken: c.sessionToken,
+              StartTime: c.startTime,
+              ExpiredTime: c.expiredTime,
+            })
+          })
+          .catch((err) => {
+            logCosError('media-sts-getAuthorization', err)
+            callback({ TmpSecretId: '', TmpSecretKey: '', SecurityToken: '', StartTime: 0, ExpiredTime: 0 })
+          })
+      },
+    })
+  }
+  return mediaStsCosInstance!
+}
+
+/**
+ * 媒体操作统一入口:永久密钥优先(实例/桶/区域与旧行为完全一致),
+ * 未配置时回退到 media-scope STS 实例(桶/区域随票据下发)。
+ */
+async function resolveMediaCos(): Promise<{ cos: CosInstance; Bucket: string; Region: string }> {
+  const auth = await getMediaAuth()
+  if (auth.mode === 'permanent') {
+    return { cos: getCosInstance(), Bucket: auth.bucket, Region: auth.region }
+  }
+  return { cos: getMediaStsCosInstance(), Bucket: auth.bucket, Region: auth.region }
 }
 
 // Keep all reject-path logging in one place so we can flip the verbosity
@@ -102,8 +142,7 @@ export interface UploadBufferOptions {
 }
 
 export async function uploadBuffer(opts: UploadBufferOptions): Promise<void> {
-  const cos = getCosInstance()
-  const { Bucket, Region } = getBucketAndRegion()
+  const { cos, Bucket, Region } = await resolveMediaCos()
   await new Promise<void>((resolve, reject) => {
     cos.putObject(
       { Bucket, Region, Key: opts.key, Body: opts.body, ContentType: opts.contentType },
@@ -280,8 +319,7 @@ export interface UploadStreamOptions {
 const SLICE_UPLOAD_HARD_TIMEOUT_MS = 10 * 60 * 1000 // 10 分钟
 
 export async function uploadStream(opts: UploadStreamOptions): Promise<void> {
-  const cos = getCosInstance()
-  const { Bucket, Region } = getBucketAndRegion()
+  const { cos, Bucket, Region } = await resolveMediaCos()
 
   // round-5 加固: 透明拦截 onTaskReady 把 taskId 抓在闭包里, 这样异常分支
   // 也能调 cancelTask 做防御性清理 —— cos-nodejs-sdk-v5 的 sliceUploadFile
@@ -347,8 +385,10 @@ export async function uploadStream(opts: UploadStreamOptions): Promise<void> {
  * to call before any upload has started (cold-cancel no-ops cleanly).
  */
 export function cancelUpload(taskId: string): void {
-  if (!cosInstance) return
-  cosInstance.cancelTask(taskId)
+  // taskId 可能属于永久实例或 media-STS 实例;对不认识的 id, SDK 的
+  // cancelTask 是 no-op,双发无副作用。
+  try { cosInstance?.cancelTask(taskId) } catch { /* SDK 内部可能已 cleanup */ }
+  try { mediaStsCosInstance?.cancelTask(taskId) } catch { /* 同上 */ }
 }
 
 export interface GetPresignedUrlOptions {
@@ -358,9 +398,8 @@ export interface GetPresignedUrlOptions {
   method?: 'GET' | 'PUT'
 }
 
-export function getPresignedUrl(opts: GetPresignedUrlOptions): Promise<string> {
-  const cos = getCosInstance()
-  const { Bucket, Region } = getBucketAndRegion()
+export async function getPresignedUrl(opts: GetPresignedUrlOptions): Promise<string> {
+  const { cos, Bucket, Region } = await resolveMediaCos()
   return new Promise((resolve, reject) => {
     cos.getObjectUrl(
       {
@@ -386,8 +425,7 @@ export function getPresignedUrl(opts: GetPresignedUrlOptions): Promise<string> {
 
 export async function deleteObjects(keys: string[]): Promise<void> {
   if (!keys.length) return
-  const cos = getCosInstance()
-  const { Bucket, Region } = getBucketAndRegion()
+  const { cos, Bucket, Region } = await resolveMediaCos()
   await new Promise<void>((resolve, reject) => {
     cos.deleteMultipleObject(
       {
