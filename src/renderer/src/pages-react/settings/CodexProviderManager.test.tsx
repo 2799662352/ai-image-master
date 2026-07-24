@@ -213,7 +213,7 @@ describe('CodexProviderManager gateway cards', () => {
       {
         id: 'rightcode',
         name: 'Right.Codes',
-        baseUrl: 'https://right.codes/codex/v1',
+        baseUrl: 'https://rightapi.ai/codex/v1',
         envKey: 'OPENAI_API_KEY',
         credentialId: 'rightcode',
       },

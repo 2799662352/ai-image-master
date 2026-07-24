@@ -31,7 +31,7 @@ describe('gatewayModelRouting', () => {
     const channel = resolveProviderChannel(route.channelId)
 
     expect(route.channelId).toBe('rightcode-grok')
-    expect(channel.baseUrl).toBe('https://right.codes/grok/v1')
+    expect(channel.baseUrl).toBe('https://rightapi.ai/grok/v1')
   })
 
   it('routes memory side requests to the smartest model each endpoint serves', () => {

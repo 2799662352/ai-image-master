@@ -388,7 +388,7 @@ describe('useSettingsStore', () => {
           builtins: [{
             id: 'rightcode-grok',
             name: 'Right.Codes Grok',
-            baseUrl: 'https://right.codes/grok/v1',
+            baseUrl: 'https://rightapi.ai/grok/v1',
             envKey: 'OPENAI_API_KEY',
             model: 'grok-4.5',
           }],
@@ -417,7 +417,7 @@ describe('useSettingsStore', () => {
           builtins: [{
             id: 'rightcode-grok',
             name: 'Right.Codes Grok',
-            baseUrl: 'https://right.codes/grok/v1',
+            baseUrl: 'https://rightapi.ai/grok/v1',
             envKey: 'OPENAI_API_KEY',
             credentialId: 'rightcode',
           }],
@@ -736,7 +736,7 @@ describe('useSettingsStore', () => {
         {
           id: 'rightcode',
           name: 'Right.Codes',
-          baseUrl: 'https://right.codes/codex/v1',
+          baseUrl: 'https://rightapi.ai/codex/v1',
           envKey: 'OPENAI_API_KEY',
           model: 'gpt-5.5',
           credentialId: 'rightcode',

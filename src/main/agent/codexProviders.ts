@@ -34,7 +34,7 @@ const APIYI_PRESET: ProviderPreset = {
 const RIGHTCODE_PRESET: ProviderPreset = {
   id: 'rightcode',
   name: 'Right.Codes',
-  baseUrl: 'https://right.codes/codex/v1',
+  baseUrl: 'https://rightapi.ai/codex/v1',
   envKey: 'OPENAI_API_KEY',
   model: 'gpt-5.5',
   verbosity: 'high',

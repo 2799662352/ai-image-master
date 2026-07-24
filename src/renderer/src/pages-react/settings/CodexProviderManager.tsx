@@ -68,7 +68,7 @@ const BUILTIN_GATEWAY_CAPABILITIES: readonly string[] = [
  *
  * Renders the two built-in Gateway radio-cards (API Yi / Right.Codes) plus
  * user-defined provider tiles and an "+ Add custom" button that opens a modal
- * mirroring `right.codes`'s config.toml schema. Grok channels are internal —
+ * mirroring `rightapi.ai`'s config.toml schema. Grok channels are internal —
  * the picker in chat routes models; only Gateways appear here.
  */
 export function CodexProviderManager() {

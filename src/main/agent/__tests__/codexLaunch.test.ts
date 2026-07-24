@@ -163,7 +163,7 @@ describe('buildCodexLaunchArgs', () => {
     // With `features.memories=true`, codex fires background memory
     // extraction/consolidation turns using its own defaults (gpt-5.4 —
     // confirmed via live capture: "Memory Writing Agent: Phase 2" POSTed
-    // `model: gpt-5.4` to right.codes/grok and got 400 端点未配置模型). Pinning
+    // `model: gpt-5.4` to rightapi.ai/grok and got 400 端点未配置模型). Pinning
     // `memories.extract_model` / `memories.consolidation_model` (both keys
     // verified present in the bundled binary's config surface) to the channel
     // model keeps every side request on a model the endpoint actually serves.
@@ -171,7 +171,7 @@ describe('buildCodexLaunchArgs', () => {
       provider: {
         id: 'rightcode-grok',
         name: 'Right.Codes Grok',
-        baseUrl: 'https://right.codes/grok/v1',
+        baseUrl: 'https://rightapi.ai/grok/v1',
         envKey: 'OPENAI_API_KEY',
         model: 'grok-4.5',
       },
@@ -581,7 +581,7 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('model_providers.apiyi.wire_api="responses"')
   })
 
-  // The right.codes preset (https://docs.right.codes/docs/rc_cli_config/codex.html)
+  // The rightapi.ai preset (https://docs.rightapi.ai/docs/rc_cli_config/codex.html)
   // requires several top-level overrides Codex normally leaves at default:
   //   - model="gpt-5.2"
   //   - model_reasoning_effort="xhigh"
@@ -597,7 +597,7 @@ describe('buildCodexLaunchArgs', () => {
       provider: {
         id: 'rightcode',
         name: 'Right.Codes',
-        baseUrl: 'https://right.codes/codex/v1',
+        baseUrl: 'https://rightapi.ai/codex/v1',
         envKey: 'OPENAI_API_KEY',
         model: 'gpt-5.2',
         reasoningEffort: 'xhigh',
@@ -617,7 +617,7 @@ describe('buildCodexLaunchArgs', () => {
       provider: {
         id: 'rightcode',
         name: 'Right.Codes',
-        baseUrl: 'https://right.codes/codex/v1',
+        baseUrl: 'https://rightapi.ai/codex/v1',
         envKey: 'OPENAI_API_KEY',
         extraTopLevelConfig: {
           disable_response_storage: true,
@@ -635,7 +635,7 @@ describe('buildCodexLaunchArgs', () => {
       provider: {
         id: 'rightcode',
         name: 'Right.Codes',
-        baseUrl: 'https://right.codes/codex/v1',
+        baseUrl: 'https://rightapi.ai/codex/v1',
         envKey: 'OPENAI_API_KEY',
         extraTopLevelConfig: {
           disable_response_storage: true,

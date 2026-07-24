@@ -26,7 +26,7 @@ describe('codexProviders', () => {
   it('ships rightcode preset matching the public docs', () => {
     const rc = BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode')
     expect(rc).toBeDefined()
-    expect(rc!.baseUrl).toBe('https://right.codes/codex/v1')
+    expect(rc!.baseUrl).toBe('https://rightapi.ai/codex/v1')
     expect(rc!.envKey).toBe('OPENAI_API_KEY')
     expect(rc!.model).toBe('gpt-5.5')
     expect(rc).not.toHaveProperty('reasoningEffort')
@@ -54,7 +54,7 @@ describe('codexProviders', () => {
     const grok = resolveProviderChannel('rightcode-grok')
     expect(grok).toMatchObject({
       name: 'Right.Codes Grok',
-      baseUrl: 'https://right.codes/grok/v1',
+      baseUrl: 'https://rightapi.ai/grok/v1',
       envKey: 'OPENAI_API_KEY',
       model: 'grok-4.5',
       allowedModels: ['grok-4.5'],

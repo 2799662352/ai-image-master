@@ -88,7 +88,7 @@ describe('buildExecArgs', () => {
         provider: {
           id: 'rightcode',
           name: 'Right.Codes',
-          baseUrl: 'https://right.codes/codex/v1',
+          baseUrl: 'https://rightapi.ai/codex/v1',
           envKey: 'OPENAI_API_KEY',
           model: 'gpt-5.2',
           reasoningEffort: 'xhigh',

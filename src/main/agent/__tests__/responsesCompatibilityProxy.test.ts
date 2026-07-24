@@ -94,7 +94,7 @@ describe('Responses namespace compatibility', () => {
     // Codex serializes replayed reasoning history as `"content": null` /
     // `"encrypted_content": null`. xAI's untagged ModelInput enum rejects
     // `content: null` with HTTP 422; omitting the field is accepted. Diagnosed
-    // live against right.codes/grok — second turn always failed.
+    // live against rightapi.ai/grok — second turn always failed.
     const request = {
       model: 'grok-4.5',
       input: [

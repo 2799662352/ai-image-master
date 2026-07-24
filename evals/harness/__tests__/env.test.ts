@@ -42,7 +42,7 @@ describe('resolveAppCreds', () => {
         id: 'rightcode-grok',
         gatewayId: 'rightcode',
         model: 'grok-4.5',
-        baseUrl: 'https://right.codes/grok/v1',
+        baseUrl: 'https://rightapi.ai/grok/v1',
       }),
     })
   })

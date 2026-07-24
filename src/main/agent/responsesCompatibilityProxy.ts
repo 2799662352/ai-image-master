@@ -153,7 +153,7 @@ function rewriteRequestCalls(
  * `"content": null` / `"encrypted_content": null`. xAI's Responses `input`
  * is a Rust untagged enum (`ModelInput`); an explicit `content: null` makes
  * the WHOLE request fail to deserialize with HTTP 422, while omitting the
- * field is accepted (verified live against right.codes/grok — turn 1 passed,
+ * field is accepted (verified live against rightapi.ai/grok — turn 1 passed,
  * every turn 2 failed). Omission and null are semantically identical for a
  * request payload, so stripping nulls is safe for every Responses server.
  */

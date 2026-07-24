@@ -57,7 +57,7 @@ describe('ProviderChannelController', () => {
 
     expect(result.changed).toBe(true)
     expect(backend.setProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: 'https://right.codes/grok/v1' }),
+      expect.objectContaining({ baseUrl: 'https://rightapi.ai/grok/v1' }),
     )
     expect(backend.restartCodex).toHaveBeenCalledTimes(1)
   })
@@ -76,7 +76,7 @@ describe('ProviderChannelController', () => {
     expect(backend.setProvider).toHaveBeenLastCalledWith(
       expect.objectContaining({
         id: 'rightcode-standard',
-        baseUrl: 'https://right.codes/codex/v1',
+        baseUrl: 'https://rightapi.ai/codex/v1',
       }),
     )
     expect(controller.currentChannelId()).toBe('rightcode-standard')
