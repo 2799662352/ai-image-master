@@ -9,7 +9,11 @@ export interface Credentials {
 
 export interface CredentialState {
   hasCredentials: boolean
-  credentialSource: 'store' | 'memory' | 'env' | 'builtin' | 'none'
+  /**
+   * 'sts' = 用户没填永久密钥,媒体功能(分镜切图/智能去字幕)走 SCF 云函数
+   * 的 scope=media 临时票据(免密钥通道,见 tencent/stsCredentials.ts)。
+   */
+  credentialSource: 'store' | 'memory' | 'env' | 'builtin' | 'sts' | 'none'
   secretIdMasked?: string
   bucket?: string
   region?: string
