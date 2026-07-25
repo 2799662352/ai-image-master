@@ -127,6 +127,7 @@ import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
 import { dropSupersededStreamItems, trimRetriedStreamItems } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
+import { createBackendRpcFacade } from './backendRpcFacade'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
 import type { DoctorReport } from './codexDoctor'
 import type {
@@ -331,6 +332,13 @@ function resolvePersistedStartupProvider(
 
 export class AgentManager {
   private backend: IAgentBackend
+
+  /**
+   * 后端直通 RPC（配置 / 插件 / 市场 / apps / 外部 agent 配置）。这批方法不读本类
+   * 的任何状态，只是把 IAgentBackend 的可选能力翻译成 {ok,error,data} 信封，实现
+   * 在 backendRpcFacade.ts。下面的同名字段把公开面原样保留，调用方无需改动。
+   */
+  private readonly backendRpc = createBackendRpcFacade(() => this.backend)
   private win: BrowserWindow | undefined
   private readonly store: ThreadStore | undefined
   private readonly attachments: AttachmentService | undefined
@@ -2356,97 +2364,14 @@ export class AgentManager {
     }
   }
 
-  async listMcpServersRpc(params?: unknown): Promise<{ ok: boolean; error?: string; data?: unknown }> {
-    try {
-      if (!this.backend.listMcpServers) throw new Error('MCP list API unavailable')
-      const result = await this.backend.listMcpServers(params)
-      return { ok: true, data: result }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
+  listMcpServersRpc = this.backendRpc.listMcpServers
+  batchWriteConfigRpc = this.backendRpc.batchWriteConfig
+  writeConfigValueRpc = this.backendRpc.writeConfigValue
+  readConfigRpc = this.backendRpc.readConfig
 
-  async batchWriteConfigRpc(edits: unknown[], reload?: boolean): Promise<{ ok: boolean; error?: string }> {
-    try {
-      if (!this.backend.batchWriteConfig) throw new Error('MCP batch write API unavailable')
-      await this.backend.batchWriteConfig(edits, reload)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async writeConfigValueRpc(keyPath: string, value: unknown): Promise<{ ok: boolean; error?: string }> {
-    try {
-      if (!this.backend.writeConfigValue) throw new Error('MCP write value API unavailable')
-      await this.backend.writeConfigValue(keyPath, value)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async readConfigRpc(): Promise<{ ok: boolean; error?: string; config?: unknown }> {
-    try {
-      if (!this.backend.readConfig) throw new Error('MCP read config API unavailable')
-      const result = await this.backend.readConfig()
-      return { ok: true, config: result?.config }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  /**
-   * Read `~/.codex/config.toml` directly (bypasses codex's strict schema).
-   *
-   * Why this exists separately from `readConfigRpc`:
-   *   The Rust `config/read` RPC rejects the entire request if any
-   *   `[mcp_servers.X]` block fails validation (e.g. unknown `transport`
-   *   value). The renderer must still be able to enumerate and EDIT the
-   *   broken section to fix it — without this RPC the MCP page is a dead
-   *   end whenever codex's parser tightens. We deliberately surface
-   *   whatever TOML the user has on disk, even when codex would reject it.
-   */
-  async readRawConfigRpc(): Promise<{
-    ok: boolean
-    error?: string
-    config?: Record<string, unknown> | null
-    raw?: string | null
-    parseError?: string
-  }> {
-    try {
-      const configPath = path.join(os.homedir(), '.codex', 'config.toml')
-      const result = await readRawCodexConfig(configPath)
-      return {
-        ok: true,
-        config: result.config,
-        raw: result.raw,
-        parseError: result.parseError,
-      }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async reloadMcpServersRpc(): Promise<{ ok: boolean; error?: string }> {
-    try {
-      if (!this.backend.reloadMcpServers) throw new Error('MCP reload API unavailable')
-      await this.backend.reloadMcpServers()
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async mcpOAuthLoginRpc(name: string): Promise<{ ok: boolean; error?: string; authorization_url?: string }> {
-    try {
-      if (!this.backend.mcpOAuthLogin) throw new Error('MCP OAuth API unavailable')
-      const result = await this.backend.mcpOAuthLogin(name)
-      return { ok: true, authorization_url: result?.authorization_url }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
+  readRawConfigRpc = this.backendRpc.readRawConfig
+  reloadMcpServersRpc = this.backendRpc.reloadMcpServers
+  mcpOAuthLoginRpc = this.backendRpc.mcpOAuthLogin
 
   // ─── Native `/goal` + `/compact` (thread/goal/*, thread/compact/*) ─────────
   // Renderer passes the DB thread id; we resolve it to the codex thread id
@@ -2636,119 +2561,17 @@ export class AgentManager {
   // try/catch across the IPC boundary. The "API unavailable" guard fires when
   // the active backend is non-Codex or hasn't been started yet.
 
-  async listPluginsRpc(params?: PluginListParams): Promise<{ ok: boolean; error?: string; data?: PluginListResponse }> {
-    try {
-      if (!this.backend.listPlugins) throw new Error('Plugin list API unavailable')
-      return { ok: true, data: await this.backend.listPlugins(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async listInstalledPluginsRpc(
-    params?: PluginInstalledParams,
-  ): Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }> {
-    try {
-      if (!this.backend.listInstalledPlugins) throw new Error('Installed plugins API unavailable')
-      return { ok: true, data: await this.backend.listInstalledPlugins(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async readPluginRpc(params: PluginReadParams): Promise<{ ok: boolean; error?: string; data?: PluginReadResponse }> {
-    try {
-      if (!this.backend.readPlugin) throw new Error('Plugin read API unavailable')
-      return { ok: true, data: await this.backend.readPlugin(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async installPluginRpc(
-    params: PluginInstallParams,
-  ): Promise<{ ok: boolean; error?: string; data?: PluginInstallResponse }> {
-    try {
-      if (!this.backend.installPlugin) throw new Error('Plugin install API unavailable')
-      return { ok: true, data: await this.backend.installPlugin(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async uninstallPluginRpc(pluginId: string): Promise<{ ok: boolean; error?: string }> {
-    try {
-      if (!this.backend.uninstallPlugin) throw new Error('Plugin uninstall API unavailable')
-      await this.backend.uninstallPlugin(pluginId)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async addMarketplaceRpc(
-    params: MarketplaceAddParams,
-  ): Promise<{ ok: boolean; error?: string; data?: MarketplaceAddResponse }> {
-    try {
-      if (!this.backend.addMarketplace) throw new Error('Marketplace add API unavailable')
-      return { ok: true, data: await this.backend.addMarketplace(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async removeMarketplaceRpc(
-    marketplaceName: string,
-  ): Promise<{ ok: boolean; error?: string; data?: MarketplaceRemoveResponse }> {
-    try {
-      if (!this.backend.removeMarketplace) throw new Error('Marketplace remove API unavailable')
-      return { ok: true, data: await this.backend.removeMarketplace(marketplaceName) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async upgradeMarketplacesRpc(
-    marketplaceName?: string,
-  ): Promise<{ ok: boolean; error?: string; data?: MarketplaceUpgradeResponse }> {
-    try {
-      if (!this.backend.upgradeMarketplaces) throw new Error('Marketplace upgrade API unavailable')
-      return { ok: true, data: await this.backend.upgradeMarketplaces(marketplaceName) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async listAppsRpc(params?: AppsListParams): Promise<{ ok: boolean; error?: string; data?: AppsListResponse }> {
-    try {
-      if (!this.backend.listApps) throw new Error('Apps list API unavailable')
-      return { ok: true, data: await this.backend.listApps(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async detectExternalAgentConfigRpc(
-    params?: ExternalAgentConfigDetectParams,
-  ): Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigDetectResponse }> {
-    try {
-      if (!this.backend.detectExternalAgentConfig) throw new Error('External agent config detect API unavailable')
-      return { ok: true, data: await this.backend.detectExternalAgentConfig(params) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  async importExternalAgentConfigRpc(
-    migrationItems: ExternalAgentConfigMigrationItem[],
-  ): Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigImportResponse }> {
-    try {
-      if (!this.backend.importExternalAgentConfig) throw new Error('External agent config import API unavailable')
-      return { ok: true, data: await this.backend.importExternalAgentConfig(migrationItems) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
+  listPluginsRpc = this.backendRpc.listPlugins
+  listInstalledPluginsRpc = this.backendRpc.listInstalledPlugins
+  readPluginRpc = this.backendRpc.readPlugin
+  installPluginRpc = this.backendRpc.installPlugin
+  uninstallPluginRpc = this.backendRpc.uninstallPlugin
+  addMarketplaceRpc = this.backendRpc.addMarketplace
+  removeMarketplaceRpc = this.backendRpc.removeMarketplace
+  upgradeMarketplacesRpc = this.backendRpc.upgradeMarketplaces
+  listAppsRpc = this.backendRpc.listApps
+  detectExternalAgentConfigRpc = this.backendRpc.detectExternalAgentConfig
+  importExternalAgentConfigRpc = this.backendRpc.importExternalAgentConfig
 
   // ---- Docker MCP Gateway workaround for Codex bug #19425 ----
   // See ./dockerMcpGateway.ts for the full rationale. Renderer calls
