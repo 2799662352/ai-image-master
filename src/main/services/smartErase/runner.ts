@@ -139,6 +139,16 @@ export function summarizeTaskDetail(taskResp: any, nowMs: number = Date.now()): 
   }
 }
 
+/**
+ * 轮询期间允许的**连续**失败次数（成功一轮即清零）。
+ *
+ * 任务已提交并计费、腾讯侧还在跑，所以一次网络抖动 / STS 换票失败 / MPS 5xx 不该
+ * 让它在界面上变成失败 —— JobQueue 不做任何重试，runner 一抛就是终局。但真正的
+ * 永久错误（签名失效、TaskId 非法）也不能无声转圈，所以给一个有限的容忍度：不必
+ * 猜测腾讯的错误码分类，连续失败到这个次数就如实报错。
+ */
+export const POLL_MAX_CONSECUTIVE_FAILURES = 5
+
 export function pollIntervalMs(attempt: number): number {
   return Math.min(
     POLL_CAP_MS,
@@ -248,12 +258,15 @@ export async function runProcessAndPoll(
   events.onProgress?.({ stage: 'processing', mpsTaskId })
 
   let attempt = 0
+  let consecutiveFailures = 0
 
   // Infinite poll loop. The only exits are:
   //   1. signal.aborted     → TASK_CANCELLED  (user pressed × in the queue)
   //   2. result.Status='SUCCESS' → return cleanly
   //   3. result.Status='FAIL' / wf.ErrCode !== 0 → MPS_TASK_FAILED / MPS_SOURCE_ERROR
   //   4. Other terminal states surfaced as UNKNOWN_ERROR
+  //   5. POLL_MAX_CONSECUTIVE_FAILURES 次连续查询失败 → MPS_POLL_FAILED
+  //      （单次抖动会退避重试，成功一轮即清零 —— 见该常量的说明）
   //
   // We previously enforced a `max(60min, duration×4)` deadline that fired
   // POLL_TIMEOUT — but for short clips it forced 60min ceiling regardless,
@@ -266,8 +279,30 @@ export async function runProcessAndPoll(
     attempt++
     // 每轮重新取 client:STS 模式下长任务(>25min)票据会到期,
     // getMpsClient 内部按到期时间自动重建;永久密钥模式命中缓存零开销。
-    const pollClient = await getMpsClient()
-    const taskResp = await pollClient.DescribeTaskDetail({ TaskId: mpsTaskId })
+    let taskResp: any
+    try {
+      const pollClient = await getMpsClient()
+      taskResp = await pollClient.DescribeTaskDetail({ TaskId: mpsTaskId })
+    } catch (err: any) {
+      // 上面注释里列的四个退出口不包含「接口暂时抖动」—— 任务已计费且仍在跑，
+      // 抛出去就等于把它丢了（JobQueue 不重试）。退避重试，连续失败到上限才认输。
+      consecutiveFailures++
+      const message = err?.message ?? String(err)
+      if (consecutiveFailures >= POLL_MAX_CONSECUTIVE_FAILURES) {
+        throw makeError(
+          'MPS_POLL_FAILED',
+          `连续 ${consecutiveFailures} 次查询任务状态失败：${message}`,
+          'poll',
+        )
+      }
+      console.warn(
+        `[smartErase] poll ${mpsTaskId} failed (${consecutiveFailures}/${POLL_MAX_CONSECUTIVE_FAILURES}), retrying:`,
+        err,
+      )
+      await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs(attempt)))
+      continue
+    }
+    consecutiveFailures = 0
     const detail = summarizeTaskDetail(taskResp)
 
     // Always emit the latest detail snapshot so the renderer's "查看详情"
