@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-25T09:40:54.091Z",
+  "generatedAt": "2026-07-25T17:05:24.711Z",
   "expiresAt": "2026-08-31",
   "diagnostics": [
     {
@@ -68,42 +68,6 @@
       "code": "TS2353",
       "message": "Object literal may only specify known properties, and 'uploadImageFromUrl' does not exist in type '{ uploadImageHistory: (base64: string, mimeType: string, metadata?: Record<string, unknown> | undefined) => Promise<{ success: true; url: string; key: string; } | { success: false; error: string; }>; enqueueUploadBytes: (requestId: string, bytes: ArrayBuffer, mimeType?: string | undefined, metadata?: Record<...> | u...'.",
       "count": 1
-    },
-    {
-      "file": "src/renderer/public/debug-helper.js",
-      "code": "TS2339",
-      "message": "Property '_hasClickListener' does not exist on type 'Element'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/public/debug-helper.js",
-      "code": "TS2339",
-      "message": "Property 'closeDropdown' does not exist on type 'ModelSelectorManager'.",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/public/debug-helper.js",
-      "code": "TS2339",
-      "message": "Property 'dataset' does not exist on type 'Element'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/public/debug-helper.js",
-      "code": "TS2339",
-      "message": "Property 'debugHelper' does not exist on type 'Window & typeof globalThis'.",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/public/debug-helper.js",
-      "code": "TS2339",
-      "message": "Property 'onclick' does not exist on type 'Element'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/public/debug-helper.js",
-      "code": "TS2339",
-      "message": "Property 'openDropdown' does not exist on type 'ModelSelectorManager'.",
-      "count": 2
     },
     {
       "file": "src/renderer/src/components/donor/__tests__/DonorVirtualGrid.test.tsx",
@@ -184,78 +148,6 @@
       "count": 1
     },
     {
-      "file": "src/renderer/src/features/history/HistoryDataService.ts",
-      "code": "TS2339",
-      "message": "Property 'id' does not exist on type 'HistoryItem'.",
-      "count": 12
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryDataService.ts",
-      "code": "TS2353",
-      "message": "Object literal may only specify known properties, and 'id' does not exist in type 'Partial<HistoryItem>'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2307",
-      "message": "Cannot find module '@/services/r2-storage' or its corresponding type declarations.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2307",
-      "message": "Cannot find module '@/services/storage' or its corresponding type declarations.",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'id' does not exist on type 'HistoryItem'.",
-      "count": 5
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'id' does not exist on type 'Partial<HistoryItem>'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'imageUrl' does not exist on type '{ type?: string | undefined; ratio?: string | undefined; resolution?: string | undefined; urls?: string[] | undefined; uploading?: boolean | undefined; originalUrls?: string[] | undefined; r2Storage?: boolean | undefined; metadata?: HistoryMetadata | undefined; }'.",
-      "count": 3
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'imageUrl' does not exist on type 'HistoryItem'.",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'model' does not exist on type 'HistoryItem'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'prompt' does not exist on type 'HistoryItem'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2339",
-      "message": "Property 'timestamp' does not exist on type 'Partial<HistoryItem>'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/history/HistoryManager.ts",
-      "code": "TS2353",
-      "message": "Object literal may only specify known properties, and 'id' does not exist in type 'HistoryItem'.",
-      "count": 1
-    },
-    {
       "file": "src/renderer/src/features/intelligent-resize/IntelligentResizeManager.ts",
       "code": "TS18048",
       "message": "'generatePage.referenceImages.length' is possibly 'undefined'.",
@@ -284,24 +176,6 @@
       "code": "TS2307",
       "message": "Cannot find module './DirectorPage' or its corresponding type declarations.",
       "count": 3
-    },
-    {
-      "file": "src/renderer/src/react-app/__tests__/DirectorApp.refresh-skills.test.tsx",
-      "code": "TS2307",
-      "message": "Cannot find module '@/services/pipeline/prompt-loader' or its corresponding type declarations.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/react-app/hooks/useDirectorGeneration.ts",
-      "code": "TS2307",
-      "message": "Cannot find module '@/services/pipeline/types' or its corresponding type declarations.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/react-app/hooks/useDirectorGeneration.ts",
-      "code": "TS2307",
-      "message": "Cannot find module '@/services/ServiceBridge' or its corresponding type declarations.",
-      "count": 2
     },
     {
       "file": "src/renderer/src/services/api/ApiService.ts",
