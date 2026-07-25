@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-25T17:49:05.265Z",
+  "generatedAt": "2026-07-25T19:29:11.452Z",
   "expiresAt": "2026-08-31",
   "diagnostics": [
     {
@@ -184,45 +184,9 @@
       "count": 2
     },
     {
-      "file": "src/renderer/src/services/i18n/I18nService.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'i18n' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/i18n/I18nService.ts",
-      "code": "TS2717",
-      "message": "Subsequent property declarations must have the same type.  Property 'i18n' must be of type 'I18nInstance | undefined', but here has type 'I18nService'.",
-      "count": 1
-    },
-    {
       "file": "src/renderer/src/services/PageStateManager.ts",
       "code": "TS2322",
       "message": "Type '(ReferenceImage | { base64: string | undefined; _savedToFile: boolean; _originalSize: number; name?: string | undefined; _oversized?: boolean | undefined; _loadFailed?: boolean | undefined; })[]' is not assignable to type 'ReferenceImage[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/r2-storage/R2StorageService.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'r2Storage' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/r2-storage/R2StorageService.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'r2StorageTS' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/r2-storage/R2StorageService.ts",
-      "code": "TS2717",
-      "message": "Subsequent property declarations must have the same type.  Property 'r2Storage' must be of type 'any', but here has type 'R2StorageService'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/r2-storage/R2StorageService.ts",
-      "code": "TS2717",
-      "message": "Subsequent property declarations must have the same type.  Property 'r2StorageTS' must be of type 'any', but here has type 'R2StorageService'.",
       "count": 1
     },
     {
@@ -241,30 +205,6 @@
       "file": "src/renderer/src/services/storage/StorageBridge.ts",
       "code": "TS2345",
       "message": "Argument of type '{ [key: string]: any; id: string | number; prompt?: string | undefined; model?: string | undefined; timestamp?: string | undefined; imageUrl?: string | undefined; images?: string[] | undefined; urls?: string[] | undefined; }[]' is not assignable to parameter of type 'HistoryItem[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storage/StorageBridge.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'storageBridge' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storage/StorageBridge.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'storageBridgeTS' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storage/StorageBridge.ts",
-      "code": "TS2717",
-      "message": "Subsequent property declarations must have the same type.  Property 'storageBridge' must be of type 'any', but here has type 'StorageBridge'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storage/StorageBridge.ts",
-      "code": "TS2717",
-      "message": "Subsequent property declarations must have the same type.  Property 'storageBridgeTS' must be of type 'any', but here has type 'StorageBridge'.",
       "count": 1
     },
     {
@@ -310,18 +250,6 @@
       "count": 1
     },
     {
-      "file": "src/renderer/src/services/version-checker/VersionChecker.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'versionChecker' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/version-checker/VersionChecker.ts",
-      "code": "TS2717",
-      "message": "Subsequent property declarations must have the same type.  Property 'versionChecker' must be of type 'any', but here has type 'VersionChecker'.",
-      "count": 1
-    },
-    {
       "file": "src/renderer/src/shims/deepagents-bridge.ts",
       "code": "TS2307",
       "message": "Cannot find module 'deepagents' or its corresponding type declarations.",
@@ -350,42 +278,6 @@
       "code": "TS2339",
       "message": "Property 'default' does not exist on type 'JSZip'.",
       "count": 3
-    },
-    {
-      "file": "src/types/index.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'i18n' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/types/index.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'r2Storage' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/types/index.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'r2StorageTS' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/types/index.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'storageBridge' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/types/index.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'storageBridgeTS' must have identical modifiers.",
-      "count": 1
-    },
-    {
-      "file": "src/types/index.ts",
-      "code": "TS2687",
-      "message": "All declarations of 'versionChecker' must have identical modifiers.",
-      "count": 1
     }
   ]
 }

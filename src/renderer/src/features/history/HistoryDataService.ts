@@ -534,11 +534,13 @@ export function createHistoryDataService(config?: Partial<HistoryDataServiceConf
   return new HistoryDataService(config)
 }
 
-// 扩展 Window 类型
+// 扩展 Window 类型。
+//
+// storageBridge / r2Storage 刻意不在这里声明 —— 它们由暴露自己的那个服务声明
+// (StorageBridge.ts / R2StorageService.ts),那里是具体类。这里曾经也声明过一份
+// `?: any`,同一属性两处不一致就报 TS2687(修饰符)+ TS2717(类型)。
 declare global {
   interface Window {
-    storageBridge?: any
-    r2Storage?: any
     aiImageAPI?: any
   }
 

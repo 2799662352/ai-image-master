@@ -606,10 +606,14 @@ declare global {
     electronAPI?: ElectronAPI
     app?: any
     aiImageAPI?: any
-    r2Storage?: any
-    storageBridge?: any
-    i18n?: I18nInstance
-    versionChecker?: any
+    // r2Storage / storageBridge / i18n / versionChecker / storageBridgeTS /
+    // r2StorageTS 刻意不在这里声明 —— 它们由**暴露自己的那个服务**声明
+    // (R2StorageService / StorageBridge / I18nService / VersionChecker 各自的
+    // `declare global`),那里能给出具体类而不是 any。
+    //
+    // 这里曾经也声明过一份 `?: any`,于是同一个属性有两处不一致的声明:修饰符
+    // (可选 vs 必需)冲突报 TS2687、类型(any vs 具体类)冲突报 TS2717,一共 18 个错。
+    // 别再加回来 —— 要改这些全局的类型,改对应服务文件里的那一份。
     HistoryPage?: any
     GeneratePage?: any
     BatchPage?: any
@@ -619,11 +623,9 @@ declare global {
     PromptTemplates?: any
     // R2 Storage 相关
     CLOUDFLARE_WORKER_URL?: string
-    // ServiceBridge 相关
-    storageBridgeTS?: any
+    // ServiceBridge 相关(storageBridgeTS / r2StorageTS 同上,由各自服务声明)
     i18nServiceTS?: any
     apiServiceTS?: any
-    r2StorageTS?: any
     versionCheckerTS?: any
     formatFileSize?: (bytes: number) => string
     formatDate?: (date: Date | string | number, format?: string) => string
