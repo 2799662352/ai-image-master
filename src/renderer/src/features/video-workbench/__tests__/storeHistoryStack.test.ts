@@ -2,10 +2,10 @@
 // 入栈)、撤销/重做的栈搬运、新编辑清空重做栈、落盘增量、栈深上限。
 // IndexedDB 在 jsdom 缺失 → WorkbenchDb 自动内存降级。
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SeedanceTaskUpdate } from '../../../../../types/seedance'
 import { ACTIVE_BOARD_KEY, resetWorkbenchStoreForTest, useVideoWorkbenchStore } from '../store'
-import { WORKBENCH_HISTORY_LIMIT } from '../workbenchHistory'
+import { WORKBENCH_COALESCE_MS, WORKBENCH_HISTORY_LIMIT } from '../workbenchHistory'
 import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 
 function state() {
@@ -35,6 +35,17 @@ beforeEach(() => {
   resetWorkbenchDbForTest()
   delete (window as unknown as { electronAPI?: unknown }).electronAPI
 })
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** 模拟在提示词框里逐字符打字(UI 就是 onChange 逐字符调 updateCard)。 */
+function type(cardId: string, text: string): void {
+  for (let i = 1; i <= text.length; i++) {
+    state().updateCard(cardId, { prompt: text.slice(0, i) })
+  }
+}
 
 describe('入栈', () => {
   it('初始两个栈都是空的,撤销/重做直接拒绝', async () => {
@@ -85,6 +96,84 @@ describe('入栈', () => {
     state().renameBoard(boardId, '新名字')
 
     expect(state().undoStack).toHaveLength(depth)
+  })
+
+  it('一串连续打字只算一步 —— 否则一条提示词就吃光整个撤销栈', async () => {
+    const [cardId] = state().addCards([{ prompt: '' }])
+    const depth = state().undoStack.length
+
+    type(cardId, '一个赛博朋克街头长镜头,雨夜霓虹')
+
+    expect(state().undoStack).toHaveLength(depth + 1)
+
+    await state().undo()
+    expect(state().cards[0].prompt).toBe('')
+  })
+
+  it('停手超过合并窗口后再打字,另起一步', () => {
+    vi.useFakeTimers()
+    const [cardId] = state().addCards([{ prompt: '' }])
+    const depth = state().undoStack.length
+
+    type(cardId, '第一句')
+    expect(state().undoStack).toHaveLength(depth + 1)
+
+    vi.advanceTimersByTime(WORKBENCH_COALESCE_MS + 50)
+    type(cardId, '第一句,第二句')
+
+    expect(state().undoStack).toHaveLength(depth + 2)
+  })
+
+  it('打字之后换下拉框设置,不并进那串打字', () => {
+    const [cardId] = state().addCards([{ prompt: '' }])
+    const depth = state().undoStack.length
+
+    type(cardId, '镜头')
+    state().updateCard(cardId, { resolution: '1080p' })
+    state().updateCard(cardId, { ratio: '9:16' })
+
+    expect(state().undoStack).toHaveLength(depth + 3)
+  })
+
+  it('分别在两张卡上打字算两步', () => {
+    const ids = state().addCards([{ prompt: '' }, { prompt: '' }])
+    const depth = state().undoStack.length
+
+    type(ids[0], 'A 卡')
+    type(ids[1], 'B 卡')
+
+    expect(state().undoStack).toHaveLength(depth + 2)
+  })
+
+  it('撤销后接着打字不会并进被撤销掉的那一步', async () => {
+    const [cardId] = state().addCards([{ prompt: '' }])
+    type(cardId, '原句')
+    const depth = state().undoStack.length
+
+    await state().undo()
+    expect(state().cards[0].prompt).toBe('')
+    type(cardId, '新句')
+
+    // 撤销弹掉一步、新打字压回一步 —— 而不是悄悄并进已经撤销掉的那一步
+    expect(state().undoStack).toHaveLength(depth)
+    await state().undo()
+    expect(state().cards[0].prompt).toBe('')
+  })
+
+  it('agent 的整板 applyIR 永不与相邻编辑合并', async () => {
+    const [cardId] = state().addCards([{ prompt: '' }])
+    type(cardId, '用户写的')
+    const depth = state().undoStack.length
+
+    const ir = state().exportIR()
+    await state().applyIR(
+      { ...ir, boards: ir.boards.map((b) => ({ ...b, cards: [{ prompt: 'agent 写的' }] })) },
+      { mode: 'replace' },
+    )
+
+    expect(state().undoStack).toHaveLength(depth + 1)
+    await state().undo()
+    expect(state().cards.map((c) => c.prompt)).toEqual(['用户写的'])
   })
 
   it('超出栈深上限丢最老的一步', () => {
@@ -183,9 +272,13 @@ describe('撤销 / 重做', () => {
   })
 
   it('连续撤销逐步回退,连续重做逐步前进', async () => {
+    // 隔开合并窗口,让三次编辑真的是三步 —— 不隔开就是一步(见入栈那组用例)
+    vi.useFakeTimers()
     const [cardId] = state().addCards([{ prompt: '一' }])
     state().updateCard(cardId, { prompt: '二' })
+    vi.advanceTimersByTime(WORKBENCH_COALESCE_MS + 50)
     state().updateCard(cardId, { prompt: '三' })
+    vi.useRealTimers()
 
     await state().undo()
     expect(state().cards[0].prompt).toBe('二')

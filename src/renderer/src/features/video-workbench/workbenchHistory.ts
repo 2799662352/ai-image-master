@@ -32,6 +32,86 @@ import { WORKBENCH_MAX_CARDS } from './WorkbenchDb'
 export const WORKBENCH_HISTORY_LIMIT = 50
 
 /**
+ * 连续同目标编辑的合并窗口(毫秒)。空闲超过这个间隔就切新的一步。
+ *
+ * 窗口量的是**间隔**而不是总时长:连续打字会一直续上,停手才断。这和文本编辑器
+ * 的直觉一致 —— 打完一句停一下,再按撤销退掉的是那一句,不是最后一个字。
+ */
+export const WORKBENCH_COALESCE_MS = 600
+
+/** 上一次入栈的合并标记。key 为 null 表示那一步不可被后续合并。 */
+export interface HistoryCursor {
+  key: string | null
+  at: number
+}
+
+/** 每次写卡都会变,不能参与「改了哪些字段」的判断。 */
+const VOLATILE_CARD_KEYS = new Set(['updatedAt'])
+
+/**
+ * 从变更前后推出合并键 —— 不让 action 自己申报。
+ *
+ * 申报式(每个 action 传一个键)看着直接,但漏埋无法被类型系统发现,新加的 action
+ * 更会忘;而且申报的是「调用方声称改了什么」,这里要的是「实际改了什么」。
+ * 反推的代价只是每次变更做 O(卡片数) 次引用比较 —— store 只为真正变了的卡建新
+ * 对象,所以引用不等就是变了。
+ *
+ * 返回 null = 这次变更自成一步,永不与相邻变更合并。批量操作(加卡/删卡/排序/
+ * agent 的整板 applyIR)和页操作都落在这里,这正是想要的:它们是离散动作。
+ */
+export function coalesceKeyFor(prev: WorkbenchIntent, next: WorkbenchIntent): string | null {
+  if (prev.activeBoardId !== next.activeBoardId) return null
+  // 页数组换了引用 = 建页/删页/改名,离散动作。
+  if (prev.boards !== next.boards) return null
+  if (prev.cards.length !== next.cards.length) return null
+
+  let changed = -1
+  for (let i = 0; i < next.cards.length; i++) {
+    if (prev.cards[i] === next.cards[i]) continue
+    if (changed !== -1) return null
+    changed = i
+  }
+  if (changed === -1) return null
+
+  const before = prev.cards[changed]
+  const after = next.cards[changed]
+  // 同一个位置换成了另一张卡 —— 那是重排而不是编辑。
+  if (before.id !== after.id) return null
+
+  const fields: string[] = []
+  for (const key of new Set<string>([...Object.keys(before), ...Object.keys(after)])) {
+    if (VOLATILE_CARD_KEYS.has(key)) continue
+    const k = key as keyof VideoWorkbenchCard
+    if (before[k] !== after[k]) fields.push(key)
+  }
+  if (fields.length === 0) return null
+  // 字段名进键:打字是 card:X:prompt,换分辨率是 card:X:resolution —— 键不同,
+  // 于是下拉框那一下自然与前面那串打字分成两步。
+  return `card:${after.id}:${fields.sort().join(',')}`
+}
+
+/**
+ * 这次变更该并入栈顶已有的那一步,还是另起一步?
+ *
+ * 撤销的步边界**不能**跟着 revision 走。revision 是 IR 的并发令牌,必须每次内容
+ * 变更都递增(否则 agent 能拿过期 IR 悄悄盖掉一次击键);而提示词输入框是逐字符
+ * 调 updateCard 的,一条 40 字的提示词会递增 40 次 —— 直接拿它当撤销粒度,一次
+ * Ctrl+Z 只退一个字,50 步的栈会被一条提示词吃光。
+ *
+ * 所以两者解耦:store 照旧逐次递增 revision,历史自己判断哪些相邻变更属于同一次
+ * 逻辑编辑。合并键由发起方给(见 store 的 withCoalesceKey),null = 离散动作,
+ * 永远自成一步 —— agent 的整板 applyIR、加卡、删卡、页操作都走这条。
+ */
+export function shouldCoalesce(
+  cursor: HistoryCursor | null,
+  key: string | null,
+  now: number,
+): boolean {
+  if (!key || !cursor || cursor.key !== key) return false
+  return now - cursor.at < WORKBENCH_COALESCE_MS
+}
+
+/**
  * 一步快照 = 那一刻的编排意图。
  *
  * 数组是浅拷贝,元素对象与 store 共享 —— store 的每次改动都产出新对象而不原地改,

@@ -51,12 +51,15 @@ import {
 } from './cardSpec'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
 import {
+  type HistoryCursor,
   type WorkbenchIntent,
   type WorkbenchRestoreResult,
   captureIntent,
+  coalesceKeyFor,
   planRestore,
   pushHistory,
   refusedRestore,
+  shouldCoalesce,
 } from './workbenchHistory'
 
 export {
@@ -594,6 +597,9 @@ async function flushPlanToDb(plan: WorkbenchWritePlan): Promise<void> {
  * 编辑记账,否则撤销一次就压进一条新历史,重做永远轮不到。
  */
 let restoringHistory = false
+
+/** 上一次入栈的合并标记(见 workbenchHistory.shouldCoalesce)。 */
+let historyCursor: HistoryCursor | null = null
 
 const initialBoard = createDefaultBoard()
 
@@ -1210,6 +1216,9 @@ function restoreStep(
   const plan = planRestore(state, target)
   if (!plan.result.ok) return Promise.resolve(plan.result)
 
+  // 断开合并游标:还原之后接着打字,不该并进被撤销掉的那一次编辑里。
+  historyCursor = null
+
   const rest = from.slice(0, -1)
   const other = pushHistory(
     direction === 'undo' ? state.redoStack : state.undoStack,
@@ -1243,9 +1252,24 @@ function restoreStep(
  * 编排改动」(生成状态回流刻意不递增),而埋点在十几个 action 里必然会漏,新加的
  * action 更会忘。代价是这里的 setState 是重入的:它不动 revision,所以下一轮
  * 订阅回调会在第二行直接返回,不会递归。
+ *
+ * 但「一次编排改动」不等于「一步撤销」:提示词框逐字符调 updateCard,revision 必须
+ * 跟着涨(它是 IR 的并发令牌,粗了就会让 agent 拿过期 IR 盖掉击键),而撤销的步
+ * 边界得比它粗。所以步边界单独由合并键决定 —— 这也是 tldraw 的分工:store 记录
+ * 一切,history 自己判断哪些相邻变更算同一步。
  */
 useVideoWorkbenchStore.subscribe((state, prev) => {
   if (restoringHistory || state.revision === prev.revision) return
+
+  const key = coalesceKeyFor(prev, state)
+  const now = Date.now()
+  const coalesce = shouldCoalesce(historyCursor, key, now)
+  // 续上一步:刷新 at,让连续打字一直并进同一步,停手才断。
+  historyCursor = { key, at: now }
+  // 并入栈顶那份快照即可 —— 快照记的是「这次逻辑编辑之前」的状态,编辑还在进行中,
+  // 已有的快照就已经是对的。(tldraw 靠 squash 累加 diff;快照是绝对值,压制就够了。)
+  if (coalesce) return
+
   useVideoWorkbenchStore.setState({
     undoStack: pushHistory(prev.undoStack, captureIntent(prev)),
     // 有了新编辑,原来那条重做分支已经不可能接回去了。
@@ -1296,6 +1320,7 @@ export function resetWorkbenchStoreForTest(): void {
   taskUnsubscribe = null
   taskMountCount = 0
   restoringHistory = false
+  historyCursor = null
   for (const t of persistTimers.values()) clearTimeout(t)
   persistTimers.clear()
   const board = createDefaultBoard()

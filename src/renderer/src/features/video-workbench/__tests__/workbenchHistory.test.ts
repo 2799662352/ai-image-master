@@ -5,12 +5,15 @@ import { describe, expect, it } from 'vitest'
 import type { VideoWorkbenchCard, VideoWorkbenchCardStatus } from '../../../../../types/videoWorkbench'
 import { normalizeSpec } from '../cardSpec'
 import {
+  WORKBENCH_COALESCE_MS,
   WORKBENCH_HISTORY_LIMIT,
   type WorkbenchHistorySource,
   type WorkbenchIntent,
   captureIntent,
+  coalesceKeyFor,
   planRestore,
   pushHistory,
+  shouldCoalesce,
 } from '../workbenchHistory'
 import { WORKBENCH_MAX_CARDS } from '../WorkbenchDb'
 
@@ -61,6 +64,95 @@ describe('pushHistory', () => {
     const stack: WorkbenchIntent[] = []
     pushHistory(stack, captureIntent(source()))
     expect(stack).toHaveLength(0)
+  })
+})
+
+describe('coalesceKeyFor', () => {
+  /** 造一对「变更前 / 变更后」意图,只有 mutate 指定的那张卡换了新对象。 */
+  function pair(
+    cards: VideoWorkbenchCard[],
+    mutate: (c: VideoWorkbenchCard) => VideoWorkbenchCard,
+    index = 0,
+  ): [WorkbenchIntent, WorkbenchIntent] {
+    const before = captureIntent(source({ cards }))
+    const after: WorkbenchIntent = {
+      ...before,
+      cards: before.cards.map((c, i) => (i === index ? mutate(c) : c)),
+    }
+    return [before, after]
+  }
+
+  it('单张卡单字段:键带字段名', () => {
+    const [before, after] = pair([card({ id: 'c1', boardId: 'b1', prompt: '一' })], (c) => ({
+      ...c,
+      prompt: '一二',
+      updatedAt: 9_999,
+    }))
+    expect(coalesceKeyFor(before, after)).toBe('card:c1:prompt')
+  })
+
+  it('换字段就换键 —— 下拉框那一下不会并进前面那串打字', () => {
+    const cards = [card({ id: 'c1', boardId: 'b1' })]
+    const [b1, a1] = pair(cards, (c) => ({ ...c, prompt: 'x' }))
+    const [b2, a2] = pair(cards, (c) => ({ ...c, resolution: '1080p' }))
+    expect(coalesceKeyFor(b1, a1)).not.toBe(coalesceKeyFor(b2, a2))
+  })
+
+  it('换卡就换键', () => {
+    const cards = [card({ id: 'c1', boardId: 'b1' }), card({ id: 'c2', boardId: 'b1', order: 1 })]
+    const [b1, a1] = pair(cards, (c) => ({ ...c, prompt: 'x' }), 0)
+    const [b2, a2] = pair(cards, (c) => ({ ...c, prompt: 'x' }), 1)
+    expect(coalesceKeyFor(b1, a1)).toBe('card:c1:prompt')
+    expect(coalesceKeyFor(b2, a2)).toBe('card:c2:prompt')
+  })
+
+  it('updatedAt 单独变化不算改动(它每次写卡都变)', () => {
+    const [before, after] = pair([card({ id: 'c1', boardId: 'b1' })], (c) => ({
+      ...c,
+      updatedAt: 9_999,
+    }))
+    expect(coalesceKeyFor(before, after)).toBeNull()
+  })
+
+  it('批量与结构性改动一律不可合并', () => {
+    const cards = [card({ id: 'c1', boardId: 'b1' }), card({ id: 'c2', boardId: 'b1', order: 1 })]
+    const before = captureIntent(source({ cards }))
+
+    // 动了两张卡
+    expect(
+      coalesceKeyFor(before, { ...before, cards: before.cards.map((c) => ({ ...c, prompt: 'x' })) }),
+    ).toBeNull()
+    // 加卡 / 删卡
+    expect(
+      coalesceKeyFor(before, { ...before, cards: [...before.cards, card({ id: 'c3', boardId: 'b1' })] }),
+    ).toBeNull()
+    expect(coalesceKeyFor(before, { ...before, cards: [before.cards[0]] })).toBeNull()
+    // 同位置换了另一张卡 = 重排
+    expect(
+      coalesceKeyFor(before, { ...before, cards: [before.cards[1], before.cards[0]] }),
+    ).toBeNull()
+    // 页数组换引用 = 建页/删页/改名
+    expect(coalesceKeyFor(before, { ...before, boards: [...before.boards] })).toBeNull()
+    // 换页
+    expect(coalesceKeyFor(before, { ...before, activeBoardId: 'other' })).toBeNull()
+  })
+})
+
+describe('shouldCoalesce', () => {
+  it('同键且在窗口内才合并', () => {
+    const cursor = { key: 'card:c1:prompt', at: 1_000 }
+    expect(shouldCoalesce(cursor, 'card:c1:prompt', 1_000 + WORKBENCH_COALESCE_MS - 1)).toBe(true)
+    expect(shouldCoalesce(cursor, 'card:c1:prompt', 1_000 + WORKBENCH_COALESCE_MS)).toBe(false)
+    expect(shouldCoalesce(cursor, 'card:c1:seed', 1_001)).toBe(false)
+  })
+
+  it('null 键永不合并(离散动作各自成一步)', () => {
+    expect(shouldCoalesce({ key: null, at: 1_000 }, null, 1_001)).toBe(false)
+    expect(shouldCoalesce({ key: 'card:c1:prompt', at: 1_000 }, null, 1_001)).toBe(false)
+  })
+
+  it('没有游标(首次改动 / 刚撤销过)不合并', () => {
+    expect(shouldCoalesce(null, 'card:c1:prompt', 1_001)).toBe(false)
   })
 })
 
