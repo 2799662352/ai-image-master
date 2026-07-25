@@ -7,7 +7,7 @@ import {
   mountSeedanceTaskListener,
   useAgentChatStore,
 } from '../features/agent-chat'
-import { mountWorkbenchTaskListener } from '../features/video-workbench/store'
+import { mountWorkbenchTaskListener, useVideoWorkbenchStore } from '../features/video-workbench/store'
 import {
   GeneratePage,
   BatchPage,
@@ -101,6 +101,15 @@ export function AppLayout() {
   // mountWorkbenchTaskListener 是引用计数的,与页面自己那份共存。
   useEffect(() => {
     return mountWorkbenchTaskListener()
+  }, [])
+
+  // 重启对账:主进程任务表是纯内存的,上次退出时进行中的任务在那边已经没人轮询,
+  // 但上游还在跑。把卡片记住的 taskId 交回去重新接管,结果照旧走落盘+写历史;
+  // 上游查不到的直接落 failed,免得永久停在「渲染中」。先挂好监听再对账,
+  // 否则接管后立刻到达的广播会没人接。
+  useEffect(() => {
+    const store = useVideoWorkbenchStore.getState()
+    void store.ensureHydrated().then(() => useVideoWorkbenchStore.getState().reconcileInFlight())
   }, [])
 
   useEffect(() => {

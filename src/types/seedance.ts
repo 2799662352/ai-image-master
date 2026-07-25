@@ -1,8 +1,27 @@
 // Seedance 视频生成 —— main / preload / renderer 三端共享类型。
 // 主进程实现细节见 src/main/services/seedance/。
 
-/** 上游任务状态（Ark 协议原样）。 */
-export type SeedanceTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+/**
+ * 上游任务状态（Ark 协议原样）。`cancelled` 由 DELETE 接口在 queued 阶段产生，
+ * 我们也用它表示 running 阶段的本地放弃（上游不支持取消 running，见下）。
+ */
+export type SeedanceTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+/**
+ * 取消结果。`billed` 是这个类型存在的全部理由 —— 上游文档（「取消或删除视频
+ * 生成任务」）规定 DELETE 只对 `queued` 生效（转 cancelled，不计费），对
+ * `running` **不支持**。所以 running 阶段的取消只能是本地放弃：视频照样生成、
+ * 照样扣余额。把这个差别一路带到 UI，按钮才能如实写「取消」还是「放弃结果
+ * （仍会计费）」，而不是让用户误以为省了钱。
+ */
+export interface SeedanceCancelResult {
+  /** 是否真的把这个任务停下了（本地层面）。未知 taskId / 已终态时为 false。 */
+  ok: boolean
+  /** 上游是否仍会为这次生成计费。running 阶段、或 DELETE 失败无法确认时为 true。 */
+  billed: boolean
+  /** 人话解释（no-op 原因、或上游 DELETE 的失败详情）。 */
+  reason?: string
+}
 
 /** 落盘 bookkeeping 阶段 —— 与任务成功与否解耦。 */
 export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'

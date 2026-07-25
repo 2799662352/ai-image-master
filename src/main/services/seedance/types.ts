@@ -15,6 +15,7 @@ export type {
   SeedanceTaskState,
   SeedanceTaskUpdate,
   SeedanceKeyState,
+  SeedanceCancelResult,
 } from '../../../types/seedance'
 
 export {

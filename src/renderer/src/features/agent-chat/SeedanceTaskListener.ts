@@ -12,6 +12,7 @@
  *   succeeded       → resolve with the video artifact; save banner narrates
  *                     the decoupled persistence (pending → saved/failed)
  *   failed          → fail bubble with the upstream error
+ *   cancelled       → fail bubble carrying the cancellation reason
  *
  * Persistence parity with generate_image: once the mp4 is on disk we record a
  * history entry (type `codex-video`) and a codex-artifact anchor so the bubble
@@ -141,6 +142,13 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
 
     case 'failed':
       chat.failImageGeneration(task.itemId, update.error ?? '视频生成失败', task.threadId)
+      tracked.delete(key)
+      return
+
+    // 聊天气泡的状态机没有「已取消」这一档，用失败态承载，并把原因原样带出
+    // —— 那句话里写着这次到底还计不计费（running 阶段无法真取消）。
+    case 'cancelled':
+      chat.failImageGeneration(task.itemId, update.error ?? '视频生成已取消', task.threadId)
       tracked.delete(key)
       return
 
