@@ -654,37 +654,16 @@ function itemStateKey(threadId: unknown, itemId: unknown): string | null {
 function extractTokenUsage(params: Record<string, unknown>): AgentTokenUsage | null {
   const counter = pickUsageCounter(params)
   if (!counter) return null
-  const u = counter
-  const inputTokens =
-    readNumber(u.inputTokens) ?? readNumber(u.input_tokens) ?? readNumber(u.prompt_tokens)
-  const outputTokens =
-    readNumber(u.outputTokens) ?? readNumber(u.output_tokens) ?? readNumber(u.completion_tokens)
-  if (inputTokens == null && outputTokens == null) return null
 
   const usage: AgentTokenUsage = {
-    inputTokens: inputTokens ?? 0,
-    outputTokens: outputTokens ?? 0,
+    inputTokens: counter.inputTokens ?? 0,
+    outputTokens: counter.outputTokens ?? 0,
   }
-  const reasoningTokens =
-    readNumber(u.reasoningTokens)
-    ?? readNumber(u.reasoning_tokens)
-    ?? readNumber(u.reasoningOutputTokens) // codex 0.128 spelling
-    ?? readNumber(u.reasoning_output_tokens)
-  if (reasoningTokens != null) usage.reasoningTokens = reasoningTokens
-  const cachedInputTokens =
-    readNumber(u.cachedInputTokens)
-    ?? readNumber(u.cached_input_tokens)
-    ?? readNumber(u.cache_read_input_tokens)
-  if (cachedInputTokens != null) usage.cachedInputTokens = cachedInputTokens
-  const contextWindow =
-    readNumber(params.contextWindow)
-    ?? readNumber(params.context_window)
-    ?? readNumber((params.tokenUsage as Record<string, unknown> | undefined)?.contextWindow)
+  if (counter.reasoningTokens != null) usage.reasoningTokens = counter.reasoningTokens
+  if (counter.cachedInputTokens != null) usage.cachedInputTokens = counter.cachedInputTokens
+  const contextWindow = readContextField(params, 'contextWindow', 'context_window')
   if (contextWindow != null) usage.contextWindow = contextWindow
-  const contextUsage =
-    readNumber(params.contextUsage)
-    ?? readNumber(params.context_usage)
-    ?? readNumber((params.tokenUsage as Record<string, unknown> | undefined)?.contextUsage)
+  const contextUsage = readContextField(params, 'contextUsage', 'context_usage')
   if (contextUsage != null) usage.contextUsage = contextUsage
 
   const last = extractLastDelta(params)
@@ -707,63 +686,93 @@ function extractTokenUsage(params: Record<string, unknown>): AgentTokenUsage | n
 /**
  * Read `tokenUsage.last` (per-turn delta). Returns `undefined` when the slice
  * is missing OR when both input/output are zero — we'd rather hide the
- * "Last turn" popover line than show "+0 / +0" noise. Mirrors the field
- * aliasing in `extractTokenUsage` so apiyi / OpenRouter snake_case still works.
+ * "Last turn" popover line than show "+0 / +0" noise.
  */
 function extractLastDelta(params: Record<string, unknown>): AgentTokenUsageDelta | undefined {
   const tu = params.tokenUsage as Record<string, unknown> | undefined
-  const last = tu?.last as Record<string, unknown> | undefined
-  if (!last || typeof last !== 'object') return undefined
-  const inputTokens =
-    readNumber(last.inputTokens) ?? readNumber(last.input_tokens) ?? readNumber(last.prompt_tokens) ?? 0
-  const outputTokens =
-    readNumber(last.outputTokens) ?? readNumber(last.output_tokens) ?? readNumber(last.completion_tokens) ?? 0
+  const counter = readTokenCounter(tu?.last)
+  if (!counter) return undefined
+  const inputTokens = counter.inputTokens ?? 0
+  const outputTokens = counter.outputTokens ?? 0
   if (inputTokens === 0 && outputTokens === 0) return undefined
 
   const delta: AgentTokenUsageDelta = { inputTokens, outputTokens }
-  const reasoningTokens =
-    readNumber(last.reasoningTokens)
-    ?? readNumber(last.reasoning_tokens)
-    ?? readNumber(last.reasoningOutputTokens)
-    ?? readNumber(last.reasoning_output_tokens)
-  if (reasoningTokens != null) delta.reasoningTokens = reasoningTokens
-  const cachedInputTokens =
-    readNumber(last.cachedInputTokens)
-    ?? readNumber(last.cached_input_tokens)
-    ?? readNumber(last.cache_read_input_tokens)
-  if (cachedInputTokens != null) delta.cachedInputTokens = cachedInputTokens
+  if (counter.reasoningTokens != null) delta.reasoningTokens = counter.reasoningTokens
+  if (counter.cachedInputTokens != null) delta.cachedInputTokens = counter.cachedInputTokens
   return delta
+}
+
+/** One candidate object's token fields, already de-aliased. */
+interface TokenCounter {
+  inputTokens: number | undefined
+  outputTokens: number | undefined
+  reasoningTokens: number | undefined
+  cachedInputTokens: number | undefined
+}
+
+/**
+ * Read one object's token fields across every spelling we've seen in the wild:
+ * codex camelCase, codex 0.128's `reasoningOutputTokens`, snake_case from
+ * apiyi / OpenRouter relays, and Responses-API names (`prompt_tokens`,
+ * `cache_read_input_tokens`). Returns `null` when neither input nor output is
+ * present — which is also how `pickUsageCounter` decides a candidate object
+ * isn't the counter, so "is this the counter" and "read the counter" can't
+ * drift apart into two different alias lists.
+ */
+function readTokenCounter(source: unknown): TokenCounter | null {
+  if (!source || typeof source !== 'object') return null
+  const u = source as Record<string, unknown>
+  const inputTokens =
+    readNumber(u.inputTokens) ?? readNumber(u.input_tokens) ?? readNumber(u.prompt_tokens)
+  const outputTokens =
+    readNumber(u.outputTokens) ?? readNumber(u.output_tokens) ?? readNumber(u.completion_tokens)
+  if (inputTokens == null && outputTokens == null) return null
+  return {
+    inputTokens,
+    outputTokens,
+    reasoningTokens:
+      readNumber(u.reasoningTokens)
+      ?? readNumber(u.reasoning_tokens)
+      ?? readNumber(u.reasoningOutputTokens) // codex 0.128 spelling
+      ?? readNumber(u.reasoning_output_tokens),
+    cachedInputTokens:
+      readNumber(u.cachedInputTokens)
+      ?? readNumber(u.cached_input_tokens)
+      ?? readNumber(u.cache_read_input_tokens),
+  }
+}
+
+/**
+ * Context-window fields arrive either on the notification params or nested in
+ * `tokenUsage`, and in either casing. Nesting is only ever camelCase in the
+ * traces we have, so we don't guess at a nested snake_case spelling.
+ */
+function readContextField(
+  params: Record<string, unknown>,
+  camel: string,
+  snake: string,
+): number | undefined {
+  const tu = params.tokenUsage as Record<string, unknown> | undefined
+  return readNumber(params[camel]) ?? readNumber(params[snake]) ?? readNumber(tu?.[camel])
 }
 
 /**
  * Walk the union of token-usage payload shapes we've seen in the wild and
- * return the first leaf object that actually carries `inputTokens` /
- * `outputTokens` (or their snake-case / Responses-API aliases). We try
- * cumulative shapes first because the meter visualizes lifetime-of-thread
- * usage, then per-turn, then a flat fallback.
+ * return the first one that actually carries a counter. We try cumulative
+ * shapes first because the meter visualizes lifetime-of-thread usage, then
+ * per-turn, then a flat fallback.
  */
-function pickUsageCounter(params: Record<string, unknown>): Record<string, unknown> | null {
-  const candidates: Array<Record<string, unknown> | undefined> = []
+function pickUsageCounter(params: Record<string, unknown>): TokenCounter | null {
   const tu = params.tokenUsage as Record<string, unknown> | undefined
+  const candidates: unknown[] = []
   if (tu) {
-    candidates.push(tu.total as Record<string, unknown> | undefined)
-    candidates.push(tu.last as Record<string, unknown> | undefined)
+    candidates.push(tu.total, tu.last)
     candidates.push(tu) // some gateways flatten total fields onto tokenUsage itself
   }
-  candidates.push(params.usage as Record<string, unknown> | undefined)
-  candidates.push(params)
-  for (const c of candidates) {
-    if (!c || typeof c !== 'object') continue
-    if (
-      readNumber(c.inputTokens) != null
-      || readNumber(c.input_tokens) != null
-      || readNumber(c.prompt_tokens) != null
-      || readNumber(c.outputTokens) != null
-      || readNumber(c.output_tokens) != null
-      || readNumber(c.completion_tokens) != null
-    ) {
-      return c
-    }
+  candidates.push(params.usage, params)
+  for (const candidate of candidates) {
+    const counter = readTokenCounter(candidate)
+    if (counter) return counter
   }
   return null
 }
