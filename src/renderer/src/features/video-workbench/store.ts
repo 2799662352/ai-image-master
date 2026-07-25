@@ -50,6 +50,17 @@ import {
   toMaterial,
 } from './cardSpec'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
+import {
+  type HistoryCursor,
+  type WorkbenchIntent,
+  type WorkbenchRestoreResult,
+  captureIntent,
+  coalesceKeyFor,
+  planRestore,
+  pushHistory,
+  refusedRestore,
+  shouldCoalesce,
+} from './workbenchHistory'
 
 export {
   MAX_REFERENCE_AUDIOS,
@@ -253,6 +264,16 @@ export interface VideoWorkbenchState {
    */
   revision: number
 
+  /**
+   * 撤销/重做栈,存的是「那一刻的编排意图」快照(见 workbenchHistory.ts)。
+   *
+   * 入栈完全由 revision 变化驱动 —— 不需要在 action 里逐个埋点,也因此天然
+   * 只覆盖编排改动,跑着的任务不会因为一次撤销从卡片上消失。不持久化:
+   * 重启后从零开始,和所有编辑器一样。
+   */
+  undoStack: WorkbenchIntent[]
+  redoStack: WorkbenchIntent[]
+
   /** 首次进入页面 / 首个 MCP 调用时从 IndexedDB 恢复(幂等)。 */
   ensureHydrated: () => Promise<void>
   /** 新建页并切换过去(缺省自动命名「页面 N」)。返回新页 id。 */
@@ -299,6 +320,11 @@ export interface VideoWorkbenchState {
    * 规格定格、在飞的卡片拒绝删除,逐项结果都在返回里。
    */
   applyIR: (ir: WorkbenchIR, opts?: WorkbenchApplyOptions) => Promise<WorkbenchApplyResult>
+
+  /** 撤销上一步编排改动(含 agent 的整板 applyIR)。栈空则返回 ok:false。 */
+  undo: () => Promise<WorkbenchRestoreResult>
+  /** 重做被撤销的一步。任何新编辑都会清空重做栈。 */
+  redo: () => Promise<WorkbenchRestoreResult>
 }
 
 /**
@@ -508,6 +534,73 @@ function readAutoImportPortrait(): boolean {
   }
 }
 
+/**
+ * 一次整板写入的计划:内存里的新状态 + 只列真正变了的落盘增量。
+ * 看板 IR 的 apply 与撤销/重做共用同一套提交路径。
+ */
+interface WorkbenchWritePlan {
+  next: {
+    boards: VideoWorkbenchBoard[]
+    cards: VideoWorkbenchCard[]
+    activeBoardId: string
+    revision: number
+  }
+  persist: {
+    cards: VideoWorkbenchCard[]
+    removeCardIds: string[]
+    boards: VideoWorkbenchBoard[]
+    removeBoardIds: string[]
+  }
+}
+
+type WorkbenchSetter = (partial: Partial<VideoWorkbenchState>) => void
+
+/**
+ * 计划的同步部分:掐掉待落盘的防抖写、换上新状态、记住当前页。
+ *
+ * 与落盘拆成两半是因为调用方要在「订阅者别把这次写当成新编辑」的闸内执行同步
+ * 部分,而闸绝不能跨 await —— 否则数据库写的那几毫秒里用户的编辑会漏进撤销栈。
+ */
+function applyPlanToState(set: WorkbenchSetter, plan: WorkbenchWritePlan): void {
+  // 一条 500ms 前排好的旧内容写入会在整板写之后落地,把刚写好的卡片打回旧值。
+  for (const id of [...plan.persist.cards.map((c) => c.id), ...plan.persist.removeCardIds]) {
+    const timer = persistTimers.get(id)
+    if (timer) {
+      clearTimeout(timer)
+      persistTimers.delete(id)
+    }
+  }
+  set(plan.next)
+  writeActiveBoard(plan.next.activeBoardId)
+}
+
+/**
+ * 计划的落盘部分:逐张 put/remove,但只写真正变了的 —— 不复用 removeCard/moveCard
+ * 那套「顺手重写整页」的路径,一次整板写改 50 张卡不该产生 50 倍写放大。
+ */
+async function flushPlanToDb(plan: WorkbenchWritePlan): Promise<void> {
+  const db = getWorkbenchDb()
+  await Promise.all([
+    ...plan.persist.cards.map((card) =>
+      db.put(card).catch((e) => {
+        console.warn('[VideoWorkbench] 整板写卡片持久化失败(忽略):', e)
+      }),
+    ),
+    ...plan.persist.removeCardIds.map((id) => db.remove(id).catch(() => {})),
+    ...plan.persist.boards.map((board) => db.putBoard(board).catch(() => {})),
+    ...plan.persist.removeBoardIds.map((id) => db.removeBoard(id).catch(() => {})),
+  ])
+}
+
+/**
+ * 撤销/重做自己也会 bump revision。这个闸让入栈订阅者别把「还原」当成一次新
+ * 编辑记账,否则撤销一次就压进一条新历史,重做永远轮不到。
+ */
+let restoringHistory = false
+
+/** 上一次入栈的合并标记(见 workbenchHistory.shouldCoalesce)。 */
+let historyCursor: HistoryCursor | null = null
+
 const initialBoard = createDefaultBoard()
 
 export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) => ({
@@ -516,6 +609,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   activeBoardId: initialBoard.id,
   hydrated: false,
   revision: 0,
+  undoStack: [],
+  redoStack: [],
   autoImportPortrait: readAutoImportPortrait(),
 
   setAutoImportPortrait: (enabled) => {
@@ -1089,43 +1184,98 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   applyIR: async (ir, opts) => {
     const plan = planApplyIR(get(), ir, opts)
     if (!plan.next || !plan.persist) return plan.result
-
-    // 落盘前先掐掉被触碰卡片的防抖定时器 —— 否则一条 500ms 前排好的旧内容
-    // 写入会在 apply 之后落地,把刚写好的卡片打回旧值。
-    for (const card of plan.persist.cards) {
-      const timer = persistTimers.get(card.id)
-      if (timer) {
-        clearTimeout(timer)
-        persistTimers.delete(card.id)
-      }
-    }
-    for (const id of plan.persist.removeCardIds) {
-      const timer = persistTimers.get(id)
-      if (timer) {
-        clearTimeout(timer)
-        persistTimers.delete(id)
-      }
-    }
-
-    set(plan.next)
-    writeActiveBoard(plan.next.activeBoardId)
-
-    // 批量落盘:逐张 put/remove,但只写真正变了的 —— 不复用 removeCard/moveCard
-    // 那套「顺手重写整页」的路径,一次 apply 改 50 张卡不该产生 50 倍写放大。
-    const db = getWorkbenchDb()
-    await Promise.all([
-      ...plan.persist.cards.map((card) =>
-        db.put(card).catch((e) => {
-          console.warn('[VideoWorkbench] IR 卡片持久化失败(忽略):', e)
-        }),
-      ),
-      ...plan.persist.removeCardIds.map((id) => db.remove(id).catch(() => {})),
-      ...plan.persist.boards.map((board) => db.putBoard(board).catch(() => {})),
-      ...plan.persist.removeBoardIds.map((id) => db.removeBoard(id).catch(() => {})),
-    ])
+    const write = { next: plan.next, persist: plan.persist }
+    applyPlanToState(set, write)
+    await flushPlanToDb(write)
     return plan.result
   },
+
+  undo: () => restoreStep(set, get(), 'undo'),
+  redo: () => restoreStep(set, get(), 'redo'),
 }))
+
+/**
+ * 撤销与重做是同一段逻辑的镜像:从一个栈弹出目标快照,把「当前」压进另一个栈。
+ *
+ * 计划被拒(例如还原后会超过卡片上限)时**保留栈顶**,用户腾出空间还能再试 ——
+ * 弹掉会让那一步永久消失。
+ */
+function restoreStep(
+  set: WorkbenchSetter,
+  state: VideoWorkbenchState,
+  direction: 'undo' | 'redo',
+): Promise<WorkbenchRestoreResult> {
+  const from = direction === 'undo' ? state.undoStack : state.redoStack
+  const target = from.at(-1)
+  if (!target) {
+    return Promise.resolve(
+      refusedRestore(state.revision, direction === 'undo' ? '没有可撤销的步骤' : '没有可重做的步骤'),
+    )
+  }
+
+  const plan = planRestore(state, target)
+  if (!plan.result.ok) return Promise.resolve(plan.result)
+
+  // 断开合并游标:还原之后接着打字,不该并进被撤销掉的那一次编辑里。
+  historyCursor = null
+
+  const rest = from.slice(0, -1)
+  const other = pushHistory(
+    direction === 'undo' ? state.redoStack : state.undoStack,
+    captureIntent(state),
+  )
+  const stacks: Partial<VideoWorkbenchState> =
+    direction === 'undo' ? { undoStack: rest, redoStack: other } : { redoStack: rest, undoStack: other }
+
+  // no-op 在实践中够不到(每个 action 只在真的改了东西时才 bump revision),但真
+  // 撞上了也得把这一步弹掉,否则按撤销像是卡住了。
+  if (!plan.next || !plan.persist) {
+    set(stacks)
+    return Promise.resolve(plan.result)
+  }
+
+  const write = { next: plan.next, persist: plan.persist }
+  restoringHistory = true
+  try {
+    applyPlanToState(set, write)
+    set(stacks)
+  } finally {
+    restoringHistory = false
+  }
+  return flushPlanToDb(write).then(() => plan.result)
+}
+
+/**
+ * 入栈钩子:revision 变了就说明编排意图变了,把变更**之前**的那份意图压进撤销栈。
+ *
+ * 挂在订阅上而不是逐个 action 里埋点 —— revision 的递增条件已经精确等于「这是一次
+ * 编排改动」(生成状态回流刻意不递增),而埋点在十几个 action 里必然会漏,新加的
+ * action 更会忘。代价是这里的 setState 是重入的:它不动 revision,所以下一轮
+ * 订阅回调会在第二行直接返回,不会递归。
+ *
+ * 但「一次编排改动」不等于「一步撤销」:提示词框逐字符调 updateCard,revision 必须
+ * 跟着涨(它是 IR 的并发令牌,粗了就会让 agent 拿过期 IR 盖掉击键),而撤销的步
+ * 边界得比它粗。所以步边界单独由合并键决定 —— 这也是 tldraw 的分工:store 记录
+ * 一切,history 自己判断哪些相邻变更算同一步。
+ */
+useVideoWorkbenchStore.subscribe((state, prev) => {
+  if (restoringHistory || state.revision === prev.revision) return
+
+  const key = coalesceKeyFor(prev, state)
+  const now = Date.now()
+  const coalesce = shouldCoalesce(historyCursor, key, now)
+  // 续上一步:刷新 at,让连续打字一直并进同一步,停手才断。
+  historyCursor = { key, at: now }
+  // 并入栈顶那份快照即可 —— 快照记的是「这次逻辑编辑之前」的状态,编辑还在进行中,
+  // 已有的快照就已经是对的。(tldraw 靠 squash 累加 diff;快照是绝对值,压制就够了。)
+  if (coalesce) return
+
+  useVideoWorkbenchStore.setState({
+    undoStack: pushHistory(prev.undoStack, captureIntent(prev)),
+    // 有了新编辑,原来那条重做分支已经不可能接回去了。
+    redoStack: [],
+  })
+})
 
 /**
  * 订阅 seedance:task-update 广播(source==='workbench' 的进度/结果回流)。
@@ -1169,15 +1319,26 @@ export function resetWorkbenchStoreForTest(): void {
   hydrationPromise = null
   taskUnsubscribe = null
   taskMountCount = 0
+  restoringHistory = false
+  historyCursor = null
   for (const t of persistTimers.values()) clearTimeout(t)
   persistTimers.clear()
   const board = createDefaultBoard()
-  useVideoWorkbenchStore.setState({
-    cards: [],
-    boards: [board],
-    activeBoardId: board.id,
-    hydrated: false,
-    revision: 0,
-    autoImportPortrait: false,
-  })
+  // 归零 revision 本身就是一次 revision 变化 —— 不关闸的话入栈订阅者会在这次
+  // setState 之后把上一个用例的状态压回撤销栈,清栈等于没清。
+  restoringHistory = true
+  try {
+    useVideoWorkbenchStore.setState({
+      cards: [],
+      boards: [board],
+      activeBoardId: board.id,
+      hydrated: false,
+      revision: 0,
+      undoStack: [],
+      redoStack: [],
+      autoImportPortrait: false,
+    })
+  } finally {
+    restoringHistory = false
+  }
 }

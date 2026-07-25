@@ -128,6 +128,58 @@ export function buildCard(
   }
 }
 
+/**
+ * 从已归一化的卡片里取出规格部分（丢掉运行时字段）。
+ *
+ * `seed` 只在有值时出现 —— 展开到旧卡片上时才能真正「清掉种子」,
+ * 写成 `seed: undefined` 会在对象上留一个 undefined 键,落到 IndexedDB 后
+ * 与「从未设过种子」不可区分。
+ */
+export function pickSpec(spec: VideoWorkbenchSpec): VideoWorkbenchSpec {
+  return {
+    prompt: spec.prompt,
+    model: spec.model,
+    resolution: spec.resolution,
+    ratio: spec.ratio,
+    duration: spec.duration,
+    generateAudio: spec.generateAudio,
+    mode: spec.mode,
+    ...(spec.seed !== undefined ? { seed: spec.seed } : {}),
+    webSearch: spec.webSearch,
+    referenceImages: spec.referenceImages,
+    referenceVideos: spec.referenceVideos,
+    referenceAudios: spec.referenceAudios,
+  }
+}
+
+function materialsEqual(a: VideoWorkbenchMaterial[], b: VideoWorkbenchMaterial[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((m, i) => m.src === b[i].src && m.name === b[i].name)
+}
+
+/**
+ * 规格等值比较 —— 看板 IR 与撤销栈共用。
+ *
+ * 两处都靠它判断「这张卡真的变了吗」来决定是否落盘,两份实现一旦漂移,
+ * 就会出现「IR 认为没变、撤销认为变了」这类只在特定字段上复现的怪账。
+ */
+export function specEquals(a: VideoWorkbenchSpec, b: VideoWorkbenchSpec): boolean {
+  return (
+    a.prompt === b.prompt
+    && a.model === b.model
+    && a.resolution === b.resolution
+    && a.ratio === b.ratio
+    && a.duration === b.duration
+    && a.generateAudio === b.generateAudio
+    && a.mode === b.mode
+    && a.seed === b.seed
+    && a.webSearch === b.webSearch
+    && materialsEqual(a.referenceImages, b.referenceImages)
+    && materialsEqual(a.referenceVideos, b.referenceVideos)
+    && materialsEqual(a.referenceAudios, b.referenceAudios)
+  )
+}
+
 /** 任务仍在飞（可取消、需要重启对账、规格定格不可改）的状态集合。 */
 export function isActiveStatus(status: VideoWorkbenchCardStatus): boolean {
   return status === 'preparing' || status === 'queued' || status === 'running'
