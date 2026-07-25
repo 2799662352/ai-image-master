@@ -25,28 +25,12 @@ import { FileExplorerPanel } from '../file-explorer/FileExplorerPanel'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { FileTreeIcon } from '../file-explorer/icons'
 import { useTabStore } from '../../stores/useTabStore'
+import { getAgentApi } from '../../utils/agentBridge'
 import type {
   AgentStreamEvent,
-  CodexApprovalRequest,
   CodexSessionConfig,
   CodexSessionStatus,
 } from '../../../../types/agent'
-
-type AgentEventApi = {
-  agent?: {
-    onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
-    onApprovalRequest?: (handler: (request: CodexApprovalRequest) => void) => () => void
-    onGoal?: (handler: (event: AgentStreamEvent) => void) => () => void
-    getSessionStatus?: () => Promise<CodexSessionStatus>
-    setSessionConfig?: (
-      patch: Partial<CodexSessionConfig>,
-      options?: { persist?: boolean },
-    ) => Promise<CodexSessionStatus | void>
-    resetSessionConfig?: () => Promise<CodexSessionStatus | void>
-    resetMemory?: () => Promise<{ ok: boolean; error?: string }>
-    restartCodex?: () => Promise<{ ok: boolean; error?: string }>
-  }
-}
 
 function isValidContextWindow(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > 0
@@ -108,7 +92,7 @@ export function AgentChatPanel() {
   // forcing the user to F5 to recover. Mirrors the onApprovalRequest pattern
   // below.
   useEffect(() => {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent) return undefined
     // Coalesce high-frequency `item_delta` events to one apply per frame so a
     // fast token stream no longer triggers a zustand set()/re-render per token.
@@ -116,7 +100,7 @@ export function AgentChatPanel() {
     // authoritative final text (item_completed) is never delayed. See
     // eventCoalescer.ts + openai/codex#15759 (deltas arrive at model speed).
     const coalescer = createEventCoalescer<AgentStreamEvent>(applyEvent)
-    const unsubscribe = agent.onEvent((event) => coalescer.push(event))
+    const unsubscribe = agent.onEvent?.((event) => coalescer.push(event))
     return () => {
       unsubscribe?.()
       coalescer.dispose()
@@ -124,14 +108,14 @@ export function AgentChatPanel() {
   }, [applyEvent])
 
   useEffect(() => {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     return agent?.onApprovalRequest?.(addApprovalRequest)
   }, [addApprovalRequest])
 
   // Native `/goal`: live goal status stream (thread/goal/updated|cleared).
   // Mount-bound like onEvent so updates aren't lost while the panel is hidden.
   useEffect(() => {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     return agent?.onGoal?.(applyGoalEvent)
   }, [applyGoalEvent])
 
@@ -152,7 +136,7 @@ export function AgentChatPanel() {
 
   useEffect(() => {
     if (!isOpen) return
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
   }, [isOpen])
 
@@ -160,7 +144,7 @@ export function AgentChatPanel() {
   // changes applied elsewhere (e.g. the Agent Workspace Permissions tab).
   useEffect(() => {
     if (!settingsOpen) return
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
   }, [settingsOpen])
 
@@ -183,7 +167,7 @@ export function AgentChatPanel() {
     patch: Partial<CodexSessionConfig>,
     options?: { persist?: boolean },
   ): Promise<void> {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.setSessionConfig) {
       setError('Electron session config API is unavailable')
       return
@@ -206,7 +190,7 @@ export function AgentChatPanel() {
   }
 
   async function resetSessionConfig(): Promise<void> {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.resetSessionConfig) {
       setError('Electron session config API is unavailable')
       return
@@ -225,7 +209,7 @@ export function AgentChatPanel() {
   }
 
   async function resetMemory(): Promise<{ ok: boolean; error?: string }> {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.resetMemory) {
       return { ok: false, error: 'Electron memory reset API is unavailable' }
     }
@@ -237,7 +221,7 @@ export function AgentChatPanel() {
   }
 
   async function restartCodex(): Promise<void> {
-    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.restartCodex) {
       setError('Electron agent restart API is unavailable')
       return

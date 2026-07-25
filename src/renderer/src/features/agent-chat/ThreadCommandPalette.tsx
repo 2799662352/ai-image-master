@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { AgentThreadSummary } from '../../../../types/agent'
 import { useAgentChatStore } from './store'
+import { getAgentApi } from '../../utils/agentBridge'
 
 export function ThreadCommandPalette() {
   const [open, setOpen] = useState(false)
@@ -27,11 +28,7 @@ export function ThreadCommandPalette() {
     if (!open) return
     setQuery('')
     setSelectedIdx(0)
-    const agent = (
-      window as {
-        electronAPI?: { agent?: { listThreads?: () => Promise<AgentThreadSummary[]> } }
-      }
-    ).electronAPI?.agent
+    const agent = getAgentApi()
     if (agent?.listThreads) {
       agent.listThreads().then((list) => setThreads(list)).catch(() => setThreads([]))
     }

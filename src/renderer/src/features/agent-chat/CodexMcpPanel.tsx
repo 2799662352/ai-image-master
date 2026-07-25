@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CodexMcpSummary } from '../../../../types/agent'
-
-type CodexMcpApi = {
-  agent?: {
-    getMcpSummary?: () => Promise<CodexMcpSummary>
-  }
-}
+import { getAgentApi } from '../../utils/agentBridge'
 
 type LoadState =
   | { status: 'loading' }
@@ -17,7 +12,7 @@ export function CodexMcpPanel() {
 
   useEffect(() => {
     let alive = true
-    const api = (window as Window & { electronAPI?: CodexMcpApi }).electronAPI?.agent
+    const api = getAgentApi()
     if (!api?.getMcpSummary) {
       setState({ status: 'error', error: 'Codex MCP discovery API is unavailable' })
       return () => {

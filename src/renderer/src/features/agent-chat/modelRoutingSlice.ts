@@ -1,15 +1,13 @@
 import type {
-  AgentModelContextApplyPayload,
   AgentModelContextApplyResult,
-  AgentModelContextSnapshotResult,
   AgentModelSelectionApplyPayload,
   AgentModelSelectionApplyResult,
   AgentModelSelectionErrorKind,
   AgentModelSelectionSnapshot,
   AgentModelSettingsCatalog,
-  AgentModelSettingsCatalogResult,
 } from '../../../../types/agent'
 import type { PlanReasoningEffort } from '../../../../shared/collaborationMode'
+import { getAgentApi } from '../../utils/agentBridge'
 import { resolveModelSelection } from './models'
 
 /** v2 canonical selected-model boundary (owned by the routing slice). */
@@ -112,19 +110,6 @@ type ModelRoutingSet = (
     | ((state: ModelRoutingOwner) => Partial<ModelRoutingOwner>),
 ) => void
 type ModelRoutingGet = () => ModelRoutingOwner
-
-type ModelRoutingElectronApi = {
-  agent?: {
-    getModelSettingsCatalog?: () => Promise<AgentModelSettingsCatalogResult>
-    getModelContextConfig?: () => Promise<AgentModelContextSnapshotResult>
-    applyModelContext?: (
-      payload: AgentModelContextApplyPayload,
-    ) => Promise<AgentModelContextApplyResult>
-    applyModelSelection?: (
-      payload: AgentModelSelectionApplyPayload,
-    ) => Promise<AgentModelSelectionApplyResult>
-  }
-}
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
@@ -307,8 +292,7 @@ async function executeModelContextIntent(
     || state.modelSettingsRecoveryRequired
       ? {}
       : { modelSettingsError: undefined })
-  const apply = (window as Window & { electronAPI?: ModelRoutingElectronApi })
-    .electronAPI?.agent?.applyModelContext
+  const apply = getAgentApi()?.applyModelContext
   if (!apply) {
     let ownerStale = false
     set((state) => {
@@ -484,8 +468,7 @@ function createCatalogLoader(
         state.modelSettingsLoadGeneration === generation
           ? { modelSettingsLoading: true }
           : {})
-      const agent = (window as Window & { electronAPI?: ModelRoutingElectronApi })
-        .electronAPI?.agent
+      const agent = getAgentApi()
       const invoke = <T>(operation: (() => Promise<T>) | undefined, label: string): Promise<T> => {
         if (!operation) return Promise.reject(new Error(`${label} API unavailable`))
         try {
@@ -730,8 +713,7 @@ export function createModelRoutingSlice(
         return false
       }
 
-      const apply = (window as Window & { electronAPI?: ModelRoutingElectronApi })
-        .electronAPI?.agent?.applyModelSelection
+      const apply = getAgentApi()?.applyModelSelection
       if (!apply) return fail('Electron 模型选择 API 不可用。', 'configuration', false)
 
       let result: AgentModelSelectionApplyResult

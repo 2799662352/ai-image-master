@@ -3,6 +3,7 @@ import type React from 'react'
 import { type Editor, Tldraw } from 'tldraw'
 import 'tldraw/tldraw.css'
 import type { EditRequestQueueStatus } from '../../../../types/canvas'
+import { getAgentApi } from '../../utils/agentBridge'
 import { canvasBridge } from './canvas/canvasBridge'
 import { canvasShapeUtils } from './canvas/FileCardShapeUtil'
 import { makeFileAssetHandlerWithDiskPath, makeFilesContentHandlerWithPlaceholders } from './canvas/shapeOps'
@@ -11,15 +12,6 @@ import { parseFileDrop } from '../file-explorer/dragHelpers'
 
 /** Custom MIME the file-explorer tree puts dragged paths in (dragHelpers). */
 const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
-
-type CanvasAgentApi = {
-  submitCanvasEditRequest: (request: unknown) => void
-  getCanvasEditQueueStatus: () => Promise<EditRequestQueueStatus>
-}
-
-function getCanvasApi(): CanvasAgentApi | undefined {
-  return (window as Window & { electronAPI?: { agent?: CanvasAgentApi } }).electronAPI?.agent
-}
 
 /** Idle delay (ms) after the last annotation edit before auto-submitting to the queue. */
 const AUTO_SUBMIT_IDLE_MS = 1500
@@ -75,7 +67,7 @@ export function CanvasSection(): React.JSX.Element {
         showFlash('无法导出画布图片作为修图原图，请重试或重新选中图片。')
         return
       }
-      getCanvasApi()?.submitCanvasEditRequest({
+      getAgentApi()?.submitCanvasEditRequest?.({
         ...built.requestPayload,
         source: 'canvas_auto',
         targetImagePath: filePath,
@@ -284,8 +276,8 @@ export function CanvasSection(): React.JSX.Element {
   useEffect(() => {
     let disposed = false
     const poll = async () => {
-      const api = getCanvasApi()
-      if (!api) return
+      const api = getAgentApi()
+      if (!api?.getCanvasEditQueueStatus) return
       try {
         const s = await api.getCanvasEditQueueStatus()
         if (!disposed) setStatus(s)

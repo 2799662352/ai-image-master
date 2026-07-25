@@ -4,6 +4,7 @@
  * 处理与 AI 图片生成 API 的所有通信
  */
 
+import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 
@@ -2859,8 +2860,7 @@ export class ApiService {
     try {
       const token =
         this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity') || ''
-      const agent = (window as unknown as { electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } } })
-        ?.electronAPI?.agent
+      const agent = getAgentApi()
       if (agent?.setProviderApiKey) {
         void agent.setProviderApiKey('qwen', token)
       }
@@ -2907,11 +2907,7 @@ export class ApiService {
         this.getStoredVisionApiKey('b-apiyi') ||
         ''
       if (!key) return
-      const agent = (
-        window as unknown as {
-          electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } }
-        }
-      )?.electronAPI?.agent
+      const agent = getAgentApi()
       if (agent?.setProviderApiKey) {
         void agent.setProviderApiKey(APIYI_MCP_PROVIDER_ID, key)
       }
@@ -2935,11 +2931,7 @@ export class ApiService {
   syncCinematographyKbKeyToMcp(): void {
     try {
       const key = (localStorage.getItem(DASHSCOPE_API_KEY_STORAGE) ?? '').trim()
-      const agent = (
-        window as unknown as {
-          electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } }
-        }
-      )?.electronAPI?.agent
+      const agent = getAgentApi()
       if (agent?.setProviderApiKey) {
         void agent.setProviderApiKey(CINEMATOGRAPHY_KB_MCP_PROVIDER_ID, key)
       }
@@ -2959,11 +2951,7 @@ export class ApiService {
   syncDashVectorKeyToMcp(): void {
     try {
       const key = (localStorage.getItem(DASHVECTOR_API_KEY_STORAGE) ?? '').trim()
-      const agent = (
-        window as unknown as {
-          electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } }
-        }
-      )?.electronAPI?.agent
+      const agent = getAgentApi()
       if (agent?.setProviderApiKey) {
         void agent.setProviderApiKey(DASHVECTOR_MCP_PROVIDER_ID, key)
       }

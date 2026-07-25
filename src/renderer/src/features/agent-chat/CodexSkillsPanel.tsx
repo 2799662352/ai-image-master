@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CodexSkillsSummary } from '../../../../types/agent'
 import { useAgentChatStore } from './store'
-
-type CodexSkillsApi = {
-  agent?: {
-    getSkillsSummary?: () => Promise<CodexSkillsSummary>
-  }
-}
+import { getAgentApi } from '../../utils/agentBridge'
 
 type LoadState =
   | { status: 'loading' }
@@ -19,7 +14,7 @@ export function CodexSkillsPanel() {
 
   useEffect(() => {
     let alive = true
-    const api = (window as Window & { electronAPI?: CodexSkillsApi }).electronAPI?.agent
+    const api = getAgentApi()
     if (!api?.getSkillsSummary) {
       setState({ status: 'error', error: 'Codex skills discovery API is unavailable' })
       return () => {

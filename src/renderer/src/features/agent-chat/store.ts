@@ -7,32 +7,22 @@ import {
 } from './chatScroll'
 import type {
   AgentAttachmentInput,
-  AgentCancelPayload,
   AgentCollaborationCapabilities,
-  AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
-  AgentApiResult,
-  AgentModelContextApplyPayload,
-  AgentModelContextApplyResult,
-  AgentModelContextSnapshotResult,
-  AgentModelSettingsCatalogResult,
   AgentMentionRef,
   AgentNotice,
-  AgentSendMessagePayload,
-  AgentSendMessageResult,
   AgentStreamEvent,
   AgentThreadSummary,
   AgentTokenUsage,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexSkillSummary,
-  CodexSkillsSummary,
   CodexThreadSummary,
   ItemDeltaPatch,
 } from '../../../../types/agent'
-import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
-import type { PluginInstalledParams, PluginInstalledResponse } from '../../../../types/codexPlugins'
+import type { ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
+import type { PluginInstalledResponse } from '../../../../types/codexPlugins'
 import type { AgentReference } from '../../../../types/agent-reference'
 import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
@@ -67,6 +57,7 @@ import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
+import { getAgentApi } from '../../utils/agentBridge'
 
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
 const MODEL_REASONING_STORAGE_KEY = 'agent.modelReasoningByModel:v1'
@@ -440,55 +431,6 @@ function persistSidebarWidth(w: number): void {
     globalThis.localStorage?.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(w))
   } catch {
     /* localStorage unavailable; silently ignore */
-  }
-}
-
-type AgentElectronApi = {
-  agent?: {
-    sendMessage: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
-    steer?: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
-    cancel: (payload: AgentCancelPayload) => Promise<unknown>
-    listThreads?: () => Promise<AgentThreadSummary[]>
-    openThread?: (id: string) => Promise<unknown>
-    renameThread?: (id: string, title: string) => Promise<void>
-    deleteThread?: (id: string) => Promise<void>
-    respondApproval?: (response: CodexApprovalResponse) => Promise<AgentApiResult>
-    listCodexThreads?: () => Promise<CodexThreadSummary[]>
-    forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
-    /**
-     * Edit-and-resend server-side context branch (codex 0.145 thread/fork +
-     * lastTurnId). `data.branched === false` = main degraded to same-thread
-     * resend and already emitted a warning notice; proceed unchanged.
-     */
-    branchThreadBeforeMessage?: (
-      threadId: string,
-      messageId: string,
-    ) => Promise<{ ok: boolean; error?: string; data?: { branched: boolean; mode?: 'fork' | 'fresh'; reason?: string } }>
-    getSkillsSummary?: () => Promise<CodexSkillsSummary>
-    getCollaborationCapabilities?: (
-      model: string,
-    ) => Promise<AgentCollaborationCapabilitiesResult>
-    updateCollaborationMode?: (
-      payload: AgentCollaborationModeUpdatePayload,
-    ) => Promise<AgentCollaborationModeUpdateResult>
-    getModelSettingsCatalog?: () => Promise<AgentModelSettingsCatalogResult>
-    getModelContextConfig?: () => Promise<AgentModelContextSnapshotResult>
-    applyModelContext?: (
-      payload: AgentModelContextApplyPayload,
-    ) => Promise<AgentModelContextApplyResult>
-    // Codex native `/goal` (thread/goal/*). threadId = DB thread id.
-    setGoal?: (
-      threadId: string,
-      params: { objective?: string; tokenBudget?: number; status?: ThreadGoalStatus },
-    ) => Promise<GoalRpcResult<ThreadGoal>>
-    getGoal?: (threadId: string) => Promise<GoalRpcResult<ThreadGoal | null>>
-    clearGoal?: (threadId: string) => Promise<GoalRpcResult<{ cleared: boolean }>>
-    // Codex native `/compact` (thread/compact/start). threadId = DB thread id.
-    compactThread?: (threadId: string) => Promise<GoalRpcResult<{ started: boolean }>>
-    // Codex native plugin/installed (≥0.140) — mention candidate source.
-    listInstalledPlugins?: (
-      params?: PluginInstalledParams,
-    ) => Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>
   }
 }
 
@@ -1361,12 +1303,6 @@ function attachmentsFromMessage(message: Message): AgentAttachmentInput[] {
   return out.map(withComposerAttachmentId)
 }
 
-function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
-  const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
-  if (!agent) throw new Error('Electron agent API is unavailable')
-  return agent
-}
-
 function formatGoalTokens(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0'
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
@@ -2033,8 +1969,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // backend-epoch cache is authoritative and is reset after a Codex restart;
     // renderer compatibility is presentation state only.
     let result: AgentCollaborationModeUpdateResult
-    const update = (window as Window & { electronAPI?: AgentElectronApi })
-      .electronAPI?.agent?.updateCollaborationMode
+    const update = getAgentApi()?.updateCollaborationMode
     if (!update) {
       result = {
         ok: false,
@@ -2289,8 +2224,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         }
       })
     }
-    const agent = (window as Window & { electronAPI?: AgentElectronApi })
-      .electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.getCollaborationCapabilities) {
       applyFallback('协作能力暂不可用，已安全回退为 Auto。')
       return
@@ -2441,7 +2375,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   refreshGoal: async (threadId) => {
     const target = threadId ?? get().threadId
     if (!target) return
-    const getGoal = getAgentApi().getGoal
+    const getGoal = getAgentApi()?.getGoal
     if (!getGoal) return
     try {
       const res = await getGoal(target)
@@ -2474,7 +2408,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       })
       return
     }
-    const setGoalApi = getAgentApi().setGoal
+    const setGoalApi = getAgentApi()?.setGoal
     if (!setGoalApi) {
       set({ error: 'Goal API 不可用(需要 Codex 后端)。' })
       return
@@ -2500,7 +2434,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       })
       return
     }
-    const setGoalApi = getAgentApi().setGoal
+    const setGoalApi = getAgentApi()?.setGoal
     if (!setGoalApi) return
     try {
       const res = await setGoalApi(threadId, { status })
@@ -2524,7 +2458,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       return
     }
     if (!Number.isFinite(tokenBudget) || tokenBudget <= 0) return
-    const setGoalApi = getAgentApi().setGoal
+    const setGoalApi = getAgentApi()?.setGoal
     if (!setGoalApi) return
     try {
       const res = await setGoalApi(threadId, { tokenBudget })
@@ -2537,7 +2471,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   clearGoal: async () => {
     const threadId = get().threadId
     if (!threadId) return
-    const clearGoalApi = getAgentApi().clearGoal
+    const clearGoalApi = getAgentApi()?.clearGoal
     if (!clearGoalApi) return
     try {
       const res = await clearGoalApi(threadId)
@@ -2549,7 +2483,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
   compact: async () => {
     const threadId = get().threadId
-    const compactApi = getAgentApi().compactThread
+    const compactApi = getAgentApi()?.compactThread
     if (!compactApi) {
       get().pushNotice({
         id: `compact-unavailable:${Date.now()}`,
@@ -2584,7 +2518,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
   respondToApproval: async (response) => {
     const agent = getAgentApi()
-    if (!agent.respondApproval) {
+    if (!agent?.respondApproval) {
       set({ error: 'Electron approval API is unavailable' })
       return
     }
@@ -2696,7 +2630,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
-      const result = await getAgentApi().sendMessage({
+      const sendMessage = getAgentApi()?.sendMessage
+      if (!sendMessage) throw new Error('Electron agent API is unavailable')
+      const result = await sendMessage({
         threadId: state.threadId,
         content: canvasContext ? `${canvasContext}\n\n${content}` : content,
         attachments,
@@ -2892,7 +2828,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       return
     }
     if (!content && attachments.length === 0 && references.length === 0) return
-    const steer = getAgentApi().steer
+    const steer = getAgentApi()?.steer
     if (!steer) {
       // Preload without steer support (older shell) — fall back to queue-on-send.
       return
@@ -3053,8 +2989,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // never blocks the edit itself.
     const threadId = state.threadId
     const target = state.messages[idx]
-    const branchApi = (window as Window & { electronAPI?: AgentElectronApi })
-      .electronAPI?.agent?.branchThreadBeforeMessage
+    const branchApi = getAgentApi()?.branchThreadBeforeMessage
     if (threadId && branchApi) {
       set({ editBranchPending: true })
       try {
@@ -3185,7 +3120,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         return { isRunning: false, runningByThread, ...extra }
       })
     try {
-      await getAgentApi().cancel({ threadId })
+      const cancel = getAgentApi()?.cancel
+      if (!cancel) throw new Error('Electron agent API is unavailable')
+      await cancel({ threadId })
       clearRunning({})
     } catch (error) {
       clearRunning({ error: error instanceof Error ? error.message : String(error) })
@@ -3282,8 +3219,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     let threadModel: string | undefined
 
     if (!restored) {
-      const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
-        .electronAPI?.agent
+      const agent = getAgentApi()
       if (!agent?.openThread) return
       let thread: unknown
       try {
@@ -3655,7 +3591,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
 
   loadAvailableSkills: async () => {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.getSkillsSummary) return
     try {
       const summary = await agent.getSkillsSummary()
@@ -3667,7 +3603,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
 
   loadAvailablePluginMentions: async () => {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.listInstalledPlugins) return
     try {
       const result = await agent.listInstalledPlugins()
@@ -3683,7 +3619,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (get().bootstrapped || get().threadListLoading) return
     set({ threadListLoading: true })
     void get().loadCollaborationCapabilities()
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.listThreads) {
       set({ threadListLoading: false, bootstrapped: true })
       return
@@ -3707,7 +3643,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
 
   refreshThreadList: async () => {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.listThreads) return
     try {
       const list = await agent.listThreads()
@@ -3718,7 +3654,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
 
   refreshCodexThreadList: async () => {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.listCodexThreads) {
       set({ codexThreadList: [], codexThreadListLoading: false })
       return
@@ -3735,7 +3671,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
 
   forkCodexThread: async (threadId) => {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.forkCodexThread) {
       set({ error: 'Electron Codex thread fork API is unavailable' })
       return
@@ -3763,14 +3699,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   renameThread: async (threadId, title) => {
     const trimmed = title.trim()
     if (!threadId || trimmed.length === 0) return
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.renameThread) return
     await agent.renameThread(threadId, trimmed)
     await get().refreshThreadList()
   },
 
   deleteThread: async (threadId) => {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    const agent = getAgentApi()
     if (!agent?.deleteThread) return
     await agent.deleteThread(threadId)
     const lifecycleGeneration = get().collabModeLifecycleSequence + 1

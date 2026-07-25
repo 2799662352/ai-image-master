@@ -2,12 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
 import type { DoctorCheck, DoctorReport, DoctorStatus } from '../../../../types/agent'
-
-type DoctorApi = {
-  agent?: {
-    codexDoctor?: () => Promise<{ ok: boolean; error?: string; report?: DoctorReport }>
-  }
-}
+import { getAgentApi } from '../../utils/agentBridge'
 
 export function DoctorSection(): React.JSX.Element {
   const [report, setReport] = useState<DoctorReport | null>(null)
@@ -16,7 +11,7 @@ export function DoctorSection(): React.JSX.Element {
   const mountedRef = useRef(false)
 
   const runDoctor = useCallback(async () => {
-    const api = getDoctorApi()
+    const api = getAgentApi()
     if (!api?.codexDoctor) {
       setError('Codex doctor API is unavailable.')
       return
@@ -180,6 +175,3 @@ function formatDetail(value: unknown): string {
   }
 }
 
-function getDoctorApi() {
-  return (window as Window & { electronAPI?: DoctorApi }).electronAPI?.agent
-}

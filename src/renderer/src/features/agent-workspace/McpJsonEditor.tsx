@@ -37,6 +37,7 @@ registerSingleton(IProductService, MonacoProductServiceStub, 0)
 
 loader.config({ monaco })
 
+import { getAgentApi } from '../../utils/agentBridge'
 import { mcpConfigSchema } from './mcpSchemaJson'
 import { stripNullDeep } from './mcpConfigSanitizer'
 import { validateMcpServerEntry, formatValidationError } from './mcpEntryValidator'
@@ -45,10 +46,6 @@ import { useMcpStore } from './useMcpStore'
 interface McpJsonEditorProps {
   serverName?: string | null
   onClose: () => void
-}
-
-function getApi() {
-  return (window as any).electronAPI?.agent
 }
 
 export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): React.JSX.Element {
@@ -61,7 +58,7 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
 
   useEffect(() => {
     async function loadConfig() {
-      const api = getApi()
+      const api = getAgentApi()
       if (!api) {
         setLoadError('MCP API 不可用')
         return
@@ -178,7 +175,7 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
         }
       }
 
-      const api = getApi()
+      const api = getAgentApi()
       if (!api?.batchWriteConfig) throw new Error('MCP API 不可用')
 
       const edits = Object.entries(parsed).map(([name, config]) => ({
