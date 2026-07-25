@@ -34,7 +34,14 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
           result: { userAgent: 'fake', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' },
         }))
       } else if (msg.method === 'turn/start') {
-        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }))
+        // Deliberately delayed: the client only registers `turnIdByThread` after
+        // this response lands, so anything that waits merely for the REQUEST to
+        // arrive would race ahead of the state it needs. Holding the response
+        // makes that gap deterministic instead of "wide enough to flake on a
+        // loaded CI runner, never locally".
+        setTimeout(() => {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }))
+        }, 40)
       } else if (msg.method === 'turn/steer') {
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turnId: 'turn-1' } }))
       }
@@ -89,9 +96,21 @@ describe('CodexProtocolClient.steer (turn/steer)', () => {
 
     // Kick off a turn (registers turnIdByThread) but never await completion —
     // the fake server keeps the turn open.
+    //
+    // The rejection MUST be swallowed: afterEach's `stop()` calls
+    // `rejectPending('Codex protocol client stopped')`, and a floating
+    // `void iterator.next()` leaves that rejection unhandled — vitest fails the
+    // whole run on unhandled errors even when every assertion passed.
     const iterator = client.send('thread-A', textInput('start'))[Symbol.asyncIterator]()
-    void iterator.next()
-    await waitUntil(() => server!.receivedFromClient.some((m) => m.method === 'turn/start'))
+    const pending = iterator.next().catch(() => undefined)
+
+    // Wait for the CLIENT to have registered the turn, not merely for the server
+    // to have received `turn/start`. `turnIdByThread` is only written after the
+    // response lands (CodexProtocolClient.ts:342), one websocket round trip
+    // later — waiting on the request arrival lets `steer` run before the
+    // precondition it needs exists, which is exactly how this test flaked on
+    // loaded CI runners while always passing locally.
+    await waitUntil(() => client!.hasActiveTurnOnThread('thread-A'))
 
     const acceptedTurnId = await client.steer('thread-A', textInput('actually, focus on failing tests'))
     expect(acceptedTurnId).toBe('turn-1')
@@ -102,5 +121,8 @@ describe('CodexProtocolClient.steer (turn/steer)', () => {
     expect(steerMsg?.params.input).toEqual([
       { type: 'text', text: 'actually, focus on failing tests', text_elements: [] },
     ])
+
+    await client.stop()
+    await pending
   })
 })
