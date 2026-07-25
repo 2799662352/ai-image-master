@@ -41,6 +41,7 @@ import {
   createId,
   isActiveStatus,
   normalizeSpec,
+  specEquals,
 } from './cardSpec'
 import { WORKBENCH_MAX_CARDS } from './WorkbenchDb'
 
@@ -173,28 +174,6 @@ function reject(
       revision: source.revision,
     },
   }
-}
-
-function materialsEqual(a: VideoWorkbenchMaterial[], b: VideoWorkbenchMaterial[]): boolean {
-  if (a.length !== b.length) return false
-  return a.every((m, i) => m.src === b[i].src && m.name === b[i].name)
-}
-
-function specEquals(a: VideoWorkbenchSpec, b: VideoWorkbenchSpec): boolean {
-  return (
-    a.prompt === b.prompt
-    && a.model === b.model
-    && a.resolution === b.resolution
-    && a.ratio === b.ratio
-    && a.duration === b.duration
-    && a.generateAudio === b.generateAudio
-    && a.mode === b.mode
-    && a.seed === b.seed
-    && a.webSearch === b.webSearch
-    && materialsEqual(a.referenceImages, b.referenceImages)
-    && materialsEqual(a.referenceVideos, b.referenceVideos)
-    && materialsEqual(a.referenceAudios, b.referenceAudios)
-  )
 }
 
 /**

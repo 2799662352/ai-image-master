@@ -14,6 +14,7 @@ import {
 } from '../features/video-workbench/store'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
+import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
 
@@ -68,6 +69,8 @@ export default function VideoWorkbenchPage() {
             {cards.length} 张卡片{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>
           <div className="ml-auto flex items-center gap-2">
+            {/* 撤销/重做:一步 = 一次编排改动,agent 的整板 applyIR 也算一步 */}
+            <UndoRedoButtons />
             {/* 海外/国内站点切换:与设置页共享同一份 region 配置,提交按此路由 */}
             <RegionSwitch />
             {/* 全局开关:本地上传素材加入卡片的同时顺带导入人像库(失败只 toast) */}
