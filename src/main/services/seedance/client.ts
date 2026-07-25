@@ -56,6 +56,42 @@ interface ArkEnvelope<T> {
  */
 export const ARK_REQUEST_TIMEOUT_MS = 30_000
 
+/**
+ * 带上游状态码的 API 错误。调用方（pollLoop）据此区分「重试能自愈」与「重试只是
+ * 浪费 30 分钟」：密钥失效、参数非法、任务不存在都属于后者。
+ */
+export class SeedanceApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    /** 上游 Retry-After 换算成毫秒（429/503 常带）。 */
+    readonly retryAfterMs?: number,
+  ) {
+    super(message)
+    this.name = 'SeedanceApiError'
+  }
+
+  /**
+   * 4xx 是请求本身的问题，重试不会自愈；408（请求超时）/425（太早）/429（限流）
+   * 与 5xx 是服务端侧的暂时状况，值得重试。HTTP 2xx 但 success:false 属于上游
+   * 逻辑拒绝，同样不会自愈。
+   */
+  get retryable(): boolean {
+    if (this.status === 408 || this.status === 425 || this.status === 429) return true
+    return this.status >= 500
+  }
+}
+
+/** Retry-After 允许「秒数」与「HTTP 日期」两种写法（RFC 9110 §10.2.3）。 */
+function parseRetryAfterMs(raw: string | null | undefined): number | undefined {
+  if (!raw) return undefined
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000)
+  const at = Date.parse(raw)
+  if (Number.isFinite(at)) return Math.max(0, at - Date.now())
+  return undefined
+}
+
 async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ARK_REQUEST_TIMEOUT_MS)
@@ -102,7 +138,9 @@ async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): P
     const detail =
       json?.error?.message || json?.message || text.slice(0, 300) || res.statusText
     const code = json?.error?.code ? `[${json.error.code}] ` : ''
-    throw new Error(`Seedance API ${res.status}: ${code}${detail}`)
+    // headers 用可选链取：单测里的假响应只有 { ok, status, text }。
+    const retryAfterMs = parseRetryAfterMs(res.headers?.get?.('retry-after'))
+    throw new SeedanceApiError(`Seedance API ${res.status}: ${code}${detail}`, res.status, retryAfterMs)
   }
   return (json.data ?? (json as unknown as T))
 }
