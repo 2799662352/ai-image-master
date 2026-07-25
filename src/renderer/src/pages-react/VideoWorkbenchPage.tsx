@@ -12,6 +12,8 @@ import {
   mountWorkbenchTaskListener,
   useVideoWorkbenchStore,
 } from '../features/video-workbench/store'
+import { buildModeMedia } from '../features/video-workbench/store'
+import { formatCostUsd, summarizeCostUsd } from '../features/video-workbench/pricing'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
@@ -51,6 +53,12 @@ export default function VideoWorkbenchPage() {
     (c) => c.prompt.trim() && c.status !== 'preparing' && c.status !== 'queued' && c.status !== 'running' && c.status !== 'succeeded',
   ).length
 
+  // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
+  // hasVideoInput 必须与单卡显示同源,否则两处数字对不上:含视频输入单价明显更低。
+  const hasVideoInput = (c: (typeof allCards)[number]) => buildModeMedia(c).referenceVideos.length > 0
+  const boardCost = summarizeCostUsd(cards, hasVideoInput)
+  const totalCost = summarizeCostUsd(allCards, hasVideoInput)
+
   return (
     <div className="bg-[#09090B] border border-[#3F3F46] p-4 md:p-6 relative overflow-hidden min-h-[70vh]">
       {/* 装饰性背景数字(与其他面板一致的 Kinetic Typography) */}
@@ -68,6 +76,26 @@ export default function VideoWorkbenchPage() {
           <span className="text-white/40 text-xs">
             {cards.length} 张卡片{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>
+          {/* 已花费:只在真有可估算的卡时才出现,不给空看板挂一个 $0.000。
+              带 ≈ 是因为它是按 completion_tokens × 官方价目估的,不是账单。 */}
+          {(boardCost.counted > 0 || boardCost.unpriced > 0) && (
+            <span
+              className="text-white/40 text-xs"
+              title={[
+                `本页 ${boardCost.counted} 张已计入`,
+                boardCost.unpriced > 0
+                  ? `${boardCost.unpriced} 张已出片但估不出价(上游未回传 token 或价目表无此组合)——所以这是下限`
+                  : null,
+                totalCost.counted !== boardCost.counted || totalCost.unpriced !== boardCost.unpriced
+                  ? `全部页合计 ≈ ${formatCostUsd(totalCost.usd)}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
+                  : null,
+                '按 usage.completion_tokens × 官方价目估算,非实际账单',
+              ].filter(Boolean).join('\n')}
+            >
+              · 已花费 ≈ {formatCostUsd(boardCost.usd)}
+              {boardCost.unpriced > 0 ? `＋${boardCost.unpriced} 张未计入` : ''}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
             {/* 撤销/重做:一步 = 一次编排改动,agent 的整板 applyIR 也算一步 */}
             <UndoRedoButtons />
