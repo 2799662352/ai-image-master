@@ -130,6 +130,83 @@ const removeTasksOutputSchema = z.looseObject({
   workbench: workbenchSummarySchema,
 })
 
+// ---------------------------------------------------------------------------
+// 看板 JSON IR(export / apply)—— 声明式整体重排
+// ---------------------------------------------------------------------------
+
+const irMaterialSchema = z.looseObject({
+  name: z.string().describe('Display name only; has no effect on what gets submitted.'),
+  src: z.string().describe(
+    'local path / https URL / asset://assetId / data: URL, or a wbref://<cardId>/<kind>/<index> '
+    + 'placeholder standing for an embedded material already on a card. Copy a wbref:// verbatim to '
+    + 'keep or reuse that material — never invent one.',
+  ),
+})
+
+/** 规格字段全部可选:IR 是声明式快照,省略即回默认值(不是 patch)。 */
+const irCardSchema = z.looseObject({
+  id: z.string().optional().describe('Existing card id. Omit to CREATE a new card. Unknown id = error.'),
+  prompt: z.string().optional(),
+  model: z.enum(['2.0', '2.0-fast', '2.0-mini']).optional(),
+  resolution: z.enum(['480p', '720p', '1080p']).optional(),
+  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
+  duration: z.union([z.literal(-1), z.number().int().min(4).max(15)]).optional(),
+  generateAudio: z.boolean().optional(),
+  mode: z.enum([
+    'text2video', 'first_frame', 'first_last_frame', 'reference_images',
+    'multimodal_ref', 'edit_video', 'extend_video',
+  ]).optional(),
+  seed: z.number().int().min(0).max(4294967295).optional(),
+  webSearch: z.boolean().optional(),
+  referenceImages: z.array(irMaterialSchema).max(9).optional(),
+  referenceVideos: z.array(irMaterialSchema).max(3).optional(),
+  referenceAudios: z.array(irMaterialSchema).max(3).optional(),
+  result: z.looseObject({
+    status: z.string(),
+    taskId: z.string().optional(),
+    error: z.string().optional(),
+    localPath: z.string().optional(),
+    remoteUrl: z.string().optional(),
+  }).optional().describe('READ-ONLY annotation from export; ignored on apply.'),
+})
+
+const irBoardSchema = z.looseObject({
+  id: z.string().optional().describe('Existing board id. Omit to CREATE a new board. Unknown id = error.'),
+  name: z.string().min(1),
+  cards: z.array(irCardSchema).describe('Array order IS the in-board order.'),
+})
+
+const irSchema = z.looseObject({
+  irVersion: z.number().describe('Must match the version returned by video_workbench_export.'),
+  revision: z.number().describe('Concurrency token from export. Apply is rejected if the workbench changed since.'),
+  activeBoardId: z.string().optional(),
+  boards: z.array(irBoardSchema).min(1).describe('Array order IS the board (tab) order.'),
+})
+
+const applyOutputSchema = z.looseObject({
+  ok: z.boolean(),
+  conflict: z.object({ expected: z.number(), actual: z.number() }).optional().describe(
+    'Set when the revision token was stale — NOTHING was written. Re-export, redo your edits, apply again.',
+  ),
+  boards: z.object({
+    created: z.array(z.string()),
+    renamed: z.array(z.string()),
+    removed: z.array(z.string()),
+  }),
+  cards: z.object({
+    created: z.array(z.string()),
+    updated: z.array(z.string()),
+    moved: z.array(z.string()),
+    removed: z.array(z.string()),
+  }),
+  skipped: z.array(z.object({
+    cardId: z.string().optional(),
+    boardId: z.string().optional(),
+    reason: z.string(),
+  })).describe('Per-item rejections (rendering cards are frozen, unknown ids, unresolvable wbref, …).'),
+  revision: z.number().describe('New concurrency token; carry it into the next apply.'),
+})
+
 type WorkbenchToolResult = {
   content: Array<{ type: 'text'; text: string }>
   structuredContent?: Record<string, unknown>
@@ -274,6 +351,88 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([banner], result)
     } catch (error) {
       return errorResult('video_workbench_status', error)
+    }
+  })
+
+  server.registerTool('video_workbench_export', {
+    description:
+      'Export the whole 「生成视频」 workbench as an editable JSON IR (boards → cards, array order = '
+      + 'display order). Use this whenever the user asks for a change that spans more than one card — '
+      + '重排/整理/拆成两页/给这一页所有卡换成 1080p/把这几镜挪到新页 —— then edit the JSON and send it '
+      + 'back via video_workbench_apply. That is one round trip instead of a dozen per-card calls, and it '
+      + 'is the only way to reorder cards or create/rename/delete boards.\n'
+      + 'The IR carries a `revision` concurrency token: apply must echo it back, and is rejected if the '
+      + 'user edited the workbench in the meantime. Embedded (data:) materials appear as '
+      + '`wbref://<cardId>/<kind>/<index>` placeholders — copy them verbatim to keep a material, or copy '
+      + 'one onto another card to reuse that material without re-uploading.',
+    inputSchema: z.object({
+      boardId: z.string().optional().describe(
+        'Export only this board (keeps the payload small on a large workbench). Omit = every board. '
+        + 'Safe to apply back with the default merge mode: boards you did not list are left alone.',
+      ),
+    }),
+    outputSchema: irSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_export', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      return okResult([
+        '✅ video_workbench_export — edit this JSON and send it back through video_workbench_apply '
+        + '(keep `irVersion` and `revision` unchanged).',
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_export', error)
+    }
+  })
+
+  server.registerTool('video_workbench_apply', {
+    description:
+      'Apply an edited workbench IR (from video_workbench_export) in ONE shot: create/update/reorder/'
+      + 'delete cards and boards together. This is the preferred way to make multi-card changes.\n'
+      + 'Rules that matter:\n'
+      + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
+      + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
+      + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
+      + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
+      + '• `revision` must be the one from export. Stale token → rejected with `conflict` and NOTHING is '
+      + 'written; re-export, redo your edits, apply again. Do not pass force unless the user accepted that '
+      + 'their concurrent edits get overwritten.\n'
+      + '• mode "merge" (default) leaves boards/cards you did not list untouched — safe. mode "replace" '
+      + 'DELETES every card and board missing from the IR; only use it when the user asked to clear things.\n'
+      + '• Cards that are currently rendering keep their frozen spec (they can still be moved), and are '
+      + 'never deleted. Read `skipped` in the result to see exactly what did not happen.',
+    inputSchema: z.object({
+      ir: irSchema.describe('The edited IR, including the original irVersion + revision.'),
+      mode: z.enum(['merge', 'replace']).optional().describe(
+        'merge (default): unlisted boards/cards are kept. replace: unlisted boards/cards are DELETED.',
+      ),
+      force: z.boolean().optional().describe(
+        'Skip the revision check, overwriting whatever the user changed meanwhile. Requires explicit user consent.',
+      ),
+    }),
+    outputSchema: applyOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_apply', params as Record<string, unknown>, extractCodexThreadId(ctx)) as {
+        ok: boolean
+        conflict?: { expected: number; actual: number }
+        skipped: Array<{ reason: string }>
+        revision: number
+      }
+      if (!result.ok) {
+        return okResult([
+          result.conflict
+            ? `⚠️ video_workbench_apply — REJECTED, nothing was written: the workbench moved from revision ${result.conflict.expected} to ${result.conflict.actual} (the user edited it). Call video_workbench_export again, redo your edits on the fresh IR, then apply.`
+            : '⚠️ video_workbench_apply — REJECTED, nothing was written (see skipped reasons).',
+        ], result)
+      }
+      return okResult([
+        `✅ video_workbench_apply — applied. New revision ${result.revision}; use it for your next apply.`,
+        ...(result.skipped.length > 0
+          ? [`⚠️ ${result.skipped.length} item(s) skipped — read \`skipped\` and tell the user what did not happen.`]
+          : []),
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_apply', error)
     }
   })
 

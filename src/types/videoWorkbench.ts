@@ -145,6 +145,138 @@ export interface VideoWorkbenchCardInput {
   referenceAudios?: Array<string | VideoWorkbenchMaterial>
 }
 
+// ---------------------------------------------------------------------------
+// 看板 JSON IR（声明式整体读写）
+//
+// 存在的理由:store 有 13 个用户可做的改动,细粒度 MCP 工具只接得出一部分,
+// 而「把这三页重新编排一遍」这类请求逐卡调用既费轮次又没有可审阅的中间态。
+// IR 让 agent 一次导出、离线想清楚、一次写回。
+//
+// 三条硬纪律,决定了下面每个字段的取舍:
+//
+// 1. **IR 只装意图,不装结果。** status/taskId/localPath/remoteUrl/actualSeed
+//    这些是生成的产物,不是用户的编排意图。它们只作 `result` 只读注解随导出
+//    带出(给 agent 看),apply 一律忽略 —— 否则 agent 一次回写就能把真实
+//    任务状态改成幻觉值。
+//
+// 2. **`revision` 是乐观并发令牌,只跟意图变更走。** 这个工作台的卖点是人与
+//    AI 改同一份 store,所以「agent 三十秒前读的看板」必然会过期。apply 必须
+//    回带导出时的 revision,对不上就拒绝而不是覆盖。关键取舍:生成进度回流
+//    (applyTaskUpdate)**不** bump revision —— 否则一个跑着的任务会让每次
+//    apply 都撞冲突,这个功能就废了。
+//
+// 3. **数组下标就是 order。** 卡片 order 在库里是按页稠密的(reorderBoard
+//    每次重排都压实成 0..n-1),所以 IR 里不需要 order 字段,`cards` 的数组
+//    顺序即是页内卷轴顺序,`boards` 的数组顺序即是页签顺序。
+// ---------------------------------------------------------------------------
+
+/** 当前 IR 格式版本(不认识的版本 apply 直接拒绝,不做尽力而为的猜测)。 */
+export const WORKBENCH_IR_VERSION = 1
+
+/**
+ * IR 里的参考素材。只有 name + src —— `previewUrl` 是 asset:// 素材的展示
+ * 派生物,apply 时由人像库重新解析,不该让 agent 手搓也不该占导出体积。
+ */
+export interface WorkbenchIRMaterial {
+  name: string
+  /** data: URL / 本地绝对路径 / https URL / asset://assetId。 */
+  src: string
+}
+
+/**
+ * 卡片的生成结果,只读注解。导出时带上让 agent 知道哪张卡已经出片、哪张失败了;
+ * apply 时整块忽略。
+ */
+export interface WorkbenchIRCardResult {
+  status: VideoWorkbenchCardStatus
+  taskId?: string
+  error?: string
+  localPath?: string
+  remoteUrl?: string
+}
+
+/**
+ * IR 里的一张卡:意图字段 + 身份。
+ *
+ * **规格字段全部可选,但语义是「声明」而不是「patch」** —— 省略某字段等于
+ * 「该字段用默认值」,不是「沿用卡片原值」。所以改一张已有卡的正确做法是
+ * export 拿到完整卡片、改想改的字段、原样带回其余字段;手搓一个只有
+ * `{ id, prompt }` 的卡片会把它的分辨率/时长/参考图一起清成默认。
+ *
+ * 导出永远填满每个字段,round-trip 因此是安全的。
+ */
+export interface WorkbenchIRCard {
+  /** 已有卡的 id。省略 = 新建一张。给了但库里没有 = 报错(而不是静默新建)。 */
+  id?: string
+  prompt?: string
+  model?: SeedanceModelAlias
+  resolution?: '480p' | '720p' | '1080p'
+  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  duration?: number
+  generateAudio?: boolean
+  mode?: VideoWorkbenchMode
+  seed?: number
+  webSearch?: boolean
+  referenceImages?: WorkbenchIRMaterial[]
+  referenceVideos?: WorkbenchIRMaterial[]
+  referenceAudios?: WorkbenchIRMaterial[]
+  /** 只读:导出时的生成结果,apply 忽略。 */
+  result?: WorkbenchIRCardResult
+}
+
+/** IR 里的一页。数组顺序即页签顺序,`cards` 数组顺序即页内卷轴顺序。 */
+export interface WorkbenchIRBoard {
+  /** 已有页的 id。省略 = 新建一页。给了但库里没有 = 报错。 */
+  id?: string
+  name: string
+  cards: WorkbenchIRCard[]
+}
+
+/** 整个工作台的声明式快照。 */
+export interface WorkbenchIR {
+  irVersion: number
+  /** 导出时的意图版本号。apply 必须回带,用来发现丢失更新。 */
+  revision: number
+  /** 当前激活页(apply 时若能解析就切过去)。 */
+  activeBoardId?: string
+  boards: WorkbenchIRBoard[]
+}
+
+export interface WorkbenchApplyOptions {
+  /**
+   * `merge`(缺省):IR 里没提到的页和卡原样保留 —— 安全默认,agent 只改它
+   * 关心的部分。`replace`:IR 未列出的页/卡删掉 —— 真正的「整体重排」,
+   * 但会删用户的东西,所以要显式要。
+   */
+  mode?: 'merge' | 'replace'
+  /** 跳过 revision 校验。明知会盖掉用户改动时的逃生门,默认不给。 */
+  force?: boolean
+}
+
+/** 单项被跳过的原因(渲染中不可改规格、id 不存在等)。 */
+export interface WorkbenchApplySkip {
+  cardId?: string
+  boardId?: string
+  reason: string
+}
+
+export interface WorkbenchApplyResult {
+  ok: boolean
+  /** 版本冲突:agent 该重新导出再改。填了这个则什么都没写。 */
+  conflict?: { expected: number; actual: number }
+  boards: { created: string[]; renamed: string[]; removed: string[] }
+  cards: {
+    created: string[]
+    updated: string[]
+    /** 换了页或换了页内位置。 */
+    moved: string[]
+    removed: string[]
+  }
+  skipped: WorkbenchApplySkip[]
+  /** apply 之后的新版本号(下一次 apply 该带这个)。 */
+  revision: number
+}
+
 /** `video-workbench:submit` IPC 载荷（渲染端 → 主进程）。 */
 export interface VideoWorkbenchSubmitPayload {
   /** 渲染端生成的 clientId，贯穿广播做卡片对齐。 */
