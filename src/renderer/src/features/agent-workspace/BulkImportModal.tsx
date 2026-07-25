@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type React from 'react'
 
+import { getAgentApi } from '../../utils/agentBridge'
 import { stripNullDeep } from './mcpConfigSanitizer'
 import { useMcpStore } from './useMcpStore'
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
@@ -90,7 +91,7 @@ export function BulkImportModal({ onClose }: BulkImportModalProps): React.JSX.El
   }, [rawJson])
 
   const handleImport = useCallback(async () => {
-    const api = (window as any).electronAPI?.agent
+    const api = getAgentApi()
     if (!api?.batchWriteConfig) return
 
     setImporting(true)

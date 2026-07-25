@@ -15,6 +15,8 @@ import { recordCodexArtifact } from './codexArtifactPersistence'
 import { buildLightArtifacts } from './buildLightArtifacts'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../../../../types/agent'
+import type { AgentApiBridge } from '../../../../types/agentApi'
+import { getAgentApi } from '../../utils/agentBridge'
 import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
 import { directorBridge } from '../../components/shared/image-editors/director/directorBridge'
 import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMediaSrc'
@@ -83,11 +85,6 @@ function resolveEffectiveImageChannel(agentRequested: unknown): string {
 }
 
 type AgentElectronApi = {
-  agent?: {
-    onToolRequest: (callback: (request: AgentToolRequest) => void) => () => void
-    sendToolResponse: (response: AgentToolResponse) => void
-    sendImageTaskUpdate: (update: ImageTaskUpdate) => void
-  }
   attachments?: {
     save: (args: {
       threadId: string
@@ -178,6 +175,7 @@ async function settleWithConcurrency<T, R>(
 export class AgentToolExecutor {
   start(): () => void {
     const agent = this.getAgentApi()
+    if (!agent.onToolRequest) throw new Error('Electron agent API is unavailable')
     return agent.onToolRequest((request) => {
       void this.handle(request)
     })
@@ -192,13 +190,13 @@ export class AgentToolExecutor {
     // only the main↔renderer contract becomes non-blocking.
     if (request.toolName === 'generate_image' || request.toolName === 'generate_images') {
       const taskId = typeof request.params.__taskId === 'string' ? request.params.__taskId : ''
-      this.getAgentApi().sendToolResponse({ id: request.id, ok: true, result: { accepted: true, taskId } })
+      this.getAgentApi().sendToolResponse?.({ id: request.id, ok: true, result: { accepted: true, taskId } })
       void this.runImageTaskInBackground(request, taskId)
       return
     }
 
     const response = await this.execute(request)
-    this.getAgentApi().sendToolResponse(response)
+    this.getAgentApi().sendToolResponse?.(response)
   }
 
   /**
@@ -227,7 +225,7 @@ export class AgentToolExecutor {
   private broadcastImageTask(update: ImageTaskUpdate): void {
     if (!update.taskId) return
     try {
-      this.getAgentApi().sendImageTaskUpdate(update)
+      this.getAgentApi().sendImageTaskUpdate?.(update)
     } catch (error) {
       console.error('[AgentToolExecutor] failed to broadcast image task update:', error)
     }
@@ -1178,8 +1176,8 @@ export class AgentToolExecutor {
     throw new Error('open_image_viewer requires at least one image URL')
   }
 
-  private getAgentApi(): NonNullable<AgentElectronApi['agent']> {
-    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+  private getAgentApi(): AgentApiBridge {
+    const agent = getAgentApi()
     if (!agent) throw new Error('Electron agent API is unavailable')
     return agent
   }

@@ -264,10 +264,15 @@ describe('PortraitPickerModal', () => {
       const items = n <= 1 ? [a1] : n === 2 ? [a1, tempRow, real] : [a1, real]
       return { items, total: items.length, page: 1, pageSize: 60, totalPages: 1 }
     })
+    // deferred 必须在 render 之前就建好。曾经写成在 mockImplementation 里现场
+    // new Promise 赋值 resolveImport,结果 CI 上偶发 `resolveImport is not a
+    // function`:下面等的「上传中占位卡」是乐观本地状态渲染的,可以早于
+    // importAsset 真正被调用,那一刻 resolveImport 还是 undefined。
     let resolveImport!: (v: { duplicated: boolean; asset: SeedanceAssetItem }) => void
-    api.importAsset.mockImplementation(
-      () => new Promise((r) => (resolveImport = r)) as never,
-    )
+    const importResult = new Promise<{ duplicated: boolean; asset: SeedanceAssetItem }>((r) => {
+      resolveImport = r
+    })
+    api.importAsset.mockImplementation(() => importResult as never)
     render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
     await screen.findByTitle('赛博猫')
 

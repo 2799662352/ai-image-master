@@ -6,6 +6,7 @@ import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
 import { CodexProviderManager } from './settings/CodexProviderManager'
+import { getAgentApi } from '../utils/agentBridge'
 import {
   CINEMATOGRAPHY_KB_MCP_PROVIDER_ID,
   DASHSCOPE_API_KEY_STORAGE,
@@ -332,7 +333,7 @@ function CinematographyKbSection() {
   }, [])
 
   const push = (providerId: string, key: string) => {
-    const agent = (window as any).electronAPI?.agent
+    const agent = getAgentApi()
     if (agent?.setProviderApiKey) {
       void agent.setProviderApiKey(providerId, key)
     }
@@ -478,8 +479,7 @@ export default function SettingsPage() {
   const handleTestCodex = async () => {
     setTestingCodex(true)
     try {
-      const electronAPI = (window as any).electronAPI
-      const result = await electronAPI?.agent?.testConnection?.()
+      const result = await getAgentApi()?.testConnection?.()
       if (result?.ok) {
         addToast({ message: 'Codex 连接成功', type: 'success' })
       } else {
@@ -496,7 +496,7 @@ export default function SettingsPage() {
     try {
       await saveAll(api)
       try {
-        await (window as any).electronAPI?.agent?.setApiKey?.(codexApiKey)
+        await getAgentApi()?.setApiKey?.(codexApiKey)
       } catch (err) {
         console.warn('failed to push codex key to main:', err)
       }

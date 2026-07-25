@@ -2,15 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type React from 'react'
 import YAML from 'yaml'
 
-import type { AgentApiResult, CodexConfigScope, CodexSkillInput } from '../../../../types/agent'
+import type { CodexConfigScope, CodexSkillInput } from '../../../../types/agent'
+import { getAgentApi } from '../../utils/agentBridge'
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
-
-type SkillEditorApi = {
-  agent?: {
-    getSkillDetail?: (id: string) => Promise<CodexSkillInput | null>
-    saveSkill?: (input: CodexSkillInput) => Promise<AgentApiResult & { id?: string }>
-  }
-}
 
 type SkillEditorProps = {
   mode: 'new' | string
@@ -53,7 +47,7 @@ export function SkillEditor({ mode, onClose }: SkillEditorProps): React.JSX.Elem
     }
 
     let cancelled = false
-    const api = getSkillEditorApi()
+    const api = getAgentApi()
     if (!api?.getSkillDetail) {
       setError('Codex skills API is unavailable.')
       return
@@ -78,7 +72,7 @@ export function SkillEditor({ mode, onClose }: SkillEditorProps): React.JSX.Elem
   }, [mode])
 
   async function handleSave(): Promise<void> {
-    const api = getSkillEditorApi()
+    const api = getAgentApi()
     if (!api?.saveSkill) {
       setError('Codex skills API is unavailable.')
       return
@@ -278,10 +272,6 @@ function skillMdToInput(text: string, scope: CodexConfigScope): CodexSkillInput 
     whenToUse: typeof record.whenToUse === 'string' ? record.whenToUse : '',
     instructions: match[2].trimStart(),
   }
-}
-
-function getSkillEditorApi() {
-  return (window as Window & { electronAPI?: SkillEditorApi }).electronAPI?.agent
 }
 
 function errorMessage(reason: unknown): string {

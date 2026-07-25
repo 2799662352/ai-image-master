@@ -114,6 +114,18 @@ import type {
   PluginReadResponse,
 } from '../types/codexPlugins'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../types/codexGoals'
+import type { IpcResponse } from '../types/index'
+// `window.electronAPI.agent` 的契约现在住在 `src/types/agentApi.ts`,渲染层同吃
+// 一份(见那边的文件头注释)。preload 只负责实现它。
+import type {
+  AgentApi,
+  AgentGoalEvent,
+  AgentMcpStatusEvent,
+  CodexCustomProviderInput,
+  CodexGatewaySnapshotResponse,
+  CodexProviderMutationResponse,
+  CodexProviderRecord,
+} from '../types/agentApi'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -396,11 +408,9 @@ export interface CanvasCheckpointMeta {
 
 // ==================== 类型定义 ====================
 
-export interface IpcResponse<T = unknown> {
-  success: boolean
-  data?: T
-  error?: string
-}
+// IpcResponse 的权威定义在 `src/types/index.ts`(主进程侧也吃它)。这里原先有
+// 一份逐字相同的副本,改成 re-export,免得两处各自漂移。
+export type { IpcResponse }
 
 export interface SaveImageResponse {
   success: boolean
@@ -460,53 +470,14 @@ export type FileExplorerStat =
   | { ok: true; size: number; mime: string; mtime: number }
   | { ok: false; reason: string }
 
-/**
- * Renderer-side mirror of `ProviderPreset` from
- * `src/main/agent/codexProviders.ts`. Kept in sync manually because preload is
- * a sandboxed module that can't import main-process files at type-check time.
- */
-export interface CodexProviderRecord {
-  id: string
-  name: string
-  baseUrl: string
-  envKey: string
-  model?: string
-  reasoningEffort?: string
-  verbosity?: string
-  credentialId?: string
-  allowedModels?: readonly string[]
-  requiresOpenaiAuth?: boolean
-  extraTopLevelConfig?: Record<string, string | boolean | number>
-  description?: string
-  isCustom?: boolean
-}
-
-export interface CodexCustomProviderInput {
-  id?: string
-  name: string
-  baseUrl: string
-  envKey?: string
-  model?: string
-  reasoningEffort?: string
-  verbosity?: string
-  requiresOpenaiAuth?: boolean
-  extraTopLevelConfig?: Record<string, string | boolean | number>
-  description?: string
-}
-
-export type CodexProviderMutationResponse = {
-  ok: boolean
-  error?: string
-} & Partial<AgentProviderMutationResult>
-
-/** Renderer-safe user-facing Gateway snapshot during the Provider migration. */
-export interface CodexGatewaySnapshotResponse {
-  ok: boolean
-  error?: string
-  builtins?: CodexProviderRecord[]
-  custom?: CodexProviderRecord[]
-  activeId?: string
-  apiKeys?: Record<string, string>
+// Provider / Gateway 的 IPC DTO 也搬到了 `src/types/agentApi.ts` —— 渲染层的
+// `useSettingsStore` 此前照抄了一份(注释还写着「redeclare it here instead of
+// importing from preload」),现在两边同吃一份。
+export type {
+  CodexCustomProviderInput,
+  CodexGatewaySnapshotResponse,
+  CodexProviderMutationResponse,
+  CodexProviderRecord,
 }
 
 export interface ElectronAPI {
@@ -531,157 +502,9 @@ export interface ElectronAPI {
     uninstall: (pluginName: string) => Promise<PluginUninstallResult>
     listInstalled: () => Promise<PluginListInstalledResult>
   }
-  // Codex Agent
-  agent: {
-    sendMessage: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
-    steer: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
-    cancel: (payload: AgentCancelPayload) => Promise<IpcResponse>
-    listThreads: () => Promise<AgentThreadSummary[]>
-    loadThread: (threadId: string) => Promise<unknown>
-    openThread: (threadId: string) => Promise<unknown>
-    renameThread: (threadId: string, title: string) => Promise<void>
-    deleteThread: (threadId: string) => Promise<void>
-    onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
-    onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
-    onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) => () => void
-    sendToolResponse: (response: AgentToolResponse) => void
-    sendImageTaskUpdate: (update: ImageTaskUpdate) => void
-    submitCanvasEditRequest: (request: unknown) => void
-    getCanvasEditQueueStatus: () => Promise<import('../types/canvas').EditRequestQueueStatus>
-    respondApproval: (response: CodexApprovalResponse) => Promise<AgentApiResult>
-    setApiKey: (key: string) => Promise<AgentApiResult>
-    testConnection: () => Promise<AgentApiResult>
-    getSessionStatus: () => Promise<CodexSessionStatus>
-    setSessionConfig: (
-      patch: Partial<CodexSessionConfig>,
-      options?: { persist?: boolean },
-    ) => Promise<CodexSessionStatus>
-    resetSessionConfig: () => Promise<CodexSessionStatus>
-    getCollaborationCapabilities: (
-      model: string,
-    ) => Promise<AgentCollaborationCapabilitiesResult>
-    updateCollaborationMode: (
-      payload: AgentCollaborationModeUpdatePayload,
-    ) => Promise<AgentCollaborationModeUpdateResult>
-    /** Returns user-facing Gateway records while legacy Provider UI remains available. */
-    getGateways: () => Promise<CodexGatewaySnapshotResponse>
-    /** Activates a user-facing Gateway through the main-process transaction. */
-    setActiveGateway: (id: string) => Promise<CodexProviderMutationResponse>
-    /** Updates a Gateway credential without exposing ipcRenderer to the renderer. */
-    setGatewayApiKey: (id: string, key: string) => Promise<CodexProviderMutationResponse>
-    getModelSettingsCatalog: () => Promise<AgentModelSettingsCatalogResult>
-    getModelContextConfig: () => Promise<AgentModelContextSnapshotResult>
-    applyModelContext: (
-      payload: AgentModelContextApplyPayload,
-    ) => Promise<AgentModelContextApplyResult>
-    /** Applies one authoritative Gateway/model/context selection transaction. */
-    applyModelSelection: (
-      payload: AgentModelSelectionApplyPayload,
-    ) => Promise<AgentModelSelectionApplyResult>
-    recoverModelSelection: () => Promise<AgentModelSelectionRecoveryResult>
-    setAllowedRoots: (roots: string[]) => Promise<string[]>
-    getMcpSummary: () => Promise<CodexMcpSummary>
-    getSkillsSummary: () => Promise<CodexSkillsSummary>
-    listSkills: () => Promise<CodexSkillListItem[]>
-    getSkillDetail: (id: string) => Promise<CodexSkillInput | null>
-    saveSkill: (input: CodexSkillInput) => Promise<AgentApiResult & { id?: string }>
-    deleteSkill: (id: string) => Promise<AgentApiResult>
-    openSkillsRoot: (
-      scope: 'repo' | 'user' | 'system',
-    ) => Promise<{ ok: true; path: string } | { ok: false; error: string; path?: string }>
-    getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) => Promise<CodexAuditLogEntry[]>
-    restartCodex: () => Promise<AgentApiResult>
-    listCodexThreads: (params?: { archived?: boolean; searchTerm?: string }) => Promise<CodexThreadSummary[]>
-    readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
-    forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
-    /**
-     * Edit-and-resend server-side context branch: fork the codex thread
-     * before the edited message's turn (`thread/fork` + `lastTurnId`) and
-     * truncate DB rows at/after the edit point. `data.branched === false`
-     * = degraded to legacy same-thread resend (renderer proceeds unchanged).
-     */
-    branchThreadBeforeMessage: (
-      threadId: string,
-      messageId: string,
-    ) => Promise<{ ok: boolean; error?: string; data?: AgentThreadBranchResult }>
-    archiveCodexThread: (threadId: string) => Promise<AgentApiResult>
-    unarchiveCodexThread: (threadId: string) => Promise<{ ok: boolean; error?: string; thread?: CodexThreadSummary }>
-    codexDoctor: () => Promise<{ ok: boolean; error?: string; report?: DoctorReport }>
-    listMcpServersRpc: (params?: unknown) => Promise<{ ok: boolean; error?: string; data?: unknown }>
-    batchWriteConfig: (edits: unknown[], reload?: boolean) => Promise<{ ok: boolean; error?: string }>
-    writeConfigValue: (keyPath: string, value: unknown) => Promise<{ ok: boolean; error?: string }>
-    reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
-    mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
-    readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
-    readRawConfig: () => Promise<{
-      ok: boolean
-      error?: string
-      config?: Record<string, unknown> | null
-      raw?: string | null
-      parseError?: string
-    }>
-    getMcpStatusSnapshot: () => Promise<{
-      ok: boolean
-      snapshot?: Record<string, { status: string; error: string | null }>
-      error?: string
-    }>
-    // Codex native `/goal` (thread/goal/*). threadId = DB thread id.
-    setGoal: (
-      threadId: string,
-      params: { objective?: string; tokenBudget?: number; status?: ThreadGoalStatus },
-    ) => Promise<GoalRpcResult<ThreadGoal>>
-    getGoal: (threadId: string) => Promise<GoalRpcResult<ThreadGoal | null>>
-    clearGoal: (threadId: string) => Promise<GoalRpcResult<{ cleared: boolean }>>
-    onGoal: (handler: (event: any) => void) => () => void
-    compactThread: (threadId: string) => Promise<GoalRpcResult<{ started: boolean }>>
-    // Cross-session memory (thread/memoryMode/set + memory/reset, 0.145
-    // experimental surface). threadId = DB thread id; reset is global.
-    setThreadMemoryMode: (
-      threadId: string,
-      mode: 'enabled' | 'disabled',
-    ) => Promise<{ ok: boolean; error?: string }>
-    resetMemory: () => Promise<{ ok: boolean; error?: string }>
-    // Codex native plugin / marketplace / apps / external-agent-import (≥0.140)
-    listPlugins: (params?: PluginListParams) => Promise<{ ok: boolean; error?: string; data?: PluginListResponse }>
-    listInstalledPlugins: (params?: PluginInstalledParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>
-    readPlugin: (params: PluginReadParams) => Promise<{ ok: boolean; error?: string; data?: PluginReadResponse }>
-    installPlugin: (params: PluginInstallParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstallResponse }>
-    uninstallPlugin: (pluginId: string) => Promise<{ ok: boolean; error?: string }>
-    addMarketplace: (params: MarketplaceAddParams) => Promise<{ ok: boolean; error?: string; data?: MarketplaceAddResponse }>
-    removeMarketplace: (marketplaceName: string) => Promise<{ ok: boolean; error?: string; data?: MarketplaceRemoveResponse }>
-    upgradeMarketplaces: (marketplaceName?: string) => Promise<{ ok: boolean; error?: string; data?: MarketplaceUpgradeResponse }>
-    listApps: (params?: AppsListParams) => Promise<{ ok: boolean; error?: string; data?: AppsListResponse }>
-    detectExternalAgentConfig: (params?: ExternalAgentConfigDetectParams) => Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigDetectResponse }>
-    importExternalAgentConfig: (migrationItems: ExternalAgentConfigMigrationItem[]) => Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigImportResponse }>
-    dockerGatewayCheck: () => Promise<{ installed: boolean; version?: string; error?: string }>
-    dockerGatewayFix: (opts?: { port?: number }) => Promise<{
-      ok: boolean
-      error?: string
-      converted?: string[]
-      gatewayPort?: number
-    }>
-    dockerGatewayStatus: () => Promise<{ running: boolean; port: number | null; pid: number | null; profile: string | null }>
-    dockerGatewayStop: () => Promise<{ ok: boolean; error?: string }>
-    onMcpStatus: (handler: (event: any) => void) => () => void
-    getProviders: () => Promise<{
-      ok: boolean
-      error?: string
-      builtins?: CodexProviderRecord[]
-      custom?: CodexProviderRecord[]
-      activeId?: string
-      apiKeys?: Record<string, string>
-    }>
-    setActiveProvider: (id: string) => Promise<CodexProviderMutationResponse>
-    setProviderApiKey: (id: string, key: string) => Promise<CodexProviderMutationResponse>
-    addCustomProvider: (
-      input: CodexCustomProviderInput,
-    ) => Promise<{ ok: boolean; error?: string; provider?: CodexProviderRecord }>
-    updateCustomProvider: (
-      id: string,
-      patch: Partial<CodexCustomProviderInput>,
-    ) => Promise<CodexProviderMutationResponse>
-    removeCustomProvider: (id: string) => Promise<CodexProviderMutationResponse>
-  }
+  // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
+  // 各 Section 手写 duck-type 子集的时代结束于此。
+  agent: AgentApi
   // Shell helpers (clipboard / save dialog)
   shell: {
     copyImage: (uri: string) => Promise<IpcResponse>
@@ -1356,7 +1179,9 @@ const electronAPI: ElectronAPI = {
       safeInvoke<{ ok: boolean; error?: string; authorization_url?: string }>(IPC_CHANNELS.AGENT.MCP_OAUTH_LOGIN, name),
 
     readConfig: () =>
-      safeInvoke<{ ok: boolean; error?: string; config?: unknown }>(IPC_CHANNELS.AGENT.MCP_READ_CONFIG),
+      safeInvoke<{ ok: boolean; error?: string; config?: Record<string, unknown> }>(
+        IPC_CHANNELS.AGENT.MCP_READ_CONFIG,
+      ),
 
     readRawConfig: () =>
       safeInvoke<{
@@ -1384,8 +1209,12 @@ const electronAPI: ElectronAPI = {
     dockerGatewayStop: () =>
       safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.DOCKER_GW_STOP),
 
-    onMcpStatus: (handler: (event: any) => void) =>
-      safeOnWithCleanup<any>('agent:mcp-status', handler, IPC_CHANNELS.AGENT_MCP_EVENTS),
+    onMcpStatus: (handler: (event: AgentMcpStatusEvent) => void) =>
+      safeOnWithCleanup<AgentMcpStatusEvent>(
+        'agent:mcp-status',
+        handler,
+        IPC_CHANNELS.AGENT_MCP_EVENTS,
+      ),
 
     getMcpStatusSnapshot: () =>
       safeInvoke<{
@@ -1416,8 +1245,8 @@ const electronAPI: ElectronAPI = {
     resetMemory: () =>
       safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MEMORY_RESET),
 
-    onGoal: (handler: (event: any) => void) =>
-      safeOnWithCleanup<any>('agent:goal', handler, IPC_CHANNELS.AGENT_GOAL_EVENTS),
+    onGoal: (handler: (event: AgentGoalEvent) => void) =>
+      safeOnWithCleanup<AgentGoalEvent>('agent:goal', handler, IPC_CHANNELS.AGENT_GOAL_EVENTS),
 
     // ----- Codex native plugin / marketplace / apps / external-agent-import (≥0.140) -----
     listPlugins: (params?: PluginListParams) =>

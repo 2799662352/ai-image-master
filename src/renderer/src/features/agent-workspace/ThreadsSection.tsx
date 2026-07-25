@@ -2,18 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
 import type { CodexThreadDetail, CodexThreadSummary } from '../../../../types/agent'
-
-type AgentApiResult = { ok: boolean; error?: string }
-
-type ThreadsApi = {
-  agent?: {
-    listCodexThreads?: (params?: { archived?: boolean; searchTerm?: string }) => Promise<CodexThreadSummary[]>
-    readCodexThread?: (threadId: string) => Promise<CodexThreadDetail>
-    forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
-    archiveCodexThread?: (threadId: string) => Promise<AgentApiResult>
-    unarchiveCodexThread?: (threadId: string) => Promise<AgentApiResult & { thread?: CodexThreadSummary }>
-  }
-}
+import { getAgentApi } from '../../utils/agentBridge'
 
 export function ThreadsSection(): React.JSX.Element {
   const [threads, setThreads] = useState<CodexThreadSummary[]>([])
@@ -29,7 +18,7 @@ export function ThreadsSection(): React.JSX.Element {
     const requestId = loadRequestIdRef.current + 1
     loadRequestIdRef.current = requestId
     const canUpdate = () => mountedRef.current && requestId === loadRequestIdRef.current
-    const api = getThreadsApi()
+    const api = getAgentApi()
     if (!api?.listCodexThreads) {
       if (canUpdate()) {
         setError('Codex threads API is unavailable.')
@@ -63,7 +52,7 @@ export function ThreadsSection(): React.JSX.Element {
   }, [loadThreads, showArchived])
 
   async function archiveThread(id: string): Promise<void> {
-    const api = getThreadsApi()
+    const api = getAgentApi()
     if (!api?.archiveCodexThread) {
       setError('Codex archive API is unavailable.')
       return
@@ -84,7 +73,7 @@ export function ThreadsSection(): React.JSX.Element {
   }
 
   async function unarchiveThread(id: string): Promise<void> {
-    const api = getThreadsApi()
+    const api = getAgentApi()
     if (!api?.unarchiveCodexThread) {
       setError('Codex unarchive API is unavailable.')
       return
@@ -105,7 +94,7 @@ export function ThreadsSection(): React.JSX.Element {
   }
 
   async function readThread(id: string): Promise<void> {
-    const api = getThreadsApi()
+    const api = getAgentApi()
     if (!api?.readCodexThread) {
       setError('Codex threads API is unavailable.')
       return
@@ -124,7 +113,7 @@ export function ThreadsSection(): React.JSX.Element {
   }
 
   async function forkThread(id: string): Promise<void> {
-    const api = getThreadsApi()
+    const api = getAgentApi()
     if (!api?.forkCodexThread) {
       setError('Codex threads API is unavailable.')
       return
@@ -255,10 +244,6 @@ export function ThreadsSection(): React.JSX.Element {
       </aside>
     </section>
   )
-}
-
-function getThreadsApi() {
-  return (window as Window & { electronAPI?: ThreadsApi }).electronAPI?.agent
 }
 
 function errorMessage(reason: unknown): string {

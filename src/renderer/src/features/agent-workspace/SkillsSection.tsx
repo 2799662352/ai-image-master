@@ -6,20 +6,12 @@ import type {
   CodexSkillListItem,
   CodexSkillScope,
 } from '../../../../types/agent'
+import { getAgentApi } from '../../utils/agentBridge'
 import { useAgentChatStore } from '../agent-chat/store'
 import { useTabStore } from '../../stores'
 import { SkillEditor } from './SkillEditor'
 
-type OpenSkillsRootResult =
-  | { ok: true; path: string }
-  | { ok: false; error: string; path?: string }
-
 type SkillsApi = {
-  agent?: {
-    listSkills?: () => Promise<CodexSkillListItem[]>
-    deleteSkill?: (id: string) => Promise<AgentApiResult>
-    openSkillsRoot?: (scope: CodexSkillScope) => Promise<OpenSkillsRootResult>
-  }
   openSkillsFolder?: () => Promise<AgentApiResult & { path?: string }>
   shell?: {
     showItemInFolder?: (p: string) => Promise<void>
@@ -48,7 +40,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
     const requestId = loadRequestIdRef.current + 1
     loadRequestIdRef.current = requestId
     const canUpdate = () => mountedRef.current && requestId === loadRequestIdRef.current
-    const api = getSkillsApi()
+    const api = getAgentApi()
     if (!api?.listSkills) {
       if (canUpdate()) {
         setError('Codex skills API is unavailable.')
@@ -82,7 +74,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
   }, [loadItems])
 
   async function deleteSkill(id: string): Promise<void> {
-    const api = getSkillsApi()
+    const api = getAgentApi()
     if (!api?.deleteSkill) {
       setError('Codex skills API is unavailable.')
       return
@@ -143,7 +135,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
   }
 
   async function openSkillsRoot(scope: CodexSkillScope): Promise<void> {
-    const api = getSkillsApi()
+    const api = getAgentApi()
     if (!api?.openSkillsRoot) {
       setFolderMessage('打开 Skills 根目录 API 不可用。')
       return
@@ -450,10 +442,6 @@ function SkillGroup({
       )}
     </section>
   )
-}
-
-function getSkillsApi() {
-  return (window as Window & { electronAPI?: SkillsApi }).electronAPI?.agent
 }
 
 function getElectronApi() {

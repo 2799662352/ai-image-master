@@ -2,40 +2,23 @@ import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import type { ApiSite } from '../services/api'
 import { useAgentChatStore } from '../features/agent-chat/store'
+import type {
+  AgentApiBridge,
+  CodexCustomProviderInput,
+  CodexProviderMutationResponse,
+  CodexProviderRecord,
+} from '../../../types/agentApi'
+import { getAgentApi } from '../utils/agentBridge'
 
 /**
  * Renderer-side mirror of `ProviderPreset` from
- * `src/main/agent/codexProviders.ts` (kept in sync with the same shape exposed
- * by the preload script's CodexProviderRecord). We redeclare it here instead
- * of importing from preload to avoid pulling Node typings into renderer code.
+ * `src/main/agent/codexProviders.ts`. The shape now lives in
+ * `src/types/agentApi.ts` alongside the bridge contract that carries it; this
+ * alias keeps the local name the settings UI already imports.
  */
-export interface CodexProvider {
-  id: string
-  name: string
-  baseUrl: string
-  envKey: string
-  model?: string
-  reasoningEffort?: string
-  verbosity?: string
-  credentialId?: string
-  allowedModels?: readonly string[]
-  requiresOpenaiAuth?: boolean
-  extraTopLevelConfig?: Record<string, string | boolean | number>
-  description?: string
-  isCustom?: boolean
-}
+export type CodexProvider = CodexProviderRecord
 
-export interface CodexCustomProviderInput {
-  name: string
-  baseUrl: string
-  envKey?: string
-  model?: string
-  reasoningEffort?: string
-  verbosity?: string
-  requiresOpenaiAuth?: boolean
-  extraTopLevelConfig?: Record<string, string | boolean | number>
-  description?: string
-}
+export type { CodexCustomProviderInput }
 
 interface ProvidersSlice {
   builtins: CodexProvider[]
@@ -91,34 +74,6 @@ interface SettingsState {
 
 const CODEX_API_KEY_STORAGE_KEY = 'codex_api_key'
 let providerWriteGeneration = 0
-
-interface ProviderMutationResponse {
-  ok?: boolean
-  error?: string
-  activeId?: string
-  providerGeneration?: number
-}
-
-interface AgentBridge {
-  getProviders?: () => Promise<unknown>
-  setActiveProvider?: (id: string) => Promise<unknown>
-  setProviderApiKey?: (id: string, key: string) => Promise<unknown>
-  getGateways?: () => Promise<unknown>
-  setActiveGateway?: (id: string) => Promise<unknown>
-  setGatewayApiKey?: (id: string, key: string) => Promise<unknown>
-  addCustomProvider?: (input: CodexCustomProviderInput) => Promise<unknown>
-  updateCustomProvider?: (
-    id: string,
-    patch: Partial<CodexCustomProviderInput>,
-  ) => Promise<unknown>
-  removeCustomProvider?: (id: string) => Promise<unknown>
-  setApiKey?: (key: string) => Promise<unknown>
-}
-
-function getAgentBridge(): AgentBridge | undefined {
-  if (typeof window === 'undefined') return undefined
-  return (window as unknown as { electronAPI?: { agent?: AgentBridge } }).electronAPI?.agent
-}
 
 async function reloadAgentModelCapabilities(providerId: string): Promise<void> {
   const agentChat = useAgentChatStore.getState()
@@ -177,7 +132,7 @@ function apiKeyForProvider(
   return providers.apiKeys[credentialIdForProvider(providers, id)] ?? ''
 }
 
-async function fetchProviderSnapshot(bridge: AgentBridge): Promise<ProviderSnapshot> {
+async function fetchProviderSnapshot(bridge: AgentApiBridge): Promise<ProviderSnapshot> {
   if (!bridge.getProviders) {
     throw new Error('getProviders unavailable')
   }
@@ -188,7 +143,7 @@ async function fetchProviderSnapshot(bridge: AgentBridge): Promise<ProviderSnaps
   return snapshot
 }
 
-async function fetchGatewaySnapshot(bridge: AgentBridge): Promise<ProviderSnapshot> {
+async function fetchGatewaySnapshot(bridge: AgentApiBridge): Promise<ProviderSnapshot> {
   if (!bridge.getGateways) {
     throw new Error('getGateways unavailable')
   }
@@ -255,7 +210,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   }
 
   const recoverProviderSnapshot = (
-    bridge: AgentBridge,
+    bridge: AgentApiBridge,
     requestGeneration: number,
   ): Promise<ProviderSnapshot | null> =>
     recoverSnapshot(() => fetchProviderSnapshot(bridge), requestGeneration)
@@ -270,7 +225,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     }))
     useAgentChatStore.getState().invalidateCollaborationCapabilities()
     try {
-      const result = (await rpcs.setActive(id)) as ProviderMutationResponse
+      const result = (await rpcs.setActive(id)) as CodexProviderMutationResponse
       if (result?.ok !== true) {
         throw new Error(result?.error || rpcs.rejectMessage)
       }
@@ -345,7 +300,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     }
     if (rpcs.setKey) {
       try {
-        const result = (await rpcs.setKey(id, trimmed)) as ProviderMutationResponse
+        const result = (await rpcs.setKey(id, trimmed)) as CodexProviderMutationResponse
         if (result?.ok !== true) {
           throw new Error(result?.error || rpcs.rejectMessage)
         }
@@ -497,7 +452,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   loadProviders: async () => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.getProviders) {
       // Browser-only / pre-bridge contexts: keep DEFAULT slice so UI doesn't crash.
       return
@@ -516,7 +471,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   selectProvider: async (id) => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.setActiveProvider) return
     await runSelectTransaction(id, {
       setActive: (providerId) => bridge.setActiveProvider!(providerId),
@@ -526,7 +481,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   saveProviderKey: async (id, key) => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     await runSaveKeyTransaction(id, key, {
       setKey: bridge?.setProviderApiKey
         ? (providerId, value) => bridge.setProviderApiKey!(providerId, value)
@@ -538,7 +493,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   loadGateways: async () => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.getGateways) {
       // Browser-only / pre-bridge contexts: keep DEFAULT slice so UI doesn't crash.
       return
@@ -557,7 +512,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   selectGateway: async (id) => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.setActiveGateway) return
     await runSelectTransaction(id, {
       setActive: (gatewayId) => bridge.setActiveGateway!(gatewayId),
@@ -567,7 +522,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   saveGatewayKey: async (id, key) => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     await runSaveKeyTransaction(id, key, {
       setKey: bridge?.setGatewayApiKey
         ? (gatewayId, value) => bridge.setGatewayApiKey!(gatewayId, value)
@@ -579,7 +534,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   addProvider: async (input) => {
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.addCustomProvider) return null
     try {
       const raw = (await bridge.addCustomProvider(input)) as {
@@ -607,7 +562,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     if (providerState.pendingProviderId === id) {
       throw new Error('Provider switch in progress')
     }
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.updateCustomProvider) return
     const changesAppliedProvider = id === providerState.activeId
     const requestGeneration = changesAppliedProvider
@@ -617,7 +572,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       useAgentChatStore.getState().invalidateCollaborationCapabilities()
     }
     try {
-      const result = (await bridge.updateCustomProvider(id, patch)) as ProviderMutationResponse
+      const result = (await bridge.updateCustomProvider(id, patch)) as CodexProviderMutationResponse
       if (result?.ok !== true) {
         throw new Error(result?.error || 'updateCustomProvider rejected')
       }
@@ -665,7 +620,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     if (providerState.pendingProviderId === id) {
       throw new Error('Provider switch in progress')
     }
-    const bridge = getAgentBridge()
+    const bridge = getAgentApi()
     if (!bridge?.removeCustomProvider) return
     const changesAppliedProvider = id === providerState.activeId
     const requestGeneration = changesAppliedProvider
@@ -675,7 +630,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       useAgentChatStore.getState().invalidateCollaborationCapabilities()
     }
     try {
-      const result = (await bridge.removeCustomProvider(id)) as ProviderMutationResponse
+      const result = (await bridge.removeCustomProvider(id)) as CodexProviderMutationResponse
       if (result?.ok !== true) {
         throw new Error(result?.error || 'removeCustomProvider rejected')
       }

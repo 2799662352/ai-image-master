@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
+import type { AgentApiBridge } from '../../../../types/agentApi'
 import type {
   AppInfo,
-  AppsListResponse,
-  ExternalAgentConfigDetectResponse,
   ExternalAgentConfigMigrationItem,
-  MarketplaceAddParams,
-  MarketplaceAddResponse,
-  MarketplaceRemoveResponse,
-  MarketplaceUpgradeResponse,
   PluginInstallParams,
-  PluginInstallResponse,
-  PluginListResponse,
   PluginSummary,
 } from '../../../../types/codexPlugins'
+import { getAgentApi } from '../../utils/agentBridge'
 
 // Codex native plugin / app / external-agent-import surface (app-server v2,
 // ≥0.140). Reads enumerate what the bundled Codex exposes (local marketplaces
@@ -22,21 +16,6 @@ import type {
 // writes (install/uninstall plugins, add/remove/upgrade marketplaces, apply an
 // external-agent import) go through the same `agent:*` IPC envelope and refresh
 // the list on success. Destructive writes are gated behind an inline confirm.
-type ConnectorsApi = {
-  agent?: {
-    listPlugins?: () => Promise<{ ok: boolean; error?: string; data?: PluginListResponse }>
-    listApps?: () => Promise<{ ok: boolean; error?: string; data?: AppsListResponse }>
-    detectExternalAgentConfig?: () => Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigDetectResponse }>
-    installPlugin?: (params: PluginInstallParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstallResponse }>
-    uninstallPlugin?: (pluginId: string) => Promise<{ ok: boolean; error?: string }>
-    addMarketplace?: (params: MarketplaceAddParams) => Promise<{ ok: boolean; error?: string; data?: MarketplaceAddResponse }>
-    removeMarketplace?: (marketplaceName: string) => Promise<{ ok: boolean; error?: string; data?: MarketplaceRemoveResponse }>
-    upgradeMarketplaces?: (marketplaceName?: string) => Promise<{ ok: boolean; error?: string; data?: MarketplaceUpgradeResponse }>
-    importExternalAgentConfig?: (
-      migrationItems: ExternalAgentConfigMigrationItem[],
-    ) => Promise<{ ok: boolean; error?: string; data?: { importId: string } }>
-  }
-}
 
 type SubTab = 'plugins' | 'apps' | 'import'
 
@@ -102,7 +81,7 @@ function PluginsPanel(): React.JSX.Element {
   const [featured, setFeatured] = useState<string[]>([])
   const [loadErrors, setLoadErrors] = useState<string[]>([])
   const fetcher = useCallback(async () => {
-    const api = getApi()
+    const api = getAgentApi()
     if (!api?.listPlugins) throw new Error('Plugin API is unavailable.')
     const res = await api.listPlugins()
     if (!res?.ok || !res.data) throw new Error(res?.error ?? 'plugin/list failed.')
@@ -204,7 +183,7 @@ async function installWithAuthNote(
   reload: () => void,
   setBusy: (b: boolean) => void,
 ): Promise<void> {
-  const api = getApi()
+  const api = getAgentApi()
   if (!api?.installPlugin) {
     setActionError('Install API is unavailable.')
     return
@@ -404,7 +383,7 @@ function AppsPanel(): React.JSX.Element {
   const [unsupported, setUnsupported] = useState(false)
   const fetcher = useCallback(async () => {
     setUnsupported(false)
-    const api = getApi()
+    const api = getAgentApi()
     if (!api?.listApps) {
       setUnsupported(true)
       return
@@ -472,7 +451,7 @@ function AppsPanel(): React.JSX.Element {
 function ImportPanel(): React.JSX.Element {
   const [items, setItems] = useState<ExternalAgentConfigMigrationItem[] | null>(null)
   const fetcher = useCallback(async () => {
-    const api = getApi()
+    const api = getAgentApi()
     if (!api?.detectExternalAgentConfig) throw new Error('Import API is unavailable.')
     const res = await api.detectExternalAgentConfig()
     if (!res?.ok || !res.data) throw new Error(res?.error ?? 'externalAgentConfig/detect failed.')
@@ -486,7 +465,7 @@ function ImportPanel(): React.JSX.Element {
 
   const applyOne = useCallback(
     async (item: ExternalAgentConfigMigrationItem) => {
-      const api = getApi()
+      const api = getAgentApi()
       if (!api?.importExternalAgentConfig) {
         setActionError('Import API is unavailable.')
         return
@@ -611,12 +590,10 @@ function PanelShell({
 
 /** Resolve a write method off the agent API or throw a uniform "unavailable"
  *  error that the caller's try/catch turns into an inline action error. */
-function requireApi<K extends keyof NonNullable<ConnectorsApi['agent']>>(
-  name: K,
-): NonNullable<NonNullable<ConnectorsApi['agent']>[K]> {
-  const fn = getApi()?.[name]
+function requireApi<K extends keyof AgentApiBridge>(name: K): NonNullable<AgentApiBridge[K]> {
+  const fn = getAgentApi()?.[name]
   if (!fn) throw new Error(`${String(name)} API is unavailable.`)
-  return fn as NonNullable<NonNullable<ConnectorsApi['agent']>[K]>
+  return fn as NonNullable<AgentApiBridge[K]>
 }
 
 /** Two-step inline confirm: first click arms (label → confirmLabel + Cancel),
@@ -723,8 +700,4 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value)
   }
-}
-
-function getApi() {
-  return (window as Window & { electronAPI?: ConnectorsApi }).electronAPI?.agent
 }

@@ -1,9 +1,6 @@
 import { useEffect } from 'react'
+import { getAgentApi } from '../../utils/agentBridge'
 import { useMcpStore, type McpServerCard } from './useMcpStore'
-
-function getApi(): any {
-  return (window as any).electronAPI?.agent
-}
 
 function isDockerStdioCandidate(s: McpServerCard): boolean {
   if (s.type === 'http') return false
@@ -38,7 +35,7 @@ export function useMcpAutoGatewayFix(): void {
     if (fp === lastConvertedFingerprint) return
 
     const timer = setTimeout(async () => {
-      const api = getApi()
+      const api = getAgentApi()
       if (!api?.dockerGatewayFix) return
       try {
         const res = await api.dockerGatewayFix()

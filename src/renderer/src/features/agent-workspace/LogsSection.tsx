@@ -2,12 +2,7 @@ import { useEffect, useState } from 'react'
 import type React from 'react'
 
 import type { CodexAuditLogEntry } from '../../../../types/agent'
-
-type LogsApi = {
-  agent?: {
-    getWorkspaceLogs?: (opts?: { limit?: number; sinceIso?: string }) => Promise<CodexAuditLogEntry[]>
-  }
-}
+import { getAgentApi } from '../../utils/agentBridge'
 
 export function LogsSection(): React.JSX.Element {
   const [rows, setRows] = useState<CodexAuditLogEntry[]>([])
@@ -15,7 +10,7 @@ export function LogsSection(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false
-    const api = getLogsApi()
+    const api = getAgentApi()
     if (!api?.getWorkspaceLogs) {
       setError('Codex logs API is unavailable.')
       return
@@ -81,10 +76,6 @@ export function LogsSection(): React.JSX.Element {
       </div>
     </section>
   )
-}
-
-function getLogsApi() {
-  return (window as Window & { electronAPI?: LogsApi }).electronAPI?.agent
 }
 
 function errorMessage(reason: unknown): string {

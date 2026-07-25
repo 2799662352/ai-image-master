@@ -1,19 +1,6 @@
 import { useEffect, useState } from 'react'
 
-type CodexRuntimeStatus = {
-  sandboxMode: string
-  approvalPolicy: string
-  webSearch: string
-  writableRoots: string[]
-}
-
-type AgentWorkspaceOverviewApi = {
-  agent?: {
-    getSessionStatus?: () => Promise<CodexRuntimeStatus>
-    getMcpSummary?: () => Promise<{ servers?: unknown[] }>
-    listSkills?: () => Promise<unknown[]>
-  }
-}
+import { getAgentApi } from '../../utils/agentBridge'
 
 type OverviewState =
   | { status: 'loading' }
@@ -35,7 +22,7 @@ export function OverviewSection() {
 
   useEffect(() => {
     let alive = true
-    const api = (window as Window & { electronAPI?: AgentWorkspaceOverviewApi }).electronAPI?.agent
+    const api = getAgentApi()
 
     async function loadOverview(): Promise<void> {
       const [sessionResult, mcpResult, skillsResult] = await Promise.allSettled([

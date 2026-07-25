@@ -1,19 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { CodexSessionConfig, CodexSessionStatus } from '../../../../types/agent'
+import { getAgentApi } from '../../utils/agentBridge'
 import { CodexPermissionsPanel } from '../agent-chat/CodexPermissionsPanel'
-
-type PermissionsApi = {
-  agent?: {
-    getSessionStatus?: () => Promise<CodexSessionStatus>
-    setSessionConfig?: (
-      patch: Partial<CodexSessionConfig>,
-      options?: { persist?: boolean },
-    ) => Promise<CodexSessionStatus | void>
-    resetSessionConfig?: () => Promise<CodexSessionStatus | void>
-    resetMemory?: () => Promise<{ ok: boolean; error?: string }>
-  }
-}
 
 export function PermissionsSection() {
   const [status, setStatus] = useState<CodexSessionStatus>()
@@ -24,7 +13,7 @@ export function PermissionsSection() {
     mountedRef.current = true
 
     async function loadStatus(): Promise<void> {
-      const api = getPermissionsApi()
+      const api = getAgentApi()
       if (!api?.getSessionStatus || !api.setSessionConfig) {
         if (mountedRef.current) setError('Codex permissions API is unavailable.')
         return
@@ -52,7 +41,7 @@ export function PermissionsSection() {
     patch: Partial<CodexSessionConfig>,
     options?: { persist?: boolean },
   ): Promise<void> {
-    const api = getPermissionsApi()
+    const api = getAgentApi()
     if (!api?.setSessionConfig || !api.getSessionStatus) {
       setError('Codex permissions API is unavailable.')
       return
@@ -73,7 +62,7 @@ export function PermissionsSection() {
   }
 
   async function resetMemory(): Promise<{ ok: boolean; error?: string }> {
-    const api = getPermissionsApi()
+    const api = getAgentApi()
     if (!api?.resetMemory) {
       return { ok: false, error: 'Codex memory reset API is unavailable.' }
     }
@@ -85,7 +74,7 @@ export function PermissionsSection() {
   }
 
   async function resetPermissions(): Promise<void> {
-    const api = getPermissionsApi()
+    const api = getAgentApi()
     if (!api?.resetSessionConfig) {
       setError('Codex permissions API is unavailable.')
       return
@@ -134,10 +123,6 @@ export function PermissionsSection() {
       />
     </>
   )
-}
-
-function getPermissionsApi() {
-  return (window as Window & { electronAPI?: PermissionsApi }).electronAPI?.agent
 }
 
 function errorMessage(reason: unknown): string {
