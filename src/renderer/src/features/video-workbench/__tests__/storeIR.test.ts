@@ -1,5 +1,6 @@
-// store 侧的看板 IR 接线:revision 令牌的递增纪律(编排改动递增、无操作与
-// 生成回流不递增)、exportIR/applyIR 的落盘增量。
+// store 侧的看板 IR 接线:两级并发令牌的递增纪律(structureRevision 只跟卡片
+// 集合/位置/页走,按卡 rev 只跟该卡规格走,生成回流两者都不动)、exportIR/applyIR
+// 的落盘增量。
 // IndexedDB 在 jsdom 缺失 → WorkbenchDb 自动内存降级,「重载」= 只 reset store。
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -14,6 +15,10 @@ function state() {
 
 function revision(): number {
   return state().revision
+}
+
+function structureRevision(): number {
+  return state().structureRevision
 }
 
 /** 跑一个动作,返回 revision 的增量。 */
@@ -101,12 +106,13 @@ describe('revision 令牌', () => {
 })
 
 describe('exportIR / applyIR', () => {
-  it('exportIR 反映当前状态与 revision', () => {
+  it('exportIR 反映当前状态与两级令牌', () => {
     state().addCards([{ prompt: '一只猫' }, { prompt: '一只狗' }])
     const ir = state().exportIR()
-    expect(ir.revision).toBe(revision())
+    expect(ir.structureRevision).toBe(structureRevision())
     expect(ir.boards).toHaveLength(1)
     expect(ir.boards[0].cards.map((c) => c.prompt)).toEqual(['一只猫', '一只狗'])
+    expect(ir.boards[0].cards.map((c) => c.rev)).toEqual([0, 0])
   })
 
   it('applyIR 落库:重排 + 新建 + 删除都能在「重载」后还原', async () => {
@@ -128,8 +134,8 @@ describe('exportIR / applyIR', () => {
     expect(applied.cards.removed).toEqual([c1])
     expect(applied.cards.created).toHaveLength(1)
     expect(applied.boards.renamed).toEqual([ir.boards[0].id])
-    expect(applied.revision).toBe(ir.revision + 1)
-    expect(revision()).toBe(applied.revision)
+    expect(applied.structureRevision).toBe(ir.structureRevision + 1)
+    expect(structureRevision()).toBe(applied.structureRevision)
 
     // 「重载」:只 reset store,库里的内容重新水合回来。
     resetWorkbenchStoreForTest()
@@ -141,10 +147,10 @@ describe('exportIR / applyIR', () => {
     expect(cards[1].model).toBe('2.0-fast')
   })
 
-  it('revision 过期时 applyIR 拒绝,状态与库都不动', async () => {
+  it('用户加过卡 → structureRevision 过期,applyIR 整份拒绝,状态与库都不动', async () => {
     state().addCards([{ prompt: 'A' }])
     const stale = state().exportIR()
-    state().addCards([{ prompt: '用户后来加的' }]) // revision 前进了
+    state().addCards([{ prompt: '用户后来加的' }]) // 结构变了
 
     const result = await state().applyIR({
       ...stale,
@@ -152,9 +158,99 @@ describe('exportIR / applyIR', () => {
     }, { mode: 'replace' })
 
     expect(result.ok).toBe(false)
-    expect(result.conflict).toEqual({ expected: stale.revision, actual: revision() })
+    expect(result.conflict).toEqual({
+      expected: stale.structureRevision,
+      actual: structureRevision(),
+    })
     expect(state().cards.map((c) => c.prompt)).toEqual(['A', '用户后来加的'])
     expect((await getWorkbenchDb().list()).length).toBe(2)
+  })
+
+  it('用户只在一张卡里打字 → 整份 apply 仍然成立,只跳过那一张', async () => {
+    const [c1, c2] = state().addCards([{ prompt: 'A' }, { prompt: 'B' }])
+    const ir = state().exportIR()
+
+    // 用户在 c1 里打字(逐字符 updateCard)。结构没动,只有 c1 的 rev 涨了。
+    state().updateCard(c1, { prompt: 'A 用户改的' })
+    expect(structureRevision()).toBe(ir.structureRevision)
+
+    const result = await state().applyIR({
+      ...ir,
+      boards: [{
+        ...ir.boards[0],
+        cards: ir.boards[0].cards.map((c) => ({ ...c, prompt: `agent 写的 ${c.id === c1 ? 1 : 2}` })),
+      }],
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.conflict).toBeUndefined()
+    expect(result.cards.updated).toEqual([c2])
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0].cardId).toBe(c1)
+    const byId = new Map(state().cards.map((c) => [c.id, c]))
+    expect(byId.get(c1)!.prompt).toBe('A 用户改的')
+    expect(byId.get(c2)!.prompt).toBe('agent 写的 2')
+  })
+
+  it('改卡不动 structureRevision,增删卡才动', () => {
+    const [cardId] = state().addCards([{ prompt: 'A' }])
+    const afterAdd = structureRevision()
+
+    state().updateCard(cardId, { prompt: 'A+' })
+    state().addMaterials(cardId, 'referenceImages', [{ name: 'x', src: 'D:/x.png' }])
+    expect(structureRevision()).toBe(afterAdd)
+    // 但「有改动」计数器照涨,撤销仍然可用
+    expect(revision()).toBeGreaterThan(afterAdd)
+
+    state().addCards([{ prompt: 'B' }])
+    expect(structureRevision()).toBe(afterAdd + 1)
+    state().moveCard(cardId, 1)
+    expect(structureRevision()).toBe(afterAdd + 2)
+    state().removeCard(cardId)
+    expect(structureRevision()).toBe(afterAdd + 3)
+  })
+
+  it('用户整句打字期间 agent 仍能回写别的卡 —— 这是两级令牌存在的理由', async () => {
+    const ids = state().addCards([{ prompt: '' }, { prompt: '' }, { prompt: '' }])
+    const ir = state().exportIR()
+
+    // 用户在第一张卡里逐字符打一整句(UI 的 onChange 就是这样)
+    const sentence = '雨夜霓虹下的赛博朋克街头长镜头'
+    for (let i = 1; i <= sentence.length; i++) {
+      state().updateCard(ids[0], { prompt: sentence.slice(0, i) })
+    }
+
+    // 结构一步没动 → agent 那份 IR 整体仍然有效
+    expect(structureRevision()).toBe(ir.structureRevision)
+
+    const result = await state().applyIR({
+      ...ir,
+      boards: [{
+        ...ir.boards[0],
+        cards: ir.boards[0].cards.map((c, i) => ({ ...c, resolution: '1080p' as const, prompt: `镜 ${i}` })),
+      }],
+    })
+
+    expect(result.ok).toBe(true)
+    // 只有被用户碰过的那张被跳过,另外两张照写
+    expect(result.cards.updated).toEqual([ids[1], ids[2]])
+    expect(result.skipped.map((s) => s.cardId)).toEqual([ids[0]])
+    const byId = new Map(state().cards.map((c) => [c.id, c]))
+    expect(byId.get(ids[0])!.prompt).toBe(sentence)
+    expect(byId.get(ids[0])!.resolution).toBe('720p')
+    expect(byId.get(ids[1])!.resolution).toBe('1080p')
+  })
+
+  it('改卡片规格会 bump 那张卡的 rev,别的卡不受影响', () => {
+    const [c1, c2] = state().addCards([{ prompt: 'A' }, { prompt: 'B' }])
+    const byId = () => new Map(state().cards.map((c) => [c.id, c]))
+    expect(byId().get(c1)!.rev).toBe(0)
+
+    state().updateCard(c1, { prompt: 'A+' })
+    state().addMaterials(c1, 'referenceImages', [{ name: 'x', src: 'D:/x.png' }])
+
+    expect(byId().get(c1)!.rev).toBe(2)
+    expect(byId().get(c2)!.rev).toBe(0)
   })
 
   it('applyIR 不写没变的卡(避免整页写放大)', async () => {

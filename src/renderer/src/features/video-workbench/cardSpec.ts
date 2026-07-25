@@ -124,6 +124,7 @@ export function buildCard(
     status: 'draft',
     createdAt: now,
     updatedAt: now,
+    rev: 0,
     ...normalizeSpec(input),
   }
 }

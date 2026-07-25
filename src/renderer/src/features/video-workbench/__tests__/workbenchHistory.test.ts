@@ -34,6 +34,7 @@ function source(patch: Partial<WorkbenchHistorySource> = {}): WorkbenchHistorySo
     cards: [],
     activeBoardId: 'b1',
     revision: 0,
+    structureRevision: 0,
     ...patch,
   }
 }

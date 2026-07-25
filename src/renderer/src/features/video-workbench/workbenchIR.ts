@@ -50,7 +50,10 @@ export interface WorkbenchIRSource {
   cards: VideoWorkbenchCard[]
   boards: VideoWorkbenchBoard[]
   activeBoardId: string
+  /** 「有任何编排改动」计数器,驱动撤销栈入栈。 */
   revision: number
+  /** 结构版本(卡片集合/位置/页),IR 的整份并发令牌。 */
+  structureRevision: number
 }
 
 const WBREF_PREFIX = 'wbref://'
@@ -93,6 +96,7 @@ function exportMaterial(
 function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
   return {
     id: card.id,
+    rev: card.rev ?? 0,
     prompt: card.prompt,
     model: card.model,
     resolution: card.resolution,
@@ -131,7 +135,7 @@ export function exportWorkbenchIR(source: WorkbenchIRSource): WorkbenchIR {
   }))
   return {
     irVersion: WORKBENCH_IR_VERSION,
-    revision: source.revision,
+    structureRevision: source.structureRevision,
     activeBoardId: source.activeBoardId,
     boards: irBoards,
   }
@@ -149,6 +153,7 @@ export interface ApplyPlan {
     cards: VideoWorkbenchCard[]
     activeBoardId: string
     revision: number
+    structureRevision: number
   }
   /** 只有 result.ok 为 true 才有:要落 IndexedDB 的增量。 */
   persist?: {
@@ -171,7 +176,7 @@ function reject(
       boards: { created: [], renamed: [], removed: [] },
       cards: { created: [], updated: [], moved: [], removed: [] },
       skipped,
-      revision: source.revision,
+      structureRevision: source.structureRevision,
     },
   }
 }
@@ -240,8 +245,8 @@ interface BoardSlot {
   board: VideoWorkbenchBoard
   created: boolean
   renamed: boolean
-  /** 该页在 IR 里列出的卡,按顺序。 */
-  claims: Array<{ cardId?: string; spec: VideoWorkbenchSpec }>
+  /** 该页在 IR 里列出的卡,按顺序。`rev` = IR 带回的按卡并发令牌。 */
+  claims: Array<{ cardId?: string; spec: VideoWorkbenchSpec; rev?: number }>
 }
 
 /**
@@ -270,10 +275,14 @@ export function planApplyIR(
   if (!Array.isArray(ir.boards) || ir.boards.length === 0) {
     return reject(source, [{ reason: 'boards 为空:工作台至少要有一页' }])
   }
-  if (!opts.force && ir.revision !== source.revision) {
+  if (!opts.force && ir.structureRevision !== source.structureRevision) {
     return reject(source, [
-      { reason: '看板在你导出之后被改过(用户或另一次 apply)。请重新 export、把改动重做一遍再 apply。' },
-    ], { expected: ir.revision, actual: source.revision })
+      {
+        reason:
+          '卡片集合或位置在你导出之后变过(新增/删除/排序/页操作)。IR 用数组下标表达位置,'
+          + '这时候写下去会错位。请重新 export、把改动重做一遍再 apply。',
+      },
+    ], { expected: ir.structureRevision, actual: source.structureRevision })
   }
 
   const boardById = new Map(source.boards.map((b) => [b.id, b]))
@@ -328,7 +337,11 @@ export function planApplyIR(
         continue
       }
       claims.set(irCard.id, { boardId: board.id, index: slot.claims.length, spec })
-      slot.claims.push({ cardId: irCard.id, spec })
+      slot.claims.push({
+        cardId: irCard.id,
+        spec,
+        ...(typeof irCard.rev === 'number' ? { rev: irCard.rev } : {}),
+      })
     }
     slots.push(slot)
   }
@@ -380,6 +393,7 @@ export function planApplyIR(
             status: 'draft',
             createdAt: now,
             updatedAt: now,
+            rev: 0,
             ...claim.spec,
           }
           createdCards.push(next.id)
@@ -406,6 +420,19 @@ export function planApplyIR(
           index += 1
           continue
         }
+        // 按卡并发校验:只有这张卡被改过才跳过这张,其余卡照写。整份拒绝留给
+        // 结构变动 —— 用户在一张卡里打字不该让 agent 对另外四十九张的回写作废。
+        if (!opts.force && claim.rev !== undefined && (cur.rev ?? 0) !== claim.rev) {
+          skipped.push({
+            cardId: cur.id,
+            reason:
+              `这张卡在你导出之后被改过(当前 rev=${cur.rev ?? 0},你带回的是 ${claim.rev});`
+              + '规格改动已跳过,位置改动已生效。要覆盖就重新 export 这张卡再写。',
+          })
+          nextCards.push(placeExisting(cur, board.id, index))
+          index += 1
+          continue
+        }
         // seed 是规格里唯一可缺省的字段:先摘掉再铺新规格,IR 没写 seed 才能
         // 真的清成随机,而不是被 cur 的旧值顶回来。
         const { seed: _dropped, ...rest } = cur
@@ -415,6 +442,8 @@ export function planApplyIR(
           boardId: board.id,
           order: index,
           updatedAt: now,
+          // 规格变了就 bump —— 让任何还攥着旧 rev 的 IR 后续撞上这一张。
+          rev: (cur.rev ?? 0) + 1,
         }
         updatedCards.push(cur.id)
         if (cur.boardId !== board.id || cur.order !== index) movedCards.push(cur.id)
@@ -491,20 +520,28 @@ export function planApplyIR(
     return !prev || prev.name !== b.name || prev.order !== b.order
   })
 
-  const changed =
+  // 结构变动 = 卡片集合/位置/页本身变了 —— 只有这些会让 IR 里「数组下标即位置」
+  // 的表达失效,所以只有这些 bump 整份令牌。改一张卡的规格不算。
+  //
+  // 改页名严格说不影响位置计划,但仍算结构变动:页操作很稀少(用户不会像敲提示词
+  // 那样一边改页名一边让 agent 干活),这点悲观换来「不会静默把用户刚改的页名
+  // 覆盖回去」,划得来。
+  const structureChanged =
     createdBoards.length > 0
     || renamedBoards.length > 0
     || removedBoardIds.length > 0
     || boardsToPersist.length > 0
     || createdCards.length > 0
-    || updatedCards.length > 0
     || movedCards.length > 0
     || removedCardIds.length > 0
-    || activeBoardId !== source.activeBoardId
 
   // 什么都没变就不 bump 版本号 —— 重复 apply 同一份 IR 不该让 agent 手里的
   // 令牌失效。
+  const changed = structureChanged || updatedCards.length > 0 || activeBoardId !== source.activeBoardId
   const revision = changed ? source.revision + 1 : source.revision
+  const structureRevision = structureChanged
+    ? source.structureRevision + 1
+    : source.structureRevision
 
   return {
     result: {
@@ -517,9 +554,9 @@ export function planApplyIR(
         removed: removedCardIds,
       },
       skipped,
-      revision,
+      structureRevision,
     },
-    next: { boards: finalBoards, cards: nextCards, activeBoardId, revision },
+    next: { boards: finalBoards, cards: nextCards, activeBoardId, revision, structureRevision },
     persist: {
       cards: persistCards,
       removeCardIds: removedCardIds,
