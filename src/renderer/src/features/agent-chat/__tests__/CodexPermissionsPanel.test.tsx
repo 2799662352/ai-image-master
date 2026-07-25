@@ -202,6 +202,31 @@ describe('CodexPermissionsPanel', () => {
     expect(screen.getByRole('button', { name: /清除记忆/ })).toBeTruthy()
   })
 
+  it('keeps unsaved edits when the parent re-renders an equivalent status snapshot', () => {
+    const { rerender } = render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('radio', { name: /danger-full-access/ }))
+
+    // A parent re-render that rebuilds the snapshot object without changing any
+    // value must not throw away what the user just picked.
+    rerender(<CodexPermissionsPanel status={{ ...baseStatus }} onApply={vi.fn()} />)
+
+    expect(screen.getByRole('radio', { name: /danger-full-access/ })).toHaveProperty('checked', true)
+    expect(screen.getByRole('button', { name: /应用设置/ })).toHaveProperty('disabled', false)
+  })
+
+  it('resyncs the draft when the status actually changes', () => {
+    const { rerender } = render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('radio', { name: /danger-full-access/ }))
+    rerender(
+      <CodexPermissionsPanel status={{ ...baseStatus, sandboxMode: 'read-only' }} onApply={vi.fn()} />,
+    )
+
+    expect(screen.getByRole('radio', { name: /read-only/ })).toHaveProperty('checked', true)
+    expect(screen.getByRole('button', { name: /应用设置/ })).toHaveProperty('disabled', true)
+  })
+
   it('清除记忆 surfaces the error when the RPC fails', async () => {
     const onResetMemory = vi.fn().mockResolvedValue({ ok: false, error: 'Memory reset API unavailable' })
     render(
