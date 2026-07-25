@@ -139,20 +139,28 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   const removeMaterial = useVideoWorkbenchStore((s) => s.removeMaterial)
   const moveMaterial = useVideoWorkbenchStore((s) => s.moveMaterial)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
+  const cancelCards = useVideoWorkbenchStore((s) => s.cancelCards)
 
   const busy = card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
 
-  // 生成耗时 ticker(仅活跃时跑)
+  const [cancelling, setCancelling] = useState(false)
+  // running 档的「放弃」要二次确认（不可逆且照样计费）；任务一离开进行中就复位
+  const [confirmAbandon, setConfirmAbandon] = useState(false)
+  useEffect(() => {
+    if (!busy) setConfirmAbandon(false)
+  }, [busy])
+
+  // 生成耗时 ticker(仅活跃时跑)。起点必须是 startedAt:每条进度广播都会 bump
+  // updatedAt,用它做起点秒表会被广播打回 0(老卡没有 startedAt,退回旧行为)。
+  const startedAt = card.startedAt ?? card.updatedAt
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
     if (!busy) return
-    const startedAt = card.updatedAt
-    setElapsed(Math.max(0, Math.round((Date.now() - startedAt) / 1000)))
-    const timer = setInterval(() => {
-      setElapsed(Math.max(0, Math.round((Date.now() - startedAt) / 1000)))
-    }, 1000)
+    const tick = (): void => setElapsed(Math.max(0, Math.round((Date.now() - startedAt) / 1000)))
+    tick()
+    const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
-  }, [busy, card.updatedAt])
+  }, [busy, startedAt])
 
   // ---- 卡片排序拖拽(手柄触发)与文件投放(整卡)----
   const [dragging, setDragging] = useState(false)
@@ -445,7 +453,9 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
                   ? '渲染中'
                   : card.status === 'succeeded'
                     ? '已完成'
-                    : '失败'}
+                    : card.status === 'cancelled'
+                      ? '已取消'
+                      : '失败'}
         </span>
         <span className="text-white/30 text-[10px] ml-auto">
           {modeSpec.label} · {card.model} · {card.resolution} · {card.ratio} ·{' '}
@@ -636,6 +646,13 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           <p className="text-red-400 text-xs break-all border border-red-500/40 px-2 py-1.5">{card.error ?? '生成失败'}</p>
         )}
 
+        {/* 取消的原因值得原样显示 —— 它会说明这次到底计不计费 */}
+        {card.status === 'cancelled' && (
+          <p className="text-orange-300 text-xs break-all border border-orange-400/40 px-2 py-1.5">
+            {card.error ?? '已取消'}
+          </p>
+        )}
+
         {card.status === 'succeeded' && hasResultVideo && (
           <div className="space-y-2">
             {/* 本地字节经 IPC 转 blob: 播放(local-file:// 直塞 <video> 会空白,
@@ -692,12 +709,50 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
                   title={gate.ok ? undefined : gate.reason}
                   onClick={() => void startCards([card.id])}
                 >
-                  {card.status === 'failed' ? '↻ 重试' : card.status === 'succeeded' ? '↻ 重新生成' : '▶ 生成'}
+                  {card.status === 'failed'
+                    ? '↻ 重试'
+                    : card.status === 'succeeded' || card.status === 'cancelled'
+                      ? '↻ 重新生成'
+                      : '▶ 生成'}
                 </button>
                 {!gate.ok && gate.reason !== '提示词为空' && (
                   <span className="text-orange-400 text-[10px]">⚠ {gate.reason}</span>
                 )}
               </>
+            )
+          })()}
+          {/* 取消。计费口径按上游分档如实写在按钮上:排队中能真取消(不计费),
+              生成中上游不支持取消 —— 视频照样出、照样扣钱,这里只是停止等待,
+              所以那一档要二次确认,别让人以为点一下就省了钱。 */}
+          {busy && (() => {
+            const running = card.status === 'running'
+            return (
+              <button
+                type="button"
+                className="border border-white/20 text-white/70 text-sm px-3 py-2 hover:border-red-400 hover:text-red-300 transition-colors disabled:opacity-40"
+                disabled={cancelling}
+                title={
+                  running
+                    ? '上游不支持取消生成中的任务:视频仍会生成并计费,这里只是停止等待结果'
+                    : '排队阶段可以真取消,不会产生费用'
+                }
+                onClick={() => {
+                  if (running && !confirmAbandon) {
+                    setConfirmAbandon(true)
+                    return
+                  }
+                  setCancelling(true)
+                  void cancelCards([card.id]).finally(() => setCancelling(false))
+                }}
+              >
+                {cancelling
+                  ? '处理中…'
+                  : running
+                    ? confirmAbandon
+                      ? '确认放弃?(仍计费)'
+                      : '⏹ 放弃结果'
+                    : '⏹ 取消'}
+              </button>
             )
           })()}
           {card.taskId && (

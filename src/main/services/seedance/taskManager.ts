@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import type { SeedanceClient } from './client'
 import type {
   CreateVideoTaskInput,
+  SeedanceCancelResult,
   SeedanceCreateTaskBody,
   SeedanceContentItem,
   SeedanceModelAlias,
@@ -54,6 +55,26 @@ export interface SubmitParams {
   clientId?: string
   /** 任务来源（'workbench' = 生成视频工作台页；缺省 = 聊天/MCP 链路）。 */
   source?: 'workbench'
+}
+
+/**
+ * 重启接管参数。任务表是纯内存的，应用重启后就空了 —— 但上游任务还在跑。
+ * 渲染端（工作台卡片持久化在 IndexedDB）启动时把进行中的 taskId 连同重建
+ * 状态所需的元数据送回来，`adopt()` 重新登记并恢复轮询，结果照旧走
+ * persistVideo + broadcast 的正常回流路径（含写历史）。
+ */
+export interface AdoptParams {
+  taskId: string
+  clientId?: string
+  source?: 'workbench'
+  threadId?: string
+  prompt: string
+  model: SeedanceModelAlias
+  resolution: string
+  ratio: string
+  duration: number
+  /** 原提交时间，用于 UI 显示真实总耗时；缺省用当前时间。 */
+  createdAt?: number
 }
 
 export class SeedanceTaskManager {
@@ -165,6 +186,68 @@ export class SeedanceTaskManager {
     })
   }
 
+  /**
+   * 重新接管一个仍在上游跑的任务（应用重启后的对账入口）。已在跟踪则返回
+   * undefined 且不做任何事 —— 幂等，绝不起第二个轮询循环。
+   */
+  adopt(params: AdoptParams): SeedanceTaskState | undefined {
+    if (this.tasks.has(params.taskId)) return undefined
+    const now = this.now()
+    const state: SeedanceTaskState = {
+      taskId: params.taskId,
+      ...(params.clientId ? { clientId: params.clientId } : {}),
+      ...(params.source ? { source: params.source } : {}),
+      ...(params.threadId ? { threadId: params.threadId } : {}),
+      prompt: params.prompt,
+      model: params.model,
+      resolution: params.resolution,
+      ratio: params.ratio,
+      duration: params.duration,
+      // 真实状态由首轮轮询（≤6s）纠正；此处只需一个非终态起点。
+      status: 'queued',
+      createdAt: params.createdAt ?? now,
+      updatedAt: now,
+      persistence: 'idle',
+    }
+    this.tasks.set(params.taskId, state)
+    void this.pollLoop(params.taskId)
+    return { ...state }
+  }
+
+  /**
+   * 取消任务。计费语义按上游文档分档，如实回报（见 SeedanceCancelResult.billed）:
+   * - `queued`：DELETE 生效 → 真取消，不计费；
+   * - `running`：上游**不支持**取消 → 只能本地放弃，仍会计费（不发无谓请求）；
+   * - 终态：no-op。
+   */
+  async cancel(taskId: string): Promise<SeedanceCancelResult> {
+    const task = this.tasks.get(taskId)
+    if (!task) {
+      return { ok: false, billed: false, reason: '任务不在跟踪表里（可能早已完成并被清理）' }
+    }
+    if (task.status === 'cancelled') return { ok: false, billed: false, reason: '任务已取消' }
+    if (task.status === 'succeeded') return { ok: false, billed: true, reason: '任务已完成，无可取消' }
+    if (task.status === 'failed') return { ok: false, billed: false, reason: '任务已失败，无可取消' }
+
+    let billed = true
+    let reason: string | undefined
+    if (task.status === 'queued') {
+      try {
+        await this.deps.client.deleteTask(taskId, this.deps.getApiKey())
+        billed = false
+      } catch (e) {
+        // 取消请求没打通 → 任务可能仍在排队并最终计费。如实上报，不假装省了钱。
+        reason = `上游取消失败，本次生成可能仍会计费：${e instanceof Error ? e.message : String(e)}`
+      }
+    } else {
+      reason = '上游不支持取消生成中的任务，已停止等待结果（本次生成仍会计费）'
+    }
+
+    this.update(taskId, { status: 'cancelled', ...(reason ? { error: reason } : {}) })
+    this.scheduleCleanup(taskId)
+    return { ok: true, billed, ...(reason ? { reason } : {}) }
+  }
+
   get(taskId: string): SeedanceTaskState | undefined {
     const t = this.tasks.get(taskId)
     return t ? { ...t } : undefined
@@ -205,6 +288,10 @@ export class SeedanceTaskManager {
   private update(taskId: string, patch: Partial<SeedanceTaskState>): void {
     const t = this.tasks.get(taskId)
     if (!t) return
+    // cancelled 是终态。取消发生时可能已有一次 queryTask / persistVideo 在途，
+    // 它们回来后的写入必须丢弃 —— 否则一条迟到的 succeeded 会把被取消的任务
+    // 复活，进而触发落盘并写进历史页。
+    if (t.status === 'cancelled' && patch.status !== 'cancelled') return
     Object.assign(t, patch, { updatedAt: this.now() })
     this.deps.broadcast({ ...t })
     const list = this.waiters.get(taskId)
@@ -237,6 +324,7 @@ export class SeedanceTaskManager {
       })
       const task = this.tasks.get(taskId)
       if (!task) return // disposed / cleaned up
+      if (task.status === 'cancelled') return // 已取消：停止轮询，别再花钱查
 
       if (this.now() - startedAt > POLL_TIMEOUT_MS) {
         this.update(taskId, { status: 'failed', error: '轮询超时（30 分钟未出结果）' })
@@ -252,6 +340,9 @@ export class SeedanceTaskManager {
         console.warn('[seedance] queryTask failed, will retry:', e)
         continue
       }
+
+      // 上一句 await 期间用户可能点了取消 —— 结果一律作废，不落盘不写历史。
+      if (this.tasks.get(taskId)?.status === 'cancelled') return
 
       if (result.status === 'failed') {
         const err = result.error

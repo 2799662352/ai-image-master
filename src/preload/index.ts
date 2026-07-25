@@ -80,6 +80,7 @@ import type {
   SeedanceAssetImportResult,
   SeedanceAssetListQuery,
   SeedanceAssetListResult,
+  SeedanceCancelResult,
   SeedanceKeyState,
   SeedanceOfficialMaterialsQuery,
   SeedanceOfficialMaterialsResult,
@@ -87,6 +88,8 @@ import type {
   SeedanceTaskUpdate,
 } from '../types/seedance'
 import type {
+  VideoWorkbenchReconcileItem,
+  VideoWorkbenchReconcileResult,
   VideoWorkbenchSubmitPayload,
   VideoWorkbenchSubmitResult,
 } from '../types/videoWorkbench'
@@ -756,6 +759,10 @@ export interface ElectronAPI {
   // 后台轮询 → 本地落盘 + COS），进度经 seedance.onTaskUpdate 回流。
   videoWorkbench: {
     submit: (payload: VideoWorkbenchSubmitPayload) => Promise<VideoWorkbenchSubmitResult>
+    /** 取消/放弃任务。`billed` 如实反映上游是否仍会计费（running 无法真取消）。 */
+    cancel: (taskId: string) => Promise<SeedanceCancelResult>
+    /** 启动时把进行中的 taskId 交回主进程重新接管并恢复轮询。 */
+    reconcile: (items: VideoWorkbenchReconcileItem[]) => Promise<VideoWorkbenchReconcileResult[]>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1628,6 +1635,9 @@ const electronAPI: ElectronAPI = {
   videoWorkbench: {
     submit: (payload: VideoWorkbenchSubmitPayload) =>
       safeInvoke<VideoWorkbenchSubmitResult>('video-workbench:submit', payload),
+    cancel: (taskId: string) => safeInvoke<SeedanceCancelResult>('video-workbench:cancel', taskId),
+    reconcile: (items: VideoWorkbenchReconcileItem[]) =>
+      safeInvoke<VideoWorkbenchReconcileResult[]>('video-workbench:reconcile', items),
   },
 
   fs: {

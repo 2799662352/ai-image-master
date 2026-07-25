@@ -470,6 +470,60 @@ export function initSeedanceRuntime(opts: {
     }
   })
 
+  // 取消。计费语义由 taskManager 按上游分档判定并原样带回渲染端（billed），
+  // 卡片按钮据此显示「取消」还是「放弃结果（仍会计费）」。
+  ipcMain.removeHandler('video-workbench:cancel')
+  ipcMain.handle('video-workbench:cancel', async (_event, taskId: unknown) => {
+    const id = String(taskId ?? '')
+    if (!id) return { ok: false, billed: false, reason: '缺少 taskId' }
+    return taskManager.cancel(id)
+  })
+
+  // 重启对账。任务表是纯内存的，应用重启后就空了，但上游任务还在跑 —— 工作台
+  // 卡片（IndexedDB 持久化）启动时把进行中的 taskId 送回来重新接管，结果照旧
+  // 走 persistVideo + 广播的正常回流路径（含写历史）。
+  //
+  // 接管前先探一次上游：taskId 可能早已过期/被删，此时直接告诉渲染端「查不到」，
+  // 免得卡片又靠 pollLoop 的重试熬满 30 分钟才落 failed。
+  ipcMain.removeHandler('video-workbench:reconcile')
+  ipcMain.handle('video-workbench:reconcile', async (_event, rawItems: unknown) => {
+    const items = Array.isArray(rawItems) ? rawItems : []
+    const results: Array<{ taskId: string; outcome: 'adopted' | 'tracked' | 'unknown'; reason?: string }> = []
+    for (const raw of items) {
+      const item = (raw ?? {}) as Record<string, unknown>
+      const taskId = String(item.taskId ?? '')
+      if (!taskId) continue
+      if (taskManager.get(taskId)) {
+        results.push({ taskId, outcome: 'tracked' })
+        continue
+      }
+      try {
+        await seedanceClient.queryTask(taskId, getSeedanceApiKey())
+      } catch (e) {
+        results.push({
+          taskId,
+          outcome: 'unknown',
+          reason: translateSeedanceTaskError(e instanceof Error ? e.message : String(e)),
+        })
+        continue
+      }
+      taskManager.adopt({
+        taskId,
+        source: 'workbench',
+        ...(typeof item.clientId === 'string' && item.clientId ? { clientId: item.clientId } : {}),
+        prompt: typeof item.prompt === 'string' ? item.prompt : '',
+        model:
+          item.model === '2.0-fast' || item.model === '2.0-mini' ? item.model : '2.0',
+        resolution: typeof item.resolution === 'string' ? item.resolution : '720p',
+        ratio: typeof item.ratio === 'string' ? item.ratio : '16:9',
+        duration: Number.isFinite(Number(item.duration)) ? Number(item.duration) : 5,
+        ...(Number.isFinite(Number(item.createdAt)) ? { createdAt: Number(item.createdAt) } : {}),
+      })
+      results.push({ taskId, outcome: 'adopted' })
+    }
+    return results
+  })
+
   router.registerMain('check_video_task', async (params) => {
     const taskId = String((params as { taskId?: unknown }).taskId ?? '')
     // 可选短轮询窗口：generate_video 在「已成功、落盘仍在跑」时用它做几秒的

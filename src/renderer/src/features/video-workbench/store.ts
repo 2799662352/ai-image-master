@@ -16,13 +16,16 @@
  */
 
 import { create } from 'zustand'
-import type { SeedanceTaskUpdate } from '../../../../types/seedance'
+import type { SeedanceCancelResult, SeedanceTaskUpdate } from '../../../../types/seedance'
 import type {
   VideoWorkbenchBoard,
   VideoWorkbenchCard,
   VideoWorkbenchCardInput,
+  VideoWorkbenchCardStatus,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
+  VideoWorkbenchReconcileItem,
+  VideoWorkbenchReconcileResult,
   VideoWorkbenchSubmitPayload,
   VideoWorkbenchSubmitResult,
 } from '../../../../types/videoWorkbench'
@@ -49,6 +52,9 @@ const MATERIAL_LIMITS: Record<MaterialKind, number> = {
 interface WorkbenchElectronApi {
   videoWorkbench?: {
     submit: (payload: VideoWorkbenchSubmitPayload) => Promise<VideoWorkbenchSubmitResult>
+    // 可选:preload 桥可能是旧版（热更新时序），调用点一律用 `?.` 并有降级分支
+    cancel?: (taskId: string) => Promise<SeedanceCancelResult>
+    reconcile?: (items: VideoWorkbenchReconcileItem[]) => Promise<VideoWorkbenchReconcileResult[]>
   }
   seedance?: {
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
@@ -269,6 +275,14 @@ export interface StartResult {
   skipped: Array<{ cardId: string; reason: string }>
 }
 
+/** 单张卡片的取消结果（`billed` 直接来自上游分档，见 SeedanceCancelResult）。 */
+export interface CancelResult {
+  cardId: string
+  /** 上游是否仍会为这次生成计费（running 阶段的取消只是本地放弃）。 */
+  billed: boolean
+  reason?: string
+}
+
 export interface VideoWorkbenchState {
   /** 全部页的卡片扁平存放(跨页任务回流仍能按 clientId/taskId 对齐);页面按 boardId 过滤展示。 */
   cards: VideoWorkbenchCard[]
@@ -303,6 +317,16 @@ export interface VideoWorkbenchState {
   setAutoImportPortrait: (enabled: boolean) => void
   /** 启动生成:缺省=全部可启动卡片;可指定 id 列表。并发提交。 */
   startCards: (ids?: string[]) => Promise<StartResult>
+  /**
+   * 取消/放弃进行中的卡片。返回每张卡的计费口径 —— 上游只允许取消 queued
+   * (不计费),running 无法取消(照样扣费),UI 据此写文案。
+   */
+  cancelCards: (ids: string[]) => Promise<CancelResult[]>
+  /**
+   * 启动时对账:主进程任务表是纯内存的,重启后就空了,但上游任务还在跑。
+   * 把进行中的卡片交回主进程重新接管并恢复轮询;上游查不到的落 failed。
+   */
+  reconcileInFlight: () => Promise<void>
   /** seedance:task-update 广播入口(仅消费 source==='workbench')。 */
   applyTaskUpdate: (update: SeedanceTaskUpdate) => void
 }
@@ -373,6 +397,62 @@ export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: stri
     return { ok: false, reason: '1080p 仅 Seedance 2.0 满血支持' }
   }
   return { ok: true }
+}
+
+/** 任务仍在飞（可取消、需要重启对账）的状态集合。 */
+function isActiveStatus(status: VideoWorkbenchCardStatus): boolean {
+  return status === 'preparing' || status === 'queued' || status === 'running'
+}
+
+type SetState = (
+  fn: (state: VideoWorkbenchState) => Partial<VideoWorkbenchState>,
+) => void
+
+/**
+ * 把卡片写成 cancelled。**只在卡片仍在飞时写** —— 取消请求往返期间上游结果可能
+ * 刚好到达（applyTaskUpdate 已落 succeeded），此时绝不能用 cancelled 覆盖掉一个
+ * 已经拿到手的好结果。
+ */
+function writeCancelled(
+  set: SetState,
+  cardId: string,
+  patch: Partial<VideoWorkbenchCard>,
+): void {
+  let after: VideoWorkbenchCard | null = null
+  set((state) => ({
+    cards: state.cards.map((c) => {
+      if (c.id !== cardId || !isActiveStatus(c.status)) return c
+      after = { ...c, status: 'cancelled', cancelRequested: undefined, ...patch, updatedAt: Date.now() }
+      return after
+    }),
+  }))
+  if (after) persistNow(after)
+}
+
+/** 同上语义的 failed 写入（仅对仍在飞的卡片生效）。 */
+function writeFailed(set: SetState, cardId: string, error: string): void {
+  let after: VideoWorkbenchCard | null = null
+  set((state) => ({
+    cards: state.cards.map((c) => {
+      if (c.id !== cardId || !isActiveStatus(c.status)) return c
+      after = { ...c, status: 'failed', error, updatedAt: Date.now() }
+      return after
+    }),
+  }))
+  if (after) persistNow(after)
+}
+
+function toReconcileItem(card: VideoWorkbenchCard): VideoWorkbenchReconcileItem {
+  return {
+    taskId: card.taskId!,
+    ...(card.clientId ? { clientId: card.clientId } : {}),
+    prompt: card.prompt,
+    model: card.model,
+    resolution: card.resolution,
+    ratio: card.ratio,
+    duration: card.duration,
+    ...(card.startedAt ? { createdAt: card.startedAt } : {}),
+  }
 }
 
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -827,6 +907,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             actualSeed: undefined,
             completionTokens: undefined,
             historyRecorded: undefined,
+            cancelRequested: undefined,
+            // 秒表起点。不能用 updatedAt —— 每条进度广播都会 bump 它，秒表会归零。
+            startedAt: Date.now(),
             updatedAt: Date.now(),
           }
           return submitted
@@ -853,19 +936,38 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           .submit(payload)
           .then((res) => {
             let after: VideoWorkbenchCard | null = null
+            let lateCancelTaskId: string | undefined
             set((state) => ({
               cards: state.cards.map((c) => {
                 if (c.id !== card.id || c.clientId !== clientId) return c
-                after = res.success
-                  ? // 广播可能先一步把状态推到 queued/running/succeeded,别倒回去
-                    c.status === 'preparing'
+                if (!res.success) {
+                  after = { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
+                  return after
+                }
+                // preparing 期间用户点了取消:直到现在才拿到 taskId,而此刻任务
+                // 几乎必然还在 queued —— 上游唯一允许真取消(不计费)的窗口,
+                // 立刻补发。状态保持 cancelled,绝不因提交成功而推回 queued。
+                if (c.cancelRequested) {
+                  lateCancelTaskId = res.taskId
+                  after = {
+                    ...c,
+                    taskId: res.taskId,
+                    status: 'cancelled',
+                    cancelRequested: undefined,
+                    updatedAt: Date.now(),
+                  }
+                  return after
+                }
+                after =
+                  // 广播可能先一步把状态推到 queued/running/succeeded,别倒回去
+                  c.status === 'preparing'
                     ? { ...c, taskId: res.taskId, status: 'queued', updatedAt: Date.now() }
                     : { ...c, taskId: res.taskId, updatedAt: Date.now() }
-                  : { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
                 return after
               }),
             }))
             if (after) persistNow(after)
+            if (lateCancelTaskId) void api.cancel?.(lateCancelTaskId)
           })
           .catch((e) => {
             let after: VideoWorkbenchCard | null = null
@@ -888,6 +990,75 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
 
     await Promise.all(submissions)
     return result
+  },
+
+  cancelCards: async (ids) => {
+    const api = getApi()?.videoWorkbench
+    const results: CancelResult[] = []
+    const targets = get().cards.filter((c) => ids.includes(c.id) && isActiveStatus(c.status))
+
+    for (const card of targets) {
+      // 还没 taskId(createTask 未返回):无从取消,先记意图。submit 一 resolve
+      // 就补发 —— 见 startCards 的 cancelRequested 分支。
+      if (!card.taskId) {
+        writeCancelled(set, card.id, {
+          cancelRequested: true,
+          error: '已请求取消,等任务提交到上游后立即取消',
+        })
+        results.push({ cardId: card.id, billed: false, reason: '任务尚未提交到上游' })
+        continue
+      }
+
+      let res: SeedanceCancelResult
+      try {
+        res = (await api?.cancel?.(card.taskId)) ?? {
+          ok: false,
+          billed: true,
+          reason: '视频服务未就绪(preload 桥缺失)',
+        }
+      } catch (e) {
+        res = { ok: false, billed: true, reason: e instanceof Error ? e.message : String(e) }
+      }
+
+      // 主进程说「已完成/不在跟踪表」时也照样在本地停下:要么结果广播已经把卡片
+      // 推到终态(writeCancelled 会让路,不覆盖好结果),要么主进程重启过、这张卡
+      // 再等下去也没人喂它。
+      writeCancelled(set, card.id, { ...(res.reason ? { error: res.reason } : {}) })
+      results.push({ cardId: card.id, billed: res.billed, ...(res.reason ? { reason: res.reason } : {}) })
+    }
+    return results
+  },
+
+  reconcileInFlight: async () => {
+    const api = getApi()?.videoWorkbench
+    const active = get().cards.filter((c) => isActiveStatus(c.status))
+    if (active.length === 0) return
+
+    // 没 taskId = 重启前 createTask 就没成功,上游根本没有这个任务,无从对账。
+    for (const orphan of active.filter((c) => !c.taskId)) {
+      writeFailed(set, orphan.id, '应用重启前任务未提交成功,请重新生成')
+    }
+
+    const items = active.filter((c) => c.taskId)
+    if (items.length === 0 || !api?.reconcile) return
+
+    let results: VideoWorkbenchReconcileResult[] = []
+    try {
+      results = (await api.reconcile(items.map(toReconcileItem))) ?? []
+    } catch (e) {
+      // 对账本身失败(IPC 抖动)不动卡片:下次启动还有机会,别把还在跑的任务错杀。
+      console.warn('[workbench] reconcile failed:', e)
+      return
+    }
+
+    const unknown = new Map(
+      results.filter((r) => r.outcome === 'unknown').map((r) => [r.taskId, r.reason]),
+    )
+    for (const card of items) {
+      const reason = unknown.has(card.taskId!) ? unknown.get(card.taskId!) : undefined
+      if (!unknown.has(card.taskId!)) continue
+      writeFailed(set, card.id, `重启后无法查询该任务${reason ? `:${reason}` : '(可能已过期)'}`)
+    }
   },
 
   applyTaskUpdate: (update) => {

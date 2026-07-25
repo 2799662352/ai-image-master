@@ -32,6 +32,12 @@ export interface SeedanceClient {
   createTask: (body: SeedanceCreateTaskBody, apiKey: string) => Promise<{ id: string }>
   queryTask: (taskId: string, apiKey: string) => Promise<SeedanceQueryResult>
   downloadVideo: (videoUrl: string) => Promise<Buffer>
+  /**
+   * 取消排队中的任务 / 删除终态任务记录（文档「取消或删除视频生成任务」）。
+   * ⚠️ 只对 `queued` 是「取消」（转 cancelled，不再计费）；对 `running`
+   * **上游明确不支持**，调了也不生效 —— 调用方应据此避免无谓请求。
+   */
+  deleteTask: (taskId: string, apiKey: string) => Promise<void>
 }
 
 interface ArkEnvelope<T> {
@@ -120,6 +126,14 @@ export const seedanceClient: SeedanceClient = {
       `${getSeedanceBaseUrl()}${QUERY_TASK_PATH}/${encodeURIComponent(taskId)}`,
       apiKey,
       { method: 'GET' },
+    )
+  },
+
+  async deleteTask(taskId, apiKey) {
+    await arkRequest<Record<string, never>>(
+      `${getSeedanceBaseUrl()}${QUERY_TASK_PATH}/${encodeURIComponent(taskId)}`,
+      apiKey,
+      { method: 'DELETE' },
     )
   },
 

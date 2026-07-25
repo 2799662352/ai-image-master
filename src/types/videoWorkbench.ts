@@ -64,7 +64,7 @@ export interface VideoWorkbenchMaterial {
 /**
  * 卡片状态机：
  *   draft（可编辑）→ preparing（素材上送/创建任务中）→ queued/running（上游渲染）
- *   → succeeded / failed（终态；failed 可重试回 preparing）。
+ *   → succeeded / failed / cancelled（终态；failed 与 cancelled 都可重试回 preparing）。
  */
 export type VideoWorkbenchCardStatus =
   | 'draft'
@@ -95,6 +95,17 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   updatedAt: number
   /** 提交时渲染端生成，贯穿 seedance:task-update 广播做卡片对齐。 */
   clientId?: string
+  /**
+   * 本轮提交的开始时间。UI 的「已耗时」必须用它 —— 早先用 updatedAt 做起点，
+   * 而每条进度广播都会 bump updatedAt，秒表因此每次广播归零。重新生成时重置。
+   */
+  startedAt?: number
+  /**
+   * 用户请求了取消，但 taskId 还没回来（preparing 阶段）。submit 一 resolve 就
+   * 立刻对拿到的 taskId 发取消 —— 那一刻任务几乎必然还在 queued，属于能真省钱
+   * 的窗口，所以这个意图值得记住而不是让用户白点一次。
+   */
+  cancelRequested?: boolean
   /** createTask 成功后的上游任务 id（可用 check_video_task 续轮询）。 */
   taskId?: string
   /** succeeded 时上游临时结果地址（有效期未知，兜底播放源）。 */
@@ -161,3 +172,28 @@ export interface VideoWorkbenchSubmitPayload {
 export type VideoWorkbenchSubmitResult =
   | { success: true; taskId: string }
   | { success: false; error: string }
+
+/**
+ * `video-workbench:reconcile` 单项载荷。重启后主进程任务表是空的，卡片把自己
+ * 记住的 taskId 与重建任务状态所需的元数据送回去重新接管。
+ */
+export interface VideoWorkbenchReconcileItem {
+  taskId: string
+  clientId?: string
+  prompt: string
+  model: SeedanceModelAlias
+  resolution: string
+  ratio: string
+  duration: number
+  createdAt?: number
+}
+
+/**
+ * 对账结果。`tracked` = 主进程仍在跟踪（没重启过，无需处理）；`adopted` = 已
+ * 重新接管并恢复轮询；`unknown` = 上游查不到（过期/已删），卡片应落 failed。
+ */
+export interface VideoWorkbenchReconcileResult {
+  taskId: string
+  outcome: 'adopted' | 'tracked' | 'unknown'
+  reason?: string
+}
