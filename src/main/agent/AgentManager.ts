@@ -584,6 +584,7 @@ export class AgentManager {
         getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
         getDashVectorKey: () => this.dashVectorKey || undefined,
         onApprovalRequest: (request) => this.emitApprovalRequest(request),
+        onApprovalResolved: (info) => this.emitApprovalResolved(info),
         onMcpNotification: (event) => this.handleMcpNotification(event),
         onGoalNotification: (event) => this.handleGoalNotification(event),
         onThreadSettingsNotification: (event) => this.handleThreadSettingsNotification(event),
@@ -3975,6 +3976,24 @@ export class AgentManager {
       : undefined
     win.webContents.send('agent:approval-request', {
       ...request,
+      ...(dbThreadId ? { threadId: dbThreadId } : {}),
+    })
+  }
+
+  /**
+   * 服务端已自行解决/清理该审批请求（turn 开始/完成/被打断都会触发）。渲染层的
+   * pendingApprovals 只在切换线程/新会话/删除线程时清空，所以必须显式撤下这张卡，
+   * 否则用户会一直看着一张点了也没用的死卡片。
+   */
+  private emitApprovalResolved(info: { id: string; threadId?: string }): void {
+    const win = this.win
+    if (!win || win.isDestroyed()) return
+
+    const dbThreadId = info.threadId
+      ? findDbThreadId(this.codexThreadIdByDbThreadId, info.threadId)
+      : undefined
+    win.webContents.send('agent:approval-resolved', {
+      id: info.id,
       ...(dbThreadId ? { threadId: dbThreadId } : {}),
     })
   }

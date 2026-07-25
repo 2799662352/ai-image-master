@@ -522,6 +522,15 @@ export interface CodexApprovalResponse {
   message?: string
 }
 
+/**
+ * `serverRequest/resolved` —— 服务端自行解决或清理了某个待决审批请求。上游会在
+ * turn 开始、完成或被打断时清掉未回答的请求并发这条通知，渲染层据此撤下卡片。
+ */
+export interface AgentApprovalResolved {
+  id: string
+  threadId?: string
+}
+
 export interface CodexThreadSummary {
   id: string
   title: string

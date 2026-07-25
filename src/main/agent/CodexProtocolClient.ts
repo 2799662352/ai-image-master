@@ -185,6 +185,12 @@ export interface CodexProtocolClientOptions {
   experimentalApi?: boolean
   onLog?: (line: string) => void
   onApprovalRequest?: (request: CodexApprovalRequest) => void
+  /**
+   * 服务端自己解决/清理了某个待决请求（`serverRequest/resolved`）。上游会在 turn
+   * 开始、完成或被打断时清掉未回答的请求并发这条通知，所以渲染层必须据此撤下审批
+   * 卡 —— 它的 pendingApprovals 只在切换线程/新会话/删除线程时清空。
+   */
+  onApprovalResolved?: (info: { id: string; threadId?: string }) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
   /**
    * Out-of-band native `/goal` updates (`thread/goal/updated|cleared`). Like
@@ -949,7 +955,30 @@ export class CodexProtocolClient {
     this.pendingServerRequests.clear()
   }
 
+  /**
+   * 服务端已自行解决/清理该请求 —— 清掉本地待决项与它的超时定时器，**不回响应**
+   * （回了会是对一个已丢弃请求的应答）。未知 id 不做任何事。
+   */
+  private handleServerRequestResolved(params: Record<string, any>): void {
+    const raw = params?.requestId
+    if (typeof raw !== 'string' && typeof raw !== 'number') return
+    const id = String(raw)
+    const pending = this.pendingServerRequests.get(id)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    this.pendingServerRequests.delete(id)
+    this.options.onApprovalResolved?.({
+      id,
+      ...(typeof params?.threadId === 'string' ? { threadId: params.threadId } : {}),
+    })
+  }
+
   private routeNotification(method: string, params: Record<string, any>): void {
+    if (method === 'serverRequest/resolved') {
+      this.handleServerRequestResolved(params)
+      return
+    }
+
     // Diagnostic: dump full params the first time we see each
     // `(method, item.type)` pair. Apiyi, OpenRouter and other gateways
     // sometimes drift on reasoning/content payload shape; without seeing the
