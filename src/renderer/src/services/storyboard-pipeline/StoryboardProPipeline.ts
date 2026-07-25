@@ -7,7 +7,6 @@ import {
   StoryboardResponseSchema,
 } from '../LangChainStoryboardService'
 import type { StoryboardResponse } from '../LangChainStoryboardService'
-import { VerifySchema } from '../pipeline/schemas/director-schemas'
 import type {
   PipelineConfig,
   PipelineSkill,
@@ -15,7 +14,7 @@ import type {
   PassCardData,
   PipelineExecuteOptions,
 } from '../pipeline/types'
-import { storyboardCodeVerify } from './storyboard-verify'
+import { storyboardCodeVerify, CodeVerifyReportSchema } from './storyboard-verify'
 import { getStoryboardPromptTemplate, renderTemplate, getStoryboardSkills } from './storyboard-prompt-loader'
 
 // ==================== Schemas ====================
@@ -93,7 +92,7 @@ const stateSchema = z.object({
   })).nullable().default(null),
   cont: z.string().default(''),
   notes: z.string().default(''),
-  report: VerifySchema.nullable().default(null),
+  report: CodeVerifyReportSchema.nullable().default(null),
   inputImages: z.array(z.object({
     data: z.string(),
     mimeType: z.string(),
@@ -846,10 +845,10 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       seq: (state.seq || []).map(s => ({
         id: s.id,
         desc: s.desc,
-        ...(s.act !== undefined && { act: s.act }),
-        ...(s.fx !== undefined && { fx: s.fx }),
-        ...(s.motive !== undefined && { motive: s.motive }),
-        ...(s.audio !== undefined && { audio: s.audio }),
+        act: s.act ?? '',
+        fx: s.fx ?? null,
+        motive: s.motive ?? '',
+        audio: s.audio ?? '',
       })),
       cont: state.cont || '',
       notes: state.notes || '',

@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { VerifySchema } from '../pipeline/schemas/director-schemas'
+import { VerifySchema } from '../pipeline/schemas/director-schemas'
 
 interface StoryboardState {
   scene: { d?: string; cap?: string; env?: string; timeline?: unknown[] } | null
@@ -9,7 +9,19 @@ interface StoryboardState {
   notes: string
 }
 
-export function storyboardCodeVerify(state: StoryboardState): z.infer<typeof VerifySchema> {
+/**
+ * VerifySchema 是 LLM 的输出契约，要求逐项给出结论；代码级校验器看不到画面，
+ * 无法评估空间/光影/风格，所以这三项一律缺席而不是硬给一个布尔。
+ */
+export const CodeVerifyReportSchema = VerifySchema.omit({
+  spatialCoherence: true,
+  lightingContinuity: true,
+  styleConsistency: true,
+})
+
+export type CodeVerifyReport = z.infer<typeof CodeVerifyReportSchema>
+
+export function storyboardCodeVerify(state: StoryboardState): CodeVerifyReport {
   let score = 10
   const issues: string[] = []
 
@@ -60,7 +72,5 @@ export function storyboardCodeVerify(state: StoryboardState): z.infer<typeof Ver
     issues,
     characterConsistency: !issues.some(i => i.includes('Character') || i.includes('character')),
     narrativeFlow: state.seq?.length > 0,
-    spatialCoherence: undefined,
-    lightingContinuity: undefined,
   }
 }

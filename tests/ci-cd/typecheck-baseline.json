@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-25T19:57:19.164Z",
+  "generatedAt": "2026-07-25T20:27:30.185Z",
   "expiresAt": "2026-08-31",
   "diagnostics": [
     {
@@ -181,42 +181,6 @@
       "file": "src/renderer/src/services/storage/StorageBridge.ts",
       "code": "TS2345",
       "message": "Argument of type '{ [key: string]: any; id: string | number; prompt?: string | undefined; model?: string | undefined; timestamp?: string | undefined; imageUrl?: string | undefined; images?: string[] | undefined; urls?: string[] | undefined; }[]' is not assignable to parameter of type 'HistoryItem[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storyboard-pipeline/aggregate.ts",
-      "code": "TS2322",
-      "message": "Type '{ id: string; desc: string; act: string; fx: string | null; motive: string; audio: string | undefined; }[]' is not assignable to type '{ id: string; desc: string; act: string; fx: string | null; motive: string; audio: string; }[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storyboard-pipeline/storyboard-verify.ts",
-      "code": "TS2322",
-      "message": "Type 'undefined' is not assignable to type 'boolean'.",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/src/services/storyboard-pipeline/StoryboardDeepAgentPipeline.ts",
-      "code": "TS2322",
-      "message": "Type '{ audio?: string | undefined; motive?: string | undefined; fx?: string | null | undefined; act?: string | undefined; id: string; desc: string; }[]' is not assignable to type '{ id: string; desc: string; act: string; fx: string | null; motive: string; audio: string; }[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storyboard-pipeline/StoryboardDeepAgentPipeline.ts",
-      "code": "TS2345",
-      "message": "Argument of type '{}' is not assignable to parameter of type 'string'.",
-      "count": 5
-    },
-    {
-      "file": "src/renderer/src/services/storyboard-pipeline/StoryboardDeepAgentPipeline.ts",
-      "code": "TS2554",
-      "message": "Expected 2-3 arguments, but got 1.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storyboard-pipeline/StoryboardProPipeline.ts",
-      "code": "TS2322",
-      "message": "Type '{ audio?: string | undefined; motive?: string | undefined; fx?: string | null | undefined; act?: string | undefined; id: string; desc: string; }[]' is not assignable to type '{ id: string; desc: string; act: string; fx: string | null; motive: string; audio: string; }[]'.",
       "count": 1
     },
     {
