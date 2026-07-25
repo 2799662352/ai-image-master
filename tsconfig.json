@@ -48,10 +48,12 @@
     "useDefineForClassFields": true,
     "jsx": "react-jsx"
   },
+  /* 只有 src/ 是活代码。`js/` 与 `electron/` 是 TS 迁移前的旧渲染层与旧主进程,
+     前者早已删除,后者随本次一并删掉 —— 入口是 package.json 的
+     `main: dist/main/index.js`(即编译后的 src/main/index.ts),而
+     electron-builder.yml 的 files 只打包 dist/ + package.json。 */
   "include": [
-    "src/**/*",
-    "js/**/*",
-    "electron/**/*"
+    "src/**/*"
   ],
   "exclude": [
     "node_modules",
