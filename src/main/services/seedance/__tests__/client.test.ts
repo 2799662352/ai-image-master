@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { seedanceClient, ARK_REQUEST_TIMEOUT_MS } from '../client'
+import { seedanceClient, ARK_REQUEST_TIMEOUT_MS, SeedanceApiError } from '../client'
 import { setSeedanceRegionMemory } from '../region'
 
 function jsonResponse(body: unknown, status = 200) {
@@ -154,5 +154,75 @@ describe('arkRequest 硬超时（防 net.fetch 永久悬挂 → turn 卡满 2000
     fetchMock.mockResolvedValue(jsonResponse({ id: 't-fast', status: 'running' }))
     const res = await seedanceClient.queryTask('t-fast', 'key')
     expect(res.status).toBe('running')
+  })
+})
+
+describe('SeedanceApiError：状态码与 Retry-After', () => {
+  /** 带响应头的假响应（上面的 jsonResponse 故意不带，用来覆盖 headers 缺失的分支）。 */
+  function withHeaders(body: unknown, status: number, headers: Record<string, string>) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      statusText: 'Error',
+      headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
+      text: async () => JSON.stringify(body),
+    }
+  }
+
+  async function catchError(): Promise<SeedanceApiError> {
+    try {
+      await seedanceClient.queryTask('t-1', 'key')
+      throw new Error('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(SeedanceApiError)
+      return e as SeedanceApiError
+    }
+  }
+
+  it('4xx 带上状态码，且标记为不可重试', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: { message: 'invalid api key' } }, 401))
+    const err = await catchError()
+    expect(err.status).toBe(401)
+    expect(err.retryable).toBe(false)
+    expect(err.message).toContain('invalid api key')
+  })
+
+  it('404（任务不存在）不可重试', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: { message: 'task not found' } }, 404))
+    expect((await catchError()).retryable).toBe(false)
+  })
+
+  it('429 / 5xx 可重试', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'rate limited' }, 429))
+    expect((await catchError()).retryable).toBe(true)
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'bad gateway' }, 502))
+    expect((await catchError()).retryable).toBe(true)
+  })
+
+  it('HTTP 200 但 success:false 属于逻辑拒绝，同样不可重试', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ success: false, message: 'quota exhausted' }, 200))
+    const err = await catchError()
+    expect(err.retryable).toBe(false)
+    expect(err.message).toContain('quota exhausted')
+  })
+
+  it('Retry-After 秒数写法换算成毫秒', async () => {
+    fetchMock.mockResolvedValue(withHeaders({ message: 'slow down' }, 429, { 'retry-after': '30' }))
+    expect((await catchError()).retryAfterMs).toBe(30_000)
+  })
+
+  it('Retry-After HTTP 日期写法换算成剩余毫秒', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-26T00:00:00Z'))
+    fetchMock.mockResolvedValue(
+      withHeaders({ message: 'slow down' }, 503, { 'retry-after': 'Sun, 26 Jul 2026 00:00:45 GMT' }),
+    )
+    expect((await catchError()).retryAfterMs).toBe(45_000)
+    vi.useRealTimers()
+  })
+
+  it('无 Retry-After 头时为 undefined，不影响退避默认策略', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'boom' }, 503))
+    expect((await catchError()).retryAfterMs).toBeUndefined()
   })
 })

@@ -11,6 +11,7 @@
 
 import { randomUUID } from 'node:crypto'
 
+import { SeedanceApiError } from './client'
 import type { SeedanceClient } from './client'
 import type {
   CreateVideoTaskInput,
@@ -26,6 +27,8 @@ import { resolveSeedanceModelId } from './types'
 
 /** 上游轮询间隔。文档建议 5~10s。 */
 const POLL_INTERVAL_MS = 6_000
+/** 连续失败退避的上限：再糟也至少每分钟探一次。 */
+const POLL_BACKOFF_CAP_MS = 60_000
 /** 单任务轮询上限（30 分钟），防上游悬死导致永久轮询。 */
 const POLL_TIMEOUT_MS = 30 * 60_000
 /** 终态任务保留时长，之后从 Map 清理。 */
@@ -44,6 +47,8 @@ export interface SeedanceTaskManagerDeps {
   broadcast: (update: SeedanceTaskUpdate) => void
   /** 注入时钟便于单测。 */
   now?: () => number
+  /** 注入随机源（退避抖动）便于单测精确断言等待时长。 */
+  random?: () => number
 }
 
 export interface SubmitParams {
@@ -86,6 +91,27 @@ export class SeedanceTaskManager {
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now()
+  }
+
+  private random(): number {
+    return this.deps.random ? this.deps.random() : Math.random()
+  }
+
+  /**
+   * 查询失败后到下一次重试的等待时长。
+   * - 上游给了 Retry-After 就听它的（限流场景，别自作聪明）；
+   * - 第一次失败保持基础节奏 —— 单次网络抖动应当快速恢复；
+   * - 之后 ×1.5 递增并叠加至多 25% 抖动：工作台是批量场景，几十个任务同时提交
+   *   会几乎同步轮询，上游一故障就变成同步重试的惊群，抖动把它们打散。
+   */
+  private retryDelayMs(consecutiveFailures: number, error: unknown): number {
+    const retryAfterMs = error instanceof SeedanceApiError ? error.retryAfterMs : undefined
+    if (typeof retryAfterMs === 'number') {
+      return Math.min(Math.max(retryAfterMs, POLL_INTERVAL_MS), POLL_BACKOFF_CAP_MS)
+    }
+    if (consecutiveFailures <= 1) return POLL_INTERVAL_MS
+    const backoff = Math.min(POLL_INTERVAL_MS * 1.5 ** (consecutiveFailures - 1), POLL_BACKOFF_CAP_MS)
+    return Math.round(backoff * (1 + 0.25 * this.random()))
   }
 
   async submit(params: SubmitParams): Promise<SeedanceTaskState> {
@@ -317,17 +343,29 @@ export class SeedanceTaskManager {
 
   private async pollLoop(taskId: string): Promise<void> {
     const startedAt = this.now()
+    let delayMs = POLL_INTERVAL_MS
+    let consecutiveFailures = 0
+    let lastFailure: string | undefined
+
     while (true) {
       await new Promise((r) => {
-        const t = setTimeout(r, POLL_INTERVAL_MS)
+        const t = setTimeout(r, delayMs)
         ;(t as NodeJS.Timeout).unref?.()
       })
+      delayMs = POLL_INTERVAL_MS
       const task = this.tasks.get(taskId)
       if (!task) return // disposed / cleaned up
       if (task.status === 'cancelled') return // 已取消：停止轮询，别再花钱查
 
       if (this.now() - startedAt > POLL_TIMEOUT_MS) {
-        this.update(taskId, { status: 'failed', error: '轮询超时（30 分钟未出结果）' })
+        // 带上最后一次失败原因：否则「上游一直 503」和「上游一直在跑」会报出
+        // 同一句话，用户和日志都无法区分。
+        this.update(taskId, {
+          status: 'failed',
+          error: lastFailure
+            ? `轮询超时（30 分钟未出结果）；最后一次查询失败：${lastFailure}`
+            : '轮询超时（30 分钟未出结果）',
+        })
         this.scheduleCleanup(taskId)
         return
       }
@@ -336,10 +374,22 @@ export class SeedanceTaskManager {
       try {
         result = await this.deps.client.queryTask(taskId, this.deps.getApiKey())
       } catch (e) {
-        // 单次查询失败不判死刑（网络抖动），下一轮继续。
-        console.warn('[seedance] queryTask failed, will retry:', e)
+        // 密钥失效 / 参数非法 / 任务不存在：重试到 30 分钟也不会变好，而且最后只会
+        // 报一句与真因无关的「轮询超时」。立刻如实失败。
+        if (e instanceof SeedanceApiError && !e.retryable) {
+          this.update(taskId, { status: 'failed', error: e.message })
+          this.scheduleCleanup(taskId)
+          return
+        }
+        // 暂时性失败（网络抖动 / 限流 / 5xx）不判死刑，退避后继续。
+        consecutiveFailures += 1
+        lastFailure = e instanceof Error ? e.message : String(e)
+        delayMs = this.retryDelayMs(consecutiveFailures, e)
+        console.warn(`[seedance] queryTask failed (${consecutiveFailures}), retry in ${delayMs}ms:`, e)
         continue
       }
+      consecutiveFailures = 0
+      lastFailure = undefined
 
       // 上一句 await 期间用户可能点了取消 —— 结果一律作废，不落盘不写历史。
       if (this.tasks.get(taskId)?.status === 'cancelled') return
