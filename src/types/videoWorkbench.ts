@@ -122,6 +122,15 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   completionTokens?: number
   /** 该任务的成功结果已写入「历史记录」(防重:重载/重复广播不再入库)。 */
   historyRecorded?: boolean
+  /**
+   * 这张卡**规格**的版本号,看板 IR 的按卡并发令牌(老数据缺省 = 0)。
+   *
+   * 只跟 spec 走(prompt/model/素材…),**不**跟位置走 —— 位置与卡片集合的变动
+   * 由 store 的 structureRevision 统管。这样「用户在 A 卡打字」不会让 agent 对
+   * B..Z 的回写失效,只会跳过 A;而「用户删了一张卡」会整份拒绝,因为 agent 的
+   * 位置计划已经失效。
+   */
+  rev?: number
 }
 
 /** MCP / IPC 写入卡片时的字段集（全部可选，缺省用默认值）。 */
@@ -159,19 +168,29 @@ export interface VideoWorkbenchCardInput {
 //    带出(给 agent 看),apply 一律忽略 —— 否则 agent 一次回写就能把真实
 //    任务状态改成幻觉值。
 //
-// 2. **`revision` 是乐观并发令牌,只跟意图变更走。** 这个工作台的卖点是人与
-//    AI 改同一份 store,所以「agent 三十秒前读的看板」必然会过期。apply 必须
-//    回带导出时的 revision,对不上就拒绝而不是覆盖。关键取舍:生成进度回流
-//    (applyTaskUpdate)**不** bump revision —— 否则一个跑着的任务会让每次
-//    apply 都撞冲突,这个功能就废了。
+// 2. **乐观并发令牌分两级。** 这个工作台的卖点是人与 AI 改同一份 store,所以
+//    「agent 三十秒前读的看板」必然会过期。但单一全局令牌太悲观到不可用:
+//    提示词输入框逐字符改卡,用户一边打字 agent 就永远撞冲突。所以拆成:
+//    - `structureRevision`(整份):卡片集合 / 页内位置 / 页本身变了才 bump。
+//      对不上 → 整份拒绝,因为 IR 的位置计划已经失效。
+//    - 每张卡的 `rev`(按卡):该卡规格变了才 bump。对不上且 IR 要改这张卡
+//      → **只跳过这一张**并报原因,其余照常写入。
+//    两级都刻意不跟生成进度回流(applyTaskUpdate)走 —— 否则一个跑着的任务
+//    会让每次 apply 都撞冲突,这个功能就废了。
 //
 // 3. **数组下标就是 order。** 卡片 order 在库里是按页稠密的(reorderBoard
 //    每次重排都压实成 0..n-1),所以 IR 里不需要 order 字段,`cards` 的数组
 //    顺序即是页内卷轴顺序,`boards` 的数组顺序即是页签顺序。
 // ---------------------------------------------------------------------------
 
-/** 当前 IR 格式版本(不认识的版本 apply 直接拒绝,不做尽力而为的猜测)。 */
-export const WORKBENCH_IR_VERSION = 1
+/**
+ * 当前 IR 格式版本(不认识的版本 apply 直接拒绝,不做尽力而为的猜测)。
+ *
+ * v2:单一 `revision` 令牌换成 `structureRevision` + 每张卡的 `rev`。v1 的 IR
+ * 只带全局 revision,无法判断「哪张卡被改过」,按 v2 语义处理会把用户的改动
+ * 静默盖掉,所以只能拒绝并要求重新 export。
+ */
+export const WORKBENCH_IR_VERSION = 2
 
 /**
  * IR 里的参考素材。只有 name + src —— `previewUrl` 是 asset:// 素材的展示
@@ -208,6 +227,13 @@ export interface WorkbenchIRCardResult {
 export interface WorkbenchIRCard {
   /** 已有卡的 id。省略 = 新建一张。给了但库里没有 = 报错(而不是静默新建)。 */
   id?: string
+  /**
+   * 导出时这张卡的规格版本。apply 时原样带回:对不上说明用户在这期间改过这张卡,
+   * 该卡的规格改动会被跳过(位置改动仍生效),其余卡不受影响。
+   *
+   * 省略 = 放弃这张卡的并发保护(新建卡本来就没有)。
+   */
+  rev?: number
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'
@@ -235,8 +261,14 @@ export interface WorkbenchIRBoard {
 /** 整个工作台的声明式快照。 */
 export interface WorkbenchIR {
   irVersion: number
-  /** 导出时的意图版本号。apply 必须回带,用来发现丢失更新。 */
-  revision: number
+  /**
+   * 导出时的**结构**版本号(卡片集合 / 页内位置 / 页本身)。apply 必须回带;
+   * 对不上则整份拒绝 —— 卡片被增删或挪过位之后,IR 里按数组下标表达的位置
+   * 计划已经不是 agent 当初看到的那个了。
+   *
+   * 单张卡的规格冲突不看这个,看 `WorkbenchIRCard.rev`。
+   */
+  structureRevision: number
   /** 当前激活页(apply 时若能解析就切过去)。 */
   activeBoardId?: string
   boards: WorkbenchIRBoard[]
@@ -249,7 +281,7 @@ export interface WorkbenchApplyOptions {
    * 但会删用户的东西,所以要显式要。
    */
   mode?: 'merge' | 'replace'
-  /** 跳过 revision 校验。明知会盖掉用户改动时的逃生门,默认不给。 */
+  /** 跳过两级并发校验。明知会盖掉用户改动时的逃生门,默认不给。 */
   force?: boolean
 }
 
@@ -262,7 +294,10 @@ export interface WorkbenchApplySkip {
 
 export interface WorkbenchApplyResult {
   ok: boolean
-  /** 版本冲突:agent 该重新导出再改。填了这个则什么都没写。 */
+  /**
+   * 结构冲突:卡片集合/位置在导出之后变过,整份被拒,什么都没写。agent 该重新
+   * export 再改。单张卡的规格冲突不在这里 —— 那是逐项 `skipped`,其余改动已生效。
+   */
   conflict?: { expected: number; actual: number }
   boards: { created: string[]; renamed: string[]; removed: string[] }
   cards: {
@@ -273,8 +308,8 @@ export interface WorkbenchApplyResult {
     removed: string[]
   }
   skipped: WorkbenchApplySkip[]
-  /** apply 之后的新版本号(下一次 apply 该带这个)。 */
-  revision: number
+  /** apply 之后的新结构版本号(下一次 apply 该带这个)。 */
+  structureRevision: number
 }
 
 /** `video-workbench:submit` IPC 载荷（渲染端 → 主进程）。 */

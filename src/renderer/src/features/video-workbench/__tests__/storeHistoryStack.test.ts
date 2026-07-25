@@ -306,7 +306,7 @@ describe('撤销 / 重做', () => {
     expect(state().redoStack).toHaveLength(1)
   })
 
-  it('撤销会 bump revision:agent 手里的旧 IR 令牌随之失效', async () => {
+  it('撤销会 bump structureRevision:agent 手里的整份 IR 随之作废', async () => {
     const [cardId] = state().addCards([{ prompt: '一' }])
     state().updateCard(cardId, { prompt: '二' })
     const stale = state().exportIR()
@@ -315,6 +315,22 @@ describe('撤销 / 重做', () => {
 
     const applied = await state().applyIR(stale)
     expect(applied.ok).toBe(false)
-    expect(applied.conflict).toEqual({ expected: stale.revision, actual: state().revision })
+    expect(applied.conflict).toEqual({
+      expected: stale.structureRevision,
+      actual: state().structureRevision,
+    })
+  })
+
+  it('撤销把卡片的 rev 往上推,不跟着快照回退', async () => {
+    const [cardId] = state().addCards([{ prompt: '旧' }])
+    state().updateCard(cardId, { prompt: '新' })
+    const revAfterEdit = state().cards[0].rev!
+
+    await state().undo()
+
+    // 内容回到「旧」,但 rev 继续往上 —— 否则一份撤销前导出的 IR 会看到匹配的
+    // rev 而校验通过,把被撤销掉的内容悄悄写回来。
+    expect(state().cards[0].prompt).toBe('旧')
+    expect(state().cards[0].rev!).toBeGreaterThan(revAfterEdit)
   })
 })

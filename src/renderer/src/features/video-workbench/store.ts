@@ -252,17 +252,26 @@ export interface VideoWorkbenchState {
   activeBoardId: string
   hydrated: boolean
   /**
-   * 编排意图的版本号,看板 IR 的乐观并发令牌(详见 types/videoWorkbench.ts)。
+   * 「有任何编排改动」计数器,唯一职责是驱动撤销栈入栈。
    *
    * **新增会改动 boards/cards 内容的 action 时,记得在返回里带上
-   * `revision: state.revision + 1`** —— 漏了会让 agent 的 apply 拿着过期令牌
-   * 却校验通过,静默盖掉用户的改动。
+   * `revision: state.revision + 1`** —— 漏了那一步就撤销不了。
    *
    * 反过来,生成状态的回流(applyTaskUpdate / startCards 的状态写入 / 取消)
-   * 刻意**不**递增:那些不是编排意图,而且一个跑着的任务会让每次 apply 都撞
-   * 冲突,功能等于废掉。
+   * 刻意**不**递增:那些不是编排意图,撤销不该把跑着的任务从卡片上抹掉。
    */
   revision: number
+  /**
+   * 结构版本:**卡片集合 / 页内位置 / 页本身**变了才递增。看板 IR 的整份并发令牌。
+   *
+   * 与 revision 分开是因为两者要的粒度相反。IR 用数组下标表达位置,所以卡片被
+   * 增删或挪过位之后整份 IR 就失效了 —— 那必须整份拒绝。但改一张卡的规格不影响
+   * 别的卡,若也算进来,用户在提示词框里打一个字(逐字符 updateCard)就会让
+   * agent 手里的 IR 立刻作废,「人与 AI 同改一份看板」这个卖点等于废掉。
+   *
+   * 单张卡的规格冲突由卡片自己的 `rev` 管,只跳过那一张。
+   */
+  structureRevision: number
 
   /**
    * 撤销/重做栈,存的是「那一刻的编排意图」快照(见 workbenchHistory.ts)。
@@ -544,6 +553,7 @@ interface WorkbenchWritePlan {
     cards: VideoWorkbenchCard[]
     activeBoardId: string
     revision: number
+    structureRevision: number
   }
   persist: {
     cards: VideoWorkbenchCard[]
@@ -609,6 +619,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   activeBoardId: initialBoard.id,
   hydrated: false,
   revision: 0,
+  structureRevision: 0,
   undoStack: [],
   redoStack: [],
   autoImportPortrait: readAutoImportPortrait(),
@@ -694,6 +705,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       boards: [...state.boards, board],
       activeBoardId: board.id,
       revision: state.revision + 1,
+      structureRevision: state.structureRevision + 1,
     }))
     writeActiveBoard(board.id)
     void getWorkbenchDb().putBoard(board).catch((e) => {
@@ -722,7 +734,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         renamed = { ...b, name: trimmed }
         return renamed
       })
-      return renamed ? { boards, revision: state.revision + 1 } : {}
+      return renamed
+        ? { boards, revision: state.revision + 1, structureRevision: state.structureRevision + 1 }
+        : {}
     })
     if (!renamed) return true
     void getWorkbenchDb().putBoard(renamed).catch(() => {})
@@ -742,6 +756,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       activeBoardId,
       cards: state.cards.filter((c) => c.boardId !== id),
       revision: state.revision + 1,
+      structureRevision: state.structureRevision + 1,
     })
     writeActiveBoard(activeBoardId)
     const db = getWorkbenchDb()
@@ -763,7 +778,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     set((state) => {
       const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
       inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
-      return { cards: [...state.cards, ...created], revision: state.revision + 1 }
+      return {
+        cards: [...state.cards, ...created],
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
     })
     for (const card of created) persistNow(card)
     void getWorkbenchDb().evict()
@@ -803,6 +822,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             ? { referenceAudios: clampMaterials(patch.referenceAudios.map(toMaterial), 'referenceAudios') }
             : {}),
           updatedAt: Date.now(),
+          // 规格版本 +1:agent 手里那份带旧 rev 的 IR 后续就写不进这张卡了。
+          // 只影响这一张 —— structureRevision 不动,别的卡照样可写。
+          rev: (card.rev ?? 0) + 1,
         }
         // 模式切换后按新模式截断超限素材(soraui 是清空,这里保守只截断)
         if (patch.mode !== undefined) {
@@ -832,6 +854,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       return {
         cards: reorderBoard(state.cards.filter((c) => c.id !== id), removed.boardId),
         revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
       }
     })
     if (!found) return
@@ -872,7 +895,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       positions.forEach((pos, i) => {
         next[pos] = reordered[i]
       })
-      return { cards: reorderBoard(next, moved.boardId), revision: state.revision + 1 }
+      return {
+        cards: reorderBoard(next, moved.boardId),
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
     })
     // 只补写这一页 —— 别的页 order 没动。
     for (const card of get().cards) {
@@ -889,6 +916,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...card,
           [kind]: clampMaterials([...card[kind], ...materials], kind),
           updatedAt: Date.now(),
+          rev: (card.rev ?? 0) + 1,
         }
         return updated
       })
@@ -909,7 +937,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         const next = [...list]
         const [moved] = next.splice(fromIndex, 1)
         next.splice(clamped, 0, moved)
-        updated = { ...card, [kind]: next, updatedAt: Date.now() }
+        updated = { ...card, [kind]: next, updatedAt: Date.now(), rev: (card.rev ?? 0) + 1 }
         return updated
       })
       return updated ? { cards, revision: state.revision + 1 } : {}
@@ -923,7 +951,12 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       const cards = state.cards.map((card) => {
         if (card.id !== id) return card
         if (index < 0 || index >= card[kind].length) return card
-        updated = { ...card, [kind]: card[kind].filter((_, i) => i !== index), updatedAt: Date.now() }
+        updated = {
+          ...card,
+          [kind]: card[kind].filter((_, i) => i !== index),
+          updatedAt: Date.now(),
+          rev: (card.rev ?? 0) + 1,
+        }
         return updated
       })
       return updated ? { cards, revision: state.revision + 1 } : {}
@@ -1334,6 +1367,7 @@ export function resetWorkbenchStoreForTest(): void {
       activeBoardId: board.id,
       hydrated: false,
       revision: 0,
+      structureRevision: 0,
       undoStack: [],
       redoStack: [],
       autoImportPortrait: false,

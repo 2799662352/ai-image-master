@@ -45,8 +45,8 @@ export interface HistoryCursor {
   at: number
 }
 
-/** 每次写卡都会变,不能参与「改了哪些字段」的判断。 */
-const VOLATILE_CARD_KEYS = new Set(['updatedAt'])
+/** 记账字段,不是内容 —— 不能参与「改了哪些字段」的判断。 */
+const VOLATILE_CARD_KEYS = new Set(['updatedAt', 'rev'])
 
 /**
  * 从变更前后推出合并键 —— 不让 action 自己申报。
@@ -127,6 +127,7 @@ export interface WorkbenchIntent {
 /** planRestore 需要的 store 字段,方便测试直接喂普通对象。 */
 export interface WorkbenchHistorySource extends WorkbenchIntent {
   revision: number
+  structureRevision: number
 }
 
 export interface WorkbenchRestoreResult {
@@ -159,6 +160,7 @@ export interface RestorePlan {
     cards: VideoWorkbenchCard[]
     activeBoardId: string
     revision: number
+    structureRevision: number
   }
   /** 只列真正变了的行 —— 一次撤销不该产生全量写放大。 */
   persist?: {
@@ -267,7 +269,14 @@ export function planRestore(
 
       if (!cur) {
         // 复活:整块用快照对象(含 clientId/taskId/status),见文件头说明。
-        const next: VideoWorkbenchCard = { ...snap, boardId: board.id, order: index, updatedAt: now }
+        // rev 例外 —— 见下面还原分支的说明,它只能往上走。
+        const next: VideoWorkbenchCard = {
+          ...snap,
+          boardId: board.id,
+          order: index,
+          updatedAt: now,
+          rev: (snap.rev ?? 0) + 1,
+        }
         resurrectedCards.push(snap.id)
         persistCards.push(next)
         nextCards.push(next)
@@ -297,6 +306,10 @@ export function planRestore(
         boardId: board.id,
         order: index,
         updatedAt: now,
+        // rev 只能单调递增,**不能**跟着快照回退:否则一个 agent 手里那份「撤销
+        // 之前导出的」IR 会看到匹配的 rev 而校验通过,把已经被撤销掉的内容悄悄
+        // 写回来 —— 并发令牌的意义正是防这个。
+        rev: (cur.rev ?? 0) + 1,
       }
       restoredCards.push(cur.id)
       persistCards.push(next)
@@ -346,6 +359,8 @@ export function planRestore(
       ? source.activeBoardId
       : finalBoards[0].id
 
+  // 还原几乎必然动到结构(位置/集合/页),规格回滚也一并算 —— 撤销之后 agent
+  // 手里的整份 IR 本来就该作废,而不是「除了这张卡以外还能写」。
   const changed =
     restoredBoards.length > 0
     || removeBoardIds.length > 0
@@ -370,7 +385,13 @@ export function planRestore(
 
   return {
     result,
-    next: { boards: finalBoards, cards: nextCards, activeBoardId, revision: result.revision },
+    next: {
+      boards: finalBoards,
+      cards: nextCards,
+      activeBoardId,
+      revision: result.revision,
+      structureRevision: source.structureRevision + 1,
+    },
     persist: { cards: persistCards, removeCardIds, boards: boardsToPersist, removeBoardIds },
   }
 }

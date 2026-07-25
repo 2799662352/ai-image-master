@@ -33,6 +33,7 @@ function source(patch: Partial<WorkbenchIRSource> = {}): WorkbenchIRSource {
     cards: [],
     activeBoardId: 'b1',
     revision: 0,
+    structureRevision: 0,
     ...patch,
   }
 }
@@ -62,11 +63,18 @@ describe('exportWorkbenchIR', () => {
     expect(JSON.stringify(ir)).not.toContain('"order"')
   })
 
-  it('带 irVersion 与 revision 令牌', () => {
-    const ir = exportWorkbenchIR(source({ revision: 7 }))
+  it('带 irVersion 与两级并发令牌(整份 structureRevision + 按卡 rev)', () => {
+    const ir = exportWorkbenchIR(
+      source({
+        structureRevision: 7,
+        cards: [card({ id: 'c1', boardId: 'b1', rev: 3 }), card({ id: 'c2', boardId: 'b1', order: 1 })],
+      }),
+    )
     expect(ir.irVersion).toBe(WORKBENCH_IR_VERSION)
-    expect(ir.revision).toBe(7)
+    expect(ir.structureRevision).toBe(7)
     expect(ir.activeBoardId).toBe('b1')
+    // 老库卡片缺 rev → 导出成 0
+    expect(ir.boards[0].cards.map((c) => c.rev)).toEqual([3, 0])
   })
 
   it('运行时结果只作只读注解进 result,不混进意图字段', () => {
@@ -136,33 +144,126 @@ describe('planApplyIR / 拒绝路径', () => {
     expect(plan.result.skipped[0].reason).toContain('irVersion')
   })
 
-  it('revision 过期时拒绝并回报冲突,什么都不写', () => {
-    const src = source({ revision: 5, cards: [card({ id: 'c1', boardId: 'b1', prompt: '旧' })] })
+  it('structureRevision 过期时整份拒绝并回报冲突,什么都不写', () => {
+    const src = source({
+      structureRevision: 5,
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: '旧' })],
+    })
     const ir = roundTrip(src)
-    ir.revision = 3 // agent 手里是旧令牌
+    ir.structureRevision = 3 // agent 手里是旧令牌:这期间有卡被增删或挪过位
     ir.boards[0].cards[0].prompt = '新'
     const plan = planApplyIR(src, ir)
     expect(plan.result.ok).toBe(false)
     expect(plan.result.conflict).toEqual({ expected: 3, actual: 5 })
     expect(plan.next).toBeUndefined()
-    expect(plan.result.revision).toBe(5)
+    expect(plan.result.structureRevision).toBe(5)
   })
 
-  it('force 可以越过 revision 校验', () => {
-    const src = source({ revision: 5, cards: [card({ id: 'c1', boardId: 'b1', prompt: '旧' })] })
+  it('force 可以越过两级校验', () => {
+    const src = source({
+      structureRevision: 5,
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: '旧', rev: 9 })],
+    })
     const ir = roundTrip(src)
-    ir.revision = 3
+    ir.structureRevision = 3
+    ir.boards[0].cards[0].rev = 1
     ir.boards[0].cards[0].prompt = '新'
     const plan = planApplyIR(src, ir, { force: true })
     expect(plan.result.ok).toBe(true)
     expect(plan.result.cards.updated).toEqual(['c1'])
   })
 
+  it('单张卡的 rev 过期只跳过那一张,其余照写(用户打字不该废掉整份 apply)', () => {
+    const src = source({
+      cards: [
+        card({ id: 'c1', boardId: 'b1', order: 0, prompt: '用户刚改的', rev: 4 }),
+        card({ id: 'c2', boardId: 'b1', order: 1, prompt: '没人碰', rev: 0 }),
+      ],
+    })
+    const ir = roundTrip(src)
+    ir.boards[0].cards[0].rev = 1 // agent 导出时是 1,用户之后又改过
+    ir.boards[0].cards[0].prompt = 'agent 想写的'
+    ir.boards[0].cards[1].prompt = 'agent 改了这张'
+
+    const plan = planApplyIR(src, ir)
+
+    expect(plan.result.ok).toBe(true)
+    expect(plan.result.conflict).toBeUndefined()
+    expect(plan.result.cards.updated).toEqual(['c2'])
+    expect(plan.result.skipped).toEqual([
+      { cardId: 'c1', reason: expect.stringContaining('这张卡在你导出之后被改过') },
+    ])
+    const byId = new Map(plan.next!.cards.map((c) => [c.id, c]))
+    expect(byId.get('c1')!.prompt).toBe('用户刚改的')
+    expect(byId.get('c2')!.prompt).toBe('agent 改了这张')
+    // 被跳过的那张不该重写落盘
+    expect(plan.persist!.cards.map((c) => c.id)).toEqual(['c2'])
+  })
+
+  it('rev 过期但只改位置:位置照样生效(位置由 structureRevision 担保)', () => {
+    const src = source({
+      cards: [
+        card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A', rev: 4 }),
+        card({ id: 'c2', boardId: 'b1', order: 1, prompt: 'B', rev: 0 }),
+      ],
+    })
+    const ir = roundTrip(src)
+    ir.boards[0].cards = [ir.boards[0].cards[1], ir.boards[0].cards[0]]
+    ir.boards[0].cards[1].rev = 1 // c1 的 rev 过期,但 IR 没改它的规格
+
+    const plan = planApplyIR(src, ir)
+
+    expect(plan.result.ok).toBe(true)
+    // 规格没变 → 根本走不到 rev 校验,不产生 skip
+    expect(plan.result.skipped).toEqual([])
+    const byId = new Map(plan.next!.cards.map((c) => [c.id, c]))
+    expect(byId.get('c2')!.order).toBe(0)
+    expect(byId.get('c1')!.order).toBe(1)
+  })
+
+  it('改一张卡的规格只 bump 该卡的 rev,不动 structureRevision', () => {
+    const src = source({
+      structureRevision: 5,
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: '旧', rev: 2 })],
+    })
+    const ir = roundTrip(src)
+    ir.boards[0].cards[0].prompt = '新'
+
+    const plan = planApplyIR(src, ir)
+
+    expect(plan.result.structureRevision).toBe(5)
+    expect(plan.next!.cards[0].rev).toBe(3)
+    // 「有改动」计数器照涨 —— 它管撤销栈
+    expect(plan.next!.revision).toBe(1)
+  })
+
+  it('新增/删除卡才 bump structureRevision', () => {
+    const src = source({
+      structureRevision: 5,
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: 'A' })],
+    })
+    const added = planApplyIR(src, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 5,
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: 'A' }, { prompt: '新卡' }] }],
+    })
+    expect(added.result.structureRevision).toBe(6)
+    expect(added.next!.cards.find((c) => c.prompt === '新卡')!.rev).toBe(0)
+  })
+
+  it('v1 的旧 IR 被拒绝并要求重新 export(令牌语义变了,不能尽力而为)', () => {
+    const src = source({ cards: [card({ id: 'c1', boardId: 'b1' })] })
+    const legacy = { ...roundTrip(src), irVersion: 1 } as unknown as Parameters<typeof planApplyIR>[1]
+    const plan = planApplyIR(src, legacy)
+    expect(plan.result.ok).toBe(false)
+    expect(plan.result.skipped[0].reason).toContain('irVersion')
+  })
+
   it('boards 为空 / 全是坏页时拒绝(否则等于清空工作台)', () => {
-    expect(planApplyIR(source(), { irVersion: WORKBENCH_IR_VERSION, revision: 0, boards: [] }).result.ok).toBe(false)
+    expect(planApplyIR(source(), { irVersion: WORKBENCH_IR_VERSION, structureRevision: 0, boards: [] }).result.ok).toBe(false)
     const allBad = planApplyIR(source(), {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [{ name: '  ', cards: [] }],
     })
     expect(allBad.result.ok).toBe(false)
@@ -182,7 +283,7 @@ describe('planApplyIR / 拒绝路径', () => {
     const src = source()
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [
         { id: 'b1', name: '页面 1', cards: [{ id: 'ghost', prompt: '鬼' }] },
         { id: 'bghost', name: '鬼页', cards: [] },
@@ -198,7 +299,7 @@ describe('planApplyIR / 拒绝路径', () => {
     const src = source({ cards: [card({ id: 'c1', boardId: 'b1', prompt: '原' })] })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [{
         id: 'b1',
         name: '页面 1',
@@ -229,7 +330,8 @@ describe('planApplyIR / 声明式改写', () => {
     const byId = new Map(plan.next!.cards.map((c) => [c.id, c]))
     expect(byId.get('c2')!.order).toBe(0)
     expect(byId.get('c1')!.order).toBe(1)
-    expect(plan.result.revision).toBe(1)
+    // 挪过位 = 结构变动
+    expect(plan.result.structureRevision).toBe(1)
   })
 
   it('省略字段 = 回默认值(声明而非 patch)', () => {
@@ -238,7 +340,7 @@ describe('planApplyIR / 声明式改写', () => {
     })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: '猫' }] }],
     })
     const next = plan.next!.cards[0]
@@ -247,9 +349,9 @@ describe('planApplyIR / 声明式改写', () => {
     expect(next.seed).toBeUndefined()
   })
 
-  it('原样 round-trip 不产生任何改动,也不 bump revision', () => {
+  it('原样 round-trip 不产生任何改动,也不 bump 任何令牌', () => {
     const src = source({
-      revision: 4,
+      structureRevision: 4,
       boards: [
         { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
         { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
@@ -265,7 +367,7 @@ describe('planApplyIR / 声明式改写', () => {
       boards: { created: [], renamed: [], removed: [] },
       cards: { created: [], updated: [], moved: [], removed: [] },
       skipped: [],
-      revision: 4,
+      structureRevision: 4,
     })
     expect(plan.persist!.cards).toEqual([])
     expect(plan.persist!.boards).toEqual([])
@@ -301,7 +403,7 @@ describe('planApplyIR / 声明式改写', () => {
     const src = source()
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [
         { id: 'b1', name: '页面 1', cards: [] },
         { name: '第二幕', cards: [{ prompt: '镜 1' }, { prompt: '镜 2' }] },
@@ -325,7 +427,7 @@ describe('planApplyIR / 声明式改写', () => {
     })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [
         { id: 'b2', name: '开场', cards: [] },
         { id: 'b1', name: '页面 1', cards: [] },
@@ -378,7 +480,7 @@ describe('planApplyIR / merge vs replace', () => {
     })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2', prompt: 'B' }] }],
     })
     expect(plan.result.cards.removed).toEqual([])
@@ -404,7 +506,7 @@ describe('planApplyIR / merge vs replace', () => {
       src,
       {
         irVersion: WORKBENCH_IR_VERSION,
-        revision: 0,
+        structureRevision: 0,
         boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2', prompt: 'B' }] }],
       },
       { mode: 'replace' },
@@ -428,7 +530,7 @@ describe('planApplyIR / merge vs replace', () => {
       src,
       {
         irVersion: WORKBENCH_IR_VERSION,
-        revision: 0,
+        structureRevision: 0,
         activeBoardId: 'b2',
         boards: [{ id: 'b1', name: '页面 1', cards: [] }],
       },
@@ -446,12 +548,14 @@ describe('planApplyIR / merge vs replace', () => {
     })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
-      revision: 0,
+      structureRevision: 0,
       activeBoardId: 'b2',
       boards: [{ id: 'b1', name: '页面 1', cards: [] }, { id: 'b2', name: '页面 2', cards: [] }],
     })
     expect(plan.next!.activeBoardId).toBe('b2')
-    expect(plan.result.revision).toBe(1)
+    // 换页只是视图变化,不算结构变动 —— agent 手里的位置计划仍然有效
+    expect(plan.result.structureRevision).toBe(0)
+    expect(plan.next!.revision).toBe(1)
   })
 })
 
@@ -492,7 +596,7 @@ describe('planApplyIR / 渲染中的卡片', () => {
       src,
       {
         irVersion: WORKBENCH_IR_VERSION,
-        revision: 0,
+        structureRevision: 0,
         boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: 'A' }] }],
       },
       { mode: 'replace' },
