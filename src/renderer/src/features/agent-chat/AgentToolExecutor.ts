@@ -24,6 +24,7 @@ import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioG
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
+import type { WorkbenchIR } from '../../../../types/videoWorkbench'
 
 type GenerateAudioToolParams = {
   input?: unknown
@@ -304,6 +305,8 @@ export class AgentToolExecutor {
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_remove_tasks':
+      case 'video_workbench_export':
+      case 'video_workbench_apply':
         return this.callVideoWorkbench(toolName, params)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
@@ -398,6 +401,39 @@ export class AgentToolExecutor {
           total: useVideoWorkbenchStore.getState().cards.length,
           workbench: workbenchSummary(),
         }
+      }
+      case 'video_workbench_export': {
+        const ir = store.exportIR()
+        const boardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (!boardId) return ir
+        const board = ir.boards.find((b) => b.id === boardId)
+        if (!board) {
+          throw new Error(
+            `video_workbench_export: board not found: ${boardId} (existing: ${ir.boards.map((b) => b.id).join(', ')})`,
+          )
+        }
+        // 单页导出仍带全局 revision —— 令牌是整个工作台的,不是这一页的。
+        // 配 merge 模式回写是安全的:没列出的页原样保留。
+        return { ...ir, boards: [board] }
+      }
+      case 'video_workbench_apply': {
+        const raw = params.ir
+        if (!raw || typeof raw !== 'object') {
+          throw new Error('video_workbench_apply: ir is required (get one from video_workbench_export)')
+        }
+        const ir = raw as WorkbenchIR
+        // asset:// 素材补 previewUrl:IR 里刻意不带这个展示派生物,不补的话
+        // apply 完人像库素材的缩略图会空一片。批量一轮解析,失败保持原样。
+        const boards = await Promise.all(
+          (Array.isArray(ir.boards) ? ir.boards : []).map(async (board) => ({
+            ...board,
+            cards: (await enrichAssetReferences(
+              (Array.isArray(board?.cards) ? board.cards : []) as Array<Record<string, unknown>>,
+            )) as unknown as WorkbenchIR['boards'][number]['cards'],
+          })),
+        )
+        const mode = params.mode === 'replace' ? 'replace' : 'merge'
+        return await store.applyIR({ ...ir, boards }, { mode, force: params.force === true })
       }
       default:
         throw new Error(`Unknown video workbench tool: ${toolName}`)
