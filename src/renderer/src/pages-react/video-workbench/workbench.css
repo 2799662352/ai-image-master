@@ -138,6 +138,25 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* 别在这里加 `content-visibility: auto` —— 2026-07-26 实机量过,不值得。
+ *
+ * 条件:200 张满素材卡(上限)、中位卡高 487px、20000 个 DOM 节点、Electron 真实窗口。
+ * 结果:一次完整强制同步重排 3.90ms → 1.40ms(降到 36%),滚动手感无可感差异。
+ *
+ * 为什么否掉:60fps 的帧预算是 16.7ms,3.90ms 只占 23%,而且**滚动根本不触发布局
+ * 失效** —— 那 3.90ms 在正常滚动路径上不会发生。浏览器本来就不绘制屏幕外内容,
+ * content-visibility 独有的收益就是这点布局/样式重算。代价却是要维护
+ * `contain-intrinsic-size`(卡高随提示词长高、视频出现、素材增减而变),填错就是
+ * 滚动条跳动 —— 拿真实的手感倒退换 2.5ms 最坏情况收益,不划算。
+ *
+ * 同理虚拟滚动也已否掉:打一个字只重渲染 1/200 张卡(memo 未坏),而虚拟化会弄坏
+ * 原生 Ctrl+F、HTML5 拖拽排序(放置目标必须在 DOM 里)、和高度变化时的滚动锚定。
+ *
+ * Vercel 的 React 最佳实践 6.2 节推荐长列表用 content-visibility,那没错 ——
+ * 它的例子是 1000 条 × 80px 的轻列表,视口里有十几条;我们是 200 张 × 487px 的
+ * 重卡,视口里同时只有一张多。场景不同结论不同,别照搬。
+ *
+ * 要重新评估的话,先量绝对值再看比例。 */
 .vw-card {
   animation: vw-card-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   transition: border-color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
