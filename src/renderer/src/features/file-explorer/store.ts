@@ -858,9 +858,14 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
         if (tab) {
           const api = getApi()
           if (api.fs.writeText) {
-            const res = await api.fs.writeText(tab.path, conflict.diskContent)
-            if (!res.ok) {
-              // Preserve conflict so the user can retry
+            // 同 readText:成功返回 `{ mtime }`,失败是 reject。原本查的 `res.ok`
+            // 恒为 undefined → 恒真 → 每次都提前 return,于是下面清除冲突态的
+            // set(...) 永远不执行。表现是:盘其实写成功了,但冲突横幅不消失、
+            // 标签页内容不更新,按钮看起来像死键。
+            try {
+              await api.fs.writeText(tab.path, conflict.diskContent)
+            } catch {
+              // 写盘真失败:保留冲突态让用户重试
               return
             }
           }
@@ -1220,15 +1225,29 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
     const [leftPath, rightPath] = paths
     const api = getApi()
-    if (!api.fs.readText) {
+    const readText = api.fs.readText
+    if (!readText) {
       return { ok: false, reason: '不支持读取文本' }
     }
-    const [leftRes, rightRes] = await Promise.all([
-      api.fs.readText(leftPath),
-      api.fs.readText(rightPath),
-    ])
-    if (!leftRes.ok) return { ok: false, reason: `读取左侧失败: ${leftRes.reason}` }
-    if (!rightRes.ok) return { ok: false, reason: `读取右侧失败: ${rightRes.reason}` }
+    // readText 成功返回 `{ content, mtime }`,失败是 **reject** ——
+    // fsIpc.handleReadText 直接 throw,而 preload 的 safeInvoke 只是
+    // `ipcRenderer.invoke`,不把异常包成结果对象。
+    //
+    // 这里原本按 `{ ok, text, reason }` 判别联合来读,而那个形状从不存在:`.ok`
+    // 恒为 undefined → `!undefined` 恒为 true → **每次都走失败分支**,文件对比
+    // 标签页从来就打不开(报「读取左侧失败: undefined」)。本文件别处(见
+    // 上面 watch 回调与 openFile)一直都是直接取 `.content`,这一处是异类。
+    const read = async (p: string, side: string) => {
+      try {
+        return { ok: true as const, content: (await readText(p)).content }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return { ok: false as const, reason: `读取${side}失败: ${detail}` }
+      }
+    }
+    const [leftRes, rightRes] = await Promise.all([read(leftPath, '左侧'), read(rightPath, '右侧')])
+    if (!leftRes.ok) return { ok: false, reason: leftRes.reason }
+    if (!rightRes.ok) return { ok: false, reason: rightRes.reason }
 
     const leftName = leftPath.split(/[\\/]/).pop() ?? leftPath
     const rightName = rightPath.split(/[\\/]/).pop() ?? rightPath
@@ -1246,8 +1265,8 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       compare: {
         left: leftPath,
         right: rightPath,
-        leftContent: leftRes.text,
-        rightContent: rightRes.text,
+        leftContent: leftRes.content,
+        rightContent: rightRes.content,
       },
     }
     set((s) => {

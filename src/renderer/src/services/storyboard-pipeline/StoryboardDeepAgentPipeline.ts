@@ -239,7 +239,15 @@ export async function charNarrativeSubAgent(opts: {
   return { narrativeData, sharedFileContent: JSON.stringify({ objs: narrativeData }) }
 }
 
-export { charMergeSubAgent } from './storyboard-char-merge'
+// 必须 import 一次再 re-export:`export { x } from '...'` **不会**把 x 带进本模块
+// 作用域,而 charMergeNode(Pass 5)在下面直接调用它 —— 少了这行,那一关运行时
+// 就是 `ReferenceError: charMergeSubAgent is not defined`。
+//
+// 测试没能挡住,因为它们从本模块 import 这个函数(re-export 对外部消费者有效),
+// 测的是被转发的函数本身,不是调用它的那个流水线节点。
+import { charMergeSubAgent } from './storyboard-char-merge'
+
+export { charMergeSubAgent }
 
 // ==================== Pipeline Class ====================
 
