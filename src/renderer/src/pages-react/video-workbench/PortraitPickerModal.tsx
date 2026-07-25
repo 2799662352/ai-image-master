@@ -6,6 +6,7 @@
 // 回填 https 地址(官方素材没有 asset://,原始地址就是推荐引用方式)。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   SeedanceAssetItem,
   SeedanceAssetKindFilter,
@@ -217,7 +218,12 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
 
   if (!open) return null
 
-  return (
+  // 必须 portal 到 body:这个弹窗是从卡片内部挂起来的(WorkbenchCard),而
+  // `position: fixed` 只在没有祖先建立包含块时才相对视口定位。卡片上任何
+  // `transform` / `filter` / `contain` / `will-change` 都会把它裁进卡片框 ——
+  // 而这几个属性正是做滚动性能时最先会加到列表项上的东西。同目录的
+  // MaterialPreviewModal 已经是这个形状。
+  return createPortal(
     <div
       className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-6"
       data-testid="vw-portrait-picker"
@@ -395,6 +401,7 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
