@@ -1,14 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-25T17:05:24.711Z",
+  "generatedAt": "2026-07-25T17:49:05.265Z",
   "expiresAt": "2026-08-31",
   "diagnostics": [
-    {
-      "file": "electron/main.js",
-      "code": "TS18046",
-      "message": "'error' is of type 'unknown'.",
-      "count": 20
-    },
     {
       "file": "src/main/index.ts",
       "code": "TS2345",
