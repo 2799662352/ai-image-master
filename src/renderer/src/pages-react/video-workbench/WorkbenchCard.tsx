@@ -484,6 +484,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
               addFiles={addFiles}
               onRemove={handleRemoveMaterial}
               onReorder={handleReorderMaterial}
+              thumbSrcs={thumbSrcs}
             />
             <div className="flex items-center gap-3">
               <p className="text-white/25 text-[10px] flex-1">
@@ -773,12 +774,15 @@ function MaterialStackRow({
   addFiles,
   onRemove,
   onReorder,
+  thumbSrcs,
 }: {
   card: VideoWorkbenchCard
   busy: boolean
   addFiles: (files: File[]) => Promise<void>
   onRemove: (kind: MediaTokenKind, index: number) => void
   onReorder: (kind: MediaTokenKind, fromIndex: number, toIndex: number) => void
+  /** 卡片层已解析的缩略图地址,顺序为 图片→视频→音频(见 thumbEntries)。 */
+  thumbSrcs: Array<string | undefined>
 }) {
   // MaterialStack 的 onAdd 直接复用整卡 addFiles(自动按 MIME 分流),
   // 这样点「+」和拖放走同一条入库路径。素材上限跟随生成模式。
@@ -788,6 +792,12 @@ function MaterialStackRow({
   const audioLimit = modeLimit(card.mode, 'audio')
   const imageLabel =
     card.mode === 'first_frame' ? '首帧图' : card.mode === 'first_last_frame' ? '首/尾帧' : '参考图'
+  // thumbSrcs 是三类素材首尾相接的一条数组,按各自长度切回来。
+  const imageCount = card.referenceImages.length
+  const videoCount = card.referenceVideos.length
+  const imageThumbs = thumbSrcs.slice(0, imageCount)
+  const videoThumbs = thumbSrcs.slice(imageCount, imageCount + videoCount)
+  const audioThumbs = thumbSrcs.slice(imageCount + videoCount)
   return (
     <div className="flex flex-wrap gap-x-8 gap-y-1">
       {imageLimit > 0 && (
@@ -796,6 +806,7 @@ function MaterialStackRow({
           label={imageLabel}
           accept="image/*"
           materials={card.referenceImages}
+          thumbSrcs={imageThumbs}
           limit={imageLimit}
           disabled={busy}
           onAdd={onAdd}
@@ -809,6 +820,7 @@ function MaterialStackRow({
           label="视频素材"
           accept="video/*"
           materials={card.referenceVideos}
+          thumbSrcs={videoThumbs}
           limit={videoLimit}
           disabled={busy}
           onAdd={onAdd}
@@ -822,6 +834,7 @@ function MaterialStackRow({
           label="音频素材"
           accept="audio/*"
           materials={card.referenceAudios}
+          thumbSrcs={audioThumbs}
           limit={audioLimit}
           disabled={busy}
           onAdd={onAdd}

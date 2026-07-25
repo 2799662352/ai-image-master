@@ -68,6 +68,17 @@ export interface MaterialThumbProps {
   /** 无缩略图 / 解析失败 / 图片加载失败时的占位内容(文件名或图标)。 */
   fallback: ReactNode
   imgClassName?: string
+  /**
+   * 父层已经解析过同一个 target 时把结果传进来,三态:
+   * - `undefined` = 父层不负责,本组件自己解析(独立使用时的默认)
+   * - `null` = 父层负责但还没解析出来 / 解析失败 → 出 fallback
+   * - `string` = 直接用
+   *
+   * 存在这个入口是因为工作台卡片必须在**卡片层**解析一遍(提示词 chip 是 HTML
+   * 字符串渲染,跑不了 hook),不传进来的话同一张图每张卡要走两趟 IPC、造两个
+   * blob —— 200 张满素材的看板峰值就是 3600 个。
+   */
+  resolvedSrc?: string | null
 }
 
 /**
@@ -75,10 +86,19 @@ export interface MaterialThumbProps {
  * data:/https 直通;asset:// 缺 previewUrl 时惰性查人像库列表补图;
  * 解析失败或 <img> onError 时渲染 fallback。
  */
-export function MaterialThumb({ kind, material, fallback, imgClassName }: MaterialThumbProps) {
+export function MaterialThumb({
+  kind,
+  material,
+  fallback,
+  imgClassName,
+  resolvedSrc,
+}: MaterialThumbProps) {
   const effective = useAssetPreviewMaterial(material)
   const target = materialThumbTarget(kind, effective) ?? ''
-  const resolved = useResolvedMediaSrc(target, 'image')
+  // hook 不能有条件地调,所以父层接管时喂空 target —— 空串走不到 IPC。
+  const parentOwns = resolvedSrc !== undefined
+  const own = useResolvedMediaSrc(parentOwns ? '' : target, 'image')
+  const resolved = parentOwns ? resolvedSrc : own
   const [erroredSrc, setErroredSrc] = useState<string | null>(null)
   if (!resolved || erroredSrc === resolved) return <>{fallback}</>
   return (

@@ -30,6 +30,11 @@ interface MaterialStackProps {
   onRemove: (index: number) => void
   /** 拖拽换位:把 fromIndex 的素材挪到 toIndex(0 起)。 */
   onReorder?: (fromIndex: number, toIndex: number) => void
+  /**
+   * 与 materials 等长的已解析缩略图地址。给了就由父层独占解析,缩略图不再自己
+   * 走一趟 IPC(见 MaterialThumb.resolvedSrc)。不给则各缩略图自己解析。
+   */
+  thumbSrcs?: Array<string | undefined>
 }
 
 /**
@@ -38,7 +43,11 @@ interface MaterialStackProps {
  * MaterialThumb 走 useResolvedMediaSrc(IPC → blob:);解析失败/图片加载
  * 失败时兜底显示文件名(图片)或类型图标(视频/音频),不出裂图。
  */
-function materialThumb(kind: 'image' | 'video' | 'audio', material: VideoWorkbenchMaterial): ReactNode {
+function materialThumb(
+  kind: 'image' | 'video' | 'audio',
+  material: VideoWorkbenchMaterial,
+  resolvedSrc?: string | null,
+): ReactNode {
   const icon = kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼'
   const fallback =
     kind === 'image' && !material.previewUrl ? (
@@ -49,7 +58,14 @@ function materialThumb(kind: 'image' | 'video' | 'audio', material: VideoWorkben
         <span className="text-[9px] text-white/60 px-0.5 truncate max-w-full">{material.name}</span>
       </span>
     )
-  return <MaterialThumb kind={kind} material={material} fallback={fallback} />
+  return (
+    <MaterialThumb
+      kind={kind}
+      material={material}
+      fallback={fallback}
+      {...(resolvedSrc !== undefined ? { resolvedSrc } : {})}
+    />
+  )
 }
 
 export function MaterialStack({
@@ -62,9 +78,14 @@ export function MaterialStack({
   onAdd,
   onRemove,
   onReorder,
+  thumbSrcs,
 }: MaterialStackProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const visible = materials.slice(0, MAX_VISIBLE)
+  // 父层接管解析时,未解析出的项要传 null(而不是 undefined)—— undefined 的语义
+  // 是「父层不管,你自己解析」,会把省下的那趟 IPC 又加回来。
+  const thumbSrcAt = (index: number): string | null | undefined =>
+    thumbSrcs ? (thumbSrcs[index] ?? null) : undefined
   const expandedWidth = (Math.min(materials.length, MAX_VISIBLE) + 1) * STEP_PX + 8
 
   // ---- 素材换位拖拽 ----
@@ -160,7 +181,7 @@ export function MaterialStack({
               onDragLeave={() => setDropPos((p) => (p?.index === idx ? null : p))}
               onDrop={(e) => handleItemDrop(e, idx)}
             >
-              {materialThumb(kind, m)}
+              {materialThumb(kind, m, thumbSrcAt(idx))}
               {!disabled && (
                 <span
                   className="vw-stack-remove"
