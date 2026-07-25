@@ -34,6 +34,7 @@ import type {
   AgentThreadSummary,
   AgentToolRequest,
   AgentToolResponse,
+  AgentApprovalResolved,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexAuditLogEntry,
@@ -160,6 +161,12 @@ export interface AgentApi {
   onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
   onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
   onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) => () => void
+  /**
+   * 服务端自行解决/清理了某个待决审批（`serverRequest/resolved`，turn 开始/完成/
+   * 被打断都会触发）。收到后必须撤下对应卡片：store 的 pendingApprovals 只在切换
+   * 线程/新会话/删除线程时清空，不会因 turn 结束而自愈。
+   */
+  onApprovalResolved: (handler: (info: AgentApprovalResolved) => void) => () => void
   sendToolResponse: (response: AgentToolResponse) => void
   sendImageTaskUpdate: (update: ImageTaskUpdate) => void
   submitCanvasEditRequest: (request: unknown) => void

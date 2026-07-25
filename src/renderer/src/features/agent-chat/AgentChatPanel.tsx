@@ -51,6 +51,7 @@ export function AgentChatPanel() {
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
   const addApprovalRequest = useAgentChatStore((state) => state.addApprovalRequest)
+  const removeApprovalRequest = useAgentChatStore((state) => state.removeApprovalRequest)
   const applyGoalEvent = useAgentChatStore((state) => state.applyGoalEvent)
   const refreshGoal = useAgentChatStore((state) => state.refreshGoal)
   const activeGoal = useAgentChatStore((state) => (threadId ? state.goalByThread[threadId] : null))
@@ -111,6 +112,14 @@ export function AgentChatPanel() {
     const agent = getAgentApi()
     return agent?.onApprovalRequest?.(addApprovalRequest)
   }, [addApprovalRequest])
+
+  // 服务端自行解决/清理了待决审批（turn 开始/完成/被打断都会触发）。不撤卡的话
+  // 用户会一直看着一张点了也没用的死卡 —— pendingApprovals 只在切换线程/新会话/
+  // 删除线程时清空，不会因 turn 结束而自愈。
+  useEffect(() => {
+    const agent = getAgentApi()
+    return agent?.onApprovalResolved?.((info) => removeApprovalRequest(info.id))
+  }, [removeApprovalRequest])
 
   // Native `/goal`: live goal status stream (thread/goal/updated|cleared).
   // Mount-bound like onEvent so updates aren't lost while the panel is hidden.

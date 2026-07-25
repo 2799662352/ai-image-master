@@ -1311,8 +1311,14 @@ export class CodexNotificationRouter {
       // Codex re-routed the requested model (e.g. quota / rate limit / unsupported
       // tool). Banner-level info — the user paid for X, got Y, they need to know.
       case 'model/rerouted': {
-        const from = typeof params?.from === 'string' ? params.from : 'requested model'
-        const to = typeof params?.to === 'string' ? params.to : 'fallback model'
+        // 上游载荷是 fromModel / toModel（app-server README + AGENTS.md 的
+        // `rename_all = "camelCase"` 约定）；短名是早期形状，一并吃下。只读短名时
+        // 两个值都会落到下面的占位符，通知照弹却不说换了哪个模型 —— 占位符会把这个
+        // 失配掩盖成「看起来正常」，所以别把它简化掉。
+        const fromRaw = params?.fromModel ?? params?.from
+        const toRaw = params?.toModel ?? params?.to
+        const from = typeof fromRaw === 'string' ? fromRaw : 'requested model'
+        const to = typeof toRaw === 'string' ? toRaw : 'fallback model'
         const reason = typeof params?.reason === 'string' ? params.reason : null
         const message = reason
           ? `Routed from ${from} to ${to} (${reason}).`

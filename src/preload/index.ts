@@ -46,6 +46,7 @@ import type {
   AgentToolRequest,
   AgentToolResponse,
   ImageTaskUpdate,
+  AgentApprovalResolved,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexAuditLogEntry,
@@ -339,6 +340,9 @@ const IPC_CHANNELS = {
     'agent:event',
     'agent:tool-request',
     'agent:approval-request',
+    // 服务端自行解决/清理了待决审批（turn 开始/完成/被打断都会触发）——渲染层据此
+    // 撤下卡片，否则会留下一张点了也没用的死卡。
+    'agent:approval-resolved',
   ] as const,
   AGENT_MCP_EVENTS: ['agent:mcp-status'] as const,
   AGENT_GOAL_EVENTS: ['agent:goal'] as const,
@@ -1016,6 +1020,9 @@ const electronAPI: ElectronAPI = {
 
     onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) =>
       safeOnWithCleanup<CodexApprovalRequest>(IPC_CHANNELS.AGENT_EVENTS[2], handler, IPC_CHANNELS.AGENT_EVENTS),
+
+    onApprovalResolved: (handler: (info: AgentApprovalResolved) => void) =>
+      safeOnWithCleanup<AgentApprovalResolved>(IPC_CHANNELS.AGENT_EVENTS[3], handler, IPC_CHANNELS.AGENT_EVENTS),
 
     sendToolResponse: (response: AgentToolResponse) => {
       ipcRenderer.send(IPC_CHANNELS.AGENT.TOOL_RESPONSE, response)

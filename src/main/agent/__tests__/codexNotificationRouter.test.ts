@@ -2174,6 +2174,44 @@ describe('CodexNotificationRouter', () => {
       expect((ev as { notice: { message: string } }).notice.message).toContain('gpt-4-turbo')
     })
 
+    // 上游 app-server README 记的 model/rerouted 载荷是 fromModel / toModel，而
+    // 项目约定是 #[serde(rename_all = "camelCase")]（AGENTS.md），所以 Rust 侧的
+    // from_model 必然序列化成 fromModel。原实现只读 from / to：按文档形状两个读取
+    // 都落到占位符，用户看到「Routed from requested model to fallback model」——
+    // 通知照弹，却完全没说换了哪个模型，而占位符把这个失配掩盖成「看起来正常」。
+    // 两种形状都吃下，与本仓库 token usage 解析的多形状容错同款。
+    it('routes model/rerouted with upstream fromModel/toModel field names', () => {
+      const router = new CodexNotificationRouter()
+      const ev = router.route('model/rerouted', {
+        threadId: 't1',
+        turnId: 'turn1',
+        fromModel: 'gpt-5.5',
+        toModel: 'gpt-5-mini',
+        reason: 'capacity',
+      })
+      expect(ev).toMatchObject({
+        type: 'notice',
+        notice: {
+          kind: 'modelRerouted',
+          level: 'info',
+          details: { from: 'gpt-5.5', to: 'gpt-5-mini', reason: 'capacity' },
+        },
+      })
+      const message = (ev as { notice: { message: string } }).notice.message
+      expect(message).toContain('gpt-5.5')
+      expect(message).toContain('gpt-5-mini')
+      expect(message).not.toContain('requested model')
+      expect(message).not.toContain('fallback model')
+    })
+
+    it('model/rerouted 缺字段时仍给占位符，不产生 undefined 文案', () => {
+      const router = new CodexNotificationRouter()
+      const ev = router.route('model/rerouted', {})
+      const message = (ev as { notice: { message: string } }).notice.message
+      expect(message).not.toContain('undefined')
+      expect(message).toContain('requested model')
+    })
+
     it('routes hook/started and hook/completed as info notices', () => {
       const router = new CodexNotificationRouter()
       const started = router.route('hook/started', { hookName: 'pre-commit', threadId: 't' })

@@ -190,6 +190,8 @@ export interface CodexLocalBackendOptions {
    */
   getDashVectorKey?: () => string | undefined
   onApprovalRequest?: (request: CodexApprovalRequest) => void
+  /** 服务端自行解决/清理了某个待决审批请求（`serverRequest/resolved`）。 */
+  onApprovalResolved?: (info: { id: string; threadId?: string }) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
   /** Out-of-band native `/goal` updates (`thread/goal/updated|cleared`). */
   onGoalNotification?: (event: AgentStreamEvent) => void
@@ -379,6 +381,7 @@ export class CodexLocalBackend implements IAgentBackend {
       connectTimeoutMs: 5_000,
       experimentalApi: this.options.experimentalApi,
       onApprovalRequest: this.options.onApprovalRequest,
+      onApprovalResolved: this.options.onApprovalResolved,
       onMcpNotification: this.options.onMcpNotification,
       onGoalNotification: this.options.onGoalNotification,
       onThreadSettingsNotification: this.options.onThreadSettingsNotification,
@@ -529,6 +532,7 @@ export class CodexLocalBackend implements IAgentBackend {
       experimentalApi: this.options.experimentalApi,
       onLog: (line) => log.write(line + '\n'),
       onApprovalRequest: this.options.onApprovalRequest,
+      onApprovalResolved: this.options.onApprovalResolved,
       onMcpNotification: this.options.onMcpNotification,
       onGoalNotification: this.options.onGoalNotification,
       onThreadSettingsNotification: this.options.onThreadSettingsNotification,
