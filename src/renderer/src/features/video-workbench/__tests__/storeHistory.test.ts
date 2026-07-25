@@ -141,3 +141,42 @@ describe('生成完成写历史记录', () => {
     expect(useVideoWorkbenchStore.getState().cards[0].status).toBe('succeeded')
   })
 })
+
+describe('重新生成同一张卡', () => {
+  it('重启时清掉上一轮结果与防重标记,第二轮结果照样入历史', async () => {
+    const addToHistory = mockHistoryService()
+    const firstClientId = await submitOneCard()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(
+      makeUpdate({
+        clientId: firstClientId,
+        localPath: 'C:\\videos\\v1.mp4',
+        remoteUrl: 'https://cos.example/v1.mp4',
+        actualSeed: 111,
+        completionTokens: 900,
+      }),
+    )
+    await vi.waitFor(() => expect(addToHistory).toHaveBeenCalledTimes(1))
+
+    const cardId = useVideoWorkbenchStore.getState().cards[0].id
+    await useVideoWorkbenchStore.getState().startCards([cardId])
+
+    // 上一轮的结果不能残留 —— 否则播放器会继续显示旧视频,
+    // 且 historyRecorded 会把第二轮结果永久挡在历史页之外。
+    const restarted = useVideoWorkbenchStore.getState().cards[0]
+    expect(restarted.historyRecorded).toBeFalsy()
+    expect(restarted.localPath).toBeUndefined()
+    expect(restarted.remoteUrl).toBeUndefined()
+    expect(restarted.actualSeed).toBeUndefined()
+    expect(restarted.completionTokens).toBeUndefined()
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(
+      makeUpdate({
+        clientId: restarted.clientId!,
+        localPath: 'C:\\videos\\v2.mp4',
+        remoteUrl: 'https://cos.example/v2.mp4',
+      }),
+    )
+    await vi.waitFor(() => expect(addToHistory).toHaveBeenCalledTimes(2))
+    expect(addToHistory.mock.calls[1][2]).toEqual(['https://cos.example/v2.mp4'])
+  })
+})

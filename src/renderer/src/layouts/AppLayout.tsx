@@ -7,6 +7,7 @@ import {
   mountSeedanceTaskListener,
   useAgentChatStore,
 } from '../features/agent-chat'
+import { mountWorkbenchTaskListener } from '../features/video-workbench/store'
 import {
   GeneratePage,
   BatchPage,
@@ -92,6 +93,14 @@ export function AppLayout() {
 
   useEffect(() => {
     return mountSeedanceTaskListener()
+  }, [])
+
+  // 工作台任务回流必须挂在 App 级:页面本身被下面的 `<Activity mode="hidden">`
+  // 托管,切走标签页时 React 会销毁页面 effect,订阅会随之断开,期间完成的任务
+  // 广播就永久丢了(全局 SeedanceTaskListener 对 source==='workbench' 不接)。
+  // mountWorkbenchTaskListener 是引用计数的,与页面自己那份共存。
+  useEffect(() => {
+    return mountWorkbenchTaskListener()
   }, [])
 
   useEffect(() => {
