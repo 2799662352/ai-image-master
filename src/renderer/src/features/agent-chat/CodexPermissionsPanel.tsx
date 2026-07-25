@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type {
   CodexApprovalPolicy,
   CodexModelVerbosity,
@@ -91,15 +91,21 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
   const [memoryResetBusy, setMemoryResetBusy] = useState(false)
   const [memoryNotice, setMemoryNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
-  useEffect(() => {
-    setDraft(statusToDraft(status))
-  }, [status])
+  // Diff against the fallback-resolved snapshot (not the raw status): older
+  // main-process builds omit the tuning fields, and comparing 'default'
+  // against undefined would wrongly mark them as changed on every apply.
+  const [baseline, setBaseline] = useState<Draft | undefined>(() => statusToDraft(status))
+  const nextBaseline = statusToDraft(status)
+  if (!sameDraft(nextBaseline, baseline)) {
+    // Resync during render rather than in an effect. An effect would leave a
+    // window where a click lands first and then gets clobbered by the late
+    // flush, and it would also discard unsaved edits whenever the parent merely
+    // rebuilt a value-identical snapshot object.
+    setBaseline(nextBaseline)
+    setDraft(nextBaseline)
+  }
 
   const patch = useMemo(() => {
-    // Diff against the fallback-resolved snapshot (not the raw status): older
-    // main-process builds omit the tuning fields, and comparing 'default'
-    // against undefined would wrongly mark them as changed on every apply.
-    const baseline = statusToDraft(status)
     if (!baseline || !draft) return {}
     const next: Partial<CodexSessionConfig> = {}
     if (draft.sandboxMode !== baseline.sandboxMode) next.sandboxMode = draft.sandboxMode
@@ -112,7 +118,7 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
     if (draft.notifyOnTurnComplete !== baseline.notifyOnTurnComplete) next.notifyOnTurnComplete = draft.notifyOnTurnComplete
     if (draft.memoriesEnabled !== baseline.memoriesEnabled) next.memoriesEnabled = draft.memoriesEnabled
     return next
-  }, [draft, status])
+  }, [draft, baseline])
 
   if (!status || !draft) {
     return (
@@ -401,6 +407,23 @@ function statusToDraft(status?: CodexSessionStatus): Draft | undefined {
     // hardcoded `features.memories=true` launch pin.
     memoriesEnabled: status.memoriesEnabled ?? true,
   }
+}
+
+const DRAFT_KEYS = [
+  'sandboxMode',
+  'approvalPolicy',
+  'webSearch',
+  'personality',
+  'reasoningSummary',
+  'showRawReasoning',
+  'modelVerbosity',
+  'notifyOnTurnComplete',
+  'memoriesEnabled',
+] as const satisfies readonly (keyof Draft)[]
+
+function sameDraft(a?: Draft, b?: Draft): boolean {
+  if (!a || !b) return a === b
+  return DRAFT_KEYS.every((key) => a[key] === b[key])
 }
 
 function RadioGroup<T extends string>({
