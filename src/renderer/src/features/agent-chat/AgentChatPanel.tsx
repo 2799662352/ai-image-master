@@ -148,6 +148,14 @@ export function AgentChatPanel() {
     void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
   }, [settingsOpen])
 
+  // Publish the GLOBAL memories switch to the store so ThreadSidebar's
+  // per-thread toggle can disable itself. Mirrored from one place instead of at
+  // each of the several `setCodexStatus` call sites.
+  const setMemoriesGloballyEnabled = useAgentChatStore((s) => s.setMemoriesGloballyEnabled)
+  useEffect(() => {
+    setMemoriesGloballyEnabled(codexStatus?.memoriesEnabled)
+  }, [codexStatus?.memoriesEnabled, setMemoriesGloballyEnabled])
+
   // Light-dismiss for the settings popover: clicking anywhere outside the
   // popover (and outside its toggle button, which handles its own toggling)
   // closes it.

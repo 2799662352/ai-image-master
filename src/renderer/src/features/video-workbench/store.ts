@@ -28,26 +28,39 @@ import type {
   VideoWorkbenchReconcileResult,
   VideoWorkbenchSubmitPayload,
   VideoWorkbenchSubmitResult,
+  WorkbenchApplyOptions,
+  WorkbenchApplyResult,
+  WorkbenchIR,
 } from '../../../../types/videoWorkbench'
 import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
-import { WORKBENCH_MODES, modeLimit } from './modes'
+import { modeLimit } from './modes'
 import { getWorkbenchDb } from './WorkbenchDb'
+import {
+  type MaterialKind,
+  buildCard,
+  clampMaterials,
+  createDefaultBoard,
+  createId,
+  isActiveStatus,
+  normalizeDuration,
+  normalizeMode,
+  normalizeSeed,
+  reorderBoard,
+  toMaterial,
+} from './cardSpec'
+import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
 
-export const MAX_REFERENCE_IMAGES = 9
-export const MAX_REFERENCE_VIDEOS = 3
-export const MAX_REFERENCE_AUDIOS = 3
+export {
+  MAX_REFERENCE_AUDIOS,
+  MAX_REFERENCE_IMAGES,
+  MAX_REFERENCE_VIDEOS,
+  buildCard,
+  toMaterial,
+} from './cardSpec'
 
 /** 卡片持久化防抖窗口(打字高频更新不打爆 IndexedDB)。 */
 const PERSIST_DEBOUNCE_MS = 500
-
-type MaterialKind = 'referenceImages' | 'referenceVideos' | 'referenceAudios'
-
-const MATERIAL_LIMITS: Record<MaterialKind, number> = {
-  referenceImages: MAX_REFERENCE_IMAGES,
-  referenceVideos: MAX_REFERENCE_VIDEOS,
-  referenceAudios: MAX_REFERENCE_AUDIOS,
-}
 
 interface WorkbenchElectronApi {
   videoWorkbench?: {
@@ -63,69 +76,6 @@ interface WorkbenchElectronApi {
 
 function getApi(): WorkbenchElectronApi | undefined {
   return (window as Window & { electronAPI?: WorkbenchElectronApi }).electronAPI
-}
-
-function createId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `wb-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-/** 字符串源 → Material(展示名从路径/URL 猜)。 */
-export function toMaterial(src: string | VideoWorkbenchMaterial): VideoWorkbenchMaterial {
-  if (typeof src !== 'string') return src
-  if (src.startsWith('data:')) return { name: '(内嵌素材)', src }
-  if (src.startsWith('asset://')) return { name: `素材库 ${src.slice(8, 20)}…`, src }
-  const clean = src.split(/[?#]/)[0]
-  const base = clean.split(/[\\/]/).pop() || src.slice(0, 32)
-  return { name: base, src }
-}
-
-/** 归一化 mode 输入(未知值回退全能参考)。 */
-function normalizeMode(mode: unknown): VideoWorkbenchMode {
-  return (WORKBENCH_MODES.find((m) => m.value === mode)?.value ?? 'multimodal_ref') as VideoWorkbenchMode
-}
-
-/** seed 归一化:非法/负数 → undefined(随机)。 */
-function normalizeSeed(seed: unknown): number | undefined {
-  const n = Number(seed)
-  if (!Number.isFinite(n) || n < 0) return undefined
-  return Math.min(4294967295, Math.round(n))
-}
-
-/** 时长归一化:-1 = 智能时长(模型自动决定,文档 8.1);其余收敛 4–15;非法回退 5。 */
-function normalizeDuration(value: unknown): number {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return 5
-  if (n === -1) return -1
-  return Math.min(15, Math.max(4, Math.round(n)))
-}
-
-function clampMaterials(list: VideoWorkbenchMaterial[], kind: MaterialKind): VideoWorkbenchMaterial[] {
-  return list.slice(0, MATERIAL_LIMITS[kind])
-}
-
-/** CardInput → 新卡片(缺省用 Seedance 默认规格;boardId 缺省由 addCards 填当前页)。 */
-export function buildCard(input: VideoWorkbenchCardInput, order: number, boardId?: string): VideoWorkbenchCard {
-  const now = Date.now()
-  return {
-    id: createId(),
-    ...(boardId ? { boardId } : {}),
-    order,
-    status: 'draft',
-    createdAt: now,
-    updatedAt: now,
-    prompt: input.prompt ?? '',
-    model: input.model ?? '2.0',
-    resolution: input.resolution ?? '720p',
-    ratio: input.ratio ?? '16:9',
-    duration: normalizeDuration(input.duration ?? 5),
-    generateAudio: input.generateAudio !== false,
-    mode: normalizeMode(input.mode),
-    ...(normalizeSeed(input.seed) !== undefined ? { seed: normalizeSeed(input.seed) } : {}),
-    webSearch: input.webSearch === true,
-    referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages'),
-    referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos'),
-    referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios'),
-  }
 }
 
 /** 快照里素材展示名的截断上限(防长文件名撑上下文)。 */
@@ -290,6 +240,18 @@ export interface VideoWorkbenchState {
   boards: VideoWorkbenchBoard[]
   activeBoardId: string
   hydrated: boolean
+  /**
+   * 编排意图的版本号,看板 IR 的乐观并发令牌(详见 types/videoWorkbench.ts)。
+   *
+   * **新增会改动 boards/cards 内容的 action 时,记得在返回里带上
+   * `revision: state.revision + 1`** —— 漏了会让 agent 的 apply 拿着过期令牌
+   * 却校验通过,静默盖掉用户的改动。
+   *
+   * 反过来,生成状态的回流(applyTaskUpdate / startCards 的状态写入 / 取消)
+   * 刻意**不**递增:那些不是编排意图,而且一个跑着的任务会让每次 apply 都撞
+   * 冲突,功能等于废掉。
+   */
+  revision: number
 
   /** 首次进入页面 / 首个 MCP 调用时从 IndexedDB 恢复(幂等)。 */
   ensureHydrated: () => Promise<void>
@@ -329,6 +291,14 @@ export interface VideoWorkbenchState {
   reconcileInFlight: () => Promise<void>
   /** seedance:task-update 广播入口(仅消费 source==='workbench')。 */
   applyTaskUpdate: (update: SeedanceTaskUpdate) => void
+
+  /** 导出整个工作台为声明式 IR(带 revision 令牌)。 */
+  exportIR: () => WorkbenchIR
+  /**
+   * 声明式回写整个工作台。revision 对不上直接拒绝(除非 force),渲染中的卡片
+   * 规格定格、在飞的卡片拒绝删除,逐项结果都在返回里。
+   */
+  applyIR: (ir: WorkbenchIR, opts?: WorkbenchApplyOptions) => Promise<WorkbenchApplyResult>
 }
 
 /**
@@ -397,11 +367,6 @@ export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: stri
     return { ok: false, reason: '1080p 仅 Seedance 2.0 满血支持' }
   }
   return { ok: true }
-}
-
-/** 任务仍在飞（可取消、需要重启对账）的状态集合。 */
-function isActiveStatus(status: VideoWorkbenchCardStatus): boolean {
-  return status === 'preparing' || status === 'queued' || status === 'running'
 }
 
 type SetState = (
@@ -482,17 +447,6 @@ function persistNow(card: VideoWorkbenchCard): void {
   })
 }
 
-/** 页内 order 压实(只动指定页的卡,其他页原样)。 */
-function reorderBoard(cards: VideoWorkbenchCard[], boardId: string | undefined): VideoWorkbenchCard[] {
-  let i = 0
-  return cards.map((c) => {
-    if (c.boardId !== boardId) return c
-    const next = c.order === i ? c : { ...c, order: i }
-    i += 1
-    return next
-  })
-}
-
 let hydrationPromise: Promise<void> | null = null
 
 /** 「默认上传人像库」开关的 localStorage 键。 */
@@ -500,10 +454,6 @@ export const AUTO_IMPORT_PORTRAIT_KEY = 'vw-auto-import-portrait'
 
 /** 当前激活「页」的 localStorage 键(轻量元数据,不进 IndexedDB)。 */
 export const ACTIVE_BOARD_KEY = 'vw-active-board'
-
-function createDefaultBoard(order = 0, name?: string): VideoWorkbenchBoard {
-  return { id: createId(), name: name ?? `页面 ${order + 1}`, order, createdAt: Date.now() }
-}
 
 /** 自动命名「页面 N」:从 boards.length+1 起找未占用的编号。 */
 function nextBoardName(boards: VideoWorkbenchBoard[]): string {
@@ -565,6 +515,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   boards: [initialBoard],
   activeBoardId: initialBoard.id,
   hydrated: false,
+  revision: 0,
   autoImportPortrait: readAutoImportPortrait(),
 
   setAutoImportPortrait: (enabled) => {
@@ -644,7 +595,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       order: boards.length,
       createdAt: Date.now(),
     }
-    set((state) => ({ boards: [...state.boards, board], activeBoardId: board.id }))
+    set((state) => ({
+      boards: [...state.boards, board],
+      activeBoardId: board.id,
+      revision: state.revision + 1,
+    }))
     writeActiveBoard(board.id)
     void getWorkbenchDb().putBoard(board).catch((e) => {
       console.warn('[VideoWorkbench] 页持久化失败(忽略):', e)
@@ -661,15 +616,20 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   renameBoard: (id, name) => {
     const trimmed = name.trim()
     if (!trimmed) return false
+    const exists = get().boards.some((b) => b.id === id)
+    if (!exists) return false
+    // 名字没变就是无操作:不 bump revision,也不重写库 —— 输入框失焦提交同名
+    // 很常见,白让 agent 手里的 IR 令牌失效不值。
     let renamed: VideoWorkbenchBoard | null = null
-    set((state) => ({
-      boards: state.boards.map((b) => {
-        if (b.id !== id) return b
+    set((state) => {
+      const boards = state.boards.map((b) => {
+        if (b.id !== id || b.name === trimmed) return b
         renamed = { ...b, name: trimmed }
         return renamed
-      }),
-    }))
-    if (!renamed) return false
+      })
+      return renamed ? { boards, revision: state.revision + 1 } : {}
+    })
+    if (!renamed) return true
     void getWorkbenchDb().putBoard(renamed).catch(() => {})
     return true
   },
@@ -686,6 +646,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       boards,
       activeBoardId,
       cards: state.cards.filter((c) => c.boardId !== id),
+      revision: state.revision + 1,
     })
     writeActiveBoard(activeBoardId)
     const db = getWorkbenchDb()
@@ -707,7 +668,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     set((state) => {
       const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
       inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
-      return { cards: [...state.cards, ...created] }
+      return { cards: [...state.cards, ...created], revision: state.revision + 1 }
     })
     for (const card of created) persistNow(card)
     void getWorkbenchDb().evict()
@@ -716,8 +677,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
 
   updateCard: (id, patch) => {
     let updated: VideoWorkbenchCard | null = null
-    set((state) => ({
-      cards: state.cards.map((card) => {
+    set((state) => {
+      const cards = state.cards.map((card) => {
         if (card.id !== id) return card
         // 进行中的任务参数已定格提交,不允许改(与音频页任务快照语义一致)
         if (card.status === 'preparing' || card.status === 'queued' || card.status === 'running') return card
@@ -758,33 +719,45 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           }
         }
         return updated
-      }),
-    }))
+      })
+      return updated ? { cards, revision: state.revision + 1 } : {}
+    })
     if (updated) schedulePersist(updated)
     return updated !== null
   },
 
   removeCard: (id) => {
+    let boardId: string | undefined
+    let found = false
     set((state) => {
       const removed = state.cards.find((c) => c.id === id)
-      if (!removed) return state
-      return { cards: reorderBoard(state.cards.filter((c) => c.id !== id), removed.boardId) }
+      if (!removed) return {}
+      found = true
+      boardId = removed.boardId
+      return {
+        cards: reorderBoard(state.cards.filter((c) => c.id !== id), removed.boardId),
+        revision: state.revision + 1,
+      }
     })
+    if (!found) return
     const timer = persistTimers.get(id)
     if (timer) {
       clearTimeout(timer)
       persistTimers.delete(id)
     }
     void getWorkbenchDb().remove(id).catch(() => {})
-    // 兄弟卡 order 变了,补写
-    for (const card of get().cards) schedulePersist(card)
+    // 兄弟卡 order 变了,补写 —— 只是这一页的兄弟,别把整个工作台重写一遍。
+    for (const card of get().cards) {
+      if (card.boardId === boardId) schedulePersist(card)
+    }
   },
 
   moveCard: (id, toIndex) => {
     // toIndex 为卡片所属页内的目标下标;只重排该页,其他页原样。
+    let boardId: string | undefined
     set((state) => {
       const moved = state.cards.find((c) => c.id === id)
-      if (!moved) return state
+      if (!moved) return {}
       const positions: number[] = []
       const boardCards: VideoWorkbenchCard[] = []
       state.cards.forEach((c, idx) => {
@@ -795,7 +768,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       })
       const from = boardCards.findIndex((c) => c.id === id)
       const clamped = Math.max(0, Math.min(boardCards.length - 1, toIndex))
-      if (from === clamped) return state
+      if (from === clamped) return {}
+      boardId = moved.boardId
       const reordered = [...boardCards]
       const [item] = reordered.splice(from, 1)
       reordered.splice(clamped, 0, item)
@@ -803,15 +777,18 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       positions.forEach((pos, i) => {
         next[pos] = reordered[i]
       })
-      return { cards: reorderBoard(next, moved.boardId) }
+      return { cards: reorderBoard(next, moved.boardId), revision: state.revision + 1 }
     })
-    for (const card of get().cards) schedulePersist(card)
+    // 只补写这一页 —— 别的页 order 没动。
+    for (const card of get().cards) {
+      if (card.boardId === boardId) schedulePersist(card)
+    }
   },
 
   addMaterials: (id, kind, materials) => {
     let updated: VideoWorkbenchCard | null = null
-    set((state) => ({
-      cards: state.cards.map((card) => {
+    set((state) => {
+      const cards = state.cards.map((card) => {
         if (card.id !== id) return card
         updated = {
           ...card,
@@ -819,15 +796,16 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           updatedAt: Date.now(),
         }
         return updated
-      }),
-    }))
+      })
+      return updated ? { cards, revision: state.revision + 1 } : {}
+    })
     if (updated) schedulePersist(updated)
   },
 
   moveMaterial: (id, kind, fromIndex, toIndex) => {
     let updated: VideoWorkbenchCard | null = null
-    set((state) => ({
-      cards: state.cards.map((card) => {
+    set((state) => {
+      const cards = state.cards.map((card) => {
         if (card.id !== id) return card
         const list = card[kind]
         if (fromIndex < 0 || fromIndex >= list.length) return card
@@ -838,20 +816,23 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         next.splice(clamped, 0, moved)
         updated = { ...card, [kind]: next, updatedAt: Date.now() }
         return updated
-      }),
-    }))
+      })
+      return updated ? { cards, revision: state.revision + 1 } : {}
+    })
     if (updated) schedulePersist(updated)
   },
 
   removeMaterial: (id, kind, index) => {
     let updated: VideoWorkbenchCard | null = null
-    set((state) => ({
-      cards: state.cards.map((card) => {
+    set((state) => {
+      const cards = state.cards.map((card) => {
         if (card.id !== id) return card
+        if (index < 0 || index >= card[kind].length) return card
         updated = { ...card, [kind]: card[kind].filter((_, i) => i !== index), updatedAt: Date.now() }
         return updated
-      }),
-    }))
+      })
+      return updated ? { cards, revision: state.revision + 1 } : {}
+    })
     if (updated) schedulePersist(updated)
   },
 
@@ -1102,6 +1083,48 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (after) persistNow(after)
     if (after && shouldRecordHistory) void recordCardHistory(after)
   },
+
+  exportIR: () => exportWorkbenchIR(get()),
+
+  applyIR: async (ir, opts) => {
+    const plan = planApplyIR(get(), ir, opts)
+    if (!plan.next || !plan.persist) return plan.result
+
+    // 落盘前先掐掉被触碰卡片的防抖定时器 —— 否则一条 500ms 前排好的旧内容
+    // 写入会在 apply 之后落地,把刚写好的卡片打回旧值。
+    for (const card of plan.persist.cards) {
+      const timer = persistTimers.get(card.id)
+      if (timer) {
+        clearTimeout(timer)
+        persistTimers.delete(card.id)
+      }
+    }
+    for (const id of plan.persist.removeCardIds) {
+      const timer = persistTimers.get(id)
+      if (timer) {
+        clearTimeout(timer)
+        persistTimers.delete(id)
+      }
+    }
+
+    set(plan.next)
+    writeActiveBoard(plan.next.activeBoardId)
+
+    // 批量落盘:逐张 put/remove,但只写真正变了的 —— 不复用 removeCard/moveCard
+    // 那套「顺手重写整页」的路径,一次 apply 改 50 张卡不该产生 50 倍写放大。
+    const db = getWorkbenchDb()
+    await Promise.all([
+      ...plan.persist.cards.map((card) =>
+        db.put(card).catch((e) => {
+          console.warn('[VideoWorkbench] IR 卡片持久化失败(忽略):', e)
+        }),
+      ),
+      ...plan.persist.removeCardIds.map((id) => db.remove(id).catch(() => {})),
+      ...plan.persist.boards.map((board) => db.putBoard(board).catch(() => {})),
+      ...plan.persist.removeBoardIds.map((id) => db.removeBoard(id).catch(() => {})),
+    ])
+    return plan.result
+  },
 }))
 
 /**
@@ -1154,6 +1177,7 @@ export function resetWorkbenchStoreForTest(): void {
     boards: [board],
     activeBoardId: board.id,
     hydrated: false,
+    revision: 0,
     autoImportPortrait: false,
   })
 }

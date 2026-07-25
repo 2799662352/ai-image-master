@@ -133,9 +133,22 @@ export function withCachedAssetPreview(m: VideoWorkbenchMaterial): VideoWorkbenc
 const REF_KEYS = ['referenceImages', 'referenceVideos', 'referenceAudios'] as const
 
 /**
- * MCP 写入侧(治本):把 CardInput 里 `asset://` 字符串引用升级为带
- * previewUrl 的 Material 对象(store.toMaterial 两种形态都收)。
- * 全部任务的 asset id 收集完只发一次批量解析;查不到/接口失败保持原字符串
+ * 取一条素材条目待解析的 assetId。字符串形态直接看内容;对象形态只在
+ * **缺 previewUrl** 时才需要解析 —— 看板 IR 的素材是 `{name, src}`(previewUrl
+ * 是展示派生物,刻意不进 IR),apply 回来时得在这里补上,否则缩略图空一片。
+ */
+function pendingAssetId(entry: unknown): string | null {
+  if (typeof entry === 'string') return extractAssetId(entry)
+  if (!entry || typeof entry !== 'object') return null
+  const m = entry as Partial<VideoWorkbenchMaterial>
+  if (typeof m.src !== 'string' || m.previewUrl) return null
+  return extractAssetId(m.src)
+}
+
+/**
+ * MCP 写入侧(治本):把 CardInput 里的 `asset://` 引用升级为带 previewUrl 的
+ * Material(字符串与 `{name, src}` 对象两种形态都收,store.toMaterial 也都收)。
+ * 全部任务的 asset id 收集完只发一次批量解析;查不到/接口失败保持原样
  * (缩略图回落文件名占位,提交链路不受影响)。
  */
 export async function enrichAssetReferences<T extends Record<string, unknown>>(
@@ -146,9 +159,8 @@ export async function enrichAssetReferences<T extends Record<string, unknown>>(
     for (const key of REF_KEYS) {
       const list = input[key]
       if (!Array.isArray(list)) continue
-      for (const s of list) {
-        if (typeof s !== 'string') continue
-        const id = extractAssetId(s)
+      for (const entry of list) {
+        const id = pendingAssetId(entry)
         if (id) ids.push(id)
       }
     }
@@ -162,16 +174,16 @@ export async function enrichAssetReferences<T extends Record<string, unknown>>(
       const list = input[key]
       if (!Array.isArray(list)) continue
       let keyChanged = false
-      const mapped = list.map((s) => {
-        if (typeof s !== 'string') return s
-        const id = extractAssetId(s)
-        const entry = id ? found.get(id) : undefined
-        if (!id || !entry?.previewUrl) return s
+      const mapped = list.map((entry) => {
+        const id = pendingAssetId(entry)
+        const asset = id ? found.get(id) : undefined
+        if (!id || !asset?.previewUrl) return entry
         keyChanged = true
+        const existing = typeof entry === 'object' && entry ? (entry as VideoWorkbenchMaterial) : null
         const material: VideoWorkbenchMaterial = {
-          name: entry.name ?? `素材库 ${id.slice(0, 12)}…`,
-          src: s,
-          previewUrl: entry.previewUrl,
+          name: existing?.name || asset.name || `素材库 ${id.slice(0, 12)}…`,
+          src: existing ? existing.src : (entry as string),
+          previewUrl: asset.previewUrl,
         }
         return material
       })

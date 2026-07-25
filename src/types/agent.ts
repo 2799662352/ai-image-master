@@ -611,6 +611,12 @@ export interface AgentThreadSummary {
    * skip auto-title summarization side-effects and to show a small "✎" hint.
    */
   manualTitle?: boolean
+  /**
+   * The thread's cross-session memory choice, or null/absent when the user
+   * never chose (codex default applies). Rides the thread list so the sidebar
+   * menu can render its current state without a second round trip.
+   */
+  memoryMode?: 'enabled' | 'disabled' | null
 }
 
 export interface AgentArtifact {

@@ -270,6 +270,16 @@ export interface AgentApi {
     threadId: string,
     mode: 'enabled' | 'disabled',
   ) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Persist the thread's memory choice and apply it when a codex thread exists,
+   * replaying it onto later ones. Prefer this over `setThreadMemoryMode` from
+   * UI: it works before the first message, which is when the choice is usually
+   * made. `pushed: false` means saved-but-not-yet-live, not a failure.
+   */
+  declareThreadMemoryMode: (
+    threadId: string,
+    mode: 'enabled' | 'disabled',
+  ) => Promise<{ ok: boolean; error?: string; pushed?: boolean }>
   resetMemory: () => Promise<{ ok: boolean; error?: string }>
   // Codex native plugin / marketplace / apps / external-agent-import (≥0.140)
   listPlugins: (

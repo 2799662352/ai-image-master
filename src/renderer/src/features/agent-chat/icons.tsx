@@ -127,6 +127,17 @@ export function FileIcon(props: IconProps): JSX.Element {
   )
 }
 
+/** Brain-ish glyph — marks the per-thread cross-session memory toggle. */
+export function BrainIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M12 5.5a3 3 0 0 0-5.9-.7A2.8 2.8 0 0 0 4 7.5c0 .7.2 1.3.6 1.8A3 3 0 0 0 4 11.5c0 1 .5 1.9 1.3 2.4A3 3 0 0 0 9 18.5c1.6 0 3-1.1 3-2.6z" />
+      <path d="M12 5.5a3 3 0 0 1 5.9-.7A2.8 2.8 0 0 1 20 7.5c0 .7-.2 1.3-.6 1.8A3 3 0 0 1 20 11.5c0 1-.5 1.9-1.3 2.4A3 3 0 0 1 15 18.5c-1.6 0-3-1.1-3-2.6z" />
+      <path d="M12 5.5v10.4" />
+    </Svg>
+  )
+}
+
 /** Arrow-out-of-square — affordance hint for "open in side panel". */
 export function OpenInPanelIcon(props: IconProps): JSX.Element {
   return (
