@@ -811,6 +811,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       set((state) => ({
         cards: state.cards.map((c) => {
           if (c.id !== card.id) return c
+          // 重启必须把上一轮的产物清干净:残留 localPath 会让播放器继续显示
+          // 旧视频;残留 historyRecorded 会把第二轮及以后的结果永久挡在
+          // 历史页之外(applyTaskUpdate 的写历史门是 !card.historyRecorded)。
           submitted = {
             ...c,
             status: 'preparing',
@@ -819,6 +822,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             videoUrl: undefined,
             error: undefined,
             persistence: undefined,
+            localPath: undefined,
+            remoteUrl: undefined,
+            actualSeed: undefined,
+            completionTokens: undefined,
+            historyRecorded: undefined,
             updatedAt: Date.now(),
           }
           return submitted
@@ -927,28 +935,46 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
 
 /**
  * 订阅 seedance:task-update 广播(source==='workbench' 的进度/结果回流)。
- * 由页面 mount 时调用;返回退订函数。模块级守卫防重复订阅。
+ *
+ * 引用计数是必需的,不是防御性设计:AppLayout 挂一份常驻,工作台页再挂一份。
+ * 页面被 `<Activity mode="hidden">` 隐藏时 React 会销毁 effect,其 cleanup 只把
+ * 计数减 1,底层订阅由 AppLayout 那份撑住。若订阅生命周期跟着页面走,切走标签页
+ * 期间完成的任务广播就无人接收(全局 SeedanceTaskListener 对 source==='workbench'
+ * 直接 return,没有兜底),卡片会永久停在「渲染中」且不写历史。
+ *
+ * 计数归零才真正退订。返回的句柄幂等,重复调用只减一次。
  */
-let taskSubscription: (() => void) | null = null
+let taskUnsubscribe: (() => void) | null = null
+let taskMountCount = 0
 
 export function mountWorkbenchTaskListener(): () => void {
-  if (taskSubscription) return taskSubscription
   const api = getApi()?.seedance
   if (!api?.onTaskUpdate) return () => {}
-  const unsub = api.onTaskUpdate((update) => {
-    useVideoWorkbenchStore.getState().applyTaskUpdate(update)
-  })
-  taskSubscription = () => {
-    unsub()
-    taskSubscription = null
+
+  if (!taskUnsubscribe) {
+    taskUnsubscribe = api.onTaskUpdate((update) => {
+      useVideoWorkbenchStore.getState().applyTaskUpdate(update)
+    })
   }
-  return taskSubscription
+  taskMountCount += 1
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    taskMountCount = Math.max(0, taskMountCount - 1)
+    if (taskMountCount === 0 && taskUnsubscribe) {
+      taskUnsubscribe()
+      taskUnsubscribe = null
+    }
+  }
 }
 
 /** 测试用:重置模块级订阅/水合状态。 */
 export function resetWorkbenchStoreForTest(): void {
   hydrationPromise = null
-  taskSubscription = null
+  taskUnsubscribe = null
+  taskMountCount = 0
   for (const t of persistTimers.values()) clearTimeout(t)
   persistTimers.clear()
   const board = createDefaultBoard()

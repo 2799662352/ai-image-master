@@ -3972,9 +3972,32 @@ export class AgentManager {
     return this.store.renameThread(threadId, title)
   }
 
+  /**
+   * Delete a conversation. The local row is authoritative; codex's on-disk
+   * rollout is cleaned up first (while the codex id is still resolvable — the
+   * persisted mapping lives on the row we're about to drop) and best-effort:
+   * a `thread/delete` failure must never wedge the user's delete button.
+   *
+   * Skipped entirely when the backend isn't running: deleting history on a cold
+   * app shouldn't spawn codex just to unlink a file. Such rollouts stay on disk
+   * (bounded by codex's own retention), which is the accepted trade-off.
+   */
   async deleteThread(threadId: string): Promise<void> {
     if (!this.store) throw new Error('AgentManager.deleteThread called without store')
-    return this.store.deleteThread(threadId)
+    await this.deleteCodexRollout(threadId)
+    await this.store.deleteThread(threadId)
+    this.forgetCodexThread(threadId)
+  }
+
+  private async deleteCodexRollout(dbThreadId: string): Promise<void> {
+    if (!this.backend.deleteThread || !this.backend.isHealthy()) return
+    try {
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
+      if (!codexThreadId) return
+      await this.backend.deleteThread(codexThreadId)
+    } catch (err) {
+      console.warn('[AgentManager] thread/delete failed; rollout left on disk:', err)
+    }
   }
 
   private async confirmUnsafeSessionConfigChange(patch: Partial<CodexSessionConfig>): Promise<void> {

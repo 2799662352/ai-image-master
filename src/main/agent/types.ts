@@ -168,6 +168,14 @@ export interface IAgentBackend {
    * route; omitted = the backend defaults to the process-active provider.
    */
   resumeThread?(threadId: string, overrides?: CodexThreadConfigOverrides): Promise<void>
+  /**
+   * Permanently delete a persisted thread and its on-disk rollout
+   * (`thread/delete`). Called when the user deletes a conversation so the
+   * `.jsonl` under `$CODEX_HOME/sessions/` goes away with the local row —
+   * otherwise the rollout leaks forever and still shows up in `thread/list`.
+   * Best-effort at the call site: the local delete is authoritative.
+   */
+  deleteThread?(threadId: string): Promise<void>
   setSessionConfig?(patch: Partial<CodexSessionConfig>): void
   /**
    * Swap the active model provider. The new value is consumed on the next

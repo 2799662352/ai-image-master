@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { getApiService } from '@/services/api'
+import { getApiService } from '../../services/api'
 
 export interface McpTool {
   name: string

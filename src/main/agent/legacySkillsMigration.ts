@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs'
+import { promises as fs, type Dirent } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -41,7 +41,10 @@ export async function migrateLegacyUserSkills({
 }: MigrateLegacyUserSkillsOptions): Promise<MigrationReport> {
   const report: MigrationReport = { copied: [], skipped: [] }
 
-  let entries: Awaited<ReturnType<typeof fs.readdir>>
+  // 显式写 Dirent[]:ReturnType<typeof fs.readdir> 会挑到返回
+  // Dirent<NonSharedBuffer>[] 的那个重载,与 withFileTypes:true 的实际返回
+  // (Dirent<string>[])不符,导致 entry.name 被当成 Buffer。
+  let entries: Dirent[]
   try {
     entries = await fs.readdir(legacyRoot, { withFileTypes: true })
   } catch (err) {

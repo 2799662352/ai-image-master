@@ -30,6 +30,9 @@ export default function VideoWorkbenchPage() {
   const autoImportPortrait = useVideoWorkbenchStore((s) => s.autoImportPortrait)
   const setAutoImportPortrait = useVideoWorkbenchStore((s) => s.setAutoImportPortrait)
 
+  // 这份挂载是给「不经 AppLayout」的宿主用的(react-app/main.tsx 把本页单独
+  // 渲进自己的 root)。在 AppLayout 宿主里 App 级已经挂了一份常驻,引用计数
+  // 保证本页被 Activity 隐藏时不会把订阅带走。
   useEffect(() => {
     void ensureHydrated()
     return mountWorkbenchTaskListener()
