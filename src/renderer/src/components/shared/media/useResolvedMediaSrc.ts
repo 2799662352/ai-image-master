@@ -248,6 +248,131 @@ async function readBytes(
   return { ok: false, reason: 'no IPC available' }
 }
 
+// ---------------------------------------------------------------------------
+// Shared, reference-counted blob cache
+//
+// Without this, every surface that shows the same file pays its own IPC read
+// and holds its own ArrayBuffer-backed Blob. That is fine for one lightbox; it
+// is not fine for the video workbench, where a 200-card board reusing one
+// character-anchor image across shots would hold 200 copies of those bytes.
+//
+// Reference counting (rather than a plain memo Map) is what makes this safe to
+// share: the previous per-instance behaviour revoked on unmount, which is
+// CORRECT — dropping it in exchange for dedup would trade peak memory for a
+// session-long leak. Here the cache owns revocation and only fires it when the
+// last holder lets go.
+//
+// Pass-through sources (`data:` / `http(s):` / `blob:`) never enter the cache:
+// there is no blob to own and no IPC to save.
+// ---------------------------------------------------------------------------
+
+interface MediaCacheEntry {
+  /** Shared in-flight/settled resolution. `null` = resolution failed. */
+  promise: Promise<string | null>
+  refs: number
+  /** Set once settled, so `release` knows whether there is a URL to revoke. */
+  settled?: { url: string | null }
+}
+
+const mediaCache = new Map<string, MediaCacheEntry>()
+
+function mediaCacheKey(src: string, hint: MediaKindHint, opts: UseResolvedMediaSrcOptions): string {
+  // fullFidelity and thumbSize change the BYTES, so they must partition the
+  // cache — a lightbox must not be served the 256px thumbnail a card cached.
+  return `${opts.fullFidelity ? 'full' : `thumb:${opts.thumbSize ?? ''}`}|${hint}|${src}`
+}
+
+async function readAsBlobUrl(
+  osPath: string,
+  hint: MediaKindHint,
+  opts: UseResolvedMediaSrcOptions,
+  label: string,
+): Promise<string | null> {
+  const res = await readBytes(osPath, opts)
+  if (!res.ok) {
+    if (import.meta.env?.DEV) {
+      // eslint-disable-next-line no-console
+      console.warn(`[${label}] read failed`, { osPath, reason: res.reason })
+    }
+    return null
+  }
+  const mime =
+    res.mime && res.mime !== 'application/octet-stream'
+      ? res.mime
+      : guessMimeFromPath(osPath, hint)
+  return URL.createObjectURL(new Blob([base64ToArrayBuffer(res.base64)], { type: mime }))
+}
+
+/**
+ * Take a reference on `src`'s renderable URL, resolving it at most once across
+ * every surface that asks for the same bytes.
+ *
+ * **Every successful acquire must be paired with {@link releaseMediaSrc}** using
+ * the identical `hint`/`opts`, or the blob is never revoked.
+ */
+export function acquireMediaSrc(
+  src: string,
+  hint: MediaKindHint = 'auto',
+  opts: UseResolvedMediaSrcOptions = {},
+): Promise<string | null> {
+  if (typeof src !== 'string' || src.length === 0) return Promise.resolve(null)
+  const osPath = toOsPathIfLocal(src)
+  if (osPath === null) return Promise.resolve(src)
+
+  const key = mediaCacheKey(src, hint, opts)
+  const existing = mediaCache.get(key)
+  if (existing) {
+    existing.refs += 1
+    return existing.promise
+  }
+
+  const entry: MediaCacheEntry = { refs: 1, promise: Promise.resolve(null) }
+  entry.promise = readAsBlobUrl(osPath, hint, opts, 'acquireMediaSrc').then((url) => {
+    entry.settled = { url }
+    // Everyone let go while the read was in flight — revoke now and don't keep
+    // a cache row for bytes nobody asked for any more.
+    if (entry.refs <= 0) {
+      if (url) URL.revokeObjectURL(url)
+      mediaCache.delete(key)
+      return null
+    }
+    // Don't cache failures: a file can appear later (downloads, COS sync), and
+    // a sticky null would make it permanently unrenderable.
+    if (url === null) mediaCache.delete(key)
+    return url
+  })
+  mediaCache.set(key, entry)
+  return entry.promise
+}
+
+/** Drop a reference taken by {@link acquireMediaSrc}; revokes at zero. */
+export function releaseMediaSrc(
+  src: string,
+  hint: MediaKindHint = 'auto',
+  opts: UseResolvedMediaSrcOptions = {},
+): void {
+  if (typeof src !== 'string' || src.length === 0) return
+  if (toOsPathIfLocal(src) === null) return
+
+  const key = mediaCacheKey(src, hint, opts)
+  const entry = mediaCache.get(key)
+  if (!entry) return
+  entry.refs -= 1
+  if (entry.refs > 0) return
+  // Still in flight — the `then` above sees refs <= 0 and cleans up there.
+  if (!entry.settled) return
+  if (entry.settled.url) URL.revokeObjectURL(entry.settled.url)
+  mediaCache.delete(key)
+}
+
+/** Test-only: drop every cached blob so suites don't leak across each other. */
+export function resetMediaSrcCacheForTest(): void {
+  for (const entry of mediaCache.values()) {
+    if (entry.settled?.url) URL.revokeObjectURL(entry.settled.url)
+  }
+  mediaCache.clear()
+}
+
 /**
  * One-shot (non-hook) variant of `useResolvedMediaSrc` for imperative
  * callers — e.g. the agent `open_image_viewer` tool, which receives local
@@ -341,26 +466,15 @@ export function useResolvedMediaSrc(
       setResolved(src)
       return
     }
+    // Ownership of the blob lives in the shared cache, not here: two surfaces
+    // showing the same file must not read it twice, and neither may revoke a
+    // URL the other is still rendering. The release below is this instance's
+    // reference, not the blob itself.
     let cancelled = false
-    let createdBlobUrl: string | null = null
-    readBytes(osPath, { fullFidelity, thumbSize })
-      .then((res) => {
-        if (cancelled) return
-        if (!res.ok) {
-          if (import.meta.env?.DEV) {
-            // eslint-disable-next-line no-console
-            console.warn('[useResolvedMediaSrc] read failed', { osPath, reason: res.reason })
-          }
-          setResolved(null)
-          return
-        }
-        const mime =
-          res.mime && res.mime !== 'application/octet-stream'
-            ? res.mime
-            : guessMimeFromPath(osPath, hint)
-        const blob = new Blob([base64ToArrayBuffer(res.base64)], { type: mime })
-        createdBlobUrl = URL.createObjectURL(blob)
-        setResolved(createdBlobUrl)
+    const opts = { fullFidelity, thumbSize }
+    acquireMediaSrc(src, hint, opts)
+      .then((url) => {
+        if (!cancelled) setResolved(url)
       })
       .catch((err) => {
         if (cancelled) return
@@ -372,7 +486,7 @@ export function useResolvedMediaSrc(
       })
     return () => {
       cancelled = true
-      if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl)
+      releaseMediaSrc(src, hint, opts)
     }
   }, [src, hint, fullFidelity, thumbSize])
 
