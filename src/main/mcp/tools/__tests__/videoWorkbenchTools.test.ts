@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
+import { WORKBENCH_IR_VERSION } from '../../../../types/videoWorkbench'
 import { registerVideoWorkbenchTools } from '../videoWorkbenchTools'
 
 type Handler = (
@@ -107,14 +108,15 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     const schema = toolByName(tools, 'video_workbench_apply').config.inputSchema
     // 导出形态:字段填满 + 只读 result 注解 + wbref 占位。
     const exported = {
-      irVersion: 1,
-      revision: 3,
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 3,
       activeBoardId: 'b1',
       boards: [{
         id: 'b1',
         name: '页面 1',
         cards: [{
           id: 'c1',
+          rev: 0,
           prompt: '一只猫',
           model: '2.0',
           resolution: '720p',
@@ -134,16 +136,16 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ ir: exported, mode: 'replace', force: true }).success).toBe(true)
     // 手搓的最小新卡:规格全省(声明式 = 回默认值)。
     expect(schema.safeParse({
-      ir: { irVersion: 1, revision: 0, boards: [{ name: '新页', cards: [{ prompt: '一镜' }] }] },
+      ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 0, boards: [{ name: '新页', cards: [{ prompt: '一镜' }] }] },
     }).success).toBe(true)
 
     expect(schema.safeParse({ ir: { ...exported, boards: [] } }).success).toBe(false)
-    expect(schema.safeParse({ ir: { boards: exported.boards, revision: 0 } }).success).toBe(false)
+    expect(schema.safeParse({ ir: { boards: exported.boards, structureRevision: 0 } }).success).toBe(false)
     expect(schema.safeParse({ mode: 'merge' }).success).toBe(false)
     expect(schema.safeParse({ ir: { ...exported, mode: 'nuke' }, mode: 'nuke' }).success).toBe(false)
     // 页名空串不该混进来 —— apply 会跳过整页,不如在 schema 就挡住。
     expect(schema.safeParse({
-      ir: { irVersion: 1, revision: 0, boards: [{ name: '', cards: [] }] },
+      ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 0, boards: [{ name: '', cards: [] }] },
     }).success).toBe(false)
   })
 
@@ -208,15 +210,16 @@ describe('handlers → router.call 透传与 banner', () => {
     expect(doneRes.content[0].text).toContain('No card is rendering')
   })
 
-  it('export:banner 指向 apply 并要求保留 revision', async () => {
-    const ir = { irVersion: 1, revision: 2, activeBoardId: 'b1', boards: [{ id: 'b1', name: '页面 1', cards: [] }] }
+  it('export:banner 指向 apply 并要求保留两级令牌', async () => {
+    const ir = { irVersion: WORKBENCH_IR_VERSION, structureRevision: 2, activeBoardId: 'b1', boards: [{ id: 'b1', name: '页面 1', cards: [] }] }
     const { tools, server, router } = capture(ir)
     registerVideoWorkbenchTools(server, router)
     const res = await toolByName(tools, 'video_workbench_export').handler({ boardId: 'b1' })
     expect(router.call).toHaveBeenCalledWith('video_workbench_export', { boardId: 'b1' }, undefined)
     expect(res.structuredContent).toEqual(ir)
     expect(res.content[0].text).toContain('video_workbench_apply')
-    expect(res.content[0].text).toContain('revision')
+    expect(res.content[0].text).toContain('structureRevision')
+    expect(res.content[0].text).toContain('rev')
   })
 
   const emptyDiff = {
@@ -224,23 +227,24 @@ describe('handlers → router.call 透传与 banner', () => {
     cards: { created: [], updated: [], moved: [], removed: [] },
   }
 
-  it('apply 冲突:banner 明说什么都没写、要求重新 export(不是 isError)', async () => {
-    const result = { ok: false, conflict: { expected: 2, actual: 5 }, ...emptyDiff, skipped: [], revision: 5 }
+  it('apply 结构冲突:banner 明说什么都没写、要求重新 export(不是 isError)', async () => {
+    const result = { ok: false, conflict: { expected: 2, actual: 5 }, ...emptyDiff, skipped: [], structureRevision: 5 }
     const { tools, server, router } = capture(result)
     registerVideoWorkbenchTools(server, router)
     const res = await toolByName(tools, 'video_workbench_apply').handler({
-      ir: { irVersion: 1, revision: 2, boards: [{ name: '页面 1', cards: [] }] },
+      ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 2, boards: [{ name: '页面 1', cards: [] }] },
     })
     expect(res.isError).toBeUndefined()
     expect(res.structuredContent).toEqual(result)
     const text = res.content[0].text
     expect(text).toContain('nothing was written')
-    expect(text).toContain('revision 2 to 5')
+    expect(text).toContain('structureRevision 2 → 5')
+    expect(text).toContain('reordered')
     expect(text).toContain('video_workbench_export')
   })
 
   it('apply 非冲突失败:仍提示什么都没写', async () => {
-    const result = { ok: false, ...emptyDiff, skipped: [{ reason: '不认识的 irVersion: 9' }], revision: 1 }
+    const result = { ok: false, ...emptyDiff, skipped: [{ reason: '不认识的 irVersion: 9' }], structureRevision: 1 }
     const { tools, server, router } = capture(result)
     registerVideoWorkbenchTools(server, router)
     const res = await toolByName(tools, 'video_workbench_apply').handler({
@@ -250,13 +254,13 @@ describe('handlers → router.call 透传与 banner', () => {
     expect(res.content[0].text).toContain('不认识的 irVersion')
   })
 
-  it('apply 成功:banner 带新 revision;有 skip 时要求转告用户', async () => {
-    const clean = capture({ ok: true, ...emptyDiff, cards: { created: ['c9'], updated: [], moved: [], removed: [] }, skipped: [], revision: 4 })
+  it('apply 成功:banner 带新 structureRevision;有 skip 时要求转告用户', async () => {
+    const clean = capture({ ok: true, ...emptyDiff, cards: { created: ['c9'], updated: [], moved: [], removed: [] }, skipped: [], structureRevision: 4 })
     registerVideoWorkbenchTools(clean.server, clean.router)
     const cleanRes = await toolByName(clean.tools, 'video_workbench_apply').handler({
-      ir: { irVersion: 1, revision: 3, boards: [{ name: '页面 1', cards: [{ prompt: 'x' }] }] },
+      ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 3, boards: [{ name: '页面 1', cards: [{ prompt: 'x' }] }] },
     })
-    expect(cleanRes.content[0].text).toContain('New revision 4')
+    expect(cleanRes.content[0].text).toContain('New structureRevision 4')
     // 无 skip 时不加第二条警告横幅(JSON 兜底里的 "skipped":[] 不算)。
     expect(cleanRes.content[0].text).not.toContain('item(s) skipped')
 
@@ -264,20 +268,20 @@ describe('handlers → router.call 透传与 banner', () => {
       ok: true,
       ...emptyDiff,
       skipped: [{ cardId: 'c1', reason: '卡片正在生成,规格已定格不可改(位置改动已生效)' }],
-      revision: 4,
+      structureRevision: 4,
     })
     registerVideoWorkbenchTools(partial.server, partial.router)
     const partialRes = await toolByName(partial.tools, 'video_workbench_apply').handler({
-      ir: { irVersion: 1, revision: 3, boards: [{ name: '页面 1', cards: [] }] },
+      ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 3, boards: [{ name: '页面 1', cards: [] }] },
     })
     expect(partialRes.content[0].text).toContain('1 item(s) skipped')
     expect(partialRes.content[0].text).toContain('规格已定格')
   })
 
   it('apply mode/force 透传给 renderer', async () => {
-    const { tools, server, router } = capture({ ok: true, ...emptyDiff, skipped: [], revision: 1 })
+    const { tools, server, router } = capture({ ok: true, ...emptyDiff, skipped: [], structureRevision: 1 })
     registerVideoWorkbenchTools(server, router)
-    const ir = { irVersion: 1, revision: 0, boards: [{ name: '页面 1', cards: [] }] }
+    const ir = { irVersion: WORKBENCH_IR_VERSION, structureRevision: 0, boards: [{ name: '页面 1', cards: [] }] }
     await toolByName(tools, 'video_workbench_apply').handler({ ir, mode: 'replace', force: true })
     expect(router.call).toHaveBeenCalledWith(
       'video_workbench_apply',
@@ -359,10 +363,10 @@ describe('structured output(MCP 2025-11-25)', () => {
       {
         name: 'video_workbench_export',
         routerResult: {
-          irVersion: 1,
-          revision: 3,
+          irVersion: WORKBENCH_IR_VERSION,
+          structureRevision: 3,
           activeBoardId: 'b1',
-          boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: '一只猫' }] }],
+          boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', rev: 0, prompt: '一只猫' }] }],
         },
         params: {},
       },
@@ -373,9 +377,9 @@ describe('structured output(MCP 2025-11-25)', () => {
           boards: { created: ['b2'], renamed: ['b1'], removed: [] },
           cards: { created: ['c9'], updated: ['c1'], moved: ['c1'], removed: ['c2'] },
           skipped: [{ cardId: 'c3', reason: '卡片正在生成,拒绝删除(已保留在页面上)' }],
-          revision: 4,
+          structureRevision: 4,
         },
-        params: { ir: { irVersion: 1, revision: 3, boards: [{ name: '页面 1', cards: [] }] } },
+        params: { ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 3, boards: [{ name: '页面 1', cards: [] }] } },
       },
     ]
     for (const c of cases) {
