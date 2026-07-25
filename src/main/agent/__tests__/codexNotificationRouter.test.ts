@@ -1275,11 +1275,65 @@ describe('CodexNotificationRouter', () => {
       })
     })
 
+    // Responses-API relays name the same counters `prompt_tokens` /
+    // `completion_tokens`. The reader has always accepted them but nothing
+    // pinned it, so a refactor could have dropped the alias silently.
+    it('accepts Responses-API counter names', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        usage: { prompt_tokens: 900, completion_tokens: 120, reasoning_output_tokens: 40 },
+      })
+      expect(event).toMatchObject({
+        type: 'token_usage_updated',
+        usage: { inputTokens: 900, outputTokens: 120, reasoningTokens: 40 },
+      })
+    })
+
+    // Some relays drop the total/last split and hang the counters straight off
+    // `tokenUsage`. Third candidate in the lookup order.
+    it('accepts counters flattened onto tokenUsage itself', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        tokenUsage: { inputTokens: 300, outputTokens: 40, contextWindow: 128_000 },
+      })
+      expect(event).toMatchObject({
+        type: 'token_usage_updated',
+        usage: { inputTokens: 300, outputTokens: 40, contextWindow: 128_000 },
+      })
+    })
+
+    // A counter carrying only one side is still a counter — the missing side
+    // reads as 0 rather than disqualifying the whole payload.
+    it('accepts a one-sided counter', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        usage: { prompt_tokens: 42 },
+      })
+      expect(event).toMatchObject({
+        type: 'token_usage_updated',
+        usage: { inputTokens: 42, outputTokens: 0 },
+      })
+    })
+
     it('returns null when payload carries no usable counter', () => {
       const router = new CodexNotificationRouter()
       const event = router.route('thread/tokenUsage/updated', {
         threadId: 't',
         usage: {},
+      })
+      expect(event).toBeNull()
+    })
+
+    // Only reasoning/cached present means no input/output, so there is nothing
+    // to anchor the meter on — treat it as no signal instead of showing 0/0.
+    it('returns null when only auxiliary counters are present', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        usage: { reasoningTokens: 100, cachedInputTokens: 200 },
       })
       expect(event).toBeNull()
     })
