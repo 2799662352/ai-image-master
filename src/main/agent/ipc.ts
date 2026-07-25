@@ -64,6 +64,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:goal-clear',
   'agent:compact-start',
   'agent:memory-mode-set',
+  'agent:memory-mode-declare',
   'agent:memory-reset',
   'agent:collaboration-capabilities',
   'agent:collaboration-update',
@@ -353,6 +354,14 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     (await getManager()).setThreadMemoryModeRpc(
       threadId,
       mode as Parameters<AgentManager['setThreadMemoryModeRpc']>[1],
+    ),
+  )
+  // Persist-then-push variant used by the thread menu: unlike `-set` it accepts
+  // a thread with no codex thread yet, which is when users usually decide.
+  ipcMain.handle('agent:memory-mode-declare', async (_event, threadId: string, mode: unknown) =>
+    (await getManager()).declareThreadMemoryModeRpc(
+      threadId,
+      mode as Parameters<AgentManager['declareThreadMemoryModeRpc']>[1],
     ),
   )
   ipcMain.handle('agent:memory-reset', async () =>

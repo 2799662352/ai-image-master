@@ -18,6 +18,7 @@ const fakeAgent = {
   sendToolResponse: vi.fn(),
   setApiKey: vi.fn(),
   testConnection: vi.fn(),
+  declareThreadMemoryMode: vi.fn(),
 }
 
 beforeEach(() => {
@@ -35,7 +36,9 @@ beforeEach(() => {
     updatedAt: '',
   })
   fakeAgent.openThread.mockResolvedValue({ id: 'today-1', messages: [] })
+  fakeAgent.declareThreadMemoryMode.mockResolvedValue({ ok: true, pushed: true })
   useAgentChatStore.setState({
+    memoriesGloballyEnabled: true,
     threadId: 'today-1',
     threadList: [
       {
@@ -167,6 +170,70 @@ describe('ThreadSidebar', () => {
     // Clicking switches to it (does not require Stop first).
     fireEvent.click(row as HTMLButtonElement)
     expect(fakeAgent.openThread).toHaveBeenCalledWith('older-1')
+  })
+
+  // Per-thread cross-session memory. Absent memoryMode = never chosen, and
+  // codex remembers by default, so an untouched row reads as "remembering".
+  it('turns memory OFF for a thread that has never chosen', async () => {
+    render(<ThreadSidebar />)
+    fireEvent.click(screen.getByTestId('thread-menu-older-1'))
+    const toggle = screen.getByTestId('thread-memory-toggle-older-1')
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(toggle)
+    await flush()
+
+    expect(fakeAgent.declareThreadMemoryMode).toHaveBeenCalledWith('older-1', 'disabled')
+    expect(fakeAgent.listThreads).toHaveBeenCalled()
+  })
+
+  it('turns memory back ON for a thread already opted out', async () => {
+    useAgentChatStore.setState({
+      threadList: [
+        {
+          id: 'older-1',
+          title: 'Older thread',
+          createdAt: '',
+          updatedAt: '',
+          lastMessageAt: new Date(Date.now() - 100 * 24 * 60 * 60_000).toISOString(),
+          memoryMode: 'disabled',
+        },
+      ],
+    })
+    render(<ThreadSidebar />)
+    fireEvent.click(screen.getByTestId('thread-menu-older-1'))
+    const toggle = screen.getByTestId('thread-memory-toggle-older-1')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.click(toggle)
+    await flush()
+
+    expect(fakeAgent.declareThreadMemoryMode).toHaveBeenCalledWith('older-1', 'enabled')
+  })
+
+  it('disables the toggle while memory is off process-wide, and says why', () => {
+    useAgentChatStore.setState({ memoriesGloballyEnabled: false })
+    render(<ThreadSidebar />)
+    fireEvent.click(screen.getByTestId('thread-menu-older-1'))
+
+    const toggle = screen.getByTestId('thread-memory-toggle-older-1') as HTMLButtonElement
+    expect(toggle.disabled).toBe(true)
+    expect(screen.getByText(/记忆功能已全局关闭/)).toBeTruthy()
+  })
+
+  it('keeps the menu open and shows the reason when the choice is refused', async () => {
+    fakeAgent.declareThreadMemoryMode.mockResolvedValue({
+      ok: false,
+      error: 'memory feature is disabled',
+    })
+    render(<ThreadSidebar />)
+    fireEvent.click(screen.getByTestId('thread-menu-older-1'))
+    fireEvent.click(screen.getByTestId('thread-memory-toggle-older-1'))
+    await flush()
+
+    expect(screen.getByRole('alert').textContent).toContain('memory feature is disabled')
+    // Still open — a dismissed menu would hide the explanation.
+    expect(screen.getByTestId('thread-memory-toggle-older-1')).toBeTruthy()
   })
 
   it('renders nothing when sidebarOpen is false', () => {

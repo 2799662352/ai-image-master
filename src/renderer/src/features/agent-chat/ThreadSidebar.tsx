@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentThreadSummary, CodexThreadSummary } from '../../../../types/agent'
-import { ChatBubbleIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
+import { BrainIcon, ChatBubbleIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 import { formatRelativeTime, groupThreadsByRecency, type ThreadGroup } from './relativeTime'
 import { useAgentChatStore } from './store'
 
@@ -29,6 +29,8 @@ export function ThreadSidebar(): JSX.Element | null {
   const switchThread = useAgentChatStore((s) => s.switchThread)
   const renameThread = useAgentChatStore((s) => s.renameThread)
   const deleteThread = useAgentChatStore((s) => s.deleteThread)
+  const setThreadMemoryMode = useAgentChatStore((s) => s.setThreadMemoryMode)
+  const memoriesGloballyEnabled = useAgentChatStore((s) => s.memoriesGloballyEnabled)
   const forkCodexThread = useAgentChatStore((s) => s.forkCodexThread)
 
   const groups: ThreadGroup[] = useMemo(() => groupThreadsByRecency(threadList), [threadList])
@@ -108,6 +110,8 @@ export function ThreadSidebar(): JSX.Element | null {
                 onSwitch={switchThread}
                 onRename={renameThread}
                 onDelete={deleteThread}
+                onSetMemoryMode={setThreadMemoryMode}
+                memoriesGloballyEnabled={memoriesGloballyEnabled}
               />
             ))
           )}
@@ -199,6 +203,11 @@ interface ThreadGroupSectionProps {
   onSwitch: (id: string) => Promise<void> | void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onSetMemoryMode: (
+    id: string,
+    mode: 'enabled' | 'disabled',
+  ) => Promise<{ ok: boolean; error?: string }>
+  memoriesGloballyEnabled?: boolean
 }
 
 function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
@@ -217,6 +226,8 @@ function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
             onSwitch={props.onSwitch}
             onRename={props.onRename}
             onDelete={props.onDelete}
+            onSetMemoryMode={props.onSetMemoryMode}
+            memoriesGloballyEnabled={props.memoriesGloballyEnabled}
           />
         ))}
       </ul>
@@ -232,6 +243,12 @@ interface ThreadRowProps {
   onSwitch: (id: string) => Promise<void> | void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onSetMemoryMode: (
+    id: string,
+    mode: 'enabled' | 'disabled',
+  ) => Promise<{ ok: boolean; error?: string }>
+  /** Global `features.memories`; undefined until session status is read. */
+  memoriesGloballyEnabled?: boolean
 }
 
 type RowMode = 'idle' | 'menu' | 'rename' | 'confirm-delete'
@@ -240,6 +257,8 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
   const [mode, setMode] = useState<RowMode>('idle')
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
   const [draftTitle, setDraftTitle] = useState(props.thread.title)
+  const [memoryBusy, setMemoryBusy] = useState(false)
+  const [memoryError, setMemoryError] = useState<string | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
@@ -256,6 +275,20 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     if (!next || next === props.thread.title) return
     await props.onRename(props.thread.id, next)
   }, [draftTitle, props])
+
+  // Absent memoryMode means "never chosen", and codex remembers by default —
+  // so an unchosen thread reads as remembering.
+  const memoryOn = props.thread.memoryMode !== 'disabled'
+
+  const toggleMemory = useCallback(async () => {
+    setMemoryError(undefined)
+    setMemoryBusy(true)
+    const res = await props.onSetMemoryMode(props.thread.id, memoryOn ? 'disabled' : 'enabled')
+    setMemoryBusy(false)
+    // Failures keep the menu open so the reason is readable; success closes it.
+    if (!res.ok) setMemoryError(res.error ?? '设置失败')
+    else setMode('idle')
+  }, [memoryOn, props])
 
   // Close the popover menu on outside click — using mousedown so we close
   // before any other onClick on the page fires (matches ContextPopover's
@@ -277,11 +310,11 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     function syncMenuPosition(): void {
       const rect = menuButtonRef.current?.getBoundingClientRect()
       if (!rect) return
-      const width = 150
+      const width = 190
       const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
       const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
       const left = Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width))
-      const top = Math.max(8, Math.min(viewportHeight - 96, rect.bottom + 4))
+      const top = Math.max(8, Math.min(viewportHeight - 150, rect.bottom + 4))
       setMenuPos({ top, left })
     }
     syncMenuPosition()
@@ -414,11 +447,11 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
               return
             }
             const rect = e.currentTarget.getBoundingClientRect()
-            const width = 150
+            const width = 190
             const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
             const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
             setMenuPos({
-              top: Math.max(8, Math.min(viewportHeight - 96, rect.bottom + 4)),
+              top: Math.max(8, Math.min(viewportHeight - 150, rect.bottom + 4)),
               left: Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width)),
             })
             setMode('menu')
@@ -465,7 +498,7 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
             onMouseDownCapture={(e) => {
               e.stopPropagation()
             }}
-            className="fixed z-[99999] min-w-[150px] overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 py-1 text-[12px] text-zinc-200 shadow-[0_18px_60px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/20"
+            className="fixed z-[99999] min-w-[190px] overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 py-1 text-[12px] text-zinc-200 shadow-[0_18px_60px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/20"
           >
             <button
               role="menuitem"
@@ -481,6 +514,42 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
               <PencilIcon className="h-3.5 w-3.5" />
               Rename
             </button>
+            <button
+              role="menuitemcheckbox"
+              type="button"
+              aria-checked={memoryOn}
+              data-testid={`thread-memory-toggle-${props.thread.id}`}
+              disabled={memoryBusy || props.memoriesGloballyEnabled === false}
+              title={
+                props.memoriesGloballyEnabled === false
+                  ? '记忆功能已全局关闭（设置 → Codex 权限）'
+                  : memoryOn
+                    ? '这个会话会写入跨会话记忆'
+                    : '这个会话不会写入跨会话记忆'
+              }
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                void toggleMemory()
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-zinc-800/60 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <BrainIcon className="h-3.5 w-3.5" />
+              <span className="flex-1">记忆此会话</span>
+              <span aria-hidden="true" className="text-[10px] text-cyan-300">
+                {memoryBusy ? '…' : memoryOn ? '✓' : ''}
+              </span>
+            </button>
+            {props.memoriesGloballyEnabled === false ? (
+              <p className="px-3 pb-1 text-[10px] leading-tight text-zinc-500">
+                记忆功能已全局关闭
+              </p>
+            ) : null}
+            {memoryError ? (
+              <p role="alert" className="px-3 pb-1 text-[10px] leading-tight text-red-300">
+                {memoryError}
+              </p>
+            ) : null}
             <button
               role="menuitem"
               type="button"
