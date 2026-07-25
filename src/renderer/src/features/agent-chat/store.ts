@@ -969,6 +969,24 @@ interface AgentChatState extends ModelRoutingSlice {
   setSidebarWidth: (width: number) => void
   renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+  /**
+   * Choose whether ONE conversation feeds the cross-session memory store.
+   * Returns the outcome instead of throwing so the sidebar menu can show the
+   * failure in place. The authoritative value lives on the thread row, so a
+   * success refreshes the list rather than patching local state.
+   */
+  setThreadMemoryMode: (
+    threadId: string,
+    mode: 'enabled' | 'disabled',
+  ) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Mirror of the GLOBAL `features.memories` switch, pushed here by
+   * AgentChatPanel when it reads session status. `undefined` = not read yet.
+   * The sidebar uses it to disable the per-thread toggle, since a per-thread
+   * "enabled" is meaningless while memory is off process-wide.
+   */
+  memoriesGloballyEnabled?: boolean
+  setMemoriesGloballyEnabled: (enabled: boolean | undefined) => void
 }
 
 export { formatContextApplyError } from './modelRoutingSlice'
@@ -3703,6 +3721,24 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (!agent?.renameThread) return
     await agent.renameThread(threadId, trimmed)
     await get().refreshThreadList()
+  },
+
+  setMemoriesGloballyEnabled: (enabled) => set({ memoriesGloballyEnabled: enabled }),
+
+  setThreadMemoryMode: async (threadId, mode) => {
+    if (!threadId) return { ok: false, error: '会话尚未创建' }
+    const agent = getAgentApi()
+    if (!agent?.declareThreadMemoryMode) {
+      return { ok: false, error: '当前版本不支持按会话记忆开关' }
+    }
+    try {
+      const res = await agent.declareThreadMemoryMode(threadId, mode)
+      if (!res?.ok) return { ok: false, error: res?.error ?? '设置失败' }
+      await get().refreshThreadList()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   },
 
   deleteThread: async (threadId) => {

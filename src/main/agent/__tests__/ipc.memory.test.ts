@@ -38,6 +38,7 @@ import { registerAgentIpc } from '../ipc'
 function makeManager() {
   return {
     setThreadMemoryModeRpc: vi.fn().mockResolvedValue({ ok: true }),
+    declareThreadMemoryModeRpc: vi.fn().mockResolvedValue({ ok: true, pushed: false }),
     resetMemoryRpc: vi.fn().mockResolvedValue({ ok: true }),
   }
 }
@@ -65,6 +66,14 @@ describe('registerAgentIpc memory handlers', () => {
     expect(h).toBeTypeOf('function')
     await h!({}, 'db-1', 'disabled')
     expect(manager.setThreadMemoryModeRpc).toHaveBeenCalledWith('db-1', 'disabled')
+  })
+
+  it('agent:memory-mode-declare forwards threadId + mode and returns the push flag', async () => {
+    const h = get('agent:memory-mode-declare')
+    expect(h).toBeTypeOf('function')
+    const res = await h!({}, 'db-1', 'disabled')
+    expect(manager.declareThreadMemoryModeRpc).toHaveBeenCalledWith('db-1', 'disabled')
+    expect(res).toEqual({ ok: true, pushed: false })
   })
 
   it('agent:memory-reset forwards with no arguments', async () => {

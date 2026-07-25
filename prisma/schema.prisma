@@ -21,6 +21,13 @@ model AgentThread {
   // the active gateway + the thread's `model`.
   gatewayId     String?
   modelProvider String?
+  // Per-thread cross-session memory eligibility ("enabled" | "disabled"), the
+  // intent behind `thread/memoryMode/set`. Persisted rather than pushed-and-
+  // forgotten because the RPC needs a live codex thread id, and a thread's id
+  // is re-minted on every fork/reset path — so the intent has to outlive any
+  // single codex thread and be re-asserted whenever one is established. Null =
+  // never chosen (codex default applies).
+  memoryMode    String?
   lastMessageAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt

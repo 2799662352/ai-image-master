@@ -18,6 +18,7 @@ CREATE TABLE "AgentThread" (
     "codexThreadId" TEXT,
     "gatewayId" TEXT,
     "modelProvider" TEXT,
+    "memoryMode" TEXT,
     "lastMessageAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -107,6 +108,9 @@ const ALIGN_SCHEMA_SQL: readonly string[] = [
   // the hot-update boot; rows stay NULL (= unbound) until their next send.
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "gatewayId" TEXT`,
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "modelProvider" TEXT`,
+  // Per-thread memory eligibility. NULL on existing rows = never chosen, which
+  // is exactly the pre-feature behavior (codex default applies).
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "memoryMode" TEXT`,
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "lastMessageAt" TIMESTAMP(3)`,
   `CREATE INDEX IF NOT EXISTS "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC)`,
   `ALTER TABLE "AgentMessage" ADD COLUMN IF NOT EXISTS "items" JSONB NOT NULL DEFAULT '[]'`,

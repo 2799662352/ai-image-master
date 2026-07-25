@@ -298,6 +298,7 @@ const IPC_CHANNELS = {
     GOAL_CLEAR: 'agent:goal-clear',
     COMPACT_START: 'agent:compact-start',
     MEMORY_MODE_SET: 'agent:memory-mode-set',
+    MEMORY_MODE_DECLARE: 'agent:memory-mode-declare',
     MEMORY_RESET: 'agent:memory-reset',
     COLLABORATION_CAPABILITIES: 'agent:collaboration-capabilities',
     COLLABORATION_UPDATE: 'agent:collaboration-update',
@@ -1241,6 +1242,13 @@ const electronAPI: ElectronAPI = {
     // ----- Cross-session memory (thread/memoryMode/set + memory/reset) -----
     setThreadMemoryMode: (threadId: string, mode: 'enabled' | 'disabled') =>
       safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MEMORY_MODE_SET, threadId, mode),
+
+    declareThreadMemoryMode: (threadId: string, mode: 'enabled' | 'disabled') =>
+      safeInvoke<{ ok: boolean; error?: string; pushed?: boolean }>(
+        IPC_CHANNELS.AGENT.MEMORY_MODE_DECLARE,
+        threadId,
+        mode,
+      ),
 
     resetMemory: () =>
       safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MEMORY_RESET),

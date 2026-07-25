@@ -1995,6 +1995,9 @@ export class AgentManager {
       this.codexThreadEpochByDbThreadId.set(threadId, epoch)
     }
     await this.store?.setCodexThreadId?.(threadId, persistedThreadId)
+    // The only re-establish path that does not funnel through
+    // `rememberCodexThread`, so it needs its own re-assert.
+    this.reassertThreadMemoryMode(threadId, persistedThreadId)
   }
 
   /**
@@ -2524,6 +2527,70 @@ export class AgentManager {
   // ─── Cross-session memory (thread/memoryMode/set + memory/reset) ──────────
   // Both are `#[experimental]` @ rust-v0.145.0 and reachable because the
   // production backend announces `experimentalApi: true` at initialize.
+
+  /**
+   * Record the user's memory choice for one thread and apply it if possible.
+   *
+   * This is the renderer-facing entry point, and unlike
+   * {@link setThreadMemoryModeRpc} it succeeds on a thread that has no codex
+   * thread yet — the common case, since "don't remember this one" is a decision
+   * users make *before* typing. The choice is persisted, and
+   * {@link reassertThreadMemoryMode} replays it onto every codex thread this
+   * conversation is later given (first start, fork, rebind, restart-resume).
+   *
+   * `pushed` reports whether the backend already has the mode, so callers can
+   * distinguish "saved, takes effect on send" from "live now".
+   */
+  async declareThreadMemoryModeRpc(
+    dbThreadId: string,
+    mode: CodexThreadMemoryMode,
+  ): Promise<{ ok: boolean; error?: string; pushed?: boolean }> {
+    try {
+      if (mode !== 'enabled' && mode !== 'disabled') {
+        return { ok: false, error: `invalid memory mode: ${String(mode)}` }
+      }
+      if (!this.store?.setThreadMemoryMode) {
+        return { ok: false, error: 'Thread store unavailable' }
+      }
+      await this.store.setThreadMemoryMode(dbThreadId, mode)
+      // Pushing is opportunistic: no codex thread yet is normal, not an error.
+      const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
+        ?? await this.store?.getCodexThreadId?.(dbThreadId)
+        ?? undefined
+      if (!codexThreadId || !this.backend.setThreadMemoryMode) {
+        return { ok: true, pushed: false }
+      }
+      await this.backend.setThreadMemoryMode(codexThreadId, mode)
+      return { ok: true, pushed: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /**
+   * Replay a thread's persisted memory choice onto a codex thread that was just
+   * established. Called from every path that mints or re-establishes a codex
+   * thread id, because the protocol offers no way to READ the current mode back
+   * — so we cannot tell whether a resumed rollout still carries the earlier
+   * `thread/memoryMode/set`. Re-asserting is idempotent, so the safe move is to
+   * assume it does not.
+   *
+   * Fire-and-forget by design: it rides the streaming hot path, and a thread
+   * that fails to re-assert falls back to the codex default rather than
+   * breaking the turn.
+   */
+  private reassertThreadMemoryMode(dbThreadId: string, codexThreadId: string): void {
+    if (!this.backend.setThreadMemoryMode || !this.store?.getThreadMemoryMode) return
+    void (async () => {
+      try {
+        const mode = await this.store?.getThreadMemoryMode?.(dbThreadId)
+        if (mode !== 'enabled' && mode !== 'disabled') return
+        await this.backend.setThreadMemoryMode?.(codexThreadId, mode)
+      } catch (err) {
+        console.warn('[AgentManager] failed to re-assert thread memory mode:', err)
+      }
+    })()
+  }
 
   /**
    * Toggle memory eligibility for ONE thread. `mode` crosses the IPC boundary
@@ -4135,6 +4202,10 @@ export class AgentManager {
         console.warn('[AgentManager] failed to persist codexThreadId:', err),
       )
     }
+    // A brand-new codex thread starts at the codex default, so the user's
+    // per-thread choice has to be re-applied here — this is the funnel for
+    // first start, fork, rebind, and restart hydration alike.
+    this.reassertThreadMemoryMode(dbThreadId, codexThreadId)
   }
 
   /** Drop both the id and its epoch tag (poisoned-thread reset / stale respawn). */

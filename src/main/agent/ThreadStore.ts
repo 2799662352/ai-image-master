@@ -229,4 +229,27 @@ export class ThreadStore {
     })
     return row?.codexThreadId ?? null
   }
+
+  /**
+   * Record the user's cross-session memory choice for one thread. Stored as the
+   * durable intent behind `thread/memoryMode/set`: the RPC itself needs a live
+   * codex thread id, which a brand-new thread does not have yet and which is
+   * re-minted by every fork/reset, so the choice must outlive any one codex
+   * thread. `updateMany` keeps a stale id a no-op instead of a throw.
+   */
+  async setThreadMemoryMode(threadId: string, memoryMode: string): Promise<void> {
+    await this.prisma.agentThread.updateMany({
+      where: { id: threadId },
+      data: { memoryMode },
+    })
+  }
+
+  /** Read the thread's memory choice (null = never chosen, codex default). */
+  async getThreadMemoryMode(threadId: string): Promise<string | null> {
+    const row = await this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      select: { memoryMode: true },
+    })
+    return row?.memoryMode ?? null
+  }
 }
