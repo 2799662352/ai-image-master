@@ -74,6 +74,22 @@ describe('PortraitPickerModal', () => {
     expect(screen.getByTitle('机械狗')).toBeTruthy()
   })
 
+  it('挂到 document.body 而不是调用方的子树里', async () => {
+    mockApi([makeAsset('a1', '赛博猫')])
+    // 模拟真实挂载点:弹窗是从卡片内部渲染的,而卡片有可能带 transform/contain。
+    // `position: fixed` 遇到这些祖先会改成相对祖先定位,弹窗被裁进卡片框 ——
+    // portal 到 body 是唯一能免疫的做法。
+    const { container } = render(
+      <div style={{ transform: 'translateZ(0)' }}>
+        <PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />
+      </div>,
+    )
+
+    const panel = await screen.findByTestId('vw-portrait-picker')
+    expect(container.contains(panel)).toBe(false)
+    expect(panel.parentElement).toBe(document.body)
+  })
+
   it('多选后确认 → onConfirm 收到完整素材项并关闭', async () => {
     mockApi([makeAsset('a1', '赛博猫'), makeAsset('a2', '机械狗')])
     const onConfirm = vi.fn()
