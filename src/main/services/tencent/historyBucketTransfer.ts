@@ -31,12 +31,72 @@ const HISTORY_REGION = 'ap-guangzhou'
 // 下载整体保险丝:视频可能数百 MB;按 0.5 MB/s 的保守带宽给上限,floor 3 分钟。
 const DOWNLOAD_FLOOR_MS = 3 * 60 * 1000
 
+/**
+ * 下载尝试次数。转存失败的代价是**用户永久丢结果** —— 调用方会退回媒体桶签名
+ * URL,而它在 STS 模式下只活 ≤30 分钟(见文件头)。上传半程有 COS SDK 的分片重试
+ * 兜着,下载半程是裸 fetch,所以在这里补一次。形状与 seedanceClient.downloadVideo
+ * 一致(两次尝试、无间隔):这类失败多是连接级的,立刻再试一次通常就过了。
+ */
+export const DOWNLOAD_ATTEMPTS = 2
+
+/** 带上游状态码的下载错误,用来区分「再试有用」和「再试也是同样结果」。 */
+class DownloadHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`download failed: HTTP ${status}`)
+    this.name = 'DownloadHttpError'
+  }
+
+  /** 4xx 说明签名 URL 已过期或对象不存在,重试无益;408/425/429 与 5xx 例外。 */
+  get retryable(): boolean {
+    if (this.status === 408 || this.status === 425 || this.status === 429) return true
+    return this.status >= 500
+  }
+}
+
 export interface TransferOptions {
   /** 媒体桶的(短寿命)签名 URL,调用时必须仍然有效。 */
   sourceUrl: string
   /** 目标 Key,必须以 `image-history/` 开头(STS 票据只授权该前缀)。 */
   key: string
   contentType?: string
+}
+
+/**
+ * 下载一遍 sourceUrl 到 tmpPath,返回落盘字节数。createWriteStream 默认以 'w' 打开,
+ * 所以重试会截断上一轮的残留字节,不会拼出坏文件。
+ */
+async function downloadOnce(sourceUrl: string, tmpPath: string): Promise<number> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), DOWNLOAD_FLOOR_MS * 10)
+  try {
+    const res = await fetch(sourceUrl, { signal: controller.signal })
+    if (!res.ok || !res.body) {
+      throw new DownloadHttpError(res.status)
+    }
+    await pipeline(Readable.fromWeb(res.body as any), createWriteStream(tmpPath))
+    return (await fsp.stat(tmpPath)).size
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function downloadWithRetry(sourceUrl: string, tmpPath: string): Promise<number> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt++) {
+    try {
+      return await downloadOnce(sourceUrl, tmpPath)
+    } catch (e) {
+      lastError = e
+      // 签名 URL 过期 / 对象不存在:再试一次仍是同样结果,别白等。
+      if (e instanceof DownloadHttpError && !e.retryable) throw e
+      if (attempt === DOWNLOAD_ATTEMPTS) throw e
+      console.warn(
+        `[historyBucketTransfer] download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed, retrying:`,
+        e instanceof Error ? e.message : e,
+      )
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 /**
@@ -51,19 +111,7 @@ export async function transferUrlToHistoryBucket(opts: TransferOptions): Promise
   const tmpPath = path.join(os.tmpdir(), `catimation-transfer-${randomBytes(8).toString('hex')}`)
 
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), DOWNLOAD_FLOOR_MS * 10)
-    let size = 0
-    try {
-      const res = await fetch(opts.sourceUrl, { signal: controller.signal })
-      if (!res.ok || !res.body) {
-        throw new Error(`download failed: HTTP ${res.status}`)
-      }
-      await pipeline(Readable.fromWeb(res.body as any), createWriteStream(tmpPath))
-      size = (await fsp.stat(tmpPath)).size
-    } finally {
-      clearTimeout(timer)
-    }
+    const size = await downloadWithRetry(opts.sourceUrl, tmpPath)
     if (size === 0) throw new Error('download produced empty file')
 
     // 上传保险丝按体积放大(0.5 MB/s 保守估计),与 mediaRelay 同款算法。
