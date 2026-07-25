@@ -11,7 +11,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
 import {
-  resolveMediaSrcOnce,
+  acquireMediaSrc,
+  releaseMediaSrc,
   useResolvedMediaSrc,
 } from '../../components/shared/media/useResolvedMediaSrc'
 import {
@@ -155,32 +156,47 @@ export function useMaterialThumbSrcs(entries: MaterialThumbEntry[]): Array<strin
 
   const targets = entries.map((e) => materialThumbTarget(e.kind, withCachedAssetPreview(e.material)))
   const depKey = targets.join('\n')
-  // 会话级缓存(target → 可渲染地址):素材增删只补差量,不重解析已有项,
-  // 更不 revoke 仍在 DOM 里的 blob: —— 中途 revoke 会让已渲染的 chip 裂图。
-  const cacheRef = useRef<Map<string, string>>(new Map())
+  // 本地视图(target → 可渲染地址)。字节与 blob 的所有权在 acquireMediaSrc 的
+  // 共享缓存里,这里只记「本 hook 实例看到的结果」并持有对应的引用 —— 所以两张
+  // 卡引用同一个文件只读一次盘、只造一个 blob,而任一张卡卸载都不会 revoke 掉
+  // 另一张仍在渲染的那个地址。
+  const viewRef = useRef<Map<string, string>>(new Map())
+  /** 本实例已取过引用的 target,卸载/换素材时按它归还。 */
+  const heldRef = useRef<Set<string>>(new Set())
   const [version, setVersion] = useState(0)
 
   useEffect(() => {
-    const cache = cacheRef.current
-    const pending = [...new Set(targets.filter((t): t is string => !!t))].filter(
-      (t) => !cache.has(t),
-    )
+    const view = viewRef.current
+    const held = heldRef.current
+    const wanted = new Set(targets.filter((t): t is string => !!t))
+
+    // 先归还已经用不到的 —— 素材被删掉后不该继续占着那份字节。
+    for (const target of [...held]) {
+      if (wanted.has(target)) continue
+      releaseMediaSrc(target, 'image')
+      held.delete(target)
+      view.delete(target)
+    }
+
+    const pending = [...wanted].filter((t) => !held.has(t))
     if (pending.length === 0) return
     let cancelled = false
+    // 取引用要同步做:等到 then 里再取,期间别处 release 到 0 就会白读一遍。
+    const acquired = pending.map((target) => {
+      held.add(target)
+      return [target, acquireMediaSrc(target, 'image')] as const
+    })
     void Promise.all(
-      pending.map(async (target) => [target, await resolveMediaSrcOnce(target, 'image')] as const),
+      acquired.map(async ([target, p]) => [target, await p] as const),
     ).then((pairs) => {
+      if (cancelled) return
       let changed = false
       for (const [target, out] of pairs) {
         if (!out) continue
-        if (cancelled) {
-          if (out.startsWith('blob:')) URL.revokeObjectURL(out)
-          continue
-        }
-        cache.set(target, out)
+        view.set(target, out)
         changed = true
       }
-      if (!cancelled && changed) setVersion((v) => v + 1)
+      if (changed) setVersion((v) => v + 1)
     })
     return () => {
       cancelled = true
@@ -189,20 +205,20 @@ export function useMaterialThumbSrcs(entries: MaterialThumbEntry[]): Array<strin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depKey])
 
-  // 卸载时统一释放本组件创建过的 blob:(缓存里 data:/https 直通值 revoke 无害但跳过)
+  // 卸载时归还本实例持有的全部引用(共享缓存据此决定要不要真 revoke)。
   useEffect(() => {
-    const cache = cacheRef.current
+    const view = viewRef.current
+    const held = heldRef.current
     return () => {
-      for (const url of cache.values()) {
-        if (url.startsWith('blob:')) URL.revokeObjectURL(url)
-      }
-      cache.clear()
+      for (const target of held) releaseMediaSrc(target, 'image')
+      held.clear()
+      view.clear()
     }
   }, [])
 
   return useMemo(
-    () => targets.map((t) => (t ? cacheRef.current.get(t) : undefined)),
-    // 同上:targets 内容由 depKey 表达;version 表达缓存内容变化
+    () => targets.map((t) => (t ? viewRef.current.get(t) : undefined)),
+    // 同上:targets 内容由 depKey 表达;version 表达解析结果变化
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [depKey, version],
   )
