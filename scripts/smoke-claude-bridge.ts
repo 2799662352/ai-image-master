@@ -15,7 +15,7 @@
 //      reach the vendor unproxied.
 //
 // Needs a Right.Codes key, since it talks to the live pool:
-//   $env:OPENAI_API_KEY = "<your right.codes key>"
+//   $env:OPENAI_API_KEY = "<your rightapi.ai key>"
 //   pnpm exec tsx scripts/smoke-claude-bridge.ts
 //
 // Optional: pass a model slug to override the channel default (`claude-opus-5`
