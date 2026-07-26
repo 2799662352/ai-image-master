@@ -16,10 +16,13 @@ import {
 } from '../../../../shared/modelSettings'
 import type {
   AgentModelFamily,
+  AgentModelRoute,
   AgentModelSettingsEntry,
 } from '../../../../types/agent'
 import {
   builtinGateways,
+  inferModelFamily,
+  ModelUnavailableInGatewayError,
   resolveAuthorizedGatewayModelRoute,
   type AuthorizedGatewayRouteContext,
 } from '../../../../main/agent/gatewayModelRouting'
@@ -29,11 +32,19 @@ import { useAgentChatStore } from './store'
 
 // XAI (Grok) renders above OPENAI by explicit user request — Grok is the
 // headline channel on these gateways, so it gets the top slot in the picker.
-const FAMILY_ORDER: readonly AgentModelFamily[] = ['xai', 'openai', 'other']
+// A family absent from this list is silently dropped from the picker (see the
+// bucket build below), so every `AgentModelFamily` member must appear here.
+const FAMILY_ORDER: readonly AgentModelFamily[] = [
+  'xai',
+  'openai',
+  'anthropic',
+  'other',
+]
 
 const FAMILY_LABEL: Record<AgentModelFamily, string> = {
   openai: 'OPENAI',
   xai: 'XAI',
+  anthropic: 'ANTHROPIC',
   other: 'OTHER',
 }
 
@@ -69,9 +80,31 @@ interface ModelPickerProps {
   disabled?: boolean
 }
 
-function conservativeEntry(
+/**
+ * Resolves a picker row's route, or `undefined` when the gateway has no
+ * channel for it.
+ *
+ * Only some gateways carry some families — Claude lives on Right.Codes and
+ * nowhere else — and that shows up as `ModelUnavailableInGatewayError` for one
+ * model rather than a failure of the whole gateway. Callers decide per row
+ * whether to drop it or substitute something.
+ */
+function tryEntryRoute(
   gatewayId: string,
   routeSource: AuthorizedGatewayRouteContext['source'],
+  modelId: string,
+): AgentModelRoute | undefined {
+  try {
+    return resolveAuthorizedGatewayModelRoute({ source: routeSource, gatewayId }, modelId)
+  } catch (error) {
+    if (error instanceof ModelUnavailableInGatewayError) return undefined
+    throw error
+  }
+}
+
+function conservativeEntry(
+  gatewayId: string,
+  route: AgentModelRoute,
   row: {
     id: string
     displayName: string
@@ -79,10 +112,6 @@ function conservativeEntry(
     isDefault: boolean
   },
 ): AgentModelSettingsEntry {
-  const route = resolveAuthorizedGatewayModelRoute({
-    source: routeSource,
-    gatewayId,
-  }, row.id)
   const capabilities = mergeModelSettingsCapabilities({
     model: row.id,
     gatewayId: route.gatewayId,
@@ -105,12 +134,23 @@ function conservativeEntry(
   }
 }
 
+/**
+ * Builds the offline fallback list, dropping rows this gateway cannot serve.
+ *
+ * The canonical directory spans every family we ship, so on a gateway without
+ * a Claude channel those rows have nowhere to go. Skipping them mirrors what
+ * the main-process catalog builder does with the same models.
+ */
 function conservativeFallbackRows(
   gatewayId: string,
   routeSource: AuthorizedGatewayRouteContext['source'],
 ): AgentModelSettingsEntry[] {
-  return CANONICAL_MODEL_SETTINGS_ROWS.map((row) =>
-    conservativeEntry(gatewayId, routeSource, row))
+  const rows: AgentModelSettingsEntry[] = []
+  for (const row of CANONICAL_MODEL_SETTINGS_ROWS) {
+    const route = tryEntryRoute(gatewayId, routeSource, row.id)
+    if (route) rows.push(conservativeEntry(gatewayId, route, row))
+  }
+  return rows
 }
 
 function pickerModel(row: AgentModelSettingsEntry): PickerModel {
@@ -121,13 +161,31 @@ function pickerModel(row: AgentModelSettingsEntry): PickerModel {
   }
 }
 
+/**
+ * Row for the currently selected model when the gateway's catalog has no
+ * entry for it.
+ *
+ * The selection is persisted globally while catalogs are per gateway, so a
+ * model picked on one gateway stays selected after switching to another that
+ * cannot serve it (Claude selected on Right.Codes, then switch to API Yi).
+ * That row still has to render — the user needs to see what is selected in
+ * order to change it — so an unroutable model is pinned to the gateway's
+ * default channel, which is also where main's send path would fall back.
+ */
 function unknownModel(
   id: string,
   gatewayId: string,
   routeSource: AuthorizedGatewayRouteContext['source'],
 ): PickerModel {
   const metadata = findModel(id)
-  return pickerModel(conservativeEntry(gatewayId, routeSource, {
+  const route = tryEntryRoute(gatewayId, routeSource, id) ?? {
+    gatewayId,
+    channelId: builtinGateways().find((gateway) => gateway.id === gatewayId)
+      ?.defaultChannelId ?? `${gatewayId}-standard`,
+    modelId: id,
+    family: inferModelFamily(id),
+  }
+  return pickerModel(conservativeEntry(gatewayId, route, {
     id,
     displayName: metadata?.label ?? `Unknown · ${id}`,
     description:

@@ -43,6 +43,7 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
 export type ProviderCompatibilityPolicy =
   | 'none'
   | 'responses-namespace-bridge'
+  | 'anthropic-messages-bridge'
 
 /**
  * Custom Codex model_provider config. When passed, we wire it through the
@@ -89,6 +90,36 @@ export interface CodexProviderConfig {
    * single-model endpoints where anything but `model` would 400.
    */
   memoriesModel?: string
+  /**
+   * Optional per-channel kill switch for cross-session memory. When `false`,
+   * `features.memories=false` is appended AFTER the session-config value so
+   * Codex's last-wins `-c` precedence disables the subsystem for this channel
+   * no matter what the user's global toggle says.
+   *
+   * Needed because the memory pipeline's two phases prompt for a strict
+   * artifact shape that only the OpenAI models it was tuned against reliably
+   * produce. On a Claude-backed channel the side requests succeed but write
+   * malformed entries into `$CODEX_HOME/memories/`, which then get injected
+   * into every later session — a silently corrupted store is worse than no
+   * store. The usual escape hatch (`memoriesModel` pointing at a GPT model on
+   * the same endpoint) does not always exist: `memoriesModel` renames the model
+   * without moving the endpoint, so a gateway that sells GPT on a *sibling* host
+   * is no help — and a Claude-only pool refuses the slug outright (rightcode's
+   * answers `503 Pricing configuration is temporarily unavailable`). Where no
+   * GPT slug answers on the channel's own base URL, turning the feature off is
+   * the only correct answer.
+   *
+   * Scope caveat: `features.memories` is a process-wide launch flag, so this
+   * only follows the ACTIVE channel. A sibling channel reached per-thread via
+   * `thread/start.modelProvider` (see {@link appendExtraProviders}) would
+   * otherwise inherit whatever the active channel decided, since there is no
+   * per-provider key to set — the common case being a spawn on the gateway's
+   * GPT channel that later routes a thread to Claude in-process. That gap is
+   * covered one layer up: `AgentManager.threadChannelSupportsMemories` reads
+   * this flag off the channel a THREAD is bound to and forces that thread's
+   * `thread/memoryMode/set` to `disabled`.
+   */
+  supportsMemories?: boolean
   /** Optional. When set, becomes `-c model_reasoning_effort="..."`. */
   reasoningEffort?: string
   /** Optional. When set, becomes `-c model_verbosity="..."`. */
@@ -114,6 +145,32 @@ export interface CodexProviderConfig {
   extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
   /** Optional channel adapter policy; omitted providers use native Responses behavior. */
   compatibilityPolicy?: ProviderCompatibilityPolicy
+  /**
+   * Optional per-channel opt-out of Anthropic prompt caching. Only consulted on
+   * `anthropic-messages-bridge` channels; native Responses upstreams treat
+   * Codex's `prompt_cache_key` as their own hint and are unaffected.
+   *
+   * Defaults to on, because on a gateway that honours caching the saving is
+   * large: measured on apiyi, one turn with a ~4k-token stable prefix billed
+   * `input_tokens: 3974` with breakpoints off versus `input_tokens: 2` plus
+   * `cache_read_input_tokens: 3972` with them on. Reads bill at 0.1x, so that
+   * is roughly a tenth of the input cost — and Codex resends a growing
+   * conversation every single turn, which is exactly the shape caching pays for.
+   *
+   * Set `false` only with a measurement in hand — either a pool that charges
+   * writes (1.25x) without ever serving reads, or one that inserts breakpoints
+   * itself, where ours add nothing and only crowd Anthropic's 4-block cap.
+   * rightcode is the second case.
+   *
+   * Beware when measuring: the library reports cache counters from the Messages
+   * `message_start` frame, where this class of gateway sends zeros, and its
+   * `message_delta` handler reads only `output_tokens`. Reading cache numbers
+   * off the translated usage is what produced the first, wrong verdict on
+   * rightcode; measure against the upstream's own usage block. Codex's copy is
+   * corrected after the fact by {@link ./anthropicUsageRepair}, which is a
+   * reporting fix and not a substitute for measuring at the source.
+   */
+  promptCacheBreakpoints?: boolean
 }
 
 /**
@@ -298,12 +355,19 @@ export function appendProviderArgs(
   // bundled binary) to `memoriesModel` (the smartest model the endpoint
   // serves) or, failing that, the channel's own chat model — either way the
   // side request always targets a model the endpoint actually has.
-  const memoriesModel = provider.memoriesModel ?? provider.model
-  if (memoriesModel) {
-    args.push(
-      '-c', `memories.extract_model="${memoriesModel}"`,
-      '-c', `memories.consolidation_model="${memoriesModel}"`,
-    )
+  // Channels whose endpoint cannot produce well-formed memory artifacts opt
+  // out entirely (see `supportsMemories`); pinning a side-request model would
+  // only make the corruption more reliable.
+  if (provider.supportsMemories === false) {
+    args.push('-c', 'features.memories=false')
+  } else {
+    const memoriesModel = provider.memoriesModel ?? provider.model
+    if (memoriesModel) {
+      args.push(
+        '-c', `memories.extract_model="${memoriesModel}"`,
+        '-c', `memories.consolidation_model="${memoriesModel}"`,
+      )
+    }
   }
   if (provider.reasoningEffort) {
     args.push('-c', `model_reasoning_effort="${provider.reasoningEffort}"`)

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   channelsForGateway,
+  ModelUnavailableInGatewayError,
   resolveAuthorizedGatewayModelRoute,
   resolveGatewayModelRoute,
   resolveProviderChannel,
@@ -34,6 +35,50 @@ describe('gatewayModelRouting', () => {
     expect(channel.baseUrl).toBe('https://rightapi.ai/grok/v1')
   })
 
+  it('routes Claude models to the Anthropic-native pool with the bridge on', () => {
+    const route = resolveGatewayModelRoute('rightcode', 'claude-opus-5')
+    const channel = resolveProviderChannel(route.channelId)
+
+    expect(route).toEqual({
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-claude',
+      modelId: 'claude-opus-5',
+      family: 'anthropic',
+    })
+    // Its own host, not the codex/grok one: this pool speaks Messages only,
+    // so it must go through the translating bridge.
+    expect(channel.baseUrl).toBe('https://right.codes/claude-sale/v1')
+    expect(channel.compatibilityPolicy).toBe('anthropic-messages-bridge')
+    expect(channel.supportsMemories).toBe(false)
+  })
+
+  it('routes Claude to each gateway\'s own Anthropic channel', () => {
+    // Both builtin gateways serve Claude, but from different pools, so the
+    // channel — not just the family — has to follow the gateway.
+    expect(resolveGatewayModelRoute('apiyi', 'claude-opus-5'))
+      .toMatchObject({ channelId: 'apiyi-claude', family: 'anthropic' })
+    expect(resolveGatewayModelRoute('rightcode', 'claude-opus-5'))
+      .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
+  })
+
+  it('rejects Claude slugs the chosen pool does not truly serve', () => {
+    // The picker aggregates every canonical row against every gateway, so an
+    // unserved slug has to raise the catchable skip type rather than a hard
+    // config error. Same slug, opposite verdicts by gateway: rightcode answers
+    // claude-fable-5 as claude-opus-4-8 (announced only through a non-standard
+    // `{"type":"fallback"}` block no SDK surfaces) while apiyi echoes back
+    // `anthropic/claude-fable-5` and genuinely runs it. Date-suffixed slugs 404
+    // on both.
+    expect(() => resolveGatewayModelRoute('rightcode', 'claude-fable-5'))
+      .toThrow(ModelUnavailableInGatewayError)
+    expect(resolveGatewayModelRoute('apiyi', 'claude-fable-5'))
+      .toMatchObject({ channelId: 'apiyi-claude' })
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      expect(() => resolveGatewayModelRoute(gatewayId, 'claude-opus-5-20260501'))
+        .toThrow(ModelUnavailableInGatewayError)
+    }
+  })
+
   it('routes memory side requests to the smartest model each endpoint serves', () => {
     // memories.extract_model / consolidation_model default to gpt-5.4, which
     // grok-only endpoints reject with 400. Both apiyi channels share the full
@@ -52,6 +97,7 @@ describe('gatewayModelRouting', () => {
     expect(channelsForGateway('apiyi').map((channel) => channel.id)).toEqual([
       'apiyi-standard',
       'apiyi-grok',
+      'apiyi-claude',
     ])
   })
 

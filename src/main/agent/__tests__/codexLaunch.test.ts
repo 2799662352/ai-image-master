@@ -180,6 +180,34 @@ describe('buildCodexLaunchArgs', () => {
     expect(pairs(args)).toContainEqual(['-c', 'memories.consolidation_model="grok-4.5"'])
   })
 
+  it('disables memories entirely for channels that cannot produce valid artifacts', () => {
+    // Claude channels write malformed entries into $CODEX_HOME/memories/, and
+    // pointing memoriesModel at a GPT slug is impossible on this pool: it lists
+    // no GPT in /models and refuses gpt-5.5 with `503 Pricing configuration is
+    // temporarily unavailable`, while the gateway's own gpt-5.5 lives on a
+    // sibling host that memoriesModel cannot reach. The kill switch must
+    // therefore beat the user's global ON, which relies on codex's
+    // last-`-c`-wins precedence: the provider block is appended after the
+    // session-config block.
+    const args = buildCodexLaunchArgs({
+      sessionConfig: { memoriesEnabled: true },
+      provider: {
+        id: 'rightcode-claude',
+        name: 'Right.Codes Claude',
+        baseUrl: 'https://right.codes/claude-sale/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'claude-opus-5',
+        supportsMemories: false,
+      },
+    })
+    expect(pairs(args)).toContainEqual(['-c', 'features.memories=false'])
+    expect(args.lastIndexOf('features.memories=false'))
+      .toBeGreaterThan(args.indexOf('features.memories=true'))
+    // Pinning side-request models would only make the corruption reliable.
+    expect(args.join(' ')).not.toContain('memories.extract_model')
+    expect(args.join(' ')).not.toContain('memories.consolidation_model')
+  })
+
   it('prefers an explicit memoriesModel over the channel model for memory side requests', () => {
     // apiyi-grok's base URL is the FULL apiyi endpoint (api.apiyi.com/v1 —
     // same host as apiyi-standard, every model available), so its memory side

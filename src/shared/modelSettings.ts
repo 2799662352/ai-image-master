@@ -109,6 +109,30 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Frontier coding and agentic model with native Responses support.',
     isDefault: false,
   },
+  {
+    id: 'claude-sonnet-5',
+    displayName: 'Claude Sonnet 5',
+    tier: 'High',
+    description: 'Anthropic mid-tier. Runs through the Responses ⇆ Messages bridge.',
+    isDefault: false,
+  },
+  {
+    id: 'claude-opus-5',
+    displayName: 'Claude Opus 5',
+    tier: 'Extra High',
+    description: 'Anthropic frontier model. Bridged, no cross-session memory.',
+    isDefault: false,
+  },
+  {
+    id: 'claude-fable-5',
+    displayName: 'Claude Fable 5',
+    tier: 'Extra High',
+    // Only routable on gateways whose Claude channel actually serves it; the
+    // picker drops the row elsewhere rather than offering a slug that silently
+    // answers as a different model.
+    description: 'Anthropic long-form frontier model. API Yi channel only.',
+    isDefault: false,
+  },
 ] as const
 
 export interface LegacyModelSelection {
@@ -155,6 +179,32 @@ const PROVIDER_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
   }],
 ])
 
+/**
+ * Effort levels Anthropic documents for its adaptive-thinking models, with
+ * Anthropic's own default. The bridge turns Codex's `reasoning.effort` into
+ * `output_config.effort`, which is the knob these models expose in place of the
+ * retired `thinking.budget_tokens`.
+ */
+const ANTHROPIC_ADAPTIVE_REASONING: ProviderReasoningPolicy = {
+  defaultEffort: 'high',
+  supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+}
+
+/**
+ * Claude channels cannot answer `model/list`, so an entry here is the only way
+ * the effort picker gets populated for a family whose whole selling point is
+ * controllable thinking depth. Keyed per channel because the two gateways do
+ * not serve the same slugs — see the `allowedModels` of `rightcode-claude` and
+ * `apiyi-claude` for why fable appears on one and not the other.
+ */
+const ANTHROPIC_ADAPTIVE_CHANNEL_MODELS: readonly string[] = [
+  'rightcode:rightcode-claude:claude-opus-5',
+  'rightcode:rightcode-claude:claude-sonnet-5',
+  'apiyi:apiyi-claude:claude-opus-5',
+  'apiyi:apiyi-claude:claude-sonnet-5',
+  'apiyi:apiyi-claude:claude-fable-5',
+]
+
 const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> = new Map([
   ['apiyi:apiyi-grok:grok-4.5', {
     defaultEffort: 'high',
@@ -164,6 +214,9 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
     defaultEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
   }],
+  ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
+    (key) => [key, ANTHROPIC_ADAPTIVE_REASONING] as const,
+  ),
 ])
 
 const LEGACY_SELECTIONS: ReadonlyMap<

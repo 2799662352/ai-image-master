@@ -2067,7 +2067,9 @@ export class AgentManager {
         console.warn('[AgentManager] thread/unsubscribe after rebind fork failed:', err)
       })
     // Re-point the conversation at the fork (map + epoch tag + persistence).
-    this.rememberCodexThread(dbThreadId, forked.id)
+    // The target Channel is passed explicitly because the new binding is not
+    // persisted yet — see `threadChannelSupportsMemories`.
+    this.rememberCodexThread(dbThreadId, forked.id, target.channelId)
   }
 
   /**
@@ -2501,14 +2503,29 @@ export class AgentManager {
    * `thread/memoryMode/set`. Re-asserting is idempotent, so the safe move is to
    * assume it does not.
    *
+   * A Channel that cannot produce well-formed artifacts overrides the choice:
+   * see {@link threadChannelSupportsMemories} for why the launch flag alone
+   * does not cover it.
+   *
    * Fire-and-forget by design: it rides the streaming hot path, and a thread
    * that fails to re-assert falls back to the codex default rather than
    * breaking the turn.
    */
-  private reassertThreadMemoryMode(dbThreadId: string, codexThreadId: string): void {
-    if (!this.backend.setThreadMemoryMode || !this.store?.getThreadMemoryMode) return
+  private reassertThreadMemoryMode(
+    dbThreadId: string,
+    codexThreadId: string,
+    channelIdHint?: string,
+  ): void {
+    if (!this.backend.setThreadMemoryMode) return
     void (async () => {
       try {
+        if (!await this.threadChannelSupportsMemories(dbThreadId, channelIdHint)) {
+          // Deliberately NOT written through to the store: this is the
+          // Channel's constraint, not the user's decision, so the persisted
+          // choice stays intact and applies again on a capable Channel.
+          await this.backend.setThreadMemoryMode?.(codexThreadId, 'disabled')
+          return
+        }
         const mode = await this.store?.getThreadMemoryMode?.(dbThreadId)
         if (mode !== 'enabled' && mode !== 'disabled') return
         await this.backend.setThreadMemoryMode?.(codexThreadId, mode)
@@ -2516,6 +2533,51 @@ export class AgentManager {
         console.warn('[AgentManager] failed to re-assert thread memory mode:', err)
       }
     })()
+  }
+
+  /**
+   * Whether the Channel this thread runs on may take part in cross-session
+   * memory (see {@link CodexProviderConfig.supportsMemories}).
+   *
+   * Needed because `features.memories` is a launch flag: a Channel's `false`
+   * only reaches Codex when that Channel is active AT SPAWN. Every sibling
+   * Channel of the active Gateway is registered on the same spawn, so
+   * selecting one is served by in-process routing with no restart (see
+   * `canRouteInProcess`) — a thread can therefore run on a Claude Channel
+   * inside a process launched with memories ON, which is exactly the case the
+   * flag was meant to prevent. Per-thread mode is the only lever that follows
+   * the binding instead of the process.
+   *
+   * `channelIdHint` wins when given: a rebind forks onto the target Channel
+   * before the new binding is persisted, so the store would still name the
+   * OUTGOING one. Otherwise the persisted binding decides, and an unbound
+   * thread falls back to the active Channel — which is what it will run on.
+   * An unresolvable Channel is treated as capable: a Channel we cannot read
+   * is not evidence of a restriction, and the launch flag still applies.
+   */
+  private async threadChannelSupportsMemories(
+    dbThreadId: string,
+    channelIdHint?: string,
+  ): Promise<boolean> {
+    let channelId = channelIdHint
+    if (!channelId) {
+      try {
+        const routing = await this.store?.getThreadRoutingSnapshot?.(dbThreadId)
+        channelId = routing?.exists ? routing.modelProvider ?? undefined : undefined
+      } catch {
+        channelId = undefined
+      }
+    }
+    channelId ??= this.channelController.currentChannelId()
+    try {
+      const channel = resolveProviderChannel(
+        channelId,
+        this.providerStore.loadSync().customProviders,
+      )
+      return channel.supportsMemories !== false
+    } catch {
+      return true
+    }
   }
 
   /**
@@ -4030,7 +4092,11 @@ export class AgentManager {
    * generation that minted it so `resolveCodexThreadForSend` can later detect a
    * respawn.
    */
-  private rememberCodexThread(dbThreadId: string, codexThreadId: string): void {
+  private rememberCodexThread(
+    dbThreadId: string,
+    codexThreadId: string,
+    channelIdHint?: string,
+  ): void {
     this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
     const epoch = this.backend.currentEpoch?.()
     if (epoch !== undefined) this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
@@ -4047,7 +4113,7 @@ export class AgentManager {
     // A brand-new codex thread starts at the codex default, so the user's
     // per-thread choice has to be re-applied here — this is the funnel for
     // first start, fork, rebind, and restart hydration alike.
-    this.reassertThreadMemoryMode(dbThreadId, codexThreadId)
+    this.reassertThreadMemoryMode(dbThreadId, codexThreadId, channelIdHint)
   }
 
   /** Drop both the id and its epoch tag (poisoned-thread reset / stale respawn). */

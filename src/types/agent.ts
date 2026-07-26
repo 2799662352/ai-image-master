@@ -216,7 +216,7 @@ export interface CodexModelContextConfig {
   modelAutoCompactTokenLimit: number
 }
 
-export type AgentModelFamily = 'openai' | 'xai' | 'other'
+export type AgentModelFamily = 'openai' | 'xai' | 'anthropic' | 'other'
 
 export interface AgentModelRoute {
   gatewayId: string

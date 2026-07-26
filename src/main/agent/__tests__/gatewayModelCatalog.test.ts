@@ -30,7 +30,10 @@ const CUSTOM_PROVIDER: ProviderPreset = {
 }
 
 describe('buildGatewayModelCatalog', () => {
-  it('aggregates standard and Grok models for Right.Codes', () => {
+  it('aggregates standard, Grok and Claude models for Right.Codes', () => {
+    // Codex's model/list only knows the standard channel's models, so the
+    // single-family channels contribute their declared allowedModels — that is
+    // the ONLY way Grok and Claude reach the picker.
     const catalog = buildGatewayModelCatalog({
       gatewayId: 'rightcode',
       dynamicSource: 'codex',
@@ -42,9 +45,32 @@ describe('buildGatewayModelCatalog', () => {
     expect(catalog.models.map((model) => model.id)).toEqual([
       'gpt-5.5',
       'grok-4.5',
+      'claude-opus-5',
+      'claude-sonnet-5',
     ])
     expect(catalog.models.find((model) => model.id === 'grok-4.5')?.route)
       .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
+    expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)
+      .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
+  })
+
+  it('offers Claude per gateway according to what that pool truly serves', () => {
+    // Same canonical slug, two gateways, deliberately different answers: apiyi
+    // echoes back `anthropic/claude-fable-5` and runs it, while rightcode
+    // substitutes claude-opus-4-8 for that slug. A row must appear only where
+    // it resolves to the model it claims to be.
+    const build = (gatewayId: string) => buildGatewayModelCatalog({
+      gatewayId,
+      dynamicSource: 'codex',
+      dynamicModels: [dynamicModel('gpt-5.5'), dynamicModel('claude-fable-5')],
+      hasCredential: true,
+      availabilityByModel: new Map(),
+    })
+
+    expect(build('apiyi').models.find((model) => model.id === 'claude-fable-5')?.route)
+      .toMatchObject({ channelId: 'apiyi-claude', family: 'anthropic' })
+    expect(build('rightcode').models.map((model) => model.id))
+      .not.toContain('claude-fable-5')
   })
 
   it('keeps deterministic unauthorized Grok visible', () => {
@@ -194,6 +220,9 @@ describe('buildGatewayModelCatalog', () => {
     })
 
     expect(catalog.models.map((model) => model.id).sort()).toEqual([
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
       'gpt-5.5',
       'grok-4.5',
     ])

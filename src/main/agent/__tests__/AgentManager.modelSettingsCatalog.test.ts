@@ -149,6 +149,9 @@ describe('AgentManager model settings catalog and snapshot', () => {
         models: [
           expect.objectContaining({ id: 'gpt-5.6-sol' }),
           expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-fable-5' }),
         ],
       },
     })
@@ -202,6 +205,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
         models: [
           expect.objectContaining({ id: 'rightcode-model' }),
           expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
         ],
       },
     })
@@ -285,6 +290,14 @@ describe('AgentManager model settings catalog and snapshot', () => {
             id: 'grok-4.5',
             route: expect.objectContaining({ channelId: 'rightcode-grok' }),
           }),
+          expect.objectContaining({
+            id: 'claude-opus-5',
+            route: expect.objectContaining({ channelId: 'rightcode-claude' }),
+          }),
+          expect.objectContaining({
+            id: 'claude-sonnet-5',
+            route: expect.objectContaining({ channelId: 'rightcode-claude' }),
+          }),
         ],
       },
     })
@@ -316,6 +329,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(result.data.models.map((model) => model.id)).toEqual([
       'gpt-5.6-sol',
       'grok-4.5',
+      'claude-opus-5',
+      'claude-sonnet-5',
     ])
     expect(result.data.models.find((model) => model.id === 'grok-4.5')).toMatchObject({
       displayName: 'Grok 4.5',
@@ -339,6 +354,9 @@ describe('AgentManager model settings catalog and snapshot', () => {
         models: [
           expect.objectContaining({ id: 'gpt-5.6-sol' }),
           expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-fable-5' }),
         ],
       },
     })

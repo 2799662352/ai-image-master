@@ -21,7 +21,8 @@
     ]
   },
   "scripts": {
-    "dev": "node scripts/build-pglite-worker.mjs && electron-vite dev",
+    "dev": "node scripts/ensure-codex.mjs && node scripts/build-pglite-worker.mjs && electron-vite dev",
+    "codex:ensure": "node scripts/ensure-codex.mjs",
     "dev:static": "electron . --dev",
     "preview": "electron-vite preview",
     "start": "electron .",
@@ -76,6 +77,8 @@
     "codex:probe": "tsx scripts/probe-codex.ts",
     "codex:smoke:resume": "tsx scripts/smoke-codex-resume.ts",
     "codex:smoke:compaction": "tsx scripts/smoke-codex-compaction.ts",
+    "codex:smoke:claude": "tsx scripts/smoke-claude-bridge.ts",
+    "codex:probe:claude": "tsx scripts/probe-gateway-claude.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "agent:init-sql": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output prisma/init.sql",
@@ -108,6 +111,7 @@
     "@codemirror/merge": "^6.12.1",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.42.1",
+    "@codeproxy/core": "0.1.22",
     "@electric-sql/pglite": "^0.4.5",
     "@electric-sql/pglite-socket": "^0.1.5",
     "@iarna/toml": "^2.2.5",
