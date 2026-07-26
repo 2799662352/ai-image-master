@@ -102,8 +102,12 @@ export interface CodexProviderConfig {
    * malformed entries into `$CODEX_HOME/memories/`, which then get injected
    * into every later session — a silently corrupted store is worse than no
    * store. The usual escape hatch (`memoriesModel` pointing at a GPT model on
-   * the same endpoint) does not exist here: a Claude-only endpoint 404s every
-   * GPT slug, so the only correct answer is to turn the feature off.
+   * the same endpoint) does not always exist: `memoriesModel` renames the model
+   * without moving the endpoint, so a gateway that sells GPT on a *sibling* host
+   * is no help — and a Claude-only pool refuses the slug outright (rightcode's
+   * answers `503 Pricing configuration is temporarily unavailable`). Where no
+   * GPT slug answers on the channel's own base URL, turning the feature off is
+   * the only correct answer.
    *
    * Scope caveat: `features.memories` is a process-wide launch flag, so this
    * only follows the ACTIVE channel. A sibling channel reached per-thread via
@@ -148,16 +152,18 @@ export interface CodexProviderConfig {
    * is roughly a tenth of the input cost — and Codex resends a growing
    * conversation every single turn, which is exactly the shape caching pays for.
    *
-   * Set `false` only with a measurement in hand. Writes bill at 1.25x, so on a
-   * pool that charges the write and never serves the read, breakpoints are a
-   * permanent surcharge buying nothing.
+   * Set `false` only with a measurement in hand — either a pool that charges
+   * writes (1.25x) without ever serving reads, or one that inserts breakpoints
+   * itself, where ours add nothing and only crowd Anthropic's 4-block cap.
+   * rightcode is the second case.
    *
-   * Beware when measuring: the library reports cache counters from the
-   * Messages `message_start` frame, where this class of gateway sends zeros,
-   * and its `message_delta` handler reads only `output_tokens`. The usage Codex
-   * sees therefore says `cached_tokens: 0` even on a turn the upstream billed
-   * almost entirely as cache reads. Trust `message_delta` on the wire, not the
-   * translated usage.
+   * Beware when measuring: the library reports cache counters from the Messages
+   * `message_start` frame, where this class of gateway sends zeros, and its
+   * `message_delta` handler reads only `output_tokens`. Reading cache numbers
+   * off the translated usage is what produced the first, wrong verdict on
+   * rightcode; measure against the upstream's own usage block. Codex's copy is
+   * corrected after the fact by {@link ./anthropicUsageRepair}, which is a
+   * reporting fix and not a substitute for measuring at the source.
    */
   promptCacheBreakpoints?: boolean
 }

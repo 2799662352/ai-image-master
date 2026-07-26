@@ -137,18 +137,23 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // Anthropic-native upstream: the bridge translates Responses ⇆ Messages
     // in-process because Codex has no Anthropic wire protocol.
     compatibilityPolicy: 'anthropic-messages-bridge',
-    // Off because this pool was measured charging cache writes on every turn
-    // and never once serving a read — a GPT-5.5 control on the same vendor
-    // behaved identically, so it is the reseller's pooling, not the bridge.
-    // Caveat on that measurement: it was read off the translated usage, which
-    // is now known to under-report cache counters (see
-    // `promptCacheBreakpoints`). Worth redoing against `message_delta` on the
-    // wire — if reads do land here, flipping this on is a ~10x input saving.
+    // Off because this pool inserts its own breakpoints, so ours are redundant
+    // weight against Anthropic's 4-block cap. Measured directly on the
+    // upstream's usage block (not the translated one, which under-reported
+    // cache counters until `anthropicUsageRepair` landed): a never-before-sent
+    // prefix carrying NO `cache_control` billed `cache_creation: 8762` and then
+    // read all 8762 back on the repeat. Caching demonstrably works here — the
+    // earlier "writes but never reads" reading was the usage bug, not the pool.
     promptCacheBreakpoints: false,
     // See `CodexProviderConfig.supportsMemories`: the memory pipeline's two
     // phases write malformed artifacts on Claude, and the usual escape hatch
-    // (`memoriesModel` → a GPT slug) is unavailable because this endpoint
-    // serves Claude only.
+    // (`memoriesModel` → a GPT slug) does not reach here. The gateway does sell
+    // gpt-5.5, but on its `/codex/v1` sibling host, and `memoriesModel` renames
+    // the model without moving the endpoint. On this host `/models` lists 8
+    // slugs and none is a GPT, and gpt-5.5 is refused `503 Pricing
+    // configuration is temporarily unavailable` on both `/messages` and
+    // `/responses` across repeated attempts — while the same key gets 200 for
+    // gpt-5.5 on `/codex/v1` and for claude-opus-5 here.
     supportsMemories: false,
   }),
   Object.freeze({
@@ -180,7 +185,11 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     promptCacheBreakpoints: true,
     // Unlike the Claude-only rightcode pool, this endpoint also serves gpt-5.5,
     // so the memory pipeline keeps a model that produces well-formed artifacts
-    // and the feature stays on.
+    // and the feature stays on. Worth stating because the side request is not
+    // exempt from the bridge: it leaves as Responses, gets translated to
+    // Messages like everything else on this channel, and lands on `/v1/messages`
+    // carrying a GPT slug. That combination was verified to answer 200 here,
+    // echoing `model: gpt-5.5-2026-04-23`.
     memoriesModel: 'gpt-5.5',
   }),
 ])
