@@ -114,11 +114,17 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     id: 'rightcode-claude',
     gatewayId: 'rightcode',
     name: 'Right.Codes Claude',
-    // Separate host from the codex/grok channels: this is the vendor's
-    // Anthropic-native pool (Messages API, `x-api-key`), the only one of the
-    // three that does NOT speak Responses. The `/claude` sibling endpoint is
-    // unusable for us — it fingerprints clients and 400s anything that isn't
-    // Claude Code.
+    // Same host as the codex/grok channels, different path: this is the
+    // vendor's Anthropic-native pool (Messages API, `x-api-key`), the only one
+    // of the three that does NOT speak Responses. The `/claude` sibling
+    // endpoint is unusable for us — it fingerprints clients and 400s anything
+    // that isn't Claude Code.
+    //
+    // The pool used to live on `right.codes`, which the vendor has since
+    // announced as blocked on mainland networks (path and behaviour unchanged
+    // on the new host). Blocked here does not mean refused: connections hang
+    // until they time out, so a user on a mainland network saw Claude turns sit
+    // there with no error at all.
     //
     // Two quirks of this pool worth knowing before reading token numbers:
     // it prepends its own ~1140-token hidden system prompt (our instructions
@@ -129,7 +135,7 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // surface. Fable is therefore deliberately absent from `allowedModels`:
     // offering a model that never actually runs is worse than not offering it.
     // Date-suffixed slugs 404 here, so they stay out too.
-    baseUrl: 'https://right.codes/claude-sale/v1',
+    baseUrl: 'https://rightapi.ai/claude-sale/v1',
     envKey: 'OPENAI_API_KEY',
     model: 'claude-opus-5',
     allowedModels: Object.freeze(['claude-opus-5', 'claude-sonnet-5']),

@@ -194,7 +194,7 @@ describe('buildCodexLaunchArgs', () => {
       provider: {
         id: 'rightcode-claude',
         name: 'Right.Codes Claude',
-        baseUrl: 'https://right.codes/claude-sale/v1',
+        baseUrl: 'https://rightapi.ai/claude-sale/v1',
         envKey: 'OPENAI_API_KEY',
         model: 'claude-opus-5',
         supportsMemories: false,

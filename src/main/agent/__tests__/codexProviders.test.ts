@@ -57,7 +57,7 @@ describe('codexProviders', () => {
     expect(claude).toMatchObject({
       name: 'Right.Codes Claude',
       // Its own Anthropic-native host, not the codex/grok one.
-      baseUrl: 'https://right.codes/claude-sale/v1',
+      baseUrl: 'https://rightapi.ai/claude-sale/v1',
       envKey: 'OPENAI_API_KEY',
       model: 'claude-opus-5',
       allowedModels: ['claude-opus-5', 'claude-sonnet-5'],
