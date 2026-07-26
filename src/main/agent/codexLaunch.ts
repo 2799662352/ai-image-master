@@ -111,8 +111,13 @@ export interface CodexProviderConfig {
    *
    * Scope caveat: `features.memories` is a process-wide launch flag, so this
    * only follows the ACTIVE channel. A sibling channel reached per-thread via
-   * `thread/start.modelProvider` (see {@link appendExtraProviders}) inherits
-   * whatever the active channel decided — there is no per-provider key to set.
+   * `thread/start.modelProvider` (see {@link appendExtraProviders}) would
+   * otherwise inherit whatever the active channel decided, since there is no
+   * per-provider key to set — the common case being a spawn on the gateway's
+   * GPT channel that later routes a thread to Claude in-process. That gap is
+   * covered one layer up: `AgentManager.threadChannelSupportsMemories` reads
+   * this flag off the channel a THREAD is bound to and forces that thread's
+   * `thread/memoryMode/set` to `disabled`.
    */
   supportsMemories?: boolean
   /** Optional. When set, becomes `-c model_reasoning_effort="..."`. */

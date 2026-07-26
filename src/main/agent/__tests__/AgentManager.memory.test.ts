@@ -195,6 +195,103 @@ describe('AgentManager per-thread memory declaration', () => {
     expect(backend.setThreadMemoryMode).not.toHaveBeenCalled()
   })
 
+  it('disables memory on a channel that cannot write valid artifacts, even with no user choice', async () => {
+    // The hole this closes: `supportsMemories: false` only emits the
+    // process-wide `features.memories=false` when that channel is active AT
+    // SPAWN. Switching gpt-5.5 → claude-opus-5 inside one rightcode spawn is
+    // served by in-process routing (the sibling table is already registered),
+    // so no restart happens and the launch flag still says memories are on —
+    // leaving Claude free to write the malformed entries the flag exists to
+    // prevent. Per-thread mode is the only lever that follows the binding.
+    const backend = fakeBackend()
+    const store = fakeDurableStore({
+      getThreadRoutingSnapshot: vi.fn().mockResolvedValue({
+        exists: true,
+        model: 'claude-opus-5',
+        modelProvider: 'rightcode-claude',
+        gatewayId: 'rightcode',
+      }),
+    })
+    const mgr = makeManager(backend, store as never)
+
+    ;(mgr as unknown as { rememberCodexThread(a: string, b: string): void })
+      .rememberCodexThread('db-1', 'thr_fresh')
+    await flushMicrotasks()
+
+    expect(backend.setThreadMemoryMode).toHaveBeenCalledWith('thr_fresh', 'disabled')
+    // A capability override is not a user decision: the persisted choice must
+    // survive untouched so moving the thread back to a GPT channel restores it.
+    expect(store.setThreadMemoryMode).not.toHaveBeenCalled()
+  })
+
+  it('lets the channel override an explicit enabled, and restores it on a capable channel', async () => {
+    const claudeBackend = fakeBackend()
+    const claudeStore = fakeDurableStore({
+      getThreadMemoryMode: vi.fn().mockResolvedValue('enabled'),
+      getThreadRoutingSnapshot: vi.fn().mockResolvedValue({
+        exists: true,
+        model: 'claude-opus-5',
+        modelProvider: 'rightcode-claude',
+        gatewayId: 'rightcode',
+      }),
+    })
+    const onClaude = makeManager(claudeBackend, claudeStore as never)
+    ;(onClaude as unknown as { rememberCodexThread(a: string, b: string): void })
+      .rememberCodexThread('db-1', 'thr_claude')
+    await flushMicrotasks()
+    expect(claudeBackend.setThreadMemoryMode).toHaveBeenCalledWith('thr_claude', 'disabled')
+
+    const gptBackend = fakeBackend()
+    const gptStore = fakeDurableStore({
+      getThreadMemoryMode: vi.fn().mockResolvedValue('enabled'),
+      getThreadRoutingSnapshot: vi.fn().mockResolvedValue({
+        exists: true,
+        model: 'gpt-5.5',
+        modelProvider: 'rightcode-standard',
+        gatewayId: 'rightcode',
+      }),
+    })
+    const onGpt = makeManager(gptBackend, gptStore as never)
+    ;(onGpt as unknown as { rememberCodexThread(a: string, b: string): void })
+      .rememberCodexThread('db-1', 'thr_gpt')
+    await flushMicrotasks()
+    expect(gptBackend.setThreadMemoryMode).toHaveBeenCalledWith('thr_gpt', 'enabled')
+  })
+
+  it('reads the capability off the rebind target, not the binding it is replacing', async () => {
+    // A rebind forks onto the new channel before the new binding is persisted,
+    // so resolving through the store here would read the OUTGOING channel and
+    // leave memory on for the incoming Claude thread.
+    const backend = fakeBackend({
+      forkThread: vi.fn().mockResolvedValue({ id: 'thr_forked' }),
+      unsubscribeThread: vi.fn().mockResolvedValue(undefined),
+    })
+    const store = fakeDurableStore({
+      getThreadRoutingSnapshot: vi.fn().mockResolvedValue({
+        exists: true,
+        model: 'gpt-5.5',
+        modelProvider: 'rightcode-standard',
+        gatewayId: 'rightcode',
+      }),
+    })
+    const mgr = makeManager(backend, store as never)
+
+    await (mgr as unknown as {
+      rebindThreadInProcess(
+        db: string,
+        codex: string,
+        target: { channelId: string; modelId: string; contextWindow: number },
+      ): Promise<void>
+    }).rebindThreadInProcess('db-1', 'thr_old', {
+      channelId: 'rightcode-claude',
+      modelId: 'claude-opus-5',
+      contextWindow: 272_000,
+    })
+    await flushMicrotasks()
+
+    expect(backend.setThreadMemoryMode).toHaveBeenCalledWith('thr_forked', 'disabled')
+  })
+
   it('swallows a failed replay rather than breaking the turn it rides on', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const backend = fakeBackend({
