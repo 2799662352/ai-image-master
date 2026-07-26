@@ -182,10 +182,13 @@ describe('buildCodexLaunchArgs', () => {
 
   it('disables memories entirely for channels that cannot produce valid artifacts', () => {
     // Claude channels write malformed entries into $CODEX_HOME/memories/, and
-    // pointing memoriesModel at a GPT slug is impossible on a Claude-only
-    // endpoint (every GPT slug 404s). The kill switch must therefore beat the
-    // user's global ON, which relies on codex's last-`-c`-wins precedence:
-    // the provider block is appended after the session-config block.
+    // pointing memoriesModel at a GPT slug is impossible on this pool: it lists
+    // no GPT in /models and refuses gpt-5.5 with `503 Pricing configuration is
+    // temporarily unavailable`, while the gateway's own gpt-5.5 lives on a
+    // sibling host that memoriesModel cannot reach. The kill switch must
+    // therefore beat the user's global ON, which relies on codex's
+    // last-`-c`-wins precedence: the provider block is appended after the
+    // session-config block.
     const args = buildCodexLaunchArgs({
       sessionConfig: { memoriesEnabled: true },
       provider: {
