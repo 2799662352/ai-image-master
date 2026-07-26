@@ -21,7 +21,8 @@
     ]
   },
   "scripts": {
-    "dev": "node scripts/build-pglite-worker.mjs && electron-vite dev",
+    "dev": "node scripts/ensure-codex.mjs && node scripts/build-pglite-worker.mjs && electron-vite dev",
+    "codex:ensure": "node scripts/ensure-codex.mjs",
     "dev:static": "electron . --dev",
     "preview": "electron-vite preview",
     "start": "electron .",
