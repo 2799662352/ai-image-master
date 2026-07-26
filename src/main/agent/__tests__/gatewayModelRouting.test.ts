@@ -47,7 +47,7 @@ describe('gatewayModelRouting', () => {
     })
     // Its own host, not the codex/grok one: this pool speaks Messages only,
     // so it must go through the translating bridge.
-    expect(channel.baseUrl).toBe('https://right.codes/claude-sale/v1')
+    expect(channel.baseUrl).toBe('https://rightapi.ai/claude-sale/v1')
     expect(channel.compatibilityPolicy).toBe('anthropic-messages-bridge')
     expect(channel.supportsMemories).toBe(false)
   })
