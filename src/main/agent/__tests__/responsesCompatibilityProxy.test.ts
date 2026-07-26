@@ -600,8 +600,9 @@ describe('Anthropic Messages bridge', () => {
         body: JSON.stringify({
           model: 'claude-opus-5',
           stream: true,
-          // Codex's per-conversation cache hint, which the translator would
-          // otherwise turn into billed-but-never-read cache breakpoints.
+          // Codex's per-conversation cache hint. The translator reads its mere
+          // presence as consent to emit Anthropic cache breakpoints, which is
+          // the bridge's default because reads bill at a tenth of input.
           prompt_cache_key: 'thread-abc',
           instructions: 'You are a helpful assistant.',
           input: [{ role: 'user', content: [{ type: 'input_text', text: '你好' }] }],
@@ -634,8 +635,13 @@ describe('Anthropic Messages bridge', () => {
       })
       // Namespace tools survive as callable flat functions.
       expect(JSON.stringify(call.body)).toContain('multi_agent_v1__spawn_agent')
-      // No breakpoints: this gateway bills writes and never serves reads.
-      expect(JSON.stringify(call.body)).not.toContain('cache_control')
+      // Caching on by default: the stable system prefix carries a breakpoint so
+      // later turns bill it as a read rather than fresh input.
+      expect(call.body.system).toMatchObject([
+        { cache_control: { type: 'ephemeral' } },
+      ])
+      // `prompt_cache_key` itself is a Responses-only field with no Messages
+      // equivalent — it must be consumed, not forwarded.
       expect(call.body).not.toHaveProperty('prompt_cache_key')
 
       // Codex only understands Responses events coming back.
@@ -646,6 +652,50 @@ describe('Anthropic Messages bridge', () => {
       await bridge.close()
       await upstream.close()
     }
+  })
+
+  it('emits no cache breakpoints when a channel opts out', async () => {
+    // The library gates breakpoint insertion on `prompt_cache_key` alone, so
+    // dropping the field is the only way to opt out. Channels do that when the
+    // pool bills the 1.25x write and never serves the 0.1x read, where
+    // breakpoints are a pure surcharge.
+    const upstream = await startFakeMessagesUpstream()
+    const bridge = await startAnthropicMessagesBridge(upstream.baseUrl, {
+      promptCacheBreakpoints: false,
+    })
+
+    try {
+      await fetch(`${bridge.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer sk-test-key',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-5',
+          stream: true,
+          prompt_cache_key: 'thread-abc',
+          instructions: 'You are a helpful assistant.',
+          input: [{ role: 'user', content: [{ type: 'input_text', text: '你好' }] }],
+        }),
+      })
+
+      expect(upstream.calls).toHaveLength(1)
+      const [call] = upstream.calls
+      expect(JSON.stringify(call.body)).not.toContain('cache_control')
+      expect(call.body).not.toHaveProperty('prompt_cache_key')
+    } finally {
+      await bridge.close()
+      await upstream.close()
+    }
+  })
+
+  it('carries each channel\'s own cache decision through the proxy group', async () => {
+    // The decision lives on the channel preset, so it has to survive the hop
+    // from preset to running bridge — the two shipped Claude channels disagree,
+    // and silently collapsing them onto one default is a billing bug either way.
+    expect(resolveProviderChannel('rightcode-claude').promptCacheBreakpoints).toBe(false)
+    expect(resolveProviderChannel('apiyi-claude').promptCacheBreakpoints).toBe(true)
   })
 
   it('refuses non-/responses routes instead of forwarding them as Messages calls', async () => {

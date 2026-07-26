@@ -149,6 +149,9 @@ describe('AgentManager model settings catalog and snapshot', () => {
         models: [
           expect.objectContaining({ id: 'gpt-5.6-sol' }),
           expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-fable-5' }),
         ],
       },
     })
@@ -351,6 +354,9 @@ describe('AgentManager model settings catalog and snapshot', () => {
         models: [
           expect.objectContaining({ id: 'gpt-5.6-sol' }),
           expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-fable-5' }),
         ],
       },
     })

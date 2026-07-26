@@ -50,6 +50,7 @@ describe('codexProviders', () => {
       'rightcode-standard',
       'rightcode-grok',
       'rightcode-claude',
+      'apiyi-claude',
     ])
 
     const claude = resolveProviderChannel('rightcode-claude')
@@ -67,6 +68,24 @@ describe('codexProviders', () => {
     // A Claude-only endpoint 404s every GPT slug, so there is no smarter
     // model to point memory side requests at — the feature is off instead.
     expect(claude).not.toHaveProperty('memoriesModel')
+
+    // The other Claude channel is the same protocol with every cost/capability
+    // decision inverted, because the pool behind it behaves differently.
+    const apiyiClaude = resolveProviderChannel('apiyi-claude')
+    expect(apiyiClaude).toMatchObject({
+      name: 'API Yi Claude',
+      // Shares the host with the gpt/grok channels rather than a dedicated pool.
+      baseUrl: 'https://api.apiyi.com/v1',
+      model: 'claude-opus-5',
+      // Fable is real here; on rightcode the same slug answers as opus-4-8.
+      allowedModels: ['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5'],
+      compatibilityPolicy: 'anthropic-messages-bridge',
+      // Reads land on this pool, so breakpoints pay for themselves.
+      promptCacheBreakpoints: true,
+      // gpt-5.5 answers on the same endpoint, so memory artifacts stay valid.
+      memoriesModel: 'gpt-5.5',
+    })
+    expect(apiyiClaude).not.toHaveProperty('supportsMemories')
 
     const grok = resolveProviderChannel('rightcode-grok')
     expect(grok).toMatchObject({

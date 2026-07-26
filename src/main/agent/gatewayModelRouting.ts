@@ -48,7 +48,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'API易 Responses 网关',
     credentialId: 'apiyi',
     defaultChannelId: 'apiyi-standard',
-    channelIds: ['apiyi-standard', 'apiyi-grok'],
+    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude'],
   }),
   Object.freeze({
     id: 'rightcode',
@@ -137,11 +137,51 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // Anthropic-native upstream: the bridge translates Responses ⇆ Messages
     // in-process because Codex has no Anthropic wire protocol.
     compatibilityPolicy: 'anthropic-messages-bridge',
+    // Off because this pool was measured charging cache writes on every turn
+    // and never once serving a read — a GPT-5.5 control on the same vendor
+    // behaved identically, so it is the reseller's pooling, not the bridge.
+    // Caveat on that measurement: it was read off the translated usage, which
+    // is now known to under-report cache counters (see
+    // `promptCacheBreakpoints`). Worth redoing against `message_delta` on the
+    // wire — if reads do land here, flipping this on is a ~10x input saving.
+    promptCacheBreakpoints: false,
     // See `CodexProviderConfig.supportsMemories`: the memory pipeline's two
     // phases write malformed artifacts on Claude, and the usual escape hatch
     // (`memoriesModel` → a GPT slug) is unavailable because this endpoint
     // serves Claude only.
     supportsMemories: false,
+  }),
+  Object.freeze({
+    id: 'apiyi-claude',
+    gatewayId: 'apiyi',
+    name: 'API Yi Claude',
+    // Same host as the other apiyi channels, reached over the Anthropic-native
+    // Messages path rather than Responses. `/v1/responses` does answer here for
+    // Claude slugs, and choosing it would drop the bridge entirely — but it was
+    // measured returning `cached_tokens: 0, cache_write_tokens: 0` on a repeated
+    // prefix, matching the vendor's own warning that cache billing engages only
+    // on the native format. Bridging costs a translation layer and buys back an
+    // order of magnitude on input tokens, so the bridge wins.
+    baseUrl: 'https://api.apiyi.com/v1',
+    envKey: 'OPENAI_API_KEY',
+    model: 'claude-opus-5',
+    // All three slugs are genuinely routed, not aliased. The vendor's public
+    // docs list only the 4-x line, so a 200 alone proves nothing — but
+    // `/v1/models` advertises 26 Claude slugs including these three, each
+    // answers echoing its own name, and a control slug that cannot exist
+    // (`claude-opus-9`) is refused with 503 "no available channels for model
+    // claude-opus-9". Per-slug routing is therefore real, which is why fable is
+    // listed here while it stays out of `rightcode-claude`, where it is
+    // silently swapped for opus-4-8.
+    allowedModels: Object.freeze(['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5']),
+    compatibilityPolicy: 'anthropic-messages-bridge',
+    // Left on: a repeated prefix billed `input_tokens: 2` +
+    // `cache_read_input_tokens: 3972` here, against 3974 uncached.
+    promptCacheBreakpoints: true,
+    // Unlike the Claude-only rightcode pool, this endpoint also serves gpt-5.5,
+    // so the memory pipeline keeps a model that produces well-formed artifacts
+    // and the feature stays on.
+    memoriesModel: 'gpt-5.5',
   }),
 ])
 

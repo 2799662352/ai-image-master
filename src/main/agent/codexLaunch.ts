@@ -136,6 +136,30 @@ export interface CodexProviderConfig {
   extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
   /** Optional channel adapter policy; omitted providers use native Responses behavior. */
   compatibilityPolicy?: ProviderCompatibilityPolicy
+  /**
+   * Optional per-channel opt-out of Anthropic prompt caching. Only consulted on
+   * `anthropic-messages-bridge` channels; native Responses upstreams treat
+   * Codex's `prompt_cache_key` as their own hint and are unaffected.
+   *
+   * Defaults to on, because on a gateway that honours caching the saving is
+   * large: measured on apiyi, one turn with a ~4k-token stable prefix billed
+   * `input_tokens: 3974` with breakpoints off versus `input_tokens: 2` plus
+   * `cache_read_input_tokens: 3972` with them on. Reads bill at 0.1x, so that
+   * is roughly a tenth of the input cost — and Codex resends a growing
+   * conversation every single turn, which is exactly the shape caching pays for.
+   *
+   * Set `false` only with a measurement in hand. Writes bill at 1.25x, so on a
+   * pool that charges the write and never serves the read, breakpoints are a
+   * permanent surcharge buying nothing.
+   *
+   * Beware when measuring: the library reports cache counters from the
+   * Messages `message_start` frame, where this class of gateway sends zeros,
+   * and its `message_delta` handler reads only `output_tokens`. The usage Codex
+   * sees therefore says `cached_tokens: 0` even on a turn the upstream billed
+   * almost entirely as cache reads. Trust `message_delta` on the wire, not the
+   * translated usage.
+   */
+  promptCacheBreakpoints?: boolean
 }
 
 /**

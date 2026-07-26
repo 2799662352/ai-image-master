@@ -604,20 +604,17 @@ const ANTHROPIC_BRIDGE_TRANSLATE_URL = new URL(
  * breakpoints are emitted.
  *
  * `prompt_cache_key` is Codex's per-conversation cache hint and is transparent
- * on native Responses endpoints. The translator, however, reads it as consent
- * to stamp `cache_control: {type:'ephemeral'}` onto up to three system blocks
- * plus the last message block. Anthropic bills a marked prefix at 1.25x on
- * write and 0.1x on read — a win only if reads actually land.
+ * on native Responses endpoints, but the translator reads its mere presence as
+ * consent to stamp `cache_control: {type:'ephemeral'}` onto up to three system
+ * blocks plus the last message block — it is the library's only opt-in for
+ * Anthropic prompt caching (`translateRequest` gates `markBlocksForCache` and
+ * `markCacheBreakpoint` on this one field). Deleting it therefore does not just
+ * hide a hint, it turns caching off.
  *
- * They do not here. Measured against this gateway: identical prefixes across
- * turns reported cache writes every time and reads never once, and a GPT-5.5
- * control on the same vendor behaved the same way, so it is the reseller's
- * pooling rather than anything the bridge does wrong. Keeping the breakpoints
- * would therefore buy a permanent 25% surcharge on the system prompt for a
- * discount that never arrives.
- *
- * Revisit if the vendor starts returning `cache_read_input_tokens > 0`: at that
- * point deleting this becomes the cheaper option, not the safer one.
+ * That is worth doing only where reads never land, because Anthropic bills a
+ * marked prefix at 1.25x on write and 0.1x on read. Where reads do land the
+ * saving is an order of magnitude, so this is opt-in per channel rather than
+ * unconditional — see {@link CodexProviderConfig.promptCacheBreakpoints}.
  */
 function stripPromptCacheKey(body: JsonObject): void {
   delete body.prompt_cache_key
@@ -643,6 +640,7 @@ function stripPromptCacheKey(body: JsonObject): void {
  */
 export async function startAnthropicMessagesBridge(
   upstreamBaseUrl: string,
+  options: { promptCacheBreakpoints?: boolean } = {},
 ): Promise<ResponsesCompatibilityProxy> {
   const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Anthropic Messages')
   const translatingFetch = createResponsesFetch({
@@ -657,7 +655,9 @@ export async function startAnthropicMessagesBridge(
         : undefined
     ),
     fetch: translatingFetch,
-    transformBody: stripPromptCacheKey,
+    transformBody: options.promptCacheBreakpoints === false
+      ? stripPromptCacheKey
+      : undefined,
   })
 }
 
@@ -677,7 +677,9 @@ export async function startProviderCompatibilityProxies(
         continue
       }
       const proxy = bridge === 'anthropic-messages'
-        ? await startAnthropicMessagesBridge(provider.baseUrl)
+        ? await startAnthropicMessagesBridge(provider.baseUrl, {
+          promptCacheBreakpoints: provider.promptCacheBreakpoints,
+        })
         : await startResponsesCompatibilityProxy(provider.baseUrl)
       proxies.push(proxy)
       rewritten.push({ ...provider, baseUrl: proxy.baseUrl })

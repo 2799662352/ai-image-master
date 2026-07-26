@@ -273,11 +273,14 @@ describe('ModelPicker model settings integration', () => {
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
-  it('drops canonical rows the active gateway cannot serve', () => {
+  it('offers each canonical row the fallback gateway can actually route', () => {
     // Fallback rows are the canonical list crossed with the active gateway
-    // (API Yi with no catalog), and only Right.Codes has a Claude pool. Those
-    // rows have nowhere to route here, so they must be filtered out rather
-    // than rendered as options that would fail on click.
+    // (API Yi with no catalog), filtered to rows that resolve to a real
+    // channel — anything else would render as an option that fails on click.
+    // API Yi serves all three families, so all three must show up, Claude
+    // included. The filtering itself is exercised where a row genuinely has
+    // nowhere to go: see gatewayModelCatalog's per-gateway Claude test, which
+    // drops claude-fable-5 on Right.Codes.
     setPickerState({
       selectedModelId: 'gpt-5.5',
       modelSettingsCatalog: undefined,
@@ -288,24 +291,26 @@ describe('ModelPicker model settings integration', () => {
     openPicker()
 
     expect(screen.getByRole('option', { name: 'GPT-5.5' })).toBeTruthy()
-    expect(screen.queryByRole('option', { name: 'Claude Opus 5' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Grok 4.5' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Claude Opus 5' })).toBeTruthy()
   })
 
   it('still renders a selected model the gateway cannot serve so it can be changed', () => {
-    // Selection is global while catalogs are per gateway, so switching from
-    // Right.Codes to API Yi leaves Claude selected. Rendering has to survive
-    // that — a picker that throws is a picker the user cannot escape from.
+    // Selection is global while catalogs are per gateway, so a switch can leave
+    // a model selected that the new gateway has no channel for. `grok-3` infers
+    // the xai family but is outside apiyi-grok's fixed allowlist, so resolving
+    // its route throws. Rendering has to survive that — a picker that throws is
+    // a picker the user cannot escape from.
     setPickerState({
-      selectedModelId: 'claude-opus-5',
+      selectedModelId: 'grok-3',
       modelSettingsCatalog: undefined,
       modelReasoningEffortByModel: {},
       activeModelContextWindow: 200_000,
     })
     render(<ModelPicker />)
 
-    expect(screen.getByRole('button', { name: /选择模型：Claude Opus 5/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /选择模型：.*grok-3/ })).toBeTruthy()
     openPicker()
-    expect(screen.getByRole('option', { name: 'Claude Opus 5' })).toBeTruthy()
     expect(screen.getByRole('option', { name: 'GPT-5.5' })).toBeTruthy()
   })
 

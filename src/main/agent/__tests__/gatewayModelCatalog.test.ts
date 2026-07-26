@@ -54,18 +54,23 @@ describe('buildGatewayModelCatalog', () => {
       .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
   })
 
-  it('leaves Claude out of gateways with no Anthropic pool', () => {
-    // Same canonical slug, different gateway: API Yi has no Claude channel, so
-    // the row must be absent rather than routed somewhere that would 404.
-    const catalog = buildGatewayModelCatalog({
-      gatewayId: 'apiyi',
+  it('offers Claude per gateway according to what that pool truly serves', () => {
+    // Same canonical slug, two gateways, deliberately different answers: apiyi
+    // echoes back `anthropic/claude-fable-5` and runs it, while rightcode
+    // substitutes claude-opus-4-8 for that slug. A row must appear only where
+    // it resolves to the model it claims to be.
+    const build = (gatewayId: string) => buildGatewayModelCatalog({
+      gatewayId,
       dynamicSource: 'codex',
-      dynamicModels: [dynamicModel('gpt-5.5'), dynamicModel('claude-opus-5')],
+      dynamicModels: [dynamicModel('gpt-5.5'), dynamicModel('claude-fable-5')],
       hasCredential: true,
       availabilityByModel: new Map(),
     })
 
-    expect(catalog.models.map((model) => model.id)).not.toContain('claude-opus-5')
+    expect(build('apiyi').models.find((model) => model.id === 'claude-fable-5')?.route)
+      .toMatchObject({ channelId: 'apiyi-claude', family: 'anthropic' })
+    expect(build('rightcode').models.map((model) => model.id))
+      .not.toContain('claude-fable-5')
   })
 
   it('keeps deterministic unauthorized Grok visible', () => {
@@ -215,6 +220,9 @@ describe('buildGatewayModelCatalog', () => {
     })
 
     expect(catalog.models.map((model) => model.id).sort()).toEqual([
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
       'gpt-5.5',
       'grok-4.5',
     ])

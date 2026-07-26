@@ -52,20 +52,29 @@ describe('gatewayModelRouting', () => {
     expect(channel.supportsMemories).toBe(false)
   })
 
-  it('rejects Claude on gateways with no Anthropic pool as a skippable miss', () => {
-    // apiyi has no `-claude` channel. The picker aggregates every canonical
-    // row against every gateway, so this has to be the same catchable type as
-    // an allowedModels miss — not a hard config error.
-    expect(() => resolveGatewayModelRoute('apiyi', 'claude-opus-5'))
-      .toThrow(ModelUnavailableInGatewayError)
+  it('routes Claude to each gateway\'s own Anthropic channel', () => {
+    // Both builtin gateways serve Claude, but from different pools, so the
+    // channel — not just the family — has to follow the gateway.
+    expect(resolveGatewayModelRoute('apiyi', 'claude-opus-5'))
+      .toMatchObject({ channelId: 'apiyi-claude', family: 'anthropic' })
+    expect(resolveGatewayModelRoute('rightcode', 'claude-opus-5'))
+      .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
   })
 
-  it('rejects Claude slugs the pool silently substitutes or 404s', () => {
-    // claude-fable-5 answers as claude-opus-4-8 (announced only via a
-    // non-standard `{"type":"fallback"}` block no SDK surfaces), and
-    // date-suffixed slugs 404. Offering either is worse than not offering it.
-    for (const model of ['claude-fable-5', 'claude-opus-5-20260501']) {
-      expect(() => resolveGatewayModelRoute('rightcode', model))
+  it('rejects Claude slugs the chosen pool does not truly serve', () => {
+    // The picker aggregates every canonical row against every gateway, so an
+    // unserved slug has to raise the catchable skip type rather than a hard
+    // config error. Same slug, opposite verdicts by gateway: rightcode answers
+    // claude-fable-5 as claude-opus-4-8 (announced only through a non-standard
+    // `{"type":"fallback"}` block no SDK surfaces) while apiyi echoes back
+    // `anthropic/claude-fable-5` and genuinely runs it. Date-suffixed slugs 404
+    // on both.
+    expect(() => resolveGatewayModelRoute('rightcode', 'claude-fable-5'))
+      .toThrow(ModelUnavailableInGatewayError)
+    expect(resolveGatewayModelRoute('apiyi', 'claude-fable-5'))
+      .toMatchObject({ channelId: 'apiyi-claude' })
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      expect(() => resolveGatewayModelRoute(gatewayId, 'claude-opus-5-20260501'))
         .toThrow(ModelUnavailableInGatewayError)
     }
   })
@@ -88,6 +97,7 @@ describe('gatewayModelRouting', () => {
     expect(channelsForGateway('apiyi').map((channel) => channel.id)).toEqual([
       'apiyi-standard',
       'apiyi-grok',
+      'apiyi-claude',
     ])
   })
 
