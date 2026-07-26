@@ -10,6 +10,11 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { StringDecoder } from 'node:string_decoder'
 import type { AgentModelFamily } from '../../types/agent'
+import {
+  createAnthropicUsageSink,
+  observeAnthropicUsage,
+  repairResponsesUsage,
+} from './anthropicUsageRepair'
 import type { CodexProviderConfig } from './codexLaunch'
 import { inferModelFamily } from './gatewayModelRouting'
 
@@ -620,6 +625,51 @@ function stripPromptCacheKey(body: JsonObject): void {
   delete body.prompt_cache_key
 }
 
+/** Content type that marks a translated stream we can repair usage on. */
+const SSE_CONTENT_TYPE = 'text/event-stream'
+
+/**
+ * Wraps the library's translating fetch so the usage it reports is the usage
+ * the upstream actually billed — see {@link ./anthropicUsageRepair} for the two
+ * bugs this corrects and the measurements behind them.
+ *
+ * The translating fetch is rebuilt per call rather than once per channel. It is
+ * a pure closure factory (no sockets, no shared state), and a fresh one per
+ * request is what keeps each turn's observation bound to its own response:
+ * concurrent turns on the same channel would otherwise write into one sink and
+ * report each other's token counts.
+ */
+function createAnthropicTranslatingFetch(baseUrl: string): typeof fetch {
+  return async (input, init) => {
+    const sink = createAnthropicUsageSink()
+    const translate = createResponsesFetch({
+      upstreamFormat: 'anthropic',
+      baseUrl,
+      fetch: async (upstreamInput, upstreamInit) => {
+        const upstream = await fetch(upstreamInput, upstreamInit)
+        if (!upstream.body) return upstream
+        return new Response(observeAnthropicUsage(upstream.body, sink), {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers: upstream.headers,
+        })
+      },
+    })
+    const translated = await translate(input, init)
+    if (
+      !translated.body
+      || !translated.headers.get('content-type')?.includes(SSE_CONTENT_TYPE)
+    ) {
+      return translated
+    }
+    return new Response(repairResponsesUsage(translated.body, sink), {
+      status: translated.status,
+      statusText: translated.statusText,
+      headers: translated.headers,
+    })
+  }
+}
+
 /**
  * Starts a loopback bridge that speaks Responses to Codex and Anthropic
  * Messages to the upstream.
@@ -643,10 +693,9 @@ export async function startAnthropicMessagesBridge(
   options: { promptCacheBreakpoints?: boolean } = {},
 ): Promise<ResponsesCompatibilityProxy> {
   const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Anthropic Messages')
-  const translatingFetch = createResponsesFetch({
-    upstreamFormat: 'anthropic',
-    baseUrl: upstreamBase.toString().replace(/\/+$/, ''),
-  })
+  const translatingFetch = createAnthropicTranslatingFetch(
+    upstreamBase.toString().replace(/\/+$/, ''),
+  )
   return startCompatibilityBridgeServer({
     basePath: upstreamBase.pathname.replace(/\/+$/, ''),
     resolveTarget: (requestUrl) => (
