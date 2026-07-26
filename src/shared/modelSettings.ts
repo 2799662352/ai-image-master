@@ -109,6 +109,20 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Frontier coding and agentic model with native Responses support.',
     isDefault: false,
   },
+  {
+    id: 'claude-sonnet-5',
+    displayName: 'Claude Sonnet 5',
+    tier: 'High',
+    description: 'Anthropic mid-tier. Runs through the Responses ⇆ Messages bridge.',
+    isDefault: false,
+  },
+  {
+    id: 'claude-opus-5',
+    displayName: 'Claude Opus 5',
+    tier: 'Extra High',
+    description: 'Anthropic frontier model. Bridged, no cross-session memory.',
+    isDefault: false,
+  },
 ] as const
 
 export interface LegacyModelSelection {
@@ -163,6 +177,20 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
   ['rightcode:rightcode-grok:grok-4.5', {
     defaultEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
+  }],
+  // Claude channels can't answer `model/list`, so without these entries the
+  // effort picker would be empty for a model family whose whole selling point
+  // is controllable thinking depth. The bridge turns Codex's
+  // `reasoning.effort` into Anthropic `output_config.effort`, which documents
+  // exactly these five levels for adaptive-thinking models, and 'high' is
+  // Anthropic's own default.
+  ['rightcode:rightcode-claude:claude-opus-5', {
+    defaultEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  }],
+  ['rightcode:rightcode-claude:claude-sonnet-5', {
+    defaultEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   }],
 ])
 

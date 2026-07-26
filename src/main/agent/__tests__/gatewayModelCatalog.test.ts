@@ -30,7 +30,10 @@ const CUSTOM_PROVIDER: ProviderPreset = {
 }
 
 describe('buildGatewayModelCatalog', () => {
-  it('aggregates standard and Grok models for Right.Codes', () => {
+  it('aggregates standard, Grok and Claude models for Right.Codes', () => {
+    // Codex's model/list only knows the standard channel's models, so the
+    // single-family channels contribute their declared allowedModels — that is
+    // the ONLY way Grok and Claude reach the picker.
     const catalog = buildGatewayModelCatalog({
       gatewayId: 'rightcode',
       dynamicSource: 'codex',
@@ -42,9 +45,27 @@ describe('buildGatewayModelCatalog', () => {
     expect(catalog.models.map((model) => model.id)).toEqual([
       'gpt-5.5',
       'grok-4.5',
+      'claude-opus-5',
+      'claude-sonnet-5',
     ])
     expect(catalog.models.find((model) => model.id === 'grok-4.5')?.route)
       .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
+    expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)
+      .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
+  })
+
+  it('leaves Claude out of gateways with no Anthropic pool', () => {
+    // Same canonical slug, different gateway: API Yi has no Claude channel, so
+    // the row must be absent rather than routed somewhere that would 404.
+    const catalog = buildGatewayModelCatalog({
+      gatewayId: 'apiyi',
+      dynamicSource: 'codex',
+      dynamicModels: [dynamicModel('gpt-5.5'), dynamicModel('claude-opus-5')],
+      hasCredential: true,
+      availabilityByModel: new Map(),
+    })
+
+    expect(catalog.models.map((model) => model.id)).not.toContain('claude-opus-5')
   })
 
   it('keeps deterministic unauthorized Grok visible', () => {

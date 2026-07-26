@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   channelsForGateway,
+  ModelUnavailableInGatewayError,
   resolveAuthorizedGatewayModelRoute,
   resolveGatewayModelRoute,
   resolveProviderChannel,
@@ -32,6 +33,41 @@ describe('gatewayModelRouting', () => {
 
     expect(route.channelId).toBe('rightcode-grok')
     expect(channel.baseUrl).toBe('https://rightapi.ai/grok/v1')
+  })
+
+  it('routes Claude models to the Anthropic-native pool with the bridge on', () => {
+    const route = resolveGatewayModelRoute('rightcode', 'claude-opus-5')
+    const channel = resolveProviderChannel(route.channelId)
+
+    expect(route).toEqual({
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-claude',
+      modelId: 'claude-opus-5',
+      family: 'anthropic',
+    })
+    // Its own host, not the codex/grok one: this pool speaks Messages only,
+    // so it must go through the translating bridge.
+    expect(channel.baseUrl).toBe('https://right.codes/claude-sale/v1')
+    expect(channel.compatibilityPolicy).toBe('anthropic-messages-bridge')
+    expect(channel.supportsMemories).toBe(false)
+  })
+
+  it('rejects Claude on gateways with no Anthropic pool as a skippable miss', () => {
+    // apiyi has no `-claude` channel. The picker aggregates every canonical
+    // row against every gateway, so this has to be the same catchable type as
+    // an allowedModels miss — not a hard config error.
+    expect(() => resolveGatewayModelRoute('apiyi', 'claude-opus-5'))
+      .toThrow(ModelUnavailableInGatewayError)
+  })
+
+  it('rejects Claude slugs the pool silently substitutes or 404s', () => {
+    // claude-fable-5 answers as claude-opus-4-8 (announced only via a
+    // non-standard `{"type":"fallback"}` block no SDK surfaces), and
+    // date-suffixed slugs 404. Offering either is worse than not offering it.
+    for (const model of ['claude-fable-5', 'claude-opus-5-20260501']) {
+      expect(() => resolveGatewayModelRoute('rightcode', model))
+        .toThrow(ModelUnavailableInGatewayError)
+    }
   })
 
   it('routes memory side requests to the smartest model each endpoint serves', () => {

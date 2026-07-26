@@ -43,6 +43,7 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
 export type ProviderCompatibilityPolicy =
   | 'none'
   | 'responses-namespace-bridge'
+  | 'anthropic-messages-bridge'
 
 /**
  * Custom Codex model_provider config. When passed, we wire it through the
@@ -89,6 +90,27 @@ export interface CodexProviderConfig {
    * single-model endpoints where anything but `model` would 400.
    */
   memoriesModel?: string
+  /**
+   * Optional per-channel kill switch for cross-session memory. When `false`,
+   * `features.memories=false` is appended AFTER the session-config value so
+   * Codex's last-wins `-c` precedence disables the subsystem for this channel
+   * no matter what the user's global toggle says.
+   *
+   * Needed because the memory pipeline's two phases prompt for a strict
+   * artifact shape that only the OpenAI models it was tuned against reliably
+   * produce. On a Claude-backed channel the side requests succeed but write
+   * malformed entries into `$CODEX_HOME/memories/`, which then get injected
+   * into every later session — a silently corrupted store is worse than no
+   * store. The usual escape hatch (`memoriesModel` pointing at a GPT model on
+   * the same endpoint) does not exist here: a Claude-only endpoint 404s every
+   * GPT slug, so the only correct answer is to turn the feature off.
+   *
+   * Scope caveat: `features.memories` is a process-wide launch flag, so this
+   * only follows the ACTIVE channel. A sibling channel reached per-thread via
+   * `thread/start.modelProvider` (see {@link appendExtraProviders}) inherits
+   * whatever the active channel decided — there is no per-provider key to set.
+   */
+  supportsMemories?: boolean
   /** Optional. When set, becomes `-c model_reasoning_effort="..."`. */
   reasoningEffort?: string
   /** Optional. When set, becomes `-c model_verbosity="..."`. */
@@ -298,12 +320,19 @@ export function appendProviderArgs(
   // bundled binary) to `memoriesModel` (the smartest model the endpoint
   // serves) or, failing that, the channel's own chat model — either way the
   // side request always targets a model the endpoint actually has.
-  const memoriesModel = provider.memoriesModel ?? provider.model
-  if (memoriesModel) {
-    args.push(
-      '-c', `memories.extract_model="${memoriesModel}"`,
-      '-c', `memories.consolidation_model="${memoriesModel}"`,
-    )
+  // Channels whose endpoint cannot produce well-formed memory artifacts opt
+  // out entirely (see `supportsMemories`); pinning a side-request model would
+  // only make the corruption more reliable.
+  if (provider.supportsMemories === false) {
+    args.push('-c', 'features.memories=false')
+  } else {
+    const memoriesModel = provider.memoriesModel ?? provider.model
+    if (memoriesModel) {
+      args.push(
+        '-c', `memories.extract_model="${memoriesModel}"`,
+        '-c', `memories.consolidation_model="${memoriesModel}"`,
+      )
+    }
   }
   if (provider.reasoningEffort) {
     args.push('-c', `model_reasoning_effort="${provider.reasoningEffort}"`)

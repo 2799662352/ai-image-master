@@ -1,3 +1,4 @@
+import { createResponsesFetch } from '@codeproxy/core'
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -8,6 +9,7 @@ import type { AddressInfo } from 'node:net'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { StringDecoder } from 'node:string_decoder'
+import type { AgentModelFamily } from '../../types/agent'
 import type { CodexProviderConfig } from './codexLaunch'
 import { inferModelFamily } from './gatewayModelRouting'
 
@@ -59,10 +61,13 @@ export interface ProviderCompatibilityProxyGroup {
  * even when its preset (or a user-defined custom provider) forgot to declare
  * `compatibilityPolicy: 'responses-namespace-bridge'`.
  */
-function providerServesXaiModels(provider: BridgeCandidateProvider): boolean {
+function providerServesFamily(
+  provider: BridgeCandidateProvider,
+  family: AgentModelFamily,
+): boolean {
   const models = [provider.model, ...(provider.allowedModels ?? [])]
   return models.some(
-    (model) => typeof model === 'string' && inferModelFamily(model) === 'xai',
+    (model) => typeof model === 'string' && inferModelFamily(model) === family,
   )
 }
 
@@ -75,22 +80,48 @@ export type BridgeCandidateProvider = CodexProviderConfig & {
   allowedModels?: readonly string[]
 }
 
-/** Returns whether a provider channel needs the Responses namespace bridge. */
-export function shouldStartResponsesCompatibilityProxy(
+/** Which loopback adapter (if any) a provider channel must be launched behind. */
+export type CompatibilityBridgeKind =
+  | 'none'
+  | 'responses-namespace'
+  | 'anthropic-messages'
+
+/**
+ * Decides which loopback adapter a provider channel needs.
+ *
+ * Both never-regress guards below fire even when a preset (or a user-defined
+ * custom provider) forgot to declare the matching `compatibilityPolicy`,
+ * because in both cases an unbridged launch fails outright rather than
+ * degrading: xAI 422s every second turn, and an Anthropic endpoint has no
+ * `/responses` route at all.
+ */
+export function resolveCompatibilityBridge(
   provider: BridgeCandidateProvider | undefined,
-): boolean {
-  if (!provider) return false
+): CompatibilityBridgeKind {
+  if (!provider) return 'none'
   const policy = provider.compatibilityPolicy ?? 'none'
   switch (policy) {
-    case 'none':
-      return providerServesXaiModels(provider)
+    case 'anthropic-messages-bridge':
+      return 'anthropic-messages'
     case 'responses-namespace-bridge':
-      return true
+      return providerServesFamily(provider, 'anthropic')
+        ? 'anthropic-messages'
+        : 'responses-namespace'
+    case 'none':
+      if (providerServesFamily(provider, 'anthropic')) return 'anthropic-messages'
+      return providerServesFamily(provider, 'xai') ? 'responses-namespace' : 'none'
     default: {
       const exhaustive: never = policy
       throw new Error(`Unsupported compatibility policy: ${String(exhaustive)}`)
     }
   }
+}
+
+/** Returns whether a provider channel needs any loopback adapter. */
+export function shouldStartResponsesCompatibilityProxy(
+  provider: BridgeCandidateProvider | undefined,
+): boolean {
+  return resolveCompatibilityBridge(provider) !== 'none'
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -386,17 +417,36 @@ async function readRequestBody(
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/**
- * Starts a loopback proxy that adapts Codex namespace tools to standard Responses calls.
- */
-export async function startResponsesCompatibilityProxy(
-  upstreamBaseUrl: string,
-): Promise<ResponsesCompatibilityProxy> {
-  const upstreamBase = new URL(upstreamBaseUrl)
-  if (!['http:', 'https:'].includes(upstreamBase.protocol)) {
-    throw new Error(`Unsupported Responses upstream protocol: ${upstreamBase.protocol}`)
-  }
+/** How a bridge reaches its upstream, and what it exposes on loopback. */
+interface CompatibilityBridgeTransport {
+  /** Path prefix appended to the loopback origin so Codex's `base_url` matches. */
+  basePath: string
+  /**
+   * Maps an incoming loopback request to the URL handed to {@link fetch}.
+   * Returning `undefined` answers 404 instead of forwarding — used by bridges
+   * that can only serve `/responses`.
+   */
+  resolveTarget: (requestUrl: string) => URL | undefined
+  fetch: typeof fetch
+  /** Optional in-place tweak applied to a `/responses` body after flattening. */
+  transformBody?: (body: JsonObject) => void
+}
 
+/**
+ * Starts the loopback server shared by every compatibility bridge.
+ *
+ * Both bridges need the same envelope — read the body, flatten Codex's
+ * namespace tools into plain Responses function tools, forward, then restore
+ * namespace identity on the way back (streaming or not) — plus the same
+ * abort-on-client-close and keep-alive tuning. They differ only in the
+ * transport: the namespace bridge forwards to a Responses endpoint verbatim,
+ * while the Anthropic bridge hands the already-flattened body to a translating
+ * fetch. Keeping one server means a fix to the stream/abort handling can never
+ * land on only one of them.
+ */
+async function startCompatibilityBridgeServer(
+  transport: CompatibilityBridgeTransport,
+): Promise<ResponsesCompatibilityProxy> {
   const server = createServer(async (request, response) => {
     const abortController = new AbortController()
     const abortUpstream = (): void => abortController.abort()
@@ -408,6 +458,15 @@ export async function startResponsesCompatibilityProxy(
     try {
       const method = request.method ?? 'GET'
       const rawBody = await readRequestBody(request)
+      const target = transport.resolveTarget(request.url ?? '/')
+      if (!target) {
+        response.statusCode = 404
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify({
+          error: { message: `Bridge serves only /responses, not ${request.url ?? '/'}` },
+        }))
+        return
+      }
       let body = rawBody
       let bindings: NamespaceToolBinding[] = []
       if (
@@ -417,12 +476,13 @@ export async function startResponsesCompatibilityProxy(
       ) {
         const parsed = JSON.parse(rawBody) as JsonObject
         const flattened = flattenNamespaceTools(parsed)
+        transport.transformBody?.(flattened.body)
         body = JSON.stringify(flattened.body)
         bindings = flattened.bindings
       }
 
-      const upstreamResponse = await fetch(
-        upstreamUrl(upstreamBase, request.url ?? '/'),
+      const upstreamResponse = await transport.fetch(
+        target,
         {
           method,
           headers: requestHeaders(request.headers),
@@ -486,10 +546,9 @@ export async function startResponsesCompatibilityProxy(
     })
   })
   const address = server.address() as AddressInfo
-  const basePath = upstreamBase.pathname.replace(/\/+$/, '')
   let closed = false
   return {
-    baseUrl: `http://127.0.0.1:${address.port}${basePath}`,
+    baseUrl: `http://127.0.0.1:${address.port}${transport.basePath}`,
     keepAliveTimeoutMs: server.keepAliveTimeout,
     headersTimeoutMs: server.headersTimeout,
     close: () => new Promise<void>((resolve, reject) => {
@@ -504,6 +563,104 @@ export async function startResponsesCompatibilityProxy(
   }
 }
 
+function parseUpstreamBase(upstreamBaseUrl: string, label: string): URL {
+  const upstreamBase = new URL(upstreamBaseUrl)
+  if (!['http:', 'https:'].includes(upstreamBase.protocol)) {
+    throw new Error(`Unsupported ${label} upstream protocol: ${upstreamBase.protocol}`)
+  }
+  return upstreamBase
+}
+
+/**
+ * Starts a loopback proxy that adapts Codex namespace tools to standard Responses calls.
+ */
+export async function startResponsesCompatibilityProxy(
+  upstreamBaseUrl: string,
+): Promise<ResponsesCompatibilityProxy> {
+  const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Responses')
+  return startCompatibilityBridgeServer({
+    basePath: upstreamBase.pathname.replace(/\/+$/, ''),
+    resolveTarget: (requestUrl) => upstreamUrl(upstreamBase, requestUrl),
+    fetch,
+  })
+}
+
+/**
+ * Loopback path Codex is pointed at on Anthropic channels.
+ *
+ * The translating fetch decides whether to translate by regex-matching
+ * `/v1/responses$` on the URL it is handed, so we hand it this canonical
+ * placeholder rather than a URL derived from the channel's `base_url` — an
+ * upstream whose base lacks the `/v1` segment would otherwise silently fall
+ * through to raw passthrough and 404 against the Messages API. The host is
+ * never contacted: the real endpoint comes from `baseUrl` in the options.
+ */
+const ANTHROPIC_BRIDGE_TRANSLATE_URL = new URL(
+  'http://anthropic-messages-bridge.invalid/v1/responses',
+)
+
+/**
+ * Drops the Responses-side cache key so no Anthropic `cache_control`
+ * breakpoints are emitted.
+ *
+ * `prompt_cache_key` is Codex's per-conversation cache hint and is transparent
+ * on native Responses endpoints. The translator, however, reads it as consent
+ * to stamp `cache_control: {type:'ephemeral'}` onto up to three system blocks
+ * plus the last message block. Anthropic bills a marked prefix at 1.25x on
+ * write and 0.1x on read — a win only if reads actually land.
+ *
+ * They do not here. Measured against this gateway: identical prefixes across
+ * turns reported cache writes every time and reads never once, and a GPT-5.5
+ * control on the same vendor behaved the same way, so it is the reseller's
+ * pooling rather than anything the bridge does wrong. Keeping the breakpoints
+ * would therefore buy a permanent 25% surcharge on the system prompt for a
+ * discount that never arrives.
+ *
+ * Revisit if the vendor starts returning `cache_read_input_tokens > 0`: at that
+ * point deleting this becomes the cheaper option, not the safer one.
+ */
+function stripPromptCacheKey(body: JsonObject): void {
+  delete body.prompt_cache_key
+}
+
+/**
+ * Starts a loopback bridge that speaks Responses to Codex and Anthropic
+ * Messages to the upstream.
+ *
+ * Codex has no Anthropic wire protocol — `wire_api` only accepts `"responses"`
+ * (`"chat"` was removed in openai/codex#7782) — so a Claude channel is only
+ * reachable by translating both directions in-process. `@codeproxy/core` does
+ * the protocol mapping (including `Authorization: Bearer` → `x-api-key`, the
+ * `anthropic-version` header, and `thinking: {type:'adaptive'}` for the
+ * Sonnet 5 / Opus 4.6+ / Fable 5 generation that rejects the legacy
+ * `budget_tokens` shape), and the shared server keeps subagent namespace tools
+ * intact around it.
+ *
+ * Deliberately no `timeoutMs`: the option exists in the library's types but is
+ * unimplemented in 0.1.22, so setting it would read as protection while doing
+ * nothing. Cancellation instead rides the `AbortSignal` the shared server
+ * already wires to client disconnects, which the library does forward upstream.
+ */
+export async function startAnthropicMessagesBridge(
+  upstreamBaseUrl: string,
+): Promise<ResponsesCompatibilityProxy> {
+  const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Anthropic Messages')
+  const translatingFetch = createResponsesFetch({
+    upstreamFormat: 'anthropic',
+    baseUrl: upstreamBase.toString().replace(/\/+$/, ''),
+  })
+  return startCompatibilityBridgeServer({
+    basePath: upstreamBase.pathname.replace(/\/+$/, ''),
+    resolveTarget: (requestUrl) => (
+      requestUrl.split('?', 1)[0].endsWith('/responses')
+        ? ANTHROPIC_BRIDGE_TRANSLATE_URL
+        : undefined
+    ),
+    fetch: translatingFetch,
+    transformBody: stripPromptCacheKey,
+  })
+}
+
 /**
  * Starts one compatibility proxy per bridged Provider and returns rewritten configs.
  */
@@ -514,13 +671,16 @@ export async function startProviderCompatibilityProxies(
   try {
     const rewritten: CodexProviderConfig[] = []
     for (const provider of providers) {
-      if (shouldStartResponsesCompatibilityProxy(provider)) {
-        const proxy = await startResponsesCompatibilityProxy(provider.baseUrl)
-        proxies.push(proxy)
-        rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
-      } else {
+      const bridge = resolveCompatibilityBridge(provider)
+      if (bridge === 'none') {
         rewritten.push({ ...provider })
+        continue
       }
+      const proxy = bridge === 'anthropic-messages'
+        ? await startAnthropicMessagesBridge(provider.baseUrl)
+        : await startResponsesCompatibilityProxy(provider.baseUrl)
+      proxies.push(proxy)
+      rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
     }
     return {
       providers: rewritten,

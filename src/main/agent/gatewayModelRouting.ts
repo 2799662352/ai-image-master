@@ -56,7 +56,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'Right.Codes Codex 与 Grok 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-claude'],
   }),
 ])
 
@@ -110,15 +110,64 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // subagent tools stay callable instead of being stripped upstream.
     compatibilityPolicy: 'responses-namespace-bridge',
   }),
+  Object.freeze({
+    id: 'rightcode-claude',
+    gatewayId: 'rightcode',
+    name: 'Right.Codes Claude',
+    // Separate host from the codex/grok channels: this is the vendor's
+    // Anthropic-native pool (Messages API, `x-api-key`), the only one of the
+    // three that does NOT speak Responses. The `/claude` sibling endpoint is
+    // unusable for us — it fingerprints clients and 400s anything that isn't
+    // Claude Code.
+    //
+    // Two quirks of this pool worth knowing before reading token numbers:
+    // it prepends its own ~1140-token hidden system prompt (our instructions
+    // land after it, and it shows up as cache-read input on every request),
+    // and `claude-fable-5` is silently swapped for `claude-opus-4-8` under a
+    // content-refusal policy, announced only through a non-standard
+    // `{"type":"fallback"}` content block that no SDK — ours included — will
+    // surface. Fable is therefore deliberately absent from `allowedModels`:
+    // offering a model that never actually runs is worse than not offering it.
+    // Date-suffixed slugs 404 here, so they stay out too.
+    baseUrl: 'https://right.codes/claude-sale/v1',
+    envKey: 'OPENAI_API_KEY',
+    model: 'claude-opus-5',
+    allowedModels: Object.freeze(['claude-opus-5', 'claude-sonnet-5']),
+    requiresOpenaiAuth: true,
+    // Anthropic-native upstream: the bridge translates Responses ⇆ Messages
+    // in-process because Codex has no Anthropic wire protocol.
+    compatibilityPolicy: 'anthropic-messages-bridge',
+    // See `CodexProviderConfig.supportsMemories`: the memory pipeline's two
+    // phases write malformed artifacts on Claude, and the usual escape hatch
+    // (`memoriesModel` → a GPT slug) is unavailable because this endpoint
+    // serves Claude only.
+    supportsMemories: false,
+  }),
 ])
 
 /** Maps a model slug to its provider family for channel routing. */
 export function inferModelFamily(modelId: string): AgentModelFamily {
   const normalized = modelId.trim().toLowerCase()
   if (normalized.startsWith('grok')) return 'xai'
+  if (normalized.startsWith('claude')) return 'anthropic'
   if (normalized.startsWith('gpt-') || /^o\d/.test(normalized)) return 'openai'
   return 'other'
 }
+
+/**
+ * Channel id suffix each family is served from within a builtin gateway.
+ *
+ * `other` (unrecognized slugs) deliberately falls back to the standard
+ * channel: it is the OpenAI-compatible Responses endpoint, which is the only
+ * safe guess for a model we cannot classify.
+ */
+const FAMILY_CHANNEL_SUFFIX: Readonly<Record<AgentModelFamily, string>> =
+  Object.freeze({
+    openai: 'standard',
+    other: 'standard',
+    xai: 'grok',
+    anthropic: 'claude',
+  })
 
 function customGatewayModelRoute(
   gatewayId: string,
@@ -183,13 +232,16 @@ export function resolveGatewayModelRoute(
     return customGatewayModelRoute(gatewayId, normalizedModel)
   }
 
-  const channelId = family === 'xai'
-    ? `${gatewayId}-grok`
-    : `${gatewayId}-standard`
-  const channel = resolveProviderChannel(channelId, customProviders)
+  const channelId = `${gatewayId}-${FAMILY_CHANNEL_SUFFIX[family]}`
+  // Not every gateway serves every family (only rightcode has a Claude pool),
+  // and the family→channel mapping is ours, not the caller's. A missing
+  // channel is therefore "this gateway can't run this model", the same
+  // skippable condition as an `allowedModels` miss — not the malformed-input
+  // error `resolveProviderChannel` would raise.
+  const channel = BUILTIN_CHANNELS.find((entry) => entry.id === channelId)
   if (
-    channel.allowedModels
-    && !channel.allowedModels.includes(normalizedModel)
+    !channel
+    || (channel.allowedModels && !channel.allowedModels.includes(normalizedModel))
   ) {
     throw new ModelUnavailableInGatewayError(normalizedModel, gatewayId)
   }

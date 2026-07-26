@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest'
 import { resolveProviderChannel } from '../gatewayModelRouting'
 import {
   flattenNamespaceTools,
+  resolveCompatibilityBridge,
   shouldStartResponsesCompatibilityProxy,
+  startAnthropicMessagesBridge,
   startProviderCompatibilityProxies,
   restoreNamespaceToolCalls,
   startResponsesCompatibilityProxy,
@@ -462,6 +464,218 @@ describe('Responses namespace compatibility', () => {
           baseUrl: qwenBaseUrl,
         }),
       ])
+    } finally {
+      await group.close()
+    }
+  })
+
+  /**
+   * The sibling Channels a Gateway registers as extra providers (Plan B
+   * per-thread routing) go through this same call, so a Claude Channel reached
+   * via `thread/start.modelProvider` must be bridged too. Leaving it on the raw
+   * Anthropic base URL would make codex POST Responses payloads at a Messages
+   * endpoint and fail every turn on that thread.
+   */
+  it('bridges each mixed-family channel onto its own loopback port', async () => {
+    const claudeChannel = resolveProviderChannel('rightcode-claude')
+    const group = await startProviderCompatibilityProxies([
+      resolveProviderChannel('rightcode-grok'),
+      claudeChannel,
+    ])
+
+    try {
+      const [grok, claude] = group.providers
+      expect(grok.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//)
+      expect(claude.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//)
+      expect(claude.baseUrl).not.toBe(claudeChannel.baseUrl)
+      expect(new URL(claude.baseUrl).port).not.toBe(new URL(grok.baseUrl).port)
+    } finally {
+      await group.close()
+    }
+  })
+})
+
+interface CapturedUpstreamCall {
+  path: string
+  headers: Record<string, string | string[] | undefined>
+  body: Record<string, unknown>
+}
+
+/**
+ * Fake Anthropic Messages endpoint that records the call it receives and
+ * replies with a minimal but well-formed Messages SSE stream.
+ */
+async function startFakeMessagesUpstream(): Promise<{
+  baseUrl: string
+  calls: CapturedUpstreamCall[]
+  close: () => Promise<void>
+}> {
+  const calls: CapturedUpstreamCall[] = []
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    calls.push({
+      path: request.url ?? '/',
+      headers: request.headers,
+      body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+    })
+    response.statusCode = 200
+    response.setHeader('content-type', 'text/event-stream')
+    for (const event of [
+      {
+        type: 'message_start',
+        message: {
+          id: 'msg_1',
+          model: 'claude-opus-5',
+          role: 'assistant',
+          content: [],
+          usage: { input_tokens: 11, output_tokens: 0 },
+        },
+      },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '你好' },
+      },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: 3 },
+      },
+      { type: 'message_stop' },
+    ]) {
+      response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    }
+    response.end()
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  return {
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    calls,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  }
+}
+
+describe('Anthropic Messages bridge', () => {
+  it('bridges Claude channels, including ones whose preset forgot to say so', () => {
+    expect(resolveCompatibilityBridge(resolveProviderChannel('rightcode-claude')))
+      .toBe('anthropic-messages')
+    // Never-regress guard, mirroring the xAI one: an Anthropic endpoint has no
+    // /responses route at all, so an unbridged Claude channel cannot even
+    // complete one turn. A missing policy must not be able to cause that.
+    expect(resolveCompatibilityBridge({
+      id: 'custom-claude',
+      name: 'Custom Claude',
+      baseUrl: 'https://example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+      model: 'claude-opus-5',
+      compatibilityPolicy: 'none',
+    })).toBe('anthropic-messages')
+    // Anthropic wins over the namespace bridge: the wire protocol has to be
+    // translated before tool shape matters.
+    expect(resolveCompatibilityBridge({
+      id: 'mislabeled-claude',
+      name: 'Mislabeled Claude',
+      baseUrl: 'https://example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+      allowedModels: ['claude-sonnet-5'],
+      compatibilityPolicy: 'responses-namespace-bridge',
+    })).toBe('anthropic-messages')
+  })
+
+  it('translates a Responses turn into a Messages call and streams the reply back', async () => {
+    const upstream = await startFakeMessagesUpstream()
+    const bridge = await startAnthropicMessagesBridge(upstream.baseUrl)
+
+    try {
+      const response = await fetch(`${bridge.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer sk-test-key',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-5',
+          stream: true,
+          // Codex's per-conversation cache hint, which the translator would
+          // otherwise turn into billed-but-never-read cache breakpoints.
+          prompt_cache_key: 'thread-abc',
+          instructions: 'You are a helpful assistant.',
+          input: [{ role: 'user', content: [{ type: 'input_text', text: '你好' }] }],
+          tools: [
+            {
+              type: 'namespace',
+              name: 'multi_agent_v1',
+              tools: [
+                { type: 'function', name: 'spawn_agent', parameters: { type: 'object' } },
+              ],
+            },
+          ],
+        }),
+      })
+      const body = await response.text()
+
+      expect(upstream.calls).toHaveLength(1)
+      const [call] = upstream.calls
+      // Base URL ending in /v1 must be extended to the Messages route.
+      expect(call.path).toBe('/v1/messages')
+      // Anthropic auth shape, not the Bearer header Codex sends.
+      expect(call.headers['x-api-key']).toBe('sk-test-key')
+      expect(call.headers.authorization).toBeUndefined()
+      expect(call.headers['anthropic-version']).toBeDefined()
+      // Messages requires an explicit output budget; Responses has none.
+      expect(call.body).toMatchObject({
+        model: 'claude-opus-5',
+        messages: [{ role: 'user' }],
+        max_tokens: expect.any(Number),
+      })
+      // Namespace tools survive as callable flat functions.
+      expect(JSON.stringify(call.body)).toContain('multi_agent_v1__spawn_agent')
+      // No breakpoints: this gateway bills writes and never serves reads.
+      expect(JSON.stringify(call.body)).not.toContain('cache_control')
+      expect(call.body).not.toHaveProperty('prompt_cache_key')
+
+      // Codex only understands Responses events coming back.
+      expect(body).toContain('response.created')
+      expect(body).toContain('response.completed')
+      expect(body).toContain('你好')
+    } finally {
+      await bridge.close()
+      await upstream.close()
+    }
+  })
+
+  it('refuses non-/responses routes instead of forwarding them as Messages calls', async () => {
+    // Everything reaching this loopback origin is Responses traffic by
+    // construction; a stray path (a probe, or a future codex route) must fail
+    // visibly here rather than being rewritten into a Messages POST upstream.
+    const upstream = await startFakeMessagesUpstream()
+    const bridge = await startAnthropicMessagesBridge(upstream.baseUrl)
+
+    try {
+      const response = await fetch(`${bridge.baseUrl}/models`)
+      expect(response.status).toBe(404)
+      expect(upstream.calls).toHaveLength(0)
+    } finally {
+      await bridge.close()
+      await upstream.close()
+    }
+  })
+
+  it('rewrites the Claude channel base URL onto its loopback bridge', async () => {
+    const group = await startProviderCompatibilityProxies([
+      resolveProviderChannel('rightcode-claude'),
+    ])
+    try {
+      expect(group.providers[0]).toEqual(expect.objectContaining({
+        id: 'rightcode-claude',
+        // Path segment preserved so Codex's base_url shape is unchanged.
+        baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/claude-sale\/v1$/),
+        supportsMemories: false,
+      }))
     } finally {
       await group.close()
     }

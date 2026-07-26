@@ -273,6 +273,42 @@ describe('ModelPicker model settings integration', () => {
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
+  it('drops canonical rows the active gateway cannot serve', () => {
+    // Fallback rows are the canonical list crossed with the active gateway
+    // (API Yi with no catalog), and only Right.Codes has a Claude pool. Those
+    // rows have nowhere to route here, so they must be filtered out rather
+    // than rendered as options that would fail on click.
+    setPickerState({
+      selectedModelId: 'gpt-5.5',
+      modelSettingsCatalog: undefined,
+      modelReasoningEffortByModel: {},
+      activeModelContextWindow: 272_000,
+    })
+    render(<ModelPicker />)
+    openPicker()
+
+    expect(screen.getByRole('option', { name: 'GPT-5.5' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: 'Claude Opus 5' })).toBeNull()
+  })
+
+  it('still renders a selected model the gateway cannot serve so it can be changed', () => {
+    // Selection is global while catalogs are per gateway, so switching from
+    // Right.Codes to API Yi leaves Claude selected. Rendering has to survive
+    // that — a picker that throws is a picker the user cannot escape from.
+    setPickerState({
+      selectedModelId: 'claude-opus-5',
+      modelSettingsCatalog: undefined,
+      modelReasoningEffortByModel: {},
+      activeModelContextWindow: 200_000,
+    })
+    render(<ModelPicker />)
+
+    expect(screen.getByRole('button', { name: /选择模型：Claude Opus 5/ })).toBeTruthy()
+    openPicker()
+    expect(screen.getByRole('option', { name: 'Claude Opus 5' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'GPT-5.5' })).toBeTruthy()
+  })
+
   it('routes an unknown fallback model for a catalog-authorized custom gateway', () => {
     setPickerState({
       selectedModelId: 'vendor-custom-future',
@@ -469,6 +505,55 @@ describe('ModelPicker family grouping and route transition status', () => {
     // Enter on a focused native button activates it; jsdom needs the click.
     fireEvent.click(grokOption)
     expect(selectModel).toHaveBeenCalledWith('grok-4.5')
+  })
+
+  it('renders Claude rows in their own ANTHROPIC group below OPENAI', () => {
+    // A family missing from the picker's order table is silently dropped, so
+    // this asserts Claude rows actually reach the list — and that they land
+    // last, since the Anthropic pool is the narrowest of the three.
+    const catalog = gatewayFamilyCatalog()
+    setPickerState({
+      selectedModelId: 'gpt-5.5',
+      modelSettingsCatalog: {
+        ...catalog,
+        models: [
+          ...catalog.models,
+          {
+            id: 'claude-opus-5',
+            displayName: 'Claude Opus 5',
+            description: 'Anthropic model',
+            hidden: false,
+            isDefault: false,
+            family: 'anthropic',
+            route: {
+              gatewayId: 'rightcode',
+              channelId: 'rightcode-claude',
+              modelId: 'claude-opus-5',
+              family: 'anthropic',
+            },
+            availability: { status: 'available' },
+            capabilities: mergeModelSettingsCapabilities({
+              model: 'claude-opus-5',
+              gatewayId: 'rightcode',
+              channelId: 'rightcode-claude',
+              supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+            }),
+          },
+        ],
+      },
+      modelReasoningEffortByModel: {},
+      activeModelContextWindow: 272_000,
+    })
+    render(<ModelPicker />)
+    openPicker()
+
+    const openaiHeader = screen.getByText('OPENAI')
+    const anthropicHeader = screen.getByText('ANTHROPIC')
+    expect(
+      openaiHeader.compareDocumentPosition(anthropicHeader)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Claude Opus 5' })).toBeTruthy()
   })
 
   it('keeps deterministic unauthorized Grok visible and disabled', () => {

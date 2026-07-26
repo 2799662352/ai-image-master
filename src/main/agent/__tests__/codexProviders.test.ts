@@ -43,13 +43,30 @@ describe('codexProviders', () => {
     expect(BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-grok')).toBeUndefined()
   })
 
-  it('exports four internal channel presets including Grok routes', () => {
+  it('exports the internal channel presets including Grok and Claude routes', () => {
     expect(BUILTIN_CHANNEL_PRESETS.map((channel) => channel.id)).toEqual([
       'apiyi-standard',
       'apiyi-grok',
       'rightcode-standard',
       'rightcode-grok',
+      'rightcode-claude',
     ])
+
+    const claude = resolveProviderChannel('rightcode-claude')
+    expect(claude).toMatchObject({
+      name: 'Right.Codes Claude',
+      // Its own Anthropic-native host, not the codex/grok one.
+      baseUrl: 'https://right.codes/claude-sale/v1',
+      envKey: 'OPENAI_API_KEY',
+      model: 'claude-opus-5',
+      allowedModels: ['claude-opus-5', 'claude-sonnet-5'],
+      requiresOpenaiAuth: true,
+      compatibilityPolicy: 'anthropic-messages-bridge',
+      supportsMemories: false,
+    })
+    // A Claude-only endpoint 404s every GPT slug, so there is no smarter
+    // model to point memory side requests at — the feature is off instead.
+    expect(claude).not.toHaveProperty('memoriesModel')
 
     const grok = resolveProviderChannel('rightcode-grok')
     expect(grok).toMatchObject({
@@ -85,6 +102,7 @@ describe('codexProviders', () => {
     expect(channelsForGateway('rightcode').map((channel) => channel.id)).toEqual([
       'rightcode-standard',
       'rightcode-grok',
+      'rightcode-claude',
     ])
   })
 
