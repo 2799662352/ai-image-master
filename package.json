@@ -76,6 +76,7 @@
     "codex:probe": "tsx scripts/probe-codex.ts",
     "codex:smoke:resume": "tsx scripts/smoke-codex-resume.ts",
     "codex:smoke:compaction": "tsx scripts/smoke-codex-compaction.ts",
+    "codex:smoke:claude": "tsx scripts/smoke-claude-bridge.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "agent:init-sql": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output prisma/init.sql",
