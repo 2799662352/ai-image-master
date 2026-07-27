@@ -475,6 +475,10 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // any flag. We used to pin `-c experimental_use_rmcp_client=true` here
     // (openai/codex#4707, needed since 0.128); keeping it would only emit an
     // "unknown config key" configWarning notice in the chat panel.
+    // CAVEAT on `max_depth` below: it binds V1 only. Upstream's
+    // `collab_tools_enabled` returns unconditional `true` for V2
+    // (codex-rs/core/src/tools/spec_plan.rs), so on the channels where we
+    // enable `multiAgentV2` nesting is bounded by `max_threads` alone.
     // Subagents (parallel delegation). Codex can spawn specialized worker
     // agents that explore/analyze/tackle work concurrently — but it only does
     // so when explicitly asked, and the concurrency ceiling lives under the

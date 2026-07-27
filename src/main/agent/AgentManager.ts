@@ -516,6 +516,9 @@ export class AgentManager {
    */
   private readonly subagentReply = new Map<string, string>()
 
+  /** Sub-agent threads whose own turn has ended — see {@link markSubagentFinished}. */
+  private readonly subagentFinished = new Set<string>()
+
   /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
@@ -4167,6 +4170,7 @@ export class AgentManager {
     ) {
       return
     }
+    if (event.type === 'turn_completed' && this.markSubagentFinished(threadId)) return
     if (this.warnedSubagentThreads.has(threadId)) return
     this.warnedSubagentThreads.add(threadId)
     const owner = this.subagentParentByCodexThread.get(threadId)
@@ -4197,7 +4201,14 @@ export class AgentManager {
     this.delegationItems.set(event.itemId, { dbThreadId: parentDbThreadId, delegation })
     for (const agent of delegation.agents) {
       this.subagentParentByCodexThread.set(agent.threadId, parentDbThreadId)
-      this.delegationItemByChild.set(agent.threadId, event.itemId)
+      // First card wins. Every V2 tool call gets its own item id, so a
+      // `followup_task` to a running child would otherwise move that child's
+      // replies and tokens onto the follow-up card and leave the card that
+      // spawned it saying "working…" forever — and steering a long job with
+      // follow-ups is the normal path, not an edge case.
+      if (!this.delegationItemByChild.has(agent.threadId)) {
+        this.delegationItemByChild.set(agent.threadId, event.itemId)
+      }
     }
   }
 
@@ -4234,6 +4245,22 @@ export class AgentManager {
   }
 
   /**
+   * Marks a sub-agent finished when its own turn ends.
+   *
+   * Multi-agent V2 supplies no status anywhere a parent-scoped client can see
+   * it: `subAgentActivity` carries only an id and a path, and V2's `wait` item
+   * reports an empty `agentsStates`. Without this the agent row would pulse
+   * "working…" for the life of the card on exactly the channels where V2 is
+   * enabled. The child's `turn/completed` is the one terminal signal that does
+   * reach us.
+   */
+  private markSubagentFinished(childThreadId: string): boolean {
+    if (!this.delegationItemByChild.has(childThreadId)) return false
+    this.subagentFinished.add(childThreadId)
+    return this.republishDelegation(childThreadId)
+  }
+
+  /**
    * Re-emits the delegation item for whichever card owns this child, folding in
    * everything learned from the child's own stream. Returns false when the
    * child belongs to no known delegation, so the caller can fall back to the
@@ -4249,11 +4276,14 @@ export class AgentManager {
       agents: record.delegation.agents.map((agent) => {
         const tokens = this.subagentUsage.get(agent.threadId)
         const scraped = this.subagentReply.get(agent.threadId)
+        const finished = this.subagentFinished.has(agent.threadId)
         return {
           ...agent,
           ...(tokens ? { tokens } : {}),
-          // Never overwrite what the parent reported.
+          // Never overwrite what the parent reported — for either field. The
+          // parent's own account is what it acted on; ours is inferred.
           ...(agent.message === undefined && scraped ? { message: scraped } : {}),
+          ...(agent.status === undefined && finished ? { status: 'completed' } : {}),
         }
       }),
     }

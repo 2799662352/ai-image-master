@@ -112,6 +112,37 @@ describe('ActivityCard delegation', () => {
     expect(screen.queryByText(/019fa301-7219/)).toBeNull()
   })
 
+  it('does not dress a failed agent up as a working one', () => {
+    // Upstream `CollabAgentStatus` has seven values and `errored` is the only
+    // one whose message is non-optional — so treating everything that is not
+    // `completed` as "still running" put an error message next to a spinner,
+    // and the user waits instead of retrying.
+    render(<ActivityCard item={delegationItem({
+      status: 'error',
+      delegation: {
+        tool: 'wait',
+        agents: [{ threadId: 'a', status: 'errored', message: 'model refused the task' }],
+      },
+    })} />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.getAttribute('aria-label')).toContain('errored')
+    expect(row.querySelector('.animate-pulse')).toBeNull()
+  })
+
+  it('marks an interrupted agent as stopped rather than done', () => {
+    render(<ActivityCard item={delegationItem({
+      delegation: {
+        tool: 'interrupted',
+        agents: [{ threadId: 'a', status: 'interrupted' }],
+      },
+    })} />)
+
+    const row = screen.getByRole('listitem')
+    expect(row.getAttribute('aria-label')).toContain('interrupted')
+    expect(row.textContent).not.toContain('working')
+  })
+
   it('falls back to the generic chip for ordinary tool calls', () => {
     render(<ActivityCard item={{
       type: 'activity',

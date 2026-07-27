@@ -201,7 +201,13 @@ export interface DelegatedAgent {
  * subscribing to the children.
  */
 export interface DelegationSnapshot {
-  /** `spawnAgent` | `wait` | `followupTask` | `sendMessage` | `interrupt` | `list`. */
+  /**
+   * What produced this snapshot. Two disjoint upstream vocabularies land here:
+   * V1's `CollabAgentTool` (`spawnAgent` | `sendInput` | `resumeAgent` | `wait`
+   * | `closeAgent`) and V2's `SubAgentActivityKind` (`started` | `interacted` |
+   * `interrupted`), because V2 reports delegation through a different item type
+   * rather than through the tool call.
+   */
   tool: string
   /** Task handed to the child (spawn only). */
   prompt?: string

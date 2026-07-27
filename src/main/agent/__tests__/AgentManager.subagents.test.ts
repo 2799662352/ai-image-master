@@ -298,6 +298,77 @@ describe('AgentManager sub-agent events', () => {
       expect(merged?.patch.fields.delegation.agents[0].message).toBe('authoritative answer')
     })
 
+    it('settles a V2 agent row when the child\'s turn ends', () => {
+      // V2 announces a spawn through `subAgentActivity`, which carries no
+      // status, and its `wait` item reports an empty `agentsStates`. Nothing
+      // else ever supplies one — so on the channels where V2 is enabled the row
+      // pulsed "working…" for the life of the card no matter what the child
+      // did. The child's own `turn/completed` reaches us on the unrouted path
+      // and is the only terminal signal available.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents({
+        type: 'item_completed',
+        threadId: 'codex-parent',
+        itemId: 'call_activity',
+        itemType: 'activity',
+        final: {
+          kind: 'subAgentActivity',
+          delegation: {
+            tool: 'started',
+            agents: [{ threadId: 'child-1', name: '/root/scout' }],
+          },
+        },
+      } as AgentStreamEvent)
+
+      fireUnrouted({ type: 'turn_completed', threadId: 'child-1' } as AgentStreamEvent)
+
+      const patch = emitted.filter((event) => event.type === 'item_delta').at(-1)
+      expect(patch).toMatchObject({
+        itemId: 'call_activity',
+        patch: {
+          fields: { delegation: { agents: [{ threadId: 'child-1', status: 'completed' }] } },
+        },
+      })
+    })
+
+    it('keeps a child bound to the card that spawned it, not to a follow-up', () => {
+      // Every V2 tool call is its own item id, so a `followup_task` to a
+      // running child used to rebind ownership: the child's reply and tokens
+      // then landed on the follow-up card while the spawn card said "working…"
+      // forever. Steering a long job with follow-ups is the normal path.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      const activity = (itemId: string, tool: string): AgentStreamEvent => ({
+        type: 'item_completed',
+        threadId: 'codex-parent',
+        itemId,
+        itemType: 'activity',
+        final: {
+          kind: 'subAgentActivity',
+          delegation: { tool, agents: [{ threadId: 'child-1' }] },
+        },
+      }) as AgentStreamEvent
+      const note = (event: AgentStreamEvent): void =>
+        (manager as unknown as { noteDelegatedAgents(e: AgentStreamEvent): void })
+          .noteDelegatedAgents(event)
+
+      note(activity('call_spawn', 'started'))
+      note(activity('call_followup', 'interacted'))
+      fireUnrouted({
+        type: 'item_completed',
+        threadId: 'child-1',
+        itemId: 'msg',
+        itemType: 'text',
+        final: { content: 'done the thing' },
+      } as AgentStreamEvent)
+
+      const patch = emitted.filter((event) => event.type === 'item_delta').at(-1)
+      expect(patch).toMatchObject({ itemId: 'call_spawn' })
+    })
+
     it('names the owning conversation in the drop warning', () => {
       // Once ownership is known the diagnostic should say whose child it was;
       // "some thread dropped events" is not actionable.
