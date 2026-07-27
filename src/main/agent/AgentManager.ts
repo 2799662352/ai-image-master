@@ -123,7 +123,7 @@ import type {
   CodexWorkspacePaths,
   ItemDeltaPatch,
 } from '../../types/agent'
-import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
+import type { AttachmentRef, DelegationSnapshot, TimelineItem } from '../../types/agent-timeline'
 import { dropSupersededStreamItems, trimRetriedStreamItems } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
@@ -476,6 +476,18 @@ export class AgentManager {
    * the diagnostic to one line per child instead of one per streamed event.
    */
   private readonly warnedSubagentThreads = new Set<string>()
+
+  /**
+   * Sub-agent codex thread id → the DB thread of the conversation that spawned
+   * it. Learned from the parent's own `collabAgentToolCall` items, which name
+   * their children in `receiverThreadIds`.
+   *
+   * Exists because {@link resolveDbThreadId} — how the MCP `ToolRouter` decides
+   * which chat a tool call belongs to — reverse-scans the DB↔codex map, and a
+   * child is not in it. Without this a sub-agent's `generate_image` card lands
+   * in whatever conversation happens to be open.
+   */
+  private readonly subagentParentByCodexThread = new Map<string, string>()
 
   /**
    * Latest status emitted per MCP server name. Populated by
@@ -3703,6 +3715,7 @@ export class AgentManager {
    */
   resolveDbThreadId(codexThreadId: string): string | undefined {
     return findDbThreadId(this.codexThreadIdByDbThreadId, codexThreadId)
+      ?? this.subagentParentByCodexThread.get(codexThreadId)
   }
 
   async respondToApprovalResponse(response: CodexApprovalResponse): Promise<{ ok: boolean; error?: string }> {
@@ -4119,10 +4132,34 @@ export class AgentManager {
     if (!threadId) return
     if (this.warnedSubagentThreads.has(threadId)) return
     this.warnedSubagentThreads.add(threadId)
+    const owner = this.subagentParentByCodexThread.get(threadId)
     console.warn(
       `[AgentManager] dropping events from sub-agent thread ${threadId}`
-      + ' (no delegation UI yet; first event was ' + event.type + ')',
+      + (owner ? ` (spawned by ${owner})` : ' (owner unknown)')
+      + ` (no delegation UI yet; first event was ${event.type})`,
     )
+  }
+
+  /**
+   * Records which conversation owns the sub-agents named by a delegation item,
+   * so their tool calls can be attributed (see
+   * {@link subagentParentByCodexThread}).
+   *
+   * A delegation whose parent codex thread we never minted is ignored: without
+   * a DB thread there is nothing to attribute to, and guessing would put a
+   * stranger's tool output in one of our conversations.
+   */
+  private noteDelegatedAgents(event: AgentStreamEvent): void {
+    if (event.type !== 'item_started' && event.type !== 'item_completed') return
+    if (event.itemType !== 'activity') return
+    const fields = event.type === 'item_started' ? event.payload : event.final
+    const delegation = (fields as { delegation?: DelegationSnapshot }).delegation
+    if (!delegation) return
+    const parentDbThreadId = findDbThreadId(this.codexThreadIdByDbThreadId, event.threadId)
+    if (!parentDbThreadId) return
+    for (const agent of delegation.agents) {
+      this.subagentParentByCodexThread.set(agent.threadId, parentDbThreadId)
+    }
   }
 
   private rememberCodexThread(
@@ -4462,6 +4499,10 @@ export class AgentManager {
             continue
           }
           if (!this.eventSink && this.win?.isDestroyed()) return
+          // Read BEFORE the rewrite below: a delegation names its children by
+          // codex thread id, and matching them to this conversation needs the
+          // codex-side parent id the event still carries here.
+          this.noteDelegatedAgents(event)
           // Renderer's chat store filters events by its DB threadId. Always rewrite
           // so codex-side UUIDs never leak into the UI layer. Out-of-band variants
           // (mcp_*, skills_changed, notice) carry no threadId — forward untouched.
