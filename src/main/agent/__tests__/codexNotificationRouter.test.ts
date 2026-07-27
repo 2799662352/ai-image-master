@@ -2368,6 +2368,42 @@ describe('CodexNotificationRouter', () => {
       expect(started.payload.detail).toContain('pong')
     })
 
+    it('reads a V2 spawn off subAgentActivity, which is where V2 puts it', () => {
+      // Measured difference between the two multi-agent generations
+      // (`scripts/smoke-subagents.ts` with and without `--v2`): under V2 the
+      // `collabAgentToolCall` arrives with `receiverThreadIds: []` and
+      // `agentsStates: {}`, and the child is announced by a separate
+      // `subAgentActivity` item instead. Reading only the V1 shape would leave
+      // the delegation card empty on V2.
+      const router = new CodexNotificationRouter()
+
+      const event = router.route('item/completed', {
+        threadId: 'parent-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'subAgentActivity',
+          id: 'call_activity',
+          kind: 'started',
+          agentThreadId: 'child-v2',
+          agentPath: '/root/pong_agent',
+        },
+      })
+
+      expect(event).toMatchObject({
+        type: 'item_completed',
+        threadId: 'parent-1',
+        itemId: 'call_activity',
+        itemType: 'activity',
+        final: {
+          kind: 'subAgentActivity',
+          delegation: {
+            tool: 'started',
+            agents: [{ threadId: 'child-v2', name: '/root/pong_agent' }],
+          },
+        },
+      })
+    })
+
     it('leaves unrelated tool calls without a delegation block', () => {
       const router = new CodexNotificationRouter()
       const event = router.route('item/started', {

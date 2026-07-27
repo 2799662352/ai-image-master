@@ -171,6 +171,27 @@ export interface CodexProviderConfig {
    * reporting fix and not a substitute for measuring at the source.
    */
   promptCacheBreakpoints?: boolean
+  /**
+   * Opt this channel into multi-agent V2 (`features.multi_agent_v2`). Off by
+   * default, which lands on V1 — codex's own default and the generation with no
+   * encrypted fields.
+   *
+   * V2 marks the task handed to a sub-agent `.with_encrypted()`, and upstream
+   * #34833 (filed against 0.145.0, our pinned version) reports non-OpenAI
+   * backends receiving an empty payload and the parent dying on a decrypt
+   * failure. So this is enabled per channel, only where a live spawn was
+   * measured working end to end (`scripts/smoke-subagents.ts --v2`).
+   *
+   * Scope caveat, same shape as {@link supportsMemories}: this is a
+   * process-wide launch flag that follows the ACTIVE channel. A sibling channel
+   * reached per-thread via `thread/start.modelProvider` inherits whatever the
+   * active channel decided — so a Claude thread inside a process launched on a
+   * GPT channel does see the V2 tools. That only bites if such a thread
+   * actually delegates, and nothing currently teaches it to (the delegation
+   * skill is retired); upstream also refuses spawn targets whose model catalog
+   * does not declare V2, which our gateway-backed Claude/Grok slugs do not.
+   */
+  multiAgentV2?: boolean
 }
 
 /**
@@ -358,6 +379,9 @@ export function appendProviderArgs(
   // Channels whose endpoint cannot produce well-formed memory artifacts opt
   // out entirely (see `supportsMemories`); pinning a side-request model would
   // only make the corruption more reliable.
+  if (provider.multiAgentV2) {
+    args.push('-c', 'features.multi_agent_v2=true')
+  }
   if (provider.supportsMemories === false) {
     args.push('-c', 'features.memories=false')
   } else {

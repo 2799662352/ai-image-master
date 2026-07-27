@@ -34,13 +34,14 @@ afterEach(async () => {
 
 /** Captures the `onUnroutedEvent` the manager wires into its backend. */
 function makeManager(): {
+  manager: AgentManager
   emitted: AgentStreamEvent[]
   fireUnrouted: (event: AgentStreamEvent) => void
 } {
   const emitted: AgentStreamEvent[] = []
   let unrouted: ((event: AgentStreamEvent) => void) | undefined
 
-  new AgentManager({
+  const manager = new AgentManager({
     userDataDir: tmpDir,
     eventSink: (event: AgentStreamEvent) => { emitted.push(event) },
     backendFactory: (options) => {
@@ -56,7 +57,27 @@ function makeManager(): {
   } as never)
 
   if (!unrouted) throw new Error('AgentManager did not wire onUnroutedEvent')
-  return { emitted, fireUnrouted: unrouted }
+  return { manager, emitted, fireUnrouted: unrouted }
+}
+
+/** The delegation item as the router emits it, from a measured wire payload. */
+function spawnCompleted(childThreadId: string): AgentStreamEvent {
+  return {
+    type: 'item_completed',
+    threadId: 'codex-parent',
+    itemId: 'call_spawn',
+    itemType: 'activity',
+    final: {
+      kind: 'collabAgentToolCall',
+      status: 'success',
+      delegation: {
+        tool: 'spawnAgent',
+        prompt: 'do the thing',
+        model: 'gpt-5.5',
+        agents: [{ threadId: childThreadId }],
+      },
+    },
+  } as AgentStreamEvent
 }
 
 const childDelta = (threadId: string): AgentStreamEvent => ({
@@ -94,5 +115,204 @@ describe('AgentManager sub-agent events', () => {
     expect(subagentWarnings).toHaveLength(2)
     expect(String(subagentWarnings[0][0])).toContain('child-1')
     expect(String(subagentWarnings[1][0])).toContain('child-2')
+  })
+
+  /**
+   * MCP tool attribution. `ToolRouter` asks `resolveDbThreadId` which chat a
+   * tool call belongs to, by reverse-scanning the DB↔codex thread map. A
+   * sub-agent thread is not in that map, so without this its `generate_image`
+   * or `ask_user` card falls back to "whatever chat is open" — the picture
+   * lands in the wrong conversation.
+   *
+   * The parent's own `collabAgentToolCall` names the children
+   * (`receiverThreadIds` → `delegation.agents`), so the ownership is knowable
+   * from the stream we already consume.
+   */
+  describe('tool-call attribution for spawned children', () => {
+    function registerParent(manager: AgentManager): void {
+      ;(manager as unknown as {
+        rememberCodexThread(db: string, codex: string): void
+      }).rememberCodexThread('db-parent', 'codex-parent')
+    }
+
+    it('resolves a child thread to the parent conversation', () => {
+      const { manager } = makeManager()
+      registerParent(manager)
+
+      expect(manager.resolveDbThreadId('child-1')).toBeUndefined()
+
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      expect(manager.resolveDbThreadId('child-1')).toBe('db-parent')
+      // The parent still resolves to itself.
+      expect(manager.resolveDbThreadId('codex-parent')).toBe('db-parent')
+    })
+
+    it('ignores a delegation whose parent thread is not ours', () => {
+      // A codex thread we never minted cannot attribute anything; guessing
+      // would be worse than leaving the tool call unattributed.
+      const { manager } = makeManager()
+
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      expect(manager.resolveDbThreadId('child-1')).toBeUndefined()
+    })
+
+    it('folds a child\'s token usage into the delegation card', () => {
+      // Sub-agent spend is real money the parent conversation is paying, but it
+      // must NOT be merged into the parent's `token_usage_updated`: the store
+      // replaces `tokenUsage` wholesale and drives the context-window gauge off
+      // it, so a child's absolute counts would misreport how full the parent's
+      // context is. The delegation item is the honest place for it.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted({
+        type: 'token_usage_updated',
+        threadId: 'child-1',
+        usage: { inputTokens: 1200, outputTokens: 340 },
+      } as AgentStreamEvent)
+
+      const patch = emitted.find((event) => event.type === 'item_delta')
+      expect(patch).toMatchObject({
+        type: 'item_delta',
+        threadId: 'db-parent',
+        itemId: 'call_spawn',
+        itemType: 'activity',
+        patch: {
+          kind: 'mergeFields',
+          fields: {
+            delegation: {
+              agents: [{ threadId: 'child-1', tokens: { input: 1200, output: 340 } }],
+            },
+          },
+        },
+      })
+    })
+
+    it('keeps the latest usage rather than summing repeated reports', () => {
+      // `thread/tokenUsage/updated` is a cumulative snapshot per thread, not a
+      // delta — adding successive reports would inflate the number.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      for (const inputTokens of [500, 1200]) {
+        fireUnrouted({
+          type: 'token_usage_updated',
+          threadId: 'child-1',
+          usage: { inputTokens, outputTokens: 10 },
+        } as AgentStreamEvent)
+      }
+
+      const last = emitted.filter((event) => event.type === 'item_delta').at(-1)
+      expect(last).toMatchObject({
+        patch: { fields: { delegation: { agents: [{ tokens: { input: 1200 } }] } } },
+      })
+    })
+
+    it('does not warn about a child whose usage it consumed', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { manager, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted({
+        type: 'token_usage_updated',
+        threadId: 'child-1',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as AgentStreamEvent)
+
+      expect(warn.mock.calls.filter((args) => /sub-agent/i.test(String(args[0])))).toHaveLength(0)
+    })
+
+    it('recovers the child\'s answer from its own stream', () => {
+      // Multi-agent V2 leaves `agentsStates` empty — measured with
+      // `scripts/smoke-subagents.ts --v2` — so the only place a child's reply
+      // exists is the child's own thread, which we otherwise drop. Attribution
+      // is what makes recovering it safe: it lands on the delegation card, not
+      // spliced into the parent's message.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted({
+        type: 'item_completed',
+        threadId: 'child-1',
+        itemId: 'msg-child',
+        itemType: 'text',
+        final: { content: 'pong' },
+      } as AgentStreamEvent)
+
+      const patch = emitted.find((event) => event.type === 'item_delta')
+      expect(patch).toMatchObject({
+        threadId: 'db-parent',
+        itemId: 'call_spawn',
+        patch: {
+          fields: { delegation: { agents: [{ threadId: 'child-1', message: 'pong' }] } },
+        },
+      })
+    })
+
+    it('keeps the reply the parent reported over one scraped from the child', () => {
+      // V1 reports the child's answer through `agentsStates`, which is the
+      // authoritative summary the parent acted on; a later child chunk must not
+      // overwrite it with a partial.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      const withState = spawnCompleted('child-1') as unknown as {
+        final: { delegation: { agents: Array<Record<string, unknown>> } }
+      }
+      withState.final.delegation.agents = [
+        { threadId: 'child-1', status: 'completed', message: 'authoritative answer' },
+      ]
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(withState as unknown as AgentStreamEvent)
+
+      fireUnrouted({
+        type: 'item_completed',
+        threadId: 'child-1',
+        itemId: 'msg-child',
+        itemType: 'text',
+        final: { content: 'partial' },
+      } as AgentStreamEvent)
+
+      const patches = emitted.filter((event) => event.type === 'item_delta')
+      const merged = patches.at(-1) as undefined | {
+        patch: { fields: { delegation: { agents: Array<{ message?: string }> } } }
+      }
+      expect(merged?.patch.fields.delegation.agents[0].message).toBe('authoritative answer')
+    })
+
+    it('names the owning conversation in the drop warning', () => {
+      // Once ownership is known the diagnostic should say whose child it was;
+      // "some thread dropped events" is not actionable.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { manager, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted(childDelta('child-1'))
+
+      const line = String(warn.mock.calls.at(-1)?.[0])
+      expect(line).toContain('child-1')
+      expect(line).toContain('db-parent')
+    })
   })
 })

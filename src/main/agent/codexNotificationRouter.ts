@@ -567,9 +567,24 @@ function maybeRoutePlanToolCall(
  * passing the empty string through would render an empty model chip.
  */
 function parseDelegation(item: CodexItem): DelegationSnapshot | undefined {
-  if (item.type !== 'collabAgentToolCall') return undefined
   const text = (value: unknown): string | undefined =>
     typeof value === 'string' && value.length > 0 ? value : undefined
+
+  // Multi-agent V2 announces a spawn through its own item type and leaves the
+  // tool call's `receiverThreadIds`/`agentsStates` empty — measured with
+  // `scripts/smoke-subagents.ts --v2`. Reading only the V1 shape would show an
+  // empty card on V2, so both feed the same snapshot.
+  if (item.type === 'subAgentActivity') {
+    const threadId = text(item.agentThreadId)
+    if (!threadId) return undefined
+    const name = text(item.agentPath)
+    return {
+      tool: text(item.kind) ?? 'started',
+      agents: [{ threadId, ...(name ? { name } : {}) }],
+    }
+  }
+
+  if (item.type !== 'collabAgentToolCall') return undefined
 
   const states = item.agentsStates
   const agents: DelegatedAgent[] = []
