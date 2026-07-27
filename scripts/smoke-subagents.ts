@@ -225,6 +225,36 @@ async function main(): Promise<void> {
 
     await waitForTurnEnd(observations, parentThreadId)
 
+    // `--read-child` checks what the upstream-sanctioned enrichment path
+    // actually yields. V2's `subAgentActivity` carries only a thread id and a
+    // path, so the delegation card cannot show the task or the model the way it
+    // can on V1. The TUI's own agent picker resolves children by reading them
+    // (`thread/loaded/list` → `thread/read` → walk `parentThreadId`), and
+    // `thread/list` can filter by `parentThreadId` directly — but whether
+    // either returns the model and the assigned task is the question.
+    if (process.argv.includes('--read-child')) {
+      const childId = observations
+        .map((o) => o.threadId)
+        .find((id): id is string => id !== undefined && id !== parentThreadId)
+      if (!childId) {
+        console.log('\n[smoke] no child thread seen; nothing to read\n')
+      } else {
+        for (const [label, method, params] of [
+          ['thread/read (no turns)', 'thread/read', { threadId: childId, includeTurns: false }],
+          ['thread/read (with turns)', 'thread/read', { threadId: childId, includeTurns: true }],
+          ['thread/list by parent', 'thread/list', { parentThreadId, pageSize: 10 }],
+        ] as const) {
+          try {
+            const value = await rpc(method, params)
+            console.log(`\n[smoke] ${label} →\n  ${JSON.stringify(value)}`)
+          } catch (error) {
+            console.log(`\n[smoke] ${label} FAILED → ${
+              error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+      }
+    }
+
     // ── verdict ─────────────────────────────────────────────────────────────
     const threads = new Set(observations.map((o) => o.threadId).filter(Boolean) as string[])
     const otherThreads = [...threads].filter((id) => id !== parentThreadId)

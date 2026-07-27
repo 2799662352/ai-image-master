@@ -28,6 +28,7 @@ import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, Choic
 import {
   dropSupersededStreamItemsInLastMessage,
   trimRetriedStreamItemsInLastMessage,
+  patchExistingItem,
   upsertItemInLastMessage,
 } from '../../../../types/agent-timeline'
 import {
@@ -1530,6 +1531,15 @@ export function reduceThreadSlice(slice: ThreadSlice, event: AgentStreamEvent): 
     }
     case 'item_delta': {
       const itemId = resolveItemId(event)
+      if (event.patch.kind === 'mergeFields') {
+        // Streaming text always targets the live turn, but field merges can be
+        // late reports from a sub-agent that outlived it — keep those on the
+        // card they belong to instead of opening a stray one further down.
+        const patched = patchExistingItem(slice.messages, itemId, (item) =>
+          applyItemPatch(item, event.patch),
+        )
+        if (patched) return { ...slice, messages: patched }
+      }
       const msgs = ensureAssistantMessage(slice.messages)
       let next = upsertItemInLastMessage(
         msgs,

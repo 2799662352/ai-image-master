@@ -542,6 +542,19 @@ export interface CodexThreadSummary {
 
 export interface CodexThreadDetail extends CodexThreadSummary {}
 
+/**
+ * Identity upstream assigns to a spawned sub-agent, readable only from the
+ * child's own thread record.
+ *
+ * Deliberately narrow: measured against codex-cli 0.145.0, a sub-agent thread
+ * carries no model slug and no item holding the task it was given, so those
+ * cannot be surfaced this way.
+ */
+export interface CodexSubagentInfo {
+  /** Human label upstream picks per spawn ("Newton"), shown instead of the agent path. */
+  nickname?: string
+}
+
 export type DoctorStatus = 'ok' | 'warn' | 'fail' | (string & {})
 
 /** One diagnostic check from `codex doctor --json` (rust-v0.137.0 schema). */

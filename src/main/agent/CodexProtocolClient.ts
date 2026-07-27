@@ -31,6 +31,7 @@ import type {
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexSessionConfig,
+  CodexSubagentInfo,
   CodexThreadDetail,
   CodexThreadSummary,
 } from '../../types/agent'
@@ -464,6 +465,17 @@ export class CodexProtocolClient {
   async readThread(threadId: string): Promise<CodexThreadDetail> {
     const response = await this.rpc<unknown>('thread/read', { threadId })
     return normalizeThreadDetail(response)
+  }
+
+  /**
+   * Identity a spawned agent only exposes on its own thread record.
+   *
+   * Separate from `readThread` because that one normalizes down to the summary
+   * shape the thread list needs, dropping exactly these fields.
+   */
+  async readSubagentInfo(threadId: string): Promise<CodexSubagentInfo | null> {
+    const response = await this.rpc<unknown>('thread/read', { threadId })
+    return extractSubagentInfo(extractThreadRecord(response))
   }
 
   async forkThread(
@@ -1224,6 +1236,17 @@ function normalizeThreadList(value: unknown): CodexThreadSummary[] {
   return rawThreads
     .map((item) => normalizeOptionalThreadSummary(item))
     .filter((item): item is CodexThreadSummary => item !== null)
+}
+
+/**
+ * Pull the spawn identity out of a thread record, tolerating both spellings
+ * upstream ships: a top-level camelCase `agentNickname` plus the snake_case
+ * spawn record it mirrors (`source.subAgent.thread_spawn`).
+ */
+function extractSubagentInfo(record: Record<string, unknown>): CodexSubagentInfo | null {
+  const spawn = toRecord(toRecord(toRecord(record.source).subAgent).thread_spawn)
+  const nickname = stringField(record, 'agentNickname') ?? stringField(spawn, 'agent_nickname')
+  return nickname ? { nickname } : null
 }
 
 function normalizeThreadDetail(value: unknown): CodexThreadDetail {

@@ -33,7 +33,7 @@ afterEach(async () => {
 })
 
 /** Captures the `onUnroutedEvent` the manager wires into its backend. */
-function makeManager(): {
+function makeManager(backendExtras: Record<string, unknown> = {}): {
   manager: AgentManager
   emitted: AgentStreamEvent[]
   fireUnrouted: (event: AgentStreamEvent, context?: { turnId?: string }) => void
@@ -57,6 +57,7 @@ function makeManager(): {
         cancel,
         interruptTurn,
         isHealthy: vi.fn().mockReturnValue(true),
+        ...backendExtras,
       } as never
     },
   } as never)
@@ -372,6 +373,83 @@ describe('AgentManager sub-agent events', () => {
 
       const patch = emitted.filter((event) => event.type === 'item_delta').at(-1)
       expect(patch).toMatchObject({ itemId: 'call_spawn' })
+    })
+
+    /**
+     * V2's spawn event names an agent only by the path of its definition file,
+     * so the card read `/root/pong_agent`. Upstream assigns every spawn a human
+     * nickname and keeps it on the child's own thread record — the same place
+     * the TUI's agent picker reads it from.
+     *
+     * Measured with `scripts/smoke-subagents.ts --v2 --read-child` on
+     * codex-cli 0.145.0: the child's record has `agentNickname` but no model
+     * slug and no item holding the task it was assigned, so the nickname is
+     * genuinely all there is to add here.
+     */
+    describe('nickname enrichment for V2 agents', () => {
+      const v2Spawn = (itemId = 'call_spawn'): AgentStreamEvent => ({
+        type: 'item_completed',
+        threadId: 'codex-parent',
+        itemId,
+        itemType: 'activity',
+        final: {
+          kind: 'subAgentActivity',
+          delegation: {
+            tool: 'started',
+            agents: [{ threadId: 'child-v2', name: '/root/pong_agent' }],
+          },
+        },
+      }) as AgentStreamEvent
+
+      const note = (manager: AgentManager, event: AgentStreamEvent): void =>
+        (manager as unknown as { noteDelegatedAgents(e: AgentStreamEvent): void })
+          .noteDelegatedAgents(event)
+
+      it('relabels the agent with the nickname upstream assigned', async () => {
+        const readSubagentInfo = vi.fn().mockResolvedValue({ nickname: 'Newton' })
+        const { manager, emitted } = makeManager({ readSubagentInfo })
+        registerParent(manager)
+
+        note(manager, v2Spawn())
+        await vi.waitFor(() => expect(emitted.some((e) => e.type === 'item_delta')).toBe(true))
+
+        expect(readSubagentInfo).toHaveBeenCalledWith('child-v2')
+        expect(emitted.filter((e) => e.type === 'item_delta').at(-1)).toMatchObject({
+          threadId: 'db-parent',
+          itemId: 'call_spawn',
+          patch: {
+            fields: { delegation: { agents: [{ threadId: 'child-v2', name: 'Newton' }] } },
+          },
+        })
+      })
+
+      it('reads a child once even though the spawn is reported repeatedly', async () => {
+        const readSubagentInfo = vi.fn().mockResolvedValue({ nickname: 'Newton' })
+        const { manager, emitted } = makeManager({ readSubagentInfo })
+        registerParent(manager)
+
+        note(manager, v2Spawn())
+        await vi.waitFor(() => expect(emitted.some((e) => e.type === 'item_delta')).toBe(true))
+        // `item/started` then `item/completed`, plus a follow-up tool call.
+        note(manager, v2Spawn())
+        note(manager, v2Spawn('call_followup'))
+        await Promise.resolve()
+
+        expect(readSubagentInfo).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps the path label when the read fails', async () => {
+        const readSubagentInfo = vi.fn().mockRejectedValue(new Error('thread not found'))
+        const { manager, emitted } = makeManager({ readSubagentInfo })
+        registerParent(manager)
+
+        note(manager, v2Spawn())
+        await vi.waitFor(() => expect(readSubagentInfo).toHaveBeenCalled())
+        await Promise.resolve()
+
+        // Nothing to say, so nothing is said: the card keeps rendering the path.
+        expect(emitted.filter((e) => e.type === 'item_delta')).toHaveLength(0)
+      })
     })
 
     it('stops the children too when the user stops the conversation', async () => {
