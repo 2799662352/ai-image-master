@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  BUILTIN_CHANNELS,
   channelsForGateway,
   ModelUnavailableInGatewayError,
   resolveAuthorizedGatewayModelRoute,
@@ -45,11 +46,26 @@ describe('gatewayModelRouting', () => {
       modelId: 'claude-opus-5',
       family: 'anthropic',
     })
-    // Its own host, not the codex/grok one: this pool speaks Messages only,
+    // Same host as codex/grok, its own path: this pool speaks Messages only,
     // so it must go through the translating bridge.
     expect(channel.baseUrl).toBe('https://rightapi.ai/claude-sale/v1')
     expect(channel.compatibilityPolicy).toBe('anthropic-messages-bridge')
     expect(channel.supportsMemories).toBe(false)
+  })
+
+  it('keeps every builtin channel off the host the vendor says is blocked', () => {
+    // Not hypothetical. v4.4.10 moved the codex and grok channels off
+    // `right.codes` after the vendor announced it blocked on mainland
+    // networks; two days later the new Claude channel shipped pointing right
+    // back at it (v4.4.12), and v4.4.13 had to move it again. A blocked host
+    // does not refuse — it hangs — so the symptom was a turn that never
+    // answered and never errored, and a probe from a machine with a VPN on
+    // reports it healthy. Only a check that reads the config can catch it.
+    const offenders = BUILTIN_CHANNELS
+      .filter((channel) => channel.baseUrl.includes('right.codes'))
+      .map((channel) => `${channel.id} → ${channel.baseUrl}`)
+
+    expect(offenders).toEqual([])
   })
 
   it('routes Claude to each gateway\'s own Anthropic channel', () => {
