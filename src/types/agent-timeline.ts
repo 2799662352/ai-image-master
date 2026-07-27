@@ -178,6 +178,13 @@ export interface DelegatedAgent {
   status?: string
   /** The child's answer, surfaced to the parent when it finishes. */
   message?: string
+  /**
+   * What this child has cost so far. Carried here rather than merged into the
+   * parent's `AgentTokenUsage` because that field is replaced wholesale and
+   * drives the context-window gauge — a child's counts would misreport how
+   * full the parent's context is, which is worse than not showing them.
+   */
+  tokens?: { input: number, output: number }
 }
 
 /**

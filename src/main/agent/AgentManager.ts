@@ -111,6 +111,7 @@ import type {
   AgentStreamEvent,
   AgentThreadBranchResult,
   AgentThreadRoutingSnapshot,
+  AgentTokenUsage,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexMcpSummary,
@@ -488,6 +489,25 @@ export class AgentManager {
    * in whatever conversation happens to be open.
    */
   private readonly subagentParentByCodexThread = new Map<string, string>()
+
+  /**
+   * Live delegation items, keyed by timeline item id, with the conversation
+   * they belong to and the latest snapshot we forwarded. Kept so a child's
+   * token report can be merged back into the card that represents it.
+   */
+  private readonly delegationItems = new Map<
+    string,
+    { dbThreadId: string, delegation: DelegationSnapshot }
+  >()
+
+  /** Sub-agent codex thread id → the delegation item that spawned it. */
+  private readonly delegationItemByChild = new Map<string, string>()
+
+  /**
+   * Latest cumulative usage reported by each sub-agent thread. Replaced, never
+   * summed: `thread/tokenUsage/updated` is a per-thread snapshot.
+   */
+  private readonly subagentUsage = new Map<string, { input: number, output: number }>()
 
   /**
    * Latest status emitted per MCP server name. Populated by
@@ -4130,6 +4150,9 @@ export class AgentManager {
   private handleUnroutedEvent(event: AgentStreamEvent): void {
     const threadId = 'threadId' in event ? event.threadId : undefined
     if (!threadId) return
+    if (event.type === 'token_usage_updated' && this.recordSubagentUsage(threadId, event.usage)) {
+      return
+    }
     if (this.warnedSubagentThreads.has(threadId)) return
     this.warnedSubagentThreads.add(threadId)
     const owner = this.subagentParentByCodexThread.get(threadId)
@@ -4157,9 +4180,46 @@ export class AgentManager {
     if (!delegation) return
     const parentDbThreadId = findDbThreadId(this.codexThreadIdByDbThreadId, event.threadId)
     if (!parentDbThreadId) return
+    this.delegationItems.set(event.itemId, { dbThreadId: parentDbThreadId, delegation })
     for (const agent of delegation.agents) {
       this.subagentParentByCodexThread.set(agent.threadId, parentDbThreadId)
+      this.delegationItemByChild.set(agent.threadId, event.itemId)
     }
+  }
+
+  /**
+   * Merges a sub-agent's cumulative token report into the delegation card that
+   * spawned it, and reports whether the event was consumed.
+   *
+   * Deliberately not folded into the parent's own usage: the renderer replaces
+   * `tokenUsage` wholesale and derives the context-window gauge from it, so a
+   * child's absolute counts would read as parent context that isn't there.
+   */
+  private recordSubagentUsage(childThreadId: string, usage: AgentTokenUsage): boolean {
+    const itemId = this.delegationItemByChild.get(childThreadId)
+    const record = itemId ? this.delegationItems.get(itemId) : undefined
+    if (!itemId || !record) return false
+
+    this.subagentUsage.set(childThreadId, {
+      input: usage.inputTokens,
+      output: usage.outputTokens,
+    })
+    const delegation: DelegationSnapshot = {
+      ...record.delegation,
+      agents: record.delegation.agents.map((agent) => {
+        const tokens = this.subagentUsage.get(agent.threadId)
+        return tokens ? { ...agent, tokens } : agent
+      }),
+    }
+    this.delegationItems.set(itemId, { ...record, delegation })
+    this.emitEvent({
+      type: 'item_delta',
+      threadId: record.dbThreadId,
+      itemId,
+      itemType: 'activity',
+      patch: { kind: 'mergeFields', fields: { delegation } },
+    })
+    return true
   }
 
   private rememberCodexThread(

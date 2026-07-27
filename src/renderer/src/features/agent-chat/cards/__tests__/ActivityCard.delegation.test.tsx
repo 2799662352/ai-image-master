@@ -83,6 +83,23 @@ describe('ActivityCard delegation', () => {
     expect(screen.getByText(/gpt-5\.5/)).toBeTruthy()
   })
 
+  it('shows what each agent has cost once usage arrives', () => {
+    // The parent conversation pays for its children, and they can run a
+    // different (pricier) model — so the spend belongs next to the agent that
+    // incurred it, not hidden in an aggregate.
+    render(<ActivityCard item={delegationItem({
+      delegation: {
+        tool: 'spawnAgent',
+        agents: [
+          { threadId: 'a', status: 'completed', message: 'ok', tokens: { input: 1200, output: 340 } },
+          { threadId: 'b' },
+        ],
+      },
+    })} />)
+
+    expect(screen.getByText(/1,540|1540/)).toBeTruthy()
+  })
+
   it('falls back to the generic chip for ordinary tool calls', () => {
     render(<ActivityCard item={{
       type: 'activity',

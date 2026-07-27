@@ -166,9 +166,17 @@ function DelegationCard({
                 >
                   {agent.status === 'completed' ? '\u2713' : '\u25CB'}
                 </span>
-                <span className="min-w-0 break-words text-zinc-300">
+                <span className="min-w-0 flex-1 break-words text-zinc-300">
                   {agent.message ?? (agent.status === 'completed' ? 'done' : 'working…')}
                 </span>
+                {agent.tokens ? (
+                  <span
+                    className="shrink-0 text-[10px] tabular-nums text-zinc-500"
+                    title={`${agent.tokens.input.toLocaleString()} in / ${agent.tokens.output.toLocaleString()} out`}
+                  >
+                    {(agent.tokens.input + agent.tokens.output).toLocaleString()} tok
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>

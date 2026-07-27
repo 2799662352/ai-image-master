@@ -162,6 +162,81 @@ describe('AgentManager sub-agent events', () => {
       expect(manager.resolveDbThreadId('child-1')).toBeUndefined()
     })
 
+    it('folds a child\'s token usage into the delegation card', () => {
+      // Sub-agent spend is real money the parent conversation is paying, but it
+      // must NOT be merged into the parent's `token_usage_updated`: the store
+      // replaces `tokenUsage` wholesale and drives the context-window gauge off
+      // it, so a child's absolute counts would misreport how full the parent's
+      // context is. The delegation item is the honest place for it.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted({
+        type: 'token_usage_updated',
+        threadId: 'child-1',
+        usage: { inputTokens: 1200, outputTokens: 340 },
+      } as AgentStreamEvent)
+
+      const patch = emitted.find((event) => event.type === 'item_delta')
+      expect(patch).toMatchObject({
+        type: 'item_delta',
+        threadId: 'db-parent',
+        itemId: 'call_spawn',
+        itemType: 'activity',
+        patch: {
+          kind: 'mergeFields',
+          fields: {
+            delegation: {
+              agents: [{ threadId: 'child-1', tokens: { input: 1200, output: 340 } }],
+            },
+          },
+        },
+      })
+    })
+
+    it('keeps the latest usage rather than summing repeated reports', () => {
+      // `thread/tokenUsage/updated` is a cumulative snapshot per thread, not a
+      // delta — adding successive reports would inflate the number.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      for (const inputTokens of [500, 1200]) {
+        fireUnrouted({
+          type: 'token_usage_updated',
+          threadId: 'child-1',
+          usage: { inputTokens, outputTokens: 10 },
+        } as AgentStreamEvent)
+      }
+
+      const last = emitted.filter((event) => event.type === 'item_delta').at(-1)
+      expect(last).toMatchObject({
+        patch: { fields: { delegation: { agents: [{ tokens: { input: 1200 } }] } } },
+      })
+    })
+
+    it('does not warn about a child whose usage it consumed', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { manager, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted({
+        type: 'token_usage_updated',
+        threadId: 'child-1',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as AgentStreamEvent)
+
+      expect(warn.mock.calls.filter((args) => /sub-agent/i.test(String(args[0])))).toHaveLength(0)
+    })
+
     it('names the owning conversation in the drop warning', () => {
       // Once ownership is known the diagnostic should say whose child it was;
       // "some thread dropped events" is not actionable.
