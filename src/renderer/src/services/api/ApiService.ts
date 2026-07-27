@@ -3453,6 +3453,26 @@ export function getDashScopeErrorMessage(data: unknown): string | null {
   return null
 }
 
+/**
+ * 文本里的图片地址。
+ *
+ * 查询串必须一并带走:对象存储回的是预签名 URL,签名就在 `?` 后面,
+ * 截断到扩展名等于交出一个必然 403 的链接。终止符里排除 `)`/引号/`]`,
+ * 是为了从 markdown 的 `![img](url)` 里取出干净的 url。
+ */
+const IMAGE_URL_IN_TEXT = /https?:\/\/[^\s)"'\]]+?\.(?:png|jpe?g|webp|gif)(?:\?[^\s)"'\]]*)?/gi
+const DATA_URL_IN_TEXT = /data:image\/[^\s)"'\]]+/gi
+
+function collectImagesFromText(text: string, images: string[], seen: Set<string>): void {
+  for (const pattern of [IMAGE_URL_IN_TEXT, DATA_URL_IN_TEXT]) {
+    for (const url of text.match(pattern) ?? []) {
+      if (seen.has(url)) continue
+      seen.add(url)
+      images.push(url)
+    }
+  }
+}
+
 /** 从 OpenAI / DashScope / new-api(metadata) 响应中提取全部图片 URL 或 data URL */
 export function extractImagesFromApiResponse(data: unknown): string[] {
   if (!data || typeof data !== 'object') return []
@@ -3509,6 +3529,10 @@ export function extractImagesFromApiResponse(data: unknown): string[] {
             images.push(dataUrl)
           }
         }
+        // 网关把产物传到对象存储后,整条响应里没有 base64,只有 text 里的一条
+        // 预签名 URL —— 图是生成成功的,只认 inlineData 会把它报成生成失败。
+        const text = (part as Record<string, unknown>).text
+        if (typeof text === 'string' && text) collectImagesFromText(text, images, seen)
       }
     }
   }
@@ -3520,24 +3544,7 @@ export function extractImagesFromApiResponse(data: unknown): string[] {
       const content = (choice as Record<string, unknown>).message as Record<string, unknown> | undefined
       const text = content?.content
       if (typeof text !== 'string') continue
-      const urlMatches = text.match(/https?:\/\/[^\s)"\]]+\.(?:png|jpg|jpeg|webp|gif)/gi)
-      if (urlMatches) {
-        for (const url of urlMatches) {
-          if (!seen.has(url)) {
-            seen.add(url)
-            images.push(url)
-          }
-        }
-      }
-      const dataUrlMatches = text.match(/data:image\/[^\s)"\]]+/gi)
-      if (dataUrlMatches) {
-        for (const url of dataUrlMatches) {
-          if (!seen.has(url)) {
-            seen.add(url)
-            images.push(url)
-          }
-        }
-      }
+      collectImagesFromText(text, images, seen)
     }
   }
 
