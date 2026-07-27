@@ -32,6 +32,13 @@ export function ActivityCard({ item }: { item: ActivityItem }) {
     return <PlanCard item={item} steps={item.steps ?? []} status={status} />
   }
 
+  // Delegation gets its own slot for the same reason plans do: the generic
+  // chip would say "collab agent tool call" and hide the only information the
+  // user can get about work that is happening on another thread entirely.
+  if (item.delegation) {
+    return <DelegationCard delegation={item.delegation} status={status} />
+  }
+
   const icon = pickIcon(item.kind)
   const accent = pickAccent(status)
   const label = item.label ?? item.kind
@@ -80,6 +87,100 @@ export function ActivityCard({ item }: { item: ActivityItem }) {
       ) : null}
     </div>
   )
+}
+
+/**
+ * Renders one multi-agent delegation: what was handed off, to how many agents,
+ * and what each said back.
+ *
+ * Why this exists rather than a link into the child conversation: a spawned
+ * agent runs on its own codex thread, which this chat is not subscribed to and
+ * which upstream deliberately keeps read-only for the parent (openai/codex
+ * #33841). The parent's own tool item is therefore the whole story — and it
+ * does carry the payload that matters, because `agentsStates` reports each
+ * child's status and final message back to the parent.
+ */
+function DelegationCard({
+  delegation,
+  status,
+}: {
+  delegation: NonNullable<ActivityItem['delegation']>
+  status: NonNullable<ActivityItem['status']>
+}) {
+  const { tool, prompt, model, agents } = delegation
+  const count = agents.length
+  const isLive = status === 'running' || agents.some((agent) => agent.status === 'running')
+  const borderTone =
+    status === 'error'
+      ? 'border-red-500/30'
+      : status === 'cancelled'
+        ? 'border-amber-500/25'
+        : isLive
+          ? 'border-cyan-500/30'
+          : 'border-emerald-500/25'
+
+  return (
+    <div className="my-1.5">
+      <div className={'rounded-md border bg-zinc-950/50 ' + borderTone} role="group" aria-label="Delegated agents">
+        <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px]">
+          <span
+            className={'text-[12px] leading-none ' + (isLive ? 'text-cyan-300' : 'text-emerald-300')}
+            aria-hidden="true"
+          >
+            {'\u21C9'}
+          </span>
+          <span className="font-medium text-zinc-200">{humanizeTool(tool)}</span>
+          {count > 0 ? (
+            <span className="text-zinc-500 tabular-nums">
+              {count} agent{count > 1 ? 's' : ''}
+            </span>
+          ) : null}
+          {model ? (
+            <span className="rounded border border-zinc-700/70 px-1 py-px text-[10px] text-zinc-400">
+              {model}
+            </span>
+          ) : null}
+          {isLive ? (
+            <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300" aria-hidden="true" />
+          ) : null}
+        </div>
+        {prompt ? (
+          <p className="border-t border-white/[0.04] px-2.5 py-1.5 text-[12px] leading-[1.5] text-zinc-400">
+            {prompt}
+          </p>
+        ) : null}
+        {count > 0 ? (
+          <ul className="m-0 list-none space-y-1 border-t border-white/[0.04] px-2.5 py-2" role="list">
+            {agents.map((agent, index) => (
+              <li
+                key={agent.threadId}
+                className="flex items-start gap-2 text-[12px] leading-[1.5]"
+                aria-label={`Agent ${index + 1}: ${agent.status ?? 'running'}`}
+              >
+                <span
+                  className={
+                    'mt-[3px] inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[11px] leading-none '
+                    + (agent.status === 'completed' ? 'text-emerald-300' : 'text-cyan-300 animate-pulse')
+                  }
+                  aria-hidden="true"
+                >
+                  {agent.status === 'completed' ? '\u2713' : '\u25CB'}
+                </span>
+                <span className="min-w-0 break-words text-zinc-300">
+                  {agent.message ?? (agent.status === 'completed' ? 'done' : 'working…')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/** `spawnAgent` → `spawn agent`; upstream's camelCase reads badly in a card. */
+function humanizeTool(tool: string): string {
+  return tool.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
 }
 
 function pickIcon(kind: string): string {
