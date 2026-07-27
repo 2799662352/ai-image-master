@@ -206,7 +206,7 @@ export interface CodexLocalBackendOptions {
    * manager can attribute the child to its parent conversation instead of the
    * event being dropped on the floor.
    */
-  onUnroutedEvent?: (event: AgentStreamEvent) => void
+  onUnroutedEvent?: (event: AgentStreamEvent, context: { turnId: string }) => void
   /**
    * Pin the `CODEX_HOME` used for EVERY spawn (initial + `restartCodex`).
    * Defaults to {@link resolveStableCodexHome} (`~/.codex`, honoring a
@@ -692,6 +692,11 @@ export class CodexLocalBackend implements IAgentBackend {
   ): Promise<CodexThreadSummary> {
     if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
     return this.client.forkThread(threadId, overrides ?? this.threadConfigOverrides(), lastTurnId)
+  }
+
+  async interruptTurn(threadId: string, turnId: string): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.interruptTurn called before start')
+    return this.client.interruptTurn(threadId, turnId)
   }
 
   async unsubscribeThread(threadId: string): Promise<void> {

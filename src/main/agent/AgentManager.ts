@@ -520,6 +520,13 @@ export class AgentManager {
   private readonly subagentFinished = new Set<string>()
 
   /**
+   * Live turn id per sub-agent thread, so a cancel can interrupt the children
+   * too (see {@link interruptSubagentsOf}). Entries are removed when that
+   * child's turn ends.
+   */
+  private readonly subagentTurnByThread = new Map<string, string>()
+
+  /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
    * snapshot via `getMcpStatusSnapshotRpc` on subscribe, so dots stay correct
@@ -634,7 +641,7 @@ export class AgentManager {
         onApprovalRequest: (request) => this.emitApprovalRequest(request),
         onApprovalResolved: (info) => this.emitApprovalResolved(info),
         onMcpNotification: (event) => this.handleMcpNotification(event),
-        onUnroutedEvent: (event) => this.handleUnroutedEvent(event),
+        onUnroutedEvent: (event, context) => this.handleUnroutedEvent(event, context),
         onGoalNotification: (event) => this.handleGoalNotification(event),
         onThreadSettingsNotification: (event) => this.handleThreadSettingsNotification(event),
       })
@@ -3735,6 +3742,35 @@ export class AgentManager {
   async cancel(threadId: string): Promise<void> {
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId)
     await this.backend.cancel(codexThreadId ?? threadId)
+    await this.interruptSubagentsOf(threadId)
+  }
+
+  /**
+   * Stops this conversation's still-running sub-agents.
+   *
+   * Upstream does not cascade: `interrupt_agent` acts on a single thread, and
+   * unlike `close_agent` — whose tool description says "and any open
+   * descendants" — it has no descendant walk. So without this, pressing stop
+   * ended the parent turn while every child kept generating paid work the user
+   * had explicitly cancelled.
+   *
+   * Best-effort and never rethrows: a failed interrupt must not turn the user's
+   * cancel into an error, and the parent turn is already stopped by then.
+   */
+  private async interruptSubagentsOf(dbThreadId: string): Promise<void> {
+    const interrupt = this.backend.interruptTurn
+    if (!interrupt) return
+    const live = [...this.subagentTurnByThread].filter(
+      ([childThreadId]) => this.subagentParentByCodexThread.get(childThreadId) === dbThreadId,
+    )
+    await Promise.all(live.map(async ([childThreadId, turnId]) => {
+      this.subagentTurnByThread.delete(childThreadId)
+      try {
+        await interrupt.call(this.backend, childThreadId, turnId)
+      } catch (err) {
+        console.warn(`[AgentManager] interrupting sub-agent ${childThreadId} failed:`, err)
+      }
+    }))
   }
 
   /**
@@ -4157,9 +4193,15 @@ export class AgentManager {
    * The warning is per thread, not per event: one child turn emits a dozen
    * events, and this log line shares a file with live streaming traces.
    */
-  private handleUnroutedEvent(event: AgentStreamEvent): void {
+  private handleUnroutedEvent(event: AgentStreamEvent, context?: { turnId?: string }): void {
     const threadId = 'threadId' in event ? event.threadId : undefined
     if (!threadId) return
+    // A child's turn id exists nowhere else we can reach: `turn/started` for a
+    // sub-agent is dropped by the router, so its own streamed items are the
+    // only carrier. Remember it so a cancel can interrupt the child too.
+    if (context?.turnId && this.delegationItemByChild.has(threadId)) {
+      this.subagentTurnByThread.set(threadId, context.turnId)
+    }
     if (event.type === 'token_usage_updated' && this.recordSubagentUsage(threadId, event.usage)) {
       return
     }
@@ -4257,6 +4299,9 @@ export class AgentManager {
   private markSubagentFinished(childThreadId: string): boolean {
     if (!this.delegationItemByChild.has(childThreadId)) return false
     this.subagentFinished.add(childThreadId)
+    // Nothing left to interrupt, and a stale turn id would make a later cancel
+    // address a turn that no longer exists.
+    this.subagentTurnByThread.delete(childThreadId)
     return this.republishDelegation(childThreadId)
   }
 

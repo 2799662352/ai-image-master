@@ -36,10 +36,14 @@ afterEach(async () => {
 function makeManager(): {
   manager: AgentManager
   emitted: AgentStreamEvent[]
-  fireUnrouted: (event: AgentStreamEvent) => void
+  fireUnrouted: (event: AgentStreamEvent, context?: { turnId?: string }) => void
+  cancel: ReturnType<typeof vi.fn>
+  interruptTurn: ReturnType<typeof vi.fn>
 } {
   const emitted: AgentStreamEvent[] = []
-  let unrouted: ((event: AgentStreamEvent) => void) | undefined
+  let unrouted: ((event: AgentStreamEvent, context?: { turnId?: string }) => void) | undefined
+  const cancel = vi.fn().mockResolvedValue(undefined)
+  const interruptTurn = vi.fn().mockResolvedValue(undefined)
 
   const manager = new AgentManager({
     userDataDir: tmpDir,
@@ -50,14 +54,15 @@ function makeManager(): {
         start: vi.fn().mockResolvedValue(undefined),
         stop: vi.fn().mockResolvedValue(undefined),
         send: vi.fn(),
-        cancel: vi.fn(),
+        cancel,
+        interruptTurn,
         isHealthy: vi.fn().mockReturnValue(true),
       } as never
     },
   } as never)
 
   if (!unrouted) throw new Error('AgentManager did not wire onUnroutedEvent')
-  return { manager, emitted, fireUnrouted: unrouted }
+  return { manager, emitted, fireUnrouted: unrouted, cancel, interruptTurn }
 }
 
 /** The delegation item as the router emits it, from a measured wire payload. */
@@ -367,6 +372,68 @@ describe('AgentManager sub-agent events', () => {
 
       const patch = emitted.filter((event) => event.type === 'item_delta').at(-1)
       expect(patch).toMatchObject({ itemId: 'call_spawn' })
+    })
+
+    it('stops the children too when the user stops the conversation', async () => {
+      // Upstream does not cascade: `interrupt_agent` acts on one thread, and
+      // unlike `close_agent` (whose own tool description says "and any open
+      // descendants") it has no descendant walk. So pressing stop ended the
+      // parent turn while every spawned child kept generating — paid work the
+      // user explicitly cancelled. Measured with
+      // `scripts/smoke-subagents.ts --interrupt-child`: the server DOES accept
+      // `turn/interrupt` addressed at a child's own (threadId, turnId), so the
+      // cascade is ours to do.
+      const { manager, fireUnrouted, cancel, interruptTurn } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+      // A child's turn id only becomes knowable from its own streamed events.
+      fireUnrouted(
+        { type: 'item_delta', threadId: 'child-1', itemId: 'm', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'x' } } as AgentStreamEvent,
+        { turnId: 'child-turn-1' },
+      )
+
+      await manager.cancel('db-parent')
+
+      expect(cancel).toHaveBeenCalledWith('codex-parent')
+      expect(interruptTurn).toHaveBeenCalledWith('child-1', 'child-turn-1')
+    })
+
+    it('does not interrupt a child whose turn already ended', async () => {
+      const { manager, fireUnrouted, interruptTurn } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+      fireUnrouted(
+        { type: 'item_delta', threadId: 'child-1', itemId: 'm', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'x' } } as AgentStreamEvent,
+        { turnId: 'child-turn-1' },
+      )
+      fireUnrouted({ type: 'turn_completed', threadId: 'child-1' } as AgentStreamEvent)
+
+      await manager.cancel('db-parent')
+
+      expect(interruptTurn).not.toHaveBeenCalled()
+    })
+
+    it('leaves another conversation\'s children alone', async () => {
+      const { manager, fireUnrouted, interruptTurn } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+      fireUnrouted(
+        { type: 'item_delta', threadId: 'child-1', itemId: 'm', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'x' } } as AgentStreamEvent,
+        { turnId: 'child-turn-1' },
+      )
+
+      await manager.cancel('db-other')
+
+      expect(interruptTurn).not.toHaveBeenCalled()
     })
 
     it('names the owning conversation in the drop warning', () => {

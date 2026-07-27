@@ -196,7 +196,7 @@ export interface CodexProtocolClientOptions {
    * buffering it leaks until the cap starts evicting the main thread's real
    * race orphans.
    */
-  onUnroutedEvent?: (event: AgentStreamEvent) => void
+  onUnroutedEvent?: (event: AgentStreamEvent, context: { turnId: string }) => void
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   /**
    * 服务端自己解决/清理了某个待决请求（`serverRequest/resolved`）。上游会在 turn
@@ -1089,7 +1089,27 @@ export class CodexProtocolClient {
       }
       return
     }
-    this.options.onUnroutedEvent?.(event)
+    // The turn id rides along because it is not on the event and cannot be
+    // recovered later: interrupting a sub-agent needs its own
+    // `(threadId, turnId)`, and this is the only place both are in hand.
+    this.options.onUnroutedEvent?.(event, { turnId })
+  }
+
+  /**
+   * Interrupt a turn on any thread, including one this client never started.
+   *
+   * `cancel()` cannot serve here: it resolves the turn id from
+   * `turnIdByThread`, which only knows threads we opened. A sub-agent's turn is
+   * addressable all the same — measured with
+   * `scripts/smoke-subagents.ts --interrupt-child`, the server accepts it and
+   * the child's turn ends.
+   */
+  async interruptTurn(threadId: string, turnId: string): Promise<void> {
+    try {
+      await this.rpc('turn/interrupt', { threadId, turnId })
+    } catch (error) {
+      this.options.onLog?.(`[codex] turn/interrupt (sub-agent) rejected: ${stringifyError(error)}`)
+    }
   }
 
   private drainOrphansInto(threadId: string, turnId: string, queue: TurnQueue): void {
