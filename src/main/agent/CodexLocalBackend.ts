@@ -200,6 +200,14 @@ export interface CodexLocalBackendOptions {
     event: Extract<AgentStreamEvent, { type: 'thread_settings_updated' }>,
   ) => void
   /**
+   * An event for a thread this client never started a turn on — in practice a
+   * sub-agent spawned by the model (see
+   * {@link CodexProtocolClientOptions.onUnroutedEvent}). Forwarded so the
+   * manager can attribute the child to its parent conversation instead of the
+   * event being dropped on the floor.
+   */
+  onUnroutedEvent?: (event: AgentStreamEvent) => void
+  /**
    * Pin the `CODEX_HOME` used for EVERY spawn (initial + `restartCodex`).
    * Defaults to {@link resolveStableCodexHome} (`~/.codex`, honoring a
    * `CODEX_HOME` env override). Tests inject an explicit dir so the spawned
@@ -383,6 +391,7 @@ export class CodexLocalBackend implements IAgentBackend {
       onApprovalRequest: this.options.onApprovalRequest,
       onApprovalResolved: this.options.onApprovalResolved,
       onMcpNotification: this.options.onMcpNotification,
+      onUnroutedEvent: this.options.onUnroutedEvent,
       onGoalNotification: this.options.onGoalNotification,
       onThreadSettingsNotification: this.options.onThreadSettingsNotification,
     })
@@ -534,6 +543,7 @@ export class CodexLocalBackend implements IAgentBackend {
       onApprovalRequest: this.options.onApprovalRequest,
       onApprovalResolved: this.options.onApprovalResolved,
       onMcpNotification: this.options.onMcpNotification,
+      onUnroutedEvent: this.options.onUnroutedEvent,
       onGoalNotification: this.options.onGoalNotification,
       onThreadSettingsNotification: this.options.onThreadSettingsNotification,
     })

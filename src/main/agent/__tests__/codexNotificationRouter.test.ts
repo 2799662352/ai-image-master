@@ -2252,4 +2252,131 @@ describe('CodexNotificationRouter', () => {
       expect(router.route('totally/unknown/method', {})).toBeNull()
     })
   })
+
+  /**
+   * Multi-agent V2 is ON by default at 0.145 (measured: `scripts/smoke-subagents.ts
+   * --no-agents` still spawns), so these items reach us whether or not we
+   * configure `[agents]`. The parent turn carries the only record a client can
+   * attribute — the child's own work streams on a DIFFERENT threadId — so the
+   * delegation fields have to survive routing instead of being flattened into
+   * the generic tool chip.
+   *
+   * Payloads below are verbatim from the wire, trimmed to the fields we read.
+   */
+  describe('collabAgentToolCall (sub-agent delegation)', () => {
+    const spawnStarted = {
+      threadId: 'parent-1',
+      turnId: 'turn-1',
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'call_spawn',
+        tool: 'spawnAgent',
+        status: 'inProgress',
+        senderThreadId: 'parent-1',
+        receiverThreadIds: [],
+        prompt: 'Reply with the single word "pong".',
+        model: '',
+        reasoningEffort: 'medium',
+        agentsStates: {},
+      },
+    }
+
+    const waitCompleted = {
+      threadId: 'parent-1',
+      turnId: 'turn-1',
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'call_wait',
+        tool: 'wait',
+        status: 'completed',
+        senderThreadId: 'parent-1',
+        receiverThreadIds: ['child-1'],
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates: { 'child-1': { status: 'completed', message: 'pong' } },
+      },
+    }
+
+    it('keeps the task, model and target agents on the spawn item', () => {
+      const router = new CodexNotificationRouter()
+
+      expect(router.route('item/started', spawnStarted)).toMatchObject({
+        type: 'item_started',
+        threadId: 'parent-1',
+        itemId: 'call_spawn',
+        itemType: 'activity',
+        payload: {
+          kind: 'collabAgentToolCall',
+          status: 'running',
+          delegation: {
+            tool: 'spawnAgent',
+            prompt: 'Reply with the single word "pong".',
+            reasoningEffort: 'medium',
+            agents: [],
+          },
+        },
+      })
+    })
+
+    it('carries each child agent\'s status and reply off the completed item', () => {
+      // `agentsStates` is where the child's answer surfaces to the parent; it is
+      // the one field a delegation card can render without subscribing to the
+      // child thread at all.
+      const router = new CodexNotificationRouter()
+
+      expect(router.route('item/completed', waitCompleted)).toMatchObject({
+        type: 'item_completed',
+        threadId: 'parent-1',
+        itemId: 'call_wait',
+        itemType: 'activity',
+        final: {
+          kind: 'collabAgentToolCall',
+          status: 'success',
+          delegation: {
+            tool: 'wait',
+            agents: [{ threadId: 'child-1', status: 'completed', message: 'pong' }],
+          },
+        },
+      })
+    })
+
+    it('omits the empty model rather than reporting an empty string', () => {
+      // Upstream sends `model: ""` while the spawn is in flight and the real
+      // slug only on completion; forwarding the blank would render an empty
+      // model chip.
+      const router = new CodexNotificationRouter()
+      const started = router.route('item/started', spawnStarted)
+      const completed = router.route('item/completed', {
+        ...waitCompleted,
+        item: { ...waitCompleted.item, id: 'call_spawn', tool: 'spawnAgent', model: 'gpt-5.5' },
+      })
+
+      expect((started as { payload: { delegation: { model?: string } } }).payload.delegation.model)
+        .toBeUndefined()
+      expect((completed as { final: { delegation: { model?: string } } }).final.delegation.model)
+        .toBe('gpt-5.5')
+    })
+
+    it('labels the chip by what the agent actually did', () => {
+      const router = new CodexNotificationRouter()
+      const started = router.route('item/started', spawnStarted) as {
+        payload: { label?: string, detail?: string }
+      }
+
+      expect(started.payload.label).toBe('spawn agent')
+      expect(started.payload.detail).toContain('pong')
+    })
+
+    it('leaves unrelated tool calls without a delegation block', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 't',
+        turnId: 'u',
+        item: { type: 'mcpToolCall', id: 'm1', serverName: 'catimation', toolName: 'generate_image' },
+      }) as { payload: Record<string, unknown> }
+
+      expect(event.payload).not.toHaveProperty('delegation')
+    })
+  })
 })
