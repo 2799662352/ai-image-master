@@ -448,6 +448,32 @@ export function dropSupersededStreamItemsInLastMessage(
   return updated
 }
 
+/**
+ * Patch an item wherever it already lives, or return null when it is unknown.
+ *
+ * Sub-agents keep working after the parent turn ends, so their updates can
+ * arrive once the conversation has moved on. Those merges belong to the card
+ * that spawned them, not to the newest exchange.
+ */
+export function patchExistingItem<T extends TimelineItem>(
+  messages: Message[],
+  itemId: string,
+  patch: (item: T) => T,
+): Message[] | null {
+  for (let msgIdx = messages.length - 1; msgIdx >= 0; msgIdx--) {
+    const message = messages[msgIdx]
+    const itemIdx = message.items.findIndex((item) => item.id === itemId)
+    if (itemIdx < 0) continue
+
+    const items = [...message.items]
+    items[itemIdx] = patch(items[itemIdx] as T)
+    const updated = [...messages]
+    updated[msgIdx] = { ...message, items }
+    return updated
+  }
+  return null
+}
+
 export function upsertItemInLastMessage<T extends TimelineItem>(
   messages: Message[],
   itemId: string,

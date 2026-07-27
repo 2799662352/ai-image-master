@@ -3,6 +3,7 @@ import type {
   AgentStreamEvent,
   CodexApprovalResponse,
   CodexSessionConfig,
+  CodexSubagentInfo,
   CodexThreadDetail,
   CodexThreadSummary,
   CodexWorkspacePaths,
@@ -186,6 +187,8 @@ export interface IAgentBackend {
   respondToApprovalResponse?(response: CodexApprovalResponse): Promise<void> | void
   listThreads?(params?: ListThreadsParams): Promise<CodexThreadSummary[]>
   readThread?(threadId: string): Promise<CodexThreadDetail>
+  /** Spawn identity (nickname, depth) for a sub-agent's own thread. */
+  readSubagentInfo?(threadId: string): Promise<CodexSubagentInfo | null>
   /**
    * `lastTurnId` = fork through that turn INCLUSIVE, omitting everything
    * after it (codex 0.145 ThreadForkParams) — the edit-and-resend

@@ -509,6 +509,12 @@ export class AgentManager {
    */
   private readonly subagentUsage = new Map<string, { input: number, output: number }>()
 
+  /** Sub-agent codex thread id → the nickname upstream assigned that spawn. */
+  private readonly subagentNickname = new Map<string, string>()
+
+  /** Children whose thread record we have already asked for, to read it once. */
+  private readonly subagentInfoRequested = new Set<string>()
+
   /**
    * Latest text a sub-agent emitted on its own thread. Only used when the
    * parent never reported an answer for that child — see
@@ -4251,7 +4257,41 @@ export class AgentManager {
       if (!this.delegationItemByChild.has(agent.threadId)) {
         this.delegationItemByChild.set(agent.threadId, event.itemId)
       }
+      this.enrichSubagentIdentity(agent.threadId)
     }
+  }
+
+  /**
+   * Asks the child's own thread record what upstream named this spawn, then
+   * relabels the card.
+   *
+   * V2's spawn event carries only a thread id and the path of the agent
+   * definition, so without this the card reads `/root/pong_agent`. The
+   * nickname lives on the child thread, which is where the TUI's agent picker
+   * reads it from too.
+   *
+   * Fire-and-forget by design — a delegation card that shows a path is a worse
+   * card, not a broken turn. A failed read clears the attempt so the next
+   * report of the same child retries, which covers reading a thread that the
+   * spawn has only just announced.
+   */
+  private enrichSubagentIdentity(childThreadId: string): void {
+    if (this.subagentNickname.has(childThreadId)) return
+    if (this.subagentInfoRequested.has(childThreadId)) return
+    const read = this.backend.readSubagentInfo?.bind(this.backend)
+    if (!read) return
+
+    this.subagentInfoRequested.add(childThreadId)
+    void read(childThreadId)
+      .then((info) => {
+        const nickname = info?.nickname
+        if (!nickname) return
+        this.subagentNickname.set(childThreadId, nickname)
+        this.republishDelegation(childThreadId)
+      })
+      .catch(() => {
+        this.subagentInfoRequested.delete(childThreadId)
+      })
   }
 
   /**
@@ -4322,9 +4362,13 @@ export class AgentManager {
         const tokens = this.subagentUsage.get(agent.threadId)
         const scraped = this.subagentReply.get(agent.threadId)
         const finished = this.subagentFinished.has(agent.threadId)
+        const nickname = this.subagentNickname.get(agent.threadId)
         return {
           ...agent,
           ...(tokens ? { tokens } : {}),
+          // The nickname replaces V2's agent path rather than deferring to it:
+          // the path is a definition file, the nickname is this spawn.
+          ...(nickname ? { name: nickname } : {}),
           // Never overwrite what the parent reported — for either field. The
           // parent's own account is what it acted on; ours is inferred.
           ...(agent.message === undefined && scraped ? { message: scraped } : {}),

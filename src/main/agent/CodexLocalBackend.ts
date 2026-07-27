@@ -22,6 +22,7 @@ import type {
   CodexApprovalResponse,
   CodexModelContextConfig,
   CodexSessionConfig,
+  CodexSubagentInfo,
   CodexThreadDetail,
   CodexThreadSummary,
   CodexWorkspacePaths,
@@ -683,6 +684,11 @@ export class CodexLocalBackend implements IAgentBackend {
   async readThread(threadId: string): Promise<CodexThreadDetail> {
     if (!this.client) throw new Error('CodexLocalBackend.readThread called before start')
     return this.client.readThread(threadId)
+  }
+
+  async readSubagentInfo(threadId: string): Promise<CodexSubagentInfo | null> {
+    if (!this.client) throw new Error('CodexLocalBackend.readSubagentInfo called before start')
+    return this.client.readSubagentInfo(threadId)
   }
 
   async forkThread(
