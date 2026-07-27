@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import { useImageLoadRetry } from '../../hooks/useImageLoadRetry'
 
 interface ImageLightboxProps {
   /** 当前预览集合(有序)。左右切换在这个集合里循环移动。 */
@@ -89,6 +90,11 @@ export function ImageLightbox({ urls, startIndex, onClose, renderActions }: Imag
 
   const currentUrl = urls[clampedIndex]
   const imgSrc = useDisplaySrc(currentUrl)
+  const {
+    reloadKey: imgReloadKey,
+    onError: onImgError,
+    failed: imgFailed,
+  } = useImageLoadRetry(imgSrc)
 
   if (total === 0 || !currentUrl) return null
 
@@ -119,12 +125,20 @@ export function ImageLightbox({ urls, startIndex, onClose, renderActions }: Imag
         onClick={(e) => e.stopPropagation()}
         className="relative max-w-[92vw] max-h-[82vh] border-2 border-zinc-700 bg-zinc-950 shadow-2xl"
       >
-        <img
-          src={imgSrc}
-          alt={`preview ${clampedIndex + 1}`}
-          onClick={() => hasMultiple && goNext()}
-          className={`block max-w-[92vw] max-h-[82vh] object-contain ${hasMultiple ? 'cursor-pointer' : ''}`}
-        />
+        {imgFailed ? (
+          <div className="flex h-[50vh] w-[60vw] max-w-[92vw] items-center justify-center text-sm text-zinc-500">
+            图片加载失败
+          </div>
+        ) : (
+          <img
+            key={imgReloadKey}
+            src={imgSrc}
+            alt={`preview ${clampedIndex + 1}`}
+            onError={onImgError}
+            onClick={() => hasMultiple && goNext()}
+            className={`block max-w-[92vw] max-h-[82vh] object-contain ${hasMultiple ? 'cursor-pointer' : ''}`}
+          />
+        )}
         {renderActions && (
           <div
             onClick={(e) => e.stopPropagation()}

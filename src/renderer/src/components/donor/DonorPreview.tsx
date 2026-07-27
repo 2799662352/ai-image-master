@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { DonorItemView } from '../../hooks/useHistoryData'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import { useImageLoadRetry } from '../../hooks/useImageLoadRetry'
 
 interface Props {
   item: DonorItemView
@@ -32,6 +33,11 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
   // handleSave / fetch(url) 仍用原 url —— blob: 也能 fetch, 但 dataURL 走 IPC
   // 下载更直接, 保留原 url 让 catch 分支的 a.href fallback 仍能工作。
   const displayImgSrc = useDisplaySrc(url)
+  const {
+    reloadKey: imgReloadKey,
+    onError: onImgError,
+    failed: imgFailed,
+  } = useImageLoadRetry(displayImgSrc)
 
   const copyPrompt = async () => {
     if (item.prompt) {
@@ -124,7 +130,17 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
                 className="max-w-full max-h-[65vh] object-contain"
               />
             ) : (
-              <img src={displayImgSrc} alt={item.prompt || 'preview'} className="max-w-full max-h-[65vh] object-contain" />
+              imgFailed ? (
+                <div className="py-20 text-center text-[color:var(--donor-red)] d-mono">LOAD_FAILED</div>
+              ) : (
+                <img
+                  key={imgReloadKey}
+                  src={displayImgSrc}
+                  alt={item.prompt || 'preview'}
+                  onError={onImgError}
+                  className="max-w-full max-h-[65vh] object-contain"
+                />
+              )
             )
           ) : (
             <div className="py-20 text-center text-[color:var(--donor-red)] d-mono">NO_DATA</div>
