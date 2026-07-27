@@ -174,6 +174,11 @@ export interface PlanStep {
 export interface DelegatedAgent {
   /** The child's own codex thread id — its work streams under this, not ours. */
   threadId: string
+  /**
+   * Human-facing name. Multi-agent V2 names its agents by path
+   * (`/root/pong_agent`); V1 has only ids, so this is absent there.
+   */
+  name?: string
   /** Upstream's word for where the child is, e.g. `completed`. */
   status?: string
   /** The child's answer, surfaced to the parent when it finishes. */

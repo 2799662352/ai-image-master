@@ -237,6 +237,67 @@ describe('AgentManager sub-agent events', () => {
       expect(warn.mock.calls.filter((args) => /sub-agent/i.test(String(args[0])))).toHaveLength(0)
     })
 
+    it('recovers the child\'s answer from its own stream', () => {
+      // Multi-agent V2 leaves `agentsStates` empty — measured with
+      // `scripts/smoke-subagents.ts --v2` — so the only place a child's reply
+      // exists is the child's own thread, which we otherwise drop. Attribution
+      // is what makes recovering it safe: it lands on the delegation card, not
+      // spliced into the parent's message.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+
+      fireUnrouted({
+        type: 'item_completed',
+        threadId: 'child-1',
+        itemId: 'msg-child',
+        itemType: 'text',
+        final: { content: 'pong' },
+      } as AgentStreamEvent)
+
+      const patch = emitted.find((event) => event.type === 'item_delta')
+      expect(patch).toMatchObject({
+        threadId: 'db-parent',
+        itemId: 'call_spawn',
+        patch: {
+          fields: { delegation: { agents: [{ threadId: 'child-1', message: 'pong' }] } },
+        },
+      })
+    })
+
+    it('keeps the reply the parent reported over one scraped from the child', () => {
+      // V1 reports the child's answer through `agentsStates`, which is the
+      // authoritative summary the parent acted on; a later child chunk must not
+      // overwrite it with a partial.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      const withState = spawnCompleted('child-1') as unknown as {
+        final: { delegation: { agents: Array<Record<string, unknown>> } }
+      }
+      withState.final.delegation.agents = [
+        { threadId: 'child-1', status: 'completed', message: 'authoritative answer' },
+      ]
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(withState as unknown as AgentStreamEvent)
+
+      fireUnrouted({
+        type: 'item_completed',
+        threadId: 'child-1',
+        itemId: 'msg-child',
+        itemType: 'text',
+        final: { content: 'partial' },
+      } as AgentStreamEvent)
+
+      const patches = emitted.filter((event) => event.type === 'item_delta')
+      const merged = patches.at(-1) as undefined | {
+        patch: { fields: { delegation: { agents: Array<{ message?: string }> } } }
+      }
+      expect(merged?.patch.fields.delegation.agents[0].message).toBe('authoritative answer')
+    })
+
     it('names the owning conversation in the drop warning', () => {
       // Once ownership is known the diagnostic should say whose child it was;
       // "some thread dropped events" is not actionable.

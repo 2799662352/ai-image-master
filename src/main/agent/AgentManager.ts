@@ -510,6 +510,13 @@ export class AgentManager {
   private readonly subagentUsage = new Map<string, { input: number, output: number }>()
 
   /**
+   * Latest text a sub-agent emitted on its own thread. Only used when the
+   * parent never reported an answer for that child — see
+   * {@link recordSubagentReply}.
+   */
+  private readonly subagentReply = new Map<string, string>()
+
+  /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
    * snapshot via `getMcpStatusSnapshotRpc` on subscribe, so dots stay correct
@@ -4153,6 +4160,13 @@ export class AgentManager {
     if (event.type === 'token_usage_updated' && this.recordSubagentUsage(threadId, event.usage)) {
       return
     }
+    if (
+      event.type === 'item_completed'
+      && event.itemType === 'text'
+      && this.recordSubagentReply(threadId, event.final)
+    ) {
+      return
+    }
     if (this.warnedSubagentThreads.has(threadId)) return
     this.warnedSubagentThreads.add(threadId)
     const owner = this.subagentParentByCodexThread.get(threadId)
@@ -4196,19 +4210,51 @@ export class AgentManager {
    * child's absolute counts would read as parent context that isn't there.
    */
   private recordSubagentUsage(childThreadId: string, usage: AgentTokenUsage): boolean {
-    const itemId = this.delegationItemByChild.get(childThreadId)
-    const record = itemId ? this.delegationItems.get(itemId) : undefined
-    if (!itemId || !record) return false
-
     this.subagentUsage.set(childThreadId, {
       input: usage.inputTokens,
       output: usage.outputTokens,
     })
+    return this.republishDelegation(childThreadId)
+  }
+
+  /**
+   * Salvages a sub-agent's answer from its own stream.
+   *
+   * Multi-agent V2 leaves the parent's `agentsStates` empty (measured with
+   * `scripts/smoke-subagents.ts --v2`), so without this the delegation card
+   * would say a child ran and never what it said. V1 does report the answer,
+   * and that copy wins — it is the summary the parent actually acted on, while
+   * this one is whatever text chunk happened to arrive last.
+   */
+  private recordSubagentReply(childThreadId: string, final: Record<string, unknown>): boolean {
+    const content = final.content
+    if (typeof content !== 'string' || content.trim().length === 0) return false
+    this.subagentReply.set(childThreadId, content)
+    return this.republishDelegation(childThreadId)
+  }
+
+  /**
+   * Re-emits the delegation item for whichever card owns this child, folding in
+   * everything learned from the child's own stream. Returns false when the
+   * child belongs to no known delegation, so the caller can fall back to the
+   * drop-and-warn path.
+   */
+  private republishDelegation(childThreadId: string): boolean {
+    const itemId = this.delegationItemByChild.get(childThreadId)
+    const record = itemId ? this.delegationItems.get(itemId) : undefined
+    if (!itemId || !record) return false
+
     const delegation: DelegationSnapshot = {
       ...record.delegation,
       agents: record.delegation.agents.map((agent) => {
         const tokens = this.subagentUsage.get(agent.threadId)
-        return tokens ? { ...agent, tokens } : agent
+        const scraped = this.subagentReply.get(agent.threadId)
+        return {
+          ...agent,
+          ...(tokens ? { tokens } : {}),
+          // Never overwrite what the parent reported.
+          ...(agent.message === undefined && scraped ? { message: scraped } : {}),
+        }
       }),
     }
     this.delegationItems.set(itemId, { ...record, delegation })

@@ -100,6 +100,18 @@ describe('ActivityCard delegation', () => {
     expect(screen.getByText(/1,540|1540/)).toBeTruthy()
   })
 
+  it('uses the agent name V2 gives instead of a bare thread id', () => {
+    render(<ActivityCard item={delegationItem({
+      delegation: {
+        tool: 'started',
+        agents: [{ threadId: '019fa301-7219-7443-81ad-8017777ca55d', name: '/root/pong_agent' }],
+      },
+    })} />)
+
+    expect(screen.getByText('/root/pong_agent')).toBeTruthy()
+    expect(screen.queryByText(/019fa301-7219/)).toBeNull()
+  })
+
   it('falls back to the generic chip for ordinary tool calls', () => {
     render(<ActivityCard item={{
       type: 'activity',

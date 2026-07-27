@@ -103,10 +103,20 @@ async function main(): Promise<void> {
   // config tells us whether production is exposed by default or only because we
   // pass the concurrency flags.
   const withoutAgentsConfig = process.argv.includes('--no-agents')
+  // `--v2` answers whether multi-agent V2 is usable on a non-OpenAI gateway.
+  // V2 marks the task payload `.with_encrypted()`, which upstream #34833 (filed
+  // against 0.145.0) reports the child cannot decode when parent and child sit
+  // behind an OpenAI-compatible gateway — the child sees an empty `Payload:`
+  // and the parent can die on "Encrypted function output content could not be
+  // decrypted". V2 additionally only offers spawn targets whose model catalog
+  // self-declares v2. Both are claims worth testing against the actual pool
+  // rather than inheriting.
+  const v2 = process.argv.includes('--v2')
   const args = [
     'app-server', '--listen', `ws://127.0.0.1:${PORT}`,
     '-c', 'approval_policy="never"',
     '-c', 'sandbox_mode="danger-full-access"',
+    ...(v2 ? ['-c', 'features.multi_agent_v2=true'] : []),
     ...(withoutAgentsConfig ? [] : ['-c', 'agents.max_threads=2', '-c', 'agents.max_depth=1']),
     '-c', 'model_provider="probe"',
     '-c', 'model_providers.probe.name="probe"',
@@ -208,6 +218,27 @@ async function main(): Promise<void> {
       console.log('\n[smoke] collabAgentToolCall payloads (the parent-visible record of delegation):')
       for (const item of spawnItems) console.log(`  ${item.method}: ${item.raw}\n`)
     }
+    // V2 replaces agent ids with a path namespace and reports spawns through
+    // `subAgentActivity` instead of filling in `receiverThreadIds`, so dump it.
+    const activity = observations.filter((o) => o.itemType === 'subAgentActivity')
+    if (activity.length > 0) {
+      console.log('\n[smoke] subAgentActivity payloads (V2 discovery hook):')
+      for (const item of activity) console.log(`  ${item.raw}\n`)
+    }
+
+    // The words themselves settle the cross-provider encryption question: a
+    // child that never received its task says so.
+    const said = observations.filter(
+      (o) => o.itemType === 'agentMessage' && o.method === 'item/completed',
+    )
+    if (said.length > 0) {
+      console.log('[smoke] completed agentMessages (who said what):')
+      for (const item of said) {
+        const who = item.threadId === parentThreadId ? 'PARENT' : `child ${item.threadId?.slice(0, 8)}`
+        console.log(`  ${who}: ${item.raw}\n`)
+      }
+    }
+
     console.log(`[smoke] events carrying a NON-parent threadId: ${childEvents.length}`)
     for (const event of childEvents) {
       console.log(`  ${event.method}${event.itemType ? `#${event.itemType}` : ''}`

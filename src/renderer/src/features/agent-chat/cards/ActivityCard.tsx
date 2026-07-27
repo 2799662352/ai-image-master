@@ -166,6 +166,11 @@ function DelegationCard({
                 >
                   {agent.status === 'completed' ? '\u2713' : '\u25CB'}
                 </span>
+                {/* V2 names its agents by path (`/root/pong_agent`); V1 has
+                    only ids, and a raw UUID is worse than no label. */}
+                {agent.name ? (
+                  <span className="shrink-0 font-mono text-[11px] text-zinc-400">{agent.name}</span>
+                ) : null}
                 <span className="min-w-0 flex-1 break-words text-zinc-300">
                   {agent.message ?? (agent.status === 'completed' ? 'done' : 'working…')}
                 </span>
