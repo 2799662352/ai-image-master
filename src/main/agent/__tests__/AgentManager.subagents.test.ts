@@ -36,10 +36,14 @@ afterEach(async () => {
 function makeManager(): {
   manager: AgentManager
   emitted: AgentStreamEvent[]
-  fireUnrouted: (event: AgentStreamEvent) => void
+  fireUnrouted: (event: AgentStreamEvent, context?: { turnId?: string }) => void
+  cancel: ReturnType<typeof vi.fn>
+  interruptTurn: ReturnType<typeof vi.fn>
 } {
   const emitted: AgentStreamEvent[] = []
-  let unrouted: ((event: AgentStreamEvent) => void) | undefined
+  let unrouted: ((event: AgentStreamEvent, context?: { turnId?: string }) => void) | undefined
+  const cancel = vi.fn().mockResolvedValue(undefined)
+  const interruptTurn = vi.fn().mockResolvedValue(undefined)
 
   const manager = new AgentManager({
     userDataDir: tmpDir,
@@ -50,14 +54,15 @@ function makeManager(): {
         start: vi.fn().mockResolvedValue(undefined),
         stop: vi.fn().mockResolvedValue(undefined),
         send: vi.fn(),
-        cancel: vi.fn(),
+        cancel,
+        interruptTurn,
         isHealthy: vi.fn().mockReturnValue(true),
       } as never
     },
   } as never)
 
   if (!unrouted) throw new Error('AgentManager did not wire onUnroutedEvent')
-  return { manager, emitted, fireUnrouted: unrouted }
+  return { manager, emitted, fireUnrouted: unrouted, cancel, interruptTurn }
 }
 
 /** The delegation item as the router emits it, from a measured wire payload. */
@@ -296,6 +301,139 @@ describe('AgentManager sub-agent events', () => {
         patch: { fields: { delegation: { agents: Array<{ message?: string }> } } }
       }
       expect(merged?.patch.fields.delegation.agents[0].message).toBe('authoritative answer')
+    })
+
+    it('settles a V2 agent row when the child\'s turn ends', () => {
+      // V2 announces a spawn through `subAgentActivity`, which carries no
+      // status, and its `wait` item reports an empty `agentsStates`. Nothing
+      // else ever supplies one — so on the channels where V2 is enabled the row
+      // pulsed "working…" for the life of the card no matter what the child
+      // did. The child's own `turn/completed` reaches us on the unrouted path
+      // and is the only terminal signal available.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents({
+        type: 'item_completed',
+        threadId: 'codex-parent',
+        itemId: 'call_activity',
+        itemType: 'activity',
+        final: {
+          kind: 'subAgentActivity',
+          delegation: {
+            tool: 'started',
+            agents: [{ threadId: 'child-1', name: '/root/scout' }],
+          },
+        },
+      } as AgentStreamEvent)
+
+      fireUnrouted({ type: 'turn_completed', threadId: 'child-1' } as AgentStreamEvent)
+
+      const patch = emitted.filter((event) => event.type === 'item_delta').at(-1)
+      expect(patch).toMatchObject({
+        itemId: 'call_activity',
+        patch: {
+          fields: { delegation: { agents: [{ threadId: 'child-1', status: 'completed' }] } },
+        },
+      })
+    })
+
+    it('keeps a child bound to the card that spawned it, not to a follow-up', () => {
+      // Every V2 tool call is its own item id, so a `followup_task` to a
+      // running child used to rebind ownership: the child's reply and tokens
+      // then landed on the follow-up card while the spawn card said "working…"
+      // forever. Steering a long job with follow-ups is the normal path.
+      const { manager, emitted, fireUnrouted } = makeManager()
+      registerParent(manager)
+      const activity = (itemId: string, tool: string): AgentStreamEvent => ({
+        type: 'item_completed',
+        threadId: 'codex-parent',
+        itemId,
+        itemType: 'activity',
+        final: {
+          kind: 'subAgentActivity',
+          delegation: { tool, agents: [{ threadId: 'child-1' }] },
+        },
+      }) as AgentStreamEvent
+      const note = (event: AgentStreamEvent): void =>
+        (manager as unknown as { noteDelegatedAgents(e: AgentStreamEvent): void })
+          .noteDelegatedAgents(event)
+
+      note(activity('call_spawn', 'started'))
+      note(activity('call_followup', 'interacted'))
+      fireUnrouted({
+        type: 'item_completed',
+        threadId: 'child-1',
+        itemId: 'msg',
+        itemType: 'text',
+        final: { content: 'done the thing' },
+      } as AgentStreamEvent)
+
+      const patch = emitted.filter((event) => event.type === 'item_delta').at(-1)
+      expect(patch).toMatchObject({ itemId: 'call_spawn' })
+    })
+
+    it('stops the children too when the user stops the conversation', async () => {
+      // Upstream does not cascade: `interrupt_agent` acts on one thread, and
+      // unlike `close_agent` (whose own tool description says "and any open
+      // descendants") it has no descendant walk. So pressing stop ended the
+      // parent turn while every spawned child kept generating — paid work the
+      // user explicitly cancelled. Measured with
+      // `scripts/smoke-subagents.ts --interrupt-child`: the server DOES accept
+      // `turn/interrupt` addressed at a child's own (threadId, turnId), so the
+      // cascade is ours to do.
+      const { manager, fireUnrouted, cancel, interruptTurn } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+      // A child's turn id only becomes knowable from its own streamed events.
+      fireUnrouted(
+        { type: 'item_delta', threadId: 'child-1', itemId: 'm', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'x' } } as AgentStreamEvent,
+        { turnId: 'child-turn-1' },
+      )
+
+      await manager.cancel('db-parent')
+
+      expect(cancel).toHaveBeenCalledWith('codex-parent')
+      expect(interruptTurn).toHaveBeenCalledWith('child-1', 'child-turn-1')
+    })
+
+    it('does not interrupt a child whose turn already ended', async () => {
+      const { manager, fireUnrouted, interruptTurn } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+      fireUnrouted(
+        { type: 'item_delta', threadId: 'child-1', itemId: 'm', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'x' } } as AgentStreamEvent,
+        { turnId: 'child-turn-1' },
+      )
+      fireUnrouted({ type: 'turn_completed', threadId: 'child-1' } as AgentStreamEvent)
+
+      await manager.cancel('db-parent')
+
+      expect(interruptTurn).not.toHaveBeenCalled()
+    })
+
+    it('leaves another conversation\'s children alone', async () => {
+      const { manager, fireUnrouted, interruptTurn } = makeManager()
+      registerParent(manager)
+      ;(manager as unknown as {
+        noteDelegatedAgents(event: AgentStreamEvent): void
+      }).noteDelegatedAgents(spawnCompleted('child-1'))
+      fireUnrouted(
+        { type: 'item_delta', threadId: 'child-1', itemId: 'm', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'x' } } as AgentStreamEvent,
+        { turnId: 'child-turn-1' },
+      )
+
+      await manager.cancel('db-other')
+
+      expect(interruptTurn).not.toHaveBeenCalled()
     })
 
     it('names the owning conversation in the drop warning', () => {

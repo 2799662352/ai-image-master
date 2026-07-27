@@ -204,6 +204,13 @@ export interface IAgentBackend {
    * memory forever.
    */
   unsubscribeThread?(threadId: string): Promise<void>
+
+  /**
+   * Interrupt a turn on a thread this backend never started — in practice a
+   * sub-agent's. Optional: non-Codex backends omit it and the manager skips the
+   * cascade. See `CodexProtocolClient.interruptTurn`.
+   */
+  interruptTurn?(threadId: string, turnId: string): Promise<void>
   archiveThread?(threadId: string): Promise<void>
   unarchiveThread?(threadId: string): Promise<CodexThreadSummary>
   /** Run `codex doctor --json` against the bundled binary (install diagnostics). */

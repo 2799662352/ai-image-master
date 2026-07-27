@@ -516,6 +516,16 @@ export class AgentManager {
    */
   private readonly subagentReply = new Map<string, string>()
 
+  /** Sub-agent threads whose own turn has ended — see {@link markSubagentFinished}. */
+  private readonly subagentFinished = new Set<string>()
+
+  /**
+   * Live turn id per sub-agent thread, so a cancel can interrupt the children
+   * too (see {@link interruptSubagentsOf}). Entries are removed when that
+   * child's turn ends.
+   */
+  private readonly subagentTurnByThread = new Map<string, string>()
+
   /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
@@ -631,7 +641,7 @@ export class AgentManager {
         onApprovalRequest: (request) => this.emitApprovalRequest(request),
         onApprovalResolved: (info) => this.emitApprovalResolved(info),
         onMcpNotification: (event) => this.handleMcpNotification(event),
-        onUnroutedEvent: (event) => this.handleUnroutedEvent(event),
+        onUnroutedEvent: (event, context) => this.handleUnroutedEvent(event, context),
         onGoalNotification: (event) => this.handleGoalNotification(event),
         onThreadSettingsNotification: (event) => this.handleThreadSettingsNotification(event),
       })
@@ -3732,6 +3742,35 @@ export class AgentManager {
   async cancel(threadId: string): Promise<void> {
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId)
     await this.backend.cancel(codexThreadId ?? threadId)
+    await this.interruptSubagentsOf(threadId)
+  }
+
+  /**
+   * Stops this conversation's still-running sub-agents.
+   *
+   * Upstream does not cascade: `interrupt_agent` acts on a single thread, and
+   * unlike `close_agent` — whose tool description says "and any open
+   * descendants" — it has no descendant walk. So without this, pressing stop
+   * ended the parent turn while every child kept generating paid work the user
+   * had explicitly cancelled.
+   *
+   * Best-effort and never rethrows: a failed interrupt must not turn the user's
+   * cancel into an error, and the parent turn is already stopped by then.
+   */
+  private async interruptSubagentsOf(dbThreadId: string): Promise<void> {
+    const interrupt = this.backend.interruptTurn
+    if (!interrupt) return
+    const live = [...this.subagentTurnByThread].filter(
+      ([childThreadId]) => this.subagentParentByCodexThread.get(childThreadId) === dbThreadId,
+    )
+    await Promise.all(live.map(async ([childThreadId, turnId]) => {
+      this.subagentTurnByThread.delete(childThreadId)
+      try {
+        await interrupt.call(this.backend, childThreadId, turnId)
+      } catch (err) {
+        console.warn(`[AgentManager] interrupting sub-agent ${childThreadId} failed:`, err)
+      }
+    }))
   }
 
   /**
@@ -4154,9 +4193,15 @@ export class AgentManager {
    * The warning is per thread, not per event: one child turn emits a dozen
    * events, and this log line shares a file with live streaming traces.
    */
-  private handleUnroutedEvent(event: AgentStreamEvent): void {
+  private handleUnroutedEvent(event: AgentStreamEvent, context?: { turnId?: string }): void {
     const threadId = 'threadId' in event ? event.threadId : undefined
     if (!threadId) return
+    // A child's turn id exists nowhere else we can reach: `turn/started` for a
+    // sub-agent is dropped by the router, so its own streamed items are the
+    // only carrier. Remember it so a cancel can interrupt the child too.
+    if (context?.turnId && this.delegationItemByChild.has(threadId)) {
+      this.subagentTurnByThread.set(threadId, context.turnId)
+    }
     if (event.type === 'token_usage_updated' && this.recordSubagentUsage(threadId, event.usage)) {
       return
     }
@@ -4167,6 +4212,7 @@ export class AgentManager {
     ) {
       return
     }
+    if (event.type === 'turn_completed' && this.markSubagentFinished(threadId)) return
     if (this.warnedSubagentThreads.has(threadId)) return
     this.warnedSubagentThreads.add(threadId)
     const owner = this.subagentParentByCodexThread.get(threadId)
@@ -4197,7 +4243,14 @@ export class AgentManager {
     this.delegationItems.set(event.itemId, { dbThreadId: parentDbThreadId, delegation })
     for (const agent of delegation.agents) {
       this.subagentParentByCodexThread.set(agent.threadId, parentDbThreadId)
-      this.delegationItemByChild.set(agent.threadId, event.itemId)
+      // First card wins. Every V2 tool call gets its own item id, so a
+      // `followup_task` to a running child would otherwise move that child's
+      // replies and tokens onto the follow-up card and leave the card that
+      // spawned it saying "working…" forever — and steering a long job with
+      // follow-ups is the normal path, not an edge case.
+      if (!this.delegationItemByChild.has(agent.threadId)) {
+        this.delegationItemByChild.set(agent.threadId, event.itemId)
+      }
     }
   }
 
@@ -4234,6 +4287,25 @@ export class AgentManager {
   }
 
   /**
+   * Marks a sub-agent finished when its own turn ends.
+   *
+   * Multi-agent V2 supplies no status anywhere a parent-scoped client can see
+   * it: `subAgentActivity` carries only an id and a path, and V2's `wait` item
+   * reports an empty `agentsStates`. Without this the agent row would pulse
+   * "working…" for the life of the card on exactly the channels where V2 is
+   * enabled. The child's `turn/completed` is the one terminal signal that does
+   * reach us.
+   */
+  private markSubagentFinished(childThreadId: string): boolean {
+    if (!this.delegationItemByChild.has(childThreadId)) return false
+    this.subagentFinished.add(childThreadId)
+    // Nothing left to interrupt, and a stale turn id would make a later cancel
+    // address a turn that no longer exists.
+    this.subagentTurnByThread.delete(childThreadId)
+    return this.republishDelegation(childThreadId)
+  }
+
+  /**
    * Re-emits the delegation item for whichever card owns this child, folding in
    * everything learned from the child's own stream. Returns false when the
    * child belongs to no known delegation, so the caller can fall back to the
@@ -4249,11 +4321,14 @@ export class AgentManager {
       agents: record.delegation.agents.map((agent) => {
         const tokens = this.subagentUsage.get(agent.threadId)
         const scraped = this.subagentReply.get(agent.threadId)
+        const finished = this.subagentFinished.has(agent.threadId)
         return {
           ...agent,
           ...(tokens ? { tokens } : {}),
-          // Never overwrite what the parent reported.
+          // Never overwrite what the parent reported — for either field. The
+          // parent's own account is what it acted on; ours is inferred.
           ...(agent.message === undefined && scraped ? { message: scraped } : {}),
+          ...(agent.status === undefined && finished ? { status: 'completed' } : {}),
         }
       }),
     }

@@ -2404,6 +2404,30 @@ describe('CodexNotificationRouter', () => {
       })
     })
 
+    it('does not call a still-running delegation successful', () => {
+      // Upstream's status is camelCase `inProgress`; the status mapper compared
+      // against `in_progress` only, so it returned undefined and the
+      // `item/completed` branch applied its positional default — success. A
+      // `wait` that completes while its agent is still running would render
+      // green.
+      const router = new CodexNotificationRouter()
+
+      const event = router.route('item/completed', {
+        threadId: 'parent-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'collabAgentToolCall',
+          id: 'call_wait',
+          tool: 'wait',
+          status: 'inProgress',
+          receiverThreadIds: ['child-1'],
+          agentsStates: {},
+        },
+      })
+
+      expect(event).toMatchObject({ final: { status: 'running' } })
+    })
+
     it('leaves unrelated tool calls without a delegation block', () => {
       const router = new CodexNotificationRouter()
       const event = router.route('item/started', {

@@ -160,11 +160,11 @@ function DelegationCard({
                 <span
                   className={
                     'mt-[3px] inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[11px] leading-none '
-                    + (agent.status === 'completed' ? 'text-emerald-300' : 'text-cyan-300 animate-pulse')
+                    + agentGlyphTone(agent.status)
                   }
                   aria-hidden="true"
                 >
-                  {agent.status === 'completed' ? '\u2713' : '\u25CB'}
+                  {agentGlyph(agent.status)}
                 </span>
                 {/* V2 names its agents by path (`/root/pong_agent`); V1 has
                     only ids, and a raw UUID is worse than no label. */}
@@ -172,7 +172,7 @@ function DelegationCard({
                   <span className="shrink-0 font-mono text-[11px] text-zinc-400">{agent.name}</span>
                 ) : null}
                 <span className="min-w-0 flex-1 break-words text-zinc-300">
-                  {agent.message ?? (agent.status === 'completed' ? 'done' : 'working…')}
+                  {agent.message ?? agentFallbackText(agent.status)}
                 </span>
                 {agent.tokens ? (
                   <span
@@ -194,6 +194,67 @@ function DelegationCard({
 /** `spawnAgent` → `spawn agent`; upstream's camelCase reads badly in a card. */
 function humanizeTool(tool: string): string {
   return tool.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+}
+
+/**
+ * Upstream `CollabAgentStatus` has seven values, not two:
+ * `pendingInit | running | interrupted | completed | errored | shutdown |
+ * notFound`. Treating everything but `completed` as "still running" put a
+ * failed agent's error message next to a spinner — the user waits for work that
+ * already died.
+ */
+function agentSettled(status: string | undefined): 'done' | 'failed' | 'stopped' | undefined {
+  switch (status) {
+    case 'completed':
+      return 'done'
+    case 'errored':
+    case 'notFound':
+      return 'failed'
+    case 'interrupted':
+    case 'shutdown':
+      return 'stopped'
+    default:
+      return undefined
+  }
+}
+
+function agentGlyph(status: string | undefined): string {
+  switch (agentSettled(status)) {
+    case 'done':
+      return '\u2713'
+    case 'failed':
+      return '!'
+    case 'stopped':
+      return '\u2298'
+    default:
+      return '\u25CB'
+  }
+}
+
+function agentGlyphTone(status: string | undefined): string {
+  switch (agentSettled(status)) {
+    case 'done':
+      return 'text-emerald-300'
+    case 'failed':
+      return 'text-red-300'
+    case 'stopped':
+      return 'text-amber-300'
+    default:
+      return 'text-cyan-300 animate-pulse'
+  }
+}
+
+function agentFallbackText(status: string | undefined): string {
+  switch (agentSettled(status)) {
+    case 'done':
+      return 'done'
+    case 'failed':
+      return 'failed'
+    case 'stopped':
+      return 'stopped'
+    default:
+      return 'working…'
+  }
 }
 
 function pickIcon(kind: string): string {

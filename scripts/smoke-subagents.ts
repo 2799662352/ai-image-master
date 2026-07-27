@@ -198,6 +198,31 @@ async function main(): Promise<void> {
     }) as { turn: { id: string } }
     console.log(`[smoke] parent turn ${turn.turn.id}; streaming…\n`)
 
+    // `--interrupt-child` settles the question the source cannot: pressing stop
+    // interrupts the PARENT turn only — upstream's `interrupt_agent` acts on one
+    // thread and, unlike `close_agent`, has no descendant cascade. If a client
+    // may address `turn/interrupt` at a child's own (threadId, turnId), the
+    // cascade is ours to implement; if the server refuses, stopping a runaway
+    // sub-agent needs an upstream feature.
+    if (process.argv.includes('--interrupt-child')) {
+      const child = await waitForChildTurn(observations, parentThreadId)
+      if (!child) {
+        console.log('\n[smoke] no child turn appeared; cannot test interrupt\n')
+      } else {
+        console.log(`\n[smoke] interrupting child ${child.threadId} turn ${child.turnId}…`)
+        try {
+          const response = await rpc('turn/interrupt', {
+            threadId: child.threadId,
+            turnId: child.turnId,
+          })
+          console.log(`[smoke] turn/interrupt ACCEPTED → ${JSON.stringify(response)}\n`)
+        } catch (error) {
+          console.log(`[smoke] turn/interrupt REFUSED → ${
+            error instanceof Error ? error.message : String(error)}\n`)
+        }
+      }
+    }
+
     await waitForTurnEnd(observations, parentThreadId)
 
     // ── verdict ─────────────────────────────────────────────────────────────
@@ -271,6 +296,36 @@ function connect(url: string): Promise<WebSocket> {
       })
     }
     attempt()
+  })
+}
+
+/**
+ * Waits for a child thread to start a turn, which is where its `(threadId,
+ * turnId)` first becomes addressable. Resolves undefined if none appears.
+ */
+function waitForChildTurn(
+  observations: Observation[],
+  parentThreadId: string,
+): Promise<{ threadId: string, turnId: string } | undefined> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + 60_000
+    const poll = setInterval(() => {
+      const hit = observations.find(
+        (o) => o.threadId !== undefined
+          && o.threadId !== parentThreadId
+          && o.turnId !== undefined,
+      )
+      if (hit?.threadId && hit.turnId) {
+        clearInterval(poll)
+        resolve({ threadId: hit.threadId, turnId: hit.turnId })
+        return
+      }
+      if (Date.now() > deadline) {
+        clearInterval(poll)
+        resolve(undefined)
+      }
+    }, 250)
+    poll.unref?.()
   })
 }
 

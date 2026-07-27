@@ -623,7 +623,13 @@ function statusFromItem(item: CodexItem): 'running' | 'success' | 'error' | 'can
   if (s.includes('error') || s.includes('fail')) return 'error'
   if (s.includes('cancel')) return 'cancelled'
   if (s.includes('success') || s === 'completed' || s === 'done') return 'success'
-  if (s === 'running' || s === 'in_progress' || s === 'pending') return 'running'
+  // `inprogress` is what upstream's camelCase `inProgress` lowercases to — the
+  // wire value of `CollabAgentToolCallStatus::InProgress`. Missing it made an
+  // `item/completed` that is still in progress fall through to this function's
+  // caller, which defaults a completion to success.
+  if (s === 'running' || s === 'in_progress' || s === 'inprogress' || s === 'pending') {
+    return 'running'
+  }
   return undefined
 }
 
