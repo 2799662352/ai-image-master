@@ -71,6 +71,11 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // extraction/consolidation on it instead of codex's gpt-5.4 default.
     memoriesModel: 'gpt-5.5',
     compatibilityPolicy: 'none',
+    // Measured: `scripts/smoke-subagents.ts --v2` against this endpoint spawns
+    // a child that receives its task, replies, and is reported back by the
+    // parent — so the encrypted-payload failure of upstream #34833 does not
+    // reach here. V2 buys named agents (`/root/pong_agent`) over V1's bare ids.
+    multiAgentV2: true,
   }),
   Object.freeze({
     id: 'apiyi-grok',
@@ -94,6 +99,11 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     model: 'gpt-5.5',
     requiresOpenaiAuth: true,
     compatibilityPolicy: 'none',
+    // Same live check as apiyi-standard: a spawned child replied and the parent
+    // relayed it. Both GPT pools verified; the Claude and Grok channels are
+    // deliberately left on V1 until they get the same treatment behind their
+    // compatibility bridges.
+    multiAgentV2: true,
   }),
   Object.freeze({
     id: 'rightcode-grok',

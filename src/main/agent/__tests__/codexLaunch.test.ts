@@ -208,6 +208,39 @@ describe('buildCodexLaunchArgs', () => {
     expect(args.join(' ')).not.toContain('memories.consolidation_model')
   })
 
+  it('turns multi-agent V2 on only for channels measured to support it', () => {
+    // V2 encrypts the task it hands a sub-agent, and upstream #34833 (filed
+    // against 0.145.0) reports non-OpenAI backends receiving an empty payload.
+    // Measured with `scripts/smoke-subagents.ts --v2`: both GPT channels drive
+    // a child end to end (it replies, the parent reports the reply), so they
+    // opt in; every other channel stays on V1, which is the default and has no
+    // encrypted fields.
+    const withV2 = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi-standard',
+        name: 'API Yi',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'gpt-5.5',
+        multiAgentV2: true,
+      },
+    })
+    expect(pairs(withV2)).toContainEqual(['-c', 'features.multi_agent_v2=true'])
+
+    const withoutV2 = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi-claude',
+        name: 'API Yi Claude',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'claude-opus-5',
+      },
+    })
+    // Absent, not `false`: V1 is codex's default, and emitting the key would
+    // imply we had measured V2 as harmful here rather than simply unverified.
+    expect(withoutV2.join(' ')).not.toContain('multi_agent_v2')
+  })
+
   it('prefers an explicit memoriesModel over the channel model for memory side requests', () => {
     // apiyi-grok's base URL is the FULL apiyi endpoint (api.apiyi.com/v1 —
     // same host as apiyi-standard, every model available), so its memory side
