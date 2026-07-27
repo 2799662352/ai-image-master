@@ -1,6 +1,7 @@
 import { memo, useState, useCallback } from 'react'
 import type { DonorItemView } from '../../hooks/useHistoryData'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import { useImageLoadRetry } from '../../hooks/useImageLoadRetry'
 import { appendCosThumb } from '../../utils/cosThumb'
 
 interface Props {
@@ -48,7 +49,14 @@ function DonorCardImpl({ item, onDelete, onPreview, onEdit }: Props) {
   // 用 useDisplaySrc 转成 blob: 让浏览器后台异步解码; 其余源透传无开销。
   // 点开 DonorPreview 大图仍用原始 URL, 无损。
   const primaryImgSrc = useDisplaySrc(appendCosThumb(primaryUrl))
-  const hasImage = !!primaryUrl && !imgError.has(0)
+  // 一次加载失败先退避重试几轮再判死:此前一次抖动就把卡片钉死在 404 占位上,
+  // 网络恢复也不会自愈,直到整页重新挂载。
+  const {
+    reloadKey: imgReloadKey,
+    onError: onImgError,
+    failed: imgFailed,
+  } = useImageLoadRetry(primaryImgSrc)
+  const hasImage = !!primaryUrl && !imgError.has(0) && !imgFailed
   const isBroken = item.isBroken
 
   const handleDelete = (e: React.MouseEvent) => {
@@ -115,11 +123,12 @@ function DonorCardImpl({ item, onDelete, onPreview, onEdit }: Props) {
               </>
             ) : (
               <img
+                key={imgReloadKey}
                 src={primaryImgSrc}
                 alt={item.prompt || 'history'}
                 loading="lazy"
                 decoding="async"
-                onError={() => setBroken(0)}
+                onError={onImgError}
                 className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
               />
             )}

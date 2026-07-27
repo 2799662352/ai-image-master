@@ -53,6 +53,12 @@ export interface ResultUploadMeta {
   snapshot?: GenerateSnapshot
 }
 
+/** 一次 generate() 的结局:新增了几张,以及失败时的原因。 */
+export interface GenerateOutcome {
+  added: number
+  error?: string
+}
+
 export interface GenerateState {
   prompt: string
   ratio: string
@@ -101,7 +107,13 @@ export interface GenerateState {
    */
   syncReferenceImagesForModel: (wantsInlineBase64: boolean) => number
   clearResults: () => void
-  generate: (api: ApiActions, modelKey: string) => Promise<void>
+  /**
+   * 发起一次生成。
+   *
+   * 结果直接回给调用方而不是只写进 store:这个页面允许并发点,靠"全局结果
+   * 张数差"反推本次成没成,会把并发那一次的图算到自己头上。
+   */
+  generate: (api: ApiActions, modelKey: string) => Promise<GenerateOutcome>
   /**
    * 把一组表单参数回灌到当前 store, 用于"重新编辑"。
    * 不会触发生成 —— 只是恢复表单状态, 让用户能继续修改后再点生成。
@@ -229,6 +241,19 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       })
       const rawUrls = result.urls ?? result.images ?? []
 
+      // generateImage 从不抛异常:网络断连、上游 4xx/5xx、重试耗尽、超时,
+      // 全都折成 { success: false, error }。不在这里拦下来,失败就会静静地
+      // 变成"追加了零张图" —— 界面上什么都不会说。
+      if (!result.success || rawUrls.length === 0) {
+        const message = result.error
+          ?? (result.success ? '上游返回成功但没有图片' : '生成失败')
+        set((s) => {
+          const nextCount = Math.max(0, s.inFlightCount - 1)
+          return { error: message, inFlightCount: nextCount, generating: nextCount > 0 }
+        })
+        return { added: 0, error: message }
+      }
+
       // P0 闪退修复(2026-07-09): 模型直出的 data: base64(nano2 4K 一张
       // ≈ 10-40MB 字符串)在进 store 前就地物化成 blob: URL, 底层字节进
       // 堆外 Blob 存储。http(s) URL 原样透传, 零开销。
@@ -287,15 +312,15 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         if (image?.blob) enqueueCosUploadBlob(meta.id, image.blob, uploadMeta)
         else enqueueCosUpload(meta.id, meta.modelUrl, uploadMeta)
       })
+
+      return { added: urls.length }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
       set((s) => {
         const nextCount = Math.max(0, s.inFlightCount - 1)
-        return {
-          error: err instanceof Error ? err.message : String(err),
-          inFlightCount: nextCount,
-          generating: nextCount > 0,
-        }
+        return { error: message, inFlightCount: nextCount, generating: nextCount > 0 }
       })
+      return { added: 0, error: message }
     }
   },
 }))

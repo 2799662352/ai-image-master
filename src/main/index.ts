@@ -36,6 +36,7 @@ import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket } from './services/tencent/cosClient'
+import { fetchImageBytes } from './utils/fetchImageBytes'
 import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } from './services/audioHistoryFiles'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
@@ -1857,20 +1858,16 @@ ipcMain.handle(
           mimeType = m[1] || hintMime || 'image/png'
           body = Buffer.from(m[2], 'base64')
         } else {
-          const controller = new AbortController()
-          const timer = setTimeout(() => controller.abort(), 30_000)
-          try {
-            const resp = await fetch(sourceUrl, { signal: controller.signal })
-            if (!resp.ok) {
-              broadcastUploadResult({ requestId, success: false, error: `fetch ${resp.status}` })
-              return
-            }
-            mimeType = hintMime || resp.headers.get('content-type') || mimeFromUrl(sourceUrl)
-            const ab = await resp.arrayBuffer()
-            body = Buffer.from(ab)
-          } finally {
-            clearTimeout(timer)
+          // 抖动重试:这一步失败就再也拿不到字节了 —— 本地副本是在抓取成功
+          // 之后才落盘的,所以一次失败会同时丢掉本地和 COS 两份,history 只
+          // 剩那条几小时后过期的预签名 URL。
+          const fetched = await fetchImageBytes(sourceUrl)
+          if (!fetched.ok) {
+            broadcastUploadResult({ requestId, success: false, error: fetched.error })
+            return
           }
+          mimeType = hintMime || fetched.contentType || mimeFromUrl(sourceUrl)
+          body = fetched.body
         }
 
         if (body.byteLength === 0) {
