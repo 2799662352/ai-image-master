@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useCallback, useState } from 'react'
+import { useRef, useMemo, useCallback, useState } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import { useApi } from '../hooks/useService'
@@ -31,7 +31,6 @@ export default function GeneratePage() {
   const resultUrls = useGenerateStore((s) => s.resultUrls)
   const resultMeta = useGenerateStore((s) => s.resultMeta)
   const referenceImages = useGenerateStore((s) => s.referenceImages)
-  const error = useGenerateStore((s) => s.error)
 
   const {
     setPrompt,
@@ -104,9 +103,8 @@ export default function GeneratePage() {
   })
   useAutosizeTextarea(textareaRef, prompt, { minRows: 4, maxRows: 20 })
 
-  useEffect(() => {
-    if (error) addToast({ message: error, type: 'error' })
-  }, [error])
+  // 提示按「这一次点击」来发,不按 error 字符串的变化来发:同一个原因连续
+  // 失败两次时,依赖 [error] 的 effect 第二次不会重跑,那一次就悄无声息了。
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -120,10 +118,13 @@ export default function GeneratePage() {
     // Non-blocking: each click fires a concurrent generation. We do NOT clear
     // results — completed images stream into the grid below. Use the "清空"
     // button next to the grid to reset.
-    const urlsBefore = useGenerateStore.getState().resultUrls.length
-    await generate(api, currentModelKey)
-    const urlsAfter = useGenerateStore.getState().resultUrls.length
-    const added = urlsAfter - urlsBefore
+    // 张数取自本次调用的回执,不是全局结果数之差 —— 并发点两次时,
+    // 用差值会把另一次的图算进这一次。
+    const { added, error: failure } = await generate(api, currentModelKey)
+    if (failure) {
+      addToast({ message: failure, type: 'error' })
+      return
+    }
     if (added > 0) {
       addToast({ message: `生成完成 (+${added} 张)`, type: 'success' })
     }

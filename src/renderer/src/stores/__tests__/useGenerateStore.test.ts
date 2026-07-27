@@ -211,13 +211,13 @@ describe('useGenerateStore', () => {
       expect(useGenerateStore.getState().generating).toBe(true)
 
       // resolve B first, then A — order shouldn't matter, both append
-      resolveB({ urls: ['b1.jpg'] })
+      resolveB({ success: true, urls: ['b1.jpg'] })
       await fB
       expect(useGenerateStore.getState().inFlightCount).toBe(1)
       expect(useGenerateStore.getState().generating).toBe(true)
       expect(useGenerateStore.getState().resultUrls).toEqual(['b1.jpg'])
 
-      resolveA({ urls: ['a1.jpg', 'a2.jpg'] })
+      resolveA({ success: true, urls: ['a1.jpg', 'a2.jpg'] })
       await fA
       const final = useGenerateStore.getState()
       expect(final.inFlightCount).toBe(0)
@@ -251,7 +251,7 @@ describe('useGenerateStore', () => {
       expect(useGenerateStore.getState().inFlightCount).toBe(1)
       expect(useGenerateStore.getState().generating).toBe(true)
 
-      resolveA({ urls: ['ok.jpg'] })
+      resolveA({ success: true, urls: ['ok.jpg'] })
       await fA
       const final = useGenerateStore.getState()
       expect(final.inFlightCount).toBe(0)
@@ -275,7 +275,7 @@ describe('useGenerateStore', () => {
       // Mid-flight: user edits refs (e.g. removes one, adds another).
       useGenerateStore.setState({ referenceImages: ['ref2'] })
 
-      resolve({ urls: ['out.jpg'] })
+      resolve({ success: true, urls: ['out.jpg'] })
       await f
 
       expect(api.generateImage).toHaveBeenCalledWith(
@@ -342,7 +342,7 @@ describe('useGenerateStore', () => {
       })
 
       const api = createMockApi({
-        generateImage: vi.fn().mockResolvedValueOnce({ urls: ['out1.jpg', 'out2.jpg'] }),
+        generateImage: vi.fn().mockResolvedValueOnce({ success: true, urls: ['out1.jpg', 'out2.jpg'] }),
       })
       await useGenerateStore.getState().generate(api, 'flux')
 
@@ -362,7 +362,7 @@ describe('useGenerateStore', () => {
     it('snapshot captures empty refs as [] (not undefined) for type stability', async () => {
       useGenerateStore.setState({ prompt: 'no refs', ratio: '1:1', referenceImages: [] })
       const api = createMockApi({
-        generateImage: vi.fn().mockResolvedValueOnce({ urls: ['x.jpg'] }),
+        generateImage: vi.fn().mockResolvedValueOnce({ success: true, urls: ['x.jpg'] }),
       })
       await useGenerateStore.getState().generate(api, 'flux')
       expect(useGenerateStore.getState().resultMeta[0].snapshot?.referenceImages).toEqual([])
