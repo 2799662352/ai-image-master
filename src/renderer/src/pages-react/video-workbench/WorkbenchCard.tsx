@@ -40,8 +40,12 @@ const MODEL_OPTIONS = [
 ] as const
 const RESOLUTION_OPTIONS = ['480p', '720p', '1080p'] as const
 const RATIO_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
-/** -1 = 智能时长(模型自动决定,文档 8.1)。 */
-const DURATION_OPTIONS = [-1, 4, 5, 6, 8, 10, 12, 15] as const
+/**
+ * -1 = 智能时长(模型自动决定,文档 8.1);其余是 `normalizeDuration` 收敛的
+ * 整个 4–15 区间。上游按秒连续接受,此前只列了偶数与 5,选不到的 7/9/11/13/14
+ * 并非上游限制。
+ */
+const DURATION_OPTIONS = [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const
 
 /** 大文件上限(读成 dataURL 兜底路径时):30MB 图片上游硬限。 */
 const MAX_DATAURL_FILE_MB = 30
