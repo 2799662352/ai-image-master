@@ -7,6 +7,7 @@ import type {
 } from '../../types/agent'
 import type { ThreadGoal } from '../../types/codexGoals'
 import { MIN_SNAPSHOT_PREFIX_LEN } from '../../types/agent-timeline'
+import type { DelegatedAgent, DelegationSnapshot } from '../../types/agent-timeline'
 import { countDiffLines, parseChange } from '../../shared/diffUtils'
 
 /**
@@ -124,6 +125,21 @@ function summarizeActivity(item: CodexItem): { label?: string; detail?: string }
         label: 'web search',
         detail: typeof item.query === 'string' ? truncate(item.query) : undefined,
       }
+    case 'collabAgentToolCall': {
+      // Name the ACTION, not the item type: the wire `tool` is camelCase
+      // (`spawnAgent`, `followupTask`), which reads badly in a chip.
+      const tool = typeof item.tool === 'string' ? item.tool : 'agent'
+      const label = tool
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+      const targets = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.length : 0
+      const detail = typeof item.prompt === 'string' && item.prompt.length > 0
+        ? truncate(item.prompt)
+        : targets > 0
+          ? `${targets} agent${targets > 1 ? 's' : ''}`
+          : undefined
+      return { label, ...(detail != null ? { detail } : {}) }
+    }
     case 'dynamicToolCall':
     case 'collabToolCall': {
       // Codex 0.130.0 v2 schema (codex-rs/app-server-protocol/src/protocol/v2.rs):
@@ -540,6 +556,52 @@ function maybeRoutePlanToolCall(
   }
 }
 
+/**
+ * Reads the delegation record off a `collabAgentToolCall` item.
+ *
+ * Returns `undefined` for every other item type, which is what keeps the
+ * generic activity path unchanged for ordinary tool calls.
+ *
+ * Blank scalars are dropped rather than forwarded: upstream sends `model: ""`
+ * while a spawn is in flight and fills in the real slug only on completion, so
+ * passing the empty string through would render an empty model chip.
+ */
+function parseDelegation(item: CodexItem): DelegationSnapshot | undefined {
+  if (item.type !== 'collabAgentToolCall') return undefined
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.length > 0 ? value : undefined
+
+  const states = item.agentsStates
+  const agents: DelegatedAgent[] = []
+  if (states && typeof states === 'object' && !Array.isArray(states)) {
+    for (const [threadId, raw] of Object.entries(states as Record<string, unknown>)) {
+      const state = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+      agents.push({
+        threadId,
+        ...(text(state.status) ? { status: text(state.status) } : {}),
+        ...(text(state.message) ? { message: text(state.message) } : {}),
+      })
+    }
+  }
+  // `receiverThreadIds` names the children even before any state exists, so a
+  // spawn that has not reported back still lists who it is waiting on.
+  if (Array.isArray(item.receiverThreadIds)) {
+    for (const id of item.receiverThreadIds) {
+      if (typeof id === 'string' && !agents.some((agent) => agent.threadId === id)) {
+        agents.push({ threadId: id })
+      }
+    }
+  }
+
+  return {
+    tool: text(item.tool) ?? 'agent',
+    ...(text(item.prompt) ? { prompt: text(item.prompt) } : {}),
+    ...(text(item.model) ? { model: text(item.model) } : {}),
+    ...(text(item.reasoningEffort) ? { reasoningEffort: text(item.reasoningEffort) } : {}),
+    agents,
+  }
+}
+
 function statusFromItem(item: CodexItem): 'running' | 'success' | 'error' | 'cancelled' | undefined {
   const s = typeof item.status === 'string' ? item.status.toLowerCase() : null
   if (!s) return undefined
@@ -889,6 +951,7 @@ export class CodexNotificationRouter {
             // pre-fix router silently dropped all of these, which is exactly
             // why the user couldn't see tool calls / MCP / file reads.
             const { label, detail } = summarizeActivity(item)
+            const delegation = parseDelegation(item)
             return {
               type: 'item_started',
               threadId: params.threadId,
@@ -899,6 +962,7 @@ export class CodexNotificationRouter {
                 ...(label != null ? { label } : {}),
                 ...(detail != null ? { detail } : {}),
                 status: statusFromItem(item) ?? 'running',
+                ...(delegation ? { delegation } : {}),
               },
             }
           }
@@ -1185,6 +1249,7 @@ export class CodexNotificationRouter {
             const { label, detail } = summarizeActivity(item)
             const explicitError =
               typeof item.error === 'string' && item.error.length > 0 ? item.error : undefined
+            const delegation = parseDelegation(item)
             return {
               type: 'item_completed',
               threadId: params.threadId,
@@ -1196,6 +1261,7 @@ export class CodexNotificationRouter {
                 ...(detail != null ? { detail } : {}),
                 status: statusFromItem(item) ?? (explicitError ? 'error' : 'success'),
                 ...(explicitError ? { error: explicitError } : {}),
+                ...(delegation ? { delegation } : {}),
               },
             }
           }

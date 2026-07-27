@@ -170,12 +170,48 @@ export interface PlanStep {
   status: PlanStepStatus
 }
 
+/** One sub-agent as the PARENT turn reports it (`agentsStates` entry). */
+export interface DelegatedAgent {
+  /** The child's own codex thread id — its work streams under this, not ours. */
+  threadId: string
+  /** Upstream's word for where the child is, e.g. `completed`. */
+  status?: string
+  /** The child's answer, surfaced to the parent when it finishes. */
+  message?: string
+}
+
+/**
+ * A multi-agent V2 delegation, read off a `collabAgentToolCall` item.
+ *
+ * This is the only record of sub-agent work that reaches the parent's stream:
+ * the child runs on a separate thread id whose notifications a parent-scoped
+ * listener never sees. Rendering `agents` therefore does not require
+ * subscribing to the children.
+ */
+export interface DelegationSnapshot {
+  /** `spawnAgent` | `wait` | `followupTask` | `sendMessage` | `interrupt` | `list`. */
+  tool: string
+  /** Task handed to the child (spawn only). */
+  prompt?: string
+  /** Resolved only once the spawn completes; blank while in flight. */
+  model?: string
+  reasoningEffort?: string
+  agents: DelegatedAgent[]
+}
+
 export interface ActivityItem extends BaseItem {
   type: 'activity'
   kind: string
   label?: string
   detail?: string
   status?: 'running' | 'success' | 'error' | 'cancelled'
+  /**
+   * Set when `kind === 'collabAgentToolCall'`. Kept on `ActivityItem` for the
+   * same reason as `steps`: the Evidence Stack grouping stays unaware of it,
+   * and a renderer that has not learned about delegation still shows the
+   * generic chip instead of nothing.
+   */
+  delegation?: DelegationSnapshot
   /**
    * Set when `kind === 'plan'`. The renderer swaps the generic activity pill
    * for a real to-do list with per-step status dots. We keep it on

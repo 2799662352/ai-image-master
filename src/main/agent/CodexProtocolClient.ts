@@ -184,6 +184,19 @@ export interface CodexProtocolClientOptions {
    */
   experimentalApi?: boolean
   onLog?: (line: string) => void
+  /**
+   * A mapped event that belongs to no turn this client started — in practice a
+   * sub-agent's thread (multi-agent V2 is on by default at 0.145, and a child
+   * streams its whole turn under its own thread id on this connection).
+   *
+   * Exists so those events have somewhere to GO. They must not enter
+   * `orphanEvents`: that buffer is only for the millisecond race between the
+   * server streaming and `send()` registering its queue, and it is drained by
+   * exact `(threadId, turnId)` match — a child's id is never claimed, so
+   * buffering it leaks until the cap starts evicting the main thread's real
+   * race orphans.
+   */
+  onUnroutedEvent?: (event: AgentStreamEvent) => void
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   /**
    * 服务端自己解决/清理了某个待决请求（`serverRequest/resolved`）。上游会在 turn
@@ -238,6 +251,12 @@ export class CodexProtocolClient {
   // race the server's first delta against our turn/start response handling, so
   // we hold them here and drain them when the queue is registered.
   private orphanEvents: OrphanNotification[] = []
+  /**
+   * Threads whose `turn/start` is in flight — the only threads whose events can
+   * still be claimed by a queue that does not exist yet. Membership is what
+   * separates "arrived a beat early" from "belongs to somebody else".
+   */
+  private readonly awaitingTurnStart = new Set<string>()
   private readonly rpcTimeoutMs: number
   private readonly approvalTimeoutMs: number
   private readonly connectTimeoutMs: number
@@ -336,14 +355,24 @@ export class CodexProtocolClient {
       // `collaborationMode` (EXPERIMENTAL, needs experimentalApi capability):
       // preset that takes precedence over model/effort/instructions for this
       // and subsequent turns. Same spread-omit posture as clientUserMessageId.
-      const turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
-        threadId: actualThreadId,
-        input: mapUserInput(input.items),
-        model: input.model,
-        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
-        ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
-        ...(input.collaborationMode ? { collaborationMode: input.collaborationMode } : {}),
-      })
+      // Opens the buffering window for THIS thread and nothing else: events
+      // arriving before the queue exists are ours to claim; events for any
+      // other thread belong to a sub-agent and go to `onUnroutedEvent`.
+      this.awaitingTurnStart.add(actualThreadId)
+      let turnResponse: TurnStartResponse
+      try {
+        turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
+          threadId: actualThreadId,
+          input: mapUserInput(input.items),
+          model: input.model,
+          ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+          ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
+          ...(input.collaborationMode ? { collaborationMode: input.collaborationMode } : {}),
+        })
+      } catch (error) {
+        this.awaitingTurnStart.delete(actualThreadId)
+        throw error
+      }
       const turnId = turnResponse.turn.id
       this.turnIdByThread.set(actualThreadId, turnId)
 
@@ -351,6 +380,8 @@ export class CodexProtocolClient {
       const queue: TurnQueue = { threadId: actualThreadId, turnId, buffer: [], closed: false }
       this.queues.set(key, queue)
       this.drainOrphansInto(actualThreadId, turnId, queue)
+      // Closed only after the drain: anything still in flight now has a queue.
+      this.awaitingTurnStart.delete(actualThreadId)
 
       try {
         while (true) {
@@ -1047,10 +1078,18 @@ export class CodexProtocolClient {
       return
     }
     // Server began streaming before send()'s `await this.rpc('turn/start', ...)`
-    // had a chance to register the per-turn queue. Buffer until it appears.
-    if (this.orphanEvents.length < ORPHAN_BUFFER_LIMIT) {
-      this.orphanEvents.push({ event, turnId })
+    // had a chance to register the per-turn queue. Buffer until it appears —
+    // but ONLY for a thread we are mid-`turn/start` on. Anything else has no
+    // future claimant (a sub-agent's thread never gets a queue here), and
+    // buffering it would fill the cap and start evicting the events this
+    // buffer exists to protect.
+    if (this.awaitingTurnStart.has(threadId)) {
+      if (this.orphanEvents.length < ORPHAN_BUFFER_LIMIT) {
+        this.orphanEvents.push({ event, turnId })
+      }
+      return
     }
+    this.options.onUnroutedEvent?.(event)
   }
 
   private drainOrphansInto(threadId: string, turnId: string, queue: TurnQueue): void {

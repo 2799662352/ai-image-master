@@ -472,6 +472,12 @@ export class AgentManager {
   private readonly codexThreadHydrationAttempted = new Set<string>()
 
   /**
+   * Sub-agent thread ids already reported by {@link handleUnroutedEvent}. Keeps
+   * the diagnostic to one line per child instead of one per streamed event.
+   */
+  private readonly warnedSubagentThreads = new Set<string>()
+
+  /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
    * snapshot via `getMcpStatusSnapshotRpc` on subscribe, so dots stay correct
@@ -586,6 +592,7 @@ export class AgentManager {
         onApprovalRequest: (request) => this.emitApprovalRequest(request),
         onApprovalResolved: (info) => this.emitApprovalResolved(info),
         onMcpNotification: (event) => this.handleMcpNotification(event),
+        onUnroutedEvent: (event) => this.handleUnroutedEvent(event),
         onGoalNotification: (event) => this.handleGoalNotification(event),
         onThreadSettingsNotification: (event) => this.handleThreadSettingsNotification(event),
       })
@@ -4092,6 +4099,32 @@ export class AgentManager {
    * generation that minted it so `resolveCodexThreadForSend` can later detect a
    * respawn.
    */
+  /**
+   * An event for a codex thread we never started a turn on — in practice a
+   * sub-agent the model spawned (multi-agent V2 is on by default at 0.145; see
+   * `scripts/smoke-subagents.ts` for the measured shape).
+   *
+   * Deliberately NOT forwarded. `forwardEvents` rewrites every event's threadId
+   * to the parent DB thread before it reaches the renderer, so passing a child
+   * through would splice its text into the parent's message — and the store's
+   * superseded-snapshot pruning would then let the two streams delete each
+   * other's items. Until the delegation UI exists, dropping is the only
+   * non-corrupting option.
+   *
+   * The warning is per thread, not per event: one child turn emits a dozen
+   * events, and this log line shares a file with live streaming traces.
+   */
+  private handleUnroutedEvent(event: AgentStreamEvent): void {
+    const threadId = 'threadId' in event ? event.threadId : undefined
+    if (!threadId) return
+    if (this.warnedSubagentThreads.has(threadId)) return
+    this.warnedSubagentThreads.add(threadId)
+    console.warn(
+      `[AgentManager] dropping events from sub-agent thread ${threadId}`
+      + ' (no delegation UI yet; first event was ' + event.type + ')',
+    )
+  }
+
   private rememberCodexThread(
     dbThreadId: string,
     codexThreadId: string,
