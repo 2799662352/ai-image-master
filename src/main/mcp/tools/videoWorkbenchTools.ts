@@ -275,7 +275,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'auto-navigates to the workbench tab so the user watches the cards appear. The result includes a ' +
       'compact `workbench` overview (boards + global status counts) so you always see the whole ' +
       'workbench after writing. Use this when the user asks to 排卡片/批量准备视频任务/在生成视频页帮我' +
-      '填好任务; for a single quick video in chat, prefer generate_video.',
+      '填好任务; for a single quick video in chat, prefer generate_video. ' +
+      'WHEN A CARD CARRIES REFERENCE IMAGES, view_image ONE of them BEFORE writing that card\'s prompt — ' +
+      'the render follows the picture, so a prompt written from a filename argues with it. Viewing an ' +
+      'INPUT is not the batch-opening of generated OUTPUTS that other tools warn against.',
     inputSchema: z.object({
       tasks: z.array(cardInputSchema).min(1).max(20).describe('Cards to append, top-to-bottom order.'),
       autoStart: z.boolean().optional().describe('Start rendering right after adding. Default false (fill only).'),
@@ -301,7 +304,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'Update ONE existing card on the 「生成视频」 workbench page: prompt, spec (model/resolution/ratio/' +
       'duration/generateAudio) and/or reference materials. Cards that are currently rendering cannot be ' +
       'edited. Get cardIds from video_workbench_add_tasks or video_workbench_status. Returns the updated ' +
-      'card snapshot plus a compact `workbench` overview (boards + global status counts).',
+      'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
+      'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
+      'the prompt — same reason as on add_tasks: the render follows the picture, not the filename.',
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
