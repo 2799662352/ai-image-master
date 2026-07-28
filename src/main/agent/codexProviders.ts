@@ -84,7 +84,9 @@ export const QWEN_UNDERSTAND_PROVIDER_ID = 'qwen' as const
 export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   id: QWEN_UNDERSTAND_PROVIDER_ID,
   name: 'Qwen Understanding (DashScope via new-api)',
-  baseUrl: 'http://175.178.198.17:3000/v1',
+  // 加速域名(2026-07-28),仅 https 可达。这个常量在每次 spawn 时现读、不落库,
+  // 所以改了下次启动即生效,老用户无需迁移。
+  baseUrl: 'https://miauapi.13797248455.xyz/v1',
   envKey: 'MIAU_API_KEY',
   model: 'qwen3.7-plus-dashscope',
   wireApi: 'responses',

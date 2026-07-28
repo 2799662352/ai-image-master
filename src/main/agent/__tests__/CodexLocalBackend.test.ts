@@ -722,7 +722,7 @@ describe('CodexLocalBackend spawn env injection', () => {
         provider: {
           id: 'qwen',
           name: 'Qwen Understanding',
-          baseUrl: 'http://175.178.198.17:3000/v1',
+          baseUrl: 'https://miauapi.13797248455.xyz/v1',
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.7-max-dashscope',
           wireApi: 'responses',
@@ -762,7 +762,7 @@ describe('CodexLocalBackend spawn env injection', () => {
         provider: {
           id: 'qwen',
           name: 'Qwen Understanding',
-          baseUrl: 'http://175.178.198.17:3000/v1',
+          baseUrl: 'https://miauapi.13797248455.xyz/v1',
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.7-max-dashscope',
           wireApi: 'responses',
@@ -787,7 +787,7 @@ describe('CodexLocalBackend spawn env injection', () => {
         /^model_providers\.apiyi-grok\.base_url="http:\/\/127\.0\.0\.1:\d+\/v1"$/,
       )
       expect(extraBaseUrl).toBe(
-        'model_providers.qwen.base_url="http://175.178.198.17:3000/v1"',
+        'model_providers.qwen.base_url="https://miauapi.13797248455.xyz/v1"',
       )
       expect(activeBaseUrl).not.toContain('api.apiyi.com')
       expect(extraBaseUrl).not.toContain('127.0.0.1')

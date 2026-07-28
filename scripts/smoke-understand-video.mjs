@@ -15,7 +15,7 @@
  * - 默认 videoUrl 是阿里云官方文档示例视频(CN 可达);可用第一个参数覆盖。
  */
 
-const BASE = process.env.MIAU_BASE_URL || 'http://175.178.198.17:3000'
+const BASE = process.env.MIAU_BASE_URL || 'https://miauapi.13797248455.xyz'
 const KEY = process.env.MIAU_API_KEY
 const MODEL = process.env.MIAU_UNDERSTAND_MODEL || 'qwen3.7-max-dashscope'
 

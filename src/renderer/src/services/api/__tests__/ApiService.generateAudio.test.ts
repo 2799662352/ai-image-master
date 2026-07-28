@@ -44,7 +44,7 @@ describe('ApiService.generateAudio', () => {
     expect(result.url).toBeUndefined() // 上游空字符串不透传
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://175.178.198.17:3000/v1/audio/speech')
+    expect(url).toBe('https://miauapi.13797248455.xyz/v1/audio/speech')
     expect(init.headers['Accept']).toBe('application/json')
     expect(init.headers['Authorization']).toBe('Bearer sk-miau-token')
 
