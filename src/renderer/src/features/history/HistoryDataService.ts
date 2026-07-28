@@ -423,6 +423,22 @@ export class HistoryDataService {
   }
 
   /**
+   * 把某条历史记录的 urls 换成更持久的地址。
+   *
+   * 视频工作台用它收尾:生成成功就先入库(那时手上往往只有会过期的上游地址,
+   * 但落盘可能还要十几分钟,不能让历史空窗),等本地/COS 副本就位再回来替换。
+   * 与 `updateWithCachedImages` 不同 —— 那个写的是 `cachedUrls` 旁路字段,
+   * 这里改的是展示与下载真正读取的 `urls`。
+   */
+  async replaceUrls(id: number | string, urls: string[]): Promise<boolean> {
+    if (urls.length === 0) return false
+    const exists = this.historyManager.getAll().some((item) => item.id === id)
+    if (!exists) return false
+    await this.historyManager.update(id, { urls } as Partial<HistoryItem>)
+    return true
+  }
+
+  /**
    * 更新历史记录的缓存图片 URL
    */
   async updateWithCachedImages(originalUrls: string[], cachedUrls: string[]): Promise<boolean> {

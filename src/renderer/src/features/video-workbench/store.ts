@@ -510,6 +510,12 @@ function toFileUrl(filePath: string): string {
   return `file:///${filePath.replace(/\\/g, '/')}`
 }
 
+/**
+ * 卡片 id → 它写下的历史条目 id。只在「先入库、后升级地址」这段窗口里有值,
+ * 升级完即删。刻意不持久化:重启后落盘结论早已尘埃落定,没有可升级的窗口。
+ */
+const historyIdByCard = new Map<string, number | string>()
+
 /** 历史条目 model 字段:带上分辨率/时长,历史页徽章一眼可见规格。 */
 function workbenchHistoryModel(card: VideoWorkbenchCard): string {
   const dur = card.duration === -1 ? '智能时长' : `${card.duration}s`
@@ -522,16 +528,48 @@ function workbenchHistoryModel(card: VideoWorkbenchCard): string {
  * file:// 兜底。防重由卡片上的 historyRecorded 标记保证(applyTaskUpdate 里
  * 与状态更新同步落下并持久化),这里只管写。best-effort:失败不影响卡片。
  */
+/** 当下能给历史记录的最好地址:COS 永久 → 本地副本 → 上游临时。 */
+function bestHistoryUrl(card: VideoWorkbenchCard): string | undefined {
+  return card.remoteUrl ?? (card.localPath ? toFileUrl(card.localPath) : undefined) ?? card.videoUrl
+}
+
 async function recordCardHistory(card: VideoWorkbenchCard): Promise<void> {
-  const durableUrl = card.remoteUrl ?? (card.localPath ? toFileUrl(card.localPath) : undefined)
-  if (!durableUrl) return
+  const url = bestHistoryUrl(card)
+  if (!url) return
   try {
     const history = ServiceRegistry.get<HistoryDataService>(SERVICE_KEYS.HISTORY_DATA)
     if (!history) return
     await history.init()
-    await history.addToHistory('codex-video', card.prompt, [durableUrl], card.ratio, workbenchHistoryModel(card))
+    const item = await history.addToHistory(
+      'codex-video', card.prompt, [url], card.ratio, workbenchHistoryModel(card),
+    )
+    // 记下条目 id:入库时用的多半还是会过期的上游地址,等落盘拿到持久地址要
+    // 回来把它换掉(见 upgradeCardHistoryUrl)。
+    if (item?.id !== undefined) historyIdByCard.set(card.id, item.id)
   } catch (error) {
     console.error('[VideoWorkbench] 写入历史记录失败(忽略):', error)
+  }
+}
+
+/**
+ * 落盘结束后把历史条目的地址换成持久的那个。
+ *
+ * 入库不等落盘结论(落盘最坏要十几分钟,期间关掉应用就什么都没留下),代价是
+ * 先写进去的往往是会过期的上游地址。这一步负责补上:拿到 COS / 本地副本后
+ * 原地替换,历史页因此既不会空窗,也不会长期停在一条明天就失效的链接上。
+ */
+async function upgradeCardHistoryUrl(card: VideoWorkbenchCard): Promise<void> {
+  const historyId = historyIdByCard.get(card.id)
+  if (historyId === undefined) return
+  const durable = card.remoteUrl ?? (card.localPath ? toFileUrl(card.localPath) : undefined)
+  if (!durable) return
+  try {
+    const history = ServiceRegistry.get<HistoryDataService>(SERVICE_KEYS.HISTORY_DATA)
+    if (!history?.replaceUrls) return
+    await history.replaceUrls(historyId, [durable])
+    historyIdByCard.delete(card.id)
+  } catch (error) {
+    console.error('[VideoWorkbench] 升级历史记录地址失败(忽略):', error)
   }
 }
 
@@ -1174,6 +1212,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (update.source !== 'workbench') return
     let after: VideoWorkbenchCard | null = null
     let shouldRecordHistory = false
+    let shouldUpgradeHistory = false
     set((state) => ({
       cards: state.cards.map((card) => {
         const match =
@@ -1193,16 +1232,26 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...(update.error ? { error: update.error } : {}),
           updatedAt: Date.now(),
         }
-        // 生成成功且落盘完成 → 写一条历史记录。防重标记与状态更新同一次
-        // set 落下(并随 persistNow 持久化),重复 done 广播 / 重载后再广播都不重写。
+        // 生成成功就写历史,**不等落盘结论**。落盘要先下载 mp4 再转存 COS,最坏
+        // 十几分钟;等它出结论意味着这段时间历史一片空白,用户此时关掉应用,这次
+        // 生成就只剩一张卡片,而卡片上那条上游地址同样会过期。先用当下最好的地址
+        // 入库,拿到持久地址后再原地升级(upgradeCardHistoryUrl)。
+        // 防重标记与状态更新同一次 set 落下(并随 persistNow 持久化),重复广播 /
+        // 重载后再广播都不重写。
         if (
           next.status === 'succeeded' &&
-          next.persistence === 'done' &&
           !card.historyRecorded &&
-          (next.remoteUrl || next.localPath)
+          (next.remoteUrl || next.localPath || next.videoUrl)
         ) {
           next = { ...next, historyRecorded: true }
           shouldRecordHistory = true
+        } else if (
+          next.status === 'succeeded' &&
+          card.historyRecorded &&
+          (next.remoteUrl || next.localPath)
+        ) {
+          // 已入库,而这一条广播带来了持久地址 → 把历史里的临时地址换掉。
+          shouldUpgradeHistory = true
         }
         after = next
         return next
@@ -1210,6 +1259,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     }))
     if (after) persistNow(after)
     if (after && shouldRecordHistory) void recordCardHistory(after)
+    if (after && shouldUpgradeHistory) void upgradeCardHistoryUrl(after)
   },
 
   exportIR: () => exportWorkbenchIR(get()),
