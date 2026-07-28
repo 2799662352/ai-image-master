@@ -4,6 +4,7 @@
 // 协议，与本客户端无关，勿混用。
 
 import { net } from 'electron'
+import { retryDownload } from './downloadRetry'
 import type { SeedanceCreateTaskBody, SeedanceTaskStatus } from './types'
 import { getSeedanceBaseUrl, SEEDANCE_REGION_BASE_URLS } from './region'
 
@@ -183,17 +184,14 @@ export const seedanceClient: SeedanceClient = {
     // 回调里 → 变 uncaughtException 被全局吞掉,而 fetch 的 Promise 永不 settle,
     // persistence 卡死在「文件仍在后台保存中…」(2026-06-13 实测,字符 '自'=33258)。
     // net.request 的 response.headers 是 Chromium 侧普通对象,不过 undici 校验,绕开此坑。
-    // 单次 120s 超时 + 重试一次;两次都失败抛错 → persistence=failed。
-    let lastError: unknown
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        return await downloadViaNetRequest(videoUrl, 120_000)
-      } catch (e) {
-        lastError = e
-        console.warn(`[seedance] downloadVideo attempt ${attempt + 1} failed:`, e)
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError))
+    // 单次 120s 超时,共 3 次、退避 3s / 6s 岔开;全败才抛错 → persistence=failed。
+    // 岔开是关键:原本两次尝试间隔为零,一次几秒的抖动会把它们一起吃掉,而这条
+    // 路径没有第二轮 —— 落盘失败就意味着本地和 COS 都没有副本,只剩会过期的
+    // 上游地址。
+    return retryDownload(() => downloadViaNetRequest(videoUrl, 120_000), {
+      attempts: 3,
+      delayMs: 3_000,
+    })
   },
 }
 
