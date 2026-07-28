@@ -469,15 +469,17 @@ function createWindow(): void {
           // (https://cdn.tldraw.com/<version>/fonts/*). Without this origin the
           // canvas throws a font-src CSP violation + NetworkError on mount.
           "font-src 'self' https://fonts.gstatic.com https://cdn.tldraw.com data:",
-          "img-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
+          // Miau 网关已改走 https 加速域名,落在通配的 `https:` 里,不再需要
+          // 单独放行它的明文来源(43.161 那台仍是 http,保留)。
+          "img-src 'self' data: blob: https: http://43.161.233.87:* file: local-file:",
           // blob: is required for tldraw image export: toImageDataUrl/exportToSvg
           // fetch() the image's blob: object URL to inline it as a data URI. Without
           // it the canvas edit pipeline can't produce a targetImagePath (export throws
           // "Refused to connect"/timeout), so annotations never reach the edit queue.
-          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
+          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://127.0.0.1:* http://localhost:*",
             // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
             // and local-file:// for the file-explorer video previewer.
-            "media-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
+            "media-src 'self' data: blob: https: http://43.161.233.87:* file: local-file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src https:"
         ].join('; ')

@@ -22,7 +22,7 @@ const require = createRequire(import.meta.url)
 const COS = require('cos-nodejs-sdk-v5')
 
 const KEY = process.env.MIAU_API_KEY
-const BASE = process.env.MIAU_BASE_URL || 'http://175.178.198.17:3000'
+const BASE = process.env.MIAU_BASE_URL || 'https://miauapi.13797248455.xyz'
 const MODEL = process.env.MIAU_UNDERSTAND_MODEL || 'qwen3.7-max-dashscope'
 const STS_ENDPOINT =
   process.env.COS_STS_ENDPOINT || 'https://1345773498-bfu1wpfnrt.ap-guangzhou.tencentscf.com'
