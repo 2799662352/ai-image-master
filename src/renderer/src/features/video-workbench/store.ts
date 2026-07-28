@@ -512,6 +512,29 @@ function toFileUrl(filePath: string): string {
 }
 
 /**
+ * 外链图后台转存成我们自己的地址(fire-and-forget)。素材当场就能用,换地址是
+ * 后来的事 —— 缩略图与提交都不必再依赖第三方图床。
+ *
+ * 三条写入路径共用:人手加素材(addMaterials)、agent 加卡(addCards)、agent 改卡
+ * 与整板回写(updateCard / applyIR)。此前只有第一条接了,于是同一张外链图,人贴
+ * 进去会被接管、agent 挂进去就一直指着别人的服务器 —— 差别要等对方挂掉才暴露。
+ */
+function startTransfersFor(
+  cardId: string,
+  kind: MaterialKind,
+  materials: readonly VideoWorkbenchMaterial[],
+): void {
+  for (const material of materials) {
+    startMaterialTransfer({ cardId, kind, originalSrc: material.src }, material.name)
+  }
+}
+
+/** 一张卡上所有可转存的素材(目前只有图片走转存)。 */
+function startTransfersForCard(card: VideoWorkbenchCard): void {
+  startTransfersFor(card.id, 'referenceImages', card.referenceImages)
+}
+
+/**
  * 卡片 id → 它写下的历史条目 id。只在「先入库、后升级地址」这段窗口里有值,
  * 升级完即删。刻意不持久化:重启后落盘结论早已尘埃落定,没有可升级的窗口。
  */
@@ -824,6 +847,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       }
     })
     for (const card of created) persistNow(card)
+    // agent 经 MCP 加卡时素材是随卡一起来的,不走 addMaterials —— 转存要在这里接。
+    for (const card of created) startTransfersForCard(card)
     void getWorkbenchDb().evict()
     return created.map((c) => c.id)
   },
@@ -878,6 +903,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       })
       return updated ? { cards, revision: state.revision + 1 } : {}
     })
+    // agent 换素材走这条路(patch.referenceImages),同样要转存。转存自己会跳过
+    // 已是持久地址的项,所以按整份新素材扫一遍即可,不必比对差异。
+    if (updated && patch.referenceImages !== undefined) startTransfersForCard(updated)
     if (updated) schedulePersist(updated)
     return updated !== null
   },
@@ -961,13 +989,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       })
       return updated ? { cards, revision: state.revision + 1 } : {}
     })
-    // 外链图后台转存成我们自己的地址(fire-and-forget)。素材当场就能用,
-    // 换地址是后来的事 —— 缩略图与提交都不必再依赖第三方图床。
-    if (updated) {
-      for (const material of materials) {
-        startMaterialTransfer({ cardId: id, kind, originalSrc: material.src }, material.name)
-      }
-    }
+    if (updated) startTransfersFor(id, kind, materials)
     if (updated) schedulePersist(updated)
   },
 
@@ -1278,6 +1300,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     const write = { next: plan.next, persist: plan.persist }
     applyPlanToState(set, write)
     await flushPlanToDb(write)
+    // 整板回写同样可能带进新的外链图(agent 手写 IR 时最常见)。
+    for (const card of write.persist.cards) startTransfersForCard(card)
     return plan.result
   },
 
