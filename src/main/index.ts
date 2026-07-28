@@ -469,17 +469,21 @@ function createWindow(): void {
           // (https://cdn.tldraw.com/<version>/fonts/*). Without this origin the
           // canvas throws a font-src CSP violation + NetworkError on mount.
           "font-src 'self' https://fonts.gstatic.com https://cdn.tldraw.com data:",
-          // Miau 网关已改走 https 加速域名,落在通配的 `https:` 里,不再需要
-          // 单独放行它的明文来源(43.161 那台仍是 http,保留)。
-          "img-src 'self' data: blob: https: http://43.161.233.87:* file: local-file:",
+          // Miau 网关本身已改走 https 加速域名(落在通配的 `https:` 里),但这几条
+          // 明文例外**不能撤**:它们是 v4.3.40 接入万相/腾讯 Image2 时为「显示图片」
+          // 加的,而历史记录在 COS 转存失败时会原样存下模型直出 URL —— 存量条目里
+          // 可能就躺着 http://175.178.198.17:3000/... 。撤掉会让这些老图无声裂开,
+          // 而留着它零成本(已经不再向该主机发起新请求)。
+          "img-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
           // blob: is required for tldraw image export: toImageDataUrl/exportToSvg
           // fetch() the image's blob: object URL to inline it as a data URI. Without
           // it the canvas edit pipeline can't produce a targetImagePath (export throws
           // "Refused to connect"/timeout), so annotations never reach the edit queue.
-          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://127.0.0.1:* http://localhost:*",
+          // 同上:下载/复制老图走 fetch(url),所以 connect-src 也得继续认这台主机。
+          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
             // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
             // and local-file:// for the file-explorer video previewer.
-            "media-src 'self' data: blob: https: http://43.161.233.87:* file: local-file:",
+            "media-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src https:"
         ].join('; ')

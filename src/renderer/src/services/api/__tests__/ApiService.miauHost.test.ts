@@ -7,13 +7,13 @@ import { beforeEach, describe, expect, it } from 'vitest'
  * `https://miauapi.13797248455.xyz`(实测同一实例:401 报文形状一致;明文 http
  * 不可达,只有 https 通)。
  *
- * 之所以要一道闸而不是靠记性:换域名的同时,主进程 CSP 里那几条
- * `http://175.178.198.17:*` 例外已经撤掉了(新地址落在通配的 `https:` 里)。
- * 所以将来谁再把某个模型指回那个明文 IP,症状**不是变慢,而是被 CSP 直接拦掉** ——
- * 表现为出图无声失败,而不是一条能读懂的网络错误。
+ * 之所以要一道闸而不是靠记性:上一次同类事故是 v4.4.10 把 codex/grok 移出被封的
+ * right.codes,两天后新加的 Claude 通道又指了回去,v4.4.13 才再修一次。加速域名
+ * 这种「换了也能跑,只是慢」的迁移更容易回潮 —— 指回源站不会报错,只是国内用户
+ * 悄悄变慢,没有任何症状会提醒你。只有读配置的检查能拦住。
  *
- * 上一次同类事故:v4.4.10 把 codex/grok 移出被封的 right.codes,两天后新加的
- * Claude 通道又指了回去,v4.4.13 才再修一次。只有读配置的检查能拦住这种回潮。
+ * 注意:主进程 CSP 仍然放行 `http://175.178.198.17:*`,那是给**存量历史图片**留的
+ * (转存失败时历史里存的是模型直出 URL),不代表这里可以再指回去。
  */
 
 const RAW_MIAU_HOST = '175.178.198.17'
@@ -43,7 +43,7 @@ describe('Miau 网关地址', () => {
     expect(offenders).toEqual([])
   })
 
-  it('Miau 站点走 https —— 明文 http 既连不上,也会被 CSP 拦下', async () => {
+  it('Miau 站点走 https —— 实测明文 http 根本连不上', async () => {
     const { ApiService } = await import('../ApiService')
     const site = new ApiService().getAllSites()['antigravity']
 
