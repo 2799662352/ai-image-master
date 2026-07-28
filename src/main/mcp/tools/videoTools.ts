@@ -291,7 +291,12 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceImages: z.array(z.string()).max(9).optional().describe(
         '全能参考 (DEFAULT mode): up to 9 reference images for subject/style consistency (人物/角色一致性). ' +
         'Prefer this over firstFrame for almost every request. If the user attached image paths in the ' +
-        'prompt, pass them here. asset://assetId from the portrait library also works.',
+        'prompt, pass them here. asset://assetId from the portrait library also works. ' +
+        'LOOK BEFORE YOU WRITE: view_image ONE representative reference first, then write the prompt from ' +
+        'what you actually see (subject, framing, palette, wardrobe). A prompt inferred from the filename ' +
+        'contradicts the picture, and the model follows the picture. This does NOT conflict with the rule ' +
+        'against batch-opening generated OUTPUTS — those the user is already looking at; this is your INPUT, ' +
+        'and one look is what makes the prompt match it.',
       ),
       referenceVideos: z.array(z.string()).max(3).optional().describe(
         '全能参考: up to 3 reference videos (motion/style), local path / URL / asset://assetId. Each 4–15s, ' +

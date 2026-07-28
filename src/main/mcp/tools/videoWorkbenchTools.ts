@@ -32,7 +32,11 @@ const cardInputSchema = z.object({
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   referenceImages: z.array(z.string()).max(9).optional().describe(
-    'Up to 9 reference images: local path / https URL / asset://assetId (portrait library) / data: URL.',
+    'Up to 9 reference images: local path / https URL / asset://assetId (portrait library) / data: URL. '
+    + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
+    + 'you actually see (subject, framing, palette, wardrobe) — a prompt inferred from the filename '
+    + 'contradicts the picture, and the model follows the picture. This does NOT conflict with the rule '
+    + 'against batch-opening generated OUTPUTS: those the user is already looking at, this is your INPUT.',
   ),
   referenceVideos: z.array(z.string()).max(3).optional().describe('Up to 3 reference videos (combined ≤15s).'),
   referenceAudios: z.array(z.string()).max(3).optional().describe('Up to 3 reference audios (combined ≤15s).'),
