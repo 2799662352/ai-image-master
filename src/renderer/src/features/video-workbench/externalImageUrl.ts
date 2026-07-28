@@ -38,6 +38,20 @@ export function externalImageUrlFromText(text: unknown): string | null {
   return null
 }
 
+/**
+ * 这次粘贴该被当成「加素材」吗?
+ *
+ * 卡片上的 onPaste 会收到从提示词输入框冒泡上来的事件 —— 在提示词里贴一条网址
+ * 是完全正常的写作动作,不能把它劫走变成素材、还让文字进不去。所以只有粘贴发生
+ * 在非输入区域(卡片空白处)时才当作加素材。
+ */
+export function pasteTargetAcceptsMaterial(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return true
+  if (target.isContentEditable) return false
+  const tag = target.tagName
+  return tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT'
+}
+
 /** 文本 → 图片素材(取不出地址时返回 null)。 */
 export function externalImageMaterialFromText(
   text: unknown,

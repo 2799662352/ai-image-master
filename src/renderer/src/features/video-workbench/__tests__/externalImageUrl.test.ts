@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   externalImageMaterialFromText,
   externalImageUrlFromText,
+  pasteTargetAcceptsMaterial,
 } from '../externalImageUrl'
 
 /**
@@ -64,5 +65,30 @@ describe('externalImageMaterialFromText', () => {
 
   it('取不出地址就返回 null', () => {
     expect(externalImageMaterialFromText('不是地址')).toBeNull()
+  })
+})
+
+/**
+ * 卡片上的 onPaste 会收到从提示词输入框冒泡上来的事件。在提示词里贴一条网址是
+ * 正常的写作动作 —— 若被劫走变成素材、文字还进不去,那是比"不支持外链"更糟的
+ * 体验。
+ */
+describe('pasteTargetAcceptsMaterial', () => {
+  it('粘贴在输入框里 → 交给输入框,不当作加素材', () => {
+    expect(pasteTargetAcceptsMaterial(document.createElement('textarea'))).toBe(false)
+    expect(pasteTargetAcceptsMaterial(document.createElement('input'))).toBe(false)
+  })
+
+  it('富文本编辑区同样让行', () => {
+    const editable = document.createElement('div')
+    editable.contentEditable = 'true'
+    // jsdom 不根据 contentEditable 属性推导 isContentEditable,显式打桩
+    Object.defineProperty(editable, 'isContentEditable', { value: true })
+    expect(pasteTargetAcceptsMaterial(editable)).toBe(false)
+  })
+
+  it('粘贴在卡片空白处 → 当作加素材', () => {
+    expect(pasteTargetAcceptsMaterial(document.createElement('div'))).toBe(true)
+    expect(pasteTargetAcceptsMaterial(null)).toBe(true)
   })
 })
