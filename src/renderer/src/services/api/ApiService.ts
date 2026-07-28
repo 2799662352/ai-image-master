@@ -283,7 +283,10 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
   },
   'antigravity': {
     name: 'Miau API',
-    baseURL: 'http://175.178.198.17:3000',
+    // 走加速域名而非源站 IP(2026-07-28)。只有 https 可达 —— 明文 http 连不上,
+    // 端口也不再需要。同一台 new-api 实例(401 报文形状一致),换域名后 CSP 里
+    // 那几条 `http://175.178.198.17:*` 例外也随之取消。
+    baseURL: 'https://miauapi.13797248455.xyz',
     description: 'Miau API 服务',
     authType: 'bearer',
     isBuiltIn: true
@@ -348,8 +351,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     displayName: '20s出图，阿里万相 wan2.7-image-pro，超清文生图/图像编辑/组图，文生图支持4K、编辑/组图最高2K（经 Miau API 代理，OpenAI 兼容端点）',
     time: '20s',
     isNew: true,
-    baseURL: 'http://175.178.198.17:3000/v1/images/generations',
-    editURL: 'http://175.178.198.17:3000/v1/images/edits',
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
     apiType: 'image-generation',
     sizeStrategy: 'seedream',
     ratios: [
@@ -407,8 +410,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     displayName: '30s出图，tokenhub 新渠道·更快更好，腾讯 image2（custom-imagemodel-gt），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（经 Miau API 代理，OpenAI 兼容端点）',
     time: '30s',
     isNew: true,
-    baseURL: 'http://175.178.198.17:3000/v1/images/generations',
-    editURL: 'http://175.178.198.17:3000/v1/images/edits',
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
     apiType: 'openai',
     sizeStrategy: 'gpt-image-2',
     // 与 gpt-image-2 共用同一套 比例 × 分辨率 × 清晰度 规格
@@ -749,7 +752,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     displayName: '20s出图，火山豆包 Seedream 5.0 Pro，文生图/图生图/多图融合(最多10张参考图)，1K/2K分辨率，仅单图（经 Miau API 代理，OpenAI 兼容端点）',
     time: '20s',
     isNew: true,
-    baseURL: 'http://175.178.198.17:3000/v1/images/generations',
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     apiType: 'image-generation',
     sizeStrategy: 'seedream',
     ratios: [

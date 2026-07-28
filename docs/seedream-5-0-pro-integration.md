@@ -1,7 +1,8 @@
 # Seedream 5.0 Pro 接入记录 + 出图渠道扩展指南
 
 > 2026-07-20,v4.4.5。上游:火山方舟 Ark `doubao-seedream-5-0-pro-260628`,
-> 经 Miau API(new-api,175.178.198.17:3000)以 OpenAI 兼容方式暴露。
+> 经 Miau API(new-api)以 OpenAI 兼容方式暴露。网关地址 2026-07-28 起由源站
+> `175.178.198.17:3000` 改为加速域名 `https://miauapi.13797248455.xyz`(仅 https)。
 > 网关侧接入文档:`seedream-5.0-pro-api-guide.md`(new-api 仓库
 > `relay/channel/volcengine/seedream.go`)。
 

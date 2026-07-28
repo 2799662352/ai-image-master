@@ -258,7 +258,7 @@ describe('ApiService.generateImage siteKey autoroute (Miau-only channels)', () =
     })
 
     expect(fetchMock).toHaveBeenCalled()
-    expect(capturedUrl).toContain('175.178.198.17:3000') // Miau gateway host
+    expect(capturedUrl).toContain('miauapi.13797248455.xyz') // Miau gateway host
     expect(capturedAuth).toBe('Bearer miau-key') // Miau site key, not current site
     expect(res.success).toBe(true)
   })

@@ -441,7 +441,7 @@ describe('Responses namespace compatibility', () => {
   })
 
   it('rewrites bridged Provider URLs and leaves native providers untouched', async () => {
-    const qwenBaseUrl = 'http://175.178.198.17:3000/v1'
+    const qwenBaseUrl = 'https://miauapi.13797248455.xyz/v1'
     const group = await startProviderCompatibilityProxies([
       resolveProviderChannel('apiyi-grok'),
       {
