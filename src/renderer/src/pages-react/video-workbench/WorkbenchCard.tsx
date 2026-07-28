@@ -24,6 +24,7 @@ import {
   removeTokenAndReindex,
   type MediaTokenKind,
 } from '../../features/video-workbench/promptTokens'
+import { externalImageMaterialFromText } from '../../features/video-workbench/externalImageUrl'
 import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { PortraitPickerModal } from './PortraitPickerModal'
@@ -206,9 +207,40 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       return
     }
     const files = [...(e.dataTransfer.files ?? [])]
-    if (files.length === 0 || busy) return
+    if (files.length > 0) {
+      if (busy) return
+      e.preventDefault()
+      void addFiles(files)
+      return
+    }
+    // 从浏览器直接拖一张图过来:没有 File,只有一条地址(text/uri-list)。
+    // 此前这一整类拖放被静默忽略,用户只能先另存到本地再拖进来。
+    if (busy) return
+    const dropped = externalImageMaterialFromText(
+      e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain'),
+    )
+    if (!dropped) return
     e.preventDefault()
-    void addFiles(files)
+    addExternalImage(dropped)
+  }
+
+  /** 外链图片入素材(拖放/粘贴共用)。超出该模式的图片上限时不入。 */
+  const addExternalImage = (material: VideoWorkbenchMaterial): void => {
+    const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
+    const limit = modeLimit(card.mode, 'image')
+    if (!current || limit <= 0 || current.referenceImages.length >= limit) return
+    if (current.referenceImages.some((m) => m.src === material.src)) return
+    addMaterials(card.id, 'referenceImages', [material])
+  }
+
+  /** 粘贴一条图片地址即入素材;粘贴文件由浏览器走 files 分支,这里只管文本。 */
+  const handlePaste = (e: React.ClipboardEvent): void => {
+    if (busy) return
+    if (e.clipboardData.files.length > 0) return
+    const pasted = externalImageMaterialFromText(e.clipboardData.getData('text/plain'))
+    if (!pasted) return
+    e.preventDefault()
+    addExternalImage(pasted)
   }
 
   const addFiles = async (files: File[]) => {
@@ -407,12 +439,17 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
         }
       }}
       onDragEnter={(e) => {
-        if (e.dataTransfer.types.includes('Files') && !busy) {
+        // 浏览器拖来的图只有 text/uri-list,没有 Files —— 也要给出可放置反馈,
+        // 否则用户看不到卡片接得住它。
+        const carriesMedia =
+          e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')
+        if (carriesMedia && !busy) {
           dragCounter.current += 1
           setFileOver(true)
         }
       }}
       onDrop={handleDrop}
+      onPaste={handlePaste}
     >
       {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除 */}
       <div className="flex items-center gap-2 px-4 pt-3">
