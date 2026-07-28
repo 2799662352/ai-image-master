@@ -24,6 +24,10 @@ import {
   removeTokenAndReindex,
   type MediaTokenKind,
 } from '../../features/video-workbench/promptTokens'
+import {
+  externalImageMaterialFromText,
+  pasteTargetAcceptsMaterial,
+} from '../../features/video-workbench/externalImageUrl'
 import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { PortraitPickerModal } from './PortraitPickerModal'
@@ -206,9 +210,42 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       return
     }
     const files = [...(e.dataTransfer.files ?? [])]
-    if (files.length === 0 || busy) return
+    if (files.length > 0) {
+      if (busy) return
+      e.preventDefault()
+      void addFiles(files)
+      return
+    }
+    // 从浏览器直接拖一张图过来:没有 File,只有一条地址(text/uri-list)。
+    // 此前这一整类拖放被静默忽略,用户只能先另存到本地再拖进来。
+    if (busy) return
+    const dropped = externalImageMaterialFromText(
+      e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain'),
+    )
+    if (!dropped) return
     e.preventDefault()
-    void addFiles(files)
+    addExternalImage(dropped)
+  }
+
+  /** 外链图片入素材(拖放/粘贴共用)。超出该模式的图片上限时不入。 */
+  const addExternalImage = (material: VideoWorkbenchMaterial): void => {
+    const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
+    const limit = modeLimit(card.mode, 'image')
+    if (!current || limit <= 0 || current.referenceImages.length >= limit) return
+    if (current.referenceImages.some((m) => m.src === material.src)) return
+    addMaterials(card.id, 'referenceImages', [material])
+  }
+
+  /** 粘贴一条图片地址即入素材;粘贴文件由浏览器走 files 分支,这里只管文本。 */
+  const handlePaste = (e: React.ClipboardEvent): void => {
+    if (busy) return
+    // 提示词里贴网址是正常写作动作,不能被劫走(事件从输入框冒泡上来)。
+    if (!pasteTargetAcceptsMaterial(e.target)) return
+    if (e.clipboardData.files.length > 0) return
+    const pasted = externalImageMaterialFromText(e.clipboardData.getData('text/plain'))
+    if (!pasted) return
+    e.preventDefault()
+    addExternalImage(pasted)
   }
 
   const addFiles = async (files: File[]) => {
@@ -370,6 +407,9 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
 
   // 人像库选择器
   const [pickerOpen, setPickerOpen] = useState(false)
+  // 「图片链接」输入行(拖放/粘贴之外的显式入口)
+  const [urlInputOpen, setUrlInputOpen] = useState(false)
+  const [urlDraft, setUrlDraft] = useState('')
   const handlePortraitConfirm = useCallback(
     (assets: SeedanceAssetItem[]) => {
       const grouped: Record<MediaTokenKind, VideoWorkbenchMaterial[]> = { image: [], video: [], audio: [] }
@@ -407,12 +447,17 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
         }
       }}
       onDragEnter={(e) => {
-        if (e.dataTransfer.types.includes('Files') && !busy) {
+        // 浏览器拖来的图只有 text/uri-list,没有 Files —— 也要给出可放置反馈,
+        // 否则用户看不到卡片接得住它。
+        const carriesMedia =
+          e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')
+        if (carriesMedia && !busy) {
           dragCounter.current += 1
           setFileOver(true)
         }
       }}
       onDrop={handleDrop}
+      onPaste={handlePaste}
     >
       {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除 */}
       <div className="flex items-center gap-2 px-4 pt-3">
@@ -504,12 +549,42 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
                 <button
                   type="button"
                   className="text-[10px] border border-[#3F3F46] text-white/60 px-2 py-1 hover:border-[#FCE300] hover:text-[#FCE300] shrink-0"
+                  onClick={() => setUrlInputOpen((v) => !v)}
+                >
+                  ◎ 图片链接
+                </button>
+              )}
+              {!busy && (
+                <button
+                  type="button"
+                  className="text-[10px] border border-[#3F3F46] text-white/60 px-2 py-1 hover:border-[#FCE300] hover:text-[#FCE300] shrink-0"
                   onClick={() => setPickerOpen(true)}
                 >
                   ◈ 人像库
                 </button>
               )}
             </div>
+            {urlInputOpen && !busy && (
+              // 拖放与粘贴是给熟手的手势,这里是给「我手上就有一条地址」的人的入口。
+              <input
+                autoFocus
+                type="url"
+                aria-label="图片链接"
+                value={urlDraft}
+                placeholder="粘贴图片地址后回车(支持没有扩展名的图床地址)"
+                className="w-full bg-[#18181B] border border-[#3F3F46] text-white/80 text-[11px] px-2 py-1.5 focus:outline-none focus:border-[#FCE300]"
+                onChange={(e) => setUrlDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { setUrlInputOpen(false); setUrlDraft(''); return }
+                  if (e.key !== 'Enter') return
+                  const material = externalImageMaterialFromText(urlDraft)
+                  if (!material) return
+                  addExternalImage(material)
+                  setUrlDraft('')
+                  setUrlInputOpen(false)
+                }}
+              />
+            )}
           </div>
         )}
 

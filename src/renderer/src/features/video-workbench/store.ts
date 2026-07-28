@@ -49,6 +49,7 @@ import {
   reorderBoard,
   toMaterial,
 } from './cardSpec'
+import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
 import {
   type HistoryCursor,
@@ -960,6 +961,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       })
       return updated ? { cards, revision: state.revision + 1 } : {}
     })
+    // 外链图后台转存成我们自己的地址(fire-and-forget)。素材当场就能用,
+    // 换地址是后来的事 —— 缩略图与提交都不必再依赖第三方图床。
+    if (updated) {
+      for (const material of materials) {
+        startMaterialTransfer({ cardId: id, kind, originalSrc: material.src }, material.name)
+      }
+    }
     if (updated) schedulePersist(updated)
   },
 
@@ -1371,6 +1379,31 @@ useVideoWorkbenchStore.subscribe((state, prev) => {
  *
  * 计数归零才真正退订。返回的句柄幂等,重复调用只减一次。
  */
+/**
+ * 外链素材转存的回填口。按**原始地址**匹配而不是下标 —— 转存是异步的,期间
+ * 用户可能又加删了素材,下标早就不是当初那个了。同一张卡里挂了同一条外链两次
+ * 时两条一起换,它们本来就是同一份字节。
+ */
+mountMaterialTransferHandler(({ cardId, kind, originalSrc }, cosUrl) => {
+  let updated: VideoWorkbenchCard | null = null
+  useVideoWorkbenchStore.setState((state) => {
+    const cards = state.cards.map((card) => {
+      if (card.id !== cardId) return card
+      const list = card[kind]
+      if (!list.some((m) => m.src === originalSrc)) return card
+      updated = {
+        ...card,
+        [kind]: list.map((m) => (m.src === originalSrc ? { ...m, src: cosUrl } : m)),
+        updatedAt: Date.now(),
+        rev: (card.rev ?? 0) + 1,
+      }
+      return updated
+    })
+    return updated ? { cards, revision: state.revision + 1 } : {}
+  })
+  if (updated) persistNow(updated)
+})
+
 let taskUnsubscribe: (() => void) | null = null
 let taskMountCount = 0
 
