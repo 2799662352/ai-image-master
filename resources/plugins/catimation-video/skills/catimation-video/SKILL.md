@@ -153,6 +153,12 @@ prompt;不要等用户说「优化提示词」才加载:
 
 ## Steps
 
+0. **有参考图就先看一眼(look before you write)**:手上有用户给的图 / 人像库
+   asset / 故事板时,先 `view_image` **一张有代表性的**,再据你**看到的**东西
+   (主体、景别、配色、服装、光线)写提示词。照文件名或用户一句话臆想出来的提示词
+   会和画面打架,而模型跟的是画面。这与「不要批量打开自己刚生成的产物」不冲突:
+   那些用户已经在聊天里看着了,这是你的**输入**,看一张是让提示词对得上它的前提。
+   多图只看代表性的 1 张(最多 2 张),别整批灌进上下文。
 1. Turn the request into one clear video prompt(subject, action, camera 运镜/景别,
    scene, lighting, mood;dialogue 与 `--style` 可后置)。
 2. **规格确认(spec_confirmed)**:用户没说规格时,发一张 `ask_user` 卡确认
