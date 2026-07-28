@@ -11,6 +11,15 @@ import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 export interface ApiSite {
   name: string
   baseURL: string
+  /**
+   * 源站地址(不过 CDN)。只给「加速域名扛不住的请求」用,其余照旧走 baseURL。
+   *
+   * 缘由(2026-07-28 实测):Miau 的加速域名前面是 EdgeOne,而它**不支持**谷歌原生
+   * 端点 `/v1beta/models/...:generateContent` —— 该路径的请求一律以 524 收场。
+   * 524 错误页不带 CORS 头,浏览器于是报「No 'Access-Control-Allow-Origin'」,
+   * 把真实原因盖住了。见 buildRequestUrl。
+   */
+  directBaseURL?: string
   description: string
   authType: 'bearer' | 'x-api-key'
   pathPrefix?: string
@@ -287,6 +296,8 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     // 端口也不再需要。同一台 new-api 实例(401 报文形状一致),换域名后 CSP 里
     // 那几条 `http://175.178.198.17:*` 例外也随之取消。
     baseURL: 'https://miauapi.13797248455.xyz',
+    // 谷歌原生端点走这里(EdgeOne 不支持那条路径,详见 ApiSite.directBaseURL)。
+    directBaseURL: 'http://175.178.198.17:3000',
     description: 'Miau API 服务',
     authType: 'bearer',
     isBuiltIn: true
@@ -1495,9 +1506,17 @@ export class ApiService {
       return `${site.baseURL}/v1/chat/completions`
     }
 
+    // 谷歌原生端点绕开 CDN:加速域名前面的 EdgeOne 不支持
+    // `/v1beta/models/...:generateContent`,走它必 524(且报成 CORS 错误)。
+    // 按 apiType 判定而不是逐个模型打标记 —— 以后新增谷歌模型自动跟随。
+    const hostSource =
+      modelConfig.apiType === 'gemini-native' && site.directBaseURL
+        ? site.directBaseURL
+        : site.baseURL
+
     try {
       const modelUrl = new URL(sourceUrl)
-      const siteUrl = new URL(site.baseURL)
+      const siteUrl = new URL(hostSource)
       modelUrl.protocol = siteUrl.protocol
       modelUrl.host = siteUrl.host
       return modelUrl.toString()
