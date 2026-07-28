@@ -54,7 +54,7 @@ describe('ApiService.understand()', () => {
     expect(result).toEqual({ success: true, text: '画面里有一只猫' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://175.178.198.17:3000/v1/chat/completions')
+    expect(url).toBe('https://miauapi.13797248455.xyz/v1/chat/completions')
     expect((init as RequestInit).headers).toMatchObject({
       Authorization: 'Bearer sk-test',
       'Content-Type': 'application/json',

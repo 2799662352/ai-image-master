@@ -921,7 +921,7 @@ describe('buildCodexLaunchArgs', () => {
         {
           id: 'qwen',
           name: 'Qwen (DashScope via new-api)',
-          baseUrl: 'http://175.178.198.17:3000/v1',
+          baseUrl: 'https://miauapi.13797248455.xyz/v1',
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.7-max-dashscope',
           wireApi: 'responses',
@@ -934,7 +934,7 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).not.toContain('model_provider="qwen"')
     // Extra provider table is registered (name / base_url / env_key / wire_api).
     expect(args).toContain('model_providers.qwen.name="Qwen (DashScope via new-api)"')
-    expect(args).toContain('model_providers.qwen.base_url="http://175.178.198.17:3000/v1"')
+    expect(args).toContain('model_providers.qwen.base_url="https://miauapi.13797248455.xyz/v1"')
     expect(args).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
     // Codex removed wire_api="chat" (#7782) — only "responses" is ever emitted.
     expect(args).toContain('model_providers.qwen.wire_api="responses"')
@@ -948,7 +948,7 @@ describe('buildCodexLaunchArgs', () => {
   it('registers extraProviders even when there is no active provider, defaulting wire_api to responses', () => {
     const args = buildCodexLaunchArgs({
       extraProviders: [
-        { id: 'qwen', name: 'Qwen', baseUrl: 'http://175.178.198.17:3000/v1', envKey: 'MIAU_API_KEY' },
+        { id: 'qwen', name: 'Qwen', baseUrl: 'https://miauapi.13797248455.xyz/v1', envKey: 'MIAU_API_KEY' },
       ],
     })
     // No active provider selected.
