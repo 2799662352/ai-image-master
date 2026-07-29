@@ -85,8 +85,13 @@ MIME 词表集中在 `file-explorer/dragHelpers.ts`。卡片拖拽今天用的�
 直接 return，不写任何 MIME。不为它造「信息行」或报错：没有产物就是没有东西可递。
 选区仍然跟着拖动走，所以 agent 下次调工具时照样看得见这几张卡。
 
-聊天栏也不补投放悬停高亮：它接的是既有 MIME，反馈缺失是**它自己那条既有链路**的问题
-（从文件树拖文件进来同样没有高亮），要补该单独一刀补，不算进这一刀。
+> **后续修订：投放悬停高亮已补（`e1e0dcd`）。** 原判断是「反馈缺失属于既有链路的问题，
+> 从文件树拖文件进来同样没有，该单独一刀补」。但这一刀恰好新增了一个投放源，缺口更显眼，
+> 所以回头补上了：照 `FileTreeNode.onDragOver / onDragLeave` 抄——MIME 白名单先筛、显式设
+> `dropEffect = 'copy'`（组合器只复制，从不移动源文件）、`dragleave` 用 `relatedTarget`
+> 包含判断防子元素闪烁。`preventDefault` 刻意保持无条件：它是「这里可以放」的总开关，
+> 按 MIME 收窄会连带掐掉浏览器原生的选中文本拖入 textarea，收窄的只是高亮。
+> MIME 判定放进 `dragHelpers.dragCarriesDroppablePayload`，不在第四处重复字面量。
 
 ## agent 如何知道选中态
 
