@@ -14,12 +14,31 @@ import {
 } from '../features/video-workbench/store'
 import { buildModeMedia } from '../features/video-workbench/store'
 import { formatCostUsd, summarizeCostUsd } from '../features/video-workbench/pricing'
+import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
+
+/**
+ * 「值得现在点生成」的卡。比 store 的 `canStart` 严:那道门允许重生已完成的卡
+ * (重生是显式意图),而按钮上的计数要排除 succeeded —— 否则一页出完片后按钮
+ * 还显示一堆待生成,点下去等于重烧一遍额度。
+ *
+ * 提成函数是为了让整页计数与选中项计数共用同一份判定:两份拷贝在加卡片状态时
+ * 必然漂移。
+ */
+function isWorthStarting(card: VideoWorkbenchCard): boolean {
+  if (!card.prompt.trim()) return false
+  return (
+    card.status !== 'preparing'
+    && card.status !== 'queued'
+    && card.status !== 'running'
+    && card.status !== 'succeeded'
+  )
+}
 
 export default function VideoWorkbenchPage() {
   // 卡片汇报的拖拽态。以前这里传的是 noop —— 卡片说了页面不听;缝隙「＋」要在拖拽时
@@ -59,14 +78,11 @@ export default function VideoWorkbenchPage() {
   const activeCount = cards.filter(
     (c) => c.status === 'preparing' || c.status === 'queued' || c.status === 'running',
   ).length
-  const startableCount = cards.filter(
-    (c) => c.prompt.trim() && c.status !== 'preparing' && c.status !== 'queued' && c.status !== 'running' && c.status !== 'succeeded',
+  const startableCount = cards.filter(isWorthStarting).length
+  // 有选中时按选中项算 —— 选中可能跨页(先选后切页),当前页的 startableCount 不作数。
+  const selectedStartableCount = selectedCardIds.filter((id) =>
+    allCards.some((c) => c.id === id && isWorthStarting(c)),
   ).length
-  // 有选中时按选中项算可启动数 —— 选中可能跨页,不能复用当前页的 startableCount。
-  const selectedStartableCount = selectedCardIds.filter((id) => {
-    const c = allCards.find((x) => x.id === id)
-    return c && c.prompt.trim() && c.status !== 'preparing' && c.status !== 'queued' && c.status !== 'running' && c.status !== 'succeeded'
-  }).length
   const batchDisabled = selectedCardIds.length > 0 ? selectedStartableCount === 0 : startableCount === 0
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
