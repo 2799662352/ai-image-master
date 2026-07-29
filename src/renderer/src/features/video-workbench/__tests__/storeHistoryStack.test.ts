@@ -213,6 +213,18 @@ describe('撤销 / 重做', () => {
     expect(rows.map((r) => r.id)).toEqual([cardId])
   })
 
+  it('撤销掉建卡后,选中态里不留悬空 id', async () => {
+    const [cardId] = state().addCards([{ prompt: '刚建的' }])
+    state().selectCard(cardId)
+    expect(state().selectedCardIds).toEqual([cardId])
+
+    await state().undo()
+
+    expect(state().cards).toHaveLength(0)
+    expect(state().selectedCardIds).toEqual([])
+    expect(state().selectionAnchorId).toBeUndefined()
+  })
+
   it('撤销删页 = 连带复活该页的卡,并切回那一页', async () => {
     const first = state().activeBoardId
     const second = state().addBoard('第二页')

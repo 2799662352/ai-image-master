@@ -273,6 +273,23 @@ describe('exportIR / applyIR', () => {
     expect(after.updatedAt).toBe(before.updatedAt)
   })
 
+  it('applyIR 删掉的卡从选中态里剔除 —— 悬空 id 会让 ⚡ 无参空跑,也会误导 agent', async () => {
+    const [c1, c2] = state().addCards([{ prompt: 'A' }, { prompt: 'B' }])
+    state().selectCard(c1)
+    state().selectCard(c2, 'toggle')
+
+    const ir = state().exportIR()
+    const applied = await state().applyIR(
+      { ...ir, boards: [{ ...ir.boards[0], cards: [{ id: c2, prompt: 'B' }] }] },
+      { mode: 'replace' },
+    )
+
+    expect(applied.ok).toBe(true)
+    expect(applied.cards.removed).toEqual([c1])
+    expect(state().selectedCardIds).toEqual([c2])
+    expect(state().selectionAnchorId).toBeUndefined()
+  })
+
   it('applyIR 切页会持久化 activeBoardId', async () => {
     const second = state().addBoard('第二幕')
     state().switchBoard(state().boards[0].id)

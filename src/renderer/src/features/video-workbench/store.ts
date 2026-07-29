@@ -756,7 +756,11 @@ type WorkbenchSetter = (partial: Partial<VideoWorkbenchState>) => void
  * 与落盘拆成两半是因为调用方要在「订阅者别把这次写当成新编辑」的闸内执行同步
  * 部分,而闸绝不能跨 await —— 否则数据库写的那几毫秒里用户的编辑会漏进撤销栈。
  */
-function applyPlanToState(set: WorkbenchSetter, plan: WorkbenchWritePlan): void {
+function applyPlanToState(
+  set: WorkbenchSetter,
+  plan: WorkbenchWritePlan,
+  prev: VideoWorkbenchState,
+): void {
   // 一条 500ms 前排好的旧内容写入会在整板写之后落地,把刚写好的卡片打回旧值。
   for (const id of [...plan.persist.cards.map((c) => c.id), ...plan.persist.removeCardIds]) {
     const timer = persistTimers.get(id)
@@ -765,8 +769,30 @@ function applyPlanToState(set: WorkbenchSetter, plan: WorkbenchWritePlan): void 
       persistTimers.delete(id)
     }
   }
-  set(plan.next)
+  set({ ...plan.next, ...pruneSelection(prev, plan.next.cards) })
   writeActiveBoard(plan.next.activeBoardId)
+}
+
+/**
+ * 整板写(agent 的 applyIR、撤销/重做)之后把选中态里已经不存在的卡剔掉。
+ *
+ * 逐张删卡那条路径各自剔过了,但整板写是另一条路:它直接换掉整个 cards 数组,
+ * 不经过 removeCard(s)。留下悬空 id 的后果不是显示错乱(渲染按卡片查选中,查不到
+ * 就不高亮),而是 ⚡ 无参会拿着一串不存在的 id 空跑,以及 agent 从 status 里读到
+ * 一份指向已删卡的选中列表。
+ */
+function pruneSelection(
+  prev: VideoWorkbenchState,
+  cards: VideoWorkbenchCard[],
+): Partial<VideoWorkbenchState> {
+  if (prev.selectedCardIds.length === 0 && !prev.selectionAnchorId) return {}
+  const alive = new Set(cards.map((c) => c.id))
+  const selectedCardIds = prev.selectedCardIds.filter((id) => alive.has(id))
+  const anchorAlive = prev.selectionAnchorId ? alive.has(prev.selectionAnchorId) : false
+  return {
+    selectedCardIds,
+    selectionAnchorId: anchorAlive ? prev.selectionAnchorId : undefined,
+  }
 }
 
 /**
@@ -1610,10 +1636,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   exportIR: () => exportWorkbenchIR(get()),
 
   applyIR: async (ir, opts) => {
-    const plan = planApplyIR(get(), ir, opts)
+    const prev = get()
+    const plan = planApplyIR(prev, ir, opts)
     if (!plan.next || !plan.persist) return plan.result
     const write = { next: plan.next, persist: plan.persist }
-    applyPlanToState(set, write)
+    applyPlanToState(set, write, prev)
     await flushPlanToDb(write)
     // 整板回写同样可能带进新的外链图(agent 手写 IR 时最常见)。
     for (const card of write.persist.cards) startTransfersForCard(card)
@@ -1667,7 +1694,7 @@ function restoreStep(
   const write = { next: plan.next, persist: plan.persist }
   restoringHistory = true
   try {
-    applyPlanToState(set, write)
+    applyPlanToState(set, write, state)
     set(stacks)
   } finally {
     restoringHistory = false
