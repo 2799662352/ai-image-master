@@ -346,7 +346,15 @@ export class AgentToolExecutor {
         // asset:// 引用 → 带 previewUrl 的 Material(人像库列表批量解析,
         // 失败/查不到保持字符串原样),新挂的素材缩略图直接有图。
         const tasks = await enrichAssetReferences(rawTasks)
-        const cardIds = store.addCards(tasks)
+        // 位置由稳定锚点 cardId 表达,不收下标 —— 下标在模型手里随时可能已经过期。
+        const afterCardId = typeof params.afterCardId === 'string' ? params.afterCardId : undefined
+        const beforeCardId = typeof params.beforeCardId === 'string' ? params.beforeCardId : undefined
+        const anchor = afterCardId
+          ? ({ afterCardId } as const)
+          : beforeCardId
+            ? ({ beforeCardId } as const)
+            : undefined
+        const cardIds = store.addCards(tasks, anchor)
         if (params.navigate !== false) {
           useTabStore.getState().switchTab('videoWorkbench')
         }

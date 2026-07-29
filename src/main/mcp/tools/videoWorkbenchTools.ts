@@ -288,7 +288,21 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       tasks: z.array(cardInputSchema).min(1).max(20).describe('Cards to append, top-to-bottom order.'),
       autoStart: z.boolean().optional().describe('Start rendering right after adding. Default false (fill only).'),
       navigate: z.boolean().optional().describe('Switch the app to the workbench tab. Default true.'),
-    }),
+      afterCardId: z.string().optional().describe(
+        'Insert the new cards right AFTER this card instead of appending. Pass a stable card id from '
+        + 'video_workbench_status — NOT a position number, those shift whenever anything is inserted, '
+        + 'deleted or dragged. The cards land on the ANCHOR card\'s board, which may differ from the '
+        + 'active one. Mutually exclusive with beforeCardId; omit both to append at the end of the '
+        + 'active board. Note this changes the card set, so any structureRevision you are holding for '
+        + 'video_workbench_apply becomes stale.',
+      ),
+      beforeCardId: z.string().optional().describe(
+        'Insert right BEFORE this card. Mutually exclusive with afterCardId. Same rules as afterCardId.',
+      ),
+    }).refine(
+      (v) => !(v.afterCardId && v.beforeCardId),
+      { message: 'afterCardId and beforeCardId are mutually exclusive' },
+    ),
     outputSchema: addTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {

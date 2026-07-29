@@ -67,6 +67,18 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ tasks: [{ resolution: '4K' }] }).success).toBe(false)
   })
 
+  it('add_tasks schema:锚点二选一,同时传两个被拒', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_add_tasks').config.inputSchema
+    expect(schema.safeParse({ tasks: [{ prompt: 'a' }] }).success).toBe(true)
+    expect(schema.safeParse({ tasks: [{ prompt: 'a' }], afterCardId: 'c1' }).success).toBe(true)
+    expect(schema.safeParse({ tasks: [{ prompt: 'a' }], beforeCardId: 'c1' }).success).toBe(true)
+    expect(
+      schema.safeParse({ tasks: [{ prompt: 'a' }], afterCardId: 'c1', beforeCardId: 'c2' }).success,
+    ).toBe(false)
+  })
+
   it('update_task schema:cardId 必填', () => {
     const { tools, server, router } = capture()
     registerVideoWorkbenchTools(server, router)
