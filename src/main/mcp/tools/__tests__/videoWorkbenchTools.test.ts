@@ -426,3 +426,32 @@ describe('structured output(MCP 2025-11-25)', () => {
     }
   })
 })
+
+describe('工具描述:回指 skill 与素材口径', () => {
+  it('add_tasks 与 start 点名 catimation-video', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    for (const name of ['video_workbench_add_tasks', 'video_workbench_start']) {
+      expect(toolByName(tools, name).config.description).toContain('catimation-video')
+    }
+  })
+
+  it('建卡类工具写死每卡素材口径(≤3 段、合计 ≤15s)', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    for (const name of ['video_workbench_add_tasks', 'video_workbench_update_task', 'video_workbench_apply']) {
+      const desc = toolByName(tools, name).config.description
+      expect(desc).toContain('referenceVideos ≤3')
+      expect(desc).toContain('≤15s')
+      expect(desc).toContain('referenceAudios ≤3')
+    }
+  })
+
+  it('只读工具不被塞进这些纪律(省上下文预算)', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    for (const name of ['video_workbench_status', 'video_workbench_export', 'video_workbench_remove_tasks']) {
+      expect(toolByName(tools, name).config.description).not.toContain('catimation-video')
+    }
+  })
+})
