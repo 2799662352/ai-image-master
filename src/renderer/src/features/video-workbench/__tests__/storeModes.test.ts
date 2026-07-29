@@ -41,6 +41,16 @@ describe('buildCard 新字段默认值', () => {
     expect(buildCard({ seed: 99999999999 }, 0).seed).toBe(4294967295)
     expect(buildCard({ seed: -3 }, 0).seed).toBeUndefined()
   })
+
+  it('duration=-1 智能时长原样保留;其余仍收敛 4–15', () => {
+    expect(buildCard({ duration: -1 }, 0).duration).toBe(-1)
+    expect(buildCard({ duration: 99 }, 0).duration).toBe(15)
+    expect(buildCard({ duration: -5 }, 0).duration).toBe(4)
+  })
+
+  it('2.0-mini 别名可存入卡片', () => {
+    expect(buildCard({ model: '2.0-mini' }, 0).model).toBe('2.0-mini')
+  })
 })
 
 describe('canStart 上游硬约束', () => {
