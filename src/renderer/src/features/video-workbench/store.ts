@@ -712,18 +712,26 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         const firstBoardId = boards[0].id
         const boardIds = new Set(boards.map((b) => b.id))
 
-        // 重启后「进行中」状态已无人推进(任务在主进程内存里,重启即丢),
-        // 统一落成 failed 并给出可读原因,可一键重试。
+        // 重启后「进行中」的卡片是否还活着,只有对账问过上游才知道 —— 主进程
+        // 的任务表是内存的,重启即空,但上游任务往往还在跑(钱也已经付了)。
+        // 所以水合期一律不下死活判定,原样读回来交给 reconcileInFlight:它拿
+        // taskId 回主进程 adopt(),恢复轮询,结果照旧走落盘 + 写历史。
+        // (曾经在这里把在飞卡片直接判成 failed,于是对账永远拿到空集、adopt()
+        //  从不执行,重启接管整条链形同不存在。)
+        //
+        // 唯一例外是没有 taskId 的:上游从没收到过这个任务,无从对账,只能判死。
         // 旧库卡片没有 mode/webSearch/boardId 字段(渐进新增),读出时补默认值;
         // boardId 缺失/失效 → 迁入第一页(单页老数据自动迁移,不丢卡)。
         const normalized = stored.map((raw) => {
           const boardId = raw.boardId && boardIds.has(raw.boardId) ? raw.boardId : firstBoardId
           const card = { ...raw, boardId, mode: normalizeMode(raw.mode), webSearch: raw.webSearch === true }
           const next =
-            card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
-              ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启,任务状态丢失(可重试)' }
+            isActiveStatus(card.status) && !card.taskId
+              ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启前任务未提交成功,请重新生成' }
               : card
-          if (next.boardId !== raw.boardId) void db.put(next).catch(() => {})
+          if (next.boardId !== raw.boardId || next.status !== raw.status) {
+            void db.put(next).catch(() => {})
+          }
           return next
         })
 
@@ -1224,20 +1232,31 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     const active = get().cards.filter((c) => isActiveStatus(c.status))
     if (active.length === 0) return
 
-    // 没 taskId = 重启前 createTask 就没成功,上游根本没有这个任务,无从对账。
-    for (const orphan of active.filter((c) => !c.taskId)) {
-      writeFailed(set, orphan.id, '应用重启前任务未提交成功,请重新生成')
+    // 只管带 taskId 的。没 taskId 的在飞卡片有两种,本函数分不清:一种是重启前
+    // createTask 没成功(已由水合期判死),另一种是本次会话里刚点生成、submit 还
+    // 没回来 —— 后者正常得很,一律判死会把用户正在提交的卡当场杀掉。
+    const items = active.filter((c) => c.taskId)
+    if (items.length === 0) return
+
+    // 对账是这些卡片在本次会话里唯一的推进机会:没被 adopt() 就没人轮询它们,
+    // 结果永远不会到。所以「无从对账」必须落终态给用户一个交代 —— 让它顶着
+    // 转圈的计时器空转是在说谎。上游那侧的分寸(5xx/超时不等于任务没了,照旧
+    // 接管别错杀已付费的任务)由主进程 adoption.ts 把握,不在这一层。
+    const giveUp = (reason: string): void => {
+      for (const card of items) writeFailed(set, card.id, reason)
     }
 
-    const items = active.filter((c) => c.taskId)
-    if (items.length === 0 || !api?.reconcile) return
+    if (!api?.reconcile) {
+      giveUp('视频服务未就绪(preload 桥缺失),无法确认任务状态')
+      return
+    }
 
     let results: VideoWorkbenchReconcileResult[] = []
     try {
       results = (await api.reconcile(items.map(toReconcileItem))) ?? []
     } catch (e) {
-      // 对账本身失败(IPC 抖动)不动卡片:下次启动还有机会,别把还在跑的任务错杀。
       console.warn('[workbench] reconcile failed:', e)
+      giveUp(`重启后无法确认任务状态:${e instanceof Error ? e.message : String(e)}`)
       return
     }
 
