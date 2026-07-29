@@ -602,7 +602,30 @@ git commit -m "feat(workbench): 卡片头部行点选,选中用边框高亮"
 
 ---
 
-### Task 4: 拖拽载荷 —— 新 MIME + 多选拖拽
+> ## ⚠ Task 4 / Task 5 已于实施中改道（2026-07-29）
+>
+> 下面 Task 4、Task 5 的原文**已作废**，保留仅为记录被推翻的方案。它们给卡片单开了
+> `application/x-catimation-workbench-cards` + `VideoWorkbenchCardDragItem` 描述符 +
+> 聊天栏专用 drop handler，等于在引用 chip 之外立第三条投放管线。对照本仓库先例
+> （文件树 `serializeFileDrag` 只带路径、画布 asset 只带 `meta.assetPath`）与 tldraw 的
+> external-content 模型（载荷只带真实来源，认领交给消费侧），这套自定义协议是多余的。
+>
+> **实际落地（commit `12f38e2`，替代 Task 4 + Task 5 全部内容）：**
+>
+> - `WorkbenchCard.onDragStart` 双写：旧 MIME `application/x-vw-card`（页内排序，单张 id
+>   不变）+ 既有 `application/x-catimation-file-paths`（`serializeFileDrag`，值为选中项的
+>   `localPath` 数组）；`effectAllowed` 改 `copyMove`。
+> - 拖未选中的卡先 `selectCard(card.id)` 把选区换成它（`FileTreeNode.onDragStart` 同款），
+>   于是「拖出去的」恒等于「选中的」→ `cardId` 由 Task 6 的选中态回读承担，不进载荷。
+> - `MentionInput` **零改动**：既有 Tier 2 已产出附件 + 引用 chip。两道门都放行
+>   `<userData>/agent/uploads`（`fsIpc.resolveAllowedRoots` push 它；`AgentManager` 发送侧补它）。
+> - 未出片的卡不写路径 MIME（`serializeFileDrag` 空数组直接 return），不假装递了东西。
+> - 测试：`WorkbenchCard.selection.test.tsx` 追加 5 条拖拽用例（共 11 条），
+>   删掉 `dragHelpers.workbench.test.ts`，撤回 `VideoWorkbenchCardDragItem`。
+>
+> 修订后的设计见 spec 的「改动（2026-07-29 修订：不另造投放协议）」一节。
+
+### ~~Task 4: 拖拽载荷 —— 新 MIME + 多选拖拽~~（作废，见上）
 
 **Files:**
 - Modify: `src/types/videoWorkbench.ts`（新增 `VideoWorkbenchCardDragItem`）
@@ -862,7 +885,7 @@ git commit -m "feat(workbench): 卡片拖拽带上聊天栏可消费的描述符
 
 ---
 
-### Task 5: 聊天栏投放分支 + 悬停反馈
+### ~~Task 5: 聊天栏投放分支 + 悬停反馈~~（作废：聊天栏零改动即可，见 Task 4 上方的改道说明）
 
 **Files:**
 - Modify: `src/renderer/src/features/agent-chat/MentionInput.tsx`（`onDrop` 991-997 加分支；`form` 的 `onDragOver` 1205）
@@ -1254,6 +1277,8 @@ git commit -m "feat(workbench): 工具摘要带出用户选中的卡片"
 npx vitest run src/renderer/src/features/video-workbench src/renderer/src/pages-react/video-workbench src/renderer/src/features/file-explorer src/renderer/src/features/agent-chat src/main/mcp/tools/__tests__/videoWorkbenchTools.test.ts
 ```
 
+> 改道后 `agent-chat` 已无本刀改动，跑它只为确认既有投放链路没被牵动。
+
 - [ ] `npm run build:vite` 通过。
 - [ ] 触及文件零新增 lint（`ReadLints` 或 `npm run lint`）。
 - [ ] 手动过一遍：拖拽排序仍正常（旧 MIME 未被新分支抢走）；缝隙「＋」插卡仍正常；选中 2 张拖进聊天栏，chip 出现且**发送不报 outside allowed roots**（这是本刀的核心守卫）。
@@ -1272,14 +1297,15 @@ npx vitest run src/renderer/src/features/video-workbench src/renderer/src/pages-
 | ⚡ 文案随选中态变化 | Task 2（3c）|
 | 删除同理 | Task 2（3c 的删除按钮）+ Task 1 的 `removeCards` |
 | MCP `start` 显式 cardIds 不受影响 | Task 2（3a 的优先级）+ 测试第 3 条 |
-| 新 MIME 词表进 dragHelpers | Task 4（3b）|
-| `effectAllowed` 改 copyMove | Task 4（3c）|
-| 拖已选中的卡 = 拖全部选中 | Task 4（3c）+ 测试 |
-| 页内排序继续读旧 MIME | Task 4（3c 双写）+ 测试断言旧 MIME 只带一张 |
-| 投放产出 chip + 可见信息行 | Task 5（3c）|
-| 无 localPath 退 remoteUrl 并如实提示 | Task 5（3c 的 `linkOnly`）|
-| 草稿卡只产信息行 | Task 5（3c 末路径）+ 测试 |
-| 聊天栏补投放悬停反馈 | Task 5（3e）|
+| ~~新 MIME 词表进 dragHelpers~~ | 改道后不需要：复用既有 `serializeFileDrag`（`12f38e2`）|
+| `effectAllowed` 改 copyMove | `12f38e2` |
+| 拖已选中的卡 = 拖全部选中 | `12f38e2` + 测试 |
+| 拖未选中的卡 → 选区换成它 | `12f38e2` + 测试（改道后新增，FileTreeNode 同款）|
+| 页内排序继续读旧 MIME | `12f38e2` 双写 + 测试断言旧 MIME 只带一张 |
+| 投放产出引用 chip | 聊天栏既有 Tier 2，零改动 |
+| ~~无 localPath 退 remoteUrl 并如实提示~~ | 改道后取消：拖拽不特判耐久源，没路径就不递 |
+| ~~草稿卡只产信息行~~ | 改道后取消：不写 MIME，静默落空（刻意）|
+| ~~聊天栏补投放悬停反馈~~ | 移出本刀：那是既有链路的缺口（文件树拖入同样没有）|
 | `snapshotWorkbench` 带出选中 | Task 6 |
 | 不为选中变化推送通知 | 全程未实现推送——这是刻意的空缺 |
 | 不复用 `mention` 输入变体 | 全程未碰 mention 通道 |
