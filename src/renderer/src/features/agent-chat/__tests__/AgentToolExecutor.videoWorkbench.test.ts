@@ -49,6 +49,34 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(useTabStore.getState().activeTab).toBe('videoWorkbench')
   })
 
+  it('add_tasks 带 afterCardId:插到锚点之后而不是末尾', async () => {
+    const [a] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'B' }])
+
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: 'M' }],
+      afterCardId: a,
+      navigate: false,
+    })
+
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((c) => c.prompt)).toEqual(['A', 'M', 'B'])
+  })
+
+  it('add_tasks 锚点不存在:回错且一张卡都不加', async () => {
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+
+    await expect(
+      callTool('video_workbench_add_tasks', {
+        tasks: [{ prompt: 'M' }],
+        afterCardId: '不存在',
+        navigate: false,
+      }),
+    ).rejects.toThrow(/anchor card not found/)
+
+    expect(useVideoWorkbenchStore.getState().cards).toHaveLength(1)
+  })
+
   it('add_tasks navigate:false 不切 tab;autoStart 触发提交', async () => {
     const submit = vi.fn(async () => ({ success: true, taskId: 't-1' }))
     ;(window as any).electronAPI = { videoWorkbench: { submit } }

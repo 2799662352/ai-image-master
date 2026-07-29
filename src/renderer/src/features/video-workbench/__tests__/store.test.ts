@@ -14,7 +14,7 @@ import {
   toMaterial,
   useVideoWorkbenchStore,
 } from '../store'
-import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
+import { WORKBENCH_MAX_CARDS, getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 
 function mockSubmit(impl?: (payload: Record<string, unknown>) => Promise<unknown>) {
   const submit = vi.fn(
@@ -377,5 +377,114 @@ describe('ensureHydrated', () => {
     const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === 'c-orphan')!
     expect(card.status).toBe('failed')
     expect(card.error).toBeTruthy()
+  })
+})
+
+describe('addCards 锚点插入', () => {
+  it('插到中间:顺序压实,后续卡顺延', () => {
+    const [a] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'B' }])
+    const [mid] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'M' }], { afterCardId: a })
+
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((c) => c.prompt)).toEqual(['A', 'M', 'B'])
+    expect(cards.map((c) => c.order)).toEqual([0, 1, 2])
+    expect(cards.find((c) => c.id === mid)?.order).toBe(1)
+  })
+
+  it('beforeCardId 插到最前', () => {
+    const [a] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'T' }], { beforeCardId: a })
+
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((c) => c.prompt)).toEqual(['T', 'A'])
+  })
+
+  it('锚点在非活动页:新卡落在锚点那一页,不是 activeBoardId', () => {
+    const [onFirst] = useVideoWorkbenchStore.getState().addCards([{ prompt: '第一页的卡' }])
+    const firstBoardId = useVideoWorkbenchStore.getState().cards[0].boardId
+    const secondBoardId = useVideoWorkbenchStore.getState().addBoard('第二页')
+    useVideoWorkbenchStore.getState().switchBoard(secondBoardId)
+    expect(useVideoWorkbenchStore.getState().activeBoardId).toBe(secondBoardId)
+
+    const [inserted] = useVideoWorkbenchStore.getState().addCards(
+      [{ prompt: '插进第一页' }],
+      { afterCardId: onFirst },
+    )
+
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === inserted)
+    expect(card?.boardId).toBe(firstBoardId)
+  })
+
+  it('锚点不存在:抛错且什么都不写', () => {
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    const countBefore = useVideoWorkbenchStore.getState().cards.length
+    const structureBefore = useVideoWorkbenchStore.getState().structureRevision
+
+    expect(() =>
+      useVideoWorkbenchStore.getState().addCards([{ prompt: 'X' }], { afterCardId: '不存在' }),
+    ).toThrow(/anchor card not found/)
+
+    expect(useVideoWorkbenchStore.getState().cards).toHaveLength(countBefore)
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(structureBefore)
+  })
+
+  it('不传锚点仍追加到当前页末尾(回归守卫)', () => {
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }, { prompt: 'B' }])
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'C' }])
+
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((c) => c.prompt)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('插入 bump revision 与 structureRevision', () => {
+    const [a] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    const rev = useVideoWorkbenchStore.getState().revision
+    const structure = useVideoWorkbenchStore.getState().structureRevision
+
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'M' }], { afterCardId: a })
+
+    expect(useVideoWorkbenchStore.getState().revision).toBe(rev + 1)
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(structure + 1)
+  })
+
+  it('插入后新卡落库的 order 是压实后的值,不是占位 0', async () => {
+    const [a] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'B' }])
+    const [mid] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'M' }], { afterCardId: a })
+
+    const rows = await getWorkbenchDb().list()
+    expect(rows.find((r) => r.id === mid)?.order).toBe(1)
+  })
+
+  it('被顶下去的兄弟卡也重新落库,重载后顺序不会错乱', async () => {
+    // schedulePersist 有 500ms 防抖(store.ts PERSIST_DEBOUNCE_MS),要推进定时器才看得到写入。
+    vi.useFakeTimers()
+    try {
+      const [a] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+      const [b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'B' }])
+      // B 落库时 order 是 1;插入后应变成 2 并被补写。
+      useVideoWorkbenchStore.getState().addCards([{ prompt: 'M' }], { afterCardId: a })
+      await vi.advanceTimersByTimeAsync(600)
+
+      const rows = await getWorkbenchDb().list()
+      expect(rows.find((r) => r.id === b)?.order).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('超上限淘汰', () => {
+  it('被淘汰的卡同步从内存摘掉,不会等到重启才消失', async () => {
+    useVideoWorkbenchStore.getState().addCards(
+      Array.from({ length: WORKBENCH_MAX_CARDS + 3 }, (_, i) => ({ prompt: `p${i}` })),
+    )
+
+    await vi.waitFor(() => {
+      expect(useVideoWorkbenchStore.getState().cards).toHaveLength(WORKBENCH_MAX_CARDS)
+    })
+    const rows = await getWorkbenchDb().list()
+    expect(rows).toHaveLength(WORKBENCH_MAX_CARDS)
   })
 })

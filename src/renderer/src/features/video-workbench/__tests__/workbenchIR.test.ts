@@ -270,13 +270,14 @@ describe('planApplyIR / 拒绝路径', () => {
     expect(allBad.result.skipped.map((s) => s.reason).join()).toContain('没有一页可用')
   })
 
-  it('超过卡片上限时整体拒绝,不静默淘汰旧卡', () => {
+  it('超过卡片上限不再拒绝:照写,超出部分由 evict 兜底淘汰', () => {
     const src = source()
     const ir = roundTrip(src)
     ir.boards[0].cards = Array.from({ length: WORKBENCH_MAX_CARDS + 1 }, (_, i) => ({ prompt: `镜 ${i}` }))
     const plan = planApplyIR(src, ir)
-    expect(plan.result.ok).toBe(false)
-    expect(plan.result.skipped.at(-1)!.reason).toContain('超过上限')
+    expect(plan.result.ok).toBe(true)
+    expect(plan.result.skipped.map((s) => s.reason).join()).not.toContain('超过上限')
+    expect(plan.next!.cards).toHaveLength(WORKBENCH_MAX_CARDS + 1)
   })
 
   it('未知 id 报错而不是静默新建', () => {

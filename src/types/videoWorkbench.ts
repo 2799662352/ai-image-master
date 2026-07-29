@@ -154,6 +154,14 @@ export interface VideoWorkbenchCardInput {
   referenceAudios?: Array<string | VideoWorkbenchMaterial>
 }
 
+/**
+ * 插卡锚点。位置用**稳定 cardId** 表达而不是下标 —— 下标是易变状态，调用方手里的
+ * 下标可能已经不指向它以为的那张卡；id 不会漂。二选一；两者都不传 = 追加到当前页末尾。
+ */
+export type VideoWorkbenchInsertAnchor =
+  | { afterCardId: string; beforeCardId?: undefined }
+  | { beforeCardId: string; afterCardId?: undefined }
+
 // ---------------------------------------------------------------------------
 // 看板 JSON IR（声明式整体读写）
 //
