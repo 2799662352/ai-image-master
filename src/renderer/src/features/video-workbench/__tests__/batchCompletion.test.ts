@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SeedanceTaskUpdate } from '../../../../types/seedance'
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
 import {
+  AGENT_BATCH_STORAGE_KEY,
   __resetWorkbenchBatches,
   mountWorkbenchBatchWatcher,
   registerAgentBatch,
@@ -57,6 +58,9 @@ beforeEach(() => {
   delete (window as any).electronAPI
   delivered = []
   unmount?.()
+  // 结算要求卡片已经读回来(见 settle 的水合闸)。这几个用例都是「应用已经跑起来」
+  // 的场景,直接标记水合完成;专门测水合闸的那条用例自己把它扳回 false。
+  useVideoWorkbenchStore.setState({ hydrated: true })
   unmount = mountWorkbenchBatchWatcher((notice) => delivered.push(notice))
 })
 
@@ -153,6 +157,104 @@ describe('批次完成推送', () => {
     // 没有 registerAgentBatch:这条路径就是 UI 按钮。
     await useVideoWorkbenchStore.getState().startCards(ids)
     setCard(ids[0], { status: 'succeeded' })
+    expect(delivered).toHaveLength(0)
+  })
+})
+
+// 渲染要几分钟,用户中途重启应用是常事(重启接管那条链就是为它建的)。而
+// video_workbench_start 的横幅明说了「不要轮询,跑完会推给你」—— 那是一句承诺,
+// 进程重启不能把它吞掉,否则 agent 永远静默等待,用户还得自己去捅它。
+describe('批次登记跨重启存活', () => {
+  /**
+   * 模拟重启:新进程的模块内存是空的,但 localStorage 里的登记和 IndexedDB 里的
+   * 卡片都还在。这里把落盘那份原样搬过去,再重新挂 watcher(挂载即恢复)。
+   */
+  function simulateRestart(): void {
+    const persisted = globalThis.localStorage.getItem(AGENT_BATCH_STORAGE_KEY)
+    __resetWorkbenchBatches()
+    if (persisted !== null) globalThis.localStorage.setItem(AGENT_BATCH_STORAGE_KEY, persisted)
+    unmount?.()
+    unmount = mountWorkbenchBatchWatcher((notice) => delivered.push(notice))
+  }
+
+  it('重启前起的批次,重启后跑完照样推送', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: '猫' }, { prompt: '狗' }])
+    await useVideoWorkbenchStore.getState().startCards(ids)
+    registerAgentBatch(ids, 'th-1')
+
+    simulateRestart()
+    expect(delivered).toHaveLength(0) // 卡片还在飞,别急着推
+
+    // 重启接管(reconcileInFlight)之后结果照常回流
+    setCard(ids[0], { status: 'succeeded', remoteUrl: 'https://cos/cat.mp4' })
+    setCard(ids[1], { status: 'succeeded', remoteUrl: 'https://cos/dog.mp4' })
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toMatchObject({ threadId: 'th-1', total: 2, succeeded: 2 })
+  })
+
+  it('水合之前不结算 —— 否则恢复的批次会被当成「卡都没了」静默丢掉', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: '猫' }])
+    await useVideoWorkbenchStore.getState().startCards(ids)
+    registerAgentBatch(ids, 'th-1')
+
+    // 真实重启时 watcher 挂得比读库早:那一刻 store 里一张卡都没有,
+    // 查不到的卡若算「已结算」,整批就会被判成无可汇报而丢弃。
+    const inFlight = useVideoWorkbenchStore.getState().cards[0]
+    useVideoWorkbenchStore.setState({ cards: [], hydrated: false })
+    simulateRestart()
+    expect(delivered).toHaveLength(0)
+
+    // 读库把卡片和 hydrated 放在同一次 set 里落下(ensureHydrated 就是这么写的),
+    // 所以订阅者看到 hydrated 时卡片必然已经在场。
+    useVideoWorkbenchStore.setState({
+      cards: [{ ...inFlight, status: 'succeeded' }],
+      hydrated: true,
+    })
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toMatchObject({ total: 1, succeeded: 1 })
+  })
+
+  it('推送之后落盘登记就清空 —— 再重启不会把同一批重复汇报一遍', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: '猫' }])
+    await useVideoWorkbenchStore.getState().startCards(ids)
+    registerAgentBatch(ids, 'th-1')
+    setCard(ids[0], { status: 'succeeded' })
+    expect(delivered).toHaveLength(1)
+
+    simulateRestart()
+    setCard(ids[0], { status: 'succeeded', remoteUrl: 'https://cos/cat.mp4' })
+    expect(delivered).toHaveLength(1)
+  })
+
+  it('隔了一天的批次恢复时丢弃 —— 那时候的「渲染完成」已经是噪音', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: '猫' }])
+    await useVideoWorkbenchStore.getState().startCards(ids)
+    registerAgentBatch(ids, 'th-1')
+
+    // 把落盘登记的时间戳往前拨两天
+    const stale = JSON.parse(globalThis.localStorage.getItem(AGENT_BATCH_STORAGE_KEY)!)
+    for (const batch of stale) batch.createdAt = Date.now() - 2 * 24 * 60 * 60 * 1000
+    __resetWorkbenchBatches()
+    globalThis.localStorage.setItem(AGENT_BATCH_STORAGE_KEY, JSON.stringify(stale))
+    unmount?.()
+    unmount = mountWorkbenchBatchWatcher((notice) => delivered.push(notice))
+
+    setCard(ids[0], { status: 'succeeded' })
+    expect(delivered).toHaveLength(0)
+  })
+
+  it('落盘登记损坏时当没有批次,不抛错', () => {
+    globalThis.localStorage.setItem(AGENT_BATCH_STORAGE_KEY, '{ 不是数组')
+    expect(() => {
+      unmount?.()
+      unmount = mountWorkbenchBatchWatcher((notice) => delivered.push(notice))
+    }).not.toThrow()
     expect(delivered).toHaveLength(0)
   })
 })
