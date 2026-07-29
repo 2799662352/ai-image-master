@@ -8,7 +8,7 @@ import {
   resetWorkbenchStoreForTest,
   useVideoWorkbenchStore,
 } from '../store'
-import { resetWorkbenchDbForTest } from '../WorkbenchDb'
+import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 
 function mockSubmit() {
   const submit = vi.fn(async () => ({ success: true, taskId: 'task-1' }))
@@ -23,11 +23,17 @@ beforeEach(() => {
 })
 
 describe('buildCard 新字段默认值', () => {
-  it('缺省 mode=multimodal_ref、webSearch=false、seed 不出现', () => {
+  it('缺省 mode=multimodal_ref、webSearch=true、配音开、seed 不出现', () => {
     const card = buildCard({}, 0)
     expect(card.mode).toBe('multimodal_ref')
-    expect(card.webSearch).toBe(false)
+    expect(card.webSearch).toBe(true)
+    expect(card.generateAudio).toBe(true)
     expect(card.seed).toBeUndefined()
+  })
+
+  it('显式关闭仍然生效:联网与配音都能被显式关掉', () => {
+    expect(buildCard({ webSearch: false }, 0).webSearch).toBe(false)
+    expect(buildCard({ generateAudio: false }, 0).generateAudio).toBe(false)
   })
 
   it('非法 mode 回退全能参考;seed 越界收敛', () => {
@@ -157,15 +163,27 @@ describe('startCards 载荷携带 seed/webSearch/firstFrame', () => {
     })
   })
 
-  it('默认卡不携带 seed/webSearch/firstFrame 字段', async () => {
+  it('默认卡携带 webSearch:true,但不携带 seed/firstFrame', async () => {
     const submit = mockSubmit()
     const store = useVideoWorkbenchStore.getState()
     const [id] = store.addCards([{ prompt: '一只狗', referenceImages: ['dog.png'] }])
     await store.startCards([id])
     const payload = submit.mock.calls[0][0] as Record<string, unknown>
+    expect(payload.webSearch).toBe(true)
     expect('seed' in payload).toBe(false)
-    expect('webSearch' in payload).toBe(false)
     expect('firstFrame' in payload).toBe(false)
     expect(payload.referenceImages).toEqual(['dog.png'])
+  })
+})
+
+describe('联网默认值不追溯老卡', () => {
+  it('库里没有 webSearch 字段的老卡,水合后仍是关闭', async () => {
+    const raw: Record<string, unknown> = { ...buildCard({ prompt: '老卡' }, 0), id: 'c-old' }
+    delete raw.webSearch
+    await getWorkbenchDb().put(raw as never)
+
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === 'c-old')!
+    expect(card.webSearch).toBe(false)
   })
 })

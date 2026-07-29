@@ -172,6 +172,43 @@ describe('registerVideoWorkbenchTools / schemas', () => {
 })
 
 describe('handlers → router.call 透传与 banner', () => {
+  it('add_tasks:webSearch:false 经 schema 透传到 router', async () => {
+    const { tools, server, router } = capture({ cardIds: ['c1'], total: 1 })
+    registerVideoWorkbenchTools(server, router)
+    const tool = toolByName(tools, 'video_workbench_add_tasks')
+    const parsed = tool.config.inputSchema.parse({
+      tasks: [{ prompt: '一只猫', webSearch: false }],
+    })
+    expect(parsed).toEqual(expect.objectContaining({
+      tasks: [expect.objectContaining({ webSearch: false })],
+    }))
+    await tool.handler(parsed as Record<string, unknown>)
+    expect(router.call).toHaveBeenCalledWith(
+      'video_workbench_add_tasks',
+      expect.objectContaining({
+        tasks: [expect.objectContaining({ webSearch: false })],
+      }),
+      undefined,
+    )
+  })
+
+  it('update_task:webSearch:false 经 schema 透传到 router', async () => {
+    const { tools, server, router } = capture({ ok: true })
+    registerVideoWorkbenchTools(server, router)
+    const tool = toolByName(tools, 'video_workbench_update_task')
+    const parsed = tool.config.inputSchema.parse({
+      cardId: 'c1',
+      webSearch: false,
+    })
+    expect(parsed).toEqual(expect.objectContaining({ cardId: 'c1', webSearch: false }))
+    await tool.handler(parsed as Record<string, unknown>)
+    expect(router.call).toHaveBeenCalledWith(
+      'video_workbench_update_task',
+      expect.objectContaining({ cardId: 'c1', webSearch: false }),
+      undefined,
+    )
+  })
+
   it('add_tasks:结果 JSON 进回包;autoStart 时 banner 明令不许轮询、说明完成会推送', async () => {
     const { tools, server, router } = capture({ cardIds: ['c1', 'c2'], total: 2 })
     registerVideoWorkbenchTools(server, router)
@@ -423,6 +460,35 @@ describe('structured output(MCP 2025-11-25)', () => {
       expect(res.isError, `${tool.name} 应标记 isError`).toBe(true)
       expect(res.structuredContent).toBeUndefined()
       expect(res.content[0].text).toContain('renderer offline')
+    }
+  })
+})
+
+describe('工具描述:回指 skill 与素材口径', () => {
+  it('add_tasks 与 start 点名 catimation-video', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    for (const name of ['video_workbench_add_tasks', 'video_workbench_start']) {
+      expect(toolByName(tools, name).config.description).toContain('catimation-video')
+    }
+  })
+
+  it('建卡类工具写死每卡素材口径(≤3 段、合计 ≤15s)', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    for (const name of ['video_workbench_add_tasks', 'video_workbench_update_task', 'video_workbench_apply']) {
+      const desc = toolByName(tools, name).config.description
+      expect(desc).toContain('referenceVideos ≤3')
+      expect(desc).toContain('≤15s')
+      expect(desc).toContain('referenceAudios ≤3')
+    }
+  })
+
+  it('只读工具不被塞进这些纪律(省上下文预算)', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    for (const name of ['video_workbench_status', 'video_workbench_export', 'video_workbench_remove_tasks']) {
+      expect(toolByName(tools, name).config.description).not.toContain('catimation-video')
     }
   })
 })

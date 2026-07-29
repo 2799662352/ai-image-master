@@ -36,6 +36,7 @@ const cardInputSchema = z.object({
     'Seconds (4-15), or -1 = smart duration (model decides). Default 5.',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
+  webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
   referenceImages: z.array(z.string()).max(9).optional().describe(
     'Up to 9 reference images: local path / https URL / asset://assetId (portrait library) / data: URL. '
     + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
@@ -272,6 +273,10 @@ function extractCodexThreadId(ctx: unknown): string | undefined {
 export function registerVideoWorkbenchTools(server: McpServer, router: ToolRouter): void {
   server.registerTool('video_workbench_add_tasks', {
     description:
+      'Batch output surface of the catimation-video skill — load that skill first, grade the request ' +
+      '(快速/标准/专业/制片) and write the prompt with the same discipline as generate_video. ' +
+      'Per card the material caps are identical too: referenceImages ≤9, referenceVideos ≤3 and ≤15s ' +
+      'in total, referenceAudios ≤3 and ≤15s in total. ' +
       'Add one or more video task cards to the 「生成视频」 workbench page (the scroll-style concurrent ' +
       'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
       'multiple boards/pages — see video_workbench_status). Each card carries a prompt + Seedance spec ' +
@@ -325,7 +330,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'edited. Get cardIds from video_workbench_add_tasks or video_workbench_status. Returns the updated ' +
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
-      'the prompt — same reason as on add_tasks: the render follows the picture, not the filename.',
+      'the prompt — same reason as on add_tasks: the render follows the picture, not the filename. ' +
+      'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and ≤15s in total, ' +
+      'referenceAudios ≤3 and ≤15s in total.',
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
@@ -341,6 +348,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_start', {
     description:
+      'Batch output surface of the catimation-video skill (load it for grading and prompt discipline). ' +
       'Start rendering workbench cards (concurrent). Omit cardIds to start EVERY startable card on the ' +
       'ACTIVE board (draft/failed/succeeded with a non-empty prompt); pass cardIds to start specific ones ' +
       '(any board). Renders run 1–3 minutes each, concurrently. Returns IMMEDIATELY (fire-and-forget) ' +
@@ -438,6 +446,8 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
+      + '• Material caps per card: referenceImages ≤9, referenceVideos ≤3 and ≤15s in total, '
+      + 'referenceAudios ≤3 and ≤15s in total.\n'
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '
       + 'rejected with `conflict`, NOTHING written; re-export, redo your edits, apply again. Stale card '
