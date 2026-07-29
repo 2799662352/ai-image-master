@@ -27,6 +27,138 @@
 
 ---
 
+### Task 0: 淘汰变诚实，并拆掉 apply 的 200 硬拒
+
+**背景（必读）：** `WorkbenchDb.evict()` 只删数据库、返回被删 id 列表，而唯一调用点
+`store.ts:860` 写的是 `void getWorkbenchDb().evict()` —— **返回值被丢弃，内存里那几张卡还在**。
+于是超限时界面一切正常，等下次启动它们凭空消失。症状延迟到重启才出现，属最难排查的一类。
+
+`workbenchIR.ts:496` 的「超过上限整体拒绝」正是在挡住这个缺陷的规模化版本。用户要求拆掉该拒绝，
+所以必须先把缺陷修掉，否则一次 apply 加 100 张卡就是 100 张在重启后蒸发。
+
+注意 `applyIR` 今天**根本不调 `evict()`**（它靠拒绝兜底），所以拆掉拒绝后 apply 只是允许卡数超过
+200，真正的淘汰仍发生在下一次 `addCards`。
+
+**Files:**
+- Modify: `src/renderer/src/features/video-workbench/store.ts:860`
+- Modify: `src/renderer/src/features/video-workbench/workbenchIR.ts:496-505`（删除整块）
+- Modify: `src/renderer/src/features/video-workbench/workbenchIR.ts:17` 附近的
+  `WORKBENCH_MAX_CARDS` import（删块后变成未使用，必须一并删）
+- Test: `src/renderer/src/features/video-workbench/__tests__/store.test.ts`
+- Test: `src/renderer/src/features/video-workbench/__tests__/workbenchIR.test.ts:273-280`（改写既有用例）
+
+**Interfaces:**
+- Consumes: `getWorkbenchDb().evict(): Promise<string[]>`（已返回被删 id，无需改动 `WorkbenchDb`）、
+  `useToastStore.getState().addToast({ type, message })`（`src/renderer/src/stores/useToastStore`）。
+- Produces: 无新导出。行为契约变更：超限淘汰会同步从内存移除并弹一次 toast；
+  `planApplyIR` 不再因超限拒绝。
+
+- [ ] **Step 1: 写失败测试（淘汰同步内存）**
+
+在 `src/renderer/src/features/video-workbench/__tests__/store.test.ts` 追加。
+顶部 import 补上 `WORKBENCH_MAX_CARDS`：
+
+```ts
+import { getWorkbenchDb, resetWorkbenchDbForTest, WORKBENCH_MAX_CARDS } from '../WorkbenchDb'
+```
+
+```ts
+describe('超上限淘汰', () => {
+  it('被淘汰的卡同步从内存摘掉,不会等到重启才消失', async () => {
+    useVideoWorkbenchStore.getState().addCards(
+      Array.from({ length: WORKBENCH_MAX_CARDS + 3 }, (_, i) => ({ prompt: `p${i}` })),
+    )
+
+    await vi.waitFor(() => {
+      expect(useVideoWorkbenchStore.getState().cards).toHaveLength(WORKBENCH_MAX_CARDS)
+    })
+    const rows = await getWorkbenchDb().list()
+    expect(rows).toHaveLength(WORKBENCH_MAX_CARDS)
+  })
+})
+```
+
+- [ ] **Step 2: 改写 apply 超限用例（从「拒绝」改为「放行」）**
+
+把 `src/renderer/src/features/video-workbench/__tests__/workbenchIR.test.ts:273-280` 整个 `it` 替换为：
+
+```ts
+  it('超过卡片上限不再拒绝:照写,超出部分由 evict 兜底淘汰', () => {
+    const src = source()
+    const ir = roundTrip(src)
+    ir.boards[0].cards = Array.from({ length: WORKBENCH_MAX_CARDS + 1 }, (_, i) => ({ prompt: `镜 ${i}` }))
+    const plan = planApplyIR(src, ir)
+    expect(plan.result.ok).toBe(true)
+    expect(plan.result.skipped.map((s) => s.reason).join()).not.toContain('超过上限')
+    expect(plan.next!.cards).toHaveLength(WORKBENCH_MAX_CARDS + 1)
+  })
+```
+
+- [ ] **Step 3: 跑测试确认失败**
+
+Run: `npx vitest run src/renderer/src/features/video-workbench/__tests__/store.test.ts -t "超上限淘汰"`
+Expected: FAIL —— 内存仍是 `WORKBENCH_MAX_CARDS + 3` 张，`vi.waitFor` 超时。
+
+Run: `npx vitest run src/renderer/src/features/video-workbench/__tests__/workbenchIR.test.ts -t "超过卡片上限"`
+Expected: FAIL —— `plan.result.ok` 仍为 `false`。
+
+- [ ] **Step 4: 让淘汰同步内存并可见**
+
+把 `src/renderer/src/features/video-workbench/store.ts:860` 的 `void getWorkbenchDb().evict()` 替换为：
+
+```ts
+    // evict() 只删库并返回被删 id。必须把它们同步从内存摘掉 —— 否则界面上卡还在、
+    // 重启后凭空消失,症状延迟到下次启动才出现,是最难排查的一类。
+    // 淘汰也不该悄悄发生:弹一次 toast 告诉用户为了放下新卡牺牲了哪些旧卡。
+    void getWorkbenchDb()
+      .evict()
+      .then((evicted) => {
+        if (evicted.length === 0) return
+        const gone = new Set(evicted)
+        set((state) => ({
+          cards: state.cards.filter((c) => !gone.has(c.id)),
+          revision: state.revision + 1,
+          // 卡片集合变了 —— agent 手里的整份 IR 令牌理应随之作废。
+          structureRevision: state.structureRevision + 1,
+        }))
+        useToastStore.getState().addToast({
+          type: 'info',
+          message: `卡片超过上限 ${WORKBENCH_MAX_CARDS} 张,已淘汰最旧的 ${evicted.length} 张终态卡`,
+        })
+      })
+      .catch(() => {})
+```
+
+在 `store.ts` 顶部补入：
+
+```ts
+import { useToastStore } from '../../stores/useToastStore'
+```
+
+并把既有的 `WorkbenchDb` import 补上 `WORKBENCH_MAX_CARDS`。
+
+- [ ] **Step 5: 拆掉 apply 的 200 硬拒**
+
+删除 `src/renderer/src/features/video-workbench/workbenchIR.ts:496-505` 整个
+`if (nextCards.length > WORKBENCH_MAX_CARDS) { ... }` 块。
+
+删除该文件顶部 `import { WORKBENCH_MAX_CARDS } from './WorkbenchDb'` —— 删块之后它已无使用点，
+留着会触发未使用导入的 lint 错误。
+
+- [ ] **Step 6: 跑测试确认通过**
+
+Run: `npx vitest run src/renderer/src/features/video-workbench`
+Expected: PASS
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add src/renderer/src/features/video-workbench/store.ts src/renderer/src/features/video-workbench/workbenchIR.ts src/renderer/src/features/video-workbench/__tests__/store.test.ts src/renderer/src/features/video-workbench/__tests__/workbenchIR.test.ts
+git commit -m "fix(workbench): 超限淘汰同步内存并提示,apply 不再因超限整体拒绝"
+```
+
+---
+
 ### Task 1: store 支持锚点插入
 
 **Files:**
