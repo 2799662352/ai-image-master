@@ -8,8 +8,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SeedanceCancelResult } from '../../../../types/seedance'
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
-import { canStart, resetWorkbenchStoreForTest, useVideoWorkbenchStore } from '../store'
-import { resetWorkbenchDbForTest } from '../WorkbenchDb'
+import { buildCard, canStart, resetWorkbenchStoreForTest, useVideoWorkbenchStore } from '../store'
+import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 
 type Api = {
   submit: ReturnType<typeof vi.fn>
@@ -182,7 +182,10 @@ describe('重启对账 reconcileInFlight', () => {
     expect(store().cards[0].error).toContain('任务不存在')
   })
 
-  it('preparing 但没 taskId(重启前没提交成功)→ 直接落 failed,不送去对账', async () => {
+  // 没 taskId 的在飞卡片有两种,对账分不清:重启前没提交成功的(判死归水合期,
+  // 见下面那组),和本次会话刚点生成、submit 还没回来的。所以对账一概不碰 ——
+  // 否则跟启动期并发点下的生成撞车,会把用户正在提交的卡当场杀掉。
+  it('本次会话正在提交(preparing 无 taskId)的卡不被对账误杀', async () => {
     const api = installApi()
     store().addCards([{ prompt: '一只猫' }])
     const id = store().cards[0].id
@@ -191,8 +194,7 @@ describe('重启对账 reconcileInFlight', () => {
     await store().reconcileInFlight()
 
     expect(api.reconcile).not.toHaveBeenCalled()
-    expect(store().cards[0].status).toBe('failed')
-    expect(store().cards[0].error).toBeTruthy()
+    expect(store().cards[0].status).toBe('preparing')
   })
 
   it('没有进行中的卡片时不发 IPC', async () => {
@@ -202,5 +204,119 @@ describe('重启对账 reconcileInFlight', () => {
     await store().reconcileInFlight()
 
     expect(api.reconcile).not.toHaveBeenCalled()
+  })
+})
+
+// 上面那组直接摆出 running 卡片,跳过了水合 —— 真实重启走的是「读库 → 水合 →
+// 对账」。这组按真实顺序跑完整条链:少了它,水合把在飞卡片抢先判死、对账必然
+// 拿到空集、adopt() 永不执行这个 bug 可以一直躲过全绿的测试。
+describe('重启接管的完整序列(读库 → ensureHydrated → reconcileInFlight)', () => {
+  /** 模拟上次退出时留在库里的卡片。 */
+  async function seedStored(patch: Partial<VideoWorkbenchCard>): Promise<string> {
+    const id = patch.id ?? 'c-stored'
+    await getWorkbenchDb().put({ ...buildCard({ prompt: '断电前在跑' }, 0), id, ...patch })
+    return id
+  }
+
+  it('水合不把带 taskId 的在飞卡片判死,对账拿到它并接管,卡片继续转', async () => {
+    const api = installApi({
+      reconcile: vi.fn(async () => [{ taskId: 'task-1', outcome: 'adopted' as const }]),
+    })
+    const id = await seedStored({ status: 'running', taskId: 'task-1', clientId: 'wb-1' })
+
+    await store().ensureHydrated()
+    // 死活判定归对账所有:水合期只管把卡片原样读回来。
+    expect(store().cards.find((c) => c.id === id)!.status).toBe('running')
+
+    await store().reconcileInFlight()
+
+    expect(api.reconcile).toHaveBeenCalledWith([
+      expect.objectContaining({ taskId: 'task-1', clientId: 'wb-1' }),
+    ])
+    expect(store().cards.find((c) => c.id === id)!.status).toBe('running')
+  })
+
+  it('queued / preparing 同样交给对账,不在水合期被抢先判死', async () => {
+    const api = installApi({
+      reconcile: vi.fn(async () => [
+        { taskId: 'task-q', outcome: 'adopted' as const },
+        { taskId: 'task-p', outcome: 'tracked' as const },
+      ]),
+    })
+    await seedStored({ id: 'c-q', status: 'queued', taskId: 'task-q' })
+    await seedStored({ id: 'c-p', status: 'preparing', taskId: 'task-p' })
+
+    await store().ensureHydrated()
+    await store().reconcileInFlight()
+
+    expect(api.reconcile.mock.calls[0][0].map((i: { taskId: string }) => i.taskId)).toEqual([
+      'task-q',
+      'task-p',
+    ])
+    expect(store().cards.find((c) => c.id === 'c-q')!.status).toBe('queued')
+    expect(store().cards.find((c) => c.id === 'c-p')!.status).toBe('preparing')
+  })
+
+  it('上游查不到 → 落 failed 并带原因(经真实水合路径)', async () => {
+    installApi({
+      reconcile: vi.fn(async () => [
+        { taskId: 'task-1', outcome: 'unknown' as const, reason: '任务不存在' },
+      ]),
+    })
+    const id = await seedStored({ status: 'running', taskId: 'task-1' })
+
+    await store().ensureHydrated()
+    await store().reconcileInFlight()
+
+    const card = store().cards.find((c) => c.id === id)!
+    expect(card.status).toBe('failed')
+    expect(card.error).toContain('任务不存在')
+  })
+
+  it('库里没 taskId 的在飞卡片无从对账:水合期就落 failed(判决只此一处)', async () => {
+    const api = installApi()
+    const id = await seedStored({ status: 'running', taskId: undefined })
+
+    await store().ensureHydrated()
+
+    const card = store().cards.find((c) => c.id === id)!
+    expect(card.status).toBe('failed')
+    expect(card.error).toBeTruthy()
+
+    await store().reconcileInFlight()
+    expect(api.reconcile).not.toHaveBeenCalled()
+  })
+
+  it('preload 桥缺失(对账无从进行)→ 卡片落 failed,不留下永远转圈的卡', async () => {
+    const id = await seedStored({ status: 'running', taskId: 'task-1' })
+
+    await store().ensureHydrated()
+    await store().reconcileInFlight()
+
+    const card = store().cards.find((c) => c.id === id)!
+    expect(card.status).toBe('failed')
+    expect(card.error).toBeTruthy()
+  })
+
+  it('对账 IPC 抛错 → 同样落 failed:没被接管就没人轮询,顶着计时器空转是说谎', async () => {
+    installApi({ reconcile: vi.fn(async () => { throw new Error('IPC 通道断了') }) })
+    const id = await seedStored({ status: 'running', taskId: 'task-1' })
+
+    await store().ensureHydrated()
+    await store().reconcileInFlight()
+
+    const card = store().cards.find((c) => c.id === id)!
+    expect(card.status).toBe('failed')
+    expect(card.error).toContain('IPC 通道断了')
+  })
+
+  it('终态卡片不受影响', async () => {
+    installApi()
+    await seedStored({ id: 'c-done', status: 'succeeded', localPath: 'C:/v.mp4' })
+
+    await store().ensureHydrated()
+    await store().reconcileInFlight()
+
+    expect(store().cards.find((c) => c.id === 'c-done')!.status).toBe('succeeded')
   })
 })

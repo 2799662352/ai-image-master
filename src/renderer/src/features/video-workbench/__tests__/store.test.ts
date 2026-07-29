@@ -355,15 +355,27 @@ describe('autoImportPortrait 全局开关', () => {
 })
 
 describe('ensureHydrated', () => {
-  it('重启后进行中的卡归一为 failed(状态在主进程内存,重启即丢)', async () => {
+  // 死活判定归 reconcileInFlight 所有(它才问得到上游)。水合期抢先判死会让对账
+  // 拿到空集、adopt() 永不执行 —— 整条重启接管链就废了。完整序列见
+  // storeLifecycle.test.ts 的「重启接管的完整序列」。
+  it('带 taskId 的在飞卡片原样读回,留给对账去问上游', async () => {
     const db = getWorkbenchDb()
     await db.put({ ...buildCard({ prompt: '断电前在跑' }, 0), id: 'c-run', status: 'running', taskId: 't1' })
     await db.put({ ...buildCard({ prompt: '完好' }, 1), id: 'c-done', status: 'succeeded', localPath: 'C:/v.mp4' })
 
     await useVideoWorkbenchStore.getState().ensureHydrated()
     const cards = useVideoWorkbenchStore.getState().cards
-    expect(cards.find((c) => c.id === 'c-run')).toMatchObject({ status: 'failed' })
-    expect(cards.find((c) => c.id === 'c-run')!.error).toContain('重启')
+    expect(cards.find((c) => c.id === 'c-run')).toMatchObject({ status: 'running', taskId: 't1' })
     expect(cards.find((c) => c.id === 'c-done')).toMatchObject({ status: 'succeeded' })
+  })
+
+  it('没 taskId 的在飞卡片就地判死:上游从没收到过它,无从对账', async () => {
+    const db = getWorkbenchDb()
+    await db.put({ ...buildCard({ prompt: '没提交成功' }, 0), id: 'c-orphan', status: 'preparing' })
+
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === 'c-orphan')!
+    expect(card.status).toBe('failed')
+    expect(card.error).toBeTruthy()
   })
 })
