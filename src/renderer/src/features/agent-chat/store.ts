@@ -579,6 +579,13 @@ interface AgentChatState extends ModelRoutingSlice {
    * it rides one message. Not set when Codex opens the canvas itself (canvas_open).
    */
   pendingCanvasContext: string | null
+  /**
+   * 「视频工作台批次跑完了」的待投递通知，按线程分桶。turn 结束后没有通道能把
+   * 消息塞给模型，所以在这里排队，随该线程的下一条用户消息作为隐藏前缀一起走
+   * （与 pendingCanvasContext 同款）—— 不自动开 turn，因此不会有意外的 token 花费。
+   * 线程正在跑时不入队，直接 steer 插进当前 turn。见 notifyWorkbenchBatchDone。
+   */
+  pendingWorkbenchNoticesByThread: Record<string, string[]>
   pendingApprovals: CodexApprovalRequest[]
   /**
    * Transient notices surfaced from codex `app-server` notifications:
@@ -783,6 +790,12 @@ interface AgentChatState extends ModelRoutingSlice {
   clearPendingReferences: () => void
   /** Mark that the user just opened the canvas; rides the next turn as context. */
   notifyCanvasOpened: () => void
+  /**
+   * 视频工作台一个渲染批次全部落终态时的推送入口（由 batchCompletion watcher 调）。
+   * 线程在跑 → steer 插进当前 turn，模型当场就知道；线程闲着 → 入队，随下一条
+   * 用户消息以隐藏前缀送达。两条路都不新开 turn。
+   */
+  notifyWorkbenchBatchDone: (text: string, threadId?: string) => void
   addApprovalRequest: (request: CodexApprovalRequest) => void
   removeApprovalRequest: (id: string) => void
   pushNotice: (notice: AgentNotice) => void
@@ -1665,6 +1678,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   attachments: [],
   pendingReferences: [],
   pendingCanvasContext: null,
+  pendingWorkbenchNoticesByThread: {},
   pendingApprovals: [],
   failedSendSnapshots: {},
   notices: [],
@@ -2363,6 +2377,45 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         '需要查看内容时调用 canvas_snapshot（返回所有形状 + 整张画布的 PNG 路径，可直接打开查看）；' +
         '不要说你看不到画布。在画布上生图/改图请用 canvas_* + generate_image 工具。',
     }),
+  notifyWorkbenchBatchDone: (text, threadId) => {
+    const state = get()
+    const target = threadId ?? state.threadId
+    // 没有线程可归属（从未开过聊天）：这条通知没有收件人，丢掉。用户在工作台
+    // 页面上照样看得到结果。
+    if (!target) return
+
+    // 该线程正在跑 → 直接 steer 插进当前 turn。刻意绕开 store 的 steer()：
+    // 那条路会把 state.input（用户草稿）变成一条真实用户气泡，而这是系统通知，
+    // 不该伪造成用户说的话，也不该吃掉他正在打的字。
+    if (state.runningByThread[target]) {
+      const steer = getAgentApi()?.steer
+      if (steer) {
+        void steer({
+          threadId: target,
+          content: text,
+          attachments: [],
+          references: [],
+          currentPage: window.location.hash.slice(1),
+        }).catch(() => {
+          // turn 刚好在这一瞬结束（steer 竞态）→ 退回排队，等下一条消息带走。
+          set((current) => ({
+            pendingWorkbenchNoticesByThread: {
+              ...current.pendingWorkbenchNoticesByThread,
+              [target]: [...(current.pendingWorkbenchNoticesByThread[target] ?? []), text],
+            },
+          }))
+        })
+        return
+      }
+    }
+
+    set((current) => ({
+      pendingWorkbenchNoticesByThread: {
+        ...current.pendingWorkbenchNoticesByThread,
+        [target]: [...(current.pendingWorkbenchNoticesByThread[target] ?? []), text],
+      },
+    }))
+  },
   addApprovalRequest: (request) =>
     set((state) => ({
       pendingApprovals: state.pendingApprovals.some((item) => item.id === request.id)
@@ -2569,6 +2622,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // One-shot canvas-open hook: rides this turn as a hidden prefix so Codex is
     // canvas-aware without mutating the visible user message. See notifyCanvasOpened.
     const canvasContext = state.pendingCanvasContext
+    // 同款隐藏前缀：turn 结束后跑完的视频工作台批次在这里排队等车。刻意不自己开
+    // turn（省 token、不打扰），所以只有用户真的说下一句话时才随车送达。
+    const workbenchNotices = state.threadId
+      ? state.pendingWorkbenchNoticesByThread[state.threadId] ?? []
+      : []
     if (state.isRunning) return
     // A model-selection transaction may be restarting the backend Channel;
     // sending mid-transaction could route to the wrong Gateway/Channel.
@@ -2624,6 +2682,16 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       input: '',
       attachments: [],
       pendingCanvasContext: null,
+      // 已上车的通知出队。发送失败时在下面的 catch 里原样退回，不会丢。
+      ...(workbenchNotices.length > 0 && state.threadId
+        ? {
+            pendingWorkbenchNoticesByThread: {
+              ...current.pendingWorkbenchNoticesByThread,
+              [state.threadId]: (current.pendingWorkbenchNoticesByThread[state.threadId] ?? [])
+                .slice(workbenchNotices.length),
+            },
+          }
+        : {}),
       error: undefined,
       isRunning: true,
       messages: [...current.messages, userMsg],
@@ -2662,7 +2730,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       if (!sendMessage) throw new Error('Electron agent API is unavailable')
       const result = await sendMessage({
         threadId: state.threadId,
-        content: canvasContext ? `${canvasContext}\n\n${content}` : content,
+        content: [...(canvasContext ? [canvasContext] : []), ...workbenchNotices, content]
+          .filter((part) => part.length > 0)
+          .join('\n\n'),
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
@@ -2805,6 +2875,19 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
               canvasContext,
             },
           },
+          // 这一车没发出去，工作台通知退回队首等下一趟。它跟 canvasContext 不同，
+          // 不进 failedSendSnapshot —— 通知的生命周期独立于「用户是否点重试」。
+          ...(workbenchNotices.length > 0 && state.threadId
+            ? {
+                pendingWorkbenchNoticesByThread: {
+                  ...current.pendingWorkbenchNoticesByThread,
+                  [state.threadId]: [
+                    ...workbenchNotices,
+                    ...(current.pendingWorkbenchNoticesByThread[state.threadId] ?? []),
+                  ],
+                },
+              }
+            : {}),
           runningByThread,
         }
       })

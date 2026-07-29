@@ -5,8 +5,13 @@
 // 与 canvas_* / navigate_page 同款。卡片状态的单一真相源在渲染端 store,
 // 用户在页面上看到的、和这里读写的,是同一份数据。
 //
-// 生成本身仍复用主进程 SeedanceTaskManager(video-workbench:submit IPC),
-// 所以 video_workbench_start 返回的 taskId 可以直接用 check_video_task 长轮询。
+// 生成本身仍复用主进程 SeedanceTaskManager(video-workbench:submit IPC)。
+//
+// 不阻塞纪律:video_workbench_start 立刻返回,绝不等渲染(甚至不等提交)——
+// 工具调用在飞的时候模型不推理、用户排队的 turn/steer 也进不来,用户视角就是
+// 「启动后卡住,没法说话」。批次跑完由渲染端 batchCompletion watcher 主动推一条
+// 摘要给发起线程(turn 在跑就 steer 插话,闲着就随下一条用户消息带走),所以
+// 这些工具的描述里一律不许再出现「poll until…」那类指令。
 //
 // 结构化输出(MCP 规范 2025-11-25):bundled @modelcontextprotocol/server
 // (2.0.0-alpha.2)的 registerTool 原生支持 outputSchema + structuredContent,
@@ -291,7 +296,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([
         '✅ video_workbench_add_tasks — cards added to the workbench page (visible to the user).',
         (params as { autoStart?: boolean }).autoStart
-          ? 'Rendering started: a normal render takes 1–3 minutes. Poll with video_workbench_status (or check_video_task per taskId) until every card is succeeded/failed. Results play inline on the workbench page and are saved locally + to COS automatically.'
+          ? 'Rendering started — this returned IMMEDIATELY and a normal render takes 1–3 minutes. Do NOT poll and do NOT wait: a 「[视频工作台] 批次渲染完成」 summary is pushed to you automatically once every card settles. Results play inline on the workbench page and are saved locally + to COS automatically. Answer the user now and stay available.'
           : 'Cards are FILLED but not started. Ask the user to review, or call video_workbench_start to begin rendering.',
       ], result)
     } catch (error) {
@@ -324,9 +329,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       'Start rendering workbench cards (concurrent). Omit cardIds to start EVERY startable card on the ' +
       'ACTIVE board (draft/failed/succeeded with a non-empty prompt); pass cardIds to start specific ones ' +
-      '(any board). Renders run 1–3 minutes each, concurrently. Returns started/skipped plus a compact ' +
-      '`workbench` overview. After starting, poll video_workbench_status until all cards reach ' +
-      'succeeded/failed — the user watches live progress on the workbench page either way.',
+      '(any board). Renders run 1–3 minutes each, concurrently. Returns IMMEDIATELY (fire-and-forget) ' +
+      'with started/skipped plus a compact `workbench` overview — it does NOT wait for the renders. ' +
+      'Do NOT poll video_workbench_status afterwards: when every card in the batch settles you are ' +
+      'pushed a 「[视频工作台] 批次渲染完成」 summary listing successes, failures and output paths. ' +
+      'The user watches live progress on the workbench page meanwhile.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
     }),
@@ -339,7 +346,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       }
       return okResult([
         result.started.length > 0
-          ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted. Poll video_workbench_status every ~20s until all cards are succeeded/failed; do NOT resubmit.`
+          ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
           : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
       ], result)
     } catch (error) {
@@ -354,8 +361,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       '(look up board names in the boards list). Each card: prompt, spec, status (draft/preparing/' +
       'queued/running/succeeded/failed), compact reference-material name lists, taskId, error, and the ' +
       'saved localPath / permanent remoteUrl for finished videos. Pass boardId to inspect one board; ' +
-      'omit to see all boards. Use it to poll after video_workbench_start, or to inspect what the user ' +
-      'has set up before editing cards.',
+      'omit to see all boards. Use it to inspect what the user has set up before editing cards, or when ' +
+      'the user explicitly asks how a render is going — NOT as a polling loop after ' +
+      'video_workbench_start (batch completion is pushed to you automatically).',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Limit to specific cards. Omit = all.'),
       boardId: z.string().optional().describe('Limit to one board (page). Omit = cards from all boards.'),
@@ -368,7 +376,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       }
       const active = result.cards.filter((c) => c.status === 'preparing' || c.status === 'queued' || c.status === 'running').length
       const banner = active > 0
-        ? `⏳ ${active} card(s) still rendering — poll video_workbench_status again in ~20s. The user sees live progress on the page.`
+        ? `⏳ ${active} card(s) still rendering. Report this to the user and move on — do NOT call this again in a loop; the batch-completion summary is pushed to you automatically. The user sees live progress on the page.`
         : '✅ No card is rendering. Finished videos are playing on the workbench page and saved locally (localPath) + to COS (remoteUrl).'
       return okResult([banner], result)
     } catch (error) {
