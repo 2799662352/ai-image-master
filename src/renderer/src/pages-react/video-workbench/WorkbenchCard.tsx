@@ -501,11 +501,12 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
             // 拖未选中的卡 → 先把选区换成它(FileTreeNode 同款):这样「拖出去的」
             // 恒等于「选中的」,而选中态本身会随每次工作台工具调用带给 agent,
             // cardId 不必再塞进拖拽载荷里。
-            const store = useVideoWorkbenchStore.getState()
-            if (!store.selectedCardIds.includes(card.id)) store.selectCard(card.id)
-            const dragged = useVideoWorkbenchStore.getState().selectedCardIds
-            const paths = dragged
-              .map((id) => store.cards.find((c) => c.id === id)?.localPath)
+            const before = useVideoWorkbenchStore.getState()
+            if (!before.selectedCardIds.includes(card.id)) before.selectCard(card.id)
+            // 同步选区之后再读一次,别把「换选区前」的快照和「换之后」的混着用
+            const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
+            const paths = selectedCardIds
+              .map((id) => cards.find((c) => c.id === id)?.localPath)
               .filter((p): p is string => Boolean(p))
             // 空数组时 serializeFileDrag 什么都不写:还没出片的卡拖进聊天栏
             // 自然落空,不假装递了东西。
