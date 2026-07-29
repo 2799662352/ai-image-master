@@ -21,6 +21,7 @@ import type {
   VideoWorkbenchBoard,
   VideoWorkbenchCard,
   VideoWorkbenchCardInput,
+  VideoWorkbenchInsertAnchor,
   VideoWorkbenchCardStatus,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
@@ -294,8 +295,15 @@ export interface VideoWorkbenchState {
   renameBoard: (id: string, name: string) => boolean
   /** 删除页(连带删卡)。仅剩一页时拒绝;删的是当前页则切到相邻页。 */
   removeBoard: (id: string) => boolean
-  /** 批量追加卡片到当前页(UI 的「+」= addCards([{}]))。返回新卡 id 列表。 */
-  addCards: (inputs: VideoWorkbenchCardInput[]) => string[]
+  /**
+   * 批量新建卡片,返回新卡 id 列表。
+   * - 不传 anchor:追加到当前页末尾(UI 的「+」= addCards([{}]))。
+   * - 传 anchor:插到锚点卡前/后,并落在**锚点所在的页**(不是 activeBoardId),
+   *   否则在非活动页插卡会跑到别的页去。
+   * - 锚点不存在:抛错、零写入。调用方明确要求了位置,静默退化成追加等于
+   *   给它一个错误的成功。
+   */
+  addCards: (inputs: VideoWorkbenchCardInput[], anchor?: VideoWorkbenchInsertAnchor) => string[]
   /** 更新卡片可编辑字段(生成中的卡片拒绝编辑)。 */
   updateCard: (id: string, patch: VideoWorkbenchCardInput) => boolean
   removeCard: (id: string) => void
@@ -844,20 +852,57 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     return true
   },
 
-  addCards: (inputs) => {
+  addCards: (inputs, anchor) => {
     const created: VideoWorkbenchCard[] = []
+    let targetBoardId: string | undefined
+    let missingAnchor: string | null = null
+
     set((state) => {
-      const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
-      inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
+      if (!anchor) {
+        targetBoardId = state.activeBoardId
+        const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
+        inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
+        return {
+          cards: [...state.cards, ...created],
+          revision: state.revision + 1,
+          structureRevision: state.structureRevision + 1,
+        }
+      }
+
+      const anchorId = anchor.afterCardId ?? anchor.beforeCardId
+      const at = state.cards.findIndex((c) => c.id === anchorId)
+      if (at < 0) {
+        missingAnchor = anchorId
+        return {}
+      }
+      const anchorCard = state.cards[at]
+      targetBoardId = anchorCard.boardId
+      // order 交给紧随其后的 reorderBoard 压实,这里的 0 只是占位。
+      inputs.forEach((input) => created.push(buildCard(input, 0, anchorCard.boardId)))
+      const next = [...state.cards]
+      next.splice(anchor.afterCardId ? at + 1 : at, 0, ...created)
       return {
-        cards: [...state.cards, ...created],
+        cards: reorderBoard(next, anchorCard.boardId),
         revision: state.revision + 1,
         structureRevision: state.structureRevision + 1,
       }
     })
-    for (const card of created) persistNow(card)
+
+    if (missingAnchor !== null) throw new Error(`anchor card not found: ${missingAnchor}`)
+
+    const createdIds = new Set(created.map((c) => c.id))
+    // reorderBoard 会替换卡片对象(order 被压实),所以必须从 store 取压实后的版本再落库,
+    // 否则插入路径会把占位 order 0 写进 IndexedDB,重载后顺序就错了。
+    const fresh = get().cards.filter((c) => createdIds.has(c.id))
+    for (const card of fresh) persistNow(card)
     // agent 经 MCP 加卡时素材是随卡一起来的,不走 addMaterials —— 转存要在这里接。
-    for (const card of created) startTransfersForCard(card)
+    for (const card of fresh) startTransfersForCard(card)
+    if (anchor) {
+      // 插入让同页兄弟卡的 order 变了,补写 —— 只这一页,别把整个工作台重写一遍。
+      for (const card of get().cards) {
+        if (card.boardId === targetBoardId && !createdIds.has(card.id)) schedulePersist(card)
+      }
+    }
     // evict() 只删库并返回被删 id。必须把它们同步从内存摘掉 —— 否则界面上卡还在、
     // 重启后凭空消失,症状延迟到下次启动才出现,是最难排查的一类。
     // 淘汰也不该悄悄发生:弹一次 toast 说明为了放下新卡牺牲了几张旧卡。
