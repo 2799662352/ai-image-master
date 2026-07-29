@@ -103,7 +103,7 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
     generateAudio: input.generateAudio !== false,
     mode: normalizeMode(input.mode),
     ...(seed !== undefined ? { seed } : {}),
-    webSearch: input.webSearch === true,
+    webSearch: input.webSearch !== false,
     referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages'),
     referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos'),
     referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios'),
