@@ -36,6 +36,7 @@ import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './Ri
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { serializeFileDrag } from '../../features/file-explorer/dragHelpers'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
 
@@ -150,6 +151,8 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   const moveMaterial = useVideoWorkbenchStore((s) => s.moveMaterial)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
   const cancelCards = useVideoWorkbenchStore((s) => s.cancelCards)
+  const selected = useVideoWorkbenchStore((s) => s.selectedCardIds.includes(card.id))
+  const selectCard = useVideoWorkbenchStore((s) => s.selectCard)
 
   const busy = card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
 
@@ -443,7 +446,9 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       ref={cardRef}
       data-testid={`vw-card-${card.id}`}
       className={[
-        'vw-card border border-[#3F3F46] bg-[#111113] relative',
+        'vw-card border bg-[#111113] relative',
+        // 选中只换边框色:加投影/填充会遮挡内容,而卡片主体全是可读信息
+        selected ? 'border-[#FCE300]' : 'border-[#3F3F46]',
         dragging ? 'vw-dragging' : '',
         dropEdge === 'above' ? 'vw-drop-above' : dropEdge === 'below' ? 'vw-drop-below' : '',
         fileOver ? 'vw-file-over' : '',
@@ -469,15 +474,46 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       onDrop={handleDrop}
       onPaste={handlePaste}
     >
-      {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除 */}
-      <div className="flex items-center gap-2 px-4 pt-3">
+      {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除。
+          这一行同时是**唯一**的选中命中区 —— 卡片主体密布输入框与药丸,整卡点选会和它们打架。 */}
+      <div
+        data-testid="vw-card-header"
+        className="flex items-center gap-2 px-4 pt-3"
+        onClick={(e) => {
+          // 行内那几个控件(删除等)各自 stopPropagation 不现实,统一按标签放行
+          if ((e.target as HTMLElement).closest('button')) return
+          selectCard(card.id, e.shiftKey ? 'range' : e.ctrlKey || e.metaKey ? 'toggle' : 'replace')
+        }}
+      >
         <span
           className="vw-drag-handle text-white/40 hover:text-[#FCE300] select-none text-sm leading-none px-1"
           title="拖动排序"
           draggable
           onDragStart={(e) => {
+            // 页内排序只认被拖那一张,即便当时选中了好几张 —— 换位语义不变。
             e.dataTransfer.setData(CARD_DRAG_MIME, card.id)
-            e.dataTransfer.effectAllowed = 'move'
+
+            // 拖出去给聊天栏的是**文件路径**,复用文件树那套词表
+            // (application/x-catimation-file-paths)。聊天栏已经会吃它:附件 + 引用 chip,
+            // 而 <userData>/agent/uploads 在 fs:stat 与发送两道门里都放行。
+            // 为卡片另造一套 MIME + 描述符协议是多余的第三条投放管线。
+            //
+            // 拖未选中的卡 → 先把选区换成它(FileTreeNode 同款):这样「拖出去的」
+            // 恒等于「选中的」,而选中态本身会随每次工作台工具调用带给 agent,
+            // cardId 不必再塞进拖拽载荷里。
+            const before = useVideoWorkbenchStore.getState()
+            if (!before.selectedCardIds.includes(card.id)) before.selectCard(card.id)
+            // 同步选区之后再读一次,别把「换选区前」的快照和「换之后」的混着用
+            const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
+            const paths = selectedCardIds
+              .map((id) => cards.find((c) => c.id === id)?.localPath)
+              .filter((p): p is string => Boolean(p))
+            // 空数组时 serializeFileDrag 什么都不写:还没出片的卡拖进聊天栏
+            // 自然落空,不假装递了东西。
+            serializeFileDrag(e.dataTransfer, paths)
+
+            // 'move' 会让聊天栏那侧拿不到 copy 效果 —— 双目标必须 copyMove。
+            e.dataTransfer.effectAllowed = 'copyMove'
             setDragging(true)
             onDragStateChange(true)
           }}

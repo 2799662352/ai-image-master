@@ -228,10 +228,21 @@ export interface WorkbenchSummary {
   activeBoardId: string
   boards: WorkbenchBoardBrief[]
   statusCounts: WorkbenchStatusCounts
+  /**
+   * 用户此刻在 UI 里选中的卡。**按需回读,不主动推送** —— 选中是高频操作,
+   * 推送等于刷屏(画布的先例也是只在「用户主动打开画布」这种明确交接手势时
+   * 推一次)。任何一次工作台工具调用都顺带带出它。
+   *
+   * 别把它当成「该对哪些卡动手」的指令:agent 的目标卡永远由参数显式给出。
+   * 它的用途是让「生成选中的那几张」「这几张重做」这类指代能落到具体 id 上。
+   *
+   * 拖卡进聊天栏时选区会跟着被拖的卡走,所以这里也恰好是「用户刚递过来的那几张」。
+   */
+  selectedCardIds: string[]
 }
 
 export function snapshotWorkbench(
-  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId'>,
+  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId' | 'selectedCardIds'>,
 ): WorkbenchSummary {
   const statusCounts: WorkbenchStatusCounts = {
     draft: 0,
@@ -256,6 +267,7 @@ export function snapshotWorkbench(
       .sort((a, b) => a.order - b.order)
       .map((b) => ({ id: b.id, name: b.name, cardCount: cardCountByBoard.get(b.id) ?? 0 })),
     statusCounts,
+    selectedCardIds: [...state.selectedCardIds],
   }
 }
 
@@ -302,6 +314,18 @@ export interface VideoWorkbenchState {
   structureRevision: number
 
   /**
+   * 当前选中的卡片 id。**纯 UI 状态**:不落库、不进 IR、不进撤销栈,
+   * 也刻意不递增 revision / structureRevision —— 那两个计数器表达
+   * 「编排意图变了」,选中不是编排意图。切页清空。
+   */
+  selectedCardIds: string[]
+  /**
+   * Shift 区间选的锚点(上一次 replace/toggle 命中的那张)。与 selectedCardIds
+   * 同样是 UI 状态。锚点卡被删掉后置空,区间选退化成单击。
+   */
+  selectionAnchorId?: string
+
+  /**
    * 撤销/重做栈,存的是「那一刻的编排意图」快照(见 workbenchHistory.ts)。
    *
    * 入栈完全由 revision 变化驱动 —— 不需要在 action 里逐个埋点,也因此天然
@@ -334,6 +358,16 @@ export interface VideoWorkbenchState {
   removeCard: (id: string) => void
   /** 拖拽排序:把卡片移到目标下标。 */
   moveCard: (id: string, toIndex: number) => void
+  /**
+   * 选中卡片。
+   * - `'replace'`(缺省):只选这张。
+   * - `'toggle'`:Ctrl/Cmd 加选,已选则取消。
+   * - `'range'`:Shift 区间选,从锚点到该卡(同页内,按当前显示序)。无锚点时等同单击。
+   */
+  selectCard: (id: string, mode?: 'replace' | 'toggle' | 'range') => void
+  clearSelection: () => void
+  /** 批量删卡:一次事务,structureRevision 只走一格(逐张调 removeCard 会走 N 格 + N 条撤销)。 */
+  removeCards: (ids: string[]) => void
   /** 追加参考素材(拖放/文件选择,自动截断到上限)。 */
   addMaterials: (id: string, kind: MaterialKind, materials: VideoWorkbenchMaterial[]) => void
   removeMaterial: (id: string, kind: MaterialKind, index: number) => void
@@ -734,7 +768,11 @@ type WorkbenchSetter = (partial: Partial<VideoWorkbenchState>) => void
  * 与落盘拆成两半是因为调用方要在「订阅者别把这次写当成新编辑」的闸内执行同步
  * 部分,而闸绝不能跨 await —— 否则数据库写的那几毫秒里用户的编辑会漏进撤销栈。
  */
-function applyPlanToState(set: WorkbenchSetter, plan: WorkbenchWritePlan): void {
+function applyPlanToState(
+  set: WorkbenchSetter,
+  plan: WorkbenchWritePlan,
+  prev: VideoWorkbenchState,
+): void {
   // 一条 500ms 前排好的旧内容写入会在整板写之后落地,把刚写好的卡片打回旧值。
   for (const id of [...plan.persist.cards.map((c) => c.id), ...plan.persist.removeCardIds]) {
     const timer = persistTimers.get(id)
@@ -743,8 +781,30 @@ function applyPlanToState(set: WorkbenchSetter, plan: WorkbenchWritePlan): void 
       persistTimers.delete(id)
     }
   }
-  set(plan.next)
+  set({ ...plan.next, ...pruneSelection(prev, plan.next.cards) })
   writeActiveBoard(plan.next.activeBoardId)
+}
+
+/**
+ * 整板写(agent 的 applyIR、撤销/重做)之后把选中态里已经不存在的卡剔掉。
+ *
+ * 逐张删卡那条路径各自剔过了,但整板写是另一条路:它直接换掉整个 cards 数组,
+ * 不经过 removeCard(s)。留下悬空 id 的后果不是显示错乱(渲染按卡片查选中,查不到
+ * 就不高亮),而是 ⚡ 无参会拿着一串不存在的 id 空跑,以及 agent 从 status 里读到
+ * 一份指向已删卡的选中列表。
+ */
+function pruneSelection(
+  prev: VideoWorkbenchState,
+  cards: VideoWorkbenchCard[],
+): Partial<VideoWorkbenchState> {
+  if (prev.selectedCardIds.length === 0 && !prev.selectionAnchorId) return {}
+  const alive = new Set(cards.map((c) => c.id))
+  const selectedCardIds = prev.selectedCardIds.filter((id) => alive.has(id))
+  const anchorAlive = prev.selectionAnchorId ? alive.has(prev.selectionAnchorId) : false
+  return {
+    selectedCardIds,
+    selectionAnchorId: anchorAlive ? prev.selectionAnchorId : undefined,
+  }
 }
 
 /**
@@ -783,6 +843,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   hydrated: false,
   revision: 0,
   structureRevision: 0,
+  selectedCardIds: [],
+  selectionAnchorId: undefined,
   undoStack: [],
   redoStack: [],
   autoImportPortrait: readAutoImportPortrait(),
@@ -875,6 +937,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     set((state) => ({
       boards: [...state.boards, board],
       activeBoardId: board.id,
+      selectedCardIds: [],
+      selectionAnchorId: undefined,
       revision: state.revision + 1,
       structureRevision: state.structureRevision + 1,
     }))
@@ -887,7 +951,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
 
   switchBoard: (id) => {
     if (!get().boards.some((b) => b.id === id)) return
-    set({ activeBoardId: id })
+    // 选中是当前页的语境,切页必须清 —— 否则 ⚡ 会去生成另一页上看不见的卡。
+    set({ activeBoardId: id, selectedCardIds: [], selectionAnchorId: undefined })
     writeActiveBoard(id)
   },
 
@@ -926,6 +991,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       boards,
       activeBoardId,
       cards: state.cards.filter((c) => c.boardId !== id),
+      selectedCardIds: [],
+      selectionAnchorId: undefined,
       revision: state.revision + 1,
       structureRevision: state.structureRevision + 1,
     })
@@ -1085,6 +1152,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       boardId = removed.boardId
       return {
         cards: reorderBoard(state.cards.filter((c) => c.id !== id), removed.boardId),
+        selectedCardIds: state.selectedCardIds.filter((x) => x !== id),
+        selectionAnchorId: state.selectionAnchorId === id ? undefined : state.selectionAnchorId,
         revision: state.revision + 1,
         structureRevision: state.structureRevision + 1,
       }
@@ -1136,6 +1205,98 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     // 只补写这一页 —— 别的页 order 没动。
     for (const card of get().cards) {
       if (card.boardId === boardId) schedulePersist(card)
+    }
+  },
+
+  selectCard: (id, mode = 'replace') => {
+    const state = get()
+    if (!state.cards.some((c) => c.id === id)) return
+
+    if (mode === 'replace') {
+      set({ selectedCardIds: [id], selectionAnchorId: id })
+      return
+    }
+    if (mode === 'toggle') {
+      const has = state.selectedCardIds.includes(id)
+      if (has) {
+        const next = state.selectedCardIds.filter((x) => x !== id)
+        set({
+          selectedCardIds: next,
+          // 只卸锚点卡本身才清锚点;卸别的加选卡不动锚点,否则 Shift 区间会丢 replace 那头
+          selectionAnchorId:
+            id === state.selectionAnchorId || next.length === 0
+              ? undefined
+              : state.selectionAnchorId,
+        })
+      } else {
+        set({
+          selectedCardIds: [...state.selectedCardIds, id],
+          selectionAnchorId: state.selectionAnchorId ?? id,
+        })
+      }
+      return
+    }
+
+    const anchor = state.selectionAnchorId
+    if (!anchor) {
+      set({ selectedCardIds: [id], selectionAnchorId: id })
+      return
+    }
+    // 区间限定在目标卡所在页内。跨页区间没有意义:页与页在 UI 上根本不同屏。
+    const target = state.cards.find((c) => c.id === id)!
+    const boardCards = state.cards.filter((c) => c.boardId === target.boardId)
+    const from = boardCards.findIndex((c) => c.id === anchor)
+    const to = boardCards.findIndex((c) => c.id === id)
+    if (from < 0) {
+      set({ selectedCardIds: [id], selectionAnchorId: id })
+      return
+    }
+    const [lo, hi] = from <= to ? [from, to] : [to, from]
+    set({
+      selectedCardIds: boardCards.slice(lo, hi + 1).map((c) => c.id),
+      // 锚点保持不动:连续 Shift 点击要能反复从同一头拉伸区间
+      selectionAnchorId: anchor,
+    })
+  },
+
+  clearSelection: () => {
+    if (get().selectedCardIds.length === 0 && !get().selectionAnchorId) return
+    set({ selectedCardIds: [], selectionAnchorId: undefined })
+  },
+
+  removeCards: (ids) => {
+    const gone = new Set(ids)
+    const boardIds = new Set<string>()
+    let removed: VideoWorkbenchCard[] = []
+    set((state) => {
+      removed = state.cards.filter((c) => gone.has(c.id))
+      if (removed.length === 0) return {}
+      for (const c of removed) if (c.boardId) boardIds.add(c.boardId)
+      let cards = state.cards.filter((c) => !gone.has(c.id))
+      for (const boardId of boardIds) cards = reorderBoard(cards, boardId)
+      return {
+        cards,
+        selectedCardIds: state.selectedCardIds.filter((x) => !gone.has(x)),
+        selectionAnchorId: gone.has(state.selectionAnchorId ?? '')
+          ? undefined
+          : state.selectionAnchorId,
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
+    })
+    if (removed.length === 0) return
+    const db = getWorkbenchDb()
+    for (const card of removed) {
+      const timer = persistTimers.get(card.id)
+      if (timer) {
+        clearTimeout(timer)
+        persistTimers.delete(card.id)
+      }
+      void db.remove(card.id).catch(() => {})
+    }
+    // 兄弟卡 order 变了,补写受影响的那几页 —— 别把整个工作台重写一遍。
+    for (const card of get().cards) {
+      if (card.boardId && boardIds.has(card.boardId)) schedulePersist(card)
     }
   },
 
@@ -1201,18 +1362,25 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     const api = getApi()?.videoWorkbench
     const result: StartResult = { started: [], skipped: [] }
     if (!api?.submit) {
-      for (const id of ids ?? get().cards.map((c) => c.id)) {
+      const selected = get().selectedCardIds
+      const scope = ids ?? (selected.length > 0 ? selected : get().cards.map((c) => c.id))
+      for (const id of scope) {
         result.skipped.push({ cardId: id, reason: '视频服务未就绪(preload 桥缺失)' })
       }
       return result
     }
 
-    // 缺省(不带 ids)只启动当前页的卡片 —— 页与页之间互相隔离
+    // 优先级:显式 ids > 用户选中 > 当前整页。
+    //
+    // 「有选中就只作用于选中」是 UI 侧的期待;MCP 走的是显式 ids 分支,不受影响 ——
+    // agent 不该因为用户碰巧选了几张卡就改变行为。
+    const selected = get().selectedCardIds
+    const scope: string[] | undefined = ids ?? (selected.length > 0 ? selected : undefined)
     const targets = get().cards.filter((c) =>
-      ids ? ids.includes(c.id) : c.boardId === get().activeBoardId,
+      scope ? scope.includes(c.id) : c.boardId === get().activeBoardId,
     )
-    if (ids) {
-      for (const id of ids) {
+    if (scope) {
+      for (const id of scope) {
         if (!targets.some((c) => c.id === id)) result.skipped.push({ cardId: id, reason: '卡片不存在' })
       }
     }
@@ -1221,8 +1389,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of targets) {
       const gate = canStart(card)
       if (!gate.ok) {
-        // 缺省全量启动时,draft 空卡静默跳过即可;显式指定 id 才值得报原因
-        if (ids || gate.reason !== '提示词为空') {
+        // 整页全量启动时 draft 空卡静默跳过;显式指名(id / 选中)才报原因
+        if (scope || gate.reason !== '提示词为空') {
           result.skipped.push({ cardId: card.id, reason: gate.reason! })
         }
         continue
@@ -1487,10 +1655,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   exportIR: () => exportWorkbenchIR(get()),
 
   applyIR: async (ir, opts) => {
-    const plan = planApplyIR(get(), ir, opts)
+    const prev = get()
+    const plan = planApplyIR(prev, ir, opts)
     if (!plan.next || !plan.persist) return plan.result
     const write = { next: plan.next, persist: plan.persist }
-    applyPlanToState(set, write)
+    applyPlanToState(set, write, prev)
     await flushPlanToDb(write)
     // 整板回写同样可能带进新的外链图(agent 手写 IR 时最常见)。
     for (const card of write.persist.cards) startTransfersForCard(card)
@@ -1544,7 +1713,7 @@ function restoreStep(
   const write = { next: plan.next, persist: plan.persist }
   restoringHistory = true
   try {
-    applyPlanToState(set, write)
+    applyPlanToState(set, write, state)
     set(stacks)
   } finally {
     restoringHistory = false
@@ -1667,6 +1836,8 @@ export function resetWorkbenchStoreForTest(): void {
       hydrated: false,
       revision: 0,
       structureRevision: 0,
+      selectedCardIds: [],
+      selectionAnchorId: undefined,
       undoStack: [],
       redoStack: [],
       autoImportPortrait: false,

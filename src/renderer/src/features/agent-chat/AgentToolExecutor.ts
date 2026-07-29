@@ -407,6 +407,9 @@ export class AgentToolExecutor {
           total: cards.length,
           activeBoardId: summary.activeBoardId,
           boards: summary.boards,
+          // status 是**读**工具,不带 workbench 包装,所以选中态得在这一层平铺 ——
+          // 否则「按需回读」在唯一一个专门用来回读的工具上反而看不到它。
+          selectedCardIds: summary.selectedCardIds,
           cards: cards.map(snapshotCard),
         }
       }

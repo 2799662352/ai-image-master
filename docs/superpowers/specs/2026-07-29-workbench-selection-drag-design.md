@@ -53,27 +53,45 @@ agent 不应该因为用户碰巧选了几张卡就改变行为——那正是�
 MIME 词表集中在 `file-explorer/dragHelpers.ts`。卡片拖拽今天用的是
 `application/x-vw-card`，载荷仅一个裸 id、`effectAllowed = 'move'`，仅供页内排序。
 
-### 改动
+### 改动（2026-07-29 修订：不另造投放协议）
 
-卡片拖拽手柄的 `onDragStart` 增加第二个 `setData`：新 MIME + JSON 卡片描述符，
-并把 `effectAllowed` 改为 `'copyMove'`（`FileTreeNode.tsx:198` 已有同款双目标先例）。
+卡片拖拽手柄的 `onDragStart` 增加第二个 `setData`——但写的是**既有的
+`application/x-catimation-file-paths`**（复用 `serializeFileDrag`），载荷就是产物的
+`localPath` 数组。`effectAllowed` 改 `'copyMove'`（`FileTreeNode.tsx:198` 同款双目标先例）。
 页内排序继续读旧 MIME，行为不变。
 
-**拖动一张已选中的卡 = 拖动全部选中项**，与文件树的多选拖拽语义一致。
+**于是聊天栏一行都不用改。** 它既有的 Tier 2 分支已经会把这个 MIME 变成
+`addAttachment` + `addPendingReference`（引用 chip）。两道门都已放行卡片产物目录：
+`fsIpc.resolveAllowedRoots()` 显式 push `<userData>/agent/uploads`（`fs:stat` 过），
+`AgentManager` 发送时也补同一段（引用不会死在 outside allowed roots）。
 
-聊天栏 `onDrop` 增加一个分支，落进去的是：
+**拖动一张已选中的卡 = 拖动全部选中项；拖动未选中的卡先把选区换成它**——
+后半句照抄 `FileTreeNode.onDragStart`（"拖动未选中的节点 → 替换选区为该节点，
+保证拖出的就是用户看到的"）。这条不只是 UX 对齐，它还消掉了「cardId 怎么送给模型」
+这个问题：**拖出去的恒等于选中的**，而选中态本身会随每一次工作台工具调用带给 agent
+（见下一节），所以 `cardId` 不必塞进拖拽载荷。
 
-1. **视频引用 chip** —— 指向该版本的 `localPath`（已验证在白名单内），走既有的
-   `addAttachment` + `addPendingReference` 通路。
-2. **一行卡片信息** —— 提示词摘要 + `cardId`，让模型知道这是工作台的哪张卡、可以拿 `cardId`
-   去调工具。这一行是可见文本，不是隐藏前缀：用户看得见自己递过去了什么。
+#### 被推翻的第一版设计
 
-降级：`localPath` 被 7 天清理扫掉时退到 `remoteUrl`。注意 **`.mp4` 既不算图片也不算音频**，
-URL 引用在 `mapReferencesToInputItems` 里会产出空结果，所以此时只能作为文本提及送达，
-UI 需如实提示「仅传了链接，未附视频」。尚无结果的卡片（草稿/渲染中）只送卡片信息行。
+第一版给卡片单开了 `application/x-catimation-workbench-cards` + `VideoWorkbenchCardDragItem`
+描述符 + 聊天栏专用 drop handler + 一行可见文本（含 `cardId` 与提示词摘录）。**已作废。**
+它在「引用 chip」之外立了第三条投放管线，而本仓库与 tldraw 的既有教条是一致的：
+拖拽载荷只带**真实来源**（文件树带路径、画布 asset 带 `meta.assetPath`），
+「这是什么、属于谁」的认领工作交给消费侧或按需回读，而不是发明协议随载荷携带。
 
-聊天栏目前**没有任何拖拽悬停反馈**（`onDragOver` 只调了 `preventDefault`），需要补一个投放高亮，
-否则用户不知道能往哪儿放。
+#### 刻意接受的空缺
+
+还没出片的卡（草稿/渲染中）拖进聊天栏**什么都不会发生**——`serializeFileDrag` 收到空数组
+直接 return，不写任何 MIME。不为它造「信息行」或报错：没有产物就是没有东西可递。
+选区仍然跟着拖动走，所以 agent 下次调工具时照样看得见这几张卡。
+
+> **后续修订：投放悬停高亮已补（`e1e0dcd`）。** 原判断是「反馈缺失属于既有链路的问题，
+> 从文件树拖文件进来同样没有，该单独一刀补」。但这一刀恰好新增了一个投放源，缺口更显眼，
+> 所以回头补上了：照 `FileTreeNode.onDragOver / onDragLeave` 抄——MIME 白名单先筛、显式设
+> `dropEffect = 'copy'`（组合器只复制，从不移动源文件）、`dragleave` 用 `relatedTarget`
+> 包含判断防子元素闪烁。`preventDefault` 刻意保持无条件：它是「这里可以放」的总开关，
+> 按 MIME 收窄会连带掐掉浏览器原生的选中文本拖入 textarea，收窄的只是高亮。
+> MIME 判定放进 `dragHelpers.dragCarriesDroppablePayload`，不在第四处重复字面量。
 
 ## agent 如何知道选中态
 
@@ -101,10 +119,11 @@ UI 需如实提示「仅传了链接，未附视频」。尚无结果的卡片�
 - 点击卡片主体的输入框与药丸**不**改变选中（防误选守卫）。
 - 有选中时 ⚡ 只生成选中项且文案随之变化；无选中时维持整页。
 - MCP `video_workbench_start` 带显式 `cardIds` 时不受选中影响。
-- 拖一张已选中的卡 = 拖全部选中项。
-- 投放到聊天栏产生引用 chip + 可见信息行；chip 指向的路径能通过发送侧白名单（**核心守卫**）。
-- 无 localPath 时退到 remoteUrl 并提示「仅传了链接」。
-- 草稿卡拖入只产生信息行，不产生 chip。
+- 拖一张已选中的卡 = 递出全部选中项的路径；拖未选中的卡 → 选区换成它且只递它自己。
+- 拖拽写的是 `application/x-catimation-file-paths`，值为 `localPath` 数组（**核心守卫**：
+  该目录在 `fsIpc.resolveAllowedRoots` 与 `AgentManager` 发送侧都放行，chip 不会死在
+  outside allowed roots）。
+- 还没出片的卡不写路径 MIME；选中里混着未出片的卡时只递有产物的那些。
 - 页内排序仍读旧 MIME，拖拽排序行为无回归。
 - `snapshotWorkbench` 带出 `selectedCardIds`。
 
@@ -113,7 +132,7 @@ UI 需如实提示「仅传了链接，未附视频」。尚无结果的卡片�
 - `src/renderer/src/features/video-workbench/store.ts`（选中态 + `startCards` 无参语义 + `snapshotWorkbench`）
 - `src/renderer/src/pages-react/video-workbench/WorkbenchCard.tsx`（头部命中区 + 拖拽载荷）
 - `src/renderer/src/pages-react/VideoWorkbenchPage.tsx`（⚡ 文案）
-- `src/renderer/src/features/file-explorer/dragHelpers.ts`（新 MIME 词表）
-- `src/renderer/src/features/agent-chat/MentionInput.tsx`（投放分支 + 悬停反馈）
+- ~~`src/renderer/src/features/file-explorer/dragHelpers.ts`~~（修订后不需要：复用既有 `serializeFileDrag`）
+- ~~`src/renderer/src/features/agent-chat/MentionInput.tsx`~~（修订后不需要：既有 Tier 2 已经接住）
 - `src/main/mcp/tools/videoWorkbenchTools.ts`（summary schema）
 - 对应测试

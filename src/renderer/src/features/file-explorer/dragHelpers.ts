@@ -34,6 +34,20 @@ export function parseFileDrop(dt: DataTransfer): string[] {
   return []
 }
 
+/**
+ * True when a drag carries something our drop targets can actually act on:
+ * internal file paths, a quote, or OS files.
+ *
+ * Exists so drop targets can light up a "you can drop here" affordance without
+ * re-hardcoding the MIME literals — this module owns the vocabulary. Deliberately
+ * does NOT decide whether a given target accepts the payload (FileTreeNode still
+ * refuses rows that have no destination dir); it only answers "is this one of ours".
+ */
+export function dragCarriesDroppablePayload(dt: DataTransfer): boolean {
+  const types = dt.types
+  return types.includes(FILE_TYPE) || types.includes(QUOTE_TYPE) || types.includes('Files')
+}
+
 export function serializeQuoteDrag(dt: DataTransfer, quote: string): void {
   dt.setData(QUOTE_TYPE, quote)
 }

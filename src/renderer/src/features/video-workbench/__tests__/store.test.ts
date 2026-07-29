@@ -317,7 +317,7 @@ describe('snapshotWorkbench 全局摘要', () => {
       { ...buildCard({ prompt: 'c' }, 0, 'b2'), status: 'succeeded' as const },
       { ...buildCard({ prompt: 'd' }, 1, 'b2'), status: 'failed' as const },
     ]
-    const summary = snapshotWorkbench({ cards, boards, activeBoardId: 'b2' })
+    const summary = snapshotWorkbench({ cards, boards, activeBoardId: 'b2', selectedCardIds: [] })
     expect(summary).toEqual({
       activeBoardId: 'b2',
       boards: [
@@ -325,6 +325,7 @@ describe('snapshotWorkbench 全局摘要', () => {
         { id: 'b2', name: '分镜', cardCount: 2 },
       ],
       statusCounts: { draft: 1, preparing: 0, queued: 0, running: 1, succeeded: 1, failed: 1 },
+      selectedCardIds: [],
     })
   })
 
@@ -334,6 +335,7 @@ describe('snapshotWorkbench 全局摘要', () => {
       cards: [{ ...buildCard({ prompt: 'x' }, 0, 'b1'), status: 'weird' as never }],
       boards,
       activeBoardId: 'b1',
+      selectedCardIds: [],
     })
     expect(summary.boards).toEqual([{ id: 'b1', name: '页面 1', cardCount: 1 }])
     expect(summary.statusCounts).toEqual({ draft: 0, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 })
@@ -614,5 +616,163 @@ describe('超上限淘汰', () => {
     })
     const rows = await getWorkbenchDb().list()
     expect(rows).toHaveLength(WORKBENCH_MAX_CARDS)
+  })
+})
+
+describe('选中态', () => {
+  function seed(n: number): string[] {
+    return useVideoWorkbenchStore.getState().addCards(
+      Array.from({ length: n }, (_, i) => ({ prompt: `p${i}` })),
+    )
+  }
+
+  it('单击替换选中,Ctrl 切换,Shift 选区间', () => {
+    const ids = seed(5)
+    const s = () => useVideoWorkbenchStore.getState()
+
+    s().selectCard(ids[1])
+    expect(s().selectedCardIds).toEqual([ids[1]])
+
+    s().selectCard(ids[3])
+    expect(s().selectedCardIds).toEqual([ids[3]])
+
+    s().selectCard(ids[0], 'toggle')
+    expect(s().selectedCardIds).toEqual([ids[3], ids[0]])
+    s().selectCard(ids[0], 'toggle')
+    expect(s().selectedCardIds).toEqual([ids[3]])
+
+    // 锚点 = 上一次 replace/toggle 命中的那张(ids[3]),区间到 ids[1]
+    s().selectCard(ids[1], 'range')
+    expect([...s().selectedCardIds].sort()).toEqual([ids[1], ids[2], ids[3]].sort())
+  })
+
+  it('没有锚点时 Shift 等同单击', () => {
+    const ids = seed(3)
+    useVideoWorkbenchStore.getState().selectCard(ids[2], 'range')
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([ids[2]])
+  })
+
+  it('选中不递增 revision / structureRevision', () => {
+    const ids = seed(2)
+    const before = useVideoWorkbenchStore.getState()
+    const rev = before.revision
+    const structRev = before.structureRevision
+    before.selectCard(ids[0])
+    const after = useVideoWorkbenchStore.getState()
+    expect(after.revision).toBe(rev)
+    expect(after.structureRevision).toBe(structRev)
+  })
+
+  it('切页清空选中', () => {
+    const ids = seed(2)
+    const store = useVideoWorkbenchStore.getState()
+    store.selectCard(ids[0])
+    const other = store.addBoard('第二页')
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([])
+
+    useVideoWorkbenchStore.getState().selectCard(
+      useVideoWorkbenchStore.getState().addCards([{ prompt: 'x' }])[0],
+    )
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toHaveLength(1)
+    useVideoWorkbenchStore.getState().switchBoard(other)
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([])
+  })
+
+  it('删卡把它从选中里剪掉', () => {
+    const ids = seed(3)
+    const store = useVideoWorkbenchStore.getState()
+    store.selectCard(ids[0])
+    store.selectCard(ids[1], 'toggle')
+    useVideoWorkbenchStore.getState().removeCard(ids[0])
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([ids[1]])
+  })
+
+  it('removeCards 一次事务删多张,order 重新密排', () => {
+    const ids = seed(4)
+    useVideoWorkbenchStore.getState().removeCards([ids[0], ids[2]])
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.map((c) => c.id)).toEqual([ids[1], ids[3]])
+    expect(cards.map((c) => c.order)).toEqual([0, 1])
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([])
+  })
+
+  it('removeCards 只让 structureRevision 走一格', () => {
+    const ids = seed(3)
+    const structRev = useVideoWorkbenchStore.getState().structureRevision
+    useVideoWorkbenchStore.getState().removeCards([ids[0], ids[1]])
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(structRev + 1)
+  })
+})
+
+describe('无参批量操作吃选中态', () => {
+  it('有选中时 startCards() 只启动选中项', async () => {
+    const submit = mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' },
+      { prompt: 'b' },
+      { prompt: 'c' },
+    ])
+    useVideoWorkbenchStore.getState().selectCard(ids[1])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toEqual([ids[1]])
+    expect(submit).toHaveBeenCalledTimes(1)
+  })
+
+  it('无选中时 startCards() 维持整页', async () => {
+    mockSubmit()
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toHaveLength(2)
+  })
+
+  it('显式 cardIds 无视选中 —— MCP 路径不受用户选中影响', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[0])
+    const result = await useVideoWorkbenchStore.getState().startCards([ids[1]])
+    expect(result.started).toEqual([ids[1]])
+  })
+
+  it('选中项在别的页时仍只启动选中项', async () => {
+    mockSubmit()
+    const first = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }])
+    const other = useVideoWorkbenchStore.getState().addBoard('第二页')
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'b' }])
+    useVideoWorkbenchStore.getState().switchBoard(other)
+    // 切页已清空选中,这里手动选回第一页那张,模拟「选中与活动页不一致」
+    useVideoWorkbenchStore.getState().selectCard(first[0])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toEqual([first[0]])
+  })
+
+  it('选中一张空白草稿点⚡,如实报「提示词为空」而不是静默无事发生', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: '' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[0])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toEqual([])
+    expect(result.skipped).toEqual([{ cardId: ids[0], reason: '提示词为空' }])
+  })
+})
+
+describe('摘要带出选中态', () => {
+  it('snapshotWorkbench 回带 selectedCardIds', () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[1])
+    const summary = snapshotWorkbench(useVideoWorkbenchStore.getState())
+    expect(summary.selectedCardIds).toEqual([ids[1]])
+  })
+
+  it('没有选中时是空数组而不是缺字段', () => {
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }])
+    expect(snapshotWorkbench(useVideoWorkbenchStore.getState()).selectedCardIds).toEqual([])
+  })
+
+  it('回带的是副本 —— 之后改选中不会篡改已发出的摘要', () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[0])
+    const summary = snapshotWorkbench(useVideoWorkbenchStore.getState())
+    useVideoWorkbenchStore.getState().selectCard(ids[1], 'toggle')
+    expect(summary.selectedCardIds).toEqual([ids[0]])
   })
 })

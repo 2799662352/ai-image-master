@@ -8,7 +8,7 @@ import { ImageChannelPicker } from './ImageChannelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore, type PluginMentionCandidate } from './store'
-import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
+import { dragCarriesDroppablePayload, parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
@@ -463,6 +463,8 @@ export function MentionInput() {
   const [fileHighlight, setFileHighlight] = useState(0)
   const [slashPopup, setSlashPopup] = useState<{ start: number; query: string } | null>(null)
   const [slashHighlight, setSlashHighlight] = useState(0)
+  /** 拖着可投放的东西悬在组合器上。此前完全没有反馈,用户不知道能往哪儿放。 */
+  const [dropActive, setDropActive] = useState(false)
   const newThread = useAgentChatStore((state) => state.newThread)
   const pushNotice = useAgentChatStore((state) => state.pushNotice)
   const setGoal = useAgentChatStore((state) => state.setGoal)
@@ -990,6 +992,7 @@ export function MentionInput() {
 
   async function onDrop(event: React.DragEvent): Promise<void> {
     event.preventDefault()
+    setDropActive(false)
     const quote = parseQuoteDrop(event.dataTransfer)
     if (quote) {
       appendInput(quote)
@@ -1202,7 +1205,22 @@ export function MentionInput() {
 
   return (
     <form
-      onDragOver={(event) => event.preventDefault()}
+      onDragOver={(event) => {
+        // preventDefault 保持无条件:它是「这里可以放」的开关,收窄它会连带
+        // 掐掉浏览器原生的选中文本拖入 textarea。高亮才按 MIME 收窄。
+        event.preventDefault()
+        if (!dragCarriesDroppablePayload(event.dataTransfer)) return
+        // 组合器只会复制(附件/引用),从不移动源文件 —— 说清楚光标才对。
+        event.dataTransfer.dropEffect = 'copy'
+        if (!dropActive) setDropActive(true)
+      }}
+      onDragLeave={(event) => {
+        // dragleave 会在每次跨越子元素时触发,只在真正离开整个组合器时收起
+        // (FileTreeNode.onDragLeave 同款)。
+        const related = event.relatedTarget as Node | null
+        if (related && event.currentTarget.contains(related)) return
+        if (dropActive) setDropActive(false)
+      }}
       onDrop={(event) => void onDrop(event)}
       onSubmit={(event) => {
         event.preventDefault()
@@ -1239,7 +1257,11 @@ export function MentionInput() {
             maxHeight: TEXTAREA_MAX_HEIGHT,
             lineHeight: `${TEXTAREA_LINE_HEIGHT}px`,
           }}
-          className="w-full resize-none rounded-lg border border-cyan-400/20 bg-black/40 px-3 py-2 text-[13px] text-cyan-50 outline-none placeholder:text-zinc-500 focus:border-cyan-300/50"
+          // 投放高亮只换边框色(发丝线,不加投影)。同属性的两个 border-* 不能
+          // 并存 —— Tailwind 的胜负由生成样式表的顺序决定,不是这里的书写顺序。
+          className={`w-full resize-none rounded-lg border ${
+            dropActive ? 'border-cyan-300/80' : 'border-cyan-400/20'
+          } bg-black/40 px-3 py-2 text-[13px] text-cyan-50 outline-none placeholder:text-zinc-500 focus:border-cyan-300/50`}
           onChange={(event) => {
             setInput(event.target.value)
             // Defer until React commits the new value so `selectionStart`

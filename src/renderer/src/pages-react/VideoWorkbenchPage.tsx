@@ -14,12 +14,31 @@ import {
 } from '../features/video-workbench/store'
 import { buildModeMedia } from '../features/video-workbench/store'
 import { formatCostUsd, summarizeCostUsd } from '../features/video-workbench/pricing'
+import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
+
+/**
+ * 「值得现在点生成」的卡。比 store 的 `canStart` 严:那道门允许重生已完成的卡
+ * (重生是显式意图),而按钮上的计数要排除 succeeded —— 否则一页出完片后按钮
+ * 还显示一堆待生成,点下去等于重烧一遍额度。
+ *
+ * 提成函数是为了让整页计数与选中项计数共用同一份判定:两份拷贝在加卡片状态时
+ * 必然漂移。
+ */
+function isWorthStarting(card: VideoWorkbenchCard): boolean {
+  if (!card.prompt.trim()) return false
+  return (
+    card.status !== 'preparing'
+    && card.status !== 'queued'
+    && card.status !== 'running'
+    && card.status !== 'succeeded'
+  )
+}
 
 export default function VideoWorkbenchPage() {
   // 卡片汇报的拖拽态。以前这里传的是 noop —— 卡片说了页面不听;缝隙「＋」要在拖拽时
@@ -33,6 +52,9 @@ export default function VideoWorkbenchPage() {
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
   const autoImportPortrait = useVideoWorkbenchStore((s) => s.autoImportPortrait)
   const setAutoImportPortrait = useVideoWorkbenchStore((s) => s.setAutoImportPortrait)
+  const selectedCardIds = useVideoWorkbenchStore((s) => s.selectedCardIds)
+  const clearSelection = useVideoWorkbenchStore((s) => s.clearSelection)
+  const removeCards = useVideoWorkbenchStore((s) => s.removeCards)
 
   // 这份挂载是给「不经 AppLayout」的宿主用的(react-app/main.tsx 把本页单独
   // 渲进自己的 root)。在 AppLayout 宿主里 App 级已经挂了一份常驻,引用计数
@@ -56,9 +78,12 @@ export default function VideoWorkbenchPage() {
   const activeCount = cards.filter(
     (c) => c.status === 'preparing' || c.status === 'queued' || c.status === 'running',
   ).length
-  const startableCount = cards.filter(
-    (c) => c.prompt.trim() && c.status !== 'preparing' && c.status !== 'queued' && c.status !== 'running' && c.status !== 'succeeded',
+  const startableCount = cards.filter(isWorthStarting).length
+  // 有选中时按选中项算 —— 选中可能跨页(先选后切页),当前页的 startableCount 不作数。
+  const selectedStartableCount = selectedCardIds.filter((id) =>
+    allCards.some((c) => c.id === id && isWorthStarting(c)),
   ).length
+  const batchDisabled = selectedCardIds.length > 0 ? selectedStartableCount === 0 : startableCount === 0
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
   // hasVideoInput 必须与单卡显示同源,否则两处数字对不上:含视频输入单价明显更低。
@@ -126,11 +151,32 @@ export default function VideoWorkbenchPage() {
             <button
               type="button"
               className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors disabled:opacity-40"
-              disabled={startableCount === 0}
+              disabled={batchDisabled}
               onClick={() => void startCards()}
             >
-              ⚡ 全部生成{startableCount > 0 ? `(${startableCount})` : ''}
+              {/* 文案必须随选中态变 —— 否则用户会以为点的是「全部生成」而烧掉一批额度 */}
+              {selectedCardIds.length > 0
+                ? `⚡ 生成选中 ${selectedCardIds.length} 张`
+                : `⚡ 全部生成${startableCount > 0 ? `(${startableCount})` : ''}`}
             </button>
+            {selectedCardIds.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="text-xs border border-[#3F3F46] text-white/70 hover:border-red-500 hover:text-red-400 px-3 py-2 transition-colors"
+                  onClick={() => removeCards(selectedCardIds)}
+                >
+                  🗑 删除选中 {selectedCardIds.length} 张
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-white/40 hover:text-white/70 px-2 py-2 transition-colors"
+                  onClick={clearSelection}
+                >
+                  取消选中
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="text-xs bg-[#FCE300] text-black font-bold px-3 py-2 hover:opacity-85 active:scale-95 transition-all"
