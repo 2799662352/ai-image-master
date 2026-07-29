@@ -533,12 +533,17 @@ describe('WorkbenchCard 头部点选', () => {
   })
 
   it('点卡片主体的提示词输入框不改变选中(防误选守卫)', () => {
-    renderCards(1)
-    const before = useVideoWorkbenchStore.getState().selectedCardIds
+    // 先真选上一张 —— 从空选中点到空选中什么都证明不了,必须验证「已有的选中不被主体点击篡改」
+    const ids = renderCards(2)
+    const headers = screen.getAllByTestId('vw-card-header')
+    fireEvent.click(headers[0])
+    fireEvent.click(headers[1], { ctrlKey: true })
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([ids[0], ids[1]])
+
     const editor = document.querySelector('[contenteditable], textarea')
     expect(editor).toBeTruthy()
     fireEvent.click(editor!)
-    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual(before)
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([ids[0], ids[1]])
   })
 })
 ```
