@@ -6,11 +6,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { ensureSchemaViaConnection } from './ensureSchema'
 import { PRISMA_POOL_ACQUIRE_TIMEOUT_MS, PRISMA_POOL_MAX } from './pgliteLimits'
-import {
-  RESPAWN_WINDOW_MS,
-  pruneRespawnHistory,
-  shouldRespawn,
-} from './pgliteSupervisor'
+import { RESPAWN_WINDOW_MS, takeRespawnSlot } from './pgliteSupervisor'
 import {
   isPgliteAbortedError,
   isResetAllowedNow,
@@ -153,6 +149,21 @@ export async function resolveDatabaseUrl(): Promise<string> {
  */
 export async function startEmbeddedPGlite(): Promise<string> {
   if (pgliteChild) return PGLITE_CONNECTION
+
+  // 懒恢复路径也必须过熔断。worker 死过之后 pgliteChild 是 null,于是后续**每一次**
+  // getPrisma 都会走到这里;若只在 recoverFromWorkerDeath 里查熔断,一个怎么都起不来
+  // 的 worker 会被每条查询各 fork 一次 —— 正是熔断要防的事。首次启动 history 为空,
+  // 这一段整体跳过,行为与从前一致。
+  if (respawnHistory.length > 0) {
+    const slot = takeRespawnSlot(respawnHistory, Date.now())
+    respawnHistory = slot.history
+    if (!slot.allowed) {
+      throw new Error(
+        `本地数据库反复异常退出(${Math.round(RESPAWN_WINDOW_MS / 60_000)} 分钟内 ${slot.recent} 次),`
+          + '已停止自动恢复。请重启应用。',
+      )
+    }
+  }
 
   const userDataDir = app.getPath('userData')
   const dataDir = path.join(userDataDir, 'pgdata')
@@ -382,10 +393,10 @@ async function recoverFromWorkerDeath(opts: SpawnOpts): Promise<void> {
     prisma = null
 
     const now = Date.now()
-    respawnHistory = pruneRespawnHistory(respawnHistory, now, RESPAWN_WINDOW_MS)
-    const decision = shouldRespawn(respawnHistory, now)
-    if (!decision.allowed) {
-      console.error(`[pglite] respawn breaker tripped (${decision.recent} in window) — giving up`)
+    const slot = takeRespawnSlot(respawnHistory, now)
+    respawnHistory = slot.history
+    if (!slot.allowed) {
+      console.error(`[pglite] respawn breaker tripped (${slot.recent} in window) — giving up`)
       emitDbNotice({
         id: `pglite-respawn-giveup-${now}`,
         kind: 'pgliteReset',
@@ -395,7 +406,6 @@ async function recoverFromWorkerDeath(opts: SpawnOpts): Promise<void> {
       return
     }
 
-    respawnHistory = [...respawnHistory, now]
     try {
       const child = await spawnWithPortGrace(opts)
       pgliteChild = child

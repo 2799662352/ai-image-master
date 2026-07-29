@@ -106,3 +106,34 @@ export function pruneRespawnHistory(
 ): number[] {
   return history.filter((t) => now - t < windowMs)
 }
+
+export interface RespawnSlot extends RespawnDecision {
+  /** 收敛过窗口、并在 allowed 时记入本次的新历史。 */
+  history: number[]
+}
+
+/**
+ * 「领一个重生额度」：收敛窗口 → 判断 → 允许时把这一次记进去，一步完成。
+ *
+ * 存在的理由是**两条路径都得过同一个闸**：
+ *   1. worker 的 exit 钩子（`recoverFromWorkerDeath`）；
+ *   2. `startEmbeddedPGlite` 的懒恢复 —— worker 死过之后，后续每次 DB 调用都会
+ *      走到那里。只在第 1 条查熔断的话，一个「怎么都起不来」的 worker 会被每条
+ *      查询各 fork 一次，正是熔断要防的事。
+ *
+ * 判断与记账放在一起（不同于 {@link shouldRespawn} 的纯判断），是因为分开就会出现
+ * 「查了没记」的窗口，而这两条路径是并发的。
+ */
+export function takeRespawnSlot(
+  history: readonly number[],
+  now: number,
+  opts: { max?: number; windowMs?: number } = {},
+): RespawnSlot {
+  const windowMs = opts.windowMs ?? RESPAWN_WINDOW_MS
+  const pruned = pruneRespawnHistory(history, now, windowMs)
+  const decision = shouldRespawn(pruned, now, { ...opts, windowMs })
+  return {
+    ...decision,
+    history: decision.allowed ? [...pruned, now] : pruned,
+  }
+}

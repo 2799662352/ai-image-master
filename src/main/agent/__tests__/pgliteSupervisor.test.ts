@@ -3,6 +3,8 @@
 // 为什么只测纯函数:真正的重生要起 utilityProcess + 真 PGlite + 真 Electron,
 // 与 pgliteRecovery.ts 同款权衡 —— 判断抽出来单测,接线交给类型检查和手动验收。
 
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   RESPAWN_MAX,
@@ -10,6 +12,7 @@ import {
   isConnectionLostError,
   pruneRespawnHistory,
   shouldRespawn,
+  takeRespawnSlot,
 } from '../pgliteSupervisor'
 
 describe('isConnectionLostError', () => {
@@ -65,6 +68,67 @@ describe('shouldRespawn', () => {
   it('窗口与上限可覆盖(便于测试与调参)', () => {
     expect(shouldRespawn([now], now, { max: 1 })).toMatchObject({ allowed: false })
     expect(shouldRespawn([now - 50], now, { max: 1, windowMs: 10 })).toMatchObject({ allowed: true })
+  })
+})
+
+describe('takeRespawnSlot', () => {
+  const now = 2_000_000
+
+  it('允许时把这一次记进历史', () => {
+    const slot = takeRespawnSlot([], now)
+    expect(slot.allowed).toBe(true)
+    expect(slot.history).toEqual([now])
+  })
+
+  it('额度用尽时不记账 —— 否则「查了没记」会让窗口无限往后滑', () => {
+    // 全部严格早于 now,这样断言「now 没被记进去」才有意义
+    const full = Array.from({ length: RESPAWN_MAX }, (_, i) => now - 1000 * (i + 1))
+    const slot = takeRespawnSlot(full, now)
+    expect(slot.allowed).toBe(false)
+    expect(slot.history).toHaveLength(RESPAWN_MAX)
+    expect(slot.history).not.toContain(now)
+  })
+
+  it('顺手收敛滑出窗口的旧记录', () => {
+    const slot = takeRespawnSlot([now - RESPAWN_WINDOW_MS - 1, now - 5], now)
+    expect(slot.history).toEqual([now - 5, now])
+  })
+
+  it('连续领额度会在第 RESPAWN_MAX+1 次被挡下', () => {
+    let history: number[] = []
+    for (let i = 0; i < RESPAWN_MAX; i++) {
+      const slot = takeRespawnSlot(history, now + i)
+      expect(slot.allowed).toBe(true)
+      history = slot.history
+    }
+    expect(takeRespawnSlot(history, now + RESPAWN_MAX).allowed).toBe(false)
+  })
+
+  it('不修改入参', () => {
+    const history = [now - 1]
+    const frozen = [...history]
+    takeRespawnSlot(history, now)
+    expect(history).toEqual(frozen)
+  })
+})
+
+// 熔断只在 exit 钩子里查是不够的:worker 死后 pgliteChild 为 null,后续每次
+// getPrisma 都会走 startEmbeddedPGlite 那条懒恢复路径。两条都得过同一个闸,
+// 否则一个起不来的 worker 会被每条查询各 fork 一次。
+describe('两条恢复路径共用同一个熔断闸', () => {
+  const source = readFileSync(path.resolve(__dirname, '../db.ts'), 'utf8')
+
+  it('exit 钩子那条走 takeRespawnSlot', () => {
+    const recover = source.slice(source.indexOf('async function recoverFromWorkerDeath'))
+    expect(recover).toContain('takeRespawnSlot')
+  })
+
+  it('startEmbeddedPGlite 的懒恢复也走 takeRespawnSlot', () => {
+    const start = source.slice(
+      source.indexOf('export async function startEmbeddedPGlite'),
+      source.indexOf('async function startEphemeralPGlite'),
+    )
+    expect(start).toContain('takeRespawnSlot')
   })
 })
 
