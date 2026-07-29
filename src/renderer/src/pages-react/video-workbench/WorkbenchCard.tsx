@@ -33,6 +33,8 @@ import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { PortraitPickerModal } from './PortraitPickerModal'
 import { ResultVideoPlayer, hasPlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
+import { VersionSwitcher } from './VersionSwitcher'
+import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
@@ -427,6 +429,14 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
 
   const modeSpec = getModeSpec(card.mode)
   const hasResultVideo = hasPlaybackSource(card)
+  const versions = card.versions ?? []
+  // 预览下标:纯 UI 状态,不持久化。新版本到达时自动跳过去 —— 那正是用户在等的东西。
+  const [versionIdx, setVersionIdx] = useState(versions.length > 0 ? versions.length - 1 : 0)
+  useEffect(() => {
+    setVersionIdx(versions.length > 0 ? versions.length - 1 : 0)
+  }, [versions.length])
+  // 渲染中显示历史版本;没有版本记录(老数据)时退回卡片自身的结果字段。
+  const playbackSource = versions[versionIdx] ?? card
 
   return (
     <div
@@ -733,12 +743,17 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           </p>
         )}
 
-        {card.status === 'succeeded' && hasResultVideo && (
+        {/* 有历史版本时,渲染中也要保持结果区可见 —— 「重新生成不该隐藏之前的视频」。 */}
+        {(hasResultVideo || versions.length > 0) && (
           <div className="space-y-2">
             {/* 本地字节经 IPC 转 blob: 播放(local-file:// 直塞 <video> 会空白,
                 见 ResultVideoPlayer 注释);失败自动降级远程源/错误兜底 */}
-            <ResultVideoPlayer card={card} />
+            <ResultVideoPlayer source={playbackSource} />
+            {isActiveStatus(card.status) && versions.length > 0 && (
+              <p className="text-[10px] text-white/40">新版本生成中,当前显示历史版本</p>
+            )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/40">
+              <VersionSwitcher versions={versions} index={versionIdx} onChange={setVersionIdx} />
               {card.persistence === 'done' && card.localPath ? (
                 <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
               ) : card.persistence === 'failed' ? (

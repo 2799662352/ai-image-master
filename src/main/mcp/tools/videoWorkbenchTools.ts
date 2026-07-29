@@ -102,6 +102,17 @@ const cardSnapshotSchema = z.looseObject({
   error: z.string().optional(),
   localPath: z.string().optional(),
   remoteUrl: z.string().optional(),
+  versions: z.array(z.object({
+    seq: z.number(),
+    localPath: z.string().optional(),
+    remoteUrl: z.string().optional(),
+    prompt: z.string(),
+  })).optional().describe(
+    'Successful renders of this card, oldest first. Regenerating no longer discards the previous '
+    + 'video — each entry keeps the prompt that produced it, so you can tell the versions apart. '
+    + 'Refer to them as v1/v2, never as "<card number>-<n>": card numbers are positions and shift '
+    + 'whenever a card is inserted, deleted or dragged.',
+  ),
 })
 
 const startResultShape = {

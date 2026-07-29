@@ -15,6 +15,7 @@ import {
   useVideoWorkbenchStore,
 } from '../store'
 import { WORKBENCH_MAX_CARDS, getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
+import { specEquals } from '../cardSpec'
 
 function mockSubmit(impl?: (payload: Record<string, unknown>) => Promise<unknown>) {
   const submit = vi.fn(
@@ -472,6 +473,133 @@ describe('addCards 锚点插入', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('版本历史', () => {
+  function markRunning(id: string, taskId: string, patch: Record<string, unknown> = {}): void {
+    useVideoWorkbenchStore.setState({
+      cards: useVideoWorkbenchStore.getState().cards.map((c) =>
+        c.id === id ? { ...c, taskId, status: 'running', ...patch } : c),
+    })
+  }
+
+  it('成功一次产生 v1,规格快照与产出时一致', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '第一版', duration: 8 }])
+    markRunning(id, 't1')
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', localPath: 'C:/v1.mp4',
+    }))
+
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    expect(card.versions).toHaveLength(1)
+    expect(card.versions![0]).toMatchObject({ seq: 1, localPath: 'C:/v1.mp4' })
+    expect(card.versions![0].spec).toMatchObject({ prompt: '第一版', duration: 8 })
+  })
+
+  it('改提示词后重生:v1 保留旧提示词,v2 记新提示词', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '旧提示词' }])
+    markRunning(id, 't1')
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', localPath: 'C:/v1.mp4',
+    }))
+
+    // 重生的典型动机就是改了提示词 —— 这一改必须只影响 v2。
+    useVideoWorkbenchStore.getState().updateCard(id, { prompt: '新提示词' })
+    markRunning(id, 't2', { historyRecorded: undefined, localPath: undefined })
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't2', status: 'succeeded', localPath: 'C:/v2.mp4',
+    }))
+
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    expect(card.versions!.map((v) => v.spec.prompt)).toEqual(['旧提示词', '新提示词'])
+    expect(card.versions!.map((v) => v.seq)).toEqual([1, 2])
+    expect(card.versions!.map((v) => v.localPath)).toEqual(['C:/v1.mp4', 'C:/v2.mp4'])
+  })
+
+  it('持久地址后到时升级最新版本,而不是再追加一条', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'p' }])
+    markRunning(id, 't1')
+    // 先只有上游临时地址
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', videoUrl: 'https://tmp/v.mp4',
+    }))
+    // 落盘 + 转存完成后带来持久地址
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', localPath: 'C:/v.mp4', remoteUrl: 'https://cos/v.mp4',
+    }))
+
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    expect(card.versions).toHaveLength(1)
+    expect(card.versions![0]).toMatchObject({
+      localPath: 'C:/v.mp4',
+      remoteUrl: 'https://cos/v.mp4',
+    })
+  })
+
+  it('失败的一轮不产生版本记录', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'p' }])
+    markRunning(id, 't1')
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'failed', error: '上游拒绝',
+    }))
+
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    expect(card.versions ?? []).toHaveLength(0)
+  })
+
+  it('版本的素材快照只记名字,不复制字节', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'p', referenceImages: ['data:image/png;base64,AAAABBBBCCCC'] },
+    ])
+    markRunning(id, 't1')
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', localPath: 'C:/v.mp4',
+    }))
+
+    const version = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.versions![0]
+    expect(version.spec.referenceBrief.images).toHaveLength(1)
+    expect(JSON.stringify(version)).not.toContain('base64')
+  })
+
+  it('版本变化不算规格变化(versions 挂在 Card 上而非 Spec 上)', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'p' }])
+    const before = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    const after = { ...before, versions: [] }
+    expect(specEquals(before, after)).toBe(true)
+  })
+
+  it('snapshotCard 带出版本摘要,供 agent 引用具体某一版', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'p' }])
+    markRunning(id, 't1')
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', remoteUrl: 'https://cos/v1.mp4',
+    }))
+
+    const snap = snapshotCard(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!)
+    expect(snap.versions).toEqual([
+      { seq: 1, remoteUrl: 'https://cos/v1.mp4', prompt: 'p' },
+    ])
+  })
+
+  it('撤销只还原意图,不删版本记录', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '旧' }])
+    useVideoWorkbenchStore.getState().updateCard(id, { prompt: '新' })
+    markRunning(id, 't1')
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', localPath: 'C:/v1.mp4',
+    }))
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.versions).toHaveLength(1)
+
+    useVideoWorkbenchStore.getState().undo()
+
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    // 提示词回到「旧」,但产物存档必须还在 —— 版本是结果不是意图。
+    expect(card.prompt).toBe('旧')
+    expect(card.versions).toHaveLength(1)
   })
 })
 

@@ -123,6 +123,13 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   /** 该任务的成功结果已写入「历史记录」(防重:重载/重复广播不再入库)。 */
   historyRecorded?: boolean
   /**
+   * 历次成功产物,追加序,末项 = 当前结果。重新生成不再让上一版消失。
+   *
+   * **是结果不是意图**:不进 apply(只作 IR 导出侧只读注解)、不进撤销栈、
+   * 不参与 specEquals —— 它挂在 Card 上而非 Spec 上,天然被排除。
+   */
+  versions?: VideoWorkbenchVersion[]
+  /**
    * 这张卡**规格**的版本号,看板 IR 的按卡并发令牌(老数据缺省 = 0)。
    *
    * 只跟 spec 走(prompt/model/素材…),**不**跟位置走 —— 位置与卡片集合的变动
@@ -161,6 +168,48 @@ export interface VideoWorkbenchCardInput {
 export type VideoWorkbenchInsertAnchor =
   | { afterCardId: string; beforeCardId?: undefined }
   | { beforeCardId: string; afterCardId?: undefined }
+
+/**
+ * 产出某一版时的意图快照。**素材只记名字不记字节** —— referenceImages 里可能是
+ * data: URL，逐版复制会迅速撑爆 IndexedDB（WORKBENCH_MAX_CARDS 这个上限存在的
+ * 唯一原因就是防素材膨胀）。
+ */
+export interface VideoWorkbenchVersionSpec {
+  prompt: string
+  model: SeedanceModelAlias
+  resolution: '480p' | '720p' | '1080p'
+  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  duration: number
+  generateAudio: boolean
+  mode: VideoWorkbenchMode
+  seed?: number
+  webSearch: boolean
+  referenceBrief: { images: string[]; videos: string[]; audios: string[] }
+}
+
+/**
+ * 一次成功渲染的产物存档。追加序，末项即卡片当前结果。
+ *
+ * 存在的意义：重新生成不该让上一版消失。磁盘上的 mp4 本来就不互相覆盖（文件名嵌
+ * taskId），丢的只是卡片上指回去的那根指针 —— 这个数组就是那根指针。
+ *
+ * 存活性：`localPath` 快但会被 7 天清理扫掉（AttachmentService.cleanup 判断「仍被
+ * 引用」时只扫聊天记录，工作台卡片对它隐形），`remoteUrl` 才是耐久源。播放按
+ * localPath → remoteUrl → videoUrl 逐级降级。
+ */
+export interface VideoWorkbenchVersion {
+  id: string
+  /** 卡内序号，从 1 起，只增不回收。UI 显示为 v1/v2，绝不与位置号拼接。 */
+  seq: number
+  createdAt: number
+  taskId?: string
+  localPath?: string
+  remoteUrl?: string
+  videoUrl?: string
+  actualSeed?: number
+  completionTokens?: number
+  spec: VideoWorkbenchVersionSpec
+}
 
 // ---------------------------------------------------------------------------
 // 看板 JSON IR（声明式整体读写）
@@ -220,6 +269,8 @@ export interface WorkbenchIRCardResult {
   error?: string
   localPath?: string
   remoteUrl?: string
+  /** 历次成功产物（只读注解，apply 一律忽略）。 */
+  versions?: Array<{ seq: number; localPath?: string; remoteUrl?: string; prompt: string }>
 }
 
 /**
