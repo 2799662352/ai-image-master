@@ -85,3 +85,50 @@ describe('WorkbenchCard 头部点选', () => {
     expect(screen.getByTestId(`vw-card-${ids[1]}`).className).not.toContain('border-[#FCE300]')
   })
 })
+
+describe('WorkbenchCard 拖拽载荷', () => {
+  function fakeDataTransfer(): DataTransfer {
+    const store = new Map<string, string>()
+    return {
+      setData: (t: string, v: string) => void store.set(t, v),
+      getData: (t: string) => store.get(t) ?? '',
+      get types() {
+        return [...store.keys()]
+      },
+      effectAllowed: 'none',
+    } as unknown as DataTransfer
+  }
+
+  it('同时写旧 MIME(排序)与新 MIME(聊天栏)', () => {
+    const ids = seedAndRender(1)
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(screen.getAllByTitle('拖动排序')[0], { dataTransfer })
+    expect(dataTransfer.getData('application/x-vw-card')).toBe(ids[0])
+    expect(JSON.parse(dataTransfer.getData('application/x-catimation-workbench-cards'))).toHaveLength(1)
+    expect(dataTransfer.effectAllowed).toBe('copyMove')
+  })
+
+  it('拖一张已选中的卡 = 拖全部选中项', () => {
+    const ids = seedAndRender(3)
+    const headers = screen.getAllByTestId('vw-card-header')
+    fireEvent.click(headers[0])
+    fireEvent.click(headers[2], { ctrlKey: true })
+
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(screen.getAllByTitle('拖动排序')[0], { dataTransfer })
+    const payload = JSON.parse(dataTransfer.getData('application/x-catimation-workbench-cards'))
+    expect(payload.map((p: { cardId: string }) => p.cardId)).toEqual([ids[0], ids[2]])
+    // 旧 MIME 仍只带被拖那一张 —— 页内排序语义不变
+    expect(dataTransfer.getData('application/x-vw-card')).toBe(ids[0])
+  })
+
+  it('拖一张未选中的卡只带它自己', () => {
+    const ids = seedAndRender(3)
+    fireEvent.click(screen.getAllByTestId('vw-card-header')[0])
+
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(screen.getAllByTitle('拖动排序')[2], { dataTransfer })
+    const payload = JSON.parse(dataTransfer.getData('application/x-catimation-workbench-cards'))
+    expect(payload.map((p: { cardId: string }) => p.cardId)).toEqual([ids[2]])
+  })
+})

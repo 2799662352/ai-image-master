@@ -1,5 +1,8 @@
+import type { VideoWorkbenchCardDragItem } from '../../../../types/videoWorkbench'
+
 const FILE_TYPE = 'application/x-catimation-file-paths'
 const QUOTE_TYPE = 'application/x-catimation-quote'
+const WORKBENCH_CARD_TYPE = 'application/x-catimation-workbench-cards'
 
 /**
  * Serialize one or more file paths into the drag DataTransfer.
@@ -69,4 +72,35 @@ export function resolveExternalPaths(files: FileList): string[] {
   return Array.from(files)
     .map((f) => getFilePath(f))
     .filter((p): p is string => Boolean(p))
+}
+
+/**
+ * Workbench cards → chat composer. Coexists with page-internal reorder MIME
+ * `application/x-vw-card` (bare card id): one dragStart writes both, each
+ * consumer reads only its own (same dual-target pattern as FileTreeNode).
+ *
+ * `text/plain` fallback lets external targets (editors, terminal) see excerpts.
+ */
+export function serializeWorkbenchCardDrag(
+  dt: DataTransfer,
+  items: VideoWorkbenchCardDragItem[],
+): void {
+  if (items.length === 0) return
+  dt.setData(WORKBENCH_CARD_TYPE, JSON.stringify(items))
+  dt.setData('text/plain', items.map((i) => i.promptExcerpt || i.cardId).join('\n'))
+}
+
+/** Always returns an array (possibly empty); callers need not null-check. Corrupt payloads → []. */
+export function parseWorkbenchCardDrop(dt: DataTransfer): VideoWorkbenchCardDragItem[] {
+  const raw = dt.getData(WORKBENCH_CARD_TYPE)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.every((x) => x && typeof x.cardId === 'string')) {
+      return parsed as VideoWorkbenchCardDragItem[]
+    }
+  } catch {
+    return []
+  }
+  return []
 }

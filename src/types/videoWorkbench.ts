@@ -170,6 +170,23 @@ export type VideoWorkbenchInsertAnchor =
   | { beforeCardId: string; afterCardId?: undefined }
 
 /**
+ * 拖进聊天栏的卡片描述符。**只带模型与 UI 需要的字段**,不整卡序列化 ——
+ * 卡片上的 referenceImages 可能是 data: URL,塞进 DataTransfer 会瞬间膨胀。
+ *
+ * `promptExcerpt` 是给人看的识别锚(贯穿约定:人靠提示词摘录认卡,agent 靠 cardId)。
+ */
+export interface VideoWorkbenchCardDragItem {
+  cardId: string
+  /** 提示词摘录,已截断。空提示词的草稿卡给空串。 */
+  promptExcerpt: string
+  status: VideoWorkbenchCardStatus
+  /** 本地产物路径。在 `<userData>/agent/uploads` 下,天然在发送侧白名单内。 */
+  localPath?: string
+  /** 耐久源。localPath 被 7 天清理扫掉后只剩它。 */
+  remoteUrl?: string
+}
+
+/**
  * 产出某一版时的意图快照。**素材只记名字不记字节** —— referenceImages 里可能是
  * data: URL，逐版复制会迅速撑爆 IndexedDB（WORKBENCH_MAX_CARDS 这个上限存在的
  * 唯一原因就是防素材膨胀）。

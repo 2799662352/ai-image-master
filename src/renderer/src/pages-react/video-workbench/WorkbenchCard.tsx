@@ -36,6 +36,7 @@ import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './Ri
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { serializeWorkbenchCardDrag } from '../../features/file-explorer/dragHelpers'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
 
@@ -489,8 +490,26 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           title="拖动排序"
           draggable
           onDragStart={(e) => {
+            // 旧 MIME:页内排序,只认被拖那一张,语义不变。
             e.dataTransfer.setData(CARD_DRAG_MIME, card.id)
-            e.dataTransfer.effectAllowed = 'move'
+            // 新 MIME:聊天栏。拖一张已选中的卡 = 拖全部选中项(与文件树多选拖拽一致)。
+            const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
+            const payloadIds = selectedCardIds.includes(card.id) ? selectedCardIds : [card.id]
+            serializeWorkbenchCardDrag(
+              e.dataTransfer,
+              payloadIds
+                .map((id) => cards.find((c) => c.id === id))
+                .filter((c): c is VideoWorkbenchCard => Boolean(c))
+                .map((c) => ({
+                  cardId: c.id,
+                  promptExcerpt: c.prompt.slice(0, 60),
+                  status: c.status,
+                  localPath: c.localPath,
+                  remoteUrl: c.remoteUrl,
+                })),
+            )
+            // 'move' 会让聊天栏那侧拿不到 copy 效果 —— 双目标必须 copyMove。
+            e.dataTransfer.effectAllowed = 'copyMove'
             setDragging(true)
             onDragStateChange(true)
           }}
