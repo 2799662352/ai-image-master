@@ -6,12 +6,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { ensureSchemaViaConnection } from './ensureSchema'
 import { PRISMA_POOL_ACQUIRE_TIMEOUT_MS, PRISMA_POOL_MAX } from './pgliteLimits'
-import {
-  RESPAWN_WINDOW_MS,
-  isConnectionLostError,
-  isRetryableOperation,
-  takeRespawnSlot,
-} from './pgliteSupervisor'
+import { RESPAWN_WINDOW_MS, planDbFailure, takeRespawnSlot } from './pgliteSupervisor'
 import {
   isPgliteAbortedError,
   isResetAllowedNow,
@@ -358,6 +353,48 @@ function superviseWorker(child: UtilityProcess, opts: SpawnOpts): void {
 }
 
 /**
+ * 数据库报错之后顺手确认一下 socket server 还在不在。
+ *
+ * 只处理**能明确判定**的那一种坏法:**进程还活着,但端口已经不接了**。那说明
+ * socket server 没了(worker 的 exit 钩子不会触发,因为进程没退),此时杀掉它交给
+ * 监管重生是安全的 —— 端口都关了,不可能还有查询在正常跑。
+ *
+ * **刻意不做「静默即判死」。** PGlite 执行查询时会阻塞 worker 的事件循环,所以一次
+ * 合法的长事务同样不会回应任何探测。按静默去杀 = 把正在跑的真实事务毁掉。「卡住
+ * 但端口还在」因此留给 30s 的池超时兜(报错、降级、用户可继续),不自动杀 ——
+ * 误杀的代价比多等一次大。
+ *
+ * 单飞 + 冷却:一批查询同时失败时只探一次。
+ */
+let socketProbe: Promise<void> | null = null
+let lastProbeAt = 0
+const PROBE_COOLDOWN_MS = 10_000
+
+function checkSocketServerAlive(): Promise<void> {
+  if (socketProbe) return socketProbe
+  const now = Date.now()
+  if (now - lastProbeAt < PROBE_COOLDOWN_MS) return Promise.resolve()
+  lastProbeAt = now
+
+  socketProbe = (async () => {
+    const child = pgliteChild
+    if (!child) return // 已经死了/正在重生,监管那条路会处理
+    if (await canConnect(PGLITE_PORT, PGLITE_HOST)) return // 端口还在,不擅自动手
+
+    console.warn('[pglite] worker process alive but port is closed — killing so supervision respawns')
+    try {
+      // kill 会触发 exit,superviseWorker 接住并走重生(含熔断)。
+      child.kill()
+    } catch (err) {
+      console.warn('[pglite] kill failed:', describeError(err))
+    }
+  })().finally(() => {
+    socketProbe = null
+  })
+  return socketProbe
+}
+
+/**
  * 重生专用的 spawn:先给端口一点释放时间,失败再等久一点重试一次。
  *
  * 与启动时那次 spawn 的区别在于**前一个进程刚刚还在监听 5433**。启动时的重建路径
@@ -594,7 +631,9 @@ export async function getPrisma(): Promise<PrismaClient> {
           try {
             return await query(args)
           } catch (err) {
-            if (!isConnectionLostError(err) || !isRetryableOperation(operation)) throw err
+            const plan = planDbFailure(err, operation)
+            if (plan.probeWorker) void checkSocketServerAlive()
+            if (!plan.retry) throw err
             // 给监管钩子一点时间把 worker 拉起来再重试一次
             await delay(1_000)
             return query(args)

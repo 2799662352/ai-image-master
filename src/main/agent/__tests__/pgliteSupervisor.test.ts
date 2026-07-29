@@ -10,7 +10,9 @@ import {
   RESPAWN_MAX,
   RESPAWN_WINDOW_MS,
   isConnectionLostError,
+  isPoolAcquireTimeout,
   isRetryableOperation,
+  planDbFailure,
   pruneRespawnHistory,
   shouldRespawn,
   takeRespawnSlot,
@@ -63,6 +65,37 @@ describe('isRetryableOperation', () => {
       expect(isRetryableOperation(op)).toBe(false)
     },
   )
+})
+
+describe('isPoolAcquireTimeout', () => {
+  it('认得出 pg 的取连接超时', () => {
+    expect(isPoolAcquireTimeout(new Error('timeout exceeded when trying to connect'))).toBe(true)
+  })
+
+  it('不与「连接没了」混淆 —— 两者处置不同', () => {
+    expect(isPoolAcquireTimeout(new Error('Server has closed the connection.'))).toBe(false)
+  })
+})
+
+describe('planDbFailure', () => {
+  it('取连接超时:连写也能安全重试 —— 查询压根没被执行', () => {
+    const err = new Error('timeout exceeded when trying to connect')
+    expect(planDbFailure(err, 'create')).toEqual({ retry: true, probeWorker: true })
+    expect(planDbFailure(err, 'findMany')).toEqual({ retry: true, probeWorker: true })
+  })
+
+  it('连接没了:只重试读', () => {
+    const err = new Error('Server has closed the connection.')
+    expect(planDbFailure(err, 'findMany')).toEqual({ retry: true, probeWorker: true })
+    // 写有没有落库不确定,重试会造重复记录
+    expect(planDbFailure(err, 'create')).toEqual({ retry: false, probeWorker: true })
+  })
+
+  it('业务错误原样抛,也不去探活', () => {
+    const err = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+    expect(planDbFailure(err, 'create')).toEqual({ retry: false, probeWorker: false })
+    expect(planDbFailure(err, 'findMany')).toEqual({ retry: false, probeWorker: false })
+  })
 })
 
 describe('shouldRespawn', () => {

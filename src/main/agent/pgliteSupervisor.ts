@@ -103,6 +103,40 @@ export function isRetryableOperation(operation: string): boolean {
   return RETRYABLE_OPERATIONS.has(operation)
 }
 
+/**
+ * 池子取连接超时（`connectionTimeoutMillis` 到点）。pg 抛的就是这句话。
+ *
+ * 与「连接没了」是**不同**的处境，值得分开判：取连接超时意味着查询**压根没被执行**
+ * （pg 在把 client 交给查询之前就 destroy + 回调错误了），所以重试它对**写也安全** ——
+ * 不存在「其实已经提交」的可能。
+ */
+export function isPoolAcquireTimeout(err: unknown): boolean {
+  return /timeout exceeded when trying to connect/i.test(describe(err))
+}
+
+export interface DbFailurePlan {
+  /** 原样重试一次是安全的。 */
+  retry: boolean
+  /** 值得顺手确认一下数据库还在不在（这类错误往下都指向「库那边出事了」）。 */
+  probeWorker: boolean
+}
+
+/**
+ * 一次数据库失败该怎么处置 —— 判断集中在这里，`db.ts` 那侧只负责执行。
+ *
+ * 三档：
+ *   - **取连接超时** → 重试（任何操作都安全，查询没跑过）+ 探活。
+ *   - **连接没了** → 只重试读（写是否已提交不确定，重试会造重复记录）+ 探活。
+ *   - **其它** → 原样抛。业务错误（唯一键、外键、语法）重试只是把同一个错误再犯一遍。
+ */
+export function planDbFailure(err: unknown, operation: string): DbFailurePlan {
+  if (isPoolAcquireTimeout(err)) return { retry: true, probeWorker: true }
+  if (isConnectionLostError(err)) {
+    return { retry: isRetryableOperation(operation), probeWorker: true }
+  }
+  return { retry: false, probeWorker: false }
+}
+
 export interface RespawnDecision {
   allowed: boolean
   /** 窗口内已经发生过的重生次数（不含这一次）。 */
