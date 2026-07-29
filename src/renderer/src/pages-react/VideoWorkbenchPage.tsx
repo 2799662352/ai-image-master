@@ -70,6 +70,23 @@ export default function VideoWorkbenchPage() {
     return release
   }, [ensureHydrated])
 
+  // Esc 取消选中 —— 选错了要有一条不用瞄准的退路。
+  //
+  // 两个让路:①输入框/富文本里按 Esc 是编辑动作(取消输入法候选、退出编辑),
+  // 不能被劫走;②已经被别人处理掉的(弹层关闭会 preventDefault)不再插手。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      // 事件可能直接派发在 window 上(它没有 closest),先收窄再问
+      const target = event.target
+      if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return
+      if (useVideoWorkbenchStore.getState().selectedCardIds.length === 0) return
+      clearSelection()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [clearSelection])
+
   // 只展示当前页的卡片;其他页卡片仍在 store 里(任务回流跨页可达)。
   const cards = allCards
     .filter((c) => c.boardId === activeBoardId)
@@ -168,9 +185,12 @@ export default function VideoWorkbenchPage() {
                 >
                   🗑 删除选中 {selectedCardIds.length} 张
                 </button>
+                {/* 取消选中原本是条低对比度的裸文字,在这排实心按钮里几乎看不见。
+                    它是「我选错了」的唯一退路,得和它的邻居一样醒目、一样好点。 */}
                 <button
                   type="button"
-                  className="text-xs text-white/40 hover:text-white/70 px-2 py-2 transition-colors"
+                  title="取消选中(Esc)"
+                  className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors"
                   onClick={clearSelection}
                 >
                   取消选中

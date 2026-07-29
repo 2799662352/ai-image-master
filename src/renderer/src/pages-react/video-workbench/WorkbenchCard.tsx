@@ -36,9 +36,12 @@ import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './Ri
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
-import { serializeFileDrag } from '../../features/file-explorer/dragHelpers'
+import { parseFileDrop, serializeWorkbenchCardDrag } from '../../features/file-explorer/dragHelpers'
+import { materialsFromPaths } from '../../features/video-workbench/pathMaterials'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
+/** 文件栏(FileExplorerPanel)内部拖拽的词表 —— 只有路径,没有 dataTransfer.files。 */
+const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
 
 const MODEL_OPTIONS = [
   { value: '2.0', label: 'Seedance 2.0 满血' },
@@ -187,7 +190,12 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       e.preventDefault()
       const rect = cardRef.current?.getBoundingClientRect()
       if (rect) setDropEdge(e.clientY < rect.top + rect.height / 2 ? 'above' : 'below')
-    } else if (e.dataTransfer.types.includes('Files')) {
+    } else if (
+      e.dataTransfer.types.includes('Files') ||
+      // 文件栏里拖过来的文件只有自定义 MIME(路径),没有 dataTransfer.files ——
+      // 不在这里 preventDefault,浏览器压根不会派发 drop,表现为「拖过去没反应」。
+      e.dataTransfer.types.includes(FILE_PATHS_MIME)
+    ) {
       e.preventDefault()
     }
   }
@@ -221,6 +229,16 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       void addFiles(files)
       return
     }
+    // 文件栏(FileExplorerPanel)拖过来的:只有路径,没有 File。它与工作台同屏
+    // (文件栏挂在 AgentChatPanel 上,是全局坞),所以这是个日常动作,此前却整类
+    // 被忽略 —— 用户只能先在系统资源管理器里找到同一个文件再拖一次。
+    const droppedPaths = parseFileDrop(e.dataTransfer)
+    if (droppedPaths.length > 0) {
+      if (busy) return
+      e.preventDefault()
+      addPathMaterials(droppedPaths)
+      return
+    }
     // 从浏览器直接拖一张图过来:没有 File,只有一条地址(text/uri-list)。
     // 此前这一整类拖放被静默忽略,用户只能先另存到本地再拖进来。
     if (busy) return
@@ -230,6 +248,21 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
     if (!dropped) return
     e.preventDefault()
     addExternalImage(dropped)
+  }
+
+  /**
+   * 一串本地路径入素材(文件栏拖放)。按扩展名归类,各类都尊重当前模式的上限,
+   * 与人像库确认那条路同一套「剩余额度」算法。
+   */
+  const addPathMaterials = (paths: string[]): void => {
+    const grouped = materialsFromPaths(paths)
+    const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
+    for (const kind of ['image', 'video', 'audio'] as const) {
+      if (grouped[kind].length === 0) continue
+      const remaining = modeLimit(card.mode, kind) - (current?.[KIND_TO_FIELD[kind]].length ?? 0)
+      if (remaining <= 0) continue
+      addMaterials(card.id, KIND_TO_FIELD[kind], grouped[kind].slice(0, remaining))
+    }
   }
 
   /** 外链图片入素材(拖放/粘贴共用)。超出该模式的图片上限时不入。 */
@@ -475,53 +508,74 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       onPaste={handlePaste}
     >
       {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除。
-          这一行同时是**唯一**的选中命中区 —— 卡片主体密布输入框与药丸,整卡点选会和它们打架。 */}
+          这一行是**唯一**的选中命中区,也是**整条可拖区** —— 卡片主体密布输入框与
+          药丸,整卡点选/整卡可拖都会和它们打架。
+          `select-none` 不是装饰:没有它,按住这一行往外拖会变成「选中 #02 这几个字」,
+          拖拽压根不启动(用户报的就是这个)。 */}
       <div
         data-testid="vw-card-header"
-        className="flex items-center gap-2 px-4 pt-3"
+        // py-3 而不是 pt-3:这一行既是选中命中区又是拖拽抓手,原来只有上内边距,
+        // 实际可点高度只有文字那么高(约 18px),要「瞄准」才点得中。加下内边距把
+        // 它撑到约 40px —— 仍然只占卡片顶部一条,不侵占主体的输入框与药丸。
+        // cursor-grab 让「这里能拖」不必靠猜。
+        className={[
+          'flex items-center gap-2 px-4 py-3 select-none cursor-grab active:cursor-grabbing',
+          // 悬停给一点底色:命中区看不见时,用户不知道该往哪儿按
+          'hover:bg-white/[0.04] transition-colors',
+          selected ? 'bg-[#FCE300]/[0.07]' : '',
+        ].join(' ')}
+        title="拖动:页内排序 / 拖进聊天栏把视频交给模型;单击选中(Ctrl 加选 · Shift 选区间)"
+        draggable
+        onDragStart={(e) => {
+          // 从行内按钮(删除等)起手不该变成拖卡
+          if ((e.target as HTMLElement).closest('button')) {
+            e.preventDefault()
+            return
+          }
+          // 页内排序只认被拖那一张,即便当时选中了好几张 —— 换位语义不变。
+          e.dataTransfer.setData(CARD_DRAG_MIME, card.id)
+
+          // 拖未选中的卡 → 先把选区换成它(FileTreeNode 同款):这样「拖出去的」
+          // 恒等于「选中的」,而选中态本身会随每次工作台工具调用带给 agent。
+          const before = useVideoWorkbenchStore.getState()
+          if (!before.selectedCardIds.includes(card.id)) before.selectCard(card.id)
+          // 同步选区之后再读一次,别把「换选区前」的快照和「换之后」的混着用
+          const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
+          const dragged = selectedCardIds
+            .map((id) => cards.find((c) => c.id === id))
+            .filter((c): c is VideoWorkbenchCard => Boolean(c))
+          // 专用 MIME,**不是**文件树那个 x-catimation-file-paths:后者的含义是
+          // 「可以被移动的工作区文件」,而文件栏与工作台同屏,复用会让卡片被拖过
+          // 文件树时真的 fs.move 掉 mp4(详见 dragHelpers 里 WORKBENCH_CARD_TYPE 的注释)。
+          // 空数组时什么都不写:还没出片的卡拖进聊天栏自然落空,不假装递了东西。
+          serializeWorkbenchCardDrag(
+            e.dataTransfer,
+            dragged.map((c) => ({
+              cardId: c.id,
+              ...(c.localPath ? { localPath: c.localPath } : {}),
+            })),
+          )
+
+          // 'move' 会让聊天栏那侧拿不到 copy 效果 —— 双目标必须 copyMove。
+          e.dataTransfer.effectAllowed = 'copyMove'
+          setDragging(true)
+          onDragStateChange(true)
+        }}
+        onDragEnd={() => {
+          setDragging(false)
+          setDropEdge(null)
+          onDragStateChange(false)
+        }}
         onClick={(e) => {
           // 行内那几个控件(删除等)各自 stopPropagation 不现实,统一按标签放行
           if ((e.target as HTMLElement).closest('button')) return
           selectCard(card.id, e.shiftKey ? 'range' : e.ctrlKey || e.metaKey ? 'toggle' : 'replace')
         }}
       >
+        {/* 纯视觉抓手 —— 可拖的是整条头部行,这个只是告诉用户「这里能拖」 */}
         <span
-          className="vw-drag-handle text-white/40 hover:text-[#FCE300] select-none text-sm leading-none px-1"
-          title="拖动排序"
-          draggable
-          onDragStart={(e) => {
-            // 页内排序只认被拖那一张,即便当时选中了好几张 —— 换位语义不变。
-            e.dataTransfer.setData(CARD_DRAG_MIME, card.id)
-
-            // 拖出去给聊天栏的是**文件路径**,复用文件树那套词表
-            // (application/x-catimation-file-paths)。聊天栏已经会吃它:附件 + 引用 chip,
-            // 而 <userData>/agent/uploads 在 fs:stat 与发送两道门里都放行。
-            // 为卡片另造一套 MIME + 描述符协议是多余的第三条投放管线。
-            //
-            // 拖未选中的卡 → 先把选区换成它(FileTreeNode 同款):这样「拖出去的」
-            // 恒等于「选中的」,而选中态本身会随每次工作台工具调用带给 agent,
-            // cardId 不必再塞进拖拽载荷里。
-            const before = useVideoWorkbenchStore.getState()
-            if (!before.selectedCardIds.includes(card.id)) before.selectCard(card.id)
-            // 同步选区之后再读一次,别把「换选区前」的快照和「换之后」的混着用
-            const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
-            const paths = selectedCardIds
-              .map((id) => cards.find((c) => c.id === id)?.localPath)
-              .filter((p): p is string => Boolean(p))
-            // 空数组时 serializeFileDrag 什么都不写:还没出片的卡拖进聊天栏
-            // 自然落空,不假装递了东西。
-            serializeFileDrag(e.dataTransfer, paths)
-
-            // 'move' 会让聊天栏那侧拿不到 copy 效果 —— 双目标必须 copyMove。
-            e.dataTransfer.effectAllowed = 'copyMove'
-            setDragging(true)
-            onDragStateChange(true)
-          }}
-          onDragEnd={() => {
-            setDragging(false)
-            setDropEdge(null)
-            onDragStateChange(false)
-          }}
+          className="vw-drag-handle text-white/40 text-sm leading-none px-1"
+          aria-hidden="true"
         >
           ⣿
         </span>

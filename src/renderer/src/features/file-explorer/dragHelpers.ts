@@ -1,5 +1,18 @@
 const FILE_TYPE = 'application/x-catimation-file-paths'
 const QUOTE_TYPE = 'application/x-catimation-quote'
+/**
+ * 视频工作台卡片 → 聊天栏。**刻意不复用 {@link FILE_TYPE}**。
+ *
+ * 那个 MIME 在本仓库里的既定含义是「可以被**移动**的工作区文件」——
+ * `FileTreeNode.onDrop` 见到它就调 `moveByDnd` → `fs.move`。而文件树是
+ * `AgentChatPanel` 的一部分(全局固定坞),和视频工作台**同屏**;卡片产物躺在
+ * `<userData>/agent/uploads` 里,那个目录又在 fs IPC 的 allowedRoots 内。
+ * 于是复用会让「把卡片拖过文件树」真的把 mp4 移走,卡片的 localPath 与整份版本
+ * 历史一起哑掉 —— 静默的数据丢失。
+ *
+ * 分开之后,文件树只认自己那个 MIME,天然忽略卡片;聊天栏显式认领这一个。
+ */
+const WORKBENCH_CARD_TYPE = 'application/x-catimation-workbench-cards'
 
 /**
  * Serialize one or more file paths into the drag DataTransfer.
@@ -46,6 +59,40 @@ export function parseFileDrop(dt: DataTransfer): string[] {
 export function dragCarriesDroppablePayload(dt: DataTransfer): boolean {
   const types = dt.types
   return types.includes(FILE_TYPE) || types.includes(QUOTE_TYPE) || types.includes('Files')
+}
+
+/** 一张被拖出来的工作台卡片。`localPath` 缺席表示这张卡还没有产物。 */
+export interface WorkbenchCardDragItem {
+  cardId: string
+  localPath?: string
+}
+
+/**
+ * 卡片 → 聊天栏。同一次 dragStart 里另写一个裸 id 到页内排序用的 MIME 是调用方的
+ * 事;这里只管聊天栏这一路。
+ *
+ * `text/plain` 兜底让外部目标(编辑器/终端)也能看到点东西。
+ */
+export function serializeWorkbenchCardDrag(dt: DataTransfer, items: WorkbenchCardDragItem[]): void {
+  if (items.length === 0) return
+  dt.setData(WORKBENCH_CARD_TYPE, JSON.stringify(items))
+  dt.setData('text/plain', items.map((i) => i.localPath ?? i.cardId).join('\n'))
+}
+
+/** 总是返回数组(可能为空)。载荷损坏按「没有卡片」处理,不抛。 */
+export function parseWorkbenchCardDrop(dt: DataTransfer): WorkbenchCardDragItem[] {
+  const raw = dt.getData(WORKBENCH_CARD_TYPE)
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.every((x) => x && typeof (x as WorkbenchCardDragItem).cardId === 'string')) {
+      return parsed as WorkbenchCardDragItem[]
+    }
+    console.warn('[dragHelpers] workbench card payload has unexpected shape — drop ignored')
+  } catch {
+    console.warn('[dragHelpers] workbench card payload is not valid JSON — drop ignored')
+  }
+  return []
 }
 
 export function serializeQuoteDrag(dt: DataTransfer, quote: string): void {
