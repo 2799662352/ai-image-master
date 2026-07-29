@@ -36,6 +36,7 @@ const cardInputSchema = z.object({
     'Seconds (4-15), or -1 = smart duration (model decides). Default 5.',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
+  webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
   referenceImages: z.array(z.string()).max(9).optional().describe(
     'Up to 9 reference images: local path / https URL / asset://assetId (portrait library) / data: URL. '
     + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
