@@ -100,15 +100,18 @@ function LocalResultVideo({ localPath, remoteSrc }: { localPath: string; remoteS
   )
 }
 
+/** 可播放源:卡片当前结果或某一历史版本,两者都有这三个字段。 */
+export type PlaybackSource = Pick<VideoWorkbenchCard, 'localPath' | 'remoteUrl' | 'videoUrl'>
+
 /**
  * 结果视频播放器入口。localPath / remoteUrl / videoUrl 全缺时返回 null
  * (与旧 playbackSrc 返回 null 的分支等价,外层不渲染结果区)。
  */
-export function ResultVideoPlayer({ card }: { card: VideoWorkbenchCard }) {
-  const remote = remoteVideoSrc(card)
+export function ResultVideoPlayer({ source }: { source: PlaybackSource }) {
+  const remote = remoteVideoSrc(source)
   const [remoteFailed, setRemoteFailed] = useState(false)
-  if (card.localPath) {
-    return <LocalResultVideo localPath={card.localPath} remoteSrc={remote} />
+  if (source.localPath) {
+    return <LocalResultVideo localPath={source.localPath} remoteSrc={remote} />
   }
   if (remote) {
     if (remoteFailed) return <PlaybackFallback reason="远程地址加载失败(可能已过期,可重新生成)" />

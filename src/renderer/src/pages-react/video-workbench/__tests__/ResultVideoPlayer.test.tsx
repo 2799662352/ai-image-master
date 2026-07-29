@@ -69,7 +69,7 @@ describe('ResultVideoPlayer — 本地播放(IPC → blob:)', () => {
   it('localPath 经 attachments:read-thumb 读字节转 blob: 喂 <video>,绝不直塞 local-file://', async () => {
     readThumb.mockResolvedValue(okBytes())
     const localPath = 'C:\\Users\\27996\\AppData\\Roaming\\catimation-cyberpunk-master\\agent\\uploads\\v.mp4'
-    render(<ResultVideoPlayer card={makeCard({ localPath })} />)
+    render(<ResultVideoPlayer source={makeCard({ localPath })} />)
     await waitFor(() => expect(queryVideo()).not.toBeNull())
     const video = queryVideo()!
     expect(video.getAttribute('src')).toMatch(/^blob:/)
@@ -79,7 +79,7 @@ describe('ResultVideoPlayer — 本地播放(IPC → blob:)', () => {
 
   it('读取中先渲染 loading 占位,不出空白 <video>', () => {
     readThumb.mockReturnValue(new Promise(() => {}))
-    render(<ResultVideoPlayer card={makeCard({ localPath: 'D:\\out\\v.mp4' })} />)
+    render(<ResultVideoPlayer source={makeCard({ localPath: 'D:\\out\\v.mp4' })} />)
     expect(screen.getByTestId('vw-playback-loading')).toBeTruthy()
     expect(queryVideo()).toBeNull()
   })
@@ -89,7 +89,7 @@ describe('ResultVideoPlayer — 本地播放(IPC → blob:)', () => {
     readBinary.mockResolvedValue({ ok: false, reason: 'file not found' })
     render(
       <ResultVideoPlayer
-        card={makeCard({ localPath: 'D:\\gone.mp4', remoteUrl: 'https://cos.example/v.mp4' })}
+        source={makeCard({ localPath: 'D:\\gone.mp4', remoteUrl: 'https://cos.example/v.mp4' })}
       />,
     )
     await waitFor(() => expect(queryVideo()?.getAttribute('src')).toBe('https://cos.example/v.mp4'))
@@ -99,7 +99,7 @@ describe('ResultVideoPlayer — 本地播放(IPC → blob:)', () => {
     readThumb.mockResolvedValue(okBytes())
     render(
       <ResultVideoPlayer
-        card={makeCard({ localPath: 'D:\\broken.mp4', videoUrl: 'https://tmp.example/v.mp4' })}
+        source={makeCard({ localPath: 'D:\\broken.mp4', videoUrl: 'https://tmp.example/v.mp4' })}
       />,
     )
     await waitFor(() => expect(queryVideo()?.getAttribute('src')).toMatch(/^blob:/))
@@ -112,7 +112,7 @@ describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
   it('本地读取失败且无远程源 → 显示路径 + 「在文件夹中打开」', async () => {
     readThumb.mockResolvedValue({ ok: false, reason: 'file not found' })
     readBinary.mockResolvedValue({ ok: false, reason: 'file not found' })
-    render(<ResultVideoPlayer card={makeCard({ localPath: 'D:\\gone.mp4' })} />)
+    render(<ResultVideoPlayer source={makeCard({ localPath: 'D:\\gone.mp4' })} />)
     const fallback = await screen.findByTestId('vw-playback-fallback')
     expect(fallback.textContent).toContain('视频加载失败')
     expect(fallback.textContent).toContain('D:\\gone.mp4')
@@ -123,7 +123,7 @@ describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
   })
 
   it('仅远程源且加载失败 → 显示错误兜底而非空白', async () => {
-    render(<ResultVideoPlayer card={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
+    render(<ResultVideoPlayer source={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
     expect(queryVideo()?.getAttribute('src')).toBe('https://cos.example/v.mp4')
     fireEvent.error(queryVideo()!)
     const fallback = await screen.findByTestId('vw-playback-fallback')
@@ -133,7 +133,7 @@ describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
 
 describe('ResultVideoPlayer — 远程直通与源判定', () => {
   it('无 localPath 时远程 https 直塞 <video>,不走 IPC', () => {
-    render(<ResultVideoPlayer card={makeCard({ videoUrl: 'https://tmp.example/v.mp4' })} />)
+    render(<ResultVideoPlayer source={makeCard({ videoUrl: 'https://tmp.example/v.mp4' })} />)
     expect(queryVideo()?.getAttribute('src')).toBe('https://tmp.example/v.mp4')
     expect(readThumb).not.toHaveBeenCalled()
   })
