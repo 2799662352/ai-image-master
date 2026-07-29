@@ -78,6 +78,8 @@ function labelFor(kind: AgentNotice['kind']): string {
       return 'attachment'
     case 'pgliteReset':
       return 'database'
+    case 'historyPersistDegraded':
+      return 'history'
     case 'threadContextReset':
       return 'context reset'
     case 'steerFallback':

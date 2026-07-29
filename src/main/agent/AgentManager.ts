@@ -3446,14 +3446,42 @@ export class AgentManager {
       const userJsonItems = JSON.parse(JSON.stringify(userTimelineItems)) as Parameters<
         ThreadStore['addMessage']
       >[0]['items']
-      const savedMessage = await this.store.addMessage({ threadId: thread.id, role: 'user', items: userJsonItems })
-      // Official-compat: forward our persisted row id as the app-server v2
-      // `clientUserMessageId` — the rollout's `userMessage` item echoes it as
-      // `clientId`, so codex-native history (thread/read, fork, resume) maps
-      // 1:1 to our DB rows without content heuristics.
-      clientUserMessageId = savedMessage?.id
-      // best-effort: failing to bump lastMessageAt should not block the turn
-      await this.store.updateLastMessageAt(thread.id).catch(() => undefined)
+      try {
+        const savedMessage = await this.store.addMessage({ threadId: thread.id, role: 'user', items: userJsonItems })
+        // Official-compat: forward our persisted row id as the app-server v2
+        // `clientUserMessageId` — the rollout's `userMessage` item echoes it as
+        // `clientId`, so codex-native history (thread/read, fork, resume) maps
+        // 1:1 to our DB rows without content heuristics.
+        clientUserMessageId = savedMessage?.id
+        // best-effort: failing to bump lastMessageAt should not block the turn
+        await this.store.updateLastMessageAt(thread.id).catch(() => undefined)
+      } catch (err) {
+        // This row is BOOKKEEPING, not a precondition of the turn. When the
+        // local DB wedges — PGlite dropping its socket surfaces as Prisma
+        // `P1017 Server has closed the connection` — a bare await here rejected
+        // the whole IPC call, so the user's message never reached the model and
+        // they got a packed Prisma stack with no way out but restarting the app.
+        //
+        // Everything else on this path already refuses to hold the message
+        // hostage: stale references are skipped with a notice, per-attachment
+        // ingest failures are isolated, `setThreadRouting` and
+        // `updateLastMessageAt` are both `.catch`ed. This line was the one
+        // holdout. Degrade the same way — announce the loss, keep the turn.
+        const detail = err instanceof Error ? err.message : String(err)
+        console.warn(`[AgentManager] user turn not persisted (turn continues): ${detail}`)
+        this.emitEvent({
+          type: 'notice',
+          notice: {
+            id: `history-persist:${thread.id}:${Date.now()}`,
+            kind: 'historyPersistDegraded',
+            level: 'warning',
+            threadId: thread.id,
+            message: '本地数据库暂时不可用,这条消息已发给模型但没能写入历史'
+              + '(重启后不会出现在会话记录里,也无法基于它编辑重发)。',
+            details: { reason: detail },
+          },
+        })
+      }
     }
 
     const input: AgentInput = {
