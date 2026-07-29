@@ -127,7 +127,7 @@ describe('buildCodexLaunchArgs', () => {
 
   it('enables native cross-session memory via the verified `memories` feature key', () => {
     // Feature key originally confirmed against the shipped 0.142.2 binary and
-    // RE-verified on 0.145.0 (scripts/smoke-codex-memories.ts:
+    // RE-verified on 0.146.0 (scripts/smoke-codex-memories.ts:
     // experimentalFeature/list → name=`memories`, stage=stable,
     // defaultEnabled=false). The docs-implied `memory` key does NOT exist;
     // using it would silently no-op.
