@@ -7,7 +7,7 @@
 // 人机协同:本页与 MCP video_workbench_* 工具操作同一个 useVideoWorkbenchStore,
 // agent 填卡/启动时页面实时可见;生成进度经 seedance:task-update 广播回流。
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   mountWorkbenchTaskListener,
   useVideoWorkbenchStore,
@@ -15,15 +15,16 @@ import {
 import { buildModeMedia } from '../features/video-workbench/store'
 import { formatCostUsd, summarizeCostUsd } from '../features/video-workbench/pricing'
 import { BoardTabs } from './video-workbench/BoardTabs'
+import { CardGap } from './video-workbench/CardGap'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
 
-/** 卡片排序拖拽的全局态暂未消费(视觉反馈在卡片内部),稳定 noop 防止子组件重渲。 */
-const NOOP_DRAG_STATE = () => {}
-
 export default function VideoWorkbenchPage() {
+  // 卡片汇报的拖拽态。以前这里传的是 noop —— 卡片说了页面不听;缝隙「＋」要在拖拽时
+  // 隐身避让插入指示线,正好把这根预埋管线接上。
+  const [dragging, setDragging] = useState(false)
   const allCards = useVideoWorkbenchStore((s) => s.cards)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const hydrated = useVideoWorkbenchStore((s) => s.hydrated)
@@ -158,14 +159,19 @@ export default function VideoWorkbenchPage() {
             </span>
           </button>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4 pt-4">
             {cards.map((card, index) => (
-              <WorkbenchCard
-                key={card.id}
-                card={card}
-                index={index}
-                onDragStateChange={NOOP_DRAG_STATE}
-              />
+              <div key={card.id} className="relative">
+                {/* 缝隙「＋」绝对定位进 space-y-4 的间距里,不占高度,行距不变。
+                    容器的 pt-4 是给第一张卡上方那道缝留落点 —— space-y-4 不给首个
+                    子元素外边距,没有它就插不到最前面。 */}
+                <CardGap beforeCardId={card.id} hidden={dragging} />
+                <WorkbenchCard
+                  card={card}
+                  index={index}
+                  onDragStateChange={setDragging}
+                />
+              </div>
             ))}
             {/* 底部追加按钮(卷轴尾部的「+」) */}
             <button
