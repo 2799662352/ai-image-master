@@ -22,6 +22,8 @@ import type {
   VideoWorkbenchCard,
   VideoWorkbenchCardInput,
   VideoWorkbenchInsertAnchor,
+  VideoWorkbenchVersion,
+  VideoWorkbenchVersionSpec,
   VideoWorkbenchCardStatus,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
@@ -463,6 +465,73 @@ function toReconcileItem(card: VideoWorkbenchCard): VideoWorkbenchReconcileItem 
     duration: card.duration,
     ...(card.startedAt ? { createdAt: card.startedAt } : {}),
   }
+}
+
+/** 素材只取展示名 —— 字节留在卡片上,版本记录不复制(见 VideoWorkbenchVersionSpec)。 */
+function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSpec {
+  return {
+    prompt: card.prompt,
+    model: card.model,
+    resolution: card.resolution,
+    ratio: card.ratio,
+    duration: card.duration,
+    generateAudio: card.generateAudio,
+    mode: card.mode,
+    ...(card.seed !== undefined ? { seed: card.seed } : {}),
+    webSearch: card.webSearch,
+    referenceBrief: {
+      images: card.referenceImages.map((m) => m.name),
+      videos: card.referenceVideos.map((m) => m.name),
+      audios: card.referenceAudios.map((m) => m.name),
+    },
+  }
+}
+
+/**
+ * 把刚成功的这一轮存档。
+ *
+ * 抓取时机是「成功那一刻」而非「重生那一刻」:重生的典型动机就是改了提示词,
+ * 那一刻卡上的规格已经是新的,和旧视频存在一起就是张冠李戴。而渲染中的卡片改不了
+ * 规格(updateCard 对 preparing/queued/running 直接返回原卡),所以成功这一刻卡上的
+ * 规格必然就是产出该视频的规格。
+ */
+function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
+  const prev = card.versions ?? []
+  return [
+    ...prev,
+    {
+      id: createId(),
+      seq: (prev.at(-1)?.seq ?? 0) + 1,
+      createdAt: Date.now(),
+      ...(card.taskId ? { taskId: card.taskId } : {}),
+      ...(card.localPath ? { localPath: card.localPath } : {}),
+      ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
+      ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
+      ...(card.actualSeed !== undefined ? { actualSeed: card.actualSeed } : {}),
+      ...(card.completionTokens !== undefined ? { completionTokens: card.completionTokens } : {}),
+      spec: versionSpecOf(card),
+    },
+  ]
+}
+
+/**
+ * 持久地址后到 —— 把最新那一版的地址原地升级。必须整体替换而不是原地改:
+ * workbenchHistory.captureIntent 与 store 共享卡片对象,原地 push/改会污染撤销快照。
+ */
+function upgradeLatestVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
+  const prev = card.versions ?? []
+  const last = prev.at(-1)
+  if (!last) return prev
+  return [
+    ...prev.slice(0, -1),
+    {
+      ...last,
+      ...(card.localPath ? { localPath: card.localPath } : {}),
+      ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
+      ...(card.actualSeed !== undefined ? { actualSeed: card.actualSeed } : {}),
+      ...(card.completionTokens !== undefined ? { completionTokens: card.completionTokens } : {}),
+    },
+  ]
 }
 
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -1335,6 +1404,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     }
   },
 
+  // 见文件内 versionSpecOf / archiveVersion / upgradeLatestVersion 的说明。
   applyTaskUpdate: (update) => {
     if (update.source !== 'workbench') return
     let after: VideoWorkbenchCard | null = null
@@ -1370,7 +1440,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           !card.historyRecorded &&
           (next.remoteUrl || next.localPath || next.videoUrl)
         ) {
-          next = { ...next, historyRecorded: true }
+          next = { ...next, historyRecorded: true, versions: archiveVersion(next) }
           shouldRecordHistory = true
         } else if (
           next.status === 'succeeded' &&
@@ -1378,6 +1448,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           (next.remoteUrl || next.localPath)
         ) {
           // 已入库,而这一条广播带来了持久地址 → 把历史里的临时地址换掉。
+          // 版本记录同样要升级,否则老版本手里只剩会过期的上游临时地址。
+          next = { ...next, versions: upgradeLatestVersion(next) }
           shouldUpgradeHistory = true
         }
         after = next
