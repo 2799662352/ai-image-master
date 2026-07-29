@@ -219,7 +219,7 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     )
   })
 
-  it('写操作统一回带 workbench 全局摘要(boards + statusCounts)', async () => {
+  it('写操作统一回带 workbench 全局摘要(boards + statusCounts + 选中态)', async () => {
     const added = await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '第一张' }, { prompt: '第二张' }],
       navigate: false,
@@ -229,7 +229,14 @@ describe('AgentToolExecutor.video_workbench_*', () => {
       activeBoardId,
       boards: [{ id: activeBoardId, name: expect.any(String), cardCount: 2 }],
       statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },
+      selectedCardIds: [],
     })
+
+    // agent 建卡不该顺手改用户的选区;用户选了以后,下一次工具调用就该看见。
+    // status 是读工具,不带 workbench 包装,选中态平铺在顶层。
+    useVideoWorkbenchStore.getState().selectCard(added.cardIds[1])
+    const afterSelect = await callTool('video_workbench_status', {})
+    expect(afterSelect.selectedCardIds).toEqual([added.cardIds[1]])
 
     const updated = await callTool('video_workbench_update_task', {
       cardId: added.cardIds[0],

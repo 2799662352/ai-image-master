@@ -228,10 +228,21 @@ export interface WorkbenchSummary {
   activeBoardId: string
   boards: WorkbenchBoardBrief[]
   statusCounts: WorkbenchStatusCounts
+  /**
+   * 用户此刻在 UI 里选中的卡。**按需回读,不主动推送** —— 选中是高频操作,
+   * 推送等于刷屏(画布的先例也是只在「用户主动打开画布」这种明确交接手势时
+   * 推一次)。任何一次工作台工具调用都顺带带出它。
+   *
+   * 别把它当成「该对哪些卡动手」的指令:agent 的目标卡永远由参数显式给出。
+   * 它的用途是让「生成选中的那几张」「这几张重做」这类指代能落到具体 id 上。
+   *
+   * 拖卡进聊天栏时选区会跟着被拖的卡走,所以这里也恰好是「用户刚递过来的那几张」。
+   */
+  selectedCardIds: string[]
 }
 
 export function snapshotWorkbench(
-  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId'>,
+  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId' | 'selectedCardIds'>,
 ): WorkbenchSummary {
   const statusCounts: WorkbenchStatusCounts = {
     draft: 0,
@@ -256,6 +267,7 @@ export function snapshotWorkbench(
       .sort((a, b) => a.order - b.order)
       .map((b) => ({ id: b.id, name: b.name, cardCount: cardCountByBoard.get(b.id) ?? 0 })),
     statusCounts,
+    selectedCardIds: [...state.selectedCardIds],
   }
 }
 

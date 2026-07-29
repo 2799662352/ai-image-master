@@ -361,6 +361,7 @@ describe('structured output(MCP 2025-11-25)', () => {
     activeBoardId: 'b1',
     boards: [{ id: 'b1', name: '页面 1', cardCount: 2 }],
     statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },
+    selectedCardIds: ['c1'],
   }
   const cardSnapshot = {
     cardId: 'c1',
@@ -383,7 +384,13 @@ describe('structured output(MCP 2025-11-25)', () => {
   }
 
   it('status:成功结果带 structuredContent(text JSON 兜底保留)且通过 outputSchema', async () => {
-    const routerResult = { total: 1, activeBoardId: 'b1', boards: workbench.boards, cards: [cardSnapshot] }
+    const routerResult = {
+      total: 1,
+      activeBoardId: 'b1',
+      boards: workbench.boards,
+      selectedCardIds: ['c1'],
+      cards: [cardSnapshot],
+    }
     const { tools, server, router } = capture(routerResult)
     registerVideoWorkbenchTools(server, router)
     const tool = toolByName(tools, 'video_workbench_status')
@@ -447,6 +454,26 @@ describe('structured output(MCP 2025-11-25)', () => {
       const parsed = tool.config.outputSchema!.safeParse(res.structuredContent)
       expect(parsed.success, `${c.name} outputSchema 校验失败: ${JSON.stringify(parsed.error?.issues)}`).toBe(true)
     }
+  })
+
+  it('摘要必须带 selectedCardIds —— 缺字段过不了 schema,agent 侧不用判 undefined', async () => {
+    const { tools, server, router } = capture({ started: ['c1'], skipped: [], workbench })
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_start').config.outputSchema!
+
+    expect(schema.safeParse({ started: ['c1'], skipped: [], workbench }).success).toBe(true)
+
+    const { selectedCardIds: _omitted, ...withoutSelection } = workbench
+    expect(schema.safeParse({ started: ['c1'], skipped: [], workbench: withoutSelection }).success).toBe(false)
+  })
+
+  it('选中态的 description 明说它是易变 UI 态、不是动手指令', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const shape = (toolByName(tools, 'video_workbench_start').config.outputSchema as any).shape
+    const description: string = shape.workbench.shape.selectedCardIds.description
+    expect(description).toContain('NEVER')
+    expect(description).toContain('explicit cardIds')
   })
 
   it('执行错误:isError: true + content 报错(不再只靠 ❌ 文本横幅),无 structuredContent', async () => {

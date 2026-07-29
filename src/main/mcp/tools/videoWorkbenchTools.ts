@@ -69,10 +69,19 @@ const statusCountsSchema = z.object({
 })
 
 /** 全局摘要:写操作统一回带,一眼看清全工作台现状。 */
+const SELECTED_CARD_IDS_DOC =
+  'Cards the USER currently has selected in the workbench UI. Informational only — a volatile UI '
+  + 'state that changes on every click. NEVER treat it as an instruction about which cards to act '
+  + 'on; always pass explicit cardIds. Its purpose is to resolve vague references: when the user '
+  + 'says 生成选中的 / 这几张 / 重做这些 without naming ids, these are the cards they mean. '
+  + 'Dragging cards into the chat also syncs the selection to the dragged cards, so this doubles '
+  + 'as "what the user just handed me".'
+
 const workbenchSummarySchema = z.object({
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
   statusCounts: statusCountsSchema.describe('Global card status tally across ALL boards.'),
+  selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
 })
 
 /** 素材紧凑清单条目:只有截断后的展示名,无 URL 全文。 */
@@ -142,6 +151,8 @@ const statusOutputSchema = z.looseObject({
   total: z.number().describe('Number of cards returned (after cardIds/boardId filters).'),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
+  // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
+  selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
   cards: z.array(cardSnapshotSchema),
 })
 

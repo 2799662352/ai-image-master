@@ -317,7 +317,7 @@ describe('snapshotWorkbench 全局摘要', () => {
       { ...buildCard({ prompt: 'c' }, 0, 'b2'), status: 'succeeded' as const },
       { ...buildCard({ prompt: 'd' }, 1, 'b2'), status: 'failed' as const },
     ]
-    const summary = snapshotWorkbench({ cards, boards, activeBoardId: 'b2' })
+    const summary = snapshotWorkbench({ cards, boards, activeBoardId: 'b2', selectedCardIds: [] })
     expect(summary).toEqual({
       activeBoardId: 'b2',
       boards: [
@@ -325,6 +325,7 @@ describe('snapshotWorkbench 全局摘要', () => {
         { id: 'b2', name: '分镜', cardCount: 2 },
       ],
       statusCounts: { draft: 1, preparing: 0, queued: 0, running: 1, succeeded: 1, failed: 1 },
+      selectedCardIds: [],
     })
   })
 
@@ -334,6 +335,7 @@ describe('snapshotWorkbench 全局摘要', () => {
       cards: [{ ...buildCard({ prompt: 'x' }, 0, 'b1'), status: 'weird' as never }],
       boards,
       activeBoardId: 'b1',
+      selectedCardIds: [],
     })
     expect(summary.boards).toEqual([{ id: 'b1', name: '页面 1', cardCount: 1 }])
     expect(summary.statusCounts).toEqual({ draft: 0, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 })
@@ -750,5 +752,27 @@ describe('无参批量操作吃选中态', () => {
     const result = await useVideoWorkbenchStore.getState().startCards()
     expect(result.started).toEqual([])
     expect(result.skipped).toEqual([{ cardId: ids[0], reason: '提示词为空' }])
+  })
+})
+
+describe('摘要带出选中态', () => {
+  it('snapshotWorkbench 回带 selectedCardIds', () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[1])
+    const summary = snapshotWorkbench(useVideoWorkbenchStore.getState())
+    expect(summary.selectedCardIds).toEqual([ids[1]])
+  })
+
+  it('没有选中时是空数组而不是缺字段', () => {
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }])
+    expect(snapshotWorkbench(useVideoWorkbenchStore.getState()).selectedCardIds).toEqual([])
+  })
+
+  it('回带的是副本 —— 之后改选中不会篡改已发出的摘要', () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[0])
+    const summary = snapshotWorkbench(useVideoWorkbenchStore.getState())
+    useVideoWorkbenchStore.getState().selectCard(ids[1], 'toggle')
+    expect(summary.selectedCardIds).toEqual([ids[0]])
   })
 })
