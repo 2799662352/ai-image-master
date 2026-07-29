@@ -296,21 +296,24 @@ directory and give it a descriptive, ordered name — e.g.
 export const CATIMATION_VIDEO_SKILL_CONTENT = `---
 name: catimation-video
 description: >-
-  FIRST-CHOICE video generator and the ONLY top-level video orchestrator in the
-  CATIMATION desktop app. Trigger whenever the user asks to generate / create /
-  render a video or animation, animate a still, or says 生成视频 / 图生视频 /
-  让它动起来 / 视频编辑 / 视频延长. Covers text-to-video, still-to-video,
-  omni-reference (全能参考, default), editing and extension via the in-app
-  generate_video tool (Seedance 2.0), and grades every request into
-  快速/标准/专业/制片 four tiers before loading any other skill.
+  FIRST-CHOICE video generator and the ONLY top-level video orchestrator in
+  CATIMATION. Trigger whenever the user asks to generate / render a video or
+  animation, animate a still, or says 生成视频 / 图生视频 / 让它动起来 / 视频编辑 /
+  视频延长 / 视频工作台 / 批量出片 / 多镜. Covers text/still-to-video, omni-reference
+  (全能参考, default), editing and extension on both output surfaces
+  (generate_video one-shot + video_workbench_* batch), and grades every request
+  快速/标准/专业/制片 before loading other skills.
 ---
 
 <!-- skill-budget: pro -->
 
 # Generate videos in CATIMATION(唯一视频入口 · 分级调度)
 
-When the user wants a video, call the **\`generate_video\`** tool from the
-\`catimation\` MCP server. It submits the render and blocks for roughly 75s to catch
+When the user wants a video, pick the output surface first: **\`generate_video\`**
+(single shot, delivered straight into the chat) or the **\`video_workbench_*\`**
+tools(「生成视频」工作台页:多卡批量、逐卡改参数、用户看着卡片渲染)。两者都在
+\`catimation\` MCP server 上,共用本 skill 的分级与提示词纪律。走 \`generate_video\` 时:
+It submits the render and blocks for roughly 75s to catch
 fast completions and early failures. It may return DONE/FAILED, or
 \`STILL RUNNING + taskId\`; only in the latter case continue with \`check_video_task\`
 long-polls until terminal. Never sleep and never resubmit the same render. The user
@@ -360,7 +363,8 @@ Caps: \`referenceImages\` ≤9 张;\`referenceVideos\` ≤3 段、合计 ≤15s;
 when the user explicitly asks. **Always name the mode you used**(如「我用**全能
 参考**模式生成」)。
 
-All modes share ONE tool (\`generate_video\`) — pick by inputs + prompt:
+All modes work on **both** surfaces(\`generate_video\` 与 \`video_workbench_*\`)
+— pick by inputs + prompt:
 
 - **文生视频**: \`prompt\` only. **图生视频**: still into \`referenceImages\`(或用户
   指明才用 \`firstFrame\`)。
@@ -378,6 +382,16 @@ All modes share ONE tool (\`generate_video\`) — pick by inputs + prompt:
 Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
 优先用 \`ffmpeg-win\` 抽尾帧/关键帧成静图(下一镜 \`firstFrame\` 最稳)或抽音轨续节奏;
 整段回喂只作规避真人脸审核的兜底。
+
+### 两条出片面怎么选
+
+- **\`generate_video\`**:单镜、一次性、用户没点名工作台。成片直接进聊天并落历史页。
+- **\`video_workbench_*\`**:多镜批量、用户已经在「生成视频」工作台、需要逐卡改参数或反复
+  重跑。先 \`video_workbench_add_tasks\` 建卡(默认只填不跑,\`autoStart:true\` 才立即渲染);
+  批次跑完会主动推「[视频工作台] 批次渲染完成」,**别轮询** \`video_workbench_status\`。
+  跨多卡的整理/重排/换规格用 \`video_workbench_export\` → 改 JSON → \`video_workbench_apply\`。
+- 两条面共用**同一套** STEP 0 分级、上面那组素材 caps 与素材引用铁律 —— 工作台不是例外。
+  有参考图时同样先 \`view_image\` 看图再写 prompt。
 
 ## 角色片 / 多镜(标准及以上):先备齐资产,再开生成
 
