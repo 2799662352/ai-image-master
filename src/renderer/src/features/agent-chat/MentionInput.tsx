@@ -8,7 +8,12 @@ import { ImageChannelPicker } from './ImageChannelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore, type PluginMentionCandidate } from './store'
-import { dragCarriesDroppablePayload, parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
+import {
+  dragCarriesDroppablePayload,
+  parseFileDrop,
+  parseQuoteDrop,
+  parseWorkbenchCardDrop,
+} from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
@@ -996,6 +1001,29 @@ export function MentionInput() {
     const quote = parseQuoteDrop(event.dataTransfer)
     if (quote) {
       appendInput(quote)
+      return
+    }
+
+    // 视频工作台卡片。它走自己的 MIME 而不是文件路径那个 —— 文件路径 MIME 的含义
+    // 是「可移动的工作区文件」,而文件栏与工作台同屏,复用会让卡片被拖过文件树时
+    // 真的 fs.move 掉 mp4。这里显式认领。
+    const droppedCards = parseWorkbenchCardDrop(event.dataTransfer)
+    if (droppedCards.length > 0) {
+      const withVideo = droppedCards.filter((c) => c.localPath)
+      if (withVideo.length === 0) {
+        // 还没出片:如实说一声,别让用户以为拖失败了。选中态仍已同步,
+        // 模型下次调工作台工具照样看得见这几张卡。
+        setError('这些卡还没有生成结果,没有视频可以递过去。')
+        return
+      }
+      const skipped: string[] = []
+      for (const item of withVideo) {
+        const localPath = item.localPath!
+        const name = localPath.split(/[\\/]/).pop() ?? localPath
+        const reason = await attachFileByPath(localPath, name)
+        if (reason) skipped.push(`${name}(${reason})`)
+      }
+      setError(skipped.length > 0 ? `已跳过 ${skipped.length} 个:${skipped.join('、')}` : undefined)
       return
     }
 
