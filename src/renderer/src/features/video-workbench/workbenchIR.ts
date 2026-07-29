@@ -113,6 +113,18 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
       ...(card.error ? { error: card.error } : {}),
       ...(card.localPath ? { localPath: card.localPath } : {}),
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
+      // 版本是结果不是意图:只作只读注解导出,planApplyIR 整块忽略 result,
+      // 所以不会被回灌 —— 无需在 apply 侧写任何防御。
+      ...(card.versions && card.versions.length > 0
+        ? {
+            versions: card.versions.map((v) => ({
+              seq: v.seq,
+              ...(v.localPath ? { localPath: v.localPath } : {}),
+              ...(v.remoteUrl ? { remoteUrl: v.remoteUrl } : {}),
+              prompt: v.spec.prompt,
+            })),
+          }
+        : {}),
     },
   }
 }

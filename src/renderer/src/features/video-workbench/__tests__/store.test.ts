@@ -572,6 +572,19 @@ describe('版本历史', () => {
     expect(specEquals(before, after)).toBe(true)
   })
 
+  it('snapshotCard 带出版本摘要,供 agent 引用具体某一版', () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'p' }])
+    markRunning(id, 't1')
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({
+      taskId: 't1', status: 'succeeded', remoteUrl: 'https://cos/v1.mp4',
+    }))
+
+    const snap = snapshotCard(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!)
+    expect(snap.versions).toEqual([
+      { seq: 1, remoteUrl: 'https://cos/v1.mp4', prompt: 'p' },
+    ])
+  })
+
   it('撤销只还原意图,不删版本记录', () => {
     const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '旧' }])
     useVideoWorkbenchStore.getState().updateCard(id, { prompt: '新' })

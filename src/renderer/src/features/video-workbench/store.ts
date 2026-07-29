@@ -145,6 +145,11 @@ export interface WorkbenchCardSnapshot {
   error?: string
   localPath?: string
   remoteUrl?: string
+  /**
+   * 历次成功产物的摘要(每版只给 seq + 地址 + 当时的提示词)。给 agent 一个能引用
+   * 具体某一版的抓手,同时不把整份规格塞进回包。
+   */
+  versions?: Array<{ seq: number; localPath?: string; remoteUrl?: string; prompt: string }>
 }
 
 export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
@@ -176,6 +181,24 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     ...(card.error ? { error: card.error } : {}),
     ...(card.localPath ? { localPath: card.localPath } : {}),
     ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
+    ...(card.versions && card.versions.length > 0
+      ? { versions: card.versions.map(versionBrief) }
+      : {}),
+  }
+}
+
+/** 版本摘要:只给 seq + 地址 + 当时的提示词,不把整份规格塞进回包。 */
+function versionBrief(v: VideoWorkbenchVersion): {
+  seq: number
+  localPath?: string
+  remoteUrl?: string
+  prompt: string
+} {
+  return {
+    seq: v.seq,
+    ...(v.localPath ? { localPath: v.localPath } : {}),
+    ...(v.remoteUrl ? { remoteUrl: v.remoteUrl } : {}),
+    prompt: v.spec.prompt,
   }
 }
 

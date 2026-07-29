@@ -270,6 +270,39 @@ describe('planApplyIR / 拒绝路径', () => {
     expect(allBad.result.skipped.map((s) => s.reason).join()).toContain('没有一页可用')
   })
 
+  it('版本进导出侧结果注解,但 apply 一律忽略(结果不是意图)', () => {
+    const src = source({
+      cards: [{
+        ...card({ id: 'c1', boardId: 'b1', prompt: 'p' }),
+        versions: [{
+          id: 'ver1',
+          seq: 1,
+          createdAt: 1,
+          remoteUrl: 'https://cos/v1.mp4',
+          spec: {
+            prompt: 'p',
+            model: '2.0',
+            resolution: '720p',
+            ratio: '16:9',
+            duration: 5,
+            generateAudio: true,
+            mode: 'multimodal_ref',
+            webSearch: false,
+            referenceBrief: { images: [], videos: [], audios: [] },
+          },
+        }],
+      }],
+    })
+
+    const ir = roundTrip(src)
+    expect(ir.boards[0].cards[0].result!.versions).toHaveLength(1)
+
+    // 把注解改掉再 apply —— 不该有任何效果。
+    ir.boards[0].cards[0].result!.versions = []
+    const plan = planApplyIR(src, ir)
+    expect(plan.next!.cards[0].versions).toHaveLength(1)
+  })
+
   it('超过卡片上限不再拒绝:照写,超出部分由 evict 兜底淘汰', () => {
     const src = source()
     const ir = roundTrip(src)

@@ -269,6 +269,8 @@ export interface WorkbenchIRCardResult {
   error?: string
   localPath?: string
   remoteUrl?: string
+  /** 历次成功产物（只读注解，apply 一律忽略）。 */
+  versions?: Array<{ seq: number; localPath?: string; remoteUrl?: string; prompt: string }>
 }
 
 /**
