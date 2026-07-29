@@ -160,7 +160,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
 })
 
 describe('handlers → router.call 透传与 banner', () => {
-  it('add_tasks:结果 JSON 进回包;autoStart 时 banner 指示轮询', async () => {
+  it('add_tasks:结果 JSON 进回包;autoStart 时 banner 明令不许轮询、说明完成会推送', async () => {
     const { tools, server, router } = capture({ cardIds: ['c1', 'c2'], total: 2 })
     registerVideoWorkbenchTools(server, router)
     const tool = toolByName(tools, 'video_workbench_add_tasks')
@@ -171,7 +171,11 @@ describe('handlers → router.call 透传与 banner', () => {
       undefined,
     )
     const text = res.content[0].text
-    expect(text).toContain('video_workbench_status')
+    // 旧契约是「poll video_workbench_status 到全部终态」,那正是把 turn 占死的元凶。
+    // 现在必须反过来:明确不许轮询/等待,并告知完成会被推送。
+    expect(text).toContain('Do NOT poll')
+    expect(text).toContain('批次渲染完成')
+    expect(text).not.toContain('video_workbench_status')
     expect(text).toContain('"cardIds":["c1","c2"]')
   })
 
@@ -183,12 +187,14 @@ describe('handlers → router.call 透传与 banner', () => {
     expect(res.content[0].text).toContain('not started')
   })
 
-  it('start:有启动项时 banner 要求轮询,全部跳过时给警告', async () => {
+  it('start:有启动项时 banner 明令不许轮询/重复提交,全部跳过时给警告', async () => {
     const started = capture({ started: ['c1'], skipped: [] })
     registerVideoWorkbenchTools(started.server, started.router)
     const startTool = toolByName(started.tools, 'video_workbench_start')
     const okRes = await startTool.handler({})
     expect(okRes.content[0].text).toContain('render(s) submitted')
+    expect(okRes.content[0].text).toContain('Do NOT poll')
+    expect(okRes.content[0].text).toContain('批次渲染完成')
 
     const skipped = capture({ started: [], skipped: [{ cardId: 'c1', reason: '提示词为空' }] })
     registerVideoWorkbenchTools(skipped.server, skipped.router)
@@ -198,11 +204,12 @@ describe('handlers → router.call 透传与 banner', () => {
     expect(skipRes.content[0].text).toContain('提示词为空')
   })
 
-  it('status:有渲染中卡片时提示继续轮询,全终态时提示完成', async () => {
+  it('status:有渲染中卡片时要求汇报后收手(不许自旋),全终态时提示完成', async () => {
     const busyCase = capture({ total: 2, cards: [{ status: 'running' }, { status: 'succeeded' }] })
     registerVideoWorkbenchTools(busyCase.server, busyCase.router)
     const busyRes = await toolByName(busyCase.tools, 'video_workbench_status').handler({})
     expect(busyRes.content[0].text).toContain('still rendering')
+    expect(busyRes.content[0].text).toContain('do NOT call this again in a loop')
 
     const doneCase = capture({ total: 1, cards: [{ status: 'succeeded', localPath: 'C:/v.mp4' }] })
     registerVideoWorkbenchTools(doneCase.server, doneCase.router)
