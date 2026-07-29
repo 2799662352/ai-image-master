@@ -30,6 +30,7 @@
     "typecheck:ci": "node scripts/ci/typecheck-baseline.mjs",
     "typecheck:baseline:refresh": "node scripts/ci/typecheck-baseline.mjs --write",
     "build:pglite-worker": "node scripts/build-pglite-worker.mjs",
+    "verify:pglite-cap": "node scripts/verify-pglite-cap.mjs",
     "vendor:apiyi-mcp": "node scripts/vendor-apiyi-mcp.mjs",
     "vendor:apiyi-mcp:update": "node scripts/vendor-apiyi-mcp.mjs --update-ref",
     "build:vite": "pnpm run vendor:apiyi-mcp && electron-vite build && node scripts/build-pglite-worker.mjs",
