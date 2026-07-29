@@ -616,3 +616,88 @@ describe('超上限淘汰', () => {
     expect(rows).toHaveLength(WORKBENCH_MAX_CARDS)
   })
 })
+
+describe('选中态', () => {
+  function seed(n: number): string[] {
+    return useVideoWorkbenchStore.getState().addCards(
+      Array.from({ length: n }, (_, i) => ({ prompt: `p${i}` })),
+    )
+  }
+
+  it('单击替换选中,Ctrl 切换,Shift 选区间', () => {
+    const ids = seed(5)
+    const s = () => useVideoWorkbenchStore.getState()
+
+    s().selectCard(ids[1])
+    expect(s().selectedCardIds).toEqual([ids[1]])
+
+    s().selectCard(ids[3])
+    expect(s().selectedCardIds).toEqual([ids[3]])
+
+    s().selectCard(ids[0], 'toggle')
+    expect(s().selectedCardIds).toEqual([ids[3], ids[0]])
+    s().selectCard(ids[0], 'toggle')
+    expect(s().selectedCardIds).toEqual([ids[3]])
+
+    // 锚点 = 上一次 replace/toggle 命中的那张(ids[3]),区间到 ids[1]
+    s().selectCard(ids[1], 'range')
+    expect([...s().selectedCardIds].sort()).toEqual([ids[1], ids[2], ids[3]].sort())
+  })
+
+  it('没有锚点时 Shift 等同单击', () => {
+    const ids = seed(3)
+    useVideoWorkbenchStore.getState().selectCard(ids[2], 'range')
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([ids[2]])
+  })
+
+  it('选中不递增 revision / structureRevision', () => {
+    const ids = seed(2)
+    const before = useVideoWorkbenchStore.getState()
+    const rev = before.revision
+    const structRev = before.structureRevision
+    before.selectCard(ids[0])
+    const after = useVideoWorkbenchStore.getState()
+    expect(after.revision).toBe(rev)
+    expect(after.structureRevision).toBe(structRev)
+  })
+
+  it('切页清空选中', () => {
+    const ids = seed(2)
+    const store = useVideoWorkbenchStore.getState()
+    store.selectCard(ids[0])
+    const other = store.addBoard('第二页')
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([])
+
+    useVideoWorkbenchStore.getState().selectCard(
+      useVideoWorkbenchStore.getState().addCards([{ prompt: 'x' }])[0],
+    )
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toHaveLength(1)
+    useVideoWorkbenchStore.getState().switchBoard(other)
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([])
+  })
+
+  it('删卡把它从选中里剪掉', () => {
+    const ids = seed(3)
+    const store = useVideoWorkbenchStore.getState()
+    store.selectCard(ids[0])
+    store.selectCard(ids[1], 'toggle')
+    useVideoWorkbenchStore.getState().removeCard(ids[0])
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([ids[1]])
+  })
+
+  it('removeCards 一次事务删多张,order 重新密排', () => {
+    const ids = seed(4)
+    useVideoWorkbenchStore.getState().removeCards([ids[0], ids[2]])
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.map((c) => c.id)).toEqual([ids[1], ids[3]])
+    expect(cards.map((c) => c.order)).toEqual([0, 1])
+    expect(useVideoWorkbenchStore.getState().selectedCardIds).toEqual([])
+  })
+
+  it('removeCards 只让 structureRevision 走一格', () => {
+    const ids = seed(3)
+    const structRev = useVideoWorkbenchStore.getState().structureRevision
+    useVideoWorkbenchStore.getState().removeCards([ids[0], ids[1]])
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(structRev + 1)
+  })
+})
