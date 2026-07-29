@@ -2,6 +2,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AgentChatPanel } from './AgentChatPanel'
 import { mountAgentToolExecutor } from './AgentToolExecutor'
 import { mountSeedanceTaskListener } from './SeedanceTaskListener'
+import { mountWorkbenchBatchWatcher } from '../video-workbench/batchCompletion'
 import { useAgentChatStore } from './store'
 
 let root: Root | null = null
@@ -36,6 +37,12 @@ export function mountAgentChatRuntime(): () => void {
 
   const unmountToolExecutor = mountAgentToolExecutor()
   const unmountSeedanceListener = mountSeedanceTaskListener()
+  // 视频工作台批次跑完 → 推给发起它的线程（turn 在跑就 steer 插话，闲着就随
+  // 下一条消息带走）。取代让模型轮询 video_workbench_status —— 轮询会把 turn
+  // 长期占在工具调用里，用户就插不进话了。
+  const unmountWorkbenchWatcher = mountWorkbenchBatchWatcher((notice) => {
+    useAgentChatStore.getState().notifyWorkbenchBatchDone(notice.text, notice.threadId)
+  })
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'a') {
       event.preventDefault()
@@ -52,6 +59,7 @@ export function mountAgentChatRuntime(): () => void {
     window.removeEventListener('keydown', onKeyDown)
     document.removeEventListener('fullscreenchange', onFullscreenChange)
     unmountSeedanceListener()
+    unmountWorkbenchWatcher()
     unmountToolExecutor()
     root?.unmount()
     root = null

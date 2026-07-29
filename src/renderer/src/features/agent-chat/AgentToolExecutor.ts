@@ -24,6 +24,7 @@ import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioG
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
+import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import type { WorkbenchIR } from '../../../../types/videoWorkbench'
 
 type GenerateAudioToolParams = {
@@ -307,7 +308,7 @@ export class AgentToolExecutor {
       case 'video_workbench_remove_tasks':
       case 'video_workbench_export':
       case 'video_workbench_apply':
-        return this.callVideoWorkbench(toolName, params)
+        return this.callVideoWorkbench(toolName, params, threadId)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
     }
@@ -318,7 +319,11 @@ export class AgentToolExecutor {
    * (useVideoWorkbenchStore),页面卡片实时反映 agent 的填写/启动。
    * 生成本身经 video-workbench:submit IPC 复用主进程 Seedance 链路。
    */
-  private async callVideoWorkbench(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+  private async callVideoWorkbench(
+    toolName: string,
+    params: Record<string, unknown>,
+    threadId?: string,
+  ): Promise<unknown> {
     const store = useVideoWorkbenchStore.getState()
     await store.ensureHydrated()
 
@@ -347,7 +352,11 @@ export class AgentToolExecutor {
         }
         let start: unknown
         if (params.autoStart === true) {
-          start = await useVideoWorkbenchStore.getState().startCards(cardIds)
+          const started = await useVideoWorkbenchStore.getState().startCards(cardIds)
+          // 登记批次：跑完后由 batchCompletion watcher 主动推给本线程，
+          // 模型不需要（也不应该）轮询 video_workbench_status 等结果。
+          registerAgentBatch(started.started, threadId)
+          start = started
         }
         return {
           cardIds,
@@ -371,6 +380,8 @@ export class AgentToolExecutor {
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : undefined
         const result = await store.startCards(ids)
+        // 同上：批次跑完主动推送，取代轮询。
+        registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
       }
       case 'video_workbench_status': {

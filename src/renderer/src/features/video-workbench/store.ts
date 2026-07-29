@@ -1165,7 +1165,20 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       )
     }
 
-    await Promise.all(submissions)
+    // 刻意不 await submissions —— 这个 await 曾让 agent 整个 turn 卡死。
+    // startCards 是 video_workbench_start 的渲染端实现,而 MCP 工具调用在飞的
+    // 时候模型不推理、用户排队的 turn/steer 也进不来(上限是 ToolRouter 的
+    // RENDERER_TOOL_TIMEOUT_MS = 2_000_000ms ≈ 33 分钟)。每条 submit 在主进程
+    // 里要跑 buildContent(读本地文件/下载 URL/转 base64)→ 人像库 COS 导入 →
+    // 逐个 asset 的存在性校验(每个一次上游 HTTP)→ createTask,批量十几张卡
+    // 时轻易堆到几分钟,用户视角就是「启动后卡住,没法说话」。
+    //
+    // 去掉是安全的:result 在提交前就已经完整(started/skipped 都是同步 push
+    // 的),这个 await 对返回值零贡献;每条 submission 自带 .then/.catch 回写
+    // 卡片状态,不会有悬空 rejection;卡片在提交前已同步落 'preparing' 并持久化,
+    // 之后的进度由 seedance:task-update 广播流回 applyTaskUpdate —— 工作台页面
+    // 本身就是交付通道,跟 agent 等不等完全无关。
+    void Promise.all(submissions)
     return result
   },
 
