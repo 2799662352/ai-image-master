@@ -9,6 +9,9 @@
  *
  * 分层：本模块只依赖工作台 store（卡片状态的单一真相源），投递方式由调用方注入
  * （agent-chat 在 mount 时接线）。工作台不反向 import agent-chat。
+ *
+ * 登记表**跨重启存活**（落 localStorage，见 AGENT_BATCH_STORAGE_KEY）：一次推送
+ * 是对模型许下的承诺（「不要轮询，跑完会推给你」），进程重启不能把它吞掉。
  */
 
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
@@ -17,6 +20,25 @@ import { useVideoWorkbenchStore } from './store'
 
 /** 摘要里最多列几张卡 —— 上下文体积纪律，其余只进计数。 */
 const MAX_LISTED = 12
+
+/**
+ * 登记表的落盘位置。**必须跨重启存活**：渲染要几分钟，用户中途重启是常事，
+ * 而 `video_workbench_start` 的横幅明说了「不要轮询，跑完会推给你」—— 那是一句
+ * 承诺。重启把登记吞掉的话，重启接管（reconcileInFlight）照样能把卡片跑到终态，
+ * 但推送永不触发，agent 会永远静默等待，用户还得自己去捅它。
+ *
+ * 用 localStorage 而不是往卡片上加字段：批次归属是会话级的投递意图，不是卡片
+ * 规格的一部分，塞进卡片就得连带回答「要不要进 IR / 算不算 specEquals」。
+ * 与 ACTIVE_BOARD_KEY 同款（都是工作台的会话级小状态）。
+ */
+export const AGENT_BATCH_STORAGE_KEY = 'catimation.workbench.agentBatches'
+
+/**
+ * 恢复时的保质期。过了这么久还没结算的批次直接丢：那时候再报「批次渲染完成」
+ * 已经是噪音，而且这也顺手给登记表封了顶 —— 万一有批次因为某张卡永远不落终态
+ * 而卡住，它不会在 localStorage 里长住。
+ */
+const BATCH_TTL_MS = 24 * 60 * 60 * 1000
 
 export interface WorkbenchBatchNotice {
   /** 发起这一批的线程；缺省时由 agent-chat 落到当前活跃线程。 */
@@ -32,10 +54,48 @@ export interface WorkbenchBatchNotice {
 interface PendingBatch {
   threadId?: string
   cardIds: string[]
+  /** 登记时刻,用于恢复时按 BATCH_TTL_MS 丢弃过期批次。 */
+  createdAt: number
 }
 
 let batches: PendingBatch[] = []
 let deliver: ((notice: WorkbenchBatchNotice) => void) | null = null
+
+/** 落盘那份才是真相,内存只是缓存 —— 于是重复挂载不会把同一批记两遍。 */
+function persistBatches(): void {
+  try {
+    if (batches.length === 0) globalThis.localStorage?.removeItem(AGENT_BATCH_STORAGE_KEY)
+    else globalThis.localStorage?.setItem(AGENT_BATCH_STORAGE_KEY, JSON.stringify(batches))
+  } catch {
+    // localStorage 不可用时仅内存生效(与 store 的 writeActiveBoard 同款)
+  }
+}
+
+function loadBatches(): PendingBatch[] {
+  let raw: string | null = null
+  try {
+    raw = globalThis.localStorage?.getItem(AGENT_BATCH_STORAGE_KEY) ?? null
+  } catch {
+    return []
+  }
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const now = Date.now()
+    return parsed.filter((b): b is PendingBatch => {
+      if (!b || typeof b !== 'object') return false
+      const batch = b as Partial<PendingBatch>
+      if (!Array.isArray(batch.cardIds) || !batch.cardIds.every((x) => typeof x === 'string')) return false
+      if (typeof batch.createdAt !== 'number') return false
+      return now - batch.createdAt < BATCH_TTL_MS
+    })
+  } catch {
+    // 只有我们自己写这个键,解不开说明写坏了 —— 按「没有待推批次」处理,别拖垮挂载
+    console.warn('[VideoWorkbench] 批次登记表读取失败,已忽略')
+    return []
+  }
+}
 
 /** 卡片已经不在飞：终态（succeeded/failed/cancelled）或已被删除。 */
 function isSettled(card: VideoWorkbenchCard | undefined): boolean {
@@ -84,7 +144,8 @@ function summarize(cards: VideoWorkbenchCard[]): string {
  */
 export function registerAgentBatch(cardIds: string[], threadId?: string): void {
   if (cardIds.length === 0) return
-  batches.push({ threadId, cardIds: [...cardIds] })
+  batches.push({ threadId, cardIds: [...cardIds], createdAt: Date.now() })
+  persistBatches()
   // 立刻结算一次：提交可能同步失败（preload 桥缺失、gate 拦下），
   // 那种情况下 zustand 不会再有变更事件来触发 watcher。
   settle()
@@ -93,8 +154,12 @@ export function registerAgentBatch(cardIds: string[], threadId?: string): void {
 /** 把已经跑完的批次投递出去。每个批次只投一次。 */
 function settle(): void {
   if (batches.length === 0) return
-  const cards = useVideoWorkbenchStore.getState().cards
-  const byId = new Map(cards.map((c) => [c.id, c]))
+  const state = useVideoWorkbenchStore.getState()
+  // 水合之前 store 里一张卡都没有,而「查不到的卡」算已结算(为的是整批被删时
+  // 静默丢弃)。两条一叠,重启恢复的批次会在读库前被判成「跑完了且无可汇报」而
+  // 丢掉 —— 正是这个函数要救的那条路径。所以先等卡片读回来。
+  if (!state.hydrated) return
+  const byId = new Map(state.cards.map((c) => [c.id, c]))
   const remaining: PendingBatch[] = []
 
   for (const batch of batches) {
@@ -115,7 +180,10 @@ function settle(): void {
       text: summarize(present),
     })
   }
+  if (remaining.length === batches.length) return
+  // 只在真有批次出清时落盘:store 每秒都有进度广播,不能每次都写 localStorage。
   batches = remaining
+  persistBatches()
 }
 
 /**
@@ -127,15 +195,26 @@ export function mountWorkbenchBatchWatcher(
   onBatchDone: (notice: WorkbenchBatchNotice) => void,
 ): () => void {
   deliver = onBatchDone
+  // 恢复上一个进程留下的未履行承诺。直接整份替换而不是 merge:本进程登记的批次
+  // 同样已经落盘,读回来就是全集 —— 于是重复挂载也不会把批次记两遍。
+  batches = loadBatches()
   const unsubscribe = useVideoWorkbenchStore.subscribe(() => settle())
+  // 挂载时卡片可能已经水合完(挂载顺序不保证在读库之前),先结算一次;
+  // 没水合的话这一次是空转,水合落地时订阅会再叫一遍。
+  settle()
   return () => {
     unsubscribe()
     deliver = null
   }
 }
 
-/** 测试用：清空登记的批次与投递通道。 */
+/** 测试用：清空登记的批次（含落盘那份）与投递通道。 */
 export function __resetWorkbenchBatches(): void {
   batches = []
   deliver = null
+  try {
+    globalThis.localStorage?.removeItem(AGENT_BATCH_STORAGE_KEY)
+  } catch {
+    // 同上
+  }
 }
