@@ -36,9 +36,15 @@ export default function VideoWorkbenchPage() {
   // 这份挂载是给「不经 AppLayout」的宿主用的(react-app/main.tsx 把本页单独
   // 渲进自己的 root)。在 AppLayout 宿主里 App 级已经挂了一份常驻,引用计数
   // 保证本页被 Activity 隐藏时不会把订阅带走。
+  //
+  // 重启对账同理:老 vanilla shell 这条路没有 AppLayout,不在这儿发起就没人发起,
+  // 上次退出时在飞的任务永远等不到接管。两个宿主都调是安全的 —— 主进程 adopt()
+  // 对已跟踪的 taskId 直接返回 tracked,不会起第二个轮询循环。
+  // 顺序要紧:先把监听挂上再对账,否则接管后立刻到达的广播没人接。
   useEffect(() => {
-    void ensureHydrated()
-    return mountWorkbenchTaskListener()
+    const release = mountWorkbenchTaskListener()
+    void ensureHydrated().then(() => useVideoWorkbenchStore.getState().reconcileInFlight())
+    return release
   }, [ensureHydrated])
 
   // 只展示当前页的卡片;其他页卡片仍在 store 里(任务回流跨页可达)。
