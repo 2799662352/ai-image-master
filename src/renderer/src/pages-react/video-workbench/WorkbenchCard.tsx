@@ -150,6 +150,8 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   const moveMaterial = useVideoWorkbenchStore((s) => s.moveMaterial)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
   const cancelCards = useVideoWorkbenchStore((s) => s.cancelCards)
+  const selected = useVideoWorkbenchStore((s) => s.selectedCardIds.includes(card.id))
+  const selectCard = useVideoWorkbenchStore((s) => s.selectCard)
 
   const busy = card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
 
@@ -443,7 +445,9 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       ref={cardRef}
       data-testid={`vw-card-${card.id}`}
       className={[
-        'vw-card border border-[#3F3F46] bg-[#111113] relative',
+        'vw-card border bg-[#111113] relative',
+        // 选中只换边框色:加投影/填充会遮挡内容,而卡片主体全是可读信息
+        selected ? 'border-[#FCE300]' : 'border-[#3F3F46]',
         dragging ? 'vw-dragging' : '',
         dropEdge === 'above' ? 'vw-drop-above' : dropEdge === 'below' ? 'vw-drop-below' : '',
         fileOver ? 'vw-file-over' : '',
@@ -469,8 +473,17 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       onDrop={handleDrop}
       onPaste={handlePaste}
     >
-      {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除 */}
-      <div className="flex items-center gap-2 px-4 pt-3">
+      {/* 头部:序号 + 拖拽手柄 + 状态徽标 + 删除。
+          这一行同时是**唯一**的选中命中区 —— 卡片主体密布输入框与药丸,整卡点选会和它们打架。 */}
+      <div
+        data-testid="vw-card-header"
+        className="flex items-center gap-2 px-4 pt-3"
+        onClick={(e) => {
+          // 行内那几个控件(删除等)各自 stopPropagation 不现实,统一按标签放行
+          if ((e.target as HTMLElement).closest('button')) return
+          selectCard(card.id, e.shiftKey ? 'range' : e.ctrlKey || e.metaKey ? 'toggle' : 'replace')
+        }}
+      >
         <span
           className="vw-drag-handle text-white/40 hover:text-[#FCE300] select-none text-sm leading-none px-1"
           title="拖动排序"
