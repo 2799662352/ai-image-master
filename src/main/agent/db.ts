@@ -5,7 +5,12 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { ensureSchemaViaConnection } from './ensureSchema'
-import { PRISMA_POOL_MAX } from './pgliteLimits'
+import { PRISMA_POOL_ACQUIRE_TIMEOUT_MS, PRISMA_POOL_MAX } from './pgliteLimits'
+import {
+  RESPAWN_WINDOW_MS,
+  pruneRespawnHistory,
+  shouldRespawn,
+} from './pgliteSupervisor'
 import {
   isPgliteAbortedError,
   isResetAllowedNow,
@@ -44,6 +49,39 @@ export function consumeStartupNotice(): AgentNotice | null {
   pendingStartupNotice = null
   return notice
 }
+
+/**
+ * 会话中途产生的数据库通知（worker 死掉又被拉起）没法走
+ * {@link consumeStartupNotice} —— 那条通道在启动时只被读一次。main/index.ts 在
+ * 窗口就绪后把这个 sink 接到 `agent:event`。
+ *
+ * 接线之前（启动早期）产生的通知退回 {@link pendingStartupNotice}，仍会随启动那次
+ * flush 送达，不丢。
+ */
+let noticeSink: ((notice: AgentNotice) => void) | null = null
+
+export function setDatabaseNoticeSink(sink: ((notice: AgentNotice) => void) | null): void {
+  noticeSink = sink
+}
+
+function emitDbNotice(notice: AgentNotice): void {
+  if (noticeSink) {
+    try {
+      noticeSink(notice)
+      return
+    } catch (err) {
+      console.warn('[db] notice sink threw, falling back to startup notice:', err)
+    }
+  }
+  pendingStartupNotice = notice
+}
+
+/** 本会话历次重生的时间戳，喂给 shouldRespawn 的滚动窗口。 */
+let respawnHistory: number[] = []
+/** shutdownDatabase 已经在收尾 —— 此时 worker 退出是意料之中，不要重生。 */
+let intentionalShutdown = false
+/** 正在重生:worker 的 exit 与后续查询的报错会同时到，别重复拉起。 */
+let respawning: Promise<void> | null = null
 
 export async function canConnect(port: number, host = '127.0.0.1'): Promise<boolean> {
   return new Promise((resolve) => {
@@ -143,6 +181,7 @@ export async function startEmbeddedPGlite(): Promise<string> {
   try {
     const child = await spawnPgliteWorker({ workerPath, dataDir })
     pgliteChild = child
+    superviseWorker(child, { workerPath, dataDir })
     return PGLITE_CONNECTION
   } catch (firstErr) {
     if (!isPgliteAbortedError(firstErr)) {
@@ -199,6 +238,7 @@ export async function startEmbeddedPGlite(): Promise<string> {
     try {
       const child = await spawnPgliteWorker({ workerPath, dataDir })
       pgliteChild = child
+      superviseWorker(child, { workerPath, dataDir })
       pendingStartupNotice = {
         id: `pglite-reset-${Date.now()}`,
         kind: 'pgliteReset',
@@ -249,6 +289,7 @@ async function startEphemeralPGlite(opts: {
   try {
     const child = await spawnPgliteWorker({ workerPath, dataDir: ephemeralDir })
     pgliteChild = child
+    superviseWorker(child, { workerPath, dataDir: ephemeralDir })
     pendingStartupNotice = {
       id: `pglite-ephemeral-${Date.now()}`,
       kind: 'pgliteReset',
@@ -279,6 +320,106 @@ async function startEphemeralPGlite(opts: {
 interface SpawnOpts {
   workerPath: string
   dataDir: string
+}
+
+/**
+ * 盯着一个**已经 ready** 的 worker，死了就把它拉起来。
+ *
+ * `spawnPgliteWorker` 里那个 `on('exit')` 只活在启动等待期（`ready` 一到
+ * `cleanup()` 就摘掉）。没有这个函数的话，worker 之后崩掉就没人知道 ——
+ * 本会话所有 Prisma 调用全废到用户重启应用，线上表现就是「重启一下就好了」。
+ */
+function superviseWorker(child: UtilityProcess, opts: SpawnOpts): void {
+  child.once('exit', (code: number | null) => {
+    if (intentionalShutdown) return
+    // shutdownDatabase 会先把 pgliteChild 置空再让 worker 退出;若这里看到的
+    // 已经不是当前那个孩子,说明它已被换掉或正在收尾,不该插手。
+    if (pgliteChild !== child) return
+    pgliteChild = null
+    console.warn(`[pglite] worker exited unexpectedly (code ${code}) — attempting recovery`)
+    void recoverFromWorkerDeath(opts)
+  })
+}
+
+/**
+ * 重生专用的 spawn:先给端口一点释放时间,失败再等久一点重试一次。
+ *
+ * 与启动时那次 spawn 的区别在于**前一个进程刚刚还在监听 5433**。启动时的重建路径
+ * 有句注释说「worker 在 Aborted 时还没绑 socket,所以没有 TIME_WAIT 要躲」——那条
+ * 前提在这里不成立:崩掉的这个是绑过并且正在服务的。Windows 上紧接着重绑同一端口
+ * 拿到 EADDRINUSE 是真实存在的,所以给一小段缓冲。
+ *
+ * 两次尝试合起来只记一次重生(熔断计数在调用方),因为它们是同一次恢复。
+ */
+async function spawnWithPortGrace(opts: SpawnOpts): Promise<UtilityProcess> {
+  await delay(300)
+  try {
+    return await spawnPgliteWorker(opts)
+  } catch (err) {
+    console.warn(`[pglite] respawn attempt 1 failed (${describeError(err)}) — retrying once`)
+    await delay(1_500)
+    return spawnPgliteWorker(opts)
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * worker 意外退出后的恢复：丢掉旧的 Prisma 客户端（它的池子里全是死连接），
+ * 重生 worker，再让下一次 `getPrisma()` 建一个新池连上去。
+ *
+ * 熔断由 {@link shouldRespawn} 管：一直起不来就停手并如实告诉用户要重启，
+ * 而不是无限 fork。
+ */
+async function recoverFromWorkerDeath(opts: SpawnOpts): Promise<void> {
+  if (respawning) return respawning
+  respawning = (async () => {
+    // 池子里握着的都是断掉的 socket。$disconnect 之后置空,下一次 getPrisma
+    // 会连同新池一起重建 —— 否则重生成功了,查询仍然打在旧池的死连接上。
+    await prisma?.$disconnect().catch(() => undefined)
+    prisma = null
+
+    const now = Date.now()
+    respawnHistory = pruneRespawnHistory(respawnHistory, now, RESPAWN_WINDOW_MS)
+    const decision = shouldRespawn(respawnHistory, now)
+    if (!decision.allowed) {
+      console.error(`[pglite] respawn breaker tripped (${decision.recent} in window) — giving up`)
+      emitDbNotice({
+        id: `pglite-respawn-giveup-${now}`,
+        kind: 'pgliteReset',
+        level: 'warning',
+        message: '本地数据库反复异常退出，已停止自动恢复。聊天仍可继续，但历史不会保存 —— 请重启应用。',
+      })
+      return
+    }
+
+    respawnHistory = [...respawnHistory, now]
+    try {
+      const child = await spawnWithPortGrace(opts)
+      pgliteChild = child
+      superviseWorker(child, opts)
+      console.warn('[pglite] worker respawned')
+      emitDbNotice({
+        id: `pglite-respawned-${now}`,
+        kind: 'pgliteReset',
+        level: 'info',
+        message: '本地数据库刚异常退出并已自动恢复，无需重启应用。',
+      })
+    } catch (err) {
+      console.error('[pglite] respawn failed:', describeError(err))
+      emitDbNotice({
+        id: `pglite-respawn-failed-${now}`,
+        kind: 'pgliteReset',
+        level: 'warning',
+        message: `本地数据库异常退出且自动恢复失败(${describeError(err)})。聊天仍可继续,但历史不会保存 —— 请重启应用。`,
+      })
+    }
+  })().finally(() => {
+    respawning = null
+  })
+  return respawning
 }
 
 /**
@@ -413,7 +554,13 @@ export async function getPrisma(): Promise<PrismaClient> {
       // 池子刻意收到 PRISMA_POOL_MAX(=1)。PGlite 是单连接库、查询在它那侧串行,
       // 多开连接换不来吞吐,只会让并发查询去撞 socket server 的连接上限并被掐断
       // (P1017 的由来)。并发改为在池子里客户端侧排队。见 pgliteLimits.ts。
-      adapter: new PrismaPg({ connectionString: databaseUrl, max: PRISMA_POOL_MAX }),
+      adapter: new PrismaPg({
+        connectionString: databaseUrl,
+        max: PRISMA_POOL_MAX,
+        // 池队列必须有界:pg 默认无限等,PGlite 卡住(而非崩溃)时调用方会从
+        // 「快速报错」退化成「永远不 resolve」,try/catch 抓不住。见 pgliteLimits.ts。
+        connectionTimeoutMillis: PRISMA_POOL_ACQUIRE_TIMEOUT_MS,
+      }),
     })
   }
 
@@ -421,6 +568,8 @@ export async function getPrisma(): Promise<PrismaClient> {
 }
 
 export async function shutdownDatabase(): Promise<void> {
+  // 先立旗:worker 接下来的退出是我们要求的,监管钩子不该把它当成崩溃去重生。
+  intentionalShutdown = true
   await prisma?.$disconnect().catch(() => undefined)
   prisma = null
 

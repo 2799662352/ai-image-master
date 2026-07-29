@@ -49,3 +49,20 @@ export const PGLITE_MAX_CONNECTIONS = 10
  * 池子里排队（客户端侧等待），而不是在服务端被掐断。
  */
 export const PRISMA_POOL_MAX = 1
+
+/**
+ * 从池子里取连接的等待上限。
+ *
+ * 必须设:pg 的池队列**默认没有超时** —— `if (!connectionTimeoutMillis)
+ * this._pendingQueue.push(...)`（pg-pool/index.js），等待者会无限排下去。把池子
+ * 收到 1 之后，并发查询改为在客户端排队，这条队列要是没有界，一旦 PGlite 不是
+ * 崩溃而是**卡住**，调用方就从「快速报错」退化成「永远不 resolve」—— 而
+ * try/catch 抓不住一个永不落地的 promise，整轮对话会静静挂死。
+ *
+ * 有界之后，卡死会变成一个普通错误，被既有的降级路径接住（用户的消息照样发出去，
+ * 只是提示没进历史，见 AgentManager 里 historyPersistDegraded 那段）。
+ *
+ * 30s 是拍的:够长,不会误伤首次启动时那串建表 DDL 或一次大事务;够短,用户不会
+ * 觉得应用死了。
+ */
+export const PRISMA_POOL_ACQUIRE_TIMEOUT_MS = 30_000

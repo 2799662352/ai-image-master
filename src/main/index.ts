@@ -28,7 +28,7 @@ import {
 import { untrackAndCleanupAll as cleanupSmartEraseReaper } from './services/smartErase/reaper'
 import { AgentManager } from './agent/AgentManager'
 import { AttachmentService } from './agent/AttachmentService'
-import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
+import { consumeStartupNotice, getPrisma, setDatabaseNoticeSink, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
 import { runStartupDedupOnce } from './agent/historyDedup'
@@ -1153,6 +1153,13 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
         dispatchNotice()
       }
     }
+
+    // 会话中途的数据库通知(worker 崩了又被自动拉起)走同一条 agent:event 通道。
+    // 上面那个一次性 startup 通道启动后就不再被读,所以必须单独接线。
+    setDatabaseNoticeSink((notice) => {
+      if (!win || win.isDestroyed()) return
+      win.webContents.send('agent:event', { type: 'notice', notice })
+    })
   } catch (error) {
     // Surface the real init failure to renderer IPC calls instead of leaving
     // them hanging forever on a never-resolving promise.
