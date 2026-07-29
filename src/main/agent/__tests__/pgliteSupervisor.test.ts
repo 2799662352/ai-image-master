@@ -10,6 +10,7 @@ import {
   RESPAWN_MAX,
   RESPAWN_WINDOW_MS,
   isConnectionLostError,
+  isRetryableOperation,
   pruneRespawnHistory,
   shouldRespawn,
   takeRespawnSlot,
@@ -39,6 +40,29 @@ describe('isConnectionLostError', () => {
     // 重试业务错误只是把同一个错误再犯一遍
     expect(isConnectionLostError(err)).toBe(false)
   })
+})
+
+describe('isRetryableOperation', () => {
+  it.each(['findUnique', 'findFirst', 'findMany', 'count', 'aggregate', 'groupBy'])(
+    '读可以重试:%s',
+    (op) => {
+      expect(isRetryableOperation(op)).toBe(true)
+    },
+  )
+
+  it.each(['create', 'createMany', 'update', 'updateMany', 'upsert', 'delete', 'deleteMany'])(
+    '写不能重试:%s —— 连接断在响应途中时写有没有落库是不确定的,重试会产生重复记录',
+    (op) => {
+      expect(isRetryableOperation(op)).toBe(false)
+    },
+  )
+
+  it.each(['queryRaw', 'executeRaw', 'runCommandRaw'])(
+    'raw 整体排除:%s —— 名字像读的 queryRaw 也能塞进 INSERT',
+    (op) => {
+      expect(isRetryableOperation(op)).toBe(false)
+    },
+  )
 })
 
 describe('shouldRespawn', () => {

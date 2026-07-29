@@ -75,6 +75,34 @@ function describe(err: unknown): string {
   return String(err)
 }
 
+/**
+ * 连接断掉之后**可以安全重试**的 Prisma 操作。
+ *
+ * 只有读，这条线不能松：连接在响应途中断掉时，写到底有没有落库是**不确定**的 ——
+ * 重试一个其实已经提交的 `create`，拿到的是一条重复记录（重复的聊天消息、重复的
+ * 附件行）。Prisma 官方那个重试示例针对的是 `P2034`（写冲突，确定已回滚），
+ * 与「连接没了」不是一回事，不能照搬。
+ *
+ * 读天然幂等，重试最坏只是多读一次。
+ *
+ * raw 系列（`queryRaw` / `executeRaw` / `runCommandRaw`）整体排除：名字看着像读的
+ * `queryRaw` 也能塞进一条 INSERT，从操作名判断不出幂等性。
+ */
+const RETRYABLE_OPERATIONS: ReadonlySet<string> = new Set([
+  'findUnique',
+  'findUniqueOrThrow',
+  'findFirst',
+  'findFirstOrThrow',
+  'findMany',
+  'count',
+  'aggregate',
+  'groupBy',
+])
+
+export function isRetryableOperation(operation: string): boolean {
+  return RETRYABLE_OPERATIONS.has(operation)
+}
+
 export interface RespawnDecision {
   allowed: boolean
   /** 窗口内已经发生过的重生次数（不含这一次）。 */

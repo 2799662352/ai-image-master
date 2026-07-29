@@ -6,7 +6,12 @@ import net from 'node:net'
 import path from 'node:path'
 import { ensureSchemaViaConnection } from './ensureSchema'
 import { PRISMA_POOL_ACQUIRE_TIMEOUT_MS, PRISMA_POOL_MAX } from './pgliteLimits'
-import { RESPAWN_WINDOW_MS, takeRespawnSlot } from './pgliteSupervisor'
+import {
+  RESPAWN_WINDOW_MS,
+  isConnectionLostError,
+  isRetryableOperation,
+  takeRespawnSlot,
+} from './pgliteSupervisor'
 import {
   isPgliteAbortedError,
   isResetAllowedNow,
@@ -560,7 +565,7 @@ export async function getPrisma(): Promise<PrismaClient> {
     // Runs against whatever DB resolveDatabaseUrl picked (embedded PGlite on
     // 5433, external sora-postgres on 5432, or env-overridden URL).
     await ensureSchemaViaConnection(databaseUrl)
-    prisma = new PrismaClient({
+    const client = new PrismaClient({
       // 池子刻意收到 PRISMA_POOL_MAX(=1)。PGlite 是单连接库、查询在它那侧串行,
       // 多开连接换不来吞吐,只会让并发查询去撞 socket server 的连接上限并被掐断
       // (P1017 的由来)。并发改为在池子里客户端侧排队。见 pgliteLimits.ts。
@@ -572,6 +577,31 @@ export async function getPrisma(): Promise<PrismaClient> {
         connectionTimeoutMillis: PRISMA_POOL_ACQUIRE_TIMEOUT_MS,
       }),
     })
+
+    // worker 崩掉的那一瞬,已经在飞的查询会拿到「连接没了」。worker 会被监管钩子
+    // 拉起来,但那条查询已经失败了 —— 用户看到的就是一次没来由的报错。
+    //
+    // **只重试读。** 连接断在响应途中时,写有没有落库是不确定的,重试一个其实已经
+    // 提交的 create 会产生重复记录(重复的聊天消息、重复的附件行)。判定见
+    // pgliteSupervisor.isRetryableOperation。
+    //
+    // 只加 query 扩展、不加任何新方法,所以扩展后的客户端与 PrismaClient 结构一致,
+    // 这个断言不会骗到调用方(Prisma 的 $extends 在类型上返回另一个类型,但运行时
+    // 形状不变)。
+    prisma = client.$extends({
+      query: {
+        $allOperations: async ({ operation, args, query }) => {
+          try {
+            return await query(args)
+          } catch (err) {
+            if (!isConnectionLostError(err) || !isRetryableOperation(operation)) throw err
+            // 给监管钩子一点时间把 worker 拉起来再重试一次
+            await delay(1_000)
+            return query(args)
+          }
+        },
+      },
+    }) as unknown as PrismaClient
   }
 
   return prisma
