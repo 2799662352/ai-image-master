@@ -526,10 +526,10 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
     // ─────────────────────────────────────────────────────────────────────────
     // Native cross-session MEMORY. Codex ships a first-party memory subsystem
-    // (codex-rs/memories/) gated behind the `memories` feature flag —
-    // originally verified against the shipped 0.142.2 binary and RE-verified
-    // on 0.145.0 via scripts/smoke-codex-memories.ts (`experimentalFeature/
-    // list` → name=`memories`, stage=stable since PR #31804,
+  // (codex-rs/memories/) gated behind the `memories` feature flag —
+  // originally verified against the shipped 0.142.2 binary and RE-verified
+  // on 0.146.0 via scripts/smoke-codex-memories.ts (`experimentalFeature/
+  // list` → name=`memories`, stage=stable since PR #31804,
     // default_enabled=false; NOT the docs-implied `memory`). Enabling it makes
     // the engine, on every NON-ephemeral root session start, run a background
     // two-phase pipeline that distills prior rollouts into
@@ -551,7 +551,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // codex restart. The companion experimental RPCs `thread/memoryMode/set`
     // (per-thread eligibility) and `memory/reset` (wipe the store) are wired
     // through CodexProtocolClient.setThreadMemoryMode / resetMemory
-    // (smoke-verified on the 0.145.0 binary).
+    // (smoke-verified on the 0.146.0 binary).
     '-c', `features.memories=${sessionConfig.memoriesEnabled}`,
   ]
 
