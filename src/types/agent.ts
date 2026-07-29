@@ -750,6 +750,15 @@ export type AgentNoticeKind =
    */
   | 'editBranchDegraded'
   /**
+   * The user turn reached the model but could NOT be written to the local DB
+   * (typically PGlite dropping its socket → Prisma `P1017 Server has closed the
+   * connection`). The conversation keeps flowing — what's lost is this message's
+   * history row: after a restart it won't be in the thread, and edit-and-resend
+   * has no row id to branch from. Surfaced rather than swallowed because a
+   * silently missing history row is worse than a warning.
+   */
+  | 'historyPersistDegraded'
+  /**
    * Auto-recovery from PGlite NODEFS abort (upstream PGlite #884 / #794):
    * the local pgdata couldn't be reopened (crash, force-quit, dual instance,
    * installer overwrite) so we either moved the corrupt dir aside and rebuilt,
