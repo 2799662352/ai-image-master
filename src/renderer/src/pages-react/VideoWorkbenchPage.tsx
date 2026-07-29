@@ -33,6 +33,9 @@ export default function VideoWorkbenchPage() {
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
   const autoImportPortrait = useVideoWorkbenchStore((s) => s.autoImportPortrait)
   const setAutoImportPortrait = useVideoWorkbenchStore((s) => s.setAutoImportPortrait)
+  const selectedCardIds = useVideoWorkbenchStore((s) => s.selectedCardIds)
+  const clearSelection = useVideoWorkbenchStore((s) => s.clearSelection)
+  const removeCards = useVideoWorkbenchStore((s) => s.removeCards)
 
   // 这份挂载是给「不经 AppLayout」的宿主用的(react-app/main.tsx 把本页单独
   // 渲进自己的 root)。在 AppLayout 宿主里 App 级已经挂了一份常驻,引用计数
@@ -59,6 +62,12 @@ export default function VideoWorkbenchPage() {
   const startableCount = cards.filter(
     (c) => c.prompt.trim() && c.status !== 'preparing' && c.status !== 'queued' && c.status !== 'running' && c.status !== 'succeeded',
   ).length
+  // 有选中时按选中项算可启动数 —— 选中可能跨页,不能复用当前页的 startableCount。
+  const selectedStartableCount = selectedCardIds.filter((id) => {
+    const c = allCards.find((x) => x.id === id)
+    return c && c.prompt.trim() && c.status !== 'preparing' && c.status !== 'queued' && c.status !== 'running' && c.status !== 'succeeded'
+  }).length
+  const batchDisabled = selectedCardIds.length > 0 ? selectedStartableCount === 0 : startableCount === 0
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
   // hasVideoInput 必须与单卡显示同源,否则两处数字对不上:含视频输入单价明显更低。
@@ -126,11 +135,32 @@ export default function VideoWorkbenchPage() {
             <button
               type="button"
               className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors disabled:opacity-40"
-              disabled={startableCount === 0}
+              disabled={batchDisabled}
               onClick={() => void startCards()}
             >
-              ⚡ 全部生成{startableCount > 0 ? `(${startableCount})` : ''}
+              {/* 文案必须随选中态变 —— 否则用户会以为点的是「全部生成」而烧掉一批额度 */}
+              {selectedCardIds.length > 0
+                ? `⚡ 生成选中 ${selectedCardIds.length} 张`
+                : `⚡ 全部生成${startableCount > 0 ? `(${startableCount})` : ''}`}
             </button>
+            {selectedCardIds.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="text-xs border border-[#3F3F46] text-white/70 hover:border-red-500 hover:text-red-400 px-3 py-2 transition-colors"
+                  onClick={() => removeCards(selectedCardIds)}
+                >
+                  🗑 删除选中 {selectedCardIds.length} 张
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-white/40 hover:text-white/70 px-2 py-2 transition-colors"
+                  onClick={clearSelection}
+                >
+                  取消选中
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="text-xs bg-[#FCE300] text-black font-bold px-3 py-2 hover:opacity-85 active:scale-95 transition-all"

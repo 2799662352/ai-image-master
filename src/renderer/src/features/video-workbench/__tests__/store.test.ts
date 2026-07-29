@@ -701,3 +701,54 @@ describe('选中态', () => {
     expect(useVideoWorkbenchStore.getState().structureRevision).toBe(structRev + 1)
   })
 })
+
+describe('无参批量操作吃选中态', () => {
+  it('有选中时 startCards() 只启动选中项', async () => {
+    const submit = mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' },
+      { prompt: 'b' },
+      { prompt: 'c' },
+    ])
+    useVideoWorkbenchStore.getState().selectCard(ids[1])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toEqual([ids[1]])
+    expect(submit).toHaveBeenCalledTimes(1)
+  })
+
+  it('无选中时 startCards() 维持整页', async () => {
+    mockSubmit()
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toHaveLength(2)
+  })
+
+  it('显式 cardIds 无视选中 —— MCP 路径不受用户选中影响', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[0])
+    const result = await useVideoWorkbenchStore.getState().startCards([ids[1]])
+    expect(result.started).toEqual([ids[1]])
+  })
+
+  it('选中项在别的页时仍只启动选中项', async () => {
+    mockSubmit()
+    const first = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }])
+    const other = useVideoWorkbenchStore.getState().addBoard('第二页')
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'b' }])
+    useVideoWorkbenchStore.getState().switchBoard(other)
+    // 切页已清空选中,这里手动选回第一页那张,模拟「选中与活动页不一致」
+    useVideoWorkbenchStore.getState().selectCard(first[0])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toEqual([first[0]])
+  })
+
+  it('选中一张空白草稿点⚡,如实报「提示词为空」而不是静默无事发生', async () => {
+    mockSubmit()
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: '' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().selectCard(ids[0])
+    const result = await useVideoWorkbenchStore.getState().startCards()
+    expect(result.started).toEqual([])
+    expect(result.skipped).toEqual([{ cardId: ids[0], reason: '提示词为空' }])
+  })
+})

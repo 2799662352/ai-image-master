@@ -1350,18 +1350,25 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     const api = getApi()?.videoWorkbench
     const result: StartResult = { started: [], skipped: [] }
     if (!api?.submit) {
-      for (const id of ids ?? get().cards.map((c) => c.id)) {
+      const selected = get().selectedCardIds
+      const scope = ids ?? (selected.length > 0 ? selected : get().cards.map((c) => c.id))
+      for (const id of scope) {
         result.skipped.push({ cardId: id, reason: '视频服务未就绪(preload 桥缺失)' })
       }
       return result
     }
 
-    // 缺省(不带 ids)只启动当前页的卡片 —— 页与页之间互相隔离
+    // 优先级:显式 ids > 用户选中 > 当前整页。
+    //
+    // 「有选中就只作用于选中」是 UI 侧的期待;MCP 走的是显式 ids 分支,不受影响 ——
+    // agent 不该因为用户碰巧选了几张卡就改变行为。
+    const selected = get().selectedCardIds
+    const scope: string[] | undefined = ids ?? (selected.length > 0 ? selected : undefined)
     const targets = get().cards.filter((c) =>
-      ids ? ids.includes(c.id) : c.boardId === get().activeBoardId,
+      scope ? scope.includes(c.id) : c.boardId === get().activeBoardId,
     )
-    if (ids) {
-      for (const id of ids) {
+    if (scope) {
+      for (const id of scope) {
         if (!targets.some((c) => c.id === id)) result.skipped.push({ cardId: id, reason: '卡片不存在' })
       }
     }
@@ -1370,8 +1377,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of targets) {
       const gate = canStart(card)
       if (!gate.ok) {
-        // 缺省全量启动时,draft 空卡静默跳过即可;显式指定 id 才值得报原因
-        if (ids || gate.reason !== '提示词为空') {
+        // 整页全量启动时 draft 空卡静默跳过;显式指名(id / 选中)才报原因
+        if (scope || gate.reason !== '提示词为空') {
           result.skipped.push({ cardId: card.id, reason: gate.reason! })
         }
         continue
