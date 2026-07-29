@@ -35,7 +35,8 @@ import type {
 import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { modeLimit } from './modes'
-import { getWorkbenchDb } from './WorkbenchDb'
+import { WORKBENCH_MAX_CARDS, getWorkbenchDb } from './WorkbenchDb'
+import { useToastStore } from '../../stores/useToastStore'
 import {
   type MaterialKind,
   buildCard,
@@ -857,7 +858,26 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of created) persistNow(card)
     // agent 经 MCP 加卡时素材是随卡一起来的,不走 addMaterials —— 转存要在这里接。
     for (const card of created) startTransfersForCard(card)
-    void getWorkbenchDb().evict()
+    // evict() 只删库并返回被删 id。必须把它们同步从内存摘掉 —— 否则界面上卡还在、
+    // 重启后凭空消失,症状延迟到下次启动才出现,是最难排查的一类。
+    // 淘汰也不该悄悄发生:弹一次 toast 说明为了放下新卡牺牲了几张旧卡。
+    void getWorkbenchDb()
+      .evict()
+      .then((evicted) => {
+        if (evicted.length === 0) return
+        const gone = new Set(evicted)
+        set((state) => ({
+          cards: state.cards.filter((c) => !gone.has(c.id)),
+          revision: state.revision + 1,
+          // 卡片集合变了 —— agent 手里的整份 IR 令牌理应随之作废。
+          structureRevision: state.structureRevision + 1,
+        }))
+        useToastStore.getState().addToast({
+          type: 'info',
+          message: `卡片超过上限 ${WORKBENCH_MAX_CARDS} 张,已淘汰最旧的 ${evicted.length} 张终态卡`,
+        })
+      })
+      .catch(() => {})
     return created.map((c) => c.id)
   },
 

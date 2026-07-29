@@ -14,7 +14,7 @@ import {
   toMaterial,
   useVideoWorkbenchStore,
 } from '../store'
-import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
+import { WORKBENCH_MAX_CARDS, getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 
 function mockSubmit(impl?: (payload: Record<string, unknown>) => Promise<unknown>) {
   const submit = vi.fn(
@@ -377,5 +377,19 @@ describe('ensureHydrated', () => {
     const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === 'c-orphan')!
     expect(card.status).toBe('failed')
     expect(card.error).toBeTruthy()
+  })
+})
+
+describe('超上限淘汰', () => {
+  it('被淘汰的卡同步从内存摘掉,不会等到重启才消失', async () => {
+    useVideoWorkbenchStore.getState().addCards(
+      Array.from({ length: WORKBENCH_MAX_CARDS + 3 }, (_, i) => ({ prompt: `p${i}` })),
+    )
+
+    await vi.waitFor(() => {
+      expect(useVideoWorkbenchStore.getState().cards).toHaveLength(WORKBENCH_MAX_CARDS)
+    })
+    const rows = await getWorkbenchDb().list()
+    expect(rows).toHaveLength(WORKBENCH_MAX_CARDS)
   })
 })

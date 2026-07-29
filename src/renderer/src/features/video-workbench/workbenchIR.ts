@@ -43,8 +43,6 @@ import {
   normalizeSpec,
   specEquals,
 } from './cardSpec'
-import { WORKBENCH_MAX_CARDS } from './WorkbenchDb'
-
 /** IR 导出/apply 只需要 store 的这几个字段,方便测试直接喂普通对象。 */
 export interface WorkbenchIRSource {
   cards: VideoWorkbenchCard[]
@@ -491,17 +489,6 @@ export function planApplyIR(
       nextCards.push(placeExisting(cur, host, index))
       index += 1
     }
-  }
-
-  if (nextCards.length > WORKBENCH_MAX_CARDS) {
-    return reject(source, [
-      ...skipped,
-      {
-        reason:
-          `apply 后会有 ${nextCards.length} 张卡,超过上限 ${WORKBENCH_MAX_CARDS}。`
-          + '先删一些卡再 apply —— 硬写下去会静默淘汰用户的旧卡。',
-      },
-    ])
   }
 
   // ---- activeBoardId ----
