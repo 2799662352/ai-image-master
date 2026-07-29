@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { ensureSchemaViaConnection } from './ensureSchema'
+import { PRISMA_POOL_MAX } from './pgliteLimits'
 import {
   isPgliteAbortedError,
   isResetAllowedNow,
@@ -409,7 +410,10 @@ export async function getPrisma(): Promise<PrismaClient> {
     // 5433, external sora-postgres on 5432, or env-overridden URL).
     await ensureSchemaViaConnection(databaseUrl)
     prisma = new PrismaClient({
-      adapter: new PrismaPg({ connectionString: databaseUrl }),
+      // 池子刻意收到 PRISMA_POOL_MAX(=1)。PGlite 是单连接库、查询在它那侧串行,
+      // 多开连接换不来吞吐,只会让并发查询去撞 socket server 的连接上限并被掐断
+      // (P1017 的由来)。并发改为在池子里客户端侧排队。见 pgliteLimits.ts。
+      adapter: new PrismaPg({ connectionString: databaseUrl, max: PRISMA_POOL_MAX }),
     })
   }
 

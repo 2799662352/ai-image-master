@@ -25,6 +25,7 @@
 
 import { PGlite } from '@electric-sql/pglite'
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
+import { PGLITE_MAX_CONNECTIONS } from './pgliteLimits'
 
 type StartMessage = { type: 'start'; dataDir: string; port: number; host?: string }
 type ShutdownMessage = { type: 'shutdown' }
@@ -58,6 +59,9 @@ async function start(msg: StartMessage): Promise<void> {
       db,
       host: msg.host ?? '127.0.0.1',
       port: msg.port,
+      // 必须显式给:上游运行时默认是 1,第二条连接会被写一句裸文本
+      // 「Too many connections」后掐断,客户端看到的就是 P1017。见 pgliteLimits.ts。
+      maxConnections: PGLITE_MAX_CONNECTIONS,
     })
     await server.start()
     parentPort!.postMessage({ type: 'ready', port: msg.port })
