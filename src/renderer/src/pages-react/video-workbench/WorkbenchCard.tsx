@@ -36,7 +36,7 @@ import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './Ri
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
-import { serializeWorkbenchCardDrag } from '../../features/file-explorer/dragHelpers'
+import { serializeFileDrag } from '../../features/file-explorer/dragHelpers'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
 
@@ -490,24 +490,27 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           title="拖动排序"
           draggable
           onDragStart={(e) => {
-            // 旧 MIME:页内排序,只认被拖那一张,语义不变。
+            // 页内排序只认被拖那一张,即便当时选中了好几张 —— 换位语义不变。
             e.dataTransfer.setData(CARD_DRAG_MIME, card.id)
-            // 新 MIME:聊天栏。拖一张已选中的卡 = 拖全部选中项(与文件树多选拖拽一致)。
-            const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
-            const payloadIds = selectedCardIds.includes(card.id) ? selectedCardIds : [card.id]
-            serializeWorkbenchCardDrag(
-              e.dataTransfer,
-              payloadIds
-                .map((id) => cards.find((c) => c.id === id))
-                .filter((c): c is VideoWorkbenchCard => Boolean(c))
-                .map((c) => ({
-                  cardId: c.id,
-                  promptExcerpt: c.prompt.slice(0, 60),
-                  status: c.status,
-                  localPath: c.localPath,
-                  remoteUrl: c.remoteUrl,
-                })),
-            )
+
+            // 拖出去给聊天栏的是**文件路径**,复用文件树那套词表
+            // (application/x-catimation-file-paths)。聊天栏已经会吃它:附件 + 引用 chip,
+            // 而 <userData>/agent/uploads 在 fs:stat 与发送两道门里都放行。
+            // 为卡片另造一套 MIME + 描述符协议是多余的第三条投放管线。
+            //
+            // 拖未选中的卡 → 先把选区换成它(FileTreeNode 同款):这样「拖出去的」
+            // 恒等于「选中的」,而选中态本身会随每次工作台工具调用带给 agent,
+            // cardId 不必再塞进拖拽载荷里。
+            const store = useVideoWorkbenchStore.getState()
+            if (!store.selectedCardIds.includes(card.id)) store.selectCard(card.id)
+            const dragged = useVideoWorkbenchStore.getState().selectedCardIds
+            const paths = dragged
+              .map((id) => store.cards.find((c) => c.id === id)?.localPath)
+              .filter((p): p is string => Boolean(p))
+            // 空数组时 serializeFileDrag 什么都不写:还没出片的卡拖进聊天栏
+            // 自然落空,不假装递了东西。
+            serializeFileDrag(e.dataTransfer, paths)
+
             // 'move' 会让聊天栏那侧拿不到 copy 效果 —— 双目标必须 copyMove。
             e.dataTransfer.effectAllowed = 'copyMove'
             setDragging(true)
