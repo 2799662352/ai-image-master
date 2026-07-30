@@ -335,7 +335,12 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
   // `app.quit()` is asynchronous; calling `process.exit` here would race the
-  // event loop. The renderer never starts because we exit `whenReady` early.
+  // event loop. The early return at the top of `app.whenReady()` below is what
+  // actually keeps this instance from touching shared state before the quit
+  // lands — without it the losing instance still registers IPC, spawns the
+  // PGlite worker onto 5433, binds the MCP port and starts codex, which is
+  // exactly the "开发版与安装版撞端口" symptom. This comment used to claim the
+  // guard existed; it did not.
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -1190,6 +1195,16 @@ async function cleanupAgentRuntime(): Promise<void> {
 
 // App 生命周期
 app.whenReady().then(async () => {
+  // 拿不到单实例锁 = 已经有一个实例在跑,这一个正在 quit 的路上。什么都不要碰:
+  // 下面每一步都会去动共享资源(pgdata、5433、MCP 端口、codex),而 app.quit() 是
+  // 异步的,不挡着这些副作用。
+  //
+  // 这一行日志是留给排查用的:短路之后不会有窗口、不会有任何后续日志,从外面看
+  // (尤其是 e2e 超时)和「启动崩了」长得一模一样。有它才分得清是谁拦的。
+  if (!gotSingleInstanceLock) {
+    console.log('[Startup] 已有实例持有单实例锁,本实例直接退出,不接管 pgdata / 端口 / codex')
+    return
+  }
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
   installLocalFileHandler()
   registerFsIpc()
