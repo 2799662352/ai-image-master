@@ -729,7 +729,7 @@ export default function PortraitLibraryPage() {
               <>
                 <p className="text-sm">人像库还是空的</p>
                 <p className="text-xs">
-                  点击「上传素材」导入图片（≤30MB）/ 视频（≤50MB，4-15s）/ 音频（4-15s），
+                  点击「上传素材」导入图片 / 视频（4-15s）/ 音频（4-15s），不限体积，
                   或在 Agent 对话里用图片生成视频（参考图会自动入库）
                 </p>
               </>

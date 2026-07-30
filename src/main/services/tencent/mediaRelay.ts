@@ -16,9 +16,18 @@
 
 import { randomBytes } from 'node:crypto'
 import { uploadBufferToBucket, uploadStreamToBucket } from './cosClient'
+import { describeCosError, isRetryableCosError } from './cosErrors'
 
 const MEDIA_RELAY_BUCKET = 'image-master-1345773498'
 const MEDIA_RELAY_REGION = 'ap-guangzhou'
+
+/**
+ * 中转是「用户按了生成」这条链路上的前置步骤,一次网络抖动就废掉整张卡片,
+ * 代价远高于多等几秒。所以瞬时失败(5xx / DNS / TLS / 超时)重试,鉴权与请求
+ * 错误(4xx)立即放弃 —— 那类重试只会把失败推迟。
+ */
+const RELAY_ATTEMPTS = 3
+const RELAY_RETRY_BASE_DELAY_MS = 800
 
 const EXT_BY_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -48,16 +57,44 @@ function relayKey(mimeType: string): string {
   return `image-history/media-relay/${yyyy}/${mm}/${dd}/${id}.${ext}`
 }
 
+/**
+ * 带重试地跑一次中转上传,并把失败统一收敛成**真 Error**。
+ *
+ * 为什么必须收敛:COS SDK 的失败是裸对象而非 Error,原样冒泡时调用方那句
+ * `e instanceof Error ? e.message : String(e)` 会渲成 `[object Object]`——
+ * 用户看到的报错里没有任何可诊断信息(见 describeCosError 的注释)。
+ *
+ * 每次重试都重新生成 Key,避免上一次失败留下的分片状态干扰下一次。
+ */
+async function relayWithRetry(op: string, run: () => Promise<string>): Promise<string> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= RELAY_ATTEMPTS; attempt++) {
+    try {
+      return await run()
+    } catch (e) {
+      lastError = e
+      if (attempt === RELAY_ATTEMPTS || !isRetryableCosError(e)) break
+      console.warn(
+        `[mediaRelay] ${op} 第 ${attempt}/${RELAY_ATTEMPTS} 次失败,重试:${describeCosError(e)}`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, RELAY_RETRY_BASE_DELAY_MS * attempt))
+    }
+  }
+  throw new Error(describeCosError(lastError))
+}
+
 /** 上传 Buffer 到中转桶,返回公网 https URL。 */
 export async function relayBufferToCos(body: Buffer, mimeType: string): Promise<string> {
   if (body.byteLength === 0) throw new Error('media relay: empty buffer')
-  return uploadBufferToBucket({
-    bucket: MEDIA_RELAY_BUCKET,
-    region: MEDIA_RELAY_REGION,
-    key: relayKey(mimeType),
-    body,
-    contentType: mimeType,
-  })
+  return relayWithRetry('relayBufferToCos', () =>
+    uploadBufferToBucket({
+      bucket: MEDIA_RELAY_BUCKET,
+      region: MEDIA_RELAY_REGION,
+      key: relayKey(mimeType),
+      body,
+      contentType: mimeType,
+    }),
+  )
 }
 
 /**
@@ -83,14 +120,16 @@ export async function relayFileToCos(
       : 0
   const hardTimeoutMs = Math.max(FLOOR_MS, sizeBasedMs)
 
-  return uploadStreamToBucket({
-    bucket: MEDIA_RELAY_BUCKET,
-    region: MEDIA_RELAY_REGION,
-    key: relayKey(mimeType),
-    filePath,
-    contentType: mimeType,
-    hardTimeoutMs,
-  })
+  return relayWithRetry('relayFileToCos', () =>
+    uploadStreamToBucket({
+      bucket: MEDIA_RELAY_BUCKET,
+      region: MEDIA_RELAY_REGION,
+      key: relayKey(mimeType),
+      filePath,
+      contentType: mimeType,
+      hardTimeoutMs,
+    }),
+  )
 }
 
 /** 解析 base64 data: URL 为 { buffer, mimeType };非 data: URL 返回 null。 */

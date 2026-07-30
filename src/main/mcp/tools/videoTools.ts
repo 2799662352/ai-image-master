@@ -286,8 +286,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'Video length in seconds (4–15), or -1 = smart duration (model auto-decides; result shows actual length). Default 5. Longer = more expensive.',
       ),
       generateAudio: z.boolean().optional().describe('Generate soundtrack/voice audio. Default true (no extra cost).'),
-      firstFrame: z.string().optional().describe('STRICT first/last-frame mode only — use ONLY when the user explicitly wants a fixed first frame. First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). Local images ≤30MB (large files are relayed automatically).'),
-      lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too, strict mode only). Same formats/limits as firstFrame.'),
+      firstFrame: z.string().optional().describe('STRICT first/last-frame mode only — use ONLY when the user explicitly wants a fixed first frame. First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). No client-side size cap — large local files are relayed automatically; if a file exceeds what upstream accepts, upstream says so.'),
+      lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too, strict mode only). Same formats as firstFrame.'),
       referenceImages: z.array(z.string()).max(9).optional().describe(
         '全能参考 (DEFAULT mode): up to 9 reference images for subject/style consistency (人物/角色一致性). ' +
         'Prefer this over firstFrame for almost every request. If the user attached image paths in the ' +
@@ -300,11 +300,11 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       ),
       referenceVideos: z.array(z.string()).max(3).optional().describe(
         '全能参考: up to 3 reference videos (motion/style), local path / URL / asset://assetId. Each 4–15s, ' +
-        'local files ≤50MB, COMBINED total duration ≤15s.',
+        'COMBINED total duration ≤15s. No client-side size cap (large local files are relayed automatically).',
       ),
       referenceAudios: z.array(z.string()).max(3).optional().describe(
         '全能参考: up to 3 reference audios (lip-sync/voice), local path / URL / asset://assetId. Each 4–15s, ' +
-        'local files ≤50MB, COMBINED total duration ≤15s.',
+        'COMBINED total duration ≤15s. No client-side size cap (large local files are relayed automatically).',
       ),
       referenceVideo: z.string().optional().describe('Deprecated single alias for referenceVideos — prefer referenceVideos.'),
       referenceAudio: z.string().optional().describe('Deprecated single alias for referenceAudios — prefer referenceAudios.'),

@@ -31,7 +31,8 @@ import {
 } from './portraitOverlay'
 import { normalizeSeedancePromptReferences } from './promptReferences'
 import { SeedanceTaskManager } from './taskManager'
-import { relayBufferToCos, relayDataUrlToCos } from '../tencent/mediaRelay'
+import { describeCosError } from '../tencent/cosErrors'
+import { relayBufferToCos, relayDataUrlToCos, relayFileToCos } from '../tencent/mediaRelay'
 import type { CreateVideoTaskInput, SeedanceContentItem } from './types'
 import type {
   PortraitOverlayMutation,
@@ -49,8 +50,12 @@ import type {
  * 文件走 COS 中转(历史图片上传链路)换 https URL 再提交。
  */
 const MAX_INLINE_FILE_BYTES = 512 * 1024
-/** 本地素材单文件硬上限(上游:图片 ≤30MB,视频/音频 ≤50MB,统一取 50MB)。 */
-const MAX_LOCAL_FILE_BYTES = 50 * 1024 * 1024
+/**
+ * 上游 `url` 字段能吃下的内联体积(实测约 1MB 原始字节后开始 `400 url is too
+ * long`)。只用在一个地方:中转失败时判断「降级回内联」还不还有希望 ——
+ * 512KB~1MB 这个窗口里内联仍在上游限内,值得一试;更大就只能报错。
+ */
+const MAX_UPSTREAM_INLINE_BYTES = 1024 * 1024
 /** download_portrait_asset 下载体积上限(防止超大视频拖垮内存)。 */
 const MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
 
@@ -77,6 +82,11 @@ const MIME_BY_EXT: Record<string, string> = {
  * - 大文件走 COS 中转(与历史图片上传同一条链路)换 https URL —— 上游对
  *   data: 长度有硬限制(`400 url is too long`),COS 中转既绕开限制又更快;
  * - data: URL 同理:超过内联上限时转存 COS。
+ *
+ * **这里不设体积闸门。** 本地文件走 `relayFileToCos` 从磁盘分片流式上传,
+ * 整个文件不进 Node Buffer,所以「多大算太大」不该由我们猜:上游自己会对
+ * 超限素材返回明确的 400,那个错误比我们编一个数字准。历史上这里卡了一道
+ * 50MB,结果是用户被我们挡下,却看不到上游到底允许多少。
  */
 async function resolveMediaUrl(src: string, label: string): Promise<string> {
   const trimmed = src.trim()
@@ -86,34 +96,44 @@ async function resolveMediaUrl(src: string, label: string): Promise<string> {
     try {
       return await relayDataUrlToCos(trimmed)
     } catch (e) {
-      console.warn(`[seedance] ${label}: COS relay failed, falling back to inline data URL:`, e)
-      return trimmed
+      // 仍在上游内联限内就降级重试内联(COS 不可达而模型接口可达时这条路救命);
+      // 超出就必须报错 —— 硬塞进去只会换来一句莫名其妙的 `url is too long`。
+      if (trimmed.length <= MAX_UPSTREAM_INLINE_BYTES * 1.4) {
+        console.warn(`[seedance] ${label}: COS relay failed, falling back to inline data URL:`, e)
+        return trimmed
+      }
+      throw new Error(`${label}: ${relayFailureHint(e)}`)
     }
   }
-  let buf: Buffer
+  let size: number
   try {
-    buf = await fs.readFile(trimmed)
+    // stat 而非 readFile:大文件走流式上传,这里只需要体积(给超时保险丝定值)。
+    const stat = await fs.stat(trimmed)
+    if (!stat.isFile()) throw new Error('not a regular file')
+    size = stat.size
   } catch {
     throw new Error(`${label}: cannot read local file "${trimmed}" — pass an existing path, data: URL, or https URL.`)
   }
-  if (buf.byteLength > MAX_LOCAL_FILE_BYTES) {
-    throw new Error(
-      `${label}: local file is ${(buf.byteLength / 1024 / 1024).toFixed(1)}MB — upstream caps media at 50MB ` +
-        '(images 30MB). Compress/downscale the file first.',
-    )
-  }
   const mime = MIME_BY_EXT[path.extname(trimmed).toLowerCase()] ?? 'application/octet-stream'
-  if (buf.byteLength <= MAX_INLINE_FILE_BYTES) {
-    return `data:${mime};base64,${buf.toString('base64')}`
+  if (size <= MAX_INLINE_FILE_BYTES) {
+    return `data:${mime};base64,${(await fs.readFile(trimmed)).toString('base64')}`
   }
   try {
-    return await relayBufferToCos(buf, mime)
+    return await relayFileToCos(trimmed, mime, { fileSize: size })
   } catch (e) {
-    throw new Error(
-      `${label}: file is ${(buf.byteLength / 1024 / 1024).toFixed(1)}MB and the COS relay upload failed ` +
-        `(${e instanceof Error ? e.message : String(e)}). Check network, or compress the file below 512KB.`,
-    )
+    throw new Error(`${label}: ${(size / 1024 / 1024).toFixed(1)}MB 素材 ${relayFailureHint(e)}`)
   }
+}
+
+/**
+ * 中转失败的用户可读说明。关键是**带上真实原因** —— COS SDK 抛的是裸对象,
+ * 早先这里用 `String(e)` 渲出来就是一句 `[object Object]`,既看不出是票据问题
+ * 还是网断了,也没法据此做任何事(mediaRelay 已经把它收敛成真 Error,这里再
+ * 兜一层防止别的调用路径漏进来)。
+ */
+function relayFailureHint(e: unknown): string {
+  const reason = e instanceof Error ? e.message : describeCosError(e)
+  return `上传到中转服务器失败(${reason})。已自动重试仍未成功,请检查网络后重新生成;若持续失败,可改用 https 链接或人像库素材(asset://)。`
 }
 
 /** 从扩展名 / mime / data: 头推断素材 kind(供 add_to_portrait_library 自动判断)。 */
@@ -295,9 +315,19 @@ export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | nul
   )
   ipcMain.removeHandler('seedance:assets-import')
   ipcMain.handle('seedance:assets-import', async (_event, input: SeedanceAssetImportInput) => {
-    // 人像库页面上传:data: URL 先中转 COS 拿 https URL,避开上游
-    // `url is too long` 限制,同时比直传 base64 快得多。
-    const url = input?.url?.startsWith('data:') ? await relayDataUrlToCos(input.url) : input?.url
+    // 人像库页面上传的两条来源:
+    // - data: URL(剪贴板/网页拖拽的合成 File)先中转 COS 拿 https URL,避开上游
+    //   `url is too long` 限制,同时比直传 base64 快得多;
+    // - 本地路径(系统拖拽/文件选择器,渲染端优先传这个)走 resolveMediaUrl,
+    //   即分片流式上传 —— 整个文件不进 Buffer,所以不需要体积闸门。
+    const raw = input?.url ?? ''
+    const url = !raw
+      ? raw // 让 importSeedanceAsset 出它自己那句「缺 url」,别在这儿变成读文件失败
+      : raw.startsWith('data:')
+        ? await relayDataUrlToCos(raw)
+        : /^(https?:|asset:)/i.test(raw)
+          ? raw
+          : await resolveMediaUrl(raw, 'assets-import.url')
     return importSeedanceAsset({ ...input, url }, assetCreds())
   })
   ipcMain.removeHandler('seedance:assets-capacity')

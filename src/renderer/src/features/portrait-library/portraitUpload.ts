@@ -1,11 +1,12 @@
 // 人像库共享上传逻辑 —— 人像库页(PortraitLibraryPage)与视频工作台的
 // 「从人像库选择」弹窗(PortraitPickerModal)共用一份实现:
-//  - 文件校验(图片 ≤30MB;视频 ≤50MB 且 4-15s;音频 4-15s,上游硬限);
+//  - 文件校验(视频/音频 4-15s,上游硬限;**不校验体积** —— 见 validateUploadFile);
 //  - 按当前选中的类型 tab 决定 imageCategory(人像 image_people / 环境
 //    image_environment;上游 SeedanceAssetImportInput 只支持这两个图片分类,
 //    视频/音频没有 imageCategory,靠 kind 本身区分);文件实际类型与 tab
 //    不一致时按实际类型入库并 toast 说明;
-//  - data URL 读取 → seedance.importAsset 逐文件导入,独立失败互不影响;
+//  - 优先取真实本地路径(主进程流式中转,零字节过 IPC),拿不到才读 data URL
+//    → seedance.importAsset 逐文件导入,独立失败互不影响;
 //  - 可选 group:导入成功后对新 assetId 直接调 overlay mutate(moveToGroup)
 //    归组 —— 主进程会广播 onOverlayChanged,页面 hook 自动同步,无需回传。
 // toast(逐文件失败 / 类型不符说明 / 汇总)统一由本模块发,调用方只管
@@ -23,9 +24,7 @@ import type {
 
 export type PortraitUploadKind = 'image' | 'video' | 'audio'
 
-/** 上游素材库硬限:图片单张 ≤30MB;视频 ≤50MB 且 4-15s;音频 4-15s。 */
-const MAX_IMAGE_BYTES = 30 * 1024 * 1024
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024
+/** 上游素材库硬限:视频/音频 4-15s。 */
 const MEDIA_MIN_SECONDS = 4
 const MEDIA_MAX_SECONDS = 15
 
@@ -88,6 +87,21 @@ export function planUpload(file: File, kindTab: SeedanceAssetKindFilter = 'all')
   return { kind, mismatch: !tabExpectsKind }
 }
 
+/**
+ * Electron 给系统拖拽 / 文件选择器产生的 File 带真实磁盘路径。拿得到就直接传
+ * 路径:主进程会分片流式上传,整个文件不进任何 Buffer,也就没有「多大算太大」
+ * 这个问题。拿不到(剪贴板粘贴、网页拖拽的合成 File)才退回 data URL。
+ */
+function getFilePathSafe(file: File): string {
+  try {
+    const api = (window as unknown as { electronAPI?: { getFilePath?: (f: File) => string } })
+      .electronAPI
+    return api?.getFilePath?.(file) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -115,13 +129,15 @@ function probeMediaDuration(file: File): Promise<number | null> {
   })
 }
 
-/** 按上游限制校验文件;返回 null 表示通过,否则返回错误文案。 */
+/**
+ * 按上游限制校验文件;返回 null 表示通过,否则返回错误文案。
+ *
+ * **只校验时长,不校验体积。** 时长超了这文件根本用不了,本地一测就知道,拦下来
+ * 省一次上传;体积则相反 —— 上限该由上游裁决,我们写死一个数字只会在它放宽时
+ * 误伤用户,而超限时上游本来就会给出确切的错误。
+ */
 async function validateUploadFile(file: File, kind: PortraitUploadKind): Promise<string | null> {
-  if (kind === 'image') {
-    if (file.size > MAX_IMAGE_BYTES) return `${file.name} 超过图片 30MB 上限`
-    return null
-  }
-  if (kind === 'video' && file.size > MAX_VIDEO_BYTES) return `${file.name} 超过视频 50MB 上限`
+  if (kind === 'image') return null
   const duration = await probeMediaDuration(file)
   if (duration != null && (duration < MEDIA_MIN_SECONDS || duration > MEDIA_MAX_SECONDS)) {
     return `${file.name} 时长 ${duration.toFixed(1)}s 不在 4-15s 范围内`
@@ -196,11 +212,11 @@ export async function uploadFilesToPortraitLibrary(
       })
     }
     try {
-      const dataUrl = await readFileAsDataUrl(file)
+      const source = getFilePathSafe(file) || (await readFileAsDataUrl(file))
       const res = await api.importAsset({
         kind: plan.kind,
         ...(plan.imageCategory ? { imageCategory: plan.imageCategory } : {}),
-        url: dataUrl,
+        url: source,
         name: file.name,
         mimeType: file.type,
       })

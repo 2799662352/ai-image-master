@@ -146,13 +146,24 @@ describe('uploadFilesToPortraitLibrary', () => {
     expect(toasts.some((t) => t.message.includes('分类不符'))).toBe(true)
   })
 
-  it('图片超过 30MB → 跳过并 toast', async () => {
+  // 曾经这里卡一道 30MB(图)/50MB(视频)。体积上限属于上游的裁量,写死在客户端
+  // 只会在上游放宽时误伤用户,而真超限时上游本来就会给出确切错误。
+  it('超大图片不再被本地拦下 —— 体积交给上游裁决', async () => {
     const { importAsset } = mockApi()
     const big = makeFile('big.png', 'image/png')
-    Object.defineProperty(big, 'size', { value: 31 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 500 * 1024 * 1024 })
     const result = await uploadFilesToPortraitLibrary([big], { kindTab: 'image_people' })
-    expect(importAsset).not.toHaveBeenCalled()
-    expect(result.failed).toBe(1)
-    expect(useToastStore.getState().toasts.some((t) => t.message.includes('30MB'))).toBe(true)
+    expect(importAsset).toHaveBeenCalledTimes(1)
+    expect(result.imported).toBe(1)
+    expect(useToastStore.getState().toasts.some((t) => t.message.includes('上限'))).toBe(false)
+  })
+
+  it('有真实本地路径时传路径,不把整个文件 base64 塞进 IPC', async () => {
+    const { importAsset } = mockApi()
+    ;(window as any).electronAPI.getFilePath = () => 'D:\\shots\\hero.png'
+    await uploadFilesToPortraitLibrary([makeFile('hero.png', 'image/png')], {
+      kindTab: 'image_people',
+    })
+    expect(importAsset.mock.calls[0][0]).toMatchObject({ url: 'D:\\shots\\hero.png' })
   })
 })
