@@ -11,7 +11,7 @@ import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClien
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveBundledFfmpegDir, resolveCodexBinary } from './paths'
 import { runCodexDoctor, type DoctorReport } from './codexDoctor'
-import { pickFreePort } from './ports'
+import { pickFreePort, withPortInUseRetry } from './ports'
 import {
   startProviderCompatibilityProxies,
   type ProviderCompatibilityProxyGroup,
@@ -375,7 +375,7 @@ export class CodexLocalBackend implements IAgentBackend {
       return
     }
 
-    const started = await this.startSpawnedClient()
+    const started = await this.spawnClientRetryingPortClashes()
     this.proc = started.proc
     this.client = started.client
     this.log = started.log
@@ -406,6 +406,24 @@ export class CodexLocalBackend implements IAgentBackend {
       appPath: app.getAppPath(),
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
+    })
+  }
+
+  /**
+   * pickFreePort 挑好端口到 codex 真正 bind 之间隔着一次进程 spawn,这个窗口关不掉:
+   * 端口必须留给子进程自己去 bind。另一个实例(开发版与安装版同跑、e2e 与本机安装版
+   * 并发)恰好在这期间抢走它,codex 就死在 `os error 10048`,而且 startSpawnedClient
+   * 不会重试 —— 表现为 agent 起不来、聊天发不出去,错误在 index.ts 里只进 console。
+   * 换个端口重来一次即可,所以在这里兜。
+   */
+  private async spawnClientRetryingPortClashes(): Promise<SpawnedCodexClient> {
+    return withPortInUseRetry(() => this.startSpawnedClient(), {
+      onRetry: (error, attemptsLeft) => {
+        console.warn(
+          `[codex] app-server 端口被抢占,换端口重试(剩余 ${attemptsLeft} 次):`,
+          error instanceof Error ? error.message : String(error),
+        )
+      },
     })
   }
 
@@ -626,7 +644,7 @@ export class CodexLocalBackend implements IAgentBackend {
     const oldProc = this.proc
     const oldLog = this.log
     const oldCompatibilityProxies = this.compatibilityProxies
-    const replacement = await this.startSpawnedClient()
+    const replacement = await this.spawnClientRetryingPortClashes()
     this.proc = replacement.proc
     this.client = replacement.client
     this.log = replacement.log
