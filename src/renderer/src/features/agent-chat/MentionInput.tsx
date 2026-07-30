@@ -10,10 +10,13 @@ import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore, type PluginMentionCandidate } from './store'
 import {
   dragCarriesDroppablePayload,
+  dragCarriesWorkbenchCards,
   parseFileDrop,
   parseQuoteDrop,
   parseWorkbenchCardDrop,
 } from '../file-explorer/dragHelpers'
+import type { WorkbenchCardDragItem } from '../file-explorer/dragHelpers'
+import { buildWorkbenchCardDoc, workbenchCardDocName } from './workbenchCardDoc'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
@@ -873,6 +876,31 @@ export function MentionInput() {
     return null
   }
 
+  /**
+   * 还没有产物的工作台卡片:合成一份规格说明当附件递过去。
+   *
+   * 走 buffer 而不是 path,因为磁盘上确实没有这张卡的任何文件(`AgentAttachmentInput`
+   * 要求 path/buffer 二选一)。不 push reference —— reference 只认 localPath/url,
+   * 这份文档要等主进程落盘后才有路径。
+   */
+  function attachWorkbenchCardDoc(item: WorkbenchCardDragItem): string | null {
+    const current = useAgentChatStore.getState().attachments
+    if (current.length >= MAX_ATTACHMENTS) return `已达 ${MAX_ATTACHMENTS} 个上限`
+    const bytes = new TextEncoder().encode(buildWorkbenchCardDoc(item))
+    // 一份说明只有几 KB,这两道闸门是为了「一次拖几十张卡」的极端情况,顺带与
+    // attachFiles 的记账口径保持一致。
+    if (bytes.byteLength > MAX_BUFFER_ATTACHMENT_BYTES) return '超过单文件 100MB'
+    const totalBytes = current.reduce((sum, attachment) => sum + attachment.size, 0)
+    if (totalBytes + bytes.byteLength > MAX_TOTAL_ATTACHMENT_BYTES) return '超过总量 4GB'
+    addAttachment({
+      name: workbenchCardDocName(item),
+      mime: 'text/markdown',
+      size: bytes.byteLength,
+      buffer: bytes.buffer as ArrayBuffer,
+    })
+    return null
+  }
+
   function commitFile(file: { path: string; name: string }): void {
     if (!filePopup) return
     const el = textareaRef.current
@@ -1009,20 +1037,33 @@ export function MentionInput() {
     // 真的 fs.move 掉 mp4。这里显式认领。
     const droppedCards = parseWorkbenchCardDrop(event.dataTransfer)
     if (droppedCards.length > 0) {
-      const withVideo = droppedCards.filter((c) => c.localPath)
-      if (withVideo.length === 0) {
-        // 还没出片:如实说一声,别让用户以为拖失败了。选中态仍已同步,
-        // 模型下次调工作台工具照样看得见这几张卡。
-        setError('这些卡还没有生成结果,没有视频可以递过去。')
-        return
-      }
+      // 每张卡按「产物存活性」逐级降级,与播放器同一顺序:
+      //   1. 本地 mp4 还在 → 附件 + 引用(路径在 uploads 白名单内,引用过得了主进程那道门)
+      //   2. 只剩耐久地址 → 把 URL 写进输入框。**视频 URL 走不了 reference**:
+      //      mapReferencesToInputItems 只把 image/audio 的 url 变成输入项,视频 URL
+      //      会被静默丢掉,模型压根看不见 —— 那样等于假装递了东西。
+      //   3. 真没有产物 → 合成一份规格说明当附件(见 workbenchCardDoc)。
+      // 第 2 级存在的理由:本地 mp4 会被 7 天清理扫掉,而卡片对那个清理是隐形的。
+      // 早先只看 localPath,于是这种卡被误报成「还没有生成结果」,可播放器还放得出来。
       const skipped: string[] = []
-      for (const item of withVideo) {
-        const localPath = item.localPath!
-        const name = localPath.split(/[\\/]/).pop() ?? localPath
-        const reason = await attachFileByPath(localPath, name)
-        if (reason) skipped.push(`${name}(${reason})`)
+      const durableUrls: string[] = []
+      for (const item of droppedCards) {
+        if (item.localPath) {
+          const name = item.localPath.split(/[\\/]/).pop() ?? item.localPath
+          const reason = await attachFileByPath(item.localPath, name)
+          if (reason) skipped.push(`${name}(${reason})`)
+          continue
+        }
+        const durable = item.remoteUrl ?? item.videoUrl
+        if (durable) {
+          durableUrls.push(durable)
+          continue
+        }
+        const reason = attachWorkbenchCardDoc(item)
+        if (reason) skipped.push(`${workbenchCardDocName(item)}(${reason})`)
       }
+      // 循环里逐张 appendInput 会各自基于同一份过期的 input 快照,只剩最后一条。
+      if (durableUrls.length > 0) appendInput(durableUrls.join('\n'))
       setError(skipped.length > 0 ? `已跳过 ${skipped.length} 个:${skipped.join('、')}` : undefined)
       return
     }
@@ -1237,7 +1278,14 @@ export function MentionInput() {
         // preventDefault 保持无条件:它是「这里可以放」的开关,收窄它会连带
         // 掐掉浏览器原生的选中文本拖入 textarea。高亮才按 MIME 收窄。
         event.preventDefault()
-        if (!dragCarriesDroppablePayload(event.dataTransfer)) return
+        // 卡片走单独的判据:那个 MIME 只有这里接得住(详见 dragCarriesWorkbenchCards)。
+        // 少了它,拖一张卡过来毫无反应,松手才知道成没成 —— 未出片的卡尤其像拖失败了。
+        if (
+          !dragCarriesDroppablePayload(event.dataTransfer) &&
+          !dragCarriesWorkbenchCards(event.dataTransfer)
+        ) {
+          return
+        }
         // 组合器只会复制(附件/引用),从不移动源文件 —— 说清楚光标才对。
         event.dataTransfer.dropEffect = 'copy'
         if (!dropActive) setDropActive(true)

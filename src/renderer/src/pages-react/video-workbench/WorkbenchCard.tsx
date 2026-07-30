@@ -525,7 +525,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           'hover:bg-white/[0.04] transition-colors',
           selected ? 'bg-[#FCE300]/[0.07]' : '',
         ].join(' ')}
-        title="拖动:页内排序 / 拖进聊天栏把视频交给模型;单击选中(Ctrl 加选 · Shift 选区间)"
+        title="拖动:页内排序 / 拖进聊天栏交给模型(还没出片就递这张卡的规格说明);单击选中(Ctrl 加选 · Shift 选区间)"
         draggable
         onDragStart={(e) => {
           // 从行内按钮(删除等)起手不该变成拖卡
@@ -548,12 +548,36 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
           // 专用 MIME,**不是**文件树那个 x-catimation-file-paths:后者的含义是
           // 「可以被移动的工作区文件」,而文件栏与工作台同屏,复用会让卡片被拖过
           // 文件树时真的 fs.move 掉 mp4(详见 dragHelpers 里 WORKBENCH_CARD_TYPE 的注释)。
-          // 空数组时什么都不写:还没出片的卡拖进聊天栏自然落空,不假装递了东西。
+          //
+          // 三级地址全带上(localPath → remoteUrl → videoUrl),和播放器的降级顺序
+          // 一致:只带 localPath 会把「本地被 7 天清理扫掉、云端还在」的卡误报成
+          // 「还没有生成结果」。还没有产物的卡则带上规格摘要,聊天栏据此合成一份
+          // 说明递给模型 —— 素材只记名字,data: URL 不进载荷。
           serializeWorkbenchCardDrag(
             e.dataTransfer,
             dragged.map((c) => ({
               cardId: c.id,
               ...(c.localPath ? { localPath: c.localPath } : {}),
+              ...(c.remoteUrl ? { remoteUrl: c.remoteUrl } : {}),
+              ...(c.videoUrl ? { videoUrl: c.videoUrl } : {}),
+              status: c.status,
+              ...(c.error ? { error: c.error } : {}),
+              spec: {
+                prompt: c.prompt,
+                model: c.model,
+                resolution: c.resolution,
+                ratio: c.ratio,
+                duration: c.duration,
+                generateAudio: c.generateAudio,
+                mode: c.mode,
+                ...(c.seed !== undefined ? { seed: c.seed } : {}),
+                webSearch: c.webSearch,
+                referenceBrief: {
+                  images: c.referenceImages.map((m) => m.name),
+                  videos: c.referenceVideos.map((m) => m.name),
+                  audios: c.referenceAudios.map((m) => m.name),
+                },
+              },
             })),
           )
 
