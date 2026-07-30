@@ -21,18 +21,29 @@ function seedanceApi(): SeedanceImportApi | undefined {
   return (window as Window & { electronAPI?: { seedance?: SeedanceImportApi } }).electronAPI?.seedance
 }
 
-/** 上游素材库硬限:图片单张 ≤30MB,视频 ≤50MB(音频从宽给 50MB)。 */
-const MAX_IMPORT_BYTES: Record<'image' | 'video' | 'audio', number> = {
-  image: 30 * 1024 * 1024,
-  video: 50 * 1024 * 1024,
-  audio: 50 * 1024 * 1024,
-}
-
 export function fileImportKind(file: File): 'image' | 'video' | 'audio' | null {
   if (file.type.startsWith('image/')) return 'image'
   if (file.type.startsWith('video/')) return 'video'
   if (file.type.startsWith('audio/')) return 'audio'
   return null
+}
+
+/**
+ * 系统拖拽 / 文件选择器给的 File 带真实磁盘路径,直接传路径:主进程分片流式
+ * 上传,整个文件不进任何 Buffer。拿不到路径(剪贴板粘贴、网页拖拽的合成 File)
+ * 才退回 data URL —— 那种本来就已经在内存里。
+ *
+ * 与人像库页上传(portraitUpload.ts)口径保持一致:同一份文件不该因为从哪个
+ * 入口进来而走不同的通道。
+ */
+function getFilePathSafe(file: File): string {
+  try {
+    const api = (window as unknown as { electronAPI?: { getFilePath?: (f: File) => string } })
+      .electronAPI
+    return api?.getFilePath?.(file) ?? ''
+  } catch {
+    return ''
+  }
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -47,6 +58,9 @@ function readAsDataUrl(file: File): Promise<string> {
 /**
  * 把本地上传文件后台导入人像库。逐文件独立失败(toast 提示),互不影响,
  * 也不影响调用方(卡片素材区)的流程;preload 桥缺失时静默跳过。
+ *
+ * 不做体积预判 —— 导入本身已经是「失败也无所谓」的副作用,与其我们按一个猜的
+ * 数字提前劝退,不如让上游给出确切上限,那句错误照旧只出 toast。
  * @returns 成功导入数(便于测试断言)
  */
 export async function autoImportFilesToPortraitLibrary(files: File[]): Promise<number> {
@@ -57,19 +71,12 @@ export async function autoImportFilesToPortraitLibrary(files: File[]): Promise<n
   for (const file of files) {
     const kind = fileImportKind(file)
     if (!kind) continue
-    if (file.size > MAX_IMPORT_BYTES[kind]) {
-      addToast({
-        message: `「${file.name}」超出人像库大小限制(${Math.round(MAX_IMPORT_BYTES[kind] / 1024 / 1024)}MB),未导入(卡片素材不受影响)`,
-        type: 'warning',
-      })
-      continue
-    }
     try {
-      const dataUrl = await readAsDataUrl(file)
+      const source = getFilePathSafe(file) || (await readAsDataUrl(file))
       await api.importAsset({
         kind,
         ...(kind === 'image' ? { imageCategory: 'image_people' as const } : {}),
-        url: dataUrl,
+        url: source,
         name: file.name,
         mimeType: file.type,
       })

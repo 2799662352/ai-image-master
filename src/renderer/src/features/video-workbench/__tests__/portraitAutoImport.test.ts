@@ -74,14 +74,23 @@ describe('autoImportFilesToPortraitLibrary', () => {
     expect(useToastStore.getState().toasts).toHaveLength(0)
   })
 
-  it('超出大小上限的文件弹 warning 跳过,不调 importAsset', async () => {
+  // 与人像库页上传(portraitUpload.ts)口径一致:拿得到真实路径就传路径,主进程
+  // 分片流式上传,不把整个文件 base64 塞进 IPC。取消体积闸门的前提就是这个。
+  it('有真实本地路径时传路径,而不是 dataUrl', async () => {
+    importAsset.mockResolvedValue({ duplicated: false, asset: { assetId: 'a1' } })
+    ;(window as any).electronAPI.getFilePath = () => 'D:\\clips\\走路.mp4'
+    await autoImportFilesToPortraitLibrary([makeFile('走路.mp4', 'video/mp4')])
+    expect(importAsset.mock.calls[0][0]).toMatchObject({ url: 'D:\\clips\\走路.mp4' })
+  })
+
+  // 曾经这里按 30MB(图)/50MB(视频音频)提前劝退。导入本身已经是「失败也无所谓」
+  // 的副作用,与其我们按一个猜的数字拦下,不如让上游给出确切上限。
+  it('超大文件不再被本地劝退 —— 体积交给上游裁决', async () => {
     const big = makeFile('大.png', 'image/png')
-    Object.defineProperty(big, 'size', { value: 31 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 500 * 1024 * 1024 })
     const n = await autoImportFilesToPortraitLibrary([big])
-    expect(n).toBe(0)
-    expect(importAsset).not.toHaveBeenCalled()
-    const toasts = useToastStore.getState().toasts
-    expect(toasts).toHaveLength(1)
-    expect(toasts[0].type).toBe('warning')
+    expect(n).toBe(1)
+    expect(importAsset).toHaveBeenCalledTimes(1)
+    expect(useToastStore.getState().toasts).toHaveLength(0)
   })
 })

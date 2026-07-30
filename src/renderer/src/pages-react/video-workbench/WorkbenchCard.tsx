@@ -57,9 +57,6 @@ const RATIO_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
  */
 const DURATION_OPTIONS = [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const
 
-/** 大文件上限(读成 dataURL 兜底路径时):30MB 图片上游硬限。 */
-const MAX_DATAURL_FILE_MB = 30
-
 function getFilePathSafe(file: File): string {
   try {
     const api = (window as unknown as { electronAPI?: { getFilePath?: (f: File) => string } }).electronAPI
@@ -81,11 +78,15 @@ function readAsDataUrl(file: File): Promise<string> {
 /**
  * File → 素材:优先取真实本地路径(零字节过 IPC,主进程直接读文件/中转 COS);
  * 合成 File(粘贴等)才读 dataURL 兜底。
+ *
+ * 兜底这条路不设体积上限 —— 体积该由上游裁决,我们猜的数字只会误伤。系统拖拽
+ * 和文件选择器给的 File 都带真实路径,走不到这儿;能落到 dataURL 的只有剪贴板
+ * 粘贴、网页拖拽这类本来就在内存里的小文件。读失败(超大导致 OOM 等)由
+ * FileReader 自己抛,照旧返回 null。
  */
 async function fileToMaterial(file: File): Promise<VideoWorkbenchMaterial | null> {
   const path = getFilePathSafe(file)
   if (path) return { name: file.name, src: path }
-  if (file.size > MAX_DATAURL_FILE_MB * 1024 * 1024) return null
   try {
     return { name: file.name, src: await readAsDataUrl(file) }
   } catch {

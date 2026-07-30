@@ -15,7 +15,7 @@ const MAX_ATTACHMENTS = 20
 // cap at 2GB to match the renderer composer + the qwen understand path. Buffer-
 // based attachments arrived over IPC as an ArrayBuffer held in memory, so they
 // keep the conservative 100MB cap.
-const MAX_PATH_ATTACHMENT_BYTES = 2 * 1024 * 1024 * 1024
+export const MAX_PATH_ATTACHMENT_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_BUFFER_ATTACHMENT_BYTES = 100 * 1024 * 1024
 const STREAM_CHUNK_SIZE = 64 * 1024
 

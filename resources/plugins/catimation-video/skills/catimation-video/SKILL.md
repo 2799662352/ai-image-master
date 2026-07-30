@@ -182,7 +182,7 @@ prompt;不要等用户说「优化提示词」才加载:
 3. Call `generate_video`:`prompt`(必填)、`model`(`2.0` 默认,用户明确要
    快/便宜才 `2.0-fast`)、`resolution` / `ratio` / `duration`、
    `referenceImages`(**用户给过的图必须传**;支持 `asset://assetId`)、
-   `referenceVideos` / `referenceAudios`(每段 ≤50MB、4–15s)、或显式要求时的
+   `referenceVideos` / `referenceAudios`(每段 4–15s、合计 ≤15s)、或显式要求时的
    `firstFrame` / `lastFrame`。
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
@@ -255,7 +255,9 @@ The `catimation` MCP server exposes portrait-library tools
 - One `generate_video` call = ONE video. 多条就多次调用、复用同一 asset://
   保持一致性;可并行,但**一次要发 20+ 个任务先向用户确认**(每条都花钱且渲染
   1–3 分钟)。
-- Local input files are handled for you(images ≤30MB, video/audio ≤50MB & 4–15s);
-  pass plain local paths, the tool deals with size limits.
+- Local input files are handled for you(video/audio 4–15s);pass plain local paths
+  and do NOT pre-compress or reject anything for size — there is no client-side size
+  cap, large files are streamed to a relay bucket automatically. If a file really is
+  too big for upstream, upstream returns the exact limit.
 - **Background saving never blocks you**: banner DONE = 视频已在播,本地保存可能
   还在后台(`persistencePending`),当作 COMPLETE 立即回复,不要等待或轮询保存。
