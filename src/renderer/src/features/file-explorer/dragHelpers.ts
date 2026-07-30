@@ -61,10 +61,63 @@ export function dragCarriesDroppablePayload(dt: DataTransfer): boolean {
   return types.includes(FILE_TYPE) || types.includes(QUOTE_TYPE) || types.includes('Files')
 }
 
-/** 一张被拖出来的工作台卡片。`localPath` 缺席表示这张卡还没有产物。 */
+/**
+ * 工作台卡片单独一个判据,**刻意不并进 {@link dragCarriesDroppablePayload}**。
+ *
+ * 那个函数是「我们家的通用载荷」,谁都能拿去点亮自己;卡片却只有聊天栏接得住 ——
+ * 文件树对卡片 MIME 是故意不响应的(响应就会 fs.move 掉 mp4)。混进去等于给所有
+ * 现在和将来的投放目标发一张「这里能放卡片」的假许可,而拖到文件树上松手会毫无
+ * 反应。所以让接得住的那一方显式认领,与 MentionInput.onDrop 的做法一致。
+ */
+export function dragCarriesWorkbenchCards(dt: DataTransfer): boolean {
+  return dt.types.includes(WORKBENCH_CARD_TYPE)
+}
+
+/**
+ * 一张被拖出来的工作台卡片。
+ *
+ * **`localPath` 缺席不等于没出片。** 本地 mp4 会被 7 天清理扫掉(AttachmentService
+ * .cleanup 判断「仍被引用」时只扫聊天记录,工作台卡片对它隐形),`remoteUrl` 才是
+ * 耐久源;播放器本来就按 localPath → remoteUrl → videoUrl 逐级降级。所以这三级必须
+ * 带齐,否则聊天栏会把「本地已清理、云端还在」的卡误报成「还没有生成结果」——
+ * 播放器还放得出来,拖进聊天栏却说没产物。
+ */
 export interface WorkbenchCardDragItem {
   cardId: string
+  /** 本地 mp4 绝对路径(最快,可能已被清理)。 */
   localPath?: string
+  /** COS 永久 https URL(跨设备/清理后仍可播)。 */
+  remoteUrl?: string
+  /** 上游临时结果地址(有效期未知,最后兜底)。 */
+  videoUrl?: string
+  /** 卡片状态机当前值 —— 还没有产物时,说明里据此写清「为什么还没有」。 */
+  status?: string
+  /** 终态失败时上游/本地的错误原文。 */
+  error?: string
+  /** 意图快照。还没有产物时,聊天栏据此合成一份规格说明递给模型。 */
+  spec?: WorkbenchCardDragSpec
+}
+
+/**
+ * 卡片规格摘要。字段与 `VideoWorkbenchSpec` 一一对应,但**素材只记名字不记字节** ——
+ * 与 `VideoWorkbenchVersionSpec.referenceBrief` 同一条纪律:referenceImages 里可能是
+ * data: URL,原样塞进 dataTransfer 会让一次拖拽拖着几十 MB base64 走,还会照原样落进
+ * 附件。类型用裸 string 而不是 workbench 的联合类型,是为了不让这个 MIME 词汇表模块
+ * 反过来依赖视频工作台。
+ */
+export interface WorkbenchCardDragSpec {
+  prompt: string
+  model: string
+  resolution: string
+  ratio: string
+  /** 秒;-1 = 智能时长(模型自动决定)。 */
+  duration: number
+  generateAudio: boolean
+  mode: string
+  /** undefined = 随机。 */
+  seed?: number
+  webSearch: boolean
+  referenceBrief: { images: string[]; videos: string[]; audios: string[] }
 }
 
 /**
@@ -76,7 +129,11 @@ export interface WorkbenchCardDragItem {
 export function serializeWorkbenchCardDrag(dt: DataTransfer, items: WorkbenchCardDragItem[]): void {
   if (items.length === 0) return
   dt.setData(WORKBENCH_CARD_TYPE, JSON.stringify(items))
-  dt.setData('text/plain', items.map((i) => i.localPath ?? i.cardId).join('\n'))
+  // 兜底按播放器同款降级取「最能指向这张卡产物的那个地址」,只有真没产物才退回 id。
+  dt.setData(
+    'text/plain',
+    items.map((i) => i.localPath ?? i.remoteUrl ?? i.videoUrl ?? i.cardId).join('\n'),
+  )
 }
 
 /** 总是返回数组(可能为空)。载荷损坏按「没有卡片」处理,不抛。 */
