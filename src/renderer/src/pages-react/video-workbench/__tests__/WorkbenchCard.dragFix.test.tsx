@@ -91,9 +91,9 @@ describe('拖不动:整条头部行必须可拖,且不能被文字选中抢走',
     fireEvent.dragStart(header(), { dataTransfer })
 
     expect(dataTransfer.getData(CARD_DRAG_MIME)).toBe(ids[0])
-    expect(JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))).toEqual([
-      { cardId: ids[0], localPath: 'C:/u/agent/uploads/a.mp4' },
-    ])
+    const payload = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect(payload).toHaveLength(1)
+    expect(payload[0]).toMatchObject({ cardId: ids[0], localPath: 'C:/u/agent/uploads/a.mp4' })
     expect(dataTransfer.effectAllowed).toBe('copyMove')
   })
 
@@ -118,15 +118,40 @@ describe('数据丢失守卫:卡片载荷绝不能伪装成「可移动的工作
     expect(dataTransfer.types).not.toContain(FILE_PATHS_MIME)
   })
 
-  it('还没出片的卡也带上 cardId,但不带路径 —— 聊天栏据此如实说「还没有结果」', () => {
+  it('还没出片的卡带上 cardId + 规格摘要,但不带路径 —— 聊天栏据此合成一份说明递给模型', () => {
     // 刻意不选择「什么都不写」:那样拖过去毫无反应,用户分不清是没做好还是拖失败了。
+    // 断言从整体相等放松成逐字段,是因为载荷现在还要带状态与规格摘要(未出片时聊天栏
+    // 靠它合成说明);唯一不能松的是「不带路径」和下面那条 FILE_PATHS_MIME 守卫。
     const ids = seedAndRender(1)
     const dataTransfer = fakeDataTransfer()
     fireEvent.dragStart(header(), { dataTransfer })
 
-    expect(JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))).toEqual([{ cardId: ids[0] }])
+    const payload = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect(payload).toHaveLength(1)
+    expect(payload[0]).toMatchObject({ cardId: ids[0], status: 'draft' })
+    expect(payload[0].localPath).toBeUndefined()
+    expect(payload[0].remoteUrl).toBeUndefined()
+    expect(payload[0].spec.prompt).toBe('p0')
     expect(dataTransfer.types).not.toContain(FILE_PATHS_MIME)
     expect(dataTransfer.getData(CARD_DRAG_MIME)).toBe(ids[0])
+  })
+
+  it('素材只带名字,不把 data: URL 拖进载荷 —— 否则一次拖拽拖着几十 MB base64 走', () => {
+    const ids = seedAndRender(1)
+    const dataURL = `data:image/png;base64,${'A'.repeat(2048)}`
+    // 直接写 store 而不走 addMaterials:后者会顺带发起素材转存(要 electronAPI),
+    // 这条测试只关心载荷里装了什么。
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === ids[0] ? { ...c, referenceImages: [{ name: '猫.png', src: dataURL }] } : c,
+      ),
+    }))
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(), { dataTransfer })
+
+    const raw = dataTransfer.getData(WORKBENCH_CARD_MIME)
+    expect(raw).not.toContain('base64')
+    expect(JSON.parse(raw)[0].spec.referenceBrief.images).toEqual(['猫.png'])
   })
 })
 

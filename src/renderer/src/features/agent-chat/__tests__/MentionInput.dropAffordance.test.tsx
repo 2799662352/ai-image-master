@@ -75,6 +75,15 @@ describe('组合器投放悬停反馈', () => {
     expect(textarea().className).toContain(ACTIVE)
   })
 
+  it('工作台卡片同样点亮 —— 少了这条,拖一张卡过来松手才知道成没成', () => {
+    render(<MentionInput />)
+    const dataTransfer = transfer(['application/x-catimation-workbench-cards'])
+    fireEvent.dragOver(composer(), { dataTransfer })
+
+    expect(textarea().className).toContain(ACTIVE)
+    expect(dataTransfer.dropEffect).toBe('copy')
+  })
+
   it('不认识的载荷不点亮,但依然 preventDefault(原生文本拖入不能被掐掉)', () => {
     render(<MentionInput />)
     const dataTransfer = transfer(['text/plain'])
