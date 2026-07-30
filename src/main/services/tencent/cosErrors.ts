@@ -8,6 +8,14 @@
 // 还是该换个文件。视频工作台那句「file is 6.4MB and the COS relay upload
 // failed ([object Object])」就是这么来的。
 
+/**
+ * 值得重试的 HTTP 状态码。口径对齐 @google-cloud/storage 的
+ * `RETRYABLE_ERR_FN_DEFAULT`(408/429/500/502/503/504)——
+ * **408 请求超时与 429 限流虽然是 4xx,但都是瞬时的**,按「4xx 一律终态」处理
+ * 会把限流当成永久失败,那正是最该退一步再试的情形。
+ */
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504])
+
 /** 值得重试的 Node 网络错误码(DNS / TLS / 连接被掐)。 */
 const TRANSIENT_NET_CODES = new Set([
   'ECONNRESET',
@@ -34,16 +42,19 @@ export function describeCosError(err: unknown): string {
   if (typeof err === 'string') return err
   const e = err as any
   const parts: string[] = []
-  const code = e?.code ?? e?.error?.Code ?? e?.error?.code
-  const status = e?.statusCode
-  // 内层才是 TLS / DNS / 代理故障的真实原因,SDK 外层只会给个笼统 code。
-  const inner = e?.error?.Message ?? e?.error?.message ?? e?.cause?.message
-  if (code) parts.push(String(code))
-  if (status) parts.push(`HTTP ${status}`)
-  for (const text of [e?.message, inner]) {
-    const t = typeof text === 'string' ? text.trim() : ''
-    if (t && !parts.includes(t)) parts.push(t)
+  const push = (value: unknown): void => {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (text && !parts.includes(text)) parts.push(text)
   }
+  push(e?.code ?? e?.error?.Code)
+  // 内层码才说明是 DNS 解析不了、TLS 被拦还是连接被掐 —— SDK 外层只会给一句
+  // 笼统的 RequestError。而 DNS 故障常常**只有** error.code 没有 error.message,
+  // 所以内层码必须单独取,不能等着从内层消息里读出来。
+  push(e?.error?.code ?? e?.cause?.code)
+  const status = e?.statusCode
+  if (status) parts.push(`HTTP ${status}`)
+  push(e?.message)
+  push(e?.error?.Message ?? e?.error?.message ?? e?.cause?.message)
   const requestId = e?.headers?.['x-cos-request-id'] ?? e?.RequestId
   if (requestId) parts.push(`requestId=${requestId}`)
   if (parts.length > 0) return parts.join(' · ')
@@ -58,18 +69,23 @@ export function describeCosError(err: unknown): string {
 }
 
 /**
- * COS 失败是否值得重试 —— 网络层抖动 / 服务端 5xx 值得,鉴权与请求错误不值得
- * (票据过期、AccessDenied、Key 非法重试多少次都一样,只是把失败推迟)。
+ * COS 失败是否值得重试 —— 瞬时故障(网络层抖动、服务端 5xx、限流、请求超时)
+ * 值得,其余不值得:票据过期、AccessDenied、Key 非法重试多少次都一样,只是把
+ * 失败推迟,还让用户多等几十秒才看到本来就确定的结论。
+ *
+ * 分类的形状照 AWS SDK 与 @google-cloud/storage 的做法:先看状态码白名单,再看
+ * 底层网络错误码,最后才退到文案匹配(有些失败两者都没有,只剩一句人话)。
  */
 export function isRetryableCosError(err: unknown): boolean {
   const e = err as any
   const status = Number(e?.statusCode)
-  if (Number.isFinite(status) && status >= 400 && status < 500) return false
-  if (Number.isFinite(status) && status >= 500) return true
+  if (Number.isFinite(status) && status > 0) return RETRYABLE_STATUS.has(status)
   const codes = [e?.code, e?.error?.code, e?.cause?.code]
     .filter((c): c is string => typeof c === 'string')
     .map((c) => c.toUpperCase())
   if (codes.some((c) => TRANSIENT_NET_CODES.has(c))) return true
   const text = `${e?.message ?? ''} ${e?.error?.message ?? ''}`.toLowerCase()
-  return /timeout|timed out|socket hang up|network|econn|etimedout|temporarily/.test(text)
+  return /timeout|timed out|socket hang up|unexpected connection closure|network|econn|etimedout|temporarily/.test(
+    text,
+  )
 }

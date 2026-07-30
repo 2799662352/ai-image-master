@@ -28,6 +28,24 @@ export function fileImportKind(file: File): 'image' | 'video' | 'audio' | null {
   return null
 }
 
+/**
+ * 系统拖拽 / 文件选择器给的 File 带真实磁盘路径,直接传路径:主进程分片流式
+ * 上传,整个文件不进任何 Buffer。拿不到路径(剪贴板粘贴、网页拖拽的合成 File)
+ * 才退回 data URL —— 那种本来就已经在内存里。
+ *
+ * 与人像库页上传(portraitUpload.ts)口径保持一致:同一份文件不该因为从哪个
+ * 入口进来而走不同的通道。
+ */
+function getFilePathSafe(file: File): string {
+  try {
+    const api = (window as unknown as { electronAPI?: { getFilePath?: (f: File) => string } })
+      .electronAPI
+    return api?.getFilePath?.(file) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -54,11 +72,11 @@ export async function autoImportFilesToPortraitLibrary(files: File[]): Promise<n
     const kind = fileImportKind(file)
     if (!kind) continue
     try {
-      const dataUrl = await readAsDataUrl(file)
+      const source = getFilePathSafe(file) || (await readAsDataUrl(file))
       await api.importAsset({
         kind,
         ...(kind === 'image' ? { imageCategory: 'image_people' as const } : {}),
-        url: dataUrl,
+        url: source,
         name: file.name,
         mimeType: file.type,
       })

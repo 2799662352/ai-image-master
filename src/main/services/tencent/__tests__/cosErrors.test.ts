@@ -31,6 +31,14 @@ describe('describeCosError', () => {
     expect(text).toContain('ENOTFOUND cos.ap-guangzhou.myqcloud.com')
   })
 
+  // DNS 故障常常只有 error.code 没有 error.message。只读内层消息的话,用户拿到的
+  // 就只剩一句笼统的 RequestError,等于什么都没说。
+  it('内层只有错误码、没有消息时,那个码也必须露出来', () => {
+    const text = describeCosError({ code: 'RequestError', error: { code: 'ENOTFOUND' } })
+    expect(text).toContain('RequestError')
+    expect(text).toContain('ENOTFOUND')
+  })
+
   it('信封为空时退回 JSON,仍然不是 [object Object]', () => {
     expect(describeCosError({ weird: 'shape' })).toBe('{"weird":"shape"}')
   })
@@ -50,13 +58,22 @@ describe('describeCosError', () => {
 })
 
 describe('isRetryableCosError', () => {
-  it('4xx 不重试 —— 票据/权限/请求本身错了,重试只是把失败推迟', () => {
+  it('确定性的 4xx 不重试 —— 票据/权限/请求本身错了,重试只是把失败推迟', () => {
     expect(isRetryableCosError({ statusCode: 403, code: 'AccessDenied' })).toBe(false)
     expect(isRetryableCosError({ statusCode: 400, code: 'InvalidArgument' })).toBe(false)
+    expect(isRetryableCosError({ statusCode: 404, code: 'NoSuchBucket' })).toBe(false)
+  })
+
+  // 口径对齐 @google-cloud/storage 的 RETRYABLE_ERR_FN_DEFAULT:408/429 虽是 4xx
+  // 却都是瞬时的,按「4xx 一律终态」会把限流当成永久失败 —— 那恰恰最该退一步再试。
+  it('408 请求超时与 429 限流照样重试,尽管它们是 4xx', () => {
+    expect(isRetryableCosError({ statusCode: 408 })).toBe(true)
+    expect(isRetryableCosError({ statusCode: 429, code: 'TooManyRequests' })).toBe(true)
   })
 
   it('5xx 重试', () => {
     expect(isRetryableCosError({ statusCode: 503, code: 'ServiceUnavailable' })).toBe(true)
+    expect(isRetryableCosError({ statusCode: 502 })).toBe(true)
   })
 
   it('网络层错误码重试(含内层)', () => {
@@ -68,6 +85,7 @@ describe('isRetryableCosError', () => {
   it('没有错误码但文案指向超时/网络时也重试', () => {
     expect(isRetryableCosError(new Error('sliceUploadFile timeout'))).toBe(true)
     expect(isRetryableCosError({ message: 'socket hang up' })).toBe(true)
+    expect(isRetryableCosError({ message: 'unexpected connection closure' })).toBe(true)
   })
 
   it('说不清的失败不重试 —— 无谓重试会把用户多耗几十秒', () => {

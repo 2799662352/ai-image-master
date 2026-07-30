@@ -23,11 +23,29 @@ const MEDIA_RELAY_REGION = 'ap-guangzhou'
 
 /**
  * 中转是「用户按了生成」这条链路上的前置步骤,一次网络抖动就废掉整张卡片,
- * 代价远高于多等几秒。所以瞬时失败(5xx / DNS / TLS / 超时)重试,鉴权与请求
- * 错误(4xx)立即放弃 —— 那类重试只会把失败推迟。
+ * 代价远高于多等几秒。所以瞬时失败(5xx / 429 / 408 / DNS / TLS / 超时)重试,
+ * 确定性失败(鉴权、请求非法)立即放弃 —— 那类重试只会把失败推迟。
  */
 const RELAY_ATTEMPTS = 3
-const RELAY_RETRY_BASE_DELAY_MS = 800
+const RELAY_BASE_DELAY_MS = 500
+const RELAY_MAX_DELAY_MS = 8_000
+
+/**
+ * 第 `attempt` 次失败后该等多久 —— 指数退避 + 等量抖动。
+ *
+ * 指数退避是 AWS SDK / @google-cloud/storage 的共同做法(后者的
+ * `retryDelayMultiplier` 默认就是 2,并配 `maxRetryDelay` 封顶)。抖动这一半在
+ * 我们这儿有具体的用处:工作台批量启动时几十张卡会同时上传素材,一起撞上服务端
+ * 抖动后,没有抖动的固定退避会让它们继续步调一致地重试,把同一时刻的压力原样
+ * 复制一遍。
+ *
+ * 用等量抖动而非满抖动:满抖动可能给出接近 0 的等待,三次尝试会在一瞬间烧完,
+ * 对 DNS 这种需要一点时间才恢复的故障反而更糟。保底一半间隔,同时仍然打散。
+ */
+export function relayRetryDelayMs(attempt: number, random: () => number = Math.random): number {
+  const ceiling = Math.min(RELAY_MAX_DELAY_MS, RELAY_BASE_DELAY_MS * 2 ** (attempt - 1))
+  return Math.round(ceiling / 2 + random() * (ceiling / 2))
+}
 
 const EXT_BY_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -46,8 +64,14 @@ const EXT_BY_MIME: Record<string, string> = {
   'audio/mp4': 'm4a',
 }
 
-function relayKey(mimeType: string): string {
-  const ext = EXT_BY_MIME[mimeType] ?? 'bin'
+/**
+ * @param preferredExt 不带点的扩展名。有真实文件名时**优先用它** —— mime 反查
+ *   是个有限表,`.mkv` / `.avi` / `.flac` 这类没收录的类型会退化成 `.bin`,
+ *   而上游按 URL 后缀判断素材类型,一个 `.bin` 链接可能被直接拒掉。文件自己的
+ *   扩展名是现成的、也更准,没必要绕道 mime 再猜回来。
+ */
+function relayKey(mimeType: string, preferredExt?: string): string {
+  const ext = preferredExt || EXT_BY_MIME[mimeType] || 'bin'
   const now = new Date()
   const yyyy = String(now.getFullYear())
   const mm = String(now.getMonth() + 1).padStart(2, '0')
@@ -74,10 +98,11 @@ async function relayWithRetry(op: string, run: () => Promise<string>): Promise<s
     } catch (e) {
       lastError = e
       if (attempt === RELAY_ATTEMPTS || !isRetryableCosError(e)) break
+      const delay = relayRetryDelayMs(attempt)
       console.warn(
-        `[mediaRelay] ${op} 第 ${attempt}/${RELAY_ATTEMPTS} 次失败,重试:${describeCosError(e)}`,
+        `[mediaRelay] ${op} 第 ${attempt}/${RELAY_ATTEMPTS} 次失败,${delay}ms 后重试:${describeCosError(e)}`,
       )
-      await new Promise((resolve) => setTimeout(resolve, RELAY_RETRY_BASE_DELAY_MS * attempt))
+      await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
   throw new Error(describeCosError(lastError))
@@ -119,12 +144,13 @@ export async function relayFileToCos(
       ? Math.ceil(opts.fileSize / (0.5 * 1024 * 1024)) * 1000
       : 0
   const hardTimeoutMs = Math.max(FLOOR_MS, sizeBasedMs)
+  const sourceExt = /\.([A-Za-z0-9]{1,8})$/.exec(filePath)?.[1]?.toLowerCase()
 
   return relayWithRetry('relayFileToCos', () =>
     uploadStreamToBucket({
       bucket: MEDIA_RELAY_BUCKET,
       region: MEDIA_RELAY_REGION,
-      key: relayKey(mimeType),
+      key: relayKey(mimeType, sourceExt),
       filePath,
       contentType: mimeType,
       hardTimeoutMs,

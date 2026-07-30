@@ -51,6 +51,29 @@ async function runWithTimers<T>(start: () => Promise<T>): Promise<T> {
   throw outcome.error
 }
 
+describe('relayRetryDelayMs — 指数退避 + 等量抖动', () => {
+  it('随尝试次数指数增长,并封顶', async () => {
+    const { relayRetryDelayMs } = await import('../mediaRelay')
+    const mid = () => 0.5
+    // 500 → 1000 → 2000 …,等量抖动下 random=0.5 恰好取到 0.75 倍上限。
+    expect(relayRetryDelayMs(1, mid)).toBe(375)
+    expect(relayRetryDelayMs(2, mid)).toBe(750)
+    expect(relayRetryDelayMs(3, mid)).toBe(1500)
+    // 封顶 8s:再多的尝试也不会把用户吊在那儿。
+    expect(relayRetryDelayMs(20, mid)).toBe(6000)
+    expect(relayRetryDelayMs(20, () => 1)).toBe(8000)
+  })
+
+  it('等量抖动:保底一半间隔,但不同调用会错开', async () => {
+    const { relayRetryDelayMs } = await import('../mediaRelay')
+    // 满抖动可能给出接近 0 的等待,三次尝试一瞬间烧完;这里保底 250ms。
+    expect(relayRetryDelayMs(1, () => 0)).toBe(250)
+    expect(relayRetryDelayMs(1, () => 1)).toBe(500)
+    const spread = new Set([0.1, 0.4, 0.9].map((r) => relayRetryDelayMs(2, () => r)))
+    expect(spread.size).toBe(3)
+  })
+})
+
 describe('relayBufferToCos', () => {
   it('瞬时失败自动重试,后续成功就当没事发生', async () => {
     const { relayBufferToCos } = await import('../mediaRelay')
@@ -131,6 +154,17 @@ describe('relayFileToCos', () => {
     }
     expect(opts.filePath).toBe('D:\\clips\\hero.mp4')
     expect(opts.hardTimeoutMs).toBeGreaterThan(15 * 60 * 1000)
+  })
+
+  it('Key 用文件自己的扩展名,不靠 mime 反查 —— 反查表漏掉的类型会变成 .bin', async () => {
+    const { relayFileToCos } = await import('../mediaRelay')
+    uploadStreamToBucket.mockResolvedValue('https://bucket/ok')
+
+    await relayFileToCos('D:\\clips\\hero.MKV', 'application/octet-stream')
+
+    const key = (uploadStreamToBucket.mock.calls[0][0] as { key: string }).key
+    expect(key.endsWith('.mkv')).toBe(true)
+    expect(key.startsWith('image-history/')).toBe(true)
   })
 
   it('流式上传同样享受重试', async () => {
