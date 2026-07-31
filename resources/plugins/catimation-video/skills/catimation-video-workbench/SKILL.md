@@ -4,8 +4,9 @@ description: >-
   Use when the user is on the CATIMATION 视频工作台 (video workbench) page, or asks to
   批量出片 / 排成卡片 / 一次落板 / 铺满工作台 / 跑一批镜头; when a board of shot cards needs
   reordering, regenerating or version comparison; or when a 剧本 / 分镜表 / shot list /
-  制片包 should become a board. Symptoms: 该拆的镜头挤在一张卡里超了时长, 跨卡漂脸漂
-  服装漂风格, 建完卡直接开跑, 拿批次摘要当验片.
+  制片包 should become a board. Load the catimation-video entry together with this
+  one — this is a leaf under that entry, never a replacement for it. Symptoms:
+  该拆的镜头挤在一张卡里超了时长, 跨卡漂脸漂服装漂风格, 建完卡直接开跑, 拿批次摘要当验片.
 ---
 
 <!-- skill-budget: standard -->
