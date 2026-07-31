@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { Readable } from 'node:stream'
 import { fetchImageBytes } from '../fetchImageBytes'
 
 /**
@@ -107,5 +111,194 @@ describe('fetchImageBytes', () => {
     const init = fetchImpl.mock.calls[0][1] as RequestInit
     expect(init.signal).toBeInstanceOf(AbortSignal)
     expect(init.signal?.aborted).toBe(false)
+  })
+})
+
+/**
+ * 造一个 body 为 web ReadableStream 的假响应。
+ *
+ * 用 `Readable.toWeb` 是刻意的 —— Electron 自己的 net.fetch 实现就是这么造
+ * response body 的(`lib/browser/api/net-fetch.ts`),Node 的 undici fetch 同理。
+ * 保真度对得上,测的才是真实形状。
+ */
+function streamResponse(
+  chunks: string[],
+  opts: { status?: number; contentType?: string } = {},
+): Response {
+  const status = opts.status ?? 200
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (k: string) => (k.toLowerCase() === 'content-type' ? (opts.contentType ?? null) : null),
+    },
+    body: Readable.toWeb(Readable.from(chunks.map((c) => Buffer.from(c)))),
+  } as unknown as Response
+}
+
+describe('fetchImageToFile — 流式落盘', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fi-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('流式写入并原子落位,带回 content-type', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'a.png')
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(streamResponse(['abc', 'de'], { contentType: 'image/webp' }))
+
+    const res = await fetchImageToFile('https://cdn/a.png', dest, { fetchImpl, delayMs: 0 })
+
+    expect(res).toMatchObject({ ok: true, path: dest, bytes: 5, contentType: 'image/webp' })
+    expect(await fs.readFile(dest, 'utf8')).toBe('abcde')
+    await expect(fs.access(dest + '.part')).rejects.toThrow()
+  })
+
+  // 错误分类必须与 fetchImageBytes 完全一致 —— 那是全仓库做得最细的一处,
+  // 流式化不该把它冲淡。
+  it('403 立刻放弃,不重试', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const fetchImpl = vi.fn().mockResolvedValue(streamResponse([], { status: 403 }))
+
+    const res = await fetchImageToFile('https://cdn/a.png', path.join(tmpDir, 'b.png'), {
+      fetchImpl,
+      delayMs: 0,
+    })
+
+    expect(res).toEqual({ ok: false, error: 'fetch 403' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('503 重试,第二次成功', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'c.png')
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(streamResponse([], { status: 503 }))
+      .mockResolvedValueOnce(streamResponse(['ok'], { contentType: 'image/png' }))
+
+    const res = await fetchImageToFile('https://cdn/a.png', dest, { fetchImpl, delayMs: 0 })
+
+    expect(res.ok).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('空响应体判失败,且不留下文件', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'd.png')
+    const fetchImpl = vi.fn().mockResolvedValue(streamResponse([], { contentType: 'image/png' }))
+
+    const res = await fetchImageToFile('https://cdn/a.png', dest, {
+      fetchImpl,
+      delayMs: 0,
+      attempts: 1,
+    })
+
+    expect(res.ok).toBe(false)
+    await expect(fs.access(dest)).rejects.toThrow()
+    await expect(fs.access(dest + '.part')).rejects.toThrow()
+  })
+
+  // 这两条守的是「超时必须分两段」这个决定。整体超时会把大图下到一半掐断
+  // —— 30MB 配 30s 等于要求全程 1MB/s,慢一点就被自己掐死,而这种失败在测试
+  // 环境(小图、快网)永远复现不出来。
+  it('响应头到手后就不再受 timeoutMs 约束:慢速但持续有数据不被掐断', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'slow.png')
+
+    let n = 0
+    const slow = new Readable({
+      read() {
+        if (n >= 4) {
+          this.push(null)
+          return
+        }
+        n += 1
+        setTimeout(() => this.push(Buffer.from('x')), 25)
+      },
+    })
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'image/png' },
+      body: Readable.toWeb(slow),
+    } as unknown as Response)
+
+    // timeoutMs 只有 40ms,而 body 全程要 100ms 才吐完。若超时覆盖全程,这条必挂。
+    const res = await fetchImageToFile('https://cdn/a.png', dest, {
+      fetchImpl,
+      delayMs: 0,
+      attempts: 1,
+      timeoutMs: 40,
+      bodyIdleTimeoutMs: 500,
+    })
+
+    expect(res).toMatchObject({ ok: true, bytes: 4 })
+  })
+
+  it('body 彻底停流则按空闲超时判失败,并清理 .part', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'stall.png')
+
+    const stalled = new Readable({ read() {} })
+    stalled.push(Buffer.from('start'))
+    const controllerRef: { signal?: AbortSignal } = {}
+    const fetchImpl = vi.fn().mockImplementation((_u: string, init: RequestInit) => {
+      controllerRef.signal = init.signal ?? undefined
+      // 复现 undici 的行为:abort 在响应头之后触发会把错误灌进 body 流。
+      init.signal?.addEventListener('abort', () => stalled.destroy(new Error('aborted')))
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/png' },
+        body: Readable.toWeb(stalled),
+      } as unknown as Response)
+    })
+
+    const res = await fetchImageToFile('https://cdn/a.png', dest, {
+      fetchImpl,
+      delayMs: 0,
+      attempts: 1,
+      bodyIdleTimeoutMs: 60,
+    })
+
+    expect(res.ok).toBe(false)
+    expect(res.ok === false && res.error).toMatch(/stalled/)
+    await expect(fs.access(dest + '.part')).rejects.toThrow()
+  })
+
+  it('传输中途出错时清理 .part,并按重试策略再来一次', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'e.png')
+    const brokenBody = Readable.toWeb(
+      new Readable({
+        read() {
+          this.push(Buffer.from('half'))
+          this.destroy(new Error('socket hang up'))
+        },
+      }),
+    )
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/png' },
+        body: brokenBody,
+      } as unknown as Response)
+      .mockResolvedValueOnce(streamResponse(['whole'], { contentType: 'image/png' }))
+
+    const res = await fetchImageToFile('https://cdn/a.png', dest, { fetchImpl, delayMs: 0 })
+
+    expect(res.ok).toBe(true)
+    expect(await fs.readFile(dest, 'utf8')).toBe('whole')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })

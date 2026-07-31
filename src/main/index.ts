@@ -35,8 +35,9 @@ import { runStartupDedupOnce } from './agent/historyDedup'
 import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
-import { uploadBufferToBucket } from './services/tencent/cosClient'
-import { fetchImageBytes } from './utils/fetchImageBytes'
+import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/cosClient'
+import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
+import { renameWithRetry } from './utils/atomicFile'
 import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } from './services/audioHistoryFiles'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
@@ -1701,7 +1702,23 @@ function rejectOversizedBase64(s: unknown): string | null {
 }
 
 const inflightUploads = new Set<Promise<void>>()
-const MAX_CONCURRENT_UPLOADS_MAIN = 4
+
+/**
+ * 上传并发上限。
+ *
+ * 这个闸门原本是为了防「N 份 30MB+ buffer 同时驻留主进程堆 → OOM」而设的
+ * (2026-07 的 P0 闪退)。http(s) 抓图改流式之后,**那条路径的峰值内存与图片
+ * 大小无关**(约 64KB 的流缓冲),根因消失。
+ *
+ * 仍然保留闸门,是因为另外两条路径手里仍是完整 Buffer:`cos:enqueue-upload-bytes`
+ * (IPC 传来的 ArrayBuffer,另有 64MB 闸门)与 `data:` 分支。按最坏情况估,
+ * 12 × 64MB = 768MB 仍然过大,所以没有直接放开,而是抬到 12 —— 对批量出图
+ * (主要走 http(s) 流式路径)是 3 倍吞吐,对 buffer 路径仍留有余量。
+ *
+ * ⚠️ 再往上调之前必须先实测 COS sliceUploadFile 在默认分片配置下的实际驻留量。
+ * 那部分没有量过,不能纯推理 —— 分片上传自己也会持有若干片在内存里。
+ */
+const MAX_CONCURRENT_UPLOADS_MAIN = 12
 
 /**
  * 占一个上传并发槽位, 返回释放函数。
@@ -1823,15 +1840,26 @@ function broadcastUploadResult(
  * 模型直出的临时签名 URL 几小时就 404, 之前失败即等于丢图。
  * 写盘失败(磁盘满等)不阻塞上传, 返回 null 即可。
  */
+/**
+ * 「磁盘写不进去」这一类错误码。命中才回落 buffer 路径 —— 网络类失败回落没有
+ * 意义,流式那层已经重试过了。
+ */
+const DISK_FAILURE_CODES = new Set(['EACCES', 'ENOSPC', 'EROFS', 'EMFILE', 'ENAMETOOLONG', 'EPERM'])
+
+/** 生成本地副本的落盘路径。流式与 buffer 两条路径共用,保证命名规则不漂移。 */
+function generatedImagePath(requestId: string, mimeType: string): string {
+  const safeId = requestId.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 64)
+  const filename = `${Date.now()}-${safeId}-${randomBytes(4).toString('hex')}.${mimeTypeToExtension(mimeType)}`
+  return path.join(imagesDir, filename)
+}
+
 async function saveGeneratedImageLocally(
   requestId: string,
   body: Buffer,
   mimeType: string,
 ): Promise<string | undefined> {
   try {
-    const safeId = requestId.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 64)
-    const filename = `${Date.now()}-${safeId}-${randomBytes(4).toString('hex')}.${mimeTypeToExtension(mimeType)}`
-    const filePath = path.join(imagesDir, filename)
+    const filePath = generatedImagePath(requestId, mimeType)
     await fs.promises.writeFile(filePath, body)
     return filePath
   } catch (err: any) {
@@ -1875,61 +1903,98 @@ ipcMain.handle(
       // 分配 30MB+ Buffer 再排队, N 份同时驻留主进程堆 → OOM。
       const release = await acquireUploadSlot()
       try {
-        let body: Buffer
+        let localPath: string | undefined
         let mimeType: string
+        let uploadedUrl: string
+        let key: string
+
         if (sourceUrl.startsWith('data:')) {
+          // data: 手里本来就是字节,流式没有意义,保持原路径。
           const m = /^data:([^;,]+);base64,(.+)$/i.exec(sourceUrl)
           if (!m) {
             broadcastUploadResult({ requestId, success: false, error: 'invalid data: URL' })
             return
           }
           mimeType = m[1] || hintMime || 'image/png'
-          body = Buffer.from(m[2], 'base64')
-        } else {
-          // 抖动重试:这一步失败就再也拿不到字节了 —— 本地副本是在抓取成功
-          // 之后才落盘的,所以一次失败会同时丢掉本地和 COS 两份,history 只
-          // 剩那条几小时后过期的预签名 URL。
-          const fetched = await fetchImageBytes(sourceUrl)
-          if (!fetched.ok) {
-            broadcastUploadResult({ requestId, success: false, error: fetched.error })
+          if (!mimeType.startsWith('image/')) mimeType = mimeFromUrl(sourceUrl)
+          const body = Buffer.from(m[2], 'base64')
+          if (body.byteLength === 0) {
+            broadcastUploadResult({ requestId, success: false, error: 'empty body after decode' })
             return
           }
-          mimeType = hintMime || fetched.contentType || mimeFromUrl(sourceUrl)
-          body = fetched.body
-        }
-
-        if (body.byteLength === 0) {
-          broadcastUploadResult({ requestId, success: false, error: 'empty body after fetch' })
-          return
-        }
-        if (!mimeType.startsWith('image/')) {
-          mimeType = mimeFromUrl(sourceUrl)
-        }
-
-        // 先落本地盘再推 COS —— 临时签名的模型直出 URL 几小时就过期,
-        // 这份本地副本保证"生成过的图永远找得回来"。
-        const localPath = await saveGeneratedImageLocally(requestId, body, mimeType)
-
-        try {
-          const key = generateImageHistoryKey(mimeType)
-          const url = await uploadBufferToBucket({
+          // 先落本地盘再推 COS —— 临时签名的模型直出 URL 几小时就过期,
+          // 这份本地副本保证"生成过的图永远找得回来"。
+          localPath = await saveGeneratedImageLocally(requestId, body, mimeType)
+          key = generateImageHistoryKey(mimeType)
+          uploadedUrl = await uploadBufferToBucket({
             bucket: IMAGE_HISTORY_BUCKET,
             region: IMAGE_HISTORY_REGION,
             key,
             body,
             contentType: mimeType,
           })
-          void metadata
-          broadcastUploadResult({ requestId, success: true, url, key, localPath })
-        } catch (uploadErr: any) {
-          console.error('[cos:enqueue-upload-from-url] upload failed:', uploadErr?.message ?? uploadErr)
-          broadcastUploadResult({
-            requestId,
-            success: false,
-            error: uploadErr?.message ?? String(uploadErr) ?? 'upload failed',
-            localPath,
+        } else {
+          // 流式必须先有目标路径,但真实 content-type 要等响应头到了才知道。
+          // 所以先按 hint 猜扩展名,拿到响应头再纠正 —— 否则历史里会出现 .png
+          // 装着 webp 的文件。
+          mimeType = hintMime && hintMime.startsWith('image/') ? hintMime : mimeFromUrl(sourceUrl)
+          const guessPath = generatedImagePath(requestId, mimeType)
+
+          // 只有磁盘写不进去才回落 buffer 路径 —— 保住「本地落盘失败不影响上传」
+          // 这条既有语义(改流式前 saveGeneratedImageLocally 失败是非致命的)。
+          // 网络类失败不回落:fetchImageToFile 内部已经重试过,再走一遍只是白费一轮。
+          let fetched: Awaited<ReturnType<typeof fetchImageToFile>>
+          try {
+            fetched = await fetchImageToFile(sourceUrl, guessPath)
+          } catch (e: any) {
+            const code = e?.code as string | undefined
+            if (!code || !DISK_FAILURE_CODES.has(code)) throw e
+            console.warn('[cos-upload] 流式落盘失败,回落 buffer 路径:', code)
+            const buffered = await fetchImageBytes(sourceUrl)
+            if (!buffered.ok) {
+              broadcastUploadResult({ requestId, success: false, error: buffered.error })
+              return
+            }
+            const fallbackMime = hintMime || buffered.contentType || mimeFromUrl(sourceUrl)
+            const fallbackKey = generateImageHistoryKey(fallbackMime)
+            const fallbackUrl = await uploadBufferToBucket({
+              bucket: IMAGE_HISTORY_BUCKET,
+              region: IMAGE_HISTORY_REGION,
+              key: fallbackKey,
+              body: buffered.body,
+              contentType: fallbackMime,
+            })
+            void metadata
+            broadcastUploadResult({ requestId, success: true, url: fallbackUrl, key: fallbackKey })
+            return
+          }
+
+          if (!fetched.ok) {
+            broadcastUploadResult({ requestId, success: false, error: fetched.error })
+            return
+          }
+
+          localPath = fetched.path
+          const actual = fetched.contentType?.split(';')[0]?.trim()
+          if (actual && actual.startsWith('image/') && actual !== mimeType) {
+            mimeType = actual
+            const corrected = generatedImagePath(requestId, mimeType)
+            await renameWithRetry(fetched.path, corrected)
+            localPath = corrected
+          }
+
+          key = generateImageHistoryKey(mimeType)
+          uploadedUrl = await uploadStreamToBucket({
+            bucket: IMAGE_HISTORY_BUCKET,
+            region: IMAGE_HISTORY_REGION,
+            key,
+            filePath: localPath,
+            contentType: mimeType,
           })
         }
+
+        void metadata
+        broadcastUploadResult({ requestId, success: true, url: uploadedUrl, key, localPath })
       } catch (err: any) {
         console.error('[cos:enqueue-upload-from-url] background failed:', err?.message ?? err)
         broadcastUploadResult({
