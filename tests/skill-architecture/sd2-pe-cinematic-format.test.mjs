@@ -197,8 +197,12 @@ test('video and storyboard instructions match runtime limits and orchestration c
   ]) {
     assert.ok(videoEntry.includes(receiptField), `routing receipt missing ${receiptField}`)
   }
-  assert.match(videoEntry, /标准.*≤3 顶层/s)
-  assert.match(videoEntry, /专业.*≤5 顶层/s)
+  // 预算表数的是「自选对症技法」,不是全部加载数 —— 表格与下方说明必须同口径,
+  // 否则 agent 会同时读到「≤5 顶层含入口」和「入口不占额度」两种互斥读法。
+  assert.match(videoEntry, /标准.*1 个对症技法/s)
+  assert.match(videoEntry, /专业.*2 个对症技法/s)
+  assert.match(videoEntry, /条件强制项不占这个额度/)
+  assert.doesNotMatch(videoEntry, /≤\d+ 顶层/, '预算不应再用「≤N 顶层」表述')
   assert.match(videoEntry, /路径 A[\s\S]*跳过结构叶子/)
   assert.match(
     videoEntry,
