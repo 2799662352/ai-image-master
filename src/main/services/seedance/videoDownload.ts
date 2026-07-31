@@ -11,10 +11,14 @@
 
 import { createWriteStream } from 'node:fs'
 import fs from 'node:fs/promises'
-import path from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { net as electronNet } from 'electron'
+import { PART_SUFFIX, renameWithRetry } from '../../utils/atomicFile'
+
+// 视频侧的既有调用方还在用这两个名字,原样透出,避免无谓的调用点改动。
+export { cleanupOrphanParts, renameWithRetry } from '../../utils/atomicFile'
+export type { RenameWithRetryOptions } from '../../utils/atomicFile'
 
 /**
  * 空闲超时:**60 秒没有收到任何新字节**才判超时。
@@ -69,7 +73,7 @@ export async function downloadToFile(
 ): Promise<DownloadToFileResult> {
   const idleTimeoutMs = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS
   const netImpl = options.net ?? electronNet
-  const partPath = `${destPath}.part`
+  const partPath = `${destPath}${PART_SUFFIX}`
 
   const request = netImpl.request(url) as MinimalRequest
 
@@ -139,53 +143,6 @@ export async function downloadToFile(
 }
 
 /**
- * rename 的重试次数与间隔。
- *
- * Windows 上杀毒软件会扫描刚落盘的大文件并短暂锁住句柄,rename 撞 EBUSY 是常态
- * 而非异常 —— 我们落的是 GB 级视频,撞上的概率不低。口径照 electron-updater
- * (60 次 × 500ms,只对 EBUSY 重试)。
- */
-const RENAME_ATTEMPTS = 60
-const RENAME_DELAY_MS = 500
-
-export interface RenameWithRetryOptions {
-  attempts?: number
-  delayMs?: number
-  /** 测试注入点。 */
-  rename?: (from: string, to: string) => Promise<void>
-}
-
-export async function renameWithRetry(
-  from: string,
-  to: string,
-  options: RenameWithRetryOptions = {},
-): Promise<void> {
-  const attempts = options.attempts ?? RENAME_ATTEMPTS
-  const delayMs = options.delayMs ?? RENAME_DELAY_MS
-  const doRename = options.rename ?? ((f: string, t: string) => fs.rename(f, t))
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      await doRename(from, to)
-      return
-    } catch (e) {
-      // 目标已经在了 —— 可能是另一次调用抢先完成的,这种情况报错是错的。
-      const landed = await fs
-        .access(to)
-        .then(() => true)
-        .catch(() => false)
-      if (landed) {
-        await fs.unlink(from).catch(() => undefined)
-        return
-      }
-      const code = (e as { code?: string })?.code
-      if (code !== 'EBUSY' || attempt === attempts) throw e
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-    }
-  }
-}
-
-/**
  * 下载 → 校验 → 原子落位。返回最终路径。
  *
  * 校验只比对 Content-Length,不做 checksum。业界的分界线是「下载物会不会被
@@ -215,28 +172,3 @@ export async function downloadVideoToDisk(
   return destPath
 }
 
-/**
- * 清掉目录里残留的 `.part`。崩溃、断电、进程被杀都会留下它们,不清理会一直占磁盘。
- * VS Code 在启动和取消时都会扫缓存目录删 `.tmp`,同一个道理。
- *
- * 任何失败都吞掉:这是启动路径上的清理动作,它自己出问题不该拖垮应用启动。
- */
-export async function cleanupOrphanParts(dir: string): Promise<number> {
-  let entries: string[]
-  try {
-    entries = await fs.readdir(dir)
-  } catch {
-    return 0
-  }
-  let removed = 0
-  for (const entry of entries) {
-    if (!entry.endsWith('.part')) continue
-    try {
-      await fs.unlink(path.join(dir, entry))
-      removed += 1
-    } catch {
-      /* 被占用等情况,下次启动再说 */
-    }
-  }
-  return removed
-}
