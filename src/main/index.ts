@@ -2489,8 +2489,10 @@ ipcMain.handle('clear-web-cache', async () => {
     }
 
     const ses = mainWindow.webContents.session
+    // 'websql' 在 Electron 43 的类型联合里已被移除 —— WebSQL 被 Chromium 整体下掉了,
+    // 留着既通不过类型检查,清的也是个不存在的东西。
     await ses.clearStorageData({
-      storages: ['localstorage', 'indexdb', 'websql', 'cachestorage']
+      storages: ['localstorage', 'indexdb', 'cachestorage']
     })
     await ses.clearCache()
 
