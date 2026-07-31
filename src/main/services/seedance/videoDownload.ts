@@ -11,6 +11,7 @@
 
 import { createWriteStream } from 'node:fs'
 import fs from 'node:fs/promises'
+import path from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { net as electronNet } from 'electron'
@@ -212,4 +213,30 @@ export async function downloadVideoToDisk(
 
   await renameWithRetry(partPath, destPath)
   return destPath
+}
+
+/**
+ * 清掉目录里残留的 `.part`。崩溃、断电、进程被杀都会留下它们,不清理会一直占磁盘。
+ * VS Code 在启动和取消时都会扫缓存目录删 `.tmp`,同一个道理。
+ *
+ * 任何失败都吞掉:这是启动路径上的清理动作,它自己出问题不该拖垮应用启动。
+ */
+export async function cleanupOrphanParts(dir: string): Promise<number> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return 0
+  }
+  let removed = 0
+  for (const entry of entries) {
+    if (!entry.endsWith('.part')) continue
+    try {
+      await fs.unlink(path.join(dir, entry))
+      removed += 1
+    } catch {
+      /* 被占用等情况,下次启动再说 */
+    }
+  }
+  return removed
 }

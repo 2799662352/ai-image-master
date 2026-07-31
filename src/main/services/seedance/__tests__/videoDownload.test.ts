@@ -284,3 +284,27 @@ describe('renameWithRetry — Windows 上杀软会锁住刚落盘的大文件', 
     expect(calls).toBe(4)
   })
 })
+
+describe('cleanupOrphanParts', () => {
+  it('删掉残留的 .part,不动别的文件', async () => {
+    const { cleanupOrphanParts } = await import('../videoDownload')
+    await fs.writeFile(path.join(tmpDir, 'a.mp4.part'), 'x')
+    await fs.writeFile(path.join(tmpDir, 'b.mp4.part'), 'y')
+    await fs.writeFile(path.join(tmpDir, 'keep.mp4'), 'z')
+
+    expect(await cleanupOrphanParts(tmpDir)).toBe(2)
+    expect(await fs.readdir(tmpDir)).toEqual(['keep.mp4'])
+  })
+
+  // 这是启动路径上的清理动作,它自己出问题不该拖垮应用启动。
+  it('目录不存在时安静返回 0,不抛错', async () => {
+    const { cleanupOrphanParts } = await import('../videoDownload')
+    expect(await cleanupOrphanParts(path.join(tmpDir, 'nope'))).toBe(0)
+  })
+
+  it('没有 .part 时返回 0', async () => {
+    const { cleanupOrphanParts } = await import('../videoDownload')
+    await fs.writeFile(path.join(tmpDir, 'only.mp4'), 'z')
+    expect(await cleanupOrphanParts(tmpDir)).toBe(0)
+  })
+})

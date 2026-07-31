@@ -37,6 +37,7 @@ import { normalizeSeedancePromptReferences } from './promptReferences'
 import { SeedanceTaskManager } from './taskManager'
 import { relayDataUrlToCos, relayFileToCos } from '../tencent/mediaRelay'
 import { MIME_BY_EXT, resolveMediaUrl } from './mediaResolve'
+import { cleanupOrphanParts } from './videoDownload'
 import type { CreateVideoTaskInput, SeedanceContentItem } from './types'
 import type {
   PortraitOverlayMutation,
@@ -296,6 +297,14 @@ export function initSeedanceRuntime(opts: {
   getWindow: () => BrowserWindow | null
 }): SeedanceRuntime {
   const { router, attachments, getWindow } = opts
+
+  // 清掉上次异常退出(崩溃 / 断电 / 进程被杀)留下的半截下载。失败不影响启动。
+  void cleanupOrphanParts(path.join(app.getPath('userData'), 'agent', 'downloads')).then(
+    (n) => {
+      if (n > 0) console.log(`[seedance] 清理了 ${n} 个残留的 .part 下载文件`)
+    },
+    () => undefined,
+  )
 
   const taskManager = new SeedanceTaskManager({
     client: seedanceClient,
