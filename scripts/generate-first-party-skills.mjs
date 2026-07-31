@@ -37,6 +37,12 @@ export const FIRST_PARTY_SKILL_SOURCES = [
   },
   { name: 'catimation-canvas', source: 'resources/first-party-skills/catimation-canvas/SKILL.md' },
   { name: 'catimation-understand', source: 'resources/first-party-skills/catimation-understand/SKILL.md' },
+  {
+    // 视频工作台是应用内界面,驱动它的正是内嵌 agent(没有 hook,只读 SKILL.md 正文),
+    // 所以和 catimation-director-stage 同等对待:随应用打包,全新安装即可用。
+    name: 'catimation-video-workbench',
+    source: 'resources/plugins/catimation-video/skills/catimation-video-workbench/SKILL.md',
+  },
   { name: 'ffmpeg-win', source: 'resources/plugins/catimation-video/skills/ffmpeg-win/SKILL.md' },
   {
     name: 'catimation-director-stage',

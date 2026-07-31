@@ -285,7 +285,7 @@ fallback_plan: ""
 ### 制片包的出口:落到视频工作台
 
 制片包做完之后,用户常常要它**出现在「生成视频」工作台上**成为一板可逐张调参、
-反复重跑的卡片。这条出口用 `storyboard-to-workbench`,它给出 Shot Card 到卡片字段的
+反复重跑的卡片。这条出口用 `catimation-video-workbench`,它给出 Shot Card 到卡片字段的
 逐项映射与整板落地口径。
 
 要点(完整规则在那份 skill 里):
