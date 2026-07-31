@@ -252,7 +252,8 @@ prompt 对齐,逐项判通过/不通过;**单帧崩坏一票否决**(最差帧�
 > `referenceImages` 传色彩/光线/材质/时代感/空间气质/视觉母题,但不承担故事、
 > 构图、动作、顺序、时长、身份或 `firstFrame`;有板即带提示词主导前缀。要精确
 > 跟随某格就先拆格、去边框文字、重绘成干净关键帧。跨镜续接优先抽关键帧/尾帧作
-> 下一镜 `firstFrame`,不整段回喂。
+> 下一镜 `firstFrame`,不整段回喂 —— 这条默认针对逐镜串行推进。**工作台批量并行
+> 时用不了**(下一镜的首帧要等上一镜渲完),取舍规则见 `catimation-video-workbench`。
 
 ## Organize finished clips into the user's workspace (when in a project)
 
