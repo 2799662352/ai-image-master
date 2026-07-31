@@ -9,6 +9,12 @@
  * 结果,只会让调用方多等几十秒。
  */
 
+import { createWriteStream } from 'node:fs'
+import fsp from 'node:fs/promises'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { PART_SUFFIX, renameWithRetry } from './atomicFile'
+
 export type FetchImageBytesResult =
   | { ok: true; body: Buffer; contentType?: string }
   | { ok: false; error: string }
@@ -67,6 +73,89 @@ export async function fetchImageBytes(
       const contentType = response.headers.get('content-type') ?? undefined
       return { ok: true, body, ...(contentType ? { contentType } : {}) }
     } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  return { ok: false, error: lastError }
+}
+
+export type FetchImageToFileResult =
+  | { ok: true; path: string; bytes: number; contentType?: string }
+  | { ok: false; error: string }
+
+/**
+ * `fetchImageBytes` 的流式版本:边收边写盘,内存占用与图片大小无关。
+ *
+ * 为什么需要它:`index.ts` 里记着一次 P0 闪退 ——「N 份 30MB+ buffer 同时驻留
+ * 主进程堆 → OOM」。当时靠并发闸门止血,这里才是根治。
+ *
+ * 重试与错误分类**完全沿用** fetchImageBytes 的口径(403/404 立刻放弃、
+ * 408/429/5xx 才重试、空响应体判失败),只把「攒 Buffer」换成「写文件」。判据在
+ * 响应头阶段就完成,与 body 如何消费解耦,所以两者不会漂移。
+ *
+ * 用 `pipeline` 而非裸 `pipe`:前者尊重背压,内存被钉在 highWaterMark;手动
+ * `.on('data')` + `.write()` 不管背压的话,队列会无限涨,那时流式比全量 buffer 更糟。
+ */
+export async function fetchImageToFile(
+  url: string,
+  destPath: string,
+  options: FetchImageBytesOptions = {},
+): Promise<FetchImageToFileResult> {
+  const { attempts = 3, timeoutMs = 30_000, delayMs = 1_000, fetchImpl = fetch } = options
+  const partPath = `${destPath}${PART_SUFFIX}`
+  let lastError = 'fetch failed'
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await sleep(delayMs * 2 ** (attempt - 1))
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await fetchImpl(url, { signal: controller.signal })
+      if (!response.ok) {
+        lastError = `fetch ${response.status}`
+        // 确定性失败:立刻交还结果,别让调用方白等两轮退避。
+        if (!isRetryableStatus(response.status)) return { ok: false, error: lastError }
+        continue
+      }
+      if (!response.body) {
+        lastError = 'response has no body'
+        continue
+      }
+
+      let received = 0
+      const counter = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          received += chunk.byteLength
+          cb(null, chunk)
+        },
+      })
+      try {
+        await pipeline(
+          Readable.fromWeb(response.body as never),
+          counter,
+          createWriteStream(partPath),
+        )
+      } catch (e) {
+        await fsp.unlink(partPath).catch(() => undefined)
+        lastError = e instanceof Error ? e.message : String(e)
+        continue
+      }
+
+      if (received === 0) {
+        await fsp.unlink(partPath).catch(() => undefined)
+        lastError = 'empty body after fetch'
+        continue
+      }
+
+      await renameWithRetry(partPath, destPath)
+      const contentType = response.headers.get('content-type') ?? undefined
+      return { ok: true, path: destPath, bytes: received, ...(contentType ? { contentType } : {}) }
+    } catch (error) {
+      await fsp.unlink(partPath).catch(() => undefined)
       lastError = error instanceof Error ? error.message : String(error)
     } finally {
       clearTimeout(timer)
