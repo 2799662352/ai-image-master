@@ -1702,7 +1702,23 @@ function rejectOversizedBase64(s: unknown): string | null {
 }
 
 const inflightUploads = new Set<Promise<void>>()
-const MAX_CONCURRENT_UPLOADS_MAIN = 4
+
+/**
+ * 上传并发上限。
+ *
+ * 这个闸门原本是为了防「N 份 30MB+ buffer 同时驻留主进程堆 → OOM」而设的
+ * (2026-07 的 P0 闪退)。http(s) 抓图改流式之后,**那条路径的峰值内存与图片
+ * 大小无关**(约 64KB 的流缓冲),根因消失。
+ *
+ * 仍然保留闸门,是因为另外两条路径手里仍是完整 Buffer:`cos:enqueue-upload-bytes`
+ * (IPC 传来的 ArrayBuffer,另有 64MB 闸门)与 `data:` 分支。按最坏情况估,
+ * 12 × 64MB = 768MB 仍然过大,所以没有直接放开,而是抬到 12 —— 对批量出图
+ * (主要走 http(s) 流式路径)是 3 倍吞吐,对 buffer 路径仍留有余量。
+ *
+ * ⚠️ 再往上调之前必须先实测 COS sliceUploadFile 在默认分片配置下的实际驻留量。
+ * 那部分没有量过,不能纯推理 —— 分片上传自己也会持有若干片在内存里。
+ */
+const MAX_CONCURRENT_UPLOADS_MAIN = 12
 
 /**
  * 占一个上传并发槽位, 返回释放函数。
