@@ -1,13 +1,13 @@
 ---
 name: "sd2-pe"
 description: >-
-  Seedance 2.0 video prompt engineering base (八大要素, path A/B routing,
-  asset binding, 12-item coverage, convergence weights, progression arc,
-  verified references). Auto-trigger on related prompt work: writing /
-  rewriting / optimizing a Seedance or 视频提示词; 图生视频 / 文生视频 /
-  视频编辑 / 延长 prompt drafts; pasted drafts to improve; Seedance 全能参考
-  or binding-syntax questions; and the video entry prompt_engineered step
-  before the generate tool. Skip for non-video copywriting or coding.
+  Seedance 2.0 video prompt engineering base (八大要素, 全能参考绑定).
+  Decide by what the user wants produced. Wants a video (生成视频 / 图生视频 /
+  让它动起来 / 批量出片): do NOT pick this skill from those words — load the
+  catimation-video entry and follow its tier plan, which names this skill
+  when it is due. Wants a prompt (writing / rewriting / optimizing a
+  Seedance 视频提示词, pasting a draft to improve, 全能参考 binding-syntax
+  questions): load this directly, no entry needed.
 ---
 
 # Seedance 2.0 Prompt Optimizer
