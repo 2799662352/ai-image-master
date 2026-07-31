@@ -11,7 +11,7 @@ function makeClient(statuses: SeedanceQueryResult[]): SeedanceClient {
   return {
     createTask: vi.fn(async () => ({ id: 'task-1' })),
     queryTask: vi.fn(async () => statuses[Math.min(i++, statuses.length - 1)]),
-    downloadVideo: vi.fn(async () => Buffer.from('mp4')),
+    downloadVideo: vi.fn(async (_url: string, destPath: string) => destPath),
     deleteTask: vi.fn(async () => {}),
   }
 }
