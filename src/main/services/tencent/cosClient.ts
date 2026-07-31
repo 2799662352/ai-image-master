@@ -74,6 +74,18 @@ function getStsCosInstance(): CosInstance {
 }
 
 /**
+ * 上传前先把票据拿到手。
+ *
+ * getAuthorization 里那条"失败就交空票据"的兜底保证了回调一定会 settle(不然
+ * SDK 会挂死),但代价是真实原因被吞掉:空票据签出来的请求在服务端只会换回一句
+ * 403 AccessDenied,用户和日志都看不出到底是端点挂了、超时了还是 token 不对。
+ * 提前取一次(命中缓存时零开销)就能让真实原因原样抛出来。
+ */
+async function ensureStsCredentials(): Promise<void> {
+  await getStsCredentials()
+}
+
+/**
  * Media-scope STS COS instance (智能去字幕 / 分镜切图 免密钥通道)。与
  * getStsCosInstance 相同的 getAuthorization 结构,但票据是 scope=media
  * (smart-erase/* + storyboard-split/* 读写删)。
@@ -184,6 +196,7 @@ export interface UploadBufferToBucketOptions {
  */
 export async function uploadBufferToBucket(opts: UploadBufferToBucketOptions): Promise<string> {
   const cos = getStsCosInstance()
+  await ensureStsCredentials()
   const Key = opts.key.replace(/^\/+/, '')
   await new Promise<void>((resolve, reject) => {
     cos.putObject(
@@ -246,6 +259,7 @@ export interface UploadStreamToBucketOptions {
  */
 export async function uploadStreamToBucket(opts: UploadStreamToBucketOptions): Promise<string> {
   const cos = getStsCosInstance()
+  await ensureStsCredentials()
   const Key = opts.key.replace(/^\/+/, '')
   const hardTimeoutMs = opts.hardTimeoutMs ?? SLICE_UPLOAD_HARD_TIMEOUT_MS
 
