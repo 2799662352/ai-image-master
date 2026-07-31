@@ -26,6 +26,16 @@ test('sd2-pe routes light and complex tasks without lowering content coverage', 
     assert.match(source, new RegExp(existingContract), `existing sd2-pe contract lost: ${existingContract}`)
   }
 
+  // 工作台复制了八大要素公式当落板自检清单。公式是 sd2-pe 的权威定义,两处必须逐字
+  // 一致 —— 否则 sd2-pe 改了要素,工作台会静默停留在旧口径。
+  const workbench = await read(`${skillRoot}/catimation-video-workbench/SKILL.md`)
+  const formula = source.match(/精准主体[^\n]*约束条件/)?.[0]
+  assert.ok(formula, 'sd2-pe 八大要素公式缺失')
+  assert.ok(
+    workbench.includes(formula),
+    `工作台的八大要素公式与 sd2-pe 漂移了。sd2-pe: ${formula}`,
+  )
+
   assert.match(source, /12 项要素是覆盖清单，不是格式模板/)
   assert.match(source, /不要求逐项写方括号标题、不要求空行分块/)
   assert.match(source, /八大核心要素同样一项都不能少/)
@@ -197,8 +207,12 @@ test('video and storyboard instructions match runtime limits and orchestration c
   ]) {
     assert.ok(videoEntry.includes(receiptField), `routing receipt missing ${receiptField}`)
   }
-  assert.match(videoEntry, /标准.*≤3 顶层/s)
-  assert.match(videoEntry, /专业.*≤5 顶层/s)
+  // 预算表数的是「自选对症技法」,不是全部加载数 —— 表格与下方说明必须同口径,
+  // 否则 agent 会同时读到「≤5 顶层含入口」和「入口不占额度」两种互斥读法。
+  assert.match(videoEntry, /标准.*1 个对症技法/s)
+  assert.match(videoEntry, /专业.*2 个对症技法/s)
+  assert.match(videoEntry, /条件强制项不占这个额度/)
+  assert.doesNotMatch(videoEntry, /≤\d+ 顶层/, '预算不应再用「≤N 顶层」表述')
   assert.match(videoEntry, /路径 A[\s\S]*跳过结构叶子/)
   assert.match(
     videoEntry,

@@ -425,6 +425,16 @@
         "budget": "studio"
       },
       "tags": ["full-production", "negative", "workbench"]
+    },
+    {
+      "id": "short-film-opening-not-film-entry",
+      "prompt": "帮我做一段赛博朋克短片开头，4 个镜头，女主角是同一个人。",
+      "expected": {
+        "shouldTrigger": ["catimation-video", "director-character-consistency"],
+        "shouldNotTrigger": ["catimation-film", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["multi-shot", "character-consistency", "negative"]
     }
   ]
 }
