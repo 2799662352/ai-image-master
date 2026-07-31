@@ -396,7 +396,11 @@
       "id": "workbench-storyboard-intake",
       "prompt": "这是我写好的分镜表，帮我铺满工作台，参考图我都放素材库了。",
       "expected": {
-        "shouldTrigger": ["catimation-video", "catimation-video-workbench"],
+        "shouldTrigger": [
+          "catimation-video",
+          "catimation-video-workbench",
+          "catimation-portrait-library"
+        ],
         "shouldNotTrigger": ["create-storyboard", "film-studio"],
         "budget": "standard"
       },
