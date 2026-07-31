@@ -13,7 +13,10 @@ export default defineConfig({
   main: {
     build: {
       outDir: 'dist/main',
-      target: 'node18',
+      // 跟随 Electron 43.2.0 捆绑的 Node v24.18。显式写死是必要的:electron-vite
+      // 的版本对照表只更新到 Electron 41,查不到时兜底取表里**最老**的一项
+      // (node16.17 / chrome108),会让产物白白降级。
+      target: 'node24',
       minify: isProd,
       // Keep `dist/main/pgliteWorker.js` (built by scripts/build-pglite-worker.mjs)
       // intact across electron-vite (re)builds. electron-vite defaults to
@@ -86,7 +89,7 @@ export default defineConfig({
   preload: {
     build: {
       outDir: 'dist/preload',
-      target: 'node18',
+      target: 'node24',
       minify: isProd,
       rollupOptions: {
         input: {
@@ -110,7 +113,8 @@ export default defineConfig({
     build: {
       outDir: 'dist/renderer',
       // 目标为 Electron 的 Chromium 版本，启用现代 JS 特性
-      target: 'chrome120',
+      // Electron 43.2.0 → Chromium 150
+      target: 'chrome150',
       // CSS 代码分割
       cssCodeSplit: true,
       rollupOptions: {
