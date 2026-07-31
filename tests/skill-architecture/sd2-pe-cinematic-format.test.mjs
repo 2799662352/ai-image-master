@@ -26,6 +26,16 @@ test('sd2-pe routes light and complex tasks without lowering content coverage', 
     assert.match(source, new RegExp(existingContract), `existing sd2-pe contract lost: ${existingContract}`)
   }
 
+  // 工作台复制了八大要素公式当落板自检清单。公式是 sd2-pe 的权威定义,两处必须逐字
+  // 一致 —— 否则 sd2-pe 改了要素,工作台会静默停留在旧口径。
+  const workbench = await read(`${skillRoot}/catimation-video-workbench/SKILL.md`)
+  const formula = source.match(/精准主体[^\n]*约束条件/)?.[0]
+  assert.ok(formula, 'sd2-pe 八大要素公式缺失')
+  assert.ok(
+    workbench.includes(formula),
+    `工作台的八大要素公式与 sd2-pe 漂移了。sd2-pe: ${formula}`,
+  )
+
   assert.match(source, /12 项要素是覆盖清单，不是格式模板/)
   assert.match(source, /不要求逐项写方括号标题、不要求空行分块/)
   assert.match(source, /八大核心要素同样一项都不能少/)
