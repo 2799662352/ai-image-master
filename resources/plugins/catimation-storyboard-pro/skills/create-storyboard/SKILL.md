@@ -290,8 +290,9 @@ fallback_plan: ""
 
 要点(完整规则在那份 skill 里):
 
-- **一张卡 = 一次生成 = 一个镜头**,N 镜就是 N 张卡,数组顺序即镜头顺序。
-  把「镜头1…镜头2…」挤进同一张卡,模型会把它们压进 5–15 秒里,哪个都不成立。
+- **一张卡 = 一次生成 = 一个连续节拍(4–15s)**,不一定等于一个镜头:同场景连着演完、
+  总时长塞得下的几镜,可按 sd2-pe 路径 B 合成一段镜头流程放同一张卡;要独立重跑、
+  各镜素材不同、时长超了或跨场景才拆卡。拆开时数组顺序即镜头顺序。
 - 字段对应关系:`scenedance_prompt` → 卡片 `prompt`、`duration` → `duration`、
   `primary_input_image` → `referenceImages` 首位、`reference_images` → `referenceImages`;
   `shot_size` / `camera_movement` 并进提示词;`shot_id` 靠卡片排列顺序表达。
