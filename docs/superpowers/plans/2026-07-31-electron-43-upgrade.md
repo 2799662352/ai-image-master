@@ -89,15 +89,15 @@ Expected: 仍是 20 处，全部为 `'22'` 或 `'22.x'`。
 
 - [ ] **Step 4: 本地验证 Node 22 下依赖能装、测试能跑**
 
-如果本地 Node 不是 22.x，先切过去（nvm-windows：`nvm install 22.12.0 && nvm use 22.12.0`），然后：
-
 ```powershell
 node --version
 pnpm install
 pnpm run test:run
 ```
 
-Expected: `node --version` 输出 `v22.*`；install 成功；测试全绿（已知 `src/renderer/src/services/pipeline/__tests__/` 下的 DirectorPipeline 用例在机器负载高时会超时，单独重跑通过即可视为通过，这是既有的 flaky，不是本次改动引入的）。
+Expected: `node --version` 输出 `v22.*`（若不是，用 nvm-windows 切过去：`nvm install 22.12.0 && nvm use 22.12.0`）；install 成功；测试全绿。
+
+已知 flaky：`src/renderer/src/services/pipeline/__tests__/` 下的 DirectorPipeline 用例在机器负载高时会超时，单独重跑通过即可视为通过。这是既有问题，不是本次改动引入的。
 
 - [ ] **Step 5: 提交**
 
@@ -106,13 +106,17 @@ git add .github/workflows
 git commit -m "ci: Node 20 升到 22,为 Electron 43 让路"
 ```
 
-- [ ] **Step 6: 推分支让 CI 实跑一轮**
+- [ ] **Step 6: 开草稿 PR 让 CI 实跑一轮**
+
+`ci.yml` 只在 `pull_request` 指向 `main`（或 push 到 main/develop）时触发——**只推分支不会跑任何 CI**，必须开 PR。用草稿 PR，后续 Task 2–4 的提交继续推到同一个分支上，最后再转正式。
 
 ```powershell
 git push -u origin HEAD
+gh pr create --draft --base main --title "chore(deps): Electron 41 升到 43" --body "Phase 0 执行中,按 docs/superpowers/plans/2026-07-31-electron-43-upgrade.md 推进。Task 1(CI Node 20→22)已提交,先让 CI 单独验证这一步。"
+gh pr checks <PR 号>
 ```
 
-Expected: Quality Gate 全绿。**这一轮必须绿了再进 Task 2**——它证明 Node 22 本身没问题，后面出的任何问题都能归因到 Electron。
+Expected: Quality Gate 全绿。**这一轮必须绿了再进 Task 2**——它证明 Node 22 本身没问题，后面出的任何问题都能明确归因到 Electron 换代。
 
 ---
 
