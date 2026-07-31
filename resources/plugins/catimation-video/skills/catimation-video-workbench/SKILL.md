@@ -1,11 +1,11 @@
 ---
 name: catimation-video-workbench
 description: >-
-  Use when the user works on the CATIMATION 视频工作台 (video workbench) page — filling
-  a board of shot cards, reordering or regenerating them, landing an existing
-  分镜表 / shot list / 制片包 onto the board, or running a batch. Owns card lifecycle,
-  one-card-one-shot discipline, cross-card anchor reuse and the Shot Card → card
-  field mapping. Loaded by catimation-video; it does not grade tasks or replace it.
+  Use when the user is on the CATIMATION 视频工作台 (video workbench) page, or asks to
+  批量出片 / 排成卡片 / 一次落板 / 铺满工作台 / 跑一批镜头; when a board of shot cards needs
+  reordering, regenerating or version comparison; or when a 剧本 / 分镜表 / shot list /
+  制片包 should become a board. Symptoms: 多镜挤进同一张卡, 跨卡漂脸漂服装漂风格,
+  建完卡直接开跑, 拿批次摘要当验片.
 ---
 
 <!-- skill-budget: standard -->

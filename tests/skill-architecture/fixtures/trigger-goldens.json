@@ -381,6 +381,46 @@
         "budget": "fast"
       },
       "tags": ["negative", "ui-animation"]
+    },
+    {
+      "id": "workbench-batch-shots",
+      "prompt": "我在视频工作台，把这 6 个镜头排成卡片一次跑完。",
+      "expected": {
+        "shouldTrigger": ["catimation-video", "catimation-video-workbench"],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["multi-shot", "workbench"]
+    },
+    {
+      "id": "workbench-storyboard-intake",
+      "prompt": "这是我写好的分镜表，帮我铺满工作台，参考图我都放素材库了。",
+      "expected": {
+        "shouldTrigger": ["catimation-video", "catimation-video-workbench"],
+        "shouldNotTrigger": ["create-storyboard", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["multi-shot", "workbench", "character-consistency"]
+    },
+    {
+      "id": "workbench-not-for-single-shot",
+      "prompt": "让这张图动起来，出一段 5 秒的。",
+      "expected": {
+        "shouldTrigger": ["catimation-video"],
+        "shouldNotTrigger": ["catimation-video-workbench", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["single-shot", "negative", "workbench"]
+    },
+    {
+      "id": "workbench-not-for-full-production",
+      "prompt": "帮我从这个剧本一条龙做成一部三分钟短片，配音和剪辑都要。",
+      "expected": {
+        "shouldTrigger": ["film-studio"],
+        "shouldNotTrigger": ["catimation-video-workbench"],
+        "budget": "studio"
+      },
+      "tags": ["full-production", "negative", "workbench"]
     }
   ]
 }
