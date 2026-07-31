@@ -206,6 +206,74 @@ describe('fetchImageToFile — 流式落盘', () => {
     await expect(fs.access(dest + '.part')).rejects.toThrow()
   })
 
+  // 这两条守的是「超时必须分两段」这个决定。整体超时会把大图下到一半掐断
+  // —— 30MB 配 30s 等于要求全程 1MB/s,慢一点就被自己掐死,而这种失败在测试
+  // 环境(小图、快网)永远复现不出来。
+  it('响应头到手后就不再受 timeoutMs 约束:慢速但持续有数据不被掐断', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'slow.png')
+
+    let n = 0
+    const slow = new Readable({
+      read() {
+        if (n >= 4) {
+          this.push(null)
+          return
+        }
+        n += 1
+        setTimeout(() => this.push(Buffer.from('x')), 25)
+      },
+    })
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'image/png' },
+      body: Readable.toWeb(slow),
+    } as unknown as Response)
+
+    // timeoutMs 只有 40ms,而 body 全程要 100ms 才吐完。若超时覆盖全程,这条必挂。
+    const res = await fetchImageToFile('https://cdn/a.png', dest, {
+      fetchImpl,
+      delayMs: 0,
+      attempts: 1,
+      timeoutMs: 40,
+      bodyIdleTimeoutMs: 500,
+    })
+
+    expect(res).toMatchObject({ ok: true, bytes: 4 })
+  })
+
+  it('body 彻底停流则按空闲超时判失败,并清理 .part', async () => {
+    const { fetchImageToFile } = await import('../fetchImageBytes')
+    const dest = path.join(tmpDir, 'stall.png')
+
+    const stalled = new Readable({ read() {} })
+    stalled.push(Buffer.from('start'))
+    const controllerRef: { signal?: AbortSignal } = {}
+    const fetchImpl = vi.fn().mockImplementation((_u: string, init: RequestInit) => {
+      controllerRef.signal = init.signal ?? undefined
+      // 复现 undici 的行为:abort 在响应头之后触发会把错误灌进 body 流。
+      init.signal?.addEventListener('abort', () => stalled.destroy(new Error('aborted')))
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/png' },
+        body: Readable.toWeb(stalled),
+      } as unknown as Response)
+    })
+
+    const res = await fetchImageToFile('https://cdn/a.png', dest, {
+      fetchImpl,
+      delayMs: 0,
+      attempts: 1,
+      bodyIdleTimeoutMs: 60,
+    })
+
+    expect(res.ok).toBe(false)
+    expect(res.ok === false && res.error).toMatch(/stalled/)
+    await expect(fs.access(dest + '.part')).rejects.toThrow()
+  })
+
   it('传输中途出错时清理 .part,并按重试策略再来一次', async () => {
     const { fetchImageToFile } = await import('../fetchImageBytes')
     const dest = path.join(tmpDir, 'e.png')
