@@ -69,7 +69,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -128,7 +128,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -181,7 +181,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -344,7 +344,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         # This job only runs pure-JS release/COS scripts. Avoid Electron's
@@ -460,7 +460,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Download canonical artifact when available
         if: needs.canonical.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
