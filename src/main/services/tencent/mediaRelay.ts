@@ -16,7 +16,8 @@
 
 import { randomBytes } from 'node:crypto'
 import { uploadBufferToBucket, uploadStreamToBucket } from './cosClient'
-import { describeCosError, isRetryableCosError } from './cosErrors'
+import { describeCosError, isRetryableCosError, isStaleCredentialError } from './cosErrors'
+import { clearStsCache } from './stsCredentials'
 
 const MEDIA_RELAY_BUCKET = 'image-master-1345773498'
 const MEDIA_RELAY_REGION = 'ap-guangzhou'
@@ -24,7 +25,10 @@ const MEDIA_RELAY_REGION = 'ap-guangzhou'
 /**
  * 中转是「用户按了生成」这条链路上的前置步骤,一次网络抖动就废掉整张卡片,
  * 代价远高于多等几秒。所以瞬时失败(5xx / 429 / 408 / DNS / TLS / 超时)重试,
- * 确定性失败(鉴权、请求非法)立即放弃 —— 那类重试只会把失败推迟。
+ * 确定性失败(请求非法、权限不足)立即放弃 —— 那类重试只会把失败推迟。
+ *
+ * 例外是票据失效的 403:它看着像鉴权失败,实则重签一张就好,所以额外给一次不
+ * 占预算的重签机会(见 relayWithRetry 与 isStaleCredentialError)。
  */
 const RELAY_ATTEMPTS = 3
 const RELAY_BASE_DELAY_MS = 500
@@ -92,12 +96,27 @@ function relayKey(mimeType: string, preferredExt?: string): string {
  */
 async function relayWithRetry(op: string, run: () => Promise<string>): Promise<string> {
   let lastError: unknown
-  for (let attempt = 1; attempt <= RELAY_ATTEMPTS; attempt++) {
+  let attempt = 0
+  let attemptsLeft = RELAY_ATTEMPTS
+  let resignUsed = false
+
+  while (attemptsLeft > 0) {
+    attempt += 1
+    attemptsLeft -= 1
     try {
       return await run()
     } catch (e) {
       lastError = e
-      if (attempt === RELAY_ATTEMPTS || !isRetryableCosError(e)) break
+      // 票据过期/签名失败:丢掉缓存里那张票、立刻重签一次。不占瞬时故障的重试
+      // 预算,也不用退避 —— 它压根不是网络问题,等再久也不会自己好。
+      if (!resignUsed && isStaleCredentialError(e)) {
+        resignUsed = true
+        attemptsLeft += 1
+        clearStsCache()
+        console.warn(`[mediaRelay] ${op} 票据失效,重签后立即重试:${describeCosError(e)}`)
+        continue
+      }
+      if (attemptsLeft === 0 || !isRetryableCosError(e)) break
       const delay = relayRetryDelayMs(attempt)
       console.warn(
         `[mediaRelay] ${op} 第 ${attempt}/${RELAY_ATTEMPTS} 次失败,${delay}ms 后重试:${describeCosError(e)}`,

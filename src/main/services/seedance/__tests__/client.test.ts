@@ -86,6 +86,82 @@ describe('seedanceClient.createTask', () => {
   })
 })
 
+// 提交是整条链路最靠后的一步：走到这里，素材中转、COS 上传、人像库导入都已经做完，
+// 一次抖动废掉的是前面所有功夫。但它同时是个没有幂等键的 POST —— 判据见 submitRetry。
+describe('seedanceClient.createTask 的重试边界', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 边推假时钟边等，让退避不真的消耗几秒。 */
+  async function runWithTimers<T>(start: () => Promise<T>): Promise<T> {
+    let outcome: { ok: true; value: T } | { ok: false; error: unknown } | undefined
+    const settled = start().then(
+      (value) => {
+        outcome = { ok: true, value }
+      },
+      (error) => {
+        outcome = { ok: false, error }
+      },
+    )
+    for (let i = 0; i < 8 && !outcome; i++) await vi.runAllTimersAsync()
+    await settled
+    if (!outcome) throw new Error('runWithTimers: 调用始终没有结束')
+    if (outcome.ok) return outcome.value
+    throw outcome.error
+  }
+
+  it('上游 5xx 自动重发，后续成功就当没事发生', async () => {
+    vi.useFakeTimers()
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ message: 'bad gateway' }, 502))
+      .mockResolvedValueOnce(jsonResponse({ id: 'task-after-retry', status: 'queued' }, 200))
+
+    const res = await runWithTimers(() => seedanceClient.createTask({} as never, 'key'))
+
+    expect(res.id).toBe('task-after-retry')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('4xx 不重发 —— 参数错了重发多少次都是同一个答案', async () => {
+    vi.useFakeTimers()
+    fetchMock.mockResolvedValue(jsonResponse({ error: { message: '账户权限不支持480分辨率' } }, 400))
+
+    await expect(
+      runWithTimers(() => seedanceClient.createTask({} as never, 'key')),
+    ).rejects.toThrow(/400/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  // 这条是花钱的边界：2xx 说明上游已经受理，只是响应里没给 id。重发会建出第二个
+  // 任务，而第一个我们永远认领不回来 —— 宁可失败。
+  it('2xx 但缺 task id 时绝不重发', async () => {
+    vi.useFakeTimers()
+    fetchMock.mockResolvedValue(jsonResponse({ status: 'queued' }, 200))
+
+    await expect(
+      runWithTimers(() => seedanceClient.createTask({} as never, 'key')),
+    ).rejects.toThrow(/missing task id/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('连接建立失败（DNS/拒连）重发，连上后被掐断则不重发', async () => {
+    vi.useFakeTimers()
+    fetchMock
+      .mockRejectedValueOnce(new Error('net::ERR_NAME_NOT_RESOLVED'))
+      .mockResolvedValueOnce(jsonResponse({ id: 'task-dns', status: 'queued' }, 200))
+    expect((await runWithTimers(() => seedanceClient.createTask({} as never, 'key'))).id).toBe('task-dns')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    fetchMock.mockReset()
+    fetchMock.mockRejectedValue(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }))
+    await expect(
+      runWithTimers(() => seedanceClient.createTask({} as never, 'key')),
+    ).rejects.toThrow(/socket hang up/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('seedanceClient.queryTask', () => {
   it('解析包裹响应', async () => {
     fetchMock.mockResolvedValue(

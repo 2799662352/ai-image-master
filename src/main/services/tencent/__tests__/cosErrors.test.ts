@@ -5,7 +5,7 @@
 // 调用方用了 String(e) —— 用户看不到原因,我们也无法据此判断该重试还是换文件。
 
 import { describe, expect, it } from 'vitest'
-import { describeCosError, isRetryableCosError } from '../cosErrors'
+import { describeCosError, isRetryableCosError, isStaleCredentialError } from '../cosErrors'
 
 describe('describeCosError', () => {
   it('COS SDK 的裸对象不再渲成 [object Object]', () => {
@@ -91,5 +91,39 @@ describe('isRetryableCosError', () => {
   it('说不清的失败不重试 —— 无谓重试会把用户多耗几十秒', () => {
     expect(isRetryableCosError({ message: 'malformed key' })).toBe(false)
     expect(isRetryableCosError(undefined)).toBe(false)
+  })
+
+  // 取票据那层自己已经重试过一轮;它判定还是瞬时的话,上传这层再给一次机会 ——
+  // 批量出片时 STS 端点的抖动往往持续几秒,跨过去整批就都活了。
+  it('瞬时的取票据失败值得再试,配置类的不值得', () => {
+    expect(isRetryableCosError({ name: 'StsCredentialError', transient: true })).toBe(true)
+    expect(isRetryableCosError({ name: 'StsCredentialError', transient: false })).toBe(false)
+  })
+})
+
+// 403 按状态码是"不可重试"，这没错——但我们这条链路上的 403 几乎只有一个来源：
+// 票据没拿到或已过期。把它和真正的权限不足一起判死刑，等于让上传的重试预算在最
+// 常见的失败模式下完全失效。
+describe('isStaleCredentialError', () => {
+  it('认得出票据类 403', () => {
+    expect(isStaleCredentialError({ statusCode: 403, code: 'AccessDenied' })).toBe(true)
+    expect(isStaleCredentialError({ statusCode: 403, code: 'SignatureDoesNotMatch' })).toBe(true)
+    expect(isStaleCredentialError({ statusCode: 403, error: { Code: 'InvalidAccessKeyId' } })).toBe(true)
+    expect(isStaleCredentialError({ statusCode: 403, code: 'RequestTimeTooSkewed' })).toBe(true)
+  })
+
+  it('桶和 Key 都是我们自己生成的,不存在用户可控 ACL —— 认不出 code 的 403 也当票据问题', () => {
+    expect(isStaleCredentialError({ statusCode: 403 })).toBe(true)
+  })
+
+  it('不是 403 的一概不算', () => {
+    expect(isStaleCredentialError({ statusCode: 404, code: 'NoSuchBucket' })).toBe(false)
+    expect(isStaleCredentialError({ statusCode: 500 })).toBe(false)
+    expect(isStaleCredentialError({ code: 'ECONNRESET' })).toBe(false)
+    expect(isStaleCredentialError(undefined)).toBe(false)
+  })
+
+  it('403 但明确是别的原因(如桶策略拒绝)就不当票据问题', () => {
+    expect(isStaleCredentialError({ statusCode: 403, code: 'NoSuchBucketPolicy' })).toBe(false)
   })
 })

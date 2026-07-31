@@ -78,6 +78,10 @@ export function describeCosError(err: unknown): string {
  */
 export function isRetryableCosError(err: unknown): boolean {
   const e = err as any
+  // 取票据失败自己已经重试过一轮了,但如果它判定是瞬时的,上传这层再给一次机会
+  // 也值得 —— 批量出片时 STS 端点的抖动往往持续几秒,跨过它整批就都活了。
+  // 按 name 而不是 instanceof 判断,是为了让本文件保持"不 import 任何东西"的纯函数。
+  if (e?.name === 'StsCredentialError') return e.transient === true
   const status = Number(e?.statusCode)
   if (Number.isFinite(status) && status > 0) return RETRYABLE_STATUS.has(status)
   const codes = [e?.code, e?.error?.code, e?.cause?.code]
@@ -87,5 +91,26 @@ export function isRetryableCosError(err: unknown): boolean {
   const text = `${e?.message ?? ''} ${e?.error?.message ?? ''}`.toLowerCase()
   return /timeout|timed out|socket hang up|unexpected connection closure|network|econn|etimedout|temporarily/.test(
     text,
+  )
+}
+
+/**
+ * 这次 403 是不是"票据的问题"—— 是的话重签一张就能自愈,不必判死刑。
+ *
+ * 为什么值得单独一个判据:403 按状态码白名单是不可重试的,这本身没错(权限不够
+ * 重试多少次都一样)。但我们这条链路上的 403 几乎只有一个来源 —— 票据没拿到或
+ * 已过期,SDK 拿着空的/旧的凭据去签名。把它和真正的权限不足一起判死刑,等于让
+ * 上传的重试预算在最常见的失败模式下完全失效。
+ *
+ * 桶和 Key 都是我们自己生成的,不存在用户可控的 ACL,所以认不出 code 的 403 也
+ * 一并当票据问题处理 —— 代价是多重签一次,收益是不再有"AccessDenied 死路"。
+ */
+export function isStaleCredentialError(err: unknown): boolean {
+  const e = err as any
+  if (Number(e?.statusCode) !== 403) return false
+  const code = String(e?.code ?? e?.error?.Code ?? e?.error?.code ?? '')
+  if (!code) return true
+  return /AccessDenied|SignatureDoesNotMatch|InvalidAccessKeyId|TokenExpired|InvalidToken|RequestTimeTooSkewed/i.test(
+    code,
   )
 }
