@@ -281,3 +281,21 @@ fallback_plan: ""
   五大必备块)后再交生成工具；制片包的多镜任务属于路径 B,加载
   `seedance-cinematic-format`,但标题、分段与散文形式自由；每次 Seedance 生成 4–15s。
 - 端到端"做成片"由上层成片编排器负责,在其分镜阶段调用本 skill 产出制片包;单镜画面打磨交单点画面工艺技能库(两者的名称与分工见本插件入口卡 references/family-catalog.md)。
+
+### 制片包的出口:落到视频工作台
+
+制片包做完之后,用户常常要它**出现在「生成视频」工作台上**成为一板可逐张调参、
+反复重跑的卡片。这条出口用 `storyboard-to-workbench`,它给出 Shot Card 到卡片字段的
+逐项映射与整板落地口径。
+
+要点(完整规则在那份 skill 里):
+
+- **一张卡 = 一次生成 = 一个镜头**,N 镜就是 N 张卡,数组顺序即镜头顺序。
+  把「镜头1…镜头2…」挤进同一张卡,模型会把它们压进 5–15 秒里,哪个都不成立。
+- 字段对应关系:`scenedance_prompt` → 卡片 `prompt`、`duration` → `duration`、
+  `primary_input_image` → `referenceImages` 首位、`reference_images` → `referenceImages`;
+  `shot_size` / `camera_movement` 并进提示词;`shot_id` 靠卡片排列顺序表达。
+  `prev_transition` / `next_transition` 不映射 —— 转场是后期剪辑的事,不是单镜输入。
+- 整板落地走 `video_workbench_export` → 填数组 → `video_workbench_apply` 一次写回;
+  少量镜头直接 `video_workbench_add_tasks`。默认**只填不跑**,交用户过目。
+- 落板前照样清点角色锚点、故事板确认、逐镜资产 —— 建卡不等于备齐资产。
