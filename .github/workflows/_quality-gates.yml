@@ -36,7 +36,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -61,7 +61,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -82,7 +82,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -113,7 +113,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -138,7 +138,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -159,7 +159,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
