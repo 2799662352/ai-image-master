@@ -30,6 +30,25 @@ vi.mock('../credentials', () => ({
   onCredentialsInvalidated: vi.fn(),
 }))
 
+// STS 桶上传现在会先把票据取到手（见 cosClient.ensureStsCredentials）——
+// 不打桩这里就会去打真实的 SCF 端点。
+const stsCredentials = {
+  tmpSecretId: 'tmp',
+  tmpSecretKey: 'k',
+  sessionToken: 'tok',
+  startTime: 1,
+  expiredTime: Math.floor(Date.now() / 1000) + 1800,
+  bucket: 'image-master-1345773498',
+  region: 'ap-guangzhou',
+}
+const getStsCredentials = vi.fn(async () => stsCredentials)
+
+vi.mock('../stsCredentials', () => ({
+  getStsCredentials: () => getStsCredentials(),
+  getMediaStsCredentials: () => getStsCredentials(),
+  clearStsCache: vi.fn(),
+}))
+
 describe('tencent/cosClient', () => {
   beforeEach(() => {
     vi.resetModules()

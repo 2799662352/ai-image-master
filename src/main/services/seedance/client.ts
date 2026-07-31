@@ -4,7 +4,9 @@
 // 协议，与本客户端无关，勿混用。
 
 import { net } from 'electron'
+import { SeedanceApiError } from './apiError'
 import { retryDownload } from './downloadRetry'
+import { retrySubmit } from './submitRetry'
 import { downloadVideoToDisk } from './videoDownload'
 import type { SeedanceCreateTaskBody, SeedanceTaskStatus } from './types'
 import { getSeedanceBaseUrl, SEEDANCE_REGION_BASE_URLS } from './region'
@@ -54,36 +56,13 @@ interface ArkEnvelope<T> {
  * 单次 Ark HTTP 请求的硬超时。createTask/queryTask 都是轻量 JSON 接口，正常 <2s；
  * 之前完全没超时——代理/上游 TCP 半开时 `net.fetch` 会永远悬挂，generate_video
  * 只能靠 codex 的 2000s 工具超时兜底(用户视角=turn 卡死半小时)。超时后:
- * queryTask 由 pollLoop 的 catch 容忍并在下一轮重试;createTask 抛给 submit →
+ * queryTask 由 pollLoop 的 catch 容忍并在下一轮重试;createTask 的重试**不**覆盖
+ * 这条超时(它分不清上游是否已受理,见 submitRetry),仍然直接抛给 submit →
  * announceFailed,用户立刻看到失败卡片而不是无限转圈。
  */
 export const ARK_REQUEST_TIMEOUT_MS = 30_000
 
-/**
- * 带上游状态码的 API 错误。调用方（pollLoop）据此区分「重试能自愈」与「重试只是
- * 浪费 30 分钟」：密钥失效、参数非法、任务不存在都属于后者。
- */
-export class SeedanceApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    /** 上游 Retry-After 换算成毫秒（429/503 常带）。 */
-    readonly retryAfterMs?: number,
-  ) {
-    super(message)
-    this.name = 'SeedanceApiError'
-  }
-
-  /**
-   * 4xx 是请求本身的问题，重试不会自愈；408（请求超时）/425（太早）/429（限流）
-   * 与 5xx 是服务端侧的暂时状况，值得重试。HTTP 2xx 但 success:false 属于上游
-   * 逻辑拒绝，同样不会自愈。
-   */
-  get retryable(): boolean {
-    if (this.status === 408 || this.status === 425 || this.status === 429) return true
-    return this.status >= 500
-  }
-}
+export { SeedanceApiError } from './apiError'
 
 /** Retry-After 允许「秒数」与「HTTP 日期」两种写法（RFC 9110 §10.2.3）。 */
 function parseRetryAfterMs(raw: string | null | undefined): number | undefined {
@@ -152,10 +131,16 @@ export const seedanceClient: SeedanceClient = {
   async createTask(body, apiKey) {
     // 扁平 200/202 body 把任务 id 放在顶层 `id`/`task_id`（二者通常同值）；包裹响应放在
     // `data.id`。arkRequest 已统一回退到顶层 json，这里再兼容 task_id 别名。
-    const data = await arkRequest<{ id?: string; task_id?: string; status?: SeedanceTaskStatus }>(
-      `${getSeedanceBaseUrl()}${CREATE_TASK_PATH}`,
-      apiKey,
-      { method: 'POST', body: JSON.stringify(body) },
+    //
+    // 重试只覆盖「能确定上游没受理」的失败(限流/5xx/连不上),判据与理由见
+    // submitRetry —— 这是整条链路最靠后的一步,一次抖动废掉的是前面所有素材
+    // 中转和上传的功夫;但它同时是个没有幂等键的 POST,所以不能见错就重发。
+    const data = await retrySubmit(() =>
+      arkRequest<{ id?: string; task_id?: string; status?: SeedanceTaskStatus }>(
+        `${getSeedanceBaseUrl()}${CREATE_TASK_PATH}`,
+        apiKey,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
     )
     const id = data.id ?? data.task_id
     if (!id) throw new Error('Seedance API: create response missing task id')

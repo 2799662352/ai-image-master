@@ -8,10 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const uploadBufferToBucket = vi.fn()
 const uploadStreamToBucket = vi.fn()
+const clearStsCache = vi.fn()
 
 vi.mock('../cosClient', () => ({
   uploadBufferToBucket: (...args: unknown[]) => uploadBufferToBucket(...args),
   uploadStreamToBucket: (...args: unknown[]) => uploadStreamToBucket(...args),
+}))
+
+vi.mock('../stsCredentials', () => ({
+  clearStsCache: (...args: unknown[]) => clearStsCache(...args),
 }))
 
 // 重试之间的等待是真 setTimeout,用假计时器把它压掉,否则每个用例白等 2.4 秒。
@@ -19,6 +24,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   uploadBufferToBucket.mockReset()
   uploadStreamToBucket.mockReset()
+  clearStsCache.mockReset()
 })
 
 afterEach(() => {
@@ -87,7 +93,36 @@ describe('relayBufferToCos', () => {
     expect(uploadBufferToBucket).toHaveBeenCalledTimes(2)
   })
 
-  it('鉴权类失败不重试 —— 立刻把原因还给用户', async () => {
+  it('权限不足这类确定性失败不重试 —— 立刻把原因还给用户', async () => {
+    const { relayBufferToCos } = await import('../mediaRelay')
+    uploadBufferToBucket.mockRejectedValue({
+      code: 'NoSuchBucketPolicy',
+      statusCode: 403,
+      message: 'bucket policy denies this action',
+    })
+
+    await expect(
+      runWithTimers(() => relayBufferToCos(Buffer.from('x'), 'image/jpeg')),
+    ).rejects.toThrow(/NoSuchBucketPolicy/)
+    expect(uploadBufferToBucket).toHaveBeenCalledTimes(1)
+  })
+
+  // 票据类 403 曾经是条死路：它看着像鉴权失败被判不可重试，可它恰恰是最常见、也
+  // 最容易自愈的一种失败 —— 重签一张票就好。
+  it('票据失效的 403 重签一次后重试，成功了用户完全无感', async () => {
+    const { relayBufferToCos } = await import('../mediaRelay')
+    uploadBufferToBucket
+      .mockRejectedValueOnce({ code: 'AccessDenied', statusCode: 403, message: 'Access Denied.' })
+      .mockResolvedValueOnce('https://bucket/ok')
+
+    const url = await runWithTimers(() => relayBufferToCos(Buffer.from('x'), 'image/jpeg'))
+
+    expect(url).toBe('https://bucket/ok')
+    expect(clearStsCache).toHaveBeenCalledTimes(1)
+    expect(uploadBufferToBucket).toHaveBeenCalledTimes(2)
+  })
+
+  it('重签之后还是 403 就认命,不再空转 —— 那说明真的没权限', async () => {
     const { relayBufferToCos } = await import('../mediaRelay')
     uploadBufferToBucket.mockRejectedValue({
       code: 'AccessDenied',
@@ -98,7 +133,22 @@ describe('relayBufferToCos', () => {
     await expect(
       runWithTimers(() => relayBufferToCos(Buffer.from('x'), 'image/jpeg')),
     ).rejects.toThrow(/AccessDenied/)
-    expect(uploadBufferToBucket).toHaveBeenCalledTimes(1)
+    expect(clearStsCache).toHaveBeenCalledTimes(1)
+    expect(uploadBufferToBucket).toHaveBeenCalledTimes(2)
+  })
+
+  it('重签不占瞬时故障的重试预算', async () => {
+    const { relayBufferToCos } = await import('../mediaRelay')
+    uploadBufferToBucket
+      .mockRejectedValueOnce({ code: 'AccessDenied', statusCode: 403 })
+      .mockRejectedValueOnce({ statusCode: 503 })
+      .mockRejectedValueOnce({ statusCode: 503 })
+      .mockResolvedValueOnce('https://bucket/ok')
+
+    const url = await runWithTimers(() => relayBufferToCos(Buffer.from('x'), 'image/jpeg'))
+
+    expect(url).toBe('https://bucket/ok')
+    expect(uploadBufferToBucket).toHaveBeenCalledTimes(4)
   })
 
   it('重试用尽后抛的是真 Error,消息里有真实原因而不是 [object Object]', async () => {
