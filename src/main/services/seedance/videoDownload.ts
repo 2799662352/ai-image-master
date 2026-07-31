@@ -40,6 +40,15 @@ export interface DownloadToFileOptions {
 export interface DownloadToFileResult {
   path: string
   bytes: number
+  /** 上游声明的字节数;上游没给就是 undefined。 */
+  declaredBytes?: number
+}
+
+/** Electron 的 IncomingMessage.headers 取值可能是数组,统一取第一个。 */
+function headerValue(headers: unknown, name: string): string | undefined {
+  const raw = (headers as Record<string, string | string[]> | undefined)?.[name]
+  if (Array.isArray(raw)) return raw[0]
+  return typeof raw === 'string' ? raw : undefined
 }
 
 /**
@@ -120,5 +129,87 @@ export async function downloadToFile(
     if (idleTimer) clearTimeout(idleTimer)
   }
 
-  return { path: partPath, bytes: received }
+  const declared = Number(headerValue(response.headers, 'content-length'))
+  return {
+    path: partPath,
+    bytes: received,
+    ...(Number.isFinite(declared) && declared > 0 ? { declaredBytes: declared } : {}),
+  }
+}
+
+/**
+ * rename 的重试次数与间隔。
+ *
+ * Windows 上杀毒软件会扫描刚落盘的大文件并短暂锁住句柄,rename 撞 EBUSY 是常态
+ * 而非异常 —— 我们落的是 GB 级视频,撞上的概率不低。口径照 electron-updater
+ * (60 次 × 500ms,只对 EBUSY 重试)。
+ */
+const RENAME_ATTEMPTS = 60
+const RENAME_DELAY_MS = 500
+
+export interface RenameWithRetryOptions {
+  attempts?: number
+  delayMs?: number
+  /** 测试注入点。 */
+  rename?: (from: string, to: string) => Promise<void>
+}
+
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  options: RenameWithRetryOptions = {},
+): Promise<void> {
+  const attempts = options.attempts ?? RENAME_ATTEMPTS
+  const delayMs = options.delayMs ?? RENAME_DELAY_MS
+  const doRename = options.rename ?? ((f: string, t: string) => fs.rename(f, t))
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await doRename(from, to)
+      return
+    } catch (e) {
+      // 目标已经在了 —— 可能是另一次调用抢先完成的,这种情况报错是错的。
+      const landed = await fs
+        .access(to)
+        .then(() => true)
+        .catch(() => false)
+      if (landed) {
+        await fs.unlink(from).catch(() => undefined)
+        return
+      }
+      const code = (e as { code?: string })?.code
+      if (code !== 'EBUSY' || attempt === attempts) throw e
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+}
+
+/**
+ * 下载 → 校验 → 原子落位。返回最终路径。
+ *
+ * 校验只比对 Content-Length,不做 checksum。业界的分界线是「下载物会不会被
+ * 执行/安装」:会的全都校验(electron-updater sha512、Signal sha512+Ed25519、
+ * VS Code 更新包 sha256),纯内容数据普遍不做。我们下的是视频内容,属于后者;
+ * 而且上游未必给 hash,字节数比对不依赖上游配合,成本几乎为零,能抓住绝大多数
+ * 截断场景。
+ */
+export async function downloadVideoToDisk(
+  url: string,
+  destPath: string,
+  options: DownloadToFileOptions = {},
+): Promise<string> {
+  const { path: partPath, bytes, declaredBytes } = await downloadToFile(url, destPath, options)
+
+  const fail = async (message: string): Promise<never> => {
+    await fs.unlink(partPath).catch(() => undefined)
+    throw new Error(message)
+  }
+
+  if (bytes === 0) await fail('video download produced an empty file')
+  if (declaredBytes != null && declaredBytes !== bytes) {
+    await fail(`video download incomplete: got ${bytes} bytes, expected ${declaredBytes}`)
+  }
+
+  await renameWithRetry(partPath, destPath)
+  return destPath
 }

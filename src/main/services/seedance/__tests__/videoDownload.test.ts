@@ -164,3 +164,123 @@ describe('downloadToFile — 空闲超时', () => {
     await expect(fs.access(dest + '.part')).rejects.toThrow()
   })
 })
+
+describe('downloadVideoToDisk — 校验与原子落位', () => {
+  it('校验通过后才 rename;结束时没有 .part 残留', async () => {
+    const { downloadVideoToDisk } = await import('../videoDownload')
+    const dest = path.join(tmpDir, 'ok.mp4')
+    const net = fakeNet(fakeResponse([Buffer.from('0123456789')], { contentLength: 10 }))
+
+    const finalPath = await downloadVideoToDisk('https://x/v.mp4', dest, { net })
+
+    expect(finalPath).toBe(dest)
+    expect(await fs.readFile(dest, 'utf8')).toBe('0123456789')
+    await expect(fs.access(dest + '.part')).rejects.toThrow()
+  })
+
+  // 这条守的是最阴险的一种坏数据:连接中途断开,落盘文件大小合法、看起来
+  //「下载好了」,下游任何靠「文件存在」判断就绪的逻辑都会直接吃进去。
+  it('字节数与 content-length 不符时判失败,最终路径不产生文件', async () => {
+    const { downloadVideoToDisk } = await import('../videoDownload')
+    const dest = path.join(tmpDir, 'trunc.mp4')
+    const net = fakeNet(fakeResponse([Buffer.from('012345')], { contentLength: 100 }))
+
+    await expect(downloadVideoToDisk('https://x/v.mp4', dest, { net })).rejects.toThrow(
+      /incomplete/i,
+    )
+    await expect(fs.access(dest)).rejects.toThrow()
+    await expect(fs.access(dest + '.part')).rejects.toThrow()
+  })
+
+  it('上游不给 content-length 时跳过校验,不因此判失败', async () => {
+    const { downloadVideoToDisk } = await import('../videoDownload')
+    const dest = path.join(tmpDir, 'nolen.mp4')
+    const net = fakeNet(fakeResponse([Buffer.from('abc')]))
+
+    expect(await downloadVideoToDisk('https://x/v.mp4', dest, { net })).toBe(dest)
+    expect(await fs.readFile(dest, 'utf8')).toBe('abc')
+  })
+
+  it('空响应体判失败 —— 0 字节的 mp4 是坏数据不是成功', async () => {
+    const { downloadVideoToDisk } = await import('../videoDownload')
+    const dest = path.join(tmpDir, 'empty.mp4')
+    const net = fakeNet(fakeResponse([]))
+
+    await expect(downloadVideoToDisk('https://x/v.mp4', dest, { net })).rejects.toThrow(/empty/i)
+    await expect(fs.access(dest)).rejects.toThrow()
+  })
+})
+
+describe('renameWithRetry — Windows 上杀软会锁住刚落盘的大文件', () => {
+  it('EBUSY 时重试,最终成功', async () => {
+    const { renameWithRetry } = await import('../videoDownload')
+    const from = path.join(tmpDir, 'a.part')
+    const to = path.join(tmpDir, 'a.mp4')
+    await fs.writeFile(from, 'data')
+
+    let calls = 0
+    const rename = async (f: string, t: string): Promise<void> => {
+      calls += 1
+      if (calls < 3) throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' })
+      await fs.rename(f, t)
+    }
+
+    await renameWithRetry(from, to, { rename, delayMs: 0 })
+
+    expect(calls).toBe(3)
+    expect(await fs.readFile(to, 'utf8')).toBe('data')
+  })
+
+  it('非 EBUSY 错误立刻抛出,不空转', async () => {
+    const { renameWithRetry } = await import('../videoDownload')
+    let calls = 0
+    const rename = async (): Promise<void> => {
+      calls += 1
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    }
+
+    await expect(
+      renameWithRetry(path.join(tmpDir, 'x.part'), path.join(tmpDir, 'x.mp4'), {
+        rename,
+        delayMs: 0,
+      }),
+    ).rejects.toThrow(/EACCES/)
+    expect(calls).toBe(1)
+  })
+
+  // 并发或重试场景下另一次调用可能已经把文件放好了,这时报错是错的。
+  it('rename 失败但目标已存在时按成功处理,并清掉源文件', async () => {
+    const { renameWithRetry } = await import('../videoDownload')
+    const from = path.join(tmpDir, 'b.part')
+    const to = path.join(tmpDir, 'b.mp4')
+    await fs.writeFile(from, 'mine')
+    await fs.writeFile(to, 'already there')
+
+    const rename = async (): Promise<void> => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    }
+
+    await renameWithRetry(from, to, { rename, delayMs: 0 })
+
+    expect(await fs.readFile(to, 'utf8')).toBe('already there')
+    await expect(fs.access(from)).rejects.toThrow()
+  })
+
+  it('EBUSY 一直不消失则最终抛出', async () => {
+    const { renameWithRetry } = await import('../videoDownload')
+    let calls = 0
+    const rename = async (): Promise<void> => {
+      calls += 1
+      throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+    }
+
+    await expect(
+      renameWithRetry(path.join(tmpDir, 'c.part'), path.join(tmpDir, 'c.mp4'), {
+        rename,
+        delayMs: 0,
+        attempts: 4,
+      }),
+    ).rejects.toThrow(/EBUSY/)
+    expect(calls).toBe(4)
+  })
+})
