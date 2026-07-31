@@ -168,7 +168,22 @@ prisma generate && electron-builder install-app-deps
 pnpm install
 ```
 
-Expected: 安装成功，输出里能看到 Electron 二进制的下载进度。**如果这里报 `install-electron: command not found`**，说明 electron 包没装上或版本没到 42+，先 `node -p "require('electron/package.json').version"` 确认。
+Expected: 安装成功，输出里能看到 Electron 二进制的下载进度。
+
+**已知坑一：pnpm 元数据缓存陈旧。** 如果这里报「找不到匹配版本」并列出一串 dist-tag（其中 43 只有 alpha），**不要怀疑 43.2.0 不存在**——那是 pnpm 的注册表元数据缓存过期了。实测时它看到的是 `41-x-y: 41.6.1` / `42-x-y: 42.1.0` / `alpha-43-x-y: 43.0.0-alpha.4`，而 npm 报的真实值是 `41-x-y: 41.10.3` / `42-x-y: 42.8.0` / `latest: 43.2.0`。
+
+先用 npm 确认真实状态，再清掉 pnpm 对 electron 的元数据缓存重试：
+
+```powershell
+npm view electron dist-tags          # 确认 latest 是 43.2.0
+$cache = pnpm config get cache-dir
+Get-ChildItem -Path $cache -Recurse -Filter "electron.json" | Remove-Item -Force
+pnpm install
+```
+
+缓存文件路径形如 `C:\Users\<你>\AppData\Local\pnpm-cache\metadata-v1.3\registry.npmjs.org\electron.json`。
+
+**已知坑二：`install-electron: command not found`。** 说明 electron 包没装上或版本没到 42+（41 及以前没有这个 bin），先 `node -p "require('electron/package.json').version"` 确认。
 
 - [ ] **Step 4: 验证二进制与 `path.txt` 都到位**
 
@@ -317,13 +332,25 @@ Expected: 消息正常发出并收到回复，且不出现 `PrismaClientKnownReq
 
 Expected: 缩略图出图。**这是整个升级里最可能被 ABI 跳变咬到的地方**——如果这里出图失败或应用崩溃，说明 `@img/sharp-*` 的预编译产物与 ABI 148 不兼容，需要在 `electron-builder.yml` 或 `install-app-deps` 层面处理。
 
-- [ ] **Step 5: 验证 codex 子进程**
+- [ ] **Step 5: 验证 `local-file://` 自定义协议（本次升级的最高风险项）**
+
+自定义协议的跨域 fetch 限制（GHSA-v3j7-r9gq-3gjw）是在 **41.4.0** 落地的，我们停在 41.2.1 **还没吃到这条**，升到 43 会一次性吞下。而 `src/main/file-explorer/protocolHandler.ts:46` 注册的 `local-file` 正是 `supportFetchAPI: true` 且**没有** `corsEnabled`——凡是跨域 `fetch()` / XHR 都会被挡。
+
+代码里已普遍绕开（`AudioPage.ts:564` 的注释明写「renderer fetch(local-file://) 会被协议门拦」，播放与缩略图都改走 IPC 读字节转 blob），但这是推断，必须实测三处：
+
+1. 文件浏览器里预览一张图片 → 图片能显示
+2. 音频页播放一条历史音频，并确认**波形图**能画出来（波形解码需要读字节，是最可能走 fetch 的路径）
+3. 视频工作台里播放一条已出片的结果视频
+
+Expected: 三处都正常。任意一处白屏/裂图/波形空白，就去 DevTools 控制台找 CORS 或 `Failed to fetch` 报错，对应的调用点需要改走 IPC。
+
+- [ ] **Step 6: 验证 codex 子进程**
 
 启动一次 agent 会话，确认 codex 二进制能被拉起。
 
 Expected: 会话正常建立。
 
-- [ ] **Step 6: 写 PR 正文到临时文件**
+- [ ] **Step 7: 写 PR 正文到临时文件**
 
 新建 `_pr_body.md`（用完即删，不进版本库），内容必须包含四块：
 
@@ -332,14 +359,17 @@ Expected: 会话正常建立。
 3. 明确**不需要改**的项及其依据：`clearStorageData` 三处均未使用被移除的 `quotas`、代码库无 `toBitmap`/`getBitmap` 调用、未配置 `electronDist`、不发 32 位包、未开启 bytecode、`utilityProcess` 在 41→43 零破坏性变更
 4. Step 2–5 的冒烟记录，**逐条写明实际结果**（通过/失败）与打包产物版本号。不要只写"冒烟通过"——下一个升级的人需要知道具体验了哪几个点。
 
-- [ ] **Step 7: 开 PR**
+- [ ] **Step 8: 转正式 PR**
+
+Task 1 阶段开的是草稿 PR，这里补上正文并转正：
 
 ```powershell
-gh pr create --base main --title "chore(deps): Electron 41 升到 43" --body-file _pr_body.md
+gh pr edit <PR 号> --body-file _pr_body.md
+gh pr ready <PR 号>
 Remove-Item _pr_body.md
 ```
 
-- [ ] **Step 8: 等 CI 全绿，重点确认 Electron E2E**
+- [ ] **Step 9: 等 CI 全绿，重点确认 Electron E2E**
 
 ```powershell
 gh pr checks <PR 号>
