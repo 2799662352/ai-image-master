@@ -9,7 +9,7 @@
  *  - SessionStart hook 不得 cat 整份 SKILL.md,静态注入文本设长度上限;
  *  - description 限长,禁止「MUST ... EVERY time / ANY image-video / 每次必用」
  *    式宽触发词与通用模型名单尾巴;
- *  - 四级预算:fast≤1、standard≤3、pro≤5 个下游引用,studio 仅 film-studio 持有;
+ *  - 四级预算:fast≤1、standard≤3、pro≤6 个下游引用,studio 仅 film-studio 持有;
  *  - 首方 Skill(resources/first-party-skills)与生成物
  *    (src/main/agent/generated/firstPartySkills.generated.ts)内容必须一致;
  *  - 同名 Skill 的插件源 / codex 镜像 / 顶层兼容副本 / 内联副本内容必须一致。
@@ -26,7 +26,12 @@ export const DEFAULT_OPTIONS = Object.freeze({
 const BUDGET_LIMITS = Object.freeze({
   fast: 1,
   standard: 3,
-  pro: 5,
+  // 6 而非 5:视频入口要同时够到 sd2-pe(提示词)、director-orchestrator(镜头设计)、
+  // catimation-video-workbench(工作台整板)、catimation-understand(内容 QA)、
+  // ffmpeg-win(发布 QA)、film-studio(制片移交)。预算数的是「引用条数」而非
+  // 「同时载入数」——分级表里的 ≤3/≤5 顶层才是真正的载入闸,工作台又是一条独立
+  // 路径,不与 director+技法在同一回合叠加,所以最坏同时载入量没变。
+  pro: 6,
   studio: Number.POSITIVE_INFINITY,
 })
 
