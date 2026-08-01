@@ -44,10 +44,13 @@ describe('buildGatewayModelCatalog', () => {
 
     expect(catalog.models.map((model) => model.id)).toEqual([
       'gpt-5.5',
+      'gpt-5.5-openai-compact',
       'grok-4.5',
       'claude-opus-5',
       'claude-sonnet-5',
     ])
+    expect(catalog.models.find((model) => model.id === 'gpt-5.5-openai-compact')?.route)
+      .toMatchObject({ channelId: 'rightcode-standard', family: 'openai' })
     expect(catalog.models.find((model) => model.id === 'grok-4.5')?.route)
       .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
     expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)

@@ -286,8 +286,9 @@ function searchKb(query, topK, agentId = AGENT_ID, raw = false) {
     }
     const bodyObj = { query, agent_id: agentId }
     if (topK) {
+      // Bailian Retrieve rejects `rerank_top_n` in agent_config overrides
+      // ("field not allowed") — only dense_similarity_top_k is accepted here.
       bodyObj.dense_similarity_top_k = Number(topK)
-      bodyObj.rerank_top_n = Number(topK)
     }
     const body = Buffer.from(JSON.stringify(bodyObj), 'utf8')
     const req = https.request(

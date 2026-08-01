@@ -204,6 +204,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
         source: 'mixed',
         models: [
           expect.objectContaining({ id: 'rightcode-model' }),
+          expect.objectContaining({ id: 'gpt-5.5-openai-compact' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
@@ -287,6 +288,12 @@ describe('AgentManager model settings catalog and snapshot', () => {
             }),
           }),
           expect.objectContaining({
+            id: 'gpt-5.5-openai-compact',
+            displayName: 'GPT-5.5 OpenAI Compact',
+            route: expect.objectContaining({ channelId: 'rightcode-standard' }),
+            availability: { status: 'available' },
+          }),
+          expect.objectContaining({
             id: 'grok-4.5',
             route: expect.objectContaining({ channelId: 'rightcode-grok' }),
           }),
@@ -329,6 +336,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(result.data.models.map((model) => model.id)).toEqual([
       'gpt-5.6-sol',
       'grok-4.5',
+      'gpt-5.5-openai-compact',
       'claude-opus-5',
       'claude-sonnet-5',
     ])
