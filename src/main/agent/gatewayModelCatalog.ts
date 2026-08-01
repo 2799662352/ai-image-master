@@ -143,7 +143,10 @@ export function buildGatewayModelCatalog(
 ): AgentModelSettingsCatalog {
   const byId = new Map<string, AgentModelSettingsEntry>()
   const declaredModels = channelsForGateway(input.gatewayId)
-    .flatMap((channel) => [...(channel.allowedModels ?? [])])
+    .flatMap((channel) => [
+      ...(channel.allowedModels ?? []),
+      ...(channel.extraCatalogModels ?? []),
+    ])
   const conservativeContext = input.dynamicSource === 'fallback'
 
   for (const row of input.dynamicModels) {

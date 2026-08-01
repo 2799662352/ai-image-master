@@ -18,7 +18,17 @@ export interface GatewayPreset extends AgentGatewayRecord {
 export interface ProviderChannelPreset extends CodexProviderConfig {
   id: string
   gatewayId: string
+  /**
+   * Fixed allow-list for single-family / pinned channels. When set, routing
+   * rejects any model outside this list (e.g. grok / claude pools).
+   */
   allowedModels?: readonly string[]
+  /**
+   * Additive catalog rows for open channels (no routing whitelist). Use when a
+   * gateway sells a slug that Codex `model/list` never returns — e.g. Right.Codes
+   * `gpt-5.5-openai-compact` — so the picker still offers it.
+   */
+  extraCatalogModels?: readonly string[]
   compatibilityPolicy: ProviderCompatibilityPolicy
 }
 
@@ -97,6 +107,9 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     baseUrl: 'https://rightapi.ai/codex/v1',
     envKey: 'OPENAI_API_KEY',
     model: 'gpt-5.5',
+    // Sold on /codex/v1 but absent from Codex's bundled model/list — without
+    // this additive row the picker never offers it on a live catalog.
+    extraCatalogModels: Object.freeze(['gpt-5.5-openai-compact']),
     requiresOpenaiAuth: true,
     compatibilityPolicy: 'none',
     // Same live check as apiyi-standard: a spawned child replied and the parent

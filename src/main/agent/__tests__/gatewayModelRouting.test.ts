@@ -105,6 +105,14 @@ describe('gatewayModelRouting', () => {
     expect(resolveProviderChannel('apiyi-standard').memoriesModel).toBe('gpt-5.5')
     expect(resolveProviderChannel('apiyi-grok').memoriesModel).toBe('gpt-5.5')
     expect(resolveProviderChannel('rightcode-standard').model).toBe('gpt-5.5')
+    expect(resolveProviderChannel('rightcode-standard').extraCatalogModels)
+      .toEqual(['gpt-5.5-openai-compact'])
+    expect(resolveGatewayModelRoute('rightcode', 'gpt-5.5-openai-compact')).toEqual({
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-standard',
+      modelId: 'gpt-5.5-openai-compact',
+      family: 'openai',
+    })
     expect(resolveProviderChannel('rightcode-grok').memoriesModel).toBeUndefined()
     expect(resolveProviderChannel('rightcode-grok').model).toBe('grok-4.5')
   })

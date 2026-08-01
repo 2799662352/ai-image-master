@@ -87,6 +87,11 @@ describe('codexProviders', () => {
     })
     expect(apiyiClaude).not.toHaveProperty('supportsMemories')
 
+    expect(resolveProviderChannel('rightcode-standard')).toMatchObject({
+      model: 'gpt-5.5',
+      extraCatalogModels: ['gpt-5.5-openai-compact'],
+    })
+
     const grok = resolveProviderChannel('rightcode-grok')
     expect(grok).toMatchObject({
       name: 'Right.Codes Grok',

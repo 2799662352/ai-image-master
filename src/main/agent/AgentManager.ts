@@ -2302,7 +2302,10 @@ export class AgentManager {
           route.channelId,
           this.providerStore.loadSync().customProviders,
         )
-        if (!declaredChannel.allowedModels?.includes(model)) return fallback()
+        const declared =
+          declaredChannel.allowedModels?.includes(model)
+          || declaredChannel.extraCatalogModels?.includes(model)
+        if (!declared) return fallback()
       }
       const modelSettings = mergeModelSettingsCapabilities({
         model,

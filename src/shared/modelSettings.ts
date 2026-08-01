@@ -96,6 +96,13 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: true,
   },
   {
+    id: 'gpt-5.5-openai-compact',
+    displayName: 'GPT-5.5 OpenAI Compact',
+    tier: 'High',
+    description: 'Right.Codes compact GPT-5.5 variant (gateway slug; not in Codex model/list).',
+    isDefault: false,
+  },
+  {
     id: 'gpt-5.6-sol',
     displayName: 'GPT-5.6 Sol',
     tier: 'Extra High',
@@ -164,6 +171,7 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
   ['gpt-5.6-terra', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.6-luna', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.5', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-5.5-openai-compact', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.4', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.4-mini', { defaultWindow: 272_000, allowExperimental1M: true }],
 ])
@@ -398,10 +406,12 @@ export function mergeModelSettingsCapabilities(input: {
   )
   const supportedReasoningEffortsList = MODEL_REASONING_EFFORTS.filter((effort) => {
     if (!supported.has(effort)) return false
+    const rightcodeGpt55Family =
+      input.model === 'gpt-5.5' || input.model === 'gpt-5.5-openai-compact'
     return !(
       input.gatewayId === 'rightcode'
       && input.channelId === 'rightcode-standard'
-      && input.model === 'gpt-5.5'
+      && rightcodeGpt55Family
       && effort === 'max'
     )
   })

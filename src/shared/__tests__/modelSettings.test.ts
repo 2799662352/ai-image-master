@@ -137,6 +137,17 @@ describe('model settings capabilities', () => {
     })
   })
 
+  it('filters max for Right Code gpt-5.5-openai-compact', () => {
+    expect(
+      mergeModelSettingsCapabilities({
+        model: 'gpt-5.5-openai-compact',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      }).supportedReasoningEfforts,
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+  })
+
   it('keeps max for gpt-5.5 on non-Right Code providers', () => {
     expect(
       mergeModelSettingsCapabilities({
