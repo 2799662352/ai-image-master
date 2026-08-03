@@ -27,6 +27,7 @@ import {
   listSeedanceOfficialMaterials,
   translateSeedanceTaskError,
   verifyContentAssetReferences,
+  withLocalThumbs,
 } from './assets'
 import {
   getPortraitOverlay,
@@ -97,51 +98,69 @@ function enrichWithOverlay(asset: SeedanceAssetItem, overlay: PortraitOverlaySta
 }
 
 /**
- * 视频生成的图片素材默认先导入素材库（人像分类 image_people），再以
- * `asset://assetId` 引用创建任务 —— 上游按内容 hash 去重，同图复用同一
- * assetId，保证人像一致性，且人像库页面能看到所有用过的参考图。
- * 未配置 API Secret 或导入失败时回退为原 data:/https 直传，不阻塞生成。
+ * 把本次用到的图片素材登记进人像库（人像分类 image_people），供后续复用与浏览。
+ * 上游按内容 hash 去重，同图始终落到同一条记录。
+ *
+ * **在任务提交之后后台跑,不进提交关键路径**。理由是上游导入是异步的:返回那刻
+ * 只有内部行 id、`status: 'pending'`,真 assetId 要等处理完成(实测数秒)才有 ——
+ * 而生成本来就吃 https/data: 直传。让用户的卡片停在「准备中」等这串往返,等到的
+ * 只是同一次生成,纯亏。
+ *
+ * 全程吞异常:这条链路只决定人像库里能不能看到这张图,不该影响生成成败。
  */
 async function importImagesToPortraitLibrary(content: SeedanceContentItem[]): Promise<void> {
   const apiKey = getSeedanceApiKey()
   const apiSecret = getSeedanceApiSecret()
   if (!apiKey || !apiSecret) return
-  for (const item of content) {
-    if (item.type !== 'image_url') continue
-    let url = item.image_url.url
-    if (url.startsWith('asset://')) continue
-    try {
-      const mime = /^data:([^;,]+)/i.exec(url)?.[1]
-      // 上游素材接口对 url 长度有硬限制(`400 url is too long`),data: 一律
-      // 先走 COS 中转(历史图片上传链路)换 https URL,再转存到素材库。
-      if (url.startsWith('data:')) {
-        url = await relayDataUrlToCos(url)
-        item.image_url.url = url
-      }
-      const { asset, referenceable } = await importSeedanceAsset(
-        {
-          kind: 'image',
-          imageCategory: 'image_people',
-          url,
-          name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}`,
-          ...(mime ? { mimeType: mime } : {}),
-        },
-        { apiKey, apiSecret },
-      )
-      // 上游导入有时只回不可引用的内部行 id(dla-xxx)且 list 也解析不出真
-      // assetId——此时**保留 https 直传**(COS 中转地址照样能生成),只把素材
-      // 留在人像库供展示;硬换成 asset://dla-xxx 会被创建任务 400 拒掉。
-      if (referenceable !== false) {
-        item.image_url.url = asset.assetUrl
-        item.assetId = asset.assetId
-      } else {
-        console.warn(
-          `[seedance] 导入素材未解析出可引用 assetId(${asset.assetId}),该图保留 URL 直传`,
+  const images = content.filter(
+    (item): item is Extract<SeedanceContentItem, { type: 'image_url' }> =>
+      item.type === 'image_url' && !item.image_url.url.startsWith('asset://'),
+  )
+  // 并发:参考图最多个位数,而串行会让每张图的 pending→ready 等待逐个累加。
+  await Promise.all(
+    images.map(async (item) => {
+      try {
+        const raw = item.image_url.url
+        const mime = /^data:([^;,]+)/i.exec(raw)?.[1]
+        // 上游素材接口对 url 长度有硬限制(`400 url is too long`),data: 一律
+        // 先走 COS 中转(历史图片上传链路)换 https URL,再转存到素材库。
+        const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
+        const { asset } = await importSeedanceAsset(
+          {
+            kind: 'image',
+            imageCategory: 'image_people',
+            url,
+            name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}`,
+            ...(mime ? { mimeType: mime } : {}),
+          },
+          { apiKey, apiSecret },
         )
+        rememberAssetThumb(asset, url)
+      } catch (e) {
+        console.warn('[seedance] portrait-library import failed (generation unaffected):', e)
       }
-    } catch (e) {
-      console.warn('[seedance] portrait-library import failed, falling back to direct URL:', e)
-    }
+    }),
+  )
+}
+
+/**
+ * 记住素材的缩略图地址 —— 上游只对**带字节**导入(data: URL)生成 `previewUrl`;
+ * 走远程 URL 导入的它不下载,`sizeBytes` 恒 0、`previewUrl` 恒 null(2026-08-03
+ * 实测)。而 >512KB 必须走 COS(否则 `400 url is too long`),所以大图在人像库里
+ * 只能靠这份我们自己传上去的地址显示。
+ *
+ * 行 id 与真 assetId 两个键都写:导入是异步的,返回那刻往往只有行 id,而列表里
+ * 两者都在 —— 页面按哪个查都命中。data: 不入库(overlay 是明文 JSON,塞进去会
+ * 把它撑成几 MB),那种情况上游本来就会给 previewUrl。
+ */
+function rememberAssetThumb(asset: SeedanceAssetItem, thumbUrl: string): void {
+  if (!/^https?:/i.test(thumbUrl)) return
+  const assetIds = [...new Set([asset.assetId, asset.id].filter((id): id is string => !!id))]
+  if (assetIds.length === 0) return
+  try {
+    mutatePortraitOverlay({ op: 'setThumb', assetIds, thumbUrl })
+  } catch (e) {
+    console.warn('[seedance] 记录本地缩略图失败(不影响导入):', e)
   }
 }
 
@@ -233,8 +252,11 @@ export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | nul
   // ============ 素材库（人像库） ============
   const assetCreds = () => ({ apiKey: getSeedanceApiKey(), apiSecret: getSeedanceApiSecret() })
   ipcMain.removeHandler('seedance:assets-list')
-  ipcMain.handle('seedance:assets-list', (_event, query: SeedanceAssetListQuery) =>
-    listSeedanceAssets(query ?? {}, assetCreds()),
+  ipcMain.handle('seedance:assets-list', async (_event, query: SeedanceAssetListQuery) =>
+    withLocalThumbs(
+      await listSeedanceAssets(query ?? {}, assetCreds()),
+      getPortraitOverlay().entries,
+    ),
   )
   ipcMain.removeHandler('seedance:assets-import')
   ipcMain.handle('seedance:assets-import', async (_event, input: SeedanceAssetImportInput) => {
@@ -251,7 +273,11 @@ export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | nul
         : /^(https?:|asset:)/i.test(raw)
           ? raw
           : await resolveMediaUrl(raw, 'assets-import.url', input?.mimeType)
-    return importSeedanceAsset({ ...input, url }, assetCreds())
+    const result = await importSeedanceAsset({ ...input, url }, assetCreds())
+    // 走 COS 的(>512KB,即绝大多数图片)上游不会生成 previewUrl,自留一份地址
+    // 当缩略图;内联 data: 的上游自己会给,rememberAssetThumb 内部已跳过。
+    rememberAssetThumb(result.asset, url)
+    return result
   })
   ipcMain.removeHandler('seedance:assets-capacity')
   ipcMain.handle('seedance:assets-capacity', () => getSeedanceAssetCapacity(assetCreds()))
@@ -361,14 +387,15 @@ export function initSeedanceRuntime(opts: {
     const clientId = taskManager.announcePreparing({ input, threadId })
     try {
       const content = await buildContent(input)
-      await importImagesToPortraitLibrary(content)
       // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
       // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
       await verifyContentAssetReferences(content, {
         apiKey: getSeedanceApiKey(),
         apiSecret: getSeedanceApiSecret(),
       })
-      return await taskManager.submit({ input, content, threadId, clientId })
+      const state = await taskManager.submit({ input, content, threadId, clientId })
+      void importImagesToPortraitLibrary(content)
+      return state
     } catch (e) {
       // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
       // 把预备卡片落成 failed，避免气泡永远转圈；随后照旧把错误抛给工具层出横幅。
@@ -419,7 +446,6 @@ export function initSeedanceRuntime(opts: {
     try {
       if (!input.prompt.trim()) throw new Error('提示词不能为空')
       const content = await buildContent(input)
-      await importImagesToPortraitLibrary(content)
       // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
       // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
       await verifyContentAssetReferences(content, {
@@ -432,6 +458,7 @@ export function initSeedanceRuntime(opts: {
         source: 'workbench',
         ...(clientId ? { clientId } : {}),
       })
+      void importImagesToPortraitLibrary(content)
       return { success: true, taskId: state.taskId }
     } catch (e) {
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。

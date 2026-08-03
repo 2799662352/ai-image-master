@@ -15,11 +15,19 @@ import {
   deleteSeedanceAssets,
   verifyContentAssetReferences,
   translateSeedanceTaskError,
+  withLocalThumbs,
 } from '../assets'
 import { setSeedanceRegionMemory } from '../region'
 import type { SeedanceContentItem } from '../types'
+import type { SeedanceAssetListResult } from '../../../../types/seedance'
 
 const CREDS = { apiKey: 'sd_key', apiSecret: 'sd_secret' }
+
+/**
+ * 只查一次就放弃 —— 给「注定解析不出来」的用例用。
+ * 不传的话会按生产节奏空转约 9s 等一个永远不会 ready 的素材。
+ */
+const SINGLE_ATTEMPT = { resolveBackoffMs: [0] } as const
 
 const ASSET = {
   id: 'dla-1',
@@ -193,11 +201,98 @@ describe('importSeedanceAsset', () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ items: [ASSET], total: 1, page: 1, pageSize: 50, totalPages: 1 }),
     )
-    const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
+    const result = await importSeedanceAsset(
+      { kind: 'image', url: 'data:image/png;base64,xx' },
+      CREDS,
+      SINGLE_ATTEMPT,
+    )
     expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
     expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
     // 不可引用:调用方(runtime)应保留 https 直传,不能换成 asset://dla-xxx
     expect(result.referenceable).toBe(false)
+  })
+
+  // 2026-08-03 线上实测:导入是**异步**的 —— 返回那刻 `status: 'pending'`,只有
+  // 内部行 id;数秒后转 `ready`,真 assetId / sizeBytes / previewUrl 一起落地。
+  // 原本只查一次就永久放弃,于是每张参考图都白跑一次注定失败的 list,并把整批
+  // 降级成 URL 直传(日志里成片的「未解析出可引用 assetId」)。
+  it('首轮 list 尚未 ready 时重试,下一拍拿到真 assetId', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
+    // 第 1 拍:上游已建行但 assetId 还没生成(实测就是 null)
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [
+          {
+            id: 'dla-mrwc058u-e8mr7x',
+            kind: 'image',
+            name: '0EE9F213.png',
+            assetId: null,
+            assetUrl: null,
+            status: 'pending',
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      }),
+    )
+    // 第 2 拍:ready,assetId 落地
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [
+          {
+            id: 'dla-mrwc058u-e8mr7x',
+            kind: 'image',
+            name: '0EE9F213.png',
+            assetId: 'asset-20260803113406-qjm28',
+            assetUrl: 'asset://asset-20260803113406-qjm28',
+            status: 'ready',
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      }),
+    )
+    const result = await importSeedanceAsset(
+      { kind: 'image', url: 'data:image/png;base64,xx' },
+      CREDS,
+      { resolveBackoffMs: [0, 0] },
+    )
+    expect(result.asset.assetId).toBe('asset-20260803113406-qjm28')
+    expect(result.referenceable).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('单次 list 报错不终止轮询,下一拍成功照样解析出 assetId', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500))
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        items: [
+          {
+            id: 'dla-mrwc058u-e8mr7x',
+            kind: 'image',
+            name: '0EE9F213.png',
+            assetId: 'v0c777',
+            assetUrl: 'asset://v0c777',
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      }),
+    )
+    const result = await importSeedanceAsset(
+      { kind: 'image', url: 'data:image/png;base64,xx' },
+      CREDS,
+      { resolveBackoffMs: [0, 0] },
+    )
+    expect(result.asset.assetId).toBe('v0c777')
+    expect(result.referenceable).toBe(true)
   })
 
   it('id 匹配不到但 name 命中时用 name 解析出真 assetId', async () => {
@@ -225,7 +320,11 @@ describe('importSeedanceAsset', () => {
   it('追加 list 请求失败时保留 id 兜底并标记不可引用(不阻断导入)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(ID_ONLY_IMPORT_RESPONSE, 201))
     fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500))
-    const result = await importSeedanceAsset({ kind: 'image', url: 'data:image/png;base64,xx' }, CREDS)
+    const result = await importSeedanceAsset(
+      { kind: 'image', url: 'data:image/png;base64,xx' },
+      CREDS,
+      SINGLE_ATTEMPT,
+    )
     expect(result.asset.assetId).toBe('dla-mrwc058u-e8mr7x')
     expect(result.asset.assetUrl).toBe('asset://dla-mrwc058u-e8mr7x')
     expect(result.referenceable).toBe(false)
@@ -331,6 +430,58 @@ describe('listSeedanceAssets', () => {
     )
     const result = await listSeedanceAssets({}, CREDS)
     expect(result.items[0]).toMatchObject({ assetId: 'v0c001', assetUrl: 'asset://v0c001' })
+  })
+})
+
+// 2026-08-03 线上实测:上游只对带字节导入(data: URL)生成 previewUrl;走远程
+// URL 导入的它不下载,sizeBytes 恒 0、previewUrl 恒 null。而 >512KB 必须走 COS
+// (否则 400 url is too long),于是人像库里大图全是空白占位。这里用导入时自留
+// 的 COS 地址补位。
+describe('withLocalThumbs', () => {
+  const listOf = (...items: Array<Record<string, unknown>>): SeedanceAssetListResult =>
+    ({ items, total: items.length, page: 1, pageSize: 24, totalPages: 1 }) as SeedanceAssetListResult
+
+  it('上游无预览图时用 overlay 里按 assetId 存的地址补进 previewUrl', () => {
+    const result = withLocalThumbs(
+      listOf({ id: 'dla-1', assetId: 'v0c001', kind: 'image', name: 'a.png' }),
+      { v0c001: { thumbUrl: 'https://cos.example/a.png' } },
+    )
+    expect(result.items[0].previewUrl).toBe('https://cos.example/a.png')
+  })
+
+  it('按行 id 也能命中 —— 导入异步,登记那刻往往只有 dla- 行 id', () => {
+    const result = withLocalThumbs(
+      listOf({ id: 'dla-2', assetId: 'asset-2026', kind: 'image', name: 'b.png' }),
+      { 'dla-2': { thumbUrl: 'https://cos.example/b.png' } },
+    )
+    expect(result.items[0].previewUrl).toBe('https://cos.example/b.png')
+  })
+
+  it('上游给了预览图就不覆盖(它那份是自家 CDN,更该优先)', () => {
+    const result = withLocalThumbs(
+      listOf({ id: 'dla-3', assetId: 'v0c003', kind: 'image', name: 'c.png', previewUrl: 'https://cdn.up/c.png' }),
+      { v0c003: { thumbUrl: 'https://cos.example/c.png' } },
+    )
+    expect(result.items[0].previewUrl).toBe('https://cdn.up/c.png')
+  })
+
+  it('上游只有 sourceUrl 时同样不补(那已经能当缩略图)', () => {
+    const result = withLocalThumbs(
+      listOf({ id: 'dla-4', assetId: 'v0c004', kind: 'image', name: 'd.png', sourceUrl: 'https://cdn.up/d.png' }),
+      { v0c004: { thumbUrl: 'https://cos.example/d.png' } },
+    )
+    expect(result.items[0].previewUrl).toBeUndefined()
+  })
+
+  it('overlay 里没记过的条目原样返回', () => {
+    const items = [{ id: 'dla-5', assetId: 'v0c005', kind: 'image', name: 'e.png' }]
+    const result = withLocalThumbs(listOf(...items), { other: { thumbUrl: 'https://cos.example/x.png' } })
+    expect(result.items[0].previewUrl).toBeUndefined()
+  })
+
+  it('overlay 为空时原样返回同一个对象(不做无谓拷贝)', () => {
+    const input = listOf({ id: 'dla-6', assetId: 'v0c006', kind: 'image', name: 'f.png' })
+    expect(withLocalThumbs(input, {})).toBe(input)
   })
 })
 

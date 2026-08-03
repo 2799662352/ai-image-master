@@ -142,6 +142,15 @@ export interface AssetOverlayEntry {
   group?: string
   /** 软删除/隐藏标记。 */
   hidden?: boolean
+  /**
+   * 本地记住的缩略图地址(导入时我们自己传给上游的那份 COS https 地址)。
+   *
+   * 上游只对**带字节**导入(data: URL)生成 `previewUrl`;走远程 URL 导入的素材
+   * 它不去下载,`sizeBytes` 恒为 0、`previewUrl` 恒为 null(2026-08-03 实测)。
+   * 而 >512KB 的文件必须走 COS —— 否则撞 `400 url is too long`。所以大图在
+   * 人像库里永远没有上游预览图,只能靠这份自留地址显示。
+   */
+  thumbUrl?: string
 }
 
 export interface PortraitOverlayState {
@@ -158,6 +167,12 @@ export type PortraitOverlayMutation =
   | { op: 'setHidden'; assetIds: string[]; hidden: boolean }
   | { op: 'addGroup'; name: string }
   | { op: 'removeGroup'; name: string }
+  /**
+   * 记住素材的本地缩略图地址。`assetIds` 通常同时带上游的行 id(`dla-…`)与
+   * 真 assetId(`asset-…`):导入是异步的,返回那一刻往往只有行 id,而列表里
+   * 两者都在 —— 两个键都存,页面按哪个查都命中。
+   */
+  | { op: 'setThumb'; assetIds: string[]; thumbUrl: string }
 
 /** 素材额度摘要（列表 summary 与 GET /local-assets/capacity 同形）。 */
 export interface SeedanceAssetCapacity {
