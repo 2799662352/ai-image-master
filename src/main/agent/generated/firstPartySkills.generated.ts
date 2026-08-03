@@ -53,12 +53,34 @@ image_gen skill: they render inside the chat AND persist results to local files
 默认进入**快速**模式;只有命中升级条件才升级。规格/方向确认过一次就不再重复问,
 自检做过就不再重复做。
 
-| 模式 | 典型请求 | 加载预算(含本 skill) | 默认动作 |
+**提示词底座自动触发(例外):** 凡属图片相关任务——出图、改图、写/改/优化图片提示词
+——**自动加载 \`director-prompt-engineering\`**,不需用户点名。它给的是七字段顺序
+(主体动作 → 角色引用 → 场景 → 镜头相机 → 光照 → 构图 → 风格情绪);**丢字段就是
+出图不稳的直接来源**,凭记忆硬写 prompt 不算数。
+
+**画面里有人,再自动加载角色链(第二个例外):** 要出的图里有人物/角色/IP,**且它需要
+复用**(组图、系列、同一个人跨会话再出、或用户给了人物参考图)——自动加载:
+
+- **\`director-anchor-extraction-quality\`** —— 有参考图时先把它提成 Face / Build /
+  Outfit / Markers 四段锚点。**锚点不足 40 词就是形象漂移的根因**,相似角色还要写出
+  相对差异(「A 比 B 高约 10cm」),被遮挡的部位标 \`[inferred]\`。
+- **\`director-character-consistency\`** —— 跨图锁死发型 / 服装 / 道具,肤色用相对描述
+  而非绝对色值。组图里每一张都要带上完整锚点,不能只在第一张写。
+
+一次性、画面里没人的配图(图标、纹理、风景、抽象背景)不加载这条链。多格反复重描
+外貌导致微漂移、想省 token 时,再按需看 director-structured-captioning
+(HoloCine 结构,用 \`[char1]\` 标签引用而不重描外貌)。
+
+| 模式 | 典型请求 | 自选技法预算 | 默认动作 |
 |---|---|---|---|
-| **快速** | 一次性配图、图标、简单插画、明确的单图请求 | ≤2 个 skill | 直接写 prompt 生成,四项验收自检 |
-| **标准** | 带风格目标/参考图/人物的单图 | ≤5 个:+2–3 个对症技法 | 按症状表挑技法再写 prompt |
-| **专业** | 复杂构图与光影、系列一致性、参考复刻、角色锚点 | 5–9 个:+ \`director-orchestrator\` | 13 维按需展开 |
+| **快速** | 一次性配图、图标、简单插画、明确的单图请求 | **0 个** —— 入口 + 底座就够 | 按七字段写 prompt 生成,四项验收自检 |
+| **标准** | 带风格目标/参考图/人物的单图 | **2–3 个对症技法** | 按症状表挑技法再写 prompt |
+| **专业** | 复杂构图与光影、系列一致性、参考复刻、角色锚点 | **3–4 个对症技法**,另必载 \`director-orchestrator\` | 13 维按需展开 |
 | **制片** | 电影/分镜项目的角色卡、场景卡、逐镜出图 | 按 \`film-studio\` 阶段加载 | 过资产门,锚点逐字下传 |
+
+> **底座不占技法名额。** \`director-prompt-engineering\`(有图片任务就载)与角色链
+> (画面里有需要复用的人就载)是自动触发的底座,不是「对症技法」;上表限的是自选
+> 技法数量。一张带人物的标准图同时载入底座 + 角色链 + 2 个技法是正常的,不算超预算。
 
 **升级条件:** ① 明确的风格复刻/真实作品·品牌·时代参考;② 系列/组图/角色一致性;
 ③ 复杂镜头设计(构图·打光·调色多维协同);④ 制片流程内的出图任务。超预算加载
@@ -73,15 +95,19 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 | 画面平/像壁纸/没纵深 | storyboard-foreground-occlusion · storyboard-pseudo-perspective |
 | 光平/糖水/塑料高光 | storyboard-light-reconstruction |
 | 色调跑偏/要 HEX 色卡 | storyboard-color-grading-control |
-| 风格不像/系列不统一 | director-style-consistency · director-character-consistency |
+| 风格不像/系列不统一 | director-style-consistency |
+| 多格反复重描外貌/外观微漂移/想省 token | director-structured-captioning |
 | 提到真实电影/导演/品牌/时代 | codex-research-grounded-prompting(先查证再落笔) |
 | 涉敏感/合规内容 | \`storyboard-negative-control\` |
 
 ## Steps
 
-1. Turn the request into one clear, descriptive prompt. Cover subject, style,
-   composition, lighting, and mood. Keep it concise. 标准及以上模式先按 STEP 0
-   把对症技法折进 prompt(物理/可复现参数优先于情绪形容词,默认只写正向提示词)。
+1. Turn the request into one clear, descriptive prompt. **按 \`director-prompt-engineering\`
+   的七字段顺序拼装**(主体动作 → 角色引用 → 场景 → 镜头相机 → 光照 → 构图 →
+   风格情绪),不要凭记忆随手写。画面里有需要复用的人物时,角色引用那一段用角色链
+   提出来的 Face / Build / Outfit / Markers 锚点原文,**组图的每一张都要带全**。
+   标准及以上模式再按 STEP 0 把对症技法折进 prompt(物理/可复现参数优先于情绪
+   形容词,默认只写正向提示词)。
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
    - \`model\` (optional): rendering channel **override**. **Omit it** to honor the
