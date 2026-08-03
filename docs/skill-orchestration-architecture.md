@@ -80,6 +80,43 @@ resources/first-party-skills/<name>/SKILL.md ← App-only skill 权威源(canvas
 
 改任何插件 skill 后,`npm run publish:marketplace` 会自动跑这三步(dry-run 用 `--check`)。**不要手改镜像/生成物**,验证器会以 `SKILL_COPY_DRIFT` / `FIRST_PARTY_PARITY_MISMATCH` 报警。
 
+插件版本号由发布器按内容哈希计算并回写三份 manifest,`scripts/plugin-publish-state.json` 是单一真源。**手改 `plugin.json` 的 `version` 没有意义**,真发时会被覆盖。
+
+### 4.1 运行时落盘:三条路径,同一个目录
+
+上面是「源码 → 产物」;这一节是「产物 → 用户磁盘」。三条路径**都落到 `~/.agents/skills/<name>/`**,但装进去的内容和后续归谁管完全不同:
+
+| 路径 | 触发时机 | 装什么 | 标记 |
+|---|---|---|---|
+| **首方安装** `firstPartySkills.ts` | 应用启动 | **只有 `SKILL.md`** | 写 `.catimation-managed`(内容 sha256) |
+| **插件安装** 应用内市场 / 外部 harness | 用户装插件 | **整个 skill 目录**(含 `references/`、`assets/`) | 无 |
+| **单技能安装** 技能市场 | 用户装单个 skill | **整个目录的 zip**(`upload-skills-to-cos.mjs` 的 `buildSkillZip` 递归打包) | 无 |
+
+两个由此而来的坑:
+
+**① 首方集合只能放单文件 skill。** `writeManaged` 只写 `SKILL.md`,带 `references/` 的 skill 进 `FIRST_PARTY_SKILL_SOURCES` 会变成一堆悬空指针。要让带参考文件的 skill 随应用强制安装,得先扩 installer。
+
+**② 插件安装会夺走首方 skill 的更新权。** `catimation-video` / `catimation-video-workbench` / `ffmpeg-win` 等既在首方集合、又随插件交付。插件安装覆盖同名目录后 `.catimation-managed` 消失,下次开机 `installFirstPartySkills` 判定 `isAppManaged === false`(标记缺失 = 用户手改过),归入 `preserved` 并**永不再更新**。
+
+这不是故障——更新权只是从「随应用版本」转给了「随插件市场」,保持插件最新即可。但要恢复应用托管,得**删掉该 skill 目录再重启应用**(目录不存在时 installer 才会重新写一份带标记的)。排查时看 `~/.agents/skills/<name>/.catimation-managed` 在不在即可判断当前归谁管。
+
+### 4.2 单技能市场的准入规则(标签有误导性)
+
+`sync-plugin-skills-to-codex.mjs` 的判定只有一行:
+
+```js
+const allowed = codexNames.has(name) || ADD_LIST.has(name)
+```
+
+即「已经在 `resources/codex-skills/` 里」或「在脚本顶部硬编码的 `ADD_LIST` 里」。两者都不是就跳过,输出打的标签是 `⏭️ SKIPPED app-only / not curated`——**这个标签把两种完全不同的情况混在了一起**:
+
+- **刻意排除**:app 集成类 skill(`catimation-image/video/brainstorm/portrait`、`create-storyboard`、`trailer-plan-generator`)离开应用跑不起来,只走插件市场 + 首方安装。
+- **只是没登记**:任何新增的插件 skill 默认都会被跳过,因为它既不在 `codex-skills/` 也不在 `ADD_LIST`。
+
+新增 craft skill 想进单技能市场,把名字加进 `ADD_LIST` 即可。判断标准看**对 app 专有工具的依赖**:`storyboard-grid-to-seedance` 对 `generate_image` / `ask_user` / `view_image` 这类工具是 0 引用,所以单装可用;引用了这些工具的 skill 单装时会指向调不到的东西,要么改成能力中性措辞,要么只走插件交付。
+
+`ADD_LIST` 顶部那条注释是硬要求:**引用了别的 skill 的单发 skill,被引用者也必须在单技能市场里**,否则单装会留下悬空的渐进披露指针。
+
 ## 5. SessionStart Hook 纪律
 
 - Hook 不得 `cat` 整份 SKILL.md;注入文本上限 2000 字符(验证器 `HOOK_CATS_SKILL` / `HOOK_INJECTION_TOO_LARGE`)。
@@ -90,13 +127,13 @@ resources/first-party-skills/<name>/SKILL.md ← App-only skill 权威源(canvas
 
 | 命令 | 作用 |
 |---|---|
-| `npm run audit:skill-arch` | 全仓审计(134 skill + 36 hook),违规即 exit 1 |
-| `npm run test:skill-arch` | 验证器单测(12)+ 仓库架构契约测试(1),node:test |
+| `npm run audit:skill-arch` | 全仓审计(139 skill + 36 hook),违规即 exit 1 |
+| `npm run test:skill-arch` | 验证器单测 + 仓库架构契约 + sd2-pe/结构叶子契约,共 19 条,node:test |
 | `npx vitest run src/main/agent/__tests__/firstPartySkills.test.ts` | 首方生成物与 Markdown 源 parity |
 | `node scripts/generate-first-party-skills.mjs --check` | CI 校验生成物未漂移 |
 | `node scripts/sync-top-level-skills.mjs --check` | CI 校验顶层镜像未漂移 |
 
-验证器规则代码一览:`IMPLICIT_GENERATION_ENTRY_COLLISION`(入口独占)、`DEPENDENCY_CYCLE`(DFS 环检测)、`BUDGET_FANOUT_EXCEEDED`(fast 1 / standard 3 / pro 5,`<!-- skill-budget: ... -->` 标记,studio 免限)、`CRAFT_FORCED_ORCHESTRATOR_BACK_EDGE`(叶子禁止强制回调调度器)、`DESCRIPTION_TOO_LONG` / `DESCRIPTION_FORBIDDEN_TRIGGER` / `DESCRIPTION_MODEL_LIST_TAIL`、`HOOK_CATS_SKILL` / `HOOK_INJECTION_TOO_LARGE`、`SKILL_COPY_DRIFT` / `FIRST_PARTY_PARITY_MISMATCH`。
+验证器规则代码一览:`IMPLICIT_GENERATION_ENTRY_COLLISION`(入口独占)、`DEPENDENCY_CYCLE`(DFS 环检测)、`BUDGET_FANOUT_EXCEEDED`(fast 1 / standard 3 / pro 7,`<!-- skill-budget: ... -->` 标记,studio 免限;数的是**反引号引用条数**而非同时载入数,pro 的上限随视频入口真实交接对象增长过两次,改动要连同 `BUDGET_LIMITS` 上方注释一起更新)、`CRAFT_FORCED_ORCHESTRATOR_BACK_EDGE`(叶子禁止强制回调调度器)、`DESCRIPTION_TOO_LONG` / `DESCRIPTION_FORBIDDEN_TRIGGER` / `DESCRIPTION_MODEL_LIST_TAIL`、`HOOK_CATS_SKILL` / `HOOK_INJECTION_TOO_LARGE`、`SKILL_COPY_DRIFT` / `FIRST_PARTY_PARITY_MISMATCH`。
 
 语义触发金标(20+ 条 should-trigger / should-not-trigger 场景 + 预期预算级别)在 `tests/skill-architecture/fixtures/trigger-goldens.json`,供发布前模型评测使用;结构测试进 CI。
 
