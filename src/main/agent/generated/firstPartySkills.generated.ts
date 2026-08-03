@@ -488,6 +488,7 @@ prompt;不要等用户说「优化提示词」才加载:
    | 风格不像/调色跑偏 | storyboard-color-grading-control · storyboard-style-extraction-logic · director-style-consistency |
    | 多角色混脸 | storyboard-multi-character-control · director-character-consistency |
    | 九宫格/多宫格故事板、电影美术设定板、整板低约束参考或拆格执行 | storyboard-grid-to-seedance |
+   | 剧本/多场要拆成逐镜生产表、要一张能搜索筛选的分镜表交付给人看 | shotlist-builder(规划与交付物,不出片) |
    | 提示词太长/权重稀释 | storyboard-video-prompt-optimization |
    | 提到真实电影/导演/品牌/时代,或「像·复刻·高级」 | codex-research-grounded-prompting(先查证再落笔) |
    | 日式动画质感/作画 | animation-craft · director-anime-quality-boost |

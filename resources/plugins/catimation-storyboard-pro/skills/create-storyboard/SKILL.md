@@ -5,7 +5,7 @@ description: Create director-grade storyboard production packages for Image 2 an
 
 # Create Storyboard / 连续性优先的制片包生成器
 
-<!-- skill-budget: standard -->
+<!-- skill-budget: pro -->
 
 ## Overview
 
@@ -117,6 +117,9 @@ description: Create director-grade storyboard production packages for Image 2 an
     尺寸、镜头表、材质和灯光文字。
 11. 写 SceneDance 镜头提示词:选定图、时长、接棒入点、动作起止、情绪起止、镜头运动、连续性锁定、交棒出点、出点视觉令牌、下一场景线索、剪辑余量、音频桥、避免清单。
 12. 写后期材料:SceneDance 使用清单、剪辑连续性备注、剪映/CapCut 剪辑计划、风险/回退计划、图清单。
+    需要一份**人能直接看的逐镜生产表**(而不是十几个 .md 文件)时,载入 `shotlist-builder`
+    把 clip_plan + shot_cards + scenedance_shot_prompts 渲染成单文件 HTML,落到
+    `06_delivery/shotlist_<scope>.html`。它是可选交付物,不替代包内的矩阵与圣经。
 13. 校验:每次生成 `4–15s`、短节拍已标后期裁切、每镜有衔接与边界计划、
     每镜有主输入图 ID、每张承诺图被追踪、无遗漏的身份/空间/风格锁定。
 
