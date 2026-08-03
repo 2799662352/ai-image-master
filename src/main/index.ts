@@ -45,6 +45,7 @@ import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
+import { registerRefImageResolveIpc } from './file-explorer/refImageResolveIpc'
 import { registerVideoPosterIpc } from './file-explorer/videoPosterIpc'
 import { registerCanvasCheckpointIpc } from './file-explorer/canvasCheckpointIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
@@ -1215,6 +1216,9 @@ app.whenReady().then(async () => {
   // (PR-A of fix-codex-chat-image-attachment-lag). attachments:read-thumb
   // stays registered above for the lightbox / download path (fullFidelity).
   registerMediaThumbIpc()
+  // media:resolve-ref-image — MCP 参考图的本地路径 → COS URL(流式上传,不进
+  // 渲染进程堆)。与界面上传路径同口径,见 file-explorer/refImageResolveIpc.ts。
+  registerRefImageResolveIpc()
   // media:ensure-video-poster — generate-once + persist a video still as a
   // static COS object so chat never re-runs the billable 数据万象 snapshot.
   registerVideoPosterIpc()

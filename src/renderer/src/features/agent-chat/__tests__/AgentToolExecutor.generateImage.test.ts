@@ -401,6 +401,122 @@ describe('AgentToolExecutor.generateImage', () => {
       expect(sent.referenceImages).toEqual(['data:image/png;base64,ZZZ', 'https://example.com/x.png'])
     })
 
+    // MCP 参考图与界面上传同口径:URL 渠道一律换 COS URL(见 utils/refImageUpload
+    // 「原图直传云端,不压缩」),只有 nano/gemini 这类 inlineRefImageAsBase64 渠道
+    // 才留 base64。此前一律内联,几 MB 的图会把请求体撑爆并触发上游
+    // "url is too long"。
+    describe('COS relay(URL 渠道)', () => {
+      function setAttachmentsWithRelay(
+        readThumb: ReturnType<typeof vi.fn>,
+        resolveRefImage: ReturnType<typeof vi.fn>,
+      ) {
+        ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
+          attachments: { readThumb, resolveRefImage },
+        }
+      }
+      /** 带 getModelConfig 的假 API —— 渠道制式的真源。 */
+      function apiWithChannels(inlineChannels: string[]): ApiFake & {
+        getModelConfig: ReturnType<typeof vi.fn>
+      } {
+        return {
+          generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })),
+          getModelConfig: vi.fn((name: string) => ({
+            inlineRefImageAsBase64: inlineChannels.includes(name),
+          })),
+        }
+      }
+      const localPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\hero.png'
+
+      it('URL 渠道:本地路径中转成 COS URL,不读字节', async () => {
+        const readThumb = vi.fn()
+        const resolveRefImage = vi.fn(async () => ({ ok: true, url: 'https://bucket/hero.png' }))
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api = apiWithChannels([])
+        registerFakes(api, makeHistory())
+
+        await callGenerate({ prompt: 'edit', referenceImages: [localPath] })
+
+        expect(resolveRefImage).toHaveBeenCalledWith(localPath)
+        expect(readThumb).not.toHaveBeenCalled()
+        expect(api.generateImage.mock.calls[0][0].referenceImages).toEqual([
+          'https://bucket/hero.png',
+        ])
+      })
+
+      // 对照式:同一张图、同一套 stub,只换渠道 —— 必须一个走 base64 一个走 URL。
+      // 单测「内联渠道没调 resolveRefImage」会在整个特性关掉时空转通过,证明不了
+      // 分流真的按渠道走(红绿验证时就是这么露馅的)。
+      it('渠道决定制式:内联渠道给 base64,URL 渠道给 COS URL', async () => {
+        const readThumb = vi.fn(async () => ({ ok: true, base64: 'QUJD', mime: 'image/png' }))
+        const resolveRefImage = vi.fn(async () => ({ ok: true, url: 'https://bucket/hero.png' }))
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api = apiWithChannels(['gemini-3.1-flash-image'])
+        registerFakes(api, makeHistory())
+
+        await callGenerate({
+          prompt: 'edit',
+          model: 'gemini-3.1-flash-image',
+          referenceImages: [localPath],
+        })
+        await callGenerate({
+          prompt: 'edit',
+          model: 'wan2.7-image-pro',
+          referenceImages: [localPath],
+        })
+
+        expect(api.generateImage.mock.calls[0][0].referenceImages).toEqual([
+          'data:image/png;base64,QUJD',
+        ])
+        expect(api.generateImage.mock.calls[1][0].referenceImages).toEqual([
+          'https://bucket/hero.png',
+        ])
+        // 内联渠道那一趟不该碰 COS(传上去再抓回来是白跑),所以总共只中转一次。
+        expect(resolveRefImage).toHaveBeenCalledTimes(1)
+        expect(resolveRefImage).toHaveBeenCalledWith(localPath)
+      })
+
+      it('COS 挂了就降级内联 —— 桶不可用不该把这次生成也拖死', async () => {
+        const readThumb = vi.fn(async () => ({ ok: true, base64: 'QUJD', mime: 'image/png' }))
+        const resolveRefImage = vi.fn(async () => ({ ok: false, reason: 'COS down' }))
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api = apiWithChannels([])
+        registerFakes(api, makeHistory())
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        await callGenerate({ prompt: 'edit', referenceImages: [localPath] })
+
+        expect(resolveRefImage).toHaveBeenCalledOnce()
+        expect(readThumb).toHaveBeenCalledWith(localPath)
+        expect(api.generateImage.mock.calls[0][0].referenceImages).toEqual([
+          'data:image/png;base64,QUJD',
+        ])
+      })
+
+      // 混合数组:https 原样透传、本地路径中转。混着测才不会在特性关掉时空转 ——
+      // 单独测一个 https 时「没调中转」恒真。
+      it('https 原样透传,同一批里的本地路径照样中转', async () => {
+        const readThumb = vi.fn()
+        const resolveRefImage = vi.fn(async () => ({ ok: true, url: 'https://bucket/hero.png' }))
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api = apiWithChannels([])
+        registerFakes(api, makeHistory())
+
+        await callGenerate({
+          prompt: 'x',
+          referenceImages: ['https://cdn/a.png', localPath],
+        })
+
+        expect(api.generateImage.mock.calls[0][0].referenceImages).toEqual([
+          'https://cdn/a.png',
+          'https://bucket/hero.png',
+        ])
+        // 已经是 URL 的那张不该白跑一趟中转。
+        expect(resolveRefImage).toHaveBeenCalledTimes(1)
+        expect(resolveRefImage).toHaveBeenCalledWith(localPath)
+        expect(readThumb).not.toHaveBeenCalled()
+      })
+    })
+
     it('throws an explicit error (and never calls the API) when no ref can be read', async () => {
       const readThumb = vi.fn(async () => ({ ok: false, reason: 'file not found' }))
       setAttachments(readThumb)

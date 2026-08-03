@@ -103,6 +103,20 @@ async function relayOrInline(src: MediaSource, label: string): Promise<string> {
  * 明确的 400,那个错误比我们编一个数字准。历史上这里卡了一道 50MB,结果是用户
  * 被我们挡下,却看不到上游到底允许多少。
  */
+export interface ResolveMediaOptions {
+  /**
+   * 跳过 ≤512KB 的内联捷径,一律走 COS 换 URL。
+   *
+   * 给**图片生成的参考图**用:那边要与 UI 侧 `refImageUpload` 同口径(「原图直传
+   * 云端、不压缩」,没有体积下限),这样同一张参考图无论从界面还是 MCP 进来都是
+   * URL,请求体不会随图片大小膨胀。视频路径不传这个开关,保留内联线 —— 小素材
+   * 多走一次往返不划算。
+   *
+   * 只影响「要不要中转」,不影响「中转挂了怎么办」:失败后仍按原策略降级内联。
+   */
+  alwaysRelay?: boolean
+}
+
 export async function resolveMediaUrl(
   src: string,
   label: string,
@@ -111,13 +125,15 @@ export async function resolveMediaUrl(
    * 扩展名是文件在磁盘上的事实,优先级更高;浏览器那个只是补充覆盖面。
    */
   mimeHint?: string,
+  options?: ResolveMediaOptions,
 ): Promise<string> {
+  const alwaysRelay = options?.alwaysRelay === true
   const trimmed = src.trim()
   if (/^(https?:|asset:)/i.test(trimmed)) return trimmed
 
   if (/^data:/i.test(trimmed)) {
     const bytes = estimateDataUrlBytes(trimmed)
-    if (bytes <= MAX_INLINE_FILE_BYTES) return trimmed
+    if (!alwaysRelay && bytes <= MAX_INLINE_FILE_BYTES) return trimmed
     return relayOrInline(
       { bytes, relay: () => relayDataUrlToCos(trimmed), inline: async () => trimmed },
       label,
@@ -142,7 +158,7 @@ export async function resolveMediaUrl(
     MIME_BY_EXT[path.extname(trimmed).toLowerCase()] ?? hinted ?? 'application/octet-stream'
   const inline = async (): Promise<string> =>
     `data:${mime};base64,${(await fs.readFile(trimmed)).toString('base64')}`
-  if (bytes <= MAX_INLINE_FILE_BYTES) return inline()
+  if (!alwaysRelay && bytes <= MAX_INLINE_FILE_BYTES) return inline()
   return relayOrInline(
     { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
     label,

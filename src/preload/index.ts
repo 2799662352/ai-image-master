@@ -384,6 +384,10 @@ const IPC_CHANNELS = {
     // so URL-returning image/video channels (whose COS/OSS links omit
     // Access-Control-Allow-Origin) can still be saved to local paths.
     SAVE_FROM_URL: 'attachments:save-from-url',
+    // Stream a local reference image to COS and hand back a submittable URL,
+    // so MCP `generate_image` matches what the UI has always done (原图直传
+    // 云端). See main/file-explorer/refImageResolveIpc.ts.
+    RESOLVE_REF_IMAGE: 'media:resolve-ref-image',
     // PR-A hot-path: resized JPEG thumbnails. See main/file-explorer/mediaThumbIpc.ts
     // for the size/security envelope. Renderer calls this by default; falls
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
@@ -625,6 +629,18 @@ export interface ElectronAPI {
     readThumb: (
       p: string,
     ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
+    /**
+     * Stream a local reference image to COS and return a submittable https URL.
+     *
+     * For MCP `generate_image` on URL channels (万相 / seedream / …): inlining a
+     * multi-MB file as base64 bloats the request body and trips upstream's
+     * ~1MB `url is too long` limit. The main side streams from disk, so the
+     * bytes never enter this renderer's heap. Mirrors what the UI upload path
+     * (`utils/refImageUpload`) has always done. Image mimes only.
+     */
+    resolveRefImage: (
+      p: string,
+    ) => Promise<{ ok: true; url: string } | { ok: false; reason: string }>
     /**
      * Resized-JPEG thumbnail hot path (PR-A of fix-codex-chat-image-attachment-lag).
      * Returns a small (~5–30 KB) JPEG sized so the longest edge is `size`
@@ -1556,6 +1572,11 @@ const electronAPI: ElectronAPI = {
       safeInvoke<
         { ok: true; base64: string; mime: string } | { ok: false; reason: string }
       >(IPC_CHANNELS.ATTACHMENTS.READ_THUMB, p),
+    resolveRefImage: (p: string) =>
+      safeInvoke<{ ok: true; url: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.ATTACHMENTS.RESOLVE_REF_IMAGE,
+        p,
+      ),
     readMediaThumb: (args: { path: string; size?: number }) =>
       safeInvoke<
         | { ok: true; base64: string; mime: string; width?: number; height?: number }
