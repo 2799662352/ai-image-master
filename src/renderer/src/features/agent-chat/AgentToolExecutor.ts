@@ -1026,18 +1026,15 @@ export class AgentToolExecutor {
     const preferInline =
       model !== undefined && wantsInlineBase64ForModel(apiService?.getModelConfig?.(model))
 
+    // **不去重。** 每一次生图都是一次全新任务:调用方传了几张、按什么次序传,
+    // 就原样解析几张、按原次序返回。折叠重复项会让数组变短,而提示词里的
+    // 「图1 / 图2」是按下标对应的 —— 少一项,后面所有编号全体前移。
     const resolved: string[] = []
     const failures: string[] = []
-    const seen = new Set<string>()
 
     for (const raw of refs) {
       if (typeof raw !== 'string' || raw.length === 0) continue
       const isInlineOrRemote = raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')
-      // Windows paths are case-insensitive and agents may mix slash/case styles.
-      // Keep URL/data keys byte-exact because URL paths and base64 are case-sensitive.
-      const dedupKey = isInlineOrRemote ? raw : raw.replace(/\\/g, '/').toLowerCase()
-      if (seen.has(dedupKey)) continue
-      seen.add(dedupKey)
       if (isInlineOrRemote) {
         resolved.push(raw)
         continue
@@ -1066,7 +1063,16 @@ export class AgentToolExecutor {
       }
     }
 
-    if (resolved.length === 0 && failures.length > 0) {
+    // **位置有语义,所以宁可整次失败,也不能少一个继续。**
+    //
+    // 提示词里的「图1 / 图2」按 referenceImages 的下标对应(多图融合渠道尤其
+    // 依赖这个)。三张里第二张读不出来时,旧实现返回 [第一张, 第三张] 并把
+    // failures 丢掉 —— 于是「图2 的衣服」指向了原本的第三张,上游照单全收,
+    // 画面看着「像那么回事」,没有任何报错告诉用户参考图少了一张、编号全移了位。
+    //
+    // 注意这不推翻上面那句「COS 挂了不该让整次生成沉船」:中转失败仍会降级内联,
+    // 两条路都走不通才到这里。
+    if (failures.length > 0) {
       throw new Error(`参考图无法读取：${failures.join('; ')}`)
     }
     return resolved.length > 0 ? resolved : undefined

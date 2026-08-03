@@ -86,6 +86,49 @@ function relayKey(mimeType: string, preferredExt?: string): string {
 }
 
 /**
+ * 中转上传的全局并发闸。
+ *
+ * 为什么需要:视频工作台的 `startCards` 对卡片是**无上限**的 `Promise.all`,每张
+ * 卡内部还要传若干素材,乘起来轻易几十个并发 PutObject。仓库里另外两道 COS 闸都
+ * 够不到这条路 —— 主进程那道 12 槽只包住 `enqueueUpload()`,渲染层那道 4 槽在
+ * 另一个进程里,而 mediaRelay 是直接调 cosClient 的。
+ *
+ * 取 4:与渲染层 `cosImageUpload.ts` 同值。那边的实测结论是「4 个并发足够把网络
+ * 打满,多了也不会更快 —— 瓶颈在 COS 单连接带宽,不在客户端」。
+ *
+ * 槽位覆盖**整个重试周期**(含退避等待),而不只是单次 PutObject。退避期间放行新
+ * 请求,等于把刚压下去的压力原样顶回服务端;而服务端正在抖动的时候,慢下来才是
+ * 对的做法。代价是失败期间会有空转的槽位 —— 那正是我们想要的减速。
+ */
+export const MAX_CONCURRENT_RELAYS = 4
+let relaysInFlight = 0
+const relayWaiters: Array<() => void> = []
+
+function acquireRelaySlot(): Promise<void> {
+  if (relaysInFlight < MAX_CONCURRENT_RELAYS) {
+    relaysInFlight += 1
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => {
+    relayWaiters.push(() => {
+      relaysInFlight += 1
+      resolve()
+    })
+  })
+}
+
+function releaseRelaySlot(): void {
+  relaysInFlight -= 1
+  relayWaiters.shift()?.()
+}
+
+/** Exposed for tests; do not call from production code. */
+export function __resetRelayConcurrencyForTests(): void {
+  relaysInFlight = 0
+  relayWaiters.length = 0
+}
+
+/**
  * 带重试地跑一次中转上传,并把失败统一收敛成**真 Error**。
  *
  * 为什么必须收敛:COS SDK 的失败是裸对象而非 Error,原样冒泡时调用方那句
@@ -95,6 +138,15 @@ function relayKey(mimeType: string, preferredExt?: string): string {
  * 每次重试都重新生成 Key,避免上一次失败留下的分片状态干扰下一次。
  */
 async function relayWithRetry(op: string, run: () => Promise<string>): Promise<string> {
+  await acquireRelaySlot()
+  try {
+    return await retryLoop(op, run)
+  } finally {
+    releaseRelaySlot()
+  }
+}
+
+async function retryLoop(op: string, run: () => Promise<string>): Promise<string> {
   let lastError: unknown
   let attempt = 0
   let attemptsLeft = RELAY_ATTEMPTS

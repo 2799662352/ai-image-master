@@ -164,32 +164,60 @@ function rememberAssetThumb(asset: SeedanceAssetItem, thumbUrl: string): void {
   }
 }
 
+/**
+ * 素材 → 可提交的 content[]。
+ *
+ * **顺序即编号,不可乱。** Seedance OpenAPI §2.3:「如果你在提示词中使用
+ * `@参考N / @视频N / @音频N` 这类标签,请确保它们与 `content[]` 里的素材顺序
+ * 一一对应」——「图片1」就是 content 里第一个 image_url,不是某个 ID。顺序错了
+ * 上游照样受理,只是生成的内容跟用户想的不是一回事,不报任何错。
+ *
+ * 所以这里**先并发把 URL 收齐,再按输入次序拼数组**:`Promise.all` 的返回顺序
+ * 等于入参顺序,与谁先完成无关。绝不能写成「谁 resolve 完就 push 谁」——那样
+ * 数组顺序会变成完成顺序,一张 4MB 人物图配几张小场景图必然错位,而且网速一变
+ * 顺序又变,同一张卡两次结果不同。回归测试见 `__tests__/buildContent.order.test.ts`。
+ *
+ * 并发的上限由 `mediaRelay` 的 4 槽全局闸兜底,这里不再自设。
+ */
 async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceContentItem[]> {
+  // 全能参考 / 视频编辑 / 视频延长：视频、音频均可多条（单数字段并入数组，向后兼容）。
+  const refImages = input.referenceImages ?? []
+  const refVideos = [...(input.referenceVideos ?? []), ...(input.referenceVideo ? [input.referenceVideo] : [])]
+  const refAudios = [...(input.referenceAudios ?? []), ...(input.referenceAudio ? [input.referenceAudio] : [])]
+
+  const [firstFrameUrl, lastFrameUrl, imageUrls, videoUrls, audioUrls] = await Promise.all([
+    input.firstFrame ? resolveMediaUrl(input.firstFrame, 'firstFrame') : Promise.resolve(null),
+    input.lastFrame ? resolveMediaUrl(input.lastFrame, 'lastFrame') : Promise.resolve(null),
+    Promise.all(refImages.map((ref, i) => resolveMediaUrl(ref, `referenceImages[${i}]`))),
+    Promise.all(refVideos.map((ref, i) => resolveMediaUrl(ref, `referenceVideos[${i}]`))),
+    Promise.all(refAudios.map((ref, i) => resolveMediaUrl(ref, `referenceAudios[${i}]`))),
+  ])
+
   const content: SeedanceContentItem[] = [
     { type: 'text', text: normalizeSeedancePromptReferences(input.prompt) },
   ]
-  if (input.firstFrame) {
-    content.push({ type: 'image_url', role: 'first_frame', image_url: { url: await resolveMediaUrl(input.firstFrame, 'firstFrame') } })
+  if (firstFrameUrl) {
+    content.push({ type: 'image_url', role: 'first_frame', image_url: { url: firstFrameUrl } })
   }
-  if (input.lastFrame) {
-    content.push({ type: 'image_url', role: 'last_frame', image_url: { url: await resolveMediaUrl(input.lastFrame, 'lastFrame') } })
+  if (lastFrameUrl) {
+    content.push({ type: 'image_url', role: 'last_frame', image_url: { url: lastFrameUrl } })
   }
-  for (const [i, ref] of (input.referenceImages ?? []).entries()) {
-    content.push({ type: 'image_url', role: 'reference_image', image_url: { url: await resolveMediaUrl(ref, `referenceImages[${i}]`) } })
+  for (const url of imageUrls) {
+    content.push({ type: 'image_url', role: 'reference_image', image_url: { url } })
   }
-  // 全能参考 / 视频编辑 / 视频延长：视频、音频均可多条（单数字段并入数组，向后兼容）。
   // ⚠️ SDK 文档要求参考视频/音频必须带 reference_video / reference_audio role
   // （多模态参考、编辑视频、延长视频示例均如此）——漏掉会被当成非参考内容处理。
-  const refVideos = [...(input.referenceVideos ?? []), ...(input.referenceVideo ? [input.referenceVideo] : [])]
-  for (const [i, ref] of refVideos.entries()) {
-    content.push({ type: 'video_url', role: 'reference_video', video_url: { url: await resolveMediaUrl(ref, `referenceVideos[${i}]`) } })
+  for (const url of videoUrls) {
+    content.push({ type: 'video_url', role: 'reference_video', video_url: { url } })
   }
-  const refAudios = [...(input.referenceAudios ?? []), ...(input.referenceAudio ? [input.referenceAudio] : [])]
-  for (const [i, ref] of refAudios.entries()) {
-    content.push({ type: 'audio_url', role: 'reference_audio', audio_url: { url: await resolveMediaUrl(ref, `referenceAudios[${i}]`) } })
+  for (const url of audioUrls) {
+    content.push({ type: 'audio_url', role: 'reference_audio', audio_url: { url } })
   }
   return content
 }
+
+/** Exposed for tests only — 顺序不变量的回归护栏需要直接调它。 */
+export const __buildContentForTests = buildContent
 
 export interface SeedanceRuntime {
   taskManager: SeedanceTaskManager
