@@ -206,13 +206,18 @@ test('enforces fast, standard, pro, and studio dependency budgets', () => {
     },
     {
       path: 'skills/pro-owner/SKILL.md',
-      content: skill('pro-owner', 'Pro helper.', 'Use `a`, `b`, `c`, `d`, `e`, `f`, and `g`.', 'pro'),
+      content: skill(
+        'pro-owner',
+        'Pro helper.',
+        'Use `a`, `b`, `c`, `d`, `e`, `f`, `g`, and `h`.',
+        'pro',
+      ),
     },
     {
       path: 'skills/not-film/SKILL.md',
       content: skill('not-film', 'Wrong studio owner.', '', 'studio'),
     },
-    ...['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => ({
+    ...['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((name) => ({
       path: `skills/${name}/SKILL.md`,
       content: skill(name, `Helper ${name}.`),
     })),
