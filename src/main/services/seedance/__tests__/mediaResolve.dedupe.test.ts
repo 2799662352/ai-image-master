@@ -1,11 +1,16 @@
 // @vitest-environment node
 //
-// 本地文件的中转去重。
+// 本地文件中转的 in-flight 合并。
 //
-// 为什么需要:同一张角色参考图挂在工作台的 10 张卡上,今天会被上传 10 次拿到 10 个
-// 不同的 COS URL —— relayKey 每次调用都 randomBytes 生成新 key,没有任何缓存或
-// in-flight 合并。上游素材接口自己会按内容去重(重复导入直接返回已有记录),白花的
-// 纯粹是我们这边的上传。
+// 解决的是这个:工作台 `startCards` 一次把所有卡片放出去,同一张角色参考图挂在
+// 10 张卡上就会在同一时刻发起 10 次上传 —— `relayKey` 每次调用都 randomBytes
+// 生成新 key,各传一份。上游素材接口自己按内容去重(重复导入直接返回已有记录),
+// 救不了已经花掉的上传。
+//
+// **这里合并的是「同一瞬间的重复」,不是「上次的结果」。** 刻意不做结果缓存:
+// 记住 URL 意味着可能返回一个已被 COS 生命周期清掉的地址(上游报 502「远程素材
+// URL 已失效」),也意味着用户在外部改了图、工具却保留了 mtime 与体积时会拿到旧图。
+// 下面有几条用例专门钉住「不留记忆」这一点。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -33,8 +38,21 @@ function fileStat(bytes: number, mtimeMs: number) {
   readFile.mockResolvedValue(Buffer.from('fake-bytes'))
 }
 
+/** 一次不会自己完成的上传,用来把 in-flight 窗口撑开。 */
+function pendingUpload(): { started: () => number; finish: (url: string) => void } {
+  let started = 0
+  let resolveOne!: (url: string) => void
+  relayFileToCos.mockImplementation(() => {
+    started += 1
+    return new Promise<string>((res) => {
+      resolveOne = res
+    })
+  })
+  return { started: () => started, finish: (url) => resolveOne(url) }
+}
+
 let resolveMediaUrl: typeof import('../mediaResolve').resolveMediaUrl
-let reset: typeof import('../mediaResolve').__resetMediaResolveCacheForTests
+let reset: typeof import('../mediaResolve').__resetMediaResolveInFlightForTests
 
 beforeEach(async () => {
   relayDataUrlToCos.mockReset()
@@ -44,7 +62,7 @@ beforeEach(async () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   const mod = await import('../mediaResolve')
   resolveMediaUrl = mod.resolveMediaUrl
-  reset = mod.__resetMediaResolveCacheForTests
+  reset = mod.__resetMediaResolveInFlightForTests
   reset()
 })
 
@@ -53,75 +71,69 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('resolveMediaUrl — 本地文件中转去重', () => {
-  it('同一个文件解析两次,只上传一次,两次拿到同一个 URL', async () => {
+describe('resolveMediaUrl — in-flight 合并', () => {
+  it('同一瞬间的多次请求合并成一次上传,拿到同一个 URL', async () => {
     fileStat(BIG, 1_700_000_000_000)
-    relayFileToCos.mockResolvedValue('https://cos/a.png')
+    const upload = pendingUpload()
 
-    const first = await resolveMediaUrl('C:/refs/hero.png', 'referenceImages[0]')
-    const second = await resolveMediaUrl('C:/refs/hero.png', 'referenceImages[3]')
-
-    expect(first).toBe('https://cos/a.png')
-    expect(second).toBe('https://cos/a.png')
-    expect(relayFileToCos).toHaveBeenCalledTimes(1)
-  })
-
-  it('并发解析同一个文件时合并成一次上传', async () => {
-    fileStat(BIG, 1_700_000_000_000)
-    let started = 0
-    relayFileToCos.mockImplementation(() => {
-      started += 1
-      return new Promise((res) => setTimeout(() => res('https://cos/a.png'), 5))
-    })
-
-    const urls = await Promise.all(
-      Array.from({ length: 6 }, (_, i) => resolveMediaUrl('C:/refs/hero.png', `ref[${i}]`)),
+    const runs = Array.from({ length: 6 }, (_, i) =>
+      resolveMediaUrl('C:/refs/hero.png', `referenceImages[${i}]`),
     )
+    await Promise.resolve()
+    await Promise.resolve()
 
-    expect(started).toBe(1)
-    expect(new Set(urls).size).toBe(1)
+    expect(upload.started()).toBe(1)
+
+    upload.finish('https://cos/hero.png')
+    const urls = await Promise.all(runs)
+    expect(new Set(urls)).toEqual(new Set(['https://cos/hero.png']))
   })
 
-  it('文件改了(mtime 变)就重新上传', async () => {
+  it('图片入口(alwaysRelay)与视频入口(超阈值)同时要同一张大图时也合并', async () => {
     fileStat(BIG, 1_700_000_000_000)
-    relayFileToCos.mockResolvedValueOnce('https://cos/v1.png')
-    await resolveMediaUrl('C:/refs/hero.png', 'ref')
+    const upload = pendingUpload()
 
-    fileStat(BIG, 1_700_000_009_999)
-    relayFileToCos.mockResolvedValueOnce('https://cos/v2.png')
-    const second = await resolveMediaUrl('C:/refs/hero.png', 'ref')
-
-    expect(second).toBe('https://cos/v2.png')
-    expect(relayFileToCos).toHaveBeenCalledTimes(2)
-  })
-
-  it('体积变了也重新上传(mtime 精度不够时的第二道判据)', async () => {
-    fileStat(BIG, 1_700_000_000_000)
-    relayFileToCos.mockResolvedValueOnce('https://cos/v1.png')
-    await resolveMediaUrl('C:/refs/hero.png', 'ref')
-
-    fileStat(BIG + 1024, 1_700_000_000_000)
-    relayFileToCos.mockResolvedValueOnce('https://cos/v2.png')
-    await resolveMediaUrl('C:/refs/hero.png', 'ref')
-
-    expect(relayFileToCos).toHaveBeenCalledTimes(2)
-  })
-
-  it('alwaysRelay 不同的两次调用不共用缓存 —— 它们的返回形态本就不同', async () => {
-    // 小文件:默认走内联,alwaysRelay 才走 COS。串味会让内联那次拿到 COS URL。
-    fileStat(1024, 1_700_000_000_000)
-    relayFileToCos.mockResolvedValue('https://cos/small.png')
-
-    const relayed = await resolveMediaUrl('C:/refs/small.png', 'ref', undefined, {
+    const fromImage = resolveMediaUrl('C:/refs/hero.png', 'referenceImage', undefined, {
       alwaysRelay: true,
     })
-    const inlined = await resolveMediaUrl('C:/refs/small.png', 'ref')
+    const fromVideo = resolveMediaUrl('C:/refs/hero.png', 'referenceImages[0]')
+    await Promise.resolve()
+    await Promise.resolve()
 
-    expect(relayed).toBe('https://cos/small.png')
-    expect(inlined.startsWith('data:')).toBe(true)
+    // 键不带 alwaysRelay —— 走到中转这一步时该开关已不再区分行为。
+    expect(upload.started()).toBe(1)
+
+    upload.finish('https://cos/hero.png')
+    expect(await fromImage).toBe('https://cos/hero.png')
+    expect(await fromVideo).toBe('https://cos/hero.png')
   })
 
-  it('中转失败不进缓存,下一次仍会重试', async () => {
+  it('上一次已经结束之后,再要同一个文件会重新上传 —— 不留记忆', async () => {
+    fileStat(BIG, 1_700_000_000_000)
+    relayFileToCos.mockResolvedValueOnce('https://cos/first.png')
+    expect(await resolveMediaUrl('C:/refs/hero.png', 'ref')).toBe('https://cos/first.png')
+
+    relayFileToCos.mockResolvedValueOnce('https://cos/second.png')
+    expect(await resolveMediaUrl('C:/refs/hero.png', 'ref')).toBe('https://cos/second.png')
+
+    // 两次都真的上传了:不会返回一个可能已被 COS 生命周期清掉的旧地址。
+    expect(relayFileToCos).toHaveBeenCalledTimes(2)
+  })
+
+  it('不同文件不会互相合并', async () => {
+    fileStat(BIG, 1_700_000_000_000)
+    const upload = pendingUpload()
+
+    void resolveMediaUrl('C:/refs/a.png', 'ref').catch(() => {})
+    void resolveMediaUrl('C:/refs/b.png', 'ref').catch(() => {})
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(upload.started()).toBe(2)
+    reset()
+  })
+
+  it('失败也把 in-flight 条目清掉,下一次仍会重试', async () => {
     fileStat(BIG, 1_700_000_000_000)
     relayFileToCos.mockRejectedValueOnce(new Error('network down'))
     await expect(resolveMediaUrl('C:/refs/hero.png', 'ref')).rejects.toThrow()
@@ -131,21 +143,15 @@ describe('resolveMediaUrl — 本地文件中转去重', () => {
     expect(relayFileToCos).toHaveBeenCalledTimes(2)
   })
 
-  it('降级内联的结果不进缓存 —— 缓存内联等于把整个文件常驻内存', async () => {
-    // 512KB~1MB 窗口:中转挂了仍可内联。
-    fileStat(700 * 1024, 1_700_000_000_000)
-    relayFileToCos.mockRejectedValue(new Error('cos down'))
+  it('小文件走内联捷径,压根不进 in-flight 表', async () => {
+    fileStat(1024, 1_700_000_000_000)
+    const inlined = await resolveMediaUrl('C:/refs/small.png', 'ref')
 
-    const first = await resolveMediaUrl('C:/refs/mid.png', 'ref', undefined, { alwaysRelay: true })
-    const second = await resolveMediaUrl('C:/refs/mid.png', 'ref', undefined, { alwaysRelay: true })
-
-    expect(first.startsWith('data:')).toBe(true)
-    expect(second.startsWith('data:')).toBe(true)
-    // 两次都真的重试了中转,没有把内联结果当成「已解析」缓存下来。
-    expect(relayFileToCos).toHaveBeenCalledTimes(2)
+    expect(inlined.startsWith('data:')).toBe(true)
+    expect(relayFileToCos).not.toHaveBeenCalled()
   })
 
-  it('http(s) / asset:// / data: 透传不受缓存影响', async () => {
+  it('http(s) / asset:// 透传不受影响', async () => {
     expect(await resolveMediaUrl('https://cdn/x.png', 'ref')).toBe('https://cdn/x.png')
     expect(await resolveMediaUrl('asset://abc', 'ref')).toBe('asset://abc')
     expect(stat).not.toHaveBeenCalled()

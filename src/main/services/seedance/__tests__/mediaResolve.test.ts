@@ -42,10 +42,10 @@ beforeEach(async () => {
   stat.mockReset()
   readFile.mockReset()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
-  // 中转结果的去重缓存是模块级的:不清就会跨用例串味 —— 前一条用例缓存的 URL
-  // 会让后一条「中转失败该降级内联」的用例直接命中缓存,永远走不到失败路径。
-  const { __resetMediaResolveCacheForTests } = await import('../mediaResolve')
-  __resetMediaResolveCacheForTests()
+  // in-flight 合并表是模块级的。正常路径下条目在上传 settle 时自删,但用例若留下
+  // 未完成的 promise 就会串味,让下一条用例复用上一条的上传结果。
+  const { __resetMediaResolveInFlightForTests } = await import('../mediaResolve')
+  __resetMediaResolveInFlightForTests()
 })
 
 afterEach(() => {
