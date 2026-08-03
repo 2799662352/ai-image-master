@@ -60,6 +60,27 @@ function formatBytes(bytes?: number): string {
 const VIDEO_URL_RE = /\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i
 
 /**
+ * 图片缩略图 —— 加载失败时回落到占位符而不是留一块空白。
+ *
+ * 地址可能是上游 CDN 的签名地址(会过期),也可能是我们自留的 COS 地址(桶策略
+ * 变更/对象被清理都会 404)。裂图和「本来就没有缩略图」在网格里应该长一样,
+ * 否则用户看到的是一格无法解释的空白。调用方用 `key={src}` 让换图时重置状态。
+ */
+function AssetImageThumb({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <span className="text-3xl">🖼</span>
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="w-full h-full object-cover"
+    />
+  )
+}
+
+/**
  * 视频首帧缩略图策略 —— 与聊天栏 MediaThumbnail 完全一致。
  *
  * metadata 加载后**命令式** seek 到 ~0.1s,强制 Chromium 解码并*绘制*首帧。
@@ -771,7 +792,9 @@ export default function PortraitLibraryPage() {
               const imageThumb = !isVideo && !isAudio ? asset.previewUrl || asset.sourceUrl : undefined
               // 视频统一用 <video> 取首帧:previewUrl 仅当确实是图片 poster 时才用,
               // 否则(上游常把 mp4 地址塞进 previewUrl)会被 <img> 渲染成碎图。
-              const videoSrc = isVideo ? asset.sourceUrl : undefined
+              // sourceUrl 缺失时回落 previewUrl —— 走 URL 导入的素材上游两个字段
+              // 都为空,主进程会把我们自留的 COS 地址填进 previewUrl(那就是原片)。
+              const videoSrc = isVideo ? asset.sourceUrl || asset.previewUrl : undefined
               const videoPoster =
                 isVideo && asset.previewUrl && !VIDEO_URL_RE.test(asset.previewUrl)
                   ? asset.previewUrl
@@ -807,7 +830,7 @@ export default function PortraitLibraryPage() {
                     ) : isAudio ? (
                       <span className="text-3xl">🎵</span>
                     ) : imageThumb ? (
-                      <img src={imageThumb} alt={asset.name} loading="lazy" className="w-full h-full object-cover" />
+                      <AssetImageThumb key={imageThumb} src={imageThumb} alt={asset.name} />
                     ) : (
                       <span className="text-3xl">🖼</span>
                     )}

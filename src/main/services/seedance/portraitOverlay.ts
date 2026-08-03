@@ -55,6 +55,7 @@ function pruneEntry(entry: AssetOverlayEntry | undefined): AssetOverlayEntry | u
   if (entry.name) next.name = entry.name
   if (entry.group) next.group = entry.group
   if (entry.hidden) next.hidden = true
+  if (entry.thumbUrl) next.thumbUrl = entry.thumbUrl
   return Object.keys(next).length > 0 ? next : undefined
 }
 
@@ -107,6 +108,9 @@ export function mutatePortraitOverlay(mutation: PortraitOverlayMutation): Portra
     }
     case 'setHidden':
       patch(mutation.assetIds, { hidden: mutation.hidden || undefined })
+      break
+    case 'setThumb':
+      patch(mutation.assetIds, { thumbUrl: mutation.thumbUrl.trim() || undefined })
       break
     case 'addGroup': {
       const name = mutation.name.trim()

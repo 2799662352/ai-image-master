@@ -149,41 +149,67 @@ function extractAsset(raw: unknown): { asset: SeedanceAssetItem; viaIdFallback: 
 }
 
 /**
- * 导入响应只回内部行 id 时，追加一次 list 匹配出真实 assetId/assetUrl。
+ * 二次解析的重试节奏（毫秒,首次立即查)。
+ *
+ * 导入是**异步**的:返回那一刻 `status: 'pending'`,只有内部行 id,没有真
+ * assetId、没有 sizeBytes、没有 previewUrl;处理完成后转 `ready`,三者一起落地
+ * (2026-08-03 实测:35KB 图片约数秒内 ready)。原本只查一次就永久放弃,于是
+ * 每张图都白跑一次注定失败的 list,还把整批参考图降级成 URL 直传。
+ *
+ * 总等待约 9s 覆盖实测窗口;仍不 ready 就保留 URL 直传(不阻断生成)。
+ */
+const ASSET_RESOLVE_BACKOFF_MS = [0, 500, 1500, 3000, 4000]
+
+const sleep = (ms: number): Promise<void> =>
+  ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
+
+/**
+ * 导入响应只回内部行 id 时，轮询 list 匹配出真实 assetId/assetUrl。
  * 匹配优先级:内部 `id` 相同 → `name` 相同(导入名含时间戳基本唯一)。
- * 找不到/list 失败时返回 null，调用方保留 id 兜底（不阻断导入）。
+ * 全部尝试用尽/list 失败时返回 null，调用方保留 id 兜底（不阻断导入）。
  */
 async function resolveAssetViaList(
   rowId: string,
   input: SeedanceAssetImportInput,
   creds: SeedanceAssetCredentials,
+  backoffMs: readonly number[] = ASSET_RESOLVE_BACKOFF_MS,
 ): Promise<SeedanceAssetItem | null> {
   // list 的 kind 过滤项没有裸 'image'——图片按 imageCategory 过滤,缺省不过滤。
   const kind: SeedanceAssetKindFilter | undefined =
     input.kind === 'image' ? input.imageCategory : input.kind
-  try {
-    const { items } = await listSeedanceAssets(
-      { page: 1, pageSize: 50, ...(kind ? { kind } : {}) },
-      creds,
-    )
-    const usable = (it: SeedanceAssetItem): boolean =>
-      typeof it.assetId === 'string' && !!it.assetId && it.assetId !== rowId
-    const hit =
-      items.find((it) => it.id === rowId && usable(it)) ??
-      (input.name ? items.find((it) => it.name === input.name && usable(it)) : undefined)
-    if (hit) {
-      return { ...hit, assetUrl: hit.assetUrl || `asset://${hit.assetId}` }
+  const usable = (it: SeedanceAssetItem): boolean =>
+    typeof it.assetId === 'string' && !!it.assetId && it.assetId !== rowId
+  for (const delay of backoffMs) {
+    await sleep(delay)
+    try {
+      const { items } = await listSeedanceAssets(
+        { page: 1, pageSize: 50, ...(kind ? { kind } : {}) },
+        creds,
+      )
+      const hit =
+        items.find((it) => it.id === rowId && usable(it)) ??
+        (input.name ? items.find((it) => it.name === input.name && usable(it)) : undefined)
+      if (hit) {
+        return { ...hit, assetUrl: hit.assetUrl || `asset://${hit.assetId}` }
+      }
+    } catch (e) {
+      // 单次 list 失败不终止轮询:上游导入后短暂 5xx 也见过,下一拍可能就好了。
+      console.warn('[seedance/assets] import 后 list 二次解析 assetId 失败(将重试):', e)
     }
-  } catch (e) {
-    console.warn('[seedance/assets] import 后 list 二次解析 assetId 失败(保留 id 兜底):', e)
   }
   return null
+}
+
+export interface SeedanceAssetImportOptions {
+  /** 二次解析的重试节奏。仅测试需要覆盖(生产用默认,见 ASSET_RESOLVE_BACKOFF_MS)。 */
+  resolveBackoffMs?: readonly number[]
 }
 
 /** 导入素材（图片默认走人像分类由调用方决定）。内容重复时上游直接返回已有记录。 */
 export async function importSeedanceAsset(
   input: SeedanceAssetImportInput,
   creds: SeedanceAssetCredentials,
+  options?: SeedanceAssetImportOptions,
 ): Promise<SeedanceAssetImportResult> {
   const result = await assetRequest<{ duplicated?: boolean; data?: { duplicated?: boolean } }>(
     'POST',
@@ -202,7 +228,12 @@ export async function importSeedanceAsset(
   // 兜底出的 dla-xxx 行 id 不是可引用的 assetId(直接引用会 400
   // LOCAL_ASSET_NOT_FOUND)——追加 list 找同 id/同 name 条目换成真 assetId/assetUrl。
   if (extracted.viaIdFallback) {
-    const resolved = await resolveAssetViaList(asset.assetId, input, creds)
+    const resolved = await resolveAssetViaList(
+      asset.assetId,
+      input,
+      creds,
+      options?.resolveBackoffMs ?? ASSET_RESOLVE_BACKOFF_MS,
+    )
     if (resolved) {
       asset = resolved
       referenceable = true
@@ -232,6 +263,33 @@ function normalizeListedAsset(item: SeedanceAssetItem): SeedanceAssetItem {
   const assetId = directId || (typeof a.id === 'string' && a.id ? a.id : null)
   if (!assetId) return item
   return { ...item, assetId, assetUrl: rawUrl || `asset://${assetId}` }
+}
+
+/**
+ * 上游没给预览图的条目,用导入时自留的地址(overlay `thumbUrl`)填进 `previewUrl`。
+ *
+ * 背景(2026-08-03 实测):上游只对**带字节**导入(data: URL)生成 previewUrl;
+ * 走远程 URL 导入的它不下载,`sizeBytes` 恒 0、`previewUrl` 恒 null。而 >512KB
+ * 必须走 COS(否则 `400 url is too long`),所以人像库里的大图永远拿不到上游预览。
+ *
+ * 收在这一层而不是各渲染表面:人像库页、工作台素材选择器、agent 列表都消费同一个
+ * 出口,让它们各自知道这件事是三份重复知识,漏一个就是一处空白网格。
+ * 上游给了就用上游的 —— 它那份是自家 CDN 地址,比我们的 COS 更该优先。
+ */
+export function withLocalThumbs(
+  result: SeedanceAssetListResult,
+  entries: Record<string, { thumbUrl?: string }>,
+): SeedanceAssetListResult {
+  if (!entries || Object.keys(entries).length === 0) return result
+  return {
+    ...result,
+    items: result.items.map((item) => {
+      if (item.previewUrl || item.sourceUrl) return item
+      // 行 id 与 assetId 两个键都查:导入异步,登记那刻可能只有行 id。
+      const thumbUrl = entries[item.assetId]?.thumbUrl ?? entries[item.id]?.thumbUrl
+      return thumbUrl ? { ...item, previewUrl: thumbUrl } : item
+    }),
+  }
 }
 
 /** 拉取素材列表（默认人像分类由调用方传 kind）。 */
