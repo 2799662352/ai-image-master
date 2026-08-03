@@ -401,6 +401,89 @@ describe('AgentToolExecutor.generateImage', () => {
       expect(sent.referenceImages).toEqual(['data:image/png;base64,ZZZ', 'https://example.com/x.png'])
     })
 
+    // 参考图的**位置有语义**:提示词里的「图1 / 图2」按 referenceImages 的下标
+    // 对应(Seedream 多图融合尤其依赖这个)。所以这个数组的长度和次序必须与
+    // 调用方传进来的完全一致 —— 少一个、换个位,后面所有编号全错,而画面看起来
+    // 「像那么回事」,不会有任何报错提示你。
+    describe('位置不变量:长度与次序必须与入参一致', () => {
+      function setAttachmentsWithRelay(
+        readThumb: ReturnType<typeof vi.fn>,
+        resolveRefImage: ReturnType<typeof vi.fn>,
+      ) {
+        ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
+          attachments: { readThumb, resolveRefImage },
+        }
+      }
+
+      it('中间一张读不出来时抛错,而不是静默返回少一个的数组', async () => {
+        // 三张里第二张两条路都失败:relay 挂 + 内联也读不出。
+        const resolveRefImage = vi.fn(async (p: string) =>
+          p.includes('bad') ? { ok: false, reason: 'not whitelisted' } : { ok: true, url: `https://bucket/${p}` },
+        )
+        const readThumb = vi.fn(async (p: string) =>
+          p.includes('bad') ? { ok: false, reason: 'ENOENT' } : { ok: true, base64: 'QUJD', mime: 'image/png' },
+        )
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+        registerFakes(api, makeHistory())
+
+        await expect(
+          callGenerate({
+            prompt: '图1 的人穿 图2 的衣服,背景用 图3',
+            referenceImages: ['C:/a/good1.png', 'C:/a/bad2.png', 'C:/a/good3.png'],
+          }),
+        ).rejects.toThrow(/bad2/)
+
+        // 关键:绝不能带着 [good1, good3] 继续 —— 那会让「图2」指向 good3。
+        expect(api.generateImage).not.toHaveBeenCalled()
+      })
+
+      it('重复路径原样解析两次,不去重也不塌缩长度', async () => {
+        const resolveRefImage = vi.fn(async (p: string) => ({ ok: true, url: `https://bucket/${p}` }))
+        const readThumb = vi.fn()
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+        registerFakes(api, makeHistory())
+
+        await callGenerate({
+          prompt: '图1 与 图3 是同一个人,图2 是场景',
+          referenceImages: ['C:/a/hero.png', 'C:/a/room.png', 'C:/a/hero.png'],
+        })
+
+        const sent = api.generateImage.mock.calls[0][0]
+        expect(sent.referenceImages).toEqual([
+          'https://bucket/C:/a/hero.png',
+          'https://bucket/C:/a/room.png',
+          'https://bucket/C:/a/hero.png',
+        ])
+        // 每一次生图都是全新任务:三个下标就是三次解析,不做任何折叠。
+        expect(resolveRefImage).toHaveBeenCalledTimes(3)
+      })
+
+      it('大小写/斜杠不同的同一路径也各自解析,各自占一个位置', async () => {
+        const resolveRefImage = vi.fn(async (p: string) => ({ ok: true, url: `https://bucket/${p}` }))
+        const readThumb = vi.fn()
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+        registerFakes(api, makeHistory())
+
+        await callGenerate({
+          prompt: 'x',
+          referenceImages: ['C:\\A\\Hero.PNG', 'C:/a/room.png', 'c:/a/hero.png'],
+        })
+
+        const sent = api.generateImage.mock.calls[0][0]
+        expect(sent.referenceImages).toHaveLength(3)
+        expect(resolveRefImage).toHaveBeenCalledTimes(3)
+        // 传进去什么就解析什么,不做大小写归一后的折叠。
+        expect(resolveRefImage.mock.calls.map((c) => c[0])).toEqual([
+          'C:\\A\\Hero.PNG',
+          'C:/a/room.png',
+          'c:/a/hero.png',
+        ])
+      })
+    })
+
     // MCP 参考图与界面上传同口径:URL 渠道一律换 COS URL(见 utils/refImageUpload
     // 「原图直传云端,不压缩」),只有 nano/gemini 这类 inlineRefImageAsBase64 渠道
     // 才留 base64。此前一律内联,几 MB 的图会把请求体撑爆并触发上游

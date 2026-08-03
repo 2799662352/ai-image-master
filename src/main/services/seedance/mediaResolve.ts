@@ -115,40 +115,60 @@ export interface ResolveMediaOptions {
    * 只影响「要不要中转」,不影响「中转挂了怎么办」:失败后仍按原策略降级内联。
    */
   alwaysRelay?: boolean
+  /**
+   * 跳过中转结果缓存,每次都真传一份新的。
+   *
+   * 给**图片生成的参考图**用:每一次生图都是一次全新任务,同一张图在两次生成里
+   * 应各自拿到独立的 URL。复用同一个 URL 有个具体的坏处 —— 同一张图在一次调用里
+   * 出现两次(「图1 与 图3 是同一个人」)时,两个下标指向同一个地址,上游有可能按
+   * 地址折叠成一个参考,后面的编号就全体前移了。
+   *
+   * 视频那边不传这个:工作台一板卡片共用同一套角色锚点是常态,缓存正是为那个
+   * 场景加的。
+   */
+  noCache?: boolean
 }
 
 /**
- * **正在中转中**的本地文件 → 该次上传的 promise。合并同一瞬间的重复请求。
+ * 已中转过的本地文件 → COS URL。进程内,不持久化。
  *
- * 解决的是这个:工作台 `startCards` 一次把所有卡片放出去,同一张角色参考图挂在
- * 10 张卡上就会在同一时刻发起 10 次上传,各自 `randomBytes` 生成 key、各传一份。
- * 上游素材接口自己按内容去重(重复导入直接返回已有记录),救不了已经花掉的上传。
- *
- * **这不是缓存,是合并。** 条目在上传 settle 的那一刻就删掉(见 `finally`),
- * 不保留任何「上次传过」的记忆:
- *   - 不会返回一个可能已被 COS 生命周期清掉的旧 URL(上游取素材会报 502
- *     「远程素材 URL 已失效」);
- *   - 用户在外部改了图、工具却保留了 mtime 与体积时,不会拿到旧图。
- * 代价是跨时间的重复仍会重传 —— 那种情况下重传本来也说得过去,而并发那一档
- * (真正会打爆 COS 的那一档)已经收住了。
+ * 解决的是这个:同一张角色参考图挂在工作台的 10 张卡上,今天会被上传 10 次拿到
+ * 10 个不同的 URL —— `relayKey` 每次调用都 `randomBytes` 生成新 key,上游素材接口
+ * 那边的内容去重(重复导入直接返回已有记录)救不了已经花掉的上传。
  *
  * **键为什么是「路径 + 体积 + mtime」**:内容哈希要把整个文件读一遍,对 2GB 视频
- * 而言比上传本身还贵。体积 + mtime 是文件系统现成的,足以判定「还是不是同一份」。
+ * 而言比上传本身还贵。体积 + mtime 是文件系统现成的,组合起来足以判定「还是不是
+ * 上次那份」。理论盲区是「同一毫秒内改成同样大小」,用户手动换参考图碰不到。
+ *
+ * **只缓存中转结果,不缓存内联结果**:内联结果就是整个文件的 base64,缓存它等于
+ * 把文件常驻内存。中转结果只是一个 URL 字符串。
+ *
+ * **不持久化**:COS 对象若被生命周期规则清掉,上游取素材会返回 502
+ * (「远程素材 URL 已失效」)。进程内缓存的存活窗口短到不用担心这件事;跨会话复用
+ * 需要先把桶的生命周期配置确认清楚,那是另一件事。
  */
+const relayedUrlCache = new Map<string, string>()
+/** 同一个键正在中转中的调用共享同一个 promise,避免并发时各传一份。 */
 const relayInFlight = new Map<string, Promise<string>>()
 
-function relayInFlightKey(absolutePath: string, bytes: number, mtimeMs: number): string {
+function relayCacheKey(
+  absolutePath: string,
+  bytes: number,
+  mtimeMs: number,
+  alwaysRelay: boolean,
+): string {
   // Windows 路径大小写不敏感,`C:\Refs\a.png` 与 `c:/refs/a.png` 是同一个文件。
   const normalized =
-    process.platform === 'win32' ? absolutePath.replaceAll('\\', '/').toLowerCase() : absolutePath
-  // 不带 alwaysRelay:能走到算键这一步的必然要中转(内联在上面已经 early return),
-  // 此时该开关不再区分行为。带上它反而会让同一张大图在图片入口(alwaysRelay)与
-  // 视频入口(超阈值)之间白白各传一次。
-  return `${normalized}|${bytes}|${mtimeMs}`
+    process.platform === 'win32'
+      ? absolutePath.replaceAll('\\', '/').toLowerCase()
+      : absolutePath
+  // alwaysRelay 必须进键:同一个小文件,开关不同时返回形态就不同(内联 vs COS URL)。
+  return `${alwaysRelay ? 'relay' : 'auto'}|${normalized}|${bytes}|${mtimeMs}`
 }
 
 /** Exposed for tests; do not call from production code. */
-export function __resetMediaResolveInFlightForTests(): void {
+export function __resetMediaResolveCacheForTests(): void {
+  relayedUrlCache.clear()
   relayInFlight.clear()
 }
 
@@ -197,17 +217,30 @@ export async function resolveMediaUrl(
     `data:${mime};base64,${(await fs.readFile(trimmed)).toString('base64')}`
   if (!alwaysRelay && bytes <= MAX_INLINE_FILE_BYTES) return inline()
 
-  const key = relayInFlightKey(path.resolve(trimmed), bytes, mtimeMs)
+  if (options?.noCache === true) {
+    return relayOrInline(
+      { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
+      label,
+    )
+  }
+
+  const key = relayCacheKey(path.resolve(trimmed), bytes, mtimeMs, alwaysRelay)
+  const cached = relayedUrlCache.get(key)
+  if (cached) return cached
   const inFlight = relayInFlight.get(key)
   if (inFlight) return inFlight
 
-  const pending = relayOrInline(
-    { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
-    label,
-  ).finally(() => {
-    // settle 即删。不留记忆 —— 这里合并的是「同一瞬间的重复」,不是「上次的结果」。
-    relayInFlight.delete(key)
-  })
+  // 只把**中转成功**的结果留在缓存里。降级内联的返回值是整个文件的 base64,
+  // 缓存它等于把文件常驻内存;而且下一次中转可能已经恢复,不该被上次的失败钉死。
+  const pending = (async () => {
+    const relayed = await relayFileToCos(trimmed, mime, { fileSize: bytes })
+    relayedUrlCache.set(key, relayed)
+    return relayed
+  })()
+    .catch(async (e) => relayOrInline({ bytes, relay: () => Promise.reject(e), inline }, label))
+    .finally(() => {
+      relayInFlight.delete(key)
+    })
 
   relayInFlight.set(key, pending)
   return pending
