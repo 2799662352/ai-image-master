@@ -117,6 +117,49 @@ export interface ResolveMediaOptions {
   alwaysRelay?: boolean
 }
 
+/**
+ * 已中转过的本地文件 → COS URL。进程内,不持久化。
+ *
+ * 解决的是这个:同一张角色参考图挂在工作台的 10 张卡上,今天会被上传 10 次拿到
+ * 10 个不同的 URL —— `relayKey` 每次调用都 `randomBytes` 生成新 key,上游素材接口
+ * 那边的内容去重(重复导入直接返回已有记录)救不了已经花掉的上传。
+ *
+ * **键为什么是「路径 + 体积 + mtime」**:内容哈希要把整个文件读一遍,对 2GB 视频
+ * 而言比上传本身还贵。体积 + mtime 是文件系统现成的,组合起来足以判定「还是不是
+ * 上次那份」。理论盲区是「同一毫秒内改成同样大小」,用户手动换参考图碰不到。
+ *
+ * **只缓存中转结果,不缓存内联结果**:内联结果就是整个文件的 base64,缓存它等于
+ * 把文件常驻内存。中转结果只是一个 URL 字符串。
+ *
+ * **不持久化**:COS 对象若被生命周期规则清掉,上游取素材会返回 502
+ * (「远程素材 URL 已失效」)。进程内缓存的存活窗口短到不用担心这件事;跨会话复用
+ * 需要先把桶的生命周期配置确认清楚,那是另一件事。
+ */
+const relayedUrlCache = new Map<string, string>()
+/** 同一个键正在中转中的调用共享同一个 promise,避免并发时各传一份。 */
+const relayInFlight = new Map<string, Promise<string>>()
+
+function relayCacheKey(
+  absolutePath: string,
+  bytes: number,
+  mtimeMs: number,
+  alwaysRelay: boolean,
+): string {
+  // Windows 路径大小写不敏感,`C:\Refs\a.png` 与 `c:/refs/a.png` 是同一个文件。
+  const normalized =
+    process.platform === 'win32'
+      ? absolutePath.replaceAll('\\', '/').toLowerCase()
+      : absolutePath
+  // alwaysRelay 必须进键:同一个小文件,开关不同时返回形态就不同(内联 vs COS URL)。
+  return `${alwaysRelay ? 'relay' : 'auto'}|${normalized}|${bytes}|${mtimeMs}`
+}
+
+/** Exposed for tests; do not call from production code. */
+export function __resetMediaResolveCacheForTests(): void {
+  relayedUrlCache.clear()
+  relayInFlight.clear()
+}
+
 export async function resolveMediaUrl(
   src: string,
   label: string,
@@ -141,11 +184,13 @@ export async function resolveMediaUrl(
   }
 
   let bytes: number
+  let mtimeMs: number
   try {
-    // stat 而非 readFile:大文件走流式上传,这里只需要体积。
+    // stat 而非 readFile:大文件走流式上传,这里只需要体积(顺带拿去重用的 mtime)。
     const stat = await fs.stat(trimmed)
     if (!stat.isFile()) throw new Error('not a regular file')
     bytes = stat.size
+    mtimeMs = typeof stat.mtimeMs === 'number' ? stat.mtimeMs : 0
   } catch {
     throw new Error(
       `${label}: cannot read local file "${trimmed}" — pass an existing path, data: URL, or https URL.`,
@@ -159,8 +204,25 @@ export async function resolveMediaUrl(
   const inline = async (): Promise<string> =>
     `data:${mime};base64,${(await fs.readFile(trimmed)).toString('base64')}`
   if (!alwaysRelay && bytes <= MAX_INLINE_FILE_BYTES) return inline()
-  return relayOrInline(
-    { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
-    label,
-  )
+
+  const key = relayCacheKey(path.resolve(trimmed), bytes, mtimeMs, alwaysRelay)
+  const cached = relayedUrlCache.get(key)
+  if (cached) return cached
+  const inFlight = relayInFlight.get(key)
+  if (inFlight) return inFlight
+
+  // 只把**中转成功**的结果留在缓存里。降级内联的返回值是整个文件的 base64,
+  // 缓存它等于把文件常驻内存;而且下一次中转可能已经恢复,不该被上次的失败钉死。
+  const pending = (async () => {
+    const relayed = await relayFileToCos(trimmed, mime, { fileSize: bytes })
+    relayedUrlCache.set(key, relayed)
+    return relayed
+  })()
+    .catch(async (e) => relayOrInline({ bytes, relay: () => Promise.reject(e), inline }, label))
+    .finally(() => {
+      relayInFlight.delete(key)
+    })
+
+  relayInFlight.set(key, pending)
+  return pending
 }

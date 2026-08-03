@@ -36,12 +36,16 @@ function fileOfBytes(bytes: number) {
   readFile.mockResolvedValue(Buffer.from('fake-bytes'))
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   relayDataUrlToCos.mockReset()
   relayFileToCos.mockReset()
   stat.mockReset()
   readFile.mockReset()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
+  // 中转结果的去重缓存是模块级的:不清就会跨用例串味 —— 前一条用例缓存的 URL
+  // 会让后一条「中转失败该降级内联」的用例直接命中缓存,永远走不到失败路径。
+  const { __resetMediaResolveCacheForTests } = await import('../mediaResolve')
+  __resetMediaResolveCacheForTests()
 })
 
 afterEach(() => {
