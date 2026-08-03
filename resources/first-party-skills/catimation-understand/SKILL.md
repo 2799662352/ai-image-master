@@ -101,17 +101,23 @@ live web results. Prefer this over guessing from stale memory; cite what you use
 MP4(`ffmpeg -i in.mp3 -f lavfi -i color=c=black:s=640x360 -shortest -c:v libx264 out.mp4`),
 再用 qwen `understand_video` 传该 MP4 `video_path`——并说明这是次选兜底,效果不如 apiyi 的 Gemini。
 
-## Path B — delegate to a qwen subagent (only when explicitly asked)
+## Path B — delegate to a qwen subagent
 
 For heavy/parallel/independent understanding jobs (e.g. "分头读这三份文档并汇总",
-"开个子代理去查资料"), and ONLY when the user explicitly asks for delegation or
-parallel work, spawn a subagent **pinned to the qwen provider**:
+"开个子代理去查资料"), spawn a subagent **pinned to the qwen provider**:
 `modelProvider="qwen"`, `model="qwen3.7-max-dashscope"`. The subagent does the
 understanding/research and reports a distilled result; you synthesize.
 
-Discipline: do NOT spawn subagents just because a task could be split — user
-intent controls it. If the Miau token is not configured, the qwen provider is
-unavailable; fall back to calling the three tools directly and tell the user.
+**先想清楚要不要子代理。** 上面那三个工具本来就返回文本、可以在同一轮里并发发多个
+调用 —— 只要一个结论,那条路更便宜(没有子代理的启动成本)。子代理留给「看完还要
+接着干活」:需要独立的工具权限和推理预算,而不只是一个答案。判据、并发上限与旁挂
+落盘规范见 catimation-subagents。
+
+派活时**交接要写全**:子代理看不到你的对话历史,必须带上绝对路径、判据、产物写到
+哪、以什么格式回话。少一样它就得靠猜。
+
+If the Miau token is not configured, the qwen provider is unavailable; fall back
+to calling the three tools directly and tell the user.
 
 ## Boundaries
 

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   CATIMATION_IMAGE_SKILL,
   CATIMATION_BRAINSTORM_SKILL,
+  CATIMATION_SUBAGENTS_SKILL,
   CATIMATION_UNDERSTAND_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
   FIRST_PARTY_SKILLS,
@@ -206,38 +207,41 @@ describe('installFirstPartySkills', () => {
     expect(mine).toBe(skillV1.content)
   })
 
+  // 样板用 `mediakit-cli` —— 它是 RETIRED_FIRST_PARTY_SKILL_NAMES 里现存的唯一一个。
+  // 这两条曾经用 `catimation-subagents` 当样板,而它在 2026-08-03 被复活成正式首方
+  // skill(看图不烧上下文的委派纪律),留在这儿会让「退休机制」测到一个没退休的名字。
   it('removes retired app-managed first-party skills', async () => {
     const officialRoot = await makeTempRoot()
     const retired = {
-      name: 'catimation-subagents',
-      content: '---\nname: catimation-subagents\ndescription: retired.\n---\n\nbody\n',
+      name: 'mediakit-cli',
+      content: '---\nname: mediakit-cli\ndescription: retired.\n---\n\nbody\n',
     }
     await installFirstPartySkills({ officialRoot, skills: [retired] })
 
     const report = await installFirstPartySkills({ officialRoot, skills: [skillV1] })
 
-    expect(report.removed).toEqual(['catimation-subagents'])
-    await expect(readFile(path.join(officialRoot, 'catimation-subagents', 'SKILL.md'), 'utf8')).rejects.toThrow()
+    expect(report.removed).toEqual(['mediakit-cli'])
+    await expect(readFile(path.join(officialRoot, 'mediakit-cli', 'SKILL.md'), 'utf8')).rejects.toThrow()
   })
 
   it('preserves retired first-party skills if the user edited them', async () => {
     const officialRoot = await makeTempRoot()
     const retired = {
-      name: 'catimation-subagents',
-      content: '---\nname: catimation-subagents\ndescription: retired.\n---\n\nbody\n',
+      name: 'mediakit-cli',
+      content: '---\nname: mediakit-cli\ndescription: retired.\n---\n\nbody\n',
     }
     await installFirstPartySkills({ officialRoot, skills: [retired] })
     await writeFile(
-      path.join(officialRoot, 'catimation-subagents', 'SKILL.md'),
-      '---\nname: catimation-subagents\ndescription: user copy.\n---\n\nmanual\n',
+      path.join(officialRoot, 'mediakit-cli', 'SKILL.md'),
+      '---\nname: mediakit-cli\ndescription: user copy.\n---\n\nmanual\n',
       'utf8',
     )
 
     const report = await installFirstPartySkills({ officialRoot, skills: [skillV1] })
 
     expect(report.removed).toEqual([])
-    expect(report.preserved).toContain('catimation-subagents')
-    const written = await readFile(path.join(officialRoot, 'catimation-subagents', 'SKILL.md'), 'utf8')
+    expect(report.preserved).toContain('mediakit-cli')
+    const written = await readFile(path.join(officialRoot, 'mediakit-cli', 'SKILL.md'), 'utf8')
     expect(written).toContain('manual')
   })
 
@@ -264,12 +268,55 @@ describe('installFirstPartySkills', () => {
       const officialRoot = await makeTempRoot()
       const report = await installFirstPartySkills({ officialRoot })
       expect(report.installed).toContain(CATIMATION_IMAGE_SKILL.name)
-      expect(report.installed).not.toContain('catimation-subagents')
+      expect(report.installed).not.toContain('mediakit-cli')
       const written = await readFile(
         path.join(officialRoot, CATIMATION_IMAGE_SKILL.name, 'SKILL.md'),
         'utf8',
       )
       expect(written).toBe(CATIMATION_IMAGE_SKILL.content)
+    })
+  })
+
+  describe('CATIMATION_SUBAGENTS_SKILL', () => {
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(CATIMATION_SUBAGENTS_SKILL)
+      expect(CATIMATION_SUBAGENTS_SKILL.name).toBe('catimation-subagents')
+      expect(CATIMATION_SUBAGENTS_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(CATIMATION_SUBAGENTS_SKILL.content).toMatch(/\nname:\s*catimation-subagents/)
+    })
+
+    // 它在 2026-07-10 的减法重构里被退休过,这次复活。断言的是「装得上」——
+    // 至于名字有没有留在 RETIRED_FIRST_PARTY_SKILL_NAMES 里,安装器那边
+    // `if (activeNames.has(name)) continue` 已经让活跃清单优先,同时出现在两处
+    // 不会被删。所以这里不写「不在退休名单里」那种断言:它恒真,测不出东西。
+    it('installs into a fresh root (revived from retirement)', async () => {
+      const officialRoot = await makeTempRoot()
+      const report = await installFirstPartySkills({ officialRoot })
+      expect(report.installed).toContain('catimation-subagents')
+      const written = await readFile(
+        path.join(officialRoot, 'catimation-subagents', 'SKILL.md'),
+        'utf8',
+      )
+      expect(written).toBe(CATIMATION_SUBAGENTS_SKILL.content)
+    })
+
+    it('keeps the always-injected description concise (progressive disclosure)', () => {
+      const desc = frontmatterDescription(CATIMATION_SUBAGENTS_SKILL.content)
+      expect(desc.length).toBeGreaterThan(0)
+      expect(desc.length).toBeLessThanOrEqual(500)
+    })
+
+    // 三条内容不变量,对应它存在的理由。
+    it('states the 5-image ceiling, the qwen MCP path, and the sidecar contract', () => {
+      const c = CATIMATION_SUBAGENTS_SKILL.content
+      // 主 agent 直接看图的硬上限。
+      expect(c).toMatch(/view_image/)
+      expect(c).toMatch(/上限是 5 张/)
+      // 路 A:并发 MCP 理解,图不进主上下文。understand_document 才是看图那条路。
+      expect(c).toContain('understand_document')
+      // 旁挂落盘:两份文件,和图同目录。
+      expect(c).toContain('.vision.json')
+      expect(c).toContain('.vision.md')
     })
   })
 

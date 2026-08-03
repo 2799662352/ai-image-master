@@ -235,6 +235,45 @@ test('enforces fast, standard, pro, and studio dependency budgets', () => {
   assert.ok(budgetCodes.includes('BUDGET_STUDIO_OWNER'))
 })
 
+// 入口走独立上限(10),不跟 pro 走。历史上 pro 被从 5 抬到 6 再到 7,三次全是被入口
+// 顶上去的,每抬一次都顺带放宽了真正该被约束的叶子 —— 分档就是为了止住这个棘轮。
+test('generation entries get their own fanout ceiling, separate from pro', () => {
+  const helpers = Array.from({ length: 12 }, (_, i) => `h${i}`)
+  const refs = helpers.map((n) => `\`${n}\``).join(', ')
+  const skillFiles = (count) => [
+    {
+      path: 'skills/catimation-image/SKILL.md',
+      content: skill(
+        'catimation-image',
+        'Image entry.',
+        `Use ${helpers.slice(0, count).map((n) => `\`${n}\``).join(', ')}.`,
+        'pro',
+      ),
+    },
+    ...helpers.map((name) => ({
+      path: `skills/${name}/SKILL.md`,
+      content: skill(name, `Helper ${name}.`),
+    })),
+  ]
+  const fanoutCodes = (count) =>
+    validateArchitecture({
+      skills: skillFiles(count),
+      hooks: [],
+      firstParty: { sourceExists: true, generatedExists: true, sourceSkills: [], generatedSkills: [] },
+    })
+      .filter((item) => item.code === 'BUDGET_FANOUT_EXCEEDED')
+      .map((item) => item.message)
+
+  // 9 条边:pro(7)会拦,入口档(10)不拦 —— 证明走的是入口那条分支。
+  assert.equal(fanoutCodes(9).length, 0)
+  // 11 条边:超过入口档,必须报,且标签是 entry 而不是 budget pro。
+  const over = fanoutCodes(11)
+  assert.equal(over.length, 1)
+  assert.match(over[0], /\(entry\) references 11 skills \(max 10\)/)
+  assert.doesNotMatch(over[0], /budget pro/)
+  assert.ok(refs.length > 0)
+})
+
 test('reports missing first-party source/generated inputs and content parity drift', () => {
   const sourceContent = skill('catimation-image', 'Source copy.')
   const missing = validateArchitecture({
