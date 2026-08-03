@@ -53,6 +53,17 @@ image_gen skill: they render inside the chat AND persist results to local files
 外貌导致微漂移、想省 token 时,再按需看 director-structured-captioning
 (HoloCine 结构,用 `[char1]` 标签引用而不重描外貌)。
 
+**跨任务一致性靠人像库,不靠记忆(第三个例外):** 角色链解决的是「这一批图里不漂」;
+**「下次、下个会话、下个项目还是同一个人」要靠 `catimation-portrait-library`**——
+自动加载,同样不需用户点名。上面提出来的 Face / Build / Outfit / Markers 锚点,
+以及用户选定的主锚图,**出完图就 `add_to_portrait_library` 存成 `asset://assetId`**;
+下次要同一个人时 `list_portrait_library` 找回同一个 asset 再传进 `referenceImages`,
+而不是凭聊天记录重新描述一遍。
+
+判据很简单:**这个角色会不会再出现第二次?** 会 → 存库并用 `asset://` 引用。
+用户说「还是上次那个人」「用之前那个角色」时,先查库,查不到再问,别自己重画一个。
+一次性的路人、不会复用的配角不必入库。
+
 | 模式 | 典型请求 | 自选技法预算 | 默认动作 |
 |---|---|---|---|
 | **快速** | 一次性配图、图标、简单插画、明确的单图请求 | **0 个** —— 入口 + 底座就够 | 按七字段写 prompt 生成,四项验收自检 |
@@ -60,7 +71,8 @@ image_gen skill: they render inside the chat AND persist results to local files
 | **专业** | 复杂构图与光影、系列一致性、参考复刻、角色锚点 | **3–4 个对症技法**,另必载 `director-orchestrator` | 13 维按需展开 |
 | **制片** | 电影/分镜项目的角色卡、场景卡、逐镜出图 | 按 `film-studio` 阶段加载 | 过资产门,锚点逐字下传 |
 
-> **底座不占技法名额。** `director-prompt-engineering`(有图片任务就载)与角色链
+> **底座不占技法名额。** `director-prompt-engineering`(有图片任务就载)、
+> `catimation-portrait-library`(角色会复用就载)与角色链
 > (画面里有需要复用的人就载)是自动触发的底座,不是「对症技法」;上表限的是自选
 > 技法数量。一张带人物的标准图同时载入底座 + 角色链 + 2 个技法是正常的,不算超预算。
 
@@ -140,10 +152,14 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
      自检。用户看不到工具调用——先闷头质检再回话,在用户眼里就是「卡死」
      (2026-07-14 实录教训)。
    - **QA 要出声**:决定自检时,先对用户说一句「正在快速质检…」之类,再开始。
-   - **看图上限**(上下文保护,与工具 banner 一致):单图最多 `view_image` 那 1 张;
-     组图/批量看**代表性 1 张**(最多 2 张),绝不批量全看——批量 view_image 会注入
-     数 MB base64 直接撑爆线程(2026-06-11 实录)。快速模式若画面简单、无人物,
-     可以只核对 DONE banner 不看图。
+   - **看图上限**(上下文保护,与工具 banner 一致):主 agent 直接 `view_image` 最多
+     **5 张**——再多会注入数 MB base64 直接撑爆线程(2026-06-11 实录)。快速模式若
+     画面简单、无人物,可以只核对 DONE banner 不看图。
+   - **超过 5 张别放弃看,改走 catimation-subagents**:并发调 `understand_document`
+     (它就是看图那条路,走 qwen 返回**文本**,图不进主上下文),结论落成
+     `<图名>.vision.json` / `.md` 旁挂在图旁边,下次直接读文本不重看。组图/系列这样
+     能张张都看,而不是「看代表性几张然后猜其余」——那是拿信息换预算。看完还要接着
+     改提示词重生成时才升级到子代理。
    然后过一遍**四项验收清单**:
    - **① 符合用户要求**:主体 / 数量 / 画幅比例 / 文字内容 / 明确指定的元素是否都对上;
      用户给了 `referenceImages` 时是否真的体现了参考(而非从零另画)。

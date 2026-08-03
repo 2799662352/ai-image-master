@@ -7,6 +7,7 @@
 //   catimation-brainstorm <- resources/plugins/catimation-core/skills/catimation-brainstorm/SKILL.md
 //   catimation-canvas <- resources/first-party-skills/catimation-canvas/SKILL.md
 //   catimation-understand <- resources/first-party-skills/catimation-understand/SKILL.md
+//   catimation-subagents <- resources/first-party-skills/catimation-subagents/SKILL.md
 //   catimation-video-workbench <- resources/plugins/catimation-video/skills/catimation-video-workbench/SKILL.md
 //   ffmpeg-win <- resources/plugins/catimation-video/skills/ffmpeg-win/SKILL.md
 //   catimation-director-stage <- resources/first-party-skills/catimation-director-stage/SKILL.md
@@ -71,6 +72,17 @@ image_gen skill: they render inside the chat AND persist results to local files
 外貌导致微漂移、想省 token 时,再按需看 director-structured-captioning
 (HoloCine 结构,用 \`[char1]\` 标签引用而不重描外貌)。
 
+**跨任务一致性靠人像库,不靠记忆(第三个例外):** 角色链解决的是「这一批图里不漂」;
+**「下次、下个会话、下个项目还是同一个人」要靠 \`catimation-portrait-library\`**——
+自动加载,同样不需用户点名。上面提出来的 Face / Build / Outfit / Markers 锚点,
+以及用户选定的主锚图,**出完图就 \`add_to_portrait_library\` 存成 \`asset://assetId\`**;
+下次要同一个人时 \`list_portrait_library\` 找回同一个 asset 再传进 \`referenceImages\`,
+而不是凭聊天记录重新描述一遍。
+
+判据很简单:**这个角色会不会再出现第二次?** 会 → 存库并用 \`asset://\` 引用。
+用户说「还是上次那个人」「用之前那个角色」时,先查库,查不到再问,别自己重画一个。
+一次性的路人、不会复用的配角不必入库。
+
 | 模式 | 典型请求 | 自选技法预算 | 默认动作 |
 |---|---|---|---|
 | **快速** | 一次性配图、图标、简单插画、明确的单图请求 | **0 个** —— 入口 + 底座就够 | 按七字段写 prompt 生成,四项验收自检 |
@@ -78,7 +90,8 @@ image_gen skill: they render inside the chat AND persist results to local files
 | **专业** | 复杂构图与光影、系列一致性、参考复刻、角色锚点 | **3–4 个对症技法**,另必载 \`director-orchestrator\` | 13 维按需展开 |
 | **制片** | 电影/分镜项目的角色卡、场景卡、逐镜出图 | 按 \`film-studio\` 阶段加载 | 过资产门,锚点逐字下传 |
 
-> **底座不占技法名额。** \`director-prompt-engineering\`(有图片任务就载)与角色链
+> **底座不占技法名额。** \`director-prompt-engineering\`(有图片任务就载)、
+> \`catimation-portrait-library\`(角色会复用就载)与角色链
 > (画面里有需要复用的人就载)是自动触发的底座,不是「对症技法」;上表限的是自选
 > 技法数量。一张带人物的标准图同时载入底座 + 角色链 + 2 个技法是正常的,不算超预算。
 
@@ -158,10 +171,14 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      自检。用户看不到工具调用——先闷头质检再回话,在用户眼里就是「卡死」
      (2026-07-14 实录教训)。
    - **QA 要出声**:决定自检时,先对用户说一句「正在快速质检…」之类,再开始。
-   - **看图上限**(上下文保护,与工具 banner 一致):单图最多 \`view_image\` 那 1 张;
-     组图/批量看**代表性 1 张**(最多 2 张),绝不批量全看——批量 view_image 会注入
-     数 MB base64 直接撑爆线程(2026-06-11 实录)。快速模式若画面简单、无人物,
-     可以只核对 DONE banner 不看图。
+   - **看图上限**(上下文保护,与工具 banner 一致):主 agent 直接 \`view_image\` 最多
+     **5 张**——再多会注入数 MB base64 直接撑爆线程(2026-06-11 实录)。快速模式若
+     画面简单、无人物,可以只核对 DONE banner 不看图。
+   - **超过 5 张别放弃看,改走 catimation-subagents**:并发调 \`understand_document\`
+     (它就是看图那条路,走 qwen 返回**文本**,图不进主上下文),结论落成
+     \`<图名>.vision.json\` / \`.md\` 旁挂在图旁边,下次直接读文本不重看。组图/系列这样
+     能张张都看,而不是「看代表性几张然后猜其余」——那是拿信息换预算。看完还要接着
+     改提示词重生成时才升级到子代理。
    然后过一遍**四项验收清单**:
    - **① 符合用户要求**:主体 / 数量 / 画幅比例 / 文字内容 / 明确指定的元素是否都对上;
      用户给了 \`referenceImages\` 时是否真的体现了参考(而非从零另画)。
@@ -592,6 +609,13 @@ QA 发现问题需要重生成时,同样先告诉用户哪里不达标、准备�
 视觉美观 s_a、时间一致性 s_c(主体稳定/运动平滑/不闪烁)、物理合理 s_r、
 prompt 对齐,逐项判通过/不通过;**单帧崩坏一票否决**(最差帧原则),首帧从严。
 需要总分时 \`S(v) = 0.4·s_r + 0.3·s_c + 0.3·s_a\`。
+
+**多镜/整板不要挨张 \`view_image\`。** 主 agent 直接看图的上限是 5 张(宫格图算一张,
+它本来就是为「一张看完整段」拼的)。超过 5 张 —— 多镜、多张宫格、一板卡片的产物 ——
+走 catimation-subagents:
+并发调 \`understand_document\` 看图 / \`understand_video\` 看整段,回来的是文本;每镜的
+结论落成 \`<文件名>.vision.json\` / \`.md\` 旁挂在素材旁边,下次(或下个人)直接读文本。
+需要「看完顺手改提示词重生成」时才升级到子代理。
 
 触发了视觉+内容两级时,两面是同一次自检,别二选一。任一不达标 → 带**针对性**
 改进点重生成(补哪个技法的哪个字段,不是泛泛「优化一下」)。自动修正
@@ -1265,17 +1289,23 @@ live web results. Prefer this over guessing from stale memory; cite what you use
 MP4(\`ffmpeg -i in.mp3 -f lavfi -i color=c=black:s=640x360 -shortest -c:v libx264 out.mp4\`),
 再用 qwen \`understand_video\` 传该 MP4 \`video_path\`——并说明这是次选兜底,效果不如 apiyi 的 Gemini。
 
-## Path B — delegate to a qwen subagent (only when explicitly asked)
+## Path B — delegate to a qwen subagent
 
 For heavy/parallel/independent understanding jobs (e.g. "分头读这三份文档并汇总",
-"开个子代理去查资料"), and ONLY when the user explicitly asks for delegation or
-parallel work, spawn a subagent **pinned to the qwen provider**:
+"开个子代理去查资料"), spawn a subagent **pinned to the qwen provider**:
 \`modelProvider="qwen"\`, \`model="qwen3.7-max-dashscope"\`. The subagent does the
 understanding/research and reports a distilled result; you synthesize.
 
-Discipline: do NOT spawn subagents just because a task could be split — user
-intent controls it. If the Miau token is not configured, the qwen provider is
-unavailable; fall back to calling the three tools directly and tell the user.
+**先想清楚要不要子代理。** 上面那三个工具本来就返回文本、可以在同一轮里并发发多个
+调用 —— 只要一个结论,那条路更便宜(没有子代理的启动成本)。子代理留给「看完还要
+接着干活」:需要独立的工具权限和推理预算,而不只是一个答案。判据、并发上限与旁挂
+落盘规范见 catimation-subagents。
+
+派活时**交接要写全**:子代理看不到你的对话历史,必须带上绝对路径、判据、产物写到
+哪、以什么格式回话。少一样它就得靠猜。
+
+If the Miau token is not configured, the qwen provider is unavailable; fall back
+to calling the three tools directly and tell the user.
 
 ## Boundaries
 
@@ -1283,6 +1313,145 @@ unavailable; fall back to calling the three tools directly and tell the user.
   auto-uploaded to the history COS bucket first (≤200MB; larger → compress).
 - Documents: partial support; degrade to page-image or extracted-text + ask.
 - On a clean result, do NOT retry; just answer the user.
+`
+
+export const CATIMATION_SUBAGENTS_SKILL_CONTENT = `---
+name: catimation-subagents
+description: >-
+  Look at images and videos WITHOUT burning the main context, and delegate
+  batch work. Trigger when more than one image/frame/board needs looking at,
+  when a contact sheet or reference set must be judged, or when several
+  independent jobs could run side by side (多图分析 / 批量看图 / 分头去做 /
+  并行 / 委派 / 子代理). Media analysis lands as a \`.vision.json\` +
+  \`.vision.md\` sidecar next to the file, so the next session reads text
+  instead of re-opening pixels.
+---
+
+# 看图不烧上下文 · 委派与旁挂
+
+<!-- skill-budget: standard -->
+
+**一张图进主上下文的代价远高于它携带的信息。** 九宫格、参考图组、一板卡片的产物——
+挨个 \`view_image\` 会把主上下文塞满,后面所有推理都在一个被稀释的窗口里进行。
+
+解决办法不是「少看几张」(那是在用信息换预算),而是**让别人去看,把结论以文本带回来**,
+并且**把结论落在图片旁边**,下次直接读文本。
+
+## 硬上限:一次 5 张
+
+**主 agent 直接 \`view_image\` 的上限是 5 张。** 第 6 张起一律走下面两条路 —— 并发 MCP
+理解或子代理,拿文本回来,不再往主上下文里塞像素。
+
+这个数不是拍脑袋:五张之内还看得清彼此关系(参考图组、一组分镜的头几格),再多就只是
+在稀释后面每一步推理可用的窗口。
+
+例外(这些本来就不该看):
+
+- **自己刚生成的产物不看。** 用户已经在聊天里看着它了,再 \`view_image\` 一遍纯属浪费。
+  需要判断质量时走下面的路,拿文字结论。
+- 宫格图(contact sheet)算**一张**。它本来就是为「一张看完整段」拼的,别再拆开逐格看。
+
+## 两条路,按「看完还要不要干活」选
+
+### 路 A(默认):MCP 理解工具并发
+
+**超过 5 张、或看一眼就够只要一个结论时走这条。** 图不进主上下文,回来的是中文文本。
+
+| 素材 | 工具 | 说明 |
+|---|---|---|
+| **图片**(png/jpg/webp/gif/avif) | **\`understand_document\`** | ⚠️ 名字带 document,但**它就是看图那条路** —— 图片 mime 在它的白名单里。别被名字骗过去 |
+| 视频 | \`understand_video\` | 整段看,懂剧情/台词/连续性 |
+| 画布上的视频 | \`understand_canvas_video\` | 不用先找路径 |
+| PDF / 图文页 | \`understand_document\` | 上游对原生文档只有部分支持,**先渲成图**再传效果最好 |
+
+三件事让这条路便宜:
+
+1. **返回文本,不返回像素。** 主上下文只涨一段话。
+2. **同一轮可以并发发多个调用。** 九张图就是九个 \`understand_document\`,一起发出去。
+   这不是子代理,没有 \`agents.max_threads\` 的限制。
+3. **默认 \`qwen3.7-plus\`**(便宜)。硬骨头才传 \`model="max"\`;失败时渲染层会自动回退一次。
+
+**问题要问具体。** \`question\` 决定这次调用值不值:
+
+\`\`\`
+❌ "这张图怎么样"
+✅ "这张图里的人物:发型、上衣款式与颜色、下装、鞋、随身道具各是什么?
+    有没有多指/断肢/脸部崩坏/文字乱码?背景里有几个人在动?"
+\`\`\`
+
+问得含糊,拿回来的就是一段没法用的观感;问得具体,拿回来的直接能写进锚点或质检结论。
+
+### 路 B:子代理
+
+**看完还要接着干活时才用这条** —— 需要独立的工具权限和推理预算,而不只是一个答案。
+典型:「把这九张分镜逐张核对锚点,不符的直接改提示词并重生成」。
+
+- 上限 8 路并发(\`agents.max_threads=8\`),深度 1(子代理不能再开子代理)。
+- 理解类的重活可以把子代理钉到 qwen:\`modelProvider="qwen"\`,\`model="qwen3.7-max-dashscope"\`
+  (详见 catimation-understand 的 Path B;未配 Miau 令牌时该 provider 不可用)。
+- **交接要写全。** 子代理看不到你的对话历史。派活时必须带上:要看哪个文件的绝对路径、
+  判据是什么(锚点原文 / 质检四项 / 具体要找的穿帮)、产物写到哪、以什么格式回话。
+  少一样,它就得靠猜,你拿回来的东西没法直接用。
+- **别为了拆而拆。** 一张图、一个问题,用路 A;子代理的启动成本比一次 qwen 调用高得多。
+
+## 旁挂:结论落在图片旁边
+
+不管走哪条路,**分析结果都写成两份旁挂文件,和图同目录、同名前缀**:
+
+\`\`\`
+assets/video/S01_station_wide.png
+assets/video/S01_station_wide.png.vision.json    ← 给 agent 读
+assets/video/S01_station_wide.png.vision.md      ← 给人读
+\`\`\`
+
+这不是留档癖。它换来三件事:**下次不用重看**(省一次调用和一次上下文)、**跨会话可复用**
+(明天接着做的人直接读)、**可 diff**(改了参考图,旧结论一眼看出过期)。
+
+### \`.vision.json\` 字段
+
+\`\`\`json
+{
+  "source": "assets/video/S01_station_wide.png",
+  "analyzedAt": "2026-08-03T10:12:00Z",
+  "by": "understand_document/qwen3.7-plus",
+  "question": "本次问的问题原文",
+  "subjects": [
+    { "role": "主角", "face": "…", "build": "…", "outfit": "…", "markers": "…" }
+  ],
+  "composition": "景别 / 机位 / 前中后景",
+  "lighting": "主光方向 / 色温 / 软硬",
+  "palette": ["#…", "#…"],
+  "issues": ["左手六指", "背景文字乱码"],
+  "verdict": "pass | needs-fix | reject",
+  "notes": "自由文本补充"
+}
+\`\`\`
+
+用不到的字段直接省掉,**不要留空占位** —— 空字段会让下一个读它的人以为「看过了没问题」。
+\`subjects\` 只在画面里有人时才写;\`issues\` 为空数组表示看过且没发现问题,与「没看」不同。
+
+### \`.vision.md\`
+
+同一份内容的人读版:一段话讲清这张图是什么、一个列表列出问题、最后一行给 verdict。
+给人看的东西不要塞 JSON。
+
+### 复用规则
+
+动手看之前**先查旁挂文件**:存在、且 \`analyzedAt\` 晚于图片的 mtime → 直接读它,不重看。
+图比它新(重生成过)→ 旧结论作废,重看并覆盖。
+
+## 常见错误
+
+| 错误 | 纠正 |
+|---|---|
+| 挨个 \`view_image\` 九宫格里的每一格 | 宫格图本来就是为「一张看完整段」拼的,看那一张(算 1 张);要逐格判就走路 A 并发 |
+| 十几张卡的产物挨张 \`view_image\` | 超过 5 张就走路 A;主上下文只涨十几段文本,而不是十几张图 |
+| 用 \`view_image\` 开 MP4 | 开不了。先用 ffmpeg-win 抽帧拼宫格,或直接 \`understand_video\` |
+| 因为工具名叫 document 就不用它看图 | 它就是看图的路,图片 mime 在白名单里 |
+| 为了省预算只看代表性一张、其余靠猜 | 那是用信息换预算。走路 A,九张都看,主上下文只涨九段话 |
+| 派子代理却不给绝对路径和判据 | 它看不到你的历史,交接不全等于让它猜 |
+| 看完不落盘 | 下次(或下个人)得重看一遍,那次调用是白花的 |
+| 旁挂文件留一堆空字段 | 空字段读起来像「看过没问题」,比没有更糟 |
 `
 
 export const CATIMATION_VIDEO_WORKBENCH_SKILL_CONTENT = `---
@@ -1579,6 +1748,12 @@ Shot Card 里没有、需要你决定的:\`model\`(默认 \`2.0\`)、\`resolutio
 
 摘要只报成败与落盘路径,**不代表 QA 已做**。人脸/复杂动作的卡照样抽九宫格,
 多镜剧情照样过内容 QA,做过的档记进 \`qa_completed\`。
+
+**整板质检别挨张看。** 主 agent 直接 \`view_image\` 的上限是 5 张;一板十几张卡的
+产物必然超过。走 catimation-subagents:并发调 \`understand_document\`(看宫格图)/
+\`understand_video\`(看整段),回来是文本;每张卡的结论落成 \`<文件名>.vision.json\` /
+\`.md\` 旁挂,重跑哪几张一目了然,也不用把整板塞进上下文。这条和上面「一轮跑完需要
+重做的卡超过半数就停下来找共因」是配套的 —— 有了逐卡的文本结论才看得出共因。
 
 **重试有两道闸,别只记住第一道。** 单卡受入口的 \`generation_attempts ≤2\` 约束:
 同一张卡连续失败两次还不对,先回去查锚点和素材,不要第三次重投。整板另有一道:
@@ -2164,6 +2339,7 @@ export const GENERATED_FIRST_PARTY_SKILLS: GeneratedFirstPartySkill[] = [
   { name: 'catimation-brainstorm', content: CATIMATION_BRAINSTORM_SKILL_CONTENT },
   { name: 'catimation-canvas', content: CATIMATION_CANVAS_SKILL_CONTENT },
   { name: 'catimation-understand', content: CATIMATION_UNDERSTAND_SKILL_CONTENT },
+  { name: 'catimation-subagents', content: CATIMATION_SUBAGENTS_SKILL_CONTENT },
   { name: 'catimation-video-workbench', content: CATIMATION_VIDEO_WORKBENCH_SKILL_CONTENT },
   { name: 'ffmpeg-win', content: FFMPEG_WIN_SKILL_CONTENT },
   { name: 'catimation-director-stage', content: CATIMATION_DIRECTOR_STAGE_SKILL_CONTENT },

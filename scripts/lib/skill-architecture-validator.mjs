@@ -26,15 +26,24 @@ export const DEFAULT_OPTIONS = Object.freeze({
 const BUDGET_LIMITS = Object.freeze({
   fast: 1,
   standard: 3,
-  // 7 而非 6:视频入口要同时够到 sd2-pe(提示词底座)、shotlist-builder(分镜底座:
-  // 有跨镜/跨图连续性就载)、director-orchestrator(镜头设计)、
-  // catimation-video-workbench(工作台整板)、catimation-understand(内容 QA)、
-  // ffmpeg-win(发布 QA)、film-studio(制片移交)。预算数的是「引用条数」而非
-  // 「同时载入数」——分级表里的自选技法名额才是真正的载入闸,两个底座不占名额,
-  // 工作台又是一条独立路径,不与 director+技法在同一回合叠加,所以最坏同时载入量没变。
   pro: 7,
   studio: Number.POSITIVE_INFINITY,
 })
+
+/**
+ * 两个生成入口的引用上限,与 `pro` 分开。
+ *
+ * 为什么分开:`pro` 是给**叶子编排器**(create-storyboard、catimation-video-workbench)
+ * 定的,它们各自只够到三四个下游。而入口天生要够到更多 —— 提示词底座、分镜底座、
+ * 角色链、人像库、镜头设计、QA 两条、制片移交、看图纪律。历史上 `pro` 被从 5 抬到
+ * 6 再抬到 7,**三次全是被入口顶上去的**,每抬一次都顺带放宽了叶子的约束,而叶子
+ * 恰恰是最需要被约束的那一层。
+ *
+ * 预算数的是「引用条数」而非「同时载入数」:分级表里的自选技法名额才是真正的载入
+ * 闸,自动触发的底座不占名额,工作台又是一条独立路径,不与 director+技法在同一回合
+ * 叠加 —— 所以最坏同时载入量并没有随这个数字变大。
+ */
+const ENTRY_FANOUT_LIMIT = 10
 
 const STUDIO_OWNER = 'film-studio'
 
@@ -372,12 +381,15 @@ export function validateArchitecture(snapshot, options = {}) {
         canonical.path,
       )
     }
-    const limit = BUDGET_LIMITS[budget] ?? BUDGET_LIMITS.fast
+    // 入口走独立上限:见 ENTRY_FANOUT_LIMIT 的注释 —— 否则每次入口多够一个下游,
+    // 就要把 pro 整档抬一级,连带放宽真正该被约束的叶子。
+    const isEntry = Object.values(ENTRY_OWNERS).includes(name)
+    const limit = isEntry ? ENTRY_FANOUT_LIMIT : (BUDGET_LIMITS[budget] ?? BUDGET_LIMITS.fast)
     const fanout = edges.get(name).size
     if (fanout > limit) {
       report(
         'BUDGET_FANOUT_EXCEEDED',
-        `${canonical.path}: "${name}" (budget ${budget}) references ${fanout} skills (max ${limit})`,
+        `${canonical.path}: "${name}" (${isEntry ? 'entry' : `budget ${budget}`}) references ${fanout} skills (max ${limit})`,
         canonical.path,
       )
     }
