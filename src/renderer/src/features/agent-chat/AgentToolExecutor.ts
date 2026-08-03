@@ -20,6 +20,7 @@ import { getAgentApi } from '../../utils/agentBridge'
 import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
 import { directorBridge } from '../../components/shared/image-editors/director/directorBridge'
 import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMediaSrc'
+import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
@@ -102,6 +103,14 @@ type AgentElectronApi = {
     readThumb: (
       p: string,
     ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
+    /**
+     * Stream a local reference image to COS and get a submittable URL back.
+     * Optional so older preloads (and tests that stub only `readThumb`)
+     * degrade to the inline path instead of throwing.
+     */
+    resolveRefImage?: (
+      p: string,
+    ) => Promise<{ ok: true; url: string } | { ok: false; reason: string }>
   }
 }
 
@@ -692,29 +701,33 @@ export class AgentToolExecutor {
     requestThreadId?: string,
     resolvedReferenceImages?: string[],
   ): Promise<unknown> {
-    const api = ServiceRegistry.getRequired<{ generateImage: (params: GenerateImageParams) => Promise<GenerateResult> }>(
-      SERVICE_KEYS.API,
-    )
-
-    // Resolve reference images BEFORE showing the in-progress bubble. Codex
-    // passes uploads-dir file PATHS (e.g. `C:\...\agent\uploads\<hash>.jpg`),
-    // but the renderer's ApiService can only `fetch()` data:/http URLs — a raw
-    // path becomes `data:image/jpeg;base64,C:\...` → ERR_INVALID_URL. We read
-    // each path's original bytes through the mime+size-gated attachments IPC
-    // and inline them as a data URL. Doing this before `beginImageGeneration`
-    // keeps a bad path from leaving a dangling "generating" bubble — it
-    // surfaces as a clean explicit error to the agent instead. Only `await`
-    // when refs are actually present so the no-ref (text-to-image) path still
-    // shows its in-progress bubble synchronously.
-    const referenceImages =
-      resolvedReferenceImages ??
-      (Array.isArray(params.referenceImages) && params.referenceImages.length > 0
-        ? await this.resolveReferenceImages(params.referenceImages)
-        : undefined)
+    const api = ServiceRegistry.getRequired<{
+      generateImage: (params: GenerateImageParams) => Promise<GenerateResult>
+      getModelConfig?: (name: string) => { inlineRefImageAsBase64?: boolean } | undefined
+    }>(SERVICE_KEYS.API)
 
     // Agent autonomy first (explicit valid `params.model` wins, e.g. 万相 for a
     // 组图 series), else the user's picked channel, else VIP.
+    //
+    // Resolved BEFORE the references below because the channel decides how refs
+    // must travel: nano/gemini want base64 `inline_data`, everything else wants
+    // a URL. See resolveReferenceImages.
     const model = resolveEffectiveImageChannel(params.model)
+
+    // Resolve reference images BEFORE showing the in-progress bubble. Codex
+    // passes uploads-dir file PATHS (e.g. `C:\...\agent\uploads\<hash>.jpg`),
+    // which ApiService cannot `fetch()` — a raw path becomes
+    // `data:image/jpeg;base64,C:\...` → ERR_INVALID_URL. Doing this before
+    // `beginImageGeneration` keeps a bad path from leaving a dangling
+    // "generating" bubble — it surfaces as a clean explicit error to the agent
+    // instead. Only `await` when refs are actually present so the no-ref
+    // (text-to-image) path still shows its in-progress bubble synchronously.
+    const referenceImages =
+      resolvedReferenceImages ??
+      (Array.isArray(params.referenceImages) && params.referenceImages.length > 0
+        ? await this.resolveReferenceImages(params.referenceImages, model)
+        : undefined)
+
     const request: GenerateImageParams = {
       ...params,
       referenceImages,
@@ -837,9 +850,14 @@ export class AgentToolExecutor {
     // Resolve shared local references ONCE. The previous implementation
     // re-read and base64-encoded the same full-resolution files for every prompt,
     // multiplying IPC/memory pressure before N identical uploads.
+    // Same channel every fan-out branch will resolve to, so the refs are
+    // encoded once in the form that channel actually wants.
     const sharedReferenceImages =
       Array.isArray(params.referenceImages) && params.referenceImages.length > 0
-        ? await this.resolveReferenceImages(params.referenceImages)
+        ? await this.resolveReferenceImages(
+            params.referenceImages,
+            resolveEffectiveImageChannel(params.model),
+          )
         : undefined
 
     const settled = await settleWithConcurrency(
@@ -970,22 +988,44 @@ export class AgentToolExecutor {
   }
 
   /**
-   * Normalize `referenceImages` into browser-loadable sources for ApiService.
+   * Normalize `referenceImages` into sources ApiService can submit.
    *
-   * `data:`/`http(s):` entries pass through untouched. Anything else is treated
-   * as a local filesystem path (codex hands us uploads-dir paths) and read once
-   * through `attachments.readThumb`. The tool deliberately preserves original
-   * bytes; if an upstream rejects them with HTTP 413, the agent may create a
-   * smaller derivative with its media tools and retry using that new path.
+   * `data:`/`http(s):` entries pass through untouched. Anything else is a local
+   * filesystem path (codex hands us uploads-dir paths), and how we turn it into
+   * a submittable source depends on the CHANNEL:
+   *
+   *   - **nano/gemini** (`inlineRefImageAsBase64`): read the bytes and inline
+   *     them as a data URL. These endpoints want base64 `inline_data`, so a COS
+   *     round trip would only be undone later by ApiService fetching the URL
+   *     back into base64.
+   *
+   *   - **everything else** (万相 / seedream / …): stream the file to COS and
+   *     submit the URL. Same policy the UI has used all along — see
+   *     `utils/refImageUpload` ("原图直传云端,不压缩"). Inlining here used to
+   *     put multi-MB base64 in the request body, which bloats the payload and
+   *     trips upstream's ~1MB `url is too long` limit.
+   *
+   * COS failures degrade to the inline path rather than failing the call, so a
+   * bucket outage costs quality-of-implementation, not the generation.
    *
    * Returns `undefined` for no refs (text-to-image). If refs were provided but
-   * NONE could be read, throws an explicit error so the agent learns the path
-   * was bad instead of the request silently degrading to text-to-image.
+   * NONE could be resolved, throws an explicit error so the agent learns the
+   * path was bad instead of the request silently degrading to text-to-image.
    */
-  private async resolveReferenceImages(refs: unknown): Promise<string[] | undefined> {
+  private async resolveReferenceImages(
+    refs: unknown,
+    model?: string,
+  ): Promise<string[] | undefined> {
     if (!Array.isArray(refs) || refs.length === 0) return undefined
 
-    const api = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.attachments
+    const electron = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI
+    const api = electron?.attachments
+    const apiService = ServiceRegistry.get<{
+      getModelConfig?: (name: string) => { inlineRefImageAsBase64?: boolean } | undefined
+    }>(SERVICE_KEYS.API)
+    const preferInline =
+      model !== undefined && wantsInlineBase64ForModel(apiService?.getModelConfig?.(model))
+
     const resolved: string[] = []
     const failures: string[] = []
     const seen = new Set<string>()
@@ -1002,6 +1042,18 @@ export class AgentToolExecutor {
         resolved.push(raw)
         continue
       }
+
+      // URL channels: stream to COS in main (the file never enters this heap).
+      if (!preferInline && api?.resolveRefImage) {
+        const relayed = await api.resolveRefImage(raw)
+        if (relayed.ok) {
+          resolved.push(relayed.url)
+          continue
+        }
+        // Fall through to inline — a COS outage shouldn't sink the generation.
+        console.warn(`[refImage] COS relay failed, inlining instead: ${raw} (${relayed.reason})`)
+      }
+
       if (!api?.readThumb) {
         failures.push(`${raw} (attachments API unavailable)`)
         continue

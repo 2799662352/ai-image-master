@@ -184,3 +184,68 @@ describe('resolveMediaUrl — 中转失败后的降级,两个入口必须同命'
     expect(readFile).not.toHaveBeenCalled()
   })
 })
+
+// 图片生成的参考图要的是「一律 URL」:上游收 data: URL 时请求体按 base64 膨胀,
+// 而图片渠道(万相/seedream 等)原生就吃 https。视频那边留 512KB 内联线是因为
+// 小素材多走一次往返不划算;图片这边则要与 UI 侧 refImageUpload 的口径一致 ——
+// 那条路是「原图直传云端、不压缩」,没有下限。
+describe('resolveMediaUrl — alwaysRelay:图片参考图一律换 URL', () => {
+  it('小文件不再内联,照样走 COS', async () => {
+    const { resolveMediaUrl } = await import('../mediaResolve')
+    fileOfBytes(100 * 1024) // 远低于 512KB 内联线
+    relayFileToCos.mockResolvedValue('https://bucket/small.png')
+
+    const url = await resolveMediaUrl('D:\\shots\\small.png', 'referenceImages[0]', undefined, {
+      alwaysRelay: true,
+    })
+
+    expect(url).toBe('https://bucket/small.png')
+    expect(readFile).not.toHaveBeenCalled()
+  })
+
+  it('小 data: URL 同样中转,不原样透传', async () => {
+    const { resolveMediaUrl } = await import('../mediaResolve')
+    const small = dataUrlOfBytes(100 * 1024)
+    relayDataUrlToCos.mockResolvedValue('https://bucket/small-from-data.png')
+
+    const url = await resolveMediaUrl(small, 'referenceImages[0]', undefined, { alwaysRelay: true })
+
+    expect(url).toBe('https://bucket/small-from-data.png')
+  })
+
+  it('http(s) / asset: 仍然原样透传 —— 已经是 URL 了,没有中转的意义', async () => {
+    const { resolveMediaUrl } = await import('../mediaResolve')
+
+    const opts = { alwaysRelay: true }
+    expect(await resolveMediaUrl('https://cdn/x.png', 'ref', undefined, opts)).toBe('https://cdn/x.png')
+    expect(await resolveMediaUrl('asset://abc', 'ref', undefined, opts)).toBe('asset://abc')
+    expect(relayFileToCos).not.toHaveBeenCalled()
+    expect(relayDataUrlToCos).not.toHaveBeenCalled()
+  })
+
+  // 关键:新开关只改「要不要走中转」,不能动「中转挂了怎么办」。COS 不可达而模型
+  // 接口可达是真实场景,这时小图内联仍是唯一能把活干成的路。
+  it('中转失败时仍按原策略降级内联,不因为 alwaysRelay 就直接失败', async () => {
+    const { resolveMediaUrl } = await import('../mediaResolve')
+    fileOfBytes(100 * 1024)
+    readFile.mockResolvedValue(Buffer.from('tiny'))
+    relayFileToCos.mockRejectedValue({ code: 'RequestError', error: { code: 'ENOTFOUND' } })
+
+    const url = await resolveMediaUrl('D:\\shots\\small.png', 'referenceImages[0]', undefined, {
+      alwaysRelay: true,
+    })
+
+    expect(url).toBe(`data:image/png;base64,${Buffer.from('tiny').toString('base64')}`)
+  })
+
+  it('不传 alwaysRelay 时行为不变 —— 视频那条路不受影响', async () => {
+    const { resolveMediaUrl } = await import('../mediaResolve')
+    fileOfBytes(100 * 1024)
+    readFile.mockResolvedValue(Buffer.from('tiny'))
+
+    const url = await resolveMediaUrl('D:\\shots\\small.png', 'referenceImages[0]')
+
+    expect(url).toBe(`data:image/png;base64,${Buffer.from('tiny').toString('base64')}`)
+    expect(relayFileToCos).not.toHaveBeenCalled()
+  })
+})
