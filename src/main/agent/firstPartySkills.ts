@@ -9,6 +9,7 @@ import {
   CATIMATION_DIRECTOR_STAGE_SKILL_CONTENT,
   CATIMATION_IMAGE_SKILL_CONTENT,
   CATIMATION_PORTRAIT_LIBRARY_SKILL_CONTENT,
+  CATIMATION_SUBAGENTS_SKILL_CONTENT,
   CATIMATION_UNDERSTAND_SKILL_CONTENT,
   CATIMATION_VIDEO_SKILL_CONTENT,
   FFMPEG_WIN_SKILL_CONTENT,
@@ -255,6 +256,11 @@ export const CATIMATION_UNDERSTAND_SKILL: FirstPartySkill = {
   content: CATIMATION_UNDERSTAND_SKILL_CONTENT,
 }
 
+export const CATIMATION_SUBAGENTS_SKILL: FirstPartySkill = {
+  name: 'catimation-subagents',
+  content: CATIMATION_SUBAGENTS_SKILL_CONTENT,
+}
+
 export const CATIMATION_FFMPEG_WIN_SKILL: FirstPartySkill = {
   name: 'ffmpeg-win',
   content: FFMPEG_WIN_SKILL_CONTENT,
@@ -270,7 +276,7 @@ export const CATIMATION_DIRECTOR_STAGE_SKILL: FirstPartySkill = {
  * installed an app-managed copy, remove it on startup so Codex stops discovering
  * it. User-edited copies are preserved.
  */
-const RETIRED_FIRST_PARTY_SKILL_NAMES = ['catimation-subagents', 'mediakit-cli']
+const RETIRED_FIRST_PARTY_SKILL_NAMES = ['mediakit-cli']
 
 /** All skills this app ships into the Codex USER scope on startup. */
 export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
@@ -281,6 +287,7 @@ export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_BRAINSTORM_SKILL,
   CATIMATION_CANVAS_SKILL,
   CATIMATION_UNDERSTAND_SKILL,
+  CATIMATION_SUBAGENTS_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
   CATIMATION_DIRECTOR_STAGE_SKILL,
 ]

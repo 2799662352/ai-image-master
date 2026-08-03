@@ -38,6 +38,15 @@ export const FIRST_PARTY_SKILL_SOURCES = [
   { name: 'catimation-canvas', source: 'resources/first-party-skills/catimation-canvas/SKILL.md' },
   { name: 'catimation-understand', source: 'resources/first-party-skills/catimation-understand/SKILL.md' },
   {
+    // 看图不烧上下文的纪律。`codexLaunch.ts` 早就注入了 agents.max_threads=8 供扇出,
+    // 但教它「何时委派」的这个 skill 在 2026-07-10 的减法重构里被退休了 —— 扇出能力
+    // 开着、没人教它用。复活时也把名字从 firstPartySkills.ts 的
+    // RETIRED_FIRST_PARTY_SKILL_NAMES 里删掉(纯卫生:安装器的
+    // `if (activeNames.has(name)) continue` 已让活跃清单优先,同时在两处不会被删)。
+    name: 'catimation-subagents',
+    source: 'resources/first-party-skills/catimation-subagents/SKILL.md',
+  },
+  {
     // 视频工作台是应用内界面,驱动它的正是内嵌 agent(没有 hook,只读 SKILL.md 正文),
     // 所以和 catimation-director-stage 同等对待:随应用打包,全新安装即可用。
     name: 'catimation-video-workbench',

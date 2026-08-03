@@ -187,9 +187,11 @@ export interface CodexProviderConfig {
    * reached per-thread via `thread/start.modelProvider` inherits whatever the
    * active channel decided — so a Claude thread inside a process launched on a
    * GPT channel does see the V2 tools. That only bites if such a thread
-   * actually delegates, and nothing currently teaches it to (the delegation
-   * skill is retired); upstream also refuses spawn targets whose model catalog
-   * does not declare V2, which our gateway-backed Claude/Grok slugs do not.
+   * actually delegates — which `catimation-subagents` now does teach (revived
+   * 2026-08-03 for the look-at-media discipline), though it steers the common
+   * case to concurrent `understand_*` MCP calls rather than spawning. Upstream
+   * also refuses spawn targets whose model catalog does not declare V2, which
+   * our gateway-backed Claude/Grok slugs do not.
    */
   multiAgentV2?: boolean
 }
