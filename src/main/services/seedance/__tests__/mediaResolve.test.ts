@@ -36,16 +36,12 @@ function fileOfBytes(bytes: number) {
   readFile.mockResolvedValue(Buffer.from('fake-bytes'))
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   relayDataUrlToCos.mockReset()
   relayFileToCos.mockReset()
   stat.mockReset()
   readFile.mockReset()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
-  // in-flight 合并表是模块级的。正常路径下条目在上传 settle 时自删,但用例若留下
-  // 未完成的 promise 就会串味,让下一条用例复用上一条的上传结果。
-  const { __resetMediaResolveInFlightForTests } = await import('../mediaResolve')
-  __resetMediaResolveInFlightForTests()
 })
 
 afterEach(() => {

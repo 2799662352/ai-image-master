@@ -115,63 +115,24 @@ export interface ResolveMediaOptions {
    * 只影响「要不要中转」,不影响「中转挂了怎么办」:失败后仍按原策略降级内联。
    */
   alwaysRelay?: boolean
-  /**
-   * 跳过中转结果缓存,每次都真传一份新的。
-   *
-   * 给**图片生成的参考图**用:每一次生图都是一次全新任务,同一张图在两次生成里
-   * 应各自拿到独立的 URL。复用同一个 URL 有个具体的坏处 —— 同一张图在一次调用里
-   * 出现两次(「图1 与 图3 是同一个人」)时,两个下标指向同一个地址,上游有可能按
-   * 地址折叠成一个参考,后面的编号就全体前移了。
-   *
-   * 视频那边不传这个:工作台一板卡片共用同一套角色锚点是常态,缓存正是为那个
-   * 场景加的。
-   */
-  noCache?: boolean
 }
 
 /**
- * 已中转过的本地文件 → COS URL。进程内,不持久化。
+ * **刻意不缓存中转结果 —— 每一次生成都是一次全新任务。**
  *
- * 解决的是这个:同一张角色参考图挂在工作台的 10 张卡上,今天会被上传 10 次拿到
- * 10 个不同的 URL —— `relayKey` 每次调用都 `randomBytes` 生成新 key,上游素材接口
- * 那边的内容去重(重复导入直接返回已有记录)救不了已经花掉的上传。
+ * 本轮加过一版又撤掉了:以「路径 + 体积 + mtime」为键复用已中转的 COS URL,让
+ * 工作台一板卡片共用的角色锚点只传一次(10 卡 × 6 图从 60 次降到 6 次)。撤掉是
+ * 因为它和**素材位置即编号**这条硬约束冲突。
  *
- * **键为什么是「路径 + 体积 + mtime」**:内容哈希要把整个文件读一遍,对 2GB 视频
- * 而言比上传本身还贵。体积 + mtime 是文件系统现成的,组合起来足以判定「还是不是
- * 上次那份」。理论盲区是「同一毫秒内改成同样大小」,用户手动换参考图碰不到。
+ * 上游按下标解析素材编号(Seedance OpenAPI §2.3:「@参考N 要与 content[] 里的
+ * 素材顺序一一对应」)。同一个文件在一次调用里出现两次时(「图1 与 图3 是同一个
+ * 人」),复用同一个 URL 会让两个下标指向同一个地址,上游有可能据此折叠成一个
+ * 参考 —— 后面的编号全体前移,而画面看着「像那么回事」,不报任何错。
  *
- * **只缓存中转结果,不缓存内联结果**:内联结果就是整个文件的 base64,缓存它等于
- * 把文件常驻内存。中转结果只是一个 URL 字符串。
- *
- * **不持久化**:COS 对象若被生命周期规则清掉,上游取素材会返回 502
- * (「远程素材 URL 已失效」)。进程内缓存的存活窗口短到不用担心这件事;跨会话复用
- * 需要先把桶的生命周期配置确认清楚,那是另一件事。
+ * 省下的上传次数不值这个风险:并发压力已经由 `mediaRelay` 的 4 槽闸兜住,缓存
+ * 再省的只是带宽;而位置错了是一个静默的错误答案。要重开这条路,先想清楚怎么
+ * 保证「同一次调用内的重复项拿到不同 URL」。
  */
-const relayedUrlCache = new Map<string, string>()
-/** 同一个键正在中转中的调用共享同一个 promise,避免并发时各传一份。 */
-const relayInFlight = new Map<string, Promise<string>>()
-
-function relayCacheKey(
-  absolutePath: string,
-  bytes: number,
-  mtimeMs: number,
-  alwaysRelay: boolean,
-): string {
-  // Windows 路径大小写不敏感,`C:\Refs\a.png` 与 `c:/refs/a.png` 是同一个文件。
-  const normalized =
-    process.platform === 'win32'
-      ? absolutePath.replaceAll('\\', '/').toLowerCase()
-      : absolutePath
-  // alwaysRelay 必须进键:同一个小文件,开关不同时返回形态就不同(内联 vs COS URL)。
-  return `${alwaysRelay ? 'relay' : 'auto'}|${normalized}|${bytes}|${mtimeMs}`
-}
-
-/** Exposed for tests; do not call from production code. */
-export function __resetMediaResolveCacheForTests(): void {
-  relayedUrlCache.clear()
-  relayInFlight.clear()
-}
-
 export async function resolveMediaUrl(
   src: string,
   label: string,
@@ -196,13 +157,11 @@ export async function resolveMediaUrl(
   }
 
   let bytes: number
-  let mtimeMs: number
   try {
-    // stat 而非 readFile:大文件走流式上传,这里只需要体积(顺带拿去重用的 mtime)。
+    // stat 而非 readFile:大文件走流式上传,这里只需要体积。
     const stat = await fs.stat(trimmed)
     if (!stat.isFile()) throw new Error('not a regular file')
     bytes = stat.size
-    mtimeMs = typeof stat.mtimeMs === 'number' ? stat.mtimeMs : 0
   } catch {
     throw new Error(
       `${label}: cannot read local file "${trimmed}" — pass an existing path, data: URL, or https URL.`,
@@ -216,32 +175,8 @@ export async function resolveMediaUrl(
   const inline = async (): Promise<string> =>
     `data:${mime};base64,${(await fs.readFile(trimmed)).toString('base64')}`
   if (!alwaysRelay && bytes <= MAX_INLINE_FILE_BYTES) return inline()
-
-  if (options?.noCache === true) {
-    return relayOrInline(
-      { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
-      label,
-    )
-  }
-
-  const key = relayCacheKey(path.resolve(trimmed), bytes, mtimeMs, alwaysRelay)
-  const cached = relayedUrlCache.get(key)
-  if (cached) return cached
-  const inFlight = relayInFlight.get(key)
-  if (inFlight) return inFlight
-
-  // 只把**中转成功**的结果留在缓存里。降级内联的返回值是整个文件的 base64,
-  // 缓存它等于把文件常驻内存;而且下一次中转可能已经恢复,不该被上次的失败钉死。
-  const pending = (async () => {
-    const relayed = await relayFileToCos(trimmed, mime, { fileSize: bytes })
-    relayedUrlCache.set(key, relayed)
-    return relayed
-  })()
-    .catch(async (e) => relayOrInline({ bytes, relay: () => Promise.reject(e), inline }, label))
-    .finally(() => {
-      relayInFlight.delete(key)
-    })
-
-  relayInFlight.set(key, pending)
-  return pending
+  return relayOrInline(
+    { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
+    label,
+  )
 }

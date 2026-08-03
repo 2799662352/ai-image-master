@@ -54,13 +54,7 @@ export async function resolveRefImage(rawPath: string): Promise<ResolveRefImageR
   }
 
   try {
-    // noCache:每一次生图都是一次全新任务,不复用上一次的 URL。见 ResolveMediaOptions
-    // 里的说明 —— 同一张图在一次调用里出现两次时,复用同一个地址可能被上游按地址
-    // 折叠成一个参考,把后面的编号全体前移。
-    const url = await resolveMediaUrl(src, 'referenceImage', mime, {
-      alwaysRelay: true,
-      noCache: true,
-    })
+    const url = await resolveMediaUrl(src, 'referenceImage', mime, { alwaysRelay: true })
     return { ok: true, url }
   } catch (err) {
     // 绝不让异常穿过 IPC 边界:渲染层拿到 ok:false 会按策略降级回内联 data URL,
