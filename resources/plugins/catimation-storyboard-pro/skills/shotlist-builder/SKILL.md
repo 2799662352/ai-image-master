@@ -1,13 +1,13 @@
 ---
 name: shotlist-builder
 description: >-
-  Use when a screenplay, scene list or shot breakdown must become a per-shot
-  production table — shot rows with plan/camera columns, grouped 4–15s Seedance
-  prompts, and a single-file HTML deliverable a human can search, filter and
-  copy from. Loaded by the video entry for 标准档及以上的多镜任务, or by
-  create-storyboard at its delivery step. Not a top-level entry: it does not
-  tier, route, or call generation tools.
-  触发词:分镜表、shotlist、镜头清单、逐镜提示词总表、拍摄清单、HTML 分镜交付。
+  Use when a script, treatment, scene list or multi-shot brief has to be broken
+  down shot by shot — 剧本拆镜、分场拆镜头、多镜规划、镜头清单、拍摄计划、
+  逐镜提示词总表、分镜表、shotlist、shot breakdown — and when that breakdown
+  should land as one searchable HTML table instead of scattered notes. Also fires
+  when a multi-shot job needs shot rows grouped into 4–15s Seedance prompts.
+  由视频入口在标准档及以上的多镜任务加载,或由 create-storyboard 在交付环节加载。
+  只做规划与交付物:不定级、不路由、不调生成工具。
 ---
 
 # Shotlist Builder / 剧本 → 逐镜分镜表
@@ -21,6 +21,42 @@ Copy 按钮的单文件 HTML。
 **你不是在誊写剧本,你是在导演它。** 用户写「他看起来很惊讶」时不要照抄——至少
 有四种惊讶,每种的肌肉动作完全不同(见 `references/micro-beats.md`)。笼统情绪
 进不了提示词,具体的肌肉、呼吸、眼神才进得去。
+
+## 自动触发(相关即载)
+
+命中任一相关任务就加载本 skill,**不需要用户点名「分镜表」或「用 shotlist-builder」**
+——和 `sd2-pe` 同一种加载姿态:sd2-pe 是「有视频提示词就载」,本 skill 是
+「**有连续性就载**」。
+
+- **产出会跨镜/跨图连续**:不止一个镜头、一板卡片、一个系列、同一角色跨多张图
+- 给了剧本、treatment、分场大纲、场景清单、shot list,要变成镜头
+- 说「拆一下」「拆成镜头」「分个镜」「排一下镜头」「列个拍摄计划」「铺满工作台」
+- 需要决定每镜多长、哪几拍合成一次 4–15s 生成
+- 已经有一堆逐镜提示词散在聊天里,要归拢成一份能过目的东西
+- 制片包出完了,需要一份人能直接读的总表(而不是十几个 .md)
+
+不加载:单镜「让这张图动起来」、单条提示词打磨、纯画面工艺问题、纯编码任务。
+
+## 没有剧本也要主动问(不要等用户递本子)
+
+**连续性任务不必先有剧本。** 用户在工作台上说「我想做个赛博朋克短片」「给这个角色出
+一组图」时,本 skill 已经该在场了——此时的工作不是拆本子,是**问出一张镜头表**。
+
+带着答案去问,一次一张 `ask_user` 卡,3–6 个具体选项并标推荐项:
+
+1. **讲什么 / 看什么** — 一句话的核心事件或视觉母题。开放时给几个具体方向,别问
+   「你想要什么风格」这种没有默认答案的空问题。
+2. **几镜** — 给区间选项并说明代价(「4 镜:紧凑但交代不全 / 6 镜:推荐 / 8 镜:
+   完整但成本翻倍」)。**镜头数是创作决定,不替用户拍板。**
+3. **谁反复出现** — 有复用角色就要先锁 identity-hard 主锚,没有就明说这是无角色的
+   氛围片,后面不必守身份一致性。
+4. **规格** — 时长/画幅/分辨率;入口已确认过就跳过。
+
+问完直接给出镜头表草案让他过目,**不要停在问题上**。他说「你帮我拿主意」时,那不是
+让你别问,是让你带着答案去问。
+
+> 工作台上的合并配比见 catimation-video-workbench 的「提问卡片:三张够了」——
+> 别为这四项各弹一张卡,把用户打断四次。
 
 ## 边界(先读这条)
 

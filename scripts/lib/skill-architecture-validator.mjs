@@ -26,12 +26,13 @@ export const DEFAULT_OPTIONS = Object.freeze({
 const BUDGET_LIMITS = Object.freeze({
   fast: 1,
   standard: 3,
-  // 6 而非 5:视频入口要同时够到 sd2-pe(提示词)、director-orchestrator(镜头设计)、
+  // 7 而非 6:视频入口要同时够到 sd2-pe(提示词底座)、shotlist-builder(分镜底座:
+  // 有跨镜/跨图连续性就载)、director-orchestrator(镜头设计)、
   // catimation-video-workbench(工作台整板)、catimation-understand(内容 QA)、
   // ffmpeg-win(发布 QA)、film-studio(制片移交)。预算数的是「引用条数」而非
-  // 「同时载入数」——分级表里的 ≤3/≤5 顶层才是真正的载入闸,工作台又是一条独立
-  // 路径,不与 director+技法在同一回合叠加,所以最坏同时载入量没变。
-  pro: 6,
+  // 「同时载入数」——分级表里的自选技法名额才是真正的载入闸,两个底座不占名额,
+  // 工作台又是一条独立路径,不与 director+技法在同一回合叠加,所以最坏同时载入量没变。
+  pro: 7,
   studio: Number.POSITIVE_INFINITY,
 })
 
