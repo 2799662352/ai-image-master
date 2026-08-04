@@ -1064,39 +1064,44 @@ export class AgentToolExecutor {
     // **不去重。** 每一次生图都是一次全新任务:调用方传了几张、按什么次序传,
     // 就原样解析几张、按原次序返回。折叠重复项会让数组变短,而提示词里的
     // 「图1 / 图2」是按下标对应的 —— 少一项,后面所有编号全体前移。
-    const resolved: string[] = []
-    const failures: string[] = []
+    const entries = refs.filter((raw): raw is string => typeof raw === 'string' && raw.length > 0)
 
-    for (const raw of refs) {
-      if (typeof raw !== 'string' || raw.length === 0) continue
-      const isInlineOrRemote = raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')
-      if (isInlineOrRemote) {
-        resolved.push(raw)
-        continue
+    /** 一张参考图 → 可提交源。失败带上原因,交给下面统一决定整次成败。 */
+    const resolveOne = async (raw: string): Promise<{ ok: true; src: string } | { ok: false; reason: string }> => {
+      if (raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')) {
+        return { ok: true, src: raw }
       }
 
       // URL channels: stream to COS in main (the file never enters this heap).
       if (!preferInline && api?.resolveRefImage) {
         const relayed = await api.resolveRefImage(raw)
-        if (relayed.ok) {
-          resolved.push(relayed.url)
-          continue
-        }
+        if (relayed.ok) return { ok: true, src: relayed.url }
         // Fall through to inline — a COS outage shouldn't sink the generation.
         console.warn(`[refImage] COS relay failed, inlining instead: ${raw} (${relayed.reason})`)
       }
 
-      if (!api?.readThumb) {
-        failures.push(`${raw} (attachments API unavailable)`)
-        continue
-      }
+      if (!api?.readThumb) return { ok: false, reason: 'attachments API unavailable' }
       const full = await api.readThumb(raw)
-      if (full.ok) {
-        resolved.push(`data:${full.mime};base64,${full.base64}`)
-      } else {
-        failures.push(`${raw} (${full.reason})`)
-      }
+      return full.ok
+        ? { ok: true, src: `data:${full.mime};base64,${full.base64}` }
+        : { ok: false, reason: full.reason }
     }
+
+    // **并发解析,但按入参次序收结果。**
+    //
+    // 原本是 `for...of` 里逐张 await:九张图就是九次串行往返,每次都要等上一张
+    // 传完 COS 才开始下一张,而它们之间毫无依赖。
+    //
+    // 陷阱是别顺手写成「谁先完成谁 push」—— `Promise.all` 的返回数组按**输入**
+    // 顺序排,与完成顺序无关,所以必须先整份收下来再按下标铺开。小图先传完就排到
+    // 大图前面的话,「图1」指向什么每次运行都可能不一样,而且不报错。
+    //
+    // 并发度不用在这里管:`resolveRefImage` 落到主进程的 relayFileToCos,那里有
+    // 4 路全局闸,渲染端一次发九个 invoke 也只会在主进程排队。内联那条不额外占
+    // 峰值内存 —— 无论串行还是并发,九张的 base64 最终都同时躺在返回数组里。
+    const outcomes = await Promise.all(entries.map(resolveOne))
+    const failures = outcomes.flatMap((o, i) => (o.ok ? [] : [`${entries[i]} (${o.reason})`]))
+    const resolved = outcomes.flatMap((o) => (o.ok ? [o.src] : []))
 
     // **位置有语义,所以宁可整次失败,也不能少一个继续。**
     //
