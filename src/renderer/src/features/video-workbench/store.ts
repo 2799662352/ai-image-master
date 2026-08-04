@@ -54,6 +54,7 @@ import {
   toMaterial,
 } from './cardSpec'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
+import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
 import {
   type HistoryCursor,
@@ -416,9 +417,12 @@ export function buildModeMedia(card: VideoWorkbenchCard): Pick<
   VideoWorkbenchSubmitPayload,
   'firstFrame' | 'lastFrame' | 'referenceImages' | 'referenceVideos' | 'referenceAudios'
 > {
-  const images = card.referenceImages.map((m) => m.src)
-  const videos = card.referenceVideos.map((m) => m.src)
-  const audios = card.referenceAudios.map((m) => m.src)
+  // 预传好的 COS 地址优先(见 materialPreupload):有就省掉主进程提交时的那次上传,
+  // 没有就照旧交本地路径过去,由 buildContent → resolveMediaUrl 现传。
+  const submitSrc = (m: VideoWorkbenchMaterial): string => m.uploadedUrl ?? m.src
+  const images = card.referenceImages.map(submitSrc)
+  const videos = card.referenceVideos.map(submitSrc)
+  const audios = card.referenceAudios.map(submitSrc)
   switch (card.mode) {
     case 'text2video':
       return { referenceImages: [], referenceVideos: [], referenceAudios: [] }
@@ -667,6 +671,45 @@ function startTransfersFor(
 /** 一张卡上所有可转存的素材(目前只有图片走转存)。 */
 function startTransfersForCard(card: VideoWorkbenchCard): void {
   startTransfersFor(card.id, 'referenceImages', card.referenceImages)
+}
+
+/**
+ * 本地素材预传(materialPreupload):把上传从「点了生成之后」挪到用户还在写提示词
+ * 的那段时间。与转存互斥 —— 一个源不可能既是第三方外链又是本地路径。
+ *
+ * **图片 / 视频 / 音频三类都走**(底层是 `media:resolve-ref-media`,白名单比生图那条
+ * `resolve-ref-image` 宽)。视频素材体积最大,提交前省下的等待也最多 —— 转存那边
+ * 只接图片是因为第三方外链基本都是图,与这里的取舍无关。
+ *
+ * 发起点要挑:凡是**素材真的换了新的**都该发,凡是**只是把同一批素材重新写一遍**
+ * 都不该发。四条写入路径的取舍见各自调用处,总结在这里:
+ *
+ * | 路径 | 发不发 | 为什么 |
+ * |---|---|---|
+ * | `addMaterials` | 发 | 人手拖进来的新素材,本功能的主场 |
+ * | `addCards` | 发 | agent 经 MCP 加卡时素材随卡一起来,不走 addMaterials |
+ * | `updateCard` | 按 kind 发 | agent 换素材走这条;但只改提示词/分辨率时不能发 —— 那是逐字符调用的 |
+ * | `applyIR` | **只对新建的卡发** | 写计划里含「仅位置变了」的卡(workbenchIR 的 placeExisting),整份扫一遍等于挪一次卡就把整板重传 |
+ *
+ * `undo`/`redo`/`hydrate` 都不经这些 action(自建写计划直接 set),天然不受影响:
+ * 撤销恢复的是整份快照、连 uploadedUrl 一起回来;hydrate 读到的则一定没有这个
+ * 字段(落库时被 `stripPreuploadUrls` 剥掉了)。
+ */
+function startPreuploadsFor(
+  cardId: string,
+  kind: MaterialKind,
+  materials: readonly VideoWorkbenchMaterial[],
+): void {
+  for (const material of materials) {
+    startMaterialPreupload({ cardId, kind, originalSrc: material.src })
+  }
+}
+
+/** 一张卡上三类参考素材全部发起预传。 */
+function startPreuploadsForCard(card: VideoWorkbenchCard): void {
+  startPreuploadsFor(card.id, 'referenceImages', card.referenceImages)
+  startPreuploadsFor(card.id, 'referenceVideos', card.referenceVideos)
+  startPreuploadsFor(card.id, 'referenceAudios', card.referenceAudios)
 }
 
 /**
@@ -1054,8 +1097,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     // 否则插入路径会把占位 order 0 写进 IndexedDB,重载后顺序就错了。
     const fresh = get().cards.filter((c) => createdIds.has(c.id))
     for (const card of fresh) persistNow(card)
-    // agent 经 MCP 加卡时素材是随卡一起来的,不走 addMaterials —— 转存要在这里接。
+    // agent 经 MCP 加卡时素材是随卡一起来的,不走 addMaterials —— 转存与预传都要在
+    // 这里接。界面上的「＋ 添加卡片」一律传 [{}],不带素材,所以这里只会为 agent 的
+    // 卡片干活。
     for (const card of fresh) startTransfersForCard(card)
+    for (const card of fresh) startPreuploadsForCard(card)
     if (anchor) {
       // 插入让同页兄弟卡的 order 变了,补写 —— 只这一页,别把整个工作台重写一遍。
       for (const card of get().cards) {
@@ -1138,6 +1184,30 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     // agent 换素材走这条路(patch.referenceImages),同样要转存。转存自己会跳过
     // 已是持久地址的项,所以按整份新素材扫一遍即可,不必比对差异。
     if (updated && patch.referenceImages !== undefined) startTransfersForCard(updated)
+    // 预传同理,但**必须逐类判断 patch 里有没有给这一类** —— updateCard 是提示词
+    // 输入框逐字符调的,无条件发起等于每敲一个字就把整卡素材重传一遍。
+    //
+    // 扫的是 `updated.*` 而不是 `patch.*`:clampMaterials 与切模式后的截断都在
+    // 落state 时发生,传 patch 会给已经被截掉的素材白发一次上传。
+    //
+    // 这里不怕重复上传浪费:updateCard 是整份**替换**素材数组,替换时经过
+    // toMaterial 重建,旧的 uploadedUrl 本来就已经没了,不重传就只能等提交时再传。
+    //
+    // 从 state 重新取而不是读 `updated`:后者在 `set` 回调里赋值,TS 的控制流分析
+    // 看不见,在这里已被收窄成 `never`(同文件其余地方只把它整个当参数传出去,所以
+    // 没暴露)。顺带这也确实是落 state 之后的那一份。同款写法见 addCards。
+    const changed = get().cards.find((c) => c.id === id)
+    if (changed) {
+      if (patch.referenceImages !== undefined) {
+        startPreuploadsFor(changed.id, 'referenceImages', changed.referenceImages)
+      }
+      if (patch.referenceVideos !== undefined) {
+        startPreuploadsFor(changed.id, 'referenceVideos', changed.referenceVideos)
+      }
+      if (patch.referenceAudios !== undefined) {
+        startPreuploadsFor(changed.id, 'referenceAudios', changed.referenceAudios)
+      }
+    }
     if (updated) schedulePersist(updated)
     return updated !== null
   },
@@ -1316,6 +1386,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       return updated ? { cards, revision: state.revision + 1 } : {}
     })
     if (updated) startTransfersFor(id, kind, materials)
+    if (updated) startPreuploadsFor(id, kind, materials)
     if (updated) schedulePersist(updated)
   },
 
@@ -1663,6 +1734,14 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     await flushPlanToDb(write)
     // 整板回写同样可能带进新的外链图(agent 手写 IR 时最常见)。
     for (const card of write.persist.cards) startTransfersForCard(card)
+    // 预传**只对新建的卡**发起。write.persist.cards 里还含「仅位置变了」的卡
+    // (workbenchIR 的 placeExisting,merge 模式下每张因下标偏移的卡都在内),
+    // 整份扫一遍等于挪一张卡就把整板本地素材重传一遍,而它们的字节一个都没变。
+    // 被改过素材的既有卡因此享受不到预传,回落提交时现传 —— 少一次优化而已。
+    const preuploadIds = new Set(plan.result.cards.created)
+    for (const card of write.persist.cards) {
+      if (preuploadIds.has(card.id)) startPreuploadsForCard(card)
+    }
     return plan.result
   },
 
@@ -1787,6 +1866,38 @@ mountMaterialTransferHandler(({ cardId, kind, originalSrc }, cosUrl) => {
     return updated ? { cards, revision: state.revision + 1 } : {}
   })
   if (updated) persistNow(updated)
+})
+
+/**
+ * 本地图预传的回填口。挂 `uploadedUrl`,**不动 src**。
+ *
+ * 三处刻意与转存不同:
+ *
+ * 1. **只补第一条还没有 uploadedUrl 的同路径素材。** 同一张图拖两次会发两次预传、
+ *    拿回两个不同地址,两条各归各的。转存那边可以「两条一起换」因为外链本来就是
+ *    同一个地址;这边共用一个地址就会踩上游按下标折叠 `@参考N` 的坑。哪个 URL 落
+ *    到哪个槽位无所谓 —— 两份字节完全相同,换过来看不出区别。
+ * 2. **不递增 rev,也不递增 revision。** 它是缓存不是编排意图:bump rev 会让 agent
+ *    手里的整板 IR 无谓地撞冲突(拖 9 张图就是 9 次),bump revision 会往撤销栈里
+ *    塞一步「撤销一次后台上传」这种用户根本不认识的操作。`materialsEqual` 只比
+ *    src+name,所以不带上它也不会让规格等值判断出错。
+ * 3. **不落库。** `WorkbenchDb.put` 本来就会剥掉这个字段,写一趟纯属浪费 IO。
+ */
+mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, cosUrl) => {
+  useVideoWorkbenchStore.setState((state) => {
+    let hit = false
+    const cards = state.cards.map((card) => {
+      if (card.id !== cardId || hit) return card
+      const list = card[kind]
+      const index = list.findIndex((m) => m.src === originalSrc && m.uploadedUrl === undefined)
+      if (index < 0) return card
+      hit = true
+      const next = [...list]
+      next[index] = { ...next[index], uploadedUrl: cosUrl }
+      return { ...card, [kind]: next }
+    })
+    return hit ? { cards } : {}
+  })
 })
 
 let taskUnsubscribe: (() => void) | null = null
