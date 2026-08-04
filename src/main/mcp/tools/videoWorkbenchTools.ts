@@ -24,6 +24,11 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
+import {
+  WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_STATUS_MAX_PAGE_SIZE,
+  WORKBENCH_STATUS_PAGE_SIZE,
+} from '../../../types/videoWorkbench'
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
@@ -148,12 +153,16 @@ const startOutputSchema = z.looseObject({
 })
 
 const statusOutputSchema = z.looseObject({
-  total: z.number().describe('Number of cards returned (after cardIds/boardId filters).'),
+  total: z.number().describe('Total cards matching the cardIds/boardId filters, across ALL pages.'),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
   // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
-  cards: z.array(cardSnapshotSchema),
+  cards: z.array(cardSnapshotSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
+  page: z.number().describe('1-based page number of `cards`.'),
+  pageSize: z.number(),
+  totalPages: z.number(),
+  hasMore: z.boolean().describe('More cards exist beyond this page; fetch them with page:N+1.'),
 })
 
 const removeTasksOutputSchema = z.looseObject({
@@ -252,17 +261,69 @@ const applyOutputSchema = z.looseObject({
   structureRevision: z.number().describe('New structure token; carry it into the next apply.'),
 })
 
+// ---------------------------------------------------------------------------
+// 渐进式披露的三个数
+//
+// codex 把**每次工具调用**的输出截到 10_000 token,而且是**静默**截断(只插一句
+// `…N tokens truncated…`),模型可能拿着半截数据照样行动。那个上限是我们自己在
+// codexLaunch 用 `-c tool_output_token_limit=10000` 钉死的,不能靠调大它绕过 ——
+// 钉死的理由是防止用户级 config.toml 把它放大到 64K 撑爆网关字节上限。
+//
+// 所以工具这一侧必须自己守住体积。仓库里已有的家规见
+// `docs/2026-06-12-mcp-stdio-bridge-pitfalls.md`「工具返回列表？→ 必须分页 +
+// hasMore」,参考实现是 `portraitTools.ts` 的 list_portrait_library。
+// ---------------------------------------------------------------------------
+
+/**
+ * 单次工具结果的字符预算。
+ *
+ * 10_000 token 换算成字符要看内容:纯 ASCII 约 4 字符/token,但 id / 路径 / URL
+ * 接近 3,中文提示词接近 1.3。按最坏情况取 2.5 折算约 25_000,再留一点给 banner
+ * 与结构开销。**宁可紧一点** —— 超了是静默丢数据,紧了只是多一次调用。
+ */
+const RESULT_CHAR_BUDGET = 20_000
+
 type WorkbenchToolResult = {
   content: Array<{ type: 'text'; text: string }>
   structuredContent?: Record<string, unknown>
   isError?: boolean
 }
 
-/** 成功:structuredContent 为权威结构化结果,text 同时带 banner + JSON 兜底。 */
+/**
+ * 成功:structuredContent 为权威结构化结果,text 同时带 banner + JSON 兜底。
+ *
+ * **这份重复序列化是规范要求的,不要为了省体积删掉。** MCP SEP-2106 的向后兼容
+ * 矩阵要求声明了 outputSchema 的服务端同时给一个序列化 JSON 的 TextContent 块,
+ * 官方 tools.mdx 的示例也是这个形状 —— 不确定 codex 客户端读不读 structuredContent
+ * 的前提下删掉它,就是七个工具集体只剩一行 banner。省体积的正确做法是**把数据本身
+ * 变小**(分页 / 收窄默认范围 / 输入上限),那样两份副本一起变小。
+ */
 function okResult(bannerLines: string[], structured: unknown): WorkbenchToolResult {
   return {
     content: [{ type: 'text', text: [...bannerLines, JSON.stringify(structured)].join('\n') }],
     structuredContent: structured as Record<string, unknown>,
+  }
+}
+
+/**
+ * 结果超预算时**响亮地失败**,而不是交给 codex 静默截断。
+ *
+ * 对 `export` 尤其要命:`apply` 是声明式不是 patch(省略字段 = 恢复默认),所以
+ * agent 拿到一份被截断的 IR 再回写,被截掉的卡片字段会被清成默认值 —— 那是数据
+ * 丢失,不是性能问题。报错至少让 agent 知道要缩小范围。
+ */
+function guardResultSize(tool: string, structured: unknown, howToNarrow: string): WorkbenchToolResult | null {
+  const chars = JSON.stringify(structured)?.length ?? 0
+  if (chars <= RESULT_CHAR_BUDGET) return null
+  return {
+    content: [{
+      type: 'text',
+      text:
+        `❌ ${tool} failed: result is ~${chars} characters, over this tool's ${RESULT_CHAR_BUDGET} budget. `
+        + 'Returning it would let the client silently truncate mid-JSON, and acting on half a payload is '
+        + `worse than not getting one. ${howToNarrow}`,
+    }],
+    isError: true,
   }
 }
 
@@ -307,12 +368,20 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'auto-navigates to the workbench tab so the user watches the cards appear. The result includes a ' +
       'compact `workbench` overview (boards + global status counts) so you always see the whole ' +
       'workbench after writing. Use this when the user asks to 排卡片/批量准备视频任务/在生成视频页帮我' +
-      '填好任务; for a single quick video in chat, prefer generate_video. ' +
+      '填好任务; for a single quick video in chat, prefer generate_video.\n' +
+      `WRITE IN SMALL BATCHES — at most ${WORKBENCH_MAX_TASKS_PER_CALL} cards per call. For more, call this ` +
+      'repeatedly (the cards append in order, so ten cards = two calls). This is deliberate: one giant ' +
+      'call is minutes of silent JSON generation during which the user cannot interrupt you and sees ' +
+      'nothing appear, whereas each small call makes its cards show up on the page immediately. ' +
+      'With autoStart:true the earlier batch starts rendering while you write the next one. ' +
       'WHEN A CARD CARRIES REFERENCE IMAGES, view_image ONE of them BEFORE writing that card\'s prompt — ' +
       'the render follows the picture, so a prompt written from a filename argues with it. Viewing an ' +
       'INPUT is not the batch-opening of generated OUTPUTS that other tools warn against.',
     inputSchema: z.object({
-      tasks: z.array(cardInputSchema).min(1).max(20).describe('Cards to append, top-to-bottom order.'),
+      tasks: z.array(cardInputSchema).min(1).max(WORKBENCH_MAX_TASKS_PER_CALL).describe(
+        `Cards to append, top-to-bottom order (1–${WORKBENCH_MAX_TASKS_PER_CALL} per call — `
+        + 'call again for more rather than trying to fit everything in one request).',
+      ),
       autoStart: z.boolean().optional().describe('Start rendering right after adding. Default false (fill only).'),
       navigate: z.boolean().optional().describe('Switch the app to the workbench tab. Default true.'),
       afterCardId: z.string().optional().describe(
@@ -407,22 +476,39 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'saved localPath / permanent remoteUrl for finished videos. Pass boardId to inspect one board; ' +
       'omit to see all boards. Use it to inspect what the user has set up before editing cards, or when ' +
       'the user explicitly asks how a render is going — NOT as a polling loop after ' +
-      'video_workbench_start (batch completion is pushed to you automatically).',
+      'video_workbench_start (batch completion is pushed to you automatically).\n' +
+      `Cards are PAGINATED (a workbench can hold hundreds): the result carries page/totalPages/hasMore, ` +
+      `and \`total\` counts every match across all pages. Default ${WORKBENCH_STATUS_PAGE_SIZE} per page. ` +
+      'When hasMore is true, fetch the next page with page:N+1 rather than asking for a huge pageSize — ' +
+      'oversized results get silently truncated by the client. Better still, narrow with boardId or ' +
+      'cardIds first; usually you only need the board the user is looking at.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Limit to specific cards. Omit = all.'),
       boardId: z.string().optional().describe('Limit to one board (page). Omit = cards from all boards.'),
+      page: z.number().int().min(1).optional().describe('1-based page number (default 1).'),
+      pageSize: z.number().int().min(1).max(WORKBENCH_STATUS_MAX_PAGE_SIZE).optional().describe(
+        `Cards per page (default ${WORKBENCH_STATUS_PAGE_SIZE}, max ${WORKBENCH_STATUS_MAX_PAGE_SIZE}).`,
+      ),
     }),
     outputSchema: statusOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_status', params as Record<string, unknown>, extractCodexThreadId(ctx)) as {
         cards: Array<{ status: string }>
+        page: number
+        totalPages: number
+        hasMore: boolean
+        total: number
       }
       const active = result.cards.filter((c) => c.status === 'preparing' || c.status === 'queued' || c.status === 'running').length
       const banner = active > 0
-        ? `⏳ ${active} card(s) still rendering. Report this to the user and move on — do NOT call this again in a loop; the batch-completion summary is pushed to you automatically. The user sees live progress on the page.`
-        : '✅ No card is rendering. Finished videos are playing on the workbench page and saved locally (localPath) + to COS (remoteUrl).'
-      return okResult([banner], result)
+        ? `⏳ ${active} card(s) still rendering on this page. Report this to the user and move on — do NOT call this again in a loop; the batch-completion summary is pushed to you automatically. The user sees live progress on the page.`
+        : '✅ No card on this page is rendering. Finished videos are playing on the workbench page and saved locally (localPath) + to COS (remoteUrl).'
+      // 分页提示只在还有下一页时出现 —— 单页就装下的常见情况不该多占一行上下文。
+      const paging = result.hasMore
+        ? [`📄 Page ${result.page}/${result.totalPages} — ${result.cards.length} of ${result.total} cards shown. Fetch the rest with page:${result.page + 1}, or narrow with boardId/cardIds.`]
+        : []
+      return okResult([banner, ...paging], result)
     } catch (error) {
       return errorResult('video_workbench_status', error)
     }
@@ -440,17 +526,34 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + "a per-card `rev` (stale means the user edited THAT card, so only that card is skipped). "
       + 'Embedded (data:) materials appear as '
       + '`wbref://<cardId>/<kind>/<index>` placeholders — copy them verbatim to keep a material, or copy '
-      + 'one onto another card to reuse that material without re-uploading.',
+      + 'one onto another card to reuse that material without re-uploading.\n'
+      + 'SCOPE: by default this exports only the ACTIVE board, because a full export carries every card\'s '
+      + 'full prompt and every material path and can exceed what the client will accept. That default is '
+      + 'safe to apply back — merge mode leaves boards you did not list alone. Pass a specific boardId for '
+      + 'another board, or allBoards:true only when the change genuinely spans boards (moving cards '
+      + 'between pages, reordering the tabs).',
     inputSchema: z.object({
       boardId: z.string().optional().describe(
-        'Export only this board (keeps the payload small on a large workbench). Omit = every board. '
-        + 'Safe to apply back with the default merge mode: boards you did not list are left alone.',
+        'Export this board instead of the active one. Safe to apply back with the default merge mode: '
+        + 'boards you did not list are left alone.',
+      ),
+      allBoards: z.boolean().optional().describe(
+        'Export every board. Only needed for cross-board changes; the payload grows with the whole '
+        + 'workbench and may be rejected as too large. Ignored when boardId is given.',
       ),
     }),
     outputSchema: irSchema,
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_export', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      const tooBig = guardResultSize(
+        'video_workbench_export',
+        result,
+        'Export one board at a time (boardId), and drop allBoards. If a SINGLE board is still too large, '
+        + 'it has too many cards to round-trip — edit those cards individually with '
+        + 'video_workbench_update_task, or ask the user to split the board in two.',
+      )
+      if (tooBig) return tooBig
       return okResult([
         '✅ video_workbench_export — edit this JSON and send it back through video_workbench_apply '
         + '(keep `irVersion`, `structureRevision` and every card `rev` unchanged).',
@@ -492,6 +595,25 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     outputSchema: applyOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
+      // 入参也要守 —— 一份超预算的 IR 说明它来自一份**已经被截断**的 export,
+      // 而 apply 是声明式的:照写下去等于把截掉的字段清成默认值。
+      //
+      // 这里刻意**不按卡片张数**设上限:IR 的数组顺序就是页内顺序,合并模式下没列出
+      // 的卡会被追加到列出的卡后面(workbenchIR 的 placeExisting),所以限制张数会让
+      // 「重排一个二十张卡的页」变成不可能 —— 只列前五张就把它们顶到最前、其余全部
+      // 挤下去。按体积卡不会误伤那种正当用法。
+      const irChars = JSON.stringify((params as { ir?: unknown }).ir)?.length ?? 0
+      if (irChars > RESULT_CHAR_BUDGET) {
+        return errorResult(
+          'video_workbench_apply',
+          new Error(
+            `the IR is ~${irChars} characters, over the ${RESULT_CHAR_BUDGET} budget. An IR this large `
+            + 'almost certainly came from an export that the client truncated, and apply is declarative — '
+            + 'writing a truncated IR back would reset the missing fields to defaults. Re-export ONE board '
+            + '(boardId, no allBoards) and apply that; merge mode leaves the other boards alone.',
+          ),
+        )
+      }
       const result = await router.call('video_workbench_apply', params as Record<string, unknown>, extractCodexThreadId(ctx)) as {
         ok: boolean
         conflict?: { expected: number; actual: number }

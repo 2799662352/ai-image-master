@@ -7,6 +7,10 @@ import {
   useVideoWorkbenchStore,
 } from '../../video-workbench/store'
 import { resetWorkbenchDbForTest } from '../../video-workbench/WorkbenchDb'
+import {
+  WORKBENCH_STATUS_MAX_PAGE_SIZE,
+  WORKBENCH_STATUS_PAGE_SIZE,
+} from '../../../../../types/videoWorkbench'
 
 /**
  * codex MCP `video_workbench_*` 的渲染层处理:AI 与用户操作同一个
@@ -266,5 +270,89 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     const removed = await callTool('video_workbench_remove_tasks', { cardIds: [cardIds[0]] })
     expect(removed).toMatchObject({ removed: [cardIds[0]], total: 1 })
     await expect(callTool('video_workbench_nope', {})).rejects.toThrow('Unknown video workbench tool')
+  })
+})
+
+// 渐进式披露 —— codex 把每次工具输出静默截到 10K token,整份倒出去会丢数据。
+describe('status 分页', () => {
+  /** 铺 n 张卡(绕过 MCP 层的每次 5 张上限,这里测的是读的一侧)。 */
+  function seed(n: number): string[] {
+    return useVideoWorkbenchStore
+      .getState()
+      .addCards(Array.from({ length: n }, (_, i) => ({ prompt: `镜 ${i + 1}` })))
+  }
+
+  it('默认每页 12 张,total 报的是筛选后的全部而不是本页数量', async () => {
+    seed(30)
+    const page1 = await callTool('video_workbench_status', {})
+    expect(page1.cards).toHaveLength(WORKBENCH_STATUS_PAGE_SIZE)
+    // agent 必须知道自己只看到了一部分,否则会把 12 当成全部去做决定。
+    expect(page1.total).toBe(30)
+    expect(page1).toMatchObject({ page: 1, totalPages: 3, hasMore: true })
+  })
+
+  it('翻页拿到不重不漏的下一批,最后一页 hasMore 为 false', async () => {
+    const ids = seed(30)
+    const seen: string[] = []
+    for (let page = 1; page <= 3; page++) {
+      const res = await callTool('video_workbench_status', { page })
+      seen.push(...res.cards.map((c: any) => c.cardId))
+      expect(res.hasMore).toBe(page < 3)
+    }
+    expect(seen).toEqual(ids)
+    expect(new Set(seen).size).toBe(30)
+  })
+
+  it('pageSize 可调但封顶,页码越界回落到最后一页而不是回空', async () => {
+    seed(30)
+    const big = await callTool('video_workbench_status', { pageSize: 999 })
+    expect(big.cards).toHaveLength(Math.min(30, WORKBENCH_STATUS_MAX_PAGE_SIZE))
+
+    // 越界回落而不是回空:agent 拿到空数组会以为卡片被删了。
+    const beyond = await callTool('video_workbench_status', { page: 99, pageSize: 12 })
+    expect(beyond.page).toBe(3)
+    expect(beyond.cards).toHaveLength(6)
+  })
+
+  it('cardIds/boardId 过滤之后再分页 —— 先收窄比翻页省得多', async () => {
+    const ids = seed(30)
+    const res = await callTool('video_workbench_status', { cardIds: ids.slice(0, 3) })
+    expect(res.total).toBe(3)
+    expect(res.totalPages).toBe(1)
+    expect(res.hasMore).toBe(false)
+  })
+})
+
+describe('export 默认只导当前页', () => {
+  it('省略参数 = 只导当前页,不是整个工作台', async () => {
+    const first = useVideoWorkbenchStore.getState().activeBoardId
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: '第一页' }], navigate: false })
+    const second = useVideoWorkbenchStore.getState().addBoard('第二页')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: '第二页' }], navigate: false })
+
+    const ir = await callTool('video_workbench_export', {})
+    expect(ir.boards).toHaveLength(1)
+    expect(ir.boards[0].id).toBe(second)
+    expect(ir.activeBoardId).toBe(second)
+    // 令牌是整个工作台的,不是这一页的 —— 收窄范围不能连带把并发保护也削掉。
+    expect(ir.structureRevision).toBe(useVideoWorkbenchStore.getState().structureRevision)
+    expect(first).not.toBe(second)
+  })
+
+  it('allBoards:true 才导全部;显式 boardId 优先于它', async () => {
+    const first = useVideoWorkbenchStore.getState().activeBoardId
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: '第一页' }], navigate: false })
+    useVideoWorkbenchStore.getState().addBoard('第二页')
+
+    const all = await callTool('video_workbench_export', { allBoards: true })
+    expect(all.boards).toHaveLength(2)
+
+    const pinned = await callTool('video_workbench_export', { boardId: first, allBoards: true })
+    expect(pinned.boards).toHaveLength(1)
+    expect(pinned.boards[0].id).toBe(first)
+  })
+
+  it('显式要一页却不存在才报错;隐式取当前页解析不出时退回整份', async () => {
+    await expect(callTool('video_workbench_export', { boardId: 'ghost' })).rejects.toThrow('board not found')
   })
 })
