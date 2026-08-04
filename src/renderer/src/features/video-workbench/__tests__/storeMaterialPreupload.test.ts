@@ -141,12 +141,29 @@ describe('本地参考图拖入即传', () => {
     })
   })
 
-  it('agent 建卡不触发预传 —— 整板回写会按 IR 重建素材,跟着它发起就是每 apply 一次全量重传', async () => {
+  it('agent 经 MCP 加卡也预传 —— 素材随卡一起来,不走 addMaterials', async () => {
     const { useVideoWorkbenchStore: useStore } = await loadStore()
     useStore.getState().addCards([{ prompt: 'x', referenceImages: [LOCAL_A, LOCAL_B] }])
 
+    await vi.waitFor(() => expect(resolveRefMedia).toHaveBeenCalledTimes(2))
+    expect(resolveRefMedia.mock.calls.map((c) => c[0])).toEqual([LOCAL_A, LOCAL_B])
+  })
+
+  it('agent 换素材(updateCard)预传;只改提示词不预传 —— 那是逐字符调的', async () => {
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+
+    // 逐字符改提示词:一次都不能发
+    for (const prompt of ['a', 'ab', 'abc']) {
+      useStore.getState().updateCard(cardId, { prompt })
+    }
     await new Promise((r) => setTimeout(r, 10))
     expect(resolveRefMedia).not.toHaveBeenCalled()
+
+    // 换素材:该发
+    useStore.getState().updateCard(cardId, { referenceImages: [LOCAL_A] })
+    await vi.waitFor(() => expect(resolveRefMedia).toHaveBeenCalledTimes(1))
+    expect(resolveRefMedia).toHaveBeenCalledWith(LOCAL_A)
   })
 
   it('视频 / 音频素材同样预传,提交时也用预传好的 URL', async () => {
@@ -184,6 +201,35 @@ describe('本地参考图拖入即传', () => {
     const card = useStore.getState().cards.find((c) => c.id === cardId)!
     expect(card.referenceImages[0].uploadedUrl).toBeUndefined()
     expect(buildModeMedia(card).referenceImages).toEqual([LOCAL_A])
+  })
+
+  it('applyIR 只为新建的卡预传 —— 挪一张卡不该把整板重传一遍', async () => {
+    // write.persist.cards 里含「仅位置变了」的卡(merge 模式下每张因下标偏移的都在),
+    // 整份扫一遍就是挪一次卡重传整板,而它们的字节一个都没变。
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    useStore.getState().addCards([{ prompt: 'A', referenceImages: [LOCAL_A] }])
+    await vi.waitFor(() => expect(resolveRefMedia).toHaveBeenCalledTimes(1))
+    resolveRefMedia.mockClear()
+    deferred.length = 0
+
+    const ir = useStore.getState().exportIR()
+    // 在既有卡前面插一张新卡 → 新卡是 created,既有卡只是下标后移
+    const applied = await useStore.getState().applyIR({
+      ...ir,
+      boards: [{
+        ...ir.boards[0],
+        cards: [
+          { prompt: '新镜', referenceImages: [{ name: 'b', src: LOCAL_B }] },
+          ...ir.boards[0].cards,
+        ],
+      }],
+    })
+
+    expect(applied.ok).toBe(true)
+    expect(applied.cards.created).toHaveLength(1)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(resolveRefMedia).toHaveBeenCalledTimes(1)
+    expect(resolveRefMedia).toHaveBeenCalledWith(LOCAL_B)
   })
 
   it('https / data: / asset:// 都不触发预传', async () => {
