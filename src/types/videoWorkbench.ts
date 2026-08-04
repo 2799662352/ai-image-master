@@ -48,6 +48,32 @@ export interface VideoWorkbenchSpec {
   referenceAudios: VideoWorkbenchMaterial[]
 }
 
+// ---------------------------------------------------------------------------
+// MCP 渐进式披露的三个数(主进程的工具 schema 与渲染端的执行器共用,所以放这里)
+//
+// codex 把**每次工具调用**的输出截到 10_000 token,而且是**静默**截断。那个上限
+// 是我们自己在 codexLaunch 用 `-c tool_output_token_limit=10000` 钉死的,不能靠
+// 调大它绕过 —— 钉死的理由是防止用户级 config.toml 把它放大到 64K 撑爆网关字节
+// 上限。所以体积得由工具自己守。家规见 docs/2026-06-12-mcp-stdio-bridge-pitfalls.md
+// 「工具返回列表？→ 必须分页 + hasMore」,参考实现是 portraitTools 的
+// list_portrait_library。
+// ---------------------------------------------------------------------------
+
+/**
+ * 一次 `video_workbench_add_tasks` 最多写几张卡。
+ *
+ * 卡这个数不是为了体积,是为了**别让用户干等**:一张卡的 JSON 约 500 token,模型
+ * 逐 token 生成,二十张就是几分钟的静默输出 —— 而工具调用在飞的时候模型不推理、
+ * 用户排队的 turn/steer 也进不来(同 batchCompletion 里那句「启动后卡住,没法
+ * 说话」)。切小之后卡片逐批出现,配 autoStart 还能让上一批开始渲染时 agent 在写
+ * 下一批。
+ */
+export const WORKBENCH_MAX_TASKS_PER_CALL = 5
+
+/** `video_workbench_status` 每页卡数。12 对齐 portraitTools 的 pageSize 与 batchCompletion 的 MAX_LISTED。 */
+export const WORKBENCH_STATUS_PAGE_SIZE = 12
+export const WORKBENCH_STATUS_MAX_PAGE_SIZE = 50
+
 /** 参考素材条目（展示名 + 可提交源）。 */
 export interface VideoWorkbenchMaterial {
   /** 展示名（文件名 / 素材名）。 */

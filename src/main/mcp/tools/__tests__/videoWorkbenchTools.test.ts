@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
-import { WORKBENCH_IR_VERSION } from '../../../../types/videoWorkbench'
+import {
+  WORKBENCH_IR_VERSION,
+  WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_STATUS_MAX_PAGE_SIZE,
+} from '../../../../types/videoWorkbench'
 import { registerVideoWorkbenchTools } from '../videoWorkbenchTools'
 
 type Handler = (
@@ -263,7 +267,9 @@ describe('handlers → router.call 透传与 banner', () => {
     const doneCase = capture({ total: 1, cards: [{ status: 'succeeded', localPath: 'C:/v.mp4' }] })
     registerVideoWorkbenchTools(doneCase.server, doneCase.router)
     const doneRes = await toolByName(doneCase.tools, 'video_workbench_status').handler({})
-    expect(doneRes.content[0].text).toContain('No card is rendering')
+    // 结果分页之后这句必须限定「本页」—— 在第 1/3 页看到「没有卡在渲染」
+    // 而据此断定整块板子都闲着,是分页最容易制造的误读。
+    expect(doneRes.content[0].text).toContain('No card on this page is rendering')
   })
 
   it('export:banner 指向 apply 并要求保留两级令牌', async () => {
@@ -390,6 +396,10 @@ describe('structured output(MCP 2025-11-25)', () => {
       boards: workbench.boards,
       selectedCardIds: ['c1'],
       cards: [cardSnapshot],
+      page: 1,
+      pageSize: 12,
+      totalPages: 1,
+      hasMore: false,
     }
     const { tools, server, router } = capture(routerResult)
     registerVideoWorkbenchTools(server, router)
@@ -517,5 +527,109 @@ describe('工具描述:回指 skill 与素材口径', () => {
     for (const name of ['video_workbench_status', 'video_workbench_export', 'video_workbench_remove_tasks']) {
       expect(toolByName(tools, name).config.description).not.toContain('catimation-video')
     }
+  })
+})
+
+// 渐进式披露 —— codex 把每次工具输出静默截到 10K token(codexLaunch 的
+// `-c tool_output_token_limit=10000`),所以体积得由工具自己守。
+describe('渐进式披露:写入分批', () => {
+  it(`add_tasks 一次最多 ${WORKBENCH_MAX_TASKS_PER_CALL} 张,超了被 schema 挡下`, () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_add_tasks').config.inputSchema
+    const card = { prompt: '一只猫' }
+    const atCap = Array.from({ length: WORKBENCH_MAX_TASKS_PER_CALL }, () => card)
+    expect(schema.safeParse({ tasks: atCap }).success).toBe(true)
+    expect(schema.safeParse({ tasks: [...atCap, card] }).success).toBe(false)
+  })
+
+  it('上限写进描述文案 —— 只放在 zod 里模型读不到,只能靠撞校验失败去学', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const tool = toolByName(tools, 'video_workbench_add_tasks')
+    expect(tool.config.description).toContain(String(WORKBENCH_MAX_TASKS_PER_CALL))
+    // 光给个数字不够,还得说清为什么要分批,否则模型会当成需要绕过的障碍。
+    expect(tool.config.description).toMatch(/small batches/i)
+  })
+})
+
+describe('渐进式披露:status 分页', () => {
+  it('schema 接受 page/pageSize,pageSize 有上限', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_status').config.inputSchema
+    expect(schema.safeParse({ page: 2, pageSize: 5 }).success).toBe(true)
+    expect(schema.safeParse({ pageSize: WORKBENCH_STATUS_MAX_PAGE_SIZE }).success).toBe(true)
+    expect(schema.safeParse({ pageSize: WORKBENCH_STATUS_MAX_PAGE_SIZE + 1 }).success).toBe(false)
+    expect(schema.safeParse({ page: 0 }).success).toBe(false)
+  })
+
+  it('还有下一页时 banner 给出页码;单页装得下就不多占一行', async () => {
+    const base = {
+      total: 30,
+      activeBoardId: 'b1',
+      boards: [{ id: 'b1', name: '第一幕', cardCount: 30 }],
+      selectedCardIds: [],
+      cards: [],
+      pageSize: 12,
+    }
+    const more = capture({ ...base, page: 1, totalPages: 3, hasMore: true })
+    registerVideoWorkbenchTools(more.server, more.router)
+    const withMore = await toolByName(more.tools, 'video_workbench_status').handler({})
+    expect(withMore.content[0].text).toContain('page:2')
+
+    const done = capture({ ...base, total: 3, page: 1, totalPages: 1, hasMore: false })
+    registerVideoWorkbenchTools(done.server, done.router)
+    const noMore = await toolByName(done.tools, 'video_workbench_status').handler({})
+    expect(noMore.content[0].text).not.toContain('page:')
+  })
+})
+
+describe('渐进式披露:体积闸(响亮失败,不交给客户端静默截断)', () => {
+  /** 造一份必然超预算的结构。 */
+  function oversized(): Record<string, unknown> {
+    return { irVersion: 2, structureRevision: 1, boards: [{ name: 'x', cards: [{ prompt: 'x'.repeat(30_000) }] }] }
+  }
+
+  it('export 结果超预算 → isError + 指路怎么缩小范围,而不是把半截 JSON 交出去', async () => {
+    const { tools, server, router } = capture(oversized())
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_export').handler({ allBoards: true })
+    expect(res.isError).toBe(true)
+    expect(res.structuredContent).toBeUndefined()
+    expect(res.content[0].text).toContain('boardId')
+  })
+
+  it('apply 入参超预算 → 直接拒,不打到 renderer', async () => {
+    const { tools, server, router } = capture({ ok: true })
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_apply').handler({ ir: oversized() })
+    expect(res.isError).toBe(true)
+    // 关键在这一条:一份超大的 IR 多半来自被截断的 export,而 apply 是声明式的,
+    // 照写下去等于把截掉的字段清成默认值 —— 所以连试都不该试。
+    expect(router.call).not.toHaveBeenCalled()
+  })
+
+  it('正常体积的 apply 照常放行', async () => {
+    const { tools, server, router } = capture({ ok: true, boards: {}, cards: {}, skipped: [], structureRevision: 2 })
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_apply').handler({
+      ir: { irVersion: 2, structureRevision: 1, boards: [{ name: 'x', cards: [{ prompt: '一只猫' }] }] },
+    })
+    expect(res.isError).toBeUndefined()
+    expect(router.call).toHaveBeenCalledOnce()
+  })
+})
+
+describe('渐进式披露:export 默认只导当前页', () => {
+  it('schema 接受 allBoards,描述说清默认范围与为什么', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const tool = toolByName(tools, 'video_workbench_export')
+    expect(tool.config.inputSchema.safeParse({ allBoards: true }).success).toBe(true)
+    expect(tool.config.description).toMatch(/ACTIVE board/)
+    // merge 模式保证没列出的页原样不动 —— 这是「收窄默认是安全的」的依据,
+    // 不写清楚 agent 会以为默认值会丢掉别的页。
+    expect(tool.config.description).toMatch(/merge mode leaves boards you did not list alone/i)
   })
 })

@@ -116,8 +116,12 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
 - **`generate_video`**:单镜、一次性、用户没点名工作台。成片直接进聊天并落历史页。
 - **`video_workbench_*`**:多镜批量、用户已经在「生成视频」工作台、需要逐卡改参数或反复
   重跑。先 `video_workbench_add_tasks` 建卡(默认只填不跑,`autoStart:true` 才立即渲染);
-  批次跑完会主动推「[视频工作台] 批次渲染完成」,**别轮询** `video_workbench_status`。
-  跨多卡的整理/重排/换规格用 `video_workbench_export` → 改 JSON → `video_workbench_apply`。
+  **一次最多 5 张,多了分几次调** —— 一整板挤在一次调用里就是几分钟静默生成,期间
+  用户插不进话、页面也不出卡;分批则每批一落地就看得见。
+  批次跑完会主动推「[视频工作台] 批次渲染完成」,**别轮询** `video_workbench_status`
+  (它也分页了,`hasMore` 为真时翻页,别去要一个巨大的 pageSize)。
+  跨多卡的整理/重排/换规格用 `video_workbench_export` → 改 JSON → `video_workbench_apply`
+  (export 默认只导当前页,回写安全 —— merge 模式不动没列出的页)。
 - 两条面共用**同一套** STEP 0 分级、上面那组素材 caps 与素材引用铁律 —— 工作台不是例外。
   有参考图时同样先 `view_image` 看图再写 prompt。
 

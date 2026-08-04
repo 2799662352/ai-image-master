@@ -27,6 +27,10 @@ import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../vide
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import type { WorkbenchIR } from '../../../../types/videoWorkbench'
+import {
+  WORKBENCH_STATUS_MAX_PAGE_SIZE,
+  WORKBENCH_STATUS_PAGE_SIZE,
+} from '../../../../types/videoWorkbench'
 
 type GenerateAudioToolParams = {
   input?: unknown
@@ -344,6 +348,15 @@ export class AgentToolExecutor {
       return ids ? cards.filter((c) => ids.includes(c.id)) : cards
     }
 
+    // 分页参数容错:zod 已在工具层挡过一遍,但这条路也被渲染端直调,坏值一律回退
+    // 默认而不是抛 —— 读工具不该因为一个页码把整次调用变成错误。
+    const toPositiveInt = (v: unknown): number | undefined => {
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isInteger(n) && n >= 1 ? n : undefined
+    }
+    const clampPageSize = (v: unknown): number =>
+      Math.min(toPositiveInt(v) ?? WORKBENCH_STATUS_PAGE_SIZE, WORKBENCH_STATUS_MAX_PAGE_SIZE)
+
     // 写操作统一回带的全局摘要(boards + 状态计数):每次写操作等于强制观测
     // 一次全局现状,agent 无需追加 status 调用。体积 O(页数),紧凑。
     const workbenchSummary = () => snapshotWorkbench(useVideoWorkbenchStore.getState())
@@ -412,14 +425,25 @@ export class AgentToolExecutor {
         let cards = pickCards(params.cardIds)
         if (boardId) cards = cards.filter((c) => c.boardId === boardId)
         const summary = snapshotWorkbench(state)
+        // 分页:一个工作台能装 200 张卡,整份倒出去会被客户端静默截断。口径与
+        // list_portrait_library 一致(page 从 1 起 / pageSize 有上限 / hasMore)。
+        const pageSize = clampPageSize(params.pageSize)
+        const totalPages = Math.max(1, Math.ceil(cards.length / pageSize))
+        const page = Math.min(Math.max(1, toPositiveInt(params.page) ?? 1), totalPages)
+        const pageCards = cards.slice((page - 1) * pageSize, page * pageSize)
         return {
+          // total 是**筛选后的全部**,不是本页数量 —— agent 得知道自己只看到了一部分。
           total: cards.length,
           activeBoardId: summary.activeBoardId,
           boards: summary.boards,
           // status 是**读**工具,不带 workbench 包装,所以选中态得在这一层平铺 ——
           // 否则「按需回读」在唯一一个专门用来回读的工具上反而看不到它。
           selectedCardIds: summary.selectedCardIds,
-          cards: cards.map(snapshotCard),
+          cards: pageCards.map(snapshotCard),
+          page,
+          pageSize,
+          totalPages,
+          hasMore: page < totalPages,
         }
       }
       case 'video_workbench_remove_tasks': {
@@ -435,13 +459,24 @@ export class AgentToolExecutor {
       }
       case 'video_workbench_export': {
         const ir = store.exportIR()
-        const boardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
-        if (!boardId) return ir
-        const board = ir.boards.find((b) => b.id === boardId)
+        // 默认只导**当前页**。整份导出带着每张卡的完整提示词和每条素材的完整路径,
+        // 一个中等规模的工作台就能超出客户端肯收的体积,而截断后的 IR 回写会把被截
+        // 掉的字段清成默认值(apply 是声明式不是 patch)。收窄默认是安全的:merge
+        // 模式保证没列出的页原样不动。要跨页改动才显式传 allBoards。
+        const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (!explicitBoardId && params.allBoards === true) return ir
+        const boardId = explicitBoardId ?? ir.activeBoardId
+        const board = boardId ? ir.boards.find((b) => b.id === boardId) : undefined
         if (!board) {
-          throw new Error(
-            `video_workbench_export: board not found: ${boardId} (existing: ${ir.boards.map((b) => b.id).join(', ')})`,
-          )
+          // 只有**显式**要了一页却找不到才算调用方的错。隐式取当前页时解析不出
+          // (activeBoardId 缺失或指向已删的页)是我们这边的状态问题,退回整份导出
+          // 比抛一句「board not found: <一个 agent 没提过的 id>」有用。
+          if (explicitBoardId) {
+            throw new Error(
+              `video_workbench_export: board not found: ${explicitBoardId} (existing: ${ir.boards.map((b) => b.id).join(', ')})`,
+            )
+          }
+          return ir
         }
         // 单页导出仍带全局 revision —— 令牌是整个工作台的,不是这一页的。
         // 配 merge 模式回写是安全的:没列出的页原样保留。
