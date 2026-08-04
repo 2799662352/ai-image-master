@@ -3,11 +3,11 @@ name: shotlist-builder
 description: >-
   Use when a script, treatment, scene list or multi-shot brief has to be broken
   down shot by shot — 剧本拆镜、分场拆镜头、多镜规划、镜头清单、拍摄计划、
-  逐镜提示词总表、分镜表、shotlist、shot breakdown — and when that breakdown
-  should land as one searchable HTML table instead of scattered notes. Also fires
-  when a multi-shot job needs shot rows grouped into 4–15s Seedance prompts.
-  由视频入口在标准档及以上的多镜任务加载,或由 create-storyboard 在交付环节加载。
-  只做规划与交付物:不定级、不路由、不调生成工具。
+  逐镜提示词总表、分镜表、shotlist、shot breakdown — landing as one searchable
+  HTML table. Also fires the moment reference material is dropped in — a script
+  plus a batch of images, an image folder path, a storyboard — and those images
+  must be reconciled against the script: 哪张图对应哪个角色/道具/地点、缺了什么、
+  多了什么、对不上的要问。只做规划与交付物,不定级、不路由、不调生成工具。
 ---
 
 # Shotlist Builder / 剧本 → 逐镜分镜表
@@ -30,6 +30,8 @@ Copy 按钮的单文件 HTML。
 
 - **产出会跨镜/跨图连续**:不止一个镜头、一板卡片、一个系列、同一角色跨多张图
 - 给了剧本、treatment、分场大纲、场景清单、shot list,要变成镜头
+- **拖进来一批素材**:剧本 + 一堆图、一个图片文件夹路径、一份分镜稿——
+  只要素材要和剧本对上号,就是本 skill 的活(见下面「素材和剧本一起到」)
 - 说「拆一下」「拆成镜头」「分个镜」「排一下镜头」「列个拍摄计划」「铺满工作台」
 - 需要决定每镜多长、哪几拍合成一次 4–15s 生成
 - 已经有一堆逐镜提示词散在聊天里,要归拢成一份能过目的东西
@@ -57,6 +59,37 @@ Copy 按钮的单文件 HTML。
 
 > 工作台上的合并配比见 catimation-video-workbench 的「提问卡片:三张够了」——
 > 别为这四项各弹一张卡,把用户打断四次。
+
+## 素材和剧本一起到:先对表,再拆镜
+
+四阶段循环默认「先有本子,再列清单,再等图」。但用户常常**一次性把东西全拖进来**:
+剧本 + 一个装满图的文件夹、或者一份分镜稿加二十张参考图。这时**不要因为图已经在了
+就直接跳到阶段四**——素材齐不齐和素材对不对得上,是两件事。
+
+先出一张**对照表**,这是本 skill 在这种情形下的第一个产出:
+
+| 剧本里的实体 | 命中的素材 | 结论 |
+|---|---|---|
+| 罗科(主角) | `roko.png` | ✅ 对上 |
+| 露露 | — | ❌ **缺**:身份关键,问用户要,不自作主张生成 |
+| 拍立得(NOV 14) | — | ⚠️ **缺**:非身份关键,可交回入口 `generate_image` 自补 |
+| — | `IMG_4821.jpg` | ❓ **多/歧义**:剧本里没有对应实体,问清楚是什么 |
+
+三类缺口的处理沿用阶段二那张分诊表(项目/人像库已有 → 找回;非身份关键 → 自补;
+身份/IP/品牌关键 → 问)。**「多」和「歧义」必须问,不许猜。** 一个名字看不出是谁的
+文件被静默当成主角,后面每一条提示词都错,而画面看着「像那么回事」。
+
+怎么看这些图:
+
+- **给的是文件夹路径**,先列出目录内容再逐个处理——别对着路径字符串猜里面有什么。
+- **文件名本身就是证据,但只是弱证据。** `roko.png` 大概率是罗科,`IMG_4821.jpg`
+  什么也说明不了。名字对不上就得真看图。
+- **超过 5 张不要逐张自己看**。主 agent 直接看图的上限是 5 张,再多会把上下文塞爆;
+  按 catimation-subagents 的做法并发调理解工具拿文本回来,或交子代理批处理。
+  对照表要的是「这张图里是谁/是什么」,那本来就是一句话的文本结论。
+
+对照表让用户点头之后,再走阶段三的锁范围与锁空间。剧本里有的实体一个都没落下、
+拖进来的图一张都没悬空,才开始写提示词。
 
 ## 边界(先读这条)
 
@@ -104,6 +137,7 @@ Copy 按钮的单文件 HTML。
 
 1. **确认范围**——做哪几场(「21 和 23 场」「13–17 场」「全部」)。
 2. **映射素材到镜头**——文件名或 assetId 有歧义**必须问**,禁止静默分配。
+   素材是和剧本一起拖进来的(没走过阶段二)时,先补上面那张对照表再往下。
 3. **确认风格预设**——用户传了覆盖就用他的;否则从
    `references/style-presets.md` 里挑一个并说明理由,不要默认套同一种长相。
 4. **画俯视图**——任何「2+ 角色同框」或「关键道具在特定台面」的场,先出一张
