@@ -22,27 +22,27 @@ const BOARD_STORE = 'boards'
 /** 卡片总量上限:超出后删最旧的已终态卡(防素材 data: URL 无限膨胀)。 */
 export const WORKBENCH_MAX_CARDS = 200
 
-/** 素材三类的字段名 —— 剥 uploadState 时逐类扫。 */
+/** 素材三类的字段名 —— 剥 uploadedUrl 时逐类扫。 */
 const MATERIAL_FIELDS = ['referenceImages', 'referenceVideos', 'referenceAudios'] as const
 
 /**
- * 落库前剥掉素材上的 `uploadState`(预传的转圈 / 打勾 / 感叹号)。
+ * 落库前剥掉素材上的 `uploadedUrl`(本地图预传拿到的 COS 地址)。
  *
- * 它是**界面的进行态**,不是数据:存下来重启会画出一个转圈,而那一刻根本没有上传
- * 在跑,它会一直转下去。水合时由 `uploadedUrl` 还在不在重新算出 `uploaded`。
- *
- * 地址本身(`uploadedUrl` + `uploadedAt`)**要存** —— 那是这条链路省下的那次上传的
- * 全部意义。安全性由另外两道兜底保证,见 `MATERIAL_UPLOAD_URL_TTL_MS` 与 store 的
- * 「失败即清」。
+ * 那是**会话内缓存**,存下来弊大于利:仓库里没有任何地方声明或配置过 COS 桶的
+ * 生命周期规则,所以一个几周前 mint 的地址是死是活无从判断,而卡片会在库里躺到
+ * 被 200 张上限挤掉为止。真拿一个死链去提交,失败后重试还是同一个死链,这张卡就
+ * 永久废了。剥掉之后重启即回到原本的行为:提交时主进程从本地路径流式上传。
  *
  * 没有可剥的就原样返回 —— 提交草稿是逐字符防抖落库的,不该每次都复制一遍卡片。
  */
-function stripTransientUploadState(card: VideoWorkbenchCard): VideoWorkbenchCard {
-  const dirty = MATERIAL_FIELDS.filter((field) => card[field]?.some((m) => m.uploadState !== undefined))
+function stripPreuploadUrls(card: VideoWorkbenchCard): VideoWorkbenchCard {
+  const dirty = MATERIAL_FIELDS.filter((field) =>
+    card[field]?.some((m) => m.uploadedUrl !== undefined || m.uploadState !== undefined),
+  )
   if (dirty.length === 0) return card
   const next = { ...card }
   for (const field of dirty) {
-    next[field] = card[field].map(({ uploadState: _state, ...rest }) => rest)
+    next[field] = card[field].map(({ uploadedUrl: _url, uploadState: _state, ...rest }) => rest)
   }
   return next
 }
@@ -96,7 +96,7 @@ export class WorkbenchDb {
   }
 
   async put(card: VideoWorkbenchCard): Promise<void> {
-    const record = stripTransientUploadState(card)
+    const record = stripPreuploadUrls(card)
     const db = await this.openDb()
     if (!db) {
       this.memory.set(record.id, record)
