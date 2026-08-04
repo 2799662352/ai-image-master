@@ -35,6 +35,7 @@ import type {
   WorkbenchApplyResult,
   WorkbenchIR,
 } from '../../../../types/videoWorkbench'
+import { MATERIAL_UPLOAD_URL_TTL_MS } from '../../../../types/videoWorkbench'
 import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { modeLimit } from './modes'
@@ -502,13 +503,68 @@ function writeCancelled(
   if (after) persistNow(after)
 }
 
+/** 素材三类的字段名 —— 预传缓存要逐类扫。 */
+const MATERIAL_KINDS = ['referenceImages', 'referenceVideos', 'referenceAudios'] as const
+
+/**
+ * 清掉整卡素材上的预传缓存(地址 + 时间戳 + 界面态),下次提交回落本地路径重传。
+ *
+ * **这是敢把地址落库的前提。** 存地址就有拿到死链的可能(桶被配了生命周期规则、
+ * 对象被人清了),而没有这一步的话,失败后重试会拿同一个死链再撞一次,这张卡永久
+ * 废掉 —— 那正是当初不敢落库的理由。清掉之后死链最多值一次失败。
+ *
+ * 不挑失败原因:内容审核拒了、参数不对,一样清。代价是重试多传一次,收益是不必去
+ * 猜「这个错是不是素材拉不到造成的」—— 上游只回一句话,猜不准。
+ */
+function withUploadCacheCleared(card: VideoWorkbenchCard): VideoWorkbenchCard {
+  const patch: Partial<VideoWorkbenchCard> = {}
+  let changed = false
+  for (const kind of MATERIAL_KINDS) {
+    if (!card[kind]?.some((m) => m.uploadedUrl !== undefined || m.uploadState !== undefined)) continue
+    patch[kind] = card[kind].map(({ uploadedUrl: _u, uploadedAt: _a, uploadState: _s, ...rest }) => rest)
+    changed = true
+  }
+  return changed ? { ...card, ...patch } : card
+}
+
+/**
+ * 水合时判定库里那些预传地址还能不能用:新鲜的留下并把角标恢复成打勾,过期的连同
+ * 时间戳一起丢掉(回落本地路径)。
+ *
+ * `dropped` 用来决定要不要写回库 —— 只在真丢掉东西时写,新鲜那支只是补了个不落库
+ * 的 `uploadState`,写回去是白跑一趟 IO。
+ */
+function restoreUploadCache(
+  card: VideoWorkbenchCard,
+  now: number,
+): { next: VideoWorkbenchCard; dropped: boolean } {
+  const patch: Partial<VideoWorkbenchCard> = {}
+  let changed = false
+  let dropped = false
+  for (const kind of MATERIAL_KINDS) {
+    if (!card[kind]?.some((m) => m.uploadedUrl !== undefined)) continue
+    patch[kind] = card[kind].map((m) => {
+      if (m.uploadedUrl === undefined) return m
+      // 没有时间戳就判不出新鲜度,一律当过期 —— 判不出就不能信。
+      if (m.uploadedAt !== undefined && now - m.uploadedAt <= MATERIAL_UPLOAD_URL_TTL_MS) {
+        return { ...m, uploadState: 'uploaded' as const }
+      }
+      dropped = true
+      const { uploadedUrl: _u, uploadedAt: _a, uploadState: _s, ...rest } = m
+      return rest
+    })
+    changed = true
+  }
+  return { next: changed ? { ...card, ...patch } : card, dropped }
+}
+
 /** 同上语义的 failed 写入（仅对仍在飞的卡片生效）。 */
 function writeFailed(set: SetState, cardId: string, error: string): void {
   let after: VideoWorkbenchCard | null = null
   set((state) => ({
     cards: state.cards.map((c) => {
       if (c.id !== cardId || !isActiveStatus(c.status)) return c
-      after = { ...c, status: 'failed', error, updatedAt: Date.now() }
+      after = withUploadCacheCleared({ ...c, status: 'failed', error, updatedAt: Date.now() })
       return after
     }),
   }))
@@ -928,14 +984,17 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         // 唯一例外是没有 taskId 的:上游从没收到过这个任务,无从对账,只能判死。
         // 旧库卡片没有 mode/webSearch/boardId 字段(渐进新增),读出时补默认值;
         // boardId 缺失/失效 → 迁入第一页(单页老数据自动迁移,不丢卡)。
+        const now = Date.now()
         const normalized = stored.map((raw) => {
           const boardId = raw.boardId && boardIds.has(raw.boardId) ? raw.boardId : firstBoardId
           const card = { ...raw, boardId, mode: normalizeMode(raw.mode), webSearch: raw.webSearch === true }
-          const next =
+          const revived =
             isActiveStatus(card.status) && !card.taskId
               ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启前任务未提交成功,请重新生成' }
               : card
-          if (next.boardId !== raw.boardId || next.status !== raw.status) {
+          // 预传地址跨重启复用(过期的丢掉、留下的把打勾角标恢复出来)。
+          const { next, dropped } = restoreUploadCache(revived, now)
+          if (next.boardId !== raw.boardId || next.status !== raw.status || dropped) {
             void db.put(next).catch(() => {})
           }
           return next
@@ -1522,7 +1581,14 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
               cards: state.cards.map((c) => {
                 if (c.id !== card.id || c.clientId !== clientId) return c
                 if (!res.success) {
-                  after = { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
+                  // 清预传缓存:上游拒收的原因里就包含「素材拉不到」,留着地址重试
+                  // 会拿同一个死链再撞一次。见 withUploadCacheCleared。
+                  after = withUploadCacheCleared({
+                    ...c,
+                    status: 'failed',
+                    error: res.error,
+                    updatedAt: Date.now(),
+                  })
                   return after
                 }
                 // preparing 期间用户点了取消:直到现在才拿到 taskId,而此刻任务
@@ -1555,12 +1621,12 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             set((state) => ({
               cards: state.cards.map((c) => {
                 if (c.id !== card.id || c.clientId !== clientId) return c
-                after = {
+                after = withUploadCacheCleared({
                   ...c,
                   status: 'failed',
                   error: e instanceof Error ? e.message : String(e),
                   updatedAt: Date.now(),
-                }
+                })
                 return after
               }),
             }))
@@ -1869,7 +1935,7 @@ mountMaterialTransferHandler(({ cardId, kind, originalSrc }, cosUrl) => {
 })
 
 /**
- * 本地素材预传的回填口。挂 `uploadedUrl` + `uploadState`,**不动 src**。
+ * 本地素材预传的回填口。挂 `uploadedUrl` + `uploadedAt` + `uploadState`,**不动 src**。
  *
  * 三处刻意与转存不同:
  *
@@ -1885,7 +1951,9 @@ mountMaterialTransferHandler(({ cardId, kind, originalSrc }, cosUrl) => {
  *    手里的整板 IR 无谓地撞冲突(拖 9 张图就是 9 次),bump revision 会往撤销栈里
  *    塞一步「撤销一次后台上传」这种用户根本不认识的操作。`materialsEqual` 只比
  *    src+name,所以不带上它也不会让规格等值判断出错。
- * 3. **不落库。** `WorkbenchDb.put` 会剥掉这两个字段,写一趟纯属浪费 IO。
+ * 3. **不主动落库,但地址会跟着下一次落盘存下去。** 这里不调 persistNow(缓存不值得
+ *    单独写一趟 IO);草稿本来就在逐字符防抖落库,地址顺路进库。`uploadState` 会被
+ *    `WorkbenchDb.put` 剥掉,水合时按地址重新算出来。
  */
 mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, outcome) => {
   useVideoWorkbenchStore.setState((state) => {
@@ -1903,7 +1971,9 @@ mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, outcome) => {
       hit = true
       const next = [...list]
       next[index] = outcome.state === 'uploaded'
-        ? { ...next[index], uploadState: 'uploaded', uploadedUrl: outcome.url }
+        // uploadedAt 是保鲜期的起点,必须和地址同时落 —— 没有它的记录水合时一律
+        // 当过期丢掉(见 restoreUploadCache)。
+        ? { ...next[index], uploadState: 'uploaded', uploadedUrl: outcome.url, uploadedAt: Date.now() }
         : { ...next[index], uploadState: outcome.state }
       return { ...card, [kind]: next }
     })
