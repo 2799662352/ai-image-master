@@ -691,9 +691,14 @@ function startTransfersForCard(card: VideoWorkbenchCard): void {
  * | `updateCard` | 按 kind 发 | agent 换素材走这条;但只改提示词/分辨率时不能发 —— 那是逐字符调用的 |
  * | `applyIR` | **只对新建的卡发** | 写计划里含「仅位置变了」的卡(workbenchIR 的 placeExisting),整份扫一遍等于挪一次卡就把整板重传 |
  *
- * `undo`/`redo`/`hydrate` 都不经这些 action(自建写计划直接 set),天然不受影响:
- * 撤销恢复的是整份快照、连 uploadedUrl 一起回来;hydrate 读到的则一定没有这个
- * 字段(落库时被 `stripPreuploadUrls` 剥掉了)。
+ * `undo`/`redo` 不经这些 action(自建写计划直接 set),天然不受影响 —— 撤销恢复的是
+ * 整份快照、连 uploadedUrl 一起回来。`hydrate` 读到的则一定没有这个字段(落库时被
+ * `stripPreuploadUrls` 剥掉了),所以它走另一条路:见 `resumePreuploadsForBoard`。
+ *
+ * **已经有结论的素材不重发**(`uploadState` 非空 = 在传 / 传好了 / 传挂了)。拖入那条
+ * 路上素材都是新的、天然为空,这条守卫是给「重启恢复」和「来回切页」用的:没有它,
+ * 切一次页就把整页素材重传一遍。判断按素材对象逐个来,所以同一路径的两个槽位仍然
+ * 各发各的(共用地址会踩上游按下标折叠 `@参考N` 的坑)。
  */
 function startPreuploadsFor(
   cardId: string,
@@ -701,6 +706,7 @@ function startPreuploadsFor(
   materials: readonly VideoWorkbenchMaterial[],
 ): void {
   for (const material of materials) {
+    if (material.uploadState !== undefined) continue
     startMaterialPreupload({ cardId, kind, originalSrc: material.src })
   }
 }
@@ -710,6 +716,35 @@ function startPreuploadsForCard(card: VideoWorkbenchCard): void {
   startPreuploadsFor(card.id, 'referenceImages', card.referenceImages)
   startPreuploadsFor(card.id, 'referenceVideos', card.referenceVideos)
   startPreuploadsFor(card.id, 'referenceAudios', card.referenceAudios)
+}
+
+/**
+ * 「下一步还可能是提交」的卡片状态。预传只对这些卡有意义 —— 已出片的卡,它的素材
+ * 这辈子可能不会再上送一次。
+ */
+function isResubmittableStatus(status: VideoWorkbenchCardStatus): boolean {
+  return status === 'draft' || status === 'failed' || status === 'cancelled'
+}
+
+/**
+ * 重启 / 切页后把这一页的本地素材重新预传一遍,顺带把角标画回来。
+ *
+ * 为什么需要:`uploadedUrl` 不落库(理由见类型定义),于是重启后素材回到「只有本地
+ * 路径」的状态 —— 提交时照旧能出片,但用户看到的是「昨天明明传好了,今天连角标都
+ * 没有」,而且那次上传的等待又得在点生成之后重新付一遍。重传把两件事一起解决:反正
+ * 提交时本来就要传,提前到开机/切页传,等于让「拖入即传」对重启也生效一次。
+ *
+ * 范围收紧到**看得见的那页** × **下一步是提交的卡**,否则开机就是一场上传风暴:
+ * 库里能躺 200 张卡(WORKBENCH_MAX_CARDS),每张最多 9 张参考图。没被覆盖到的页在
+ * 切过去的那一刻补传,代价只是那一页第一次切过去时角标晚出现一会儿。
+ *
+ * 幂等由 `startPreuploadsFor` 的 `uploadState` 守卫保证:来回切页不会重复发。
+ */
+function resumePreuploadsForBoard(cards: readonly VideoWorkbenchCard[], boardId: string): void {
+  for (const card of cards) {
+    if (card.boardId !== boardId || !isResubmittableStatus(card.status)) continue
+    startPreuploadsForCard(card)
+  }
 }
 
 /**
@@ -960,6 +995,14 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           for (const b of boards) cards = reorderBoard(cards, b.id)
           return { cards, boards, activeBoardId, hydrated: true }
         })
+
+        // 地址不落库,恢复出来的素材只剩本地路径 —— 当前页重传一遍,把打勾画回来,
+        // 顺带把提交时的等待再省一次。见 resumePreuploadsForBoard。
+        //
+        // 必须在 set 之外发:预传发起时会同步回写一次 `uploading`,在 set 的 updater
+        // 里调等于 set 套 set。
+        const hydratedState = get()
+        resumePreuploadsForBoard(hydratedState.cards, hydratedState.activeBoardId)
       } catch (e) {
         console.warn('[VideoWorkbench] 历史卡片恢复失败(忽略):', e)
         set({ hydrated: true })
@@ -997,6 +1040,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     // 选中是当前页的语境,切页必须清 —— 否则 ⚡ 会去生成另一页上看不见的卡。
     set({ activeBoardId: id, selectedCardIds: [], selectionAnchorId: undefined })
     writeActiveBoard(id)
+    // 水合只传了当前页,别的页在切过去的这一刻才补(见 resumePreuploadsForBoard)。
+    resumePreuploadsForBoard(get().cards, id)
   },
 
   renameBoard: (id, name) => {
