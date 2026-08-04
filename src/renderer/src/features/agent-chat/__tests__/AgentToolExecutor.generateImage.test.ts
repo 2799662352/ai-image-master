@@ -460,6 +460,79 @@ describe('AgentToolExecutor.generateImage', () => {
         expect(resolveRefImage).toHaveBeenCalledTimes(3)
       })
 
+      it('并发解析:九张图同时在飞,不是等上一张传完才开始下一张', async () => {
+        // 串行版本下,第二次调用要等第一次 resolve 之后才发生,所以「全部挂起时
+        // 已经调了九次」这个断言只有并发实现才成立。
+        const release: Array<() => void> = []
+        const resolveRefImage = vi.fn(
+          (p: string) =>
+            new Promise((res) => {
+              release.push(() => res({ ok: true, url: `https://bucket/${p}` }))
+            }),
+        )
+        const readThumb = vi.fn()
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+        registerFakes(api, makeHistory())
+
+        const refs = Array.from({ length: 9 }, (_, i) => `C:/a/shot${i}.png`)
+        const pending = callGenerate({ prompt: 'x', referenceImages: refs })
+
+        await vi.waitFor(() => expect(resolveRefImage).toHaveBeenCalledTimes(9))
+        for (const done of release) done()
+        await pending
+
+        expect(api.generateImage.mock.calls[0][0].referenceImages).toEqual(
+          refs.map((p) => `https://bucket/${p}`),
+        )
+      })
+
+      it('乱序完成也按入参次序排 —— 小图先传完不该顶到大图前面', async () => {
+        // 只在网络抖动时现形的那类 bug:把 Promise.all 写成「谁先完成谁 push」,
+        // 本地跑永远是对的,线上偶尔就把「图1」指到别人身上,而且不报错。
+        const delays: Record<string, number> = { big: 30, mid: 10, small: 0 }
+        const resolveRefImage = vi.fn(async (p: string) => {
+          const key = Object.keys(delays).find((k) => p.includes(k))!
+          await new Promise((r) => setTimeout(r, delays[key]))
+          return { ok: true, url: `https://bucket/${key}` }
+        })
+        const readThumb = vi.fn()
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+        registerFakes(api, makeHistory())
+
+        await callGenerate({
+          prompt: '图1 的人穿 图2 的衣服,背景用 图3',
+          referenceImages: ['C:/a/big.png', 'C:/a/mid.png', 'C:/a/small.png'],
+        })
+
+        expect(api.generateImage.mock.calls[0][0].referenceImages).toEqual([
+          'https://bucket/big',
+          'https://bucket/mid',
+          'https://bucket/small',
+        ])
+      })
+
+      it('并发下中间一张失败,仍然整次抛错而不是交出短了一位的数组', async () => {
+        const resolveRefImage = vi.fn(async (p: string) => {
+          await new Promise((r) => setTimeout(r, p.includes('bad') ? 20 : 0))
+          return p.includes('bad')
+            ? { ok: false as const, reason: 'not whitelisted' }
+            : { ok: true as const, url: `https://bucket/${p}` }
+        })
+        const readThumb = vi.fn(async (p: string) =>
+          p.includes('bad') ? { ok: false, reason: 'ENOENT' } : { ok: true, base64: 'QUJD', mime: 'image/png' },
+        )
+        setAttachmentsWithRelay(readThumb, resolveRefImage)
+        const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+        registerFakes(api, makeHistory())
+
+        await expect(
+          callGenerate({ prompt: 'x', referenceImages: ['C:/a/good1.png', 'C:/a/bad2.png', 'C:/a/good3.png'] }),
+        ).rejects.toThrow(/bad2/)
+        expect(api.generateImage).not.toHaveBeenCalled()
+      })
+
       it('大小写/斜杠不同的同一路径也各自解析,各自占一个位置', async () => {
         const resolveRefImage = vi.fn(async (p: string) => ({ ok: true, url: `https://bucket/${p}` }))
         const readThumb = vi.fn()
