@@ -679,7 +679,21 @@ async function getSakugaClip(args) {
   return { success: true, text: parts.join('\n') }
 }
 
-const TOOLS = [
+/**
+ * 暂时下线「出片段」的两个工具:`search_sakuga_clips`(回可下载 mp4)与
+ * `get_sakuga_clip`(回本地路径/签名 URL + 时间码)。
+ *
+ * 为什么下线而不是删:写提示词真正需要的是**文本**——权威运镜术语、结构化描述
+ * 范式、技法标签、出处链接,那两个 `search_cinematography_kb` 和
+ * `query_sakuga_dataset` 都给得了。而回一段可下载的视频对写提示词没有增量,却要
+ * agent 去下载、去 ffmpeg 截取,还会把签名 URL 和本地路径倒进上下文。
+ *
+ * 实现整个留着:改这个开关为 true 就恢复,不必翻 git 历史。
+ */
+const CLIP_TOOLS_ENABLED = false
+const CLIP_TOOL_NAMES = new Set(['search_sakuga_clips', 'get_sakuga_clip'])
+
+const ALL_TOOLS = [
   {
     name: 'search_cinematography_kb',
     description:
@@ -786,6 +800,24 @@ const TOOLS = [
   },
 ]
 
+/** 对外只暴露启用的工具 —— `tools/list` 是模型看得见的唯一目录。 */
+const TOOLS = ALL_TOOLS.filter((tool) => CLIP_TOOLS_ENABLED || !CLIP_TOOL_NAMES.has(tool.name))
+
+/** 下线的工具即使被硬调也要说清原因,而不是回一句 Unknown tool。 */
+function disabledToolResult() {
+  return {
+    content: [{
+      type: 'text',
+      text:
+        'This tool is currently disabled: the knowledge base returns text and source URLs only, '
+        + 'no downloadable clips. Use search_cinematography_kb for camera-motion terminology and '
+        + 'structured shot-description specs, and query_sakuga_dataset for technique tags, '
+        + 'animator/studio attribution and source links with timecodes.',
+    }],
+    isError: true,
+  }
+}
+
 async function handleRequest(request) {
   const { method, id } = request
   const params = request.params || {}
@@ -801,6 +833,10 @@ async function handleRequest(request) {
   } else if (method === 'tools/call') {
     const toolName = params.name
     const args = params.arguments || {}
+    if (!CLIP_TOOLS_ENABLED && CLIP_TOOL_NAMES.has(toolName)) {
+      sendResult(id, disabledToolResult())
+      return
+    }
     if (toolName === 'search_cinematography_kb') {
       const query = args.query || ''
       if (!query) {
@@ -879,6 +915,9 @@ if (require.main === module) {
 // only starts when this file is the entrypoint.
 module.exports = {
   TOOLS,
+  ALL_TOOLS,
+  CLIP_TOOL_NAMES,
+  CLIP_TOOLS_ENABLED,
   buildSakugaQueryBody,
   formatSakugaHits,
   parseAvNode,
