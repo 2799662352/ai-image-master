@@ -186,6 +186,66 @@ describe('本地参考图拖入即传', () => {
     })
   })
 
+  // uploadState 只为界面存在:光看 uploadedUrl 有没有,「在传」「传失败」
+  // 「根本不用传」是同一个样子,照那个画转圈会永远转下去。
+  it('发起时就落 uploading,成功后转 uploaded —— 界面才画得出转圈到打勾', async () => {
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+    const matOf = () => useStore.getState().cards.find((c) => c.id === cardId)!.referenceImages[0]
+
+    useStore.getState().addMaterials(cardId, 'referenceImages', [{ name: 'a', src: LOCAL_A }])
+    await vi.waitFor(() => expect(matOf().uploadState).toBe('uploading'))
+    expect(matOf().uploadedUrl).toBeUndefined()
+
+    deferred[0]({ ok: true, url: COS_A })
+    await vi.waitFor(() => expect(matOf().uploadState).toBe('uploaded'))
+    expect(matOf().uploadedUrl).toBe(COS_A)
+  })
+
+  it('传失败落 failed 而不是停在 uploading —— 否则转圈永远不停', async () => {
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+    const matOf = () => useStore.getState().cards.find((c) => c.id === cardId)!.referenceImages[0]
+
+    useStore.getState().addMaterials(cardId, 'referenceImages', [{ name: 'a', src: LOCAL_A }])
+    await vi.waitFor(() => expect(matOf().uploadState).toBe('uploading'))
+
+    deferred[0]({ ok: false, reason: 'COS down' })
+    await vi.waitFor(() => expect(matOf().uploadState).toBe('failed'))
+    expect(matOf().uploadedUrl).toBeUndefined()
+  })
+
+  it('不用传的源(https/data/asset)压根不落 uploadState —— 别给它们画角标', async () => {
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+    useStore.getState().addMaterials(cardId, 'referenceImages', [
+      { name: 'u', src: 'https://example.com/x.png' },
+      { name: 'd', src: 'data:image/png;base64,AAA' },
+      { name: 'a', src: 'asset://abc123' },
+    ])
+
+    await new Promise((r) => setTimeout(r, 10))
+    const imgs = useStore.getState().cards.find((c) => c.id === cardId)!.referenceImages
+    expect(imgs.map((m) => m.uploadState)).toEqual([undefined, undefined, undefined])
+  })
+
+  it('同一张图拖两次:两条各自走完 uploading → uploaded,不会把结论都堆在第一条', async () => {
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+    useStore.getState().addMaterials(cardId, 'referenceImages', [
+      { name: 'a', src: LOCAL_A },
+      { name: 'a 又一次', src: LOCAL_A },
+    ])
+    const imgs = () => useStore.getState().cards.find((c) => c.id === cardId)!.referenceImages
+
+    await vi.waitFor(() => expect(imgs().map((m) => m.uploadState)).toEqual(['uploading', 'uploading']))
+    deferred[0]({ ok: true, url: COS_A })
+    deferred[1]({ ok: true, url: COS_A2 })
+
+    await vi.waitFor(() => expect(imgs().map((m) => m.uploadedUrl)).toEqual([COS_A, COS_A2]))
+    expect(imgs().map((m) => m.uploadState)).toEqual(['uploaded', 'uploaded'])
+  })
+
   it('主进程降级成 data URL 时当作没传成 —— 不把 base64 塞进卡片状态', async () => {
     // COS 不可达时 resolveMediaUrl 会对小文件内联(relayOrInline)。那对生图那条路
     // 是有用的兜底,对预传是净亏:什么都没上传,却往每次都要浅拷贝的卡片对象里塞
@@ -308,5 +368,7 @@ describe('本地参考图拖入即传', () => {
     const persisted = (await store.list()).find((c) => c.id === cardId)!
     expect(persisted.referenceImages[0].src).toBe(LOCAL_A)
     expect(persisted.referenceImages[0].uploadedUrl).toBeUndefined()
+    // uploadState 同样是会话内的:重启后不该显示一个上次会话的打勾。
+    expect(persisted.referenceImages[0].uploadState).toBeUndefined()
   })
 })

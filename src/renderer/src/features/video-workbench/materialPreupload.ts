@@ -66,7 +66,19 @@ export interface MaterialPreuploadTarget {
   originalSrc: string
 }
 
-export type MaterialPreuploadApply = (target: MaterialPreuploadTarget, url: string) => void
+/**
+ * 一次预传的结果。**发起时也回报一次**(`uploading`),界面才画得出转圈 ——
+ * 只回报成功的话,「在传」「传失败」「根本不用传」在界面上是同一个样子。
+ */
+export type MaterialPreuploadOutcome =
+  | { state: 'uploading' }
+  | { state: 'uploaded'; url: string }
+  | { state: 'failed'; reason: string }
+
+export type MaterialPreuploadApply = (
+  target: MaterialPreuploadTarget,
+  outcome: MaterialPreuploadOutcome,
+) => void
 
 let apply: MaterialPreuploadApply | null = null
 
@@ -82,21 +94,29 @@ export function startMaterialPreupload(target: MaterialPreuploadTarget): void {
   if (!isPreuploadableMaterialSrc(target.originalSrc)) return
   const resolve = getApi()?.attachments?.resolveRefMedia
   if (!resolve) return
+  apply?.(target, { state: 'uploading' })
   void resolve(target.originalSrc)
     .then((result) => {
-      // 失败就什么都不做:src 还在,提交时主进程照旧上传。
+      // 失败不影响能否出片:src 还在,提交时主进程照旧上传。但要让界面知道,
+      // 否则转圈会一直转下去。
       if (!result.ok) {
         console.warn(`[vwPreupload] 预传失败,提交时再传: ${target.originalSrc} (${result.reason})`)
+        apply?.(target, { state: 'failed', reason: result.reason })
         return
       }
       // **只收 http(s)。** COS 不可达时主进程会对小文件降级成内联 data URL
       // (mediaResolve 的 relayOrInline),那对生图那条路是有用的兜底,对预传却是
       // 净亏:什么都没上传成,却往卡片状态里塞了一坨 base64 —— 而卡片对象在 store
       // 里每次更新都要浅拷贝一遍。丢掉它,回到「提交时主进程从磁盘现传」。
-      if (!/^https?:\/\//i.test(result.url)) return
-      apply?.(target, result.url)
+      if (!/^https?:\/\//i.test(result.url)) {
+        apply?.(target, { state: 'failed', reason: 'COS 不可达,已降级为提交时上传' })
+        return
+      }
+      apply?.(target, { state: 'uploaded', url: result.url })
     })
-    .catch(() => {})
+    .catch((err: unknown) => {
+      apply?.(target, { state: 'failed', reason: err instanceof Error ? err.message : String(err) })
+    })
 }
 
 /**

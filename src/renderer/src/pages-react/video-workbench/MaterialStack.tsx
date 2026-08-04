@@ -6,13 +6,59 @@
 // 单击素材弹出预览(图片大图 / 视频播放 / 音频播放,MaterialPreviewModal);
 // 拖拽换位后的 click 用 ref 抑制一拍,两种手势不打架。
 
-import { useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
+import { copyToClipboard } from '../../utils/clipboard'
+import { useToastStore } from '../../stores/useToastStore'
 import { MaterialPreviewModal } from './MaterialPreviewModal'
 import { MaterialThumb } from './MaterialThumb'
 
 const STEP_PX = 64
 const MAX_VISIBLE = 12
+
+/**
+ * 预传状态角标。素材拖进来就开始往云端传,这里是那件事**唯一的界面反馈** ——
+ * 在此之前传完没传完只能开 F12 猜(而且猜不到:上传走主进程,不经 Chromium
+ * 网络栈,DevTools 的 Network 面板里根本没有)。
+ *
+ * 没有状态就不画:https / data: / asset:// 这些源本来就没有本地文件要传,
+ * 给它们挂个角标只是噪音。
+ */
+function UploadBadge({ material }: { material: VideoWorkbenchMaterial }): ReactNode {
+  const state = material.uploadState
+  if (!state) return null
+  const label =
+    state === 'uploading' ? '正在上传到云端…'
+      : state === 'uploaded' ? `已传到云端:${material.uploadedUrl ?? ''}`
+        : '云端上传失败,生成时会从本地重传'
+  return (
+    <span
+      className={`vw-stack-upload ${state === 'uploaded' ? 'is-uploaded' : state === 'failed' ? 'is-failed' : ''}`}
+      title={label}
+      aria-label={label}
+      data-testid={`vw-upload-${state}`}
+    >
+      {state === 'uploading' ? <span className="vw-upload-spin" aria-hidden="true" /> : null}
+      {state === 'uploaded' ? '✓' : null}
+      {state === 'failed' ? '!' : null}
+    </span>
+  )
+}
+
+/** 缩略图的 hover 提示:文件名 + 传输结论(有地址就把地址也带上)。 */
+function tileTitle(m: VideoWorkbenchMaterial): string {
+  if (m.uploadState === 'uploading') return `${m.name}\n正在上传到云端…`
+  if (m.uploadState === 'failed') return `${m.name}\n云端上传失败,生成时会从本地重传`
+  if (m.uploadedUrl) return `${m.name}\n${m.uploadedUrl}`
+  return m.name
+}
+
+/** 打开外部链接(与 file-explorer 的 UrlPreview 同一条桥)。 */
+function openExternal(url: string): void {
+  const bridge = (window as Window & { electronAPI?: { shell?: { openExternal?: (u: string) => Promise<unknown> } } })
+    .electronAPI?.shell
+  void bridge?.openExternal?.(url)
+}
 
 /** 素材换位拖拽 mime(带 kind,跨堆叠不生效)。 */
 export function materialDragMime(kind: 'image' | 'video' | 'audio'): string {
@@ -99,6 +145,28 @@ export function MaterialStack({
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const suppressClickRef = useRef(false)
 
+  // ---- 右键菜单(复制/打开云端地址)----
+  // 必须是渲染层菜单,不能指望 Electron 原生那个:原生菜单按右键处的
+  // `params.srcURL` 是不是 http(s) 决定要不要给「复制图片地址」,而缩略图渲染的是
+  // 本地文件解析出来的 blob:,那道闸永远不过。云端地址挂在素材对象的 uploadedUrl
+  // 上,从不进 DOM 的 src,原生菜单看不见它。
+  const addToast = useToastStore((s) => s.addToast)
+  const [menu, setMenu] = useState<{ x: number; y: number; url: string } | null>(null)
+
+  useEffect(() => {
+    if (!menu) return
+    const close = (): void => setMenu(null)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
   const clearDragState = () => {
     setDragIdx(null)
     setDropPos(null)
@@ -140,6 +208,9 @@ export function MaterialStack({
         className={`vw-stack-container ${materials.length === 0 ? 'vw-empty' : ''} ${dragIdx !== null ? 'vw-reordering' : ''}`}
         style={{ width: expandedWidth }}
         data-testid={`vw-stack-${kind}`}
+        // 主进程据此跳过原生右键菜单,免得「图片另存为…」盖在自定义菜单上面。
+        // 同款做法见 file-explorer 的 data-file-explorer-root。
+        data-vw-material-stack=""
       >
         {visible.map((m, idx) => {
           const rot = (idx % 2 === 0 ? -1 : 1) * (3 + (idx % 3) * 0.8)
@@ -153,7 +224,7 @@ export function MaterialStack({
                 dragIdx === idx ? 'vw-mat-dragging' : '',
                 dropPos?.index === idx ? (dropPos.before ? 'vw-mat-drop-before' : 'vw-mat-drop-after') : '',
               ].join(' ')}
-              title={m.name}
+              title={tileTitle(m)}
               draggable={!disabled && !!onReorder}
               data-testid={`vw-stack-item-${kind}-${idx}`}
               style={{
@@ -180,8 +251,16 @@ export function MaterialStack({
               onDragOver={(e) => handleItemDragOver(e, idx)}
               onDragLeave={() => setDropPos((p) => (p?.index === idx ? null : p))}
               onDrop={(e) => handleItemDrop(e, idx)}
+              onContextMenu={(e) => {
+                // 没有云端地址就没有可复制/可打开的东西,让原生菜单照常出。
+                if (!m.uploadedUrl) return
+                e.preventDefault()
+                e.stopPropagation()
+                setMenu({ x: e.clientX, y: e.clientY, url: m.uploadedUrl })
+              }}
             >
               {materialThumb(kind, m, thumbSrcAt(idx))}
+              <UploadBadge material={m} />
               {!disabled && (
                 <span
                   className="vw-stack-remove"
@@ -231,6 +310,39 @@ export function MaterialStack({
           }}
         />
       </div>
+      {menu && (
+        <div
+          className="vw-material-menu"
+          style={{ left: menu.x, top: menu.y }}
+          role="menu"
+          data-testid="vw-material-menu"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const url = menu.url
+              setMenu(null)
+              void copyToClipboard(url).then((ok) => {
+                addToast({ message: ok ? '云端地址已复制' : '复制失败', type: ok ? 'success' : 'error' })
+              })
+            }}
+          >
+            复制链接
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              openExternal(menu.url)
+              setMenu(null)
+            }}
+          >
+            在浏览器中打开
+          </button>
+        </div>
+      )}
       {previewIdx !== null && materials[previewIdx] && (
         <MaterialPreviewModal
           kind={kind}
