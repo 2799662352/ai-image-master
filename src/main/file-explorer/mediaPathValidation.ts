@@ -33,6 +33,7 @@ export const ALLOWED_MIME_BY_EXT: Record<string, string> = {
   m4v: 'video/x-m4v',
   mkv: 'video/x-matroska',
   mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
   wav: 'audio/wav',
   flac: 'audio/flac',
   aac: 'audio/aac',
@@ -56,4 +57,8 @@ export function isImageMime(mime: string): boolean {
 
 export function isVideoMime(mime: string): boolean {
   return typeof mime === 'string' && mime.startsWith('video/')
+}
+
+export function isAudioMime(mime: string): boolean {
+  return typeof mime === 'string' && mime.startsWith('audio/')
 }

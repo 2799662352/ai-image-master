@@ -388,6 +388,11 @@ const IPC_CHANNELS = {
     // so MCP `generate_image` matches what the UI has always done (原图直传
     // 云端). See main/file-explorer/refImageResolveIpc.ts.
     RESOLVE_REF_IMAGE: 'media:resolve-ref-image',
+    // Same, but the whitelist also admits video/audio — the video workbench
+    // pre-uploads all three reference kinds the moment they're dropped, so the
+    // upload happens while the user is still writing the prompt instead of
+    // after they hit generate.
+    RESOLVE_REF_MEDIA: 'media:resolve-ref-media',
     // PR-A hot-path: resized JPEG thumbnails. See main/file-explorer/mediaThumbIpc.ts
     // for the size/security envelope. Renderer calls this by default; falls
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
@@ -639,6 +644,21 @@ export interface ElectronAPI {
      * (`utils/refImageUpload`) has always done. Image mimes only.
      */
     resolveRefImage: (
+      p: string,
+    ) => Promise<{ ok: true; url: string } | { ok: false; reason: string }>
+    /**
+     * Same as `resolveRefImage`, but the whitelist also admits video and audio.
+     *
+     * For the video workbench's drop-time pre-upload: reference video is the
+     * bulkiest material of the three, so moving its upload out of the gap
+     * between "hit generate" and "task exists" is where most of the wait goes.
+     *
+     * The result is not guaranteed to be https — when COS is unreachable the
+     * main side falls back to an inline data URL for small files. Callers that
+     * specifically want a URL must check the scheme and treat a data URL as a
+     * miss.
+     */
+    resolveRefMedia: (
       p: string,
     ) => Promise<{ ok: true; url: string } | { ok: false; reason: string }>
     /**
@@ -1575,6 +1595,11 @@ const electronAPI: ElectronAPI = {
     resolveRefImage: (p: string) =>
       safeInvoke<{ ok: true; url: string } | { ok: false; reason: string }>(
         IPC_CHANNELS.ATTACHMENTS.RESOLVE_REF_IMAGE,
+        p,
+      ),
+    resolveRefMedia: (p: string) =>
+      safeInvoke<{ ok: true; url: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.ATTACHMENTS.RESOLVE_REF_MEDIA,
         p,
       ),
     readMediaThumb: (args: { path: string; size?: number }) =>

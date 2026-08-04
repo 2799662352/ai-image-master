@@ -1,6 +1,12 @@
 import { ipcMain } from 'electron'
 import path from 'node:path'
-import { hasTraversalSegment, isImageMime, mimeFromExt } from './mediaPathValidation'
+import {
+  hasTraversalSegment,
+  isAudioMime,
+  isImageMime,
+  isVideoMime,
+  mimeFromExt,
+} from './mediaPathValidation'
 import { resolveMediaUrl } from '../services/seedance/mediaResolve'
 
 /**
@@ -29,13 +35,36 @@ import { resolveMediaUrl } from '../services/seedance/mediaResolve'
  * 是 `will-navigate` + `setWindowOpenHandler` 挡住不受信内容加载。白名单真正的作用
  * 是**拦住调用方的失误**:agent 抄错路径、或把一个非图片文件当参考图传进来时,别让
  * 它进了**公开** COS 桶。这类误传一旦发生就是不可撤销的,所以值得在这里拦一道。
+ *
+ * 同文件还有一条 `media:resolve-ref-media`(`resolveRefMedia`):同一段逻辑、白名单放宽
+ * 到图片/视频/音频,给视频工作台的「拖入即传」用。两个入口分开是为了让默认最窄。
  */
 
 export type ResolveRefImageResult =
   | { ok: true; url: string }
   | { ok: false; reason: string }
 
-export async function resolveRefImage(rawPath: string): Promise<ResolveRefImageResult> {
+/**
+ * 放行哪一类素材。两个入口共用同一段逻辑,只有这道闸不同:
+ *
+ * - `image`(`resolveRefImage`,MCP 生图):参考图就是图片,没有理由放过 mp4/zip;
+ * - `av`(`resolveRefMedia`,视频工作台):三种参考素材都要预传,图片/视频/音频都放行。
+ *
+ * 两个入口分开而不是加个参数,是为了让**默认最窄** —— MCP 那条路即使将来有人改
+ * 错调用点,也不可能把一段视频当参考图传进公开桶。
+ */
+type RefMediaFamily = 'image' | 'av'
+
+function isAllowedFamily(mime: string, family: RefMediaFamily): boolean {
+  if (isImageMime(mime)) return true
+  return family === 'av' && (isVideoMime(mime) || isAudioMime(mime))
+}
+
+async function resolveRef(
+  rawPath: string,
+  family: RefMediaFamily,
+  label: string,
+): Promise<ResolveRefImageResult> {
   if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {
     return { ok: false, reason: 'empty path' }
   }
@@ -49,12 +78,13 @@ export async function resolveRefImage(rawPath: string): Promise<ResolveRefImageR
     return { ok: false, reason: 'path contains a traversal segment' }
   }
   const mime = mimeFromExt(src)
-  if (!mime || !isImageMime(mime)) {
-    return { ok: false, reason: `not a whitelisted image path: ${path.basename(src)}` }
+  if (!mime || !isAllowedFamily(mime, family)) {
+    const kind = family === 'image' ? 'image' : 'media'
+    return { ok: false, reason: `not a whitelisted ${kind} path: ${path.basename(src)}` }
   }
 
   try {
-    const url = await resolveMediaUrl(src, 'referenceImage', mime, { alwaysRelay: true })
+    const url = await resolveMediaUrl(src, label, mime, { alwaysRelay: true })
     return { ok: true, url }
   } catch (err) {
     // 绝不让异常穿过 IPC 边界:渲染层拿到 ok:false 会按策略降级回内联 data URL,
@@ -63,6 +93,25 @@ export async function resolveRefImage(rawPath: string): Promise<ResolveRefImageR
   }
 }
 
+export function resolveRefImage(rawPath: string): Promise<ResolveRefImageResult> {
+  return resolveRef(rawPath, 'image', 'referenceImage')
+}
+
+/**
+ * 视频工作台「拖入即传」用:图片 / 视频 / 音频三类参考素材都换成可提交的 URL。
+ *
+ * 与 `resolveRefImage` 的唯一区别是白名单放宽。视频素材恰恰是体积最大的那批,
+ * 把它的上传从「点了生成之后」挪到用户还在写提示词的时候,省下的等待也最多。
+ *
+ * 注意返回值**可能不是 https**:COS 挂掉时 `resolveMediaUrl` 会对小文件降级成
+ * 内联 data URL(见 mediaResolve 的 relayOrInline)。预传的调用方只接受 http(s),
+ * 拿到 data URL 要当作「没传成」丢掉 —— 那玩意儿留在卡片上就是一坨 base64。
+ */
+export function resolveRefMedia(rawPath: string): Promise<ResolveRefImageResult> {
+  return resolveRef(rawPath, 'av', 'referenceMedia')
+}
+
 export function registerRefImageResolveIpc(): void {
   ipcMain.handle('media:resolve-ref-image', (_event, rawPath: string) => resolveRefImage(rawPath))
+  ipcMain.handle('media:resolve-ref-media', (_event, rawPath: string) => resolveRefMedia(rawPath))
 }
