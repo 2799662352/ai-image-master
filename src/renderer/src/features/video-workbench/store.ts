@@ -1869,31 +1869,42 @@ mountMaterialTransferHandler(({ cardId, kind, originalSrc }, cosUrl) => {
 })
 
 /**
- * 本地图预传的回填口。挂 `uploadedUrl`,**不动 src**。
+ * 本地素材预传的回填口。挂 `uploadedUrl` + `uploadState`,**不动 src**。
  *
  * 三处刻意与转存不同:
  *
- * 1. **只补第一条还没有 uploadedUrl 的同路径素材。** 同一张图拖两次会发两次预传、
- *    拿回两个不同地址,两条各归各的。转存那边可以「两条一起换」因为外链本来就是
- *    同一个地址;这边共用一个地址就会踩上游按下标折叠 `@参考N` 的坑。哪个 URL 落
- *    到哪个槽位无所谓 —— 两份字节完全相同,换过来看不出区别。
+ * 1. **只补第一条还没有结论的同路径素材。** 同一张图拖两次会发两次预传、拿回两个
+ *    不同地址,两条各归各的。转存那边可以「两条一起换」因为外链本来就是同一个
+ *    地址;这边共用一个地址就会踩上游按下标折叠 `@参考N` 的坑。哪个 URL 落到哪个
+ *    槽位无所谓 —— 两份字节完全相同,换过来看不出区别。
+ *
+ *    「还没有结论」= `uploadState` 未定或仍是 `uploading`。用它而不是
+ *    `uploadedUrl === undefined` 判断,是因为 `uploading` 那一拍已经写过一次状态,
+ *    再按 URL 判空会让成功那一拍落到**另一条**同路径素材上。
  * 2. **不递增 rev,也不递增 revision。** 它是缓存不是编排意图:bump rev 会让 agent
  *    手里的整板 IR 无谓地撞冲突(拖 9 张图就是 9 次),bump revision 会往撤销栈里
  *    塞一步「撤销一次后台上传」这种用户根本不认识的操作。`materialsEqual` 只比
  *    src+name,所以不带上它也不会让规格等值判断出错。
- * 3. **不落库。** `WorkbenchDb.put` 本来就会剥掉这个字段,写一趟纯属浪费 IO。
+ * 3. **不落库。** `WorkbenchDb.put` 会剥掉这两个字段,写一趟纯属浪费 IO。
  */
-mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, cosUrl) => {
+mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, outcome) => {
   useVideoWorkbenchStore.setState((state) => {
     let hit = false
     const cards = state.cards.map((card) => {
       if (card.id !== cardId || hit) return card
       const list = card[kind]
-      const index = list.findIndex((m) => m.src === originalSrc && m.uploadedUrl === undefined)
+      const index = list.findIndex(
+        (m) => m.src === originalSrc
+          && (outcome.state === 'uploading'
+            ? m.uploadState === undefined
+            : m.uploadState === 'uploading'),
+      )
       if (index < 0) return card
       hit = true
       const next = [...list]
-      next[index] = { ...next[index], uploadedUrl: cosUrl }
+      next[index] = outcome.state === 'uploaded'
+        ? { ...next[index], uploadState: 'uploaded', uploadedUrl: outcome.url }
+        : { ...next[index], uploadState: outcome.state }
       return { ...card, [kind]: next }
     })
     return hit ? { cards } : {}

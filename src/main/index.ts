@@ -663,14 +663,21 @@ function createWindow(): void {
 
   // 右键菜单 - 支持图片保存
   mainWindow.webContents.on('context-menu', async (_event, params) => {
-    // File Explorer 面板内的右键由 React 自定义菜单处理；
-    // 主进程跳过原生 fallback，避免「刷新 / 开发者工具」漏出覆盖到自定义菜单上方。
+    // 这两处的右键由 React 自定义菜单处理，主进程跳过原生 fallback，避免
+    // 「图片另存为 / 刷新 / 开发者工具」漏出覆盖到自定义菜单上方。
+    //
+    // - File Explorer 面板：整套文件操作都是自定义菜单。
+    // - 视频工作台的素材堆叠：原生菜单按 `params.srcURL` 是不是 http(s) 决定要不要
+    //   给「复制图片地址」，而缩略图渲染的是本地文件解析出的 blob:，那道闸永远不过；
+    //   云端地址挂在素材对象的 uploadedUrl 上、从不进 DOM 的 src，原生菜单看不见。
+    //   所以那两项只能由渲染层自己出（MaterialStack）。
+    const CUSTOM_MENU_ROOTS = '[data-file-explorer-root],[data-vw-material-stack]'
     try {
-      const inFileExplorer = await mainWindow!.webContents.executeJavaScript(
-        `(() => { const el = document.elementFromPoint(${params.x}, ${params.y}); return !!(el && el.closest && el.closest('[data-file-explorer-root]')); })()`,
+      const inCustomMenuZone = await mainWindow!.webContents.executeJavaScript(
+        `(() => { const el = document.elementFromPoint(${params.x}, ${params.y}); return !!(el && el.closest && el.closest(${JSON.stringify(CUSTOM_MENU_ROOTS)})); })()`,
         true,
       )
-      if (inFileExplorer) return
+      if (inCustomMenuZone) return
     } catch {
       // executeJavaScript 失败时退回到默认行为
     }

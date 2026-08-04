@@ -88,6 +88,85 @@
   background: #dc2626;
 }
 
+/* ---------- 预传状态角标 ----------
+   与 ✕ 分居两角:✕ 在右上且 hover 才出现(破坏性操作,别常驻);状态角标在左下且
+   **常驻** —— 它是被动反馈,要的就是不用悬停就能一眼看到「这张传完没有」。
+   .vw-stack-item 是 overflow:hidden 的 60px 盒子,所以角标不能像批量页那样用
+   负偏移溢出到边框外,会被裁掉。 */
+.vw-stack-item .vw-stack-upload {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: none;
+}
+
+.vw-stack-item .vw-stack-upload.is-uploaded {
+  color: #fce300;
+}
+
+.vw-stack-item .vw-stack-upload.is-failed {
+  color: #f87171;
+}
+
+/* 转圈用边框环而不是字形:字形旋转在小尺寸下会糊,而且不同字体基线不一致。 */
+.vw-stack-item .vw-stack-upload .vw-upload-spin {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #fce300;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: vw-upload-spin 0.9s linear infinite;
+}
+
+@keyframes vw-upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vw-stack-item .vw-stack-upload .vw-upload-spin {
+    animation: none;
+  }
+}
+
+/* ---------- 素材右键菜单 ---------- */
+.vw-material-menu {
+  position: fixed;
+  z-index: 50000;
+  min-width: 140px;
+  padding: 4px 0;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.vw-material-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 12px;
+  color: #e4e4e7;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.vw-material-menu button:hover {
+  background: #27272a;
+  color: #fce300;
+}
+
 /* 尾部虚线「+ 添加」卡:hover 容器才淡入并平移到队尾 */
 .vw-stack-add {
   position: absolute;

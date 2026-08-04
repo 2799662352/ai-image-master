@@ -37,12 +37,12 @@ const MATERIAL_FIELDS = ['referenceImages', 'referenceVideos', 'referenceAudios'
  */
 function stripPreuploadUrls(card: VideoWorkbenchCard): VideoWorkbenchCard {
   const dirty = MATERIAL_FIELDS.filter((field) =>
-    card[field]?.some((m) => m.uploadedUrl !== undefined),
+    card[field]?.some((m) => m.uploadedUrl !== undefined || m.uploadState !== undefined),
   )
   if (dirty.length === 0) return card
   const next = { ...card }
   for (const field of dirty) {
-    next[field] = card[field].map(({ uploadedUrl: _dropped, ...rest }) => rest)
+    next[field] = card[field].map(({ uploadedUrl: _url, uploadState: _state, ...rest }) => rest)
   }
   return next
 }

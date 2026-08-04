@@ -100,6 +100,15 @@ export interface VideoWorkbenchMaterial {
    * 后面的编号全体前移且不报错。
    */
   uploadedUrl?: string
+  /**
+   * 预传的进行态,**只为界面存在**(转圈 / 打勾 / 传失败)。与 `uploadedUrl` 同样
+   * 是会话内缓存,不落库。
+   *
+   * 为什么不能只看 `uploadedUrl` 有没有:那样「没有」同时意味着**在传**、
+   * **传失败**、**根本不用传**(https / data: / asset:// 源本来就没有本地文件要传)
+   * 三种情况。照那个画转圈,传失败的会永远转下去 —— 比不画还糟。
+   */
+  uploadState?: 'uploading' | 'uploaded' | 'failed'
 }
 
 /**
