@@ -17,6 +17,9 @@ const mcpPath = path.resolve(
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const mcp = req(mcpPath) as {
   TOOLS: Array<{ name: string; inputSchema: { required?: string[] } }>
+  ALL_TOOLS: Array<{ name: string }>
+  CLIP_TOOL_NAMES: Set<string>
+  CLIP_TOOLS_ENABLED: boolean
   buildSakugaQueryBody: (
     vector: number[],
     args: Record<string, unknown>,
@@ -45,6 +48,24 @@ describe('cinematography-kb-mcp sakuga tool', () => {
     expect(names).toContain('query_sakuga_dataset')
     const sakuga = mcp.TOOLS.find((t) => t.name === 'query_sakuga_dataset')
     expect(sakuga?.inputSchema.required).toEqual(['query'])
+  })
+
+  // 出片段的两个工具暂时下线:写提示词要的是文本(术语 / 描述范式 / 技法标签 /
+  // 出处链接),回一段可下载的 mp4 没有增量,却要 agent 去下载、去 ffmpeg 截取。
+  it('只对外暴露两个文本工具 —— 出片段的那两个不进 tools/list', () => {
+    expect(mcp.TOOLS.map((t) => t.name)).toEqual([
+      'search_cinematography_kb',
+      'query_sakuga_dataset',
+    ])
+  })
+
+  it('下线是开关不是删除 —— 实现与描述都还在 ALL_TOOLS 里,改开关即恢复', () => {
+    expect(mcp.CLIP_TOOLS_ENABLED).toBe(false)
+    const all = mcp.ALL_TOOLS.map((t) => t.name)
+    expect(all).toContain('search_sakuga_clips')
+    expect(all).toContain('get_sakuga_clip')
+    // 开关一开,暴露的就是全部四个 —— 这条锁住「过滤逻辑只看开关」。
+    expect(mcp.ALL_TOOLS.filter((t) => !mcp.CLIP_TOOL_NAMES.has(t.name))).toHaveLength(2)
   })
 
   it('buildSakugaQueryBody assembles topk/filter/output_fields', () => {

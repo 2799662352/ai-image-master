@@ -16,6 +16,28 @@ description: 【导演模式·提示词结构 / Director · Prompt Structure】�
 - 用:需要一条规范、可复现的成品提示词;字段乱序/丢字段导致出图不稳。
 - 不用:多镜连续性/叙事排序(→ continuity / narrative 系列);纯锚点提取(→ anchor-extraction)。
 
+## 落笔前先查运镜知识库(硬性,图片也一样)
+
+第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆写。**每条提示词落笔前至少查
+三次** `search_cinematography_kb`,三次各查一个面,别用同义词把同一个问题问三遍:
+
+1. **术语** — 你打算用的那个机位/运动本身(`dolly in`、`arc`、`low-angle
+   pedestal`、`rack focus`…),拿库里的权威写法,而不是「镜头慢慢靠近」。
+2. **描述规范** — 这个镜头在结构化描述里该怎么落字(机位高度 / 角度 / 景别 /
+   焦点 / 景深 / 主体位置 / 空间层次那套 CHAI 五维)。
+3. **范例或修正对** — 找一条同类的专业 caption,或一条 critique/fix 对,照着改
+   自己的措辞。修正对尤其值钱:它直接告诉你这类描述通常错在哪。
+
+做动画风格时再加一次 `query_sakuga_dataset`,拿真实的技法标签(smears、
+impact_frames、background_animation…)与作画/studio 归属——那些是可核实的名词,
+比「作画精良」这种形容词能进提示词。
+
+同一条镜头运动在同一个任务里查过一次就可以复用结论,不必逐张卡重查;但**换了运动
+就要重查**。工具没配 key 或不可用时退回联网检索,并在交付里说明这条是未经库校准的。
+
+> 为什么值得这几次往返:「电影感」「镜头很带感」这类词进不了模型,`低机位 35mm
+> 前推、焦点从前景手部拉到背景人脸` 才进得去。知识库的作用就是把前者换成后者。
+
 PROMPT STRUCTURE — follow this order for every panel prompt:
 
 1. Subject + Action: "[char1] reaches for a door handle" (use character tags, not full descriptions)

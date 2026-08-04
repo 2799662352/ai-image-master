@@ -2,7 +2,7 @@
 # SessionStart hook for catimation-storyboard-pro plugin (generic: cursor/claude/copilot).
 set -euo pipefail
 
-session_context="<IMPORTANT>\nCATIMATION 制片包生成器(catimation-storyboard-pro)已启用。当任务是把剧本/概念做成连续性受控的图生视频素材包(角色/场景/道具/风格/连贯性圣经 + shot cards + handoff 衔接矩阵 + 剪辑边界矩阵 + 中英分离 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 清单)时,用 Skill 工具加载 create-storyboard(制片级任务,由 film-studio 或用户显式触发);视频提示词经 sd2-pe 工程化,每段 Seedance ≤15s,整图不作唯一视频输入;生成一律交回 catimation-image / catimation-video 入口。有剧本/分场/镜头清单要逐镜拆解,或要一张人能看的逐镜生产表(镜头行 + 景别/运镜列 + 逐条提示词 + 可搜索筛选的单文件 HTML)时加载 shotlist-builder——用户不必点名「分镜表」,拆镜本身就是触发条件;它只做规划与交付物,不出图不出片,可独立用也可作制片包 06_delivery 的交付环节。命令:/create-storyboard。\n</IMPORTANT>"
+session_context="<IMPORTANT>\nCATIMATION 制片包生成器(catimation-storyboard-pro)已启用。当任务是把剧本/概念做成连续性受控的图生视频素材包(角色/场景/道具/风格/连贯性圣经 + shot cards + handoff 衔接矩阵 + 剪辑边界矩阵 + 中英分离 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 清单)时,用 Skill 工具加载 create-storyboard(制片级任务,由 film-studio 或用户显式触发);视频提示词经 sd2-pe 工程化,每段 Seedance ≤15s,整图不作唯一视频输入;生成一律交回 catimation-image / catimation-video 入口。有剧本/分场/镜头清单要逐镜拆解,或要一张人能看的逐镜生产表(镜头行 + 景别/运镜列 + 逐条提示词 + 可搜索筛选的单文件 HTML)时加载 shotlist-builder——用户不必点名「分镜表」,拆镜本身就是触发条件。**用户把剧本连同一批图/一个图片文件夹路径/一份分镜稿一起拖进来时同样加载**:先出一张素材↔剧本对照表(哪张图对应哪个角色/道具/地点、缺什么、多什么、对不上的问清楚),对不上号一律不许静默分配;超过 5 张图别逐张自己看,按 catimation-subagents 并发理解。它只做规划与交付物,不出图不出片,可独立用也可作制片包 06_delivery 的交付环节。命令:/create-storyboard。\n</IMPORTANT>"
 
 if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
   printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
