@@ -87,3 +87,54 @@ describe('resolveRefImage — 安全边界', () => {
     expect((await resolveRefImage(undefined as unknown as string)).ok).toBe(false)
   })
 })
+
+// `media:resolve-ref-media` —— 视频工作台「拖入即传」用的宽白名单版本。
+// 与上面共用同一段逻辑,唯一的差别就是放行哪些 mime。
+describe('resolveRefMedia — 放宽到图片/视频/音频', () => {
+  it('视频与音频路径都能中转,mime 由扩展名推出', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+
+    for (const [p, mime] of [
+      ['D:\\v\\clip.mp4', 'video/mp4'],
+      ['D:\\v\\clip.mov', 'video/quicktime'],
+      ['D:\\v\\voice.mp3', 'audio/mpeg'],
+      ['D:\\v\\voice.m4a', 'audio/mp4'],
+      ['D:\\v\\hero.png', 'image/png'],
+    ] as const) {
+      resolveMediaUrl.mockReset()
+      resolveMediaUrl.mockResolvedValue('https://bucket/relayed')
+
+      expect(await resolveRefMedia(p), `${p} 该放行`).toEqual({
+        ok: true,
+        url: 'https://bucket/relayed',
+      })
+      expect(resolveMediaUrl.mock.calls[0][2]).toBe(mime)
+      expect(resolveMediaUrl.mock.calls[0][3]).toEqual({ alwaysRelay: true })
+    }
+  })
+
+  it('放宽的只是媒体类型,非媒体文件照旧拒绝', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+
+    for (const p of ['D:\\a\\secret.zip', 'D:\\a\\model.pmx', 'D:\\a\\notes.txt']) {
+      expect((await resolveRefMedia(p)).ok, `${p} 不该放行`).toBe(false)
+    }
+    expect(resolveMediaUrl).not.toHaveBeenCalled()
+  })
+
+  it('遍历段与空输入这两道闸与生图那条完全一致', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+
+    expect((await resolveRefMedia('D:\\uploads\\..\\..\\secret.mp4')).ok).toBe(false)
+    expect((await resolveRefMedia('')).ok).toBe(false)
+    expect(resolveMediaUrl).not.toHaveBeenCalled()
+  })
+
+  it('生图那条入口仍然只认图片 —— 两个入口分开就是为了让默认最窄', async () => {
+    const { resolveRefImage } = await import('../refImageResolveIpc')
+
+    expect((await resolveRefImage('D:\\v\\clip.mp4')).ok).toBe(false)
+    expect((await resolveRefImage('D:\\v\\voice.mp3')).ok).toBe(false)
+    expect(resolveMediaUrl).not.toHaveBeenCalled()
+  })
+})
