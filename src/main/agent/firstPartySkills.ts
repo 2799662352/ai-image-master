@@ -49,6 +49,13 @@ export interface FirstPartySkill {
   name: string
   /** Full SKILL.md contents (frontmatter + body). */
   content: string
+  /**
+   * Bundled resources shipped beside SKILL.md, keyed by POSIX-relative path
+   * (`references/models.md`). Codex pulls SKILL.md into context on every
+   * trigger but reads these only when the body points at them, so anything a
+   * common request does not need belongs here rather than inline.
+   */
+  files?: Readonly<Record<string, string>>
 }
 
 export interface InstallFirstPartySkillsOptions {
@@ -131,10 +138,137 @@ async function readFileOrNull(file: string): Promise<string | null> {
   }
 }
 
-async function writeManaged(dir: string, skill: FirstPartySkill): Promise<void> {
+/**
+ * Marker layout. Line 0 is the SKILL.md hash — unchanged from the single-line
+ * format older builds wrote, so their installs stay recognizable. Lines 1+
+ * inventory the bundled files WE wrote (`<sha256>  <relative/path>`), which is
+ * what lets a later run tell "the user rewrote this" from "we shipped a new
+ * version" and retire files we stopped shipping without globbing the folder.
+ */
+interface ManagedMarker {
+  skillHash: string
+  files: Map<string, string>
+}
+
+function parseMarker(raw: string | null): ManagedMarker | null {
+  if (raw === null) return null
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (lines.length === 0) return null
+
+  const files = new Map<string, string>()
+  for (const line of lines.slice(1)) {
+    const match = line.match(/^([a-f0-9]{64})\s+(.+)$/)
+    if (match) files.set(match[2], match[1])
+  }
+  return { skillHash: lines[0], files }
+}
+
+function formatMarker(skillHash: string, files: ReadonlyMap<string, string>): string {
+  const lines = [skillHash]
+  for (const rel of [...files.keys()].sort()) lines.push(`${files.get(rel)}  ${rel}`)
+  return `${lines.join('\n')}\n`
+}
+
+/**
+ * Bundled paths are generated, not user input — but a traversal here would
+ * write anywhere under the user's home, so it is worth one cheap assertion.
+ */
+function assertContainedPath(skillName: string, rel: string): void {
+  const segments = rel.split(/[\\/]/)
+  const escapes =
+    rel.length === 0 ||
+    path.posix.isAbsolute(rel) ||
+    path.win32.isAbsolute(rel) ||
+    segments.some((segment) => segment === '..' || segment === '.' || segment.length === 0)
+  if (escapes) {
+    throw new Error(`${skillName}: bundled path "${rel}" would escape the skill directory`)
+  }
+}
+
+function bundledTarget(dir: string, rel: string): string {
+  return path.join(dir, ...rel.split('/'))
+}
+
+/**
+ * A bundled file on disk is ours to overwrite only when it still hashes to what
+ * we last wrote. Anything else — hand-edited, or created by the user before we
+ * ever shipped that path — belongs to them and is left alone forever after.
+ */
+function isOursToOverwrite(
+  onDisk: string,
+  shipped: string,
+  recorded: string | undefined,
+): boolean {
+  const onDiskHash = sha256(onDisk)
+  return recorded !== undefined ? onDiskHash === recorded : onDiskHash === sha256(shipped)
+}
+
+async function writeManaged(
+  dir: string,
+  skill: FirstPartySkill,
+  previous: ManagedMarker | null,
+): Promise<void> {
+  const shipped = skill.files ?? {}
+  for (const rel of Object.keys(shipped)) assertContainedPath(skill.name, rel)
+
   await fs.mkdir(dir, { recursive: true })
   await fs.writeFile(path.join(dir, 'SKILL.md'), skill.content, 'utf8')
-  await fs.writeFile(path.join(dir, MANAGED_MARKER), `${sha256(skill.content)}\n`, 'utf8')
+
+  const inventory = new Map<string, string>()
+  for (const [rel, content] of Object.entries(shipped)) {
+    const target = bundledTarget(dir, rel)
+    const onDisk = await readFileOrNull(target)
+    if (onDisk !== null && !isOursToOverwrite(onDisk, content, previous?.files.get(rel))) {
+      continue
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, content, 'utf8')
+    inventory.set(rel, sha256(content))
+  }
+
+  // Retire files we shipped before but no longer do, so the body never points
+  // at a stale doc. Only ones still matching our recorded hash — a file the
+  // user took over is theirs to keep.
+  for (const [rel, hash] of previous?.files ?? []) {
+    if (rel in shipped) continue
+    const target = bundledTarget(dir, rel)
+    const onDisk = await readFileOrNull(target)
+    if (onDisk === null || sha256(onDisk) !== hash) continue
+    await fs.rm(target, { force: true })
+  }
+
+  await fs.writeFile(
+    path.join(dir, MANAGED_MARKER),
+    formatMarker(sha256(skill.content), inventory),
+    'utf8',
+  )
+}
+
+/** True when every bundled file is already in the state a rewrite would leave it. */
+async function bundledFilesSettled(
+  dir: string,
+  skill: FirstPartySkill,
+  previous: ManagedMarker | null,
+): Promise<boolean> {
+  const shipped = skill.files ?? {}
+  for (const [rel, content] of Object.entries(shipped)) {
+    const onDisk = await readFileOrNull(bundledTarget(dir, rel))
+    if (onDisk === null) return false
+    if (sha256(onDisk) === sha256(content)) continue
+    // Differs from what we ship — fine only if the file is the user's, since
+    // then a rewrite would skip it anyway.
+    if (isOursToOverwrite(onDisk, content, previous?.files.get(rel))) return false
+  }
+
+  for (const [rel, hash] of previous?.files ?? []) {
+    if (rel in shipped) continue
+    const onDisk = await readFileOrNull(bundledTarget(dir, rel))
+    if (onDisk !== null && sha256(onDisk) === hash) return false
+  }
+  return true
 }
 
 /**
@@ -160,20 +294,20 @@ export async function installFirstPartySkills(
     const existing = await readFileOrNull(path.join(dir, 'SKILL.md'))
 
     if (existing === null) {
-      await writeManaged(dir, skill)
+      await writeManaged(dir, skill, null)
       report.installed.push(skill.name)
       continue
     }
 
-    const marker = (await readFileOrNull(path.join(dir, MANAGED_MARKER)))?.trim() ?? null
-    const isAppManaged = marker !== null && marker === sha256(existing)
+    const managed = parseMarker(await readFileOrNull(path.join(dir, MANAGED_MARKER)))
+    const isAppManaged = managed !== null && managed.skillHash === sha256(existing)
 
     if (
       !isAppManaged &&
-      marker === null &&
+      managed === null &&
       canAdoptUnmarkedCopy(skill, existing, knownUnmarkedSkillHashes)
     ) {
-      await writeManaged(dir, skill)
+      await writeManaged(dir, skill, null)
       report.updated.push(skill.name)
       continue
     }
@@ -183,12 +317,15 @@ export async function installFirstPartySkills(
       continue
     }
 
-    if (sha256(existing) === sha256(skill.content)) {
+    if (
+      sha256(existing) === sha256(skill.content) &&
+      (await bundledFilesSettled(dir, skill, managed))
+    ) {
       // Already up to date.
       continue
     }
 
-    await writeManaged(dir, skill)
+    await writeManaged(dir, skill, managed)
     report.updated.push(skill.name)
   }
 
@@ -199,8 +336,8 @@ export async function installFirstPartySkills(
     const existing = await readFileOrNull(path.join(dir, 'SKILL.md'))
     if (existing === null) continue
 
-    const marker = (await readFileOrNull(path.join(dir, MANAGED_MARKER)))?.trim() ?? null
-    const isAppManaged = marker !== null && marker === sha256(existing)
+    const managed = parseMarker(await readFileOrNull(path.join(dir, MANAGED_MARKER)))
+    const isAppManaged = managed !== null && managed.skillHash === sha256(existing)
     if (!isAppManaged) {
       report.preserved.push(name)
       continue
