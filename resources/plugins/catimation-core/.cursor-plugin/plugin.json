@@ -2,7 +2,7 @@
   "name": "catimation-core",
   "displayName": "CATIMATION Core",
   "description": "应用内出图 generate_image / 人像库 / 创意头脑风暴。",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "author": {
     "name": "CATIMATION",
     "url": "https://github.com/zuozuoliang999"
