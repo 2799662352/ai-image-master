@@ -278,6 +278,31 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(router.call).toHaveBeenCalled()
   })
 
+  /**
+   * 实战里踩过的三连坑：①一次性 17 张 → 超大 JSON 解析失败整次作废；②改成每批 4 张
+   * → 列出的卡被排到最前，每批都把顺序打乱一次；③为恢复顺序被迫再来一次两万字符的
+   * 全量回写。这条钉住第三条路：整页都列，只有在改的那几张带内容。
+   */
+  it('apply:分批改内容也能保序 —— 4 张带内容 + 13 张占位，既不撞闸也不乱序', async () => {
+    const { tools, server, router } = capture({ ok: true, skipped: [], structureRevision: 1 })
+    registerVideoWorkbenchTools(server, router)
+    const ir = {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        cards: Array.from({ length: 17 }, (_, i) => (
+          // 只有前 4 张真的在改；其余 13 张是占位，仅用来把位置钉住。
+          i < 4 ? { id: `c${i}`, prompt: `新提示词 ${i}` } : { id: `c${i}` }
+        )),
+      }],
+    }
+    const res = await toolByName(tools, 'video_workbench_apply').handler({ ir })
+    expect(res.content[0].text).not.toContain('Nothing was written')
+    expect(router.call).toHaveBeenCalled()
+  })
+
   it('set_board_summary schema:超长**拒绝**而不是截断', () => {
     const { tools, server, router } = capture()
     registerVideoWorkbenchTools(server, router)

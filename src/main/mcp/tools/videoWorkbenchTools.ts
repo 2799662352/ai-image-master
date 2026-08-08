@@ -738,6 +738,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + `• ${PROMPT_BASE_DIRECTIVE}\n`
       + `• ${MATERIAL_ROLE_DIRECTIVE}\n`
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
+      + '• POSITION-ONLY entries: a card with ONLY `id` (plus optional `rev`) keeps its content exactly '
+      + 'as it is and just takes that slot. Use them for every card you are NOT editing.\n'
+      + '• LISTED CARDS GO FIRST, OMITTED ONES GET APPENDED AFTER THEM. This bites silently: send 4 of '
+      + '17 cards and those 4 jump to the head of the page. Never "batch" by sending a subset — send the '
+      + 'whole page every time, the ones you edit with content and the rest as position-only `{id}`. '
+      + 'Only content-bearing cards count against the per-call limit, so listing all 17 is free.\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '
       + 'rejected with `conflict`, NOTHING written; re-export, redo your edits, apply again. Stale card '
       + '`rev` (the user edited that one card) → only that card is skipped, everything else lands; read '
@@ -788,11 +794,18 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
             + 'its full prompt and material arrays back through the model.\n'
             + 'Pick the tool that matches what you are actually doing:\n'
             + '• Same spec across many cards (480p / webSearch / model) → video_workbench_set_spec, one call.\n'
-            + '• Different prompts per card → video_workbench_update_task, once per card. Each lands '
-            + 'immediately and a conflict on card 7 does not cost you cards 1-6.\n'
+            + '• Different prompts per card → video_workbench_update_task, once per card. Best default: '
+            + 'it never touches order, each call lands immediately, and a conflict on card 7 does not '
+            + 'cost you cards 1-6.\n'
             + '• Pure reordering → keep using apply, but send POSITION-ONLY entries: a card object with '
             + 'ONLY `id` (plus optional `rev`) keeps its content untouched and just takes that slot. '
-            + 'Those do not count against this limit, so a 20-card reorder is still one call.',
+            + 'Those do not count against this limit, so a 20-card reorder is still one call.\n'
+            + 'IF YOU BATCH THROUGH apply, LIST THE WHOLE PAGE EVERY TIME. Cards you list are placed in '
+            + 'array order and cards you omit are appended AFTER them — so a batch of 4 silently jumps '
+            + 'those 4 to the front and scrambles the page. Send all N cards: the few you are editing '
+            + 'with content, every other one as a position-only `{id}`. Order stays correct, and only '
+            + 'the edited ones count against the limit. Omitting the rest and "fixing the order later" '
+            + 'costs you a second full-board write — the exact thing this limit exists to prevent.',
           ),
         )
       }
