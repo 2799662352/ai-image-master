@@ -263,6 +263,9 @@ describe('exportIR / applyIR', () => {
     const skip = result.skipped.find((s) => s.cardId === c1)
     expect(skip, '这张卡应当被跳过').toBeTruthy()
     expect(skip!.current, '跳过项要带 current').toBeTruthy()
+    // 字段级线索：用户改了时长、agent 改了提示词，两个都该被点名。
+    expect(skip!.reason).toContain('duration(现 12s / 你写 5s)')
+    expect(skip!.reason).toContain('prompt')
     expect(skip!.current!.prompt).toBe('用户重写的提示词')
     expect(skip!.current!.duration).toBe(12)
     // 抄这个 rev 回去即可覆盖，不必重新 export 整板。

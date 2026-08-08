@@ -430,7 +430,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       (v) => !(v.afterCardId && v.beforeCardId),
       { message: 'afterCardId and beforeCardId are mutually exclusive' },
     ),
-    annotations: WRITE_ADDITIVE,
+    // 不是纯增：卡片总数超过 WORKBENCH_MAX_CARDS 时 store 会 evict() 淘汰最旧的终态卡
+    // （store.ts 的 addCards 分支）。也就是说「加几张卡」在满板时会删掉别的卡 ——
+    // 那是用户数据，标 additive 是错的。
+    annotations: DESTRUCTIVE,
     outputSchema: addTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -467,7 +470,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
-    annotations: WRITE_IDEMPOTENT,
+    // 幂等（同参数重复调结果一致），但**会删素材**：切模型 / 切模式时 updateCard 按新
+    // 上限截断超限的参考图与音视频（store.ts 的 modeLimit 截断），2.5 降回 2.0 就会掉 21 张。
+    // 那是用户拖进去的东西，所以标破坏性而不是 additive。
+    annotations: { ...DESTRUCTIVE, idempotentHint: true },
     outputSchema: updateTaskOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {

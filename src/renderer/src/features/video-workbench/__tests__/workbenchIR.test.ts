@@ -196,6 +196,11 @@ describe('planApplyIR / 拒绝路径', () => {
     const skip = plan.result.skipped[0]
     expect(skip.cardId).toBe('c1')
     expect(skip.reason).toContain('被用户改过')
+    // 把「哪几个字段对不上」喂到嘴边，省得 agent 自己 diff。
+    expect(skip.reason).toContain('对不上的字段')
+    expect(skip.reason).toContain('prompt')
+    // 但**不做归因** —— 没有导出基线就分不清谁改的，硬猜比不说更误导。
+    expect(skip.reason).toContain('分不清是你改的还是用户改的')
     expect(skip.current).toEqual({
       prompt: '用户刚改的',
       model: '2.0',
