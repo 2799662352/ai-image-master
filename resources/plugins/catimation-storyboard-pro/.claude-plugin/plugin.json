@@ -1,7 +1,7 @@
 {
   "name": "catimation-storyboard-pro",
   "description": "连续性优先的图生视频「制片包」生成器:把剧本/概念做成 SceneDance/Seedance 可用的出片素材包——角色/场景/道具/风格/连贯性圣经 + 逐镜 shot card(action/emotion 起止与衔接字段)+ handoff 衔接矩阵 + edit-boundary 剪辑边界矩阵 + 中英分离 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 剪辑与回退清单。每段 Seedance ≤15s,整图不作唯一视频输入。",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "author": {
     "name": "CATIMATION",
     "url": "https://github.com/zuozuoliang999"
