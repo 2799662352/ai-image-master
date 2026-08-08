@@ -436,8 +436,20 @@ export function planApplyIR(
           skipped.push({
             cardId: cur.id,
             reason:
-              `这张卡在你导出之后被改过(当前 rev=${cur.rev ?? 0},你带回的是 ${claim.rev});`
-              + '规格改动已跳过,位置改动已生效。要覆盖就重新 export 这张卡再写。',
+              `这张卡在你导出之后被用户改过(当前 rev=${cur.rev ?? 0},你带回的是 ${claim.rev});`
+              + '规格改动已跳过,位置改动已生效。下面的 `current` 就是它现在的样子——'
+              + '照着它判断该怎么办:只是时长/模型变了就按新值重写你那份再发一次;'
+              + '提示词被整个换过就先问用户,别把人家刚写的覆盖掉。'
+              + '确认要覆盖时,把 `current.rev` 抄进这张卡的 `rev` 重发即可(不必重新 export 整板)。',
+            // 带上现场值,省掉「为了看用户改了什么再 export 一次」那趟往返。
+            current: {
+              prompt: cur.prompt,
+              model: cur.model,
+              resolution: cur.resolution,
+              ratio: cur.ratio,
+              duration: cur.duration,
+              rev: cur.rev ?? 0,
+            },
           })
           nextCards.push(placeExisting(cur, board.id, index))
           index += 1

@@ -267,9 +267,24 @@ const applyOutputSchema = z.looseObject({
     cardId: z.string().optional(),
     boardId: z.string().optional(),
     reason: z.string(),
+    current: z.object({
+      prompt: z.string(),
+      model: z.string(),
+      resolution: z.string(),
+      ratio: z.string(),
+      duration: z.number(),
+      rev: z.number(),
+    }).optional().describe(
+      "Present when the skip was a per-card version conflict: this is the card AS IT IS NOW, so you do "
+      + 'NOT need another export just to see what the user changed. Decide from it — if only duration/model '
+      + 'moved, rewrite your version against the new value and send again; if the prompt itself was '
+      + 'replaced, ask the user rather than overwriting what they just wrote. To overwrite deliberately, '
+      + "copy `current.rev` into that card's `rev` and re-apply.",
+    ),
   })).describe(
     'Per-item rejections (a card the user edited meanwhile, rendering cards whose spec is frozen, unknown '
-    + 'ids, unresolvable wbref, …). Everything not listed here was applied.',
+    + 'ids, unresolvable wbref, …). Everything not listed here was applied. A per-card conflict is NOT a '
+    + 'failure of the whole call — the other cards landed.',
   ),
   structureRevision: z.number().describe('New structure token; carry it into the next apply.'),
 })
@@ -437,6 +452,13 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
       'the prompt — same reason as on add_tasks: the render follows the picture, not the filename. ' +
+      'THIS IS THE TOOL FOR CHANGING ONE CARD — reach for it whenever you are rewriting a single ' +
+      "prompt, swapping that card's references, or adjusting its duration/model. It targets the card " +
+      'by id, carries no board-wide version token, and cannot be invalidated by the user typing in ' +
+      'another card. Do NOT export the whole board and re-apply it just to edit one card: that is far ' +
+      'slower and any edit the user makes meanwhile can push your write aside. Reserve ' +
+      'video_workbench_apply for restructuring (adding/deleting/reordering cards or pages, or editing ' +
+      'many cards at once). Call it once per card — one focused call per card beats one giant IR. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
@@ -584,6 +606,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'Apply an edited workbench IR (from video_workbench_export) in ONE shot: create/update/reorder/'
       + 'delete cards and boards together. This is the preferred way to make multi-card changes.\n'
       + 'Rules that matter:\n'
+      + '• WRONG TOOL FOR A SINGLE CARD. Editing one prompt / one card\'s references or duration → use '
+      + 'video_workbench_update_task instead: it targets the card by id, needs no board token, and the '
+      + 'user typing elsewhere cannot push it aside. This tool is for RESTRUCTURING (adding, deleting, '
+      + 'reordering cards or pages) or editing many cards in one shot.\n'
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'

@@ -404,6 +404,26 @@ export interface WorkbenchApplySkip {
   cardId?: string
   boardId?: string
   reason: string
+  /**
+   * 并发跳过时把这张卡**现在的样子**一并带回来，让调用方不必为了「看看用户改了什么」
+   * 再跑一趟 export。
+   *
+   * 为什么值得多带这几个字段：人和 agent 同改一块看板时，「你写的被跳过了」只说明
+   * 发生了冲突，说不清该怎么办。拿到现场值，agent 就能自己判断——用户只是改了时长，
+   * 那就把自己那份提示词按新时长重写再发一次；用户把提示词整个换了，那就该停下来问，
+   * 而不是把人家刚写的覆盖掉。
+   *
+   * 只在按卡 rev 冲突时出现，且只带规格字段（不含素材数组和产出），保持回包紧凑。
+   */
+  current?: {
+    prompt: string
+    model: string
+    resolution: string
+    ratio: string
+    duration: number
+    /** 现在的规格版本号；照抄进下一次 apply 的 `rev` 即可覆盖。 */
+    rev: number
+  }
 }
 
 export interface WorkbenchApplyResult {
