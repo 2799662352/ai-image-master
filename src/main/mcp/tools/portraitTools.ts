@@ -8,6 +8,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
+import { DESTRUCTIVE, READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
 
 function textResult(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] }
@@ -71,6 +72,7 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'query, kind filter, and group filter. Results are paginated (the library can be large): the ' +
         'response carries page/totalPages/hasMore — when hasMore is true, fetch the next page with ' +
         'page:N+1 instead of asking for a huge pageSize. Narrow with query/kind/group before paging.',
+      annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         query: z.string().optional().describe('Text to search asset names.'),
         kind: z
@@ -132,6 +134,7 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'in the (reviewed) library and is safe to use now; for a fresh duplicated:false upload, wait for ' +
         'review to pass (it shows up normally in list_portrait_library with no 审核中 marker) — or tell ' +
         'the user to wait for review — before generating with it.',
+      annotations: WRITE_ADDITIVE_REMOTE,
       inputSchema: z.object({
         source: z.string().min(1).describe('Local file path, data: URL, https URL, or asset://assetId.'),
         kind: z.enum(['image', 'video', 'audio']).optional().describe('Override auto-detected kind.'),
@@ -171,6 +174,7 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'Download a portrait-library asset to a local file and return the saved path. Use it when the ' +
         'user wants to save/export a library item locally. Pass the asset\'s sourceUrl (from ' +
         'list_portrait_library results).',
+      annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         url: z.string().min(1).describe('The asset sourceUrl (http(s)) from list_portrait_library.'),
         name: z.string().optional().describe('Optional filename for the saved file.'),
@@ -199,6 +203,7 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'Organize the portrait library: rename an asset, move asset(s) into a user-defined group, ' +
         'hide/unhide (soft-delete/restore) asset(s), or create/delete a group. These edits are shared ' +
         'live with the 人像库 page the user sees. Get assetIds from list_portrait_library first.',
+      annotations: DESTRUCTIVE,
       inputSchema: z.object({
         action: z
           .enum(['rename', 'move_group', 'hide', 'unhide', 'new_group', 'delete_group'])

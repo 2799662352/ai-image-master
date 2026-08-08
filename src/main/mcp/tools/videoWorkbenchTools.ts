@@ -30,6 +30,7 @@ import {
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../types/videoWorkbench'
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
+import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
@@ -429,6 +430,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       (v) => !(v.afterCardId && v.beforeCardId),
       { message: 'afterCardId and beforeCardId are mutually exclusive' },
     ),
+    annotations: WRITE_ADDITIVE,
     outputSchema: addTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -465,6 +467,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
+    annotations: WRITE_IDEMPOTENT,
     outputSchema: updateTaskOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -488,6 +491,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
     }),
+    annotations: WRITE_ADDITIVE_REMOTE,
     outputSchema: startOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -528,6 +532,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         `Cards per page (default ${WORKBENCH_STATUS_PAGE_SIZE}, max ${WORKBENCH_STATUS_MAX_PAGE_SIZE}).`,
       ),
     }),
+    annotations: READ_ONLY,
     outputSchema: statusOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -580,6 +585,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'workbench and may be rejected as too large. Ignored when boardId is given.',
       ),
     }),
+    annotations: READ_ONLY,
     outputSchema: irSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -636,6 +642,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'Skip BOTH token checks, overwriting whatever the user changed meanwhile. Requires explicit user consent.',
       ),
     }),
+    annotations: DESTRUCTIVE,
     outputSchema: applyOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -690,6 +697,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     inputSchema: z.object({
       cardIds: z.array(z.string()).min(1).describe('Cards to remove.'),
     }),
+    annotations: DESTRUCTIVE,
     outputSchema: removeTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {

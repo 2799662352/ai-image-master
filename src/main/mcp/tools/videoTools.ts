@@ -31,6 +31,7 @@ import type {
 } from '../../services/seedance/types'
 import { validateSeedanceRequest } from '../../services/seedance/types'
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
+import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
 
 /** check_video_task 服务端长轮询窗口（须 < codex 工具超时，留足余量）。 */
 export const CHECK_LONG_POLL_MS = 25_000
@@ -278,6 +279,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       '【@图片1】, and legacy <图片1> aliases before submission. Note: real ' +
       'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
       'previously Seedance-generated clip.',
+    annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       prompt: z.string().min(1).describe(
         'Video description. Supports shot language (运镜/景别), dialogue lines, and -- style ' +
@@ -372,6 +374,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'server-side for up to ~25s and returns AS SOON AS the status changes; keep calling until ' +
       'DONE or FAILED. Returns queued/running progress, the final saved MP4 path on success, or ' +
       'the upstream error on failure.',
+    annotations: READ_ONLY_REMOTE,
     inputSchema: z.object({
       taskId: z.string().min(1).describe('Task id returned by generate_video.'),
     }),
