@@ -116,6 +116,11 @@ image_gen skill: they render inside the chat AND persist results to local files
   才追加一次查描述规范或 critique/fix 对照。
 - **同一任务内查过的直接复用,不逐张重查。** 一组图通常只有 1–3 种机位,
   整组的查库次数是个位数,不是张数的三倍。
+- **查到什么就原样写什么,不要译成中文。** \`rack focus\`、\`low-angle\`、\`deep focus\`
+  是模型训练时见到的**确切词形**,中文对译(「变焦对焦」「仰拍」)不是等价物 ——
+  换过去等于把一个精确坐标换成一个大致方向。**提示词整体是中文也照样保留这些英文
+  原词**:中英混排正是知识库里那些参考 caption 的真实样子,不是将就。跟用户解释时
+  怎么说都行,但进提示词的那份必须是检索回来的原文。
 
 做动画风格时按同样口径用 \`query_sakuga_dataset\` 拿技法标签(smears、
 impact_frames、background_animation…)与作画/studio 归属。工具不可用时退回联网
