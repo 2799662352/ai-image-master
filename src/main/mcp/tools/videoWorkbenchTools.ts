@@ -689,6 +689,15 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'Export every board. Only needed for cross-board changes; the payload grows with the whole '
         + 'workbench and may be rejected as too large. Ignored when boardId is given.',
       ),
+      skeleton: z.boolean().optional().describe(
+        'Return ids and ORDER only — every card comes back as a POSITION-ONLY `{id, rev}` with no '
+        + 'prompt and no materials. This is what you want whenever you are reordering, or editing a few '
+        + 'cards out of many: take the skeleton, fill content into just the cards you are changing, '
+        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny '
+        + 'no matter how long the prompts are. A full export of a 17-card board is ~20k characters and '
+        + 'has to be read, rewritten and emitted by the model — the skeleton of the same board is a few '
+        + 'hundred. Only ask for a full export when you actually need to READ the existing prompts.',
+      ),
     }),
     annotations: READ_ONLY,
     outputSchema: irSchema,

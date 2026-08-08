@@ -563,12 +563,33 @@ export class AgentToolExecutor {
       }
       case 'video_workbench_export': {
         const ir = store.exportIR()
+        /**
+         * skeleton:把每张卡剥成 `{id, rev}` 的占位条目。
+         *
+         * 补的是读侧的对称性 —— 写侧已经限了内容卡张数,读侧却还是整板全量:
+         * 17 张卡的完整提示词约两万字符,模型要读完、改完、再吐一遍。而「重排」和
+         * 「只改其中几张」这两类活**根本不需要看别人的提示词**,它们只需要 id 和顺序。
+         *
+         * 拿骨架 → 往要改的那几张里填内容 → 回写。顺序天然正确(每张卡都列了),
+         * 体积与提示词长度无关。只有真要**读**现有提示词时才该拉全量。
+         */
+        const skeleton = params.skeleton === true
+        const strip = (src: WorkbenchIR): WorkbenchIR => ({
+          ...src,
+          boards: src.boards.map((b) => ({
+            ...b,
+            cards: b.cards.map((c) => ({
+              id: c.id,
+              ...(typeof c.rev === 'number' ? { rev: c.rev } : {}),
+            })),
+          })),
+        })
         // 默认只导**当前页**。整份导出带着每张卡的完整提示词和每条素材的完整路径,
         // 一个中等规模的工作台就能超出客户端肯收的体积,而截断后的 IR 回写会把被截
         // 掉的字段清成默认值(apply 是声明式不是 patch)。收窄默认是安全的:merge
         // 模式保证没列出的页原样不动。要跨页改动才显式传 allBoards。
         const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
-        if (!explicitBoardId && params.allBoards === true) return ir
+        if (!explicitBoardId && params.allBoards === true) return skeleton ? strip(ir) : ir
         const boardId = explicitBoardId ?? ir.activeBoardId
         const board = boardId ? ir.boards.find((b) => b.id === boardId) : undefined
         if (!board) {
@@ -580,11 +601,12 @@ export class AgentToolExecutor {
               `video_workbench_export: board not found: ${explicitBoardId} (existing: ${ir.boards.map((b) => b.id).join(', ')})`,
             )
           }
-          return ir
+          return skeleton ? strip(ir) : ir
         }
         // 单页导出仍带全局 revision —— 令牌是整个工作台的,不是这一页的。
         // 配 merge 模式回写是安全的:没列出的页原样保留。
-        return { ...ir, boards: [board] }
+        const scoped = { ...ir, boards: [board] }
+        return skeleton ? strip(scoped) : scoped
       }
       case 'video_workbench_apply': {
         const raw = params.ir

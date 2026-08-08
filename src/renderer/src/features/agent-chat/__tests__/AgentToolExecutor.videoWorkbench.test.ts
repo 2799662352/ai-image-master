@@ -376,6 +376,48 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     ).rejects.toThrow('board not found')
   })
 
+  /**
+   * 读侧要和写侧对称。写侧已限内容卡张数，读侧若还是整板全量，两万字符只是从
+   * 「写」挪到了「读」。而「重排」和「只改其中几张」根本不需要看别人的提示词。
+   */
+  it('export skeleton:只回 id + rev，顺序完整，不带提示词与素材', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '很长的提示词'.repeat(50) }, { prompt: '第二张' }, { prompt: '第三张' }],
+      navigate: false,
+    })
+    const full = await callTool('video_workbench_export', {})
+    const skel = await callTool('video_workbench_export', { skeleton: true })
+
+    // 每张卡都在、顺序一致 —— 这是它能用来保序的前提。
+    expect(skel.boards[0].cards.map((c: { id: string }) => c.id))
+      .toEqual(full.boards[0].cards.map((c: { id: string }) => c.id))
+    for (const c of skel.boards[0].cards) {
+      expect(Object.keys(c).sort()).toEqual(['id', 'rev'])
+    }
+    // 体积与提示词长度**脱钩**：把提示词再拉长十倍，全量跟着涨，骨架纹丝不动。
+    // （不比绝对比例：页名和令牌是固定开销，卡少时摊不薄，那不是重点。）
+    const skelBefore = JSON.stringify(skel).length
+    const id = full.boards[0].cards[0].id
+    useVideoWorkbenchStore.getState().updateCard(id, { prompt: '超长'.repeat(2000) })
+    const fullAfter = await callTool('video_workbench_export', {})
+    const skelAfter = await callTool('video_workbench_export', { skeleton: true })
+    expect(JSON.stringify(fullAfter).length).toBeGreaterThan(JSON.stringify(full).length + 3000)
+    expect(JSON.stringify(skelAfter).length).toBe(skelBefore)
+    // 令牌照常带回，否则回写会撞版本冲突。
+    expect(skel.structureRevision).toBe(full.structureRevision)
+  })
+
+  it('export skeleton:跨页(allBoards)同样剥干净', async () => {
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A' }], navigate: false })
+    useVideoWorkbenchStore.getState().addBoard('第二页')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B' }], navigate: false })
+    const skel = await callTool('video_workbench_export', { allBoards: true, skeleton: true })
+    expect(skel.boards).toHaveLength(2)
+    for (const b of skel.boards) {
+      for (const c of b.cards) expect(c).not.toHaveProperty('prompt')
+    }
+  })
+
   it('status:boardId 不存在时抛可读错误(agent 可据 boards 自纠)', async () => {
     await expect(callTool('video_workbench_status', { boardId: 'ghost-board' })).rejects.toThrow(
       'board not found',
