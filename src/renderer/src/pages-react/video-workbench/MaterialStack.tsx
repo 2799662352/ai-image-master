@@ -127,12 +127,28 @@ export function MaterialStack({
   thumbSrcs,
 }: MaterialStackProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const visible = materials.slice(0, MAX_VISIBLE)
+  // 「铺开全部」。悬停展开只排得下一行(MAX_VISIBLE),而 Seedance 2.5 一张卡收 30 张图 ——
+  // 单行要 1920px,必然溢出卡片。所以超出一行的部分改为**点开钉住**再多行铺开:
+  // 悬停是掠过性动作,不该把卡片高度撑起来;点开是明确意图,撑高才不突兀。
+  //
+  // 这不只是好看:被折叠的那些**既删不掉也拖不动**,而「第 N 张 = reference image N」
+  // 现在是写进 skill 的硬规矩,拖不动就等于改不了绑定关系。
+  const [expanded, setExpanded] = useState(false)
   // 父层接管解析时,未解析出的项要传 null(而不是 undefined)—— undefined 的语义
   // 是「父层不管,你自己解析」,会把省下的那趟 IPC 又加回来。
   const thumbSrcAt = (index: number): string | null | undefined =>
     thumbSrcs ? (thumbSrcs[index] ?? null) : undefined
-  const expandedWidth = (Math.min(materials.length, MAX_VISIBLE) + 1) * STEP_PX + 8
+
+  const overflowing = materials.length > MAX_VISIBLE
+  const showAll = expanded && overflowing
+  // 收起态下,超出首行的那些**仍然渲染**,只是位置钳到最后一格 —— 它们叠在
+  // 「+N」角标底下,展开时才各就各位。渲染而不是 slice 掉,是为了让展开/收起
+  // 只是位移动画,不是整批 DOM 增删(缩略图会重新解析,闪一下)。
+  const posIndex = (idx: number): number => (showAll ? idx : Math.min(idx, MAX_VISIBLE - 1))
+  const columns = Math.min(materials.length, MAX_VISIBLE)
+  const rows = showAll ? Math.ceil(materials.length / MAX_VISIBLE) : 1
+  const expandedWidth = (columns + (showAll ? 0 : 1)) * STEP_PX + 8
+  const expandedHeight = showAll ? rows * STEP_PX + 12 : undefined
 
   // ---- 素材换位拖拽 ----
   const dragMime = materialDragMime(kind)
@@ -205,17 +221,18 @@ export function MaterialStack({
         <span className="block text-[10px] text-white/30">{materials.length}/{limit}</span>
       </span>
       <div
-        className={`vw-stack-container ${materials.length === 0 ? 'vw-empty' : ''} ${dragIdx !== null ? 'vw-reordering' : ''}`}
-        style={{ width: expandedWidth }}
+        className={`vw-stack-container ${materials.length === 0 ? 'vw-empty' : ''} ${dragIdx !== null ? 'vw-reordering' : ''} ${showAll ? 'vw-expanded' : ''}`}
+        style={{ width: expandedWidth, ...(expandedHeight ? { height: expandedHeight } : {}) }}
         data-testid={`vw-stack-${kind}`}
         // 主进程据此跳过原生右键菜单,免得「图片另存为…」盖在自定义菜单上面。
         // 同款做法见 file-explorer 的 data-file-explorer-root。
         data-vw-material-stack=""
       >
-        {visible.map((m, idx) => {
+        {materials.map((m, idx) => {
           const rot = (idx % 2 === 0 ? -1 : 1) * (3 + (idx % 3) * 0.8)
           const tx = (idx % 2 === 0 ? -1 : 1) * 2
           const ty = (idx % 2 === 0 ? 1 : -1) * 1.5
+          const pos = posIndex(idx)
           return (
             <div
               key={`${m.src.slice(0, 64)}-${idx}`}
@@ -228,11 +245,12 @@ export function MaterialStack({
               draggable={!disabled && !!onReorder}
               data-testid={`vw-stack-item-${kind}-${idx}`}
               style={{
-                zIndex: visible.length - idx,
+                zIndex: materials.length - idx,
                 ['--stack-rotate' as string]: `${rot}deg`,
                 ['--stack-tx' as string]: `${tx}px`,
                 ['--stack-ty' as string]: `${ty}px`,
-                ['--expand-left' as string]: `${idx * STEP_PX}px`,
+                ['--expand-left' as string]: `${(pos % MAX_VISIBLE) * STEP_PX}px`,
+                ['--expand-top' as string]: `${Math.floor(pos / MAX_VISIBLE) * STEP_PX}px`,
               }}
               role="button"
               aria-label={`预览 ${m.name}`}
@@ -277,20 +295,31 @@ export function MaterialStack({
             </div>
           )
         })}
-        {materials.length > MAX_VISIBLE && (
-          <span
-            className="absolute text-[10px] text-black bg-[#FCE300] px-1 z-[100]"
-            style={{ left: MAX_VISIBLE * STEP_PX - 12, top: 0 }}
+        {overflowing && (
+          <button
+            type="button"
+            className="vw-stack-more"
+            aria-expanded={showAll}
+            aria-label={showAll ? `收起${label}` : `展开全部 ${materials.length} 个${label}`}
+            title={showAll ? '收起' : `还有 ${materials.length - MAX_VISIBLE} 个 —— 点开铺平，可逐个删除和拖拽换位`}
+            style={{ left: MAX_VISIBLE * STEP_PX - 12 }}
+            onClick={(e) => {
+              e.stopPropagation()
+              setExpanded((v) => !v)
+            }}
           >
-            +{materials.length - MAX_VISIBLE}
-          </span>
+            {showAll ? '收起' : `+${materials.length - MAX_VISIBLE}`}
+          </button>
         )}
         {!disabled && materials.length < limit && (
           <div
             className="vw-stack-add"
             role="button"
             aria-label={`添加${label}`}
-            style={{ ['--expand-left' as string]: `${Math.min(materials.length, MAX_VISIBLE) * STEP_PX}px` }}
+            style={{
+              ['--expand-left' as string]: `${(columns % MAX_VISIBLE) * STEP_PX}px`,
+              ['--expand-top' as string]: `${(showAll ? rows - 1 : 0) * STEP_PX}px`,
+            }}
             onClick={() => inputRef.current?.click()}
           >
             ＋

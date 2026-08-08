@@ -39,8 +39,14 @@
 .vw-stack-container:hover .vw-stack-item,
 .vw-stack-container.vw-expanded .vw-stack-item,
 .vw-stack-container.vw-reordering .vw-stack-item {
-  /* 展开:横排,回正旋转(拖拽换位中也保持展开) */
-  transform: translateX(var(--expand-left, 0)) rotate(0deg);
+  /* 展开:铺平回正旋转(拖拽换位中也保持展开)。
+     --expand-top 只在「铺开全部」时非 0 —— 单行够放时它恒为 0,行为与从前一致。 */
+  transform: translate(var(--expand-left, 0), var(--expand-top, 0)) rotate(0deg);
+}
+
+/* 钉住铺开时容器要撑高,让第二行往下长而不是盖住提示词框。 */
+.vw-stack-container.vw-expanded {
+  align-items: flex-start;
 }
 
 /* ---------- 素材拖拽换位视觉 ---------- */
@@ -58,10 +64,29 @@
   box-shadow: 3px 0 0 0 #fce300;
 }
 
-.vw-stack-container:hover .vw-stack-item:hover {
-  transform: translateX(var(--expand-left, 0)) translateY(-6px) scale(1.12);
+.vw-stack-container:hover .vw-stack-item:hover,
+.vw-stack-container.vw-expanded .vw-stack-item:hover {
+  transform: translate(var(--expand-left, 0), calc(var(--expand-top, 0px) - 6px)) scale(1.12);
   border-color: #fce300;
   z-index: 99 !important;
+}
+
+/* 「+N / 收起」开关。它是唯一能把折叠掉的素材拿出来删除或换位的入口,
+   所以要常驻可点,不能像 ✕ 那样藏在 hover 里。 */
+.vw-stack-more {
+  position: absolute;
+  top: 0;
+  z-index: 100;
+  padding: 0 3px;
+  font-size: 10px;
+  line-height: 14px;
+  color: #000;
+  background: #fce300;
+  cursor: pointer;
+}
+
+.vw-stack-more:hover {
+  background: #fff;
 }
 
 .vw-stack-item .vw-stack-remove {
