@@ -148,15 +148,16 @@ describe('AgentManager model settings catalog and snapshot', () => {
         source: 'mixed',
         models: [
           expect.objectContaining({ id: 'gpt-5.6-sol' }),
-          expect.objectContaining({ id: 'grok-4.5' }),
-          expect.objectContaining({ id: 'claude-opus-5' }),
-          expect.objectContaining({ id: 'claude-sonnet-5' }),
-          expect.objectContaining({ id: 'claude-fable-5' }),
-          // qwen 经 Miau 渠道并入本网关目录；排在最后是组装顺序使然（动态行先铺，
-          // 静态行后补，而 qwen 只存在于静态那一轮）。
+          // 顺序 = CANONICAL_MODEL_SETTINGS_ROWS 下标（sortByCanonicalOrder），
+          // 不是组装顺序：qwen 因此落在 gpt 与 grok 之间，claude 也按 canonical
+          // 排（sonnet 在 opus 前），而不是渠道 allowedModels 的书写次序。
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-fable-5' }),
         ],
       },
     })
@@ -210,12 +211,12 @@ describe('AgentManager model settings catalog and snapshot', () => {
         models: [
           expect.objectContaining({ id: 'rightcode-model' }),
           expect.objectContaining({ id: 'gpt-5.5-openai-compact' }),
-          expect.objectContaining({ id: 'grok-4.5' }),
-          expect.objectContaining({ id: 'claude-opus-5' }),
-          expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
         ],
       },
     })
@@ -276,19 +277,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
         source: 'mixed',
         models: [
           expect.objectContaining({
-            id: 'gpt-5.6-sol',
-            displayName: 'GPT-5.6 Sol',
-            description: 'Frontier coding model',
-            hidden: false,
-            isDefault: true,
-            availability: { status: 'available' },
-            capabilities: expect.objectContaining({
-              model: 'gpt-5.6-sol',
-              provider: 'rightcode',
-              supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-            }),
-          }),
-          expect.objectContaining({
+            // 顺序 = canonical 下标（sortByCanonicalOrder），不是组装顺序。
             id: 'gpt-5.5',
             availability: { status: 'available' },
             capabilities: expect.objectContaining({
@@ -302,16 +291,17 @@ describe('AgentManager model settings catalog and snapshot', () => {
             availability: { status: 'available' },
           }),
           expect.objectContaining({
-            id: 'grok-4.5',
-            route: expect.objectContaining({ channelId: 'rightcode-grok' }),
-          }),
-          expect.objectContaining({
-            id: 'claude-opus-5',
-            route: expect.objectContaining({ channelId: 'rightcode-claude' }),
-          }),
-          expect.objectContaining({
-            id: 'claude-sonnet-5',
-            route: expect.objectContaining({ channelId: 'rightcode-claude' }),
+            id: 'gpt-5.6-sol',
+            displayName: 'GPT-5.6 Sol',
+            description: 'Frontier coding model',
+            hidden: false,
+            isDefault: true,
+            availability: { status: 'available' },
+            capabilities: expect.objectContaining({
+              model: 'gpt-5.6-sol',
+              provider: 'rightcode',
+              supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+            }),
           }),
           // qwen 走本网关下的 Miau 渠道（端点与 Key 都是 Miau 自己的）。
           expect.objectContaining({
@@ -325,6 +315,18 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({
             id: 'qwen3.8-max',
             route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
+          }),
+          expect.objectContaining({
+            id: 'grok-4.5',
+            route: expect.objectContaining({ channelId: 'rightcode-grok' }),
+          }),
+          expect.objectContaining({
+            id: 'claude-sonnet-5',
+            route: expect.objectContaining({ channelId: 'rightcode-claude' }),
+          }),
+          expect.objectContaining({
+            id: 'claude-opus-5',
+            route: expect.objectContaining({ channelId: 'rightcode-claude' }),
           }),
         ],
       },
@@ -355,14 +357,16 @@ describe('AgentManager model settings catalog and snapshot', () => {
     if (!result.ok) throw new Error('Expected catalog')
 
     expect(result.data.models.map((model) => model.id)).toEqual([
-      'gpt-5.6-sol',
-      'grok-4.5',
+      // 顺序 = canonical 下标（sortByCanonicalOrder）：gpt → qwen → grok → claude，
+      // 且 claude 内部也按 canonical（sonnet 在 opus 前）。
       'gpt-5.5-openai-compact',
-      'claude-opus-5',
-      'claude-sonnet-5',
+      'gpt-5.6-sol',
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
       'qwen3.8-max',
+      'grok-4.5',
+      'claude-sonnet-5',
+      'claude-opus-5',
     ])
     expect(result.data.models.find((model) => model.id === 'grok-4.5')).toMatchObject({
       displayName: 'Grok 4.5',
@@ -385,15 +389,16 @@ describe('AgentManager model settings catalog and snapshot', () => {
         source: 'mixed',
         models: [
           expect.objectContaining({ id: 'gpt-5.6-sol' }),
-          expect.objectContaining({ id: 'grok-4.5' }),
-          expect.objectContaining({ id: 'claude-opus-5' }),
-          expect.objectContaining({ id: 'claude-sonnet-5' }),
-          expect.objectContaining({ id: 'claude-fable-5' }),
-          // qwen 经 Miau 渠道并入本网关目录；排在最后是组装顺序使然（动态行先铺，
-          // 静态行后补，而 qwen 只存在于静态那一轮）。
+          // 顺序 = CANONICAL_MODEL_SETTINGS_ROWS 下标（sortByCanonicalOrder），
+          // 不是组装顺序：qwen 因此落在 gpt 与 grok 之间，claude 也按 canonical
+          // 排（sonnet 在 opus 前），而不是渠道 allowedModels 的书写次序。
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          expect.objectContaining({ id: 'grok-4.5' }),
+          expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'claude-opus-5' }),
+          expect.objectContaining({ id: 'claude-fable-5' }),
         ],
       },
     })

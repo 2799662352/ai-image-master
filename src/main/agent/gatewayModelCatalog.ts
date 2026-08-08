@@ -123,6 +123,32 @@ function withConservativeContext(
   }
 }
 
+/**
+ * 选择器的显示顺序 = `CANONICAL_MODEL_SETTINGS_ROWS` 的下标。
+ *
+ * 在这一步排序之前，顺序是**组装顺序**的副产品：先铺网关 `model/list` 回来的动态
+ * 行，再补渠道声明的静态行。后果是一个只存在于静态那一轮的模型（典型如挂在 Miau
+ * 上的 qwen —— 它不在 apiyi/rightcode 的 model/list 里）永远被追加到末尾，无论你
+ * 在 canonical 数组里把它放到哪。也就是说那个数组的顺序此前是句空话。
+ *
+ * 排序后它说了算。不在 canonical 里的 slug 排在**最前**而不是最后：它们只可能
+ * 来自网关的 `model/list`，也就是上游确认存在的真模型，而 canonical 行是我们自己
+ * 的策展。把确认过的压到策展行下面是退步 —— 排前面也正好保住它们在这次改动之前
+ * 的位置（此前动态行整体先于静态行）。彼此之间的相对次序由 `sort` 的稳定性保住。
+ */
+function canonicalOrderIndex(modelId: string): number {
+  const index = CANONICAL_MODEL_SETTINGS_ROWS.findIndex((row) => row.id === modelId)
+  return index === -1 ? -1 : index
+}
+
+function sortByCanonicalOrder(
+  models: AgentModelSettingsEntry[],
+): AgentModelSettingsEntry[] {
+  return models.sort(
+    (left, right) => canonicalOrderIndex(left.id) - canonicalOrderIndex(right.id),
+  )
+}
+
 function staticDisplayMetadata(modelId: string): { displayName: string; description: string } {
   const canonical = CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === modelId)
   return {
@@ -208,7 +234,7 @@ export function buildGatewayModelCatalog(
     })
   }
 
-  const models = [...byId.values()]
+  const models = sortByCanonicalOrder([...byId.values()])
   return {
     gatewayId: input.gatewayId,
     revision: modelCatalogRevision(input.gatewayId, models),
