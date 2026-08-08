@@ -227,6 +227,47 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(filtered.cards[0].cardId).toBe(cardIds[0])
   })
 
+  /**
+   * 页面摘要是渐进披露缺的那一层索引：status 只回当前页的卡，别页只剩 id/name/cardCount，
+   * 而页名常常只是「页面 3」——光凭「20 张卡」判断不了要不要翻过去。
+   */
+  it('页面摘要:写完出现在 boards 里,别页不用拉卡片就能判断该不该翻', async () => {
+    const first = useVideoWorkbenchStore.getState().activeBoardId
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: '追车 1' }], navigate: false })
+    const second = useVideoWorkbenchStore.getState().addBoard('页面 2')
+
+    await callTool('video_workbench_set_board_summary', {
+      boardId: first,
+      summary: '追车戏 8 镜，全部夜景',
+    })
+
+    // 当前页是第二页，但第一页的摘要照样在目录里看得到 —— 不用切页、不用拉卡。
+    const res = await callTool('video_workbench_status', {})
+    expect(res.scope).toEqual({ boardId: second })
+    expect(res.boards).toEqual([
+      { id: first, name: expect.any(String), cardCount: 1, summary: '追车戏 8 镜，全部夜景' },
+      { id: second, name: '页面 2', cardCount: 0 },
+    ])
+  })
+
+  it('页面摘要:传空串清除,写摘要不作废 agent 手里的 IR 令牌', async () => {
+    const boardId = useVideoWorkbenchStore.getState().activeBoardId
+    const before = useVideoWorkbenchStore.getState().structureRevision
+
+    await callTool('video_workbench_set_board_summary', { boardId, summary: '夜景外景' })
+    // 摘要是路标不是编排意图：动了它就等于让 agent 手里那份 IR 白白作废。
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(before)
+
+    await callTool('video_workbench_set_board_summary', { boardId, summary: '' })
+    expect(useVideoWorkbenchStore.getState().boards[0].summary).toBeUndefined()
+  })
+
+  it('页面摘要:页不存在时抛可读错误并列出可用 id', async () => {
+    await expect(
+      callTool('video_workbench_set_board_summary', { boardId: 'ghost', summary: 'x' }),
+    ).rejects.toThrow('board not found')
+  })
+
   it('status:boardId 不存在时抛可读错误(agent 可据 boards 自纠)', async () => {
     await expect(callTool('video_workbench_status', { boardId: 'ghost-board' })).rejects.toThrow(
       'board not found',

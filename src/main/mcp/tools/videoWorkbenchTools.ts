@@ -71,6 +71,13 @@ const boardBriefSchema = z.object({
   id: z.string(),
   name: z.string(),
   cardCount: z.number(),
+  summary: z.string().optional().describe(
+    'One-line note about what this page holds, written by you via video_workbench_set_board_summary. '
+    + 'Absent until someone writes it. This is the whole point of the boards list: since status only '
+    + 'returns the ACTIVE page\'s cards, "page 3, 20 cards" alone cannot tell you whether page 3 is worth '
+    + 'pulling — page names are often just "页面 3". A summary lets you pick the right page without '
+    + 'fetching any of its cards.',
+  ),
 })
 
 const statusCountsSchema = z.object({
@@ -711,6 +718,47 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       ], result)
     } catch (error) {
       return errorResult('video_workbench_apply', error)
+    }
+  })
+
+  server.registerTool('video_workbench_set_board_summary', {
+    description:
+      'Leave a one-line note on a workbench page saying what it holds ("追车戏 8 镜，全部夜景"). '
+      + 'Cheap to write, and it is what makes progressive reading work: video_workbench_status returns '
+      + "only the ACTIVE page's cards, so every other page shows up as just id/name/cardCount — and page "
+      + 'names are usually "页面 3". A summary lets you (or the next session) pick the right page WITHOUT '
+      + 'pulling its cards.\n'
+      + 'Write one whenever you finish laying out a page, and refresh it when the page\'s content changes '
+      + 'shape. Keep it to one line about CONTENT (what is in it), not status ("8 cards, 3 done") — counts '
+      + 'are already in the boards list and go stale immediately. Pass an empty string to clear it.\n'
+      + 'This does NOT invalidate an IR you are holding: a summary is a signpost, not a spec change.',
+    inputSchema: z.object({
+      boardId: z.string().min(1).describe('Page to annotate. Get ids from the `boards` list.'),
+      summary: z.string().max(200).describe(
+        'One line about what this page holds. Empty string clears it. Max 200 chars — it is an index '
+        + 'entry, not a document.',
+      ),
+    }),
+    outputSchema: z.looseObject({
+      ok: z.boolean(),
+      workbench: workbenchSummarySchema,
+    }),
+    annotations: WRITE_IDEMPOTENT,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_board_summary',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { ok: boolean }
+      return okResult(
+        [result.ok
+          ? '✅ video_workbench_set_board_summary — saved.'
+          : '⚠️ video_workbench_set_board_summary — board not found; check the `boards` list for valid ids.'],
+        result,
+      )
+    } catch (error) {
+      return errorResult('video_workbench_set_board_summary', error)
     }
   })
 

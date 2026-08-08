@@ -133,6 +133,18 @@ export type VideoWorkbenchCardStatus =
 export interface VideoWorkbenchBoard {
   id: string
   name: string
+  /**
+   * 一句话说明这一页装的是什么（「追车戏 8 镜，全部夜景」）。
+   *
+   * 这是渐进披露缺的那一层索引。status 默认只回当前页的卡片，别页只给
+   * id / name / cardCount —— 光看「第 3 页，20 张卡」判断不了要不要去拉它，
+   * 而页名常常只是「页面 3」。有了摘要，agent 能在**不拉卡片**的前提下决定
+   * 该翻哪一页，这正是分批读取想省下的那部分。
+   *
+   * 由 agent 写（video_workbench_set_board_summary），不参与生成、不影响出片；
+   * 纯粹是给「下一次回来的人」留的路标，所以也不进撤销栈的编排意图。
+   */
+  summary?: string
   /** 页签排序(小在左)。 */
   order: number
   createdAt: number

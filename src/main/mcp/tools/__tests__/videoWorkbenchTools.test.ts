@@ -49,6 +49,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_status',
       'video_workbench_export',
       'video_workbench_apply',
+      'video_workbench_set_board_summary',
       'video_workbench_remove_tasks',
     ])
   })

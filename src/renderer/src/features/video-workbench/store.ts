@@ -208,6 +208,8 @@ export interface WorkbenchBoardBrief {
   id: string
   name: string
   cardCount: number
+  /** 这一页装的是什么（agent 自己写的一句话）。没写过就没有这个字段。 */
+  summary?: string
 }
 
 /** 全局状态计数(跨页聚合)。 */
@@ -266,7 +268,14 @@ export function snapshotWorkbench(
     activeBoardId: state.activeBoardId,
     boards: [...state.boards]
       .sort((a, b) => a.order - b.order)
-      .map((b) => ({ id: b.id, name: b.name, cardCount: cardCountByBoard.get(b.id) ?? 0 })),
+      // 摘要一起带上：这是别页在「只读当前页」下唯一的判据 —— 光看「第 3 页 20 张卡」
+      // 决定不了要不要翻过去，而页名常常只是「页面 3」。没写摘要的页不带这个字段。
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        cardCount: cardCountByBoard.get(b.id) ?? 0,
+        ...(b.summary ? { summary: b.summary } : {}),
+      })),
     statusCounts,
     selectedCardIds: [...state.selectedCardIds],
   }
@@ -343,6 +352,13 @@ export interface VideoWorkbenchState {
   switchBoard: (id: string) => void
   /** 重命名页(trim 后为空拒绝)。 */
   renameBoard: (id: string, name: string) => boolean
+  /**
+   * 写这一页的一句话摘要（传空串 = 清除）。页不存在返回 false。
+   *
+   * 刻意**不动** revision / structureRevision：摘要是路标不是编排意图，
+   * 让它作废 agent 手里的 IR 令牌得不偿失。
+   */
+  setBoardSummary: (id: string, summary: string) => boolean
   /** 删除页(连带删卡)。仅剩一页时拒绝;删的是当前页则切到相邻页。 */
   removeBoard: (id: string) => boolean
   /**
@@ -1041,6 +1057,27 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     })
     if (!renamed) return true
     void getWorkbenchDb().putBoard(renamed).catch(() => {})
+    return true
+  },
+
+  setBoardSummary: (id, summary) => {
+    const trimmed = summary.trim()
+    if (!get().boards.some((b) => b.id === id)) return false
+    let updated: VideoWorkbenchBoard | null = null
+    set((state) => {
+      const boards = state.boards.map((b) => {
+        if (b.id !== id || (b.summary ?? '') === trimmed) return b
+        // 空串 = 清除摘要，不留一个空字段占位。
+        updated = trimmed ? { ...b, summary: trimmed } : (({ summary: _drop, ...rest }) => rest)(b)
+        return updated
+      })
+      // **两个令牌都不动。** 摘要是给人和 agent 看的路标，不是编排意图：
+      // 它不改卡片、不改页的集合与顺序，让它 bump structureRevision 等于
+      // 「agent 写了一句备注，自己手里的整份 IR 就作废了」。撤销栈同理不该记它。
+      return updated ? { boards } : {}
+    })
+    if (!updated) return true
+    void getWorkbenchDb().putBoard(updated).catch(() => {})
     return true
   },
 

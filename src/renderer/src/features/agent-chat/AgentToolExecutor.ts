@@ -318,6 +318,7 @@ export class AgentToolExecutor {
       case 'video_workbench_update_task':
       case 'video_workbench_start':
       case 'video_workbench_status':
+      case 'video_workbench_set_board_summary':
       case 'video_workbench_remove_tasks':
       case 'video_workbench_export':
       case 'video_workbench_apply':
@@ -413,6 +414,19 @@ export class AgentToolExecutor {
         // 同上：批次跑完主动推送，取代轮询。
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
+      }
+      case 'video_workbench_set_board_summary': {
+        const boardId = typeof params.boardId === 'string' ? params.boardId : ''
+        if (!boardId) throw new Error('video_workbench_set_board_summary: boardId is required')
+        const summary = typeof params.summary === 'string' ? params.summary : ''
+        const ok = store.setBoardSummary(boardId, summary)
+        if (!ok) {
+          const ids = useVideoWorkbenchStore.getState().boards.map((b) => b.id).join(', ')
+          throw new Error(
+            `video_workbench_set_board_summary: board not found: ${boardId} (existing: ${ids})`,
+          )
+        }
+        return { ok: true, workbench: workbenchSummary() }
       }
       case 'video_workbench_status': {
         const state = useVideoWorkbenchStore.getState()
