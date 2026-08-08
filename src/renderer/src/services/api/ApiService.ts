@@ -66,6 +66,20 @@ export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-plus-dashscope'
 export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
 
 /**
+ * 旗舰理解模型 `qwen3.8-max`(2026-08-03 GA)。
+ *
+ * **不设为默认。** 它与 3.7-plus 的视频规格完全相同(2 小时 / 2GB / 单次 64 段
+ * 视频 / 2048 张 URL 图),差别在推理强度、1M 上下文和内置工具 —— 而理解工具的
+ * 绝大多数调用是「看一段片子讲了什么」,这些规格上 plus 已经吃满,换旗舰只是更贵。
+ * 需要长文档深读或复杂跨模态推理时由调用方显式指定 `model="flagship"`。
+ *
+ * 注意模型 id **没有** `-dashscope` 后缀 —— 它走的是网关里 `QWEN_MIAU_MODELS`
+ * 那条(与对话栏同一枚 Miau key),不是 3.7 那两个 DashScope 原生别名。
+ * 规格来源:千问平台「视觉理解模型」文档。
+ */
+export const QWEN_UNDERSTAND_FLAGSHIP_MODEL = 'qwen3.8-max'
+
+/**
  * 把 apiyi-mcp 的 `APIYI_API_KEY` 推给主进程时使用的 provider-store 槽位 id。
  * 不是 codex 网关 provider——是「只存 key」的通道,镜像 qwen('qwen')存 Miau token
  * 的做法。用专属 id(`apiyi-mcp`,不是真正的网关 `apiyi`)把 MCP 密钥与 codex
@@ -96,6 +110,7 @@ export const DASHVECTOR_API_KEY_STORAGE = 'dashvector_api_key'
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
   QWEN_UNDERSTAND_FALLBACK_MODEL,
+  QWEN_UNDERSTAND_FLAGSHIP_MODEL,
 ]
 
 /**
@@ -109,6 +124,9 @@ export function resolveUnderstandModel(requested?: string): string {
   const r = requested.trim().toLowerCase()
   if (r === 'max') return 'qwen3.7-max-dashscope'
   if (r === 'plus') return 'qwen3.7-plus-dashscope'
+  // 'flagship' 而不是 '3.8':别名要表达「选最强的那档」,写死版本号会在下次换代时
+  // 变成需要同步改动的死值(plus/max 就是这么活过好几代的)。
+  if (r === 'flagship' || r === '3.8') return QWEN_UNDERSTAND_FLAGSHIP_MODEL
   return QWEN_UNDERSTAND_MODELS.includes(requested) ? requested : QWEN_UNDERSTAND_MODEL
 }
 

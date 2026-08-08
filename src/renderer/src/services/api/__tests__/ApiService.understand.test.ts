@@ -1,5 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ApiService } from '../ApiService'
+import {
+  ApiService,
+  QWEN_UNDERSTAND_FLAGSHIP_MODEL,
+  QWEN_UNDERSTAND_MODEL,
+  resolveUnderstandModel,
+} from '../ApiService'
+
+describe('resolveUnderstandModel', () => {
+  it('三档别名各自映射到真实模型名', () => {
+    expect(resolveUnderstandModel('plus')).toBe('qwen3.7-plus-dashscope')
+    expect(resolveUnderstandModel('max')).toBe('qwen3.7-max-dashscope')
+    // qwen3.8-max 走网关的 Miau 那条，模型 id 没有 -dashscope 后缀。
+    expect(resolveUnderstandModel('flagship')).toBe('qwen3.8-max')
+    expect(resolveUnderstandModel('3.8')).toBe('qwen3.8-max')
+  })
+
+  it('旗舰只在被点名时启用，默认仍是 plus', () => {
+    // 3.8 与 3.7-plus 的视频规格相同(2h / 2GB)，默认换旗舰只是更贵。
+    expect(resolveUnderstandModel(undefined)).toBe(QWEN_UNDERSTAND_MODEL)
+    expect(resolveUnderstandModel('qwen3.9-ultra')).toBe(QWEN_UNDERSTAND_MODEL)
+    expect(resolveUnderstandModel(QWEN_UNDERSTAND_FLAGSHIP_MODEL)).toBe('qwen3.8-max')
+  })
+})
 
 /** Minimal Response-like stub for fetch. */
 function fakeResponse(opts: {
