@@ -141,19 +141,46 @@ describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
     }
   })
 
-  it('一个候选试满后降级到下一个（COS → 上游临时地址）', async () => {
+  /** 把某个错误码贴到 <video> 上再触发 error —— 真实浏览器就是这么传递原因的。 */
+  function failWith(code: number): void {
+    const el = queryVideo()!
+    Object.defineProperty(el, 'error', { value: { code }, configurable: true })
+    fireEvent.error(el)
+  }
+
+  /** 反复报网络错并推进时钟，直到**当前候选**的重试时限耗尽（换源或出兜底）。 */
+  async function burnRetryWindow(): Promise<void> {
+    const from = queryVideo()?.getAttribute('src')
+    for (let i = 0; i < 40; i++) {
+      failWith(2 /* MEDIA_ERR_NETWORK */)
+      await act(async () => { await vi.advanceTimersByTimeAsync(11_000) })
+      const el = queryVideo()
+      // 播放器没了 = 出兜底；src 变了 = 已降级到下一个候选。两种都算这轮烧完。
+      if (!el || el.getAttribute('src') !== from) return
+    }
+  }
+
+  it('重试期内会提示「正在重试」，60 秒静默和卡死在屏幕上长得一样', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<ResultVideoPlayer source={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
+      failWith(2 /* MEDIA_ERR_NETWORK */)
+      await act(async () => { await vi.advanceTimersByTimeAsync(11_000) })
+      expect(screen.getByTestId('vw-remote-retrying').textContent).toContain('正在重试')
+      expect(screen.queryByTestId('vw-playback-fallback')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('时限用尽后降级到下一个候选（COS → 上游临时地址）', async () => {
     vi.useFakeTimers()
     try {
       render(<ResultVideoPlayer source={makeCard({
         remoteUrl: 'https://cos.example/v.mp4',
         videoUrl: 'https://tmp.example/v.mp4',
       })} />)
-      // 把 COS 那个候选的 3 次机会用光。
-      for (let i = 0; i < 3; i++) {
-        fireEvent.error(queryVideo()!)
-        await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
-      }
-      // 不该判死 —— 还有上游地址没试。
+      await burnRetryWindow()
       expect(screen.queryByTestId('vw-playback-fallback')).toBeNull()
       expect(queryVideo()?.getAttribute('src')).toBe('https://tmp.example/v.mp4')
     } finally {
@@ -161,18 +188,34 @@ describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
     }
   })
 
-  it('所有候选都试满 → 兜底，且不再断言「已过期」', async () => {
+  /**
+   * 「只重试瞬时错误」是退避策略的前提：对 403/404 这类永久错误重试，只是把失败
+   * 推迟一分钟，期间用户还以为有救。SRC_NOT_SUPPORTED 就是 403 常落的那一档。
+   */
+  it('永久性错误不耗时限，立刻换下一个候选', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<ResultVideoPlayer source={makeCard({
+        remoteUrl: 'https://cos.example/v.mp4',
+        videoUrl: 'https://tmp.example/v.mp4',
+      })} />)
+      failWith(4 /* MEDIA_ERR_SRC_NOT_SUPPORTED */)
+      // 没有推进任何时钟 —— 立刻就该换源，一秒都不该等。
+      expect(queryVideo()?.getAttribute('src')).toBe('https://tmp.example/v.mp4')
+      expect(screen.queryByTestId('vw-remote-retrying')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('所有候选都试尽 → 兜底，且不再单口咬定「已过期」', async () => {
     vi.useFakeTimers()
     try {
       render(<ResultVideoPlayer source={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
-      for (let i = 0; i < 3; i++) {
-        fireEvent.error(queryVideo()!)
-        await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
-      }
+      await burnRetryWindow()
       // 用 getBy 而不是 findBy：findBy 靠真实定时器轮询，在假计时器下会一直挂着。
       const fallback = screen.getByTestId('vw-playback-fallback')
-      expect(fallback.textContent).toContain('次加载失败')
-      // 原因是「网络问题或链接已过期」，不再单口咬定过期把人引去重新生成。
+      expect(fallback.textContent).toContain('60 秒')
       expect(fallback.textContent).toContain('网络问题')
     } finally {
       vi.useRealTimers()
