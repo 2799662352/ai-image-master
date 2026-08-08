@@ -613,8 +613,17 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       '`boardId` for a specific page, or `allBoards:true` for everything. The `boards` list always carries ' +
       "every page's id/name/cardCount, so you can see what else exists without pulling its cards. The " +
       'result echoes `scope` so you always know what you just looked at.\n' +
-      `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
+      'THESE TOOLS ARE THE ONLY WAY TO SEE THE WORKBENCH. The board lives in the running app\'s '
+      + 'IndexedDB; there is no JSON file on disk that mirrors it. Do NOT go looking for one — grepping '
+      + 'LevelDB blobs, page-states.json, Local Storage or the app data directory wastes minutes and '
+      + 'returns garbage even when it appears to match. Anything you need is here: this tool for state, '
+      + 'video_workbench_export for the full prompts.\n'
+      + `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
       + 'full card is bulky and you usually care about one or two of them.\n'
+      + 'PROMPTS ARE TRUNCATED HERE (~120 chars). That is deliberate: this tool is for surveying state, '
+      + 'not for reading copy. When you need a card\'s FULL prompt — to rewrite it, quote it, or diff it '
+      + '— call video_workbench_export (scope it with boardId). Do not try to reconstruct a prompt from '
+      + 'the truncated text.\n'
       + 'READ `pageIndex` FIRST. It has one line per page across the whole scope (page number, card ids, '
       + 'the opening words of each prompt), so you can jump straight to the page you want instead of '
       + 'walking pages 1..N. Then fetch that page, or skip paging entirely by passing its cardIds.\n'
@@ -675,6 +684,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'Embedded (data:) materials appear as '
       + '`wbref://<cardId>/<kind>/<index>` placeholders — copy them verbatim to keep a material, or copy '
       + 'one onto another card to reuse that material without re-uploading.\n'
+      + 'This is also where you READ full prompts: video_workbench_status truncates them to ~120 chars. '
+      + 'And it is the only way — the board lives in the running app\'s IndexedDB, there is no file on '
+      + 'disk to grep.\n'
       + 'SCOPE: by default this exports only the ACTIVE board, because a full export carries every card\'s '
       + 'full prompt and every material path and can exceed what the client will accept. That default is '
       + 'safe to apply back — merge mode leaves boards you did not list alone. Pass a specific boardId for '

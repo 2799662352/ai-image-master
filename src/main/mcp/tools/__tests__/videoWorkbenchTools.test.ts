@@ -238,6 +238,25 @@ describe('registerVideoWorkbenchTools / schemas', () => {
    * 硬闸而不是「劝」：描述是建议，模型可以不听，而这一趟的代价全落在用户身上 ——
    * 十七张卡的完整提示词要被模型读完、改完、再吐回来，实测卡到 JSON 解析失败重来。
    */
+  /**
+   * 实战里 agent 用 PowerShell 去翻 IndexedDB 的 LevelDB 文件找看板状态（它自己都写
+   * 「hard to parse, but strings can be grepped」）。它不是偷懒——是没人告诉它盘上
+   * 没有这份数据，而 status 里的 prompt 又是截断的，看不到全文就以为工具不够用。
+   */
+  it('读工具必须堵死「去磁盘找看板」这条路，并指明全文在哪', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const status = toolByName(tools, 'video_workbench_status').config.description
+    expect(status).toMatch(/ONLY WAY|no JSON file on disk/i)
+    // 截断是刻意的，但必须同时说清全文去哪儿拿，否则就是把人逼去刨盘。
+    expect(status).toMatch(/TRUNCATED/i)
+    expect(status).toContain('video_workbench_export')
+
+    const exportDesc = toolByName(tools, 'video_workbench_export').config.description
+    expect(exportDesc).toMatch(/full prompts/i)
+    expect(exportDesc).toMatch(/no file on\s+disk|IndexedDB/i)
+  })
+
   it('apply 硬闸:内容卡超限整份拒绝、零写入，并点名该换哪个工具', async () => {
     const { tools, server, router } = capture()
     registerVideoWorkbenchTools(server, router)
