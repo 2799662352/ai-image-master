@@ -416,10 +416,13 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'Reference images for image-to-image / editing, as local file paths or data/http URLs. ' +
           'Accepts MULTIPLE images — pass every relevant one (character + background, multiple ' +
           'angles, subject + style ref), not just the first. ORDER IS IDENTITY: the Nth entry here is ' +
-          '"reference image N" and the app keeps that order exactly (no dedupe, no silent drop). With ' +
-          'more than one subject you MUST bind labels to ordinals in the prompt — e.g. "Reference image ' +
-          '1 defines [char1]: <2-3 stable static features>." — otherwise the model guesses which face ' +
-          'goes where, which is the top cause of a character swapping faces across a set. Never put a ' +
+          '"reference image N" and the app keeps that order exactly (no dedupe, no silent drop). ' +
+          'ONE ROLE LINE PER IMAGE — N references means N role lines in the prompt, matched by ordinal. ' +
+          'People get a bound label ("Reference image 1 defines [char1]: <2-3 stable static features>."); ' +
+          'non-people references still need a role ("Reference image 3: color palette and grain only — ' +
+          'do not copy its composition or subjects."). An unaccounted reference gets a role invented for ' +
+          'it — typically the people from a style ref end up painted into the scene. Leaving a subject ' +
+          'label unbound is the top cause of a character swapping faces across a set. Never put a ' +
           'raw asset:// id in the prompt body. IMPORTANT: if the user attached/provided ' +
           'any image (its path appears in the prompt under "[Attached files at these local paths: …]" / ' +
           '"[Referenced files at these local paths: …]"), or the user says things like ' +
@@ -541,10 +544,11 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe(
           'Reference images shared by all prompts, as local file paths or data/http URLs. ORDER IS ' +
-          'IDENTITY — the Nth entry is "reference image N" in EVERY prompt of the batch, so bind each ' +
-          'subject label to its ordinal once per prompt ("Reference image 1 defines [char1]: …"). ' +
-          'A batch is exactly where an unbound label goes wrong: the same character comes back with a ' +
-          'different face on some of the images.',
+          'IDENTITY — the Nth entry is "reference image N" in EVERY prompt of the batch. Give each ' +
+          'reference one role line per prompt, matched by ordinal: people get a bound label ' +
+          '("Reference image 1 defines [char1]: …"), style/background references still get an explicit ' +
+          'role. A batch is exactly where this goes wrong when skipped: the same character comes back ' +
+          'with a different face on some of the images.',
         ),
     }),
   }, async (params, ctx?: unknown) => {

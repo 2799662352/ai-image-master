@@ -64,8 +64,15 @@ image_gen skill: they render inside the chat AND persist results to local files
   defines [char2]: <...>.` 特征只挑不随镜头变的(脸型 / 发色发型 / 标志物 / 常驻配饰),
   别把姿势、表情、光线这类会变的写进定义里。
 
-三条硬规矩:
+四条硬规矩:
 
+- **有几张就写几条 —— 逐份负责,一张都不许留白。** 传了 N 张参考图,提示词里就要有
+  N 条职责说明,一条对一张,序号对得上。人物图 → 定义成主体标签;不是人物的图也
+  照样要有职责,写明它贡献哪一维:`Reference image 3: color palette and film grain
+  only — do not copy its composition or subjects.` **漏写哪张,模型就会自己给它安排
+  用途**,最常见的就是把风格参考图里的人也一起画进画面。这轮确实用不上的图,要么
+  别传,要么明写一句 `Reference image 4: not used this time.` —— 别指望模型自己
+  看出来哪张是多余的。
 - **一张参考图只定义一个出场主体。** 单人设定图不要同时定义两个会同时出场的人;
   有多张单人候选时先一人一图分配。同一主体的多视角(正面 / 侧面 / 全身)才可以
   合并到同一个标签。
