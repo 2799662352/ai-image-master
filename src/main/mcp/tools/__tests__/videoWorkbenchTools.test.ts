@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import {
+  WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_IR_VERSION,
   WORKBENCH_MAX_TASKS_PER_CALL,
@@ -45,6 +46,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     registerVideoWorkbenchTools(server, router)
     expect(tools.map((t) => t.name)).toEqual([
       'video_workbench_add_tasks',
+      'video_workbench_set_spec',
       'video_workbench_update_task',
       'video_workbench_start',
       'video_workbench_status',
@@ -230,6 +232,75 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ tasks: [{ ...base, referenceVideos: [...base.referenceVideos, 'C:/v10.mp4'] }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ ...base, referenceAudios: [...base.referenceAudios, 'C:/a10.mp3'] }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ ...base, duration: 31 }] }).success).toBe(false)
+  })
+
+  /**
+   * 硬闸而不是「劝」：描述是建议，模型可以不听，而这一趟的代价全落在用户身上 ——
+   * 十七张卡的完整提示词要被模型读完、改完、再吐回来，实测卡到 JSON 解析失败重来。
+   */
+  it('apply 硬闸:内容卡超限整份拒绝、零写入，并点名该换哪个工具', async () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const ir = {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        cards: Array.from({ length: WORKBENCH_APPLY_MAX_CONTENT_CARDS + 1 }, (_, i) => ({
+          id: `c${i}`, prompt: `镜 ${i}`,
+        })),
+      }],
+    }
+    const res = await toolByName(tools, 'video_workbench_apply').handler({ ir })
+    expect(res.content[0].text).toContain('Nothing was written')
+    expect(res.content[0].text).toContain('video_workbench_set_spec')
+    expect(res.content[0].text).toContain('video_workbench_update_task')
+    // 零写入：拦在 router 之前，不能有任何调用漏过去。
+    expect(router.call).not.toHaveBeenCalled()
+  })
+
+  it('apply 硬闸:只占位条目不计入，重排整页照样放行', async () => {
+    const { tools, server, router } = capture({ ok: true, skipped: [], structureRevision: 1 })
+    registerVideoWorkbenchTools(server, router)
+    const ir = {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        // 20 张纯 id + rev —— 这正是「重排二十张卡」该长的样子。
+        cards: Array.from({ length: 20 }, (_, i) => ({ id: `c${i}`, rev: 0 })),
+      }],
+    }
+    const res = await toolByName(tools, 'video_workbench_apply').handler({ ir })
+    expect(res.content[0].text).not.toContain('Nothing was written')
+    expect(router.call).toHaveBeenCalled()
+  })
+
+  /**
+   * 实战里踩过的三连坑：①一次性 17 张 → 超大 JSON 解析失败整次作废；②改成每批 4 张
+   * → 列出的卡被排到最前，每批都把顺序打乱一次；③为恢复顺序被迫再来一次两万字符的
+   * 全量回写。这条钉住第三条路：整页都列，只有在改的那几张带内容。
+   */
+  it('apply:分批改内容也能保序 —— 4 张带内容 + 13 张占位，既不撞闸也不乱序', async () => {
+    const { tools, server, router } = capture({ ok: true, skipped: [], structureRevision: 1 })
+    registerVideoWorkbenchTools(server, router)
+    const ir = {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        cards: Array.from({ length: 17 }, (_, i) => (
+          // 只有前 4 张真的在改；其余 13 张是占位，仅用来把位置钉住。
+          i < 4 ? { id: `c${i}`, prompt: `新提示词 ${i}` } : { id: `c${i}` }
+        )),
+      }],
+    }
+    const res = await toolByName(tools, 'video_workbench_apply').handler({ ir })
+    expect(res.content[0].text).not.toContain('Nothing was written')
+    expect(router.call).toHaveBeenCalled()
   })
 
   it('set_board_summary schema:超长**拒绝**而不是截断', () => {

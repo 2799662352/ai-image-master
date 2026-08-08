@@ -702,7 +702,14 @@ const ALL_TOOLS = [
       'professional caption examples (camera/motion/scene/spatial/subject), and ' +
       'critique-correction pairs. Use for questions about camera movement terminology ' +
       '(dolly in/out, pan, tilt, truck, pedestal, arc, crane, whip pan, rack focus...), ' +
-      'how to write structured shot descriptions, or good vs bad caption examples.',
+      'how to write structured shot descriptions, or good vs bad caption examples.\n' +
+      'USE THE RETRIEVED WORDING VERBATIM — do NOT translate the camera-movement terms or the ' +
+      'phrasing patterns into Chinese when you put them in a prompt. "dolly in", "rack focus", ' +
+      '"truck left", "low-angle", "deep focus" are the exact tokens the video models were trained ' +
+      'on; the Chinese renderings ("推镜", "变焦对焦") are NOT equivalent and measurably weaken the ' +
+      'result. Keep the English term even inside an otherwise-Chinese prompt — mixed language is ' +
+      'fine and is what the reference captions in this KB actually look like. Explain in Chinese to ' +
+      'the user if you like, but what goes into the prompt stays as retrieved.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -731,7 +738,11 @@ const ALL_TOOLS = [
       "expressions over fields like aesthetic_score/dynamic_score/user_tags, e.g. " +
       '"aesthetic_score > 0.7 and user_tags like \'%smears%\'". Use ' +
       'search_cinematography_kb for concepts/specs/how-to; use this tool when you need ' +
-      'real example clips (descriptions + source links) of a technique or motion.',
+      'real example clips (descriptions + source links) of a technique or motion.\n' +
+      'Technique tags are sakugabooru vocabulary — carry them into prompts VERBATIM ' +
+      '(smears, impact_frames, background_animation, character_acting…). They are dataset ' +
+      'identifiers, not descriptions: a Chinese paraphrase points at nothing. Same for the English ' +
+      'scene descriptions — reuse their phrasing rather than re-writing it in Chinese.',
     inputSchema: {
       type: 'object',
       properties: {

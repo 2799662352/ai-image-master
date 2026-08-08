@@ -13,9 +13,56 @@
 // 降级远程源;两边都没有时显示错误兜底(文件路径 + 「在文件夹中打开」),
 // 不留空白播放器。
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
 import { useFileUrl } from '../../features/file-explorer/useFileUrl'
+
+/**
+ * 每个远程源的重试**时限**(不是次数)。
+ *
+ * 按业界口径:先定「整段重试允许花多久」,再倒推次数与退避,而不是先拍一个次数。
+ * 60s 的依据是这类失败的性质 —— 实测是 `net::ERR_CONNECTION_CLOSED`,连接被对端
+ * 掐断,**不是过期**(过期回 403)。对端抖动通常几十秒内自愈,而一条片子重生成
+ * 要花钱又要几分钟,多等一分钟远比误判划算。
+ */
+const REMOTE_RETRY_WINDOW_MS = 60_000
+
+/** 退避基数与上限。cap 取 10s:再长用户会以为卡死,而 60s 窗口也放不下几次。 */
+const RETRY_BASE_MS = 500
+const RETRY_CAP_MS = 10_000
+
+/**
+ * 封顶指数退避 + full jitter:`Uniform(0, min(cap, base × 2^n))`。
+ *
+ * jitter 在这里不是形式主义:一板 17 张卡同时加载失败时,它们会在同一毫秒一起
+ * 重试同一个主机 —— 那就是个微型惊群。随机化把这些请求摊开。
+ */
+function retryDelayMs(attempt: number): number {
+  return Math.random() * Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** attempt)
+}
+
+/**
+ * 这个错误值得重试吗?
+ *
+ * 「只重试瞬时错误」是退避策略的前提 —— 对 4xx 那类永久错误重试,只是把失败推迟
+ * 60 秒,期间用户还以为有救。`<video>` 这边的对应物是 `MediaError.code`:
+ * - NETWORK(2):传输中断 —— 正是我们要救的那种,重试。
+ * - DECODE(3):字节坏了,同一个源再拉一次还是坏的 —— 换下一个候选。
+ * - SRC_NOT_SUPPORTED(4):地址取不到或类型不对,403/404 通常落这里 —— 换候选。
+ * - ABORTED(1):用户自己中断的,不是故障。
+ *
+ * 拿不到 code 时按可重试处理:宁可多等,不可把能救的判死。
+ */
+function isRetryableMediaError(el: HTMLVideoElement | null): boolean {
+  const code = el?.error?.code
+  if (code === undefined) return true
+  return code === MEDIA_ERR_ABORTED || code === MEDIA_ERR_NETWORK
+}
+
+// 写成数值而不是引用 `MediaError.*`:那是个浏览器全局，jsdom 里根本不存在，
+// 靠它会让这段逻辑在测试环境直接抛 ReferenceError。数值是 HTML 规范定死的。
+const MEDIA_ERR_ABORTED = 1
+const MEDIA_ERR_NETWORK = 2
 
 interface ShellBridge {
   showItemInFolder?: (p: string) => Promise<unknown>
@@ -27,9 +74,102 @@ function getShell(): ShellBridge | undefined {
 
 const VIDEO_CLASS = 'w-full max-h-[420px] bg-black border border-[#27272A]'
 
-/** 远程候选(COS 永久 URL 优先于上游临时地址)。 */
+/**
+ * 远程候选,按可靠性排序:COS 永久 URL > 上游临时地址。
+ *
+ * 返回**列表**而不是单个 —— 此前二选一，COS 那条断了就直接判死，明明还有上游
+ * 地址可试。两条都留着，逐个降级。
+ */
+export function remoteVideoCandidates(
+  card: Pick<VideoWorkbenchCard, 'remoteUrl' | 'videoUrl'>,
+): string[] {
+  return [card.remoteUrl, card.videoUrl].filter((u): u is string => !!u)
+}
+
+/** 首选远程源。保留给只关心「有没有」的调用方。 */
 export function remoteVideoSrc(card: Pick<VideoWorkbenchCard, 'remoteUrl' | 'videoUrl'>): string | null {
-  return card.remoteUrl || card.videoUrl || null
+  return remoteVideoCandidates(card)[0] ?? null
+}
+
+/**
+ * 远程播放:每个候选重试若干次，用尽再降到下一个候选。
+ *
+ * `<video>` 没有「重新加载」的公开接口，换 key 强制重挂是最干净的做法 ——
+ * 也顺带绕开某些实现会缓存失败结果的行为。
+ */
+function RemoteResultVideo({
+  candidates,
+  localPath,
+}: { candidates: string[]; localPath?: string }) {
+  const [idx, setIdx] = useState(0)
+  const [attempt, setAttempt] = useState(0)
+  const [exhausted, setExhausted] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 当前候选开始尝试的时刻 —— 时限是按「这个候选试了多久」算的，不是按次数。 */
+  const startedAt = useRef(Date.now())
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current)
+  }, [])
+
+  const nextCandidate = (): void => {
+    if (idx + 1 < candidates.length) {
+      setIdx((i) => i + 1)
+      setAttempt(0)
+      startedAt.current = Date.now()
+      return
+    }
+    setExhausted(true)
+  }
+
+  const onError = (e: { currentTarget: HTMLVideoElement }): void => {
+    if (timer.current) clearTimeout(timer.current)
+    // 永久性错误（源不支持 / 字节损坏）重试多少次都一样，直接换候选，
+    // 别把 60 秒窗口浪费在一个注定失败的地址上。
+    if (!isRetryableMediaError(e.currentTarget)) {
+      nextCandidate()
+      return
+    }
+    const delay = retryDelayMs(attempt)
+    if (Date.now() - startedAt.current + delay < REMOTE_RETRY_WINDOW_MS) {
+      timer.current = setTimeout(() => setAttempt((a) => a + 1), delay)
+      return
+    }
+    nextCandidate()
+  }
+
+  if (exhausted) {
+    return (
+      <PlaybackFallback
+        localPath={localPath}
+        // 不断言「已过期」：最常见的其实是连接被掐断，过期会回 403。说清「试了多久」
+        // 比给一个可能错误的原因有用，也免得把人引去花钱重生成一条已经好了的片子。
+        reason={`${candidates.length} 个地址各重试 ${REMOTE_RETRY_WINDOW_MS / 1000} 秒仍加载不出（网络问题或链接已过期）`}
+      />
+    )
+  }
+
+  return (
+    <>
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <video
+        key={`${idx}-${attempt}`}
+        data-testid="vw-remote-video"
+        controls
+        preload="metadata"
+        src={candidates[idx]}
+        className={VIDEO_CLASS}
+        onError={onError}
+      />
+      {attempt > 0 && (
+        // 60 秒静默重试和「卡死了」在屏幕上长得一模一样，必须说话。
+        <p data-testid="vw-remote-retrying" className="text-white/40 text-[10px] mt-1">
+          加载失败，正在重试（第 {attempt} 次
+          {candidates.length > 1 ? `，源 ${idx + 1}/${candidates.length}` : ''}）…
+        </p>
+      )}
+    </>
+  )
 }
 
 /** 错误兜底:不给空白播放器,给出路径与「在文件夹中打开」。 */
@@ -59,7 +199,7 @@ function PlaybackFallback({ localPath, reason }: { localPath?: string; reason: s
 }
 
 /** 本地 mp4:字节经 IPC 转 blob: 播放;读取/解码失败自动降级远程源。 */
-function LocalResultVideo({ localPath, remoteSrc }: { localPath: string; remoteSrc: string | null }) {
+function LocalResultVideo({ localPath, remotes }: { localPath: string; remotes: string[] }) {
   const file = useFileUrl(localPath)
   // blob: 喂进 <video> 后解码失败(极少见,文件损坏)也走降级
   const [decodeFailed, setDecodeFailed] = useState(false)
@@ -76,10 +216,9 @@ function LocalResultVideo({ localPath, remoteSrc }: { localPath: string; remoteS
   }
 
   if (file.status === 'error' || decodeFailed) {
-    if (remoteSrc) {
-      // eslint-disable-next-line jsx-a11y/media-has-caption
-      return <video controls preload="metadata" src={remoteSrc} className={VIDEO_CLASS} />
-    }
+    // 本地读不出 / 解码失败 → 走远程那条，同样带重试与逐候选降级。
+    if (remotes.length > 0) return <RemoteResultVideo candidates={remotes} localPath={localPath} />
+
     return (
       <PlaybackFallback
         localPath={localPath}
@@ -108,24 +247,11 @@ export type PlaybackSource = Pick<VideoWorkbenchCard, 'localPath' | 'remoteUrl' 
  * (与旧 playbackSrc 返回 null 的分支等价,外层不渲染结果区)。
  */
 export function ResultVideoPlayer({ source }: { source: PlaybackSource }) {
-  const remote = remoteVideoSrc(source)
-  const [remoteFailed, setRemoteFailed] = useState(false)
+  const remotes = remoteVideoCandidates(source)
   if (source.localPath) {
-    return <LocalResultVideo localPath={source.localPath} remoteSrc={remote} />
+    return <LocalResultVideo localPath={source.localPath} remotes={remotes} />
   }
-  if (remote) {
-    if (remoteFailed) return <PlaybackFallback reason="远程地址加载失败(可能已过期,可重新生成)" />
-    return (
-      // eslint-disable-next-line jsx-a11y/media-has-caption
-      <video
-        controls
-        preload="metadata"
-        src={remote}
-        className={VIDEO_CLASS}
-        onError={() => setRemoteFailed(true)}
-      />
-    )
-  }
+  if (remotes.length > 0) return <RemoteResultVideo candidates={remotes} />
   return null
 }
 

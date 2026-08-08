@@ -263,6 +263,35 @@ function resolveMaterials(
   return out
 }
 
+/**
+ * IR 卡片里算「内容」的字段。`id` 和 `rev` 不在其中 —— 前者是身份，后者是并发令牌，
+ * 两个都不表达「这张卡应该长什么样」。
+ */
+const IR_CARD_CONTENT_KEYS = [
+  'prompt', 'model', 'resolution', 'ratio', 'duration',
+  'generateAudio', 'mode', 'seed', 'webSearch',
+  'referenceImages', 'referenceVideos', 'referenceAudios',
+] as const satisfies readonly (keyof WorkbenchIRCard)[]
+
+/**
+ * 「只占位」条目：给了 id、但一个内容字段都没给。语义是**「这张卡放在这个位置，
+ * 内容一个字别动」**。
+ *
+ * 为什么需要它：IR 是声明式的，省略字段回默认值。于是为了给二十张卡重排个序，
+ * 调用方必须把二十段完整提示词和素材数组原样搬一遍 —— 而它真正想表达的只有顺序。
+ * 有了占位条目，重排的 payload 只剩一串 id。
+ *
+ * 与「省略字段 = 回默认值」不矛盾，两者按**有没有任何内容字段**分界：
+ * 带了内容却漏了几个字段 → 照旧回默认（调用方在声明这张卡的完整形态）；
+ * 一个字段都没带 → 占位（调用方没有在声明形态，只是在排位置）。
+ *
+ * 用 `in` 而不是判 undefined：显式写 `{prompt: undefined}` 也算「带了内容字段」，
+ * 那是调用方在明确表达「清空提示词」，不该被静默当成占位。
+ */
+function isPositionOnlyCard(card: WorkbenchIRCard): boolean {
+  return IR_CARD_CONTENT_KEYS.every((key) => !(key in card))
+}
+
 function irCardToInput(
   card: WorkbenchIRCard,
   cardById: Map<string, VideoWorkbenchCard>,
@@ -374,7 +403,14 @@ export function planApplyIR(
     const slot: BoardSlot = { board, created, renamed, claims: [] }
     for (const irCard of Array.isArray(irBoard.cards) ? irBoard.cards : []) {
       if (!irCard || typeof irCard !== 'object') continue
-      const spec = normalizeSpec(irCardToInput(irCard, cardById, skipped))
+      // 占位条目沿用现卡规格 —— 这样下游 specEquals 判定「没变」，只走重排那条路。
+      // 必须在 irCardToInput 之前拦：那个函数会把缺失字段填成默认值，一旦填了就
+      // 与「用户真的想清空」无法区分了。
+      const positionOnly = Boolean(irCard.id) && isPositionOnlyCard(irCard)
+      const current = irCard.id ? cardById.get(irCard.id) : undefined
+      const spec = positionOnly && current
+        ? normalizeSpec(current)
+        : normalizeSpec(irCardToInput(irCard, cardById, skipped))
       if (!irCard.id) {
         slot.claims.push({ spec })
         continue

@@ -320,16 +320,29 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         '"理解/分析这个视频" request. Pass either a public video_url OR a local video_path — a local ' +
         'path is auto-uploaded (streamed) to the history COS bucket to obtain a public URL (≤2GB / 2h, ' +
         'the qwen3.7 upstream limit). ' +
-        'AUDIO is NOT natively supported: to "understand" an audio file, first convert it to MP4 ' +
-        '(ffmpeg-win skill: audio track + placeholder/​waveform video) and pass that MP4 here. ' +
-        'Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger qwen3.7-max. ' +
+        '⚠️ THIS IS FRAME-BASED, THE AUDIO TRACK IS NEVER HEARD. The model samples frames (see `fps`) '
+        + 'and reads what is VISIBLE. It can read burned-in subtitles; it cannot hear speech, music, '
+        + 'sound effects or tone of voice. So: "这段台词说了什么" only works if the words are on screen. '
+        + 'Never claim you heard something — if the answer would require audio, say the video has no '
+        + 'readable subtitles and that this tool cannot listen.\n'
+        + 'THERE IS NO AUDIO PATH AT ALL on this model family (qwen3.7 / qwen3.8 take text + image + '
+        + 'video only; audio input exists solely on the qwen3.5-omni line, which we do not route here). '
+        + 'Do NOT wrap an audio file into an MP4 with a waveform/placeholder video and send it here — '
+        + 'the model would just describe a picture of a waveform and then invent content. For speech you '
+        + 'need transcription, which this tool does not do.\n'
+        + 'Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger qwen3.7-max. ' +
         'Returns a Chinese description. Do NOT retry on a clean result.',
       annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         video_url: z.string().optional().describe('Public http(s) URL of the video (preferred when you already have one).'),
         video_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
         question: z.string().min(1).describe('What you want to know about the video.'),
-        fps: z.number().int().positive().optional().describe('Optional sampling fps hint (reserved; not yet sent upstream).'),
+        fps: z.number().positive().max(10).optional().describe(
+          'Frame sampling rate: one frame every 1/fps seconds. Range 0.1–10, upstream default 2. '
+          + 'Raise it for fast action you would otherwise miss between frames; lower it for long static '
+          + 'footage to save tokens. This is the only lever you have over what the model actually sees — '
+          + 'it never hears the audio.',
+        ),
         model: z.enum(['max', 'plus', 'flagship']).optional().describe('Model: "plus" (default, cheaper) | "max" (stronger 3.7) | "flagship" (qwen3.8-max — 1M context + built-in tools, for long documents or hard cross-modal reasoning). Same video limits on all three (2h / 2GB), so flagship is NOT needed just because the input is a video. Omit for plus.'),
       }),
     },

@@ -230,6 +230,56 @@ describe('AgentToolExecutor.video_workbench_*', () => {
   })
 
   /**
+   * 「整板只改规格」此前只能走 apply —— 那是声明式整份 IR，省略字段会被当成恢复默认，
+   * 于是为了改三个字段，每张卡的完整 prompt 和素材数组都得在模型里走一遍。17 张卡时
+   * 用户看到的就是右边一直 RUNNING，而真正的改动一秒就能做完。
+   */
+  it('set_spec:整板改规格,不碰 prompt 与素材', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [
+        { prompt: '镜一', referenceImages: [{ name: 'a.png', src: 'https://x/a.png' }] },
+        { prompt: '镜二' },
+      ],
+      navigate: false,
+    })
+    const before = useVideoWorkbenchStore.getState().cards
+
+    const res = await callTool('video_workbench_set_spec', {
+      resolution: '480p',
+      webSearch: true,
+    })
+    expect(res.updated).toHaveLength(2)
+    expect(res.skipped).toEqual([])
+
+    const after = useVideoWorkbenchStore.getState().cards
+    for (const [i, card] of after.entries()) {
+      expect(card.resolution).toBe('480p')
+      expect(card.webSearch).toBe(true)
+      // 内容必须原封不动 —— 这正是这个工具存在的理由。
+      expect(card.prompt).toBe(before[i].prompt)
+      expect(card.referenceImages).toEqual(before[i].referenceImages)
+    }
+  })
+
+  it('set_spec:一个规格字段都不给要报错(否则是一次无意义的全板遍历)', async () => {
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'x' }], navigate: false })
+    await expect(callTool('video_workbench_set_spec', {})).rejects.toThrow('至少要给一个规格字段')
+  })
+
+  it('set_spec:cardIds 可点名,不点名就是当前页全部', async () => {
+    const r = await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '甲' }, { prompt: '乙' }],
+      navigate: false,
+    })
+    const [first] = r.cardIds as string[]
+    const res = await callTool('video_workbench_set_spec', { cardIds: [first], duration: 10 })
+    expect(res.updated).toEqual([first])
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.find((c) => c.id === first)!.duration).toBe(10)
+    expect(cards.find((c) => c.id !== first)!.duration).not.toBe(10)
+  })
+
+  /**
    * 分批读取只有配上目录才成立：每次只回 3 张而不告诉 agent 剩下的是什么，
    * 它只能从第 1 页翻到最后一页 —— 调用次数翻十倍，省下的上下文全赔进往返。
    */
@@ -324,6 +374,48 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     await expect(
       callTool('video_workbench_set_board_summary', { boardId: 'ghost', summary: 'x' }),
     ).rejects.toThrow('board not found')
+  })
+
+  /**
+   * 读侧要和写侧对称。写侧已限内容卡张数，读侧若还是整板全量，两万字符只是从
+   * 「写」挪到了「读」。而「重排」和「只改其中几张」根本不需要看别人的提示词。
+   */
+  it('export skeleton:只回 id + rev，顺序完整，不带提示词与素材', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '很长的提示词'.repeat(50) }, { prompt: '第二张' }, { prompt: '第三张' }],
+      navigate: false,
+    })
+    const full = await callTool('video_workbench_export', {})
+    const skel = await callTool('video_workbench_export', { skeleton: true })
+
+    // 每张卡都在、顺序一致 —— 这是它能用来保序的前提。
+    expect(skel.boards[0].cards.map((c: { id: string }) => c.id))
+      .toEqual(full.boards[0].cards.map((c: { id: string }) => c.id))
+    for (const c of skel.boards[0].cards) {
+      expect(Object.keys(c).sort()).toEqual(['id', 'rev'])
+    }
+    // 体积与提示词长度**脱钩**：把提示词再拉长十倍，全量跟着涨，骨架纹丝不动。
+    // （不比绝对比例：页名和令牌是固定开销，卡少时摊不薄，那不是重点。）
+    const skelBefore = JSON.stringify(skel).length
+    const id = full.boards[0].cards[0].id
+    useVideoWorkbenchStore.getState().updateCard(id, { prompt: '超长'.repeat(2000) })
+    const fullAfter = await callTool('video_workbench_export', {})
+    const skelAfter = await callTool('video_workbench_export', { skeleton: true })
+    expect(JSON.stringify(fullAfter).length).toBeGreaterThan(JSON.stringify(full).length + 3000)
+    expect(JSON.stringify(skelAfter).length).toBe(skelBefore)
+    // 令牌照常带回，否则回写会撞版本冲突。
+    expect(skel.structureRevision).toBe(full.structureRevision)
+  })
+
+  it('export skeleton:跨页(allBoards)同样剥干净', async () => {
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A' }], navigate: false })
+    useVideoWorkbenchStore.getState().addBoard('第二页')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B' }], navigate: false })
+    const skel = await callTool('video_workbench_export', { allBoards: true, skeleton: true })
+    expect(skel.boards).toHaveLength(2)
+    for (const b of skel.boards) {
+      for (const c of b.cards) expect(c).not.toHaveProperty('prompt')
+    }
   })
 
   it('status:boardId 不存在时抛可读错误(agent 可据 boards 自纠)', async () => {

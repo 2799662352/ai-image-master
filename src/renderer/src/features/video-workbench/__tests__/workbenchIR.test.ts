@@ -400,6 +400,67 @@ describe('planApplyIR / 声明式改写', () => {
     expect(next.seed).toBeUndefined()
   })
 
+  /**
+   * 「只占位」条目：只给 id、不给任何内容字段 = 「这张卡放这个位置，内容一个字别动」。
+   *
+   * 为什么需要它：IR 是声明式的，省略字段回默认值。所以为了给 20 张卡重新排个序，
+   * agent 必须把 20 段完整提示词和素材数组原样搬一遍 —— 一次会话里最慢的一步，
+   * 而它真正想表达的只是顺序。有了占位条目，重排的 payload 只剩一串 id。
+   *
+   * 与上面「省略字段 = 回默认值」并不矛盾：那条针对的是**带了内容却漏了某些字段**
+   * 的卡，此处针对的是**一个字段都没带**的卡。二者靠「有没有任何内容字段」区分。
+   */
+  it('只占位:只给 id 的卡保持内容不变，只改位置', () => {
+    const src = source({
+      cards: [
+        card({ id: 'c1', boardId: 'b1', order: 0, prompt: '猫', resolution: '1080p', duration: 12, seed: 7 }),
+        card({ id: 'c2', boardId: 'b1', order: 1, prompt: '狗' }),
+      ],
+    })
+    const plan = planApplyIR(src, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      // 倒序，且两张都只给 id。
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2' }, { id: 'c1' }] }],
+    })
+    expect(plan.result.ok).toBe(true)
+    // 内容一个字没动 —— 这正是它与「省略字段=回默认」的分界。
+    expect(plan.result.cards.updated).toEqual([])
+    const byId = new Map(plan.next!.cards.map((c) => [c.id, c]))
+    expect(byId.get('c1')).toMatchObject({ prompt: '猫', resolution: '1080p', duration: 12, seed: 7, order: 1 })
+    expect(byId.get('c2')).toMatchObject({ prompt: '狗', order: 0 })
+    expect(plan.result.cards.moved).toEqual(expect.arrayContaining(['c1', 'c2']))
+  })
+
+  it('只占位:带了任何一个内容字段就不再是占位，仍按声明式回默认', () => {
+    const src = source({
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: '猫', resolution: '1080p', duration: 12 })],
+    })
+    const plan = planApplyIR(src, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      // 只改了 duration，但既然带了内容字段，其余照样回默认（既有契约不变）。
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', duration: 10 }] }],
+    })
+    const next = plan.next!.cards[0]
+    expect(next.duration).toBe(10)
+    expect(next.resolution).toBe('720p')
+    expect(next.prompt).toBe('')
+  })
+
+  it('只占位:rev 是令牌不是内容，带 rev 仍算占位', () => {
+    const src = source({
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: '猫', rev: 3 })],
+    })
+    const plan = planApplyIR(src, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', rev: 3 }] }],
+    })
+    expect(plan.result.ok).toBe(true)
+    expect(plan.next!.cards[0].prompt).toBe('猫')
+  })
+
   it('原样 round-trip 不产生任何改动,也不 bump 任何令牌', () => {
     const src = source({
       structureRevision: 4,

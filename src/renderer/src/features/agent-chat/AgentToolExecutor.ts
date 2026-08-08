@@ -319,6 +319,7 @@ export class AgentToolExecutor {
       case 'video_workbench_update_task':
       case 'video_workbench_start':
       case 'video_workbench_status':
+      case 'video_workbench_set_spec':
       case 'video_workbench_set_board_summary':
       case 'video_workbench_remove_tasks':
       case 'video_workbench_export':
@@ -450,6 +451,43 @@ export class AgentToolExecutor {
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
       }
+      case 'video_workbench_set_spec': {
+        // 「整板只改规格」的专用路径。此前 agent 只能抓 apply —— 那是**声明式整份 IR**,
+        // 省略字段会被当成恢复默认,所以为了改三个字段,17 张卡的完整 prompt 和素材数组
+        // 都得在模型里走一遍。用户看到的就是右边一直 RUNNING,而真正的改动一秒就能做完。
+        const state = useVideoWorkbenchStore.getState()
+        const boardId = typeof params.boardId === 'string' && params.boardId
+          ? params.boardId
+          : state.activeBoardId
+        const explicitIds = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : null
+        const targets = explicitIds
+          ? state.cards.filter((c) => explicitIds.includes(c.id))
+          : state.cards.filter((c) => c.boardId === boardId)
+
+        // 只挑规格字段。**prompt 和素材进不来** —— 这是这个工具存在的理由:
+        // 让「批量」和「重写内容」彻底分开,批量就不必再背着内容的体积。
+        const SPEC_KEYS = [
+          'model', 'resolution', 'ratio', 'duration', 'generateAudio', 'webSearch', 'mode',
+        ] as const
+        const patch: Record<string, unknown> = {}
+        for (const k of SPEC_KEYS) if (params[k] !== undefined) patch[k] = params[k]
+        if (Object.keys(patch).length === 0) {
+          throw new Error('video_workbench_set_spec: 至少要给一个规格字段（model/resolution/ratio/duration/generateAudio/webSearch/mode）')
+        }
+
+        const updated: string[] = []
+        const skipped: Array<{ cardId: string; reason: string }> = []
+        for (const card of targets) {
+          // 生成中的卡跳过而不是报错:一次扫板不该因为某张卡正好在渲染就整个失败,
+          // 但也不能悄悄跳过 —— 回执里逐条列出,让 agent 有话可说。
+          const ok = store.updateCard(card.id, patch as VideoWorkbenchCardInput)
+          if (ok) updated.push(card.id)
+          else skipped.push({ cardId: card.id, reason: '生成中或该卡不存在，未改动' })
+        }
+        return { updated, skipped, workbench: workbenchSummary() }
+      }
       case 'video_workbench_set_board_summary': {
         const boardId = typeof params.boardId === 'string' ? params.boardId : ''
         if (!boardId) throw new Error('video_workbench_set_board_summary: boardId is required')
@@ -525,12 +563,33 @@ export class AgentToolExecutor {
       }
       case 'video_workbench_export': {
         const ir = store.exportIR()
+        /**
+         * skeleton:把每张卡剥成 `{id, rev}` 的占位条目。
+         *
+         * 补的是读侧的对称性 —— 写侧已经限了内容卡张数,读侧却还是整板全量:
+         * 17 张卡的完整提示词约两万字符,模型要读完、改完、再吐一遍。而「重排」和
+         * 「只改其中几张」这两类活**根本不需要看别人的提示词**,它们只需要 id 和顺序。
+         *
+         * 拿骨架 → 往要改的那几张里填内容 → 回写。顺序天然正确(每张卡都列了),
+         * 体积与提示词长度无关。只有真要**读**现有提示词时才该拉全量。
+         */
+        const skeleton = params.skeleton === true
+        const strip = (src: WorkbenchIR): WorkbenchIR => ({
+          ...src,
+          boards: src.boards.map((b) => ({
+            ...b,
+            cards: b.cards.map((c) => ({
+              id: c.id,
+              ...(typeof c.rev === 'number' ? { rev: c.rev } : {}),
+            })),
+          })),
+        })
         // 默认只导**当前页**。整份导出带着每张卡的完整提示词和每条素材的完整路径,
         // 一个中等规模的工作台就能超出客户端肯收的体积,而截断后的 IR 回写会把被截
         // 掉的字段清成默认值(apply 是声明式不是 patch)。收窄默认是安全的:merge
         // 模式保证没列出的页原样不动。要跨页改动才显式传 allBoards。
         const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
-        if (!explicitBoardId && params.allBoards === true) return ir
+        if (!explicitBoardId && params.allBoards === true) return skeleton ? strip(ir) : ir
         const boardId = explicitBoardId ?? ir.activeBoardId
         const board = boardId ? ir.boards.find((b) => b.id === boardId) : undefined
         if (!board) {
@@ -542,11 +601,12 @@ export class AgentToolExecutor {
               `video_workbench_export: board not found: ${explicitBoardId} (existing: ${ir.boards.map((b) => b.id).join(', ')})`,
             )
           }
-          return ir
+          return skeleton ? strip(ir) : ir
         }
         // 单页导出仍带全局 revision —— 令牌是整个工作台的,不是这一页的。
         // 配 merge 模式回写是安全的:没列出的页原样保留。
-        return { ...ir, boards: [board] }
+        const scoped = { ...ir, boards: [board] }
+        return skeleton ? strip(scoped) : scoped
       }
       case 'video_workbench_apply': {
         const raw = params.ir

@@ -105,6 +105,23 @@ export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
  */
 export const WORKBENCH_BOARD_SUMMARY_MAX = 60
 
+/**
+ * 一次 `video_workbench_apply` 里最多允许几张卡**携带内容**。
+ *
+ * 数的是内容卡，不是卡片总数 —— 只给 id 的「占位」条目不计入，所以重排一个
+ * 二十张卡的页照样一次做完。按总数拦会弄坏重排：IR 的数组顺序就是页内顺序，
+ * 合并模式下没列出的卡会被追加到列出的卡后面，少列几张就等于把它们全挤下去。
+ *
+ * 为什么要拦而不只是在描述里劝：描述是建议，模型可以不听，而这一趟的代价全落在
+ * 用户身上 —— 十七张卡的完整提示词要被模型读完、改完、再吐回来，实测卡到 JSON
+ * 解析失败重来，用户只能盯着 RUNNING 干等。5 与 `WORKBENCH_MAX_TASKS_PER_CALL`
+ * 对齐:同样是「一批能让人看到进展」的量。
+ *
+ * 超限**整份拒绝、零写入**，并告诉调用方该换哪个工具（规格扫全板 → set_spec，
+ * 逐卡改内容 → update_task）。截半份写进去比拒绝糟得多。
+ */
+export const WORKBENCH_APPLY_MAX_CONTENT_CARDS = 5
+
 /** 参考素材条目（展示名 + 可提交源）。 */
 export interface VideoWorkbenchMaterial {
   /** 展示名（文件名 / 素材名）。 */

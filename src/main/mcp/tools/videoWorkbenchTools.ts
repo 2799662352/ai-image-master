@@ -26,6 +26,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
   WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -476,6 +477,61 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_set_spec', {
+    description:
+      'Apply the SAME spec change to many cards at once — resolution, ratio, model, duration, audio, '
+      + 'webSearch, mode. This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5".\n'
+      + 'USE THIS INSTEAD OF export+apply for spec-only sweeps. apply is declarative over the WHOLE board: '
+      + 'omitted fields reset to defaults, so to change three fields you must round-trip every prompt and '
+      + 'every material array of every card through the model — on a 17-card board that is the slowest '
+      + 'thing in the session, and the user is just sitting there watching RUNNING. This tool carries only '
+      + 'the fields you name.\n'
+      + 'It CANNOT touch prompts or materials — that is the point, not a limitation. For those, use '
+      + 'video_workbench_update_task (one card) or video_workbench_apply (restructuring).\n'
+      + 'Omit cardIds to hit every card on the active board. Cards that are rendering are skipped and '
+      + 'reported, not errored — a sweep should not fail because one card happens to be busy.',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).optional().describe(
+        'Cards to change. Omit = every card on the ACTIVE board (the common case for a sweep). '
+        + 'Pass ids from `pageIndex` / status when you only want some of them.',
+      ),
+      boardId: z.string().optional().describe('Sweep this page instead of the active one. Ignored when cardIds is given.'),
+      model: cardInputSchema.shape.model,
+      resolution: cardInputSchema.shape.resolution,
+      ratio: cardInputSchema.shape.ratio,
+      duration: cardInputSchema.shape.duration,
+      generateAudio: cardInputSchema.shape.generateAudio,
+      webSearch: cardInputSchema.shape.webSearch,
+      mode: cardInputSchema.shape.mode,
+    }),
+    // 与 update_task 同档:换模型/模式时按新上限截断素材(2.5 → 2.0 会掉 21 张),
+    // 而这里是**批量**截断,一次能影响整板 —— 更该让客户端问一声。
+    annotations: { ...DESTRUCTIVE, idempotentHint: true },
+    outputSchema: z.looseObject({
+      updated: z.array(z.string()).describe('Card ids actually changed.'),
+      skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })).describe(
+        'Cards left untouched (rendering, or the patch was a no-op for them).',
+      ),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_spec',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { updated: string[]; skipped: Array<{ reason: string }> }
+      return okResult([
+        `✅ video_workbench_set_spec — ${result.updated.length} card(s) updated.`,
+        ...(result.skipped.length > 0
+          ? [`⚠️ ${result.skipped.length} skipped — read \`skipped\` and tell the user which ones and why.`]
+          : []),
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_spec', error)
+    }
+  })
+
   server.registerTool('video_workbench_update_task', {
     description:
       'Update ONE existing card on the 「生成视频」 workbench page: prompt, spec (model/resolution/ratio/' +
@@ -489,8 +545,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'by id, carries no board-wide version token, and cannot be invalidated by the user typing in ' +
       'another card. Do NOT export the whole board and re-apply it just to edit one card: that is far ' +
       'slower and any edit the user makes meanwhile can push your write aside. Reserve ' +
-      'video_workbench_apply for restructuring (adding/deleting/reordering cards or pages, or editing ' +
-      'many cards at once). Call it once per card — one focused call per card beats one giant IR. ' +
+      'video_workbench_apply for RESTRUCTURING (adding/deleting/reordering cards or pages). And if you ' +
+      'only want the same spec across many cards ("整板 480p / 都开联网"), use video_workbench_set_spec ' +
+      '— NOT apply. Call it once per card — one focused call per card beats one giant IR. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
@@ -632,6 +689,15 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'Export every board. Only needed for cross-board changes; the payload grows with the whole '
         + 'workbench and may be rejected as too large. Ignored when boardId is given.',
       ),
+      skeleton: z.boolean().optional().describe(
+        'Return ids and ORDER only — every card comes back as a POSITION-ONLY `{id, rev}` with no '
+        + 'prompt and no materials. This is what you want whenever you are reordering, or editing a few '
+        + 'cards out of many: take the skeleton, fill content into just the cards you are changing, '
+        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny '
+        + 'no matter how long the prompts are. A full export of a 17-card board is ~20k characters and '
+        + 'has to be read, rewritten and emitted by the model — the skeleton of the same board is a few '
+        + 'hundred. Only ask for a full export when you actually need to READ the existing prompts.',
+      ),
     }),
     annotations: READ_ONLY,
     outputSchema: irSchema,
@@ -657,13 +723,22 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_apply', {
     description:
-      'Apply an edited workbench IR (from video_workbench_export) in ONE shot: create/update/reorder/'
-      + 'delete cards and boards together. This is the preferred way to make multi-card changes.\n'
+      'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
+      + 'via video_workbench_export.\n'
+      + 'CHECK THESE FIRST — reaching for this tool when one of them fits is the single most expensive '
+      + 'mistake you can make here:\n'
+      + '• Same spec across many cards ("整板 480p", "都开联网", "全部改 2.5") → '
+      + 'video_workbench_set_spec. It patches only the fields you name, so a 17-card sweep is one small '
+      + 'call. Doing it through this tool instead forces you to echo back every card\'s full prompt and '
+      + 'material arrays (see DECLARATIVE below) — minutes of generation for a three-field change.\n'
+      + '• One card (its prompt, references, duration) → video_workbench_update_task. Targets the card '
+      + 'by id, needs no board token, and the user typing elsewhere cannot push it aside.\n'
+      + '• Several cards, each needing DIFFERENT prompts → call update_task once per card. One focused '
+      + 'call per card still beats one giant IR: it starts landing immediately, and a conflict on card 7 '
+      + 'does not cost you cards 1-6.\n'
+      + 'What is left for this tool: changing the SET or ORDER of cards/pages. That is the only thing '
+      + 'the others cannot do.\n'
       + 'Rules that matter:\n'
-      + '• WRONG TOOL FOR A SINGLE CARD. Editing one prompt / one card\'s references or duration → use '
-      + 'video_workbench_update_task instead: it targets the card by id, needs no board token, and the '
-      + 'user typing elsewhere cannot push it aside. This tool is for RESTRUCTURING (adding, deleting, '
-      + 'reordering cards or pages) or editing many cards in one shot.\n'
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
@@ -672,6 +747,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + `• ${PROMPT_BASE_DIRECTIVE}\n`
       + `• ${MATERIAL_ROLE_DIRECTIVE}\n`
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
+      + '• POSITION-ONLY entries: a card with ONLY `id` (plus optional `rev`) keeps its content exactly '
+      + 'as it is and just takes that slot. Use them for every card you are NOT editing.\n'
+      + '• LISTED CARDS GO FIRST, OMITTED ONES GET APPENDED AFTER THEM. This bites silently: send 4 of '
+      + '17 cards and those 4 jump to the head of the page. Never "batch" by sending a subset — send the '
+      + 'whole page every time, the ones you edit with content and the rest as position-only `{id}`. '
+      + 'Only content-bearing cards count against the per-call limit, so listing all 17 is free.\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '
       + 'rejected with `conflict`, NOTHING written; re-export, redo your edits, apply again. Stale card '
       + '`rev` (the user edited that one card) → only that card is skipped, everything else lands; read '
@@ -701,6 +782,43 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       // 的卡会被追加到列出的卡后面(workbenchIR 的 placeExisting),所以限制张数会让
       // 「重排一个二十张卡的页」变成不可能 —— 只列前五张就把它们顶到最前、其余全部
       // 挤下去。按体积卡不会误伤那种正当用法。
+      // 内容卡硬闸。数的是**携带内容的卡**,不是卡片总数 —— 只给 id 的占位条目
+      // 不计入,所以「重排二十张卡」照样一次做完(按总数拦会把没列出的卡挤下去,
+      // 见下面那段注释)。这里拦的是另一件事:一次回写十七段完整提示词。
+      const irCards = ((params as { ir?: { boards?: Array<{ cards?: unknown[] }> } }).ir?.boards ?? [])
+        .flatMap((b) => (Array.isArray(b?.cards) ? b.cards : []))
+      const contentCards = irCards.filter((c) => {
+        if (!c || typeof c !== 'object') return false
+        const keys = Object.keys(c as Record<string, unknown>)
+        // id / rev 是身份与令牌,不算内容。其余任何一个字段都算。
+        return keys.some((k) => k !== 'id' && k !== 'rev')
+      })
+      if (contentCards.length > WORKBENCH_APPLY_MAX_CONTENT_CARDS) {
+        return errorResult(
+          'video_workbench_apply',
+          new Error(
+            `this IR carries content for ${contentCards.length} cards, over the limit of `
+            + `${WORKBENCH_APPLY_MAX_CONTENT_CARDS}. Nothing was written. Rewriting many cards through `
+            + 'apply is the slowest path in the session: apply is declarative, so every card must carry '
+            + 'its full prompt and material arrays back through the model.\n'
+            + 'Pick the tool that matches what you are actually doing:\n'
+            + '• Same spec across many cards (480p / webSearch / model) → video_workbench_set_spec, one call.\n'
+            + '• Different prompts per card → video_workbench_update_task, once per card. Best default: '
+            + 'it never touches order, each call lands immediately, and a conflict on card 7 does not '
+            + 'cost you cards 1-6.\n'
+            + '• Pure reordering → keep using apply, but send POSITION-ONLY entries: a card object with '
+            + 'ONLY `id` (plus optional `rev`) keeps its content untouched and just takes that slot. '
+            + 'Those do not count against this limit, so a 20-card reorder is still one call.\n'
+            + 'IF YOU BATCH THROUGH apply, LIST THE WHOLE PAGE EVERY TIME. Cards you list are placed in '
+            + 'array order and cards you omit are appended AFTER them — so a batch of 4 silently jumps '
+            + 'those 4 to the front and scrambles the page. Send all N cards: the few you are editing '
+            + 'with content, every other one as a position-only `{id}`. Order stays correct, and only '
+            + 'the edited ones count against the limit. Omitting the rest and "fixing the order later" '
+            + 'costs you a second full-board write — the exact thing this limit exists to prevent.',
+          ),
+        )
+      }
+
       const irChars = JSON.stringify((params as { ir?: unknown }).ir)?.length ?? 0
       if (irChars > RESULT_CHAR_BUDGET) {
         return errorResult(
