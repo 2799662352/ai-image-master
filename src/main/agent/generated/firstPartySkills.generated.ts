@@ -54,10 +54,39 @@ image_gen skill: they render inside the chat AND persist results to local files
 默认进入**快速**模式;只有命中升级条件才升级。规格/方向确认过一次就不再重复问,
 自检做过就不再重复做。
 
-**提示词底座自动触发(例外):** 凡属图片相关任务——出图、改图、写/改/优化图片提示词
-——**自动加载 \`director-prompt-engineering\`**,不需用户点名。它给的是七字段顺序
-(主体动作 → 角色引用 → 场景 → 镜头相机 → 光照 → 构图 → 风格情绪);**丢字段就是
-出图不稳的直接来源**,凭记忆硬写 prompt 不算数。
+**提示词骨架(直接用下面这份,不必再去读别的 skill):** 每条图片提示词按七字段
+顺序拼装,英文、现在时、重要元素前置、≤120 词。**丢字段就是出图不稳的直接来源。**
+
+1. **主体 + 动作** —— \`[char1] reaches for a brass door handle\`(用角色标签,别内联外貌)
+2. **角色引用** —— \`[char1]\` \`[char2]\`,外貌在全局段定义一次,每格只引用标签
+3. **场景环境** —— 地点、天气、时间
+4. **镜头相机** —— \`medium shot, eye-level, 50mm\`
+5. **光照** —— 方向 + 质感 + 色温,如 \`warm tungsten side-light from left, soft, 3200K\`
+6. **构图** —— \`rule of thirds, subject at left intersection, shallow DoF on background\`
+7. **风格情绪** —— 画风、色板、情绪基调
+
+画质要求写成**正向**(\`sharp focus, correct anatomy, five clear fingers\`),而不是堆
+「不要…」清单;只有目标模型有独立负向字段且确需时才补负向。空洞形容词
+(beautiful / amazing)单独出现不算数,必须配具体描述。
+
+**第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆写。** 每条提示词落笔前至少查
+三次 \`search_cinematography_kb\`,三次各查一个面,不要用同义词把同一个问题问三遍:
+
+1. **术语** —— 你打算用的那个机位/运动本身(\`dolly in\`、\`arc\`、\`low-angle
+   pedestal\`、\`rack focus\`…),拿库里的权威写法,而不是「镜头慢慢靠近」。
+2. **描述规范** —— 这个镜头在结构化描述里该怎么落字(机位高度 / 角度 / 景别 /
+   焦点 / 景深 / 主体位置 / 空间层次)。
+3. **范例或修正对** —— 找一条同类专业 caption,或一条 critique/fix 对照着改措辞。
+   修正对尤其值钱,它直接告诉你这类描述通常错在哪。
+
+做动画风格时再加一次 \`query_sakuga_dataset\`,拿真实技法标签(smears、
+impact_frames、background_animation…)与作画/studio 归属。**同一条镜头运动在同一个
+任务里查过一次就复用结论,不必逐张重查;换了运动才重查。** 工具不可用时退回联网
+检索,并在交付里说明这条未经库校准。
+
+> 需要展开讲字段边界、负向清单、完整范例或常见错误对照时,再读
+> \`director-prompt-engineering\`。**上面这份骨架够用的任务不要去读它** —— 多一次
+> 文件读取就是多一个来回,而它给的就是这七行加上面这条查库纪律。
 
 **画面里有人,再自动加载角色链(第二个例外):** 要出的图里有人物/角色/IP,**且它需要
 复用**(组图、系列、同一个人跨会话再出、或用户给了人物参考图)——自动加载:
@@ -90,10 +119,10 @@ image_gen skill: they render inside the chat AND persist results to local files
 | **专业** | 复杂构图与光影、系列一致性、参考复刻、角色锚点 | **3–4 个对症技法**,另必载 \`director-orchestrator\` | 13 维按需展开 |
 | **制片** | 电影/分镜项目的角色卡、场景卡、逐镜出图 | 按 \`film-studio\` 阶段加载 | 过资产门,锚点逐字下传 |
 
-> **底座不占技法名额。** \`director-prompt-engineering\`(有图片任务就载)、
-> \`catimation-portrait-library\`(角色会复用就载)与角色链
+> **底座不占技法名额。** \`catimation-portrait-library\`(角色会复用就载)与角色链
 > (画面里有需要复用的人就载)是自动触发的底座,不是「对症技法」;上表限的是自选
 > 技法数量。一张带人物的标准图同时载入底座 + 角色链 + 2 个技法是正常的,不算超预算。
+> 七字段骨架已内联在上面,快速模式一个文件都不用额外读。
 
 **升级条件:** ① 明确的风格复刻/真实作品·品牌·时代参考;② 系列/组图/角色一致性;
 ③ 复杂镜头设计(构图·打光·调色多维协同);④ 制片流程内的出图任务。超预算加载
@@ -115,8 +144,8 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 
 ## Steps
 
-1. Turn the request into one clear, descriptive prompt. **按 \`director-prompt-engineering\`
-   的七字段顺序拼装**(主体动作 → 角色引用 → 场景 → 镜头相机 → 光照 → 构图 →
+1. Turn the request into one clear, descriptive prompt. **按 STEP 0 内联的七字段骨架
+   拼装**(主体动作 → 角色引用 → 场景 → 镜头相机 → 光照 → 构图 →
    风格情绪),不要凭记忆随手写。画面里有需要复用的人物时,角色引用那一段用角色链
    提出来的 Face / Build / Outfit / Markers 锚点原文,**组图的每一张都要带全**。
    标准及以上模式再按 STEP 0 把对症技法折进 prompt(物理/可复现参数优先于情绪
@@ -282,12 +311,18 @@ Rules:
 
 ## Multiple images at once — use generate_images (important)
 
-When the user asks for more than one image (e.g. "生成 3 张…", "make 4 variations",
-a set/series, or several distinct subjects), **call \`generate_images\` exactly
-once**. Do not try to manually emit several \`generate_image\` calls; models often
-serialize those calls even when asked to be parallel. \`generate_images\` is the
-parallel-safe batch wrapper and fans out the renderer calls concurrently inside
-CATIMATION.
+凡是**这一轮要出不止一张图**——用户说「生成 3 张」「做 4 个变体」、一组系列图、
+几个不同主体,**或者一个剧本/分镜里的多个镜头**——都是 \`generate_images\` 一次调用,
+不是循环调 \`generate_image\`。
+
+**带参考图时这条是硬性的,不是偏好。** \`generate_images\` 把共享的
+\`referenceImages\` **只解析上传一次**,然后所有 prompt 复用同一批地址;循环调单张
+则是同一组人物参考图**被重新读盘、重新上传 N 遍**。十个镜头共用三张角色锚图,
+一次批量是 3 次上传,循环调是 30 次——参考图越大差距越明显,而画面结果完全一样。
+
+批量还顺带解决另外两件事:内部有 3 路并发(模型自己发多个 \`generate_image\` 往往会
+被串行化),以及各分支共用同一个渠道解析结果,参考图按那个渠道真正要的形式只编码
+一次。
 
 - If the user asks for N images (2–20), pass exactly N prompts to
   \`generate_images.prompts\`.

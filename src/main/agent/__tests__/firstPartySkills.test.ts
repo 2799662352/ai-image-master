@@ -455,3 +455,148 @@ describe('installFirstPartySkills', () => {
     })
   })
 })
+
+/**
+ * Bundled resources (`references/…`) let a fat SKILL.md become a lean router:
+ * Codex loads the body on every trigger but reads references only on demand.
+ * The installer therefore has to ship them, refresh them, retire the ones we
+ * stop shipping, and never clobber a file the user rewrote.
+ */
+describe('installFirstPartySkills — bundled resources', () => {
+  const withRefs = (body: string, refs: Record<string, string>): FirstPartySkill => ({
+    name: 'demo-skill',
+    content: `---\nname: demo-skill\ndescription: ${body} description.\n---\n\n${body}\n`,
+    files: refs,
+  })
+
+  const refPath = (root: string, rel: string) => path.join(root, 'demo-skill', ...rel.split('/'))
+  const marker = (root: string) => readFile(path.join(root, 'demo-skill', '.catimation-managed'), 'utf8')
+
+  it('writes bundled files next to SKILL.md on a fresh install', async () => {
+    const officialRoot = await makeTempRoot()
+    const skill = withRefs('v1', { 'references/models.md': '# models\n' })
+
+    const report = await installFirstPartySkills({ officialRoot, skills: [skill] })
+
+    expect(report.installed).toEqual(['demo-skill'])
+    expect(await readFile(refPath(officialRoot, 'references/models.md'), 'utf8')).toBe('# models\n')
+  })
+
+  it('stays idempotent once the bundled files are on disk', async () => {
+    const officialRoot = await makeTempRoot()
+    const skill = withRefs('v1', { 'references/models.md': '# models\n' })
+    await installFirstPartySkills({ officialRoot, skills: [skill] })
+
+    const report = await installFirstPartySkills({ officialRoot, skills: [skill] })
+    expect(report).toEqual({ installed: [], updated: [], removed: [], preserved: [] })
+  })
+
+  it('refreshes a bundled file whose shipped content changed, even when SKILL.md did not', async () => {
+    const officialRoot = await makeTempRoot()
+    await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v1', { 'references/models.md': '# old\n' })],
+    })
+
+    const report = await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v1', { 'references/models.md': '# new\n' })],
+    })
+
+    expect(report.updated).toEqual(['demo-skill'])
+    expect(await readFile(refPath(officialRoot, 'references/models.md'), 'utf8')).toBe('# new\n')
+  })
+
+  it('deletes a bundled file we no longer ship, so no pointer dangles', async () => {
+    const officialRoot = await makeTempRoot()
+    await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v1', { 'references/gone.md': '# gone\n', 'references/kept.md': '# kept\n' })],
+    })
+
+    await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v2', { 'references/kept.md': '# kept\n' })],
+    })
+
+    await expect(readFile(refPath(officialRoot, 'references/gone.md'), 'utf8')).rejects.toThrow()
+    expect(await readFile(refPath(officialRoot, 'references/kept.md'), 'utf8')).toBe('# kept\n')
+  })
+
+  it('never clobbers a bundled file the user rewrote, but still updates SKILL.md', async () => {
+    const officialRoot = await makeTempRoot()
+    await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v1', { 'references/models.md': '# shipped\n' })],
+    })
+    await writeFile(refPath(officialRoot, 'references/models.md'), '# mine\n', 'utf8')
+
+    await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v2', { 'references/models.md': '# shipped v2\n' })],
+    })
+
+    expect(await readFile(refPath(officialRoot, 'references/models.md'), 'utf8')).toBe('# mine\n')
+    expect(await readFile(path.join(officialRoot, 'demo-skill', 'SKILL.md'), 'utf8')).toContain('v2')
+  })
+
+  it('leaves a user-owned file alone when a later version happens to ship that same path', async () => {
+    const officialRoot = await makeTempRoot()
+    await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+    await mkdir(path.join(officialRoot, 'demo-skill', 'references'), { recursive: true })
+    await writeFile(refPath(officialRoot, 'references/notes.md'), '# user notes\n', 'utf8')
+
+    await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v2', { 'references/notes.md': '# shipped notes\n' })],
+    })
+
+    expect(await readFile(refPath(officialRoot, 'references/notes.md'), 'utf8')).toBe('# user notes\n')
+  })
+
+  it('keeps the marker single-line for skills that ship no bundled files', async () => {
+    const officialRoot = await makeTempRoot()
+    await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+    expect(await marker(officialRoot)).toMatch(/^[a-f0-9]{64}\n$/)
+  })
+
+  it('still recognizes a legacy single-line marker as app-managed when adding bundled files', async () => {
+    const officialRoot = await makeTempRoot()
+    // Installed by an older build: marker holds only the SKILL.md hash.
+    await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+    expect(await marker(officialRoot)).toMatch(/^[a-f0-9]{64}\n$/)
+
+    const report = await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v2', { 'references/models.md': '# models\n' })],
+    })
+
+    expect(report.updated).toEqual(['demo-skill'])
+    expect(report.preserved).toEqual([])
+    expect(await readFile(refPath(officialRoot, 'references/models.md'), 'utf8')).toBe('# models\n')
+  })
+
+  it('writes nothing when the user edited SKILL.md — bundled files included', async () => {
+    const officialRoot = await makeTempRoot()
+    await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+    await writeFile(path.join(officialRoot, 'demo-skill', 'SKILL.md'), 'hand written\n', 'utf8')
+
+    const report = await installFirstPartySkills({
+      officialRoot,
+      skills: [withRefs('v2', { 'references/models.md': '# models\n' })],
+    })
+
+    expect(report.preserved).toEqual(['demo-skill'])
+    await expect(readFile(refPath(officialRoot, 'references/models.md'), 'utf8')).rejects.toThrow()
+  })
+
+  it('rejects bundled paths that escape the skill directory', async () => {
+    const officialRoot = await makeTempRoot()
+    await expect(
+      installFirstPartySkills({
+        officialRoot,
+        skills: [withRefs('v1', { '../escaped.md': 'nope\n' })],
+      }),
+    ).rejects.toThrow(/escape/i)
+  })
+})

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-04T10:53:41.330Z",
+  "generatedAt": "2026-08-06T15:44:50.561Z",
   "plugins": {
     "catimation-director": {
       "sig": "c18b2641b125d82c3fefa437ca0fb40b33a833ca1ecf629585f1b49f27cd531c",
@@ -10,20 +10,20 @@
       "version": "1.0.11"
     },
     "catimation-storyboard-pro": {
-      "sig": "fe38a89ccf3f3fe81a2f176044bb520465ca57f954e474e1005828d4ddcdb950",
-      "version": "1.0.14"
+      "sig": "5c62a0f49b0c6d2d2f4c9beaa899865ddb162027b386f61b45c613ee088a83f3",
+      "version": "1.0.15"
     },
     "catimation-film": {
       "sig": "7e3ea30bc3ab6d0adad590bfc8bee3e470d5701c5322abd5130e77207c5362a5",
       "version": "1.0.13"
     },
     "catimation-video": {
-      "sig": "b4504883067c1d4798026615bfeb578184ef6e35d125fb9539f792ac4c2d398f",
-      "version": "1.0.29"
+      "sig": "ac76ee8210c6e91ff1fd3d02f6d0e54b013e955c243445ce853c6f775fc02ed5",
+      "version": "1.0.30"
     },
     "catimation-core": {
-      "sig": "92bb1e8debf95b8b1d6fb0cddf0408b9233d08d816a4c8044e5386d8c7e6bae6",
-      "version": "1.0.22"
+      "sig": "66bbb425d821c3d62a4ada1800f544625dd6c6a4c1cef9d851092b1602019b95",
+      "version": "1.0.23"
     }
   }
 }

@@ -1,13 +1,13 @@
 ---
 name: shotlist-builder
 description: >-
-  Use when a script, treatment, scene list or multi-shot brief has to be broken
-  down shot by shot — 剧本拆镜、分场拆镜头、多镜规划、镜头清单、拍摄计划、
-  逐镜提示词总表、分镜表、shotlist、shot breakdown — landing as one searchable
-  HTML table. Also fires the moment reference material is dropped in — a script
-  plus a batch of images, an image folder path, a storyboard — and those images
-  must be reconciled against the script: 哪张图对应哪个角色/道具/地点、缺了什么、
-  多了什么、对不上的要问。只做规划与交付物,不定级、不路由、不调生成工具。
+  Use when a script, treatment, scene list or multi-shot brief has to be planned
+  as a multi-shot VIDEO piece — 剧本拆镜、分场拆镜头、多镜规划、镜头清单、拍摄计划、
+  逐镜视频提示词总表、分镜表、shotlist、shot breakdown — landing as one searchable
+  HTML table with per-shot durations and 4–15s Seedance groupings. 素材要和剧本
+  对上号时(剧本 + 一批图 / 图片文件夹 / 分镜稿)在这条视频路径内一并对表。
+  只做规划与交付物,不定级、不路由、不调生成工具。**纯出图任务不走本 skill**:
+  只要关键帧/一组角色图而不做成片时,由图片入口直接出,一致性交给角色链与人像库。
 ---
 
 # Shotlist Builder / 剧本 → 逐镜分镜表
@@ -26,23 +26,35 @@ Copy 按钮的单文件 HTML。
 
 命中任一相关任务就加载本 skill,**不需要用户点名「分镜表」或「用 shotlist-builder」**
 ——和 `sd2-pe` 同一种加载姿态:sd2-pe 是「有视频提示词就载」,本 skill 是
-「**有连续性就载**」。
+「**要做成多镜片子就载**」。
 
-- **产出会跨镜/跨图连续**:不止一个镜头、一板卡片、一个系列、同一角色跨多张图
+- **产出是多镜视频**:不止一个镜头、一板卡片、一条片子、一个预告
 - 给了剧本、treatment、分场大纲、场景清单、shot list,要变成镜头
-- **拖进来一批素材**:剧本 + 一堆图、一个图片文件夹路径、一份分镜稿——
-  只要素材要和剧本对上号,就是本 skill 的活(见下面「素材和剧本一起到」)
+- **拖进来一批素材、而且是要做成片**:剧本 + 一堆图、一个图片文件夹路径、
+  一份分镜稿——素材要和剧本对上号(见下面「素材和剧本一起到」)
 - 说「拆一下」「拆成镜头」「分个镜」「排一下镜头」「列个拍摄计划」「铺满工作台」
 - 需要决定每镜多长、哪几拍合成一次 4–15s 生成
 - 已经有一堆逐镜提示词散在聊天里,要归拢成一份能过目的东西
 - 制片包出完了,需要一份人能直接读的总表(而不是十几个 .md)
 
-不加载:单镜「让这张图动起来」、单条提示词打磨、纯画面工艺问题、纯编码任务。
+**不加载 —— 纯出图任务(重要):** 用户要的只是图,不做成片时**不要拉本 skill**,
+交给图片入口直接出。包括:「按这个剧本出几张关键帧」「给这个角色出一组图」
+「这批图 + 剧本,帮我出场景图」。
+
+判据是**要不要动起来**,不是有没有剧本、有没有多张图。图的跨张一致性由
+`director-character-consistency` 和 `catimation-portrait-library` 负责,不需要
+本 skill 的镜头时长、4–15s 分组和 HTML 总表——那三样只有做成片才用得上。
+素材对不上号时由图片入口就地问一句,**不走本 skill 的四阶段闸门**:那个闸门要求
+出图前先交对照表、等用户确认、必要时再画俯视图,对「只要几张图」是纯粹的等待。
+
+其它不加载:单镜「让这张图动起来」、单条提示词打磨、纯画面工艺问题、纯编码任务。
 
 ## 没有剧本也要主动问(不要等用户递本子)
 
-**连续性任务不必先有剧本。** 用户在工作台上说「我想做个赛博朋克短片」「给这个角色出
-一组图」时,本 skill 已经该在场了——此时的工作不是拆本子,是**问出一张镜头表**。
+**多镜片子不必先有剧本。** 用户在工作台上说「我想做个赛博朋克短片」「给这个角色做
+一条片子」时,本 skill 已经该在场了——此时的工作不是拆本子,是**问出一张镜头表**。
+
+(注意区别:「给这个角色出一组图」不在此列——那是纯出图,归图片入口,见上一节。)
 
 带着答案去问,一次一张 `ask_user` 卡,3–6 个具体选项并标推荐项:
 
