@@ -11,7 +11,7 @@
     "director-orchestrator": "1.0.13",
     "director-lighting-continuity": "1.0.4",
     "director-narrative-flow": "1.0.4",
-    "director-prompt-engineering": "1.0.5",
+    "director-prompt-engineering": "1.0.6",
     "director-scene-analysis-depth": "1.0.4",
     "director-shot-sequence-patterns": "1.0.6",
     "director-structured-captioning": "1.0.4",
