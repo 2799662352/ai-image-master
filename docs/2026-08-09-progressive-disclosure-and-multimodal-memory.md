@@ -92,7 +92,7 @@
 
 目标不是「换个地方存数据」，而是让 agent **按需检索而不是全量读取**，并且**跨会话记得住关系**。
 
-### 深挖后的结论:主体数据别上云,只把 embedding 上云
+### 深挖后的结论:本地优先 + 云端同步，两层都要
 
 深挖之后，**我推翻了自己第一版的建议**。原本打算主体数据上 Lindorm，查了连接方式和计费之后发现这条路对**桌面应用**根本走不通。
 
@@ -146,7 +146,7 @@ Lindorm 向量引擎兼容 Elasticsearch 协议(端口 30070，Node 端可以直
 
 查了阿里云开发者社区和 GitHub，三条路各有归属:
 
-有，但**不是现在，也不是这个位置**。
+有 —— 商业级产品**两层都要**,但顺序不能反:**本地是权威工作副本,云端是同步与共享层**。下面先看各家在云侧那一层的定位(详细架构见「阶段 3」)。
 
 **Lindorm(多模一体)** — 一套系统内宽表 / 向量 / 时序 / 全文 / 文件五种模型，向量与全文索引共享底层存储、不用双写;官方数字是单 Key 读写 P99 < 1ms、向量检索 P99 < 10ms。技术上确实是同类里最省心的。
 → **但它的形态是给服务端应用用的。** 只有当我们真的有了自己的后端(比如做云端协作、多设备同步、团队共享素材库)，它才成立。那时候它替代的是 Milvus + ES + Redis 三套拼接，价值很大。**现在没有那个前提。**
@@ -198,13 +198,51 @@ PGlite 已经在包里了，这一步的增量只有 schema 和一层查询封�
 - `shot_state` 类在**读路径**上按时间过滤(第 2 条)，避免陈旧的「进行中」被当成现状读回。
 - **验收标准要能证伪**:挑一个两周前的项目，问 agent「第 6 镜为什么是现在这样」，看它能否答出因果链，而不是复述当前状态。答不出就是分型或触发时机不对，继续在本地改——这个循环在本地是分钟级的，上了云就是小时级。
 
-**阶段 3(有前提才做):云端**
+**阶段 3:云端那一半(商业级必须有)**
 
-触发条件明确写死，不满足就不启动:
+本地库解决「单机好用」，但商业产品还欠三件事:**换台电脑数据还在**、**团队能共享素材与角色库**、**电脑坏了不丢工程**。这三件只能靠云。所以本地和云是**两层，不是二选一**。
 
-- **多设备 / 团队协作**成为真实需求 → 这时才需要服务端，Lindorm 的多模一体价值才兑现。
-- **本地库规模扛不住**(比如向量超过百万级) → 迁 ADB-PG，因为 PGlite 就是 Postgres，schema 和 SQL 基本可以直接搬。
-- 在此之前，云侧只用**无状态的 embedding API**，不碰数据库。
+架构定型为「**本地优先 + 云端同步**」——和 Linear / Obsidian Sync 同一个路子:
+
+```
+Electron 客户端
+  └── PGlite (本地，权威工作副本，离线可用)
+        ↕ 同步
+  函数计算 FC (Serverless 后端，持凭据 / 鉴权 / 多租户)
+        ↕
+  RDS PostgreSQL Serverless + pgvector (云端主库)
+        + OSS (素材二进制)
+```
+
+**为什么必须有后端:** 桌面端直连数据库这条路已经被否了(白名单 + 凭据外泄)。后端不是可选项，是上云的入场券。但它可以是 **Serverless 的**——用函数计算 FC，按调用计费，没人用就不花钱，与桌面应用突发分散的负载天然匹配。
+
+**云库为什么选 RDS PostgreSQL Serverless 而不是 Lindorm:**
+
+| | RDS PG Serverless | Lindorm | ADB-PG Serverless Pro |
+|---|---|---|---|
+| 空闲成本 | **10 分钟无连接自动暂停，RCU=0 不计费** | 按节点常驻，一直计费 | 最低 16 ACU × ¥0.35/h ≈ ¥5.6/h |
+| 与本地库同构 | **完全同构**(都是 Postgres + pgvector) | 否(ES 协议 + 宽表) | 同构 |
+| 弹性单位 | RCU，可设上下限自动伸缩 | 节点数，手动 | ACU，秒级 |
+| 适配阶段 | **从 0 用户到几千用户** | 有稳定高并发后 | 海量分析 |
+
+**自动暂停这一条是决定性的。** 商业化早期用户量不确定，一个常驻集群意味着无论有没有人用都在扣钱;RCU 归零则让成本随真实使用走。而**与本地库同构**意味着 schema、SQL、pgvector 用法在两层之间**一份代码两处跑**——这是选 PGlite 的复利在这里兑现。
+
+ADB-PG Serverless Pro 最低 16 ACU 起、约 ¥4000/月保底，是**规模起来之后**的选项:它的存算分离 + 多 VW 共享存储(读扩展从天级降到分钟级)在有大量并发只读分析时才值这个价。Lindorm 同理——它替代 Milvus+ES+Redis 三套拼接的价值，要在我们真有那三套的时候才成立。
+
+**素材二进制放 OSS，不进数据库。** 库里只存路径 + 向量 + 元数据。这条今天在本地就要立好规矩，否则将来迁云时要重做。
+
+**Tablestore 作为备选留一手:** 它也是 Serverless 免运维、支持标量+向量混合检索，而且官方有 **Tablestore MCP 服务**(文档存储 + 混合检索两类工具)。如果将来"素材元数据"这一块量级远超关系数据，可以把它单拆到 Tablestore，成本更低。但不作为第一选择——多一套库就多一套运维和一致性问题，与今天「收敛」的方向相反。
+
+**同步策略(这块最容易做错):**
+
+- 本地是**权威工作副本**，云端是同步目标，不是反过来。理由:离线必须能开工，而"以云为准"会让断网时寸步难行。
+- 冲突解决沿用今天工作台那套思路:**回带现场 + 指明哪几个字段对不上**，让用户/agent 决定，不做静默合并。今天在 `apply` 上验证过的东西，正好在这里复用。
+- 同步粒度按**项目**，不按行。用户的心智是"这个片子"，不是"这张卡"。
+
+### 触发条件(不满足就不启动阶段 3)
+
+- 有**第二台设备**或**第二个人**的真实需求 —— 单人单机时云端是纯成本。
+- 阶段 1、2 在本地跑通并且 agent 确实在用索引 —— 否则搬上云只是把不被使用的数据换个地方放。
 
 ### 要先想清楚的三件事
 
@@ -234,6 +272,9 @@ PGlite 已经在包里了，这一步的增量只有 schema 和一层查询封�
 - [Lindorm 新版计费构成(按节点 CPU/内存/存储，无 Serverless)](https://help.aliyun.com/zh/lindorm/product-overview/billing-item-of-lindormv2-0)
 - [百炼向量化模型总览(多模态 / 文本 embedding 规格与价格)](https://help.aliyun.com/zh/model-studio/embedding)
 - [Multimodal-Embedding API 详情](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)
+- [RDS PostgreSQL Serverless(RCU 弹性 / 空闲 10 分钟自动暂停)](https://www.alibabacloud.com/help/zh/rds/apsaradb-rds-for-postgresql/serverless-apsaradb-rds-for-postgresql-instances/)
+- [ADB-PG Serverless Pro(存算分离 / ACU 计费)](https://help.aliyun.com/zh/analyticdb/analyticdb-for-postgresql/product-overview/serverless-pro-mode)
+- [ADB-PG 定价详情](https://help.aliyun.com/zh/analyticdb/analyticdb-for-postgresql/product-overview/pricing-1)
 - [mem0ai/mem0 — 架构与最佳实践](https://github.com/mem0ai/mem0)
 - [letta-ai/letta — 有状态 agent 平台](https://github.com/letta-ai/letta)
 - [openai/codex#34956 — 只暴露一个规范化能力，别让模型面对互相竞争的工具](https://github.com/openai/codex/issues/34956)
