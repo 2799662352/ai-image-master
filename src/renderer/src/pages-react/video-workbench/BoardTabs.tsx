@@ -21,6 +21,16 @@ export function BoardTabs() {
    */
   const [editing, setEditing] = useState<{ id: string; field: 'name' | 'summary' } | null>(null)
   const [draft, setDraft] = useState('')
+  /**
+   * 右侧「全文位」是否展开。**不按页 id 记** —— 切页时收回默认单行:
+   * 展开是「我现在想细看这一句」的临时意图,不是页的属性,让它跨页粘住会导致
+   * 切到一个长摘要的页时栏高突然跳变。
+   */
+  const [summaryExpanded, setSummaryExpanded] = useState(false)
+  useEffect(() => {
+    setSummaryExpanded(false)
+  }, [activeBoardId])
+
   /** 两步删除确认中的页 id;3.5s 无操作自动复位。 */
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -51,7 +61,12 @@ export function BoardTabs() {
     setEditing(null)
   }
 
+  const activeBoard = boards.find((b) => b.id === activeBoardId)
+  const activeSummary = activeBoard?.summary?.trim() ?? ''
+  const editingActiveSummary = editing?.id === activeBoardId && editing.field === 'summary'
+
   return (
+    <div className="flex items-start gap-3 flex-wrap">
     <div role="tablist" aria-label="工作台页" className="flex items-center gap-1 flex-wrap">
       {boards.map((board) => {
         const active = board.id === activeBoardId
@@ -104,7 +119,12 @@ export function BoardTabs() {
               它是扫读用的提示,不是拿来读全文的,全文在 title 里。
               没写摘要的页不占任何位置,不留空占位符。
             */}
-            {editingSummary ? (
+            {/*
+              当前页的摘要(看/展开/编辑/新建)整块由右侧全文位负责,页签里不再重复 ——
+              同一句话印两遍是噪音;编辑时更会出现两个 autoFocus 输入框互抢焦点。
+              页签这边只承担「别页写了什么」的扫读。
+            */}
+            {active ? null : editingSummary ? (
               <input
                 autoFocus
                 value={draft}
@@ -123,7 +143,14 @@ export function BoardTabs() {
               <span
                 // 不是 button:点它要走的是「切到这一页」,和点页名一样,不该是第二个
                 // tab stop。双击才是它自己的动作。
-                className="text-[11px] max-w-[7rem] truncate text-white/40 cursor-text"
+                className={[
+                  'text-[11px] truncate cursor-text',
+                  // 当前页放宽到 18rem,其余保持 7rem。放宽的代价是页签变宽、栏可能
+                  // 换行,但**当前页只有一个**,代价封顶在一个页签上;若每个页签都放宽,
+                  // 几页下来整条栏能占三四行,把卡片区往下挤。
+                  // 两边都保留 truncate:摘要上限 200 字,不截断的话一条就能撑满一行。
+                  active ? 'max-w-[18rem] text-white/55' : 'max-w-[7rem] text-white/40',
+                ].join(' ')}
                 title={`${summary}\n\n双击编辑摘要（清空即删除）`}
                 onClick={() => switchBoard(board.id)}
                 onDoubleClick={() => beginEdit(board.id, 'summary', summary)}
@@ -131,16 +158,13 @@ export function BoardTabs() {
                 {summary}
               </span>
             ) : (
-              // 没摘要时只在悬停/激活时露出一个极淡的入口 —— 否则用户永远发现不了
-              // 这里可以写东西(agent 写的摘要他也就无从修改)。
+              // 没摘要的页只在悬停时露出一个极淡的入口 —— 否则用户永远发现不了
+              // 这里能写东西(agent 写的摘要他也就无从修改)。
               <button
                 type="button"
                 aria-label={`给「${board.name}」写摘要`}
                 title="写一句话说明这页装的是什么"
-                className={[
-                  'text-[11px] px-0.5 text-white/25 hover:text-[#FCE300] transition-opacity',
-                  active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-                ].join(' ')}
+                className="text-[11px] px-0.5 text-white/25 hover:text-[#FCE300] opacity-0 group-hover:opacity-100 transition-opacity"
                 onClick={() => beginEdit(board.id, 'summary', '')}
               >
                 ＋摘要
@@ -185,6 +209,62 @@ export function BoardTabs() {
       >
         ＋
       </button>
+    </div>
+
+      {/*
+        当前页摘要的「全文位」。放右侧空域而不是把当前页签本身撑宽:页签一撑宽,
+        切页时所有页签会左右跳一下 —— 而这里的宽度变化落在栏尾的空白上,页签原地不动。
+        flex-1 + min-w-0 让它只吃剩余宽度、必要时缩到零,不会自己顶出新的一行把卡片区往下挤。
+        默认单行截断,点一下展开成整段(摘要上限 200 字,展开最多两三行)。
+      */}
+      {activeSummary && !editingActiveSummary && (
+        <button
+          type="button"
+          aria-expanded={summaryExpanded}
+          aria-label={`当前页摘要：${activeSummary}`}
+          // 当前页的摘要不在页签里了,编辑入口也跟着搬到这儿 —— 手势与页签一致:
+          // 单击是「看」(展开/收起),双击是「改」。
+          title={`${summaryExpanded ? '点击收起' : '点击展开全文'}，双击编辑`}
+          className={[
+            'flex-1 min-w-0 basis-40 text-left text-[11px] leading-relaxed text-white/45',
+            'hover:text-white/70 transition-colors py-1.5',
+            summaryExpanded ? 'whitespace-normal' : 'truncate',
+          ].join(' ')}
+          onClick={() => setSummaryExpanded((v) => !v)}
+          onDoubleClick={() => beginEdit(activeBoardId, 'summary', activeSummary)}
+        >
+          {activeSummary}
+        </button>
+      )}
+      {/* 当前页还没写摘要:入口也得在这一区,不然它在页签里被摘掉后就彻底没入口了。 */}
+      {!activeSummary && !editingActiveSummary && (
+        <button
+          type="button"
+          aria-label="给当前页写摘要"
+          title="写一句话说明这页装的是什么"
+          className="text-[11px] py-1.5 text-white/25 hover:text-[#FCE300] transition-colors"
+          onClick={() => beginEdit(activeBoardId, 'summary', '')}
+        >
+          ＋摘要
+        </button>
+      )}
+      {/* 编辑当前页摘要时输入框也留在原位,避免焦点从右侧跳回页签里。 */}
+      {editingActiveSummary && (
+        <input
+          autoFocus
+          value={draft}
+          placeholder="这一页装的是什么"
+          aria-label="当前页摘要"
+          maxLength={200}
+          className="flex-1 min-w-0 basis-40 bg-transparent text-[11px] py-1.5 outline-none border-b border-[#FCE300]/60 text-white/80 placeholder:text-white/25"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitEdit()
+            if (e.key === 'Escape') setEditing(null)
+          }}
+          onBlur={commitEdit}
+        />
+      )}
     </div>
   )
 }
