@@ -680,7 +680,16 @@ export class AgentToolExecutor {
       const fps = typeof params.fps === 'number' ? params.fps : undefined
       return api.understand({ kind: 'video', mediaUrl: media.url, question, fps }, { model })
     }
-    return api.understand({ kind: 'document', mediaUrl: media.url, question }, { model })
+    // 追加图由主进程先逐张中转成公网 URL 再放进 file_urls,这里只透传 —— 顺序
+    // 已在那一侧按输入序固定好,不要在这里重排或去重(去重在 understand() 里做,
+    // 它同时要处理 mediaUrl 与追加图重复的情况)。
+    const extraUrls = Array.isArray(params.file_urls)
+      ? params.file_urls.filter((u): u is string => typeof u === 'string')
+      : undefined
+    return api.understand(
+      { kind: 'document', mediaUrl: media.url, question, mediaUrls: extraUrls },
+      { model },
+    )
   }
 
   /**

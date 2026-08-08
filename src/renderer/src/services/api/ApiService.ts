@@ -41,8 +41,45 @@ export interface ResolutionOption {
  */
 export type UnderstandInput =
   | { kind: 'video'; mediaUrl: string; question: string; fps?: number }
-  | { kind: 'document'; mediaUrl: string; question: string }
+  /**
+   * 图片 / 文档。`mediaUrl` 是单张;要一次看多张(商品对比、多页文档、
+   * 分镜连续性)就再给 `mediaUrls` —— 上游把同一条 user message 里并列的多个
+   * `image_url` 当成一组来看,这正是「跨图比较」能成立的原因;拆成多次调用
+   * 模型就看不到彼此了。
+   *
+   * 两者可同时给,`mediaUrl` 排在最前(它常是「主图」),之后按 `mediaUrls` 顺序,
+   * 去重但**不重排** —— 顺序即身份,提示词里说「第二张」就得是第二张。
+   */
+  | { kind: 'document'; mediaUrl: string; question: string; mediaUrls?: string[] }
   | { kind: 'web'; query: string }
+
+/**
+ * 单次请求的图片张数上限(公网 URL 形态)。来自千问「视觉理解模型」文档:
+ * qwen3.8-max / 3.7-plus 均为 URL 2048 张、base64 250 张。我们这条链只传 URL
+ * (上游不收本机路径,调用方已先中转成公网 URL),故按 2048 记。
+ *
+ * 这里只做**兜底截断**而不是报错:上游超限会整条请求失败,而看图是「多看几张少看
+ * 几张」的事,砍掉尾部远好过一张都看不成。真到 2048 张的场景本身就该先聚合。
+ */
+export const QWEN_UNDERSTAND_MAX_IMAGES = 2048
+
+/**
+ * 去重但**保序**。顺序即身份 —— 提问里说「第二张」,就必须是数组里的第二张;
+ * 用 Set 一转再展开虽然也保序,但这里显式写出来是为了钉住「不许排序」这条约束。
+ * 空串/非字符串一并滤掉,免得组出 `image_url: { url: "" }` 让整条请求失败。
+ */
+function dedupePreservingOrder(urls: readonly unknown[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const u of urls) {
+    if (typeof u !== 'string') continue
+    const trimmed = u.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
+  }
+  return out
+}
 
 /**
  * 理解能力上游模型(走 antigravity new-api 网关的 DashScope 原生通道)。
@@ -2937,9 +2974,20 @@ export class ApiService {
         ? input.query
         : [
             { type: 'text', text: input.question },
-            input.kind === 'video'
-              ? { type: 'video_url', video_url: { url: input.mediaUrl } }
-              : { type: 'image_url', image_url: { url: input.mediaUrl } },
+            ...(input.kind === 'video'
+              // `fps` 是 video_url 的**同级**字段,不在它里面(官方 curl 示例如此)。
+              // 之前它只在类型上存在、组包时被丢掉,等于永远走上游默认 2.0。
+              ? [{
+                  type: 'video_url',
+                  video_url: { url: input.mediaUrl },
+                  ...(typeof input.fps === 'number' ? { fps: input.fps } : {}),
+                }]
+              // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
+              // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
+              // 拆成多次调用模型就看不到彼此了。
+              : dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])])
+                  .slice(0, QWEN_UNDERSTAND_MAX_IMAGES)
+                  .map((url) => ({ type: 'image_url', image_url: { url } }))),
           ]
 
     const baseBody: Record<string, unknown> = { messages: [{ role: 'user', content }] }

@@ -150,6 +150,24 @@ async function resolveMediaUrl(
   return { ok: false, error: `缺少 ${urlKey} 或 ${pathKey}。` }
 }
 
+/**
+ * 把 `file_urls` / `file_paths` 摊成一串可交给 `resolveMediaUrl` 的单条参数。
+ *
+ * 两个数组拼接而不是二选一:一次看多张时素材来源常常是混的(几张已在 COS 上、
+ * 几张刚从本机拖进来),强迫调用方统一成一种反而逼它自己先上传。
+ * URL 排在 path 前,与 `resolveMediaUrl` 对单条的优先级一致。
+ */
+function collectExtraDocumentSources(
+  params: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const pick = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : []
+  return [
+    ...pick(params.file_urls).map((file_url) => ({ file_url })),
+    ...pick(params.file_paths).map((file_path) => ({ file_path })),
+  ]
+}
+
 async function runUnderstand(
   router: ToolRouter,
   tool: string,
@@ -167,6 +185,32 @@ async function runUnderstand(
     const pathKey = kind === 'video' ? 'video_path' : 'file_path'
     outParams = { ...params, [urlKey]: media.url }
     delete outParams[pathKey]
+
+    // 追加图:一次看多张(商品对比 / 多页文档 / 跨镜连续性)。上游把同一条
+    // message 里并列的多张当成一组看,拆成多次调用就看不到彼此了。
+    if (kind === 'document') {
+      const extras = collectExtraDocumentSources(params)
+      if (extras.length > 0) {
+        // 并发中转但**按输入顺序落位**:Promise.all 按入参顺序返回,与谁先传完无关。
+        // 顺序即身份 —— 提问里说「第二张」就必须是第二张,按完成顺序 push 会在
+        // 网络抖动时随机错位,而且不报错。
+        const resolved = await Promise.all(
+          extras.map((src) => resolveMediaUrl(src, 'document')),
+        )
+        const failed = resolved.findIndex((r) => !r.ok)
+        if (failed >= 0) {
+          // 不静默跳过失败的那张:少一张会让后面所有序号前移,「第三张」指向第四张,
+          // 而模型不会察觉。宁可整条报错让调用方处理。
+          const err = resolved[failed] as { ok: false; error: string }
+          return textResult(formatResult(tool, {
+            success: false,
+            error: `第 ${failed + 2} 张素材无法使用:${err.error}(共 ${extras.length + 1} 张;顺序会影响提问里的「第 N 张」,所以不跳过)`,
+          }))
+        }
+        outParams.file_urls = resolved.map((r) => (r as { ok: true; url: string }).url)
+      }
+      delete outParams.file_paths
+    }
   }
 
   const threadId = extractCodexThreadId(ctx)
@@ -306,7 +350,19 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
       inputSchema: z.object({
         file_url: z.string().optional().describe('Public http(s) URL of the document/page image (preferred when you already have one).'),
         file_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
-        question: z.string().min(1).describe('What you want to know from the document.'),
+        file_urls: z.array(z.string()).optional().describe(
+          'ADDITIONAL images to look at in the SAME request (public URLs). Use this whenever the question '
+          + 'spans more than one image — "是同一个人吗", "这两版哪个更好", a multi-page document, checking a '
+          + 'character across shots. The model sees them as one set, so it can compare; splitting into '
+          + 'separate calls loses that entirely. Order is preserved and matters: file_url is #1, then these '
+          + 'in order, so "第二张" in your question means the first entry here. Duplicates are dropped.',
+        ),
+        file_paths: z.array(z.string()).optional().describe(
+          'Same as file_urls but LOCAL paths (each auto-uploaded to COS). Can be combined with file_urls '
+          + '— URLs are ordered first, then paths. If any one of them fails to upload the whole call errors '
+          + 'out rather than silently dropping it, because a missing image would shift every later index.',
+        ),
+        question: z.string().min(1).describe('What you want to know from the document / across the images.'),
         model: z.enum(['max', 'plus', 'flagship']).optional().describe('Model: "plus" (default, cheaper) | "max" (stronger 3.7) | "flagship" (qwen3.8-max — 1M context + built-in tools, for long documents or hard cross-modal reasoning). Same video limits on all three (2h / 2GB), so flagship is NOT needed just because the input is a video. Omit for plus.'),
       }),
     },
