@@ -59,7 +59,10 @@ export class ModelUnavailableInGatewayError extends Error {
  * 端点被登记成正式 Channel,于是它们出现在对话栏里、可以直接当主模型驱动。
  *
  * 协议:Miau 提供**完整的 OpenAI 兼容 Responses 转发**(含 reasoning/usage),
- * 所以 `compatibilityPolicy: 'none'` —— 既不需要 grok 那套 namespace 桥,也不需要
+ * ⚠️ 下面这段结论**只对文本成立**,工具调用需要 namespace 桥(见 qwenChannel 里的
+ * 说明)。保留原文是为了记住教训:「转发完整」这个判断当时只拿对话验过。
+ *
+ * 原文:所以 `compatibilityPolicy: 'none'` —— 既不需要 grok 那套 namespace 桥,也不需要
  * Claude 那套 Messages 翻译。依据是接入说明 2026-08-06「Responses:兼容模式
  * responses(网关已有完整转发)」与其测试服实测(返回含 reasoning + message +
  * usage,`x_billing_type: "response_api"`)。
@@ -94,7 +97,25 @@ function qwenChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
     credentialId: 'qwen',
     model: 'qwen3.7-max-dashscope',
     allowedModels: QWEN_MIAU_MODELS,
-    compatibilityPolicy: 'none',
+    // ⚠️ 曾经是 'none',那是**只验了对话没验工具**得出的结论。
+    //
+    // 文本、reasoning、usage 确实都能完整转发回来 —— 但工具调用是另一回事:
+    // codex 把每个 MCP 工具包进 `{"type":"namespace",...}`(Responses API 的
+    // OpenAI 私有扩展,见 openai/codex#23186)。标准 OpenAI 兼容后端不认这个
+    // 类型,反应分两种:明确报错(LM Studio / OpenRouter),或者**静默丢弃**
+    // 后照常返回 200(llama.cpp / Ollama / 我们这条)。
+    //
+    // 静默那种最难查:没有任何报错,只是模型压根看不见工具。它于是发出一个
+    // 认不出的调用,codex 的分发器(core/src/tools/router.rs)落到
+    // `unsupported call: ` 丢弃,回合就此结束;模型再说一遍要读文件、再被丢掉
+    // —— 实测一次会话刷出 59 条,用户看到的是 agent 反复宣布同一个计划却不动手。
+    //
+    // 上游那个逃生开关(`namespace_tools`)是坏的:false 分支把 namespace 工具
+    // 整个过滤掉而不是展开(openai/codex#32318),关了照样用不了。所以只能自己
+    // 垫桥 —— 而这座桥我们给 grok 早就写好了(`flattenNamespaceTools`),它做的
+    // 正是社区 codex-ollama-proxy 那套:摊平成标准 function,回程按
+    // `namespace__name` 映射回去。
+    compatibilityPolicy: 'responses-namespace-bridge',
   })
 }
 
