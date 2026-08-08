@@ -4,7 +4,7 @@
 // 失败自动降级远程源;两边都没有时渲染错误兜底(路径 + 在文件夹中打开),
 // 不留空白播放器。
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VideoWorkbenchCard } from '../../../../../types/videoWorkbench'
 import { ResultVideoPlayer, hasPlaybackSource, remoteVideoSrc } from '../ResultVideoPlayer'
@@ -122,12 +122,61 @@ describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
     expect(showItemInFolder).toHaveBeenCalledWith('D:\\gone.mp4')
   })
 
-  it('仅远程源且加载失败 → 显示错误兜底而非空白', async () => {
-    render(<ResultVideoPlayer source={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
-    expect(queryVideo()?.getAttribute('src')).toBe('https://cos.example/v.mp4')
-    fireEvent.error(queryVideo()!)
-    const fallback = await screen.findByTestId('vw-playback-fallback')
-    expect(fallback.textContent).toContain('远程地址加载失败')
+  /**
+   * 实测的失败是 `net::ERR_CONNECTION_CLOSED` —— 连接被掐断，不是过期（过期回 403）。
+   * 此前一次 onError 就永久判死并提示「可能已过期，可重新生成」，把用户引去花钱
+   * 重跑一条已经生成好的片子。现在要先重试，用尽了才认输。
+   */
+  it('远程加载失败先重试，不是一次就判死', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<ResultVideoPlayer source={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
+      fireEvent.error(queryVideo()!)
+      // 还在重试期内：播放器仍在，不出兜底。
+      expect(screen.queryByTestId('vw-playback-fallback')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(queryVideo()?.getAttribute('src')).toBe('https://cos.example/v.mp4')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('一个候选试满后降级到下一个（COS → 上游临时地址）', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<ResultVideoPlayer source={makeCard({
+        remoteUrl: 'https://cos.example/v.mp4',
+        videoUrl: 'https://tmp.example/v.mp4',
+      })} />)
+      // 把 COS 那个候选的 3 次机会用光。
+      for (let i = 0; i < 3; i++) {
+        fireEvent.error(queryVideo()!)
+        await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      }
+      // 不该判死 —— 还有上游地址没试。
+      expect(screen.queryByTestId('vw-playback-fallback')).toBeNull()
+      expect(queryVideo()?.getAttribute('src')).toBe('https://tmp.example/v.mp4')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('所有候选都试满 → 兜底，且不再断言「已过期」', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<ResultVideoPlayer source={makeCard({ remoteUrl: 'https://cos.example/v.mp4' })} />)
+      for (let i = 0; i < 3; i++) {
+        fireEvent.error(queryVideo()!)
+        await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      }
+      // 用 getBy 而不是 findBy：findBy 靠真实定时器轮询，在假计时器下会一直挂着。
+      const fallback = screen.getByTestId('vw-playback-fallback')
+      expect(fallback.textContent).toContain('次加载失败')
+      // 原因是「网络问题或链接已过期」，不再单口咬定过期把人引去重新生成。
+      expect(fallback.textContent).toContain('网络问题')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
