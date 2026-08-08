@@ -457,6 +457,9 @@ describe('structured output(MCP 2025-11-25)', () => {
   it('status:成功结果带 structuredContent(text JSON 兜底保留)且通过 outputSchema', async () => {
     const routerResult = {
       total: 1,
+      // 默认只看当前页，所以回包必须说清这次看的是哪一页 —— 否则「12 张」在
+      // 「这页有 12 张」和「整个工作台只有 12 张」之间是歧义的。
+      scope: { boardId: 'b1' },
       activeBoardId: 'b1',
       boards: workbench.boards,
       selectedCardIds: ['c1'],
@@ -474,6 +477,25 @@ describe('structured output(MCP 2025-11-25)', () => {
     expect(res.structuredContent).toEqual(routerResult)
     expect(res.content[0].text).toContain('"total":1')
     expect(tool.config.outputSchema!.safeParse(res.structuredContent).success).toBe(true)
+  })
+
+  it('status:回包缺 scope 过不了 outputSchema —— 取值范围不能省', () => {
+    const { tools, server, router } = capture({})
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_status').config.outputSchema!
+    const base = {
+      total: 1,
+      activeBoardId: 'b1',
+      boards: workbench.boards,
+      selectedCardIds: [],
+      cards: [cardSnapshot],
+      page: 1,
+      pageSize: 12,
+      totalPages: 1,
+      hasMore: false,
+    }
+    expect(schema.safeParse(base).success).toBe(false)
+    expect(schema.safeParse({ ...base, scope: { allBoards: true } }).success).toBe(true)
   })
 
   it('写操作:structuredContent 含 workbench 全局摘要且通过各自 outputSchema', async () => {

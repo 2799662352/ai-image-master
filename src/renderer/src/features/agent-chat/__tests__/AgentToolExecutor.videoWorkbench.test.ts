@@ -201,16 +201,26 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     const secondBoardId = useVideoWorkbenchStore.getState().addBoard('分镜页')
     await callTool('video_workbench_add_tasks', { tasks: [{ prompt: '第二页的卡' }], navigate: false })
 
-    const all = await callTool('video_workbench_status', {})
-    expect(all.total).toBe(2)
-    expect(all.activeBoardId).toBe(secondBoardId)
-    expect(all.boards).toEqual([
+    // 默认只看**当前页**：用户就在这一页上，其余页只给 id/name/cardCount 让它知道
+    // 还有什么，不倒卡片。
+    const scoped = await callTool('video_workbench_status', {})
+    expect(scoped.scope).toEqual({ boardId: secondBoardId })
+    expect(scoped.total).toBe(1)
+    expect(scoped.cards.map((c: any) => c.boardId)).toEqual([secondBoardId])
+    expect(scoped.activeBoardId).toBe(secondBoardId)
+    // boards 始终是全量目录：能看见别页存在、有几张，但不为此付出卡片的代价。
+    expect(scoped.boards).toEqual([
       { id: firstBoardId, name: expect.any(String), cardCount: 1 },
       { id: secondBoardId, name: '分镜页', cardCount: 1 },
     ])
-    expect(all.cards.map((c: any) => c.boardId).sort()).toEqual([firstBoardId, secondBoardId].sort())
     // 卡片快照带紧凑素材清单字段
-    expect(all.cards[0].references).toEqual({ images: [], videos: [], audios: [] })
+    expect(scoped.cards[0].references).toEqual({ images: [], videos: [], audios: [] })
+
+    // 真要跨页时明说。
+    const all = await callTool('video_workbench_status', { allBoards: true })
+    expect(all.scope).toEqual({ allBoards: true })
+    expect(all.total).toBe(2)
+    expect(all.cards.map((c: any) => c.boardId).sort()).toEqual([firstBoardId, secondBoardId].sort())
 
     const filtered = await callTool('video_workbench_status', { boardId: firstBoardId })
     expect(filtered.total).toBe(1)
@@ -320,6 +330,20 @@ describe('status 分页', () => {
     expect(res.total).toBe(3)
     expect(res.totalPages).toBe(1)
     expect(res.hasMore).toBe(false)
+  })
+
+  /**
+   * 点名 cardIds 是「我就要这几张」的意思，不该再被当前页收窄 —— 否则 agent 拿着别页的
+   * 卡 id 去查，会得到一个空结果，而它完全无从判断是卡没了还是被页过滤掉了。
+   */
+  it('点名 cardIds 时跨页取,不被当前页收窄', async () => {
+    const firstPageIds = seed(2)
+    useVideoWorkbenchStore.getState().addBoard('第二页')
+    seed(1)
+
+    const res = await callTool('video_workbench_status', { cardIds: firstPageIds })
+    expect(res.total).toBe(2)
+    expect(res.cards.map((c: any) => c.cardId).sort()).toEqual([...firstPageIds].sort())
   })
 })
 

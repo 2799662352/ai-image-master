@@ -422,8 +422,16 @@ export class AgentToolExecutor {
             `video_workbench_status: board not found: ${boardId} (existing: ${state.boards.map((b) => b.id).join(', ')})`,
           )
         }
+        // 默认**只看当前页**。此前省略 boardId = 倒出所有页的卡，一个装了十几页的
+        // 工作台会把几百张卡的摘要一股脑塞进上下文，而用户九成时间只在看一页。
+        // 要看别页得明说：给 boardId，或 allBoards:true。
+        const allBoards = params.allBoards === true
+        const scopeBoardId = boardId ?? (allBoards ? undefined : state.activeBoardId)
         let cards = pickCards(params.cardIds)
-        if (boardId) cards = cards.filter((c) => c.boardId === boardId)
+        // 点名了 cardIds 就按 id 取，不再按页收窄 —— 那是「我就要这几张」的意思。
+        if (scopeBoardId && !Array.isArray(params.cardIds)) {
+          cards = cards.filter((c) => c.boardId === scopeBoardId)
+        }
         const summary = snapshotWorkbench(state)
         // 分页:一个工作台能装 200 张卡,整份倒出去会被客户端静默截断。口径与
         // list_portrait_library 一致(page 从 1 起 / pageSize 有上限 / hasMore)。
@@ -434,6 +442,10 @@ export class AgentToolExecutor {
         return {
           // total 是**筛选后的全部**,不是本页数量 —— agent 得知道自己只看到了一部分。
           total: cards.length,
+          // 明确告诉它这次的取值范围,否则「只看到 12 张」和「整个工作台只有 12 张」
+          // 在回包里长得一样。boards 里的 cardCount 是各页真实总数,可据此判断
+          // 要不要去看别页。
+          scope: scopeBoardId ? { boardId: scopeBoardId } : { allBoards: true },
           activeBoardId: summary.activeBoardId,
           boards: summary.boards,
           // status 是**读**工具,不带 workbench 包装,所以选中态得在这一层平铺 ——

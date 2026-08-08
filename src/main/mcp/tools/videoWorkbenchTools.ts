@@ -162,7 +162,15 @@ const startOutputSchema = z.looseObject({
 })
 
 const statusOutputSchema = z.looseObject({
-  total: z.number().describe('Total cards matching the cardIds/boardId filters, across ALL pages.'),
+  total: z.number().describe('Total cards matching the current scope + cardIds filter, across ALL pages.'),
+  scope: z.looseObject({
+    boardId: z.string().optional(),
+    allBoards: z.boolean().optional(),
+  }).describe(
+    'What this call actually looked at. Without it, "12 cards" is ambiguous between "this page has 12" '
+    + 'and "the whole workbench has 12". Cross-check against `boards[].cardCount` to decide whether '
+    + 'another page is worth pulling.',
+  ),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
   // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
@@ -521,18 +529,29 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
       '(look up board names in the boards list). Each card: prompt, spec, status (draft/preparing/' +
       'queued/running/succeeded/failed), compact reference-material name lists, taskId, error, and the ' +
-      'saved localPath / permanent remoteUrl for finished videos. Pass boardId to inspect one board; ' +
-      'omit to see all boards. Use it to inspect what the user has set up before editing cards, or when ' +
-      'the user explicitly asks how a render is going — NOT as a polling loop after ' +
-      'video_workbench_start (batch completion is pushed to you automatically).\n' +
-      `Cards are PAGINATED (a workbench can hold hundreds): the result carries page/totalPages/hasMore, ` +
-      `and \`total\` counts every match across all pages. Default ${WORKBENCH_STATUS_PAGE_SIZE} per page. ` +
-      'When hasMore is true, fetch the next page with page:N+1 rather than asking for a huge pageSize — ' +
-      'oversized results get silently truncated by the client. Better still, narrow with boardId or ' +
-      'cardIds first; usually you only need the board the user is looking at.',
+      'saved localPath / permanent remoteUrl for finished videos. Use it to inspect what the user has ' +
+      'set up before editing cards, or when the user explicitly asks how a render is going — NOT as a ' +
+      'polling loop after video_workbench_start (batch completion is pushed to you automatically).\n' +
+      'SCOPED TO THE ACTIVE BOARD BY DEFAULT. A workbench can hold a dozen pages; the user is looking at ' +
+      'one of them, and that is the one you get. Reach wider only when the task actually needs it: pass ' +
+      '`boardId` for a specific page, or `allBoards:true` for everything. The `boards` list always carries ' +
+      "every page's id/name/cardCount, so you can see what else exists without pulling its cards. The " +
+      'result echoes `scope` so you always know what you just looked at.\n' +
+      `Cards are also PAGINATED: the result carries page/totalPages/hasMore, and \`total\` counts every ` +
+      `match within the current scope. Default ${WORKBENCH_STATUS_PAGE_SIZE} per page. When hasMore is ` +
+      'true, fetch page:N+1 rather than asking for a huge pageSize — oversized results get silently ' +
+      'truncated by the client. Narrowing with cardIds is cheaper still when you already know which cards ' +
+      'you care about.',
     inputSchema: z.object({
-      cardIds: z.array(z.string()).optional().describe('Limit to specific cards. Omit = all.'),
-      boardId: z.string().optional().describe('Limit to one board (page). Omit = cards from all boards.'),
+      cardIds: z.array(z.string()).optional().describe(
+        'Limit to specific cards, ACROSS pages (an explicit id list means "just these", so it is not '
+        + 'narrowed to the active board). Omit to list the scoped board.',
+      ),
+      boardId: z.string().optional().describe('Inspect one specific page. Omit = the ACTIVE page only.'),
+      allBoards: z.boolean().optional().describe(
+        'Set true to pull cards from EVERY page. Default false — the active page only. Use it when the '
+        + 'task genuinely spans pages (a whole-film overview), not as a default reflex.',
+      ),
       page: z.number().int().min(1).optional().describe('1-based page number (default 1).'),
       pageSize: z.number().int().min(1).max(WORKBENCH_STATUS_MAX_PAGE_SIZE).optional().describe(
         `Cards per page (default ${WORKBENCH_STATUS_PAGE_SIZE}, max ${WORKBENCH_STATUS_MAX_PAGE_SIZE}).`,
