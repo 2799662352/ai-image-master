@@ -621,9 +621,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
       + 'full card is bulky and you usually care about one or two of them.\n'
       + 'PROMPTS ARE TRUNCATED HERE (~120 chars). That is deliberate: this tool is for surveying state, '
-      + 'not for reading copy. When you need a card\'s FULL prompt — to rewrite it, quote it, or diff it '
-      + '— call video_workbench_export (scope it with boardId). Do not try to reconstruct a prompt from '
-      + 'the truncated text.\n'
+      + 'not for reading copy. For a card\'s FULL prompt call '
+      + '`video_workbench_export({ cardIds: [...] })` — those cards come back complete, every other card '
+      + 'as a position-only `{id}`, so you read a few at a time instead of pulling a 20k-character board. '
+      + 'Do not reconstruct a prompt from the truncated text, and do not reach for a whole-board export '
+      + 'when you only care about three cards.\n'
       + 'READ `pageIndex` FIRST. It has one line per page across the whole scope (page number, card ids, '
       + 'the opening words of each prompt), so you can jump straight to the page you want instead of '
       + 'walking pages 1..N. Then fetch that page, or skip paging entirely by passing its cardIds.\n'
@@ -700,6 +702,14 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       allBoards: z.boolean().optional().describe(
         'Export every board. Only needed for cross-board changes; the payload grows with the whole '
         + 'workbench and may be rejected as too large. Ignored when boardId is given.',
+      ),
+      cardIds: z.array(z.string()).optional().describe(
+        'Full content for THESE cards only; every other card comes back as a position-only `{id, rev}`. '
+        + 'This is how you read long prompts a few at a time — status truncates at ~120 chars, and a '
+        + 'whole-board export of a 17-card board is ~20k characters that you have to read, hold and '
+        + 'often re-emit. Pick the ids from `pageIndex`, pull 3-5 of them, edit, apply, repeat.\n'
+        + 'The result is still directly applicable: every card is listed, so order is preserved, and '
+        + 'only the ones you named count against apply\'s content-card limit. Ignored when skeleton:true.',
       ),
       skeleton: z.boolean().optional().describe(
         'Return ids and ORDER only — every card comes back as a POSITION-ONLY `{id, rev}` with no '

@@ -574,22 +574,36 @@ export class AgentToolExecutor {
          * 体积与提示词长度无关。只有真要**读**现有提示词时才该拉全量。
          */
         const skeleton = params.skeleton === true
+        /**
+         * cardIds:只有点名的卡出全文，其余剥成占位。
+         *
+         * 补的是「分批读全文」这条路 —— status 截断到 120 字，而整板 export 是
+         * 要么全给要么被体积闸拒，中间没有台阶。点名之后读多少由调用方定，
+         * 而结果仍然**直接可回写**:每张卡都在，顺序不乱，只有点名的那几张计入
+         * apply 的内容卡上限。
+         */
+        const pickIds = Array.isArray(params.cardIds)
+          ? new Set(params.cardIds.filter((x): x is string => typeof x === 'string'))
+          : null
         const strip = (src: WorkbenchIR): WorkbenchIR => ({
           ...src,
           boards: src.boards.map((b) => ({
             ...b,
-            cards: b.cards.map((c) => ({
-              id: c.id,
-              ...(typeof c.rev === 'number' ? { rev: c.rev } : {}),
-            })),
+            cards: b.cards.map((c) => (
+              // skeleton 一律剥；否则只剥没被点名的。
+              !skeleton && pickIds?.has(c.id)
+                ? c
+                : { id: c.id, ...(typeof c.rev === 'number' ? { rev: c.rev } : {}) }
+            )),
           })),
         })
+        const trim = (src: WorkbenchIR): WorkbenchIR => (skeleton || pickIds ? strip(src) : src)
         // 默认只导**当前页**。整份导出带着每张卡的完整提示词和每条素材的完整路径,
         // 一个中等规模的工作台就能超出客户端肯收的体积,而截断后的 IR 回写会把被截
         // 掉的字段清成默认值(apply 是声明式不是 patch)。收窄默认是安全的:merge
         // 模式保证没列出的页原样不动。要跨页改动才显式传 allBoards。
         const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
-        if (!explicitBoardId && params.allBoards === true) return skeleton ? strip(ir) : ir
+        if (!explicitBoardId && params.allBoards === true) return trim(ir)
         const boardId = explicitBoardId ?? ir.activeBoardId
         const board = boardId ? ir.boards.find((b) => b.id === boardId) : undefined
         if (!board) {
@@ -601,12 +615,12 @@ export class AgentToolExecutor {
               `video_workbench_export: board not found: ${explicitBoardId} (existing: ${ir.boards.map((b) => b.id).join(', ')})`,
             )
           }
-          return skeleton ? strip(ir) : ir
+          return trim(ir)
         }
         // 单页导出仍带全局 revision —— 令牌是整个工作台的,不是这一页的。
         // 配 merge 模式回写是安全的:没列出的页原样保留。
         const scoped = { ...ir, boards: [board] }
-        return skeleton ? strip(scoped) : scoped
+        return trim(scoped)
       }
       case 'video_workbench_apply': {
         const raw = params.ir

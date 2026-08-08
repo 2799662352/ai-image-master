@@ -407,6 +407,30 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(skel.structureRevision).toBe(full.structureRevision)
   })
 
+  /**
+   * 分批读全文这条路此前是断的:status 截断到 120 字，export 要么整板给、要么被
+   * 体积闸拒，中间没有台阶 —— agent 于是跑去 grep IndexedDB 找全文。
+   */
+  it('export cardIds:点名的出全文，其余出占位，结果仍可直接回写', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '第一张的完整提示词'.repeat(20) }, { prompt: '第二张' }, { prompt: '第三张' }],
+      navigate: false,
+    })
+    const all = await callTool('video_workbench_export', {})
+    const target = all.boards[0].cards[1].id
+
+    const partial = await callTool('video_workbench_export', { cardIds: [target] })
+    const cards = partial.boards[0].cards
+    // 顺序完整 —— 这是它「可直接回写」的前提，少一张回写就会把顺序打乱。
+    expect(cards.map((c: { id: string }) => c.id)).toEqual(all.boards[0].cards.map((c: { id: string }) => c.id))
+    expect(cards[1].prompt).toBe('第二张')
+    // 没点名的只剩身份与令牌。
+    expect(Object.keys(cards[0]).sort()).toEqual(['id', 'rev'])
+    expect(Object.keys(cards[2]).sort()).toEqual(['id', 'rev'])
+    // 那张很长的提示词没被拖进来。
+    expect(JSON.stringify(partial).length).toBeLessThan(JSON.stringify(all).length / 2)
+  })
+
   it('export skeleton:跨页(allBoards)同样剥干净', async () => {
     await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A' }], navigate: false })
     useVideoWorkbenchStore.getState().addBoard('第二页')
