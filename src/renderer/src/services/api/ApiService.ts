@@ -187,6 +187,11 @@ export interface ModelCapabilities {
    * 千问 3.0 的图生图官方规定 content 里只能有 1-3 个 `{image}`，超了上游直接拒。
    */
   maxReferenceImages?: number
+  /**
+   * 上游接受独立的反向提示词字段（DashScope 原生 `parameters.negative_prompt`）。
+   * 打开后界面会渲染反向提示词输入框；不支持的渠道不该冒出这个框。
+   */
+  negativePrompt?: boolean
 }
 
 export interface GenerateImageParams {
@@ -912,7 +917,11 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       // 参考图必须走 input.messages —— 顶层 image 字段会被网关丢弃。
       dashscopeNativeInput: true,
       // 官方：I2I 的 content 里只能有 1-3 个 {image}，多了上游直接拒。
-      maxReferenceImages: 3
+      maxReferenceImages: 3,
+      // 上游支持独立反向词；经 Miau 时**可能**到不了（网关参数表里没这个键）。
+      // 仍然暴露输入框：真到不了也只是这一个字段没生效，而网关补上白名单那天
+      // 就自动可用、不用再发版。界面上有一句说明，不向用户承诺它必然生效。
+      negativePrompt: true
     }
   },
   'sora_image': {

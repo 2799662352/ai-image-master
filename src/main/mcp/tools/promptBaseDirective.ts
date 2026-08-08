@@ -14,12 +14,13 @@
 
 /** 视频出片面用：按 Seedance 档位二选一。 */
 export const PROMPT_BASE_DIRECTIVE =
-  'PROMPT BASE (load before writing ANY prompt, keyed by `model`): "2.5" → skill `sd25-pe`; ' +
-  '"2.0" / "2.0-fast" / "2.0-mini" → skill `sd2-pe`. These are bases, not optional techniques — they own ' +
-  'the material reference syntax (图片N / 视频N / 音频N), the shot-structure formula, and, on 2.5 only, ' +
-  'the edit / extend / keyframe / grid-storyboard templates. Load the ONE that matches the model and ' +
-  'follow its template; never blend both template sets into a single prompt. Calling this tool without ' +
-  'the matching base is how you end up with a prompt that argues with the attached materials.'
+  'PROMPT BASE — load exactly ONE, keyed by `model`: "2.5" (also the default when the model is unknown) ' +
+  '→ skill `sd25-pe`; "2.0" / "2.0-fast" / "2.0-mini" → skill `sd2-pe`. Load it ONCE per task and reuse ' +
+  'it across every card — re-reading it per shot is pure overhead. Never load both: they are ~70KB ' +
+  'combined and you can only follow one template anyway. The base owns the material reference syntax ' +
+  '(图片N / 视频N / 音频N), the shot-structure formula, and, on 2.5 only, the edit / extend / keyframe / ' +
+  'grid-storyboard templates. Writing the prompt from memory instead is how you end up with one that ' +
+  'argues with the attached materials.'
 
 /**
  * 视频出片面用：素材逐份负责。

@@ -482,13 +482,28 @@ test('media profiles stay flexible, inherit dialogue language, and preserve temp
   assert.match(template, /不照搬.*固定 10 秒.*权重.*API 参数.*固定导演/s)
   assert.match(template, /2D.*优先.*日语.*真人.*3D.*优先.*中英/s)
   assert.match(template, /台词.*沿用.*用户.*语言.*不擅自翻译/s)
+  // hook 只断言「它还是个短指针」，不再逐句复制正文。
+  //
+  // 这里原本断言 7 句话——媒介 profile、台词语言、路径 A/B 条件、12 项内容、参考候选——
+  // 而那些正是把 catimation-video / seedance-cinematic-format 的正文提前搬进每一轮会话的
+  // 元凶：注入串因此涨到约 1900 字符，模型把它当成「每次都要照做的清单」而不是索引，
+  // 拆个脚本都要先过一遍分级和闸门。这些不变量在上面已经对 sd2-pe、helper、template
+  // 的正文各断言过一次，在 hook 里再断言一遍只是逼着 hook 保持臃肿。
   for (const hook of hooks) {
-    assert.match(hook, /真人、2D、3D是可组合profile.*电影是检索意图词/s)
-    assert.match(hook, /台词语言按用户要求或原文/)
-    assert.match(hook, /仅简单单镜轻量任务走路径A,可跳过 seedance-cinematic-format/)
-    assert.match(hook, /复杂、多镜、混合媒介.*路径B/)
-    assert.match(hook, /B条件优先于任务类型/)
-    assert.match(hook, /12项内容和五大必备块/)
-    assert.match(hook, /真实影视参考候选/)
+    const context = hook.match(/^session_context="([\s\S]*?)"$/m)?.[1] ?? ''
+    assert.ok(context.length > 0, 'hook must still inject something')
+    assert.ok(
+      context.length <= 1190,
+      `hook injection must stay a short pointer (got ${context.length} chars) —— 正文该由 Skill 工具按需读`,
+    )
+    // 指路仍要指得准：入口名 + 底座按模型二选一，其余按需。
+    assert.match(context, /catimation-video/)
+    assert.match(context, /sd25-pe/)
+    assert.match(context, /sd2-pe/)
+    // 纯文本任务必须被明确豁免，否则「拆个脚本」又会被拖进分级流程。
+    assert.match(context, /纯文本任务/)
+    assert.match(context, /不加载任何 skill/)
+    // 不许再把「每次都要」这类全称强制写回注入串。
+    assert.doesNotMatch(context, /自动加载两个|两个同级底座/)
   }
 })

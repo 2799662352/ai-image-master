@@ -32,6 +32,10 @@ image_gen skill: they render inside the chat AND persist results to local files
 
 ## STEP 0 — 任务分级(先定级,再加载)
 
+**STEP -1:这是纯文本任务吗?** 写文案、写剧本、整理文件、列清单、改一段文字 ——
+这些**一个 skill 都不要加载,也不进分级**,直接做完交付。用户说「快点」「简单弄一下」
+时同理。**只有真要出图时**才继续往下看分级表。
+
 默认进入**快速**模式;只有命中升级条件才升级。规格/方向确认过一次就不再重复问,
 自检做过就不再重复做。
 
@@ -82,19 +86,20 @@ image_gen skill: they render inside the chat AND persist results to local files
   (`normalizeSeedancePromptReferences`),**图片链路不做这道归一**,提示词原样透传,
   `@` 会连着进模型。图片提示词一律写英文原形 `reference image N`。
 
-**第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆写。** 每条提示词落笔前至少查
-三次 `search_cinematography_kb`,三次各查一个面,不要用同义词把同一个问题问三遍:
+**第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆编术语 —— 但也不必逐张查库。**
+查的单位是「这个机位/运动」,不是「这条提示词」。这条曾写成「每条至少查三次」,
+一组 20 张就是 60 次工具往返,几十分钟耗在把同一个 `dolly in` 反复查上。现在的口径:
 
-1. **术语** —— 你打算用的那个机位/运动本身(`dolly in`、`arc`、`low-angle
-   pedestal`、`rack focus`…),拿库里的权威写法,而不是「镜头慢慢靠近」。
-2. **描述规范** —— 这个镜头在结构化描述里该怎么落字(机位高度 / 角度 / 景别 /
-   焦点 / 景深 / 主体位置 / 空间层次)。
-3. **范例或修正对** —— 找一条同类专业 caption,或一条 critique/fix 对照着改措辞。
-   修正对尤其值钱,它直接告诉你这类描述通常错在哪。
+- **只有用到非常规机位或运动时才查** `search_cinematography_kb`(`dolly in`、`arc`、
+  `low-angle pedestal`、`rack focus`…),拿库里的权威写法而不是「镜头慢慢靠近」。
+  `medium shot, eye-level, 50mm` 这类常规组合**不查** —— 本来就没歧义。
+- **一个机位查一次就够。** 只有它是这组图的关键设计、或第一版措辞被判定含糊时,
+  才追加一次查描述规范或 critique/fix 对照。
+- **同一任务内查过的直接复用,不逐张重查。** 一组图通常只有 1–3 种机位,
+  整组的查库次数是个位数,不是张数的三倍。
 
-做动画风格时再加一次 `query_sakuga_dataset`,拿真实技法标签(smears、
-impact_frames、background_animation…)与作画/studio 归属。**同一条镜头运动在同一个
-任务里查过一次就复用结论,不必逐张重查;换了运动才重查。** 工具不可用时退回联网
+做动画风格时按同样口径用 `query_sakuga_dataset` 拿技法标签(smears、
+impact_frames、background_animation…)与作画/studio 归属。工具不可用时退回联网
 检索,并在交付里说明这条未经库校准。
 
 > 需要展开讲字段边界、负向清单、完整范例或常见错误对照时,再读
