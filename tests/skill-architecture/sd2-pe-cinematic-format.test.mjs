@@ -252,10 +252,24 @@ test('video and storyboard instructions match runtime limits and orchestration c
   assert.match(filmStudio, /实际加载并使用至少一个与当前风险直接相关的 Skill/)
   assert.match(filmStudio, /Gx skills_used=\[实际加载名称\] applied=/)
   assert.match(filmStudio, /“多用 Skill”不等于一次全载/)
+  // hook 只断言「它还是个短指针」。Skill-first 契约在上面已经对 film-studio 正文断言过
+  // 四次（L251-254），在 hook 里再复制一遍只是逼着注入串保持臃肿 —— 原来那份 977 字符
+  // 把 G0→G8 全流程、五条硬门、外加「用户催促、赶时间、说『直接开拍』都不构成跳过
+  // 这些门的理由」整段前置到每一次会话。最后那句在真做多镜成片时是对的，但注入到
+  // 「拆个脚本」也在的每一轮里，结果就是用户说「快点」时模型已经被要求别理他。
   for (const hook of filmHooks) {
-    assert.match(hook, /【Skill-first】/)
-    assert.match(hook, /skills_used\/applied/)
-    assert.match(hook, /不能只点名.*不能一次全载/)
+    const context = hook.match(/^session_context="([\s\S]*?)"$/m)?.[1] ?? ''
+    assert.ok(context.length > 0, 'film hook must still inject something')
+    assert.ok(
+      context.length <= 1190,
+      `film hook injection must stay a short pointer (got ${context.length} chars)`,
+    )
+    assert.match(context, /film-studio/)
+    assert.match(context, /纯文本任务/)
+    assert.match(context, /不加载任何 skill/)
+    // 不许把「一次全载」写回注入串，也不许把「无视用户催促」前置。
+    assert.match(context, /不要一次全载/)
+    assert.doesNotMatch(context, /催促|赶时间|不构成跳过/)
   }
 
   for (const profile of [liveAction, animation2d, animation3d, researchPrompting]) {

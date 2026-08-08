@@ -106,8 +106,8 @@ impact_frames、background_animation…)与作画/studio 归属。工具不可�
 > `director-prompt-engineering`。**上面这份骨架够用的任务不要去读它** —— 多一次
 > 文件读取就是多一个来回,而它给的就是这七行加上面这条查库纪律。
 
-**画面里有人,再自动加载角色链(第二个例外):** 要出的图里有人物/角色/IP,**且它需要
-复用**(组图、系列、同一个人跨会话再出、或用户给了人物参考图)——自动加载:
+**角色要复用时才载角色链。** 判据是**这个人还要再出现**(组图、系列、同一个人跨会话
+再出、或用户给了人物参考图)—— 只有这时才载下面两个;单张一次性的人物图不载:
 
 - **`director-anchor-extraction-quality`** —— 有参考图时先把它提成 Face / Build /
   Outfit / Markers 四段锚点。**锚点不足 40 词就是形象漂移的根因**,相似角色还要写出
@@ -119,9 +119,9 @@ impact_frames、background_animation…)与作画/studio 归属。工具不可�
 外貌导致微漂移、想省 token 时,再按需看 director-structured-captioning
 (HoloCine 结构,用 `[char1]` 标签引用而不重描外貌)。
 
-**跨任务一致性靠人像库,不靠记忆(第三个例外):** 角色链解决的是「这一批图里不漂」;
-**「下次、下个会话、下个项目还是同一个人」要靠 `catimation-portrait-library`**——
-自动加载,同样不需用户点名。上面提出来的 Face / Build / Outfit / Markers 锚点,
+**跨任务一致性靠人像库,不靠记忆。** 角色链解决的是「这一批图里不漂」;
+**「下次、下个会话、下个项目还是同一个人」要靠 `catimation-portrait-library`** ——
+角色需要跨任务复用时载它,一次性配图不载。上面提出来的 Face / Build / Outfit / Markers 锚点,
 以及用户选定的主锚图,**出完图就 `add_to_portrait_library` 存成 `asset://assetId`**;
 下次要同一个人时 `list_portrait_library` 找回同一个 asset 再传进 `referenceImages`,
 而不是凭聊天记录重新描述一遍。
