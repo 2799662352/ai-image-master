@@ -476,6 +476,61 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_set_spec', {
+    description:
+      'Apply the SAME spec change to many cards at once — resolution, ratio, model, duration, audio, '
+      + 'webSearch, mode. This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5".\n'
+      + 'USE THIS INSTEAD OF export+apply for spec-only sweeps. apply is declarative over the WHOLE board: '
+      + 'omitted fields reset to defaults, so to change three fields you must round-trip every prompt and '
+      + 'every material array of every card through the model — on a 17-card board that is the slowest '
+      + 'thing in the session, and the user is just sitting there watching RUNNING. This tool carries only '
+      + 'the fields you name.\n'
+      + 'It CANNOT touch prompts or materials — that is the point, not a limitation. For those, use '
+      + 'video_workbench_update_task (one card) or video_workbench_apply (restructuring).\n'
+      + 'Omit cardIds to hit every card on the active board. Cards that are rendering are skipped and '
+      + 'reported, not errored — a sweep should not fail because one card happens to be busy.',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).optional().describe(
+        'Cards to change. Omit = every card on the ACTIVE board (the common case for a sweep). '
+        + 'Pass ids from `pageIndex` / status when you only want some of them.',
+      ),
+      boardId: z.string().optional().describe('Sweep this page instead of the active one. Ignored when cardIds is given.'),
+      model: cardInputSchema.shape.model,
+      resolution: cardInputSchema.shape.resolution,
+      ratio: cardInputSchema.shape.ratio,
+      duration: cardInputSchema.shape.duration,
+      generateAudio: cardInputSchema.shape.generateAudio,
+      webSearch: cardInputSchema.shape.webSearch,
+      mode: cardInputSchema.shape.mode,
+    }),
+    // 与 update_task 同档:换模型/模式时按新上限截断素材(2.5 → 2.0 会掉 21 张),
+    // 而这里是**批量**截断,一次能影响整板 —— 更该让客户端问一声。
+    annotations: { ...DESTRUCTIVE, idempotentHint: true },
+    outputSchema: z.looseObject({
+      updated: z.array(z.string()).describe('Card ids actually changed.'),
+      skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })).describe(
+        'Cards left untouched (rendering, or the patch was a no-op for them).',
+      ),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_spec',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { updated: string[]; skipped: Array<{ reason: string }> }
+      return okResult([
+        `✅ video_workbench_set_spec — ${result.updated.length} card(s) updated.`,
+        ...(result.skipped.length > 0
+          ? [`⚠️ ${result.skipped.length} skipped — read \`skipped\` and tell the user which ones and why.`]
+          : []),
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_spec', error)
+    }
+  })
+
   server.registerTool('video_workbench_update_task', {
     description:
       'Update ONE existing card on the 「生成视频」 workbench page: prompt, spec (model/resolution/ratio/' +
@@ -489,8 +544,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'by id, carries no board-wide version token, and cannot be invalidated by the user typing in ' +
       'another card. Do NOT export the whole board and re-apply it just to edit one card: that is far ' +
       'slower and any edit the user makes meanwhile can push your write aside. Reserve ' +
-      'video_workbench_apply for restructuring (adding/deleting/reordering cards or pages, or editing ' +
-      'many cards at once). Call it once per card — one focused call per card beats one giant IR. ' +
+      'video_workbench_apply for RESTRUCTURING (adding/deleting/reordering cards or pages). And if you ' +
+      'only want the same spec across many cards ("整板 480p / 都开联网"), use video_workbench_set_spec ' +
+      '— NOT apply. Call it once per card — one focused call per card beats one giant IR. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,

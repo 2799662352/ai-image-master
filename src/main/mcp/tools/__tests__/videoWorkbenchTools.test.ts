@@ -45,6 +45,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     registerVideoWorkbenchTools(server, router)
     expect(tools.map((t) => t.name)).toEqual([
       'video_workbench_add_tasks',
+      'video_workbench_set_spec',
       'video_workbench_update_task',
       'video_workbench_start',
       'video_workbench_status',

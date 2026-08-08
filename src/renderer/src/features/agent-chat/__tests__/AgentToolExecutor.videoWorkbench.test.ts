@@ -230,6 +230,56 @@ describe('AgentToolExecutor.video_workbench_*', () => {
   })
 
   /**
+   * 「整板只改规格」此前只能走 apply —— 那是声明式整份 IR，省略字段会被当成恢复默认，
+   * 于是为了改三个字段，每张卡的完整 prompt 和素材数组都得在模型里走一遍。17 张卡时
+   * 用户看到的就是右边一直 RUNNING，而真正的改动一秒就能做完。
+   */
+  it('set_spec:整板改规格,不碰 prompt 与素材', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [
+        { prompt: '镜一', referenceImages: [{ name: 'a.png', src: 'https://x/a.png' }] },
+        { prompt: '镜二' },
+      ],
+      navigate: false,
+    })
+    const before = useVideoWorkbenchStore.getState().cards
+
+    const res = await callTool('video_workbench_set_spec', {
+      resolution: '480p',
+      webSearch: true,
+    })
+    expect(res.updated).toHaveLength(2)
+    expect(res.skipped).toEqual([])
+
+    const after = useVideoWorkbenchStore.getState().cards
+    for (const [i, card] of after.entries()) {
+      expect(card.resolution).toBe('480p')
+      expect(card.webSearch).toBe(true)
+      // 内容必须原封不动 —— 这正是这个工具存在的理由。
+      expect(card.prompt).toBe(before[i].prompt)
+      expect(card.referenceImages).toEqual(before[i].referenceImages)
+    }
+  })
+
+  it('set_spec:一个规格字段都不给要报错(否则是一次无意义的全板遍历)', async () => {
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'x' }], navigate: false })
+    await expect(callTool('video_workbench_set_spec', {})).rejects.toThrow('至少要给一个规格字段')
+  })
+
+  it('set_spec:cardIds 可点名,不点名就是当前页全部', async () => {
+    const r = await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '甲' }, { prompt: '乙' }],
+      navigate: false,
+    })
+    const [first] = r.cardIds as string[]
+    const res = await callTool('video_workbench_set_spec', { cardIds: [first], duration: 10 })
+    expect(res.updated).toEqual([first])
+    const cards = useVideoWorkbenchStore.getState().cards
+    expect(cards.find((c) => c.id === first)!.duration).toBe(10)
+    expect(cards.find((c) => c.id !== first)!.duration).not.toBe(10)
+  })
+
+  /**
    * 分批读取只有配上目录才成立：每次只回 3 张而不告诉 agent 剩下的是什么，
    * 它只能从第 1 页翻到最后一页 —— 调用次数翻十倍，省下的上下文全赔进往返。
    */
