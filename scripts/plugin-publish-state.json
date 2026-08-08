@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-08T20:19:37.267Z",
+  "generatedAt": "2026-08-08T23:29:39.248Z",
   "plugins": {
     "catimation-director": {
       "sig": "8149798bedb1e2841792a27a74bc958fff3702fabfd9f16700716868277d11b4",
@@ -18,12 +18,12 @@
       "version": "1.0.14"
     },
     "catimation-video": {
-      "sig": "5ddf162d041f39f6f6fb61ed0ddafd06af7f6c19b8bfe53e6d161da82b5eff0e",
-      "version": "1.0.32"
+      "sig": "11c9707ad3060c18f9c592175b1f3580843ebd26f9919afbd721cc9328545e04",
+      "version": "1.0.33"
     },
     "catimation-core": {
-      "sig": "4ad9543fcb21917c0cd6dff609c8c7012bc0ce6770a3880267a71b7831f82e34",
-      "version": "1.0.24"
+      "sig": "5a961c55d8bacccbecf204aa8122ca73229fb4bb96d3c539783830028428247c",
+      "version": "1.0.25"
     }
   }
 }
