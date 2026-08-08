@@ -4,7 +4,15 @@ import {
   normalizeOption,
   FALLBACK_RATIO_OPTIONS,
   FALLBACK_RESOLUTION_OPTIONS,
+  type ImageParamModelConfig,
 } from '../imageParamControls'
+import { ApiService } from '../ApiService'
+
+// 从真实服务里取模型表，而不是 export 一份内部常量出来给测试用 —— 后者会把私有
+// 配置表变成公开面。getModelConfig 本来就是消费端（UI / AgentToolExecutor）走的那条路。
+const models = new ApiService()
+const configOf = (key: string) =>
+  (models as unknown as { getModelConfig: (k: string) => ImageParamModelConfig }).getModelConfig(key)
 
 describe('deriveImageParamControls', () => {
   it('gpt-image-2 三轴: 比例/清晰度(resolution)/质量(quality) 都暴露', () => {
@@ -28,6 +36,22 @@ describe('deriveImageParamControls', () => {
     expect(c.defaultResolution).toBe('1K')
     expect(c.defaultQuality).toBe('auto')
     expect(c.sizeHidden).toBe(false)
+  })
+
+  /**
+   * 数量轴是从真实模型表派生的，所以这里直接拿 DEFAULT_MODELS 里的千问配置来验 ——
+   * 手写一份 capabilities 只能证明函数会算，证明不了那张表填对了。千问官方 n 是 1-6，
+   * 早先照 Seedream 抄成 1，界面上就只有「1 张」这一个选项。
+   */
+  it('千问 3.0 Pro 的数量轴给到 1-6（而不是被 maxOutputs:1 卡死）', () => {
+    const c = deriveImageParamControls(configOf('qwen-image-3.0-pro'))
+    expect(c.supportsCount).toBe(true)
+    expect(c.maxCount).toBe(6)
+  })
+
+  it('只出单图的渠道不冒出数量轴 —— 别给没有的能力加个选择器', () => {
+    const c = deriveImageParamControls(configOf('doubao-seedream-5-0-pro-260628'))
+    expect(c.supportsCount).toBe(false)
   })
 
   it('无 resolutions / 无 resolutionControl: supportsResolution=false, 回退分辨率列表', () => {
