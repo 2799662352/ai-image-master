@@ -26,6 +26,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
   WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../types/videoWorkbench'
@@ -183,6 +184,16 @@ const statusOutputSchema = z.looseObject({
   // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
   cards: z.array(cardSnapshotSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
+  pageIndex: z.array(z.object({
+    page: z.number(),
+    cardIds: z.array(z.string()),
+    digest: z.string(),
+  })).describe(
+    'One line per page covering the WHOLE scope, so you can jump straight to the page you need instead '
+    + 'of walking every page. Each entry holds the page number, its card ids, and the opening ~24 chars of '
+    + 'each prompt (plus status when it is not draft). Read this first, pick the page, then fetch it. '
+    + `Capped at ${WORKBENCH_STATUS_MAX_INDEX_ENTRIES} entries — beyond that, page numbers still work.`,
+  ),
   page: z.number().describe('1-based page number of `cards`.'),
   pageSize: z.number(),
   totalPages: z.number(),
@@ -544,11 +555,15 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       '`boardId` for a specific page, or `allBoards:true` for everything. The `boards` list always carries ' +
       "every page's id/name/cardCount, so you can see what else exists without pulling its cards. The " +
       'result echoes `scope` so you always know what you just looked at.\n' +
-      `Cards are also PAGINATED: the result carries page/totalPages/hasMore, and \`total\` counts every ` +
-      `match within the current scope. Default ${WORKBENCH_STATUS_PAGE_SIZE} per page. When hasMore is ` +
-      'true, fetch page:N+1 rather than asking for a huge pageSize — oversized results get silently ' +
-      'truncated by the client. Narrowing with cardIds is cheaper still when you already know which cards ' +
-      'you care about.',
+      `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
+      + 'full card is bulky and you usually care about one or two of them.\n'
+      + 'READ `pageIndex` FIRST. It has one line per page across the whole scope (page number, card ids, '
+      + 'the opening words of each prompt), so you can jump straight to the page you want instead of '
+      + 'walking pages 1..N. Then fetch that page, or skip paging entirely by passing its cardIds.\n'
+      + 'Do NOT raise pageSize just to avoid paging: paging is already cheap thanks to pageIndex, while '
+      + 'cards you pull sit in your context for the rest of the session, and oversized results get '
+      + 'silently truncated by the client. `total` counts every match in scope; hasMore/page/totalPages '
+      + 'describe the slice you got.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe(
         'Limit to specific cards, ACROSS pages (an explicit id list means "just these", so it is not '
@@ -581,7 +596,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         : '✅ No card on this page is rendering. Finished videos are playing on the workbench page and saved locally (localPath) + to COS (remoteUrl).'
       // 分页提示只在还有下一页时出现 —— 单页就装下的常见情况不该多占一行上下文。
       const paging = result.hasMore
-        ? [`📄 Page ${result.page}/${result.totalPages} — ${result.cards.length} of ${result.total} cards shown. Fetch the rest with page:${result.page + 1}, or narrow with boardId/cardIds.`]
+        ? [`📄 Page ${result.page}/${result.totalPages} — ${result.cards.length} of ${result.total} cards shown. Use \`pageIndex\` to pick the page you actually need (or pass its cardIds); page:${result.page + 1} is just the next one, not necessarily the right one.`]
         : []
       return okResult([banner, ...paging], result)
     } catch (error) {

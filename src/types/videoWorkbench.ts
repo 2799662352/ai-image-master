@@ -75,9 +75,23 @@ export interface VideoWorkbenchSpec {
  */
 export const WORKBENCH_MAX_TASKS_PER_CALL = 5
 
-/** `video_workbench_status` 每页卡数。12 对齐 portraitTools 的 pageSize 与 batchCompletion 的 MAX_LISTED。 */
-export const WORKBENCH_STATUS_PAGE_SIZE = 12
+/**
+ * `video_workbench_status` 每页卡数。
+ *
+ * 取 3 不是抠体积,是让 agent 能**边读边动手**:一张卡的 JSON 约 500 token,
+ * 12 张就是六千 token 一次灌进来,而它九成时候只关心其中一两张。3 张读完就够
+ * 决定「是不是这几张」,不是就跳下一页 —— 配 pageIndex 目录通常一跳到位。
+ *
+ * 别调回大值来「少翻几页」:翻页的成本已经被目录摊掉了,而灌进来的卡片是实打实
+ * 占着上下文直到会话结束。要一次看很多张,应当用 cardIds 点名。
+ */
+export const WORKBENCH_STATUS_PAGE_SIZE = 3
 export const WORKBENCH_STATUS_MAX_PAGE_SIZE = 50
+/**
+ * `pageIndex` 目录最多几条。目录本身也会膨胀:200 张卡按 3 张一页就是 67 条,
+ * 那又变成一次性倒出去了。超出就截断,agent 仍可用 page 参数直接翻到后面。
+ */
+export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
 
 /** 参考素材条目（展示名 + 可提交源）。 */
 export interface VideoWorkbenchMaterial {

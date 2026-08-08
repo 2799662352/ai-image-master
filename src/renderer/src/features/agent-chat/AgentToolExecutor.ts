@@ -28,6 +28,7 @@ import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import type { WorkbenchIR } from '../../../../types/videoWorkbench'
 import {
+  WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../../types/videoWorkbench'
@@ -358,6 +359,40 @@ export class AgentToolExecutor {
     const clampPageSize = (v: unknown): number =>
       Math.min(toPositiveInt(v) ?? WORKBENCH_STATUS_PAGE_SIZE, WORKBENCH_STATUS_MAX_PAGE_SIZE)
 
+    /**
+     * 给整份筛选结果按页做目录,一页一条。
+     *
+     * 分批读取有个自带的坑:每次只回 3 张,agent 不知道第 4 页装的是什么,就只能
+     * 一页页翻到底 —— 调用次数翻十倍,省下的上下文全赔进往返里。目录把「这一页
+     * 大概是什么」提前摊开,让它一次跳到位。
+     *
+     * 每条只留 id 和 prompt 开头(24 字),不带素材/时长/rev —— 那些是「决定动手
+     * 之后」才需要的,现在只是在挑页。
+     */
+    const buildPageIndex = (
+      cards: ReturnType<typeof pickCards>,
+      pageSize: number,
+    ): Array<{ page: number; cardIds: string[]; digest: string }> => {
+      const index: Array<{ page: number; cardIds: string[]; digest: string }> = []
+      for (let start = 0; start < cards.length; start += pageSize) {
+        const slice = cards.slice(start, start + pageSize)
+        index.push({
+          page: index.length + 1,
+          cardIds: slice.map((c) => c.id),
+          digest: slice
+            .map((c) => {
+              const head = (c.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 24) || '(空)'
+              // 状态只在「不是草稿」时才写 —— 草稿是绝大多数,标出来纯属噪音。
+              return c.status && c.status !== 'draft' ? `${head} [${c.status}]` : head
+            })
+            .join(' / '),
+        })
+        // 目录本身也得有上限,否则 200 张卡 / 3 = 67 条,又变成一次性倒出去。
+        if (index.length >= WORKBENCH_STATUS_MAX_INDEX_ENTRIES) break
+      }
+      return index
+    }
+
     // 写操作统一回带的全局摘要(boards + 状态计数):每次写操作等于强制观测
     // 一次全局现状,agent 无需追加 status 调用。体积 O(页数),紧凑。
     const workbenchSummary = () => snapshotWorkbench(useVideoWorkbenchStore.getState())
@@ -454,6 +489,11 @@ export class AgentToolExecutor {
         const page = Math.min(Math.max(1, toPositiveInt(params.page) ?? 1), totalPages)
         const pageCards = cards.slice((page - 1) * pageSize, page * pageSize)
         return {
+          // 每页一条的目录。**这才是分批读取能成立的前提** —— 只回 3 张卡而不告诉
+          // 你剩下的是什么,agent 只能从第 1 页翻到最后一页,比一次性倒出去还费。
+          // 有了目录它能直接跳到相关那一页。刻意做得很省:每张卡只留 id + 截断的
+          // prompt 开头,不带素材/时长/rev,一条约等于四分之一张卡。
+          pageIndex: buildPageIndex(cards, pageSize),
           // total 是**筛选后的全部**,不是本页数量 —— agent 得知道自己只看到了一部分。
           total: cards.length,
           // 明确告诉它这次的取值范围,否则「只看到 12 张」和「整个工作台只有 12 张」

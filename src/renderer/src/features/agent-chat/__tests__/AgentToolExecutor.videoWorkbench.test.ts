@@ -9,6 +9,7 @@ import {
 import { resetWorkbenchDbForTest } from '../../video-workbench/WorkbenchDb'
 import {
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
+  WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../../../types/videoWorkbench'
 
@@ -228,6 +229,53 @@ describe('AgentToolExecutor.video_workbench_*', () => {
   })
 
   /**
+   * 分批读取只有配上目录才成立：每次只回 3 张而不告诉 agent 剩下的是什么，
+   * 它只能从第 1 页翻到最后一页 —— 调用次数翻十倍，省下的上下文全赔进往返。
+   */
+  it('分批:默认每页 3 张,pageIndex 一页一条覆盖整个范围', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '夜景追车起势' }, { prompt: '车内特写' }, { prompt: '撞击瞬间' }],
+      navigate: false,
+    })
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '医院走廊' }, { prompt: '病房对话' }],
+      navigate: false,
+    })
+
+    const res = await callTool('video_workbench_status', {})
+    expect(res.total).toBe(5)
+    expect(res.pageSize).toBe(3)
+    expect(res.cards).toHaveLength(3)
+    expect(res.totalPages).toBe(2)
+    expect(res.hasMore).toBe(true)
+
+    // 目录覆盖**全部** 5 张，不只是本页 —— 否则跳页无从谈起。
+    expect(res.pageIndex).toHaveLength(2)
+    expect(res.pageIndex[0].digest).toBe('夜景追车起势 / 车内特写 / 撞击瞬间')
+    expect(res.pageIndex[1]).toMatchObject({ page: 2, digest: '医院走廊 / 病房对话' })
+    expect(res.pageIndex[1].cardIds).toHaveLength(2)
+
+    // 照目录跳到第 2 页，拿到的正是目录里承诺的那两张。
+    const p2 = await callTool('video_workbench_status', { page: 2 })
+    expect(p2.cards.map((c: { cardId: string }) => c.cardId)).toEqual(res.pageIndex[1].cardIds)
+  })
+
+  it('分批:目录带非草稿状态,长 prompt 截断,条数封顶', async () => {
+    const long = '一段很长的提示词'.repeat(10)
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: long }], navigate: false })
+    const res = await callTool('video_workbench_status', {})
+    // 24 字截断:目录是用来挑页的,不是用来读提示词的。
+    expect(res.pageIndex[0].digest.length).toBeLessThanOrEqual(24)
+
+    const id = res.cards[0].cardId
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? { ...c, status: 'succeeded' as const } : c)),
+    }))
+    const after = await callTool('video_workbench_status', {})
+    expect(after.pageIndex[0].digest).toContain('[succeeded]')
+  })
+
+  /**
    * 页面摘要是渐进披露缺的那一层索引：status 只回当前页的卡，别页只剩 id/name/cardCount，
    * 而页名常常只是「页面 3」——光凭「20 张卡」判断不了要不要翻过去。
    */
@@ -333,25 +381,38 @@ describe('status 分页', () => {
       .addCards(Array.from({ length: n }, (_, i) => ({ prompt: `镜 ${i + 1}` })))
   }
 
-  it('默认每页 12 张,total 报的是筛选后的全部而不是本页数量', async () => {
+  it('默认每页 3 张,total 报的是筛选后的全部而不是本页数量', async () => {
     seed(30)
     const page1 = await callTool('video_workbench_status', {})
     expect(page1.cards).toHaveLength(WORKBENCH_STATUS_PAGE_SIZE)
-    // agent 必须知道自己只看到了一部分,否则会把 12 当成全部去做决定。
+    // agent 必须知道自己只看到了一部分,否则会把 3 当成全部去做决定。
     expect(page1.total).toBe(30)
-    expect(page1).toMatchObject({ page: 1, totalPages: 3, hasMore: true })
+    expect(page1).toMatchObject({ page: 1, totalPages: 10, hasMore: true })
+    // 每页只回 3 张,但目录一次给全 10 页 —— 否则只能一页页翻到底。
+    expect(page1.pageIndex).toHaveLength(10)
   })
 
   it('翻页拿到不重不漏的下一批,最后一页 hasMore 为 false', async () => {
     const ids = seed(30)
     const seen: string[] = []
-    for (let page = 1; page <= 3; page++) {
+    for (let page = 1; page <= 10; page++) {
       const res = await callTool('video_workbench_status', { page })
       seen.push(...res.cards.map((c: any) => c.cardId))
-      expect(res.hasMore).toBe(page < 3)
+      expect(res.hasMore).toBe(page < 10)
     }
     expect(seen).toEqual(ids)
     expect(new Set(seen).size).toBe(30)
+  })
+
+  it('目录条数封顶:卡多到目录本身会膨胀时截断,页码照样能翻过去', async () => {
+    seed(120) // 120 / 3 = 40 页 > 30 条上限
+    const res = await callTool('video_workbench_status', {})
+    expect(res.totalPages).toBe(40)
+    expect(res.pageIndex).toHaveLength(WORKBENCH_STATUS_MAX_INDEX_ENTRIES)
+    // 目录截断不影响翻页:第 40 页照样取得到。
+    const last = await callTool('video_workbench_status', { page: 40 })
+    expect(last.cards).toHaveLength(3)
+    expect(last.hasMore).toBe(false)
   })
 
   it('pageSize 可调但封顶,页码越界回落到最后一页而不是回空', async () => {
