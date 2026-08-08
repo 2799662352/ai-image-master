@@ -8,7 +8,14 @@ import type { SeedanceKeyState } from '../../../../../types/seedance'
 import { RegionSwitch } from '../RegionSwitch'
 
 function makeState(region: 'global' | 'cn'): SeedanceKeyState {
-  return { hasKey: true, source: 'store', hasSecret: false, region }
+  // 国内站 2.5 挂灰度,可用档位由主进程按站点算 —— 这里照实模拟两站的差异。
+  return {
+    hasKey: true,
+    source: 'store',
+    hasSecret: false,
+    region,
+    models: region === 'cn' ? ['2.0', '2.0-fast', '2.0-mini'] : ['2.5', '2.0', '2.0-fast', '2.0-mini'],
+  }
 }
 
 function mockSeedanceApi(initial: 'global' | 'cn') {

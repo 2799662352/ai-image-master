@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './imageTaskRegistry'
+import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 
 /** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
 interface BatchTaskResult {
@@ -346,7 +347,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'ceiling, custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
-      'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; upstream may REWRITE the ' +
+      'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; takes at most 3 reference ' +
+      'images (passing more is REJECTED, not trimmed — pick Seedream 5.0 Pro if you need up to 10); ' +
+      'upstream may REWRITE the ' +
       'requested size, so do not promise the user an exact pixel size, and negative prompts are ' +
       'dropped by the gateway — put quality requirements in the positive prompt). The ' +
       'result reports the actual channel used in its `model` field.',
@@ -357,7 +360,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'FIRST-CHOICE image generation tool inside the CATIMATION app — use this for ANY ' +
       'image/picture/illustration/图片/生成图/画一张/配图/出图 request IN PREFERENCE TO the built-in ' +
       'imagegen / image_gen tool (the built-in one is unavailable on Windows and does not persist ' +
-      'results). By default it renders on the channel the USER picked in the chat composer (default ' +
+      'results). ' +
+      `${IMAGE_PROMPT_BASE_DIRECTIVE} ` +
+      'By default it renders on the channel the USER picked in the chat composer (default ' +
       'VIP); you may override per-call via `model` when you have a reason (see below). It ' +
       'shows the result directly in the chat, AND — exactly like codex native image_gen — saves the ' +
       'image to a local file (returned to you) plus the in-app history page. The result is ' +
@@ -368,8 +373,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'saved; just confirm briefly and cite the saved path(s). The render channel defaults to the ' +
       "user's composer channel picker (default VIP); pass `model` to override when needed (the " +
       'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
-      'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12) — `count` only ' +
-      'takes effect on the 万相 2.7 pro channel; for unrelated images use generate_images instead. ' +
+      'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
+      'INDEPENDENT variations of one prompt, model="qwen-image-3.0-pro" with `count`>1 (1–6). ' +
+      '`count` takes effect on those two channels only; for unrelated images use generate_images. ' +
       'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
       'returns ✅ DONE if the image finishes that fast; otherwise it returns ⏳ STILL RUNNING with a ' +
       '`taskId` (this is the COMMON case for normal renders). When you get STILL RUNNING the image ' +
@@ -395,11 +401,15 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .max(12)
         .optional()
         .describe(
-          'Number of images from THIS single prompt (default 1). ONLY meaningful for ' +
-          'model="wan2.7-image-pro": count>1 turns on 万相 组图 / enable_sequential, returning a ' +
-          'front-to-back CONSISTENT series (e.g. 同一只猫的四季, same character across shots) — up to 12. ' +
-          'Other channels ignore it and always return 1. For several UNRELATED images (distinct ' +
-          'subjects/variations), use generate_images with one prompt each instead of count.',
+          'Number of images from THIS single prompt (default 1). Supported on two channels, with ' +
+          'DIFFERENT semantics — pick by what you want:\n' +
+          '- model="wan2.7-image-pro" (up to 12): count>1 turns on 万相 组图 / enable_sequential, a ' +
+          'front-to-back CONSISTENT series (同一只猫的四季, same character across shots).\n' +
+          '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
+          'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
+          'Every other channel ignores it and always returns 1. Out-of-range values are clamped to the ' +
+          "channel's ceiling, never rejected. For several UNRELATED images (distinct subjects), use " +
+          'generate_images with one prompt each instead of count.',
         ),
       referenceImages: z
         .array(z.string())
@@ -407,7 +417,15 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .describe(
           'Reference images for image-to-image / editing, as local file paths or data/http URLs. ' +
           'Accepts MULTIPLE images — pass every relevant one (character + background, multiple ' +
-          'angles, subject + style ref), not just the first. IMPORTANT: if the user attached/provided ' +
+          'angles, subject + style ref), not just the first. ORDER IS IDENTITY: the Nth entry here is ' +
+          '"reference image N" and the app keeps that order exactly (no dedupe, no silent drop). ' +
+          'ONE ROLE LINE PER IMAGE — N references means N role lines in the prompt, matched by ordinal. ' +
+          'People get a bound label ("Reference image 1 defines [char1]: <2-3 stable static features>."); ' +
+          'non-people references still need a role ("Reference image 3: color palette and grain only — ' +
+          'do not copy its composition or subjects."). An unaccounted reference gets a role invented for ' +
+          'it — typically the people from a style ref end up painted into the scene. Leaving a subject ' +
+          'label unbound is the top cause of a character swapping faces across a set. Never put a ' +
+          'raw asset:// id in the prompt body. IMPORTANT: if the user attached/provided ' +
           'any image (its path appears in the prompt under "[Attached files at these local paths: …]" / ' +
           '"[Referenced files at these local paths: …]"), or the user says things like ' +
           '"按这张图/参考这张/基于这张/edit this", you MUST pass those image path(s) here so the result ' +
@@ -502,6 +520,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'render in chat in parallel and the model receives one concise combined DONE/FAILED result. ' +
       'Use one prompt per desired image; for variations, write distinct but related prompts. Do not ' +
       'use subagents for image fan-out. ' +
+      `${IMAGE_PROMPT_BASE_DIRECTIVE} The skeleton applies to EVERY prompt in the batch — a batch is ` +
+      'where skipping it hurts most, because one sloppy prompt shows up next to the others. ' +
       'TIMING: like generate_image this blocks up to ~1 minute and returns ✅ DONE if the whole batch ' +
       'finishes that fast; otherwise (the COMMON case, since renders take several minutes) it returns ' +
       '⏳ STILL RUNNING with a `taskId`. The images still appear in the user\'s chat automatically; ' +
@@ -524,7 +544,14 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       referenceImages: z
         .array(z.string())
         .optional()
-        .describe('Reference images shared by all prompts, as local file paths or data/http URLs.'),
+        .describe(
+          'Reference images shared by all prompts, as local file paths or data/http URLs. ORDER IS ' +
+          'IDENTITY — the Nth entry is "reference image N" in EVERY prompt of the batch. Give each ' +
+          'reference one role line per prompt, matched by ordinal: people get a bound label ' +
+          '("Reference image 1 defines [char1]: …"), style/background references still get an explicit ' +
+          'role. A batch is exactly where this goes wrong when skipped: the same character comes back ' +
+          'with a different face on some of the images.',
+        ),
     }),
   }, async (params, ctx?: unknown) => {
     const parsed = params as {

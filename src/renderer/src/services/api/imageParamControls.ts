@@ -29,6 +29,8 @@ export interface ImageParamModelConfig {
     multipleImages?: boolean
     /** 单次最大出图张数(组图上限) */
     maxOutputs?: number
+    /** 上游接受独立的反向提示词字段(DashScope 原生 `parameters.negative_prompt`) */
+    negativePrompt?: boolean
   }
 }
 
@@ -46,6 +48,8 @@ export interface ImageParamControlsState {
   supportsCount: boolean
   /** 组图上限(>=2 才有意义); 不支持时为 1 */
   maxCount: number
+  /** 是否渲染反向提示词输入框 */
+  supportsNegativePrompt: boolean
 }
 
 export const FALLBACK_RATIO_OPTIONS: ParamOption[] = [
@@ -103,6 +107,7 @@ export function deriveImageParamControls(
     defaultQuality: cfg.defaultQuality || 'auto',
     supportsCount,
     maxCount,
+    supportsNegativePrompt: Boolean(cfg.capabilities?.negativePrompt),
   }
 }
 

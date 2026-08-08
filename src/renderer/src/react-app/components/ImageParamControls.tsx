@@ -31,6 +31,12 @@ interface ImageParamControlsProps {
   /** 组图张数;仅 multipleImages 模型且传了 onCountChange 时渲染数量轴 */
   count?: number
   onCountChange?: (v: number) => void
+  /**
+   * 反向提示词;仅 `capabilities.negativePrompt` 的模型且传了 onNegativePromptChange
+   * 时渲染。不传 = 该页面不接这个字段,控件自己不会凭空冒出来。
+   */
+  negativePrompt?: string
+  onNegativePromptChange?: (v: string) => void
   /** 比例自动归位时优先选中的 key(默认 auto) */
   preferRatio?: string
   className?: string
@@ -97,6 +103,8 @@ export function ImageParamControls({
   onQualityChange,
   count,
   onCountChange,
+  negativePrompt,
+  onNegativePromptChange,
   preferRatio = 'auto',
   className,
 }: ImageParamControlsProps) {
@@ -112,10 +120,13 @@ export function ImageParamControls({
     defaultQuality,
     supportsCount,
     maxCount,
+    supportsNegativePrompt,
   } = deriveImageParamControls(modelConfig)
 
   const showQuality = supportsQuality && typeof quality === 'string' && Boolean(onQualityChange)
   const showCount = supportsCount && typeof count === 'number' && Boolean(onCountChange)
+  const showNegativePrompt =
+    supportsNegativePrompt && typeof negativePrompt === 'string' && Boolean(onNegativePromptChange)
 
   // 模型切换后自动归位(当前值不在新选项内时)
   useEffect(() => {

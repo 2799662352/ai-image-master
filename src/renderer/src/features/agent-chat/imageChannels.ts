@@ -73,7 +73,7 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     id: 'qwen-image-3.0-pro',
     label: 'Qwen3',
     fullLabel: '通义千问 Image 3.0 Pro',
-    description: '阿里通义千问 Image 3.0 Pro — 同步出图，经 Miau 代理；尺寸以实际返回为准。',
+    description: '阿里通义千问 Image 3.0 Pro — 同步出图，一次可出 1–6 张、参考图最多 3 张；尺寸以实际返回为准。',
     miauOnly: true,
   },
   {

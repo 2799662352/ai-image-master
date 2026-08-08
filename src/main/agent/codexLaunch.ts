@@ -501,6 +501,22 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // tool's canonical namespace the bare server name `catimation` (no `mcp__`
     // prefix), which the deferral escape-hatch below keys off.
     '-c', 'features.non_prefixed_mcp_tool_names=true',
+    // ─────────────────────────────────────────────────────────────────────────
+    // view_image 一律走 resized，不许发原图。
+    //
+    // 0.147 的二进制自己写着：`view_image.detail only supports 'high' or
+    // 'original'; omit 'detail' for default high resized behavior`——默认是缩过的，
+    // 但 `detail` 参数**确实暴露在 schema 里**，`ModelInfo.supports_image_detail_original`
+    // 一旦为真，模型完全可能自作主张传 `original`。
+    //
+    // 对本 app 来说那是纯亏：我们看图是为了「这张里有什么 / 是不是同一个人 /
+    // 质量过不过关」，缩过的图足够回答；而原图会按 32px patch 计费（openai/codex#19806
+    // 实测可达约 12000 token/张），还会**留在对话历史里每轮重放**——第 10 轮仍在为
+    // 第 2 轮那张图付钱。出图 / 出视频用的是原始文件，不经这条路，画质不受影响。
+    //
+    // 显式关掉而不是依赖默认：这是 experimental 列表里的开关，默认值会随版本漂，
+    // 而「看图突然变贵」是那种不会报错、只会让人觉得「今天怎么这么慢」的回归。
+    '-c', 'features.image_detail_original=false',
     // Keep first-party MCP tools directly visible instead of deferring them behind tool_search.
     '-c', 'features.code_mode.enabled=false',
     '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',

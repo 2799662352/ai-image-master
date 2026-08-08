@@ -10,6 +10,7 @@ import path from 'path'
 import type { SeedanceKeyState, SeedanceRegion } from '../../../types/seedance'
 import {
   getSeedanceRegion,
+  listSeedanceModelAliases,
   parseSeedanceRegion,
   setSeedanceRegionMemory,
 } from './region'
@@ -145,6 +146,8 @@ export function getSeedanceKeyState(): SeedanceKeyState {
     hasSecret: !!creds.apiSecret,
     secretMasked: creds.apiSecret ? `${creds.apiSecret.slice(0, 5)}****` : undefined,
     region: creds.region,
+    // 按站点算，不是把能力表的键抄一遍：2.5 在国内还挂着灰度开关。
+    models: listSeedanceModelAliases(creds.region),
   }
 }
 

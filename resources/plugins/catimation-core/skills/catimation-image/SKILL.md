@@ -32,6 +32,10 @@ image_gen skill: they render inside the chat AND persist results to local files
 
 ## STEP 0 — 任务分级(先定级,再加载)
 
+**STEP -1:这是纯文本任务吗?** 写文案、写剧本、整理文件、列清单、改一段文字 ——
+这些**一个 skill 都不要加载,也不进分级**,直接做完交付。用户说「快点」「简单弄一下」
+时同理。**只有真要出图时**才继续往下看分级表。
+
 默认进入**快速**模式;只有命中升级条件才升级。规格/方向确认过一次就不再重复问,
 自检做过就不再重复做。
 
@@ -39,7 +43,8 @@ image_gen skill: they render inside the chat AND persist results to local files
 顺序拼装,英文、现在时、重要元素前置、≤120 词。**丢字段就是出图不稳的直接来源。**
 
 1. **主体 + 动作** —— `[char1] reaches for a brass door handle`(用角色标签,别内联外貌)
-2. **角色引用** —— `[char1]` `[char2]`,外貌在全局段定义一次,每格只引用标签
+2. **角色引用** —— `[char1]` `[char2]`,外貌在全局段定义一次,每格只引用标签。
+   **有参考图时标签必须绑到具体某一张**,见下方「参考图绑定」
 3. **场景环境** —— 地点、天气、时间
 4. **镜头相机** —— `medium shot, eye-level, 50mm`
 5. **光照** —— 方向 + 质感 + 色温,如 `warm tungsten side-light from left, soft, 3200K`
@@ -50,27 +55,59 @@ image_gen skill: they render inside the chat AND persist results to local files
 「不要…」清单;只有目标模型有独立负向字段且确需时才补负向。空洞形容词
 (beautiful / amazing)单独出现不算数,必须配具体描述。
 
-**第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆写。** 每条提示词落笔前至少查
-三次 `search_cinematography_kb`,三次各查一个面,不要用同义词把同一个问题问三遍:
+**参考图绑定(有参考图就必写,与视频侧同一套纪律):** 参考图**按位置认人** ——
+`referenceImages` 里的第 N 张就是 reference image N。本 app 保证这个顺序原样送达:
+不去重、不静默丢弃、并发上传也按输入序排列。所以**角色标签必须绑到序号**,
+只写 `[char1]` 而不说它是哪张图里的人,多人多图时模型只能猜 —— 这正是「同一个人
+在组图里换脸」的头号成因。两种写法按主体数量选:
 
-1. **术语** —— 你打算用的那个机位/运动本身(`dolly in`、`arc`、`low-angle
-   pedestal`、`rack focus`…),拿库里的权威写法,而不是「镜头慢慢靠近」。
-2. **描述规范** —— 这个镜头在结构化描述里该怎么落字(机位高度 / 角度 / 景别 /
-   焦点 / 景深 / 主体位置 / 空间层次)。
-3. **范例或修正对** —— 找一条同类专业 caption,或一条 critique/fix 对照着改措辞。
-   修正对尤其值钱,它直接告诉你这类描述通常错在哪。
+- **单主体、不复用** —— 行内绑定,首次出现时写一次:
+  `[char1] (reference image 1) reaches for a brass door handle`
+- **多主体或跨图复用** —— 先在提示词开头**定义为主体**,之后全程只用标签:
+  `Reference image 1 defines [char1]: <2–3 个稳定静态特征>. Reference image 2
+  defines [char2]: <...>.` 特征只挑不随镜头变的(脸型 / 发色发型 / 标志物 / 常驻配饰),
+  别把姿势、表情、光线这类会变的写进定义里。
 
-做动画风格时再加一次 `query_sakuga_dataset`,拿真实技法标签(smears、
-impact_frames、background_animation…)与作画/studio 归属。**同一条镜头运动在同一个
-任务里查过一次就复用结论,不必逐张重查;换了运动才重查。** 工具不可用时退回联网
+四条硬规矩:
+
+- **有几张就写几条 —— 逐份负责,一张都不许留白。** 传了 N 张参考图,提示词里就要有
+  N 条职责说明,一条对一张,序号对得上。人物图 → 定义成主体标签;不是人物的图也
+  照样要有职责,写明它贡献哪一维:`Reference image 3: color palette and film grain
+  only — do not copy its composition or subjects.` **漏写哪张,模型就会自己给它安排
+  用途**,最常见的就是把风格参考图里的人也一起画进画面。这轮确实用不上的图,要么
+  别传,要么明写一句 `Reference image 4: not used this time.` —— 别指望模型自己
+  看出来哪张是多余的。
+- **一张参考图只定义一个出场主体。** 单人设定图不要同时定义两个会同时出场的人;
+  有多张单人候选时先一人一图分配。同一主体的多视角(正面 / 侧面 / 全身)才可以
+  合并到同一个标签。
+- **裸 asset ID 严禁进正文。** `asset://…` 只出现在 `referenceImages` 参数里,
+  提示词里一律用 `[charN]` 或 `reference image N` —— 模型关联不了无语义 ID。
+- **别照抄视频侧的 `@图片N`。** 视频那条路会在发送前把 `@图片1` 归一成 `图片1`
+  (`normalizeSeedancePromptReferences`),**图片链路不做这道归一**,提示词原样透传,
+  `@` 会连着进模型。图片提示词一律写英文原形 `reference image N`。
+
+**第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆编术语 —— 但也不必逐张查库。**
+查的单位是「这个机位/运动」,不是「这条提示词」。这条曾写成「每条至少查三次」,
+一组 20 张就是 60 次工具往返,几十分钟耗在把同一个 `dolly in` 反复查上。现在的口径:
+
+- **只有用到非常规机位或运动时才查** `search_cinematography_kb`(`dolly in`、`arc`、
+  `low-angle pedestal`、`rack focus`…),拿库里的权威写法而不是「镜头慢慢靠近」。
+  `medium shot, eye-level, 50mm` 这类常规组合**不查** —— 本来就没歧义。
+- **一个机位查一次就够。** 只有它是这组图的关键设计、或第一版措辞被判定含糊时,
+  才追加一次查描述规范或 critique/fix 对照。
+- **同一任务内查过的直接复用,不逐张重查。** 一组图通常只有 1–3 种机位,
+  整组的查库次数是个位数,不是张数的三倍。
+
+做动画风格时按同样口径用 `query_sakuga_dataset` 拿技法标签(smears、
+impact_frames、background_animation…)与作画/studio 归属。工具不可用时退回联网
 检索,并在交付里说明这条未经库校准。
 
 > 需要展开讲字段边界、负向清单、完整范例或常见错误对照时,再读
 > `director-prompt-engineering`。**上面这份骨架够用的任务不要去读它** —— 多一次
 > 文件读取就是多一个来回,而它给的就是这七行加上面这条查库纪律。
 
-**画面里有人,再自动加载角色链(第二个例外):** 要出的图里有人物/角色/IP,**且它需要
-复用**(组图、系列、同一个人跨会话再出、或用户给了人物参考图)——自动加载:
+**角色要复用时才载角色链。** 判据是**这个人还要再出现**(组图、系列、同一个人跨会话
+再出、或用户给了人物参考图)—— 只有这时才载下面两个;单张一次性的人物图不载:
 
 - **`director-anchor-extraction-quality`** —— 有参考图时先把它提成 Face / Build /
   Outfit / Markers 四段锚点。**锚点不足 40 词就是形象漂移的根因**,相似角色还要写出
@@ -82,9 +119,9 @@ impact_frames、background_animation…)与作画/studio 归属。**同一条镜
 外貌导致微漂移、想省 token 时,再按需看 director-structured-captioning
 (HoloCine 结构,用 `[char1]` 标签引用而不重描外貌)。
 
-**跨任务一致性靠人像库,不靠记忆(第三个例外):** 角色链解决的是「这一批图里不漂」;
-**「下次、下个会话、下个项目还是同一个人」要靠 `catimation-portrait-library`**——
-自动加载,同样不需用户点名。上面提出来的 Face / Build / Outfit / Markers 锚点,
+**跨任务一致性靠人像库,不靠记忆。** 角色链解决的是「这一批图里不漂」;
+**「下次、下个会话、下个项目还是同一个人」要靠 `catimation-portrait-library`** ——
+角色需要跨任务复用时载它,一次性配图不载。上面提出来的 Face / Build / Outfit / Markers 锚点,
 以及用户选定的主锚图,**出完图就 `add_to_portrait_library` 存成 `asset://assetId`**;
 下次要同一个人时 `list_portrait_library` 找回同一个 asset 再传进 `referenceImages`,
 而不是凭聊天记录重新描述一遍。
