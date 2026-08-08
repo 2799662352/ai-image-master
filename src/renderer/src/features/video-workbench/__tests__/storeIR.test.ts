@@ -303,6 +303,38 @@ describe('exportIR / applyIR', () => {
     expect(skip!.current).toBeUndefined()
   })
 
+  /**
+   * updateCard 被输入框逐字符调用，也被失焦 / 重渲染用同一份值重复调用。无条件 bump
+   * 的代价全落在 agent 身上：它手里那份 IR 的 rev 会因为一次「什么都没改」的调用作废，
+   * 下次回写整张卡被跳过。改页名早就是这个口径，这里对齐。
+   */
+  it('值没变的 updateCard 是无操作 —— 不该白白作废 agent 手里的令牌', async () => {
+    const [c1] = state().addCards([{ prompt: 'A', duration: 5 }])
+    const ir = state().exportIR()
+    const revBefore = state().revision
+
+    // 失焦 / 重渲染用同一份值再调一次。
+    state().updateCard(c1, { prompt: 'A' })
+    state().updateCard(c1, { duration: 5 })
+
+    expect(state().cards.find((c) => c.id === c1)!.rev).toBe(0)
+    expect(state().revision).toBe(revBefore)
+
+    // agent 那份导出仍然有效,整张卡照写不误。
+    const result = await state().applyIR({
+      ...ir,
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], prompt: 'agent 写的' }] }],
+    })
+    expect(result.skipped).toHaveLength(0)
+    expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('agent 写的')
+  })
+
+  it('但真改了一个字符照样 bump —— 不能为了少冲突把真冲突也吞掉', () => {
+    const [c1] = state().addCards([{ prompt: 'A' }])
+    state().updateCard(c1, { prompt: 'AB' })
+    expect(state().cards.find((c) => c.id === c1)!.rev).toBe(1)
+  })
+
   it('改卡片规格会 bump 那张卡的 rev,别的卡不受影响', () => {
     const [c1, c2] = state().addCards([{ prompt: 'A' }, { prompt: 'B' }])
     const byId = () => new Map(state().cards.map((c) => [c.id, c]))

@@ -408,6 +408,19 @@ export interface WorkbenchApplySkip {
    * 并发跳过时把这张卡**现在的样子**一并带回来，让调用方不必为了「看看用户改了什么」
    * 再跑一趟 export。
    *
+   * 为什么是「写入时补救」而不是「变更时推送」（2026-08-09 查证，别再重新推演）：
+   * MCP 的正解本该是把看板做成可订阅资源 —— 用户一改，agent 收到
+   * `notifications/resources/updated`，压根不会拿着过期的 IR 去写。协议这边是齐的
+   * （2026-07-28 起 `subscriptions/listen` + SubscriptionFilter 取代了
+   * `resources/subscribe`），但**客户端不认**：codex 只实现了 resources 的
+   * list / read / templates，subscribe 与 unsubscribe 都是 ❌，收到 updated 通知
+   * 也只写一行日志不往上派发（`rmcp-client/src/logging_client_handler.rs` 的
+   * `on_resource_updated` 整个函数体就一句 info!）。追踪 issue：openai/codex#16159。
+   *
+   * 也就是说现在做订阅只会得到一个没人订阅的服务端。等 #16159 落地，再把看板做成
+   * 资源、把这里降级成兜底。在那之前，写入是人和 agent **唯一必然交汇**的时刻，
+   * 所以把现场交还给它。
+   *
    * 为什么值得多带这几个字段：人和 agent 同改一块看板时，「你写的被跳过了」只说明
    * 发生了冲突，说不清该怎么办。拿到现场值，agent 就能自己判断——用户只是改了时长，
    * 那就把自己那份提示词按新时长重写再发一次；用户把提示词整个换了，那就该停下来问，

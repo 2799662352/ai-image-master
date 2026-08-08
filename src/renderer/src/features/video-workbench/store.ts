@@ -56,6 +56,7 @@ import {
   normalizeMode,
   normalizeSeed,
   reorderBoard,
+  specEquals,
   toMaterial,
 } from './cardSpec'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
@@ -1206,6 +1207,20 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             referenceVideos: updated.referenceVideos.slice(0, modeLimit(updated.mode, 'video', m)),
             referenceAudios: updated.referenceAudios.slice(0, modeLimit(updated.mode, 'audio', m)),
           }
+        }
+        // 值没变就是无操作:不 bump rev、不 bump revision、不落库。
+        //
+        // updateCard 被输入框**逐字符**调用,也被失焦 / 重渲染用同一份值重复调用。
+        // 无条件 bump 的代价全落在 agent 身上:它手里那份 IR 的 rev 会因为一次
+        // 「什么都没改」的调用而作废,下次回写整张卡被跳过。改页名早就是这么处理的
+        // (「名字没变就是无操作……白让 agent 手里的 IR 令牌失效不值」),这里对齐同一条口径。
+        //
+        // 注意这**不能**缓解「用户真的在打字」那种过期 —— 冲突看的是 rev 变没变,
+        // 不是变了几次;打一个字和打十个字对 agent 一样致命。那个要靠三方合并
+        // (导出时留基线、写入时按字段判断谁碰了什么)才治得了,不在这一笔里。
+        if (specEquals(card, updated)) {
+          updated = null
+          return card
         }
         return updated
       })
