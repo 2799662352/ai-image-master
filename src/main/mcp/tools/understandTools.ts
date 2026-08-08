@@ -342,9 +342,9 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
       description:
         'Understand / read a DOCUMENT (PDF/图文页) with qwen. Pass either file_url ' +
         '(public URL) OR a local file_path — a local path is auto-uploaded (streamed) to the history COS ' +
-        'bucket to get a public URL (≤2GB). NOTE: native document understanding is only PARTIAL upstream — ' +
-        'for best results render the page(s) to image(s) and pass an image, or extract text and ask ' +
-        'normally. Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger model. ' +
+        'bucket to get a public URL (≤2GB). PDFs are parsed natively (text AND images inside the file) — ' +
+        'just pass the .pdf, do NOT pre-render pages to images; upstream caps are 150MB / 500 pages per ' +
+        'document. Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger model. ' +
         'Returns a Chinese answer.',
       annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({

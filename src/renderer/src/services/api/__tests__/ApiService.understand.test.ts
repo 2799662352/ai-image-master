@@ -83,6 +83,31 @@ describe('ApiService.understand() — 多图与 fps', () => {
     expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: 'https://x/a.png' } })
   })
 
+  it('PDF 用 file part 而不是 image_url(发错形状上游读不出内容)', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'document', question: '总结一下', mediaUrl: 'https://x/paper.pdf',
+    })
+    expect(bodyOf().messages[0].content[1]).toEqual({
+      type: 'file', file: { file_url: 'https://x/paper.pdf' },
+    })
+  })
+
+  it('PDF 与图片混传时各用各的 part 类型', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'document',
+      question: '对照看',
+      mediaUrl: 'https://x/a.png',
+      mediaUrls: ['https://x/spec.pdf?v=2', 'https://x/b.jpg'],
+    })
+    const parts = bodyOf().messages[0].content.slice(1)
+    // 带查询串的 .pdf 也要认出来。
+    expect(parts).toEqual([
+      { type: 'file', file: { file_url: 'https://x/spec.pdf?v=2' } },
+      { type: 'image_url', image_url: { url: 'https://x/a.png' } },
+      { type: 'image_url', image_url: { url: 'https://x/b.jpg' } },
+    ])
+  })
+
   it('fps 作为 video_url 的同级字段送出;不给就不出现这个键', async () => {
     await newServiceWithKey('k').understand({
       kind: 'video', question: 'q', mediaUrl: 'https://x/v.mp4', fps: 0.5,

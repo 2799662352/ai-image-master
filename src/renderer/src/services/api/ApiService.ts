@@ -68,6 +68,33 @@ export const QWEN_UNDERSTAND_MAX_IMAGES = 2048
  * 用 Set 一转再展开虽然也保序,但这里显式写出来是为了钉住「不许排序」这条约束。
  * 空串/非字符串一并滤掉,免得组出 `image_url: { url: "" }` 让整条请求失败。
  */
+/**
+ * PDF 走**另一种 content part**。
+ *
+ * 上游对 PDF 有原生解析(`type: "file"`),而我们此前对所有「文档」一律发
+ * `image_url` —— 一个指向 .pdf 的 image_url 上游是读不出内容的,这正是
+ * understand_document 的说明里那句「原生文档只有部分支持,先渲成图效果最好」
+ * 的由来:不是上游不行,是我们发错了形状。
+ *
+ * 注意 PDF 理解**只走 Chat Completions**(官方明写「暂不支持 Responses API」),
+ * 也就是我们现在这条路,不需要另开通路。
+ *
+ * 排布上 file part 在图片之前、但整体仍在问题文本之后 —— 官方 PDF 示例是
+ * file 在前、文本在后,而我们既有的图片形态是文本在前且一直可用。两种顺序
+ * 上游都接受(content 是一组 part,不是有序指令),所以这里保持与图片一致,
+ * 避免为 PDF 单开一种排布。
+ * 上游限制:单文件 150MB / 单文档 500 页。
+ */
+function buildDocumentParts(urls: readonly string[]): Array<Record<string, unknown>> {
+  const isPdf = (u: string) => /\.pdf(?:[?#]|$)/i.test(u)
+  const pdfs = urls.filter(isPdf)
+  const images = urls.filter((u) => !isPdf(u)).slice(0, QWEN_UNDERSTAND_MAX_IMAGES)
+  return [
+    ...pdfs.map((file_url) => ({ type: 'file', file: { file_url } })),
+    ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+  ]
+}
+
 function dedupePreservingOrder(urls: readonly unknown[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
@@ -2985,9 +3012,9 @@ export class ApiService {
               // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
               // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
               // 拆成多次调用模型就看不到彼此了。
-              : dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])])
-                  .slice(0, QWEN_UNDERSTAND_MAX_IMAGES)
-                  .map((url) => ({ type: 'image_url', image_url: { url } }))),
+              : buildDocumentParts(
+                  dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])]),
+                )),
           ]
 
     const baseBody: Record<string, unknown> = { messages: [{ role: 'user', content }] }
