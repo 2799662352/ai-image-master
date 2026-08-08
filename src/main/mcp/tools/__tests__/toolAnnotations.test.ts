@@ -76,6 +76,30 @@ describe('MCP 工具注解', () => {
     for (const t of captureAll()) assertNoUndefinedShapeFields(t.name, (t as { inputSchema?: unknown }).inputSchema)
   })
 
+  /**
+   * 工具 schema 是给**别人的**校验器吃的。union 转成 JSON Schema 是 anyOf，而客户端
+   * 侧对 anyOf 的支持参差不齐 —— 实测有客户端拿 `duration: -1` 去校验
+   * `anyOf:[{enum:[-1]},{type:integer,minimum:4}]` 直接判失败，请求根本没发出来:
+   * 我们这边的 zod 明明接受，服务器日志里什么都没有，用户只看到对话里一片红。
+   *
+   * 所以顶层字段一律用朴素类型，把「哪些值真的合法」交给 handler 里的校验器 ——
+   * 它本来就要按模型分档判（4–15 还是 4–30），schema 这层从来就管不全。
+   */
+  it('没有工具的顶层字段用 union —— anyOf 在客户端校验器里不可靠', () => {
+    for (const t of captureAll()) {
+      const shape = (t as { inputSchema?: { shape?: Record<string, { _def?: { type?: string } }> } })
+        .inputSchema?.shape
+      if (!shape) continue
+      for (const [key, field] of Object.entries(shape)) {
+        // 解包 .optional() 等修饰，看真正的内层类型。
+        let def = field?._def as { type?: string; innerType?: { _def?: { type?: string } } } | undefined
+        while (def?.innerType) def = def.innerType._def as typeof def
+        expect(def?.type, `${t.name}.inputSchema.${key} 是 union —— 换成朴素类型，合法值交给 handler 校验`)
+          .not.toBe('union')
+      }
+    }
+  })
+
   it('每个工具都声明了 annotations —— 缺省值是最保守的一组，不写就是全都往最坏里说', () => {
     const missing = captureAll().filter((t) => !t.annotations).map((t) => t.name)
     expect(missing, `这些工具缺 annotations: ${missing.join(', ')}`).toEqual([])

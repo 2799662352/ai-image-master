@@ -44,8 +44,18 @@ const cardInputSchema = z.object({
   ),
   resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0" (NOT "2.5").'),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored for edit_video / extend_video on "2.5" (forced adaptive).'),
-  duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional().describe(
-    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). Default 5.',
+  // 刻意用**朴素整数区间**而不是 union([literal(-1), int().min(4)])。
+  //
+  // 那个 union 转成 JSON Schema 是 `anyOf: [{enum:[-1]}, {type:integer, minimum:4}]`,
+  // 而客户端侧的校验器对 anyOf 的支持参差不齐 —— 实测有客户端拿它校验 `duration: -1`
+  // 直接判失败，请求根本没发出来:我们这边的 zod 明明接受 -1，服务器日志里却什么都
+  // 没有，只有对话里一片红。工具 schema 是给别人的校验器吃的，越朴素越可移植。
+  //
+  // 代价是 0–3 这段在 schema 层放行了，由 validateSeedanceRequest 拦（它本来就要按
+  // 模型分档校验 4–15 / 4–30，schema 这层从来就管不全）。
+  duration: z.number().int().min(-1).max(30).optional().describe(
+    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). '
+    + 'Default 5. (0-3 are not valid; they are rejected downstream with a model-aware message.)',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
@@ -236,7 +246,7 @@ const irCardSchema = z.looseObject({
   model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional(),
   resolution: z.enum(['480p', '720p', '1080p']).optional(),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
-  duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional(),
+  duration: z.number().int().min(-1).max(30).optional(), // 同上:避开 anyOf
   generateAudio: z.boolean().optional(),
   mode: z.enum([
     'text2video', 'first_frame', 'first_last_frame', 'reference_images',
