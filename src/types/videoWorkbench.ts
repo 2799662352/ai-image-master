@@ -93,6 +93,18 @@ export const WORKBENCH_STATUS_MAX_PAGE_SIZE = 50
  */
 export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
 
+/**
+ * 页面摘要字数上限。
+ *
+ * 60 不是随手定的:摘要要跟着 boards 目录在**每一次**工作台工具调用里回传,
+ * 十页就是十条。写成句子的话十条能顶掉一整屏上下文,而它本来是用来省上下文的。
+ * 60 字够写「追车 · 夜外 · 主角车vs追兵」这种电报体,不够写一段话 —— 这个约束
+ * 本身就是在逼出正确的格式。
+ *
+ * 超限在工具层**报错**而不是静默截断:截断会在半个词上切断,agent 还以为写进去了。
+ */
+export const WORKBENCH_BOARD_SUMMARY_MAX = 60
+
 /** 参考素材条目（展示名 + 可提交源）。 */
 export interface VideoWorkbenchMaterial {
   /** 展示名（文件名 / 素材名）。 */

@@ -22,6 +22,7 @@ import type {
   SeedanceTaskUpdate,
 } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
+import { WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import type {
   VideoWorkbenchBoard,
   VideoWorkbenchCard,
@@ -1061,7 +1062,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   },
 
   setBoardSummary: (id, summary) => {
-    const trimmed = summary.trim()
+    // 工具层用 zod 硬拒超长(报错比截断诚实),但这条路也被渲染端直调 —— UI 那边
+    // 已有 maxLength,这里只是最后一道兜底,不该因为多了几个字就整个失败。
+    const trimmed = summary.trim().slice(0, WORKBENCH_BOARD_SUMMARY_MAX)
     if (!get().boards.some((b) => b.id === id)) return false
     let updated: VideoWorkbenchBoard | null = null
     set((state) => {

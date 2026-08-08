@@ -3,6 +3,7 @@
 // 视觉遵循 DESIGN.md 赛博朋克 token:激活页 #FCE300 描边,未激活 #3F3F46。
 
 import { useEffect, useRef, useState } from 'react'
+import { WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
 export function BoardTabs() {
@@ -131,7 +132,7 @@ export function BoardTabs() {
                 placeholder="这一页装的是什么"
                 aria-label={`「${board.name}」的摘要`}
                 className="bg-transparent text-[11px] w-32 outline-none border-b border-[#FCE300]/60 text-white/80 placeholder:text-white/25"
-                maxLength={200}
+                maxLength={WORKBENCH_BOARD_SUMMARY_MAX}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') commitEdit()
@@ -143,14 +144,10 @@ export function BoardTabs() {
               <span
                 // 不是 button:点它要走的是「切到这一页」,和点页名一样,不该是第二个
                 // tab stop。双击才是它自己的动作。
-                className={[
-                  'text-[11px] truncate cursor-text',
-                  // 当前页放宽到 18rem,其余保持 7rem。放宽的代价是页签变宽、栏可能
-                  // 换行,但**当前页只有一个**,代价封顶在一个页签上;若每个页签都放宽,
-                  // 几页下来整条栏能占三四行,把卡片区往下挤。
-                  // 两边都保留 truncate:摘要上限 200 字,不截断的话一条就能撑满一行。
-                  active ? 'max-w-[18rem] text-white/55' : 'max-w-[7rem] text-white/40',
-                ].join(' ')}
+                // 这一支只渲染**别页**(当前页在上面就 null 掉了),所以不需要按 active
+                // 分宽度。保留 truncate:摘要虽已收到 60 字上限,每页都摊开仍会把整条栏
+                // 撑到换行,把卡片区往下挤;全文看 title,或切过去看右侧全文位。
+                className="text-[11px] max-w-[7rem] truncate text-white/40 cursor-text"
                 title={`${summary}\n\n双击编辑摘要（清空即删除）`}
                 onClick={() => switchBoard(board.id)}
                 onDoubleClick={() => beginEdit(board.id, 'summary', summary)}
@@ -255,7 +252,7 @@ export function BoardTabs() {
           value={draft}
           placeholder="这一页装的是什么"
           aria-label="当前页摘要"
-          maxLength={200}
+          maxLength={WORKBENCH_BOARD_SUMMARY_MAX}
           className="flex-1 min-w-0 basis-40 bg-transparent text-[11px] py-1.5 outline-none border-b border-[#FCE300]/60 text-white/80 placeholder:text-white/25"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

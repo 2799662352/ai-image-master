@@ -26,6 +26,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
   WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -744,14 +745,22 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'names are usually "页面 3". A summary lets you (or the next session) pick the right page WITHOUT '
       + 'pulling its cards.\n'
       + 'Write one whenever you finish laying out a page, and refresh it when the page\'s content changes '
-      + 'shape. Keep it to one line about CONTENT (what is in it), not status ("8 cards, 3 done") — counts '
-      + 'are already in the boards list and go stale immediately. Pass an empty string to clear it.\n'
+      + 'shape. Pass an empty string to clear it.\n'
+      + `FORMAT — telegraphic, not prose. Hard limit ${WORKBENCH_BOARD_SUMMARY_MAX} characters; over that the `
+      + 'call is REJECTED (not truncated), so compress rather than trail off. Use " · " between 2-4 facts, '
+      + 'no verbs, no sentence, no trailing period: "追车 · 夜外 · 主角车vs追兵" / '
+      + '"Hospital line · interior day · Mia + doctor". Say what the page CONTAINS; never counts or status '
+      + '("8 cards, 3 done") — those are already in the boards list and go stale the moment a card changes.\n'
+      + 'Why so short: this rides along with the boards list on EVERY workbench call, so ten pages means ten '
+      + 'of these every time. A summary that costs more context than the cards it saves you from reading '
+      + 'defeats its own purpose.\n'
       + 'This does NOT invalidate an IR you are holding: a summary is a signpost, not a spec change.',
     inputSchema: z.object({
       boardId: z.string().min(1).describe('Page to annotate. Get ids from the `boards` list.'),
-      summary: z.string().max(200).describe(
-        'One line about what this page holds. Empty string clears it. Max 200 chars — it is an index '
-        + 'entry, not a document.',
+      summary: z.string().max(WORKBENCH_BOARD_SUMMARY_MAX).describe(
+        `Telegraphic index entry, max ${WORKBENCH_BOARD_SUMMARY_MAX} chars: 2-4 facts joined by " · ", `
+        + 'no verbs, no period ("追车 · 夜外 · 主角车vs追兵"). Empty string clears it. Over the limit is '
+        + 'rejected, not trimmed — compress instead of writing a sentence and letting it get cut.',
       ),
     }),
     outputSchema: z.looseObject({

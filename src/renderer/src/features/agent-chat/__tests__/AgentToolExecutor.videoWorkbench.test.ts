@@ -9,6 +9,7 @@ import {
 import { resetWorkbenchDbForTest } from '../../video-workbench/WorkbenchDb'
 import {
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
+  WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../../../types/videoWorkbench'
@@ -308,6 +309,15 @@ describe('AgentToolExecutor.video_workbench_*', () => {
 
     await callTool('video_workbench_set_board_summary', { boardId, summary: '' })
     expect(useVideoWorkbenchStore.getState().boards[0].summary).toBeUndefined()
+  })
+
+  it('页面摘要:渲染端直调超长时兜底截断(不因多几个字整个失败)', async () => {
+    const boardId = useVideoWorkbenchStore.getState().activeBoardId
+    // MCP 那侧由 zod 硬拒；这条路绕过 schema，只能兜底，但不该整个调用失败。
+    await callTool('video_workbench_set_board_summary', { boardId, summary: '追'.repeat(200) })
+    expect(useVideoWorkbenchStore.getState().boards[0].summary).toHaveLength(
+      WORKBENCH_BOARD_SUMMARY_MAX,
+    )
   })
 
   it('页面摘要:页不存在时抛可读错误并列出可用 id', async () => {

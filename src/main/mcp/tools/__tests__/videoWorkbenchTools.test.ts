@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import {
+  WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_IR_VERSION,
   WORKBENCH_MAX_TASKS_PER_CALL,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -229,6 +230,21 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ tasks: [{ ...base, referenceVideos: [...base.referenceVideos, 'C:/v10.mp4'] }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ ...base, referenceAudios: [...base.referenceAudios, 'C:/a10.mp3'] }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ ...base, duration: 31 }] }).success).toBe(false)
+  })
+
+  it('set_board_summary schema:超长**拒绝**而不是截断', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_set_board_summary').config.inputSchema
+    // 摘要跟着 boards 目录在每次工作台调用里回传，写成句子会反过来吃掉它想省的上下文。
+    expect(schema.safeParse({ boardId: 'b1', summary: '追车 · 夜外 · 主角车vs追兵' }).success).toBe(true)
+    // 空串 = 清除。
+    expect(schema.safeParse({ boardId: 'b1', summary: '' }).success).toBe(true)
+    // 截断会在半个词上切断而 agent 以为写进去了，所以这里必须是硬拒。
+    expect(schema.safeParse({
+      boardId: 'b1',
+      summary: 'x'.repeat(WORKBENCH_BOARD_SUMMARY_MAX + 1),
+    }).success).toBe(false)
   })
 
   it('remove_tasks schema:cardIds 非空必填', () => {
