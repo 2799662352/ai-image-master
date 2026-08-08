@@ -26,6 +26,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
   WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -766,6 +767,36 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       // 的卡会被追加到列出的卡后面(workbenchIR 的 placeExisting),所以限制张数会让
       // 「重排一个二十张卡的页」变成不可能 —— 只列前五张就把它们顶到最前、其余全部
       // 挤下去。按体积卡不会误伤那种正当用法。
+      // 内容卡硬闸。数的是**携带内容的卡**,不是卡片总数 —— 只给 id 的占位条目
+      // 不计入,所以「重排二十张卡」照样一次做完(按总数拦会把没列出的卡挤下去,
+      // 见下面那段注释)。这里拦的是另一件事:一次回写十七段完整提示词。
+      const irCards = ((params as { ir?: { boards?: Array<{ cards?: unknown[] }> } }).ir?.boards ?? [])
+        .flatMap((b) => (Array.isArray(b?.cards) ? b.cards : []))
+      const contentCards = irCards.filter((c) => {
+        if (!c || typeof c !== 'object') return false
+        const keys = Object.keys(c as Record<string, unknown>)
+        // id / rev 是身份与令牌,不算内容。其余任何一个字段都算。
+        return keys.some((k) => k !== 'id' && k !== 'rev')
+      })
+      if (contentCards.length > WORKBENCH_APPLY_MAX_CONTENT_CARDS) {
+        return errorResult(
+          'video_workbench_apply',
+          new Error(
+            `this IR carries content for ${contentCards.length} cards, over the limit of `
+            + `${WORKBENCH_APPLY_MAX_CONTENT_CARDS}. Nothing was written. Rewriting many cards through `
+            + 'apply is the slowest path in the session: apply is declarative, so every card must carry '
+            + 'its full prompt and material arrays back through the model.\n'
+            + 'Pick the tool that matches what you are actually doing:\n'
+            + '• Same spec across many cards (480p / webSearch / model) → video_workbench_set_spec, one call.\n'
+            + '• Different prompts per card → video_workbench_update_task, once per card. Each lands '
+            + 'immediately and a conflict on card 7 does not cost you cards 1-6.\n'
+            + '• Pure reordering → keep using apply, but send POSITION-ONLY entries: a card object with '
+            + 'ONLY `id` (plus optional `rev`) keeps its content untouched and just takes that slot. '
+            + 'Those do not count against this limit, so a 20-card reorder is still one call.',
+          ),
+        )
+      }
+
       const irChars = JSON.stringify((params as { ir?: unknown }).ir)?.length ?? 0
       if (irChars > RESULT_CHAR_BUDGET) {
         return errorResult(
