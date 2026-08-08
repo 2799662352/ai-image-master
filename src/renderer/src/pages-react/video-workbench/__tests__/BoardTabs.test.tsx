@@ -44,6 +44,50 @@ describe('BoardTabs', () => {
     expect(screen.getByRole('tab', { name: /页面 2/ })).toBeTruthy()
   })
 
+  /**
+   * 摘要原本只有 agent 写得了。不给 UI 入口的话，agent 写错用户改不掉，
+   * 也不知道自己这一页被标成了什么 —— 那是个单向门。
+   */
+  it('摘要:写过的页行内显示,完整内容进 title(行内是截断的)', () => {
+    const { activeBoardId, setBoardSummary } = useVideoWorkbenchStore.getState()
+    setBoardSummary(activeBoardId, '追车戏 8 镜，全部夜景')
+    render(<BoardTabs />)
+
+    const inline = screen.getByText('追车戏 8 镜，全部夜景')
+    expect(inline.getAttribute('title')).toContain('追车戏 8 镜，全部夜景')
+    // 摘要不该是第二个 tab stop：点它和点页名是同一个意图（切到这页）。
+    expect(inline.tagName).toBe('SPAN')
+  })
+
+  it('摘要:没写过的页给「＋摘要」入口,点开写入并落库', () => {
+    render(<BoardTabs />)
+    fireEvent.click(screen.getByRole('button', { name: /给「页面 1」写摘要/ }))
+    const input = screen.getByRole('textbox') as HTMLInputElement
+    expect(input.value).toBe('')
+
+    fireEvent.change(input, { target: { value: '医院线，3 镜' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(useVideoWorkbenchStore.getState().boards[0].summary).toBe('医院线，3 镜')
+  })
+
+  it('摘要:双击可改,清空即删除,Esc 不落盘', () => {
+    const { activeBoardId, setBoardSummary } = useVideoWorkbenchStore.getState()
+    setBoardSummary(activeBoardId, '旧摘要')
+    render(<BoardTabs />)
+
+    fireEvent.doubleClick(screen.getByText('旧摘要'))
+    let input = screen.getByRole('textbox') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '改过的' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(useVideoWorkbenchStore.getState().boards[0].summary).toBe('旧摘要')
+
+    fireEvent.doubleClick(screen.getByText('旧摘要'))
+    input = screen.getByRole('textbox') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '  ' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(useVideoWorkbenchStore.getState().boards[0].summary).toBeUndefined()
+  })
+
   it('双击页签进入行内编辑,Enter 确认重命名', () => {
     render(<BoardTabs />)
     fireEvent.doubleClick(screen.getByRole('tab', { name: /页面 1/ }))
