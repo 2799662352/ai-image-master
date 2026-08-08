@@ -257,6 +257,66 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(exportDesc).toMatch(/no file on\s+disk|IndexedDB/i)
   })
 
+  /** 造一块必定超预算的看板。 */
+  function hugeBoard(n: number) {
+    return {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 3,
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        cards: Array.from({ length: n }, (_, i) => ({
+          id: `c${i}`, rev: 0, prompt: `镜 ${i} ${'很长的提示词'.repeat(200)}`,
+        })),
+      }],
+    }
+  }
+
+  /**
+   * 超预算不报错 —— 报错再重试要花两个模型回合，而调用方并没做错什么，只是看板大。
+   * 关键是剥成占位而不是**删掉**那些卡:IR 是声明式的，少列一张在 merge 模式下会把
+   * 它挤到后面去。占位让这份残缺导出**依然可以直接回写**。
+   */
+  it('export 超预算:回前缀而不是报错，其余剥成占位，并给出续取偏移', async () => {
+    const { tools, server, router } = capture(hugeBoard(30))
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_export').handler({})
+    const text = res.content.map((c: { text: string }) => c.text).join('\n')
+
+    expect(text).toContain('PARTIAL')
+    // 「PARTIAL 却不给续取参数」只是礼貌版的硬错误。
+    expect(text).toMatch(/contentFrom:\d+/)
+    // 得说清没带回来的是被省略而不是被删了，否则 agent 不敢回写。
+    expect(text).toContain('NOT deleted')
+
+    const cards = res.structuredContent.boards[0].cards
+    expect(cards).toHaveLength(30) // 一张都不能少，少了就乱序
+    const full = cards.filter((c: Record<string, unknown>) => 'prompt' in c)
+    expect(full.length).toBeGreaterThan(0)
+    expect(full.length).toBeLessThan(30)
+    // 没带内容的只剩身份与令牌。
+    const stub = cards.find((c: Record<string, unknown>) => !('prompt' in c))
+    expect(Object.keys(stub).sort()).toEqual(['id', 'rev'])
+  })
+
+  it('export 未超预算:一个字都不改，也不喊 PARTIAL', async () => {
+    const { tools, server, router } = capture(hugeBoard(1))
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_export').handler({})
+    expect(res.content.map((c: { text: string }) => c.text).join('\n')).not.toContain('PARTIAL')
+    expect(res.structuredContent.boards[0].cards[0]).toHaveProperty('prompt')
+  })
+
+  it('export contentFrom:续取从指定位置开始出全文', async () => {
+    const { tools, server, router } = capture(hugeBoard(30))
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_export').handler({ contentFrom: 20 })
+    const cards = res.structuredContent.boards[0].cards
+    // 前 20 张这一轮不带内容，从第 21 张起才有。
+    expect(cards.slice(0, 20).every((c: Record<string, unknown>) => !('prompt' in c))).toBe(true)
+    expect(cards[20]).toHaveProperty('prompt')
+  })
+
   it('apply 硬闸:内容卡超限整份拒绝、零写入，并点名该换哪个工具', async () => {
     const { tools, server, router } = capture()
     registerVideoWorkbenchTools(server, router)
@@ -787,13 +847,24 @@ describe('渐进式披露:体积闸(响亮失败,不交给客户端静默截断)
     return { irVersion: 2, structureRevision: 1, boards: [{ name: 'x', cards: [{ prompt: 'x'.repeat(30_000) }] }] }
   }
 
-  it('export 结果超预算 → isError + 指路怎么缩小范围,而不是把半截 JSON 交出去', async () => {
+  /**
+   * 契约已翻:export 超预算**不再报错**。
+   *
+   * 原来的理由是「半截 JSON 交出去会被当成完整的回写，把没带回来的字段清成默认值」——
+   * 那个担心是对的，但答案不是拒绝服务。有了「只占位」条目之后，残缺的导出可以做到
+   * **依然安全可回写**:每张卡都在（顺序不乱），没带内容的保持原样。
+   *
+   * 报错再重试要花两个模型回合，而调用方并没做错什么，只是这块看板大。
+   */
+  it('export 结果超预算 → 回前缀 + 续取偏移，而不是拒绝服务', async () => {
     const { tools, server, router } = capture(oversized())
     registerVideoWorkbenchTools(server, router)
     const res = await toolByName(tools, 'video_workbench_export').handler({ allBoards: true })
-    expect(res.isError).toBe(true)
-    expect(res.structuredContent).toBeUndefined()
-    expect(res.content[0].text).toContain('boardId')
+    expect(res.isError).toBeFalsy()
+    expect(res.structuredContent).toBeDefined()
+    const text = res.content.map((c: { text: string }) => c.text).join('\n')
+    expect(text).toContain('PARTIAL')
+    expect(text).toMatch(/contentFrom:\d+/)
   })
 
   it('apply 入参超预算 → 直接拒,不打到 renderer', async () => {

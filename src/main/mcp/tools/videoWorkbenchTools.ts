@@ -369,6 +369,65 @@ function okResult(bannerLines: string[], structured: unknown): WorkbenchToolResu
  * agent 拿到一份被截断的 IR 再回写,被截掉的卡片字段会被清成默认值 —— 那是数据
  * 丢失,不是性能问题。报错至少让 agent 知道要缩小范围。
  */
+/** 一张卡剥成「只占位」——保留身份与并发令牌,丢掉内容(不是删除,是本次没带回)。 */
+function toPositionOnly(card: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: card.id,
+    ...(typeof card.rev === 'number' ? { rev: card.rev } : {}),
+  }
+}
+
+/**
+ * 把整板导出压进预算:从 `from` 开始按顺序保留整卡内容,装不下的剥成占位。
+ *
+ * 为什么是降级而不是报错 —— 报错再重试要花两个模型回合,而调用方并没做错什么,
+ * 只是这块看板大。回前缀 + 续取参数,能用的部分立刻可用。
+ *
+ * 为什么剥成占位而不是**删掉**那些卡:IR 是声明式的,少列一张卡在 merge 模式下
+ * 会把它挤到后面去(placeExisting)。占位条目让这份残缺的导出**依然可以直接回写** ——
+ * 顺序不乱、没带回来的卡内容原样保留。这是「截断」和「安全的截断」之间的区别。
+ */
+function degradeExportToBudget(
+  structured: unknown,
+  from: number,
+): { ir: unknown; kept: number; total: number; truncated: boolean } {
+  const ir = structured as { boards?: Array<{ cards?: Array<Record<string, unknown>> }> } | null
+  const boards = Array.isArray(ir?.boards) ? ir!.boards : []
+  const total = boards.reduce((n, b) => n + (Array.isArray(b?.cards) ? b.cards.length : 0), 0)
+  if (JSON.stringify(structured).length <= RESULT_CHAR_BUDGET && from === 0) {
+    return { ir: structured, kept: total, total, truncated: false }
+  }
+
+  // 先全剥成占位量出底价(占位是不可省的:少一张就会乱序),再从 from 开始逐张
+  // 换回整卡,直到装不下。
+  let used = JSON.stringify({
+    ...(structured as object),
+    boards: boards.map((b) => ({ ...b, cards: (b.cards ?? []).map(toPositionOnly) })),
+  }).length
+  const keep = new Set<number>()
+  let seen = 0
+  for (const board of boards) {
+    for (const card of board.cards ?? []) {
+      const i = seen++
+      if (i < from) continue
+      const cost = JSON.stringify(card).length - JSON.stringify(toPositionOnly(card)).length
+      if (used + cost > RESULT_CHAR_BUDGET) continue
+      used += cost
+      keep.add(i)
+    }
+  }
+
+  let idx = 0
+  const out = {
+    ...(structured as object),
+    boards: boards.map((b) => ({
+      ...b,
+      cards: (b.cards ?? []).map((c) => (keep.has(idx++) ? c : toPositionOnly(c))),
+    })),
+  }
+  return { ir: out, kept: keep.size, total, truncated: keep.size < total }
+}
+
 function guardResultSize(tool: string, structured: unknown, howToNarrow: string): WorkbenchToolResult | null {
   const chars = JSON.stringify(structured)?.length ?? 0
   if (chars <= RESULT_CHAR_BUDGET) return null
@@ -703,6 +762,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'Export every board. Only needed for cross-board changes; the payload grows with the whole '
         + 'workbench and may be rejected as too large. Ignored when boardId is given.',
       ),
+      contentFrom: z.number().int().min(0).optional().describe(
+        'Continuation offset for an export that came back PARTIAL. A board too large to fit in one '
+        + 'response is never rejected — it comes back with full content for as many cards as fit and '
+        + 'position-only `{id, rev}` for the rest, plus the offset to resume from. Pass that number here '
+        + 'to get the next batch. Usually you do not need this: naming cardIds is more direct.',
+      ),
       cardIds: z.array(z.string()).optional().describe(
         'Full content for THESE cards only; every other card comes back as a position-only `{id, rev}`. '
         + 'This is how you read long prompts a few at a time — status truncates at ~120 chars, and a '
@@ -726,18 +791,28 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_export', params as Record<string, unknown>, extractCodexThreadId(ctx))
-      const tooBig = guardResultSize(
-        'video_workbench_export',
-        result,
-        'Export one board at a time (boardId), and drop allBoards. If a SINGLE board is still too large, '
-        + 'it has too many cards to round-trip — edit those cards individually with '
-        + 'video_workbench_update_task, or ask the user to split the board in two.',
-      )
-      if (tooBig) return tooBig
+      // 超预算**不报错**。报错再重试等于把一次大结果的代价翻倍(两个模型回合),
+      // 而调用方并没做错什么 —— 只是这块看板大。改成回前缀 + 续取句柄:能用的
+      // 部分立刻可用,不够再来一次。「PARTIAL 却不给续取参数」才是礼貌版的硬错误。
+      const from = typeof (params as { contentFrom?: unknown }).contentFrom === 'number'
+        ? Math.max(0, (params as { contentFrom: number }).contentFrom)
+        : 0
+      const { ir, kept, total, truncated } = degradeExportToBudget(result, from)
+      if (!truncated) {
+        return okResult([
+          '✅ video_workbench_export — edit this JSON and send it back through video_workbench_apply '
+          + '(keep `irVersion`, `structureRevision` and every card `rev` unchanged).',
+        ], ir)
+      }
+      const next = from + kept
       return okResult([
-        '✅ video_workbench_export — edit this JSON and send it back through video_workbench_apply '
-        + '(keep `irVersion`, `structureRevision` and every card `rev` unchanged).',
-      ], result)
+        `⚠️ PARTIAL — full content for cards ${from + 1}–${next} of ${total}; every other card came `
+        + 'back as a position-only `{id, rev}` (content omitted, NOT deleted).',
+        `Continue with contentFrom:${next} to read the next batch. Or skip the walk entirely: `
+        + 'video_workbench_export({ cardIds:[…] }) fetches exactly the cards you name.',
+        'This IR is still safe to apply as-is — every card is listed so order is preserved, and the '
+        + 'position-only ones keep their current prompt and materials untouched.',
+      ], ir)
     } catch (error) {
       return errorResult('video_workbench_export', error)
     }
