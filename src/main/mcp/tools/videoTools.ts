@@ -30,6 +30,7 @@ import type {
   SeedanceTaskState,
 } from '../../services/seedance/types'
 import { validateSeedanceRequest } from '../../services/seedance/types'
+import { PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 
 /** check_video_task 服务端长轮询窗口（须 < codex 工具超时，留足余量）。 */
 export const CHECK_LONG_POLL_MS = 25_000
@@ -270,7 +271,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'user explicitly asks for it or has a clear first/last-frame need. This ONE tool also covers ' +
       'VIDEO EDITING (替换/增删/修改元素 in an existing clip) and VIDEO EXTENSION (向前/向后延长 or ' +
       'stitching up to 3 clips): both are just omni-reference under the hood — pass the source clip(s) ' +
-      'via referenceVideos and write an edit/extend-style prompt (see the catimation-video skill). In ' +
+      'via referenceVideos and write an edit/extend-style prompt (see the catimation-video skill). ' +
+      `${PROMPT_BASE_DIRECTIVE} In ` +
       'the prompt, refer to materials by canonical ordinal ("视频1 / 图片1 / 音频1"), never by assetId. ' +
       'The runtime also accepts and normalizes @Video1/@Image1/@Audio1, @视频1/@图片1/@音频1, ' +
       '【@图片1】, and legacy <图片1> aliases before submission. Note: real ' +
