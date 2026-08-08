@@ -43,11 +43,17 @@ describe('buildGatewayModelCatalog', () => {
     })
 
     expect(catalog.models.map((model) => model.id)).toEqual([
+      // 顺序 = CANONICAL_MODEL_SETTINGS_ROWS 的下标（sortByCanonicalOrder），
+      // 不再是组装顺序。qwen 因此排到 grok 之前；claude 两档也跟随 canonical
+      // （sonnet 在 opus 前），而不是渠道 allowedModels 的书写次序。
       'gpt-5.5',
       'gpt-5.5-openai-compact',
+      'qwen3.7-plus-dashscope',
+      'qwen3.7-max-dashscope',
+      'qwen3.8-max',
       'grok-4.5',
-      'claude-opus-5',
       'claude-sonnet-5',
+      'claude-opus-5',
     ])
     expect(catalog.models.find((model) => model.id === 'gpt-5.5-openai-compact')?.route)
       .toMatchObject({ channelId: 'rightcode-standard', family: 'openai' })
@@ -228,6 +234,9 @@ describe('buildGatewayModelCatalog', () => {
       'claude-sonnet-5',
       'gpt-5.5',
       'grok-4.5',
+      'qwen3.7-max-dashscope',
+      'qwen3.7-plus-dashscope',
+      'qwen3.8-max',
     ])
   })
 })

@@ -813,6 +813,56 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       resolutionControl: true
     }
   },
+  'qwen-image-3.0-pro': {
+    name: '通义千问 Image 3.0 Pro',
+    displayName: '通义千问 Image 3.0 Pro，DashScope 同步多模态出图（经 Miau API 代理，OpenAI 兼容端点）；尺寸以实际返回为准',
+    time: '30s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    apiType: 'image-generation',
+    sizeStrategy: 'seedream',
+    ratios: [
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' }
+    ],
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '快速出图' },
+      { key: '2K', label: '2K 高清', description: '标准分辨率' }
+    ],
+    defaultResolution: '2K',
+    // ⚠️ 这张表是**请求值**，不是承诺值。接入说明 2026-08-07 §6：上游可能忽略或
+    // 改写请求尺寸（实测请求 1328×1328 拿回约 1792×2400，元数据里带 qima_output_2k
+    // 一类标记）。对像素有硬要求时要按拿回的图校验，别拿这里的数字当结果。
+    resolutionMap: {
+      '1:1':  { '1K': '1024x1024', '2K': '1328x1328' },
+      '2:3':  { '1K': '848x1264',  '2K': '1104x1664' },
+      '3:2':  { '1K': '1264x848',  '2K': '1664x1104' },
+      '3:4':  { '1K': '896x1200',  '2K': '1140x1472' },
+      '4:3':  { '1K': '1200x896',  '2K': '1472x1140' },
+      '9:16': { '1K': '768x1376',  '2K': '928x1664' },
+      '16:9': { '1K': '1376x768',  '2K': '1664x928' }
+    },
+    // negative_prompt 有意不出现：网关的 AliImageParameters 里没有这个键，反序列化
+    // 时会被丢弃（接入说明 §9），发了也是白发 —— 画质要求得写进正向提示词。
+    defaultParams: {
+      response_format: 'url',
+      watermark: false
+    },
+    responseFormats: ['url', 'b64_json'],
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      referenceImage: true,
+      imageEdit: false,
+      maxOutputs: 1,
+      resolutionControl: true
+    }
+  },
   'sora_image': {
     name: 'Sora Image',
     displayName: '90s出图，Sora网页版出图，同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】',
@@ -900,6 +950,7 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'custom-imagemodel-gt',
   'gemini-3.1-flash-image',
   'wan2.7-image-pro',
+  'qwen-image-3.0-pro',
   'gpt-image-2',
   'gpt-image-2-vip',
 ]

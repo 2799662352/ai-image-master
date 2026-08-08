@@ -39,7 +39,13 @@ import { SeedanceTaskManager } from './taskManager'
 import { relayDataUrlToCos, relayFileToCos } from '../tencent/mediaRelay'
 import { MIME_BY_EXT, resolveMediaUrl } from './mediaResolve'
 import { cleanupOrphanParts } from './videoDownload'
-import type { CreateVideoTaskInput, SeedanceContentItem } from './types'
+import type {
+  CreateVideoTaskInput,
+  SeedanceContentItem,
+  SeedanceModelAlias,
+  SeedanceTaskMode,
+} from './types'
+import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
@@ -449,19 +455,35 @@ export function initSeedanceRuntime(opts: {
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
     const seedRaw = Number(payload?.seed)
     const durationRaw = Number(payload?.duration)
+    // 别名与时长/分辨率的收敛都必须**按模型**来 —— 2.5 能到 30 秒但只到 720p,
+    // 写死 15 会把用户选的 30 秒悄悄夹成 15，成片比预期短一半还不报错。
+    const model: SeedanceModelAlias = isSeedanceModelAvailable(payload?.model as SeedanceModelAlias)
+      ? (payload.model as SeedanceModelAlias)
+      : '2.0'
+    const caps = capabilitiesFor(model)
+    const taskMode: SeedanceTaskMode | undefined =
+      (payload?.taskMode === 'edit' || payload?.taskMode === 'extend') &&
+      caps.taskModes.includes(payload.taskMode)
+        ? payload.taskMode
+        : undefined
     const input: CreateVideoTaskInput = {
       prompt: String(payload?.prompt ?? ''),
-      model:
-        payload?.model === '2.0-fast' || payload?.model === '2.0-mini' ? payload.model : '2.0',
-      resolution: (['480p', '720p', '1080p'] as const).find((r) => r === payload?.resolution) ?? '720p',
+      model,
+      resolution:
+        (caps.resolutions.find((r) => r === payload?.resolution) as
+          | '480p'
+          | '720p'
+          | '1080p'
+          | undefined) ?? '720p',
       ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
-      // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余收敛到 4–15。
+      // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余按该模型的区间收敛。
       duration: !Number.isFinite(durationRaw)
         ? 5
         : durationRaw === -1
           ? -1
-          : Math.min(15, Math.max(4, Math.round(durationRaw))),
+          : Math.min(caps.duration.max, Math.max(caps.duration.min, Math.round(durationRaw))),
       generateAudio: payload?.generateAudio !== false,
+      ...(taskMode ? { taskMode } : {}),
       // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
       ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
       ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),

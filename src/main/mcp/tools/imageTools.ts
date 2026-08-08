@@ -333,6 +333,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'wan2.7-image-pro',
       'gemini-3.1-flash-image',
       'doubao-seedream-5-0-pro-260628',
+      'qwen-image-3.0-pro',
     ])
     .optional()
     .describe(
@@ -344,7 +345,10 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'gpt-image-2 = API易 OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ' +
       'ceiling, custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
-      'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call). The ' +
+      'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
+      'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; upstream may REWRITE the ' +
+      'requested size, so do not promise the user an exact pixel size, and negative prompts are ' +
+      'dropped by the gateway — put quality requirements in the positive prompt). The ' +
       'result reports the actual channel used in its `model` field.',
     )
 

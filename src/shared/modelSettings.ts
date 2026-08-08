@@ -109,6 +109,35 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
     isDefault: false,
   },
+  // 通义千问三档（Miau / new-api 网关，完整 OpenAI 兼容 Responses）。这些 slug
+  // 之前只在后台跑（qwen 子代理 + MCP 理解工具），现在也能当主对话模型选。
+  //
+  // ⚠️ 本数组的顺序**不等于**选择器里的顺序。`buildGatewayModelCatalog` 先铺网关
+  // `model/list` 回来的动态行、再补静态行，而 qwen 不在 apiyi/rightcode 的
+  // model/list 里（它挂在 Miau 上），所以它总是走第二轮、被追加到列表末尾。
+  // 产品要求 qwen 排在 Grok 上方 —— 那需要在 catalog 组装处按本数组重排，光挪
+  // 这几行没用。改之前先看 gatewayModelCatalog 的两轮循环。
+  {
+    id: 'qwen3.7-plus-dashscope',
+    displayName: 'Qwen 3.7 Plus',
+    tier: 'Medium',
+    description: '通义千问 3.7 Plus（Miau 网关）。日常够用且更便宜，理解类任务的默认档。',
+    isDefault: false,
+  },
+  {
+    id: 'qwen3.7-max-dashscope',
+    displayName: 'Qwen 3.7 Max',
+    tier: 'High',
+    description: '通义千问 3.7 Max（Miau 网关）。比 Plus 更强，长文与复杂推理用它。',
+    isDefault: false,
+  },
+  {
+    id: 'qwen3.8-max',
+    displayName: 'Qwen 3.8 Max',
+    tier: 'Extra High',
+    description: '通义千问 3.8 Max（Miau 网关）。最新一代，支持 thinking / reasoning。',
+    isDefault: false,
+  },
   {
     id: 'grok-4.5',
     displayName: 'Grok 4.5',

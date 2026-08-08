@@ -77,7 +77,10 @@ describe('registerVideoTools / schemas', () => {
     const schema = tools[0].config.inputSchema
     expect(schema.safeParse({ prompt: '' }).success).toBe(false)
     expect(schema.safeParse({ prompt: 'x', duration: 3 }).success).toBe(false)
-    expect(schema.safeParse({ prompt: 'x', duration: 16 }).success).toBe(false)
+    // schema 放到全模型最宽的 4–30（2.5 需要）；按模型收窄由 validateSeedanceRequest
+    // 在 handler 里做，所以 16 在这一层是合法的、31 才越界。
+    expect(schema.safeParse({ prompt: 'x', duration: 16 }).success).toBe(true)
+    expect(schema.safeParse({ prompt: 'x', duration: 31 }).success).toBe(false)
     expect(schema.safeParse({ prompt: 'x', duration: 15 }).success).toBe(true)
     expect(schema.safeParse({ prompt: 'x', resolution: '4K' }).success).toBe(false)
   })
@@ -87,7 +90,26 @@ describe('registerVideoTools / schemas', () => {
     registerVideoTools(server, router)
     const res = await tools[0].handler({ prompt: 'x', model: '2.0-fast', resolution: '1080p' })
     expect(router.call).not.toHaveBeenCalled()
-    expect((res.content[0] as { text: string }).text).toContain('1080p requires model "2.0"')
+    expect((res.content[0] as { text: string }).text).toContain('1080p')
+  })
+
+  it('generate_video handler rejects 16s on 2.0 but allows it on 2.5', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const tooLong = await tools[0].handler({ prompt: 'x', model: '2.0', duration: 16 })
+    expect(router.call).not.toHaveBeenCalled()
+    expect((tooLong.content[0] as { text: string }).text).toContain('4-15')
+
+    await tools[0].handler({ prompt: 'x', model: '2.5', duration: 30 })
+    expect(router.call).toHaveBeenCalled()
+  })
+
+  it('generate_video handler rejects taskMode without a reference video', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const res = await tools[0].handler({ prompt: 'x', model: '2.5', taskMode: 'edit', duration: -1 })
+    expect(router.call).not.toHaveBeenCalled()
+    expect((res.content[0] as { text: string }).text).toContain('视频')
   })
 
   it('generate_video blocks until succeeded and returns DONE + saved path + resource_link', async () => {

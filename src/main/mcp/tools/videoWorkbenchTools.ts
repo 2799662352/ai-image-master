@@ -32,25 +32,26 @@ import {
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
-  model: z.enum(['2.0', '2.0-fast', '2.0-mini']).optional().describe(
-    'Seedance model. Default "2.0" (full quality); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only).',
+  model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional().describe(
+    'Seedance model. Default "2.0" (full quality); "2.5" for长镜头 up to 30s, 30/10/10 materials and edit/extend '
+    + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only).',
   ),
-  resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0".'),
-  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
-  duration: z.union([z.literal(-1), z.number().int().min(4).max(15)]).optional().describe(
-    'Seconds (4-15), or -1 = smart duration (model decides). Default 5.',
+  resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0" (NOT "2.5").'),
+  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored for edit_video / extend_video on "2.5" (forced adaptive).'),
+  duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional().describe(
+    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). Default 5.',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
-  referenceImages: z.array(z.string()).max(9).optional().describe(
-    'Up to 9 reference images: local path / https URL / asset://assetId (portrait library) / data: URL. '
+  referenceImages: z.array(z.string()).max(30).optional().describe(
+    'Up to 9 reference images (30 with model "2.5"): local path / https URL / asset://assetId (portrait library) / data: URL. '
     + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
     + 'you actually see (subject, framing, palette, wardrobe) — a prompt inferred from the filename '
     + 'contradicts the picture, and the model follows the picture. This does NOT conflict with the rule '
     + 'against batch-opening generated OUTPUTS: those the user is already looking at, this is your INPUT.',
   ),
-  referenceVideos: z.array(z.string()).max(3).optional().describe('Up to 3 reference videos (combined ≤15s).'),
-  referenceAudios: z.array(z.string()).max(3).optional().describe('Up to 3 reference audios (combined ≤15s).'),
+  referenceVideos: z.array(z.string()).max(10).optional().describe('Up to 3 reference videos (10 with model "2.5"), combined ≤15s. Required for mode edit_video / extend_video.'),
+  referenceAudios: z.array(z.string()).max(10).optional().describe('Up to 3 reference audios (10 with model "2.5"), combined ≤15s. Model "2.5" accepts audio-only references.'),
 })
 
 // ---------------------------------------------------------------------------
@@ -203,9 +204,11 @@ const irCardSchema = z.looseObject({
   ]).optional(),
   seed: z.number().int().min(0).max(4294967295).optional(),
   webSearch: z.boolean().optional(),
-  referenceImages: z.array(irMaterialSchema).max(9).optional(),
-  referenceVideos: z.array(irMaterialSchema).max(3).optional(),
-  referenceAudios: z.array(irMaterialSchema).max(3).optional(),
+  // 上限取全模型最宽（2.5 的 30/10/10）；按模型收窄由渲染端 canStart 与主进程
+  // validateSeedanceRequest 负责 —— schema 写死 9/3/3 会让 2.5 的卡片直接被拒。
+  referenceImages: z.array(irMaterialSchema).max(30).optional(),
+  referenceVideos: z.array(irMaterialSchema).max(10).optional(),
+  referenceAudios: z.array(irMaterialSchema).max(10).optional(),
   result: z.looseObject({
     status: z.string(),
     taskId: z.string().optional(),
@@ -358,7 +361,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       'Batch output surface of the catimation-video skill — load that skill first, grade the request ' +
       '(快速/标准/专业/制片) and write the prompt with the same discipline as generate_video. ' +
-      'Per card the material caps are identical too: referenceImages ≤9, referenceVideos ≤3 and ≤15s ' +
+      'Per card the material caps are identical too: referenceImages ≤9 (30 on model 2.5), referenceVideos ≤3 (10 on 2.5) and ≤15s ' +
       'in total, referenceAudios ≤3 and ≤15s in total. ' +
       'Add one or more video task cards to the 「生成视频」 workbench page (the scroll-style concurrent ' +
       'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
@@ -422,7 +425,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
       'the prompt — same reason as on add_tasks: the render follows the picture, not the filename. ' +
-      'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and ≤15s in total, ' +
+      'Material caps per card: referenceImages ≤9 (30 on model 2.5), referenceVideos ≤3 (10 on 2.5) and ≤15s in total, ' +
       'referenceAudios ≤3 and ≤15s in total.',
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
@@ -571,7 +574,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
-      + '• Material caps per card: referenceImages ≤9, referenceVideos ≤3 and ≤15s in total, '
+      + '• Material caps per card: referenceImages ≤9 (30 on model 2.5), referenceVideos ≤3 (10 on 2.5) and ≤15s in total, '
       + 'referenceAudios ≤3 and ≤15s in total.\n'
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '

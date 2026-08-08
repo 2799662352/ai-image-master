@@ -23,7 +23,15 @@ import type {
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
 } from './types'
-import { resolveSeedanceModelId } from './types'
+import { resolveSeedanceModelId, validateSeedanceRequest } from './types'
+
+/** content[] 里某类素材的条数 —— 校验按真正会发出去的东西算，而不是入参字段。 */
+function countContent(
+  content: SeedanceContentItem[],
+  type: 'image_url' | 'video_url' | 'audio_url',
+): number {
+  return content.filter((item) => item.type === type).length
+}
 
 /** 上游轮询间隔。文档建议 5~10s。 */
 const POLL_INTERVAL_MS = 6_000
@@ -121,8 +129,24 @@ export class SeedanceTaskManager {
 
     const model: SeedanceModelAlias = input.model ?? '2.0'
     const resolution = input.resolution ?? '720p'
-    const ratio = input.ratio ?? '16:9'
     const duration = input.duration ?? 5
+    const taskMode = input.taskMode
+
+    // 提交前按模型能力自查。上游对 4k 配 2.5、30 秒配 2.0、edit 不带视频都会 400,
+    // 但那时用户已经等过一次网络往返、看到的是一张失败卡片。
+    const errors = validateSeedanceRequest(model, {
+      duration,
+      resolution,
+      taskMode,
+      images: countContent(content, 'image_url'),
+      videos: countContent(content, 'video_url'),
+      audios: countContent(content, 'audio_url'),
+    })
+    if (errors.length > 0) throw new Error(errors.join('；'))
+
+    // edit / extend 由上游强制 adaptive（文档 4.9）—— 与其让它悄悄改写我们传的
+    // 比例、再让 UI 显示一个与成片不符的值，不如提交时就写成真实生效的那个。
+    const ratio = taskMode ? 'adaptive' : (input.ratio ?? '16:9')
 
     const body: SeedanceCreateTaskBody = {
       model: resolveSeedanceModelId(model),
@@ -131,9 +155,10 @@ export class SeedanceTaskManager {
       resolution,
       duration,
       generate_audio: input.generateAudio ?? true,
-      // seed / 联网搜索:spread-omit,不传时字段完全不出现(兼容旧上游)。
+      // seed / 联网搜索 / taskMode:spread-omit,不传时字段完全不出现(兼容旧上游)。
       ...(typeof input.seed === 'number' && Number.isFinite(input.seed) ? { seed: Math.round(input.seed) } : {}),
       ...(input.webSearch ? { tools: [{ type: 'web_search' as const }] } : {}),
+      ...(taskMode ? { taskMode } : {}),
     }
 
     const { id } = await this.deps.client.createTask(body, apiKey)

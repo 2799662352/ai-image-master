@@ -122,7 +122,22 @@ describe('gatewayModelRouting', () => {
       'apiyi-standard',
       'apiyi-grok',
       'apiyi-claude',
+      'apiyi-qwen',
     ])
+  })
+
+  it('把 qwen 送到 Miau 渠道，而不是网关自家的 standard', () => {
+    // qwen 若并进 `other`，会落到 standard 渠道 —— 那是网关自己的端点，用的也是
+    // 网关自己的 Key，请求必然 404/401。所以它必须自成一族。
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      expect(resolveGatewayModelRoute(gatewayId, 'qwen3.8-max'))
+        .toMatchObject({ channelId: `${gatewayId}-qwen`, family: 'qwen' })
+      expect(resolveGatewayModelRoute(gatewayId, 'qwen3.7-max-dashscope'))
+        .toMatchObject({ channelId: `${gatewayId}-qwen`, family: 'qwen' })
+    }
+    // 不在白名单里的 qwen 变体照样被拒，而不是悄悄落到别的渠道。
+    expect(() => resolveGatewayModelRoute('apiyi', 'qwen-bogus-9'))
+      .toThrow(ModelUnavailableInGatewayError)
   })
 
   it('routes catalog-authorized custom gateways through one custom channel', () => {
