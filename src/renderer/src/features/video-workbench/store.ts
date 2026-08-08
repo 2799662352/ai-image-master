@@ -16,7 +16,12 @@
  */
 
 import { create } from 'zustand'
-import type { SeedanceCancelResult, SeedanceTaskUpdate } from '../../../../types/seedance'
+import type {
+  SeedanceCancelResult,
+  SeedanceTaskMode,
+  SeedanceTaskUpdate,
+} from '../../../../types/seedance'
+import { capabilitiesFor } from '../../../../types/seedance'
 import type {
   VideoWorkbenchBoard,
   VideoWorkbenchCard,
@@ -456,23 +461,45 @@ export function buildModeMedia(card: VideoWorkbenchCard): Pick<
   }
 }
 
+/**
+ * 卡片模式 → 上游 taskMode。
+ *
+ * 「编辑视频 / 延长视频」这两个模式工作台早就有了，但在 2.5 之前它们只决定带哪些
+ * 素材、**从不往上游发 taskMode** —— 选了「编辑视频」发出去的其实是一次普通生成。
+ * 2.5 才真正有这两个模式，所以只有它派生；其余模型返回 undefined，行为不变。
+ */
+export function taskModeForCard(card: VideoWorkbenchCard): SeedanceTaskMode | undefined {
+  const modes = capabilitiesFor(card.model).taskModes
+  const wanted: SeedanceTaskMode | undefined =
+    card.mode === 'edit_video' ? 'edit' : card.mode === 'extend_video' ? 'extend' : undefined
+  return wanted && modes.includes(wanted) ? wanted : undefined
+}
+
 /** 卡片当前是否允许(重新)提交生成。 */
 export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: string } {
   if (!card.prompt.trim()) return { ok: false, reason: '提示词为空' }
   if (card.status === 'preparing' || card.status === 'queued' || card.status === 'running') {
     return { ok: false, reason: '任务进行中' }
   }
-  // 上游硬约束(文档 2.2):音频不能单独作为唯一参考输入。
+  const caps = capabilitiesFor(card.model)
   const media = buildModeMedia(card)
   const hasAudio = (media.referenceAudios?.length ?? 0) > 0
   const hasVisual =
     !!media.firstFrame || (media.referenceImages?.length ?? 0) > 0 || (media.referenceVideos?.length ?? 0) > 0
-  if (hasAudio && !hasVisual) {
+  // 音频不能单独作唯一参考 —— 但 2.5 放开了这条（文档 4.9）。
+  if (hasAudio && !hasVisual && !caps.audioOnlyReference) {
     return { ok: false, reason: '音频不能单独作参考,请再加至少一张图片或一段视频' }
   }
-  // mini/fast 不支持 1080p(文档 9.2 价格表仅 480p/720p 档)。
-  if (card.resolution === '1080p' && card.model !== '2.0') {
-    return { ok: false, reason: '1080p 仅 Seedance 2.0 满血支持' }
+  const taskMode = taskModeForCard(card)
+  if (taskMode && (media.referenceVideos?.length ?? 0) === 0) {
+    return { ok: false, reason: `${card.mode === 'edit_video' ? '编辑' : '延长'}视频必须带至少一段参考视频` }
+  }
+  // 分辨率/时长按该模型的能力表判 —— 1080p 仅 2.0，2.5 只到 720p 但能到 30 秒。
+  if (!caps.resolutions.includes(card.resolution)) {
+    return { ok: false, reason: `${card.model} 不支持 ${card.resolution}，可用：${caps.resolutions.join(' / ')}` }
+  }
+  if (card.duration !== -1 && (card.duration < caps.duration.min || card.duration > caps.duration.max)) {
+    return { ok: false, reason: `${card.model} 的时长支持 ${caps.duration.min}-${caps.duration.max} 秒或智能时长` }
   }
   return { ok: true }
 }
@@ -1509,6 +1536,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         generateAudio: card.generateAudio,
         ...(card.seed !== undefined ? { seed: card.seed } : {}),
         ...(card.webSearch ? { webSearch: true } : {}),
+        ...(taskModeForCard(card) ? { taskMode: taskModeForCard(card) } : {}),
         ...buildModeMedia(card),
       }
 

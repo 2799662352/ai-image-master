@@ -18,8 +18,14 @@ import type {
   VideoWorkbenchMode,
   VideoWorkbenchSpec,
 } from '../../../../types/videoWorkbench'
+import type { SeedanceModelAlias } from '../../../../types/seedance'
+import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
 
+/**
+ * 2.0 家族的上限，保留给不知道模型的旧调用点（UI 计数、拖拽提示）。
+ * 按模型取值请用 {@link materialLimitFor} —— 2.5 是 30/10/10。
+ */
 export const MAX_REFERENCE_IMAGES = 9
 export const MAX_REFERENCE_VIDEOS = 3
 export const MAX_REFERENCE_AUDIOS = 3
@@ -70,19 +76,37 @@ export function normalizeSeed(seed: unknown): number | undefined {
   return Math.min(4294967295, Math.round(n))
 }
 
-/** 时长归一化:-1 = 智能时长(模型自动决定,文档 8.1);其余收敛 4–15;非法回退 5。 */
-export function normalizeDuration(value: unknown): number {
+/**
+ * 时长归一化:-1 = 智能时长(模型自动决定,文档 8.1);其余按**该模型**的区间
+ * 收敛(2.0 家族 4–15,2.5 4–30);非法回退 5。
+ *
+ * 区间必须跟模型走 —— 写死 15 会把用户在 2.5 上选的 30 秒在**建卡那一刻**就
+ * 悄悄夹成 15,卡片显示 15、成片也 15,没有任何报错说明发生过什么。
+ */
+export function normalizeDuration(value: unknown, model: SeedanceModelAlias = '2.0'): number {
   const n = Number(value)
   if (!Number.isFinite(n)) return 5
   if (n === -1) return -1
-  return Math.min(15, Math.max(4, Math.round(n)))
+  const { min, max } = capabilitiesFor(model).duration
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+/** 该模型下某类素材的条数上限（2.5 是 30/10/10，2.0 家族 9/3/3）。 */
+export function materialLimitFor(kind: MaterialKind, model: SeedanceModelAlias = '2.0'): number {
+  const caps = capabilitiesFor(model)
+  return kind === 'referenceImages'
+    ? caps.maxImages
+    : kind === 'referenceVideos'
+      ? caps.maxVideos
+      : caps.maxAudios
 }
 
 export function clampMaterials(
   list: VideoWorkbenchMaterial[],
   kind: MaterialKind,
+  model: SeedanceModelAlias = '2.0',
 ): VideoWorkbenchMaterial[] {
-  return list.slice(0, MATERIAL_LIMITS[kind])
+  return list.slice(0, materialLimitFor(kind, model))
 }
 
 /**
@@ -94,19 +118,20 @@ export function clampMaterials(
  */
 export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpec {
   const seed = normalizeSeed(input.seed)
+  const model = input.model ?? '2.0'
   return {
     prompt: input.prompt ?? '',
-    model: input.model ?? '2.0',
+    model,
     resolution: input.resolution ?? '720p',
     ratio: input.ratio ?? '16:9',
-    duration: normalizeDuration(input.duration ?? 5),
+    duration: normalizeDuration(input.duration ?? 5, model),
     generateAudio: input.generateAudio !== false,
     mode: normalizeMode(input.mode),
     ...(seed !== undefined ? { seed } : {}),
     webSearch: input.webSearch !== false,
-    referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages'),
-    referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos'),
-    referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios'),
+    referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages', model),
+    referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos', model),
+    referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios', model),
   }
 }
 
