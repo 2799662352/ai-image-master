@@ -22,6 +22,25 @@ export const PROMPT_BASE_DIRECTIVE =
   'the matching base is how you end up with a prompt that argues with the attached materials.'
 
 /**
+ * 视频出片面用：素材逐份负责。
+ *
+ * 与图片侧同一条纪律，只是这边有三类素材。sd25-pe 的官方原文叫「素材逐份负责 +
+ * 【未采用素材】」，sd2-pe 叫「素材职责优先级 + 收束权重（必须写出）」—— 两边都有，
+ * 但**工具描述里一句没有**，而 agent 直接调工具时读的就是工具描述。
+ *
+ * 漏写职责的那份素材不会被忽略，模型会自己给它安排一个用途：最常见的是把氛围板
+ * 里的人一起演进画面，或者拿风格参考的运镜去覆盖你写好的镜头。
+ */
+export const MATERIAL_ROLE_DIRECTIVE =
+  'ORDER IS IDENTITY, AND EVERY MATERIAL NEEDS A ROLE: the Nth entry of each array is 图片N / 视频N / ' +
+  '音频N in the prompt, and the app preserves that order exactly. Give EVERY material you pass one ' +
+  'explicit role line — a person gets bound (`将 @图片1 中的[2-3 个稳定静态特征] 定义为 <主体1>`), ' +
+  'a mood board / style clip / voice sample gets told what it contributes and what it must NOT ' +
+  'contribute. An unaccounted material gets a role invented for it, typically the people from a mood ' +
+  'board walking into the shot. If you are not using one this turn, drop it from the array rather than ' +
+  'passing it silently. Never write a raw asset:// id in the prompt body — bridge it through 图片N / <主体N>.'
+
+/**
  * 出图面用。图片这边**只有一个**底座，而且就是入口卡本身。
  *
  * 别照搬视频那套「按模型二选一」：sd2-pe / sd25-pe 写的是 Seedance 的素材职责与

@@ -12,7 +12,11 @@ import { z } from 'zod'
 import { registerImageTools } from '../imageTools'
 import { registerVideoTools } from '../videoTools'
 import { registerVideoWorkbenchTools } from '../videoWorkbenchTools'
-import { IMAGE_PROMPT_BASE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from '../promptBaseDirective'
+import {
+  IMAGE_PROMPT_BASE_DIRECTIVE,
+  MATERIAL_ROLE_DIRECTIVE,
+  PROMPT_BASE_DIRECTIVE,
+} from '../promptBaseDirective'
 
 interface CapturedTool {
   name: string
@@ -67,6 +71,24 @@ describe('提示词底座在 MCP 描述里被点名', () => {
     // 别把「2.0 家族用 sd2-pe」写丢了——只说 2.5 会让 agent 对 2.0 也载 sd25-pe。
     expect(PROMPT_BASE_DIRECTIVE).toMatch(/2\.0-fast/)
     expect(PROMPT_BASE_DIRECTIVE).toMatch(/2\.0-mini/)
+  })
+})
+
+describe('视频侧素材逐份负责', () => {
+  it.each(PROMPT_WRITING_TOOLS)('%s 的描述带上素材职责纪律', (name) => {
+    const desc = allTools().find((t) => t.name === name)?.config.description ?? ''
+    expect(desc).toContain(MATERIAL_ROLE_DIRECTIVE)
+  })
+
+  it('三类素材都覆盖到 —— 图片有绑定、视频音频不能只字不提', () => {
+    expect(MATERIAL_ROLE_DIRECTIVE).toContain('图片N')
+    expect(MATERIAL_ROLE_DIRECTIVE).toContain('视频N')
+    expect(MATERIAL_ROLE_DIRECTIVE).toContain('音频N')
+  })
+
+  it('写明「没认领的素材会被模型自己安排用途」，而不是只说一句要写职责', () => {
+    // 只写「请为每份素材写职责」是无效指令 —— 得说清不写会发生什么。
+    expect(MATERIAL_ROLE_DIRECTIVE).toMatch(/invented/i)
   })
 })
 

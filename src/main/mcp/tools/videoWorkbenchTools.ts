@@ -29,7 +29,7 @@ import {
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../types/videoWorkbench'
-import { PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
+import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
@@ -371,7 +371,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       'Batch output surface of the catimation-video skill — load that skill first, grade the request ' +
       '(快速/标准/专业/制片) and write the prompt with the same discipline as generate_video. ' +
-      `${PROMPT_BASE_DIRECTIVE} ` +
+      `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE} ` +
       'Per card the material caps are identical too: referenceImages ≤9, referenceVideos ≤3 and ' +
       'referenceAudios ≤3, each type ≤15s in total — model "2.5" raises all three to 30/10/10 with ' +
       '≤30s in total. ' +
@@ -439,7 +439,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'the prompt — same reason as on add_tasks: the render follows the picture, not the filename. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
-      PROMPT_BASE_DIRECTIVE,
+      `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
@@ -590,6 +590,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + '• Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each '
       + 'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total.\n'
       + `• ${PROMPT_BASE_DIRECTIVE}\n`
+      + `• ${MATERIAL_ROLE_DIRECTIVE}\n`
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '
       + 'rejected with `conflict`, NOTHING written; re-export, redo your edits, apply again. Stale card '
