@@ -686,11 +686,28 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   //      keeps it from actually spawning until a key exists. The moment the
   //      user adds a key in 设置 + restarts, (A) enables it.
   //
+  // ⛔ apiyi(Gemini)整条通道当前**不对 agent 暴露**。
+  //
+  // 直接原因:那枚 key 已失效,上游一律回 "Invalid token"。而这里的启用判据是
+  // 「有没有 key」而不是「key 能不能用」—— 失效的 key 与有效的 key 在启动那一刻
+  // 长得一模一样,于是服务器照常起来、照常把工具挂出去,agent 看见一个「能看图」
+  // 的工具就去用,连撞三次才知道不行。这比工具不存在更糟:不存在时它会直接走
+  // 正确的那条路。
+  //
+  // 根本原因是能力重复:看图/看视频我们已经有 qwen 那条(understand_document /
+  // understand_video,`file_urls` 还能一次看多张做跨图比较),再挂一个同能力的
+  // Gemini 只是让模型多一个选项、多一次试错 —— 与 codex 官方「只暴露一个规范化
+  // 能力,别让模型面对互相竞争的工具」是同一个道理(openai/codex#34956)。
+  //
+  // 要恢复:把这里改回 true,并确认设置里的 API易 key 有效。整条通道的 seed /
+  // 超时 / 命令解析都原样保留,只是不注入、不启用,所以改一行就能回来。
+  const APIYI_MCP_EXPOSED = false
+
   // The force-seed (`seedApiyiMcpEntry`) guarantees the entry's canonical
   // transport (`command`/`args`) at boot, so every `-c` below only sets a leaf
   // onto an existing entry — we never synthesize a command-less
   // `[mcp_servers.apiyi]` that codex would reject as "invalid transport".
-  const apiyiKey = options?.apiyiKey?.trim()
+  const apiyiKey = APIYI_MCP_EXPOSED ? options?.apiyiKey?.trim() : ''
   if (apiyiKey) {
     // (A) Overlay the leaf secret; dotted `-c` merges over the boot-seeded env
     // (base_url / model / other timeouts survive). Force-enable regardless of
