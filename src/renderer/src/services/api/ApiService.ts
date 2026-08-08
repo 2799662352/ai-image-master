@@ -172,6 +172,21 @@ export interface ModelCapabilities {
   useExtraBody?: boolean
   /** 出多张时需显式开启组图模式（如万相 wan2.7 的 enable_sequential），且一次返回的系列图前后一致 */
   sequentialGroup?: boolean
+  /**
+   * 参考图必须走 DashScope 原生 `input.messages`（`{image}` 在前、`{text}` 在后），
+   * 而不是顶层 `image` 字段。
+   *
+   * 这条独立于 {@link sequentialGroup}：两者此前耦合在一起（构造 input.messages 的
+   * 分支挂在组图能力上），于是千问这种「有参考图但没有组图」的模型掉进顶层 `image`
+   * 分支 —— 而网关的字段映射表里根本没有 `image`，它会被静默丢弃，表现为「传了参考图
+   * 但模型完全没看」（2026-08-08 实测）。
+   */
+  dashscopeNativeInput?: boolean
+  /**
+   * 参考图张数上限。缺省表示不额外限制（沿用各渠道自己的约束）。
+   * 千问 3.0 的图生图官方规定 content 里只能有 1-3 个 `{image}`，超了上游直接拒。
+   */
+  maxReferenceImages?: number
 }
 
 export interface GenerateImageParams {
@@ -183,7 +198,17 @@ export interface GenerateImageParams {
   quality?: string
   referenceImages?: string[]
   imageBase64?: string  // 编辑模式的图片
+  /**
+   * 反向提示词。仅 DashScope 原生渠道（千问 / 万相）会把它放进 `parameters`。
+   *
+   * ⚠️ 经 Miau 网关时**当前到不了上游**：网关的 `AliImageParameters` 里没有
+   * `negative_prompt` 这个键，反序列化即丢弃（接入说明 §3.2 / §9）。上游 API 本身
+   * 是支持的，所以这里照发不误 —— 网关补上白名单那天就自动生效，不必再发版。
+   * 在此之前 UI 不应向用户承诺它有效。
+   */
   negativePrompt?: string
+  /** 随机种子 [0, 2147483647]。固定种子可让结果相对稳定；在网关白名单内，真能生效。 */
+  seed?: number
   count?: number
   signal?: AbortSignal
   /**
@@ -821,6 +846,9 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     apiType: 'image-generation',
     sizeStrategy: 'seedream',
+    // 官方只用两条规则约束尺寸：像素面积 512*512 ~ 2048*2048，宽高比 1:8 ~ 8:1。
+    // 所以 21:9(2.33:1) / 5:4 / 4:5 全都合法 —— 早先只给 7 个比例是照别家抄的子集，
+    // 不是模型的限制。
     ratios: [
       { key: '1:1', label: '方形 1:1', description: '常用' },
       { key: '4:3', label: '横版 4:3', description: '标准' },
@@ -828,39 +856,63 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       { key: '16:9', label: '横版 16:9', description: '宽屏' },
       { key: '9:16', label: '竖版 9:16', description: '竖屏' },
       { key: '3:2', label: '横版 3:2', description: '经典' },
-      { key: '2:3', label: '竖版 2:3', description: '经典' }
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' }
     ],
     resolutions: [
       { key: '1K', label: '1K 标准', description: '快速出图' },
       { key: '2K', label: '2K 高清', description: '标准分辨率' }
     ],
     defaultResolution: '2K',
-    // ⚠️ 这张表是**请求值**，不是承诺值。接入说明 2026-08-07 §6：上游可能忽略或
-    // 改写请求尺寸（实测请求 1328×1328 拿回约 1792×2400，元数据里带 qima_output_2k
-    // 一类标记）。对像素有硬要求时要按拿回的图校验，别拿这里的数字当结果。
+    // 每档都核过官方那两条约束：面积落在 262144(512²) ~ 4194304(2048²) 之间，
+    // 宽高比远在 1:8 ~ 8:1 内（最极端的 21:9 也只有 2.33:1）。
+    //
+    // ⚠️ 这张表是**请求值**，不是承诺值。上游开着 prompt_extend 时可能改写最终
+    // 分辨率（Miau 接入说明 §6 实测请求 1328×1328 拿回约 1792×2400）。对像素有硬
+    // 要求时按拿回的图校验，别拿这里的数字当结果。
     resolutionMap: {
       '1:1':  { '1K': '1024x1024', '2K': '1328x1328' },
       '2:3':  { '1K': '848x1264',  '2K': '1104x1664' },
       '3:2':  { '1K': '1264x848',  '2K': '1664x1104' },
-      '3:4':  { '1K': '896x1200',  '2K': '1140x1472' },
-      '4:3':  { '1K': '1200x896',  '2K': '1472x1140' },
+      '3:4':  { '1K': '896x1200',  '2K': '1248x1664' },
+      '4:3':  { '1K': '1200x896',  '2K': '1664x1248' },
       '9:16': { '1K': '768x1376',  '2K': '928x1664' },
-      '16:9': { '1K': '1376x768',  '2K': '1664x928' }
+      '16:9': { '1K': '1376x768',  '2K': '1664x928' },
+      '21:9': { '1K': '1568x672',  '2K': '2016x864' },
+      '5:4':  { '1K': '1152x928',  '2K': '1488x1200' },
+      '4:5':  { '1K': '928x1152',  '2K': '1200x1488' }
     },
-    // negative_prompt 有意不出现：网关的 AliImageParameters 里没有这个键，反序列化
-    // 时会被丢弃（接入说明 §9），发了也是白发 —— 画质要求得写进正向提示词。
+    // prompt_extend 跟随官方默认（true）。官方 API 文档写明「建议开启…对描述较简单的
+    // 提示词效果提升明显」。代价是上游可能改写最终分辨率（Miau 接入说明 §6 实测请求
+    // 1328×1328 拿回约 1792×2400）—— 两害相权，画质比尺寸可预期更值钱；对像素有硬
+    // 要求的场景应当按返回的图校验，而不是靠关掉改写。
+    //
+    // 两个**发了也没用**的键，别再往 parameters 里加：
+    //   - negative_prompt：上游支持，但网关的 AliImageParameters 没有这个键，
+    //     反序列化即丢弃 —— 画质要求得写进正向提示词。
+    //   - prompt_extend_mode：同样不在网关转发白名单里。默认的 `direct` 正好是
+    //     T2I / I2I 都支持的那档（`agent` 在图生图下会 400），所以不传反而对。
     defaultParams: {
       response_format: 'url',
-      watermark: false
+      watermark: false,
+      prompt_extend: true
     },
     responseFormats: ['url', 'b64_json'],
     capabilities: {
-      multipleImages: false,
+      // 官方 API 文档：n 支持 1-6（此前照 Seedream 抄成 1，白砍了能力）。
+      multipleImages: true,
       customSize: true,
       referenceImage: true,
+      // I2I 走同一个 model，不需要 /images/edits 那条路。
       imageEdit: false,
-      maxOutputs: 1,
-      resolutionControl: true
+      maxOutputs: 6,
+      resolutionControl: true,
+      // 参考图必须走 input.messages —— 顶层 image 字段会被网关丢弃。
+      dashscopeNativeInput: true,
+      // 官方：I2I 的 content 里只能有 1-3 个 {image}，多了上游直接拒。
+      maxReferenceImages: 3
     }
   },
   'sora_image': {
@@ -1003,7 +1055,7 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count = 1, signal, siteKey } = params
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count = 1, signal, siteKey } = params
 
     // 解析「本次请求的有效站点 + 令牌」：调用方传了存在的 siteKey 就强制走该站点
     // （及其专属 Key），否则沿用当前选中站点。绝不临时改 this.apiKey/this.currentSite——
@@ -1040,6 +1092,8 @@ export class ApiService {
           quality,
           referenceImages,
           imageBase64,
+          negativePrompt,
+          seed,
           count,
           modelConfig,
           site,
@@ -1587,6 +1641,8 @@ export class ApiService {
     quality?: string
     referenceImages?: string[]
     imageBase64?: string
+    negativePrompt?: string
+    seed?: number
     count: number
     modelConfig: ModelConfig
     site: ApiSite
@@ -1594,7 +1650,7 @@ export class ApiService {
     apiKey: string
     signal?: AbortSignal
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count, modelConfig, site, apiKey, signal } = options
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, site, apiKey, signal } = options
 
     // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
     if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
@@ -1700,6 +1756,8 @@ export class ApiService {
       resolution,
       referenceImages: resolvedRefs,
       imageBase64: resolvedImageBase64,
+      negativePrompt,
+      seed,
       count,
       modelConfig
     })
@@ -2189,10 +2247,12 @@ export class ApiService {
     resolution?: string
     referenceImages?: string[]
     imageBase64?: string
+    negativePrompt?: string
+    seed?: number
     count?: number
     modelConfig: ModelConfig
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count, modelConfig } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig } = options
 
     // Gemini Native 格式
     if (modelConfig.apiType === 'gemini-native') {
@@ -2226,6 +2286,8 @@ export class ApiService {
       resolution,
       referenceImages,
       imageBase64,
+      negativePrompt,
+      seed,
       count,
       modelConfig
     })
@@ -2368,10 +2430,12 @@ export class ApiService {
     resolution?: string
     referenceImages?: string[]
     imageBase64?: string
+    negativePrompt?: string
+    seed?: number
     count?: number
     modelConfig: ModelConfig
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count, modelConfig } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig } = options
 
     // 检查是否是图片生成 API 格式
     if (modelConfig.baseURL?.includes('/images/generations')) {
@@ -2401,11 +2465,18 @@ export class ApiService {
         payload.size = size
       }
 
-      if (isWanModel) {
+      // DashScope 原生形态（万相与千问共用）。这里**不能**继续用 isWanModel 判定 ——
+      // 「参考图走 input.messages」与「支持组图」是两件事，耦合在一起会让千问这种
+      // 有参考图但无组图的模型掉进顶层 `image` 分支被网关丢弃（见 dashscopeNativeInput）。
+      const usesDashscopeInput = isWanModel || !!modelConfig.capabilities?.dashscopeNativeInput
+
+      if (usesDashscopeInput) {
         payload.response_format = modelConfig.defaultParams?.response_format ?? 'url'
         payload.watermark = modelConfig.defaultParams?.watermark ?? false
 
-        // new-api ali 通道从 Extra["parameters"] / Extra["input"] 透传 DashScope 原生字段
+        // new-api ali 通道从 Extra["parameters"] / Extra["input"] 透传 DashScope 原生字段。
+        // 注意：一旦出现 parameters，顶层 n/size/watermark 就**不再**被网关合并进去
+        // （接入说明 §9），所以要用的键必须写在这里面。
         const parameters: Record<string, unknown> = {
           n,
           watermark: modelConfig.defaultParams?.watermark ?? false,
@@ -2415,14 +2486,32 @@ export class ApiService {
         }
         if (isSequentialGroup) {
           parameters.enable_sequential = true
-        } else if (!isEditOrImageInput) {
+        } else if (isWanModel && !isEditOrImageInput) {
+          // thinking_mode 是万相那条路验过的；千问未验证，不擅自发。
           parameters.thinking_mode = modelConfig.defaultParams?.thinking_mode ?? true
+        }
+        if (typeof modelConfig.defaultParams?.prompt_extend === 'boolean') {
+          parameters.prompt_extend = modelConfig.defaultParams.prompt_extend
+        }
+        // seed 在网关转发白名单里，真能生效（官方取值 [0, 2147483647]）。
+        if (typeof seed === 'number' && Number.isFinite(seed) && seed >= 0) {
+          parameters.seed = Math.min(2147483647, Math.floor(seed))
+        }
+        // negative_prompt 上游支持，但**当前经 Miau 到不了**：网关的
+        // AliImageParameters 没有这个键，反序列化即丢弃（接入说明 §3.2）。照发不误 ——
+        // 网关补上白名单那天自动生效，不必再发版；在此之前 UI 不该承诺它有效。
+        if (typeof negativePrompt === 'string' && negativePrompt.trim()) {
+          parameters.negative_prompt = negativePrompt.trim()
         }
         payload.parameters = parameters
 
-        // 官方 wan2.7 要求 input.messages；new-api 不会把顶层 image 转成 messages
+        // 官方 wan2.7 / 千问都要求 input.messages；new-api 不会把顶层 image 转成 messages。
+        // 张数按模型上限截断（千问 I2I 只收 1-3 张，多了上游 400）——宁可少发一张，
+        // 也不要整次请求被拒。
+        const refCap = modelConfig.capabilities?.maxReferenceImages
+        const cappedSources = typeof refCap === 'number' ? imageSources.slice(0, refCap) : imageSources
         const contentParts: Array<{ text?: string; image?: string }> = []
-        for (const img of imageSources) {
+        for (const img of cappedSources) {
           contentParts.push({ image: img })
         }
         contentParts.push({ text: prompt })
