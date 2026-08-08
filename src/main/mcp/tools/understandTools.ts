@@ -24,6 +24,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import { relayDataUrlToCos, relayFileToCos } from '../../services/tencent/mediaRelay'
+import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
 
 /** 与 imageTools/videoTools 一致的 codex threadId 提取。 */
 function extractCodexThreadId(ctx: unknown): string | undefined {
@@ -279,6 +280,7 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         '(ffmpeg-win skill: audio track + placeholder/​waveform video) and pass that MP4 here. ' +
         'Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger qwen3.7-max. ' +
         'Returns a Chinese description. Do NOT retry on a clean result.',
+      annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         video_url: z.string().optional().describe('Public http(s) URL of the video (preferred when you already have one).'),
         video_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
@@ -300,6 +302,7 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'for best results render the page(s) to image(s) and pass an image, or extract text and ask ' +
         'normally. Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger model. ' +
         'Returns a Chinese answer.',
+      annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         file_url: z.string().optional().describe('Public http(s) URL of the document/page image (preferred when you already have one).'),
         file_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
@@ -318,6 +321,7 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         '搜一下/最新消息" requests. Pass a natural-language query; returns a synthesized answer that ' +
         'incorporates live web results. Model defaults to qwen3.7-plus (cheaper); pass model="max" ' +
         'for the stronger model. Prefer this over guessing from stale memory.',
+      annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         query: z.string().min(1).describe('Natural-language research query.'),
         model: z.enum(['max', 'plus']).optional().describe('Model: "plus" (default, cheaper) or "max" (stronger). Omit for plus.'),
@@ -337,6 +341,7 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'COS — a dragged-in clip is first materialized to a real file). Model defaults to qwen3.7-plus ' +
         '(cheaper); pass model="max" for the stronger qwen3.7-max. Set annotate=false to only return the text ' +
         'without drawing the note. Requires the Canvas tab open. Returns a Chinese description.',
+      annotations: WRITE_ADDITIVE_REMOTE,
       inputSchema: z.object({
         question: z.string().min(1).describe('What you want to know about the selected canvas video.'),
         model: z.enum(['max', 'plus']).optional().describe('Model: "plus" (default, cheaper) or "max" (stronger). Omit for plus.'),

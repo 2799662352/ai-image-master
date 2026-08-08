@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import {
+  WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_IR_VERSION,
   WORKBENCH_MAX_TASKS_PER_CALL,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -49,6 +50,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_status',
       'video_workbench_export',
       'video_workbench_apply',
+      'video_workbench_set_board_summary',
       'video_workbench_remove_tasks',
     ])
   })
@@ -228,6 +230,21 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ tasks: [{ ...base, referenceVideos: [...base.referenceVideos, 'C:/v10.mp4'] }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ ...base, referenceAudios: [...base.referenceAudios, 'C:/a10.mp3'] }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ ...base, duration: 31 }] }).success).toBe(false)
+  })
+
+  it('set_board_summary schema:超长**拒绝**而不是截断', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_set_board_summary').config.inputSchema
+    // 摘要跟着 boards 目录在每次工作台调用里回传，写成句子会反过来吃掉它想省的上下文。
+    expect(schema.safeParse({ boardId: 'b1', summary: '追车 · 夜外 · 主角车vs追兵' }).success).toBe(true)
+    // 空串 = 清除。
+    expect(schema.safeParse({ boardId: 'b1', summary: '' }).success).toBe(true)
+    // 截断会在半个词上切断而 agent 以为写进去了，所以这里必须是硬拒。
+    expect(schema.safeParse({
+      boardId: 'b1',
+      summary: 'x'.repeat(WORKBENCH_BOARD_SUMMARY_MAX + 1),
+    }).success).toBe(false)
   })
 
   it('remove_tasks schema:cardIds 非空必填', () => {
@@ -457,10 +474,14 @@ describe('structured output(MCP 2025-11-25)', () => {
   it('status:成功结果带 structuredContent(text JSON 兜底保留)且通过 outputSchema', async () => {
     const routerResult = {
       total: 1,
+      // 默认只看当前页，所以回包必须说清这次看的是哪一页 —— 否则「12 张」在
+      // 「这页有 12 张」和「整个工作台只有 12 张」之间是歧义的。
+      scope: { boardId: 'b1' },
       activeBoardId: 'b1',
       boards: workbench.boards,
       selectedCardIds: ['c1'],
       cards: [cardSnapshot],
+      pageIndex: [{ page: 1, cardIds: ['c1'], digest: '夜景追车' }],
       page: 1,
       pageSize: 12,
       totalPages: 1,
@@ -474,6 +495,26 @@ describe('structured output(MCP 2025-11-25)', () => {
     expect(res.structuredContent).toEqual(routerResult)
     expect(res.content[0].text).toContain('"total":1')
     expect(tool.config.outputSchema!.safeParse(res.structuredContent).success).toBe(true)
+  })
+
+  it('status:回包缺 scope 过不了 outputSchema —— 取值范围不能省', () => {
+    const { tools, server, router } = capture({})
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_status').config.outputSchema!
+    const base = {
+      total: 1,
+      activeBoardId: 'b1',
+      boards: workbench.boards,
+      selectedCardIds: [],
+      cards: [cardSnapshot],
+      pageIndex: [{ page: 1, cardIds: ['c1'], digest: '夜景追车' }],
+      page: 1,
+      pageSize: 12,
+      totalPages: 1,
+      hasMore: false,
+    }
+    expect(schema.safeParse(base).success).toBe(false)
+    expect(schema.safeParse({ ...base, scope: { allBoards: true } }).success).toBe(true)
   })
 
   it('写操作:structuredContent 含 workbench 全局摘要且通过各自 outputSchema', async () => {

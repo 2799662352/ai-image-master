@@ -75,9 +75,35 @@ export interface VideoWorkbenchSpec {
  */
 export const WORKBENCH_MAX_TASKS_PER_CALL = 5
 
-/** `video_workbench_status` 每页卡数。12 对齐 portraitTools 的 pageSize 与 batchCompletion 的 MAX_LISTED。 */
-export const WORKBENCH_STATUS_PAGE_SIZE = 12
+/**
+ * `video_workbench_status` 每页卡数。
+ *
+ * 取 3 不是抠体积,是让 agent 能**边读边动手**:一张卡的 JSON 约 500 token,
+ * 12 张就是六千 token 一次灌进来,而它九成时候只关心其中一两张。3 张读完就够
+ * 决定「是不是这几张」,不是就跳下一页 —— 配 pageIndex 目录通常一跳到位。
+ *
+ * 别调回大值来「少翻几页」:翻页的成本已经被目录摊掉了,而灌进来的卡片是实打实
+ * 占着上下文直到会话结束。要一次看很多张,应当用 cardIds 点名。
+ */
+export const WORKBENCH_STATUS_PAGE_SIZE = 3
 export const WORKBENCH_STATUS_MAX_PAGE_SIZE = 50
+/**
+ * `pageIndex` 目录最多几条。目录本身也会膨胀:200 张卡按 3 张一页就是 67 条,
+ * 那又变成一次性倒出去了。超出就截断,agent 仍可用 page 参数直接翻到后面。
+ */
+export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
+
+/**
+ * 页面摘要字数上限。
+ *
+ * 60 不是随手定的:摘要要跟着 boards 目录在**每一次**工作台工具调用里回传,
+ * 十页就是十条。写成句子的话十条能顶掉一整屏上下文,而它本来是用来省上下文的。
+ * 60 字够写「追车 · 夜外 · 主角车vs追兵」这种电报体,不够写一段话 —— 这个约束
+ * 本身就是在逼出正确的格式。
+ *
+ * 超限在工具层**报错**而不是静默截断:截断会在半个词上切断,agent 还以为写进去了。
+ */
+export const WORKBENCH_BOARD_SUMMARY_MAX = 60
 
 /** 参考素材条目（展示名 + 可提交源）。 */
 export interface VideoWorkbenchMaterial {
@@ -133,6 +159,18 @@ export type VideoWorkbenchCardStatus =
 export interface VideoWorkbenchBoard {
   id: string
   name: string
+  /**
+   * 一句话说明这一页装的是什么（「追车戏 8 镜，全部夜景」）。
+   *
+   * 这是渐进披露缺的那一层索引。status 默认只回当前页的卡片，别页只给
+   * id / name / cardCount —— 光看「第 3 页，20 张卡」判断不了要不要去拉它，
+   * 而页名常常只是「页面 3」。有了摘要，agent 能在**不拉卡片**的前提下决定
+   * 该翻哪一页，这正是分批读取想省下的那部分。
+   *
+   * 由 agent 写（video_workbench_set_board_summary），不参与生成、不影响出片；
+   * 纯粹是给「下一次回来的人」留的路标，所以也不进撤销栈的编排意图。
+   */
+  summary?: string
   /** 页签排序(小在左)。 */
   order: number
   createdAt: number
@@ -404,6 +442,39 @@ export interface WorkbenchApplySkip {
   cardId?: string
   boardId?: string
   reason: string
+  /**
+   * 并发跳过时把这张卡**现在的样子**一并带回来，让调用方不必为了「看看用户改了什么」
+   * 再跑一趟 export。
+   *
+   * 为什么是「写入时补救」而不是「变更时推送」（2026-08-09 查证，别再重新推演）：
+   * MCP 的正解本该是把看板做成可订阅资源 —— 用户一改，agent 收到
+   * `notifications/resources/updated`，压根不会拿着过期的 IR 去写。协议这边是齐的
+   * （2026-07-28 起 `subscriptions/listen` + SubscriptionFilter 取代了
+   * `resources/subscribe`），但**客户端不认**：codex 只实现了 resources 的
+   * list / read / templates，subscribe 与 unsubscribe 都是 ❌，收到 updated 通知
+   * 也只写一行日志不往上派发（`rmcp-client/src/logging_client_handler.rs` 的
+   * `on_resource_updated` 整个函数体就一句 info!）。追踪 issue：openai/codex#16159。
+   *
+   * 也就是说现在做订阅只会得到一个没人订阅的服务端。等 #16159 落地，再把看板做成
+   * 资源、把这里降级成兜底。在那之前，写入是人和 agent **唯一必然交汇**的时刻，
+   * 所以把现场交还给它。
+   *
+   * 为什么值得多带这几个字段：人和 agent 同改一块看板时，「你写的被跳过了」只说明
+   * 发生了冲突，说不清该怎么办。拿到现场值，agent 就能自己判断——用户只是改了时长，
+   * 那就把自己那份提示词按新时长重写再发一次；用户把提示词整个换了，那就该停下来问，
+   * 而不是把人家刚写的覆盖掉。
+   *
+   * 只在按卡 rev 冲突时出现，且只带规格字段（不含素材数组和产出），保持回包紧凑。
+   */
+  current?: {
+    prompt: string
+    model: string
+    resolution: string
+    ratio: string
+    duration: number
+    /** 现在的规格版本号；照抄进下一次 apply 的 `rev` 即可覆盖。 */
+    rev: number
+  }
 }
 
 export interface WorkbenchApplyResult {

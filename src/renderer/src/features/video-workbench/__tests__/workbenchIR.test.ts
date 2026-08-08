@@ -190,9 +190,26 @@ describe('planApplyIR / 拒绝路径', () => {
     expect(plan.result.ok).toBe(true)
     expect(plan.result.conflict).toBeUndefined()
     expect(plan.result.cards.updated).toEqual(['c2'])
-    expect(plan.result.skipped).toEqual([
-      { cardId: 'c1', reason: expect.stringContaining('这张卡在你导出之后被改过') },
-    ])
+    // 跳过项要带上这张卡**现在的样子**：agent 才能不用再 export 一次就判断
+    // 「用户到底改了什么、该重写还是该问」。冲突是可恢复的，不是死路。
+    expect(plan.result.skipped).toHaveLength(1)
+    const skip = plan.result.skipped[0]
+    expect(skip.cardId).toBe('c1')
+    expect(skip.reason).toContain('被用户改过')
+    // 把「哪几个字段对不上」喂到嘴边，省得 agent 自己 diff。
+    expect(skip.reason).toContain('对不上的字段')
+    expect(skip.reason).toContain('prompt')
+    // 但**不做归因** —— 没有导出基线就分不清谁改的，硬猜比不说更误导。
+    expect(skip.reason).toContain('分不清是你改的还是用户改的')
+    expect(skip.current).toEqual({
+      prompt: '用户刚改的',
+      model: '2.0',
+      resolution: '720p',
+      ratio: '16:9',
+      duration: 5,
+      // 抄这个 rev 回去即可覆盖，不必重新 export 整板。
+      rev: 4,
+    })
     const byId = new Map(plan.next!.cards.map((c) => [c.id, c]))
     expect(byId.get('c1')!.prompt).toBe('用户刚改的')
     expect(byId.get('c2')!.prompt).toBe('agent 改了这张')

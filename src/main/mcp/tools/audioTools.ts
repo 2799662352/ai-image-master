@@ -15,6 +15,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
+import { WRITE_ADDITIVE_REMOTE } from './annotations'
 
 /** 与 imageTools/understandTools 一致的 codex threadId 提取。 */
 function extractCodexThreadId(ctx: unknown): string | undefined {
@@ -89,6 +90,7 @@ export function registerAudioTools(server: McpServer, router: ToolRouter): void 
         'uploaded to cloud storage (COS) AND saved locally, then added to the app\'s 音频生成 (Audio) tab ' +
         'library where the user can play and download it — so just confirm briefly, never re-describe the ' +
         'waveform. Billed by output seconds (~¥1/min).',
+      annotations: WRITE_ADDITIVE_REMOTE,
       inputSchema: z.object({
         input: z.string().min(1).describe(
           'Natural-language description of the audio: what is said, by whom (voice/tone/age), plus any ' +
