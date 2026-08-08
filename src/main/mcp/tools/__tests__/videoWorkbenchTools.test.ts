@@ -168,6 +168,68 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     }).success).toBe(false)
   })
 
+  /**
+   * schema 是静态的，装不下「按模型不同的上限」，所以它只能放**全模型并集**，
+   * 逐模型收窄交给 validateSeedanceRequest。写窄了不是「更严格」而是更糟：
+   * 合法的 2.5 卡片在 zod 层就被拒，拿不到「模型 X 最多 N 段」这种能照着改的报错。
+   *
+   * 这个洞真犯过两次 —— apply 的 IR schema 把素材放宽到 30/10/10 却漏了 model 枚举
+   * 和 duration，导致「导出一块含 2.5 卡片的板子再 apply」整条往返断掉。
+   */
+  it('apply schema:2.5 卡片能原样往返 —— 模型枚举与时长都得放到并集', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_apply').config.inputSchema
+    const card25 = {
+      id: 'c1',
+      rev: 0,
+      prompt: '一只猫',
+      model: '2.5',
+      resolution: '720p',
+      ratio: '16:9',
+      duration: 30,
+      generateAudio: true,
+      mode: 'extend_video',
+      webSearch: false,
+      referenceImages: Array.from({ length: 30 }, (_, i) => ({ name: `i${i}`, src: `wbref://c1/referenceImages/${i}` })),
+      referenceVideos: Array.from({ length: 10 }, (_, i) => ({ name: `v${i}`, src: `wbref://c1/referenceVideos/${i}` })),
+      referenceAudios: Array.from({ length: 10 }, (_, i) => ({ name: `a${i}`, src: `wbref://c1/referenceAudios/${i}` })),
+    }
+    const ir = {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 3,
+      activeBoardId: 'b1',
+      boards: [{ id: 'b1', name: '页面 1', cards: [card25] }],
+    }
+    expect(schema.safeParse({ ir }).success).toBe(true)
+
+    // 并集之外仍然要拒 —— 放宽不等于不设防。
+    const tooMany = { ...ir, boards: [{ ...ir.boards[0], cards: [{ ...card25, referenceImages: [...card25.referenceImages, { name: 'x', src: 'wbref://c1/referenceImages/30' }] }] }] }
+    expect(schema.safeParse({ ir: tooMany }).success).toBe(false)
+    const tooLong = { ...ir, boards: [{ ...ir.boards[0], cards: [{ ...card25, duration: 31 }] }] }
+    expect(schema.safeParse({ ir: tooLong }).success).toBe(false)
+    const unknownModel = { ...ir, boards: [{ ...ir.boards[0], cards: [{ ...card25, model: '3.0' }] }] }
+    expect(schema.safeParse({ ir: unknownModel }).success).toBe(false)
+  })
+
+  it('add_tasks schema:2.5 的 30/10/10 与 30 秒能过,超出并集被拒', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_add_tasks').config.inputSchema
+    const base = {
+      prompt: '一只猫',
+      model: '2.5',
+      duration: 30,
+      referenceImages: Array.from({ length: 30 }, (_, i) => `C:/i${i}.png`),
+      referenceVideos: Array.from({ length: 10 }, (_, i) => `C:/v${i}.mp4`),
+      referenceAudios: Array.from({ length: 10 }, (_, i) => `C:/a${i}.mp3`),
+    }
+    expect(schema.safeParse({ tasks: [base] }).success).toBe(true)
+    expect(schema.safeParse({ tasks: [{ ...base, referenceVideos: [...base.referenceVideos, 'C:/v10.mp4'] }] }).success).toBe(false)
+    expect(schema.safeParse({ tasks: [{ ...base, referenceAudios: [...base.referenceAudios, 'C:/a10.mp3'] }] }).success).toBe(false)
+    expect(schema.safeParse({ tasks: [{ ...base, duration: 31 }] }).success).toBe(false)
+  })
+
   it('remove_tasks schema:cardIds 非空必填', () => {
     const { tools, server, router } = capture()
     registerVideoWorkbenchTools(server, router)

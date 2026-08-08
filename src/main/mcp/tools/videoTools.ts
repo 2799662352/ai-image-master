@@ -264,7 +264,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'consistent across videos. You can also pass an existing asset://assetId (from the 人像库 ' +
       'page) directly as any image input. DEFAULT MODE = 全能参考 (omni-reference): for almost every ' +
       'request, supply the user material via referenceImages (up to 9), referenceVideos (up to 3, total ' +
-      '≤15s) and referenceAudios (up to 3, total ≤15s) — this keeps subject/motion/voice consistent and ' +
+      '≤15s) and referenceAudios (up to 3, total ≤15s; model "2.5" raises these to 30/10/10 with ≤30s ' +
+      'totals) — this keeps subject/motion/voice consistent and ' +
       'is the recommended path. Only use firstFrame/lastFrame (strict first/last-frame mode) when the ' +
       'user explicitly asks for it or has a clear first/last-frame need. This ONE tool also covers ' +
       'VIDEO EDITING (替换/增删/修改元素 in an existing clip) and VIDEO EXTENSION (向前/向后延长 or ' +
@@ -306,13 +307,18 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'against batch-opening generated OUTPUTS — those the user is already looking at; this is your INPUT, ' +
         'and one look is what makes the prompt match it.',
       ),
-      referenceVideos: z.array(z.string()).max(3).optional().describe(
+      // 上限取全模型并集（2.5 的 10），逐模型收窄交给下面的 validateSeedanceRequest。
+      // 写死 3 的话，2.5 的第 4 段视频在 zod 就被拒了，压根走不到那个能给出
+      // 「模型 X 最多 N 段」这种可执行报错的地方。
+      referenceVideos: z.array(z.string()).max(10).optional().describe(
         '全能参考: up to 3 reference videos (motion/style), local path / URL / asset://assetId. Each 4–15s, ' +
-        'COMBINED total duration ≤15s. No client-side size cap (large local files are relayed automatically).',
+        'COMBINED total duration ≤15s — model "2.5" raises this to 10 videos combined ≤30s. ' +
+        'No client-side size cap (large local files are relayed automatically).',
       ),
-      referenceAudios: z.array(z.string()).max(3).optional().describe(
+      referenceAudios: z.array(z.string()).max(10).optional().describe(
         '全能参考: up to 3 reference audios (lip-sync/voice), local path / URL / asset://assetId. Each 4–15s, ' +
-        'COMBINED total duration ≤15s. No client-side size cap (large local files are relayed automatically).',
+        'COMBINED total duration ≤15s — model "2.5" raises this to 10 audios combined ≤30s and is the ' +
+        'only model that accepts audio-only references. No client-side size cap (large local files are relayed automatically).',
       ),
       referenceVideo: z.string().optional().describe('Deprecated single alias for referenceVideos — prefer referenceVideos.'),
       referenceAudio: z.string().optional().describe('Deprecated single alias for referenceAudios — prefer referenceAudios.'),

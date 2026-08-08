@@ -50,8 +50,14 @@ const cardInputSchema = z.object({
     + 'contradicts the picture, and the model follows the picture. This does NOT conflict with the rule '
     + 'against batch-opening generated OUTPUTS: those the user is already looking at, this is your INPUT.',
   ),
-  referenceVideos: z.array(z.string()).max(10).optional().describe('Up to 3 reference videos (10 with model "2.5"), combined ≤15s. Required for mode edit_video / extend_video.'),
-  referenceAudios: z.array(z.string()).max(10).optional().describe('Up to 3 reference audios (10 with model "2.5"), combined ≤15s. Model "2.5" accepts audio-only references.'),
+  referenceVideos: z.array(z.string()).max(10).optional().describe(
+    'Up to 3 reference videos, combined ≤15s — model "2.5" raises this to 10 videos combined ≤30s. '
+    + 'Required for mode edit_video / extend_video.',
+  ),
+  referenceAudios: z.array(z.string()).max(10).optional().describe(
+    'Up to 3 reference audios, combined ≤15s — model "2.5" raises this to 10 audios combined ≤30s '
+    + 'and is the only model that accepts audio-only references.',
+  ),
 })
 
 // ---------------------------------------------------------------------------
@@ -193,10 +199,13 @@ const irCardSchema = z.looseObject({
     + 'only this card is skipped (reported in `skipped`) — the rest of your apply still lands.',
   ),
   prompt: z.string().optional(),
-  model: z.enum(['2.0', '2.0-fast', '2.0-mini']).optional(),
+  // 枚举与区间都取**全模型并集**，逐模型收窄交给 validateSeedanceRequest。
+  // 漏掉 '2.5' 不只是「设不了 2.5」：export 一块含 2.5 卡片的板子再 apply，
+  // 会被 zod 当场拒掉 —— 往返路径整条断，而卡片本身完全合法。
+  model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional(),
   resolution: z.enum(['480p', '720p', '1080p']).optional(),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
-  duration: z.union([z.literal(-1), z.number().int().min(4).max(15)]).optional(),
+  duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional(),
   generateAudio: z.boolean().optional(),
   mode: z.enum([
     'text2video', 'first_frame', 'first_last_frame', 'reference_images',
@@ -361,8 +370,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       'Batch output surface of the catimation-video skill — load that skill first, grade the request ' +
       '(快速/标准/专业/制片) and write the prompt with the same discipline as generate_video. ' +
-      'Per card the material caps are identical too: referenceImages ≤9 (30 on model 2.5), referenceVideos ≤3 (10 on 2.5) and ≤15s ' +
-      'in total, referenceAudios ≤3 and ≤15s in total. ' +
+      'Per card the material caps are identical too: referenceImages ≤9, referenceVideos ≤3 and ' +
+      'referenceAudios ≤3, each type ≤15s in total — model "2.5" raises all three to 30/10/10 with ' +
+      '≤30s in total. ' +
       'Add one or more video task cards to the 「生成视频」 workbench page (the scroll-style concurrent ' +
       'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
       'multiple boards/pages — see video_workbench_status). Each card carries a prompt + Seedance spec ' +
@@ -425,8 +435,8 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
       'the prompt — same reason as on add_tasks: the render follows the picture, not the filename. ' +
-      'Material caps per card: referenceImages ≤9 (30 on model 2.5), referenceVideos ≤3 (10 on 2.5) and ≤15s in total, ' +
-      'referenceAudios ≤3 and ≤15s in total.',
+      'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
+      'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total.',
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
@@ -574,8 +584,8 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
-      + '• Material caps per card: referenceImages ≤9 (30 on model 2.5), referenceVideos ≤3 (10 on 2.5) and ≤15s in total, '
-      + 'referenceAudios ≤3 and ≤15s in total.\n'
+      + '• Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each '
+      + 'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total.\n'
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '
       + 'rejected with `conflict`, NOTHING written; re-export, redo your edits, apply again. Stale card '
