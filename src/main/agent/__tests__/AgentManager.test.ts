@@ -251,6 +251,7 @@ describe('AgentManager persisted Gateway/model startup routing', () => {
       'rightcode-standard',
       'rightcode-grok',
       'rightcode-claude',
+      'rightcode-qwen',
     ])
   })
 

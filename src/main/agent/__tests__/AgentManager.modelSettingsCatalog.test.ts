@@ -152,6 +152,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'claude-opus-5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-fable-5' }),
+          // qwen 经 Miau 渠道并入本网关目录；排在最后是组装顺序使然（动态行先铺，
+          // 静态行后补，而 qwen 只存在于静态那一轮）。
+          expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.8-max' }),
         ],
       },
     })
@@ -208,6 +213,9 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
+          expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.8-max' }),
         ],
       },
     })
@@ -305,6 +313,19 @@ describe('AgentManager model settings catalog and snapshot', () => {
             id: 'claude-sonnet-5',
             route: expect.objectContaining({ channelId: 'rightcode-claude' }),
           }),
+          // qwen 走本网关下的 Miau 渠道（端点与 Key 都是 Miau 自己的）。
+          expect.objectContaining({
+            id: 'qwen3.7-plus-dashscope',
+            route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
+          }),
+          expect.objectContaining({
+            id: 'qwen3.7-max-dashscope',
+            route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
+          }),
+          expect.objectContaining({
+            id: 'qwen3.8-max',
+            route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
+          }),
         ],
       },
     })
@@ -339,6 +360,9 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'gpt-5.5-openai-compact',
       'claude-opus-5',
       'claude-sonnet-5',
+      'qwen3.7-plus-dashscope',
+      'qwen3.7-max-dashscope',
+      'qwen3.8-max',
     ])
     expect(result.data.models.find((model) => model.id === 'grok-4.5')).toMatchObject({
       displayName: 'Grok 4.5',
@@ -365,6 +389,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'claude-opus-5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-fable-5' }),
+          // qwen 经 Miau 渠道并入本网关目录；排在最后是组装顺序使然（动态行先铺，
+          // 静态行后补，而 qwen 只存在于静态那一轮）。
+          expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.8-max' }),
         ],
       },
     })

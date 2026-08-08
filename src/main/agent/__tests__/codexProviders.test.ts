@@ -51,6 +51,9 @@ describe('codexProviders', () => {
       'rightcode-grok',
       'rightcode-claude',
       'apiyi-claude',
+      // 同一个 Miau 端点在两个网关下各注册一次（过渡态，见 QWEN_CHANNELS 注释）。
+      'apiyi-qwen',
+      'rightcode-qwen',
     ])
 
     const claude = resolveProviderChannel('rightcode-claude')
@@ -127,6 +130,7 @@ describe('codexProviders', () => {
       'rightcode-standard',
       'rightcode-grok',
       'rightcode-claude',
+      'rightcode-qwen',
     ])
   })
 

@@ -51,6 +51,58 @@ export class ModelUnavailableInGatewayError extends Error {
   }
 }
 
+/**
+ * 通义千问在 Miau(new-api)网关上的可选模型。
+ *
+ * 这三个 slug 之前只作**后台**用途存在:`QWEN_UNDERSTAND_PROVIDER` 是一个不可选的
+ * 额外 provider,给子代理(`modelProvider="qwen"`)和 MCP 理解工具用。现在同样的
+ * 端点被登记成正式 Channel,于是它们出现在对话栏里、可以直接当主模型驱动。
+ *
+ * 协议:Miau 提供**完整的 OpenAI 兼容 Responses 转发**(含 reasoning/usage),
+ * 所以 `compatibilityPolicy: 'none'` —— 既不需要 grok 那套 namespace 桥,也不需要
+ * Claude 那套 Messages 翻译。依据是接入说明 2026-08-06「Responses:兼容模式
+ * responses(网关已有完整转发)」与其测试服实测(返回含 reasoning + message +
+ * usage,`x_billing_type: "response_api"`)。
+ */
+const QWEN_MIAU_MODELS = Object.freeze([
+  'qwen3.7-plus-dashscope',
+  'qwen3.7-max-dashscope',
+  'qwen3.8-max',
+])
+
+/**
+ * Miau 的 base URL 与 Key。
+ *
+ * `credentialId: 'qwen'` 是关键:Miau 用的**不是**所在网关(apiyi / rightcode)的
+ * Key,而是早就存在 `apiKeys['qwen']` 里的那枚 Miau token —— 也就是理解工具和
+ * qwen 子代理一直在用的同一枚。所以用户不必为此重新配置任何东西。
+ *
+ * ⚠️ 给后来维护的人:**同一个 Miau 端点在两个网关下各注册了一次**,这是过渡态。
+ * 一个 Channel 只能属于一个 gatewayId(见 `ProviderChannelPreset`),而我们希望
+ * 无论用户当前选 apiyi 还是 rightcode,都能在对话栏里看到 qwen —— 所以只能重复
+ * 一份。后续把 apiyi / rightcode 都并入 Miau 之后,这两条应当合并成一条。
+ */
+const QWEN_MIAU_BASE_URL = 'https://miauapi.13797248455.xyz/v1'
+
+function qwenChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
+  return Object.freeze({
+    id: `${gatewayId}-qwen`,
+    gatewayId,
+    name: '通义千问 (Miau)',
+    baseUrl: QWEN_MIAU_BASE_URL,
+    envKey: 'MIAU_API_KEY',
+    credentialId: 'qwen',
+    model: 'qwen3.7-max-dashscope',
+    allowedModels: QWEN_MIAU_MODELS,
+    compatibilityPolicy: 'none',
+  })
+}
+
+const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
+  qwenChannel('apiyi'),
+  qwenChannel('rightcode'),
+])
+
 const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'apiyi',
@@ -58,7 +110,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'API易 Responses 网关',
     credentialId: 'apiyi',
     defaultChannelId: 'apiyi-standard',
-    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude'],
+    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen'],
   }),
   Object.freeze({
     id: 'rightcode',
@@ -66,7 +118,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'Right.Codes Codex 与 Grok 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-claude'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-claude', 'rightcode-qwen'],
   }),
 ])
 
@@ -221,6 +273,7 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // echoing `model: gpt-5.5-2026-04-23`.
     memoriesModel: 'gpt-5.5',
   }),
+  ...QWEN_CHANNELS,
 ])
 
 /** Maps a model slug to its provider family for channel routing. */
@@ -229,6 +282,9 @@ export function inferModelFamily(modelId: string): AgentModelFamily {
   if (normalized.startsWith('grok')) return 'xai'
   if (normalized.startsWith('claude')) return 'anthropic'
   if (normalized.startsWith('gpt-') || /^o\d/.test(normalized)) return 'openai'
+  // qwen 必须早于 `other` 兜底：`other` 落 standard 渠道（网关自家的端点），
+  // 而 qwen 在 Miau 上，端点和 Key 都是另一套。
+  if (normalized.startsWith('qwen')) return 'qwen'
   return 'other'
 }
 
@@ -245,6 +301,7 @@ const FAMILY_CHANNEL_SUFFIX: Readonly<Record<AgentModelFamily, string>> =
     other: 'standard',
     xai: 'grok',
     anthropic: 'claude',
+    qwen: 'qwen',
   })
 
 function customGatewayModelRoute(

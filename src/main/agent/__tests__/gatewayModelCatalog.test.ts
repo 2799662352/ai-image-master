@@ -48,6 +48,13 @@ describe('buildGatewayModelCatalog', () => {
       'grok-4.5',
       'claude-opus-5',
       'claude-sonnet-5',
+      // qwen 排在最后不是排版意图，是组装顺序的结果：动态行（网关 model/list）
+      // 先铺，静态行后补，而 qwen 只存在于静态那一轮。产品要它排在 Grok 上方，
+      // 需要在 buildGatewayModelCatalog 里按 CANONICAL_MODEL_SETTINGS_ROWS 重排 —
+      // 那一步还没做，这条断言钉的是**当前**行为，改排序时它应当一起改。
+      'qwen3.7-plus-dashscope',
+      'qwen3.7-max-dashscope',
+      'qwen3.8-max',
     ])
     expect(catalog.models.find((model) => model.id === 'gpt-5.5-openai-compact')?.route)
       .toMatchObject({ channelId: 'rightcode-standard', family: 'openai' })
@@ -228,6 +235,9 @@ describe('buildGatewayModelCatalog', () => {
       'claude-sonnet-5',
       'gpt-5.5',
       'grok-4.5',
+      'qwen3.7-max-dashscope',
+      'qwen3.7-plus-dashscope',
+      'qwen3.8-max',
     ])
   })
 })

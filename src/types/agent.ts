@@ -216,7 +216,12 @@ export interface CodexModelContextConfig {
   modelAutoCompactTokenLimit: number
 }
 
-export type AgentModelFamily = 'openai' | 'xai' | 'anthropic' | 'other'
+/**
+ * 决定一个模型走网关内的哪条 Channel。`qwen` 是独立一族而不是并进 `other`：
+ * `other` 会落到 standard 渠道（各网关自己的 OpenAI 兼容端点），而 qwen 挂在
+ * Miau（new-api）上，baseUrl 与 Key 都不同，必须自成一条。
+ */
+export type AgentModelFamily = 'openai' | 'xai' | 'anthropic' | 'qwen' | 'other'
 
 export interface AgentModelRoute {
   gatewayId: string
