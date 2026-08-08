@@ -22,6 +22,7 @@
 // 截 120 字、素材只列名字(截 40 字),绝不把 URL/base64 全文倒进上下文。
 
 import { z } from 'zod'
+import type { VideoWorkbenchMode } from '../../../types/videoWorkbench'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
@@ -561,7 +562,17 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       duration: cardInputSchema.shape.duration,
       generateAudio: cardInputSchema.shape.generateAudio,
       webSearch: cardInputSchema.shape.webSearch,
-      mode: cardInputSchema.shape.mode,
+      // ⚠️ 不能写 `cardInputSchema.shape.mode` —— 那个 shape 里**没有** mode，取到
+      // undefined，注册时 MCP SDK 读 `undefined._zod` 直接让整个服务器起不来
+      // ("Cannot read properties of undefined (reading '_zod')")。TypeScript 早就报了
+      // TS2551，被当成预存基线放过了 —— 教训:Zod schema 上的「属性不存在」不是
+      // 类型洁癖，是运行时炸弹。
+      mode: z.enum([
+        'text2video', 'first_frame', 'first_last_frame', 'reference_images',
+        'multimodal_ref', 'edit_video', 'extend_video',
+      ] satisfies readonly VideoWorkbenchMode[]).optional().describe(
+        'Workbench mode. Changing it re-checks material caps and may TRUNCATE materials that no longer fit.',
+      ),
     }),
     // 与 update_task 同档:换模型/模式时按新上限截断素材(2.5 → 2.0 会掉 21 张),
     // 而这里是**批量**截断,一次能影响整板 —— 更该让客户端问一声。
