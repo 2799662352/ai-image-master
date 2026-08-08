@@ -116,6 +116,19 @@ describe('qwen-image-3.0-pro 请求体', () => {
     expect(seen.length).toBeGreaterThanOrEqual(20)
   })
 
+  it('count 直达 parameters.n，超过官方上限 6 时截断而不是报错', () => {
+    expect((build(undefined, { count: 4 }).parameters as Record<string, unknown>).n).toBe(4)
+    // 官方 n 上限 6；调用方（MCP schema 允许到 12）传多了就地收敛，不该把整次请求打掉。
+    expect((build(undefined, { count: 12 }).parameters as Record<string, unknown>).n).toBe(6)
+    expect((build().parameters as Record<string, unknown>).n).toBe(1)
+  })
+
+  it('不是万相，多张不该带 enable_sequential —— 千问的 n>1 是独立变体不是组图', () => {
+    const p = build(undefined, { count: 5 }).parameters as Record<string, unknown>
+    expect('enable_sequential' in p).toBe(false)
+    expect('thinking_mode' in p).toBe(false)
+  })
+
   it('seed 与 negative_prompt 会进 parameters，缺省时不出现', () => {
     const withBoth = build(undefined, { seed: 12345, negativePrompt: '模糊, 多手指' })
       .parameters as Record<string, unknown>

@@ -368,8 +368,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'saved; just confirm briefly and cite the saved path(s). The render channel defaults to the ' +
       "user's composer channel picker (default VIP); pass `model` to override when needed (the " +
       'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
-      'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12) — `count` only ' +
-      'takes effect on the 万相 2.7 pro channel; for unrelated images use generate_images instead. ' +
+      'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
+      'INDEPENDENT variations of one prompt, model="qwen-image-3.0-pro" with `count`>1 (1–6). ' +
+      '`count` takes effect on those two channels only; for unrelated images use generate_images. ' +
       'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
       'returns ✅ DONE if the image finishes that fast; otherwise it returns ⏳ STILL RUNNING with a ' +
       '`taskId` (this is the COMMON case for normal renders). When you get STILL RUNNING the image ' +
@@ -395,11 +396,15 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .max(12)
         .optional()
         .describe(
-          'Number of images from THIS single prompt (default 1). ONLY meaningful for ' +
-          'model="wan2.7-image-pro": count>1 turns on 万相 组图 / enable_sequential, returning a ' +
-          'front-to-back CONSISTENT series (e.g. 同一只猫的四季, same character across shots) — up to 12. ' +
-          'Other channels ignore it and always return 1. For several UNRELATED images (distinct ' +
-          'subjects/variations), use generate_images with one prompt each instead of count.',
+          'Number of images from THIS single prompt (default 1). Supported on two channels, with ' +
+          'DIFFERENT semantics — pick by what you want:\n' +
+          '- model="wan2.7-image-pro" (up to 12): count>1 turns on 万相 组图 / enable_sequential, a ' +
+          'front-to-back CONSISTENT series (同一只猫的四季, same character across shots).\n' +
+          '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
+          'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
+          'Every other channel ignores it and always returns 1. Out-of-range values are clamped to the ' +
+          "channel's ceiling, never rejected. For several UNRELATED images (distinct subjects), use " +
+          'generate_images with one prompt each instead of count.',
         ),
       referenceImages: z
         .array(z.string())
