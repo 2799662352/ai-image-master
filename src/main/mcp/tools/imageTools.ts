@@ -347,7 +347,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'ceiling, custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
-      'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; upstream may REWRITE the ' +
+      'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; takes at most 3 reference ' +
+      'images (passing more is REJECTED, not trimmed — pick Seedream 5.0 Pro if you need up to 10); ' +
+      'upstream may REWRITE the ' +
       'requested size, so do not promise the user an exact pixel size, and negative prompts are ' +
       'dropped by the gateway — put quality requirements in the positive prompt). The ' +
       'result reports the actual channel used in its `model` field.',

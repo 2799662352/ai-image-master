@@ -65,13 +65,8 @@ describe('qwen-image-3.0-pro 请求体', () => {
     expect(parameters.n).toBe(1)
   })
 
-  it('参考图截断到官方上限 3 张，而不是让整次请求被上游拒', () => {
-    const body = build([
-      'https://e.com/1.png',
-      'https://e.com/2.png',
-      'https://e.com/3.png',
-      'https://e.com/4.png',
-    ])
+  it('刚好 3 张参考图全部发出，一张不少', () => {
+    const body = build(['https://e.com/1.png', 'https://e.com/2.png', 'https://e.com/3.png'])
     const content = (body.input as { messages: Array<{ content: Array<Record<string, string>> }> })
       .messages[0].content
     const images = content.filter((part) => 'image' in part)
@@ -81,6 +76,32 @@ describe('qwen-image-3.0-pro 请求体', () => {
       'https://e.com/2.png',
       'https://e.com/3.png',
     ])
+  })
+
+  /**
+   * 超过 3 张要**报错**而不是截断。这条曾经是 slice(0, 3) 静默丢弃：请求成功、图也
+   * 出来，但用户挑的第 4、5 张参考图从头到尾没参与，界面上没有任何迹象。参考图的
+   * 位置就是身份（图 N 绑定角色 N），少一张不是「少一点参考」，是后面所有绑定整体
+   * 错位 —— 出来的图看着正常，人却对不上。
+   */
+  it('超过 3 张报错，不静默丢弃 —— 位置即身份，少一张后面全错位', () => {
+    expect(() => build([
+      'https://e.com/1.png',
+      'https://e.com/2.png',
+      'https://e.com/3.png',
+      'https://e.com/4.png',
+    ])).toThrow(/最多支持 3 张参考图/)
+  })
+
+  it('报错要说清现状与出路，不能只说「超限」', () => {
+    let message = ''
+    try {
+      build(['a', 'b', 'c', 'd', 'e'])
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e)
+    }
+    expect(message).toContain('5 张') // 当前传了几张
+    expect(message).toContain('Seedream 5.0 Pro') // 需要更多参考图时该换谁
   })
 
   it('不发万相专属的 thinking_mode / enable_sequential', () => {

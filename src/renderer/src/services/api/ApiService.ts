@@ -2506,12 +2506,22 @@ export class ApiService {
         payload.parameters = parameters
 
         // 官方 wan2.7 / 千问都要求 input.messages；new-api 不会把顶层 image 转成 messages。
-        // 张数按模型上限截断（千问 I2I 只收 1-3 张，多了上游 400）——宁可少发一张，
-        // 也不要整次请求被拒。
+        //
+        // 超过模型上限**报错，不截断**（千问 I2I 只收 1-3 张，多了上游 400）。这里
+        // 曾经是 slice(0, cap) 静默丢弃：请求会成功、图会出来，但用户挑的第 4、5 张
+        // 参考图从头到尾没参与，而且没有任何迹象——这正是「传了参考图但模型没看」
+        // 那类最难查的问题。参考图的位置就是身份（图 N 绑定角色 N），少一张不是
+        // 「少一点参考」，是后面所有绑定整体错位。
         const refCap = modelConfig.capabilities?.maxReferenceImages
-        const cappedSources = typeof refCap === 'number' ? imageSources.slice(0, refCap) : imageSources
+        if (typeof refCap === 'number' && imageSources.length > refCap) {
+          throw new Error(
+            `${modelConfig.displayName || model} 最多支持 ${refCap} 张参考图，当前传了 ` +
+            `${imageSources.length} 张。请删到 ${refCap} 张以内，或换用支持更多参考图的渠道` +
+            `（如 Seedream 5.0 Pro 支持 10 张）。`,
+          )
+        }
         const contentParts: Array<{ text?: string; image?: string }> = []
-        for (const img of cappedSources) {
+        for (const img of imageSources) {
           contentParts.push({ image: img })
         }
         contentParts.push({ text: prompt })
