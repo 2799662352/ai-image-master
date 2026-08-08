@@ -18,6 +18,12 @@ const PRICE_TABLE: Record<
   '2.0-mini': {
     standard: { noVideo: 3.5, withVideo: 2.1 },
   },
+  // 2.5 没有 fhd 档（它只支持 480p/720p，文档 2.2.1），所以只填 standard。
+  // 注意它的价差方向和 2.0 家族不同：不含视频比 2.0 更贵、含视频反而更便宜
+  // （文档 9.2：$10.70 / $6.40，对 2.0 的 $7.0 / $4.3）。
+  '2.5': {
+    standard: { noVideo: 10.7, withVideo: 6.4 },
+  },
 }
 
 /** 单价($/1M tokens)。未知组合(如 fast/mini 配 1080p)返回 null。 */

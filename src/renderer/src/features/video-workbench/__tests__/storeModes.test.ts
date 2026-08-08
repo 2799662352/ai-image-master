@@ -6,6 +6,7 @@ import {
   buildModeMedia,
   canStart,
   resetWorkbenchStoreForTest,
+  taskModeForCard,
   useVideoWorkbenchStore,
 } from '../store'
 import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
@@ -20,6 +21,61 @@ beforeEach(() => {
   resetWorkbenchStoreForTest()
   resetWorkbenchDbForTest()
   delete (window as any).electronAPI
+})
+
+/**
+ * 「编辑视频 / 延长视频」这两个模式工作台早就有,但在 2.5 之前它们从不往上游发
+ * taskMode —— 选了「编辑视频」发出去的其实是一次普通生成。所以这里钉的是
+ * 「只有 2.5 才派生」,以及 2.0 家族行为**保持不变**。
+ */
+describe('taskModeForCard（卡片模式 → 上游 taskMode）', () => {
+  it('2.5 的编辑/延长模式派生出 edit/extend', () => {
+    expect(taskModeForCard(buildCard({ model: '2.5', mode: 'edit_video' }, 0))).toBe('edit')
+    expect(taskModeForCard(buildCard({ model: '2.5', mode: 'extend_video' }, 0))).toBe('extend')
+  })
+
+  it('2.5 的其它模式不派生', () => {
+    for (const mode of ['text2video', 'first_frame', 'reference_images', 'multimodal_ref'] as const) {
+      expect(taskModeForCard(buildCard({ model: '2.5', mode }, 0))).toBeUndefined()
+    }
+  })
+
+  it('2.0 家族即使选了编辑/延长也不派生（行为不变）', () => {
+    for (const model of ['2.0', '2.0-fast', '2.0-mini'] as const) {
+      expect(taskModeForCard(buildCard({ model, mode: 'edit_video' }, 0))).toBeUndefined()
+      expect(taskModeForCard(buildCard({ model, mode: 'extend_video' }, 0))).toBeUndefined()
+    }
+  })
+})
+
+describe('canStart 按模型能力判定', () => {
+  const withVideo = (over: Record<string, unknown>) =>
+    buildCard({ prompt: '一只猫', referenceVideos: [{ src: 'https://x/v.mp4', kind: 'video' }], ...over } as never, 0)
+
+  it('2.5 建卡时不再被夹到 15 秒', () => {
+    expect(buildCard({ prompt: 'x', model: '2.5', duration: 30 }, 0).duration).toBe(30)
+    // 2.0 仍然夹在 15 —— 建卡这一道就挡住了，canStart 见到的已是合法值。
+    expect(buildCard({ prompt: 'x', model: '2.0', duration: 30 }, 0).duration).toBe(15)
+  })
+
+  it('canStart 兜住绕过 buildCard 的越界卡（旧版本落库的草稿）', () => {
+    const stale = { ...buildCard({ prompt: 'x', model: '2.0' }, 0), duration: 30 }
+    const tooLong = canStart(stale)
+    expect(tooLong.ok).toBe(false)
+    expect(tooLong.reason).toMatch(/4-15/)
+  })
+
+  it('1080p 仍然只有 2.0,2.5 也不行', () => {
+    expect(canStart(buildCard({ prompt: 'x', model: '2.0', resolution: '1080p' }, 0)).ok).toBe(true)
+    expect(canStart(buildCard({ prompt: 'x', model: '2.5', resolution: '1080p' }, 0)).ok).toBe(false)
+  })
+
+  it('2.5 的编辑/延长必须带参考视频', () => {
+    const missing = canStart(buildCard({ prompt: 'x', model: '2.5', mode: 'edit_video' }, 0))
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toMatch(/参考视频/)
+    expect(canStart(withVideo({ model: '2.5', mode: 'edit_video' })).ok).toBe(true)
+  })
 })
 
 describe('buildCard 新字段默认值', () => {

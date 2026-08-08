@@ -4,14 +4,16 @@
 // 上游文档：seedance-openapi-ark-2026-06-12.md；设计稿：
 // docs/superpowers/specs/2026-06-12-seedance-video-mcp-design.md
 
-import type { SeedanceModelAlias } from '../../../types/seedance'
+import type { SeedanceModelAlias, SeedanceTaskMode } from '../../../types/seedance'
 import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
 
 export type {
   SeedanceTaskStatus,
   SeedancePersistence,
   SeedanceModelAlias,
+  SeedanceModelCapabilities,
   SeedanceRegion,
+  SeedanceTaskMode,
   SeedanceTaskState,
   SeedanceTaskUpdate,
   SeedanceKeyState,
@@ -19,8 +21,17 @@ export type {
 } from '../../../types/seedance'
 
 export {
+  SEEDANCE_MODEL_CAPABILITIES,
+  capabilitiesFor,
+  validateSeedanceRequest,
+} from '../../../types/seedance'
+
+export {
   getSeedanceRegion,
+  isSeedanceModelAvailable,
+  listSeedanceModelAliases,
   resolveSeedanceModelId,
+  SEEDANCE_CN_2_5_ENABLED,
   SEEDANCE_MODEL_IDS_BY_REGION,
 } from './region'
 
@@ -56,6 +67,11 @@ export interface SeedanceCreateTaskBody {
   seed?: number
   /** 联网搜索增强（Seedance 2.0;soraui relay: webSearch → tools）。 */
   tools?: Array<{ type: 'web_search' }>
+  /**
+   * 编辑 / 延长已有视频（仅 Seedance 2.5，文档 4.9）。缺省时字段完全不出现
+   * —— 2.0 家族的上游不认这个键。
+   */
+  taskMode?: SeedanceTaskMode
 }
 
 /** generate_video main handler 的入参（videoTools zod 校验后的形状）。 */
@@ -74,6 +90,11 @@ export interface CreateVideoTaskInput {
   referenceVideos?: string[]
   /** 全能参考模式：最多 3 段参考音频（对口型/音色），总时长 ≤15s。 */
   referenceAudios?: string[]
+  /**
+   * 编辑 / 延长已有视频（仅 2.5）。上游会强制 `adaptive` 比例并要求带视频参考，
+   * `edit` 另外锁死 `duration: -1` —— 这些都在提交前由 validateSeedanceRequest 兜住。
+   */
+  taskMode?: SeedanceTaskMode
   /** @deprecated 单数别名，buildContent 会并入 referenceVideos。 */
   referenceVideo?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceAudios。 */

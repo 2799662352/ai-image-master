@@ -67,7 +67,10 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       }).success,
     ).toBe(true)
     expect(schema.safeParse({ tasks: [] }).success).toBe(false)
-    expect(schema.safeParse({ tasks: [{ duration: 30 }] }).success).toBe(false)
+    // schema 放到全模型最宽的 4-30（2.5 需要）；按模型收窄由渲染端 canStart 与
+    // 主进程 validateSeedanceRequest 做，所以 30 在这一层合法、31 才越界。
+    expect(schema.safeParse({ tasks: [{ duration: 30 }] }).success).toBe(true)
+    expect(schema.safeParse({ tasks: [{ duration: 31 }] }).success).toBe(false)
     expect(schema.safeParse({ tasks: [{ resolution: '4K' }] }).success).toBe(false)
   })
 

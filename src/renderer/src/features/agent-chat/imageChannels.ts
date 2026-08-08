@@ -65,6 +65,18 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     miauOnly: true,
   },
   {
+    // DashScope 同步多模态出图，经 Miau 的 OpenAI 兼容 /v1/images/generations。
+    // 注意两条与别家不同的脾气（接入说明 2026-08-07 §6 / §9）：上游可能忽略或
+    // 改写请求尺寸（实测请求 1328×1328 拿回约 1792×2400），所以别把 size 当承诺；
+    // `negative_prompt` 不会经网关透传（AliImageParameters 里没有这个键，反序列化
+    // 时直接丢弃），要压画质问题得写进正向提示词。
+    id: 'qwen-image-3.0-pro',
+    label: 'Qwen3',
+    fullLabel: '通义千问 Image 3.0 Pro',
+    description: '阿里通义千问 Image 3.0 Pro — 同步出图，经 Miau 代理；尺寸以实际返回为准。',
+    miauOnly: true,
+  },
+  {
     id: 'gpt-image-2',
     label: 'Image2',
     fullLabel: 'GPT Image 2 官方',

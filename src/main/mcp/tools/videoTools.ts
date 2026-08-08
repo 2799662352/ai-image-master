@@ -24,7 +24,12 @@ import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
-import type { SeedanceTaskState } from '../../services/seedance/types'
+import type {
+  SeedanceModelAlias,
+  SeedanceTaskMode,
+  SeedanceTaskState,
+} from '../../services/seedance/types'
+import { validateSeedanceRequest } from '../../services/seedance/types'
 
 /** check_video_task 服务端长轮询窗口（须 < codex 工具超时，留足余量）。 */
 export const CHECK_LONG_POLL_MS = 25_000
@@ -275,21 +280,24 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'Video description. Supports shot language (运镜/景别), dialogue lines, and -- style ' +
         'parameters appended at the end.',
       ),
-      model: z.enum(['2.0', '2.0-fast', '2.0-mini']).optional().describe(
-        'Seedance model alias. Upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only).',
+      model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional().describe(
+        'Seedance model alias. Upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only).',
       ),
       resolution: z.enum(['480p', '720p', '1080p']).optional().describe(
-        'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0".',
+        'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0" (NOT "2.5").',
       ),
-      ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
-      duration: z.union([z.literal(-1), z.number().int().min(4).max(15)]).optional().describe(
-        'Video length in seconds (4–15), or -1 = smart duration (model auto-decides; result shows actual length). Default 5. Longer = more expensive.',
+      ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored (forced adaptive) when taskMode is set.'),
+      duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional().describe(
+        'Video length in seconds — 4–15 for the 2.0 family, 4–30 for "2.5" — or -1 = smart duration (model auto-decides; result shows actual length). Default 5. Longer = more expensive.',
+      ),
+      taskMode: z.enum(['edit', 'extend']).optional().describe(
+        'Seedance 2.5 ONLY. "edit" rewrites an existing video, "extend" continues it. Both REQUIRE at least one referenceVideos entry and force an adaptive aspect ratio; "edit" additionally forces duration -1. Omit for normal generation.',
       ),
       generateAudio: z.boolean().optional().describe('Generate soundtrack/voice audio. Default true (no extra cost).'),
       firstFrame: z.string().optional().describe('STRICT first/last-frame mode only — use ONLY when the user explicitly wants a fixed first frame. First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). No client-side size cap — large local files are relayed automatically; if a file exceeds what upstream accepts, upstream says so.'),
       lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too, strict mode only). Same formats as firstFrame.'),
-      referenceImages: z.array(z.string()).max(9).optional().describe(
-        '全能参考 (DEFAULT mode): up to 9 reference images for subject/style consistency (人物/角色一致性). ' +
+      referenceImages: z.array(z.string()).max(30).optional().describe(
+        '全能参考 (DEFAULT mode): up to 9 reference images (30 with model "2.5") for subject/style consistency (人物/角色一致性). ' +
         'Prefer this over firstFrame for almost every request. If the user attached image paths in the ' +
         'prompt, pass them here. asset://assetId from the portrait library also works. ' +
         'LOOK BEFORE YOU WRITE: view_image ONE representative reference first, then write the prompt from ' +
@@ -310,9 +318,27 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceAudio: z.string().optional().describe('Deprecated single alias for referenceAudios — prefer referenceAudios.'),
     }),
   }, async (params, ctx?: unknown) => {
-    const p = params as { model?: '2.0' | '2.0-fast' | '2.0-mini'; resolution?: string }
-    if (p.resolution === '1080p' && (p.model ?? '2.0') !== '2.0') {
-      return textResult(buildErrorBanner('generate_video', new Error('1080p requires model "2.0" — either set model:"2.0" or drop to 720p.')))
+    // 提交前按模型能力自查（4k/1080p 归属、时长区间、taskMode 前提、素材上限）。
+    // 这些上游都会 400，但那时用户已经等过一次往返、看到的是一张失败卡片。
+    const p = params as {
+      model?: SeedanceModelAlias
+      resolution?: string
+      duration?: number
+      taskMode?: SeedanceTaskMode
+      referenceImages?: unknown[]
+      referenceVideos?: unknown[]
+      referenceAudios?: unknown[]
+    }
+    const errors = validateSeedanceRequest(p.model ?? '2.0', {
+      resolution: p.resolution,
+      duration: p.duration,
+      taskMode: p.taskMode,
+      images: p.referenceImages?.length ?? 0,
+      videos: p.referenceVideos?.length ?? 0,
+      audios: p.referenceAudios?.length ?? 0,
+    })
+    if (errors.length > 0) {
+      return textResult(buildErrorBanner('generate_video', new Error(errors.join('；'))))
     }
     const codexThreadId = extractCodexThreadId(ctx)
     try {

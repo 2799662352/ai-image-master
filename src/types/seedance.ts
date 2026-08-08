@@ -27,7 +27,159 @@ export interface SeedanceCancelResult {
 export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
 
 /** 对外暴露的友好模型名（mini = 最便宜档,仅 480p/720p）。 */
-export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini'
+export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5'
+
+/**
+ * 2.5 独有的任务模式（文档 4.9）。两者都**必须带视频参考**、比例被上游强制
+ * `adaptive`;`edit` 另外锁死 `durationSeconds: -1`。
+ */
+export type SeedanceTaskMode = 'edit' | 'extend'
+
+export interface SeedanceModelCapabilities {
+  /** 固定秒数区间；`-1`（智能时长）任何模型都额外允许。 */
+  duration: { min: number; max: number }
+  /** 上游接受的 `resolution` 白名单。 */
+  resolutions: readonly string[]
+  maxImages: number
+  maxVideos: number
+  maxAudios: number
+  /** 三类素材加总的上限（文档只给了 2.5 的口径）。 */
+  maxMaterialsTotal: number
+  /** 空数组 = 该模型没有 edit/extend。 */
+  taskModes: readonly SeedanceTaskMode[]
+  /** 传 `subtitleEraseEnabled=true` 是否被接受（否则上游 400）。 */
+  subtitleErase: boolean
+  /** 是否允许「只有音频、没有图/视频」的参考组合。 */
+  audioOnlyReference: boolean
+}
+
+/**
+ * 各模型的上游约束 —— 「9/3/3」「4-15」这类数字的**唯一**出处。
+ *
+ * 此前它们散在 videoTools / videoWorkbenchTools / modes / cardSpec 至少五处,
+ * 加一个模型就要同时改五处、漏一处就是运行时 400。数字出自 vvdance 开发文档
+ * (版本 2026-08-08) 第 2.2.1（4k 归属）、2.3（时长区间）、2.4（擦字幕归属）、
+ * 4.9（2.5 的素材上限与 taskMode）节。
+ */
+export const SEEDANCE_MODEL_CAPABILITIES: Record<
+  SeedanceModelAlias,
+  SeedanceModelCapabilities
+> = {
+  '2.0': {
+    duration: { min: 4, max: 15 },
+    resolutions: ['480p', '720p', '1080p', '4k'],
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: true,
+    audioOnlyReference: false,
+  },
+  '2.0-fast': {
+    duration: { min: 4, max: 15 },
+    // 1080p 只配 2.0 —— 这条不是文档写的（文档只点名 4k 归 2.0 独占），是
+    // videoTools 早先就立着的实战规则，收编进表时原样保留，不擅自放宽。
+    resolutions: ['480p', '720p'],
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: true,
+    audioOnlyReference: false,
+  },
+  '2.0-mini': {
+    duration: { min: 4, max: 15 },
+    resolutions: ['480p', '720p'],
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: false,
+    audioOnlyReference: false,
+  },
+  '2.5': {
+    duration: { min: 4, max: 30 },
+    resolutions: ['480p', '720p'],
+    maxImages: 30,
+    maxVideos: 10,
+    maxAudios: 10,
+    maxMaterialsTotal: 50,
+    taskModes: ['edit', 'extend'],
+    subtitleErase: false,
+    audioOnlyReference: true,
+  },
+}
+
+export function capabilitiesFor(alias: SeedanceModelAlias): SeedanceModelCapabilities {
+  return SEEDANCE_MODEL_CAPABILITIES[alias]
+}
+
+export interface SeedanceRequestShape {
+  duration?: number
+  resolution?: string
+  taskMode?: SeedanceTaskMode
+  images?: number
+  videos?: number
+  audios?: number
+  subtitleErase?: boolean
+}
+
+/**
+ * 提交前把请求按模型能力核一遍,返回人话错误（空数组 = 放行）。
+ *
+ * 存在的理由是「别等上游 400 才知道」：4k 配 2.5、30 秒配 2.0、edit 不带视频,
+ * 这几种都会被上游拒,但错误回到用户面前时已经隔了一次网络往返和一张失败卡片。
+ */
+export function validateSeedanceRequest(
+  alias: SeedanceModelAlias,
+  request: SeedanceRequestShape,
+): string[] {
+  const caps = capabilitiesFor(alias)
+  const errors: string[] = []
+  const { duration, resolution, taskMode } = request
+  const images = request.images ?? 0
+  const videos = request.videos ?? 0
+  const audios = request.audios ?? 0
+
+  if (taskMode && !caps.taskModes.includes(taskMode)) {
+    errors.push(`模型 ${alias} 不支持 taskMode="${taskMode}"，仅 Seedance 2.5 支持 edit / extend`)
+  } else if (taskMode) {
+    // 两个模式都以视频为编辑对象，没有视频就无从编辑/延长。
+    if (videos < 1) errors.push(`taskMode="${taskMode}" 必须至少带一段视频参考`)
+    if (taskMode === 'edit' && duration !== undefined && duration !== -1) {
+      errors.push('taskMode="edit" 的时长固定为 -1（智能时长），不能指定固定秒数')
+    }
+  }
+
+  if (duration !== undefined && duration !== -1) {
+    const { min, max } = caps.duration
+    if (!Number.isInteger(duration) || duration < min || duration > max) {
+      errors.push(`模型 ${alias} 的时长支持 ${min}-${max} 秒或 -1，收到 ${duration}`)
+    }
+  }
+
+  if (resolution && !caps.resolutions.includes(resolution)) {
+    errors.push(
+      `模型 ${alias} 不支持分辨率 ${resolution}，可用：${caps.resolutions.join(' / ')}`,
+    )
+  }
+
+  if (request.subtitleErase && !caps.subtitleErase) {
+    errors.push(`模型 ${alias} 不支持擦除字幕（仅 2.0 与 2.0-fast 支持）`)
+  }
+
+  if (images > caps.maxImages) errors.push(`参考图最多 ${caps.maxImages} 张，收到 ${images}`)
+  if (videos > caps.maxVideos) errors.push(`参考视频最多 ${caps.maxVideos} 段，收到 ${videos}`)
+  if (audios > caps.maxAudios) errors.push(`参考音频最多 ${caps.maxAudios} 段，收到 ${audios}`)
+  if (images + videos + audios > caps.maxMaterialsTotal) {
+    errors.push(`素材总数最多 ${caps.maxMaterialsTotal} 个`)
+  }
+
+  return errors
+}
 
 /** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
 export type SeedanceRegion = 'global' | 'cn'

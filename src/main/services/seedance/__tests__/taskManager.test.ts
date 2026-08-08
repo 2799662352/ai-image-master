@@ -79,6 +79,56 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  it('submit 支持 2.5 与 30 秒时长', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({ input: { ...INPUT, model: '2.5', duration: 30 }, content: [] })
+    expect(client.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'dreamina-seedance-2-5-260628', duration: 30 }),
+      'sk-test',
+    )
+    mgr.dispose()
+  })
+
+  it('taskMode 透传并强制 adaptive 比例（文档 4.9）', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({
+      input: { ...INPUT, model: '2.5', taskMode: 'extend', duration: 20, ratio: '16:9' },
+      // 校验按真正会发出去的 content[] 数素材，不看入参字段 —— 所以这里得给真视频项。
+      content: [{ type: 'video_url', video_url: { url: 'https://x/v.mp4' } }],
+    })
+    expect(client.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ taskMode: 'extend', ratio: 'adaptive' }),
+      'sk-test',
+    )
+    mgr.dispose()
+  })
+
+  it('不传 taskMode 时请求体里完全没有这个字段（兼容旧上游）', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({ input: { ...INPUT, model: '2.0' }, content: [] })
+    const body = (client.createTask as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]
+    expect(Object.hasOwn(body as object, 'taskMode')).toBe(false)
+    mgr.dispose()
+  })
+
+  it('提交前按模型能力拦下非法组合，不打上游', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    // 30 秒是 2.5 的上限，2.0 只到 15。
+    await expect(
+      mgr.submit({ input: { ...INPUT, model: '2.0', duration: 30 }, content: [] }),
+    ).rejects.toThrow(/4-15/)
+    // edit 必须带视频参考。
+    await expect(
+      mgr.submit({ input: { ...INPUT, model: '2.5', taskMode: 'edit', duration: -1 }, content: [] }),
+    ).rejects.toThrow(/视频/)
+    expect(client.createTask).not.toHaveBeenCalled()
+    mgr.dispose()
+  })
+
   it('succeeded 透传上游实际 seed 与 completion_tokens(计费口径)', async () => {
     const mgr = makeManager(
       makeClient([

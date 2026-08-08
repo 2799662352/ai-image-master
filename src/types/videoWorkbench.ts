@@ -9,7 +9,12 @@
 // - MCP 工具（video_workbench_*）经 agent:tool-request 路由到渲染端
 //   AgentToolExecutor，直接操作同一个 zustand store —— 人与 AI 操作同一页面。
 
-import type { SeedanceModelAlias, SeedancePersistence, SeedanceTaskStatus } from './seedance'
+import type {
+  SeedanceModelAlias,
+  SeedancePersistence,
+  SeedanceTaskMode,
+  SeedanceTaskStatus,
+} from './seedance'
 
 /**
  * 生成模式（移植自 soraui 旧工作台 VolcengineArkVideoMode）：
@@ -439,6 +444,12 @@ export interface VideoWorkbenchSubmitPayload {
   seed?: number
   /** 联网搜索增强。 */
   webSearch?: boolean
+  /**
+   * 编辑 / 延长已有视频（仅 Seedance 2.5）。**由卡片的 `mode` 派生，不是新字段**：
+   * `edit_video`/`extend_video` 这两个模式早就在工作台上了，只是从来没往上游发过
+   * 这个参数 —— 也就是说 2.5 之前选「编辑视频」发出去的其实是一次普通生成。
+   */
+  taskMode?: SeedanceTaskMode
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]
