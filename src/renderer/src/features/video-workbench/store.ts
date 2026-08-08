@@ -73,13 +73,7 @@ import {
   shouldCoalesce,
 } from './workbenchHistory'
 
-export {
-  MAX_REFERENCE_AUDIOS,
-  MAX_REFERENCE_IMAGES,
-  MAX_REFERENCE_VIDEOS,
-  buildCard,
-  toMaterial,
-} from './cardSpec'
+export { buildCard, toMaterial } from './cardSpec'
 
 /** 卡片持久化防抖窗口(打字高频更新不打爆 IndexedDB)。 */
 const PERSIST_DEBOUNCE_MS = 500
@@ -1165,13 +1159,17 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         if (card.id !== id) return card
         // 进行中的任务参数已定格提交,不允许改(与音频页任务快照语义一致)
         if (card.status === 'preparing' || card.status === 'queued' || card.status === 'running') return card
+        // 这一轮改完之后的模型。所有「按模型收敛」的字段都得用它而不是 card.model,
+        // 否则同一个 patch 里「升到 2.5 + 给 30 张图 / 给 30 秒」会被旧模型的
+        // 9 张 / 15 秒当场切掉,用户看到的是设置静默失效。
+        const nextModel = patch.model ?? card.model
         updated = {
           ...card,
           ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
           ...(patch.model !== undefined ? { model: patch.model } : {}),
           ...(patch.resolution !== undefined ? { resolution: patch.resolution } : {}),
           ...(patch.ratio !== undefined ? { ratio: patch.ratio } : {}),
-          ...(patch.duration !== undefined ? { duration: normalizeDuration(patch.duration) } : {}),
+          ...(patch.duration !== undefined ? { duration: normalizeDuration(patch.duration, nextModel) } : {}),
           ...(patch.generateAudio !== undefined ? { generateAudio: patch.generateAudio } : {}),
           ...(patch.mode !== undefined ? { mode: normalizeMode(patch.mode) } : {}),
           // seed: null=清除(恢复随机);undefined=不动
@@ -1181,27 +1179,32 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
               ? { seed: normalizeSeed(patch.seed) }
               : {}),
           ...(patch.webSearch !== undefined ? { webSearch: patch.webSearch === true } : {}),
+          // 按**这次改完之后**的模型截断:同一个 patch 里可能既换模型又换素材,
+          // 用 card.model(旧值)会把升到 2.5 后本该收下的图当场切掉。
           ...(patch.referenceImages !== undefined
-            ? { referenceImages: clampMaterials(patch.referenceImages.map(toMaterial), 'referenceImages') }
+            ? { referenceImages: clampMaterials(patch.referenceImages.map(toMaterial), 'referenceImages', nextModel) }
             : {}),
           ...(patch.referenceVideos !== undefined
-            ? { referenceVideos: clampMaterials(patch.referenceVideos.map(toMaterial), 'referenceVideos') }
+            ? { referenceVideos: clampMaterials(patch.referenceVideos.map(toMaterial), 'referenceVideos', nextModel) }
             : {}),
           ...(patch.referenceAudios !== undefined
-            ? { referenceAudios: clampMaterials(patch.referenceAudios.map(toMaterial), 'referenceAudios') }
+            ? { referenceAudios: clampMaterials(patch.referenceAudios.map(toMaterial), 'referenceAudios', nextModel) }
             : {}),
           updatedAt: Date.now(),
           // 规格版本 +1:agent 手里那份带旧 rev 的 IR 后续就写不进这张卡了。
           // 只影响这一张 —— structureRevision 不动,别的卡照样可写。
           rev: (card.rev ?? 0) + 1,
         }
-        // 模式切换后按新模式截断超限素材(soraui 是清空,这里保守只截断)
-        if (patch.mode !== undefined) {
+        // 模式或模型切换后按新上限截断超限素材(soraui 是清空,这里保守只截断)。
+        // 模型也要管:2.5 收 30 张图,降回 2.0 只收 9 张——不截断的话卡片看着正常,
+        // 一提交就被 validateSeedanceRequest 拒,用户还得自己去数哪几张多余。
+        if (patch.mode !== undefined || patch.model !== undefined) {
+          const m = updated.model
           updated = {
             ...updated,
-            referenceImages: updated.referenceImages.slice(0, modeLimit(updated.mode, 'image')),
-            referenceVideos: updated.referenceVideos.slice(0, modeLimit(updated.mode, 'video')),
-            referenceAudios: updated.referenceAudios.slice(0, modeLimit(updated.mode, 'audio')),
+            referenceImages: updated.referenceImages.slice(0, modeLimit(updated.mode, 'image', m)),
+            referenceVideos: updated.referenceVideos.slice(0, modeLimit(updated.mode, 'video', m)),
+            referenceAudios: updated.referenceAudios.slice(0, modeLimit(updated.mode, 'audio', m)),
           }
         }
         return updated
@@ -1404,7 +1407,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         if (card.id !== id) return card
         updated = {
           ...card,
-          [kind]: clampMaterials([...card[kind], ...materials], kind),
+          [kind]: clampMaterials([...card[kind], ...materials], kind, card.model),
           updatedAt: Date.now(),
           rev: (card.rev ?? 0) + 1,
         }

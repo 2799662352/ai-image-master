@@ -22,21 +22,12 @@ import type { SeedanceModelAlias } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
 
-/**
- * 2.0 家族的上限，保留给不知道模型的旧调用点（UI 计数、拖拽提示）。
- * 按模型取值请用 {@link materialLimitFor} —— 2.5 是 30/10/10。
- */
-export const MAX_REFERENCE_IMAGES = 9
-export const MAX_REFERENCE_VIDEOS = 3
-export const MAX_REFERENCE_AUDIOS = 3
+// 素材条数上限没有「与模型无关」的版本 —— 2.0 家族 9/3/3、2.5 是 30/10/10。
+// 这里曾摆着一组 MAX_REFERENCE_* 常量「给不知道模型的旧调用点用」,结果 2.5 接进来
+// 之后正是这些默认值在背地里把第 10 张图切掉:界面按能力表显示 9/30,落 state 那一刀
+// 却按 9 切。上限只有一个来源 —— {@link materialLimitFor}，必须带模型。
 
 export type MaterialKind = 'referenceImages' | 'referenceVideos' | 'referenceAudios'
-
-export const MATERIAL_LIMITS: Record<MaterialKind, number> = {
-  referenceImages: MAX_REFERENCE_IMAGES,
-  referenceVideos: MAX_REFERENCE_VIDEOS,
-  referenceAudios: MAX_REFERENCE_AUDIOS,
-}
 
 export const MATERIAL_KINDS = [
   'referenceImages',

@@ -248,6 +248,14 @@ export interface SeedanceKeyState {
   secretMasked?: string
   /** 当前站点预设（env `SEEDANCE_BASE_URL` 可覆盖实际 Base，不改此字段）。 */
   region: SeedanceRegion
+  /**
+   * 当前站点**真正能提交**的模型档位，由主进程按 region + 灰度开关算出。
+   *
+   * 渲染端别自己枚举 `SEEDANCE_MODEL_CAPABILITIES` 的键去填下拉框：2.5 在国内站
+   * 还挂着 `SEEDANCE_CN_2_5_ENABLED` 灰度，能力表里有不等于提交得上去。摆一个
+   * 注定被上游拒的选项，比少摆一个更糟。
+   */
+  models: readonly SeedanceModelAlias[]
 }
 
 // ==================== 素材库（人像库） ====================

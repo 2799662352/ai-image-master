@@ -10,7 +10,12 @@
 //   succeeded(内联 <video> 播放) / failed(错误+重试)。
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
-import type { SeedanceAssetItem, SeedanceAssetListResult } from '../../../../types/seedance'
+import type {
+  SeedanceAssetItem,
+  SeedanceAssetListResult,
+  SeedanceModelAlias,
+} from '../../../../types/seedance'
+import { capabilitiesFor } from '../../../../types/seedance'
 import type {
   VideoWorkbenchCard,
   VideoWorkbenchMaterial,
@@ -38,24 +43,37 @@ import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
 import { parseFileDrop, serializeWorkbenchCardDrag } from '../../features/file-explorer/dragHelpers'
 import { materialsFromPaths } from '../../features/video-workbench/pathMaterials'
+import { useSeedanceModels } from '../../features/video-workbench/useSeedanceModels'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
 /** 文件栏(FileExplorerPanel)内部拖拽的词表 —— 只有路径,没有 dataTransfer.files。 */
 const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
 
-const MODEL_OPTIONS = [
-  { value: '2.0', label: 'Seedance 2.0 满血' },
-  { value: '2.0-fast', label: 'Seedance 2.0 Fast' },
-  { value: '2.0-mini', label: 'Seedance 2.0 Mini(最省)' },
-] as const
-const RESOLUTION_OPTIONS = ['480p', '720p', '1080p'] as const
+const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
+  '2.5': 'Seedance 2.5',
+  '2.0': 'Seedance 2.0 满血',
+  '2.0-fast': 'Seedance 2.0 Fast',
+  '2.0-mini': 'Seedance 2.0 Mini(最省)',
+}
+/** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
+const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
 const RATIO_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
+
 /**
- * -1 = 智能时长(模型自动决定,文档 8.1);其余是 `normalizeDuration` 收敛的
- * 整个 4–15 区间。上游按秒连续接受,此前只列了偶数与 5,选不到的 7/9/11/13/14
- * 并非上游限制。
+ * 分辨率与时长都**按所选模型现算**,不再写死一张 2.0 的表。
+ *
+ * 2.5 接进来时能力表已经改对了(它没有 1080p / 4k,时长到 30 秒),但这里的常量
+ * 数组没跟上,于是界面照旧只肯给到 15 秒、还摆着一个提交必被拒的 1080p。
+ *
+ * -1 = 智能时长(模型自动决定,文档 8.1);其余按秒连续 —— 上游本来就连续接受,
+ * 早先只列偶数与 5 是我们自己漏的,不是上游限制。
  */
-const DURATION_OPTIONS = [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const
+function durationOptionsFor(model: SeedanceModelAlias): number[] {
+  const { min, max } = capabilitiesFor(model).duration
+  const secs: number[] = []
+  for (let s = min; s <= max; s += 1) secs.push(s)
+  return [-1, ...secs]
+}
 
 function getFilePathSafe(file: File): string {
   try {
@@ -160,6 +178,12 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
 
   const busy = card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
 
+  // 可选档位由主进程按站点算(国内 2.5 挂着灰度),渲染端不自己枚举能力表。
+  // 拿不到就退回 2.0 家族——少一个选项好过摆一个提交必被拒的选项。
+  const availableModels = useSeedanceModels()
+  const modelCaps = capabilitiesFor(card.model)
+  const durationOptions = useMemo(() => durationOptionsFor(card.model), [card.model])
+
   const [cancelling, setCancelling] = useState(false)
   // running 档的「放弃」要二次确认（不可逆且照样计费）；任务一离开进行中就复位
   const [confirmAbandon, setConfirmAbandon] = useState(false)
@@ -260,7 +284,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
     const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
     for (const kind of ['image', 'video', 'audio'] as const) {
       if (grouped[kind].length === 0) continue
-      const remaining = modeLimit(card.mode, kind) - (current?.[KIND_TO_FIELD[kind]].length ?? 0)
+      const remaining = modeLimit(card.mode, kind, card.model) - (current?.[KIND_TO_FIELD[kind]].length ?? 0)
       if (remaining <= 0) continue
       addMaterials(card.id, KIND_TO_FIELD[kind], grouped[kind].slice(0, remaining))
     }
@@ -269,7 +293,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
   /** 外链图片入素材(拖放/粘贴共用)。超出该模式的图片上限时不入。 */
   const addExternalImage = (material: VideoWorkbenchMaterial): void => {
     const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
-    const limit = modeLimit(card.mode, 'image')
+    const limit = modeLimit(card.mode, 'image', card.model)
     if (!current || limit <= 0 || current.referenceImages.length >= limit) return
     if (current.referenceImages.some((m) => m.src === material.src)) return
     addMaterials(card.id, 'referenceImages', [material])
@@ -292,15 +316,15 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
     const toMaterials = async (list: File[]) =>
       (await Promise.all(list.map(fileToMaterial))).filter((m): m is VideoWorkbenchMaterial => m !== null)
     const accepted: File[] = []
-    if (images.length && modeLimit(card.mode, 'image') > 0) {
+    if (images.length && modeLimit(card.mode, 'image', card.model) > 0) {
       addMaterials(card.id, 'referenceImages', await toMaterials(images))
       accepted.push(...images)
     }
-    if (videos.length && modeLimit(card.mode, 'video') > 0) {
+    if (videos.length && modeLimit(card.mode, 'video', card.model) > 0) {
       addMaterials(card.id, 'referenceVideos', await toMaterials(videos))
       accepted.push(...videos)
     }
-    if (audios.length && modeLimit(card.mode, 'audio') > 0) {
+    if (audios.length && modeLimit(card.mode, 'audio', card.model) > 0) {
       addMaterials(card.id, 'referenceAudios', await toMaterials(audios))
       accepted.push(...audios)
     }
@@ -346,7 +370,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
       if (!current) return null
       const list = current[field]
-      if (list.length >= modeLimit(current.mode, kind)) return null
+      if (list.length >= modeLimit(current.mode, kind, current.model)) return null
       // 已在素材里(同 asset:// 源)则直接复用其序号,不重复添加
       const material = assetToMaterial(asset)
       const existing = list.findIndex((m) => m.src === material.src)
@@ -437,7 +461,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       const list = current[field]
       const existing = list.findIndex((m) => m.src === ref.material.src)
       if (existing >= 0) return { kind: ref.kind, index1: existing + 1 }
-      if (list.length >= modeLimit(current.mode, ref.kind)) return null
+      if (list.length >= modeLimit(current.mode, ref.kind, current.model)) return null
       addMaterials(card.id, field, [ref.material])
       return { kind: ref.kind, index1: list.length + 1 }
     },
@@ -456,7 +480,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
       const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
       for (const kind of ['image', 'video', 'audio'] as const) {
         if (grouped[kind].length === 0) continue
-        const remaining = modeLimit(card.mode, kind) - (current?.[KIND_TO_FIELD[kind]].length ?? 0)
+        const remaining = modeLimit(card.mode, kind, card.model) - (current?.[KIND_TO_FIELD[kind]].length ?? 0)
         if (remaining <= 0) continue
         addMaterials(card.id, KIND_TO_FIELD[kind], grouped[kind].slice(0, remaining))
       }
@@ -650,7 +674,9 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
 
       <div className="p-4 space-y-3">
         {/* 参考素材(soraui 布局:素材区在提示词上方) */}
-        {(modeSpec.maxImages > 0 || modeSpec.maxVideos > 0 || modeSpec.maxAudios > 0) && (
+        {(modeLimit(card.mode, 'image', card.model) > 0 ||
+          modeLimit(card.mode, 'video', card.model) > 0 ||
+          modeLimit(card.mode, 'audio', card.model) > 0) && (
           <div className="space-y-2 border border-dashed border-[#27272A] px-3 py-2">
             <MaterialStackRow
               card={card}
@@ -667,8 +693,8 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
                   : card.mode === 'first_last_frame'
                     ? '第 1 张图 = 首帧,第 2 张 = 尾帧'
                     : card.mode === 'extend_video'
-                      ? '上传要延长的视频(≤3)'
-                      : `拖放文件到卡片任意位置即可按类型自动归入(图≤${modeSpec.maxImages} / 视频≤${modeSpec.maxVideos} / 音频≤${modeSpec.maxAudios})`}
+                      ? `上传要延长的视频(≤${modeLimit(card.mode, 'video', card.model)})`
+                      : `拖放文件到卡片任意位置即可按类型自动归入(图≤${modeLimit(card.mode, 'image', card.model)} / 视频≤${modeLimit(card.mode, 'video', card.model)} / 音频≤${modeLimit(card.mode, 'audio', card.model)})`}
               </p>
               {!busy && (
                 <button
@@ -746,17 +772,28 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
             disabled={busy}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) => {
-              const v = e.target.value
-              const model = v === '2.0-fast' || v === '2.0-mini' ? v : '2.0'
-              // 1080p 仅 2.0 满血支持(文档 9.2),切 fast/mini 自动降 720p
+              const model = e.target.value as SeedanceModelAlias
+              const caps = capabilitiesFor(model)
+              // 换档可能让当前分辨率/时长越界(1080p 只有 2.0 满血有;2.5 上限 30s
+              // 而 2.0 家族 15s)。就地收敛到新模型的合法值,别把越界值留到提交时
+              // 才被上游或 validateSeedanceRequest 拒。
+              const resolution = caps.resolutions.includes(card.resolution)
+                ? undefined
+                : ('720p' as const)
+              const duration =
+                card.duration !== -1 &&
+                (card.duration < caps.duration.min || card.duration > caps.duration.max)
+                  ? Math.min(caps.duration.max, Math.max(caps.duration.min, card.duration))
+                  : undefined
               updateCard(card.id, {
                 model,
-                ...(model !== '2.0' && card.resolution === '1080p' ? { resolution: '720p' } : {}),
+                ...(resolution ? { resolution } : {}),
+                ...(duration !== undefined ? { duration } : {}),
               })
             }}
           >
-            {MODEL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {availableModels.map((m) => (
+              <option key={m} value={m}>{MODEL_LABELS[m]}</option>
             ))}
           </select>
           <select
@@ -768,10 +805,8 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
               updateCard(card.id, { resolution: e.target.value as '480p' | '720p' | '1080p' })
             }
           >
-            {RESOLUTION_OPTIONS.map((r) => (
-              <option key={r} value={r} disabled={r === '1080p' && card.model !== '2.0'}>
-                {r}{r === '1080p' && card.model !== '2.0' ? '(仅 2.0)' : ''}
-              </option>
+            {modelCaps.resolutions.map((r) => (
+              <option key={r} value={r}>{r}</option>
             ))}
           </select>
           <select
@@ -793,7 +828,7 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) => updateCard(card.id, { duration: Number(e.target.value) })}
           >
-            {DURATION_OPTIONS.map((d) => (
+            {durationOptions.map((d) => (
               <option key={d} value={d}>{d === -1 ? '✨ 智能' : `${d}s`}</option>
             ))}
           </select>
@@ -996,9 +1031,9 @@ function MaterialStackRow({
   // MaterialStack 的 onAdd 直接复用整卡 addFiles(自动按 MIME 分流),
   // 这样点「+」和拖放走同一条入库路径。素材上限跟随生成模式。
   const onAdd = (files: File[]) => void addFiles(files)
-  const imageLimit = modeLimit(card.mode, 'image')
-  const videoLimit = modeLimit(card.mode, 'video')
-  const audioLimit = modeLimit(card.mode, 'audio')
+  const imageLimit = modeLimit(card.mode, 'image', card.model)
+  const videoLimit = modeLimit(card.mode, 'video', card.model)
+  const audioLimit = modeLimit(card.mode, 'audio', card.model)
   const imageLabel =
     card.mode === 'first_frame' ? '首帧图' : card.mode === 'first_last_frame' ? '首/尾帧' : '参考图'
   // thumbSrcs 是三类素材首尾相接的一条数组,按各自长度切回来。
