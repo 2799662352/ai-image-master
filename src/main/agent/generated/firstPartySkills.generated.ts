@@ -58,7 +58,8 @@ image_gen skill: they render inside the chat AND persist results to local files
 顺序拼装,英文、现在时、重要元素前置、≤120 词。**丢字段就是出图不稳的直接来源。**
 
 1. **主体 + 动作** —— \`[char1] reaches for a brass door handle\`(用角色标签,别内联外貌)
-2. **角色引用** —— \`[char1]\` \`[char2]\`,外貌在全局段定义一次,每格只引用标签
+2. **角色引用** —— \`[char1]\` \`[char2]\`,外貌在全局段定义一次,每格只引用标签。
+   **有参考图时标签必须绑到具体某一张**,见下方「参考图绑定」
 3. **场景环境** —— 地点、天气、时间
 4. **镜头相机** —— \`medium shot, eye-level, 50mm\`
 5. **光照** —— 方向 + 质感 + 色温,如 \`warm tungsten side-light from left, soft, 3200K\`
@@ -68,6 +69,30 @@ image_gen skill: they render inside the chat AND persist results to local files
 画质要求写成**正向**(\`sharp focus, correct anatomy, five clear fingers\`),而不是堆
 「不要…」清单;只有目标模型有独立负向字段且确需时才补负向。空洞形容词
 (beautiful / amazing)单独出现不算数,必须配具体描述。
+
+**参考图绑定(有参考图就必写,与视频侧同一套纪律):** 参考图**按位置认人** ——
+\`referenceImages\` 里的第 N 张就是 reference image N。本 app 保证这个顺序原样送达:
+不去重、不静默丢弃、并发上传也按输入序排列。所以**角色标签必须绑到序号**,
+只写 \`[char1]\` 而不说它是哪张图里的人,多人多图时模型只能猜 —— 这正是「同一个人
+在组图里换脸」的头号成因。两种写法按主体数量选:
+
+- **单主体、不复用** —— 行内绑定,首次出现时写一次:
+  \`[char1] (reference image 1) reaches for a brass door handle\`
+- **多主体或跨图复用** —— 先在提示词开头**定义为主体**,之后全程只用标签:
+  \`Reference image 1 defines [char1]: <2–3 个稳定静态特征>. Reference image 2
+  defines [char2]: <...>.\` 特征只挑不随镜头变的(脸型 / 发色发型 / 标志物 / 常驻配饰),
+  别把姿势、表情、光线这类会变的写进定义里。
+
+三条硬规矩:
+
+- **一张参考图只定义一个出场主体。** 单人设定图不要同时定义两个会同时出场的人;
+  有多张单人候选时先一人一图分配。同一主体的多视角(正面 / 侧面 / 全身)才可以
+  合并到同一个标签。
+- **裸 asset ID 严禁进正文。** \`asset://…\` 只出现在 \`referenceImages\` 参数里,
+  提示词里一律用 \`[charN]\` 或 \`reference image N\` —— 模型关联不了无语义 ID。
+- **别照抄视频侧的 \`@图片N\`。** 视频那条路会在发送前把 \`@图片1\` 归一成 \`图片1\`
+  (\`normalizeSeedancePromptReferences\`),**图片链路不做这道归一**,提示词原样透传,
+  \`@\` 会连着进模型。图片提示词一律写英文原形 \`reference image N\`。
 
 **第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆写。** 每条提示词落笔前至少查
 三次 \`search_cinematography_kb\`,三次各查一个面,不要用同义词把同一个问题问三遍:

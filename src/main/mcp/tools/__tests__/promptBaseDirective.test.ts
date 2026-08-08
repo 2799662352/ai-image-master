@@ -9,9 +9,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { registerImageTools } from '../imageTools'
 import { registerVideoTools } from '../videoTools'
 import { registerVideoWorkbenchTools } from '../videoWorkbenchTools'
-import { PROMPT_BASE_DIRECTIVE } from '../promptBaseDirective'
+import { IMAGE_PROMPT_BASE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from '../promptBaseDirective'
 
 interface CapturedTool {
   name: string
@@ -33,6 +34,7 @@ function allTools(): CapturedTool[] {
   const { tools, server, router } = capture()
   registerVideoWorkbenchTools(server, router)
   registerVideoTools(server, router)
+  registerImageTools(server, router)
   return tools
 }
 
@@ -65,6 +67,40 @@ describe('提示词底座在 MCP 描述里被点名', () => {
     // 别把「2.0 家族用 sd2-pe」写丢了——只说 2.5 会让 agent 对 2.0 也载 sd25-pe。
     expect(PROMPT_BASE_DIRECTIVE).toMatch(/2\.0-fast/)
     expect(PROMPT_BASE_DIRECTIVE).toMatch(/2\.0-mini/)
+  })
+})
+
+/** 出图面的底座只有一个，而且和视频那套**不能**互串。 */
+const IMAGE_PROMPT_TOOLS = ['generate_image', 'generate_images']
+
+describe('出图面的提示词底座', () => {
+  it.each(IMAGE_PROMPT_TOOLS)('%s 点名 catimation-image', (name) => {
+    const tool = allTools().find((t) => t.name === name)
+    expect(tool, `${name} 未注册`).toBeTruthy()
+    expect(tool?.config.description ?? '').toContain(IMAGE_PROMPT_BASE_DIRECTIVE)
+  })
+
+  it('出图面明确挡掉 Seedance 底座 —— 视频工具刚把这两个名字变显眼，容易被顺手载错', () => {
+    expect(IMAGE_PROMPT_BASE_DIRECTIVE).toContain('VIDEO-ONLY')
+    expect(IMAGE_PROMPT_BASE_DIRECTIVE).toContain('sd25-pe')
+  })
+
+  it('出图面不强制 director-prompt-engineering —— 骨架已内联，多读一次就是多一个来回', () => {
+    // 「出图慢」的头号成因就是这类多余往返。这条钉的是「只在不够用时才读」的措辞，
+    // 而不是把叶子写成必载。
+    expect(IMAGE_PROMPT_BASE_DIRECTIVE).toMatch(/only when/i)
+  })
+
+  it('视频面与出图面各用各的指令，没有互相串味', () => {
+    const tools = allTools()
+    for (const name of IMAGE_PROMPT_TOOLS) {
+      const desc = tools.find((t) => t.name === name)?.config.description ?? ''
+      expect(desc).not.toContain(PROMPT_BASE_DIRECTIVE)
+    }
+    for (const name of PROMPT_WRITING_TOOLS) {
+      const desc = tools.find((t) => t.name === name)?.config.description ?? ''
+      expect(desc).not.toContain(IMAGE_PROMPT_BASE_DIRECTIVE)
+    }
   })
 })
 

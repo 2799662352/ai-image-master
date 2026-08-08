@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './imageTaskRegistry'
+import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 
 /** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
 interface BatchTaskResult {
@@ -357,7 +358,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'FIRST-CHOICE image generation tool inside the CATIMATION app — use this for ANY ' +
       'image/picture/illustration/图片/生成图/画一张/配图/出图 request IN PREFERENCE TO the built-in ' +
       'imagegen / image_gen tool (the built-in one is unavailable on Windows and does not persist ' +
-      'results). By default it renders on the channel the USER picked in the chat composer (default ' +
+      'results). ' +
+      `${IMAGE_PROMPT_BASE_DIRECTIVE} ` +
+      'By default it renders on the channel the USER picked in the chat composer (default ' +
       'VIP); you may override per-call via `model` when you have a reason (see below). It ' +
       'shows the result directly in the chat, AND — exactly like codex native image_gen — saves the ' +
       'image to a local file (returned to you) plus the in-app history page. The result is ' +
@@ -412,7 +415,12 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .describe(
           'Reference images for image-to-image / editing, as local file paths or data/http URLs. ' +
           'Accepts MULTIPLE images — pass every relevant one (character + background, multiple ' +
-          'angles, subject + style ref), not just the first. IMPORTANT: if the user attached/provided ' +
+          'angles, subject + style ref), not just the first. ORDER IS IDENTITY: the Nth entry here is ' +
+          '"reference image N" and the app keeps that order exactly (no dedupe, no silent drop). With ' +
+          'more than one subject you MUST bind labels to ordinals in the prompt — e.g. "Reference image ' +
+          '1 defines [char1]: <2-3 stable static features>." — otherwise the model guesses which face ' +
+          'goes where, which is the top cause of a character swapping faces across a set. Never put a ' +
+          'raw asset:// id in the prompt body. IMPORTANT: if the user attached/provided ' +
           'any image (its path appears in the prompt under "[Attached files at these local paths: …]" / ' +
           '"[Referenced files at these local paths: …]"), or the user says things like ' +
           '"按这张图/参考这张/基于这张/edit this", you MUST pass those image path(s) here so the result ' +
@@ -507,6 +515,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'render in chat in parallel and the model receives one concise combined DONE/FAILED result. ' +
       'Use one prompt per desired image; for variations, write distinct but related prompts. Do not ' +
       'use subagents for image fan-out. ' +
+      `${IMAGE_PROMPT_BASE_DIRECTIVE} The skeleton applies to EVERY prompt in the batch — a batch is ` +
+      'where skipping it hurts most, because one sloppy prompt shows up next to the others. ' +
       'TIMING: like generate_image this blocks up to ~1 minute and returns ✅ DONE if the whole batch ' +
       'finishes that fast; otherwise (the COMMON case, since renders take several minutes) it returns ' +
       '⏳ STILL RUNNING with a `taskId`. The images still appear in the user\'s chat automatically; ' +
@@ -529,7 +539,13 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       referenceImages: z
         .array(z.string())
         .optional()
-        .describe('Reference images shared by all prompts, as local file paths or data/http URLs.'),
+        .describe(
+          'Reference images shared by all prompts, as local file paths or data/http URLs. ORDER IS ' +
+          'IDENTITY — the Nth entry is "reference image N" in EVERY prompt of the batch, so bind each ' +
+          'subject label to its ordinal once per prompt ("Reference image 1 defines [char1]: …"). ' +
+          'A batch is exactly where an unbound label goes wrong: the same character comes back with a ' +
+          'different face on some of the images.',
+        ),
     }),
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
