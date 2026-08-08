@@ -41,8 +41,72 @@ export interface ResolutionOption {
  */
 export type UnderstandInput =
   | { kind: 'video'; mediaUrl: string; question: string; fps?: number }
-  | { kind: 'document'; mediaUrl: string; question: string }
+  /**
+   * 图片 / 文档。`mediaUrl` 是单张;要一次看多张(商品对比、多页文档、
+   * 分镜连续性)就再给 `mediaUrls` —— 上游把同一条 user message 里并列的多个
+   * `image_url` 当成一组来看,这正是「跨图比较」能成立的原因;拆成多次调用
+   * 模型就看不到彼此了。
+   *
+   * 两者可同时给,`mediaUrl` 排在最前(它常是「主图」),之后按 `mediaUrls` 顺序,
+   * 去重但**不重排** —— 顺序即身份,提示词里说「第二张」就得是第二张。
+   */
+  | { kind: 'document'; mediaUrl: string; question: string; mediaUrls?: string[] }
   | { kind: 'web'; query: string }
+
+/**
+ * 单次请求的图片张数上限(公网 URL 形态)。来自千问「视觉理解模型」文档:
+ * qwen3.8-max / 3.7-plus 均为 URL 2048 张、base64 250 张。我们这条链只传 URL
+ * (上游不收本机路径,调用方已先中转成公网 URL),故按 2048 记。
+ *
+ * 这里只做**兜底截断**而不是报错:上游超限会整条请求失败,而看图是「多看几张少看
+ * 几张」的事,砍掉尾部远好过一张都看不成。真到 2048 张的场景本身就该先聚合。
+ */
+export const QWEN_UNDERSTAND_MAX_IMAGES = 2048
+
+/**
+ * 去重但**保序**。顺序即身份 —— 提问里说「第二张」,就必须是数组里的第二张;
+ * 用 Set 一转再展开虽然也保序,但这里显式写出来是为了钉住「不许排序」这条约束。
+ * 空串/非字符串一并滤掉,免得组出 `image_url: { url: "" }` 让整条请求失败。
+ */
+/**
+ * PDF 走**另一种 content part**。
+ *
+ * 上游对 PDF 有原生解析(`type: "file"`),而我们此前对所有「文档」一律发
+ * `image_url` —— 一个指向 .pdf 的 image_url 上游是读不出内容的,这正是
+ * understand_document 的说明里那句「原生文档只有部分支持,先渲成图效果最好」
+ * 的由来:不是上游不行,是我们发错了形状。
+ *
+ * 注意 PDF 理解**只走 Chat Completions**(官方明写「暂不支持 Responses API」),
+ * 也就是我们现在这条路,不需要另开通路。
+ *
+ * 排布上 file part 在图片之前、但整体仍在问题文本之后 —— 官方 PDF 示例是
+ * file 在前、文本在后,而我们既有的图片形态是文本在前且一直可用。两种顺序
+ * 上游都接受(content 是一组 part,不是有序指令),所以这里保持与图片一致,
+ * 避免为 PDF 单开一种排布。
+ * 上游限制:单文件 150MB / 单文档 500 页。
+ */
+function buildDocumentParts(urls: readonly string[]): Array<Record<string, unknown>> {
+  const isPdf = (u: string) => /\.pdf(?:[?#]|$)/i.test(u)
+  const pdfs = urls.filter(isPdf)
+  const images = urls.filter((u) => !isPdf(u)).slice(0, QWEN_UNDERSTAND_MAX_IMAGES)
+  return [
+    ...pdfs.map((file_url) => ({ type: 'file', file: { file_url } })),
+    ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+  ]
+}
+
+function dedupePreservingOrder(urls: readonly unknown[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const u of urls) {
+    if (typeof u !== 'string') continue
+    const trimmed = u.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
+  }
+  return out
+}
 
 /**
  * 理解能力上游模型(走 antigravity new-api 网关的 DashScope 原生通道)。
@@ -64,6 +128,20 @@ export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-plus-dashscope'
 
 /** 更强 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
 export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
+
+/**
+ * 旗舰理解模型 `qwen3.8-max`(2026-08-03 GA)。
+ *
+ * **不设为默认。** 它与 3.7-plus 的视频规格完全相同(2 小时 / 2GB / 单次 64 段
+ * 视频 / 2048 张 URL 图),差别在推理强度、1M 上下文和内置工具 —— 而理解工具的
+ * 绝大多数调用是「看一段片子讲了什么」,这些规格上 plus 已经吃满,换旗舰只是更贵。
+ * 需要长文档深读或复杂跨模态推理时由调用方显式指定 `model="flagship"`。
+ *
+ * 注意模型 id **没有** `-dashscope` 后缀 —— 它走的是网关里 `QWEN_MIAU_MODELS`
+ * 那条(与对话栏同一枚 Miau key),不是 3.7 那两个 DashScope 原生别名。
+ * 规格来源:千问平台「视觉理解模型」文档。
+ */
+export const QWEN_UNDERSTAND_FLAGSHIP_MODEL = 'qwen3.8-max'
 
 /**
  * 把 apiyi-mcp 的 `APIYI_API_KEY` 推给主进程时使用的 provider-store 槽位 id。
@@ -96,6 +174,7 @@ export const DASHVECTOR_API_KEY_STORAGE = 'dashvector_api_key'
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
   QWEN_UNDERSTAND_FALLBACK_MODEL,
+  QWEN_UNDERSTAND_FLAGSHIP_MODEL,
 ]
 
 /**
@@ -109,6 +188,9 @@ export function resolveUnderstandModel(requested?: string): string {
   const r = requested.trim().toLowerCase()
   if (r === 'max') return 'qwen3.7-max-dashscope'
   if (r === 'plus') return 'qwen3.7-plus-dashscope'
+  // 'flagship' 而不是 '3.8':别名要表达「选最强的那档」,写死版本号会在下次换代时
+  // 变成需要同步改动的死值(plus/max 就是这么活过好几代的)。
+  if (r === 'flagship' || r === '3.8') return QWEN_UNDERSTAND_FLAGSHIP_MODEL
   return QWEN_UNDERSTAND_MODELS.includes(requested) ? requested : QWEN_UNDERSTAND_MODEL
 }
 
@@ -2919,9 +3001,20 @@ export class ApiService {
         ? input.query
         : [
             { type: 'text', text: input.question },
-            input.kind === 'video'
-              ? { type: 'video_url', video_url: { url: input.mediaUrl } }
-              : { type: 'image_url', image_url: { url: input.mediaUrl } },
+            ...(input.kind === 'video'
+              // `fps` 是 video_url 的**同级**字段,不在它里面(官方 curl 示例如此)。
+              // 之前它只在类型上存在、组包时被丢掉,等于永远走上游默认 2.0。
+              ? [{
+                  type: 'video_url',
+                  video_url: { url: input.mediaUrl },
+                  ...(typeof input.fps === 'number' ? { fps: input.fps } : {}),
+                }]
+              // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
+              // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
+              // 拆成多次调用模型就看不到彼此了。
+              : buildDocumentParts(
+                  dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])]),
+                )),
           ]
 
     const baseBody: Record<string, unknown> = { messages: [{ role: 'user', content }] }

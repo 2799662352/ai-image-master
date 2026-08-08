@@ -5,6 +5,7 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './imageTaskRegistry'
 import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
+import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
 
 /** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
 interface BatchTaskResult {
@@ -382,6 +383,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'will STILL appear in the user\'s chat automatically — tell the user it is generating and then ' +
       'call check_image_task with that taskId, repeatedly, until it reports DONE or FAILED. Before ' +
       'calling this tool, briefly tell the user you are submitting the render.',
+    annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       prompt: z.string().min(1).describe('Image description / prompt.'),
       model: modelSchema,
@@ -492,6 +494,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'calling with the same taskId until DONE or FAILED. The image(s) already appear in the user\'s ' +
       'chat automatically, so this is only about getting the saved path / final status — never ' +
       'resubmit generate_image.',
+    annotations: READ_ONLY_REMOTE,
     inputSchema: z.object({
       taskId: z.string().min(1).describe('Task id returned by a generate_image STILL RUNNING handoff.'),
     }),
@@ -527,6 +530,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       '⏳ STILL RUNNING with a `taskId`. The images still appear in the user\'s chat automatically; ' +
       'tell the user they are generating and call check_image_task with that taskId, repeatedly, until ' +
       'DONE or FAILED. Before calling, briefly tell the user you are submitting the batch.',
+    annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       prompts: z.array(z.string().min(1)).min(2).max(GENERATE_IMAGES_MAX_PROMPTS).describe(
         'One prompt per image (2–20). If the user asks for N images, provide N prompts here.',

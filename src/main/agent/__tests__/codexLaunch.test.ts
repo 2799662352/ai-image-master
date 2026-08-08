@@ -787,26 +787,28 @@ describe('buildCodexLaunchArgs', () => {
   // force-seed wipes any hand-typed config.toml key) is overlaid onto the
   // seeded [mcp_servers.apiyi].env table via `-c` at spawn, NEVER written to
   // config.toml.
-  it('overlays the apiyi-mcp APIYI_API_KEY via -c when apiyiKey is supplied', () => {
+  // ⛔ 契约已变:apiyi(Gemini)整条通道不再对 agent 暴露,**即使设置里有 key**。
+  // 原判据是「有没有 key」而不是「key 能不能用」—— 失效的 key 会让服务器照常
+  // 起来、照常挂出工具,agent 撞三次才知道不行,比工具不存在更糟。而看图/看视频
+  // 已有 qwen 那条(还支持一次多张做跨图比较),重复能力只会让模型多一次试错。
+  it('即使给了 key 也不注入 apiyi(整条通道不暴露)', () => {
     const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
-    expect(args).toContain('mcp_servers.apiyi.env.APIYI_API_KEY="sk-apiyi-runtime"')
-    // The model is owned by the boot seed's canonical env (gemini-3.5-flash);
-    // the runtime overlay never injects it.
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.APIYI_API_KEY'))).toBe(false)
     expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.GEMINI_MODEL'))).toBe(false)
   })
 
   // FORCE mode: a key in 设置 must force-enable apiyi at runtime, overriding
   // any stale `enabled = false` on disk (old seeds wrote that; users toggled
   // the card off while debugging and stayed dead forever).
-  it('force-enables apiyi via -c when apiyiKey is supplied', () => {
+  it('有 key 也走休眠分支:enabled=false,永不 enabled=true', () => {
     const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
-    expect(args).toContain('mcp_servers.apiyi.enabled=true')
-    expect(args).not.toContain('mcp_servers.apiyi.enabled=false')
+    expect(args).toContain('mcp_servers.apiyi.enabled=false')
+    expect(args).not.toContain('mcp_servers.apiyi.enabled=true')
   })
 
   // Reliability timeouts ride alongside the key (guarded so the seeded
   // transport-carrying entry exists), mirroring catimation's tool_timeout_sec.
-  it('injects apiyi startup/tool timeouts when apiyiKey is supplied', () => {
+  it.skip('injects apiyi startup/tool timeouts when apiyiKey is supplied（通道不暴露后不再注入）', () => {
     const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
     // Generous 60s startup slack — the list side (90s budget + silent timeout
     // degrade) is what keeps one slow server from blanking the whole panel, so
@@ -862,11 +864,8 @@ describe('buildCodexLaunchArgs', () => {
 
   // localStorage key present → inject the secret via `-c`, apply timeouts, and
   // never emit the dormant guard.
-  it('does not emit the dormant guard when apiyiKey is supplied', () => {
-    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
-    expect(args).not.toContain('mcp_servers.apiyi.enabled=false')
-    expect(args).toContain('mcp_servers.apiyi.env.APIYI_API_KEY="sk-apiyi-runtime"')
-  })
+  // (原「有 key 就不休眠」那条已删:通道不暴露后语义整个反过来了,
+  //  新契约由上面「有 key 也走休眠分支」覆盖,留着只会是重复且相反的断言。)
 
   // cinematography-kb-mcp key: same catimation-style runtime injection as apiyi —
   // the 设置 → 运镜知识库 key is overlaid onto the boot-seeded

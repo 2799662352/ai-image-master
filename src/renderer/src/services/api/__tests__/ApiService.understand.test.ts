@@ -1,5 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ApiService } from '../ApiService'
+import {
+  ApiService,
+  QWEN_UNDERSTAND_FLAGSHIP_MODEL,
+  QWEN_UNDERSTAND_MODEL,
+  resolveUnderstandModel,
+} from '../ApiService'
+
+describe('resolveUnderstandModel', () => {
+  it('三档别名各自映射到真实模型名', () => {
+    expect(resolveUnderstandModel('plus')).toBe('qwen3.7-plus-dashscope')
+    expect(resolveUnderstandModel('max')).toBe('qwen3.7-max-dashscope')
+    // qwen3.8-max 走网关的 Miau 那条，模型 id 没有 -dashscope 后缀。
+    expect(resolveUnderstandModel('flagship')).toBe('qwen3.8-max')
+    expect(resolveUnderstandModel('3.8')).toBe('qwen3.8-max')
+  })
+
+  it('旗舰只在被点名时启用，默认仍是 plus', () => {
+    // 3.8 与 3.7-plus 的视频规格相同(2h / 2GB)，默认换旗舰只是更贵。
+    expect(resolveUnderstandModel(undefined)).toBe(QWEN_UNDERSTAND_MODEL)
+    expect(resolveUnderstandModel('qwen3.9-ultra')).toBe(QWEN_UNDERSTAND_MODEL)
+    expect(resolveUnderstandModel(QWEN_UNDERSTAND_FLAGSHIP_MODEL)).toBe('qwen3.8-max')
+  })
+})
 
 /** Minimal Response-like stub for fetch. */
 function fakeResponse(opts: {
@@ -22,6 +44,86 @@ function newServiceWithKey(key: string | null): ApiService {
   vi.spyOn(service, 'getStoredVisionApiKey').mockReturnValue(null)
   return service
 }
+
+describe('ApiService.understand() — 多图与 fps', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(fakeResponse({
+      ok: true,
+      body: JSON.stringify({ choices: [{ message: { content: 'ok' } }] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  const bodyOf = () => JSON.parse(fetchMock.mock.calls[0][1].body as string)
+
+  it('多图并列在同一条 message 里(跨图比较才成立),且保序去重', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'document',
+      question: '这两张里的人是同一个吗',
+      mediaUrl: 'https://x/a.png',
+      // 故意夹一个与主图重复的、一个空串：去重但不许重排。
+      mediaUrls: ['https://x/b.png', 'https://x/a.png', '   ', 'https://x/c.png'],
+    })
+    const parts = bodyOf().messages[0].content
+    expect(parts[0]).toEqual({ type: 'text', text: '这两张里的人是同一个吗' })
+    // 顺序即身份：提问里说「第二张」就得是第二张。
+    expect(parts.slice(1).map((p: { image_url: { url: string } }) => p.image_url.url))
+      .toEqual(['https://x/a.png', 'https://x/b.png', 'https://x/c.png'])
+  })
+
+  it('只给单张时形状不变(不因为支持了多图就改变既有调用)', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'document', question: 'q', mediaUrl: 'https://x/a.png',
+    })
+    const parts = bodyOf().messages[0].content
+    expect(parts).toHaveLength(2)
+    expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: 'https://x/a.png' } })
+  })
+
+  it('PDF 用 file part 而不是 image_url(发错形状上游读不出内容)', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'document', question: '总结一下', mediaUrl: 'https://x/paper.pdf',
+    })
+    expect(bodyOf().messages[0].content[1]).toEqual({
+      type: 'file', file: { file_url: 'https://x/paper.pdf' },
+    })
+  })
+
+  it('PDF 与图片混传时各用各的 part 类型', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'document',
+      question: '对照看',
+      mediaUrl: 'https://x/a.png',
+      mediaUrls: ['https://x/spec.pdf?v=2', 'https://x/b.jpg'],
+    })
+    const parts = bodyOf().messages[0].content.slice(1)
+    // 带查询串的 .pdf 也要认出来。
+    expect(parts).toEqual([
+      { type: 'file', file: { file_url: 'https://x/spec.pdf?v=2' } },
+      { type: 'image_url', image_url: { url: 'https://x/a.png' } },
+      { type: 'image_url', image_url: { url: 'https://x/b.jpg' } },
+    ])
+  })
+
+  it('fps 作为 video_url 的同级字段送出;不给就不出现这个键', async () => {
+    await newServiceWithKey('k').understand({
+      kind: 'video', question: 'q', mediaUrl: 'https://x/v.mp4', fps: 0.5,
+    })
+    // 官方 curl 里 fps 与 video_url 平级 —— 塞进 video_url 内部上游会忽略。
+    expect(bodyOf().messages[0].content[1]).toEqual({
+      type: 'video_url', video_url: { url: 'https://x/v.mp4' }, fps: 0.5,
+    })
+
+    fetchMock.mockClear()
+    await newServiceWithKey('k').understand({
+      kind: 'video', question: 'q', mediaUrl: 'https://x/v.mp4',
+    })
+    expect(bodyOf().messages[0].content[1]).not.toHaveProperty('fps')
+  })
+})
 
 describe('ApiService.understand()', () => {
   let fetchMock: ReturnType<typeof vi.fn>

@@ -26,10 +26,13 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
   WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_BOARD_SUMMARY_MAX,
+  WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../types/videoWorkbench'
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
+import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
@@ -70,6 +73,13 @@ const boardBriefSchema = z.object({
   id: z.string(),
   name: z.string(),
   cardCount: z.number(),
+  summary: z.string().optional().describe(
+    'One-line note about what this page holds, written by you via video_workbench_set_board_summary. '
+    + 'Absent until someone writes it. This is the whole point of the boards list: since status only '
+    + 'returns the ACTIVE page\'s cards, "page 3, 20 cards" alone cannot tell you whether page 3 is worth '
+    + 'pulling — page names are often just "页面 3". A summary lets you pick the right page without '
+    + 'fetching any of its cards.',
+  ),
 })
 
 const statusCountsSchema = z.object({
@@ -161,12 +171,30 @@ const startOutputSchema = z.looseObject({
 })
 
 const statusOutputSchema = z.looseObject({
-  total: z.number().describe('Total cards matching the cardIds/boardId filters, across ALL pages.'),
+  total: z.number().describe('Total cards matching the current scope + cardIds filter, across ALL pages.'),
+  scope: z.looseObject({
+    boardId: z.string().optional(),
+    allBoards: z.boolean().optional(),
+  }).describe(
+    'What this call actually looked at. Without it, "12 cards" is ambiguous between "this page has 12" '
+    + 'and "the whole workbench has 12". Cross-check against `boards[].cardCount` to decide whether '
+    + 'another page is worth pulling.',
+  ),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
   // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
   cards: z.array(cardSnapshotSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
+  pageIndex: z.array(z.object({
+    page: z.number(),
+    cardIds: z.array(z.string()),
+    digest: z.string(),
+  })).describe(
+    'One line per page covering the WHOLE scope, so you can jump straight to the page you need instead '
+    + 'of walking every page. Each entry holds the page number, its card ids, and the opening ~24 chars of '
+    + 'each prompt (plus status when it is not draft). Read this first, pick the page, then fetch it. '
+    + `Capped at ${WORKBENCH_STATUS_MAX_INDEX_ENTRIES} entries — beyond that, page numbers still work.`,
+  ),
   page: z.number().describe('1-based page number of `cards`.'),
   pageSize: z.number(),
   totalPages: z.number(),
@@ -267,9 +295,24 @@ const applyOutputSchema = z.looseObject({
     cardId: z.string().optional(),
     boardId: z.string().optional(),
     reason: z.string(),
+    current: z.object({
+      prompt: z.string(),
+      model: z.string(),
+      resolution: z.string(),
+      ratio: z.string(),
+      duration: z.number(),
+      rev: z.number(),
+    }).optional().describe(
+      "Present when the skip was a per-card version conflict: this is the card AS IT IS NOW, so you do "
+      + 'NOT need another export just to see what the user changed. Decide from it — if only duration/model '
+      + 'moved, rewrite your version against the new value and send again; if the prompt itself was '
+      + 'replaced, ask the user rather than overwriting what they just wrote. To overwrite deliberately, '
+      + "copy `current.rev` into that card's `rev` and re-apply.",
+    ),
   })).describe(
     'Per-item rejections (a card the user edited meanwhile, rendering cards whose spec is frozen, unknown '
-    + 'ids, unresolvable wbref, …). Everything not listed here was applied.',
+    + 'ids, unresolvable wbref, …). Everything not listed here was applied. A per-card conflict is NOT a '
+    + 'failure of the whole call — the other cards landed.',
   ),
   structureRevision: z.number().describe('New structure token; carry it into the next apply.'),
 })
@@ -414,6 +457,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       (v) => !(v.afterCardId && v.beforeCardId),
       { message: 'afterCardId and beforeCardId are mutually exclusive' },
     ),
+    // 不是纯增：卡片总数超过 WORKBENCH_MAX_CARDS 时 store 会 evict() 淘汰最旧的终态卡
+    // （store.ts 的 addCards 分支）。也就是说「加几张卡」在满板时会删掉别的卡 ——
+    // 那是用户数据，标 additive 是错的。
+    annotations: DESTRUCTIVE,
     outputSchema: addTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -437,12 +484,23 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
       'the prompt — same reason as on add_tasks: the render follows the picture, not the filename. ' +
+      'THIS IS THE TOOL FOR CHANGING ONE CARD — reach for it whenever you are rewriting a single ' +
+      "prompt, swapping that card's references, or adjusting its duration/model. It targets the card " +
+      'by id, carries no board-wide version token, and cannot be invalidated by the user typing in ' +
+      'another card. Do NOT export the whole board and re-apply it just to edit one card: that is far ' +
+      'slower and any edit the user makes meanwhile can push your write aside. Reserve ' +
+      'video_workbench_apply for restructuring (adding/deleting/reordering cards or pages, or editing ' +
+      'many cards at once). Call it once per card — one focused call per card beats one giant IR. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
     }).merge(cardInputSchema),
+    // 幂等（同参数重复调结果一致），但**会删素材**：切模型 / 切模式时 updateCard 按新
+    // 上限截断超限的参考图与音视频（store.ts 的 modeLimit 截断），2.5 降回 2.0 就会掉 21 张。
+    // 那是用户拖进去的东西，所以标破坏性而不是 additive。
+    annotations: { ...DESTRUCTIVE, idempotentHint: true },
     outputSchema: updateTaskOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -466,6 +524,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
     }),
+    annotations: WRITE_ADDITIVE_REMOTE,
     outputSchema: startOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -489,23 +548,39 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
       '(look up board names in the boards list). Each card: prompt, spec, status (draft/preparing/' +
       'queued/running/succeeded/failed), compact reference-material name lists, taskId, error, and the ' +
-      'saved localPath / permanent remoteUrl for finished videos. Pass boardId to inspect one board; ' +
-      'omit to see all boards. Use it to inspect what the user has set up before editing cards, or when ' +
-      'the user explicitly asks how a render is going — NOT as a polling loop after ' +
-      'video_workbench_start (batch completion is pushed to you automatically).\n' +
-      `Cards are PAGINATED (a workbench can hold hundreds): the result carries page/totalPages/hasMore, ` +
-      `and \`total\` counts every match across all pages. Default ${WORKBENCH_STATUS_PAGE_SIZE} per page. ` +
-      'When hasMore is true, fetch the next page with page:N+1 rather than asking for a huge pageSize — ' +
-      'oversized results get silently truncated by the client. Better still, narrow with boardId or ' +
-      'cardIds first; usually you only need the board the user is looking at.',
+      'saved localPath / permanent remoteUrl for finished videos. Use it to inspect what the user has ' +
+      'set up before editing cards, or when the user explicitly asks how a render is going — NOT as a ' +
+      'polling loop after video_workbench_start (batch completion is pushed to you automatically).\n' +
+      'SCOPED TO THE ACTIVE BOARD BY DEFAULT. A workbench can hold a dozen pages; the user is looking at ' +
+      'one of them, and that is the one you get. Reach wider only when the task actually needs it: pass ' +
+      '`boardId` for a specific page, or `allBoards:true` for everything. The `boards` list always carries ' +
+      "every page's id/name/cardCount, so you can see what else exists without pulling its cards. The " +
+      'result echoes `scope` so you always know what you just looked at.\n' +
+      `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
+      + 'full card is bulky and you usually care about one or two of them.\n'
+      + 'READ `pageIndex` FIRST. It has one line per page across the whole scope (page number, card ids, '
+      + 'the opening words of each prompt), so you can jump straight to the page you want instead of '
+      + 'walking pages 1..N. Then fetch that page, or skip paging entirely by passing its cardIds.\n'
+      + 'Do NOT raise pageSize just to avoid paging: paging is already cheap thanks to pageIndex, while '
+      + 'cards you pull sit in your context for the rest of the session, and oversized results get '
+      + 'silently truncated by the client. `total` counts every match in scope; hasMore/page/totalPages '
+      + 'describe the slice you got.',
     inputSchema: z.object({
-      cardIds: z.array(z.string()).optional().describe('Limit to specific cards. Omit = all.'),
-      boardId: z.string().optional().describe('Limit to one board (page). Omit = cards from all boards.'),
+      cardIds: z.array(z.string()).optional().describe(
+        'Limit to specific cards, ACROSS pages (an explicit id list means "just these", so it is not '
+        + 'narrowed to the active board). Omit to list the scoped board.',
+      ),
+      boardId: z.string().optional().describe('Inspect one specific page. Omit = the ACTIVE page only.'),
+      allBoards: z.boolean().optional().describe(
+        'Set true to pull cards from EVERY page. Default false — the active page only. Use it when the '
+        + 'task genuinely spans pages (a whole-film overview), not as a default reflex.',
+      ),
       page: z.number().int().min(1).optional().describe('1-based page number (default 1).'),
       pageSize: z.number().int().min(1).max(WORKBENCH_STATUS_MAX_PAGE_SIZE).optional().describe(
         `Cards per page (default ${WORKBENCH_STATUS_PAGE_SIZE}, max ${WORKBENCH_STATUS_MAX_PAGE_SIZE}).`,
       ),
     }),
+    annotations: READ_ONLY,
     outputSchema: statusOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -522,7 +597,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         : '✅ No card on this page is rendering. Finished videos are playing on the workbench page and saved locally (localPath) + to COS (remoteUrl).'
       // 分页提示只在还有下一页时出现 —— 单页就装下的常见情况不该多占一行上下文。
       const paging = result.hasMore
-        ? [`📄 Page ${result.page}/${result.totalPages} — ${result.cards.length} of ${result.total} cards shown. Fetch the rest with page:${result.page + 1}, or narrow with boardId/cardIds.`]
+        ? [`📄 Page ${result.page}/${result.totalPages} — ${result.cards.length} of ${result.total} cards shown. Use \`pageIndex\` to pick the page you actually need (or pass its cardIds); page:${result.page + 1} is just the next one, not necessarily the right one.`]
         : []
       return okResult([banner, ...paging], result)
     } catch (error) {
@@ -558,6 +633,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'workbench and may be rejected as too large. Ignored when boardId is given.',
       ),
     }),
+    annotations: READ_ONLY,
     outputSchema: irSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -584,6 +660,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'Apply an edited workbench IR (from video_workbench_export) in ONE shot: create/update/reorder/'
       + 'delete cards and boards together. This is the preferred way to make multi-card changes.\n'
       + 'Rules that matter:\n'
+      + '• WRONG TOOL FOR A SINGLE CARD. Editing one prompt / one card\'s references or duration → use '
+      + 'video_workbench_update_task instead: it targets the card by id, needs no board token, and the '
+      + 'user typing elsewhere cannot push it aside. This tool is for RESTRUCTURING (adding, deleting, '
+      + 'reordering cards or pages) or editing many cards in one shot.\n'
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
@@ -610,6 +690,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'Skip BOTH token checks, overwriting whatever the user changed meanwhile. Requires explicit user consent.',
       ),
     }),
+    annotations: DESTRUCTIVE,
     outputSchema: applyOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {
@@ -656,6 +737,55 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_set_board_summary', {
+    description:
+      'Leave a one-line note on a workbench page saying what it holds ("追车戏 8 镜，全部夜景"). '
+      + 'Cheap to write, and it is what makes progressive reading work: video_workbench_status returns '
+      + "only the ACTIVE page's cards, so every other page shows up as just id/name/cardCount — and page "
+      + 'names are usually "页面 3". A summary lets you (or the next session) pick the right page WITHOUT '
+      + 'pulling its cards.\n'
+      + 'Write one whenever you finish laying out a page, and refresh it when the page\'s content changes '
+      + 'shape. Pass an empty string to clear it.\n'
+      + `FORMAT — telegraphic, not prose. Hard limit ${WORKBENCH_BOARD_SUMMARY_MAX} characters; over that the `
+      + 'call is REJECTED (not truncated), so compress rather than trail off. Use " · " between 2-4 facts, '
+      + 'no verbs, no sentence, no trailing period: "追车 · 夜外 · 主角车vs追兵" / '
+      + '"Hospital line · interior day · Mia + doctor". Say what the page CONTAINS; never counts or status '
+      + '("8 cards, 3 done") — those are already in the boards list and go stale the moment a card changes.\n'
+      + 'Why so short: this rides along with the boards list on EVERY workbench call, so ten pages means ten '
+      + 'of these every time. A summary that costs more context than the cards it saves you from reading '
+      + 'defeats its own purpose.\n'
+      + 'This does NOT invalidate an IR you are holding: a summary is a signpost, not a spec change.',
+    inputSchema: z.object({
+      boardId: z.string().min(1).describe('Page to annotate. Get ids from the `boards` list.'),
+      summary: z.string().max(WORKBENCH_BOARD_SUMMARY_MAX).describe(
+        `Telegraphic index entry, max ${WORKBENCH_BOARD_SUMMARY_MAX} chars: 2-4 facts joined by " · ", `
+        + 'no verbs, no period ("追车 · 夜外 · 主角车vs追兵"). Empty string clears it. Over the limit is '
+        + 'rejected, not trimmed — compress instead of writing a sentence and letting it get cut.',
+      ),
+    }),
+    outputSchema: z.looseObject({
+      ok: z.boolean(),
+      workbench: workbenchSummarySchema,
+    }),
+    annotations: WRITE_IDEMPOTENT,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_board_summary',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { ok: boolean }
+      return okResult(
+        [result.ok
+          ? '✅ video_workbench_set_board_summary — saved.'
+          : '⚠️ video_workbench_set_board_summary — board not found; check the `boards` list for valid ids.'],
+        result,
+      )
+    } catch (error) {
+      return errorResult('video_workbench_set_board_summary', error)
+    }
+  })
+
   server.registerTool('video_workbench_remove_tasks', {
     description:
       'Remove cards from the 「生成视频」 workbench page. Only use when the user explicitly asks to ' +
@@ -664,6 +794,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     inputSchema: z.object({
       cardIds: z.array(z.string()).min(1).describe('Cards to remove.'),
     }),
+    annotations: DESTRUCTIVE,
     outputSchema: removeTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {

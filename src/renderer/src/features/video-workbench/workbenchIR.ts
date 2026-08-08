@@ -174,6 +174,47 @@ export interface ApplyPlan {
   }
 }
 
+/**
+ * 列出「卡片现值」与「agent 带回的规格」对不上的字段，喂到跳过理由里。
+ *
+ * **只报差异，不做归因。** 没有导出时的基线快照，就分不清某个字段是用户改的还是 agent
+ * 要改的 —— 硬猜会把「用户把时长改成 30 秒」说成「你要改时长」，比不说更误导。所以这里
+ * 只把线索摆出来（哪几个字段、现值是什么），判断留给能读懂提示词内容的 agent。
+ *
+ * 长文本只报「变了」不贴全文：提示词动辄几百字，两份都塞进 reason 会把回包撑爆，而
+ * `current.prompt` 里本来就有现值。
+ */
+function describeSpecDrift(cur: VideoWorkbenchSpec, next: VideoWorkbenchSpec): string {
+  const parts: string[] = []
+  if (cur.prompt !== next.prompt) parts.push('prompt(内容不同,现值见 current.prompt)')
+  if (cur.model !== next.model) parts.push(`model(现 ${cur.model} / 你写 ${next.model})`)
+  if (cur.resolution !== next.resolution) {
+    parts.push(`resolution(现 ${cur.resolution} / 你写 ${next.resolution})`)
+  }
+  if (cur.ratio !== next.ratio) parts.push(`ratio(现 ${cur.ratio} / 你写 ${next.ratio})`)
+  if (cur.duration !== next.duration) {
+    parts.push(`duration(现 ${cur.duration}s / 你写 ${next.duration}s)`)
+  }
+  if (cur.generateAudio !== next.generateAudio) {
+    parts.push(`generateAudio(现 ${cur.generateAudio} / 你写 ${next.generateAudio})`)
+  }
+  if (cur.mode !== next.mode) parts.push(`mode(现 ${cur.mode} / 你写 ${next.mode})`)
+  if (cur.seed !== next.seed) parts.push(`seed(现 ${cur.seed ?? '随机'} / 你写 ${next.seed ?? '随机'})`)
+  if (cur.webSearch !== next.webSearch) {
+    parts.push(`webSearch(现 ${cur.webSearch} / 你写 ${next.webSearch})`)
+  }
+  for (const [key, label] of [
+    ['referenceImages', '参考图'],
+    ['referenceVideos', '参考视频'],
+    ['referenceAudios', '参考音频'],
+  ] as const) {
+    const a = cur[key]?.length ?? 0
+    const b = next[key]?.length ?? 0
+    if (a !== b) parts.push(`${label}(现 ${a} 份 / 你写 ${b} 份)`)
+  }
+  return parts.join('、')
+}
+
 function reject(
   source: WorkbenchIRSource,
   skipped: WorkbenchApplySkip[],
@@ -433,11 +474,26 @@ export function planApplyIR(
         // 按卡并发校验:只有这张卡被改过才跳过这张,其余卡照写。整份拒绝留给
         // 结构变动 —— 用户在一张卡里打字不该让 agent 对另外四十九张的回写作废。
         if (!opts.force && claim.rev !== undefined && (cur.rev ?? 0) !== claim.rev) {
+          const drifted = describeSpecDrift(cur, claim.spec)
           skipped.push({
             cardId: cur.id,
             reason:
-              `这张卡在你导出之后被改过(当前 rev=${cur.rev ?? 0},你带回的是 ${claim.rev});`
-              + '规格改动已跳过,位置改动已生效。要覆盖就重新 export 这张卡再写。',
+              `这张卡在你导出之后被用户改过(当前 rev=${cur.rev ?? 0},你带回的是 ${claim.rev});`
+              + '规格改动已跳过,位置改动已生效。'
+              + (drifted ? `对不上的字段:${drifted}。` : '规格字段本身一致,差的只是版本号。')
+              + '注意这里只说「哪几个对不上」,分不清是你改的还是用户改的——那要你自己对照'
+              + '`current` 判断:时长/模型这类变了就按新值重写你那份再发一次;提示词被整个'
+              + '换过就先问用户,别把人家刚写的覆盖掉。'
+              + '确认要覆盖时,把 `current.rev` 抄进这张卡的 `rev` 重发即可(不必重新 export 整板)。',
+            // 带上现场值,省掉「为了看用户改了什么再 export 一次」那趟往返。
+            current: {
+              prompt: cur.prompt,
+              model: cur.model,
+              resolution: cur.resolution,
+              ratio: cur.ratio,
+              duration: cur.duration,
+              rev: cur.rev ?? 0,
+            },
           })
           nextCards.push(placeExisting(cur, board.id, index))
           index += 1

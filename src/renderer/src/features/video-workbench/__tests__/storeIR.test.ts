@@ -241,6 +241,103 @@ describe('exportIR / applyIR', () => {
     expect(byId.get(ids[1])!.resolution).toBe('1080p')
   })
 
+  /**
+   * 冲突要带现场值。人和 agent 同改一块看板时，「你写的被跳过了」只说明发生了冲突，
+   * 说不清该怎么办 —— agent 为了看用户改了什么，得再 export 一次整板。把当前规格
+   * 一并回带，那趟往返就省了，而且 agent 能自己判断：只是时长变了就按新值重写，
+   * 提示词被整个换过就该停下来问。
+   */
+  it('按卡冲突把这张卡「现在的样子」一起回带,省掉再 export 一次', async () => {
+    const [c1] = state().addCards([{ prompt: 'A' }])
+    const ir = state().exportIR()
+
+    // 用户改了提示词和时长（两次 updateCard，rev 从 0 涨到 2）。
+    state().updateCard(c1, { prompt: '用户重写的提示词' })
+    state().updateCard(c1, { duration: 12 })
+
+    const result = await state().applyIR({
+      ...ir,
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], prompt: 'agent 写的' }] }],
+    })
+
+    const skip = result.skipped.find((s) => s.cardId === c1)
+    expect(skip, '这张卡应当被跳过').toBeTruthy()
+    expect(skip!.current, '跳过项要带 current').toBeTruthy()
+    // 字段级线索：用户改了时长、agent 改了提示词，两个都该被点名。
+    expect(skip!.reason).toContain('duration(现 12s / 你写 5s)')
+    expect(skip!.reason).toContain('prompt')
+    expect(skip!.current!.prompt).toBe('用户重写的提示词')
+    expect(skip!.current!.duration).toBe(12)
+    // 抄这个 rev 回去即可覆盖，不必重新 export 整板。
+    expect(skip!.current!.rev).toBe(2)
+    // 用户的值没被覆盖。
+    expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('用户重写的提示词')
+  })
+
+  it('照 current.rev 重发就能覆盖 —— 冲突是可恢复的,不是死路', async () => {
+    const [c1] = state().addCards([{ prompt: 'A' }])
+    const ir = state().exportIR()
+    state().updateCard(c1, { prompt: '用户改的' })
+
+    const first = await state().applyIR({
+      ...ir,
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], prompt: 'agent 第一次' }] }],
+    })
+    const rev = first.skipped.find((s) => s.cardId === c1)!.current!.rev
+
+    const second = await state().applyIR({
+      ...ir,
+      structureRevision: first.structureRevision,
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], rev, prompt: 'agent 第二次' }] }],
+    })
+    expect(second.skipped).toHaveLength(0)
+    expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('agent 第二次')
+  })
+
+  it('非并发原因的跳过不带 current —— 那些拿现场值也没用', async () => {
+    state().addCards([{ prompt: 'A' }])
+    const ir = state().exportIR()
+    const result = await state().applyIR({
+      ...ir,
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], id: '不存在的卡' }] }],
+    })
+    const skip = result.skipped.find((s) => s.cardId === '不存在的卡')
+    expect(skip).toBeTruthy()
+    expect(skip!.current).toBeUndefined()
+  })
+
+  /**
+   * updateCard 被输入框逐字符调用，也被失焦 / 重渲染用同一份值重复调用。无条件 bump
+   * 的代价全落在 agent 身上：它手里那份 IR 的 rev 会因为一次「什么都没改」的调用作废，
+   * 下次回写整张卡被跳过。改页名早就是这个口径，这里对齐。
+   */
+  it('值没变的 updateCard 是无操作 —— 不该白白作废 agent 手里的令牌', async () => {
+    const [c1] = state().addCards([{ prompt: 'A', duration: 5 }])
+    const ir = state().exportIR()
+    const revBefore = state().revision
+
+    // 失焦 / 重渲染用同一份值再调一次。
+    state().updateCard(c1, { prompt: 'A' })
+    state().updateCard(c1, { duration: 5 })
+
+    expect(state().cards.find((c) => c.id === c1)!.rev).toBe(0)
+    expect(state().revision).toBe(revBefore)
+
+    // agent 那份导出仍然有效,整张卡照写不误。
+    const result = await state().applyIR({
+      ...ir,
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], prompt: 'agent 写的' }] }],
+    })
+    expect(result.skipped).toHaveLength(0)
+    expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('agent 写的')
+  })
+
+  it('但真改了一个字符照样 bump —— 不能为了少冲突把真冲突也吞掉', () => {
+    const [c1] = state().addCards([{ prompt: 'A' }])
+    state().updateCard(c1, { prompt: 'AB' })
+    expect(state().cards.find((c) => c.id === c1)!.rev).toBe(1)
+  })
+
   it('改卡片规格会 bump 那张卡的 rev,别的卡不受影响', () => {
     const [c1, c2] = state().addCards([{ prompt: 'A' }, { prompt: 'B' }])
     const byId = () => new Map(state().cards.map((c) => [c.id, c]))

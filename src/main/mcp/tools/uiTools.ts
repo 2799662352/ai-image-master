@@ -1,10 +1,12 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
+import { WRITE_IDEMPOTENT } from './annotations'
 
 export function registerUiTools(server: McpServer, router: ToolRouter): void {
   server.registerTool('open_image_viewer', {
     description: 'Open CATIMATION image viewer with one or more image URLs.',
+    annotations: WRITE_IDEMPOTENT,
     inputSchema: z.object({
       urls: z.array(z.string()).min(1),
       startIndex: z.number().int().min(0).default(0),
