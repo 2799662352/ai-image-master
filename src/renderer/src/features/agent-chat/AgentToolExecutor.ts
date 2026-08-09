@@ -317,6 +317,7 @@ export class AgentToolExecutor {
         return this.generateAudio(params as GenerateAudioToolParams, threadId)
       case 'video_workbench_add_tasks':
       case 'video_workbench_update_task':
+      case 'video_workbench_patch_prompt':
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
@@ -441,6 +442,31 @@ export class AgentToolExecutor {
         if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
         if (!ok) throw new Error(`video_workbench_update_task: card is rendering and cannot be edited: ${cardId}`)
         return { ok: true, card: snapshotCard(card), workbench: workbenchSummary() }
+      }
+      case 'video_workbench_patch_prompt': {
+        // 改几个词不必把整条提示词再发一遍 —— 那既慢又容易在重打的过程中丢细节。
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        const oldText = typeof params.oldText === 'string' ? params.oldText : ''
+        const newText = typeof params.newText === 'string' ? params.newText : ''
+        if (!cardId) throw new Error('video_workbench_patch_prompt: cardId is required')
+        if (!oldText) throw new Error('video_workbench_patch_prompt: oldText 不能为空')
+
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!card) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 不存在`)
+
+        const patched = patchPromptText(card.prompt ?? '', oldText, newText)
+        if (!patched.ok) {
+          // 带上全文:模型据此把 oldText 写长一点重来，不必再发一次 export。
+          throw new Error(
+            `video_workbench_patch_prompt: oldText 在该卡提示词中命中 ${patched.count} 处，`
+            + '需要恰好 1 处。把 oldText 写长一点以唯一定位；整段重写请用 '
+            + `video_workbench_update_task。当前提示词全文:\n${card.prompt ?? ''}`,
+          )
+        }
+
+        const ok = store.updateCard(cardId, { prompt: patched.prompt })
+        if (!ok) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 生成中，未改动`)
+        return { prompt: patched.prompt, workbench: workbenchSummary() }
       }
       case 'video_workbench_start': {
         const ids = Array.isArray(params.cardIds)

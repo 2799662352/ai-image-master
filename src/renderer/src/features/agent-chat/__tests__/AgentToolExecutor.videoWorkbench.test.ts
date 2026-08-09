@@ -639,3 +639,54 @@ describe('patchPromptText', () => {
       .toEqual({ ok: true, prompt: '曝光 (f/8) 浅景深' })
   })
 })
+
+describe('video_workbench_patch_prompt', () => {
+  it('改动落地并回改后全文', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头 dolly in 推进' }])
+    const r = await callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'dolly in', newText: 'rack focus',
+    })
+
+    expect(r.prompt).toBe('镜头 rack focus 推进')
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('镜头 rack focus 推进')
+  })
+
+  // 错误信息必须带全文:模型据此自纠，省掉一次 export 往返。
+  it('多处命中时零写入，并把全文带回去', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '推进，然后推进' }])
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '推进', newText: '拉远',
+    })).rejects.toThrow(/2 处[\s\S]*推进，然后推进/)
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('推进，然后推进')
+  })
+
+  it('未命中时零写入', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头推进' }])
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'zoom', newText: 'x',
+    })).rejects.toThrow(/镜头推进/)
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('镜头推进')
+  })
+
+  it('卡不存在时报错', async () => {
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: 'nope', oldText: 'a', newText: 'b',
+    })).rejects.toThrow(/nope/)
+  })
+
+  // updateCard 本身就跳过 preparing/queued/running，这里确认失败被如实上报而不是静默成功。
+  it('生成中的卡拒绝改动', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头推进' }])
+    // 先把 hydrate 走完:首次 ensureHydrated 会从 DB 重载，把这里手设的 running 冲回 draft。
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? { ...c, status: 'running' as const } : c)),
+    }))
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '推进', newText: '拉远',
+    })).rejects.toThrow(/生成中/)
+  })
+})
