@@ -106,6 +106,15 @@ export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
 export const WORKBENCH_BOARD_SUMMARY_MAX = 60
 
 /**
+ * 卡片摘要上限。比页摘要更短 —— 页摘要一页一条,卡片摘要是**一页里每张卡一条**,
+ * 二十张卡就是二十条,长度直接乘以卡数。40 字够写「主角跳车 · 夜外 · 追兵逼近」
+ * 这种电报体,而这正是它该有的样子:它是索引,不是简介。
+ *
+ * 同页摘要:超限在工具层**报错**而不是静默截断。
+ */
+export const WORKBENCH_CARD_SUMMARY_MAX = 40
+
+/**
  * 一次 `video_workbench_apply` 里最多允许几张卡**携带内容**。
  *
  * 数的是内容卡，不是卡片总数 —— 只给 id 的「占位」条目不计入，所以重排一个
@@ -203,6 +212,17 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   status: VideoWorkbenchCardStatus
   createdAt: number
   updatedAt: number
+  /**
+   * agent 写的一行摘要（`video_workbench_set_card_summary`），给「不拉全文就能
+   * 认出这是哪一镜」用。不参与生成、不影响出片。
+   *
+   * 与 `summaryFor` 成对存在:后者是写摘要时那份提示词的指纹,提示词一变就对不上,
+   * 摘要随即被判为过期、不再展示。**别把它绑到 `rev`** —— rev 在素材上传完成
+   * 这类后台事件里也会涨,内容一个字没变,绑 rev 会让摘要集体假过期。
+   */
+  summary?: string
+  /** 写 `summary` 时提示词的指纹（见 cardSummary.promptFingerprint）。 */
+  summaryFor?: string
   /** 提交时渲染端生成，贯穿 seedance:task-update 广播做卡片对齐。 */
   clientId?: string
   /**

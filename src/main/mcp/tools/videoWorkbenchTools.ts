@@ -29,6 +29,7 @@ import {
   WORKBENCH_MAX_TASKS_PER_CALL,
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
+  WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -126,6 +127,13 @@ const cardSnapshotSchema = z.looseObject({
   cardId: z.string(),
   boardId: z.string().optional().describe('Owning board id; board name lives in the top-level boards list.'),
   order: z.number(),
+  summary: z.string().optional().describe(
+    'The one-line note for this card, present only while it still matches the current prompt.',
+  ),
+  summaryStale: z.boolean().optional().describe(
+    'A summary exists but the prompt changed since it was written, so it is withheld. Rewrite it with '
+    + 'video_workbench_set_card_summary if you want the index back.',
+  ),
   prompt: z.string().describe('Truncated to 120 chars.'),
   model: z.string(),
   resolution: z.string(),
@@ -175,6 +183,15 @@ const updateTaskOutputSchema = z.looseObject({
   ok: z.boolean(),
   card: cardSnapshotSchema,
   workbench: workbenchSummarySchema,
+})
+
+/**
+ * 贴注解类工具的回包:只回那张卡。不带 workbench 摘要 —— 写一行摘要不改卡数、
+ * 不改状态计数,那份摘要与调用前逐字节相同,回带只是把同一坨复制进上下文。
+ */
+const cardOnlyOutputSchema = z.looseObject({
+  ok: z.boolean(),
+  card: cardSnapshotSchema,
 })
 
 const startOutputSchema = z.looseObject({
@@ -689,6 +706,42 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_patch_prompt', error)
+    }
+  })
+
+  server.registerTool('video_workbench_set_card_summary', {
+    description:
+      'Leave a one-line note on a CARD saying which shot it is ("主角跳车 · 夜外 · 追兵逼近"). '
+      + `At most ${WORKBENCH_CARD_SUMMARY_MAX} characters — it is an index entry, not a synopsis, and `
+      + 'a 20-card page pays this cost 20 times.\n'
+      + 'Why it earns its keep: after sd2-pe engineering every prompt opens with the same structure '
+      + '(framing, lens, light), so the truncated prompt head that video_workbench_status falls back to '
+      + 'looks nearly identical across cards on a page. A summary is what lets you pick the right card '
+      + 'WITHOUT pulling any full prompts.\n'
+      + 'It is bound to the prompt it was written for. Edit the prompt and the summary stops being '
+      + 'shown — status reports `summaryStale: true` instead, and you can rewrite it. A stale summary '
+      + 'is never served as if it were current. Pass an empty string to clear.\n'
+      + 'This is a note, not a spec change: it does not bump the card rev, so it cannot invalidate an '
+      + 'IR you are holding, and it never reaches the render.',
+    inputSchema: z.object({
+      cardId: z.string().min(1).describe('Card to annotate. Get ids from video_workbench_status.'),
+      summary: z.string().describe(
+        `One line, ≤${WORKBENCH_CARD_SUMMARY_MAX} chars, telegraphic. Empty string clears it.`,
+      ),
+    }),
+    // 只贴注解:不碰规格、不碰素材、不进提交参数,所以不是破坏性的。
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: cardOnlyOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_card_summary',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      )
+      return okResult([], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_card_summary', error)
     }
   })
 

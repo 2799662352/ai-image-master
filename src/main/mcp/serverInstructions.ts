@@ -22,10 +22,12 @@ export const CATIMATION_SERVER_INSTRUCTIONS = [
   + 'video_workbench_remove_tasks. video_workbench_apply is STRUCTURE ONLY: it rejects prompt '
   + 'edits to existing cards with zero writes, and exists for atomic whole-board rebuilds.',
 
-  'Per-card writes touch different cards and are safe to issue in parallel. Reordering is the '
-  + 'exception because it is order-dependent: prefer one video_workbench_reorder call with the '
-  + "page's full order, and never issue video_workbench_move_task calls in parallel.",
+  'Per-card writes touch different cards and are safe in parallel. Reordering is order-dependent '
+  + 'and is the exception: never issue video_workbench_move_task calls in parallel.',
 
-  'Every tool result is truncated at ~10k tokens, silently. Prefer several small targeted '
-  + 'calls over one broad one, and page through results instead of asking for a huge page.',
+  'Every tool result is silently truncated at ~10k tokens, so read the workbench in layers: page '
+  + 'summaries, then the per-page card index, then full prompts only for cards you name in '
+  + 'video_workbench_export cardIds. Engineered prompts all open alike, so a truncated head barely '
+  + 'distinguishes cards — leaving one-line notes (video_workbench_set_board_summary, '
+  + 'video_workbench_set_card_summary) is what keeps the upper layers worth reading.',
 ].join('\n\n')

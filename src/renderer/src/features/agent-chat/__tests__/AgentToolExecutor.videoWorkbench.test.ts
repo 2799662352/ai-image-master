@@ -8,6 +8,7 @@ import {
 } from '../../video-workbench/store'
 import { resetWorkbenchDbForTest } from '../../video-workbench/WorkbenchDb'
 import {
+  WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
@@ -752,6 +753,106 @@ describe('video_workbench_patch_prompt', () => {
     })
     expect(r.workbench).toBeUndefined()
     expect(Object.keys(r)).toEqual(['prompt'])
+  })
+})
+
+/**
+ * 卡片摘要:递归披露阶梯上缺的那一级(工作台 → 页摘要 → 卡片摘要 → 全文)。
+ *
+ * 它是**有损**的,而共识把有损摘要排在可逆卸载之后 —— 所以它只是附加索引,
+ * 骨架 + cardIds 的可逆取回仍是主路,没写摘要就退回原来的截断行为。
+ *
+ * 真正的风险是漂移,整层设计都围着它转:过期摘要比截断更危险,因为截断看得出
+ * 残缺,而过期摘要看起来是权威的。
+ */
+describe('video_workbench_set_card_summary', () => {
+  it('写下的摘要出现在卡片快照里', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '中景，主角跳上车顶' }])
+    const r = await callTool('video_workbench_set_card_summary', { cardId: id, summary: '主角跳车 · 夜外' })
+
+    expect(r.card.summary).toBe('主角跳车 · 夜外')
+    expect(r.card.summaryStale).toBeUndefined()
+  })
+
+  it('提示词改过之后不再展示摘要，只留一个 stale 信号', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '中景，主角跳上车顶' }])
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '主角跳车 · 夜外' })
+
+    await callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '跳上车顶', newText: '滚落台阶',
+    })
+
+    const res = await callTool('video_workbench_status', {})
+    const card = res.cards.find((c: { cardId: string }) => c.cardId === id)
+    expect(card.summary).toBeUndefined()
+    expect(card.summaryStale).toBe(true)
+  })
+
+  // rev 在素材上传完成这类后台事件里也会涨(store 的 attachUploadedMaterial)。
+  // 摘要若绑 rev，图片一传完就集体假过期 —— 所以绑的是提示词指纹。
+  it('规格变了但提示词没变时，摘要仍然新鲜', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '中景，主角跳上车顶' }])
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '主角跳车 · 夜外' })
+
+    await callTool('video_workbench_update_task', { cardId: id, resolution: '1080p' })
+
+    const res = await callTool('video_workbench_status', {})
+    const card = res.cards.find((c: { cardId: string }) => c.cardId === id)
+    expect(card.summary).toBe('主角跳车 · 夜外')
+    expect(card.summaryStale).toBeUndefined()
+  })
+
+  // 贴注解不该作废 agent 手里那份 IR。
+  it('写摘要不涨 rev，也不涨 structureRevision', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const before = useVideoWorkbenchStore.getState()
+    const revBefore = before.cards.find((c) => c.id === id)!.rev ?? 0
+    const structBefore = before.structureRevision
+
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '一行' })
+
+    const after = useVideoWorkbenchStore.getState()
+    expect(after.cards.find((c) => c.id === id)!.rev ?? 0).toBe(revBefore)
+    expect(after.structureRevision).toBe(structBefore)
+  })
+
+  it('空串清除摘要，连指纹一起清掉（不留半个状态）', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '一行' })
+    const r = await callTool('video_workbench_set_card_summary', { cardId: id, summary: '' })
+
+    expect(r.card.summary).toBeUndefined()
+    expect(r.card.summaryStale).toBeUndefined()
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.summaryFor).toBeUndefined()
+  })
+
+  it('超长时报错而不是截断', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    await expect(callTool('video_workbench_set_card_summary', {
+      cardId: id, summary: '追'.repeat(WORKBENCH_CARD_SUMMARY_MAX + 1),
+    })).rejects.toThrow(/上限/)
+  })
+
+  it('卡不存在时报错', async () => {
+    await expect(callTool('video_workbench_set_card_summary', { cardId: 'nope', summary: 'x' }))
+      .rejects.toThrow(/nope/)
+  })
+
+  // 目录那一行是「挑卡」用的，而工程化过的提示词开头在同一页里几乎都一样 ——
+  // 有摘要就该用摘要，这才是这层真正省往返的地方。
+  it('页内目录优先用新鲜摘要，没有才退回截提示词开头', async () => {
+    const head = '中景，35mm，侧逆光，夜景霓虹，'
+    const ids = useVideoWorkbenchStore.getState().addCards([
+      { prompt: `${head}主角跳上车顶` },
+      { prompt: `${head}追兵翻过护栏` },
+    ])
+    await callTool('video_workbench_set_card_summary', { cardId: ids[0], summary: '主角跳车' })
+
+    const res = await callTool('video_workbench_status', {})
+    expect(res.pageIndex[0].digest).toContain('主角跳车')
+    // 没写摘要的那张仍是截断的开头。
+    expect(res.pageIndex[0].digest).toContain(head.slice(0, 10))
   })
 })
 

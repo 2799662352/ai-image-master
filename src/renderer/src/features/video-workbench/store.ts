@@ -60,6 +60,7 @@ import {
   specEquals,
   toMaterial,
 } from './cardSpec'
+import { cardSummaryState, promptFingerprint } from './cardSummary'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
 import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
@@ -126,6 +127,13 @@ export interface WorkbenchCardSnapshot {
   /** 所属「页」id(页名从 status 顶层 boards 表查,卡上不重复带,省 token)。 */
   boardId?: string
   order: number
+  /**
+   * agent 写的一行摘要,**只在它仍对应当前提示词时出现**。提示词改过就不给 ——
+   * 一条过期摘要比截断的提示词更危险:截断看得出残缺,过期摘要看起来是权威的。
+   */
+  summary?: string
+  /** 写过摘要但提示词已经变了。给 agent 一个明确的「该刷新了」信号。 */
+  summaryStale?: boolean
   prompt: string
   model: string
   resolution: string
@@ -155,10 +163,13 @@ export interface WorkbenchCardSnapshot {
 }
 
 export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
+  const summaryState = cardSummaryState(card)
   return {
     cardId: card.id,
     ...(card.boardId ? { boardId: card.boardId } : {}),
     order: card.order,
+    ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
+    ...(summaryState === 'stale' ? { summaryStale: true } : {}),
     prompt: card.prompt.length > 120 ? `${card.prompt.slice(0, 120)}…` : card.prompt,
     model: card.model,
     resolution: card.resolution,
@@ -381,6 +392,14 @@ export interface VideoWorkbenchState {
   addCards: (inputs: VideoWorkbenchCardInput[], anchor?: VideoWorkbenchInsertAnchor) => string[]
   /** 更新卡片可编辑字段(生成中的卡片拒绝编辑)。 */
   updateCard: (id: string, patch: VideoWorkbenchCardInput) => boolean
+  /**
+   * 写/清一行卡片摘要(空串=清除)。返回卡片是否存在。
+   *
+   * 连同当前提示词的指纹一起存,提示词一变摘要即判过期。**不涨 `rev`、不涨
+   * `structureRevision`** —— 它是给卡片贴的注解,不是规格改动;涨了就等于给卡
+   * 写条注解顺手作废了 agent 手里那份 IR。生成中的卡也允许写:摘要不进提交参数。
+   */
+  setCardSummary: (id: string, summary: string) => boolean
   removeCard: (id: string) => void
   /** 拖拽排序:把卡片移到目标下标。 */
   moveCard: (id: string, toIndex: number) => void
@@ -1417,6 +1436,25 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of get().cards) {
       if (card.boardId === boardId) schedulePersist(card)
     }
+  },
+
+  setCardSummary: (id, summary) => {
+    let updated: VideoWorkbenchCard | null = null
+    set((state) => {
+      const cards = state.cards.map((card) => {
+        if (card.id !== id) return card
+        const trimmed = summary.trim()
+        updated = trimmed
+          ? { ...card, summary: trimmed, summaryFor: promptFingerprint(card.prompt ?? ''), updatedAt: Date.now() }
+          // 清除要把指纹一起去掉,否则残留的 summaryFor 会让后续判定读到半个状态。
+          : { ...card, summary: undefined, summaryFor: undefined, updatedAt: Date.now() }
+        return updated
+      })
+      // 不动 rev / structureRevision:摘要是注解不是规格,见接口上的说明。
+      return updated ? { cards } : {}
+    })
+    if (updated) schedulePersist(updated)
+    return updated !== null
   },
 
   reorderCards: (cardIds) => {

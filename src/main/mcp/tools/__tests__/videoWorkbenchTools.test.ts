@@ -49,6 +49,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_set_spec',
       'video_workbench_update_task',
       'video_workbench_patch_prompt',
+      'video_workbench_set_card_summary',
       'video_workbench_move_task',
       'video_workbench_reorder',
       'video_workbench_start',

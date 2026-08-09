@@ -23,11 +23,13 @@ import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMe
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
+import { cardSummaryState } from '../video-workbench/cardSummary'
 import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import type { VideoWorkbenchCardInput, WorkbenchIR } from '../../../../types/videoWorkbench'
 import {
+  WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -320,6 +322,7 @@ export class AgentToolExecutor {
       case 'video_workbench_patch_prompt':
       case 'video_workbench_move_task':
       case 'video_workbench_reorder':
+      case 'video_workbench_set_card_summary':
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
@@ -385,7 +388,11 @@ export class AgentToolExecutor {
           cardIds: slice.map((c) => c.id),
           digest: slice
             .map((c) => {
-              const head = (c.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 24) || '(空)'
+              // 有新鲜摘要就用摘要 —— 提示词经 sd2-pe 工程化后结构固定,开头 24 字
+              // 在同一页里几乎都一样,那是这条目录最没用的形态。
+              const head = cardSummaryState(c) === 'fresh'
+                ? c.summary!
+                : (c.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 24) || '(空)'
               // 状态只在「不是草稿」时才写 —— 草稿是绝大多数,标出来纯属噪音。
               return c.status && c.status !== 'draft' ? `${head} [${c.status}]` : head
             })
@@ -476,6 +483,23 @@ export class AgentToolExecutor {
         // 不回带 workbench 摘要:改几个字不动卡数/状态/页，它与调用前逐字节相同。
         // 这个工具设计来一回合并行调好几次，回带就是把同一份 ~200 token 复制 N 份。
         return { prompt: patched.prompt }
+      }
+      case 'video_workbench_set_card_summary': {
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        const summary = typeof params.summary === 'string' ? params.summary : ''
+        if (!cardId) throw new Error('video_workbench_set_card_summary: cardId is required')
+        // 超限报错而不是截断:截断会在半个词上切断,agent 还以为写进去了。
+        if (summary.trim().length > WORKBENCH_CARD_SUMMARY_MAX) {
+          throw new Error(
+            `video_workbench_set_card_summary: 摘要 ${summary.trim().length} 字，上限 `
+            + `${WORKBENCH_CARD_SUMMARY_MAX}。它是索引不是简介 —— 写成「主角跳车 · 夜外 · 追兵逼近」这种电报体。`,
+          )
+        }
+        if (!store.setCardSummary(cardId, summary)) {
+          throw new Error(`video_workbench_set_card_summary: 卡片 ${cardId} 不存在`)
+        }
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)!
+        return { ok: true, card: snapshotCard(card) }
       }
       case 'video_workbench_move_task': {
         const cardId = typeof params.cardId === 'string' ? params.cardId : ''
