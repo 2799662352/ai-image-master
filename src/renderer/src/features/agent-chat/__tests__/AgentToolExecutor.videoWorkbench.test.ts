@@ -380,13 +380,13 @@ describe('AgentToolExecutor.video_workbench_*', () => {
    * 读侧要和写侧对称。写侧已限内容卡张数，读侧若还是整板全量，两万字符只是从
    * 「写」挪到了「读」。而「重排」和「只改其中几张」根本不需要看别人的提示词。
    */
-  it('export skeleton:只回 id + rev，顺序完整，不带提示词与素材', async () => {
+  it('export 默认出骨架:只回 id + rev，顺序完整，不带提示词与素材', async () => {
     await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '很长的提示词'.repeat(50) }, { prompt: '第二张' }, { prompt: '第三张' }],
       navigate: false,
     })
-    const full = await callTool('video_workbench_export', {})
-    const skel = await callTool('video_workbench_export', { skeleton: true })
+    const full = await callTool('video_workbench_export', { full: true })
+    const skel = await callTool('video_workbench_export', {})
 
     // 每张卡都在、顺序一致 —— 这是它能用来保序的前提。
     expect(skel.boards[0].cards.map((c: { id: string }) => c.id))
@@ -399,8 +399,8 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     const skelBefore = JSON.stringify(skel).length
     const id = full.boards[0].cards[0].id
     useVideoWorkbenchStore.getState().updateCard(id, { prompt: '超长'.repeat(2000) })
-    const fullAfter = await callTool('video_workbench_export', {})
-    const skelAfter = await callTool('video_workbench_export', { skeleton: true })
+    const fullAfter = await callTool('video_workbench_export', { full: true })
+    const skelAfter = await callTool('video_workbench_export', {})
     expect(JSON.stringify(fullAfter).length).toBeGreaterThan(JSON.stringify(full).length + 3000)
     expect(JSON.stringify(skelAfter).length).toBe(skelBefore)
     // 令牌照常带回，否则回写会撞版本冲突。
@@ -416,7 +416,7 @@ describe('AgentToolExecutor.video_workbench_*', () => {
       tasks: [{ prompt: '第一张的完整提示词'.repeat(20) }, { prompt: '第二张' }, { prompt: '第三张' }],
       navigate: false,
     })
-    const all = await callTool('video_workbench_export', {})
+    const all = await callTool('video_workbench_export', { full: true })
     const target = all.boards[0].cards[1].id
 
     const partial = await callTool('video_workbench_export', { cardIds: [target] })
@@ -431,15 +431,38 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(JSON.stringify(partial).length).toBeLessThan(JSON.stringify(all).length / 2)
   })
 
-  it('export skeleton:跨页(allBoards)同样剥干净', async () => {
+  it('export 骨架:跨页(allBoards)同样剥干净', async () => {
     await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A' }], navigate: false })
     useVideoWorkbenchStore.getState().addBoard('第二页')
     await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B' }], navigate: false })
-    const skel = await callTool('video_workbench_export', { allBoards: true, skeleton: true })
+    const skel = await callTool('video_workbench_export', { allBoards: true })
     expect(skel.boards).toHaveLength(2)
     for (const b of skel.boards) {
       for (const c of b.cards) expect(c).not.toHaveProperty('prompt')
     }
+  })
+
+  /**
+   * 默认值反过来的理由:apply 降级成纯结构工具之后，「带全文的整板 IR」只剩
+   * 「整板原子重建」一个消费者，却仍是最容易撞 codex 那 10k 静默截断的调用 ——
+   * 而截断在这里是数据丢失,不是慢:apply 是声明式的，被截掉的字段回写后会变默认值。
+   *
+   * 开关取肯定式的 `full` 而不是 `skeleton: false`:双重否定是模型最容易写反的形状。
+   */
+  it('要全文必须显式 full:true，没有「反着传」的写法', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '很长的提示词'.repeat(50) }],
+      navigate: false,
+    })
+
+    // 旧写法 skeleton:true 现在是多余的 —— 它要的就是默认行为，传了也无害。
+    for (const params of [{}, { skeleton: true }, { skeleton: false }]) {
+      const res = await callTool('video_workbench_export', params)
+      expect(Object.keys(res.boards[0].cards[0]).sort(), JSON.stringify(params)).toEqual(['id', 'rev'])
+    }
+
+    const full = await callTool('video_workbench_export', { full: true })
+    expect(full.boards[0].cards[0].prompt).toContain('很长的提示词')
   })
 
   it('status:boardId 不存在时抛可读错误(agent 可据 boards 自纠)', async () => {

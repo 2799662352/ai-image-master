@@ -904,21 +904,25 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'to get the next batch. Usually you do not need this: naming cardIds is more direct.',
       ),
       cardIds: z.array(z.string()).optional().describe(
-        'Full content for THESE cards only; every other card comes back as a position-only `{id, rev}`. '
-        + 'This is how you read long prompts a few at a time — status truncates at ~120 chars, and a '
-        + 'whole-board export of a 17-card board is ~20k characters that you have to read, hold and '
-        + 'often re-emit. Pick the ids from `pageIndex`, pull 3-5 of them, edit, apply, repeat.\n'
+        'Restore FULL content for THESE cards on top of the default skeleton; every other card stays a '
+        + 'position-only `{id, rev}`. This is how you read long prompts a few at a time — status '
+        + 'truncates at ~120 chars. Pick the ids from `pageIndex`, pull 3-5 of them, edit, apply, '
+        + 'repeat.\n'
         + 'The result is still directly applicable: every card is listed, so order is preserved, and '
-        + 'only the ones you named count against apply\'s content-card limit. Ignored when skeleton:true.',
+        + 'only the ones you named count against apply\'s content-card limit. Ignored when full:true.',
       ),
-      skeleton: z.boolean().optional().describe(
-        'Return ids and ORDER only — every card comes back as a POSITION-ONLY `{id, rev}` with no '
-        + 'prompt and no materials. This is what you want whenever you are reordering, or editing a few '
-        + 'cards out of many: take the skeleton, fill content into just the cards you are changing, '
-        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny '
-        + 'no matter how long the prompts are. A full export of a 17-card board is ~20k characters and '
-        + 'has to be read, rewritten and emitted by the model — the skeleton of the same board is a few '
-        + 'hundred. Only ask for a full export when you actually need to READ the existing prompts.',
+      full: z.boolean().optional().describe(
+        'Return every prompt and every material path. OFF BY DEFAULT — the default response is a '
+        + 'SKELETON: every card as a position-only `{id, rev}`, no prompt, no materials.\n'
+        + 'You rarely need this. Reordering and editing a few cards out of many do not require reading '
+        + "anyone else's prompt: take the skeleton, fill content into just the cards you are changing, "
+        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny no '
+        + 'matter how long the prompts are. To read a few specific prompts, name them in cardIds instead '
+        + 'of turning this on.\n'
+        + 'A full export of a 17-card board is ~20k characters that you must read, hold and re-emit, and '
+        + 'it is the call most likely to hit the silent 10k truncation — which is dangerous here, '
+        + 'because apply is declarative: writing a truncated IR back resets the missing fields to '
+        + 'defaults. Turn this on only when you genuinely need to READ the existing prompts wholesale.',
       ),
     }),
     annotations: READ_ONLY,
