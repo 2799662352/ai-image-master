@@ -385,6 +385,14 @@ export interface VideoWorkbenchState {
   /** 拖拽排序:把卡片移到目标下标。 */
   moveCard: (id: string, toIndex: number) => void
   /**
+   * 整页重排:一次给出该页**完整**的 id 顺序。返回是否生效。
+   *
+   * 要求完整而不是接受子集 —— IR apply 的老坑就是「只列 4 张,那 4 张跳到页首」,
+   * 静默且难查。要求全集,「没列出的怎么办」这个问题就不存在。
+   * 顺序与现状一致时不改任何东西也不涨版本(同「值没变的 updateCard 是无操作」)。
+   */
+  reorderCards: (cardIds: string[]) => boolean
+  /**
    * 选中卡片。
    * - `'replace'`(缺省):只选这张。
    * - `'toggle'`:Ctrl/Cmd 加选,已选则取消。
@@ -1409,6 +1417,56 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of get().cards) {
       if (card.boardId === boardId) schedulePersist(card)
     }
+  },
+
+  reorderCards: (cardIds) => {
+    let ok = false
+    let changedBoardId: string | undefined
+    set((state) => {
+      if (cardIds.length === 0) return {}
+      const byId = new Map(state.cards.map((c) => [c.id, c]))
+      const first = byId.get(cardIds[0])
+      if (!first) return {}
+      const targetBoardId = first.boardId
+
+      // 位置(在全局 cards 数组里的下标)与该页现有顺序,一次遍历取齐。
+      const positions: number[] = []
+      const current: string[] = []
+      state.cards.forEach((c, idx) => {
+        if (c.boardId === targetBoardId) {
+          positions.push(idx)
+          current.push(c.id)
+        }
+      })
+
+      // 必须是这一页的**全集**且无重复。任一不满足就整份不动 —— 校验与可读的
+      // 错误由调用方(工具执行器)负责,这里只保证不写出半个顺序。
+      const wanted = new Set(cardIds)
+      if (wanted.size !== cardIds.length) return {}
+      if (cardIds.length !== current.length) return {}
+      if (!current.every((id) => wanted.has(id))) return {}
+
+      ok = true
+      // 顺序没变 = 无操作。白涨 structureRevision 会平白作废 agent 手里的令牌。
+      if (current.every((id, i) => id === cardIds[i])) return {}
+
+      changedBoardId = targetBoardId
+      const next = [...state.cards]
+      cardIds.forEach((id, i) => {
+        next[positions[i]] = byId.get(id)!
+      })
+      return {
+        cards: reorderBoard(next, targetBoardId),
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
+    })
+    if (changedBoardId) {
+      for (const card of get().cards) {
+        if (card.boardId === changedBoardId) schedulePersist(card)
+      }
+    }
+    return ok
   },
 
   selectCard: (id, mode = 'replace') => {

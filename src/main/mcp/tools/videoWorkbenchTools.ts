@@ -674,9 +674,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     // 只改提示词文本，不碰素材/规格，所以不是破坏性的 —— 别让客户端为它弹确认。
     // 重复调用没有额外效果(第二次找不到 oldText 会被拒，状态不变)。
     annotations: WRITE_IDEMPOTENT,
+    // 不回 workbench 摘要:改几个字不动卡数/状态/页,它与调用前逐字节相同,而这个
+    // 工具是设计来一回合并行调好几次的 —— 回带就是把同一份摘要复制 N 份进上下文。
     outputSchema: z.looseObject({
       prompt: z.string().describe('The full prompt after the edit — check it landed as you intended.'),
-      workbench: workbenchSummarySchema,
     }),
   }, async (params, ctx?: unknown) => {
     try {
@@ -705,11 +706,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       toIndex: z.number().int().min(0).describe('0-based target position within that card\'s page.'),
     }),
     annotations: WRITE_IDEMPOTENT,
+    // 同 patch_prompt:页内挪位不改卡数/状态,workbench 摘要恒定不变,`order` 才是增量。
     outputSchema: z.looseObject({
       order: z.array(z.string()).describe(
         'Card ids of that page in their new order — verify before the next move.',
       ),
-      workbench: workbenchSummarySchema,
     }),
   }, async (params, ctx?: unknown) => {
     try {
@@ -721,6 +722,39 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([`✓ video_workbench_move_task → ${result.order.length} card(s) reordered.`], result)
     } catch (error) {
       return errorResult('video_workbench_move_task', error)
+    }
+  })
+
+  server.registerTool('video_workbench_reorder', {
+    description:
+      'Reorder a whole page in ONE call by giving its cards in the order you want. Prefer this over '
+      + 'repeated video_workbench_move_task: moves are order-dependent so they cannot run in parallel, '
+      + 'and N cards means N sequential round trips.\n'
+      + 'cardIds must be the COMPLETE set of that page\'s cards — passing only the ones you want to '
+      + 'move is REJECTED with zero writes, because what happens to the cards you left out would be '
+      + 'ambiguous. The rejection includes the page\'s current full order, so you can fill it in and '
+      + 'retry without calling export.\n'
+      + 'This tool does not touch prompts, specs or materials — only position.',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).min(1).describe(
+        'The page\'s cards, in the desired order. Must be the complete set — get ids from '
+        + 'video_workbench_status.',
+      ),
+    }),
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: z.looseObject({
+      order: z.array(z.string()).describe('Card ids of that page in their new order.'),
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_reorder',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { order: string[] }
+      return okResult([`✓ video_workbench_reorder → page reordered (${result.order.length} cards).`], result)
+    } catch (error) {
+      return errorResult('video_workbench_reorder', error)
     }
   })
 

@@ -319,6 +319,7 @@ export class AgentToolExecutor {
       case 'video_workbench_update_task':
       case 'video_workbench_patch_prompt':
       case 'video_workbench_move_task':
+      case 'video_workbench_reorder':
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
@@ -472,7 +473,9 @@ export class AgentToolExecutor {
 
         const ok = store.updateCard(cardId, { prompt: patched.prompt })
         if (!ok) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 生成中，未改动`)
-        return { prompt: patched.prompt, workbench: workbenchSummary() }
+        // 不回带 workbench 摘要:改几个字不动卡数/状态/页，它与调用前逐字节相同。
+        // 这个工具设计来一回合并行调好几次，回带就是把同一份 ~200 token 复制 N 份。
+        return { prompt: patched.prompt }
       }
       case 'video_workbench_move_task': {
         const cardId = typeof params.cardId === 'string' ? params.cardId : ''
@@ -495,12 +498,55 @@ export class AgentToolExecutor {
         }
 
         store.moveCard(cardId, toIndex)
+        // 同 patch_prompt:页内挪位不动卡数/状态,摘要恒定不变;order 才是增量。
         return {
           order: useVideoWorkbenchStore
             .getState()
             .cards.filter((c) => c.boardId === card.boardId)
             .map((c) => c.id),
-          workbench: workbenchSummary(),
+        }
+      }
+      case 'video_workbench_reorder': {
+        const cardIds = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : []
+        if (cardIds.length === 0) throw new Error('video_workbench_reorder: cardIds is required')
+
+        const state = useVideoWorkbenchStore.getState()
+        const unknown = cardIds.filter((id) => !state.cards.some((c) => c.id === id))
+        if (unknown.length > 0) {
+          throw new Error(`video_workbench_reorder: 卡片不存在: ${unknown.join(', ')}`)
+        }
+        const dupes = cardIds.filter((id, i) => cardIds.indexOf(id) !== i)
+        if (dupes.length > 0) {
+          throw new Error(`video_workbench_reorder: cardIds 有重复: ${[...new Set(dupes)].join(', ')}`)
+        }
+
+        // 必须是**某一页的全集**。错误里带上该页现在的完整顺序 —— 模型照着补齐重发
+        // 即可,不必再 export 一次。
+        const boardId = state.cards.find((c) => c.id === cardIds[0])!.boardId
+        const current = state.cards.filter((c) => c.boardId === boardId).map((c) => c.id)
+        const wanted = new Set(cardIds)
+        const missing = current.filter((id) => !wanted.has(id))
+        const foreign = cardIds.filter((id) => !current.includes(id))
+        if (missing.length > 0 || foreign.length > 0) {
+          throw new Error(
+            'video_workbench_reorder: cardIds 必须是该页卡片的完整集合(不能只给要挪的那几张，'
+            + '否则「没列出的」怎么排就是歧义)。'
+            + (foreign.length > 0 ? `不属于该页: ${foreign.join(', ')}。` : '')
+            + (missing.length > 0 ? `缺少: ${missing.join(', ')}。` : '')
+            + `该页当前完整顺序:${current.join(', ')}`,
+          )
+        }
+
+        if (!store.reorderCards(cardIds)) {
+          throw new Error('video_workbench_reorder: 重排未生效，看板可能刚被改过，请重读 status 再试')
+        }
+        return {
+          order: useVideoWorkbenchStore
+            .getState()
+            .cards.filter((c) => c.boardId === boardId)
+            .map((c) => c.id),
         }
       }
       case 'video_workbench_start': {

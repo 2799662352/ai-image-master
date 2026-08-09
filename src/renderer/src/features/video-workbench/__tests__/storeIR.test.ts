@@ -105,6 +105,42 @@ describe('revision 令牌', () => {
   })
 })
 
+/**
+ * 整页重排的 store 侧闸门。工具执行器那层负责把「你给漏了哪几张」写成可自纠的
+ * 错误,这一层只负责一件事:**半个顺序永远不落地**。两层各自独立成立 —— 哪天
+ * 有别的调用方绕过执行器,数据也不会写坏。
+ */
+describe('reorderCards', () => {
+  it('全集时按给定顺序落地，并压实 order', () => {
+    const [a, b, c] = state().addCards([{ prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' }])
+
+    expect(state().reorderCards([c, a, b])).toBe(true)
+
+    const cards = [...state().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((x) => x.id)).toEqual([c, a, b])
+    expect(cards.map((x) => x.order)).toEqual([0, 1, 2])
+  })
+
+  it('子集 / 重复 / 混进别页的 id：一律拒绝且零写入', () => {
+    const [a, b, c] = state().addCards([{ prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' }])
+    state().addBoard() // 切到第二页
+    const [d] = state().addCards([{ prompt: 'd' }])
+    const orderOf = (id: string) => state().cards.find((x) => x.id === id)!.order
+
+    for (const bad of [[c, a], [a, a, b], [a, b, d]]) {
+      expect(state().reorderCards(bad), bad.join(',')).toBe(false)
+    }
+    // 第一页一个字没动。
+    expect([orderOf(a), orderOf(b), orderOf(c)]).toEqual([0, 1, 2])
+  })
+
+  it('空数组是无操作而不是清空', () => {
+    const [a] = state().addCards([{ prompt: 'a' }])
+    expect(state().reorderCards([])).toBe(false)
+    expect(state().cards.map((c) => c.id)).toEqual([a])
+  })
+})
+
 describe('exportIR / applyIR', () => {
   it('exportIR 反映当前状态与两级令牌', () => {
     state().addCards([{ prompt: '一只猫' }, { prompt: '一只狗' }])

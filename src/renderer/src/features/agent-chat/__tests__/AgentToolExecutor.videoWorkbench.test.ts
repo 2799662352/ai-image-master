@@ -448,7 +448,9 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     )
   })
 
-  it('写操作统一回带 workbench 全局摘要(boards + statusCounts + 选中态)', async () => {
+  // 改变了「有多少卡、什么状态、在哪一页」的写操作要回带摘要，省掉一次 status 调用。
+  // 例外是 patch_prompt / move_task —— 它们的调用**不可能**改变这份摘要，见各自的用例。
+  it('改变结构或状态的写操作回带 workbench 全局摘要(boards + statusCounts + 选中态)', async () => {
     const added = await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '第一张' }, { prompt: '第二张' }],
       navigate: false,
@@ -716,6 +718,18 @@ describe('video_workbench_patch_prompt', () => {
     expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
       .toBe('镜头 rack focus 快速拉远')
   })
+
+  // 改几个字不动卡数、不动状态计数、不动页 —— 这份摘要在调用前后逐字节相同。
+  // 而这个工具是设计来一回合并行调好几次的，回带它就是把同一份 ~200 token 复制 N 份，
+  // 全落在最热的路径上。改后全文已经是完整的增量。
+  it('不回带那份不可能变的 workbench 摘要', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头 dolly in 推进' }])
+    const r = await callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'dolly in', newText: 'rack focus',
+    })
+    expect(r.workbench).toBeUndefined()
+    expect(Object.keys(r)).toEqual(['prompt'])
+  })
 })
 
 describe('video_workbench_move_task', () => {
@@ -754,5 +768,71 @@ describe('video_workbench_move_task', () => {
 
     const r = await callTool('video_workbench_move_task', { cardId: b, toIndex: 0 })
     expect(r.order).toEqual([b, a])
+  })
+
+  // 页内挪位不动卡数、不动状态计数 —— 摘要与调用前逐字节相同。回的 order 才是增量。
+  it('不回带那份不可能变的 workbench 摘要', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    const r = await callTool('video_workbench_move_task', { cardId: ids[1], toIndex: 0 })
+    expect(r.workbench).toBeUndefined()
+    expect(Object.keys(r)).toEqual(['order'])
+  })
+})
+
+/**
+ * 整页重排。补上 move_task 的短板:重排是顺序相关的，不能并发，所以挪 10 张卡
+ * 就是 10 次串行往返。一次给出完整顺序则是一次调用、结果确定。
+ *
+ * 为什么要求**完整**的 id 列表而不接受子集 —— apply 的老坑就是「只列 4 张，
+ * 那 4 张就跳到页首」，静默且难查。要求全集，"没列出的怎么办"这个问题就不存在。
+ */
+describe('video_workbench_reorder', () => {
+  it('按给定顺序整页重排并回新顺序', async () => {
+    const [a, b, c] = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' },
+    ])
+    const r = await callTool('video_workbench_reorder', { cardIds: [c, a, b] })
+
+    expect(r.order).toEqual([c, a, b])
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((x) => x.id)).toEqual([c, a, b])
+  })
+
+  // 错误要能自纠:带上这一页现在的完整顺序，模型照着补齐重发即可，不必再 export。
+  it('给子集时拒绝，并回带该页完整的当前顺序', async () => {
+    const [a, b, c] = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' },
+    ])
+    await expect(callTool('video_workbench_reorder', { cardIds: [c, a] }))
+      .rejects.toThrow(new RegExp(`${a}[\\s\\S]*${b}[\\s\\S]*${c}`))
+
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((x) => x.id)).toEqual([a, b, c])
+  })
+
+  it('有重复 id 时拒绝', async () => {
+    const [a, b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    await expect(callTool('video_workbench_reorder', { cardIds: [a, a] }))
+      .rejects.toThrow(/重复/)
+    void b
+  })
+
+  it('混进别页或不存在的 id 时拒绝', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    await expect(callTool('video_workbench_reorder', { cardIds: [ids[0], 'ghost'] }))
+      .rejects.toThrow(/ghost/)
+  })
+
+  // 顺序没变就是无操作 —— 白 bump structureRevision 会平白作废 agent 手里的令牌，
+  // 与 store 里「值没变的 updateCard 不涨版本」同一个口径。
+  it('顺序与现状一致时不 bump structureRevision', async () => {
+    const [a, b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const before = useVideoWorkbenchStore.getState().structureRevision
+
+    const r = await callTool('video_workbench_reorder', { cardIds: [a, b] })
+
+    expect(r.order).toEqual([a, b])
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(before)
   })
 })

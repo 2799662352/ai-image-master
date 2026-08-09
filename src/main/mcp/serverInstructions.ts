@@ -16,14 +16,15 @@
 export const CATIMATION_SERVER_INSTRUCTIONS = [
   'Workbench card edits — pick the tool by SIZE OF CHANGE: a few words of a prompt → '
   + 'video_workbench_patch_prompt; one card, several fields → video_workbench_update_task; '
-  + 'the same spec across many cards → video_workbench_set_spec; reordering → '
-  + 'video_workbench_move_task; adding or removing cards → video_workbench_add_tasks / '
+  + 'the same spec across many cards → video_workbench_set_spec; reordering a whole page → '
+  + 'video_workbench_reorder (one call); moving a single card → video_workbench_move_task; '
+  + 'adding or removing cards → video_workbench_add_tasks / '
   + 'video_workbench_remove_tasks. video_workbench_apply is STRUCTURE ONLY: it rejects prompt '
   + 'edits to existing cards with zero writes, and exists for atomic whole-board rebuilds.',
 
-  'Per-card writes touch different cards and are safe to issue in parallel. '
-  + 'video_workbench_move_task is the exception — reordering is order-dependent, so move one '
-  + 'card, read the returned order, then decide the next move.',
+  'Per-card writes touch different cards and are safe to issue in parallel. Reordering is the '
+  + 'exception because it is order-dependent: prefer one video_workbench_reorder call with the '
+  + "page's full order, and never issue video_workbench_move_task calls in parallel.",
 
   'Every tool result is truncated at ~10k tokens, silently. Prefer several small targeted '
   + 'calls over one broad one, and page through results instead of asking for a huge page.',
