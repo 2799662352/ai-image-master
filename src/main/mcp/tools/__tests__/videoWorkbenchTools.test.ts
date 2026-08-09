@@ -48,6 +48,7 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_add_tasks',
       'video_workbench_set_spec',
       'video_workbench_update_task',
+      'video_workbench_patch_prompt',
       'video_workbench_start',
       'video_workbench_status',
       'video_workbench_export',
@@ -404,6 +405,19 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ cardIds: ['c1'] }).success).toBe(true)
     expect(schema.safeParse({ cardIds: [] }).success).toBe(false)
     expect(schema.safeParse({}).success).toBe(false)
+  })
+
+  it('patch_prompt schema:三个字段都是必填的朴素标量', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const tool = toolByName(tools, 'video_workbench_patch_prompt')
+    const shape = (tool.config.inputSchema as any).shape
+    expect(Object.keys(shape).sort()).toEqual(['cardId', 'newText', 'oldText'])
+    const schema = tool.config.inputSchema
+    // newText 允许空串 = 删掉这个片段。
+    expect(schema.safeParse({ cardId: 'c1', oldText: 'a', newText: '' }).success).toBe(true)
+    expect(schema.safeParse({ cardId: 'c1', oldText: 'a' }).success).toBe(false)
+    expect(schema.safeParse({ oldText: 'a', newText: 'b' }).success).toBe(false)
   })
 })
 

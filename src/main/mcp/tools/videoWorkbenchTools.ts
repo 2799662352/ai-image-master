@@ -648,6 +648,45 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_patch_prompt', {
+    description:
+      'Change PART of one card\'s prompt by exact string replacement — the tool for "把第 3 张的 '
+      + 'dolly in 改成 rack focus".\n'
+      + 'USE THIS INSTEAD OF update_task when you are editing a few words. update_task takes the whole '
+      + 'prompt, so re-emitting 200 characters to change 8 of them costs you the decode time for all 200 '
+      + '— and long re-emissions are exactly where models start eliding content.\n'
+      + 'oldText must appear EXACTLY ONCE in that card\'s prompt. It is matched literally: no regex, no '
+      + 'fuzzy matching. If it matches 0 or 2+ times the call is REJECTED with zero writes and the full '
+      + 'current prompt in the error, so you can lengthen oldText and retry without calling export.\n'
+      + 'newText may be empty to delete the fragment. For a genuine full rewrite, use '
+      + 'video_workbench_update_task instead — stuffing the entire prompt into oldText is strictly worse.',
+    inputSchema: z.object({
+      cardId: z.string().min(1).describe('Card to edit. Get ids from video_workbench_status.'),
+      oldText: z.string().min(1).describe(
+        'Exact text to replace. Must occur exactly once in the card prompt. Matched literally.',
+      ),
+      newText: z.string().describe('Replacement text. Empty string deletes the fragment.'),
+    }),
+    // 只改提示词文本，不碰素材/规格，所以不是破坏性的 —— 别让客户端为它弹确认。
+    // 重复调用没有额外效果(第二次找不到 oldText 会被拒，状态不变)。
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: z.looseObject({
+      prompt: z.string().describe('The full prompt after the edit — check it landed as you intended.'),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_patch_prompt',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      )
+      return okResult([], result)
+    } catch (error) {
+      return errorResult('video_workbench_patch_prompt', error)
+    }
+  })
+
   server.registerTool('video_workbench_start', {
     description:
       'Batch output surface of the catimation-video skill (load it for grading and prompt discipline). ' +
