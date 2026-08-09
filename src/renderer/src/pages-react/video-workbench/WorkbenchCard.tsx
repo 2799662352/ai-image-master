@@ -907,7 +907,11 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
               {card.persistence === 'done' && card.localPath ? (
                 <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
               ) : card.persistence === 'failed' ? (
-                <span className="text-orange-400">本地保存失败(视频仍可播放/下载)</span>
+                <span className="text-orange-400" title="上游地址通常一天后过期；后台会在 1/5/15 分钟后自动重试保存">
+                  {/* 不能写「视频仍可播放/下载」—— 本地和 COS 都没副本时只剩上游那条会
+                      过期的地址，等用户回来点播放它多半已经不通，那句话就成了假话。 */}
+                  未保存到本地(仅剩上游临时地址,后台重试中)
+                </span>
               ) : (
                 <span>正在后台保存…</span>
               )}
