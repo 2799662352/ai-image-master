@@ -87,8 +87,55 @@ describe('persistVideoBytes', () => {
     await expect(persistVideoBytes(TASK, deps)).rejects.toThrow('ERR_CONNECTION_CLOSED')
   })
 
-  it('没有 videoUrl 时直接拒绝', async () => {
+  it('新鲜地址和任务号都没有才拒绝', async () => {
     await expect(persistVideoBytes({ ...TASK, videoUrl: undefined }, makeDeps()))
-      .rejects.toThrow('no videoUrl')
+      .rejects.toThrow('no fresh nor stored videoUrl')
+  })
+})
+
+/**
+ * 开发文档 §3.1/§3.4:任务记录一直在，随时可以按 taskId 重查拿一条**新签发**的
+ * `content.video_url`。所以 taskId 才是持久句柄，卡片上那条预签名地址只是 24 小时
+ * 的缓存。先重查再下载，卡片放置超过一天后「重新保存」才还能用。
+ */
+describe('persistVideoBytes · 按 taskId 重查地址', () => {
+  it('总是优先用重查回来的新地址，而不是手上那条旧的', async () => {
+    const deps = makeDeps({ refreshVideoUrl: vi.fn(async () => 'https://fresh/v.mp4') })
+    await persistVideoBytes(TASK, deps)
+
+    expect(deps.refreshVideoUrl).toHaveBeenCalledWith('task-12345678')
+    expect(deps.downloadVideo).toHaveBeenCalledWith('https://fresh/v.mp4', expect.any(String))
+  })
+
+  it('重查抛错时退回旧地址，不因此放弃', async () => {
+    const deps = makeDeps({
+      refreshVideoUrl: vi.fn(async () => { throw new Error('network down') }),
+    })
+    await persistVideoBytes(TASK, deps)
+
+    expect(deps.downloadVideo).toHaveBeenCalledWith(TASK.videoUrl, expect.any(String))
+  })
+
+  it('重查回来没有 video_url 时也退回旧地址', async () => {
+    const deps = makeDeps({ refreshVideoUrl: vi.fn(async () => undefined) })
+    await persistVideoBytes(TASK, deps)
+
+    expect(deps.downloadVideo).toHaveBeenCalledWith(TASK.videoUrl, expect.any(String))
+  })
+
+  it('只有 taskId、没有旧地址时靠重查也能救回来', async () => {
+    const deps = makeDeps({ refreshVideoUrl: vi.fn(async () => 'https://fresh/v.mp4') })
+    const r = await persistVideoBytes({ ...TASK, videoUrl: undefined }, deps)
+
+    expect(r.localPath).toBe('D:/attachments/v.mp4')
+    expect(deps.downloadVideo).toHaveBeenCalledWith('https://fresh/v.mp4', expect.any(String))
+  })
+
+  it('重查失败且没有旧地址才真失败', async () => {
+    const deps = makeDeps({
+      refreshVideoUrl: vi.fn(async () => { throw new Error('404') }),
+    })
+    await expect(persistVideoBytes({ ...TASK, videoUrl: undefined }, deps))
+      .rejects.toThrow('no fresh nor stored videoUrl')
   })
 })

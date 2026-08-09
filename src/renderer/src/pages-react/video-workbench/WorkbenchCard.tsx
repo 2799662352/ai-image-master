@@ -914,12 +914,12 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                   <span title="上游地址通常一天后过期；后台已在 1/5/15 分钟各重试过一次">
                     未保存到本地(仅剩上游临时地址)
                   </span>
-                  {card.videoUrl && (
-                    // 免费的补救:自动重试只覆盖到 21 分钟，而地址还能用约一天。
-                    // 放在这里而不是只给「重新生成」——后者要花钱重跑一条已经有了的片子。
+                  {(card.taskId || card.videoUrl) && (
+                    // 免费的补救。有任务号就一定值得点:主进程会拿它向上游重查出一条
+                    // 新签发的地址，不受那条旧地址 24 小时过期的限制。
                     <button
                       type="button"
-                      title="用这张卡上的原始地址重新下载保存，不重新生成、不花钱"
+                      title="按任务号重新取一次视频并保存，不重新生成、不花钱"
                       className="border border-orange-400/50 px-1.5 py-0.5 text-[10px] hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
                       onClick={() => { void resaveCard(card.id) }}
                     >

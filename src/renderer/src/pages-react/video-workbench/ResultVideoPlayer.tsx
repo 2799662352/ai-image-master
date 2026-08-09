@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
+import { describeUrlHealth } from '../../../../shared/signedUrlExpiry'
 import { useFileUrl } from '../../features/file-explorer/useFileUrl'
 
 /**
@@ -66,6 +67,7 @@ const MEDIA_ERR_NETWORK = 2
 
 interface ShellBridge {
   showItemInFolder?: (p: string) => Promise<unknown>
+  openExternal?: (url: string) => Promise<unknown>
 }
 
 function getShell(): ShellBridge | undefined {
@@ -112,6 +114,31 @@ function RemoteResultVideo({
     if (timer.current) clearTimeout(timer.current)
   }, [])
 
+  const restart = (): void => {
+    if (timer.current) clearTimeout(timer.current)
+    setIdx(0)
+    setAttempt(0)
+    setExhausted(false)
+    startedAt.current = Date.now()
+  }
+
+  // 地址换了就从头再试一遍。「重新保存」成功后会多出一条 COS 永久地址，而放弃
+  // 状态原本是黏住的 —— 明明已经有了能播的源，屏幕上还停在那句失败。
+  const key = candidates.join('|')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { restart() }, [key])
+
+  // 网络回来了自动再试一次。这条路径最常见的失败就是断网/对端抖动，让用户自己
+  // 想起来点一下不合理 —— 尤其错误文案本身还在暗示「链接可能已过期」，很容易
+  // 把人引去花钱重生成一条其实好好的片子。只在已放弃时挂监听。
+  useEffect(() => {
+    if (!exhausted) return undefined
+    const onOnline = (): void => restart()
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exhausted])
+
   const nextCandidate = (): void => {
     if (idx + 1 < candidates.length) {
       setIdx((i) => i + 1)
@@ -142,9 +169,13 @@ function RemoteResultVideo({
     return (
       <PlaybackFallback
         localPath={localPath}
-        // 不断言「已过期」：最常见的其实是连接被掐断，过期会回 403。说清「试了多久」
-        // 比给一个可能错误的原因有用，也免得把人引去花钱重生成一条已经好了的片子。
-        reason={`${candidates.length} 个地址各重试 ${REMOTE_RETRY_WINDOW_MS / 1000} 秒仍加载不出（网络问题或链接已过期）`}
+        // 过期与否不用猜:预签名地址的签发时间和有效期就写在 query 里。之前这里
+        // 写的是「网络问题或链接已过期」，而实测那条失败的地址签发才 13 分钟、
+        // 还有 23 小时 —— 含糊其辞会把人推去花钱重生成一条其实还能下载的片子。
+        reason={`${candidates.length} 个地址各重试 ${REMOTE_RETRY_WINDOW_MS / 1000} 秒仍加载不出`
+          + describeUrlHealth(candidates[candidates.length - 1])}
+        onRetry={restart}
+        externalUrl={candidates[candidates.length - 1]}
       />
     )
   }
@@ -172,14 +203,50 @@ function RemoteResultVideo({
   )
 }
 
-/** 错误兜底:不给空白播放器,给出路径与「在文件夹中打开」。 */
-function PlaybackFallback({ localPath, reason }: { localPath?: string; reason: string }) {
+/**
+ * 错误兜底:不给空白播放器，给出路径与出口。
+ *
+ * 「加载失败」不等于「片子没了」。放弃只说明内嵌播放器这一条路没走通，而地址
+ * 通常还活着 —— 所以这里必须同时给「再试一次」和「在浏览器中打开」，否则用户
+ * 面对一条其实能播的视频，唯一看得见的按钮是花钱重新生成。
+ */
+function PlaybackFallback({ localPath, reason, onRetry, externalUrl }: {
+  localPath?: string
+  reason: string
+  onRetry?: () => void
+  externalUrl?: string
+}) {
   return (
     <div
       data-testid="vw-playback-fallback"
       className="border border-orange-500/40 bg-orange-500/5 px-3 py-2.5 space-y-1.5"
     >
       <p className="text-orange-400 text-xs">⚠ 视频加载失败:{reason}</p>
+      {(onRetry || externalUrl) && (
+        <div className="flex items-center gap-2">
+          {onRetry && (
+            <button
+              type="button"
+              data-testid="vw-playback-retry"
+              className="text-[10px] border border-[#3F3F46] text-white/70 px-2 py-1 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
+              onClick={onRetry}
+            >
+              ↻ 重试播放
+            </button>
+          )}
+          {externalUrl && (
+            <button
+              type="button"
+              data-testid="vw-playback-external"
+              title="用系统浏览器打开原始地址：内嵌播放器放不了不代表地址失效"
+              className="text-[10px] border border-[#3F3F46] text-white/70 px-2 py-1 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
+              onClick={() => void getShell()?.openExternal?.(externalUrl)}
+            >
+              ↗ 在浏览器中打开
+            </button>
+          )}
+        </div>
+      )}
       {localPath && (
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-white/40 text-[10px] truncate" title={localPath}>

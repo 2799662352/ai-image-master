@@ -1071,8 +1071,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
 
   resaveCard: async (id) => {
     const card = get().cards.find((c) => c.id === id)
-    // 没有上游地址就真的没救了（这条地址是最后一份副本），如实说，别让用户白点。
-    if (!card?.videoUrl) return { ok: false, error: '这张卡没有可用的视频地址，只能重新生成' }
+    // taskId 才是持久句柄:主进程会拿它重查出一条新签发的地址（预签名地址 24 小时
+    // 就过期，重查不受此限）。所以只要有任务号就值得一试，卡片上那条旧地址只是兜底。
+    if (!card?.taskId && !card?.videoUrl) {
+      return { ok: false, error: '这张卡既没有任务号也没有视频地址，只能重新生成' }
+    }
     const api = (window as unknown as {
       electronAPI?: { videoWorkbench?: { repersist?: (p: unknown) => Promise<{
         ok: boolean; localPath?: string; remoteUrl?: string; error?: string
@@ -1083,8 +1086,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     set((s) => ({ cards: s.cards.map((c) => (c.id === id ? { ...c, persistence: 'running' } : c)) }))
     type Resaved = { ok: boolean; localPath?: string; remoteUrl?: string; error?: string }
     const r: Resaved = await api({
-      videoUrl: card.videoUrl,
       model: card.model,
+      ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
       ...(card.taskId ? { taskId: card.taskId } : {}),
     }).catch((e: unknown): Resaved => ({ ok: false, error: e instanceof Error ? e.message : String(e) }))
 

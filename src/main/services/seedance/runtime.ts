@@ -385,6 +385,10 @@ export function initSeedanceRuntime(opts: {
 
   const persistDeps: PersistVideoDeps = {
     downloadVideo: (url, dest) => seedanceClient.downloadVideo(url, dest),
+    refreshVideoUrl: async (taskId) => {
+      const r = await seedanceClient.queryTask(taskId, getSeedanceApiKey())
+      return r.content?.video_url
+    },
     ingest: (threadId, files) => attachments.ingest(threadId, files),
     relayFileToCos: (p, mime, opts) => relayFileToCos(p, mime, opts),
     stat: (p) => fs.stat(p),
@@ -405,15 +409,20 @@ export function initSeedanceRuntime(opts: {
    */
   ipcMain.removeHandler('video-workbench:repersist')
   ipcMain.handle('video-workbench:repersist', async (_event, payload: Record<string, unknown>) => {
-    const videoUrl = typeof payload?.videoUrl === 'string' ? payload.videoUrl : ''
-    if (!videoUrl) return { ok: false, error: '这张卡没有可用的视频地址，只能重新生成' }
+    const videoUrl = typeof payload?.videoUrl === 'string' ? payload.videoUrl : undefined
+    const taskId = typeof payload?.taskId === 'string' ? payload.taskId : ''
+    // taskId 是持久句柄，凭它就能重查出一条新签发的地址；旧地址只是兜底。
+    // 两个都没有才是真没救。
+    if (!taskId && !videoUrl) {
+      return { ok: false, error: '这张卡既没有任务号也没有视频地址，只能重新生成' }
+    }
     try {
       const { localPath, remoteUrl } = await persistVideoBytes({
         videoUrl,
         model: String(payload?.model ?? '2.0'),
-        taskId: String(payload?.taskId ?? randomUUID()),
+        taskId: taskId || randomUUID(),
         threadId: typeof payload?.threadId === 'string' ? payload.threadId : undefined,
-      }, persistDeps)
+      }, taskId ? persistDeps : { ...persistDeps, refreshVideoUrl: undefined })
       return { ok: true, localPath, remoteUrl }
     } catch (e) {
       // 失败原因如实带回:多半是地址已过期或仍然断网，两者的下一步不同

@@ -26,6 +26,11 @@ export interface PersistVideoResult {
 
 export interface PersistVideoDeps {
   downloadVideo: (videoUrl: string, destPath: string) => Promise<string>
+  /**
+   * 按 taskId 重查任务，拿一条**新签发**的 `content.video_url`（开发文档 §3.1/§3.4）。
+   * 不提供时退化为只用调用方给的旧地址。
+   */
+  refreshVideoUrl?: (taskId: string) => Promise<string | undefined>
   ingest: (
     threadId: string,
     files: { name: string; mime: string; size: number; path: string }[],
@@ -44,17 +49,43 @@ export interface PersistVideoDeps {
   join: (...parts: string[]) => string
 }
 
+/**
+ * 决定这次到底去下哪条地址。
+ *
+ * **taskId 才是持久句柄，`content.video_url` 只是派生出来的预签名缓存**（有效期
+ * 24 小时，写在 URL 的 `X-Tos-Expires` 里）。开发文档 §3.1/§3.4 的模型是:任务
+ * 记录一直在，随时可以重查拿一条新签发的地址。
+ *
+ * 所以这里总是先重查。手上那条旧地址只在重查失败时兜底 —— 它可能已经过期，也
+ * 可能正好是那条连不上的。反过来做（先用旧的）意味着卡片放置超过一天后，「重新
+ * 保存」必然失败，用户只剩花钱重生成这一条路，而服务端其实一直留着这个片子。
+ */
+async function resolveVideoUrl(
+  task: PersistVideoTask,
+  deps: PersistVideoDeps,
+): Promise<string> {
+  if (deps.refreshVideoUrl) {
+    try {
+      const fresh = await deps.refreshVideoUrl(task.taskId)
+      if (fresh) return fresh
+      console.warn('[seedance] task re-query returned no video_url; falling back to stored URL')
+    } catch (e) {
+      console.warn('[seedance] task re-query failed; falling back to stored URL:', e)
+    }
+  }
+  if (!task.videoUrl) throw new Error('seedance persist: no fresh nor stored videoUrl')
+  return task.videoUrl
+}
+
 export async function persistVideoBytes(
   task: PersistVideoTask,
   deps: PersistVideoDeps,
 ): Promise<PersistVideoResult> {
-  if (!task.videoUrl) throw new Error('seedance persist: task has no videoUrl')
-
   const name = `seedance-${task.model.replace('.', '_')}-${task.taskId.slice(-8)}.mp4`
   await deps.mkdir(deps.downloadsDir)
   const destPath = deps.join(deps.downloadsDir, `${deps.uuid()}-${name}`)
 
-  const filePath = await deps.downloadVideo(task.videoUrl, destPath)
+  const filePath = await deps.downloadVideo(await resolveVideoUrl(task, deps), destPath)
   const { size } = await deps.stat(filePath)
 
   // 按 path 而非 buffer 交给 ingest。这不只是省内存 —— buffer 路径的上限是
