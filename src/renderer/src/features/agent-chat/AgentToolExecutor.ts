@@ -452,6 +452,11 @@ export class AgentToolExecutor {
         if (!cardId) throw new Error('video_workbench_patch_prompt: cardId is required')
         if (!oldText) throw new Error('video_workbench_patch_prompt: oldText 不能为空')
 
+        // 不变量:从这里的读到下面的 updateCard 之间**不能有 await**。
+        // 这是唯一一个读—改—写的工作台工具，而我们对整个 server 开了
+        // supports_parallel_tool_calls,codex 会在同一回合并行派发多次调用。
+        // 中间一旦让出事件循环，后一次就会读到旧提示词、把前一次的改动覆盖掉。
+        // AgentToolExecutor.videoWorkbench.test.ts 的「不丢更新」用例钉着这条。
         const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
         if (!card) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 不存在`)
 

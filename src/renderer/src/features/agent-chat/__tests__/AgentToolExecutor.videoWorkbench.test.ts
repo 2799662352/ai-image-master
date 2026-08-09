@@ -689,6 +689,33 @@ describe('video_workbench_patch_prompt', () => {
       cardId: id, oldText: '推进', newText: '拉远',
     })).rejects.toThrow(/生成中/)
   })
+
+  /**
+   * 这是唯一一个「读—改—写」的工作台工具:读出提示词、算出新值、写回去。
+   *
+   * 我们对整个 catimation server 开了 `supports_parallel_tool_calls=true`
+   * (codexLaunch.ts,为了多张图并发出),而 codex 的 PR #17667 明确警告
+   * 「只在该 server 的工具可以安全并发时才开，特别注意共享状态和读写竞争」。
+   *
+   * 它现在安全，靠的是**读和写之间一个 await 都没有** —— zustand 的 set() 是同步的，
+   * 单线程下两次调用不会交错。这个不变量只由代码顺序保证，将来谁在中间插一个
+   * await（比如加个异步校验、异步查素材），就会静默变成丢更新。这条测试就是那道闸。
+   */
+  it('并发改同一张卡的不同片段:两处都落地，不丢更新', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头 dolly in 缓缓推进' }])
+
+    // 故意不 await 第一个 —— 模拟 codex 在同一回合里并行派发两次调用。
+    const a = callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'dolly in', newText: 'rack focus',
+    })
+    const b = callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '缓缓推进', newText: '快速拉远',
+    })
+    await Promise.all([a, b])
+
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('镜头 rack focus 快速拉远')
+  })
 })
 
 describe('video_workbench_move_task', () => {
