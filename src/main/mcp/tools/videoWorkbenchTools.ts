@@ -1050,7 +1050,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         return okResult([
           result.conflict
             ? `⚠️ video_workbench_apply — REJECTED, nothing was written: cards were added, deleted or reordered since your export (structureRevision ${result.conflict.expected} → ${result.conflict.actual}), so the array positions in your IR no longer line up. Call video_workbench_export again, redo your edits on the fresh IR, then apply.`
-            : '⚠️ video_workbench_apply — REJECTED, nothing was written (see skipped reasons).',
+            : '⚠️ video_workbench_apply — REJECTED, nothing was written.',
+          // 「怎么改」要摆在横幅里，不能只丢一句「see skipped reasons」让模型自己去
+          // JSON 里翻 —— 拒绝的调用只有带上可执行的下一步才是可自纠的。
+          ...(result.conflict ? [] : result.skipped.slice(0, 3).map((s) => `   · ${s.reason}`)),
         ], result)
       }
       return okResult([
