@@ -770,7 +770,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'And it is the only way — the board lives in the running app\'s IndexedDB, there is no file on '
       + 'disk to grep.\n'
       + 'SCOPE: by default this exports only the ACTIVE board, because a full export carries every card\'s '
-      + 'full prompt and every material path and can exceed what the client will accept. That default is '
+      + 'full prompt and every material path, which gets big fast. (It is never REJECTED for size — an '
+      + 'oversized export degrades to full content for as many cards as fit plus position-only entries '
+      + 'for the rest, with a contentFrom offset to continue. But a narrower scope is still cheaper.) '
+      + 'That default is '
       + 'safe to apply back — merge mode leaves boards you did not list alone. Pass a specific boardId for '
       + 'another board, or allBoards:true only when the change genuinely spans boards (moving cards '
       + 'between pages, reordering the tabs).',
@@ -780,8 +783,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'boards you did not list are left alone.',
       ),
       allBoards: z.boolean().optional().describe(
-        'Export every board. Only needed for cross-board changes; the payload grows with the whole '
-        + 'workbench and may be rejected as too large. Ignored when boardId is given.',
+        'Export every board. Only needed for cross-board changes. The payload grows with the whole '
+        + 'workbench, so expect it to come back PARTIAL (content for the first N cards, position-only '
+        + 'for the rest) — that is a degradation, not a failure. Ignored when boardId is given.',
       ),
       contentFrom: z.number().int().min(0).optional().describe(
         'Continuation offset for an export that came back PARTIAL. A board too large to fit in one '
