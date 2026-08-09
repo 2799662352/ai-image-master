@@ -1489,6 +1489,24 @@ export class AgentToolExecutor {
   }
 }
 
+/**
+ * 提示词的精确字符串替换。照 Claude Code 的 Edit 工具:精确匹配、不做正则、
+ * 要求全文唯一。歧义时拒绝而不是猜 —— 改错一个词不会像代码那样编译失败，
+ * 会安静地生成一条错的视频，而那是要花钱的。
+ */
+export function patchPromptText(
+  prompt: string,
+  oldText: string,
+  newText: string,
+): { ok: true; prompt: string } | { ok: false; count: number } {
+  if (!oldText) return { ok: false, count: 0 }
+  // split 计数而不是正则:提示词里括号/点/星号是常态，当成正则会误伤。
+  const parts = prompt.split(oldText)
+  const count = parts.length - 1
+  if (count !== 1) return { ok: false, count }
+  return { ok: true, prompt: parts[0] + newText + parts[1] }
+}
+
 export function mountAgentToolExecutor(): () => void {
   return new AgentToolExecutor().start()
 }

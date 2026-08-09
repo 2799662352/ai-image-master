@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentToolExecutor } from '../AgentToolExecutor'
+import { AgentToolExecutor, patchPromptText } from '../AgentToolExecutor'
 import { useTabStore } from '../../../stores/useTabStore'
 import { resetAssetPreviewCacheForTest } from '../../video-workbench/assetPreview'
 import {
@@ -606,5 +606,36 @@ describe('export 默认只导当前页', () => {
 
   it('显式要一页却不存在才报错;隐式取当前页解析不出时退回整份', async () => {
     await expect(callTool('video_workbench_export', { boardId: 'ghost' })).rejects.toThrow('board not found')
+  })
+})
+
+describe('patchPromptText', () => {
+  it('唯一命中时替换并回全文', () => {
+    const r = patchPromptText('镜头 dolly in 缓缓推进', 'dolly in', 'rack focus')
+    expect(r).toEqual({ ok: true, prompt: '镜头 rack focus 缓缓推进' })
+  })
+
+  it('newText 为空串 = 删除该片段', () => {
+    expect(patchPromptText('a BAD b', ' BAD', '')).toEqual({ ok: true, prompt: 'a b' })
+  })
+
+  // 歧义时宁可拒绝也不猜:改错一个词不会报错，会安静生成一条错的视频，而那要花钱。
+  it('多处命中时拒绝并回命中次数', () => {
+    expect(patchPromptText('推进，然后推进', '推进', '拉远')).toEqual({ ok: false, count: 2 })
+  })
+
+  it('未命中时拒绝', () => {
+    expect(patchPromptText('镜头缓缓推进', 'zoom in', 'x')).toEqual({ ok: false, count: 0 })
+  })
+
+  // 空串会被 split 按字符切开，命中数等于长度+1，必须在入口挡掉。
+  it('oldText 为空串时拒绝', () => {
+    expect(patchPromptText('镜头缓缓推进', '', 'x')).toEqual({ ok: false, count: 0 })
+  })
+
+  // 不做正则:用户提示词里出现正则元字符是常态（括号、点、星号）。
+  it('把 oldText 当字面量，不当正则', () => {
+    expect(patchPromptText('曝光 (f/2.8) 浅景深', '(f/2.8)', '(f/8)'))
+      .toEqual({ ok: true, prompt: '曝光 (f/8) 浅景深' })
   })
 })
