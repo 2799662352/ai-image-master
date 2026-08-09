@@ -167,7 +167,9 @@ describe('planApplyIR / 拒绝路径', () => {
     const ir = roundTrip(src)
     ir.structureRevision = 3
     ir.boards[0].cards[0].rev = 1
-    ir.boards[0].cards[0].prompt = '新'
+    // 用规格字段而不是 prompt 当载体:apply 已硬禁改已有卡的提示词，
+    // 而这条测的是 force 越过 structureRevision / rev 两级校验，与提示词无关。
+    ir.boards[0].cards[0].resolution = '1080p'
     const plan = planApplyIR(src, ir, { force: true })
     expect(plan.result.ok).toBe(true)
     expect(plan.result.cards.updated).toEqual(['c1'])
@@ -182,8 +184,10 @@ describe('planApplyIR / 拒绝路径', () => {
     })
     const ir = roundTrip(src)
     ir.boards[0].cards[0].rev = 1 // agent 导出时是 1,用户之后又改过
-    ir.boards[0].cards[0].prompt = 'agent 想写的'
-    ir.boards[0].cards[1].prompt = 'agent 改了这张'
+    // 载体从 prompt 换成规格字段:apply 已硬禁改已有卡的提示词，
+    // 这条测的是「一张卡 rev 过期不该废掉整份 apply」。
+    ir.boards[0].cards[0].resolution = '1080p'
+    ir.boards[0].cards[1].resolution = '1080p'
 
     const plan = planApplyIR(src, ir)
 
@@ -198,7 +202,7 @@ describe('planApplyIR / 拒绝路径', () => {
     expect(skip.reason).toContain('被用户改过')
     // 把「哪几个字段对不上」喂到嘴边，省得 agent 自己 diff。
     expect(skip.reason).toContain('对不上的字段')
-    expect(skip.reason).toContain('prompt')
+    expect(skip.reason).toContain('resolution')
     // 但**不做归因** —— 没有导出基线就分不清谁改的，硬猜比不说更误导。
     expect(skip.reason).toContain('分不清是你改的还是用户改的')
     expect(skip.current).toEqual({
@@ -211,8 +215,8 @@ describe('planApplyIR / 拒绝路径', () => {
       rev: 4,
     })
     const byId = new Map(plan.next!.cards.map((c) => [c.id, c]))
-    expect(byId.get('c1')!.prompt).toBe('用户刚改的')
-    expect(byId.get('c2')!.prompt).toBe('agent 改了这张')
+    expect(byId.get('c1')!.resolution).toBe('720p')
+    expect(byId.get('c2')!.resolution).toBe('1080p')
     // 被跳过的那张不该重写落盘
     expect(plan.persist!.cards.map((c) => c.id)).toEqual(['c2'])
   })
@@ -244,7 +248,8 @@ describe('planApplyIR / 拒绝路径', () => {
       cards: [card({ id: 'c1', boardId: 'b1', prompt: '旧', rev: 2 })],
     })
     const ir = roundTrip(src)
-    ir.boards[0].cards[0].prompt = '新'
+    // 载体是规格字段:apply 已硬禁改已有卡的提示词，这条测的是 rev 记账。
+    ir.boards[0].cards[0].resolution = '1080p'
 
     const plan = planApplyIR(src, ir)
 
@@ -354,17 +359,23 @@ describe('planApplyIR / 拒绝路径', () => {
       boards: [{
         id: 'b1',
         name: '页面 1',
-        cards: [{ id: 'c1', prompt: '第一处' }, { id: 'c1', prompt: '第二处' }],
+        // 提示词都原样带回(apply 已硬禁改已有卡的提示词);去重用规格字段区分。
+        cards: [
+          { id: 'c1', prompt: '原', resolution: '1080p' },
+          { id: 'c1', prompt: '原', resolution: '480p' },
+        ],
       }],
     })
     expect(plan.next!.cards.filter((c) => c.id === 'c1')).toHaveLength(1)
-    expect(plan.next!.cards[0].prompt).toBe('第一处')
+    expect(plan.next!.cards[0].resolution).toBe('1080p')
     expect(plan.result.skipped.map((s) => s.reason).join()).toContain('同一张卡出现多次')
   })
 })
 
 describe('planApplyIR / 声明式改写', () => {
-  it('改 prompt 记 updated,并按 IR 顺序重排 order', () => {
+  // 原本用改 prompt 做载体;apply 已硬禁改已有卡的提示词，改用规格字段，
+  // 测的东西不变:改了规格记 updated，同时按 IR 数组顺序重排 order。
+  it('改规格记 updated,并按 IR 顺序重排 order', () => {
     const src = source({
       cards: [
         card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A' }),
@@ -373,7 +384,7 @@ describe('planApplyIR / 声明式改写', () => {
     })
     const ir = roundTrip(src)
     ir.boards[0].cards.reverse()
-    ir.boards[0].cards[0].prompt = 'B+'
+    ir.boards[0].cards[0].resolution = '1080p'
     const plan = planApplyIR(src, ir)
     expect(plan.result.ok).toBe(true)
     expect(plan.result.cards.updated).toEqual(['c2'])
@@ -439,13 +450,31 @@ describe('planApplyIR / 声明式改写', () => {
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
-      // 只改了 duration，但既然带了内容字段，其余照样回默认（既有契约不变）。
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', duration: 10 }] }],
+      // 改了 duration，既然带了内容字段，其余照样回默认（既有契约不变）。
+      // prompt 必须原样带回 —— 漏带会被硬闸当成「清空提示词」拦下，见下一条。
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: '猫', duration: 10 }] }],
     })
     const next = plan.next!.cards[0]
     expect(next.duration).toBe(10)
     expect(next.resolution).toBe('720p')
-    expect(next.prompt).toBe('')
+    expect(next.prompt).toBe('猫')
+  })
+
+  // 这条以前的期望是「prompt 被声明式清空成 ''」。硬闸落地后翻了过来:声明式清空
+  // 恰恰是最危险的一种「改提示词」—— 用户看到的是提示词凭空消失，而 agent 那边
+  // 是一次成功回执。现在整份拒绝。
+  it('带内容字段却漏带 prompt = 声明式清空，被硬闸拦下', () => {
+    const src = source({
+      cards: [card({ id: 'c1', boardId: 'b1', prompt: '猫', resolution: '1080p', duration: 12 })],
+    })
+    const plan = planApplyIR(src, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', duration: 10 }] }],
+    })
+    expect(plan.result.ok).toBe(false)
+    expect(plan.next).toBeUndefined()
+    expect(plan.result.skipped.map((s) => s.reason).join()).toContain('patch_prompt')
   })
 
   it('只占位:rev 是令牌不是内容，带 rev 仍算占位', () => {
@@ -682,10 +711,12 @@ describe('planApplyIR / 渲染中的卡片', () => {
       })
       const ir = roundTrip(src)
       ir.boards[0].cards.reverse()
-      ir.boards[0].cards[1].prompt = '改不动'
+      // 载体从 prompt 换成规格字段:apply 已硬禁改已有卡的提示词，
+      // 这条测的是「渲染中的卡规格定格、位置照动」。
+      ir.boards[0].cards[1].resolution = '1080p'
       const plan = planApplyIR(src, ir)
       const c1 = plan.next!.cards.find((c) => c.id === 'c1')!
-      expect(c1.prompt).toBe('在飞')
+      expect(c1.resolution).toBe('720p')
       expect(c1.order).toBe(1)
       expect(plan.result.cards.updated).toEqual([])
       expect(plan.result.cards.moved).toEqual(expect.arrayContaining(['c1', 'c2']))
@@ -718,5 +749,104 @@ describe('planApplyIR / 渲染中的卡片', () => {
     const c2 = plan.next!.cards.find((c) => c.id === 'c2')!
     expect(c2).toMatchObject({ boardId: 'b1', order: 1 })
     expect(plan.persist!.cards.map((c) => c.id)).toContain('c2')
+  })
+})
+
+// 光在描述里劝「别用 apply 改提示词」不管用 —— apply 是声明式的，模型很容易顺手把
+// 整板提示词都带上，而那正是最慢、最容易中途崩掉的一条路。所以这里是硬闸。
+describe('planApplyIR / 硬禁用 apply 改已有卡的提示词', () => {
+  const src = () => source({
+    structureRevision: 7,
+    cards: [
+      card({ id: 'c1', boardId: 'b1', order: 0, prompt: '原提示词 A' }),
+      card({ id: 'c2', boardId: 'b1', order: 1, prompt: '原提示词 B' }),
+    ],
+  })
+
+  it('已存在的卡携带不同提示词时整份拒绝、零写入', () => {
+    const s = src()
+    const ir = roundTrip(s)
+    ir.boards[0].cards[0].prompt = '换了的提示词'
+    const plan = planApplyIR(s, ir)
+
+    expect(plan.result.ok).toBe(false)
+    expect(plan.next).toBeUndefined()
+    expect(plan.persist).toBeUndefined()
+    const reason = plan.result.skipped.map((x) => x.reason).join()
+    expect(reason).toContain('patch_prompt')
+    expect(reason).toContain('c1')
+  })
+
+  it('提示词与现状一致时放行（重排常常会原样带上）', () => {
+    const s = src()
+    const ir = roundTrip(s)
+    ir.boards[0].cards.reverse()
+    const plan = planApplyIR(s, ir)
+
+    expect(plan.result.ok).toBe(true)
+    expect(plan.next!.cards.map((c) => c.id)).toEqual(['c2', 'c1'])
+  })
+
+  it('新建卡可以带提示词', () => {
+    const s = src()
+    const ir = roundTrip(s)
+    ir.boards[0].cards.push({ prompt: '全新的卡' })
+    const plan = planApplyIR(s, ir)
+
+    expect(plan.result.ok).toBe(true)
+    expect(plan.result.cards.created).toHaveLength(1)
+  })
+
+  it('只占位条目不受影响', () => {
+    const s = src()
+    const plan = planApplyIR(s, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 7,
+      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2' }, { id: 'c1' }] }],
+    })
+
+    expect(plan.result.ok).toBe(true)
+    expect(plan.next!.cards.map((c) => c.id)).toEqual(['c2', 'c1'])
+  })
+
+  // 闸只对「IR 是新的、提示词差异是故意改」生效。rev 对不上说明这份 IR 已经旧了，
+  // 差异多半是用户在导出之后自己改的 —— 那条路本来就有按卡 rev 兜着（跳过该卡、
+  // 不覆盖用户的字）。升级成整份拒绝会让用户打一个字就废掉一次纯重排。
+  it('rev 过期时不整份拒绝，交给按卡 rev 跳过那一张', () => {
+    const s = source({
+      cards: [
+        card({ id: 'c1', boardId: 'b1', order: 0, prompt: '用户后来改的', rev: 4 }),
+        card({ id: 'c2', boardId: 'b1', order: 1, prompt: '原提示词 B', rev: 0 }),
+      ],
+    })
+    const plan = planApplyIR(s, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      // agent 手里是导出时的旧提示词与旧 rev，它想做的只是把两张卡对调。
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        cards: [
+          { id: 'c2', prompt: '原提示词 B', rev: 0 },
+          { id: 'c1', prompt: '导出时的提示词', rev: 1 },
+        ],
+      }],
+    })
+
+    expect(plan.result.ok).toBe(true)
+    expect(plan.next!.cards.find((c) => c.id === 'c1')!.prompt).toBe('用户后来改的')
+    expect(plan.result.skipped.map((x) => x.cardId)).toEqual(['c1'])
+    expect(plan.next!.cards.map((c) => c.id)).toEqual(['c2', 'c1'])
+  })
+
+  // force 是给「用户明确要求覆盖」用的并发逃生口，不是绕开工具选择的后门。
+  it('force 也不能绕过', () => {
+    const s = src()
+    const ir = roundTrip(s)
+    ir.boards[0].cards[0].prompt = '换了的提示词'
+    const plan = planApplyIR(s, ir, { force: true })
+
+    expect(plan.result.ok).toBe(false)
+    expect(plan.next).toBeUndefined()
   })
 })

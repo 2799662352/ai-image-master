@@ -178,7 +178,9 @@ describe('exportIR / applyIR', () => {
       ...ir,
       boards: [{
         ...ir.boards[0],
-        cards: ir.boards[0].cards.map((c) => ({ ...c, prompt: `agent 写的 ${c.id === c1 ? 1 : 2}` })),
+        // 载体是规格字段:apply 已硬禁改已有卡的提示词，
+        // 这条测的是「一张卡的 rev 过期不该废掉整份 apply」。
+        cards: ir.boards[0].cards.map((c) => ({ ...c, resolution: '1080p' as const })),
       }],
     })
 
@@ -189,7 +191,8 @@ describe('exportIR / applyIR', () => {
     expect(result.skipped[0].cardId).toBe(c1)
     const byId = new Map(state().cards.map((c) => [c.id, c]))
     expect(byId.get(c1)!.prompt).toBe('A 用户改的')
-    expect(byId.get(c2)!.prompt).toBe('agent 写的 2')
+    expect(byId.get(c1)!.resolution).toBe('720p')
+    expect(byId.get(c2)!.resolution).toBe('1080p')
   })
 
   it('改卡不动 structureRevision,增删卡才动', () => {
@@ -227,7 +230,8 @@ describe('exportIR / applyIR', () => {
       ...ir,
       boards: [{
         ...ir.boards[0],
-        cards: ir.boards[0].cards.map((c, i) => ({ ...c, resolution: '1080p' as const, prompt: `镜 ${i}` })),
+        // 只改规格、提示词原样带回:apply 已硬禁改已有卡的提示词。
+        cards: ir.boards[0].cards.map((c) => ({ ...c, resolution: '1080p' as const })),
       }],
     })
 
@@ -274,24 +278,26 @@ describe('exportIR / applyIR', () => {
     expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('用户重写的提示词')
   })
 
+  // 载体是规格字段:apply 已硬禁改已有卡的提示词，恢复一次**提示词**冲突要走
+  // patch_prompt / update_task。这条测的是「按卡冲突可以靠抄 rev 恢复」本身。
   it('照 current.rev 重发就能覆盖 —— 冲突是可恢复的,不是死路', async () => {
     const [c1] = state().addCards([{ prompt: 'A' }])
     const ir = state().exportIR()
-    state().updateCard(c1, { prompt: '用户改的' })
+    state().updateCard(c1, { duration: 9 })
 
     const first = await state().applyIR({
       ...ir,
-      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], prompt: 'agent 第一次' }] }],
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], resolution: '1080p' }] }],
     })
     const rev = first.skipped.find((s) => s.cardId === c1)!.current!.rev
 
     const second = await state().applyIR({
       ...ir,
       structureRevision: first.structureRevision,
-      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], rev, prompt: 'agent 第二次' }] }],
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], rev, resolution: '480p' }] }],
     })
     expect(second.skipped).toHaveLength(0)
-    expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('agent 第二次')
+    expect(state().cards.find((c) => c.id === c1)!.resolution).toBe('480p')
   })
 
   it('非并发原因的跳过不带 current —— 那些拿现场值也没用', async () => {
@@ -323,13 +329,13 @@ describe('exportIR / applyIR', () => {
     expect(state().cards.find((c) => c.id === c1)!.rev).toBe(0)
     expect(state().revision).toBe(revBefore)
 
-    // agent 那份导出仍然有效,整张卡照写不误。
+    // agent 那份导出仍然有效,整张卡照写不误(载体用规格字段:apply 不能改提示词)。
     const result = await state().applyIR({
       ...ir,
-      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], prompt: 'agent 写的' }] }],
+      boards: [{ ...ir.boards[0], cards: [{ ...ir.boards[0].cards[0], resolution: '1080p' }] }],
     })
     expect(result.skipped).toHaveLength(0)
-    expect(state().cards.find((c) => c.id === c1)!.prompt).toBe('agent 写的')
+    expect(state().cards.find((c) => c.id === c1)!.resolution).toBe('1080p')
   })
 
   it('但真改了一个字符照样 bump —— 不能为了少冲突把真冲突也吞掉', () => {
@@ -359,7 +365,8 @@ describe('exportIR / applyIR', () => {
       ...ir,
       boards: [{
         ...ir.boards[0],
-        cards: ir.boards[0].cards.map((c, i) => (i === 1 ? { ...c, prompt: 'B+' } : c)),
+        // 载体是规格字段:apply 已硬禁改已有卡的提示词。
+        cards: ir.boards[0].cards.map((c, i) => (i === 1 ? { ...c, resolution: '1080p' as const } : c)),
       }],
     }
     const applied = await state().applyIR(next)

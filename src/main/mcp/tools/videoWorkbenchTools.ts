@@ -920,7 +920,18 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_apply', {
     description:
-      'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
+      'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
+      + 'rejected with zero writes, and so is omitting a prompt you were carrying (that reads as '
+      + 'clearing it).\n'
+      + 'Pick the per-card tool instead:\n'
+      + '  · a few words of a prompt → video_workbench_patch_prompt\n'
+      + '  · one card, several fields → video_workbench_update_task\n'
+      + '  · same spec across many cards → video_workbench_set_spec\n'
+      + '  · reordering → video_workbench_move_task\n'
+      + '  · adding / removing → video_workbench_add_tasks / video_workbench_remove_tasks\n'
+      + 'What apply is still for: rebuilding a board wholesale in one atomic shot — all cards change or '
+      + 'none do, which no sequence of per-card calls can guarantee.\n'
+      + 'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
       + 'via video_workbench_export.\n'
       + 'CHECK THESE FIRST — reaching for this tool when one of them fits is the single most expensive '
       + 'mistake you can make here:\n'

@@ -319,6 +319,8 @@ interface CardClaim {
   boardId: string
   index: number
   spec: VideoWorkbenchSpec
+  /** IR 带回的按卡并发令牌(缺省表示 IR 没带)。 */
+  rev?: number
 }
 
 interface BoardSlot {
@@ -423,7 +425,12 @@ export function planApplyIR(
         skipped.push({ cardId: irCard.id, reason: `IR 里同一张卡出现多次: ${irCard.id}` })
         continue
       }
-      claims.set(irCard.id, { boardId: board.id, index: slot.claims.length, spec })
+      claims.set(irCard.id, {
+        boardId: board.id,
+        index: slot.claims.length,
+        spec,
+        ...(typeof irCard.rev === 'number' ? { rev: irCard.rev } : {}),
+      })
       slot.claims.push({
         cardId: irCard.id,
         spec,
@@ -435,6 +442,31 @@ export function planApplyIR(
 
   if (slots.length === 0) {
     return reject(source, [...skipped, { reason: 'IR 里没有一页可用,拒绝执行(否则会清空工作台)' }])
+  }
+
+  // 硬禁「用 apply 批量改提示词」。描述里劝过一轮没用 —— apply 是声明式的,模型很容易
+  // 顺手把整板提示词都带上,而那正是最慢、最容易中途崩掉的一条路(整板往返一次,
+  // 用户看到的就是右边一直 RUNNING)。新建卡不受限(没有提示词就建不出来);
+  // 提示词与现状一致也放行(重排常常原样带上)。force 是并发逃生口,不是绕过工具选择
+  // 的后门,所以这条闸不看 force。
+  const promptEdits = [...claims.entries()].filter(([id, claim]) => {
+    const cur = cardById.get(id)
+    if (cur === undefined || cur.prompt === claim.spec.prompt) return false
+    // rev 对不上 = 这份 IR 是旧的,提示词的差异多半是「用户在你导出之后改了」,
+    // 而不是「你想改」。那条路已经有按卡 rev 校验兜着(跳过该卡、不覆盖用户的字),
+    // 升级成整份拒绝反而会让用户打一个字就废掉一次纯重排 —— 两级令牌当初就是
+    // 为了避免这个。force 例外:它跳过 rev 校验,提示词会真的被写下去。
+    if (!opts.force && claim.rev !== undefined && (cur.rev ?? 0) !== claim.rev) return false
+    return true
+  })
+  if (promptEdits.length > 0) {
+    const ids = promptEdits.map(([id]) => id).join(', ')
+    return reject(source, [...skipped, {
+      reason:
+        `video_workbench_apply 不能改已有卡片的提示词(${promptEdits.length} 张:${ids})。`
+        + '改几个词用 video_workbench_patch_prompt;整段重写用 video_workbench_update_task。'
+        + 'apply 只负责结构:新建、重排、删除。零写入,看板未改动。',
+    }])
   }
 
   // ---- 页的最终顺序 ----
