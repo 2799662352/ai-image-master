@@ -26,7 +26,7 @@ import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
-import type { WorkbenchIR } from '../../../../types/videoWorkbench'
+import type { VideoWorkbenchCardInput, WorkbenchIR } from '../../../../types/videoWorkbench'
 import {
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -591,7 +591,8 @@ export class AgentToolExecutor {
             ...b,
             cards: b.cards.map((c) => (
               // skeleton 一律剥；否则只剥没被点名的。
-              !skeleton && pickIds?.has(c.id)
+              // IR 里的 id 是可选的（新建卡还没有 id），点名匹配前先确认它存在。
+              !skeleton && !!c.id && pickIds?.has(c.id)
                 ? c
                 : { id: c.id, ...(typeof c.rev === 'number' ? { rev: c.rev } : {}) }
             )),
