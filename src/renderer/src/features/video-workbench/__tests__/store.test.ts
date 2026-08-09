@@ -776,3 +776,52 @@ describe('摘要带出选中态', () => {
     expect(summary.selectedCardIds).toEqual([ids[0]])
   })
 })
+
+/**
+ * 手动「重新保存」是降级路径的最后一环。
+ *
+ * 自动重试只覆盖到 21 分钟（任务之后从主进程内存表清掉），而上游地址有效期约一天。
+ * 断网超过半小时的情况只能靠用户点一下 —— 没有这条路，视频就真的没了，
+ * 唯一补救是花钱重生成一条已经生成好的片子。
+ */
+describe('resaveCard 手动重新保存', () => {
+  it('用卡片上留着的 videoUrl 重下，成功后升级为 done 并写回路径', async () => {
+    const repersist = vi.fn(async () => ({ ok: true, localPath: 'D:/save/v.mp4', remoteUrl: 'https://cos/v.mp4' }))
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = { videoWorkbench: { repersist } }
+
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'x' }])
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id
+        ? { ...c, status: 'succeeded' as const, persistence: 'failed' as const, videoUrl: 'https://cdn/v.mp4' }
+        : c)),
+    }))
+
+    const r = await useVideoWorkbenchStore.getState().resaveCard(id)
+    expect(r.ok).toBe(true)
+    expect(repersist).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://cdn/v.mp4' }))
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!
+    expect(card.persistence).toBe('done')
+    expect(card.localPath).toBe('D:/save/v.mp4')
+    expect(card.remoteUrl).toBe('https://cos/v.mp4')
+  })
+
+  it('没有 videoUrl 时如实拒绝，不让用户白点', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'x' }])
+    const r = await useVideoWorkbenchStore.getState().resaveCard(id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('只能重新生成')
+  })
+
+  it('重下失败时回到 failed，而不是卡在 running 上', async () => {
+    const repersist = vi.fn(async () => ({ ok: false, error: 'ERR_CONNECTION_CLOSED' }))
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = { videoWorkbench: { repersist } }
+
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'x' }])
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? { ...c, videoUrl: 'https://cdn/v.mp4' } : c)),
+    }))
+    const r = await useVideoWorkbenchStore.getState().resaveCard(id)
+    expect(r.ok).toBe(false)
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.persistence).toBe('failed')
+  })
+})

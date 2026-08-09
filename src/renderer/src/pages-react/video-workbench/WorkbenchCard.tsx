@@ -167,6 +167,7 @@ interface WorkbenchCardProps {
 export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragStateChange }: WorkbenchCardProps) {
   const updateCard = useVideoWorkbenchStore((s) => s.updateCard)
   const removeCard = useVideoWorkbenchStore((s) => s.removeCard)
+const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const moveCard = useVideoWorkbenchStore((s) => s.moveCard)
   const addMaterials = useVideoWorkbenchStore((s) => s.addMaterials)
   const removeMaterial = useVideoWorkbenchStore((s) => s.removeMaterial)
@@ -907,10 +908,24 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
               {card.persistence === 'done' && card.localPath ? (
                 <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
               ) : card.persistence === 'failed' ? (
-                <span className="text-orange-400" title="上游地址通常一天后过期；后台会在 1/5/15 分钟后自动重试保存">
+                <span className="flex items-center gap-1.5 text-orange-400">
                   {/* 不能写「视频仍可播放/下载」—— 本地和 COS 都没副本时只剩上游那条会
                       过期的地址，等用户回来点播放它多半已经不通，那句话就成了假话。 */}
-                  未保存到本地(仅剩上游临时地址,后台重试中)
+                  <span title="上游地址通常一天后过期；后台已在 1/5/15 分钟各重试过一次">
+                    未保存到本地(仅剩上游临时地址)
+                  </span>
+                  {card.videoUrl && (
+                    // 免费的补救:自动重试只覆盖到 21 分钟，而地址还能用约一天。
+                    // 放在这里而不是只给「重新生成」——后者要花钱重跑一条已经有了的片子。
+                    <button
+                      type="button"
+                      title="用这张卡上的原始地址重新下载保存，不重新生成、不花钱"
+                      className="border border-orange-400/50 px-1.5 py-0.5 text-[10px] hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
+                      onClick={() => { void resaveCard(card.id) }}
+                    >
+                      ↻ 重新保存
+                    </button>
+                  )}
                 </span>
               ) : (
                 <span>正在后台保存…</span>

@@ -379,7 +379,20 @@ export function initSeedanceRuntime(opts: {
         }
       }
     },
-    persistVideo: async (task) => {
+    persistVideo: (task) => persistVideoBytes(task),
+  })
+
+  /**
+   * 把上游那条临时地址的字节抓下来:落本地 + 转存 COS。
+   *
+   * 抽成具名函数是为了能被**手动重试**复用(`video-workbench:repersist`)。
+   * 自动重试有窗口上限(任务 30 分钟后从内存表清掉),而上游地址有效期一天 ——
+   * 中间那段只能靠用户点一下。没有这条路,断网超过半小时视频就真的没了,
+   * 而唯一的补救是花钱重生成。
+   */
+  async function persistVideoBytes(
+    task: { videoUrl?: string; model: string; taskId: string; threadId?: string },
+  ): Promise<{ localPath: string; remoteUrl?: string }> {
       const name = `seedance-${task.model.replace('.', '_')}-${task.taskId.slice(-8)}.mp4`
       const tmpDir = path.join(app.getPath('userData'), 'agent', 'downloads')
       await fs.mkdir(tmpDir, { recursive: true })
@@ -411,7 +424,32 @@ export function initSeedanceRuntime(opts: {
         // ingest 已经把内容拷进 attachments 目录,这份临时副本不必留。
         await fs.unlink(filePath).catch(() => undefined)
       }
-    },
+  }
+
+  /**
+   * 手动「重新保存」。**不重新生成、不花钱** —— 只是拿卡片上还留着的那条上游
+   * 地址(有效期约一天)再抓一次字节。
+   *
+   * 这是降级路径的最后一环:即时重试约 75 秒、后台重试到 21 分钟,再往后任务
+   * 就从内存表清掉了,而地址还能用二十多个小时。断网超过半小时的情况只能靠这里。
+   */
+  ipcMain.removeHandler('video-workbench:repersist')
+  ipcMain.handle('video-workbench:repersist', async (_event, payload: Record<string, unknown>) => {
+    const videoUrl = typeof payload?.videoUrl === 'string' ? payload.videoUrl : ''
+    if (!videoUrl) return { ok: false, error: '这张卡没有可用的视频地址，只能重新生成' }
+    try {
+      const { localPath, remoteUrl } = await persistVideoBytes({
+        videoUrl,
+        model: String(payload?.model ?? '2.0'),
+        taskId: String(payload?.taskId ?? randomUUID()),
+        threadId: typeof payload?.threadId === 'string' ? payload.threadId : undefined,
+      })
+      return { ok: true, localPath, remoteUrl }
+    } catch (e) {
+      // 失败原因如实带回:多半是地址已过期或仍然断网，两者的下一步不同
+      // （前者只能重新生成，后者等一会儿再点一次就行）。
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
   })
 
   router.registerMain('generate_video', async (params, threadId) => {

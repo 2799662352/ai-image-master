@@ -359,6 +359,14 @@ export interface VideoWorkbenchState {
    * 刻意**不动** revision / structureRevision：摘要是路标不是编排意图，
    * 让它作废 agent 手里的 IR 令牌得不偿失。
    */
+  /**
+   * 手动「重新保存」:拿卡片上还留着的上游地址再抓一次字节落盘。
+   *
+   * **不重新生成、不花钱。** 自动重试只覆盖到 21 分钟（任务之后从主进程内存表
+   * 清掉），而上游地址有效期约一天 —— 中间那段只能靠用户点一下。没有这条路，
+   * 断网超过半小时视频就真的没了，唯一补救是花钱重生成。
+   */
+  resaveCard: (id: string) => Promise<{ ok: boolean; error?: string }>
   setBoardSummary: (id: string, summary: string) => boolean
   /** 删除页(连带删卡)。仅剩一页时拒绝;删的是当前页则切到相邻页。 */
   removeBoard: (id: string) => boolean
@@ -1059,6 +1067,43 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (!renamed) return true
     void getWorkbenchDb().putBoard(renamed).catch(() => {})
     return true
+  },
+
+  resaveCard: async (id) => {
+    const card = get().cards.find((c) => c.id === id)
+    // 没有上游地址就真的没救了（这条地址是最后一份副本），如实说，别让用户白点。
+    if (!card?.videoUrl) return { ok: false, error: '这张卡没有可用的视频地址，只能重新生成' }
+    const api = (window as unknown as {
+      electronAPI?: { videoWorkbench?: { repersist?: (p: unknown) => Promise<{
+        ok: boolean; localPath?: string; remoteUrl?: string; error?: string
+      }> } }
+    }).electronAPI?.videoWorkbench?.repersist
+    if (!api) return { ok: false, error: '当前环境不支持重新保存' }
+
+    set((s) => ({ cards: s.cards.map((c) => (c.id === id ? { ...c, persistence: 'running' } : c)) }))
+    type Resaved = { ok: boolean; localPath?: string; remoteUrl?: string; error?: string }
+    const r: Resaved = await api({
+      videoUrl: card.videoUrl,
+      model: card.model,
+      ...(card.taskId ? { taskId: card.taskId } : {}),
+    }).catch((e: unknown): Resaved => ({ ok: false, error: e instanceof Error ? e.message : String(e) }))
+
+    set((s) => ({
+      cards: s.cards.map((c) => (c.id === id
+        ? {
+            ...c,
+            persistence: r.ok ? 'done' as const : 'failed' as const,
+            ...(r.ok && r.localPath ? { localPath: r.localPath } : {}),
+            ...(r.ok && r.remoteUrl ? { remoteUrl: r.remoteUrl } : {}),
+            updatedAt: Date.now(),
+          }
+        : c)),
+    }))
+    // 立刻落库而不是等防抖:重新保存成功后的 localPath 是这张卡唯一的持久副本，
+    // 用户此刻关掉应用就白救了。
+    const saved = get().cards.find((c) => c.id === id)
+    if (saved) persistNow(saved)
+    return r
   },
 
   setBoardSummary: (id, summary) => {
