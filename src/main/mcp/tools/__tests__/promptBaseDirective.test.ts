@@ -47,6 +47,9 @@ const PROMPT_WRITING_TOOLS = [
   'generate_video',
   'video_workbench_add_tasks',
   'video_workbench_update_task',
+  // 局部替换也是在写提示词:一段段 patch 下来足以重写整条，而中途一次都不会经过
+  // add_tasks / update_task 那两个带底座的面。
+  'video_workbench_patch_prompt',
   'video_workbench_apply',
 ]
 

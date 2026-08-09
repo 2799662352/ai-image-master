@@ -662,7 +662,8 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'fuzzy matching. If it matches 0 or 2+ times the call is REJECTED with zero writes and the full '
       + 'current prompt in the error, so you can lengthen oldText and retry without calling export.\n'
       + 'newText may be empty to delete the fragment. For a genuine full rewrite, use '
-      + 'video_workbench_update_task instead — stuffing the entire prompt into oldText is strictly worse.',
+      + 'video_workbench_update_task instead — stuffing the entire prompt into oldText is strictly worse.\n'
+      + `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Card to edit. Get ids from video_workbench_status.'),
       oldText: z.string().min(1).describe(

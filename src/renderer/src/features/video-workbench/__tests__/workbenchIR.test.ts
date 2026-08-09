@@ -797,6 +797,27 @@ describe('planApplyIR / 硬禁用 apply 改已有卡的提示词', () => {
     expect(plan.result.cards.created).toHaveLength(1)
   })
 
+  // 类型上 prompt 必填，但 IndexedDB 里的老卡可能压根没这个字段。不归一化的话
+  // undefined !== '' 会让一次纯重排被误判成「改提示词」，整份拒绝。
+  it('老卡没有 prompt 字段时，空提示词不算改动', () => {
+    const legacy = card({ id: 'c1', boardId: 'b1', order: 0 })
+    delete (legacy as { prompt?: string }).prompt
+    const s = source({ cards: [legacy, card({ id: 'c2', boardId: 'b1', order: 1, prompt: 'B' })] })
+
+    const plan = planApplyIR(s, {
+      irVersion: WORKBENCH_IR_VERSION,
+      structureRevision: 0,
+      boards: [{
+        id: 'b1',
+        name: '页面 1',
+        cards: [{ id: 'c2', prompt: 'B' }, { id: 'c1', prompt: '' }],
+      }],
+    })
+
+    expect(plan.result.ok).toBe(true)
+    expect(plan.next!.cards.map((c) => c.id)).toEqual(['c2', 'c1'])
+  })
+
   it('只占位条目不受影响', () => {
     const s = src()
     const plan = planApplyIR(s, {

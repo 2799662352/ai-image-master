@@ -451,7 +451,9 @@ export function planApplyIR(
   // 的后门,所以这条闸不看 force。
   const promptEdits = [...claims.entries()].filter(([id, claim]) => {
     const cur = cardById.get(id)
-    if (cur === undefined || cur.prompt === claim.spec.prompt) return false
+    // `?? ''`:类型上 prompt 必填,但 IndexedDB 里的老卡可能没这个字段。
+    // 不归一化的话 undefined !== '' 会让一次纯重排被误判成「改提示词」而整份拒绝。
+    if (cur === undefined || (cur.prompt ?? '') === claim.spec.prompt) return false
     // rev 对不上 = 这份 IR 是旧的,提示词的差异多半是「用户在你导出之后改了」,
     // 而不是「你想改」。那条路已经有按卡 rev 校验兜着(跳过该卡、不覆盖用户的字),
     // 升级成整份拒绝反而会让用户打一个字就废掉一次纯重排 —— 两级令牌当初就是
