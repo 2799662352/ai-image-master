@@ -562,8 +562,10 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
   用户插不进话、页面也不出卡;分批则每批一落地就看得见。
   批次跑完会主动推「[视频工作台] 批次渲染完成」,**别轮询** \`video_workbench_status\`
   (它也分页了,\`hasMore\` 为真时翻页,别去要一个巨大的 pageSize)。
-  跨多卡的整理/重排/换规格用 \`video_workbench_export\` → 改 JSON → \`video_workbench_apply\`
-  (export 默认只导当前页,回写安全 —— merge 模式不动没列出的页)。
+  改已有卡片挑单卡工具,别走整板往返:改几个词用 \`video_workbench_patch_prompt\`,
+  一张卡多个字段用 \`video_workbench_update_task\`,一批卡同一个规格用
+  \`video_workbench_set_spec\`,挪位置用 \`video_workbench_move_task\`(不要并发)。
+  \`video_workbench_apply\` 已收窄为纯结构工具 —— 给已有卡带不同的提示词会被整份拒绝。
 - 两条面共用**同一套** STEP 0 分级、上面那组素材 caps 与素材引用铁律 —— 工作台不是例外。
   有参考图时同样先 \`view_image\` 看图再写 prompt。
 
@@ -1821,11 +1823,28 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 
 ## 整板落地:已有分镜 / 制片包
 
-用户手里已有 shot list、分镜表或 create-storyboard 制片包时,走整板通道:
+用户手里已有 shot list、分镜表或 create-storyboard 制片包时:
 
-\`video_workbench_export\` 拿当前 IR → 按下表填好整个数组 → \`video_workbench_apply\`
-一次写回。数组顺序即卡片顺序。保持 \`irVersion\` / \`structureRevision\` / 每张卡的
-\`rev\` 不变,否则会被拒。
+**新建整板走 \`video_workbench_add_tasks\`**(每次 ≤5,分批),按下表把 Shot Card 映射
+成卡片字段。这是把分镜落进工作台的正路。
+
+**已有卡片的提示词不能用 apply 改** —— \`video_workbench_apply\` 是纯结构工具(新建 /
+重排 / 删除 / 挪页),给已有卡带一段不同的提示词会被整份拒绝、零写入。改提示词按
+改动大小挑工具:
+
+| 你要做的事 | 用哪个 |
+| --- | --- |
+| 改提示词里几个词 | \`video_workbench_patch_prompt\`(给旧片段和新片段,不用重发整段) |
+| 一张卡多个字段 / 整段重写提示词 | \`video_workbench_update_task\` |
+| 一批卡同一个规格(整板 480p、都开联网) | \`video_workbench_set_spec\` |
+| 挪一张卡的位置 | \`video_workbench_move_task\`(**不要并发调**,重排没有交换律) |
+| 增删卡 | \`video_workbench_add_tasks\` / \`video_workbench_remove_tasks\` |
+
+单卡工具改的是不同卡、彼此可交换,所以**可以并发**;只有 \`move_task\` 例外。
+
+\`video_workbench_export\` → 改 JSON → \`video_workbench_apply\` 只剩一个用途:整板一次性
+重建(全改或全不改的原子性,是单卡调用序列给不了的)。数组顺序即卡片顺序,保持
+\`irVersion\` / \`structureRevision\` / 每张卡的 \`rev\` 不变,否则会被拒。
 
 **export 默认只导当前页**,回写也安全 —— merge 模式保证没列出的页原样不动。真要
 跨页挪卡或重排页签才传 \`allBoards:true\`。整份导出带着每张卡的完整提示词和每条素材
@@ -1833,8 +1852,8 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 拿一份被截断的 IR 回写,会把截掉的字段清成默认值。工具超预算时会直接报错并让你
 缩小范围 —— 那是在替你挡这件事,别去绕。
 
-新建一板卡走 \`add_tasks\`(每次 ≤5,分批);\`export\` → \`apply\` 是用来**改已有的板**
-的 —— 重排、换规格、挪页。它是唯一能重排卡片顺序的通道。
+新建一板卡走 \`add_tasks\`(每次 ≤5,分批)。重排单张卡用 \`move_task\` 就够了,不必
+为了挪一个位置把整板 IR 往返一遍。
 
 ### Shot Card → 卡片字段
 

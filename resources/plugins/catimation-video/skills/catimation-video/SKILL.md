@@ -146,8 +146,10 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
   用户插不进话、页面也不出卡;分批则每批一落地就看得见。
   批次跑完会主动推「[视频工作台] 批次渲染完成」,**别轮询** `video_workbench_status`
   (它也分页了,`hasMore` 为真时翻页,别去要一个巨大的 pageSize)。
-  跨多卡的整理/重排/换规格用 `video_workbench_export` → 改 JSON → `video_workbench_apply`
-  (export 默认只导当前页,回写安全 —— merge 模式不动没列出的页)。
+  改已有卡片挑单卡工具,别走整板往返:改几个词用 `video_workbench_patch_prompt`,
+  一张卡多个字段用 `video_workbench_update_task`,一批卡同一个规格用
+  `video_workbench_set_spec`,挪位置用 `video_workbench_move_task`(不要并发)。
+  `video_workbench_apply` 已收窄为纯结构工具 —— 给已有卡带不同的提示词会被整份拒绝。
 - 两条面共用**同一套** STEP 0 分级、上面那组素材 caps 与素材引用铁律 —— 工作台不是例外。
   有参考图时同样先 `view_image` 看图再写 prompt。
 

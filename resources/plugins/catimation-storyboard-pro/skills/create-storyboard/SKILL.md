@@ -301,7 +301,9 @@ fallback_plan: ""
   `shot_size` / `camera_movement` 并进提示词;`shot_id` 靠卡片排列顺序表达。
   `prev_transition` / `next_transition` 不映射 —— 转场是后期剪辑的事,不是单镜输入。
 - 新建一板走 `video_workbench_add_tasks`,**一次最多 5 张,分几批调** —— 每批一落地
-  用户就看得见,整板挤一次调用则是几分钟静默生成。已有的板要重排/换规格才走
-  `video_workbench_export` → 改数组 → `video_workbench_apply`(export 默认只导当前页)。
+  用户就看得见,整板挤一次调用则是几分钟静默生成。已有的板改一张卡走
+  `video_workbench_patch_prompt`(改几个词)/ `video_workbench_update_task`(整张卡),
+  一批卡同规格走 `video_workbench_set_spec`,挪位置走 `video_workbench_move_task`;
+  `video_workbench_apply` 不能改已有卡的提示词,会被整份拒绝。
   两条都默认**只填不跑**,交用户过目。
 - 落板前照样清点角色锚点、故事板确认、逐镜资产 —— 建卡不等于备齐资产。
