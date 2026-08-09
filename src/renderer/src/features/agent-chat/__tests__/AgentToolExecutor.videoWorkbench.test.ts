@@ -690,3 +690,42 @@ describe('video_workbench_patch_prompt', () => {
     })).rejects.toThrow(/生成中/)
   })
 })
+
+describe('video_workbench_move_task', () => {
+  it('把卡片移到指定位置并回新顺序', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' },
+    ])
+    const r = await callTool('video_workbench_move_task', { cardId: ids[2], toIndex: 0 })
+
+    expect(r.order).toEqual([ids[2], ids[0], ids[1]])
+  })
+
+  it('卡不存在时报错', async () => {
+    await expect(callTool('video_workbench_move_task', { cardId: 'nope', toIndex: 0 }))
+      .rejects.toThrow(/nope/)
+  })
+
+  it('toIndex 越界时报错而不是静默夹紧', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }])
+    await expect(callTool('video_workbench_move_task', { cardId: ids[0], toIndex: 5 }))
+      .rejects.toThrow(/toIndex/)
+  })
+
+  // store.moveCard 的 toIndex 是**页内**下标，不是全局下标。用全局张数做越界校验，
+  // 在多页时会把合法的页内位置判成越界（或反过来放过越界值）。
+  it('越界与顺序都按卡片所在页判定', async () => {
+    // 先把 hydrate 走完:首次 ensureHydrated 会从 DB 重载，冲掉这里手工建的第二页。
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const [a, b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().addBoard() // addBoard 会切过去，下面这张落在第二页
+    const [c] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'c' }])
+
+    // 第二页只有 1 张，toIndex:1 越界 —— 尽管全局有 3 张。
+    await expect(callTool('video_workbench_move_task', { cardId: c, toIndex: 1 }))
+      .rejects.toThrow(/toIndex/)
+
+    const r = await callTool('video_workbench_move_task', { cardId: b, toIndex: 0 })
+    expect(r.order).toEqual([b, a])
+  })
+})

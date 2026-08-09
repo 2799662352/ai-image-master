@@ -690,6 +690,39 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_move_task', {
+    description:
+      'Move ONE card to a new position on its page. Use this instead of video_workbench_apply for '
+      + 'reordering — apply is declarative over the whole board, so reordering through it means '
+      + 'round-tripping every card.\n'
+      + 'toIndex is 0-based WITHIN the page that card belongs to, not across the whole workbench.\n'
+      + 'DO NOT issue several move calls in parallel. Unlike prompt/spec edits, moves are order-dependent: '
+      + 'two concurrent moves race and the final order is undefined. Move one card, read the returned '
+      + 'order, then decide the next move.',
+    inputSchema: z.object({
+      cardId: z.string().min(1).describe('Card to move. Get ids from video_workbench_status.'),
+      toIndex: z.number().int().min(0).describe('0-based target position within that card\'s page.'),
+    }),
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: z.looseObject({
+      order: z.array(z.string()).describe(
+        'Card ids of that page in their new order — verify before the next move.',
+      ),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_move_task',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { order: string[] }
+      return okResult([`✓ video_workbench_move_task → ${result.order.length} card(s) reordered.`], result)
+    } catch (error) {
+      return errorResult('video_workbench_move_task', error)
+    }
+  })
+
   server.registerTool('video_workbench_start', {
     description:
       'Batch output surface of the catimation-video skill (load it for grading and prompt discipline). ' +

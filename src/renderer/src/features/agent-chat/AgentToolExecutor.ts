@@ -318,6 +318,7 @@ export class AgentToolExecutor {
       case 'video_workbench_add_tasks':
       case 'video_workbench_update_task':
       case 'video_workbench_patch_prompt':
+      case 'video_workbench_move_task':
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
@@ -467,6 +468,35 @@ export class AgentToolExecutor {
         const ok = store.updateCard(cardId, { prompt: patched.prompt })
         if (!ok) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 生成中，未改动`)
         return { prompt: patched.prompt, workbench: workbenchSummary() }
+      }
+      case 'video_workbench_move_task': {
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        const toIndex = typeof params.toIndex === 'number' ? params.toIndex : Number.NaN
+        if (!cardId) throw new Error('video_workbench_move_task: cardId is required')
+
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!card) throw new Error(`video_workbench_move_task: 卡片 ${cardId} 不存在`)
+
+        // 下标是**页内**的(store.moveCard 只重排该卡所属页),所以越界要按该页张数判，
+        // 不是全局张数。越界报错而不是夹紧:夹紧会让「移到第 5 位」静默变成「移到末位」，
+        // 模型拿到成功回执却得到了没要的顺序，比失败更难查。
+        const boardCards = useVideoWorkbenchStore
+          .getState()
+          .cards.filter((c) => c.boardId === card.boardId)
+        if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= boardCards.length) {
+          throw new Error(
+            `video_workbench_move_task: toIndex ${params.toIndex} 越界，该页共 ${boardCards.length} 张卡（0..${boardCards.length - 1}）`,
+          )
+        }
+
+        store.moveCard(cardId, toIndex)
+        return {
+          order: useVideoWorkbenchStore
+            .getState()
+            .cards.filter((c) => c.boardId === card.boardId)
+            .map((c) => c.id),
+          workbench: workbenchSummary(),
+        }
       }
       case 'video_workbench_start': {
         const ids = Array.isArray(params.cardIds)
