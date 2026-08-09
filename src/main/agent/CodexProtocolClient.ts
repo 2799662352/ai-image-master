@@ -125,11 +125,21 @@ const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
  * Stream-idle watchdog (upstream gap: openai/codex#30526 — app-server can go
  * permanently silent mid-turn with no turn/completed and no error). If NO
  * event arrives on an active turn for this long, we synthesize a terminal
- * error so the UI recovers instead of hanging forever. Generous by design:
- * long shell commands and pending approval prompts (5 min budget) legitimately
- * produce quiet stretches — the watchdog only fires past all of those.
+ * error so the UI recovers instead of hanging forever.
+ *
+ * **Disabled (`0`).** The 10-minute budget was calibrated against shell
+ * commands and approval prompts, but our own MCP tools legitimately run far
+ * longer in silence: `tool_timeout_sec` is 2000s and `generate_video` polls a
+ * Seedance task for minutes without emitting a single event. The watchdog was
+ * therefore killing healthy turns mid-generation, which reads to the user as
+ * the app cancelling their paid render.
+ *
+ * The tradeoff is real: a genuinely wedged app-server now hangs instead of
+ * self-recovering. If that comes back, prefer raising this past the tool
+ * timeout (e.g. `40 * 60_000`) over re-enabling the old 10-minute value —
+ * anything below `tool_timeout_sec` will keep firing on healthy long turns.
  */
-const DEFAULT_TURN_IDLE_TIMEOUT_MS = 10 * 60_000
+const DEFAULT_TURN_IDLE_TIMEOUT_MS = 0
 
 type PendingRpc = {
   resolve: (value: unknown) => void
