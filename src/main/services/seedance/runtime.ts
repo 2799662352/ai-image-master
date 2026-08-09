@@ -34,6 +34,7 @@ import {
   mutatePortraitOverlay,
   onPortraitOverlayChange,
 } from './portraitOverlay'
+import { persistVideoBytes, type PersistVideoDeps } from './persistVideo'
 import { normalizeSeedancePromptReferences } from './promptReferences'
 import { SeedanceTaskManager } from './taskManager'
 import { relayDataUrlToCos, relayFileToCos } from '../tencent/mediaRelay'
@@ -379,51 +380,20 @@ export function initSeedanceRuntime(opts: {
         }
       }
     },
-    persistVideo: (task) => persistVideoBytes(task),
+    persistVideo: (task) => persistVideoBytes(task, persistDeps),
   })
 
-  /**
-   * 把上游那条临时地址的字节抓下来:落本地 + 转存 COS。
-   *
-   * 抽成具名函数是为了能被**手动重试**复用(`video-workbench:repersist`)。
-   * 自动重试有窗口上限(任务 30 分钟后从内存表清掉),而上游地址有效期一天 ——
-   * 中间那段只能靠用户点一下。没有这条路,断网超过半小时视频就真的没了,
-   * 而唯一的补救是花钱重生成。
-   */
-  async function persistVideoBytes(
-    task: { videoUrl?: string; model: string; taskId: string; threadId?: string },
-  ): Promise<{ localPath: string; remoteUrl?: string }> {
-      const name = `seedance-${task.model.replace('.', '_')}-${task.taskId.slice(-8)}.mp4`
-      const tmpDir = path.join(app.getPath('userData'), 'agent', 'downloads')
-      await fs.mkdir(tmpDir, { recursive: true })
-      const destPath = path.join(tmpDir, `${randomUUID()}-${name}`)
-
-      const filePath = await seedanceClient.downloadVideo(task.videoUrl!, destPath)
-      try {
-        const { size } = await fs.stat(filePath)
-        // 按 path 而非 buffer 交给 ingest。这不只是省内存 —— buffer 路径的上限是
-        // 100MB(MAX_BUFFER_ATTACHMENT_BYTES),path 路径是 2GB。走 buffer 时任何
-        // 超过 100MB 的视频都会 ingest 失败,本地和 COS 都留不下副本,只剩上游那条
-        // 会过期的地址。
-        const [saved] = await attachments.ingest(task.threadId ?? FALLBACK_THREAD_ID, [
-          { name, mime: 'video/mp4', size, path: filePath },
-        ])
-        if (!saved) throw new Error('seedance persist: attachment ingest produced no file')
-
-        // 转存到历史桶（COS）拿永久 https URL —— 聊天气泡 / 历史记录用它做持久
-        // 来源,重启后不会因上游代理地址过期或本地文件清理而丢失。上传失败不致命:
-        // 本地 mp4 仍在,降级用 file:// 路径。
-        let remoteUrl: string | undefined
-        try {
-          remoteUrl = await relayFileToCos(filePath, 'video/mp4', { fileSize: size })
-        } catch (e) {
-          console.warn('[seedance] video COS upload failed, falling back to local path:', e)
-        }
-        return { localPath: saved.localPath, remoteUrl }
-      } finally {
-        // ingest 已经把内容拷进 attachments 目录,这份临时副本不必留。
-        await fs.unlink(filePath).catch(() => undefined)
-      }
+  const persistDeps: PersistVideoDeps = {
+    downloadVideo: (url, dest) => seedanceClient.downloadVideo(url, dest),
+    ingest: (threadId, files) => attachments.ingest(threadId, files),
+    relayFileToCos: (p, mime, opts) => relayFileToCos(p, mime, opts),
+    stat: (p) => fs.stat(p),
+    mkdir: (p) => fs.mkdir(p, { recursive: true }),
+    unlink: (p) => fs.unlink(p),
+    downloadsDir: path.join(app.getPath('userData'), 'agent', 'downloads'),
+    fallbackThreadId: FALLBACK_THREAD_ID,
+    uuid: randomUUID,
+    join: path.join,
   }
 
   /**
@@ -443,7 +413,7 @@ export function initSeedanceRuntime(opts: {
         model: String(payload?.model ?? '2.0'),
         taskId: String(payload?.taskId ?? randomUUID()),
         threadId: typeof payload?.threadId === 'string' ? payload.threadId : undefined,
-      })
+      }, persistDeps)
       return { ok: true, localPath, remoteUrl }
     } catch (e) {
       // 失败原因如实带回:多半是地址已过期或仍然断网，两者的下一步不同
