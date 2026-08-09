@@ -615,7 +615,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_update_task', {
     description:
       'Update ONE existing card on the 「生成视频」 workbench page: prompt, spec (model/resolution/ratio/' +
-      'duration/generateAudio) and/or reference materials. Cards that are currently rendering cannot be ' +
+      'duration/generateAudio) and/or reference materials. ' +
+      'To change only a few words of the prompt, use video_workbench_patch_prompt instead — it takes ' +
+      'just the old and new fragment rather than the entire prompt. ' +
+      'Cards that are currently rendering cannot be ' +
       'edited. Get cardIds from video_workbench_add_tasks or video_workbench_status. Returns the updated ' +
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
