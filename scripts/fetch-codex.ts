@@ -96,14 +96,20 @@ function getCodexBinaryName(target: string): string {
 }
 
 /**
- * Windows-only sibling helper binaries required by Codex 0.140+'s native
- * sandbox (`windows-sandbox-rs`). At runtime codex resolves them via
- * `bundled_executable_path_for_exe()` — first candidate is "same directory as
- * codex.exe" — so we download the per-target release assets and rename them to
- * the exact filenames codex probes for. Without these, any code path that
- * touches the Windows sandbox (setup refresh, apply_patch/fs helper — see
- * openai/codex#29200 #29072 #20942) throws a per-invocation Windows
- * "cannot find file" dialog even under `danger-full-access`.
+ * Windows-only sibling helper binaries codex spawns at runtime. It resolves
+ * them via `bundled_executable_path_for_exe()` — first candidate is "same
+ * directory as codex.exe" — so we download the per-target release assets and
+ * rename them to the exact filenames codex probes for.
+ *
+ * A missing sibling is not a degraded feature, it is a Windows "cannot find
+ * file" dialog on every invocation of whatever needed it, even under
+ * `danger-full-access` (see openai/codex#29200 #29072 #20942).
+ *
+ * Keep this list exhaustive against the release: {@link assertNoUnlistedCodexBinaries}
+ * fails the fetch when upstream ships a `codex-*` sibling we don't know about.
+ * That guard exists because the 0.147 bump silently dropped code-mode-host —
+ * nothing broke at build time, and the failure only surfaced to users as a
+ * missing-program error when the model tried to run code mode.
  */
 function getWindowsHelperBinaries(target: string): Array<{ assetName: string; fileName: string }> {
   if (!target.startsWith('win32-')) return []
@@ -117,7 +123,63 @@ function getWindowsHelperBinaries(target: string): Array<{ assetName: string; fi
       assetName: `codex-command-runner-${triple}.exe`,
       fileName: 'codex-command-runner.exe',
     },
+    {
+      assetName: `codex-code-mode-host-${triple}.exe`,
+      fileName: 'codex-code-mode-host.exe',
+    },
+    {
+      // Credential-isolation tool, NOT a protocol adapter: it forwards
+      // `POST /v1/responses` to api.openai.com and injects the operator's
+      // OPENAI_API_KEY, rejecting everything else with 403. It does no wire
+      // translation, so it does not overlap our `responsesCompatibilityProxy`
+      // (which adapts Codex's OpenAI-private shape for third-party gateways).
+      // Bundled anyway because 5.7MB is nothing against the installer and,
+      // unlike app-server, there is no `codex.exe <subcommand>` substitute if
+      // something does reach for it.
+      assetName: `codex-responses-api-proxy-${triple}.exe`,
+      fileName: 'codex-responses-api-proxy.exe',
+    },
   ]
+}
+
+/**
+ * Siblings we deliberately do not bundle, so the "unlisted binary" guard can
+ * tell "known and skipped" apart from "upstream added something new".
+ *
+ * `codex-app-server` is reachable as `codex.exe app-server`; shipping the
+ * standalone 236MB copy would nearly double the installer for no new capability.
+ */
+const INTENTIONALLY_UNBUNDLED_CODEX_BINARIES = ['codex-app-server'] as const
+
+/**
+ * Fail the fetch when the release contains a `codex-*` Windows sibling that is
+ * neither bundled nor explicitly skipped.
+ *
+ * Without this, a CLI bump that introduces a new helper is invisible: the build
+ * succeeds, the installer ships, and the gap only appears at runtime as a
+ * missing-program error on whichever feature needed it.
+ */
+function assertNoUnlistedCodexBinaries(release: GitHubRelease, target: string): void {
+  if (!target.startsWith('win32-')) return
+  const triple = target === 'win32-arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc'
+  const bundled = new Set(getWindowsHelperBinaries(target).map((h) => h.assetName))
+  bundled.add(`codex-${triple}.exe`)
+
+  const unlisted = release.assets
+    .map((a) => a.name)
+    // Raw `.exe` only — the .zip/.zst/.tar.gz variants are the same binaries.
+    .filter((name) => name.startsWith('codex-') && name.endsWith(`-${triple}.exe`))
+    .filter((name) => !bundled.has(name))
+    .filter((name) => !INTENTIONALLY_UNBUNDLED_CODEX_BINARIES.some((skip) => name.startsWith(`${skip}-`)))
+
+  if (unlisted.length > 0) {
+    throw new Error(
+      `Codex release ships ${unlisted.length} unlisted Windows binary/binaries: ${unlisted.join(', ')}. `
+      + 'Either add them to getWindowsHelperBinaries() or list them in '
+      + 'INTENTIONALLY_UNBUNDLED_CODEX_BINARIES with a reason. Shipping without a '
+      + 'sibling codex spawns produces a runtime "cannot find file" error, not a build failure.',
+    )
+  }
 }
 
 function getTargetAliases(target: string): string[] {
@@ -366,12 +428,15 @@ async function writeWindowsHelperBinaries(
   recordNewDigests: boolean,
   recordedTargets: Record<string, Record<string, string>>,
 ): Promise<void> {
+  assertNoUnlistedCodexBinaries(release, target)
+
   for (const helper of getWindowsHelperBinaries(target)) {
     const asset = release.assets.find((candidate) => candidate.name === helper.assetName)
     if (!asset) {
       throw new Error(
         `Codex release is missing Windows helper asset "${helper.assetName}" required for ${target}. `
-        + 'Codex 0.140+ needs codex-windows-sandbox-setup.exe / codex-command-runner.exe next to codex.exe.',
+        + 'Codex spawns these siblings from its own directory; without one the user gets a '
+        + 'Windows "cannot find file" error instead of the feature.',
       )
     }
     const bytes = await fetchBytes(asset.browser_download_url)

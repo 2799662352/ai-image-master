@@ -43,7 +43,14 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
           result: { userAgent: 'fake', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' },
         }))
       } else if (msg.method === 'turn/start') {
-        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }))
+        // Deliberately delayed: the client only writes `turnIdByThread` once it
+        // receives this reply, so "server received turn/start" is one round trip
+        // early. Replying synchronously shrinks that gap to near zero and makes
+        // the race pass locally no matter what the test waits on — a CI-only
+        // failure with no way to reproduce or red/green a fix.
+        setTimeout(() => {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }))
+        }, 30)
       } else if (msg.method === 'turn/steer') {
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turnId: 'turn-1' } }))
       }
@@ -89,7 +96,10 @@ describe('CodexProtocolClient clientUserMessageId passthrough', () => {
     await client.start()
 
     const iterator = client.send('thread-A', textInput('hi', 'msg_abc123'))[Symbol.asyncIterator]()
-    void iterator.next()
+    // Swallow the teardown rejection. These turns are never completed, so
+    // client.stop() rejects the pending next() -- an unhandled rejection that
+    // vitest counts against the whole run even when every assertion passes.
+    void iterator.next().catch(() => undefined)
     await waitUntil(() => server!.receivedFromClient.some((m) => m.method === 'turn/start'))
 
     const turnStart = server.receivedFromClient.find((m) => m.method === 'turn/start')
@@ -102,7 +112,10 @@ describe('CodexProtocolClient clientUserMessageId passthrough', () => {
     await client.start()
 
     const iterator = client.send('thread-B', textInput('hi'))[Symbol.asyncIterator]()
-    void iterator.next()
+    // Swallow the teardown rejection. These turns are never completed, so
+    // client.stop() rejects the pending next() -- an unhandled rejection that
+    // vitest counts against the whole run even when every assertion passes.
+    void iterator.next().catch(() => undefined)
     await waitUntil(() => server!.receivedFromClient.some((m) => m.method === 'turn/start'))
 
     const turnStart = server.receivedFromClient.find((m) => m.method === 'turn/start')
@@ -115,8 +128,15 @@ describe('CodexProtocolClient clientUserMessageId passthrough', () => {
     await client.start()
 
     const iterator = client.send('thread-C', textInput('start'))[Symbol.asyncIterator]()
-    void iterator.next()
-    await waitUntil(() => server!.receivedFromClient.some((m) => m.method === 'turn/start'))
+    // Swallow the teardown rejection. These turns are never completed, so
+    // client.stop() rejects the pending next() -- an unhandled rejection that
+    // vitest counts against the whole run even when every assertion passes.
+    void iterator.next().catch(() => undefined)
+    // Wait for the real precondition, not a proxy for it. "server received
+    // turn/start" happens one ws round trip before the client writes
+    // `turnIdByThread` from the response, and steer() throws without it —
+    // waiting on the former made this test fail on a slow runner.
+    await waitUntil(() => client!.hasActiveTurnOnThread('thread-C'))
 
     await client.steer('thread-C', textInput('interject', 'msg_steer42'))
 
