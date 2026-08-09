@@ -9,6 +9,26 @@
 // 这类字段加完就会被下一个新工具漏掉，所以断言「一个都不许缺」，而不是抽查几个。
 
 import { describe, expect, it } from 'vitest'
+
+/**
+ * schema 里出现 `undefined` 字段 = MCP 服务器起不来。
+ *
+ * 真实事故:`set_spec` 写了 `cardInputSchema.shape.mode`，而那个 shape 里没有 mode，
+ * 取到 undefined；注册时 SDK 去读 `undefined._zod`，整个 catimation MCP 直接启动失败
+ * （`Mcp error: -32603: Cannot read properties of undefined (reading '_zod')`）——
+ * 不是某个工具坏了，是全部工具一起没了。
+ *
+ * TypeScript 当时就报了 TS2551「属性不存在」，但被当成预存基线放过。教训:Zod schema
+ * 上的「属性不存在」不是类型洁癖，是运行时炸弹。这条测试把它变成必然被发现的东西。
+ */
+function assertNoUndefinedShapeFields(name: string, schema: unknown): void {
+  const shape = (schema as { shape?: Record<string, unknown> } | undefined)?.shape
+  if (!shape) return
+  for (const [key, value] of Object.entries(shape)) {
+    expect(value, `${name}.inputSchema.${key} 是 undefined —— 多半引用了某个 shape 上不存在的字段`)
+      .toBeDefined()
+  }
+}
 import { registerAudioTools } from '../audioTools'
 import { registerHistoryTools } from '../historyTools'
 import { registerImageTools } from '../imageTools'
@@ -32,7 +52,7 @@ function captureAll(): Captured[] {
   const tools: Captured[] = []
   const server = {
     registerTool: (name: string, config: Captured['annotations'] extends never ? never : any) => {
-      tools.push({ name, annotations: config?.annotations })
+      tools.push({ name, annotations: config?.annotations, inputSchema: config?.inputSchema })
     },
   } as never
   const router = { call: async () => ({}) } as never
@@ -52,6 +72,34 @@ function captureAll(): Captured[] {
 }
 
 describe('MCP 工具注解', () => {
+  it('没有工具的 schema 里藏着 undefined 字段 —— 有一个就全体起不来', () => {
+    for (const t of captureAll()) assertNoUndefinedShapeFields(t.name, (t as { inputSchema?: unknown }).inputSchema)
+  })
+
+  /**
+   * 工具 schema 是给**别人的**校验器吃的。union 转成 JSON Schema 是 anyOf，而客户端
+   * 侧对 anyOf 的支持参差不齐 —— 实测有客户端拿 `duration: -1` 去校验
+   * `anyOf:[{enum:[-1]},{type:integer,minimum:4}]` 直接判失败，请求根本没发出来:
+   * 我们这边的 zod 明明接受，服务器日志里什么都没有，用户只看到对话里一片红。
+   *
+   * 所以顶层字段一律用朴素类型，把「哪些值真的合法」交给 handler 里的校验器 ——
+   * 它本来就要按模型分档判（4–15 还是 4–30），schema 这层从来就管不全。
+   */
+  it('没有工具的顶层字段用 union —— anyOf 在客户端校验器里不可靠', () => {
+    for (const t of captureAll()) {
+      const shape = (t as { inputSchema?: { shape?: Record<string, { _def?: { type?: string } }> } })
+        .inputSchema?.shape
+      if (!shape) continue
+      for (const [key, field] of Object.entries(shape)) {
+        // 解包 .optional() 等修饰，看真正的内层类型。
+        let def = field?._def as { type?: string; innerType?: { _def?: { type?: string } } } | undefined
+        while (def?.innerType) def = def.innerType._def as typeof def
+        expect(def?.type, `${t.name}.inputSchema.${key} 是 union —— 换成朴素类型，合法值交给 handler 校验`)
+          .not.toBe('union')
+      }
+    }
+  })
+
   it('每个工具都声明了 annotations —— 缺省值是最保守的一组，不写就是全都往最坏里说', () => {
     const missing = captureAll().filter((t) => !t.annotations).map((t) => t.name)
     expect(missing, `这些工具缺 annotations: ${missing.join(', ')}`).toEqual([])

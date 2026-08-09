@@ -41,6 +41,16 @@ const POLL_BACKOFF_CAP_MS = 60_000
 const POLL_TIMEOUT_MS = 30 * 60_000
 /** 终态任务保留时长，之后从 Map 清理。 */
 const RETENTION_MS = 30 * 60_000
+/**
+ * 落盘失败后的后台重试间隔(分钟级)。
+ *
+ * 上游地址有效期一天(`X-Tos-Expires=86400`),而原来只在几秒内试三次就永久判死 ——
+ * 一次几十秒的抖动就足以让本地和 COS 都没副本,只剩这条会过期的地址。
+ *
+ * 排到 21 分钟为止而不是铺满一天:任务在 `RETENTION_MS`(30 分钟)后会从 Map 里
+ * 清掉,更晚的重试会扑空。要覆盖更长窗口得先把任务状态持久化,那是另一件事。
+ */
+const PERSIST_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const
 
 export interface SeedanceTaskManagerDeps {
   client: SeedanceClient
@@ -366,6 +376,41 @@ export class SeedanceTaskManager {
     this.timers.set(taskId, timer)
   }
 
+  /**
+   * 落盘 + **跨分钟级的后台重试**。
+   *
+   * 为什么不能一次定生死:上游那条地址 `X-Tos-Expires=86400`,有效期整整一天,
+   * 而原来只在几秒内试三次就落 `persistence:'failed'` —— 一次几十秒的网络抖动
+   * (实测 `ERR_CONNECTION_CLOSED`)就足以让本地和 COS 都没有副本,只剩这条会过期
+   * 的地址。用户过几个钟头回来点播放,视频就"没了",而重生成要花钱又要几分钟。
+   *
+   * 所以失败之后继续在后台试:1 / 5 / 15 / 30 分钟。四次机会摊在 51 分钟里,足够
+   * 跨过绝大多数抖动与短时断网,又远在 24 小时窗口之内。定时器 unref,不拖住退出;
+   * 卡片已经是 succeeded,重试全程不打扰用户 —— 成了就静默升级成 done。
+   */
+  private async persistWithRetry(taskId: string, round = 0): Promise<void> {
+    const task = this.tasks.get(taskId)
+    if (!task) return // 已被清理,没有必要再救
+    try {
+      const { localPath, remoteUrl } = await this.deps.persistVideo({ ...task })
+      this.update(taskId, { persistence: 'done', localPath, remoteUrl })
+      return
+    } catch (e) {
+      const next = PERSIST_RETRY_DELAYS_MS[round]
+      console.warn(
+        `[seedance] persistVideo failed (round ${round + 1}); `
+        + (next ? `retrying in ${next / 60_000}min` : 'giving up, only the expiring upstream URL remains'),
+        e,
+      )
+      // 状态照实标 failed —— 界面要能显示"没保存下来",不能因为后台还在试就假装没事。
+      // 试成了会原地升级回 done。
+      this.update(taskId, { persistence: 'failed' })
+      if (next === undefined) return
+      const timer = setTimeout(() => { void this.persistWithRetry(taskId, round + 1) }, next)
+      timer.unref?.()
+    }
+  }
+
   private async pollLoop(taskId: string): Promise<void> {
     const startedAt = this.now()
     let delayMs = POLL_INTERVAL_MS
@@ -447,13 +492,7 @@ export class SeedanceTaskManager {
             ? { completionTokens: result.usage.completion_tokens }
             : {}),
         })
-        try {
-          const { localPath, remoteUrl } = await this.deps.persistVideo({ ...this.tasks.get(taskId)! })
-          this.update(taskId, { persistence: 'done', localPath, remoteUrl })
-        } catch (e) {
-          console.warn('[seedance] persistVideo failed (video itself is fine):', e)
-          this.update(taskId, { persistence: 'failed' })
-        }
+        await this.persistWithRetry(taskId)
         this.scheduleCleanup(taskId)
         return
       }

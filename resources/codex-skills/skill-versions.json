@@ -46,15 +46,15 @@
     "storyboard-visual": "1.0.4",
     "storyboard-voice-control": "1.0.2",
     "find-skills": "1.0.0",
-    "ffmpeg-win": "1.0.9",
+    "ffmpeg-win": "1.0.10",
     "screenwriter": "1.0.3",
     "seedance-video-craft": "1.0.15",
     "animation-craft": "1.0.7",
     "film-studio": "1.0.14",
-    "sd2-pe": "1.0.35",
+    "sd2-pe": "1.0.36",
     "storyboard-grid-to-seedance": "1.0.7",
     "catimation-video-director-router": "1.0.2",
     "seedance-cinematic-format": "1.0.14",
-    "sd25-pe": "1.0.1"
+    "sd25-pe": "1.0.2"
   }
 }

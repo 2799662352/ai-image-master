@@ -236,6 +236,46 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  /**
+   * 落盘失败此前是一次定生死:几秒内试三次，然后永久 persistence='failed'，本地和
+   * COS 都没副本，只剩上游那条一天后过期的地址。用户过几小时回来点播放，视频就
+   * "没了"，而重生成要花钱。上游地址有效期整整一天，几秒就放弃是把窗口扔了。
+   */
+  it('落盘失败后在后台继续重试，成功则原地升级回 done', async () => {
+    persistVideo
+      .mockRejectedValueOnce(new Error('ERR_CONNECTION_CLOSED'))
+      .mockResolvedValueOnce({ localPath: 'D:/save/v.mp4', remoteUrl: 'https://cos/v.mp4' })
+    const mgr = makeManager(
+      makeClient([{ id: 'task-1', status: 'succeeded', content: { video_url: 'https://cdn/v.mp4' } }]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    // 第一轮失败：如实标 failed，界面要能显示「没保存下来」，不能因为后台还在试就装没事。
+    expect(mgr.get('task-1')!.persistence).toBe('failed')
+
+    // 一分钟后的后台重试成功 → 原地升级。
+    await vi.advanceTimersByTimeAsync(60_000)
+    const t = mgr.get('task-1')!
+    expect(t.persistence).toBe('done')
+    expect(t.localPath).toBe('D:/save/v.mp4')
+    expect(t.remoteUrl).toBe('https://cos/v.mp4')
+    mgr.dispose()
+  })
+
+  it('后台重试用尽后停手，不无限重试', async () => {
+    persistVideo.mockRejectedValue(new Error('disk full'))
+    const mgr = makeManager(
+      makeClient([{ id: 'task-1', status: 'succeeded', content: { video_url: 'https://cdn/v.mp4' } }]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    // 1 + 5 + 15 分钟三轮重试后应当停手（再多也没意义:任务 30 分钟后就被清理了）。
+    await vi.advanceTimersByTimeAsync(25 * 60_000)
+    expect(persistVideo).toHaveBeenCalledTimes(4) // 首次 + 3 轮重试
+    expect(mgr.get('task-1')?.persistence ?? 'failed').toBe('failed')
+    mgr.dispose()
+  })
+
   it('落盘失败不影响任务 succeeded（persistence failed）', async () => {
     persistVideo.mockRejectedValueOnce(new Error('disk full'))
     const mgr = makeManager(

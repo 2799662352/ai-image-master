@@ -22,10 +22,12 @@
 // 截 120 字、素材只列名字(截 40 字),绝不把 URL/base64 全文倒进上下文。
 
 import { z } from 'zod'
+import type { VideoWorkbenchMode } from '../../../types/videoWorkbench'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import {
   WORKBENCH_MAX_TASKS_PER_CALL,
+  WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -42,8 +44,18 @@ const cardInputSchema = z.object({
   ),
   resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0" (NOT "2.5").'),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored for edit_video / extend_video on "2.5" (forced adaptive).'),
-  duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional().describe(
-    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). Default 5.',
+  // 刻意用**朴素整数区间**而不是 union([literal(-1), int().min(4)])。
+  //
+  // 那个 union 转成 JSON Schema 是 `anyOf: [{enum:[-1]}, {type:integer, minimum:4}]`,
+  // 而客户端侧的校验器对 anyOf 的支持参差不齐 —— 实测有客户端拿它校验 `duration: -1`
+  // 直接判失败，请求根本没发出来:我们这边的 zod 明明接受 -1，服务器日志里却什么都
+  // 没有，只有对话里一片红。工具 schema 是给别人的校验器吃的，越朴素越可移植。
+  //
+  // 代价是 0–3 这段在 schema 层放行了，由 validateSeedanceRequest 拦（它本来就要按
+  // 模型分档校验 4–15 / 4–30，schema 这层从来就管不全）。
+  duration: z.number().int().min(-1).max(30).optional().describe(
+    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). '
+    + 'Default 5. (0-3 are not valid; they are rejected downstream with a model-aware message.)',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
@@ -234,7 +246,7 @@ const irCardSchema = z.looseObject({
   model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional(),
   resolution: z.enum(['480p', '720p', '1080p']).optional(),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
-  duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional(),
+  duration: z.number().int().min(-1).max(30).optional(), // 同上:避开 anyOf
   generateAudio: z.boolean().optional(),
   mode: z.enum([
     'text2video', 'first_frame', 'first_last_frame', 'reference_images',
@@ -368,6 +380,65 @@ function okResult(bannerLines: string[], structured: unknown): WorkbenchToolResu
  * agent 拿到一份被截断的 IR 再回写,被截掉的卡片字段会被清成默认值 —— 那是数据
  * 丢失,不是性能问题。报错至少让 agent 知道要缩小范围。
  */
+/** 一张卡剥成「只占位」——保留身份与并发令牌,丢掉内容(不是删除,是本次没带回)。 */
+function toPositionOnly(card: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: card.id,
+    ...(typeof card.rev === 'number' ? { rev: card.rev } : {}),
+  }
+}
+
+/**
+ * 把整板导出压进预算:从 `from` 开始按顺序保留整卡内容,装不下的剥成占位。
+ *
+ * 为什么是降级而不是报错 —— 报错再重试要花两个模型回合,而调用方并没做错什么,
+ * 只是这块看板大。回前缀 + 续取参数,能用的部分立刻可用。
+ *
+ * 为什么剥成占位而不是**删掉**那些卡:IR 是声明式的,少列一张卡在 merge 模式下
+ * 会把它挤到后面去(placeExisting)。占位条目让这份残缺的导出**依然可以直接回写** ——
+ * 顺序不乱、没带回来的卡内容原样保留。这是「截断」和「安全的截断」之间的区别。
+ */
+function degradeExportToBudget(
+  structured: unknown,
+  from: number,
+): { ir: unknown; kept: number; total: number; truncated: boolean } {
+  const ir = structured as { boards?: Array<{ cards?: Array<Record<string, unknown>> }> } | null
+  const boards = Array.isArray(ir?.boards) ? ir!.boards : []
+  const total = boards.reduce((n, b) => n + (Array.isArray(b?.cards) ? b.cards.length : 0), 0)
+  if (JSON.stringify(structured).length <= RESULT_CHAR_BUDGET && from === 0) {
+    return { ir: structured, kept: total, total, truncated: false }
+  }
+
+  // 先全剥成占位量出底价(占位是不可省的:少一张就会乱序),再从 from 开始逐张
+  // 换回整卡,直到装不下。
+  let used = JSON.stringify({
+    ...(structured as object),
+    boards: boards.map((b) => ({ ...b, cards: (b.cards ?? []).map(toPositionOnly) })),
+  }).length
+  const keep = new Set<number>()
+  let seen = 0
+  for (const board of boards) {
+    for (const card of board.cards ?? []) {
+      const i = seen++
+      if (i < from) continue
+      const cost = JSON.stringify(card).length - JSON.stringify(toPositionOnly(card)).length
+      if (used + cost > RESULT_CHAR_BUDGET) continue
+      used += cost
+      keep.add(i)
+    }
+  }
+
+  let idx = 0
+  const out = {
+    ...(structured as object),
+    boards: boards.map((b) => ({
+      ...b,
+      cards: (b.cards ?? []).map((c) => (keep.has(idx++) ? c : toPositionOnly(c))),
+    })),
+  }
+  return { ir: out, kept: keep.size, total, truncated: keep.size < total }
+}
+
 function guardResultSize(tool: string, structured: unknown, howToNarrow: string): WorkbenchToolResult | null {
   const chars = JSON.stringify(structured)?.length ?? 0
   if (chars <= RESULT_CHAR_BUDGET) return null
@@ -476,6 +547,71 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_set_spec', {
+    description:
+      'Apply the SAME spec change to many cards at once — resolution, ratio, model, duration, audio, '
+      + 'webSearch, mode. This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5".\n'
+      + 'USE THIS INSTEAD OF export+apply for spec-only sweeps. apply is declarative over the WHOLE board: '
+      + 'omitted fields reset to defaults, so to change three fields you must round-trip every prompt and '
+      + 'every material array of every card through the model — on a 17-card board that is the slowest '
+      + 'thing in the session, and the user is just sitting there watching RUNNING. This tool carries only '
+      + 'the fields you name.\n'
+      + 'It CANNOT touch prompts or materials — that is the point, not a limitation. For those, use '
+      + 'video_workbench_update_task (one card) or video_workbench_apply (restructuring).\n'
+      + 'Omit cardIds to hit every card on the active board. Cards that are rendering are skipped and '
+      + 'reported, not errored — a sweep should not fail because one card happens to be busy.',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).optional().describe(
+        'Cards to change. Omit = every card on the ACTIVE board (the common case for a sweep). '
+        + 'Pass ids from `pageIndex` / status when you only want some of them.',
+      ),
+      boardId: z.string().optional().describe('Sweep this page instead of the active one. Ignored when cardIds is given.'),
+      model: cardInputSchema.shape.model,
+      resolution: cardInputSchema.shape.resolution,
+      ratio: cardInputSchema.shape.ratio,
+      duration: cardInputSchema.shape.duration,
+      generateAudio: cardInputSchema.shape.generateAudio,
+      webSearch: cardInputSchema.shape.webSearch,
+      // ⚠️ 不能写 `cardInputSchema.shape.mode` —— 那个 shape 里**没有** mode，取到
+      // undefined，注册时 MCP SDK 读 `undefined._zod` 直接让整个服务器起不来
+      // ("Cannot read properties of undefined (reading '_zod')")。TypeScript 早就报了
+      // TS2551，被当成预存基线放过了 —— 教训:Zod schema 上的「属性不存在」不是
+      // 类型洁癖，是运行时炸弹。
+      mode: z.enum([
+        'text2video', 'first_frame', 'first_last_frame', 'reference_images',
+        'multimodal_ref', 'edit_video', 'extend_video',
+      ] satisfies readonly VideoWorkbenchMode[]).optional().describe(
+        'Workbench mode. Changing it re-checks material caps and may TRUNCATE materials that no longer fit.',
+      ),
+    }),
+    // 与 update_task 同档:换模型/模式时按新上限截断素材(2.5 → 2.0 会掉 21 张),
+    // 而这里是**批量**截断,一次能影响整板 —— 更该让客户端问一声。
+    annotations: { ...DESTRUCTIVE, idempotentHint: true },
+    outputSchema: z.looseObject({
+      updated: z.array(z.string()).describe('Card ids actually changed.'),
+      skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })).describe(
+        'Cards left untouched (rendering, or the patch was a no-op for them).',
+      ),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_spec',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { updated: string[]; skipped: Array<{ reason: string }> }
+      return okResult([
+        `✅ video_workbench_set_spec — ${result.updated.length} card(s) updated.`,
+        ...(result.skipped.length > 0
+          ? [`⚠️ ${result.skipped.length} skipped — read \`skipped\` and tell the user which ones and why.`]
+          : []),
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_spec', error)
+    }
+  })
+
   server.registerTool('video_workbench_update_task', {
     description:
       'Update ONE existing card on the 「生成视频」 workbench page: prompt, spec (model/resolution/ratio/' +
@@ -489,8 +625,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'by id, carries no board-wide version token, and cannot be invalidated by the user typing in ' +
       'another card. Do NOT export the whole board and re-apply it just to edit one card: that is far ' +
       'slower and any edit the user makes meanwhile can push your write aside. Reserve ' +
-      'video_workbench_apply for restructuring (adding/deleting/reordering cards or pages, or editing ' +
-      'many cards at once). Call it once per card — one focused call per card beats one giant IR. ' +
+      'video_workbench_apply for RESTRUCTURING (adding/deleting/reordering cards or pages). And if you ' +
+      'only want the same spec across many cards ("整板 480p / 都开联网"), use video_workbench_set_spec ' +
+      '— NOT apply. Call it once per card — one focused call per card beats one giant IR. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
@@ -556,8 +693,19 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       '`boardId` for a specific page, or `allBoards:true` for everything. The `boards` list always carries ' +
       "every page's id/name/cardCount, so you can see what else exists without pulling its cards. The " +
       'result echoes `scope` so you always know what you just looked at.\n' +
-      `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
+      'THESE TOOLS ARE THE ONLY WAY TO SEE THE WORKBENCH. The board lives in the running app\'s '
+      + 'IndexedDB; there is no JSON file on disk that mirrors it. Do NOT go looking for one — grepping '
+      + 'LevelDB blobs, page-states.json, Local Storage or the app data directory wastes minutes and '
+      + 'returns garbage even when it appears to match. Anything you need is here: this tool for state, '
+      + 'video_workbench_export for the full prompts.\n'
+      + `Cards come back a few at a time — ${WORKBENCH_STATUS_PAGE_SIZE} per page by default — because a `
       + 'full card is bulky and you usually care about one or two of them.\n'
+      + 'PROMPTS ARE TRUNCATED HERE (~120 chars). That is deliberate: this tool is for surveying state, '
+      + 'not for reading copy. For a card\'s FULL prompt call '
+      + '`video_workbench_export({ cardIds: [...] })` — those cards come back complete, every other card '
+      + 'as a position-only `{id}`, so you read a few at a time instead of pulling a 20k-character board. '
+      + 'Do not reconstruct a prompt from the truncated text, and do not reach for a whole-board export '
+      + 'when you only care about three cards.\n'
       + 'READ `pageIndex` FIRST. It has one line per page across the whole scope (page number, card ids, '
       + 'the opening words of each prompt), so you can jump straight to the page you want instead of '
       + 'walking pages 1..N. Then fetch that page, or skip paging entirely by passing its cardIds.\n'
@@ -618,8 +766,14 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'Embedded (data:) materials appear as '
       + '`wbref://<cardId>/<kind>/<index>` placeholders — copy them verbatim to keep a material, or copy '
       + 'one onto another card to reuse that material without re-uploading.\n'
+      + 'This is also where you READ full prompts: video_workbench_status truncates them to ~120 chars. '
+      + 'And it is the only way — the board lives in the running app\'s IndexedDB, there is no file on '
+      + 'disk to grep.\n'
       + 'SCOPE: by default this exports only the ACTIVE board, because a full export carries every card\'s '
-      + 'full prompt and every material path and can exceed what the client will accept. That default is '
+      + 'full prompt and every material path, which gets big fast. (It is never REJECTED for size — an '
+      + 'oversized export degrades to full content for as many cards as fit plus position-only entries '
+      + 'for the rest, with a contentFrom offset to continue. But a narrower scope is still cheaper.) '
+      + 'That default is '
       + 'safe to apply back — merge mode leaves boards you did not list alone. Pass a specific boardId for '
       + 'another board, or allBoards:true only when the change genuinely spans boards (moving cards '
       + 'between pages, reordering the tabs).',
@@ -629,8 +783,32 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'boards you did not list are left alone.',
       ),
       allBoards: z.boolean().optional().describe(
-        'Export every board. Only needed for cross-board changes; the payload grows with the whole '
-        + 'workbench and may be rejected as too large. Ignored when boardId is given.',
+        'Export every board. Only needed for cross-board changes. The payload grows with the whole '
+        + 'workbench, so expect it to come back PARTIAL (content for the first N cards, position-only '
+        + 'for the rest) — that is a degradation, not a failure. Ignored when boardId is given.',
+      ),
+      contentFrom: z.number().int().min(0).optional().describe(
+        'Continuation offset for an export that came back PARTIAL. A board too large to fit in one '
+        + 'response is never rejected — it comes back with full content for as many cards as fit and '
+        + 'position-only `{id, rev}` for the rest, plus the offset to resume from. Pass that number here '
+        + 'to get the next batch. Usually you do not need this: naming cardIds is more direct.',
+      ),
+      cardIds: z.array(z.string()).optional().describe(
+        'Full content for THESE cards only; every other card comes back as a position-only `{id, rev}`. '
+        + 'This is how you read long prompts a few at a time — status truncates at ~120 chars, and a '
+        + 'whole-board export of a 17-card board is ~20k characters that you have to read, hold and '
+        + 'often re-emit. Pick the ids from `pageIndex`, pull 3-5 of them, edit, apply, repeat.\n'
+        + 'The result is still directly applicable: every card is listed, so order is preserved, and '
+        + 'only the ones you named count against apply\'s content-card limit. Ignored when skeleton:true.',
+      ),
+      skeleton: z.boolean().optional().describe(
+        'Return ids and ORDER only — every card comes back as a POSITION-ONLY `{id, rev}` with no '
+        + 'prompt and no materials. This is what you want whenever you are reordering, or editing a few '
+        + 'cards out of many: take the skeleton, fill content into just the cards you are changing, '
+        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny '
+        + 'no matter how long the prompts are. A full export of a 17-card board is ~20k characters and '
+        + 'has to be read, rewritten and emitted by the model — the skeleton of the same board is a few '
+        + 'hundred. Only ask for a full export when you actually need to READ the existing prompts.',
       ),
     }),
     annotations: READ_ONLY,
@@ -638,18 +816,28 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_export', params as Record<string, unknown>, extractCodexThreadId(ctx))
-      const tooBig = guardResultSize(
-        'video_workbench_export',
-        result,
-        'Export one board at a time (boardId), and drop allBoards. If a SINGLE board is still too large, '
-        + 'it has too many cards to round-trip — edit those cards individually with '
-        + 'video_workbench_update_task, or ask the user to split the board in two.',
-      )
-      if (tooBig) return tooBig
+      // 超预算**不报错**。报错再重试等于把一次大结果的代价翻倍(两个模型回合),
+      // 而调用方并没做错什么 —— 只是这块看板大。改成回前缀 + 续取句柄:能用的
+      // 部分立刻可用,不够再来一次。「PARTIAL 却不给续取参数」才是礼貌版的硬错误。
+      const from = typeof (params as { contentFrom?: unknown }).contentFrom === 'number'
+        ? Math.max(0, (params as { contentFrom: number }).contentFrom)
+        : 0
+      const { ir, kept, total, truncated } = degradeExportToBudget(result, from)
+      if (!truncated) {
+        return okResult([
+          '✅ video_workbench_export — edit this JSON and send it back through video_workbench_apply '
+          + '(keep `irVersion`, `structureRevision` and every card `rev` unchanged).',
+        ], ir)
+      }
+      const next = from + kept
       return okResult([
-        '✅ video_workbench_export — edit this JSON and send it back through video_workbench_apply '
-        + '(keep `irVersion`, `structureRevision` and every card `rev` unchanged).',
-      ], result)
+        `⚠️ PARTIAL — full content for cards ${from + 1}–${next} of ${total}; every other card came `
+        + 'back as a position-only `{id, rev}` (content omitted, NOT deleted).',
+        `Continue with contentFrom:${next} to read the next batch. Or skip the walk entirely: `
+        + 'video_workbench_export({ cardIds:[…] }) fetches exactly the cards you name.',
+        'This IR is still safe to apply as-is — every card is listed so order is preserved, and the '
+        + 'position-only ones keep their current prompt and materials untouched.',
+      ], ir)
     } catch (error) {
       return errorResult('video_workbench_export', error)
     }
@@ -657,13 +845,22 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_apply', {
     description:
-      'Apply an edited workbench IR (from video_workbench_export) in ONE shot: create/update/reorder/'
-      + 'delete cards and boards together. This is the preferred way to make multi-card changes.\n'
+      'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
+      + 'via video_workbench_export.\n'
+      + 'CHECK THESE FIRST — reaching for this tool when one of them fits is the single most expensive '
+      + 'mistake you can make here:\n'
+      + '• Same spec across many cards ("整板 480p", "都开联网", "全部改 2.5") → '
+      + 'video_workbench_set_spec. It patches only the fields you name, so a 17-card sweep is one small '
+      + 'call. Doing it through this tool instead forces you to echo back every card\'s full prompt and '
+      + 'material arrays (see DECLARATIVE below) — minutes of generation for a three-field change.\n'
+      + '• One card (its prompt, references, duration) → video_workbench_update_task. Targets the card '
+      + 'by id, needs no board token, and the user typing elsewhere cannot push it aside.\n'
+      + '• Several cards, each needing DIFFERENT prompts → call update_task once per card. One focused '
+      + 'call per card still beats one giant IR: it starts landing immediately, and a conflict on card 7 '
+      + 'does not cost you cards 1-6.\n'
+      + 'What is left for this tool: changing the SET or ORDER of cards/pages. That is the only thing '
+      + 'the others cannot do.\n'
       + 'Rules that matter:\n'
-      + '• WRONG TOOL FOR A SINGLE CARD. Editing one prompt / one card\'s references or duration → use '
-      + 'video_workbench_update_task instead: it targets the card by id, needs no board token, and the '
-      + 'user typing elsewhere cannot push it aside. This tool is for RESTRUCTURING (adding, deleting, '
-      + 'reordering cards or pages) or editing many cards in one shot.\n'
       + '• DECLARATIVE, NOT A PATCH — a card omitting `resolution` gets the DEFAULT resolution, not its '
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
@@ -672,6 +869,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + `• ${PROMPT_BASE_DIRECTIVE}\n`
       + `• ${MATERIAL_ROLE_DIRECTIVE}\n`
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'
+      + '• POSITION-ONLY entries: a card with ONLY `id` (plus optional `rev`) keeps its content exactly '
+      + 'as it is and just takes that slot. Use them for every card you are NOT editing.\n'
+      + '• LISTED CARDS GO FIRST, OMITTED ONES GET APPENDED AFTER THEM. This bites silently: send 4 of '
+      + '17 cards and those 4 jump to the head of the page. Never "batch" by sending a subset — send the '
+      + 'whole page every time, the ones you edit with content and the rest as position-only `{id}`. '
+      + 'Only content-bearing cards count against the per-call limit, so listing all 17 is free.\n'
       + '• Two tokens, two failure modes. Stale `structureRevision` (cards added/deleted/reordered) → '
       + 'rejected with `conflict`, NOTHING written; re-export, redo your edits, apply again. Stale card '
       + '`rev` (the user edited that one card) → only that card is skipped, everything else lands; read '
@@ -701,6 +904,43 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       // 的卡会被追加到列出的卡后面(workbenchIR 的 placeExisting),所以限制张数会让
       // 「重排一个二十张卡的页」变成不可能 —— 只列前五张就把它们顶到最前、其余全部
       // 挤下去。按体积卡不会误伤那种正当用法。
+      // 内容卡硬闸。数的是**携带内容的卡**,不是卡片总数 —— 只给 id 的占位条目
+      // 不计入,所以「重排二十张卡」照样一次做完(按总数拦会把没列出的卡挤下去,
+      // 见下面那段注释)。这里拦的是另一件事:一次回写十七段完整提示词。
+      const irCards = ((params as { ir?: { boards?: Array<{ cards?: unknown[] }> } }).ir?.boards ?? [])
+        .flatMap((b) => (Array.isArray(b?.cards) ? b.cards : []))
+      const contentCards = irCards.filter((c) => {
+        if (!c || typeof c !== 'object') return false
+        const keys = Object.keys(c as Record<string, unknown>)
+        // id / rev 是身份与令牌,不算内容。其余任何一个字段都算。
+        return keys.some((k) => k !== 'id' && k !== 'rev')
+      })
+      if (contentCards.length > WORKBENCH_APPLY_MAX_CONTENT_CARDS) {
+        return errorResult(
+          'video_workbench_apply',
+          new Error(
+            `this IR carries content for ${contentCards.length} cards, over the limit of `
+            + `${WORKBENCH_APPLY_MAX_CONTENT_CARDS}. Nothing was written. Rewriting many cards through `
+            + 'apply is the slowest path in the session: apply is declarative, so every card must carry '
+            + 'its full prompt and material arrays back through the model.\n'
+            + 'Pick the tool that matches what you are actually doing:\n'
+            + '• Same spec across many cards (480p / webSearch / model) → video_workbench_set_spec, one call.\n'
+            + '• Different prompts per card → video_workbench_update_task, once per card. Best default: '
+            + 'it never touches order, each call lands immediately, and a conflict on card 7 does not '
+            + 'cost you cards 1-6.\n'
+            + '• Pure reordering → keep using apply, but send POSITION-ONLY entries: a card object with '
+            + 'ONLY `id` (plus optional `rev`) keeps its content untouched and just takes that slot. '
+            + 'Those do not count against this limit, so a 20-card reorder is still one call.\n'
+            + 'IF YOU BATCH THROUGH apply, LIST THE WHOLE PAGE EVERY TIME. Cards you list are placed in '
+            + 'array order and cards you omit are appended AFTER them — so a batch of 4 silently jumps '
+            + 'those 4 to the front and scrambles the page. Send all N cards: the few you are editing '
+            + 'with content, every other one as a position-only `{id}`. Order stays correct, and only '
+            + 'the edited ones count against the limit. Omitting the rest and "fixing the order later" '
+            + 'costs you a second full-board write — the exact thing this limit exists to prevent.',
+          ),
+        )
+      }
+
       const irChars = JSON.stringify((params as { ir?: unknown }).ir)?.length ?? 0
       if (irChars > RESULT_CHAR_BUDGET) {
         return errorResult(

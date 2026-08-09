@@ -174,9 +174,14 @@ export const seedanceClient: SeedanceClient = {
     //
     // 具体的流式下载、空闲超时、字节数校验与原子落位都在 videoDownload.ts 里,
     // 包括为什么必须用 net.request 而非 net.fetch(中文响应头,见 #42244)。
+    // 5 次 / 5s 起步翻倍 = 5+10+20+40，即时这一轮覆盖约 75 秒。
+    // 原来是 3 次 / 3s(约 9 秒)—— 实测的失败是 ERR_CONNECTION_CLOSED，对端抖动
+    // 常常几十秒才恢复，9 秒窗口正好整个落在抖动里。落盘失败的代价是本地和 COS
+    // 都没副本、只剩一天后过期的上游地址，多等一分钟远比丢片划算。
+    // 更长的窗口由 taskManager 的分钟级后台重试接手。
     return retryDownload(() => downloadVideoToDisk(videoUrl, destPath), {
-      attempts: 3,
-      delayMs: 3_000,
+      attempts: 5,
+      delayMs: 5_000,
     })
   },
 }

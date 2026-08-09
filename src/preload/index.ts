@@ -600,6 +600,12 @@ export interface ElectronAPI {
     cancel: (taskId: string) => Promise<SeedanceCancelResult>
     /** 启动时把进行中的 taskId 交回主进程重新接管并恢复轮询。 */
     reconcile: (items: VideoWorkbenchReconcileItem[]) => Promise<VideoWorkbenchReconcileResult[]>
+    /**
+     * 手动「重新保存」:拿卡片上还留着的上游地址再抓一次字节落盘。
+     * **不重新生成、不花钱** —— 自动重试只覆盖到 21 分钟，而地址还能用约一天。
+     */
+    repersist: (payload: { videoUrl: string; model?: string; taskId?: string; threadId?: string })
+      => Promise<{ ok: boolean; localPath?: string; remoteUrl?: string; error?: string }>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1518,6 +1524,10 @@ const electronAPI: ElectronAPI = {
     cancel: (taskId: string) => safeInvoke<SeedanceCancelResult>('video-workbench:cancel', taskId),
     reconcile: (items: VideoWorkbenchReconcileItem[]) =>
       safeInvoke<VideoWorkbenchReconcileResult[]>('video-workbench:reconcile', items),
+    repersist: (payload: { videoUrl: string; model?: string; taskId?: string; threadId?: string }) =>
+      safeInvoke<{ ok: boolean; localPath?: string; remoteUrl?: string; error?: string }>(
+        'video-workbench:repersist', payload,
+      ),
   },
 
   fs: {

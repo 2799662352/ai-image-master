@@ -10,6 +10,24 @@ import {
 } from '../gatewayModelRouting'
 
 describe('gatewayModelRouting', () => {
+  /**
+   * 曾经这两条是 'none'，因为「Miau 的 Responses 转发是完整的」——那个结论只拿
+   * 对话验过。文本、reasoning、usage 确实都回来了，但 codex 把 MCP 工具包成
+   * `{"type":"namespace"}`（OpenAI 私有扩展），网关静默丢弃后照常返回 200，
+   * 模型压根看不见工具，于是刷出一串 `unsupported call: `（openai/codex#23186）。
+   *
+   * 这条测试钉住的是「别再改回 none」。要改回去，先跑一次真实的工具调用往返。
+   */
+  it('千问通道必须走 namespace 桥 —— 不桥则工具被静默丢弃', () => {
+    for (const gateway of ['apiyi', 'rightcode'] as const) {
+      const channel = channelsForGateway(gateway).find((c) => c.id === `${gateway}-qwen`)
+      expect(channel, `${gateway}-qwen 通道应存在`).toBeDefined()
+      expect(channel!.compatibilityPolicy).toBe('responses-namespace-bridge')
+      // qwen3.8-max 是撞上这个 bug 的那一个，确保它确实在这条通道里。
+      expect(channel!.allowedModels).toContain('qwen3.8-max')
+    }
+  })
+
   it('resolves API Yi GPT models to apiyi-standard', () => {
     expect(resolveGatewayModelRoute('apiyi', 'gpt-5.5')).toEqual({
       gatewayId: 'apiyi',

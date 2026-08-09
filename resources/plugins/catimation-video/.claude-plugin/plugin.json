@@ -1,7 +1,7 @@
 {
   "name": "catimation-video",
   "description": "视频出片与后期。以 sd2-pe 为总兜底:轻量连续任务走路径A,复杂多镜任务走路径B,均覆盖八大要素、12项内容与五大必备块;复杂任务条件加载 cinematic-format,再按需叠加出片技法、generate_video 与 ffmpeg 后期。",
-  "version": "1.0.32",
+  "version": "1.0.33",
   "author": {
     "name": "CATIMATION",
     "url": "https://github.com/zuozuoliang999"

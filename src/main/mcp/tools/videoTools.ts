@@ -292,7 +292,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0" (NOT "2.5").',
       ),
       ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored (forced adaptive) when taskMode is set.'),
-      duration: z.union([z.literal(-1), z.number().int().min(4).max(30)]).optional().describe(
+      // 朴素整数区间而非 union:后者转成 JSON Schema 是 anyOf，客户端校验器对它支持参差，
+    // 实测有客户端拿它校验 -1 直接判失败、请求根本发不出来（见 videoWorkbenchTools
+    // 里 cardInputSchema.duration 的长注释）。0–3 由 validateSeedanceRequest 拦。
+    duration: z.number().int().min(-1).max(30).optional().describe(
         'Video length in seconds — 4–15 for the 2.0 family, 4–30 for "2.5" — or -1 = smart duration (model auto-decides; result shows actual length). Default 5. Longer = more expensive.',
       ),
       taskMode: z.enum(['edit', 'extend']).optional().describe(

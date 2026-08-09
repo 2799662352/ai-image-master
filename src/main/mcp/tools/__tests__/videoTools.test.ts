@@ -76,7 +76,15 @@ describe('registerVideoTools / schemas', () => {
     registerVideoTools(server, router)
     const schema = tools[0].config.inputSchema
     expect(schema.safeParse({ prompt: '' }).success).toBe(false)
-    expect(schema.safeParse({ prompt: 'x', duration: 3 }).success).toBe(false)
+    // duration 现在是朴素整数区间 [-1, 30]，不再是 union([literal(-1), int().min(4)])。
+    // 换掉的原因:union 转成 JSON Schema 是 anyOf，客户端校验器对它支持参差 —— 实测
+    // 有客户端拿它校验合法的 -1 直接判失败，请求根本发不出来。工具 schema 是给别人的
+    // 校验器吃的，越朴素越可移植。
+    expect(schema.safeParse({ prompt: 'x', duration: -1 }).success).toBe(true)
+    // 代价:0–3 在 schema 层放行，由 validateSeedanceRequest 按模型分档拦（它本来就要
+    // 管 4–15 / 4–30 的差别，schema 这层从来就管不全）。
+    expect(schema.safeParse({ prompt: 'x', duration: 3 }).success).toBe(true)
+    expect(schema.safeParse({ prompt: 'x', duration: -2 }).success).toBe(false)
     // schema 放到全模型最宽的 4–30（2.5 需要）；按模型收窄由 validateSeedanceRequest
     // 在 handler 里做，所以 16 在这一层是合法的、31 才越界。
     expect(schema.safeParse({ prompt: 'x', duration: 16 }).success).toBe(true)

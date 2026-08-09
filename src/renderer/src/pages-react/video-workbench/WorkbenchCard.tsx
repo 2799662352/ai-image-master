@@ -167,6 +167,7 @@ interface WorkbenchCardProps {
 export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragStateChange }: WorkbenchCardProps) {
   const updateCard = useVideoWorkbenchStore((s) => s.updateCard)
   const removeCard = useVideoWorkbenchStore((s) => s.removeCard)
+const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const moveCard = useVideoWorkbenchStore((s) => s.moveCard)
   const addMaterials = useVideoWorkbenchStore((s) => s.addMaterials)
   const removeMaterial = useVideoWorkbenchStore((s) => s.removeMaterial)
@@ -907,7 +908,25 @@ export const WorkbenchCard = memo(function WorkbenchCard({ card, index, onDragSt
               {card.persistence === 'done' && card.localPath ? (
                 <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
               ) : card.persistence === 'failed' ? (
-                <span className="text-orange-400">本地保存失败(视频仍可播放/下载)</span>
+                <span className="flex items-center gap-1.5 text-orange-400">
+                  {/* 不能写「视频仍可播放/下载」—— 本地和 COS 都没副本时只剩上游那条会
+                      过期的地址，等用户回来点播放它多半已经不通，那句话就成了假话。 */}
+                  <span title="上游地址通常一天后过期；后台已在 1/5/15 分钟各重试过一次">
+                    未保存到本地(仅剩上游临时地址)
+                  </span>
+                  {(card.taskId || card.videoUrl) && (
+                    // 免费的补救。有任务号就一定值得点:主进程会拿它向上游重查出一条
+                    // 新签发的地址，不受那条旧地址 24 小时过期的限制。
+                    <button
+                      type="button"
+                      title="按任务号重新取一次视频并保存，不重新生成、不花钱"
+                      className="border border-orange-400/50 px-1.5 py-0.5 text-[10px] hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
+                      onClick={() => { void resaveCard(card.id) }}
+                    >
+                      ↻ 重新保存
+                    </button>
+                  )}
+                </span>
               ) : (
                 <span>正在后台保存…</span>
               )}
