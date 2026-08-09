@@ -3,6 +3,7 @@ import type { EditorState } from '@codemirror/state'
 import type { AgentReference } from '../../../../types/agent-reference'
 import type { FileChange } from '../../../../types/agent-timeline'
 import type { Conflict, FileNode, FileSource, FileTab } from './types'
+import { removeFromTree, renameInTree, updateNodeInTree } from './treeOps'
 import { parseUnifiedDiff } from '../agent-chat/diff/parseUnifiedDiff'
 import { classify } from './classify'
 
@@ -373,23 +374,6 @@ function mergeListedChildren(prevChildren: FileNode[] | undefined, listed: FileN
       return { ...next, childrenLoaded: true, children: prev.children ?? [] }
     }
     return next
-  })
-}
-
-/**
- * Apply `updater` to the node at `targetPath`, preserving structural sharing
- * for sibling/cousin subtrees so React reconciliation doesn't drop their UI
- * state.
- */
-function updateNodeInTree(
-  tree: FileNode[],
-  targetPath: string,
-  updater: (n: FileNode) => FileNode,
-): FileNode[] {
-  return tree.map((n) => {
-    if (n.path === targetPath) return updater(n)
-    if (n.children) return { ...n, children: updateNodeInTree(n.children, targetPath, updater) }
-    return n
   })
 }
 
@@ -1368,18 +1352,3 @@ async function writeTextToOsClipboard(text: string): Promise<void> {
   }
 }
 
-function removeFromTree(tree: FileNode[], targetPath: string): FileNode[] {
-  return tree
-    .filter((n) => n.path !== targetPath)
-    .map((n) =>
-      n.children ? { ...n, children: removeFromTree(n.children, targetPath) } : n,
-    )
-}
-
-function renameInTree(tree: FileNode[], oldPath: string, newPath: string, newName: string): FileNode[] {
-  return tree.map((n) => {
-    if (n.path === oldPath) return { ...n, path: newPath, name: newName }
-    if (n.children) return { ...n, children: renameInTree(n.children, oldPath, newPath, newName) }
-    return n
-  })
-}

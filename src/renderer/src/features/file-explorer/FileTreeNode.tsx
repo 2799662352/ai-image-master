@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { FileNode, FileSource } from './types'
 import { useFileExplorerStore } from './store'
 import { FolderIcon, FolderOpenIcon, FileIcon, ImageFileIcon, ChevronRightIcon } from './icons'
@@ -51,7 +51,18 @@ function buildMenu(opts: {
   return items
 }
 
-export function FileTreeNode({ node, depth }: { node: FileNode; depth: number }) {
+/**
+ * 一行一个组件,递归渲染整棵树。
+ *
+ * `memo` 只有在两件事同时成立时才真的省下东西:
+ *  ① `node` 的引用在没改到它时保持不变 —— 由 treeOps 的结构共享保证;
+ *  ② 组件订阅的是**派生布尔**而不是 selectedPaths / clipboard 这类每次新建的对象。
+ * 少任何一条,memo 都会静默失效:看起来做了优化,实际每行照样重渲染。
+ */
+export const FileTreeNode = memo(function FileTreeNode({
+  node,
+  depth,
+}: { node: FileNode; depth: number }) {
   const [open, setOpen] = useState(node.childrenLoaded === true && (node.children?.length ?? 0) > 0)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [renaming, setRenaming] = useState(false)
@@ -69,8 +80,16 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   const renameFile = useFileExplorerStore((s) => s.renameFile)
   const moveByDnd = useFileExplorerStore((s) => s.moveByDnd)
   const selectNode = useFileExplorerStore((s) => s.selectNode)
-  const selectedPaths = useFileExplorerStore((s) => s.selectedPaths)
-  const clipboard = useFileExplorerStore((s) => s.clipboard)
+  // 订阅**派生出来的布尔值**，而不是 selectedPaths / clipboard / pendingNewNode 本身。
+  //
+  // 那三个每次都是新引用(selectNode 直接 `selectedPaths: [path]`)，订阅它们等于
+  // 「任何一次点击都让每一行重渲染」。订阅布尔之后，一次点击只会重渲染真正变了的
+  // 那两行:被取消选中的和被选中的。其余 15 个是 action，zustand 里引用恒定，
+  // 不会引起重渲染，留着不动。
+  const isSelected = useFileExplorerStore((s) => s.selectedPaths.includes(node.path))
+  const isCut = useFileExplorerStore(
+    (s) => s.clipboard?.mode === 'cut' && s.clipboard.paths.includes(node.path),
+  )
   const copySel = useFileExplorerStore((s) => s.copySelectionToClipboard)
   const cutSel = useFileExplorerStore((s) => s.cutSelectionToClipboard)
   const paste = useFileExplorerStore((s) => s.pasteIntoDir)
@@ -80,10 +99,10 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   const cancelNewNode = useFileExplorerStore((s) => s.cancelNewNode)
   const openInTerm = useFileExplorerStore((s) => s.openInTerminal)
   const compareSel = useFileExplorerStore((s) => s.compareSelection)
-  const pendingNewNode = useFileExplorerStore((s) => s.pendingNewNode)
-
-  const isSelected = selectedPaths.includes(node.path)
-  const isCut = clipboard?.mode === 'cut' && clipboard.paths.includes(node.path)
+  // 同理:只关心「新建占位是不是挂在我这一行」，而不是整个 pendingNewNode 对象。
+  const newNodeKind = useFileExplorerStore(
+    (s) => (s.pendingNewNode?.parentPath === node.path ? s.pendingNewNode.kind : undefined),
+  )
 
   useEffect(() => {
     if (renaming && inputRef.current) {
@@ -96,10 +115,10 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
 
   // 当 dir 节点处于「正在新建」状态且未展开时，自动打开
   useEffect(() => {
-    if (pendingNewNode?.parentPath === node.path && !open && node.kind === 'dir') {
+    if (newNodeKind && !open && node.kind === 'dir') {
       setOpen(true)
     }
-  }, [pendingNewNode, node.path, node.kind, open])
+  }, [newNodeKind, node.kind, open])
 
   // 监听全局 F2 重命名请求（FileExplorerPanel 触发）
   useEffect(() => {
@@ -373,7 +392,18 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   const cutOpacity = isCut ? 'opacity-50' : ''
 
   // 检查是否要在该节点下渲染「新建占位」
-  const showInlineNew = pendingNewNode?.parentPath === node.path && open
+  const showInlineNew = newNodeKind !== undefined && open
+
+  /** 右键菜单要的那几项,开菜单的一刻现读 —— 见下方 FileContextMenu 处的说明。 */
+  const menuInputs = (isDir: boolean) => {
+    const s = useFileExplorerStore.getState()
+    return {
+      isDir,
+      hasClipboard: !!s.clipboard,
+      selectionCount: s.selectedPaths.length,
+      selectionAllFiles: areAllSelectedFiles(s.selectedPaths),
+    }
+  }
 
   return (
     <>
@@ -417,7 +447,7 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
       {showInlineNew && (
         <NewNodeRow
           depth={depth + 1}
-          kind={pendingNewNode!.kind}
+          kind={newNodeKind!}
           onCommit={(name) => void commitNewNode(name)}
           onCancel={cancelNewNode}
         />
@@ -429,19 +459,17 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
         <FileContextMenu
           x={menu.x}
           y={menu.y}
-          items={buildMenu({
-            isDir: node.kind === 'dir',
-            hasClipboard: !!clipboard,
-            selectionCount: selectedPaths.length,
-            selectionAllFiles: areAllSelectedFiles(selectedPaths),
-          })}
+          // 开菜单时现读,而不是常年订阅 selectedPaths / clipboard。同一时刻只有一行
+          // 有菜单,为它让**每一行**都跟着选中集重渲染不划算;而且 areAllSelectedFiles
+          // 是对整棵树做 DFS,常驻订阅意味着每次点击都跑一遍。
+          items={buildMenu(menuInputs(node.kind === 'dir'))}
           onSelect={(a) => void handleAction(a)}
           onClose={() => setMenu(null)}
         />
       )}
     </>
   )
-}
+})
 
 export function NewNodeRow({
   depth,

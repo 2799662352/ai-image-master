@@ -40,6 +40,40 @@ import {
   validateReleaseReady,
 } from './release-contract.mjs'
 
+/**
+ * 单个 HTTP 请求的上限。
+ *
+ * 2026-08-09 的 4.5.3 发版:「COS 只读预检」在 `cos-release.mjs status` 上挂了
+ * 18 分钟,直到 job 超时被取消 —— 后面所有阶段跳过,而日志里只有一句
+ * "The operation was canceled",没有任何可诊断的东西。
+ *
+ * 病根是**有重试但没有超时**:这些地方都写了 4 次重试 + 1 秒退避,可那只挡得住
+ * 「快速失败」。socket 级挂起既不返回也不抛错,`await fetch` 就一直等下去,重试
+ * 一次都不会触发。所以超时不是重试的补充,是重试能生效的前提。
+ *
+ * 30 秒:远小于 job 超时(所以我们会拿到真正的错误信息和重试),又远大于 COS 正常
+ * 响应(所以不会把慢网络误判成故障)。
+ */
+const HTTP_TIMEOUT_MS = Number(process.env.COS_HTTP_TIMEOUT_MS ?? 30_000)
+
+/**
+ * 带超时的 fetch。签名与 fetch 一致,可直接替换。
+ *
+ * 超时后抛出**点名了 URL 和秒数**的错误 —— 上层那些重试循环只把 `lastError` 原样
+ * 带出来,错误信息不具体的话,失败时依旧无从下手。
+ */
+export async function fetchWithTimeout(input, init = {}) {
+  try {
+    return await fetch(input, { ...init, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) })
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+      const url = typeof input === 'string' ? input : input?.url ?? String(input)
+      throw new Error(`Request timed out after ${HTTP_TIMEOUT_MS}ms: ${url}`)
+    }
+    throw error
+  }
+}
+
 const WRITE_COMMANDS = new Set([
   'upload-assets',
   'mark-ready',
@@ -138,7 +172,7 @@ function createClient(prefix) {
 }
 
 async function githubAssetSha256(repository, assetId) {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${repository}/releases/assets/${assetId}`,
     {
       headers: {
@@ -165,7 +199,7 @@ async function githubTagCommit(repository, tag) {
       ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
       : {}),
   }
-  const referenceResponse = await fetch(
+  const referenceResponse = await fetchWithTimeout(
     `https://api.github.com/repos/${repository}/git/ref/tags/${encodeURIComponent(tag)}`,
     { headers },
   )
@@ -174,7 +208,7 @@ async function githubTagCommit(repository, tag) {
   if (reference.object?.type === 'commit') return reference.object.sha
   if (reference.object?.type !== 'tag' || !reference.object.sha) return null
 
-  const tagResponse = await fetch(
+  const tagResponse = await fetchWithTimeout(
     `https://api.github.com/repos/${repository}/git/tags/${reference.object.sha}`,
     { headers },
   )
@@ -213,7 +247,7 @@ async function verifyOptionalLegacyGithubRelease(manifest) {
   if (!githubToken) {
     throw new Error('GITHUB_TOKEN is required for legacy GitHub Release lookup')
   }
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`,
     {
       headers: {
@@ -288,7 +322,7 @@ async function verifyEligibility(eligibility, prefix, manifest, immutable) {
   ) {
     return false
   }
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.github.com/repos/${eligibility.repository}/releases/tags/${encodeURIComponent(eligibility.tag)}`,
     {
       headers: {
@@ -358,7 +392,7 @@ export async function verifyPublicRelease(
   )
   const channelUrl = new URL(channelManifest, publicBase)
   channelUrl.searchParams.set('ci', cacheBuster)
-  const channelResponse = await fetch(channelUrl)
+  const channelResponse = await fetchWithTimeout(channelUrl)
   if (!channelResponse.ok) {
     throw new Error(
       `Public channel manifest returned ${channelResponse.status}`,
@@ -379,7 +413,7 @@ export async function verifyPublicRelease(
     path.basename(updaterManifest.path),
     `${path.basename(updaterManifest.path)}.blockmap`,
   ]) {
-    const response = await fetch(new URL(assetName, publicBase), {
+    const response = await fetchWithTimeout(new URL(assetName, publicBase), {
       method: 'HEAD',
     })
     if (!response.ok) {
@@ -418,7 +452,7 @@ async function verifyPublicRestoration(
           'recovery',
           `${process.env.GITHUB_RUN_ID ?? 'local'}-${randomUUID()}`,
         )
-        const response = await fetch(channelUrl, { cache: 'no-store' })
+        const response = await fetchWithTimeout(channelUrl, { cache: 'no-store' })
         if (response.status !== 404) {
           throw new Error(
             `Restored absent channel returned ${response.status}`,
