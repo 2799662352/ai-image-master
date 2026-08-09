@@ -615,7 +615,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_update_task', {
     description:
       'Update ONE existing card on the 「生成视频」 workbench page: prompt, spec (model/resolution/ratio/' +
-      'duration/generateAudio) and/or reference materials. Cards that are currently rendering cannot be ' +
+      'duration/generateAudio) and/or reference materials. ' +
+      'To change only a few words of the prompt, use video_workbench_patch_prompt instead — it takes ' +
+      'just the old and new fragment rather than the entire prompt. ' +
+      'Cards that are currently rendering cannot be ' +
       'edited. Get cardIds from video_workbench_add_tasks or video_workbench_status. Returns the updated ' +
       'card snapshot plus a compact `workbench` overview (boards + global status counts). ' +
       'If you are attaching or replacing reference images here, view_image one of them before rewriting ' +
@@ -645,6 +648,79 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_update_task', error)
+    }
+  })
+
+  server.registerTool('video_workbench_patch_prompt', {
+    description:
+      'Change PART of one card\'s prompt by exact string replacement — the tool for "把第 3 张的 '
+      + 'dolly in 改成 rack focus".\n'
+      + 'USE THIS INSTEAD OF update_task when you are editing a few words. update_task takes the whole '
+      + 'prompt, so re-emitting 200 characters to change 8 of them costs you the decode time for all 200 '
+      + '— and long re-emissions are exactly where models start eliding content.\n'
+      + 'oldText must appear EXACTLY ONCE in that card\'s prompt. It is matched literally: no regex, no '
+      + 'fuzzy matching. If it matches 0 or 2+ times the call is REJECTED with zero writes and the full '
+      + 'current prompt in the error, so you can lengthen oldText and retry without calling export.\n'
+      + 'newText may be empty to delete the fragment. For a genuine full rewrite, use '
+      + 'video_workbench_update_task instead — stuffing the entire prompt into oldText is strictly worse.\n'
+      + `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
+    inputSchema: z.object({
+      cardId: z.string().min(1).describe('Card to edit. Get ids from video_workbench_status.'),
+      oldText: z.string().min(1).describe(
+        'Exact text to replace. Must occur exactly once in the card prompt. Matched literally.',
+      ),
+      newText: z.string().describe('Replacement text. Empty string deletes the fragment.'),
+    }),
+    // 只改提示词文本，不碰素材/规格，所以不是破坏性的 —— 别让客户端为它弹确认。
+    // 重复调用没有额外效果(第二次找不到 oldText 会被拒，状态不变)。
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: z.looseObject({
+      prompt: z.string().describe('The full prompt after the edit — check it landed as you intended.'),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_patch_prompt',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      )
+      return okResult([], result)
+    } catch (error) {
+      return errorResult('video_workbench_patch_prompt', error)
+    }
+  })
+
+  server.registerTool('video_workbench_move_task', {
+    description:
+      'Move ONE card to a new position on its page. Use this instead of video_workbench_apply for '
+      + 'reordering — apply is declarative over the whole board, so reordering through it means '
+      + 'round-tripping every card.\n'
+      + 'toIndex is 0-based WITHIN the page that card belongs to, not across the whole workbench.\n'
+      + 'DO NOT issue several move calls in parallel. Unlike prompt/spec edits, moves are order-dependent: '
+      + 'two concurrent moves race and the final order is undefined. Move one card, read the returned '
+      + 'order, then decide the next move.',
+    inputSchema: z.object({
+      cardId: z.string().min(1).describe('Card to move. Get ids from video_workbench_status.'),
+      toIndex: z.number().int().min(0).describe('0-based target position within that card\'s page.'),
+    }),
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: z.looseObject({
+      order: z.array(z.string()).describe(
+        'Card ids of that page in their new order — verify before the next move.',
+      ),
+      workbench: workbenchSummarySchema,
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_move_task',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { order: string[] }
+      return okResult([`✓ video_workbench_move_task → ${result.order.length} card(s) reordered.`], result)
+    } catch (error) {
+      return errorResult('video_workbench_move_task', error)
     }
   })
 
@@ -845,7 +921,18 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_apply', {
     description:
-      'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
+      'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
+      + 'rejected with zero writes, and so is omitting a prompt you were carrying (that reads as '
+      + 'clearing it).\n'
+      + 'Pick the per-card tool instead:\n'
+      + '  · a few words of a prompt → video_workbench_patch_prompt\n'
+      + '  · one card, several fields → video_workbench_update_task\n'
+      + '  · same spec across many cards → video_workbench_set_spec\n'
+      + '  · reordering → video_workbench_move_task\n'
+      + '  · adding / removing → video_workbench_add_tasks / video_workbench_remove_tasks\n'
+      + 'What apply is still for: rebuilding a board wholesale in one atomic shot — all cards change or '
+      + 'none do, which no sequence of per-card calls can guarantee.\n'
+      + 'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
       + 'via video_workbench_export.\n'
       + 'CHECK THESE FIRST — reaching for this tool when one of them fits is the single most expensive '
       + 'mistake you can make here:\n'

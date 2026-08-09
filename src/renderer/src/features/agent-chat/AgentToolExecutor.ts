@@ -317,6 +317,8 @@ export class AgentToolExecutor {
         return this.generateAudio(params as GenerateAudioToolParams, threadId)
       case 'video_workbench_add_tasks':
       case 'video_workbench_update_task':
+      case 'video_workbench_patch_prompt':
+      case 'video_workbench_move_task':
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
@@ -441,6 +443,60 @@ export class AgentToolExecutor {
         if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
         if (!ok) throw new Error(`video_workbench_update_task: card is rendering and cannot be edited: ${cardId}`)
         return { ok: true, card: snapshotCard(card), workbench: workbenchSummary() }
+      }
+      case 'video_workbench_patch_prompt': {
+        // 改几个词不必把整条提示词再发一遍 —— 那既慢又容易在重打的过程中丢细节。
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        const oldText = typeof params.oldText === 'string' ? params.oldText : ''
+        const newText = typeof params.newText === 'string' ? params.newText : ''
+        if (!cardId) throw new Error('video_workbench_patch_prompt: cardId is required')
+        if (!oldText) throw new Error('video_workbench_patch_prompt: oldText 不能为空')
+
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!card) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 不存在`)
+
+        const patched = patchPromptText(card.prompt ?? '', oldText, newText)
+        if (!patched.ok) {
+          // 带上全文:模型据此把 oldText 写长一点重来，不必再发一次 export。
+          throw new Error(
+            `video_workbench_patch_prompt: oldText 在该卡提示词中命中 ${patched.count} 处，`
+            + '需要恰好 1 处。把 oldText 写长一点以唯一定位；整段重写请用 '
+            + `video_workbench_update_task。当前提示词全文:\n${card.prompt ?? ''}`,
+          )
+        }
+
+        const ok = store.updateCard(cardId, { prompt: patched.prompt })
+        if (!ok) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 生成中，未改动`)
+        return { prompt: patched.prompt, workbench: workbenchSummary() }
+      }
+      case 'video_workbench_move_task': {
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        const toIndex = typeof params.toIndex === 'number' ? params.toIndex : Number.NaN
+        if (!cardId) throw new Error('video_workbench_move_task: cardId is required')
+
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!card) throw new Error(`video_workbench_move_task: 卡片 ${cardId} 不存在`)
+
+        // 下标是**页内**的(store.moveCard 只重排该卡所属页),所以越界要按该页张数判，
+        // 不是全局张数。越界报错而不是夹紧:夹紧会让「移到第 5 位」静默变成「移到末位」，
+        // 模型拿到成功回执却得到了没要的顺序，比失败更难查。
+        const boardCards = useVideoWorkbenchStore
+          .getState()
+          .cards.filter((c) => c.boardId === card.boardId)
+        if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= boardCards.length) {
+          throw new Error(
+            `video_workbench_move_task: toIndex ${params.toIndex} 越界，该页共 ${boardCards.length} 张卡（0..${boardCards.length - 1}）`,
+          )
+        }
+
+        store.moveCard(cardId, toIndex)
+        return {
+          order: useVideoWorkbenchStore
+            .getState()
+            .cards.filter((c) => c.boardId === card.boardId)
+            .map((c) => c.id),
+          workbench: workbenchSummary(),
+        }
       }
       case 'video_workbench_start': {
         const ids = Array.isArray(params.cardIds)
@@ -1487,6 +1543,24 @@ export class AgentToolExecutor {
     if (!agent) throw new Error('Electron agent API is unavailable')
     return agent
   }
+}
+
+/**
+ * 提示词的精确字符串替换。照 Claude Code 的 Edit 工具:精确匹配、不做正则、
+ * 要求全文唯一。歧义时拒绝而不是猜 —— 改错一个词不会像代码那样编译失败，
+ * 会安静地生成一条错的视频，而那是要花钱的。
+ */
+export function patchPromptText(
+  prompt: string,
+  oldText: string,
+  newText: string,
+): { ok: true; prompt: string } | { ok: false; count: number } {
+  if (!oldText) return { ok: false, count: 0 }
+  // split 计数而不是正则:提示词里括号/点/星号是常态，当成正则会误伤。
+  const parts = prompt.split(oldText)
+  const count = parts.length - 1
+  if (count !== 1) return { ok: false, count }
+  return { ok: true, prompt: parts[0] + newText + parts[1] }
 }
 
 export function mountAgentToolExecutor(): () => void {

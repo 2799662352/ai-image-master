@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentToolExecutor } from '../AgentToolExecutor'
+import { AgentToolExecutor, patchPromptText } from '../AgentToolExecutor'
 import { useTabStore } from '../../../stores/useTabStore'
 import { resetAssetPreviewCacheForTest } from '../../video-workbench/assetPreview'
 import {
@@ -606,5 +606,126 @@ describe('export 默认只导当前页', () => {
 
   it('显式要一页却不存在才报错;隐式取当前页解析不出时退回整份', async () => {
     await expect(callTool('video_workbench_export', { boardId: 'ghost' })).rejects.toThrow('board not found')
+  })
+})
+
+describe('patchPromptText', () => {
+  it('唯一命中时替换并回全文', () => {
+    const r = patchPromptText('镜头 dolly in 缓缓推进', 'dolly in', 'rack focus')
+    expect(r).toEqual({ ok: true, prompt: '镜头 rack focus 缓缓推进' })
+  })
+
+  it('newText 为空串 = 删除该片段', () => {
+    expect(patchPromptText('a BAD b', ' BAD', '')).toEqual({ ok: true, prompt: 'a b' })
+  })
+
+  // 歧义时宁可拒绝也不猜:改错一个词不会报错，会安静生成一条错的视频，而那要花钱。
+  it('多处命中时拒绝并回命中次数', () => {
+    expect(patchPromptText('推进，然后推进', '推进', '拉远')).toEqual({ ok: false, count: 2 })
+  })
+
+  it('未命中时拒绝', () => {
+    expect(patchPromptText('镜头缓缓推进', 'zoom in', 'x')).toEqual({ ok: false, count: 0 })
+  })
+
+  // 空串会被 split 按字符切开，命中数等于长度+1，必须在入口挡掉。
+  it('oldText 为空串时拒绝', () => {
+    expect(patchPromptText('镜头缓缓推进', '', 'x')).toEqual({ ok: false, count: 0 })
+  })
+
+  // 不做正则:用户提示词里出现正则元字符是常态（括号、点、星号）。
+  it('把 oldText 当字面量，不当正则', () => {
+    expect(patchPromptText('曝光 (f/2.8) 浅景深', '(f/2.8)', '(f/8)'))
+      .toEqual({ ok: true, prompt: '曝光 (f/8) 浅景深' })
+  })
+})
+
+describe('video_workbench_patch_prompt', () => {
+  it('改动落地并回改后全文', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头 dolly in 推进' }])
+    const r = await callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'dolly in', newText: 'rack focus',
+    })
+
+    expect(r.prompt).toBe('镜头 rack focus 推进')
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('镜头 rack focus 推进')
+  })
+
+  // 错误信息必须带全文:模型据此自纠，省掉一次 export 往返。
+  it('多处命中时零写入，并把全文带回去', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '推进，然后推进' }])
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '推进', newText: '拉远',
+    })).rejects.toThrow(/2 处[\s\S]*推进，然后推进/)
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('推进，然后推进')
+  })
+
+  it('未命中时零写入', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头推进' }])
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'zoom', newText: 'x',
+    })).rejects.toThrow(/镜头推进/)
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('镜头推进')
+  })
+
+  it('卡不存在时报错', async () => {
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: 'nope', oldText: 'a', newText: 'b',
+    })).rejects.toThrow(/nope/)
+  })
+
+  // updateCard 本身就跳过 preparing/queued/running，这里确认失败被如实上报而不是静默成功。
+  it('生成中的卡拒绝改动', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头推进' }])
+    // 先把 hydrate 走完:首次 ensureHydrated 会从 DB 重载，把这里手设的 running 冲回 draft。
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? { ...c, status: 'running' as const } : c)),
+    }))
+    await expect(callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '推进', newText: '拉远',
+    })).rejects.toThrow(/生成中/)
+  })
+})
+
+describe('video_workbench_move_task', () => {
+  it('把卡片移到指定位置并回新顺序', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' },
+    ])
+    const r = await callTool('video_workbench_move_task', { cardId: ids[2], toIndex: 0 })
+
+    expect(r.order).toEqual([ids[2], ids[0], ids[1]])
+  })
+
+  it('卡不存在时报错', async () => {
+    await expect(callTool('video_workbench_move_task', { cardId: 'nope', toIndex: 0 }))
+      .rejects.toThrow(/nope/)
+  })
+
+  it('toIndex 越界时报错而不是静默夹紧', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }])
+    await expect(callTool('video_workbench_move_task', { cardId: ids[0], toIndex: 5 }))
+      .rejects.toThrow(/toIndex/)
+  })
+
+  // store.moveCard 的 toIndex 是**页内**下标，不是全局下标。用全局张数做越界校验，
+  // 在多页时会把合法的页内位置判成越界（或反过来放过越界值）。
+  it('越界与顺序都按卡片所在页判定', async () => {
+    // 先把 hydrate 走完:首次 ensureHydrated 会从 DB 重载，冲掉这里手工建的第二页。
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const [a, b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    useVideoWorkbenchStore.getState().addBoard() // addBoard 会切过去，下面这张落在第二页
+    const [c] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'c' }])
+
+    // 第二页只有 1 张，toIndex:1 越界 —— 尽管全局有 3 张。
+    await expect(callTool('video_workbench_move_task', { cardId: c, toIndex: 1 }))
+      .rejects.toThrow(/toIndex/)
+
+    const r = await callTool('video_workbench_move_task', { cardId: b, toIndex: 0 })
+    expect(r.order).toEqual([b, a])
   })
 })
