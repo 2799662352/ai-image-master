@@ -180,6 +180,33 @@ describe('CodexProtocolClient.send stream-idle watchdog', () => {
     expect(only.error).toMatch(/idle|无响应|silent/i)
   })
 
+  it('turnIdleTimeoutMs=0 disables the watchdog — a silent turn is left alone', async () => {
+    // This is the production default. The 10-minute budget was calibrated for
+    // shell commands, but our MCP tools legitimately run silent for far longer
+    // (tool_timeout_sec is 2000s; generate_video polls Seedance for minutes),
+    // so the watchdog was killing healthy turns mid-render. Nothing else covers
+    // the off switch, and re-enabling it by accident is invisible until a user
+    // loses a paid generation.
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 't', version: '0' },
+      turnIdleTimeoutMs: 0,
+    })
+    await client.start()
+
+    const threadId = 'thread-no-watchdog'
+    const collected = collectEvents(client.send(threadId, textInput('hi')))
+
+    // Stay silent well past what any enabled watchdog would tolerate here,
+    // then complete normally. A surviving watchdog would have injected an error.
+    await new Promise((r) => setTimeout(r, 600))
+    server.notify('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } })
+
+    const events = await collected
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+  })
+
   it('resets the watchdog whenever any event arrives', async () => {
     server = await startFakeCodexServer()
     client = new CodexProtocolClient({
