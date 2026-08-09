@@ -29,6 +29,7 @@ import {
   WORKBENCH_MAX_TASKS_PER_CALL,
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
+  WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -126,6 +127,13 @@ const cardSnapshotSchema = z.looseObject({
   cardId: z.string(),
   boardId: z.string().optional().describe('Owning board id; board name lives in the top-level boards list.'),
   order: z.number(),
+  summary: z.string().optional().describe(
+    'The one-line note for this card, present only while it still matches the current prompt.',
+  ),
+  summaryStale: z.boolean().optional().describe(
+    'A summary exists but the prompt changed since it was written, so it is withheld. Rewrite it with '
+    + 'video_workbench_set_card_summary if you want the index back.',
+  ),
   prompt: z.string().describe('Truncated to 120 chars.'),
   model: z.string(),
   resolution: z.string(),
@@ -175,6 +183,15 @@ const updateTaskOutputSchema = z.looseObject({
   ok: z.boolean(),
   card: cardSnapshotSchema,
   workbench: workbenchSummarySchema,
+})
+
+/**
+ * 贴注解类工具的回包:只回那张卡。不带 workbench 摘要 —— 写一行摘要不改卡数、
+ * 不改状态计数,那份摘要与调用前逐字节相同,回带只是把同一坨复制进上下文。
+ */
+const cardOnlyOutputSchema = z.looseObject({
+  ok: z.boolean(),
+  card: cardSnapshotSchema,
 })
 
 const startOutputSchema = z.looseObject({
@@ -674,9 +691,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     // 只改提示词文本，不碰素材/规格，所以不是破坏性的 —— 别让客户端为它弹确认。
     // 重复调用没有额外效果(第二次找不到 oldText 会被拒，状态不变)。
     annotations: WRITE_IDEMPOTENT,
+    // 不回 workbench 摘要:改几个字不动卡数/状态/页,它与调用前逐字节相同,而这个
+    // 工具是设计来一回合并行调好几次的 —— 回带就是把同一份摘要复制 N 份进上下文。
     outputSchema: z.looseObject({
       prompt: z.string().describe('The full prompt after the edit — check it landed as you intended.'),
-      workbench: workbenchSummarySchema,
     }),
   }, async (params, ctx?: unknown) => {
     try {
@@ -688,6 +706,42 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_patch_prompt', error)
+    }
+  })
+
+  server.registerTool('video_workbench_set_card_summary', {
+    description:
+      'Leave a one-line note on a CARD saying which shot it is ("主角跳车 · 夜外 · 追兵逼近"). '
+      + `At most ${WORKBENCH_CARD_SUMMARY_MAX} characters — it is an index entry, not a synopsis, and `
+      + 'a 20-card page pays this cost 20 times.\n'
+      + 'Why it earns its keep: after sd2-pe engineering every prompt opens with the same structure '
+      + '(framing, lens, light), so the truncated prompt head that video_workbench_status falls back to '
+      + 'looks nearly identical across cards on a page. A summary is what lets you pick the right card '
+      + 'WITHOUT pulling any full prompts.\n'
+      + 'It is bound to the prompt it was written for. Edit the prompt and the summary stops being '
+      + 'shown — status reports `summaryStale: true` instead, and you can rewrite it. A stale summary '
+      + 'is never served as if it were current. Pass an empty string to clear.\n'
+      + 'This is a note, not a spec change: it does not bump the card rev, so it cannot invalidate an '
+      + 'IR you are holding, and it never reaches the render.',
+    inputSchema: z.object({
+      cardId: z.string().min(1).describe('Card to annotate. Get ids from video_workbench_status.'),
+      summary: z.string().describe(
+        `One line, ≤${WORKBENCH_CARD_SUMMARY_MAX} chars, telegraphic. Empty string clears it.`,
+      ),
+    }),
+    // 只贴注解:不碰规格、不碰素材、不进提交参数,所以不是破坏性的。
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: cardOnlyOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_card_summary',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      )
+      return okResult([], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_card_summary', error)
     }
   })
 
@@ -705,11 +759,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       toIndex: z.number().int().min(0).describe('0-based target position within that card\'s page.'),
     }),
     annotations: WRITE_IDEMPOTENT,
+    // 同 patch_prompt:页内挪位不改卡数/状态,workbench 摘要恒定不变,`order` 才是增量。
     outputSchema: z.looseObject({
       order: z.array(z.string()).describe(
         'Card ids of that page in their new order — verify before the next move.',
       ),
-      workbench: workbenchSummarySchema,
     }),
   }, async (params, ctx?: unknown) => {
     try {
@@ -721,6 +775,39 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([`✓ video_workbench_move_task → ${result.order.length} card(s) reordered.`], result)
     } catch (error) {
       return errorResult('video_workbench_move_task', error)
+    }
+  })
+
+  server.registerTool('video_workbench_reorder', {
+    description:
+      'Reorder a whole page in ONE call by giving its cards in the order you want. Prefer this over '
+      + 'repeated video_workbench_move_task: moves are order-dependent so they cannot run in parallel, '
+      + 'and N cards means N sequential round trips.\n'
+      + 'cardIds must be the COMPLETE set of that page\'s cards — passing only the ones you want to '
+      + 'move is REJECTED with zero writes, because what happens to the cards you left out would be '
+      + 'ambiguous. The rejection includes the page\'s current full order, so you can fill it in and '
+      + 'retry without calling export.\n'
+      + 'This tool does not touch prompts, specs or materials — only position.',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).min(1).describe(
+        'The page\'s cards, in the desired order. Must be the complete set — get ids from '
+        + 'video_workbench_status.',
+      ),
+    }),
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: z.looseObject({
+      order: z.array(z.string()).describe('Card ids of that page in their new order.'),
+    }),
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_reorder',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { order: string[] }
+      return okResult([`✓ video_workbench_reorder → page reordered (${result.order.length} cards).`], result)
+    } catch (error) {
+      return errorResult('video_workbench_reorder', error)
     }
   })
 
@@ -870,21 +957,25 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'to get the next batch. Usually you do not need this: naming cardIds is more direct.',
       ),
       cardIds: z.array(z.string()).optional().describe(
-        'Full content for THESE cards only; every other card comes back as a position-only `{id, rev}`. '
-        + 'This is how you read long prompts a few at a time — status truncates at ~120 chars, and a '
-        + 'whole-board export of a 17-card board is ~20k characters that you have to read, hold and '
-        + 'often re-emit. Pick the ids from `pageIndex`, pull 3-5 of them, edit, apply, repeat.\n'
+        'Restore FULL content for THESE cards on top of the default skeleton; every other card stays a '
+        + 'position-only `{id, rev}`. This is how you read long prompts a few at a time — status '
+        + 'truncates at ~120 chars. Pick the ids from `pageIndex`, pull 3-5 of them, edit, apply, '
+        + 'repeat.\n'
         + 'The result is still directly applicable: every card is listed, so order is preserved, and '
-        + 'only the ones you named count against apply\'s content-card limit. Ignored when skeleton:true.',
+        + 'only the ones you named count against apply\'s content-card limit. Ignored when full:true.',
       ),
-      skeleton: z.boolean().optional().describe(
-        'Return ids and ORDER only — every card comes back as a POSITION-ONLY `{id, rev}` with no '
-        + 'prompt and no materials. This is what you want whenever you are reordering, or editing a few '
-        + 'cards out of many: take the skeleton, fill content into just the cards you are changing, '
-        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny '
-        + 'no matter how long the prompts are. A full export of a 17-card board is ~20k characters and '
-        + 'has to be read, rewritten and emitted by the model — the skeleton of the same board is a few '
-        + 'hundred. Only ask for a full export when you actually need to READ the existing prompts.',
+      full: z.boolean().optional().describe(
+        'Return every prompt and every material path. OFF BY DEFAULT — the default response is a '
+        + 'SKELETON: every card as a position-only `{id, rev}`, no prompt, no materials.\n'
+        + 'You rarely need this. Reordering and editing a few cards out of many do not require reading '
+        + "anyone else's prompt: take the skeleton, fill content into just the cards you are changing, "
+        + 'apply it back. Order is preserved because every card is listed, and the payload stays tiny no '
+        + 'matter how long the prompts are. To read a few specific prompts, name them in cardIds instead '
+        + 'of turning this on.\n'
+        + 'A full export of a 17-card board is ~20k characters that you must read, hold and re-emit, and '
+        + 'it is the call most likely to hit the silent 10k truncation — which is dangerous here, '
+        + 'because apply is declarative: writing a truncated IR back resets the missing fields to '
+        + 'defaults. Turn this on only when you genuinely need to READ the existing prompts wholesale.',
       ),
     }),
     annotations: READ_ONLY,
@@ -921,17 +1012,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_apply', {
     description:
+      // 工具间的选择表在 server instructions 里(MCP 官方把「描述里重复 instructions
+      // 已有的内容」列为反模式)。这里只留 apply 自己的硬边界。
       'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
       + 'rejected with zero writes, and so is omitting a prompt you were carrying (that reads as '
-      + 'clearing it).\n'
-      + 'Pick the per-card tool instead:\n'
-      + '  · a few words of a prompt → video_workbench_patch_prompt\n'
-      + '  · one card, several fields → video_workbench_update_task\n'
-      + '  · same spec across many cards → video_workbench_set_spec\n'
-      + '  · reordering → video_workbench_move_task\n'
-      + '  · adding / removing → video_workbench_add_tasks / video_workbench_remove_tasks\n'
-      + 'What apply is still for: rebuilding a board wholesale in one atomic shot — all cards change or '
-      + 'none do, which no sequence of per-card calls can guarantee.\n'
+      + 'clearing it). It exists for rebuilding a board wholesale in one atomic shot — all cards '
+      + 'change or none do, which no sequence of per-card calls can guarantee.\n'
       + 'RESTRUCTURE the board: add / delete / reorder cards and pages in one shot, from an IR you got '
       + 'via video_workbench_export.\n'
       + 'CHECK THESE FIRST — reaching for this tool when one of them fits is the single most expensive '
@@ -1050,7 +1136,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         return okResult([
           result.conflict
             ? `⚠️ video_workbench_apply — REJECTED, nothing was written: cards were added, deleted or reordered since your export (structureRevision ${result.conflict.expected} → ${result.conflict.actual}), so the array positions in your IR no longer line up. Call video_workbench_export again, redo your edits on the fresh IR, then apply.`
-            : '⚠️ video_workbench_apply — REJECTED, nothing was written (see skipped reasons).',
+            : '⚠️ video_workbench_apply — REJECTED, nothing was written.',
+          // 「怎么改」要摆在横幅里，不能只丢一句「see skipped reasons」让模型自己去
+          // JSON 里翻 —— 拒绝的调用只有带上可执行的下一步才是可自纠的。
+          ...(result.conflict ? [] : result.skipped.slice(0, 3).map((s) => `   · ${s.reason}`)),
         ], result)
       }
       return okResult([

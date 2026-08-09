@@ -8,6 +8,7 @@ import {
 } from '../../video-workbench/store'
 import { resetWorkbenchDbForTest } from '../../video-workbench/WorkbenchDb'
 import {
+  WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
@@ -380,13 +381,13 @@ describe('AgentToolExecutor.video_workbench_*', () => {
    * 读侧要和写侧对称。写侧已限内容卡张数，读侧若还是整板全量，两万字符只是从
    * 「写」挪到了「读」。而「重排」和「只改其中几张」根本不需要看别人的提示词。
    */
-  it('export skeleton:只回 id + rev，顺序完整，不带提示词与素材', async () => {
+  it('export 默认出骨架:只回 id + rev，顺序完整，不带提示词与素材', async () => {
     await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '很长的提示词'.repeat(50) }, { prompt: '第二张' }, { prompt: '第三张' }],
       navigate: false,
     })
-    const full = await callTool('video_workbench_export', {})
-    const skel = await callTool('video_workbench_export', { skeleton: true })
+    const full = await callTool('video_workbench_export', { full: true })
+    const skel = await callTool('video_workbench_export', {})
 
     // 每张卡都在、顺序一致 —— 这是它能用来保序的前提。
     expect(skel.boards[0].cards.map((c: { id: string }) => c.id))
@@ -399,8 +400,8 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     const skelBefore = JSON.stringify(skel).length
     const id = full.boards[0].cards[0].id
     useVideoWorkbenchStore.getState().updateCard(id, { prompt: '超长'.repeat(2000) })
-    const fullAfter = await callTool('video_workbench_export', {})
-    const skelAfter = await callTool('video_workbench_export', { skeleton: true })
+    const fullAfter = await callTool('video_workbench_export', { full: true })
+    const skelAfter = await callTool('video_workbench_export', {})
     expect(JSON.stringify(fullAfter).length).toBeGreaterThan(JSON.stringify(full).length + 3000)
     expect(JSON.stringify(skelAfter).length).toBe(skelBefore)
     // 令牌照常带回，否则回写会撞版本冲突。
@@ -416,7 +417,7 @@ describe('AgentToolExecutor.video_workbench_*', () => {
       tasks: [{ prompt: '第一张的完整提示词'.repeat(20) }, { prompt: '第二张' }, { prompt: '第三张' }],
       navigate: false,
     })
-    const all = await callTool('video_workbench_export', {})
+    const all = await callTool('video_workbench_export', { full: true })
     const target = all.boards[0].cards[1].id
 
     const partial = await callTool('video_workbench_export', { cardIds: [target] })
@@ -431,15 +432,38 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(JSON.stringify(partial).length).toBeLessThan(JSON.stringify(all).length / 2)
   })
 
-  it('export skeleton:跨页(allBoards)同样剥干净', async () => {
+  it('export 骨架:跨页(allBoards)同样剥干净', async () => {
     await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A' }], navigate: false })
     useVideoWorkbenchStore.getState().addBoard('第二页')
     await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B' }], navigate: false })
-    const skel = await callTool('video_workbench_export', { allBoards: true, skeleton: true })
+    const skel = await callTool('video_workbench_export', { allBoards: true })
     expect(skel.boards).toHaveLength(2)
     for (const b of skel.boards) {
       for (const c of b.cards) expect(c).not.toHaveProperty('prompt')
     }
+  })
+
+  /**
+   * 默认值反过来的理由:apply 降级成纯结构工具之后，「带全文的整板 IR」只剩
+   * 「整板原子重建」一个消费者，却仍是最容易撞 codex 那 10k 静默截断的调用 ——
+   * 而截断在这里是数据丢失,不是慢:apply 是声明式的，被截掉的字段回写后会变默认值。
+   *
+   * 开关取肯定式的 `full` 而不是 `skeleton: false`:双重否定是模型最容易写反的形状。
+   */
+  it('要全文必须显式 full:true，没有「反着传」的写法', async () => {
+    await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '很长的提示词'.repeat(50) }],
+      navigate: false,
+    })
+
+    // 旧写法 skeleton:true 现在是多余的 —— 它要的就是默认行为，传了也无害。
+    for (const params of [{}, { skeleton: true }, { skeleton: false }]) {
+      const res = await callTool('video_workbench_export', params)
+      expect(Object.keys(res.boards[0].cards[0]).sort(), JSON.stringify(params)).toEqual(['id', 'rev'])
+    }
+
+    const full = await callTool('video_workbench_export', { full: true })
+    expect(full.boards[0].cards[0].prompt).toContain('很长的提示词')
   })
 
   it('status:boardId 不存在时抛可读错误(agent 可据 boards 自纠)', async () => {
@@ -448,7 +472,9 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     )
   })
 
-  it('写操作统一回带 workbench 全局摘要(boards + statusCounts + 选中态)', async () => {
+  // 改变了「有多少卡、什么状态、在哪一页」的写操作要回带摘要，省掉一次 status 调用。
+  // 例外是 patch_prompt / move_task —— 它们的调用**不可能**改变这份摘要，见各自的用例。
+  it('改变结构或状态的写操作回带 workbench 全局摘要(boards + statusCounts + 选中态)', async () => {
     const added = await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '第一张' }, { prompt: '第二张' }],
       navigate: false,
@@ -689,6 +715,145 @@ describe('video_workbench_patch_prompt', () => {
       cardId: id, oldText: '推进', newText: '拉远',
     })).rejects.toThrow(/生成中/)
   })
+
+  /**
+   * 这是唯一一个「读—改—写」的工作台工具:读出提示词、算出新值、写回去。
+   *
+   * 我们对整个 catimation server 开了 `supports_parallel_tool_calls=true`
+   * (codexLaunch.ts,为了多张图并发出),而 codex 的 PR #17667 明确警告
+   * 「只在该 server 的工具可以安全并发时才开，特别注意共享状态和读写竞争」。
+   *
+   * 它现在安全，靠的是**读和写之间一个 await 都没有** —— zustand 的 set() 是同步的，
+   * 单线程下两次调用不会交错。这个不变量只由代码顺序保证，将来谁在中间插一个
+   * await（比如加个异步校验、异步查素材），就会静默变成丢更新。这条测试就是那道闸。
+   */
+  it('并发改同一张卡的不同片段:两处都落地，不丢更新', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头 dolly in 缓缓推进' }])
+
+    // 故意不 await 第一个 —— 模拟 codex 在同一回合里并行派发两次调用。
+    const a = callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'dolly in', newText: 'rack focus',
+    })
+    const b = callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '缓缓推进', newText: '快速拉远',
+    })
+    await Promise.all([a, b])
+
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.prompt)
+      .toBe('镜头 rack focus 快速拉远')
+  })
+
+  // 改几个字不动卡数、不动状态计数、不动页 —— 这份摘要在调用前后逐字节相同。
+  // 而这个工具是设计来一回合并行调好几次的，回带它就是把同一份 ~200 token 复制 N 份，
+  // 全落在最热的路径上。改后全文已经是完整的增量。
+  it('不回带那份不可能变的 workbench 摘要', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '镜头 dolly in 推进' }])
+    const r = await callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: 'dolly in', newText: 'rack focus',
+    })
+    expect(r.workbench).toBeUndefined()
+    expect(Object.keys(r)).toEqual(['prompt'])
+  })
+})
+
+/**
+ * 卡片摘要:递归披露阶梯上缺的那一级(工作台 → 页摘要 → 卡片摘要 → 全文)。
+ *
+ * 它是**有损**的,而共识把有损摘要排在可逆卸载之后 —— 所以它只是附加索引,
+ * 骨架 + cardIds 的可逆取回仍是主路,没写摘要就退回原来的截断行为。
+ *
+ * 真正的风险是漂移,整层设计都围着它转:过期摘要比截断更危险,因为截断看得出
+ * 残缺,而过期摘要看起来是权威的。
+ */
+describe('video_workbench_set_card_summary', () => {
+  it('写下的摘要出现在卡片快照里', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '中景，主角跳上车顶' }])
+    const r = await callTool('video_workbench_set_card_summary', { cardId: id, summary: '主角跳车 · 夜外' })
+
+    expect(r.card.summary).toBe('主角跳车 · 夜外')
+    expect(r.card.summaryStale).toBeUndefined()
+  })
+
+  it('提示词改过之后不再展示摘要，只留一个 stale 信号', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '中景，主角跳上车顶' }])
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '主角跳车 · 夜外' })
+
+    await callTool('video_workbench_patch_prompt', {
+      cardId: id, oldText: '跳上车顶', newText: '滚落台阶',
+    })
+
+    const res = await callTool('video_workbench_status', {})
+    const card = res.cards.find((c: { cardId: string }) => c.cardId === id)
+    expect(card.summary).toBeUndefined()
+    expect(card.summaryStale).toBe(true)
+  })
+
+  // rev 在素材上传完成这类后台事件里也会涨(store 的 attachUploadedMaterial)。
+  // 摘要若绑 rev，图片一传完就集体假过期 —— 所以绑的是提示词指纹。
+  it('规格变了但提示词没变时，摘要仍然新鲜', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '中景，主角跳上车顶' }])
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '主角跳车 · 夜外' })
+
+    await callTool('video_workbench_update_task', { cardId: id, resolution: '1080p' })
+
+    const res = await callTool('video_workbench_status', {})
+    const card = res.cards.find((c: { cardId: string }) => c.cardId === id)
+    expect(card.summary).toBe('主角跳车 · 夜外')
+    expect(card.summaryStale).toBeUndefined()
+  })
+
+  // 贴注解不该作废 agent 手里那份 IR。
+  it('写摘要不涨 rev，也不涨 structureRevision', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const before = useVideoWorkbenchStore.getState()
+    const revBefore = before.cards.find((c) => c.id === id)!.rev ?? 0
+    const structBefore = before.structureRevision
+
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '一行' })
+
+    const after = useVideoWorkbenchStore.getState()
+    expect(after.cards.find((c) => c.id === id)!.rev ?? 0).toBe(revBefore)
+    expect(after.structureRevision).toBe(structBefore)
+  })
+
+  it('空串清除摘要，连指纹一起清掉（不留半个状态）', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    await callTool('video_workbench_set_card_summary', { cardId: id, summary: '一行' })
+    const r = await callTool('video_workbench_set_card_summary', { cardId: id, summary: '' })
+
+    expect(r.card.summary).toBeUndefined()
+    expect(r.card.summaryStale).toBeUndefined()
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)!.summaryFor).toBeUndefined()
+  })
+
+  it('超长时报错而不是截断', async () => {
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'A' }])
+    await expect(callTool('video_workbench_set_card_summary', {
+      cardId: id, summary: '追'.repeat(WORKBENCH_CARD_SUMMARY_MAX + 1),
+    })).rejects.toThrow(/上限/)
+  })
+
+  it('卡不存在时报错', async () => {
+    await expect(callTool('video_workbench_set_card_summary', { cardId: 'nope', summary: 'x' }))
+      .rejects.toThrow(/nope/)
+  })
+
+  // 目录那一行是「挑卡」用的，而工程化过的提示词开头在同一页里几乎都一样 ——
+  // 有摘要就该用摘要，这才是这层真正省往返的地方。
+  it('页内目录优先用新鲜摘要，没有才退回截提示词开头', async () => {
+    const head = '中景，35mm，侧逆光，夜景霓虹，'
+    const ids = useVideoWorkbenchStore.getState().addCards([
+      { prompt: `${head}主角跳上车顶` },
+      { prompt: `${head}追兵翻过护栏` },
+    ])
+    await callTool('video_workbench_set_card_summary', { cardId: ids[0], summary: '主角跳车' })
+
+    const res = await callTool('video_workbench_status', {})
+    expect(res.pageIndex[0].digest).toContain('主角跳车')
+    // 没写摘要的那张仍是截断的开头。
+    expect(res.pageIndex[0].digest).toContain(head.slice(0, 10))
+  })
 })
 
 describe('video_workbench_move_task', () => {
@@ -727,5 +892,71 @@ describe('video_workbench_move_task', () => {
 
     const r = await callTool('video_workbench_move_task', { cardId: b, toIndex: 0 })
     expect(r.order).toEqual([b, a])
+  })
+
+  // 页内挪位不动卡数、不动状态计数 —— 摘要与调用前逐字节相同。回的 order 才是增量。
+  it('不回带那份不可能变的 workbench 摘要', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    const r = await callTool('video_workbench_move_task', { cardId: ids[1], toIndex: 0 })
+    expect(r.workbench).toBeUndefined()
+    expect(Object.keys(r)).toEqual(['order'])
+  })
+})
+
+/**
+ * 整页重排。补上 move_task 的短板:重排是顺序相关的，不能并发，所以挪 10 张卡
+ * 就是 10 次串行往返。一次给出完整顺序则是一次调用、结果确定。
+ *
+ * 为什么要求**完整**的 id 列表而不接受子集 —— apply 的老坑就是「只列 4 张，
+ * 那 4 张就跳到页首」，静默且难查。要求全集，"没列出的怎么办"这个问题就不存在。
+ */
+describe('video_workbench_reorder', () => {
+  it('按给定顺序整页重排并回新顺序', async () => {
+    const [a, b, c] = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' },
+    ])
+    const r = await callTool('video_workbench_reorder', { cardIds: [c, a, b] })
+
+    expect(r.order).toEqual([c, a, b])
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((x) => x.id)).toEqual([c, a, b])
+  })
+
+  // 错误要能自纠:带上这一页现在的完整顺序，模型照着补齐重发即可，不必再 export。
+  it('给子集时拒绝，并回带该页完整的当前顺序', async () => {
+    const [a, b, c] = useVideoWorkbenchStore.getState().addCards([
+      { prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' },
+    ])
+    await expect(callTool('video_workbench_reorder', { cardIds: [c, a] }))
+      .rejects.toThrow(new RegExp(`${a}[\\s\\S]*${b}[\\s\\S]*${c}`))
+
+    const cards = [...useVideoWorkbenchStore.getState().cards].sort((x, y) => x.order - y.order)
+    expect(cards.map((x) => x.id)).toEqual([a, b, c])
+  })
+
+  it('有重复 id 时拒绝', async () => {
+    const [a, b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    await expect(callTool('video_workbench_reorder', { cardIds: [a, a] }))
+      .rejects.toThrow(/重复/)
+    void b
+  })
+
+  it('混进别页或不存在的 id 时拒绝', async () => {
+    const ids = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    await expect(callTool('video_workbench_reorder', { cardIds: [ids[0], 'ghost'] }))
+      .rejects.toThrow(/ghost/)
+  })
+
+  // 顺序没变就是无操作 —— 白 bump structureRevision 会平白作废 agent 手里的令牌，
+  // 与 store 里「值没变的 updateCard 不涨版本」同一个口径。
+  it('顺序与现状一致时不 bump structureRevision', async () => {
+    const [a, b] = useVideoWorkbenchStore.getState().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+    const before = useVideoWorkbenchStore.getState().structureRevision
+
+    const r = await callTool('video_workbench_reorder', { cardIds: [a, b] })
+
+    expect(r.order).toEqual([a, b])
+    expect(useVideoWorkbenchStore.getState().structureRevision).toBe(before)
   })
 })

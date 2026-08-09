@@ -60,6 +60,7 @@ import {
   specEquals,
   toMaterial,
 } from './cardSpec'
+import { cardSummaryState, promptFingerprint } from './cardSummary'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
 import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
@@ -126,6 +127,13 @@ export interface WorkbenchCardSnapshot {
   /** 所属「页」id(页名从 status 顶层 boards 表查,卡上不重复带,省 token)。 */
   boardId?: string
   order: number
+  /**
+   * agent 写的一行摘要,**只在它仍对应当前提示词时出现**。提示词改过就不给 ——
+   * 一条过期摘要比截断的提示词更危险:截断看得出残缺,过期摘要看起来是权威的。
+   */
+  summary?: string
+  /** 写过摘要但提示词已经变了。给 agent 一个明确的「该刷新了」信号。 */
+  summaryStale?: boolean
   prompt: string
   model: string
   resolution: string
@@ -155,10 +163,13 @@ export interface WorkbenchCardSnapshot {
 }
 
 export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
+  const summaryState = cardSummaryState(card)
   return {
     cardId: card.id,
     ...(card.boardId ? { boardId: card.boardId } : {}),
     order: card.order,
+    ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
+    ...(summaryState === 'stale' ? { summaryStale: true } : {}),
     prompt: card.prompt.length > 120 ? `${card.prompt.slice(0, 120)}…` : card.prompt,
     model: card.model,
     resolution: card.resolution,
@@ -381,9 +392,25 @@ export interface VideoWorkbenchState {
   addCards: (inputs: VideoWorkbenchCardInput[], anchor?: VideoWorkbenchInsertAnchor) => string[]
   /** 更新卡片可编辑字段(生成中的卡片拒绝编辑)。 */
   updateCard: (id: string, patch: VideoWorkbenchCardInput) => boolean
+  /**
+   * 写/清一行卡片摘要(空串=清除)。返回卡片是否存在。
+   *
+   * 连同当前提示词的指纹一起存,提示词一变摘要即判过期。**不涨 `rev`、不涨
+   * `structureRevision`** —— 它是给卡片贴的注解,不是规格改动;涨了就等于给卡
+   * 写条注解顺手作废了 agent 手里那份 IR。生成中的卡也允许写:摘要不进提交参数。
+   */
+  setCardSummary: (id: string, summary: string) => boolean
   removeCard: (id: string) => void
   /** 拖拽排序:把卡片移到目标下标。 */
   moveCard: (id: string, toIndex: number) => void
+  /**
+   * 整页重排:一次给出该页**完整**的 id 顺序。返回是否生效。
+   *
+   * 要求完整而不是接受子集 —— IR apply 的老坑就是「只列 4 张,那 4 张跳到页首」,
+   * 静默且难查。要求全集,「没列出的怎么办」这个问题就不存在。
+   * 顺序与现状一致时不改任何东西也不涨版本(同「值没变的 updateCard 是无操作」)。
+   */
+  reorderCards: (cardIds: string[]) => boolean
   /**
    * 选中卡片。
    * - `'replace'`(缺省):只选这张。
@@ -1409,6 +1436,75 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of get().cards) {
       if (card.boardId === boardId) schedulePersist(card)
     }
+  },
+
+  setCardSummary: (id, summary) => {
+    let updated: VideoWorkbenchCard | null = null
+    set((state) => {
+      const cards = state.cards.map((card) => {
+        if (card.id !== id) return card
+        const trimmed = summary.trim()
+        updated = trimmed
+          ? { ...card, summary: trimmed, summaryFor: promptFingerprint(card.prompt ?? ''), updatedAt: Date.now() }
+          // 清除要把指纹一起去掉,否则残留的 summaryFor 会让后续判定读到半个状态。
+          : { ...card, summary: undefined, summaryFor: undefined, updatedAt: Date.now() }
+        return updated
+      })
+      // 不动 rev / structureRevision:摘要是注解不是规格,见接口上的说明。
+      return updated ? { cards } : {}
+    })
+    if (updated) schedulePersist(updated)
+    return updated !== null
+  },
+
+  reorderCards: (cardIds) => {
+    let ok = false
+    let changedBoardId: string | undefined
+    set((state) => {
+      if (cardIds.length === 0) return {}
+      const byId = new Map(state.cards.map((c) => [c.id, c]))
+      const first = byId.get(cardIds[0])
+      if (!first) return {}
+      const targetBoardId = first.boardId
+
+      // 位置(在全局 cards 数组里的下标)与该页现有顺序,一次遍历取齐。
+      const positions: number[] = []
+      const current: string[] = []
+      state.cards.forEach((c, idx) => {
+        if (c.boardId === targetBoardId) {
+          positions.push(idx)
+          current.push(c.id)
+        }
+      })
+
+      // 必须是这一页的**全集**且无重复。任一不满足就整份不动 —— 校验与可读的
+      // 错误由调用方(工具执行器)负责,这里只保证不写出半个顺序。
+      const wanted = new Set(cardIds)
+      if (wanted.size !== cardIds.length) return {}
+      if (cardIds.length !== current.length) return {}
+      if (!current.every((id) => wanted.has(id))) return {}
+
+      ok = true
+      // 顺序没变 = 无操作。白涨 structureRevision 会平白作废 agent 手里的令牌。
+      if (current.every((id, i) => id === cardIds[i])) return {}
+
+      changedBoardId = targetBoardId
+      const next = [...state.cards]
+      cardIds.forEach((id, i) => {
+        next[positions[i]] = byId.get(id)!
+      })
+      return {
+        cards: reorderBoard(next, targetBoardId),
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
+    })
+    if (changedBoardId) {
+      for (const card of get().cards) {
+        if (card.boardId === changedBoardId) schedulePersist(card)
+      }
+    }
+    return ok
   },
 
   selectCard: (id, mode = 'replace') => {

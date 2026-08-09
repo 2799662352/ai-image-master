@@ -49,7 +49,9 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_set_spec',
       'video_workbench_update_task',
       'video_workbench_patch_prompt',
+      'video_workbench_set_card_summary',
       'video_workbench_move_task',
+      'video_workbench_reorder',
       'video_workbench_start',
       'video_workbench_status',
       'video_workbench_export',
@@ -406,6 +408,27 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ cardIds: ['c1'] }).success).toBe(true)
     expect(schema.safeParse({ cardIds: [] }).success).toBe(false)
     expect(schema.safeParse({}).success).toBe(false)
+  })
+
+  // Anthropic 的 error-as-instruction / MCP SEP-1303:拒绝的调用要把「怎么改」
+  // 摆在模型一定会读的文本里，而不是让它去 JSON 里翻。原先横幅只说
+  // 「see skipped reasons」——那是个指针，不是指令。
+  it('apply 被拒时把 skipped 的理由抬进横幅', async () => {
+    const { tools, server, router } = capture({
+      ok: false,
+      skipped: [{ reason: 'video_workbench_apply 不能改已有卡片的提示词（1 张：c1）。改几个词用 video_workbench_patch_prompt。' }],
+      structureRevision: 7,
+    })
+    registerVideoWorkbenchTools(server, router)
+    const res = await toolByName(tools, 'video_workbench_apply').handler({
+      ir: { irVersion: WORKBENCH_IR_VERSION, structureRevision: 7, boards: [] },
+    })
+    // okResult 会把整份 JSON 附在横幅之后，理由本来就「在文本里」；这里要的是
+    // 它出现在**横幅**里（JSON 之前），模型不必去 JSON 里翻才知道怎么改。
+    const lines = res.content[0].text.split('\n')
+    const banner = lines.slice(0, -1).join('\n')
+    expect(banner).toContain('REJECTED')
+    expect(banner).toContain('patch_prompt')
   })
 
   it('patch_prompt schema:三个字段都是必填的朴素标量', () => {

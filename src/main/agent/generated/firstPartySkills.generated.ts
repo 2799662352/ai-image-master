@@ -1837,14 +1837,29 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | 改提示词里几个词 | \`video_workbench_patch_prompt\`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | \`video_workbench_update_task\` |
 | 一批卡同一个规格(整板 480p、都开联网) | \`video_workbench_set_spec\` |
+| 整页重排 | \`video_workbench_reorder\`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | \`video_workbench_move_task\`(**不要并发调**,重排没有交换律) |
 | 增删卡 | \`video_workbench_add_tasks\` / \`video_workbench_remove_tasks\` |
 
-单卡工具改的是不同卡、彼此可交换,所以**可以并发**;只有 \`move_task\` 例外。
+单卡工具改的是不同卡、彼此可交换,所以**可以并发**;只有重排例外 —— 挪多张卡用
+\`reorder\` 一次做完,别并发发几个 \`move_task\`。
+
+**给卡片留一行摘要**(\`video_workbench_set_card_summary\`,≤40 字,电报体如
+「主角跳车 · 夜外 · 追兵逼近」)。经 sd2-pe 工程化的提示词开头结构固定,同一页里
+截断的开头看起来几乎一样 —— 摘要才是让你**不拉全文就能认出这是哪一镜**的东西。
+它绑在写它时的那份提示词上:提示词一改,摘要即被判过期、不再展示,\`status\` 只回一个
+\`summaryStale: true\` 提示你可以重写。所以你永远不会读到一条「看起来是权威的」旧摘要。
+写摘要不涨卡片 \`rev\`,不会作废你手里的 IR。
 
 \`video_workbench_export\` → 改 JSON → \`video_workbench_apply\` 只剩一个用途:整板一次性
 重建(全改或全不改的原子性,是单卡调用序列给不了的)。数组顺序即卡片顺序,保持
 \`irVersion\` / \`structureRevision\` / 每张卡的 \`rev\` 不变,否则会被拒。
+
+**\`export\` 默认只出骨架** —— 每张卡是 \`{id, rev}\`,没有提示词也没有素材。重排、
+只改其中几张这类活本来就不需要看别人的提示词:拿骨架 → 往要改的那几张填内容 →
+回写,顺序天然正确、体积与提示词长度无关。要读某几张的全文,在 \`cardIds\` 里点名;
+\`full: true\` 是整板全文,只在真要通读时才开 —— 它是最容易撞 10k 静默截断的调用,
+而 apply 是声明式的,回写一份被截断的 IR 会把截掉的字段清成默认值。
 
 **export 默认只导当前页**,回写也安全 —— merge 模式保证没列出的页原样不动。真要
 跨页挪卡或重排页签才传 \`allBoards:true\`。整份导出带着每张卡的完整提示词和每条素材

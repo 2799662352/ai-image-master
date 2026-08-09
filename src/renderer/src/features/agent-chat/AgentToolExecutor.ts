@@ -23,11 +23,13 @@ import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMe
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
+import { cardSummaryState } from '../video-workbench/cardSummary'
 import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import type { VideoWorkbenchCardInput, WorkbenchIR } from '../../../../types/videoWorkbench'
 import {
+  WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -319,6 +321,8 @@ export class AgentToolExecutor {
       case 'video_workbench_update_task':
       case 'video_workbench_patch_prompt':
       case 'video_workbench_move_task':
+      case 'video_workbench_reorder':
+      case 'video_workbench_set_card_summary':
       case 'video_workbench_start':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
@@ -384,7 +388,11 @@ export class AgentToolExecutor {
           cardIds: slice.map((c) => c.id),
           digest: slice
             .map((c) => {
-              const head = (c.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 24) || '(空)'
+              // 有新鲜摘要就用摘要 —— 提示词经 sd2-pe 工程化后结构固定,开头 24 字
+              // 在同一页里几乎都一样,那是这条目录最没用的形态。
+              const head = cardSummaryState(c) === 'fresh'
+                ? c.summary!
+                : (c.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 24) || '(空)'
               // 状态只在「不是草稿」时才写 —— 草稿是绝大多数,标出来纯属噪音。
               return c.status && c.status !== 'draft' ? `${head} [${c.status}]` : head
             })
@@ -452,6 +460,11 @@ export class AgentToolExecutor {
         if (!cardId) throw new Error('video_workbench_patch_prompt: cardId is required')
         if (!oldText) throw new Error('video_workbench_patch_prompt: oldText 不能为空')
 
+        // 不变量:从这里的读到下面的 updateCard 之间**不能有 await**。
+        // 这是唯一一个读—改—写的工作台工具，而我们对整个 server 开了
+        // supports_parallel_tool_calls,codex 会在同一回合并行派发多次调用。
+        // 中间一旦让出事件循环，后一次就会读到旧提示词、把前一次的改动覆盖掉。
+        // AgentToolExecutor.videoWorkbench.test.ts 的「不丢更新」用例钉着这条。
         const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
         if (!card) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 不存在`)
 
@@ -467,7 +480,26 @@ export class AgentToolExecutor {
 
         const ok = store.updateCard(cardId, { prompt: patched.prompt })
         if (!ok) throw new Error(`video_workbench_patch_prompt: 卡片 ${cardId} 生成中，未改动`)
-        return { prompt: patched.prompt, workbench: workbenchSummary() }
+        // 不回带 workbench 摘要:改几个字不动卡数/状态/页，它与调用前逐字节相同。
+        // 这个工具设计来一回合并行调好几次，回带就是把同一份 ~200 token 复制 N 份。
+        return { prompt: patched.prompt }
+      }
+      case 'video_workbench_set_card_summary': {
+        const cardId = typeof params.cardId === 'string' ? params.cardId : ''
+        const summary = typeof params.summary === 'string' ? params.summary : ''
+        if (!cardId) throw new Error('video_workbench_set_card_summary: cardId is required')
+        // 超限报错而不是截断:截断会在半个词上切断,agent 还以为写进去了。
+        if (summary.trim().length > WORKBENCH_CARD_SUMMARY_MAX) {
+          throw new Error(
+            `video_workbench_set_card_summary: 摘要 ${summary.trim().length} 字，上限 `
+            + `${WORKBENCH_CARD_SUMMARY_MAX}。它是索引不是简介 —— 写成「主角跳车 · 夜外 · 追兵逼近」这种电报体。`,
+          )
+        }
+        if (!store.setCardSummary(cardId, summary)) {
+          throw new Error(`video_workbench_set_card_summary: 卡片 ${cardId} 不存在`)
+        }
+        const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)!
+        return { ok: true, card: snapshotCard(card) }
       }
       case 'video_workbench_move_task': {
         const cardId = typeof params.cardId === 'string' ? params.cardId : ''
@@ -490,12 +522,55 @@ export class AgentToolExecutor {
         }
 
         store.moveCard(cardId, toIndex)
+        // 同 patch_prompt:页内挪位不动卡数/状态,摘要恒定不变;order 才是增量。
         return {
           order: useVideoWorkbenchStore
             .getState()
             .cards.filter((c) => c.boardId === card.boardId)
             .map((c) => c.id),
-          workbench: workbenchSummary(),
+        }
+      }
+      case 'video_workbench_reorder': {
+        const cardIds = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : []
+        if (cardIds.length === 0) throw new Error('video_workbench_reorder: cardIds is required')
+
+        const state = useVideoWorkbenchStore.getState()
+        const unknown = cardIds.filter((id) => !state.cards.some((c) => c.id === id))
+        if (unknown.length > 0) {
+          throw new Error(`video_workbench_reorder: 卡片不存在: ${unknown.join(', ')}`)
+        }
+        const dupes = cardIds.filter((id, i) => cardIds.indexOf(id) !== i)
+        if (dupes.length > 0) {
+          throw new Error(`video_workbench_reorder: cardIds 有重复: ${[...new Set(dupes)].join(', ')}`)
+        }
+
+        // 必须是**某一页的全集**。错误里带上该页现在的完整顺序 —— 模型照着补齐重发
+        // 即可,不必再 export 一次。
+        const boardId = state.cards.find((c) => c.id === cardIds[0])!.boardId
+        const current = state.cards.filter((c) => c.boardId === boardId).map((c) => c.id)
+        const wanted = new Set(cardIds)
+        const missing = current.filter((id) => !wanted.has(id))
+        const foreign = cardIds.filter((id) => !current.includes(id))
+        if (missing.length > 0 || foreign.length > 0) {
+          throw new Error(
+            'video_workbench_reorder: cardIds 必须是该页卡片的完整集合(不能只给要挪的那几张，'
+            + '否则「没列出的」怎么排就是歧义)。'
+            + (foreign.length > 0 ? `不属于该页: ${foreign.join(', ')}。` : '')
+            + (missing.length > 0 ? `缺少: ${missing.join(', ')}。` : '')
+            + `该页当前完整顺序:${current.join(', ')}`,
+          )
+        }
+
+        if (!store.reorderCards(cardIds)) {
+          throw new Error('video_workbench_reorder: 重排未生效，看板可能刚被改过，请重读 status 再试')
+        }
+        return {
+          order: useVideoWorkbenchStore
+            .getState()
+            .cards.filter((c) => c.boardId === boardId)
+            .map((c) => c.id),
         }
       }
       case 'video_workbench_start': {
@@ -620,21 +695,26 @@ export class AgentToolExecutor {
       case 'video_workbench_export': {
         const ir = store.exportIR()
         /**
-         * skeleton:把每张卡剥成 `{id, rev}` 的占位条目。
+         * **默认出骨架**:每张卡剥成 `{id, rev}` 的占位条目,要全文得显式 `full: true`。
          *
-         * 补的是读侧的对称性 —— 写侧已经限了内容卡张数,读侧却还是整板全量:
-         * 17 张卡的完整提示词约两万字符,模型要读完、改完、再吐一遍。而「重排」和
-         * 「只改其中几张」这两类活**根本不需要看别人的提示词**,它们只需要 id 和顺序。
+         * 默认值是这么反过来的 —— apply 降级成纯结构工具之后,「带全文的整板 IR」
+         * 的消费者只剩「整板原子重建」一个场景,却仍是最容易撑爆 codex 那 10k 截断
+         * 的调用。而截断在这里特别毒:apply 是声明式的,拿一份被截断的 IR 回写会把
+         * 截掉的字段**清成默认值** —— 那是数据丢失,不是慢。
          *
-         * 拿骨架 → 往要改的那几张里填内容 → 回写。顺序天然正确(每张卡都列了),
-         * 体积与提示词长度无关。只有真要**读**现有提示词时才该拉全量。
+         * 「重排」和「只改其中几张」这两类活根本不需要看别人的提示词,只需要 id 和
+         * 顺序。拿骨架 → 往要改的那几张填内容 → 回写:顺序天然正确(每张卡都列了),
+         * 体积与提示词长度无关。
+         *
+         * 开关是肯定式的 `full` 而不是 `skeleton: false` —— 双重否定是模型最容易
+         * 写反的形状。
          */
-        const skeleton = params.skeleton === true
+        const full = params.full === true
         /**
-         * cardIds:只有点名的卡出全文，其余剥成占位。
+         * cardIds:在默认的骨架之上，只把点名的卡还原成全文。
          *
-         * 补的是「分批读全文」这条路 —— status 截断到 120 字，而整板 export 是
-         * 要么全给要么被体积闸拒，中间没有台阶。点名之后读多少由调用方定，
+         * 这是「分批读全文」那条路 —— status 把提示词截到 120 字，而整板 export
+         * 要么全给要么撞体积闸，中间原本没有台阶。点名之后读多少由调用方定，
          * 而结果仍然**直接可回写**:每张卡都在，顺序不乱，只有点名的那几张计入
          * apply 的内容卡上限。
          */
@@ -646,15 +726,15 @@ export class AgentToolExecutor {
           boards: src.boards.map((b) => ({
             ...b,
             cards: b.cards.map((c) => (
-              // skeleton 一律剥；否则只剥没被点名的。
+              // 只有被点名的卡留全文，其余一律剥成占位。
               // IR 里的 id 是可选的（新建卡还没有 id），点名匹配前先确认它存在。
-              !skeleton && !!c.id && pickIds?.has(c.id)
+              !!c.id && pickIds?.has(c.id)
                 ? c
                 : { id: c.id, ...(typeof c.rev === 'number' ? { rev: c.rev } : {}) }
             )),
           })),
         })
-        const trim = (src: WorkbenchIR): WorkbenchIR => (skeleton || pickIds ? strip(src) : src)
+        const trim = (src: WorkbenchIR): WorkbenchIR => (full ? src : strip(src))
         // 默认只导**当前页**。整份导出带着每张卡的完整提示词和每条素材的完整路径,
         // 一个中等规模的工作台就能超出客户端肯收的体积,而截断后的 IR 回写会把被截
         // 掉的字段清成默认值(apply 是声明式不是 patch)。收窄默认是安全的:merge
