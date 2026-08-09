@@ -7,7 +7,9 @@
         "win32-x64": {
           "codex-x86_64-pc-windows-msvc.exe": "sha256:935a1911ed2556e4ffcec995f4886ac2ac425863ba26fed264df62e30272ad9d",
           "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe": "sha256:a4df86996dfbb218d96d73a80606d89b742dfa4ddd3470614e90dde89e3250a3",
-          "codex-command-runner-x86_64-pc-windows-msvc.exe": "sha256:3a70491d8d588afa459a42816f05b8c2fdd6bddb0ef318f3dfccc963a30b420a"
+          "codex-command-runner-x86_64-pc-windows-msvc.exe": "sha256:3a70491d8d588afa459a42816f05b8c2fdd6bddb0ef318f3dfccc963a30b420a",
+          "codex-code-mode-host-x86_64-pc-windows-msvc.exe": "sha256:37c23a542037e1bcfd0fa7eb4a150c697229d7ff31bf675c519d5bff7226b191",
+          "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe": "sha256:8ac9d7e3d6b18d5d30255440e52aa6c56c9e1f38de2a2e8efca669e425fd123f"
         }
       }
     },
