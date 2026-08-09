@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import type { AgentToolRequest, AgentToolResponse } from '../../types/agent'
+import { recordToolCall } from './toolTelemetry'
 
 // How long the main process waits for a renderer-handled tool (e.g.
 // `generate_image`) to respond before giving up. Image generation on the
@@ -73,12 +74,20 @@ export class ToolRouter {
     // reaches us (vs. being rejected upstream as `unsupported call`) and what
     // EXACT name working tools (canvas_snapshot, generate_image) come in as.
     console.log(`[ToolRouter] incoming tool call: ${JSON.stringify(name)}`)
-    const mainHandler = this.mainHandlers.get(name)
-    if (mainHandler) {
-      const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
-      return mainHandler(params, threadId)
+    // 埋点收口在这里:主处理器和渲染端委派两条路都必经此处,少一处就少一半数据。
+    const startedAt = Date.now()
+    const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
+    try {
+      const mainHandler = this.mainHandlers.get(name)
+      const result = mainHandler
+        ? await mainHandler(params, threadId)
+        : await this.callRenderer(name, params, codexThreadId)
+      recordToolCall({ name, durationMs: Date.now() - startedAt, threadId })
+      return result
+    } catch (error) {
+      recordToolCall({ name, durationMs: Date.now() - startedAt, threadId, error })
+      throw error
     }
-    return this.callRenderer(name, params, codexThreadId)
   }
 
   /**

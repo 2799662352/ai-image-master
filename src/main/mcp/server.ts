@@ -10,6 +10,8 @@ import { CATIMATION_MCP_HOST, CATIMATION_MCP_PORT, CATIMATION_MCP_TOKEN_HEADER }
 import { startCatimationBridgeListener, type BridgeRuntime } from './bridge'
 import { ToolRouter } from './ToolRouter'
 import { CATIMATION_SERVER_INSTRUCTIONS } from './serverInstructions'
+import { setToolTelemetrySink } from './toolTelemetry'
+import { createToolCallTelemetrySink } from './toolTelemetrySink'
 import { registerTools } from './tools'
 
 export interface McpRuntime {
@@ -85,6 +87,9 @@ export async function startCatimationMcpServer(
   port = CATIMATION_MCP_PORT
 ): Promise<McpRuntime | null> {
   const token = randomBytes(32).toString('hex')
+  // 埋点的落盘端在这里装 —— toolTelemetry 自己不碰 electron,不装就是不记,
+  // 所以单测与渲染端引用它既不会写盘也不需要 mock。
+  setToolTelemetrySink(createToolCallTelemetrySink())
   const router = new ToolRouter(win)
 
   // One McpServer instance PER CONNECTION/SESSION, all sharing this router.
