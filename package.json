@@ -133,7 +133,6 @@
     "@uiw/react-codemirror": "^4.25.9",
     "browser-image-compression": "^2.0.2",
     "choices.js": "^11.1.0",
-    "chokidar": "^5.0.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",

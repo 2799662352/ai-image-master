@@ -170,7 +170,7 @@ type Actions = {
   collectVisiblePaths: () => string[]
   /**
    * Idempotent. Sets up renderer-side IPC subscriptions:
-   *  - `fs.onWatchEvent` for workspace file changes (chokidar push)
+   *  - `fs.onWatchEvent` for workspace file changes (native watcher push)
    *  - `attachments.onChanged` for chat-uploaded attachments (AttachmentService push)
    *
    * Safe to call from any mount effect; later calls are no-ops. Tests can
@@ -246,10 +246,13 @@ function ensureAttachmentsSubscription(getState: () => State & Actions): void {
 /**
  * 把所有**已展开**的目录重列一遍,合并进树里。
  *
- * 这是文件树的兜底:面板本来完全依赖 chokidar 推事件来刷新,而那条链上任何一环
- * 出问题(事件没发出、路径不在监视范围、目录还没展开过),面板就会**静默地**停在
+ * 这是文件树的兜底:面板的主刷新路径是监视器推事件,而那条链上任何一环出问题
+ * (路径不在监视范围、监视器起不来、内核事件队列溢出),面板就会**静默地**停在
  * 旧状态 —— 用户看到「AI 把文件移进文件夹了,面板里什么都没变」,而且没有任何
  * 办法让它自己好。
+ *
+ * 注意这只是兜底,不是主路径:主路径是 fsWatcher 的原生递归监视。若发现要靠这里
+ * 才能看到改动,那是监视器出了问题,该去修监视器。
  *
  * VS Code 也是这么兜的:切回窗口时重新扫描,因为它同样不能假设外部改动都被监视到。
  *
@@ -1176,7 +1179,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     if (!res.ok) return { ok: false, reason: res.reason }
     // Refresh both the destination (newly-arrived items must appear) and the
     // affected source directories (the items left). For sources we only need
-    // their immediate parents — chokidar would do this too, but the user
+    // their immediate parents — the watcher would do this too, but the user
     // expects an instant update.
     const sourceDirs = new Set<string>()
     for (const src of sources) {
@@ -1188,7 +1191,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     try {
       await get().expandDir(destDir, destSource)
     } catch {
-      // listDir failure here is non-fatal — chokidar will catch up.
+      // listDir failure here is non-fatal — the watcher will catch up.
     }
     for (const dir of sourceDirs) {
       const src = inferSource(get().workspaceTree, dir)
@@ -1216,7 +1219,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       try {
         await get().expandDir(destDir, destSource)
       } catch {
-        // listDir failure is non-fatal — chokidar will catch up.
+        // listDir failure is non-fatal — the watcher will catch up.
       }
       get().selectNode(written[written.length - 1], 'replace')
     }
