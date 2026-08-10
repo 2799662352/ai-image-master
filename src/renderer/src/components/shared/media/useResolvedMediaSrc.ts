@@ -70,12 +70,16 @@ function guessMimeFromPath(osPath: string, hint: MediaKindHint): string {
   return 'application/octet-stream'
 }
 
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64)
-  const out = new ArrayBuffer(bin.length)
-  const view = new Uint8Array(out)
-  for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i)
-  return out
+/**
+ * base64 → Blob,**交给浏览器原生解码**,不要在 JS 里逐字节抄。
+ *
+ * 原先是 `atob` + 一个 `for` 循环逐字节写 Uint8Array。视频经 base64 膨胀约 4/3,
+ * 一个 50MB 的 mp4 就是 6700 万次迭代,全在渲染进程主线程上,窗口在这期间停止绘制。
+ * `fetch('data:…')` 把解码交给 Chromium 原生实现,没有 JS 循环。
+ */
+async function base64ToBlob(b64: string, mime: string): Promise<Blob> {
+  const res = await fetch(`data:${mime};base64,${b64}`)
+  return res.blob()
 }
 
 /**
@@ -300,7 +304,7 @@ async function readAsBlobUrl(
     res.mime && res.mime !== 'application/octet-stream'
       ? res.mime
       : guessMimeFromPath(osPath, hint)
-  return URL.createObjectURL(new Blob([base64ToArrayBuffer(res.base64)], { type: mime }))
+  return URL.createObjectURL(await base64ToBlob(res.base64, mime))
 }
 
 /**
@@ -406,8 +410,7 @@ export async function resolveMediaSrcOnce(
     res.mime && res.mime !== 'application/octet-stream'
       ? res.mime
       : guessMimeFromPath(osPath, hint)
-  const blob = new Blob([base64ToArrayBuffer(res.base64)], { type: mime })
-  return URL.createObjectURL(blob)
+  return URL.createObjectURL(await base64ToBlob(res.base64, mime))
 }
 
 /**

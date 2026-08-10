@@ -18,11 +18,37 @@ function getApi(): ElectronApiShape | undefined {
   return (window as unknown as { electronAPI?: ElectronApiShape }).electronAPI
 }
 
-function base64ToBlob(b64: string, mime: string): Blob {
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return new Blob([bytes], { type: mime })
+/**
+ * base64 → Blob,**交给浏览器原生解码**,不要在 JS 里逐字节抄。
+ *
+ * 原先是 `atob` + `for (i...) bytes[i] = bin.charCodeAt(i)`。一个 50MB 的 mp4 经
+ * base64 膨胀成约 67MB,那个循环就是 6700 万次迭代,全在渲染进程主线程上跑 ——
+ * 窗口在这期间完全停止绘制,用户看到的是「点一下视频整个应用卡死」。
+ *
+ * `fetch('data:…')` 把解码交给 Chromium 的原生实现,没有 JS 循环。
+ *
+ * 注意这里**没有**解决主进程侧的整份 readFile + toString('base64')。要解决它只有
+ * 两条路,而且第二条是死路:
+ *
+ *  ① 把 IPC 的返回换成可转移的字节数组(structured clone 原生支持 Uint8Array,
+ *     没有 4/3 膨胀也没有解码)。可行,但 `attachments:read-thumb` 的返回形状有
+ *     四处消费者,是一次真改动。
+ *
+ *  ② 让渲染端直接 `<video src="local-file://…">` 流式读。**别再试了** ——
+ *     Windows 上这条路被上游堵死:Chromium 的 standard-scheme 解析没有 `file://`
+ *     才有的盘符处理,`D%3A` 会塌掉,GET 发出去时盘符已经没了
+ *     (electron/electron#49073)。表现是 protocol.handle 根本不被调用、主进程
+ *     一行日志都没有,极易被误判成 CSP 或权限问题。
+ *
+ *     这已经被独立踩过三次:2026-05-10 查了 CSP / 盘符编码 / hostname 兜底三轮后
+ *     退回本方案(docs/session-summaries/2026-05-10-file-preview-ipc-blob-fix.md);
+ *     useResolvedMediaSrc 顶部记着同一个上游 issue;2026-08-10 又试了一次,补上
+ *     文档要求的 `stream` + `corsEnabled` 权限**仍然无效**,因为它们治的不是
+ *     盘符被吞这个病。
+ */
+async function base64ToBlob(b64: string, mime: string): Promise<Blob> {
+  const res = await fetch(`data:${mime};base64,${b64}`)
+  return res.blob()
 }
 
 /**
@@ -83,13 +109,16 @@ export function useFileUrl(filePath: string): FileUrlState {
     }
 
     readMediaBytes(api, filePath)
-      .then((res) => {
+      .then(async (res) => {
         if (cancelled) return
         if (!res.ok) {
           setState({ status: 'error', reason: res.reason })
           return
         }
-        const blob = base64ToBlob(res.base64, res.mime)
+        const blob = await base64ToBlob(res.base64, res.mime)
+        // 解码是异步的了,期间路径可能已经切走 —— 再查一次,否则会给新 tab 挂上旧
+        // 文件的 URL,而且这个 blob 没人回收。
+        if (cancelled) return
         createdBlobUrl = URL.createObjectURL(blob)
         setState({ status: 'ready', url: createdBlobUrl })
       })
