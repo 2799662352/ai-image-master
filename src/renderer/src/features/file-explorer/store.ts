@@ -105,6 +105,11 @@ type Actions = {
   toggleFxCollapsed: () => void
   toggleFxViewerCollapsed: () => void
   setFxTreeWidth: (w: number) => void
+  /**
+   * 把已展开的目录全部重列一遍。文件树的兜底 —— 见 refreshLoadedDirs 的说明。
+   * 手动刷新按钮、窗口重获焦点、面板从隐藏变可见,都走这一个入口。
+   */
+  refreshTree: () => Promise<void>
   loadWorkspaceFolders: () => Promise<void>
   pickWorkspaceFolder: () => Promise<void>
   removeWorkspaceFolder: (path: string) => void
@@ -165,7 +170,7 @@ type Actions = {
   collectVisiblePaths: () => string[]
   /**
    * Idempotent. Sets up renderer-side IPC subscriptions:
-   *  - `fs.onWatchEvent` for workspace file changes (chokidar push)
+   *  - `fs.onWatchEvent` for workspace file changes (native watcher push)
    *  - `attachments.onChanged` for chat-uploaded attachments (AttachmentService push)
    *
    * Safe to call from any mount effect; later calls are no-ops. Tests can
@@ -178,6 +183,7 @@ type Actions = {
 let unsubscribeWatch: (() => void) | null = null
 let unsubscribeAttachments: (() => void) | null = null
 let attachmentsRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let unsubscribeFocus: (() => void) | null = null
 
 const ATTACHMENTS_REFRESH_DEBOUNCE_MS = 200
 
@@ -237,9 +243,75 @@ function ensureAttachmentsSubscription(getState: () => State & Actions): void {
   })
 }
 
-function ensureWatchSubscription(getState: () => State & Actions): void {
+/**
+ * 把所有**已展开**的目录重列一遍,合并进树里。
+ *
+ * 这是文件树的兜底:面板的主刷新路径是监视器推事件,而那条链上任何一环出问题
+ * (路径不在监视范围、监视器起不来、内核事件队列溢出),面板就会**静默地**停在
+ * 旧状态 —— 用户看到「AI 把文件移进文件夹了,面板里什么都没变」,而且没有任何
+ * 办法让它自己好。
+ *
+ * 注意这只是兜底,不是主路径:主路径是 fsWatcher 的原生递归监视。若发现要靠这里
+ * 才能看到改动,那是监视器出了问题,该去修监视器。
+ *
+ * VS Code 也是这么兜的:切回窗口时重新扫描,因为它同样不能假设外部改动都被监视到。
+ *
+ * 只重列已展开的目录 —— 没展开的看不见内容,重列纯属浪费(几百个文件夹就是几百次
+ * IPC)。展开状态由 mergeListedChildren 保住。
+ */
+async function refreshLoadedDirs(getState: () => State & Actions): Promise<void> {
+  const collect = (nodes: FileNode[], out: string[]): void => {
+    for (const n of nodes) {
+      if (n.kind !== 'dir' || !n.childrenLoaded) continue
+      out.push(n.path)
+      if (n.children) collect(n.children, out)
+    }
+  }
+  const paths: string[] = []
+  collect(getState().workspaceTree, paths)
+  if (paths.length === 0) return
+
+  const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
+  if (!api?.fs?.listDir) return
+
+  // 由浅入深逐个应用:先刷父目录,再刷子目录,这样子目录的合并结果不会被随后
+  // 父目录的重列覆盖掉。
+  for (const p of paths) {
+    let listed: FileNode[]
+    try {
+      listed = await api.fs.listDir(p)
+    } catch {
+      continue // 目录可能刚被删掉 —— 跳过,别让一个坏路径中断整轮刷新。
+    }
+    useFileExplorerStore.setState((s) => ({
+      workspaceTree: updateNodeInTree(s.workspaceTree, p, (n) => ({
+        ...n,
+        childrenLoaded: true,
+        children: mergeListedChildren(n.children, listed),
+      })),
+    }))
+  }
+}
+
+export function ensureWatchSubscription(getState: () => State & Actions): void {
   ensureFsWatchSubscription(getState)
   ensureAttachmentsSubscription(getState)
+  ensureFocusRefresh(getState)
+}
+
+/** 窗口重获焦点 = 用户回来看了 —— 这一刻树必须是真的。 */
+function ensureFocusRefresh(getState: () => State & Actions): void {
+  if (unsubscribeFocus || typeof window === 'undefined') return
+  let running = false
+  const onFocus = (): void => {
+    if (running) return
+    running = true
+    void refreshLoadedDirs(getState).finally(() => {
+      running = false
+    })
+  }
+  window.addEventListener('focus', onFocus)
+  unsubscribeFocus = () => window.removeEventListener('focus', onFocus)
 }
 
 /**
@@ -253,6 +325,8 @@ export function __resetSubscriptionsForTesting(): void {
   unsubscribeWatch = null
   unsubscribeAttachments?.()
   unsubscribeAttachments = null
+  unsubscribeFocus?.()
+  unsubscribeFocus = null
   if (attachmentsRefreshTimer) {
     clearTimeout(attachmentsRefreshTimer)
     attachmentsRefreshTimer = null
@@ -448,10 +522,16 @@ let pendingDoc = ''
 export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   ...makeInitialState(),
 
+  refreshTree: () => refreshLoadedDirs(get),
+
   toggleFx: () => {
     set((s) => {
       const next = !s.fxOpen
       writeStorage(FX_OPEN_KEY, next ? '1' : '0')
+      // 面板从隐藏变可见 = 用户要看了,这一刻树必须是真的。VS Code 同款
+      // (microsoft/vscode#126817:「refresh both when the window gets focus,
+      // and when the explorer becomes visible」)。
+      if (next) void refreshLoadedDirs(get)
       // 打开永远展示完整面板:否则「收着的面板被打开」= 用户看到一片空。
       if (next && (s.fxCollapsed || s.fxViewerCollapsed)) {
         writeStorage(FX_COLLAPSED_KEY, '0')
@@ -477,6 +557,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     set((s) => {
       const next = !s.fxCollapsed
       writeStorage(FX_COLLAPSED_KEY, next ? '1' : '0')
+      if (!next) void refreshLoadedDirs(get) // 展开回来 = 变可见,同上。
       return { fxCollapsed: next }
     })
   },
@@ -1098,7 +1179,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     if (!res.ok) return { ok: false, reason: res.reason }
     // Refresh both the destination (newly-arrived items must appear) and the
     // affected source directories (the items left). For sources we only need
-    // their immediate parents — chokidar would do this too, but the user
+    // their immediate parents — the watcher would do this too, but the user
     // expects an instant update.
     const sourceDirs = new Set<string>()
     for (const src of sources) {
@@ -1110,7 +1191,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     try {
       await get().expandDir(destDir, destSource)
     } catch {
-      // listDir failure here is non-fatal — chokidar will catch up.
+      // listDir failure here is non-fatal — the watcher will catch up.
     }
     for (const dir of sourceDirs) {
       const src = inferSource(get().workspaceTree, dir)
@@ -1138,7 +1219,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       try {
         await get().expandDir(destDir, destSource)
       } catch {
-        // listDir failure is non-fatal — chokidar will catch up.
+        // listDir failure is non-fatal — the watcher will catch up.
       }
       get().selectNode(written[written.length - 1], 'replace')
     }

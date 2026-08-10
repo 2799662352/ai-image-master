@@ -104,9 +104,6 @@ importers:
       choices.js:
         specifier: ^11.1.0
         version: 11.2.3
-      chokidar:
-        specifier: ^5.0.0
-        version: 5.0.0
       cos-nodejs-sdk-v5:
         specifier: ^2.15.4
         version: 2.15.4

@@ -19,6 +19,15 @@ function CollapseAllGlyph() {
   )
 }
 
+function RefreshGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <path d="M12 7a5 5 0 1 1-1.5-3.5" strokeLinecap="round" />
+      <path d="M12 1.5 V4.5 H9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function FileTree() {
   const workspaceRoot = useFileExplorerStore((s) => s.workspaceRoot)
   const workspaceTree = useFileExplorerStore((s) => s.workspaceTree)
@@ -27,6 +36,7 @@ export function FileTree() {
   const pickWorkspaceFolder = useFileExplorerStore((s) => s.pickWorkspaceFolder)
   const removeWorkspaceFolder = useFileExplorerStore((s) => s.removeWorkspaceFolder)
   const refreshAttachmentsTree = useFileExplorerStore((s) => s.refreshAttachmentsTree)
+  const refreshTree = useFileExplorerStore((s) => s.refreshTree)
   const ensureSubscriptions = useFileExplorerStore((s) => s.ensureSubscriptions)
   const startNewNode = useFileExplorerStore((s) => s.startNewNode)
   const selectedPaths = useFileExplorerStore((s) => s.selectedPaths)
@@ -99,6 +109,21 @@ export function FileTree() {
               className="rounded p-1 text-cyan-200/70 hover:bg-cyan-500/10 hover:text-cyan-100"
             >
               <CollapseAllGlyph />
+            </button>
+            {/*
+              手动刷新。文件监视会漏事件(网络盘、某些移动方式、被排除的目录),
+              漏了之后树就静默地停在旧状态。焦点/可见时的自动刷新覆盖了绝大多数
+              情况,但用户仍然需要一个「我现在就要它是对的」的出口 —— VS Code 的
+              资源管理器标题栏也一直有这个按钮,原因相同。
+            */}
+            <button
+              type="button"
+              onClick={() => void refreshTree()}
+              title="刷新"
+              aria-label="刷新"
+              className="rounded p-1 text-cyan-200/70 hover:bg-cyan-500/10 hover:text-cyan-100"
+            >
+              <RefreshGlyph />
             </button>
             {workspaceTree.length > 0 && (
               <button
