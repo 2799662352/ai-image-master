@@ -105,6 +105,11 @@ type Actions = {
   toggleFxCollapsed: () => void
   toggleFxViewerCollapsed: () => void
   setFxTreeWidth: (w: number) => void
+  /**
+   * 把已展开的目录全部重列一遍。文件树的兜底 —— 见 refreshLoadedDirs 的说明。
+   * 手动刷新按钮、窗口重获焦点、面板从隐藏变可见,都走这一个入口。
+   */
+  refreshTree: () => Promise<void>
   loadWorkspaceFolders: () => Promise<void>
   pickWorkspaceFolder: () => Promise<void>
   removeWorkspaceFolder: (path: string) => void
@@ -514,10 +519,16 @@ let pendingDoc = ''
 export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   ...makeInitialState(),
 
+  refreshTree: () => refreshLoadedDirs(get),
+
   toggleFx: () => {
     set((s) => {
       const next = !s.fxOpen
       writeStorage(FX_OPEN_KEY, next ? '1' : '0')
+      // 面板从隐藏变可见 = 用户要看了,这一刻树必须是真的。VS Code 同款
+      // (microsoft/vscode#126817:「refresh both when the window gets focus,
+      // and when the explorer becomes visible」)。
+      if (next) void refreshLoadedDirs(get)
       // 打开永远展示完整面板:否则「收着的面板被打开」= 用户看到一片空。
       if (next && (s.fxCollapsed || s.fxViewerCollapsed)) {
         writeStorage(FX_COLLAPSED_KEY, '0')
@@ -543,6 +554,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     set((s) => {
       const next = !s.fxCollapsed
       writeStorage(FX_COLLAPSED_KEY, next ? '1' : '0')
+      if (!next) void refreshLoadedDirs(get) // 展开回来 = 变可见,同上。
       return { fxCollapsed: next }
     })
   },

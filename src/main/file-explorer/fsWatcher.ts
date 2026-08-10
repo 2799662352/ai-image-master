@@ -30,6 +30,14 @@ function ensureWatcher(): FSWatcher {
     atomic: true,
     ignoreInitial: true,
     ignored: WATCH_IGNORED,
+    // 不跟随目录软链。递归监视 + 默认跟随软链 = 一个小目录可能把外部的巨大目录树
+    // 整个拉进来监视。codex 踩过同一个坑(openai/codex#30795:一个指向 NixOS
+    // 系统闭包的软链让 notify 的 inotify 循环卡死、CPU 打满);chokidar 的
+    // followSymlinks 同样默认为 true。
+    //
+    // 代价:软链目录**里面**的变动不再自动刷新。可接受 —— 焦点/可见时的重列和
+    // 手动刷新按钮都会把它带回来,而这个代价换的是「不会因为一个软链就卡死」。
+    followSymlinks: false,
   })
   watcher.on('add', (p) => emit({ type: 'add', path: p, mtime: Date.now() }))
   watcher.on('addDir', (p) => emit({ type: 'addDir', path: p, mtime: Date.now() }))
