@@ -13,6 +13,7 @@ import { FileTabStrip } from './FileTabStrip'
 import { LatestPreviewBanner } from './LatestPreviewBanner'
 import { FileViewer } from './FileViewer'
 import { ImageViewer } from './ImageViewer'
+import { toRenderableUri } from './uri'
 import { VideoViewer } from './VideoViewer'
 import { BinaryViewer } from './BinaryViewer'
 import { ConflictModal } from './ConflictModal'
@@ -95,7 +96,10 @@ function ActiveViewer({ tab }: { tab: FileTab | undefined }) {
     case 'video':
       return <VideoViewer tab={tab} />
     case 'pdf':
-      return <embed src={`local-file:///${tab.path.replace(/\\/g, '/')}`} type="application/pdf" className="h-full w-full" />
+      // 走同一个 helper 而不是手拼:它会把盘符冒号编码成 %3A。手拼出来的
+      // `local-file:///D:/x.pdf` 依赖协议处理器从 host 反推盘符那条兼容分支,
+      // 而图片/视频用的是编码形式 —— 两种写法并存迟早会有人只修一边。
+      return <embed src={toRenderableUri(tab.path)} type="application/pdf" className="h-full w-full" />
     case 'binary':
       return <BinaryViewer tab={tab} />
     case 'reference':
