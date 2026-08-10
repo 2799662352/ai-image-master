@@ -178,6 +178,7 @@ type Actions = {
 let unsubscribeWatch: (() => void) | null = null
 let unsubscribeAttachments: (() => void) | null = null
 let attachmentsRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let unsubscribeFocus: (() => void) | null = null
 
 const ATTACHMENTS_REFRESH_DEBOUNCE_MS = 200
 
@@ -237,9 +238,72 @@ function ensureAttachmentsSubscription(getState: () => State & Actions): void {
   })
 }
 
-function ensureWatchSubscription(getState: () => State & Actions): void {
+/**
+ * 把所有**已展开**的目录重列一遍,合并进树里。
+ *
+ * 这是文件树的兜底:面板本来完全依赖 chokidar 推事件来刷新,而那条链上任何一环
+ * 出问题(事件没发出、路径不在监视范围、目录还没展开过),面板就会**静默地**停在
+ * 旧状态 —— 用户看到「AI 把文件移进文件夹了,面板里什么都没变」,而且没有任何
+ * 办法让它自己好。
+ *
+ * VS Code 也是这么兜的:切回窗口时重新扫描,因为它同样不能假设外部改动都被监视到。
+ *
+ * 只重列已展开的目录 —— 没展开的看不见内容,重列纯属浪费(几百个文件夹就是几百次
+ * IPC)。展开状态由 mergeListedChildren 保住。
+ */
+async function refreshLoadedDirs(getState: () => State & Actions): Promise<void> {
+  const collect = (nodes: FileNode[], out: string[]): void => {
+    for (const n of nodes) {
+      if (n.kind !== 'dir' || !n.childrenLoaded) continue
+      out.push(n.path)
+      if (n.children) collect(n.children, out)
+    }
+  }
+  const paths: string[] = []
+  collect(getState().workspaceTree, paths)
+  if (paths.length === 0) return
+
+  const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
+  if (!api?.fs?.listDir) return
+
+  // 由浅入深逐个应用:先刷父目录,再刷子目录,这样子目录的合并结果不会被随后
+  // 父目录的重列覆盖掉。
+  for (const p of paths) {
+    let listed: FileNode[]
+    try {
+      listed = await api.fs.listDir(p)
+    } catch {
+      continue // 目录可能刚被删掉 —— 跳过,别让一个坏路径中断整轮刷新。
+    }
+    useFileExplorerStore.setState((s) => ({
+      workspaceTree: updateNodeInTree(s.workspaceTree, p, (n) => ({
+        ...n,
+        childrenLoaded: true,
+        children: mergeListedChildren(n.children, listed),
+      })),
+    }))
+  }
+}
+
+export function ensureWatchSubscription(getState: () => State & Actions): void {
   ensureFsWatchSubscription(getState)
   ensureAttachmentsSubscription(getState)
+  ensureFocusRefresh(getState)
+}
+
+/** 窗口重获焦点 = 用户回来看了 —— 这一刻树必须是真的。 */
+function ensureFocusRefresh(getState: () => State & Actions): void {
+  if (unsubscribeFocus || typeof window === 'undefined') return
+  let running = false
+  const onFocus = (): void => {
+    if (running) return
+    running = true
+    void refreshLoadedDirs(getState).finally(() => {
+      running = false
+    })
+  }
+  window.addEventListener('focus', onFocus)
+  unsubscribeFocus = () => window.removeEventListener('focus', onFocus)
 }
 
 /**
@@ -253,6 +317,8 @@ export function __resetSubscriptionsForTesting(): void {
   unsubscribeWatch = null
   unsubscribeAttachments?.()
   unsubscribeAttachments = null
+  unsubscribeFocus?.()
+  unsubscribeFocus = null
   if (attachmentsRefreshTimer) {
     clearTimeout(attachmentsRefreshTimer)
     attachmentsRefreshTimer = null
