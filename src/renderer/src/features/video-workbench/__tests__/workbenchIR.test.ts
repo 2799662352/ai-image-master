@@ -14,7 +14,6 @@ import {
   exportWorkbenchIR,
   planApplyIR,
 } from '../workbenchIR'
-import { WORKBENCH_MAX_CARDS } from '../WorkbenchDb'
 
 function card(patch: Partial<VideoWorkbenchCard> & { id: string; boardId: string }): VideoWorkbenchCard {
   return {
@@ -325,14 +324,14 @@ describe('planApplyIR / 拒绝路径', () => {
     expect(plan.next!.cards[0].versions).toHaveLength(1)
   })
 
-  it('超过卡片上限不再拒绝:照写,超出部分由 evict 兜底淘汰', () => {
+  it('卡片数量不设上限:一次 apply 五百张照写不拒', () => {
     const src = source()
     const ir = roundTrip(src)
-    ir.boards[0].cards = Array.from({ length: WORKBENCH_MAX_CARDS + 1 }, (_, i) => ({ prompt: `镜 ${i}` }))
+    ir.boards[0].cards = Array.from({ length: 500 }, (_, i) => ({ prompt: `镜 ${i}` }))
     const plan = planApplyIR(src, ir)
     expect(plan.result.ok).toBe(true)
     expect(plan.result.skipped.map((s) => s.reason).join()).not.toContain('超过上限')
-    expect(plan.next!.cards).toHaveLength(WORKBENCH_MAX_CARDS + 1)
+    expect(plan.next!.cards).toHaveLength(500)
   })
 
   it('未知 id 报错而不是静默新建', () => {

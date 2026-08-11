@@ -1,5 +1,7 @@
 // 人像库选择器弹窗 —— 移植自 soraui PortraitLibraryModal/PortraitGrid 的
-// 精简版:搜索(上游 q)+ 类型过滤 + 多选 + 确认回填 asset:// 素材。
+// 精简版:搜索(上游 q)+ 类型过滤 + 分页 + 多选 + 确认回填 asset:// 素材。
+// 分页与人像库页同形(上一页 / 页码 / 下一页,页码由上游 totalPages 定);
+// 换来源/类型/搜索词都回第 1 页。多选跨页保留 —— 选中存的是完整素材项。
 // 数据源走既有 preload 桥 seedance.listAssets;叠加层自定义名/隐藏由
 // usePortraitLibraryOverlay 消费,与人像库页一致。
 // 追加「官方素材/虚拟人像」来源(文档 5,只读):走 listOfficialMaterials,
@@ -114,62 +116,89 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
   const [source, setSource] = useState<PickerSource>('mine')
   const [kind, setKind] = useState<SeedanceAssetKindFilter>('image_people')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<Record<string, SeedanceAssetItem>>({})
   const [uploading, setUploading] = useState(false)
   const overlay = usePortraitLibraryOverlay()
   const loadSeq = useRef(0)
   const uploadInputRef = useRef<HTMLInputElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
 
   const displayName = useCallback(
     (a: SeedanceAssetItem): string => overlay.entries[a.assetId]?.name || a.name,
     [overlay.entries],
   )
 
-  const load = useCallback(async (src: PickerSource, k: SeedanceAssetKindFilter, q: string, opts?: { silent?: boolean }) => {
+  const load = useCallback(async (
+    src: PickerSource,
+    k: SeedanceAssetKindFilter,
+    q: string,
+    p: number,
+    opts?: { silent?: boolean },
+  ) => {
     const api = listApi()
     const seq = ++loadSeq.current
     if (!opts?.silent) setLoading(true)
     setError(null)
     try {
       let next: SeedanceAssetItem[]
+      let resultTotal: number
+      let resultTotalPages: number
       if (src === 'mine') {
         if (!api?.listAssets) throw new Error('人像库未就绪(preload 桥缺失)')
-        const result = await api.listAssets({ page: 1, pageSize: PAGE_SIZE, kind: k, ...(q ? { q } : {}) })
+        const result = await api.listAssets({ page: p, pageSize: PAGE_SIZE, kind: k, ...(q ? { q } : {}) })
         next = result.items ?? []
+        resultTotal = result.total ?? next.length
+        resultTotalPages = result.totalPages ?? 1
       } else {
         if (!api?.listOfficialMaterials) throw new Error('官方素材库未就绪(preload 桥缺失)')
         const result = await api.listOfficialMaterials({
           library: src === 'avatars' ? 'avatars' : 'materials',
-          page: 1,
+          page: p,
           pageSize: PAGE_SIZE,
           ...(q ? { q } : {}),
         })
         next = (result.items ?? []).map(officialToAssetItem)
+        resultTotal = result.total ?? next.length
+        resultTotalPages = result.totalPages ?? 1
       }
       if (seq !== loadSeq.current) return
       // 按稳定键去重:上游偶发重复行/临时行,同 assetId(或内部 id)只留一条
       setItems(dedupeAssets(next))
+      setTotal(resultTotal)
+      setTotalPages(Math.max(1, resultTotalPages))
     } catch (e) {
       if (seq !== loadSeq.current) return
       setError(e instanceof Error ? e.message : String(e))
       setItems([])
+      setTotal(0)
+      setTotalPages(1)
     } finally {
       if (seq === loadSeq.current) setLoading(false)
     }
   }, [])
 
-  // 打开时拉取;搜索词 300ms 防抖
+  // 打开时拉取;搜索词 300ms 防抖。翻页也走这条 —— page 是依赖之一。
   useEffect(() => {
     if (!open) return
-    const timer = setTimeout(() => void load(source, kind, query.trim()), query ? 300 : 0)
+    const timer = setTimeout(() => void load(source, kind, query.trim(), page), query ? 300 : 0)
     return () => clearTimeout(timer)
-  }, [open, source, kind, query, load])
+  }, [open, source, kind, query, page, load])
 
-  // 关闭时重置选择
+  // 翻页后把网格滚回顶部 —— 否则停在上一页的滚动位置,新一页像是「只有下半截」。
+  // 直接写 scrollTop 而不是 scrollTo():后者在 jsdom 里根本没实现,一调就炸。
+  useEffect(() => {
+    if (gridRef.current) gridRef.current.scrollTop = 0
+  }, [page])
+
+  // 关闭时重置选择与翻页位置
   useEffect(() => {
     if (!open) {
       setSelected({})
       setQuery('')
+      setPage(1)
     }
   }, [open])
 
@@ -188,7 +217,11 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
       try {
         const result = await uploadFilesToPortraitLibrary(Array.from(files), { kindTab: kind })
         if (result.assets.length > 0) {
-          await load('mine', kind, query.trim())
+          // 回第 1 页:列表按时间倒序,刚传的就在首页,停在第 3 页会看不见它。
+          // 当时若不在首页,setPage 会额外触发一次同页拉取 —— loadSeq 兜得住,
+          // 不值得为这一次多余请求再引一套 reload token。
+          setPage(1)
+          await load('mine', kind, query.trim(), 1)
           setSelected((prev) => {
             const next = { ...prev }
             for (const asset of result.assets) {
@@ -198,7 +231,7 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
           })
           // 延迟静默重拉:替换掉上游尚未落定的临时行,不闪整格 spinner
           await new Promise((resolve) => setTimeout(resolve, UPLOAD_SETTLE_DELAY_MS))
-          await load('mine', kind, query.trim(), { silent: true })
+          await load('mine', kind, query.trim(), 1, { silent: true })
         }
       } finally {
         setUploading(false)
@@ -242,7 +275,11 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
             value={query}
             placeholder="搜索素材名…"
             className="flex-1 min-w-0 bg-[#18181B] border border-[#3F3F46] text-white/90 text-xs px-2 py-1.5 focus:outline-none focus:border-[#FCE300]"
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              // 换了筛选条件就回第 1 页 —— 新结果只有 2 页时停在第 5 页会是空的
+              setPage(1)
+              setQuery(e.target.value)
+            }}
           />
           <button type="button" aria-label="关闭" className="text-white/40 hover:text-white px-1" onClick={onClose}>
             ✕
@@ -260,7 +297,10 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
                   ? 'border-[#FCE300] text-[#FCE300] bg-[#FCE300]/10'
                   : 'border-[#3F3F46] text-white/50 hover:text-white/80'
               }`}
-              onClick={() => setSource(t.value)}
+              onClick={() => {
+                setPage(1)
+                setSource(t.value)
+              }}
             >
               {t.label}
             </button>
@@ -276,7 +316,10 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
                     ? 'border-[#FCE300] text-[#FCE300]'
                     : 'border-[#3F3F46] text-white/50 hover:text-white/80'
                 }`}
-                onClick={() => setKind(t.value)}
+                onClick={() => {
+                  setPage(1)
+                  setKind(t.value)
+                }}
               >
                 {t.label}
               </button>
@@ -284,7 +327,7 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
         </div>
 
         {/* 素材网格 */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div ref={gridRef} className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <div className="flex justify-center py-12">
               <div className="w-6 h-6 border-2 border-[#FCE300] border-t-transparent rounded-full animate-spin" />
@@ -353,6 +396,36 @@ export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPicker
             </div>
           )}
         </div>
+
+        {/* 分页。跨页多选是安全的:selected 存的是完整素材项,不从当前页的 items
+            里派生 —— 翻走那一页的勾选照样留在「已选 N 个」里。 */}
+        {totalPages > 1 && (
+          <div
+            data-testid="vw-picker-pager"
+            className="flex items-center justify-center gap-3 px-4 py-2 border-t border-[#27272A] text-xs"
+          >
+            <button
+              type="button"
+              className="border border-[#3F3F46] text-white/60 px-2 py-1 hover:text-white disabled:opacity-40"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              上一页
+            </button>
+            <span className="text-white/40">
+              {page} / {totalPages}
+              {total > 0 ? ` · 共 ${total} 个` : ''}
+            </span>
+            <button
+              type="button"
+              className="border border-[#3F3F46] text-white/60 px-2 py-1 hover:text-white disabled:opacity-40"
+              disabled={page >= totalPages || loading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              下一页
+            </button>
+          </div>
+        )}
 
         {/* 底部:上传(仅我的素材) + 确认 */}
         <div className="flex items-center gap-2 px-4 py-3 border-t border-[#27272A]">

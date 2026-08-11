@@ -545,10 +545,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       (v) => !(v.afterCardId && v.beforeCardId),
       { message: 'afterCardId and beforeCardId are mutually exclusive' },
     ),
-    // 不是纯增：卡片总数超过 WORKBENCH_MAX_CARDS 时 store 会 evict() 淘汰最旧的终态卡
-    // （store.ts 的 addCards 分支）。也就是说「加几张卡」在满板时会删掉别的卡 ——
-    // 那是用户数据，标 additive 是错的。
-    annotations: DESTRUCTIVE,
+    // 纯增：只往当前页追加/插入卡片，不动任何已有卡。曾经标 DESTRUCTIVE 是因为
+    // 卡片总数有 200 张全局上限、加卡会 evict() 淘汰最旧的终态卡；那个上限已于
+    // 2026-08-11 移除（见 WorkbenchDb.ts 顶部），加卡不再删任何用户数据。
+    annotations: WRITE_ADDITIVE,
     outputSchema: addTasksOutputSchema,
   }, async (params, ctx?: unknown) => {
     try {

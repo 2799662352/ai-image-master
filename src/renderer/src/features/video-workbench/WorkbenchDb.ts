@@ -19,8 +19,11 @@ const DB_VERSION = 2
 const STORE = 'cards'
 const BOARD_STORE = 'boards'
 
-/** 卡片总量上限:超出后删最旧的已终态卡(防素材 data: URL 无限膨胀)。 */
-export const WORKBENCH_MAX_CARDS = 200
+// 卡片总量刻意不设上限。曾有过 200 张的全局上限 + evict() 淘汰最旧终态卡,
+// 已于 2026-08-11 移除:那个数是跨全部「页」计的,用户在页面 6 加卡会删掉页面 1
+// 的老卡 —— 静默丢用户的编排,代价远大于收益。当初的动机「防素材 data: URL
+// 无限膨胀」也基本不成立了:本地文件存真实路径、外链转存成 COS https 地址,
+// 只有粘贴进来的合成 File 才留 data:。真要控库体积,按字节算,别按卡片数砍。
 
 /** 素材三类的字段名 —— 剥 uploadedUrl 时逐类扫。 */
 const MATERIAL_FIELDS = ['referenceImages', 'referenceVideos', 'referenceAudios'] as const
@@ -29,9 +32,10 @@ const MATERIAL_FIELDS = ['referenceImages', 'referenceVideos', 'referenceAudios'
  * 落库前剥掉素材上的 `uploadedUrl`(本地图预传拿到的 COS 地址)。
  *
  * 那是**会话内缓存**,存下来弊大于利:仓库里没有任何地方声明或配置过 COS 桶的
- * 生命周期规则,所以一个几周前 mint 的地址是死是活无从判断,而卡片会在库里躺到
- * 被 200 张上限挤掉为止。真拿一个死链去提交,失败后重试还是同一个死链,这张卡就
- * 永久废了。剥掉之后重启即回到原本的行为:提交时主进程从本地路径流式上传。
+ * 生命周期规则,所以一个几周前 mint 的地址是死是活无从判断,而卡片会在库里一直
+ * 躺到用户自己删(卡片总量已无上限)。真拿一个死链去提交,失败后重试还是同一个
+ * 死链,这张卡就永久废了。剥掉之后重启即回到原本的行为:提交时主进程从本地路径
+ * 流式上传。
  *
  * 没有可剥的就原样返回 —— 提交草稿是逐字符防抖落库的,不该每次都复制一遍卡片。
  */
@@ -150,21 +154,6 @@ export class WorkbenchDb {
       ? await this.request<VideoWorkbenchBoard[]>(this.tx(db, 'readonly', BOARD_STORE).getAll())
       : [...this.memoryBoards.values()]
     return items.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
-  }
-
-  /** 超上限时删最旧的终态卡片(生成中的不动)。返回被删 id。 */
-  async evict(): Promise<string[]> {
-    const items = await this.list()
-    if (items.length <= WORKBENCH_MAX_CARDS) return []
-    const terminal = items
-      .filter((c) => c.status === 'succeeded' || c.status === 'failed' || c.status === 'draft')
-      .sort((a, b) => a.createdAt - b.createdAt)
-    const removed: string[] = []
-    for (const card of terminal.slice(0, items.length - WORKBENCH_MAX_CARDS)) {
-      await this.remove(card.id)
-      removed.push(card.id)
-    }
-    return removed
   }
 }
 

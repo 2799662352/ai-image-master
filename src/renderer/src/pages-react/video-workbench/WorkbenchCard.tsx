@@ -22,7 +22,6 @@ import type {
   VideoWorkbenchMode,
 } from '../../../../types/videoWorkbench'
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
-import { autoImportFilesToPortraitLibrary } from '../../features/video-workbench/portraitAutoImport'
 import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
 import {
   remapTokensForMove,
@@ -40,7 +39,7 @@ import { ResultVideoPlayer, hasPlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
-import { buildModeMedia, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { cardHasVideoInput, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
 import { parseFileDrop, serializeWorkbenchCardDrag } from '../../features/file-explorer/dragHelpers'
 import { materialsFromPaths } from '../../features/video-workbench/pathMaterials'
 import { useSeedanceModels } from '../../features/video-workbench/useSeedanceModels'
@@ -316,22 +315,15 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
     const { images, videos, audios } = classifyFiles(files)
     const toMaterials = async (list: File[]) =>
       (await Promise.all(list.map(fileToMaterial))).filter((m): m is VideoWorkbenchMaterial => m !== null)
-    const accepted: File[] = []
+    // 只进卡片素材区;人像库入库改由生成时兜底(工具栏总闸),上传不再顺带。
     if (images.length && modeLimit(card.mode, 'image', card.model) > 0) {
       addMaterials(card.id, 'referenceImages', await toMaterials(images))
-      accepted.push(...images)
     }
     if (videos.length && modeLimit(card.mode, 'video', card.model) > 0) {
       addMaterials(card.id, 'referenceVideos', await toMaterials(videos))
-      accepted.push(...videos)
     }
     if (audios.length && modeLimit(card.mode, 'audio', card.model) > 0) {
       addMaterials(card.id, 'referenceAudios', await toMaterials(audios))
-      accepted.push(...audios)
-    }
-    // 「默认上传人像库」开着 → 后台顺带导入人像库(失败只 toast,不阻断卡片)
-    if (accepted.length > 0 && useVideoWorkbenchStore.getState().autoImportPortrait) {
-      void autoImportFilesToPortraitLibrary(accepted)
     }
   }
 
@@ -949,7 +941,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                     const cost = estimateCostUsd(
                       card.model,
                       card.resolution,
-                      buildModeMedia(card).referenceVideos.length > 0,
+                      cardHasVideoInput(card),
                       card.completionTokens,
                     )
                     return cost != null ? ` ≈ ${formatCostUsd(cost)}` : ''

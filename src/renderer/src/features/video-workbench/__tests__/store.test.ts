@@ -14,7 +14,7 @@ import {
   toMaterial,
   useVideoWorkbenchStore,
 } from '../store'
-import { WORKBENCH_MAX_CARDS, getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
+import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 import { specEquals } from '../cardSpec'
 
 function mockSubmit(impl?: (payload: Record<string, unknown>) => Promise<unknown>) {
@@ -343,17 +343,17 @@ describe('snapshotWorkbench 全局摘要', () => {
 })
 
 describe('autoImportPortrait 全局开关', () => {
-  it('默认关闭;setAutoImportPortrait 写 localStorage 持久化', () => {
+  it('默认开启;setAutoImportPortrait 写 localStorage 持久化', () => {
     localStorage.removeItem(AUTO_IMPORT_PORTRAIT_KEY)
     resetWorkbenchStoreForTest()
-    expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(false)
-
-    useVideoWorkbenchStore.getState().setAutoImportPortrait(true)
     expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(true)
-    expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('1')
 
     useVideoWorkbenchStore.getState().setAutoImportPortrait(false)
+    expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(false)
     expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('0')
+
+    useVideoWorkbenchStore.getState().setAutoImportPortrait(true)
+    expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('1')
   })
 })
 
@@ -605,17 +605,19 @@ describe('版本历史', () => {
   })
 })
 
-describe('超上限淘汰', () => {
-  it('被淘汰的卡同步从内存摘掉,不会等到重启才消失', async () => {
+describe('卡片总量不设上限', () => {
+  it('加满 203 张卡不淘汰任何一张:内存与库都是全量', async () => {
+    const total = 203
     useVideoWorkbenchStore.getState().addCards(
-      Array.from({ length: WORKBENCH_MAX_CARDS + 3 }, (_, i) => ({ prompt: `p${i}` })),
+      Array.from({ length: total }, (_, i) => ({ prompt: `p${i}` })),
     )
 
-    await vi.waitFor(() => {
-      expect(useVideoWorkbenchStore.getState().cards).toHaveLength(WORKBENCH_MAX_CARDS)
+    expect(useVideoWorkbenchStore.getState().cards).toHaveLength(total)
+    await vi.waitFor(async () => {
+      expect(await getWorkbenchDb().list()).toHaveLength(total)
     })
-    const rows = await getWorkbenchDb().list()
-    expect(rows).toHaveLength(WORKBENCH_MAX_CARDS)
+    // 最早那张必须还在 —— 旧的淘汰逻辑正是从这头开始删的。
+    expect(useVideoWorkbenchStore.getState().cards[0].prompt).toBe('p0')
   })
 })
 

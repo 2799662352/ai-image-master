@@ -1,5 +1,5 @@
 // 撤销栈纯逻辑单测:意图/运行时切分、复活、删新卡、渲染中定格、在飞卡停车、
-// 上限守门、no-op 不消耗版本号、栈深上限。全部喂普通对象,不碰 store。
+// no-op 不消耗版本号、栈深上限。全部喂普通对象,不碰 store。
 
 import { describe, expect, it } from 'vitest'
 import type { VideoWorkbenchCard, VideoWorkbenchCardStatus } from '../../../../../types/videoWorkbench'
@@ -15,7 +15,6 @@ import {
   pushHistory,
   shouldCoalesce,
 } from '../workbenchHistory'
-import { WORKBENCH_MAX_CARDS } from '../WorkbenchDb'
 
 function card(patch: Partial<VideoWorkbenchCard> & { id: string; boardId: string }): VideoWorkbenchCard {
   return {
@@ -380,8 +379,8 @@ describe('planRestore', () => {
     expect(plan.result.skipped[0].reason).toContain('清空工作台')
   })
 
-  it('还原后超过卡片上限则整体拒绝,不静默淘汰旧卡', () => {
-    const many = Array.from({ length: WORKBENCH_MAX_CARDS }, (_, i) =>
+  it('卡片总数不设上限:复活一大批 + 在飞的卡停车,照常通过', () => {
+    const many = Array.from({ length: 300 }, (_, i) =>
       card({ id: `s${i}`, boardId: 'b1', order: i }),
     )
     const snapshot = captureIntent(source({ cards: many }))
@@ -393,8 +392,9 @@ describe('planRestore', () => {
 
     const plan = planRestore(src, snapshot)
 
-    expect(plan.result.ok).toBe(false)
-    expect(plan.next).toBeUndefined()
-    expect(plan.result.skipped.at(-1)!.reason).toContain(`超过上限 ${WORKBENCH_MAX_CARDS}`)
+    expect(plan.result.ok).toBe(true)
+    expect(plan.result.cards.resurrected).toHaveLength(300)
+    // 300 张复活的 + 1 张停到第一页末尾的在飞卡
+    expect(plan.next!.cards).toHaveLength(301)
   })
 })
