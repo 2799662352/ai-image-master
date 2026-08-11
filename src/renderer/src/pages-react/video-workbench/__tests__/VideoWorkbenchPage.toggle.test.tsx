@@ -20,18 +20,18 @@ afterEach(() => {
 })
 
 describe('「默认上传人像库」全局开关', () => {
-  it('默认关闭(aria-pressed=false);点击开启并写 localStorage;再点关闭', async () => {
+  it('默认开启(aria-pressed=true);点击关闭并写 localStorage;再点开启', async () => {
     render(<VideoWorkbenchPage />)
     const toggle = await screen.findByRole('button', { name: /默认上传人像库/ })
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
-
-    fireEvent.click(toggle)
-    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'))
-    expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(true)
-    expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('1')
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(toggle)
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'))
+    expect(useVideoWorkbenchStore.getState().autoImportPortrait).toBe(false)
     expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('0')
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'))
+    expect(localStorage.getItem(AUTO_IMPORT_PORTRAIT_KEY)).toBe('1')
   })
 })

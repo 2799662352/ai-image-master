@@ -39,6 +39,14 @@ export function unitPriceUsd(
   return hasVideoInput ? tier.withVideo : tier.noVideo
 }
 
+/**
+ * 这张卡有没有可用于估价的 token 数。没有就一定算不出价 —— 是 summarizeCostUsd
+ * 得以跳过 hasVideoInput 的前提,所以单独提出来,避免两处判定漂移。
+ */
+function hasUsableTokens(completionTokens: number | undefined): completionTokens is number {
+  return typeof completionTokens === 'number' && Number.isFinite(completionTokens) && completionTokens > 0
+}
+
 /** 按上游回传的 completion_tokens 估算本次费用(USD)。无法估算返回 null。 */
 export function estimateCostUsd(
   model: SeedanceModelAlias,
@@ -46,9 +54,7 @@ export function estimateCostUsd(
   hasVideoInput: boolean,
   completionTokens: number | undefined,
 ): number | null {
-  if (typeof completionTokens !== 'number' || !Number.isFinite(completionTokens) || completionTokens <= 0) {
-    return null
-  }
+  if (!hasUsableTokens(completionTokens)) return null
   const price = unitPriceUsd(model, resolution, hasVideoInput)
   if (price == null) return null
   return (completionTokens / 1_000_000) * price
@@ -91,8 +97,7 @@ export interface WorkbenchCostSummary {
  * 是上游生成完才回传的 —— 生成前无从得知,除非自己造一个「分辨率 × 时长 × 帧率
  * → token」的近似模型,那是发明数据。所以这里只回答「已经花了多少」,不做超额拦截。
  *
- * `hasVideoInput` 由调用方注入(生产里是
- * `buildModeMedia(card).referenceVideos.length > 0`),与单卡显示走**同一条推导** ——
+ * `hasVideoInput` 由调用方注入(生产里是 `cardHasVideoInput`,与提交拆分同源) ——
  * 含视频输入的单价明显更低(文档 9.2),两处若各算一次必然对不上。
  */
 export function summarizeCostUsd<T extends CostCardLike>(
@@ -103,14 +108,22 @@ export function summarizeCostUsd<T extends CostCardLike>(
   let counted = 0
   let unpriced = 0
   for (const card of cards) {
+    // 先判 token 再问 hasVideoInput:看板上绝大多数是草稿,算不出价,问了白烧。
+    // 生产侧的判定本身已经是 O(1) 布尔(`cardHasVideoInput`),这条顺序纪律仍留着
+    // —— 万一以后又有人塞回重型推导,草稿热路径不该为此买单。
+    if (!hasUsableTokens(card.completionTokens)) {
+      // 出了片但估不出价 —— 钱是真花了的,只是我们算不出来。
+      if (card.status === 'succeeded' || typeof card.completionTokens === 'number') unpriced += 1
+      continue
+    }
     const cost = estimateCostUsd(card.model, card.resolution, hasVideoInput(card), card.completionTokens)
     if (cost != null) {
       usd += cost
       counted += 1
       continue
     }
-    // 出了片但估不出价 —— 钱是真花了的,只是我们算不出来。
-    if (card.status === 'succeeded' || typeof card.completionTokens === 'number') unpriced += 1
+    // token 可用却仍算不出 —— 价目表里没有这个 模型 × 分辨率 组合。
+    unpriced += 1
   }
   return { usd, counted, unpriced }
 }

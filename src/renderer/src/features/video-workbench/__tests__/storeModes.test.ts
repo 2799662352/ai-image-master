@@ -2,17 +2,21 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  AUTO_IMPORT_PORTRAIT_KEY,
   buildCard,
   buildModeMedia,
   canStart,
+  cardHasVideoInput,
   resetWorkbenchStoreForTest,
   taskModeForCard,
   useVideoWorkbenchStore,
 } from '../store'
 import { getWorkbenchDb, resetWorkbenchDbForTest } from '../WorkbenchDb'
 
+// 形参要写出来:不写的话 mock.calls 被推成空元组,每个读载荷的断言都得 as 一次
+// undefined,tsc 全线报错。
 function mockSubmit() {
-  const submit = vi.fn(async () => ({ success: true, taskId: 'task-1' }))
+  const submit = vi.fn(async (_payload: Record<string, unknown>) => ({ success: true, taskId: 'task-1' }))
   ;(window as any).electronAPI = { videoWorkbench: { submit } }
   return submit
 }
@@ -199,6 +203,31 @@ describe('buildModeMedia 提交拆分', () => {
     expect(media.referenceVideos).toEqual(['v.mp4'])
     expect(media.referenceAudios).toEqual(['s.mp3'])
   })
+
+  it('cardHasVideoInput 与 buildModeMedia.referenceVideos 同口径(含换模式残留视频)', () => {
+    // 卡上挂着视频但模式不带它 → 必须是 false,不能看 referenceVideos.length
+    const leftover = buildCard({ ...base, mode: 'reference_images' }, 0)
+    expect(leftover.referenceVideos).toHaveLength(1)
+    expect(cardHasVideoInput(leftover)).toBe(false)
+    expect(buildModeMedia(leftover).referenceVideos).toHaveLength(0)
+
+    const modes = [
+      'text2video',
+      'first_frame',
+      'first_last_frame',
+      'reference_images',
+      'extend_video',
+      'multimodal_ref',
+      'edit_video',
+    ] as const
+    for (const mode of modes) {
+      const card = buildCard({ ...base, mode }, 0)
+      expect(cardHasVideoInput(card)).toBe(buildModeMedia(card).referenceVideos.length > 0)
+    }
+    // 空视频槽:即便模式会带视频,也是 false
+    const empty = buildCard({ mode: 'multimodal_ref', referenceVideos: [] }, 0)
+    expect(cardHasVideoInput(empty)).toBe(false)
+  })
 })
 
 describe('startCards 载荷携带 seed/webSearch/firstFrame', () => {
@@ -229,6 +258,29 @@ describe('startCards 载荷携带 seed/webSearch/firstFrame', () => {
     expect('seed' in payload).toBe(false)
     expect('firstFrame' in payload).toBe(false)
     expect(payload.referenceImages).toEqual(['dog.png'])
+  })
+
+  // 这是「人像库入库总闸」在工作台这条路上唯一起作用的地方:主进程只看载荷里的
+  // 这个字段(它不去查渲染端偏好)。字段掉了不会有任何报错 —— 只会变成关不掉。
+  it('每次提交都带上人像库总闸的当前值', async () => {
+    const submit = mockSubmit()
+    // 两张卡而不是同一张发两次:第一次提交后那张已进「生成中」,不再可启动。
+    const [onId, offId] = useVideoWorkbenchStore.getState().addCards([
+      { prompt: '开着时提交' },
+      { prompt: '关掉后提交' },
+    ])
+
+    try {
+      await useVideoWorkbenchStore.getState().startCards([onId])
+      expect((submit.mock.calls[0][0] as Record<string, unknown>).autoImportPortrait).toBe(true)
+
+      useVideoWorkbenchStore.getState().setAutoImportPortrait(false)
+      await useVideoWorkbenchStore.getState().startCards([offId])
+      expect((submit.mock.calls[1][0] as Record<string, unknown>).autoImportPortrait).toBe(false)
+    } finally {
+      // 开关持久在 localStorage,不清掉会顺着 resetWorkbenchStoreForTest 漏进后面的用例
+      localStorage.removeItem(AUTO_IMPORT_PORTRAIT_KEY)
+    }
   })
 })
 

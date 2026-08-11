@@ -105,8 +105,28 @@ function enrichWithOverlay(asset: SeedanceAssetItem, overlay: PortraitOverlaySta
 }
 
 /**
+ * 「默认上传人像库」总闸 —— 渲染端工具栏那个药丸的当前值。
+ *
+ * 真相源在渲染端(localStorage `vw-auto-import-portrait`),这里只是给**没有载荷
+ * 可带**的那条路(agent 的 generate_video)留的一份镜像:渲染端在开关变化时和
+ * store 初始化时各推一次。工作台自己的提交不读它,读 payload 里的字段 —— 那条
+ * 路不该依赖「推送到没到」。
+ *
+ * 默认开(与渲染端一致):只影响**生成后兜底登记**,上传时不再顺带入库。
+ */
+let autoImportPortraitEnabled = true
+
+export function setAutoImportPortraitEnabled(enabled: boolean): void {
+  autoImportPortraitEnabled = enabled
+}
+
+/**
  * 把本次用到的图片素材登记进人像库（人像分类 image_people），供后续复用与浏览。
  * 上游按内容 hash 去重，同图始终落到同一条记录。
+ *
+ * **人像库入库唯一自动路径**(卡片上传不再顺带)。受「默认上传人像库」开关管:
+ * 关着时整个函数直接返回。调用方传入开关值(工作台从提交载荷取、agent 路从
+ * 上面那份镜像取);默认开。
  *
  * **在任务提交之后后台跑,不进提交关键路径**。理由是上游导入是异步的:返回那刻
  * 只有内部行 id、`status: 'pending'`,真 assetId 要等处理完成(实测数秒)才有 ——
@@ -115,7 +135,11 @@ function enrichWithOverlay(asset: SeedanceAssetItem, overlay: PortraitOverlaySta
  *
  * 全程吞异常:这条链路只决定人像库里能不能看到这张图,不该影响生成成败。
  */
-async function importImagesToPortraitLibrary(content: SeedanceContentItem[]): Promise<void> {
+async function importImagesToPortraitLibrary(
+  content: SeedanceContentItem[],
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return
   const apiKey = getSeedanceApiKey()
   const apiSecret = getSeedanceApiSecret()
   if (!apiKey || !apiSecret) return
@@ -245,6 +269,16 @@ export interface SeedanceRuntime {
  * 返回一个 disposer,用于解除 overlay 变更广播订阅。
  */
 export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | null): () => void {
+  // 「默认上传人像库」总闸的镜像推送。单向 send/on(Electron 的 Pattern 1)——
+  // 渲染端只是告知,不等回执,没有值得 await 的返回。
+  //
+  // 注册在这里而不是 initSeedanceRuntime 里:渲染端 store 一初始化就推,那时
+  // MCP server 还没起来,晚注册的话首推直接落空,开关状态要等用户手点一次才同步。
+  ipcMain.removeAllListeners('video-workbench:set-auto-import-portrait')
+  ipcMain.on('video-workbench:set-auto-import-portrait', (_event, enabled: unknown) => {
+    setAutoImportPortraitEnabled(enabled === true)
+  })
+
   // ============ 设置(API Key / Secret) ============
   ipcMain.removeHandler('seedance:get-config')
   ipcMain.handle('seedance:get-config', () => getSeedanceKeyState())
@@ -445,7 +479,8 @@ export function initSeedanceRuntime(opts: {
         apiSecret: getSeedanceApiSecret(),
       })
       const state = await taskManager.submit({ input, content, threadId, clientId })
-      void importImagesToPortraitLibrary(content)
+      // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
+      void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
       return state
     } catch (e) {
       // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
@@ -525,7 +560,8 @@ export function initSeedanceRuntime(opts: {
         source: 'workbench',
         ...(clientId ? { clientId } : {}),
       })
-      void importImagesToPortraitLibrary(content)
+      // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
+      void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
       return { success: true, taskId: state.taskId }
     } catch (e) {
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。

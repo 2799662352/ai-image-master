@@ -26,7 +26,6 @@ import type {
   WorkbenchApplySkip,
 } from '../../../../types/videoWorkbench'
 import { isActiveStatus, pickSpec, specEquals } from './cardSpec'
-import { WORKBENCH_MAX_CARDS } from './WorkbenchDb'
 
 /** 撤销栈深度上限。超出后丢最老的一步。 */
 export const WORKBENCH_HISTORY_LIMIT = 50
@@ -210,7 +209,7 @@ const byOrder = (a: { order: number }, b: { order: number }): number => a.order 
  * 算出「把工作台还原成 snapshot 的意图」这一步要写什么。纯函数。
  *
  * 与 planApplyIR 共用同一套硬门:在飞的卡不删(停到第一页末尾并报告)、
- * 渲染中的卡规格定格(位置照样还原)、超上限直接拒绝而不是静默淘汰。
+ * 渲染中的卡规格定格(位置照样还原)。
  */
 export function planRestore(
   source: WorkbenchHistorySource,
@@ -338,17 +337,6 @@ export function planRestore(
       nextCards.push(placeExisting(cur, host, index, null))
       index += 1
     }
-  }
-
-  if (nextCards.length > WORKBENCH_MAX_CARDS) {
-    return reject(source, [
-      ...skipped,
-      {
-        reason:
-          `还原后会有 ${nextCards.length} 张卡,超过上限 ${WORKBENCH_MAX_CARDS}。`
-          + '先删一些卡再撤销 —— 硬写下去会静默淘汰用户的旧卡。',
-      },
-    ])
   }
 
   // 优先回到快照那一刻看的页 —— 撤销要看得见效果,否则「删页 → 撤销」会停在

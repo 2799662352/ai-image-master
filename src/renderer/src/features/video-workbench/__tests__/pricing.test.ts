@@ -115,6 +115,25 @@ describe('summarizeCostUsd(跨卡汇总)', () => {
     expect(summarizeCostUsd([], noVideo)).toEqual({ usd: 0, counted: 0, unpriced: 0 })
   })
 
+  // 锁求值顺序:算不出价的卡不许问 hasVideoInput。生产侧判定已是 O(1),但这条
+  // 纪律防的是以后有人再塞回重型推导 —— 草稿占绝大多数,热路径不该为它们买单。
+  it('算不出价的卡不调 hasVideoInput —— 草稿占绝大多数,这是热路径', () => {
+    const asked: string[] = []
+    const spy = (c: CostCardLike & { id?: string }): boolean => {
+      asked.push(c.id ?? '?')
+      return false
+    }
+    summarizeCostUsd(
+      [
+        { ...card({ status: 'draft', completionTokens: undefined }), id: 'draft' },
+        { ...card({ completionTokens: undefined }), id: 'no-tokens' },
+        { ...card(), id: 'priceable' },
+      ],
+      spy,
+    )
+    expect(asked).toEqual(['priceable'])
+  })
+
   it('混合场景:合计只覆盖可定价部分,unpriced 如实计数', () => {
     const s = summarizeCostUsd(
       [

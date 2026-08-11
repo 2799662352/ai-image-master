@@ -254,6 +254,103 @@ describe('PortraitPickerModal', () => {
     expect(assets[0].name).toBe('甲')
   })
 
+  // 分页:上游一次只回一页(默认 60),没有翻页控件就等于「库里其余素材根本够不着」。
+  describe('分页', () => {
+    /** 按请求的 page 回不同内容的 listAssets;总量 total 决定 totalPages。 */
+    function mockPagedApi(pages: Record<number, SeedanceAssetItem[]>, total: number, totalPages: number) {
+      const listAssets = vi.fn(async (q: { page?: number }) => {
+        const p = q.page ?? 1
+        return { items: pages[p] ?? [], total, page: p, pageSize: 60, totalPages }
+      })
+      ;(window as any).electronAPI = {
+        seedance: {
+          listAssets,
+          listOfficialMaterials: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 60, totalPages: 1 })),
+          getOverlay: vi.fn(async () => ({ entries: {}, groups: [] })),
+          mutateOverlay: vi.fn(async () => ({ entries: {}, groups: [] })),
+          onOverlayChanged: vi.fn(() => () => {}),
+        },
+      }
+      return listAssets
+    }
+
+    it('只有一页时不出翻页条 —— 别给两张素材配一套控件', async () => {
+      mockApi([makeAsset('a1', '赛博猫')])
+      render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
+      await screen.findByTitle('赛博猫')
+      expect(screen.queryByTestId('vw-picker-pager')).toBeNull()
+    })
+
+    it('点「下一页」按 page=2 重拉并换成第二页内容', async () => {
+      const listAssets = mockPagedApi(
+        { 1: [makeAsset('a1', '第一页猫')], 2: [makeAsset('b1', '第二页狗')] },
+        70,
+        2,
+      )
+      render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
+      await screen.findByTitle('第一页猫')
+      expect(screen.getByTestId('vw-picker-pager').textContent).toContain('1 / 2')
+
+      await act(async () => {
+        screen.getByRole('button', { name: '下一页' }).click()
+      })
+
+      await waitFor(() => expect(listAssets).toHaveBeenCalledWith(expect.objectContaining({ page: 2 })))
+      expect(await screen.findByTitle('第二页狗')).toBeTruthy()
+      expect(screen.queryByTitle('第一页猫')).toBeNull()
+      // 到末页后「下一页」禁用,不让用户翻进空页
+      expect((screen.getByRole('button', { name: '下一页' }) as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    // 这条是分页最容易踩的坑:选中若从当前页 items 派生,翻页就会把上一页的勾选清掉。
+    it('跨页多选保留:第一页选一张,翻到第二页再选一张,确认回填两张', async () => {
+      mockPagedApi({ 1: [makeAsset('a1', '第一页猫')], 2: [makeAsset('b1', '第二页狗')] }, 70, 2)
+      const onConfirm = vi.fn()
+      render(<PortraitPickerModal open onClose={() => {}} onConfirm={onConfirm} />)
+
+      const first = await screen.findByTitle('第一页猫')
+      await act(async () => {
+        first.click()
+      })
+      await act(async () => {
+        screen.getByRole('button', { name: '下一页' }).click()
+      })
+      const second = await screen.findByTitle('第二页狗')
+      await act(async () => {
+        second.click()
+      })
+
+      await act(async () => {
+        screen.getByRole('button', { name: /使用选中素材/ }).click()
+      })
+      const assets = onConfirm.mock.calls[0][0] as SeedanceAssetItem[]
+      expect(assets.map((a) => a.assetId).sort()).toEqual(['a1', 'b1'])
+    })
+
+    it('换类型 tab 回到第 1 页 —— 新筛选只有一页时停在第 2 页会是空的', async () => {
+      const listAssets = mockPagedApi(
+        { 1: [makeAsset('a1', '第一页猫')], 2: [makeAsset('b1', '第二页狗')] },
+        70,
+        2,
+      )
+      render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
+      await screen.findByTitle('第一页猫')
+      await act(async () => {
+        screen.getByRole('button', { name: '下一页' }).click()
+      })
+      await screen.findByTitle('第二页狗')
+
+      await act(async () => {
+        screen.getByRole('button', { name: /场景/ }).click()
+      })
+      await waitFor(() =>
+        expect(listAssets).toHaveBeenCalledWith(
+          expect.objectContaining({ page: 1, kind: 'image_environment' }),
+        ),
+      )
+    })
+  })
+
   it('上游返回重复行(同 assetId)→ 按稳定键去重只渲染一条', async () => {
     mockApi([makeAsset('a1', '赛博猫'), { ...makeAsset('a1', '赛博猫') }])
     render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)

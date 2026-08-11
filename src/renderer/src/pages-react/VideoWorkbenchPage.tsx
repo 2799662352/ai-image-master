@@ -9,10 +9,10 @@
 
 import { useEffect, useState } from 'react'
 import {
+  cardHasVideoInput,
   mountWorkbenchTaskListener,
   useVideoWorkbenchStore,
 } from '../features/video-workbench/store'
-import { buildModeMedia } from '../features/video-workbench/store'
 import { formatCostUsd, summarizeCostUsd } from '../features/video-workbench/pricing'
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
@@ -103,10 +103,9 @@ export default function VideoWorkbenchPage() {
   const batchDisabled = selectedCardIds.length > 0 ? selectedStartableCount === 0 : startableCount === 0
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
-  // hasVideoInput 必须与单卡显示同源,否则两处数字对不上:含视频输入单价明显更低。
-  const hasVideoInput = (c: (typeof allCards)[number]) => buildModeMedia(c).referenceVideos.length > 0
-  const boardCost = summarizeCostUsd(cards, hasVideoInput)
-  const totalCost = summarizeCostUsd(allCards, hasVideoInput)
+  // cardHasVideoInput 与单卡显示 / 提交拆分同源,但不为布尔分配三个数组。
+  const boardCost = summarizeCostUsd(cards, cardHasVideoInput)
+  const totalCost = summarizeCostUsd(allCards, cardHasVideoInput)
 
   return (
     <div className="bg-[#09090B] border border-[#3F3F46] p-4 md:p-6 relative overflow-hidden min-h-[70vh]">
@@ -150,11 +149,14 @@ export default function VideoWorkbenchPage() {
             <UndoRedoButtons />
             {/* 海外/国内站点切换:与设置页共享同一份 region 配置,提交按此路由 */}
             <RegionSwitch />
-            {/* 全局开关:本地上传素材加入卡片的同时顺带导入人像库(失败只 toast) */}
+            {/* 人像库入库总闸:只管生成时把参考图登记进人像库(上传不再顺带) */}
             <button
               type="button"
               aria-pressed={autoImportPortrait}
-              title="开启后,任何卡片上本地上传的素材会自动同步导入人像库(导入失败不影响卡片)"
+              title={
+                '人像库入库总闸(默认开)。开启:生成时用到的参考图会后台登记进人像库'
+                + '(不影响卡片与生成)。关闭:生成也不传,人像库只收你在人像库页手动上传的。'
+              }
               className={[
                 'text-xs px-3 py-2 border transition-colors',
                 autoImportPortrait

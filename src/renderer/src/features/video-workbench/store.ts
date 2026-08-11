@@ -44,7 +44,7 @@ import type {
 import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { modeLimit } from './modes'
-import { WORKBENCH_MAX_CARDS, getWorkbenchDb } from './WorkbenchDb'
+import { getWorkbenchDb } from './WorkbenchDb'
 import { useToastStore } from '../../stores/useToastStore'
 import {
   type MaterialKind,
@@ -87,6 +87,7 @@ interface WorkbenchElectronApi {
     // 可选:preload 桥可能是旧版（热更新时序），调用点一律用 `?.` 并有降级分支
     cancel?: (taskId: string) => Promise<SeedanceCancelResult>
     reconcile?: (items: VideoWorkbenchReconcileItem[]) => Promise<VideoWorkbenchReconcileResult[]>
+    setAutoImportPortrait?: (enabled: boolean) => void
   }
   seedance?: {
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
@@ -509,6 +510,35 @@ export function buildModeMedia(card: VideoWorkbenchCard): Pick<
 }
 
 /**
+ * 这张卡提交时会不会带参考视频 —— 与 `buildModeMedia(...).referenceVideos.length > 0`
+ * 同口径,但不分配数组。
+ *
+ * 费用估算(含视频输入单价更低)必须跟提交拆分同源:卡上可能还挂着换模式前留下
+ * 的视频槽,`referenceVideos.length > 0` 会误判。热路径是工具条跨卡汇总,所以
+ * 单独提出来,别为了一句布尔去跑三趟 `.map`。
+ */
+export function cardHasVideoInput(
+  card: Pick<VideoWorkbenchCard, 'mode' | 'referenceVideos'>,
+): boolean {
+  switch (card.mode) {
+    case 'text2video':
+    case 'first_frame':
+    case 'first_last_frame':
+    case 'reference_images':
+      return false
+    case 'extend_video':
+    case 'multimodal_ref':
+    case 'edit_video':
+      return card.referenceVideos.length > 0
+    default: {
+      const exhaustive: never = card.mode
+      void exhaustive
+      return card.referenceVideos.length > 0
+    }
+  }
+}
+
+/**
  * 卡片模式 → 上游 taskMode。
  *
  * 「编辑视频 / 延长视频」这两个模式工作台早就有了，但在 2.5 之前它们只决定带哪些
@@ -849,11 +879,14 @@ async function upgradeCardHistoryUrl(card: VideoWorkbenchCard): Promise<void> {
   }
 }
 
+/** 未写过键默认开;显式 `'0'` 才关。 */
 function readAutoImportPortrait(): boolean {
   try {
-    return globalThis.localStorage?.getItem(AUTO_IMPORT_PORTRAIT_KEY) === '1'
+    const v = globalThis.localStorage?.getItem(AUTO_IMPORT_PORTRAIT_KEY)
+    if (v == null) return true
+    return v !== '0'
   } catch {
-    return false
+    return true
   }
 }
 
@@ -951,6 +984,22 @@ let restoringHistory = false
 /** 上一次入栈的合并标记(见 workbenchHistory.shouldCoalesce)。 */
 let historyCursor: HistoryCursor | null = null
 
+/**
+ * 把「默认上传人像库」总闸镜像给主进程。
+ *
+ * 只有 agent 那条 generate_video 需要它 —— 工作台自己的提交把开关值写在载荷里,
+ * 不依赖这次推送到没到。桥缺失(旧 preload / 非 Electron 宿主)静默跳过,此时
+ * 主进程留在它自己的默认值(开,与 UI 默认同);只有「用户显式关掉 + preload 还是
+ * 旧版」这个窄窗口会不一致,热更新一轮就消失。
+ */
+function mirrorAutoImportPortraitToMain(enabled: boolean): void {
+  try {
+    getApi()?.videoWorkbench?.setAutoImportPortrait?.(enabled)
+  } catch {
+    // 推送失败不影响开关本身 —— 它的真相源在 localStorage
+  }
+}
+
 const initialBoard = createDefaultBoard()
 
 export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) => ({
@@ -973,6 +1022,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     } catch {
       // localStorage 不可用(隐私模式等)时仅内存生效
     }
+    mirrorAutoImportPortraitToMain(enabled)
   },
 
   ensureHydrated: async () => {
@@ -1245,26 +1295,6 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         if (card.boardId === targetBoardId && !createdIds.has(card.id)) schedulePersist(card)
       }
     }
-    // evict() 只删库并返回被删 id。必须把它们同步从内存摘掉 —— 否则界面上卡还在、
-    // 重启后凭空消失,症状延迟到下次启动才出现,是最难排查的一类。
-    // 淘汰也不该悄悄发生:弹一次 toast 说明为了放下新卡牺牲了几张旧卡。
-    void getWorkbenchDb()
-      .evict()
-      .then((evicted) => {
-        if (evicted.length === 0) return
-        const gone = new Set(evicted)
-        set((state) => ({
-          cards: state.cards.filter((c) => !gone.has(c.id)),
-          revision: state.revision + 1,
-          // 卡片集合变了 —— agent 手里的整份 IR 令牌理应随之作废。
-          structureRevision: state.structureRevision + 1,
-        }))
-        useToastStore.getState().addToast({
-          type: 'info',
-          message: `卡片超过上限 ${WORKBENCH_MAX_CARDS} 张,已淘汰最旧的 ${evicted.length} 张终态卡`,
-        })
-      })
-      .catch(() => {})
     return created.map((c) => c.id)
   },
 
@@ -1739,6 +1769,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         ...(card.seed !== undefined ? { seed: card.seed } : {}),
         ...(card.webSearch ? { webSearch: true } : {}),
         ...(taskModeForCard(card) ? { taskMode: taskModeForCard(card) } : {}),
+        // 总闸随每次提交带过去 —— 关着时主进程不把这批参考图登记进人像库。
+        autoImportPortrait: get().autoImportPortrait,
         ...buildModeMedia(card),
       }
 
@@ -1979,10 +2011,16 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   redo: () => restoreStep(set, get(), 'redo'),
 }))
 
+// 开机先把总闸的持久值推给主进程一次。不能只在用户手点开关时推 —— 那样重启后
+// 到用户下次点之前,主进程用的还是它自己的默认值,agent 那条路的行为就可能和
+// 药丸显示的不一致。放在模块级是因为 agent 也 import 这个 store,不依赖工作台
+// 页被打开。
+mirrorAutoImportPortraitToMain(useVideoWorkbenchStore.getState().autoImportPortrait)
+
 /**
  * 撤销与重做是同一段逻辑的镜像:从一个栈弹出目标快照,把「当前」压进另一个栈。
  *
- * 计划被拒(例如还原后会超过卡片上限)时**保留栈顶**,用户腾出空间还能再试 ——
+ * 计划被拒(例如快照为空、还原会清空工作台)时**保留栈顶**,条件变了还能再试 ——
  * 弹掉会让那一步永久消失。
  */
 function restoreStep(
@@ -2192,7 +2230,7 @@ export function resetWorkbenchStoreForTest(): void {
       selectionAnchorId: undefined,
       undoStack: [],
       redoStack: [],
-      autoImportPortrait: false,
+      autoImportPortrait: readAutoImportPortrait(),
     })
   } finally {
     restoringHistory = false

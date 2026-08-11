@@ -148,9 +148,9 @@ export interface VideoWorkbenchMaterial {
    *
    * 刻意**不持久化**（`WorkbenchDb.put` 会剥掉）。仓库里没有任何地方声明或配置
    * 过 COS 桶的生命周期规则,所以一个几周前 mint 的地址是死是活无从判断;而卡片
-   * 会在 IndexedDB 里躺到被 200 张上限挤掉为止。存下来的收益（隔天生成省一次
-   * 上传）远小于代价（拿一个死链去提交,而且重试还是同一个死链）。丢掉它,重启
-   * 后就是今天的行为:提交时主进程从磁盘流式上传。
+   * 会在 IndexedDB 里一直躺到用户自己删（卡片总量无上限）。存下来的收益（隔天
+   * 生成省一次上传）远小于代价（拿一个死链去提交,而且重试还是同一个死链）。
+   * 丢掉它,重启后就是今天的行为:提交时主进程从磁盘流式上传。
    *
    * 同一个文件出现在两个槽位时会各传各的、拿到两个不同地址 —— 上游按下标解析
    * `@参考N`（Seedance OpenAPI §2.3）,共用一个地址有可能被折叠成一个参考,
@@ -301,8 +301,8 @@ export type VideoWorkbenchInsertAnchor =
 
 /**
  * 产出某一版时的意图快照。**素材只记名字不记字节** —— referenceImages 里可能是
- * data: URL，逐版复制会迅速撑爆 IndexedDB（WORKBENCH_MAX_CARDS 这个上限存在的
- * 唯一原因就是防素材膨胀）。
+ * data: URL，逐版复制会迅速撑爆 IndexedDB。卡片总量已无上限（见 WorkbenchDb.ts
+ * 顶部），所以这条纪律现在是防膨胀的唯一防线，别为了「版本里也能看到图」破例。
  */
 export interface VideoWorkbenchVersionSpec {
   prompt: string
@@ -561,6 +561,16 @@ export interface VideoWorkbenchSubmitPayload {
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]
+  /**
+   * 「默认上传人像库」开关的当前值（工具栏那个药丸）。只管**生成时兜底登记**
+   * 参考图进人像库;上传素材本身不再顺带入库。关着时这次提交用到的参考图
+   * 不会被登记。
+   *
+   * 随每次提交带过来而不是让主进程去查,是因为提交路径不该依赖「渲染端有没有
+   * 推送过偏好」这个前置条件 —— 推送是给 agent 那条路(generate_video)用的镜像,
+   * 见 runtime.ts 的 setAutoImportPortraitEnabled。缺省按开处理(与 UI 默认一致)。
+   */
+  autoImportPortrait?: boolean
 }
 
 /** `video-workbench:submit` 返回（成功 = 已创建上游任务，轮询在主进程后台跑）。 */
