@@ -251,9 +251,10 @@ export interface SeedanceKeyState {
   /**
    * 当前站点**真正能提交**的模型档位，由主进程按 region + 灰度开关算出。
    *
-   * 渲染端别自己枚举 `SEEDANCE_MODEL_CAPABILITIES` 的键去填下拉框：2.5 在国内站
-   * 还挂着 `SEEDANCE_CN_2_5_ENABLED` 灰度，能力表里有不等于提交得上去。摆一个
-   * 注定被上游拒的选项，比少摆一个更糟。
+   * 渲染端别自己枚举 `SEEDANCE_MODEL_CAPABILITIES` 的键去填下拉框：能力表说的是
+   * 「这个档位的规格」，不是「这个站点现在能不能提交」。国内 2.5 就走过这条路
+   * （`SEEDANCE_CN_2_5_ENABLED`，2026-08-12 已开，但 `SEEDANCE_CN_25=0` 随时能关回去）。
+   * 摆一个注定被上游拒的选项，比少摆一个更糟。
    */
   models: readonly SeedanceModelAlias[]
 }

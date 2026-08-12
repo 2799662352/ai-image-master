@@ -14,6 +14,17 @@ if (typeof document !== 'undefined') {
   }
 }
 
+// jsdom 没有 ResizeObserver。任何「按容器尺寸算布局」的组件(视频标注覆盖层要用它
+// 把 canvas 对齐到 object-fit: contain 后的真实画面区)一挂载就会 ReferenceError,
+// 而那与被测行为无关。给一个不回调的空实现:jsdom 里本来也没有真实布局可观察。
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver
+}
+
 if (typeof HTMLDialogElement !== 'undefined') {
   if (!HTMLDialogElement.prototype.showModal) {
     HTMLDialogElement.prototype.showModal = function () {

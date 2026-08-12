@@ -150,3 +150,26 @@ export function enqueueCosUploadBlob(
     fr.readAsDataURL(blob)
   }
 }
+
+/**
+ * 已经握着字节时用这个,别再包一层 Blob。
+ *
+ * 调用方(如工作台的内联素材转存)是从 data: URL 解出来的 `ArrayBuffer`,
+ * `enqueueCosUploadBlob` 会把它包成 Blob 再 `arrayBuffer()` 拆回来 —— 一次
+ * 无谓的往返,而且 Blob 在 jsdom 里没有 `arrayBuffer()`,单测还得为它让路。
+ *
+ * 返回**是否真的入队**:字节通道不存在(老 preload / 浏览器预览)时返回 false,
+ * 调用方据此决定是登记等回调还是干脆放弃 —— 登记了却永远等不到结果就是内存泄漏。
+ */
+export function enqueueCosUploadBytes(
+  itemId: string,
+  bytes: ArrayBuffer,
+  mimeType?: string,
+  metadata?: Record<string, unknown>,
+): boolean {
+  const send = getBridge()?.enqueueUploadBytes
+  if (!send) return false
+  const source = typeof metadata?.source === 'string' ? metadata.source : 'unknown'
+  void send(`${source}:${itemId}`, bytes, mimeType, metadata)
+  return true
+}

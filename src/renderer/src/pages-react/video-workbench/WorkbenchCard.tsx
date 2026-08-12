@@ -24,16 +24,21 @@ import type {
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
 import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
 import {
+  mediaToken,
   remapTokensForMove,
   removeTokenAndReindex,
   type MediaTokenKind,
 } from '../../features/video-workbench/promptTokens'
+import { frameAnnotationLabel } from '../../features/video-workbench/advancedVideoEdit'
+import { useResolvedMediaSrc } from '../../components/shared/media/useResolvedMediaSrc'
+import { useToastStore } from '../../stores/useToastStore'
 import {
   externalImageMaterialFromText,
   pasteTargetAcceptsMaterial,
 } from '../../features/video-workbench/externalImageUrl'
 import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
+import { AdvancedVideoEditModal, type AdvancedEditFrame } from './AdvancedVideoEditModal'
 import { PortraitPickerModal } from './PortraitPickerModal'
 import { ResultVideoPlayer, hasPlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
@@ -83,6 +88,18 @@ function getFilePathSafe(file: File): string {
   }
 }
 
+/**
+ * 内联(无磁盘路径)素材的体积上限。**只管走内存那条路的**,本地文件不受限 ——
+ * 那条从磁盘流式上传,压根没有体积闸门。
+ *
+ * 取 64MB 而不是聊天栏那条内存路的 100MB(MentionInput 的
+ * MAX_BUFFER_ATTACHMENT_BYTES),是因为下游不同:工作台素材要靠
+ * `cos:enqueue-upload-bytes` 换成 https,而那条 IPC 自己的闸门就是 64MB。
+ * 超过它的素材进来了也永远换不成 https,只会以 base64 跟着卡片一遍遍写进
+ * IndexedDB —— 救不回来的东西,别让它进门。
+ */
+const MAX_INLINE_MATERIAL_BYTES = 64 * 1024 * 1024
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -100,10 +117,17 @@ function readAsDataUrl(file: File): Promise<string> {
  * 和文件选择器给的 File 都带真实路径,走不到这儿;能落到 dataURL 的只有剪贴板
  * 粘贴、网页拖拽这类本来就在内存里的小文件。读失败(超大导致 OOM 等)由
  * FileReader 自己抛,照旧返回 null。
+ *
+ * `allowInline: false` 关掉兜底(视频用)—— 见 addFiles 里的说明。
  */
-async function fileToMaterial(file: File): Promise<VideoWorkbenchMaterial | null> {
+async function fileToMaterial(
+  file: File,
+  allowInline = true,
+): Promise<VideoWorkbenchMaterial | null> {
   const path = getFilePathSafe(file)
   if (path) return { name: file.name, src: path }
+  if (!allowInline) return null
+  if (file.size > MAX_INLINE_MATERIAL_BYTES) return null
   try {
     return { name: file.name, src: await readAsDataUrl(file) }
   } catch {
@@ -313,14 +337,45 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
 
   const addFiles = async (files: File[]) => {
     const { images, videos, audios } = classifyFiles(files)
-    const toMaterials = async (list: File[]) =>
-      (await Promise.all(list.map(fileToMaterial))).filter((m): m is VideoWorkbenchMaterial => m !== null)
+    const toMaterials = async (list: File[], allowInline = true) =>
+      (await Promise.all(list.map((f) => fileToMaterial(f, allowInline))))
+        .filter((m): m is VideoWorkbenchMaterial => m !== null)
+    // 体积闸只拦「走内存那条路」的:没有磁盘路径、又超过内联上限。视频不在此列,
+    // 它下面有自己那条更明确的提示(无论多大都不收内联)。静默丢掉是最坏的选择 ——
+    // 用户只会以为拖拽失灵。
+    const tooBig = files.filter(
+      (f) =>
+        !f.type.startsWith('video/')
+        && !getFilePathSafe(f)
+        && f.size > MAX_INLINE_MATERIAL_BYTES,
+    )
+    if (tooBig.length) {
+      useToastStore.getState().addToast({
+        type: 'warning',
+        message: `${tooBig.length > 1 ? `${tooBig.length} 份素材` : `「${tooBig[0].name}」`}没有本地文件且超过 64MB,进来了也无法上传。先保存到本地再拖进来 —— 本地文件走磁盘流式上传,没有体积限制。`,
+      })
+    }
     // 只进卡片素材区;人像库入库改由生成时兜底(工具栏总闸),上传不再顺带。
     if (images.length && modeLimit(card.mode, 'image', card.model) > 0) {
       addMaterials(card.id, 'referenceImages', await toMaterials(images))
     }
     if (videos.length && modeLimit(card.mode, 'video', card.model) > 0) {
-      addMaterials(card.id, 'referenceVideos', await toMaterials(videos))
+      // 视频不走 dataURL 兜底。分界不在「图片 vs 视频」,在**字节走不走内存**:
+      // 有路径的视频由主进程从磁盘流式传 COS,不进渲染堆也不进 IPC,没有体积上限;
+      // 没路径就只能整个读进内存再过一次 IPC,而 Electron 的 IPC 对二进制没有零拷贝
+      // (所有 IPC 方法都经 v8::ValueSerializer 深拷贝,transfer list 只认 MessagePort),
+      // 一条载荷同时存在两份副本。之后它还会以 base64 常驻 IndexedDB、每次提交再过一遍。
+      //
+      // 图片认这个代价(剪贴板截图没有别的路);视频不认 —— 用户右键存到本地就能换来
+      // 流式上传,所以拒收并指路,比默默扛着一坨 base64 诚实。
+      const accepted = await toMaterials(videos, false)
+      if (accepted.length < videos.length) {
+        useToastStore.getState().addToast({
+          type: 'warning',
+          message: '这个视频没有本地文件(多半是从网页拖来的)。先保存到本地再拖进来 —— 那样会走流式上传,也没有体积限制。',
+        })
+      }
+      if (accepted.length) addMaterials(card.id, 'referenceVideos', accepted)
     }
     if (audios.length && modeLimit(card.mode, 'audio', card.model) > 0) {
       addMaterials(card.id, 'referenceAudios', await toMaterials(audios))
@@ -479,6 +534,60 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
       }
     },
     [card.id, card.mode, addMaterials],
+  )
+
+  // ---- 高级编辑(仅 2.5 的「编辑视频」)----
+  // 它解决的是「改哪儿说不清楚」:在参考视频的某一帧上圈一下、标个号,把这张带
+  // 标注的图当参考图发出去,比任何措辞都准。入口只在**真能用**时出现:换模型/
+  // 换模式/没视频素材时按钮消失,而不是点了才报错。
+  const [aveOpen, setAveOpen] = useState(false)
+  const editableVideo = card.referenceVideos[0]
+  const canAdvancedEdit = card.model === '2.5' && card.mode === 'edit_video' && editableVideo !== undefined
+  // 本地路径直连 <video> 在 Electron 38 下加载不出字节(见 useResolvedMediaSrc
+  // 模块注释),必须经 IPC 转 blob:。抽帧要原始字节,不能用缩略图那条路。
+  const aveVideoSrc = useResolvedMediaSrc(
+    canAdvancedEdit && aveOpen ? editableVideo.src : '',
+    'video',
+    { fullFidelity: true },
+  )
+
+  /**
+   * 高级编辑保存:拍平帧进参考图,并在提示词末尾补上对应的 `【@图片N】` + 备注。
+   *
+   * 序号按**加入后**的位置算,所以要在 addMaterials 之后重新读一次卡片 —— 中途
+   * 可能被模式上限截断,拿加入前的长度去推会指到不存在的素材上。
+   */
+  const handleAdvancedEditApply = useCallback(
+    (frames: AdvancedEditFrame[], note: string) => {
+      if (frames.length === 0) return
+      const state = useVideoWorkbenchStore.getState()
+      const before = state.cards.find((c) => c.id === card.id)?.referenceImages.length ?? 0
+      const remaining = modeLimit(card.mode, 'image', card.model) - before
+      if (remaining <= 0) {
+        useToastStore.getState().addToast({ type: 'error', message: '参考图已达该模式上限,先删几张再添加' })
+        return
+      }
+      const accepted = frames.slice(0, remaining)
+      // 就当一张普通参考图加进去:内联字节的转存由 materialTransfer 统一接管
+      // (与粘贴图同路),回来会把 src 换成 COS 的 https 地址。
+      addMaterials(
+        card.id,
+        'referenceImages',
+        accepted.map((f) => ({ name: `${frameAnnotationLabel(f.timeSec)}.jpg`, src: f.dataUrl })),
+      )
+      const after = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
+      if (!after) return
+      const tokens = accepted.map((_, i) => mediaToken('image', before + i + 1)).join(' ')
+      const nextPrompt = [after.prompt, tokens, note].filter((s) => s && s.trim()).join(' ').trim()
+      if (nextPrompt !== after.prompt) updateCard(card.id, { prompt: nextPrompt })
+      if (accepted.length < frames.length) {
+        useToastStore.getState().addToast({
+          type: 'warning',
+          message: `参考图上限,只加入了 ${accepted.length}/${frames.length} 帧`,
+        })
+      }
+    },
+    [card.id, card.mode, card.model, addMaterials, updateCard],
   )
 
   const modeSpec = getModeSpec(card.mode)
@@ -759,6 +868,18 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
               <option key={m.value} value={m.value} title={m.description}>{m.label}</option>
             ))}
           </select>
+          {canAdvancedEdit && (
+            <button
+              type="button"
+              data-testid="vw-advanced-edit-open"
+              disabled={busy}
+              title="在参考视频的某一帧上标注(圈选/箭头/文字/定位钉),拍平成参考图带回本卡"
+              className="border border-[#FCE300]/60 text-[#FCE300] px-2 py-1.5 hover:bg-[#FCE300]/10 disabled:opacity-40"
+              onClick={() => setAveOpen(true)}
+            >
+              ✎ 高级编辑
+            </button>
+          )}
           <select
             aria-label="模型"
             value={card.model}
@@ -1019,6 +1140,15 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
 
       {/* 人像库选择器(asset:// 回填) */}
       <PortraitPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} onConfirm={handlePortraitConfirm} />
+      {/* 地址解析完才挂:<video src=""> 会立刻报一个没有意义的加载错误 */}
+      {aveOpen && aveVideoSrc && (
+        <AdvancedVideoEditModal
+          open
+          videoSrc={aveVideoSrc}
+          onClose={() => setAveOpen(false)}
+          onApply={handleAdvancedEditApply}
+        />
+      )}
     </div>
   )
 })
