@@ -18,7 +18,7 @@ import { memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useFileExplorerStore } from './store'
-import { useFileUrl } from './useFileUrl'
+import { toStreamableUri } from './uri'
 import { isDirectHref, resolveDocRelativePath } from './markdownDocLinks'
 import './markdownPreview.css'
 
@@ -36,23 +36,21 @@ function lineAnchor(node: unknown): { className: string; 'data-line'?: number } 
 }
 
 /**
- * 本地图片。渲染端不能把磁盘路径直接塞进 `<img src>` —— Windows 上盘符会在自定义
- * 协议解析时被吞掉(electron#49073,详见 useFileUrl 模块注释),所以统一经 IPC
- * 读字节转 blob:。
+ * 文档里的本地图片。磁盘路径不能直接塞进 `<img src>`(渲染进程加载不了裸路径),
+ * 走与查看器同一条流式协议:按需读盘、不经 base64、不进 JS 内存 —— 一篇插了十几张
+ * 截图的文档,差别很明显。
  */
 function LocalImage({ path, alt }: { path: string; alt: string }) {
-  const file = useFileUrl(path)
-  if (file.status === 'loading') {
-    return <span className="fx-md-img-placeholder">载入图片…</span>
-  }
-  if (file.status === 'error') {
+  const src = toStreamableUri(path)
+  const [failed, setFailed] = useState(false)
+  if (failed) {
     return (
-      <span className="fx-md-img-placeholder" title={`${path}\n${file.reason}`}>
+      <span className="fx-md-img-placeholder" title={path}>
         图片打不开:{alt || path}
       </span>
     )
   }
-  return <img src={file.url} alt={alt} />
+  return <img src={src} alt={alt} onError={() => setFailed(true)} />
 }
 
 function CodeBlock({ children }: { children: ReactNode }) {
