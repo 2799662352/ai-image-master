@@ -71,8 +71,12 @@ const RATIO_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
  *
  * -1 = 智能时长(模型自动决定,文档 8.1);其余按秒连续 —— 上游本来就连续接受,
  * 早先只列偶数与 5 是我们自己漏的,不是上游限制。
+ *
+ * 「编辑视频」只给智能一个选项:上游 `taskMode="edit"` 的时长固定为 -1,列出来的
+ * 每一个秒数都是提交必被拒的(见 cardSpec.lockDurationForMode)。
  */
-function durationOptionsFor(model: SeedanceModelAlias): number[] {
+function durationOptionsFor(model: SeedanceModelAlias, mode: VideoWorkbenchMode): number[] {
+  if (mode === 'edit_video') return [-1]
   const { min, max } = capabilitiesFor(model).duration
   const secs: number[] = []
   for (let s = min; s <= max; s += 1) secs.push(s)
@@ -206,7 +210,11 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   // 拿不到就退回 2.0 家族——少一个选项好过摆一个提交必被拒的选项。
   const availableModels = useSeedanceModels()
   const modelCaps = capabilitiesFor(card.model)
-  const durationOptions = useMemo(() => durationOptionsFor(card.model), [card.model])
+  const durationLocked = card.mode === 'edit_video'
+  const durationOptions = useMemo(
+    () => durationOptionsFor(card.model, card.mode),
+    [card.model, card.mode],
+  )
 
   const [cancelling, setCancelling] = useState(false)
   // running 档的「放弃」要二次确认（不可逆且照样计费）；任务一离开进行中就复位
@@ -937,8 +945,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           <select
             aria-label="时长"
             value={card.duration}
-            disabled={busy}
-            title="智能时长 = 模型按内容自动决定输出时长"
+            disabled={busy || durationLocked}
+            title={durationLocked
+              ? '编辑视频固定为智能时长 —— 上游不接受固定秒数,输出长度跟随被编辑的视频'
+              : '智能时长 = 模型按内容自动决定输出时长'}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) => updateCard(card.id, { duration: Number(e.target.value) })}
           >

@@ -53,6 +53,7 @@ import {
   createDefaultBoard,
   createId,
   isActiveStatus,
+  lockDurationForMode,
   normalizeDuration,
   normalizeMode,
   normalizeSeed,
@@ -1054,12 +1055,26 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         // boardId 缺失/失效 → 迁入第一页(单页老数据自动迁移,不丢卡)。
         const normalized = stored.map((raw) => {
           const boardId = raw.boardId && boardIds.has(raw.boardId) ? raw.boardId : firstBoardId
-          const card = { ...raw, boardId, mode: normalizeMode(raw.mode), webSearch: raw.webSearch === true }
+          const mode = normalizeMode(raw.mode)
+          // 编辑视频锁死智能时长。这道锁是后加的,库里躺着的老卡可能是「编辑视频 +
+          // 25 秒」那种提交必被拒的组合 —— 恢复时就地纠正,别让它一直等到用户
+          // 按下生成才暴露。
+          const card = {
+            ...raw,
+            boardId,
+            mode,
+            duration: lockDurationForMode(mode, raw.duration),
+            webSearch: raw.webSearch === true,
+          }
           const next =
             isActiveStatus(card.status) && !card.taskId
               ? { ...card, status: 'failed' as const, error: card.error ?? '应用重启前任务未提交成功,请重新生成' }
               : card
-          if (next.boardId !== raw.boardId || next.status !== raw.status) {
+          if (
+            next.boardId !== raw.boardId
+            || next.status !== raw.status
+            || next.duration !== raw.duration
+          ) {
             void db.put(next).catch(() => {})
           }
           return next
@@ -1341,6 +1356,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           // 只影响这一张 —— structureRevision 不动,别的卡照样可写。
           rev: (card.rev ?? 0) + 1,
         }
+        // 编辑视频锁死智能时长(见 lockDurationForMode)。收敛点放在合并之后、而不是
+        // 塞进上面那个 `patch.duration` 分支:切模式时改的是 mode,固定秒数原封不动
+        // 留在卡上,只看 duration 分支就漏了这条最常见的路径。
+        //
+        // 无条件跑:对合法卡片是恒等变换,只有历史遗留的非法组合会被就地纠正 ——
+        // 那种卡在提交前是看不出问题的,越早纠正越好。
+        updated = { ...updated, duration: lockDurationForMode(updated.mode, updated.duration) }
         // 模式或模型切换后按新上限截断超限素材(soraui 是清空,这里保守只截断)。
         // 模型也要管:2.5 收 30 张图,降回 2.0 只收 9 张——不截断的话卡片看着正常,
         // 一提交就被 validateSeedanceRequest 拒,用户还得自己去数哪几张多余。

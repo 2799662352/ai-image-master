@@ -33,4 +33,18 @@ describe('卡片时长下拉', () => {
 
     expect(values).toEqual(['-1', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])
   })
+
+  // 上游 taskMode="edit" 的时长固定为 -1,列出来的每个秒数都是提交必被拒的。
+  // 这条曾经真的发生过:界面给选 25s,点生成才收到「不能指定固定秒数」。
+  it('编辑视频锁死智能时长:下拉只剩「智能」且禁用', async () => {
+    useVideoWorkbenchStore.getState().addCards([{ prompt: 'x', model: '2.5', mode: 'edit_video' }])
+    useVideoWorkbenchStore.setState({ hydrated: true })
+    render(<VideoWorkbenchPage />)
+
+    const select = await screen.findByLabelText('时长')
+    const values = Array.from(select.querySelectorAll('option')).map((o) => o.value)
+
+    expect(values).toEqual(['-1'])
+    expect((select as HTMLSelectElement).disabled).toBe(true)
+  })
 })

@@ -56,7 +56,10 @@ const cardInputSchema = z.object({
   // 模型分档校验 4–15 / 4–30，schema 这层从来就管不全）。
   duration: z.number().int().min(-1).max(30).optional().describe(
     'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). '
-    + 'Default 5. (0-3 are not valid; they are rejected downstream with a model-aware message.)',
+    + 'Default 5. (0-3 are not valid; they are rejected downstream with a model-aware message.) '
+    + 'FORCED to -1 on mode edit_video: upstream taskMode="edit" accepts smart duration only, so the '
+    + 'workbench COERCES instead of rejecting — the card reads -1 whatever you send, and the output '
+    + 'length follows the video being edited. extend_video is NOT affected; its seconds are real.',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
@@ -263,12 +266,19 @@ const irCardSchema = z.looseObject({
   model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional(),
   resolution: z.enum(['480p', '720p', '1080p']).optional(),
   ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
-  duration: z.number().int().min(-1).max(30).optional(), // 同上:避开 anyOf
+  // 同上:避开 anyOf
+  duration: z.number().int().min(-1).max(30).optional().describe(
+    'Seconds, or -1 = smart duration. Coerced to -1 when mode is edit_video (upstream takes nothing '
+    + 'else) — so a round-trip of an edit card reads -1 even if you wrote seconds.',
+  ),
   generateAudio: z.boolean().optional(),
   mode: z.enum([
     'text2video', 'first_frame', 'first_last_frame', 'reference_images',
     'multimodal_ref', 'edit_video', 'extend_video',
-  ]).optional(),
+  ]).optional().describe(
+    'edit_video / extend_video need model "2.5" plus at least one reference video, and force '
+    + 'ratio adaptive; edit_video additionally forces duration -1.',
+  ),
   seed: z.number().int().min(0).max(4294967295).optional(),
   webSearch: z.boolean().optional(),
   // 上限取全模型最宽（2.5 的 30/10/10）；按模型收窄由渲染端 canStart 与主进程
@@ -598,7 +608,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'text2video', 'first_frame', 'first_last_frame', 'reference_images',
         'multimodal_ref', 'edit_video', 'extend_video',
       ] satisfies readonly VideoWorkbenchMode[]).optional().describe(
-        'Workbench mode. Changing it re-checks material caps and may TRUNCATE materials that no longer fit.',
+        'Workbench mode. Changing it re-checks material caps and may TRUNCATE materials that no longer fit. '
+        + 'Switching to edit_video also resets duration to -1 (smart) — upstream takes nothing else there, '
+        + 'so a sweep of "改成编辑视频 + 都 10 秒" lands as -1 and that is correct, not a dropped write. '
+        + 'edit_video / extend_video additionally require model "2.5" and ≥1 reference video per card; '
+        + 'cards without one stay unstartable until the user attaches a video.',
       ),
     }),
     // 与 update_task 同档:换模型/模式时按新上限截断素材(2.5 → 2.0 会掉 21 张),
@@ -650,6 +664,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       '— NOT apply. Call it once per card — one focused call per card beats one giant IR. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
+      'ON AN edit_video CARD, when the user says WHERE to change something and words are not enough ' +
+      '("把左边第二个人的外套换掉"), stop writing prose and tell them to click 「✎ 高级编辑」 on that card: ' +
+      'it opens the reference video, lets them circle / arrow / label a frame, and drops the annotated ' +
+      'frame back in as a reference image with a 【@图片N】 token. A circle on the frame beats any wording. ' +
+      'You cannot open it yourself — it is a UI action on their screen. ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
