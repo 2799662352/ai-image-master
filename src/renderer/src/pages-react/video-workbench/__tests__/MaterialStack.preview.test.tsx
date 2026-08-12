@@ -97,30 +97,31 @@ describe('MaterialStack 点击预览', () => {
     expect(screen.queryByTestId('vw-material-preview')).toBeNull()
   })
 
-  it('音频:本地路径经 IPC 转 blob: 喂 <audio controls>', async () => {
-    readThumb.mockResolvedValue({
-      ok: true,
-      base64: Buffer.from('mp3-bytes').toString('base64'),
-      mime: 'audio/mpeg',
-    })
-    renderStack('audio', [{ name: '配乐.mp3', src: 'D:\\audio\\配乐.mp3' }])
+  // 本地音视频改走流式协议(local-file://media/?p=…):按 Range 分段读盘,
+  // 整份文件不进渲染进程内存,长音频/大视频也能拖进度条。
+  it('音频:本地路径喂流式地址,不再读字节转 blob:', async () => {
+    const localPath = 'D:\\audio\\配乐.mp3'
+    renderStack('audio', [{ name: '配乐.mp3', src: localPath }])
     fireEvent.click(screen.getByTestId('vw-stack-item-audio-0'))
     const dialog = await screen.findByTestId('vw-material-preview')
-    await waitFor(() => {
-      const audio = dialog.querySelector('audio')
-      expect(audio?.getAttribute('src')).toMatch(/^blob:/)
-      expect(audio?.hasAttribute('controls')).toBe(true)
-    })
-    expect(readThumb).toHaveBeenCalledWith('D:\\audio\\配乐.mp3')
+
+    const audio = dialog.querySelector('audio')!
+    const src = audio.getAttribute('src') ?? ''
+    expect(src.startsWith('local-file://media/?p=')).toBe(true)
+    expect(decodeURIComponent(new URL(src).searchParams.get('p') ?? '')).toBe(localPath)
+    expect(audio.hasAttribute('controls')).toBe(true)
+    expect(readThumb).not.toHaveBeenCalled()
   })
 
-  it('本地文件读取失败 → 错误兜底而非空白播放器', async () => {
-    readThumb.mockResolvedValue({ ok: false, reason: 'file not found' })
-    renderStack('video', [{ name: '丢失.mp4', src: 'D:\\gone.mp4' }])
+  it('视频:同一条流式地址,一个字节都不经 IPC', async () => {
+    const localPath = 'D:\\clips\\hero.mp4'
+    renderStack('video', [{ name: 'hero.mp4', src: localPath }])
     fireEvent.click(screen.getByTestId('vw-stack-item-video-0'))
     const dialog = await screen.findByTestId('vw-material-preview')
-    await waitFor(() => expect(dialog.textContent).toContain('本地文件读取失败'))
-    expect(dialog.querySelector('video')).toBeNull()
+
+    const src = dialog.querySelector('video')?.getAttribute('src') ?? ''
+    expect(decodeURIComponent(new URL(src).searchParams.get('p') ?? '')).toBe(localPath)
+    expect(readThumb).not.toHaveBeenCalled()
   })
 
   it('拖拽排序不误开预览:dragstart 后 click 被抑制,dragend 后恢复', async () => {

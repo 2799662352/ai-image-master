@@ -1,12 +1,16 @@
 // 生成结果视频播放器 —— 「生成视频」工作台 succeeded 卡片的内联播放。
 //
-// 为什么不能把 `toRenderableUri(本地路径)` 直塞 <video src>:`local-file://`
-// 自定义协议在 Electron 渲染端有盘符解析缺陷(electron/electron#49073,
-// 详见 useResolvedMediaSrc 模块注释),<video> 直连加载不出字节——播放器
-// 渲染出来但时长 0:00、画面空白。项目里所有能正常播本地视频的表面
-// (文件浏览器 VideoViewer、聊天 Lightbox)都是把字节经 IPC 读回转 blob:
-// 再喂给 <video>。这里复用同一条链(useFileUrl → attachments:read-thumb,
-// >100MB 自动落 fs:read-binary,uploads 目录在其 allowed roots 内)。
+// 本地视频走 `toStreamableUri` → `local-file://media/?p=…` 流式协议。
+//
+// 曾经此处走 IPC 把整份文件读成 base64 再转 blob,因为 `local-file://` 直连
+// 加载不出字节。那个失败的真正原因到 2026-08-12 才查清:不是盘符,是**空 host** ——
+// 标准 scheme 的空 host 会被 Blink 的 IsSafeToLoadURL 在渲染端直接拒掉
+// (MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check),请求根本不发出去,
+// 所以主进程一条日志都没有,才会被反复误判成协议或权限问题。地址换成带 host 的
+// `local-file://media/?p=…` 之后这条路通了,详见 file-explorer/uri.ts 的 toStreamableUri。
+//
+// 换过来解决两件事:整份文件不再进渲染进程内存(每张 succeeded 卡片各一份,
+// 卡片数没有上限),以及进度条能拖(主进程按 Range 分段发,此前 seekable.end() 恒为 0)。
 //
 // 播放源优先级(与旧 playbackSrc 一致):本地 mp4(免网络、秒开)>
 // COS 永久 URL > 上游临时地址。本地读取失败或 <video> 解码失败时自动
@@ -16,7 +20,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
 import { describeUrlHealth } from '../../../../shared/signedUrlExpiry'
-import { useFileUrl } from '../../features/file-explorer/useFileUrl'
+import { toStreamableUri } from '../../features/file-explorer/uri'
 
 /**
  * 每个远程源的重试**时限**(不是次数)。
@@ -265,33 +269,24 @@ function PlaybackFallback({ localPath, reason, onRetry, externalUrl }: {
   )
 }
 
-/** 本地 mp4:字节经 IPC 转 blob: 播放;读取/解码失败自动降级远程源。 */
+/**
+ * 本地 mp4:走流式协议播放;读取/解码失败自动降级远程源。
+ *
+ * 此前是 `useFileUrl` —— 整份文件经 IPC 读成 base64 再转 blob。这里是**每张
+ * succeeded 卡片各一份**:一板十张成片就是十份视频常驻渲染进程内存,而且 blob 要等
+ * 组件卸载才释放。卡片总量上限取消之后这条没有天花板。改走 Range 分段之后,播放器
+ * 要哪段读哪段,内存里不再留整片,进度条也真能拖(此前 seekable.end() 恒为 0)。
+ *
+ * 不再有「加载中」这一档:协议是流式的,`<video>` 自己会边取边放,没有"先把整份读完"
+ * 那个阶段可等。
+ */
 function LocalResultVideo({ localPath, remotes }: { localPath: string; remotes: string[] }) {
-  const file = useFileUrl(localPath)
-  // blob: 喂进 <video> 后解码失败(极少见,文件损坏)也走降级
-  const [decodeFailed, setDecodeFailed] = useState(false)
+  // 文件不存在 / 编码不受支持都由 <video> 的 error 事件报出来,统一走降级。
+  const [failed, setFailed] = useState(false)
 
-  if (file.status === 'loading') {
-    return (
-      <div
-        data-testid="vw-playback-loading"
-        className="flex items-center justify-center h-40 bg-black border border-[#27272A]"
-      >
-        <div className="w-6 h-6 border-2 border-[#FCE300] border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
-  if (file.status === 'error' || decodeFailed) {
-    // 本地读不出 / 解码失败 → 走远程那条，同样带重试与逐候选降级。
+  if (failed) {
     if (remotes.length > 0) return <RemoteResultVideo candidates={remotes} localPath={localPath} />
-
-    return (
-      <PlaybackFallback
-        localPath={localPath}
-        reason={file.status === 'error' ? file.reason : '视频解码失败'}
-      />
-    )
+    return <PlaybackFallback localPath={localPath} reason="本地视频无法播放" />
   }
 
   return (
@@ -299,9 +294,9 @@ function LocalResultVideo({ localPath, remotes }: { localPath: string; remotes: 
     <video
       controls
       preload="metadata"
-      src={file.url}
+      src={toStreamableUri(localPath)}
       className={VIDEO_CLASS}
-      onError={() => setDecodeFailed(true)}
+      onError={() => setFailed(true)}
     />
   )
 }

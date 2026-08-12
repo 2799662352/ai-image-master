@@ -551,8 +551,20 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const [aveOpen, setAveOpen] = useState(false)
   const editableVideo = card.referenceVideos[0]
   const canAdvancedEdit = card.model === '2.5' && card.mode === 'edit_video' && editableVideo !== undefined
-  // 本地路径直连 <video> 在 Electron 38 下加载不出字节(见 useResolvedMediaSrc
-  // 模块注释),必须经 IPC 转 blob:。抽帧要原始字节,不能用缩略图那条路。
+  /**
+   * 抽帧源**刻意保留 blob:**,不要跟着播放那几处改成 `toStreamableUri`。
+   *
+   * 播放类表面(ResultVideoPlayer / MaterialPreviewModal)已经迁到流式协议,省内存
+   * 又能拖进度条。这里不能跟：高级编辑要把 `<video>` 画到 canvas 上再 `toDataURL`
+   * 取像素,而 canvas 一旦画进**跨源**内容就会被污染,`toDataURL` 直接抛 SecurityError。
+   * `blob:` 是同源的,`local-file://` 不是。
+   *
+   * 真要迁,前置条件是给协议加 `corsEnabled` + 响应带 `Access-Control-Allow-Origin`,
+   * 再给 `<video>` 设 `crossOrigin="anonymous"` —— 那是独立一笔,而且会动到刚验证通过
+   * 的协议配置,不该顺手做。
+   *
+   * `fullFidelity` 同样不能去掉:抽帧要原始像素,缩略图那条路出来的是 256px JPEG。
+   */
   const aveVideoSrc = useResolvedMediaSrc(
     canAdvancedEdit && aveOpen ? editableVideo.src : '',
     'video',

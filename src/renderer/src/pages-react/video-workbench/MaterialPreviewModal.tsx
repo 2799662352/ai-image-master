@@ -3,9 +3,10 @@
 //
 // 解析链路与 ResultVideoPlayer / MaterialThumb 同款纪律:
 //   - https / data: / blob: 直通(渲染端原生可加载);
-//   - 本地路径**不能**直塞 <img>/<video>/<audio>(local-file:// 协议在
-//     Electron 渲染端有盘符解析缺陷,见 useResolvedMediaSrc 模块注释),
-//     统一走 useFileUrl(IPC 读字节 → blob:);
+//   - 本地**视频/音频**走流式协议(toStreamableUri → local-file://media/?p=…),
+//     由主进程按 Range 分段发,整份文件不进内存、进度条能拖;
+//   - 本地**图片**仍走 useResolvedMediaSrc(IPC → blob:):它要的是全保真字节,
+//     且没有 Range 可言,换过去只是白改;
 //   - asset://(人像库)没有可播放源:图片用 previewUrl 大图兜底,
 //     视频/音频显示「无法本地预览」提示(previewUrl 仅是缩略图)。
 //
@@ -15,7 +16,7 @@ import { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
 import { useResolvedMediaSrc } from '../../components/shared/media/useResolvedMediaSrc'
-import { useFileUrl } from '../../features/file-explorer/useFileUrl'
+import { toStreamableUri } from '../../features/file-explorer/uri'
 import { extractAssetId } from '../../features/video-workbench/assetPreview'
 import type { MediaTokenKind } from '../../features/video-workbench/promptTokens'
 import { useAssetPreviewMaterial } from './MaterialThumb'
@@ -60,12 +61,16 @@ function ImagePreviewBody({ material: raw }: { material: VideoWorkbenchMaterial 
   )
 }
 
-/** 本地文件 → blob: 后交给 <video>/<audio>(与 ResultVideoPlayer 同链)。 */
+/**
+ * 本地视频/音频 → 流式协议(与 ResultVideoPlayer 同链)。
+ *
+ * 此前是 `useFileUrl`:整份文件经 IPC 读成 base64 再转 blob。一段成片 mp4 走这条路
+ * 会直接打不开(data: URL 太大,Chromium 的 fetch 放弃),能开的也没有 Range —— 进度条
+ * 拖不动,而且整份解码常驻渲染进程内存。改走 `local-file://media/?p=…` 之后由主进程
+ * 按 Range 分段发,拖到哪读到哪。
+ */
 function LocalMediaBody({ path, kind }: { path: string; kind: 'video' | 'audio' }) {
-  const file = useFileUrl(path)
-  if (file.status === 'loading') return <Spinner />
-  if (file.status === 'error') return <PreviewError reason={`本地文件读取失败:${file.reason}`} />
-  return <MediaElement kind={kind} src={file.url} />
+  return <MediaElement kind={kind} src={toStreamableUri(path)} />
 }
 
 function MediaElement({ kind, src }: { kind: 'video' | 'audio'; src: string }) {
@@ -87,7 +92,7 @@ function MediaElement({ kind, src }: { kind: 'video' | 'audio'; src: string }) {
   )
 }
 
-/** 视频/音频:https/data 直通;本地路径走 IPC;asset:// 提示不可本地播放。 */
+/** 视频/音频:https/data 直通;本地路径走流式协议;asset:// 提示不可本地播放。 */
 function AvPreviewBody({ kind, material }: { kind: 'video' | 'audio'; material: VideoWorkbenchMaterial }) {
   if (isDirectSrc(material.src)) return <MediaElement kind={kind} src={material.src} />
   if (extractAssetId(material.src)) {
