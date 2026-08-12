@@ -1,8 +1,17 @@
-// ResultVideoPlayer 单测:生成结果视频必须把本地字节经 IPC 读回转 blob:
-// 再喂 <video>(toRenderableUri 的 local-file:// 直塞 <video src> 在
-// Electron 渲染端加载不出字节 —— 播放器空白、时长 0:00 的根因);本地读取
-// 失败自动降级远程源;两边都没有时渲染错误兜底(路径 + 在文件夹中打开),
-// 不留空白播放器。
+// ResultVideoPlayer 单测:生成结果的本地视频走**流式协议**
+// (`local-file://media/?p=…`,见 file-explorer/uri.ts 的 toStreamableUri),
+// 而不是把整份文件经 IPC 读成 base64 再转 blob:。
+//
+// 为什么换:这里是**每张 succeeded 卡片各一份**,一板十张成片就是十份视频常驻
+// 渲染进程内存;而且 blob 没有 Range,进度条拖不动(seekable.end() 恒为 0)。
+//
+// 旧写法失败的真正原因到 2026-08-12 才查清:不是盘符,是**空 host** —— 标准 scheme
+// 的空 host 会被 Blink 的 IsSafeToLoadURL 在渲染端直接拒掉,请求根本不发出去。
+// 地址带上 host 之后这条路是通的。所以这里钉的是「必须是带 media 主机的流式地址」,
+// 而不再是「必须是 blob:」。
+//
+// 播放失败(文件没了 / 编码不支持)由 <video> 的 error 事件报出来,自动降级远程源;
+// 两边都没有时渲染错误兜底(路径 + 在文件夹中打开),不留空白播放器。
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,11 +64,8 @@ function makeCard(patch: Partial<VideoWorkbenchCard>): VideoWorkbenchCard {
   }
 }
 
-const okBytes = () => ({
-  ok: true,
-  base64: Buffer.from('mp4-bytes').toString('base64'),
-  mime: 'video/mp4',
-})
+// 读字节那两个 IPC 仍然 mock 着,但只为了**断言它们没被调用** —— 本地播放改走
+// 流式协议之后一个字节都不该经 IPC。留着比删掉有用:它们是这条纪律的探针。
 
 function queryVideo(): HTMLVideoElement | null {
   return document.querySelector('video')
@@ -84,54 +90,51 @@ async function burnRetryWindow(): Promise<void> {
   }
 }
 
-describe('ResultVideoPlayer — 本地播放(IPC → blob:)', () => {
-  it('localPath 经 attachments:read-thumb 读字节转 blob: 喂 <video>,绝不直塞 local-file://', async () => {
-    readThumb.mockResolvedValue(okBytes())
+describe('ResultVideoPlayer — 本地播放(流式协议)', () => {
+  it('localPath 直接喂带 media 主机的流式地址,不再读字节转 blob:', () => {
     const localPath = 'C:\\Users\\27996\\AppData\\Roaming\\catimation-cyberpunk-master\\agent\\uploads\\v.mp4'
     render(<ResultVideoPlayer source={makeCard({ localPath })} />)
-    await waitFor(() => expect(queryVideo()).not.toBeNull())
-    const video = queryVideo()!
-    expect(video.getAttribute('src')).toMatch(/^blob:/)
-    expect(video.getAttribute('src')).not.toContain('local-file')
-    expect(readThumb).toHaveBeenCalledWith(localPath)
+    const src = queryVideo()?.getAttribute('src') ?? ''
+
+    expect(src.startsWith('local-file://media/?p=')).toBe(true)
+    // 路径整条在查询串里,盘符不参与路径规范化
+    expect(decodeURIComponent(new URL(src).searchParams.get('p') ?? '')).toBe(localPath)
+    // 一个字节都不该经 IPC —— 这正是「十张卡十份视频占内存」的来源
+    expect(readThumb).not.toHaveBeenCalled()
+    expect(readBinary).not.toHaveBeenCalled()
   })
 
-  it('读取中先渲染 loading 占位,不出空白 <video>', () => {
-    readThumb.mockReturnValue(new Promise(() => {}))
+  it('没有「读取中」这一档:流式源直接就位,不出 loading 占位', () => {
     render(<ResultVideoPlayer source={makeCard({ localPath: 'D:\\out\\v.mp4' })} />)
-    expect(screen.getByTestId('vw-playback-loading')).toBeTruthy()
-    expect(queryVideo()).toBeNull()
+    expect(screen.queryByTestId('vw-playback-loading')).toBeNull()
+    expect(queryVideo()).not.toBeNull()
   })
 
-  it('本地读取失败且有 COS 永久 URL → 自动降级远程播放', async () => {
-    readThumb.mockResolvedValue({ ok: false, reason: 'file not found' })
-    readBinary.mockResolvedValue({ ok: false, reason: 'file not found' })
+  it('本地播放失败(文件没了/编码不支持)且有 COS 永久 URL → 自动降级远程播放', async () => {
     render(
       <ResultVideoPlayer
         source={makeCard({ localPath: 'D:\\gone.mp4', remoteUrl: 'https://cos.example/v.mp4' })}
       />,
     )
+    fireEvent.error(queryVideo()!)
     await waitFor(() => expect(queryVideo()?.getAttribute('src')).toBe('https://cos.example/v.mp4'))
   })
 
-  it('blob: 解码失败(onError)且有远程源 → 降级远程播放', async () => {
-    readThumb.mockResolvedValue(okBytes())
+  it('本地播放失败且只有上游临时地址 → 也降级', async () => {
     render(
       <ResultVideoPlayer
         source={makeCard({ localPath: 'D:\\broken.mp4', videoUrl: 'https://tmp.example/v.mp4' })}
       />,
     )
-    await waitFor(() => expect(queryVideo()?.getAttribute('src')).toMatch(/^blob:/))
     fireEvent.error(queryVideo()!)
     await waitFor(() => expect(queryVideo()?.getAttribute('src')).toBe('https://tmp.example/v.mp4'))
   })
 })
 
 describe('ResultVideoPlayer — 失败兜底(不留空白播放器)', () => {
-  it('本地读取失败且无远程源 → 显示路径 + 「在文件夹中打开」', async () => {
-    readThumb.mockResolvedValue({ ok: false, reason: 'file not found' })
-    readBinary.mockResolvedValue({ ok: false, reason: 'file not found' })
+  it('本地播放失败且无远程源 → 显示路径 + 「在文件夹中打开」', async () => {
     render(<ResultVideoPlayer source={makeCard({ localPath: 'D:\\gone.mp4' })} />)
+    fireEvent.error(queryVideo()!)
     const fallback = await screen.findByTestId('vw-playback-fallback')
     expect(fallback.textContent).toContain('视频加载失败')
     expect(fallback.textContent).toContain('D:\\gone.mp4')
