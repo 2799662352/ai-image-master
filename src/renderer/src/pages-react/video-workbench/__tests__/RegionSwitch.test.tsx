@@ -8,7 +8,8 @@ import type { SeedanceKeyState } from '../../../../../types/seedance'
 import { RegionSwitch } from '../RegionSwitch'
 
 function makeState(region: 'global' | 'cn'): SeedanceKeyState {
-  // 国内站 2.5 挂灰度,可用档位由主进程按站点算 —— 这里照实模拟两站的差异。
+  // 可用档位由主进程按站点算,渲染端只照抄。这里刻意让两站给出不同档位来验证
+  // 「照抄」这件事 —— 国内 2.5 的灰度关掉时(`SEEDANCE_CN_25=0`)就是这个形状。
   return {
     hasKey: true,
     source: 'store',

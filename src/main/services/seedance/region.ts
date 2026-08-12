@@ -13,7 +13,8 @@ export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
  * 国内直连 yongmuai.com → doubao-*。MCP 别名仍是 2.0 / 2.0-fast。
  *
  * `2.5` 的 global ID 读自控制台模型下拉的 option value（2026-08-08 实测）；
- * cn ID 见 {@link SEEDANCE_CN_2_5_ENABLED} 的说明——尚未取证，默认灰度关闭。
+ * cn ID 出自国内站开发文档 §9.2 价格表（2026-08-12 版），见
+ * {@link SEEDANCE_CN_2_5_ENABLED}。
  */
 export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
   SeedanceRegion,
@@ -34,17 +35,21 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
 }
 
 /**
- * 国内区 Seedance 2.5 的灰度闸。
+ * 国内区 Seedance 2.5 的灰度闸 —— **已于 2026-08-12 打开**。
  *
- * 上面那个 `doubao-seedance-2-5-260628` 是**按 2.0 家族的对称规律推断**的
- * （global/cn 三个 2.0 ID 后缀逐字相同），并非取证所得：GLOBAL 开发文档通篇
- * 没有 `doubao-seedance`，国内站需要独立账号、当前拿不到。填错的代价是国内
- * 用户提交即报「模型不存在」，所以默认关闭——列表里根本不出现，点不到。
+ * 关着的那段时间里，上面那个 `doubao-seedance-2-5-260628` 是**按 2.0 家族的对称
+ * 规律推断**的（global/cn 三个 2.0 ID 后缀逐字相同）：GLOBAL 文档通篇没有
+ * `doubao-seedance`，国内站文档当时拿不到。ID 猜错的代价是国内用户提交即报
+ * 「模型不存在」，所以宁可先不给点。
  *
- * 国内正式开放后：把这里改成 `true` 重新发版；想先验证不必等发版，设环境变量
- * `SEEDANCE_CN_25=1` 重启应用即可。
+ * 打开的依据是国内站开发文档（`vvdance.yongmuai.com`，2026-08-12 版）§9.2 价格表
+ * 逐字列出了 `doubao-seedance-2-5-260628`，与推断值完全一致；同版 §2.2 的 2.5 约束
+ * （仅 480p/720p、图/视频/音频 30/10/10、总数 50、edit 锁 -1、extend 4-30、允许纯
+ * 音频参考）也与 `SEEDANCE_MODEL_CAPABILITIES['2.5']` 逐条对得上。
+ *
+ * 要临时关掉不必回退发版：设环境变量 `SEEDANCE_CN_25=0` 重启应用即可。
  */
-export const SEEDANCE_CN_2_5_ENABLED = false
+export const SEEDANCE_CN_2_5_ENABLED = true
 
 const CN_ONLY_GATED: ReadonlySet<SeedanceModelAlias> = new Set(['2.5'])
 
