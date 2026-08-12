@@ -42,4 +42,18 @@ describe('FileViewer 不在每次渲染时重配置编辑器', () => {
   it('给编辑器显式高度,让 .cm-scroller 自己滚(不与外层滚动容器抢)', () => {
     expect(SOURCE).toMatch(/height=\{EDITOR_HEIGHT\}/)
   })
+
+  /**
+   * `height` prop 只作用到内部的 `.cm-editor`,而 @uiw 在它外面还包了自己的容器 div。
+   * 那层没有高度,`.cm-editor` 的 `height:100%` 就没有可解析的父高度 —— 编辑器按内容
+   * 撑高、被外层 overflow-hidden 裁掉,表现是「文档很长却滚不动、连滚动条都没有」。
+   * 光看 `height="100%"` 完全看不出缺了这一环,所以单独钉一条。
+   */
+  it('@uiw 的容器 div 也要有确定高度,否则 height=100% 无处解析', () => {
+    expect(SOURCE).toMatch(/<CodeMirror[\s\S]{0,600}?className="h-full"/)
+  })
+
+  it('滚动与滚动条显式声明,不靠 overflow-x 隐式推导出 overflow-y', () => {
+    expect(SOURCE).toMatch(/'\.cm-scroller':\s*\{\s*overflow:\s*'auto'\s*\}/)
+  })
 })

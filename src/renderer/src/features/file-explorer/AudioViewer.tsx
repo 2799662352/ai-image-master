@@ -1,15 +1,20 @@
+import { useState } from 'react'
 import type { FileTab } from './types'
-import { useFileUrl } from './useFileUrl'
+import { toStreamableUri } from './uri'
+import { describeMediaError } from './mediaError'
 
 /**
  * 音频文件查看器。
  *
- * 此前 mp3/wav 落进 classify 的 `binary` 分支 —— 界面只给一句"二进制文件",连播
+ * 此前 mp3/wav 落进 classify 的 `binary` 分支 —— 界面只给一句「二进制文件」,连播
  * 都播不了,而应用里到处都在生成配音和音效。
  *
- * 播放链路与 VideoViewer 完全同款:**不能**把磁盘路径直接塞进 `<audio src>`,
- * Windows 上盘符会在自定义协议解析时被吞掉(electron#49073,详见 useFileUrl 模块
- * 注释),所以统一经 IPC 读字节转 blob:。这条纪律有源码级守卫(viewersUseIpc)。
+ * 播放与 VideoViewer 同链:`local-file://` 流式协议(`protocol.handle` + `net.fetch`
+ * + `stream: true`),不把整份文件读进内存,长音频也能拖进度条。音频作品库
+ * (main/services/audioHistoryFiles.ts)早就在用这条路,这里只是把文件面板接上。
+ *
+ * 地址形状 `local-file://media/?p=<编码后的绝对路径>` —— host 非空是关键,路径走查询串
+ * 不会被路径规范化动到(详见 uri.ts 的 toStreamableUri)。
  */
 
 type ShellBridge = {
@@ -17,7 +22,9 @@ type ShellBridge = {
 }
 
 export function AudioViewer({ tab }: { tab: FileTab }) {
-  const file = useFileUrl(tab.path)
+  const src = toStreamableUri(tab.path)
+  const [failure, setFailure] = useState<{ src: string; reason: string } | null>(null)
+  const failed = failure?.src === src
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-black/70">
@@ -31,17 +38,21 @@ export function AudioViewer({ tab }: { tab: FileTab }) {
         <div className="max-w-full truncate text-sm text-cyan-100/90" title={tab.path}>
           {tab.name}
         </div>
-        {file.status === 'loading' && <span className="text-sm text-cyan-300/60">加载中…</span>}
-        {file.status === 'error' && (
-          <span className="text-sm text-red-400">加载失败: {file.reason}</span>
-        )}
-        {file.status === 'ready' && (
+        {failed ? (
+          <div className="max-w-lg space-y-2 text-center">
+            <div className="text-sm text-red-400">无法播放这个文件</div>
+            <div className="text-xs text-red-300/80">{failure?.reason}</div>
+            <div className="break-all font-mono text-[10px] text-white/35">{src}</div>
+          </div>
+        ) : (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <audio
-            src={file.url}
+            key={src}
+            src={src}
             controls
             preload="metadata"
             controlsList="nodownload"
+            onError={(e) => setFailure({ src, reason: describeMediaError(e.currentTarget) })}
             data-testid="fx-audio-player"
             className="w-[min(420px,100%)]"
           />

@@ -9,7 +9,12 @@ import { buildLangExtension } from './lang'
 import { serializeQuoteDrag } from './dragHelpers'
 import { SelectionFloatingBar } from './SelectionFloatingBar'
 import { MarkdownPreview } from './MarkdownPreview'
-import { collectPreviewAnchors, lineForPreviewTop, previewTopForLine } from './markdownScrollSync'
+import {
+  collectPreviewAnchors,
+  lineForPreviewTop,
+  previewTopForLine,
+  type PreviewAnchor,
+} from './markdownScrollSync'
 import type { FileTab } from './types'
 import { formatSelectionForChat } from './selectionToChat'
 
@@ -69,6 +74,39 @@ const MARKDOWN_COLORS = Prec.high(syntaxHighlighting(MARKDOWN_HIGHLIGHT))
 
 /** 编辑器自己滚。外层再套一个 overflow 容器会和 `.cm-scroller` 抢滚动。 */
 const EDITOR_HEIGHT = '100%'
+
+/**
+ * 滚动与滚动条,**显式**写死。
+ *
+ * 纵向滚动此前是靠推导来的:CM6 基础主题只给 `.cm-scroller` 写了 `overflow-x: auto`,
+ * 按 CSS 规则另一轴若是 `visible` 就会被提升成 `auto` —— 理论成立,实际在这套嵌套
+ * (@uiw 还给 `.cm-scroller` 压了 `height: 100% !important`)里滚不动。与其继续赌那条
+ * 隐式推导,不如把 `overflow: auto` 直接写出来:一行的事,而且读代码的人一眼知道
+ * 谁负责滚。
+ *
+ * 滚动条同时收窄成 8px 并配暗色主题 —— 默认那条 Windows 灰色宽滚动条压在深色编辑器上
+ * 又亮又粗。`Prec.high` 是因为 @uiw 把我们的扩展拼在默认扩展之后,不抬优先级会被
+ * 它自己的主题盖掉。
+ */
+const EDITOR_LAYOUT = Prec.high(
+  EditorView.theme({
+    '&': { height: '100%' },
+    '.cm-scroller': { overflow: 'auto' },
+    '.cm-scroller::-webkit-scrollbar': { width: '10px', height: '10px' },
+    '.cm-scroller::-webkit-scrollbar-track': { background: 'transparent' },
+    '.cm-scroller::-webkit-scrollbar-thumb': {
+      background: 'rgba(103, 232, 249, 0.18)',
+      borderRadius: '5px',
+      border: '2px solid transparent',
+      backgroundClip: 'content-box',
+    },
+    '.cm-scroller::-webkit-scrollbar-thumb:hover': {
+      background: 'rgba(103, 232, 249, 0.34)',
+      backgroundClip: 'content-box',
+    },
+    '.cm-scroller::-webkit-scrollbar-corner': { background: 'transparent' },
+  }),
+)
 
 type MdViewMode = 'edit' | 'split' | 'preview'
 
@@ -167,6 +205,7 @@ export function FileViewer({ tab }: { tab: FileTab }) {
         }
       }),
       EditorView.lineWrapping,
+      EDITOR_LAYOUT,
     ]
     if (langExt) exts.push(langExt)
     if (isMarkdown) exts.push(MARKDOWN_COLORS)
@@ -233,7 +272,39 @@ export function FileViewer({ tab }: { tab: FileTab }) {
       }, 150)
     }
 
-    const onEditorScroll = () => {
+    /**
+     * 锚点缓存。`collectPreviewAnchors` 要 querySelectorAll 再逐个
+     * getBoundingClientRect —— 长文档就是几百次**强制布局读**,放在 scroll 处理
+     * 函数里等于每秒跑几十遍,正是典型的 layout thrashing。
+     *
+     * 锚点只在**预览内容变了或宽度变了**时才会移动,滚动本身不会改它们(它们是相对
+     * 内容顶部的偏移,不是视口坐标)。所以缓存起来,由 ResizeObserver 与文档变化
+     * 负责作废即可。
+     */
+    let anchors: PreviewAnchor[] | null = null
+    const invalidate = () => {
+      anchors = null
+    }
+    const getAnchors = (): PreviewAnchor[] => {
+      anchors ??= collectPreviewAnchors(preview)
+      return anchors
+    }
+
+    // 图片加载完、字体回流、面板拖宽都会让锚点整体位移。
+    const resizeObserver = new ResizeObserver(invalidate)
+    resizeObserver.observe(preview)
+
+    // scroll 事件的触发频率高于渲染帧,合帧处理:一帧内只算一次。
+    let frame = 0
+    const onFrame = (fn: () => void) => () => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        fn()
+      })
+    }
+
+    const syncFromEditor = () => {
       if (driver === 'preview') return
       hold('editor')
       const rect = view.scrollDOM.getBoundingClientRect()
@@ -242,25 +313,31 @@ export function FileViewer({ tab }: { tab: FileTab }) {
       const pos = view.posAtCoords({ x: rect.left + 4, y: rect.top + 4 })
       if (pos === null) return
       const line = view.state.doc.lineAt(pos).number
-      preview.scrollTop = previewTopForLine(collectPreviewAnchors(preview), line)
+      preview.scrollTop = previewTopForLine(getAnchors(), line)
     }
 
-    const onPreviewScroll = () => {
+    const syncFromPreview = () => {
       if (driver === 'editor') return
       hold('preview')
-      const line = lineForPreviewTop(collectPreviewAnchors(preview), preview.scrollTop)
+      const line = lineForPreviewTop(getAnchors(), preview.scrollTop)
       const clamped = Math.min(Math.max(line, 1), view.state.doc.lines)
       view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(clamped).from, { y: 'start' }) })
     }
+
+    const onEditorScroll = onFrame(syncFromEditor)
+    const onPreviewScroll = onFrame(syncFromPreview)
 
     view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
     preview.addEventListener('scroll', onPreviewScroll, { passive: true })
     return () => {
       clearTimeout(releaseTimer)
+      if (frame) cancelAnimationFrame(frame)
+      resizeObserver.disconnect()
       view.scrollDOM.removeEventListener('scroll', onEditorScroll)
       preview.removeEventListener('scroll', onPreviewScroll)
     }
-  }, [effectiveMode, view])
+    // previewDoc 进依赖:文档一变锚点就全错位了,重挂一次顺带把缓存清掉。
+  }, [effectiveMode, view, previewDoc])
 
   const showEditor = effectiveMode !== 'preview'
   const showPreview = effectiveMode !== 'edit'
@@ -307,36 +384,56 @@ export function FileViewer({ tab }: { tab: FileTab }) {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        {/* overflow-hidden 而不是 auto:滚动归 CodeMirror 自己的 .cm-scroller,
-            外面再开一个滚动容器,两者会为同一次 scrollIntoView 打架。 */}
-        <div className={`h-full min-w-0 overflow-hidden ${showEditor ? 'flex-1' : 'hidden'}`}>
-          <CodeMirror
-            ref={editorRef}
-            value={initialDoc}
-            height={EDITOR_HEIGHT}
-            onCreateEditor={(createdView, state) => {
-              setView(createdView)
-              // 回到这个标签页时把上次的光标/选区/撤销栈一起恢复(state 里都带着)。
-              if (tab.state) {
-                if (createdView.state !== tab.state) createdView.setState(tab.state)
-              } else {
-                useFileExplorerStore.getState().setTabState(tab.id, state)
-              }
-            }}
-            extensions={extensions}
-            theme="dark"
-            basicSetup={BASIC_SETUP}
-          />
+      {/*
+        两栏都用 `absolute inset-0` 铺满,而不是 `h-full`。
+        `h-full` 是百分比高度,要求**祖先链上每一层**都有确定高度;这条链很长
+        (面板列 → 查看器列 → ViewerHost → 本组件 → 这一行),任意一层塌成 auto,
+        CodeMirror 的 `height:100%` 就退化成按内容撑高,再被外面的 overflow 裁掉 ——
+        表现是文档明明很长却既滚不动、也没有滚动条。绝对定位的高度由定位块直接
+        给出,与那条链无关。
+      */}
+      <div className="relative flex min-h-0 flex-1">
+        <div className={`relative min-w-0 ${showEditor ? 'flex-1' : 'hidden'}`}>
+          {/* overflow-hidden 而不是 auto:滚动归 CodeMirror 自己的 .cm-scroller,
+              外面再开一个滚动容器,两者会为同一次 scrollIntoView 打架。 */}
+          <div className="absolute inset-0 overflow-hidden">
+            <CodeMirror
+              ref={editorRef}
+              value={initialDoc}
+              // `height` 只作用到内部的 `.cm-editor`(主题里的 `&`),而 @uiw 在它外面
+              // 还包了**自己的容器 div**,那层没有任何高度样式 —— 于是 `.cm-editor`
+              // 的 `height:100%` 找不到可解析的父高度,退化成按内容撑高,再被外面的
+              // overflow-hidden 裁掉:滚不动、也没有滚动条。这个 className 走 @uiw 的
+              // HTMLAttributes 透传落到那层容器上,把高度链接上。
+              className="h-full"
+              height={EDITOR_HEIGHT}
+              onCreateEditor={(createdView, state) => {
+                setView(createdView)
+                // 回到这个标签页时把上次的光标/选区/撤销栈一起恢复(state 里都带着)。
+                if (tab.state) {
+                  if (createdView.state !== tab.state) createdView.setState(tab.state)
+                } else {
+                  useFileExplorerStore.getState().setTabState(tab.id, state)
+                }
+              }}
+              extensions={extensions}
+              theme="dark"
+              basicSetup={BASIC_SETUP}
+            />
+          </div>
         </div>
 
         {showPreview && (
           <div
-            ref={previewRef}
-            data-testid="fx-md-preview-pane"
-            className={`min-w-0 flex-1 overflow-auto bg-[#0b0d0f] ${showEditor ? 'border-l border-cyan-500/10' : ''}`}
+            className={`relative min-w-0 flex-1 ${showEditor ? 'border-l border-cyan-500/10' : ''}`}
           >
-            <MarkdownPreview source={previewDoc} docPath={tab.path} />
+            <div
+              ref={previewRef}
+              data-testid="fx-md-preview-pane"
+              className="fx-md-scroll absolute inset-0 overflow-auto bg-[#0b0d0f]"
+            >
+              <MarkdownPreview source={previewDoc} docPath={tab.path} />
+            </div>
           </div>
         )}
       </div>
