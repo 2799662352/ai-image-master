@@ -113,6 +113,60 @@ describe('buildCard 新字段默认值', () => {
   })
 })
 
+/**
+ * 上游 `taskMode="edit"` 的时长固定为 -1,给固定秒数会被 validateSeedanceRequest
+ * 拒。曾经界面照旧给选 25s,点了生成才报「不能指定固定秒数」—— 一个只能通向失败
+ * 的选项。锁在规格层而不是只锁 UI:agent 经 MCP 写卡走的不是那个下拉。
+ */
+describe('编辑视频锁死智能时长', () => {
+  it('建卡时锁:显式给固定秒数也落 -1', () => {
+    expect(buildCard({ model: '2.5', mode: 'edit_video', duration: 25 }, 0).duration).toBe(-1)
+  })
+
+  it('只锁 edit —— 延长视频的秒数是真能指定的', () => {
+    expect(buildCard({ model: '2.5', mode: 'extend_video', duration: 25 }, 0).duration).toBe(25)
+  })
+
+  it('切到编辑视频时锁:留在卡上的固定秒数一起收敛', () => {
+    const store = useVideoWorkbenchStore.getState()
+    store.addCards([{ prompt: 'x', model: '2.5', duration: 25 }])
+    const id = useVideoWorkbenchStore.getState().cards[0].id
+    expect(useVideoWorkbenchStore.getState().cards[0].duration).toBe(25)
+
+    store.updateCard(id, { mode: 'edit_video' })
+    expect(useVideoWorkbenchStore.getState().cards[0].duration).toBe(-1)
+  })
+
+  it('已在编辑视频时锁:MCP 改秒数改不动(下拉不给选,但那条路不经下拉)', () => {
+    const store = useVideoWorkbenchStore.getState()
+    store.addCards([{ prompt: 'x', model: '2.5', mode: 'edit_video' }])
+    const id = useVideoWorkbenchStore.getState().cards[0].id
+
+    store.updateCard(id, { duration: 25 })
+    expect(useVideoWorkbenchStore.getState().cards[0].duration).toBe(-1)
+  })
+
+  it('切走之后不再锁:改回全能参考就能指定秒数', () => {
+    const store = useVideoWorkbenchStore.getState()
+    store.addCards([{ prompt: 'x', model: '2.5', mode: 'edit_video' }])
+    const id = useVideoWorkbenchStore.getState().cards[0].id
+
+    store.updateCard(id, { mode: 'multimodal_ref', duration: 25 })
+    expect(useVideoWorkbenchStore.getState().cards[0].duration).toBe(25)
+  })
+
+  it('恢复历史卡时锁:锁是后加的,库里躺着的老卡也就地纠正', async () => {
+    const stale = { ...buildCard({ prompt: 'x', model: '2.5', mode: 'edit_video' }, 0), duration: 25 }
+    await getWorkbenchDb().put(stale)
+    useVideoWorkbenchStore.setState({ hydrated: false, cards: [] })
+
+    await useVideoWorkbenchStore.getState().ensureHydrated()
+
+    const restored = useVideoWorkbenchStore.getState().cards.find((c) => c.id === stale.id)
+    expect(restored?.duration).toBe(-1)
+  })
+})
+
 describe('canStart 上游硬约束', () => {
   it('音频不能单独作参考(文档 2.2):仅音频 → 拒绝;加图后放行', () => {
     const audioOnly = buildCard(

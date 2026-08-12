@@ -214,6 +214,21 @@ export interface ElectronAPI {
   deleteCustomGalleryImage: (imageId: string) => Promise<{ success: boolean; error?: string }>
   addCustomGalleryImage: (imageData: { id: string; name: string; sourcePath: string }) => Promise<{ success: boolean; filename?: string; path?: string; error?: string }>
   getCustomGalleryPath: () => Promise<string>
+  /**
+   * 剪贴板 / 另存为 / 在文件夹中显示 / 用外部浏览器打开。
+   *
+   * 形状与 preload 里同名成员一字不差(`src/preload/index.ts` 的 `ElectronAPI.shell`)。
+   * 这里是 `window.electronAPI` 的**声明**所在,preload 那份是实现侧的完整契约 ——
+   * 两份长期不同步,于是每个用到 shell 的组件都得先 `as` 一个手写子集再调,而
+   * 那句 `window.electronAPI?.shell` 本身就是 TS2339。BinaryViewer / ImageViewer /
+   * VideoViewer 三处的报错在基线里躺了很久,补上这一段一起清掉。
+   */
+  shell: {
+    copyImage: (uri: string) => Promise<IpcResponse>
+    saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
+    showItemInFolder: (p: string) => Promise<void>
+    openExternal: (url: string) => Promise<IpcResponse>
+  }
 }
 
 // ==================== IPC 通道定义 ====================

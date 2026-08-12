@@ -1,0 +1,286 @@
+/*
+ * Markdown 预览排版 —— 度量值移植自 VS Code 内置预览的样式表
+ * (microsoft/vscode, MIT: extensions/markdown-language-features/media/markdown.css)。
+ *
+ * 为什么照抄它而不是自己调:那份表是几千万人日常读 md 磨出来的,标题的
+ * 2em/1.5em/1.25em 阶梯、h1/h2 底下那条分隔线、段落 16px 与列表 0.7em 的
+ * 差别、表格 5px 10px 的内边距 —— 每一个都不是随手定的。自己拍脑袋调出来的
+ * 排版看着"也还行",连续读三屏就知道差在哪。
+ *
+ * **只搬样式表,不搬 webview**。VS Code 的预览跑在带 CSP 的 iframe 里,所以它
+ * 满篇 `var(--vscode-*)`(iframe 继承不到宿主主题,只能注入)、有
+ * `#code-csp-warning`(被 CSP 拦了的角标)、有 `.code-line` 那套行锚点配
+ * postMessage 做滚动同步。那道 iframe 边界是给**第三方扩展注入任意 HTML/CSS/JS**
+ * 用的安全闸,我们没有扩展这个概念,搬过来只会白白弄坏本地链接跳转、选中拖到
+ * 聊天栏、以及本地图片(local-file:// 在 Windows 上盘符会被吞,见 useFileUrl)。
+ * 所以这里保留它的**度量**,颜色换成本应用的暗色青调,直接在同一个 document 里渲染。
+ *
+ * `.code-line` 这个类名刻意沿用 VS Code 的叫法 —— 它承载 `data-line`,是滚动
+ * 同步的锚点(见 useMarkdownScrollSync)。同一个 document 里做同步不需要
+ * postMessage,直接读 CodeMirror 的行块坐标即可。
+ */
+
+.fx-md {
+  --fx-md-fg: #d4d4d8;
+  --fx-md-fg-strong: #f4f4f5;
+  --fx-md-muted: #a1a1aa;
+  --fx-md-accent: #67e8f9;
+  --fx-md-border: rgba(255, 255, 255, 0.18);
+  --fx-md-border-strong: rgba(255, 255, 255, 0.42);
+  --fx-md-code-bg: rgba(10, 10, 10, 0.55);
+  --fx-md-code-border: rgba(103, 232, 249, 0.14);
+
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Microsoft YaHei',
+    'Ubuntu', 'Droid Sans', sans-serif;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--fx-md-fg);
+  padding: 1em 26px 40vh;
+  word-wrap: break-word;
+}
+
+/* 末屏留白:VS Code 的 scrollBeyondLastLine。分栏时没有它,文档最后几行
+   永远滚不到视口中间,滚动同步在尾部就对不齐了。 */
+
+.fx-md > *:first-child {
+  margin-top: 0;
+}
+
+.fx-md h1,
+.fx-md h2,
+.fx-md h3,
+.fx-md h4,
+.fx-md h5,
+.fx-md h6 {
+  font-weight: 600;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  line-height: 1.25;
+  color: var(--fx-md-fg-strong);
+}
+
+.fx-md h1 {
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--fx-md-border);
+}
+
+.fx-md h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--fx-md-border);
+}
+
+.fx-md h3 { font-size: 1.25em; }
+.fx-md h4 { font-size: 1em; }
+.fx-md h5 { font-size: 0.875em; }
+.fx-md h6 { font-size: 0.85em; color: var(--fx-md-muted); }
+
+.fx-md p {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.fx-md ul,
+.fx-md ol {
+  margin-top: 0;
+  margin-bottom: 0.7em;
+  padding-left: 2em;
+}
+
+.fx-md ul { list-style: disc; }
+.fx-md ol { list-style: decimal; }
+.fx-md ul ul { list-style: circle; }
+
+.fx-md li p {
+  margin-bottom: 0.7em;
+}
+
+.fx-md ul ul:first-child,
+.fx-md ul ol:first-child,
+.fx-md ol ul:first-child,
+.fx-md ol ol:first-child {
+  margin-bottom: 0;
+}
+
+/* 任务列表(remark-gfm):复选框不参与列表标记 */
+.fx-md li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.2em;
+}
+
+.fx-md input[type='checkbox'] {
+  margin-right: 0.5em;
+  accent-color: var(--fx-md-accent);
+}
+
+.fx-md hr {
+  border: 0;
+  height: 1px;
+  border-bottom: 1px solid var(--fx-md-border);
+  margin: 24px 0;
+}
+
+.fx-md a {
+  color: var(--fx-md-accent);
+  text-decoration: none;
+}
+
+.fx-md a:hover {
+  text-decoration: underline;
+}
+
+.fx-md strong {
+  font-weight: 600;
+  color: var(--fx-md-fg-strong);
+}
+
+.fx-md em {
+  font-style: italic;
+}
+
+.fx-md del {
+  text-decoration: line-through;
+  color: var(--fx-md-muted);
+}
+
+.fx-md img,
+.fx-md video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 3px;
+}
+
+/* sub/sup 不许撑行高(VS Code 同款修正) */
+.fx-md sub,
+.fx-md sup {
+  line-height: 0;
+}
+
+.fx-md table {
+  border-collapse: collapse;
+  margin-bottom: 0.7em;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.fx-md th,
+.fx-md td {
+  padding: 5px 10px;
+}
+
+.fx-md th {
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--fx-md-border-strong);
+  color: var(--fx-md-fg-strong);
+}
+
+.fx-md table > tbody > tr + tr > td {
+  border-top: 1px solid var(--fx-md-border);
+}
+
+.fx-md blockquote {
+  margin: 0 0 16px;
+  padding: 0 16px 0 10px;
+  border-left: 5px solid var(--fx-md-code-border);
+  border-radius: 2px;
+  background: rgba(103, 232, 249, 0.05);
+  color: rgba(228, 228, 231, 0.85);
+}
+
+.fx-md blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.fx-md code {
+  font-family:
+    'SF Mono', Monaco, Menlo, Consolas, 'Ubuntu Mono', 'Liberation Mono', 'DejaVu Sans Mono',
+    'Courier New', monospace;
+  font-size: 1em;
+  line-height: 1.357em;
+}
+
+/* 行内 code 才加底色。VS Code 靠 `pre code { background: none }` 把块内的
+   底色抵消掉,这里用 :not(pre >) 直接说清楚,少一层互相抵消的规则。 */
+.fx-md :not(pre) > code {
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+  background: var(--fx-md-code-bg);
+  color: #a5f3fc;
+}
+
+.fx-md pre {
+  position: relative;
+  margin: 0 0 16px;
+  padding: 16px;
+  border-radius: 3px;
+  overflow: auto;
+  background: var(--fx-md-code-bg);
+  border: 1px solid var(--fx-md-code-border);
+  white-space: pre-wrap;
+}
+
+.fx-md pre code {
+  display: inline-block;
+  background: none;
+  padding: 0;
+  color: var(--fx-md-fg);
+  tab-size: 4;
+}
+
+/* 代码块复制按钮:悬停才显形,和 VS Code 的 .code-block-copy-button 同款分寸 —— 
+   常驻会在每个代码块右上角糊一个色块,读文档时全是噪音。 */
+.fx-md pre > .fx-md-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--fx-md-code-border);
+  background: rgba(24, 24, 27, 0.9);
+  color: var(--fx-md-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.fx-md pre:hover > .fx-md-copy,
+.fx-md pre > .fx-md-copy:focus {
+  opacity: 1;
+}
+
+.fx-md pre > .fx-md-copy:hover {
+  color: var(--fx-md-accent);
+  background: rgba(39, 39, 42, 0.95);
+}
+
+.fx-md-img-placeholder {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px dashed var(--fx-md-code-border);
+  background: var(--fx-md-code-bg);
+  color: var(--fx-md-muted);
+  font-size: 12px;
+}
+
+/* 滚动同步高亮:编辑器光标所在的那个块。VS Code 用 .code-active-line 干同一件事。 */
+.fx-md .code-active-line::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(103, 232, 249, 0.55);
+}
+
+.fx-md .code-line {
+  position: relative;
+}

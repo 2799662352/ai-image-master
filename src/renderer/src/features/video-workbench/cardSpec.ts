@@ -82,6 +82,19 @@ export function normalizeDuration(value: unknown, model: SeedanceModelAlias = '2
   return Math.min(max, Math.max(min, Math.round(n)))
 }
 
+/**
+ * 「编辑视频」锁死智能时长。
+ *
+ * 上游 `taskMode="edit"` 的时长固定为 -1,给任何固定秒数都会被
+ * `validateSeedanceRequest` 拒(types/seedance.ts)。所以固定秒数在这个模式下
+ * **不是一个可选项** —— 让它选得出来、只在提交时报错,等于摆一个必踩的坑。
+ *
+ * 只锁 edit:`extend`(延长视频)上游没有这条限制,它的秒数是真能指定的。
+ */
+export function lockDurationForMode(mode: VideoWorkbenchMode, duration: number): number {
+  return mode === 'edit_video' ? -1 : duration
+}
+
 /** 该模型下某类素材的条数上限（2.5 是 30/10/10，2.0 家族 9/3/3）。 */
 export function materialLimitFor(kind: MaterialKind, model: SeedanceModelAlias = '2.0'): number {
   const caps = capabilitiesFor(model)
@@ -110,14 +123,15 @@ export function clampMaterials(
 export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpec {
   const seed = normalizeSeed(input.seed)
   const model = input.model ?? '2.0'
+  const mode = normalizeMode(input.mode)
   return {
     prompt: input.prompt ?? '',
     model,
     resolution: input.resolution ?? '720p',
     ratio: input.ratio ?? '16:9',
-    duration: normalizeDuration(input.duration ?? 5, model),
+    duration: lockDurationForMode(mode, normalizeDuration(input.duration ?? 5, model)),
     generateAudio: input.generateAudio !== false,
-    mode: normalizeMode(input.mode),
+    mode,
     ...(seed !== undefined ? { seed } : {}),
     webSearch: input.webSearch !== false,
     referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages', model),
