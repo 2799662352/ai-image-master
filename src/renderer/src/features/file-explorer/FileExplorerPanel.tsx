@@ -14,6 +14,7 @@ import { LatestPreviewBanner } from './LatestPreviewBanner'
 import { FileViewer } from './FileViewer'
 import { ImageViewer } from './ImageViewer'
 import { VideoViewer } from './VideoViewer'
+import { AudioViewer } from './AudioViewer'
 import { BinaryViewer } from './BinaryViewer'
 import { ConflictModal } from './ConflictModal'
 import { ReferencePreview } from './ReferencePreview'
@@ -89,11 +90,15 @@ function ActiveViewer({ tab }: { tab: FileTab | undefined }) {
   }
   switch (tab.kind) {
     case 'text':
-      return <FileViewer tab={tab} />
+      // key 按标签页走:换文件时重挂一个干净的编辑器,而不是拿 view.setState 去
+      // 换文档 —— 后者会把滚动位置一起重置(见 FileViewer 顶部注释)。
+      return <FileViewer key={tab.id} tab={tab} />
     case 'image':
       return <ImageViewer tab={tab} />
     case 'video':
       return <VideoViewer tab={tab} />
+    case 'audio':
+      return <AudioViewer tab={tab} />
     case 'pdf':
       return <embed src={`local-file:///${tab.path.replace(/\\/g, '/')}`} type="application/pdf" className="h-full w-full" />
     case 'binary':

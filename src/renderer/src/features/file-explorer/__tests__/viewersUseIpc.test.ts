@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest'
  *
  * 真要重新启用它,先解决上游那个盘符问题,然后连这条测试一起改 —— 而不是绕开。
  */
-const VIEWERS = ['ImageViewer.tsx', 'VideoViewer.tsx']
+const VIEWERS = ['ImageViewer.tsx', 'VideoViewer.tsx', 'AudioViewer.tsx', 'MarkdownPreview.tsx']
 
 describe('文件预览走 IPC，不走 local-file://', () => {
   it.each(VIEWERS)('%s 使用 useFileUrl 而不是 local-file 地址', (file) => {

@@ -86,6 +86,8 @@ function kindBadgeFor(kind: FileTabKind): { label: string; className: string } {
       return { label: 'image', className: 'bg-cyan-400/15 text-cyan-200' }
     case 'video':
       return { label: 'video', className: 'bg-purple-400/15 text-purple-200' }
+    case 'audio':
+      return { label: 'audio', className: 'bg-teal-400/15 text-teal-200' }
     case 'pdf':
       return { label: 'pdf', className: 'bg-red-400/15 text-red-200' }
     case 'binary':
