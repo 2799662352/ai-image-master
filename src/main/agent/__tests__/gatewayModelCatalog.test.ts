@@ -51,14 +51,17 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
       'qwen3.8-max',
+      'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
       'claude-opus-5',
     ])
     expect(catalog.models.find((model) => model.id === 'gpt-5.5-openai-compact')?.route)
       .toMatchObject({ channelId: 'rightcode-standard', family: 'openai' })
-    expect(catalog.models.find((model) => model.id === 'grok-4.5')?.route)
-      .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
+    for (const grok of ['grok-4.5', 'grok-4.6']) {
+      expect(catalog.models.find((model) => model.id === grok)?.route)
+        .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
+    }
     expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)
       .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
   })

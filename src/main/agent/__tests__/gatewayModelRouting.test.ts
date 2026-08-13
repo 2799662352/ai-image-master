@@ -54,6 +54,19 @@ describe('gatewayModelRouting', () => {
     expect(channel.baseUrl).toBe('https://rightapi.ai/grok/v1')
   })
 
+  it('serves Grok 4.6 on Right.Codes only, and never on a gateway that lacks it', () => {
+    expect(resolveGatewayModelRoute('rightcode', 'grok-4.6')).toEqual({
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-grok',
+      modelId: 'grok-4.6',
+      family: 'xai',
+    })
+    // API Yi has not been confirmed to sell the slug. Routing it there anyway
+    // would trade a picker row the user cannot use for a 404 on every turn.
+    expect(() => resolveGatewayModelRoute('apiyi', 'grok-4.6'))
+      .toThrow(ModelUnavailableInGatewayError)
+  })
+
   it('routes Claude models to the Anthropic-native pool with the bridge on', () => {
     const route = resolveGatewayModelRoute('rightcode', 'claude-opus-5')
     const channel = resolveProviderChannel(route.channelId)
@@ -119,7 +132,8 @@ describe('gatewayModelRouting', () => {
     // api.apiyi.com endpoint (every model available) so memories can run on
     // the smarter gpt-5.5 — even when chatting on grok. rightcode-standard's
     // channel model IS gpt-5.5 (fallback covers it); rightcode-grok's endpoint
-    // serves ONLY grok-4.5, so it must not carry a memoriesModel override.
+    // serves the grok family only, so it must not carry a memoriesModel
+    // override — a GPT slug there is a 400, whichever Grok is chatting.
     expect(resolveProviderChannel('apiyi-standard').memoriesModel).toBe('gpt-5.5')
     expect(resolveProviderChannel('apiyi-grok').memoriesModel).toBe('gpt-5.5')
     expect(resolveProviderChannel('rightcode-standard').model).toBe('gpt-5.5')

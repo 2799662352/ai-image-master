@@ -198,7 +198,16 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     baseUrl: 'https://rightapi.ai/grok/v1',
     envKey: 'OPENAI_API_KEY',
     model: 'grok-4.5',
-    allowedModels: Object.freeze(['grok-4.5']),
+    // 4.6 is sold on this same `/grok` endpoint at 4.5's price. Listing it here
+    // is what makes it routable AND visible: the catalog builder seeds its rows
+    // from `allowedModels`, and anything outside the list is rejected by
+    // `ModelUnavailableInGatewayError` even when the endpoint would serve it.
+    //
+    // The channel default stays 4.5 — flipping it would silently move every
+    // user who never picked a model explicitly. API Yi is deliberately NOT
+    // given 4.6: we have only confirmed the slug on Right.Codes, and offering
+    // it on a gateway that does not sell it produces a 404 per turn.
+    allowedModels: Object.freeze(['grok-4.6', 'grok-4.5']),
     requiresOpenaiAuth: true,
     // xAI-backed channel: needs the proxy's input-null sanitize (codex replays
     // reasoning history with `content: null`, which xAI's ModelInput rejects

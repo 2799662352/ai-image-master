@@ -13,7 +13,8 @@ export type ModelReasoningEffort = 'auto' | ConcreteModelReasoningEffort
 
 export const UNKNOWN_MODEL_CONTEXT_WINDOW = 200_000
 export const EXPERIMENTAL_CONTEXT_WINDOW = 1_000_000
-export const GROK_4_5_CONTEXT_WINDOW = 500_000
+/** xAI documents 500K for the whole Grok 4.x line (4.5 and 4.6 alike). */
+export const GROK_CONTEXT_WINDOW = 500_000
 
 export interface ModelContextOption {
   value: number
@@ -139,6 +140,13 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
+    id: 'grok-4.6',
+    displayName: 'Grok 4.6',
+    tier: 'Extra High',
+    description: 'Newest xAI flagship: coding, tool calling and long-running agents.',
+    isDefault: false,
+  },
+  {
     id: 'grok-4.5',
     displayName: 'Grok 4.5',
     tier: 'Extra High',
@@ -191,7 +199,11 @@ interface ProviderReasoningPolicy {
 
 const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new Map([
   ['grok-4.5', {
-    defaultWindow: GROK_4_5_CONTEXT_WINDOW,
+    defaultWindow: GROK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  ['grok-4.6', {
+    defaultWindow: GROK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
   // Codex 0.144.6 hotfix corrected the GPT-5.6 family from 372K to 272K
@@ -205,9 +217,21 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
   ['gpt-5.4-mini', { defaultWindow: 272_000, allowExperimental1M: true }],
 ])
 
+/**
+ * Per-route overrides. Absent a route entry, the model-level policy applies.
+ *
+ * `grok-4.6` deliberately has NO Right.Codes override, so it lands on the
+ * documented 500K instead of inheriting 4.5's 1M. That 1M is the vendor's own
+ * advertised figure (see docs/releases/v4.4.1.md), and xAI documents 500K for
+ * the whole 4.x line — a number we would only over-claim at the user's
+ * expense: the window drives auto-compaction, so claiming 1M means compaction
+ * waits for 900K and the request is refused upstream long before that. Under-
+ * claiming only compacts sooner than strictly necessary. If Right.Codes states
+ * 1M for 4.6 too, add the entry then — with the claim recorded here.
+ */
 const PROVIDER_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new Map([
   ['apiyi:apiyi-grok:grok-4.5', {
-    defaultWindow: 500_000,
+    defaultWindow: GROK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
   ['rightcode:rightcode-grok:grok-4.5', {
@@ -242,15 +266,21 @@ const ANTHROPIC_ADAPTIVE_CHANNEL_MODELS: readonly string[] = [
   'apiyi:apiyi-claude:claude-fable-5',
 ]
 
+/**
+ * Efforts verified against the Grok channels. xAI's own docs additionally list
+ * `xhigh` for 4.6, but every level here has been exercised through these
+ * gateways and that one has not — and an effort the proxy rejects is a failed
+ * turn, not a degraded one. Promote it once a live call confirms it.
+ */
+const GROK_REASONING: ProviderReasoningPolicy = {
+  defaultEffort: 'high',
+  supportedEfforts: ['low', 'medium', 'high'],
+}
+
 const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> = new Map([
-  ['apiyi:apiyi-grok:grok-4.5', {
-    defaultEffort: 'high',
-    supportedEfforts: ['low', 'medium', 'high'],
-  }],
-  ['rightcode:rightcode-grok:grok-4.5', {
-    defaultEffort: 'high',
-    supportedEfforts: ['low', 'medium', 'high'],
-  }],
+  ['apiyi:apiyi-grok:grok-4.5', GROK_REASONING],
+  ['rightcode:rightcode-grok:grok-4.5', GROK_REASONING],
+  ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
   ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
     (key) => [key, ANTHROPIC_ADAPTIVE_REASONING] as const,
   ),
