@@ -51,6 +51,8 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
       'qwen3.8-max',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -61,6 +63,10 @@ describe('buildGatewayModelCatalog', () => {
     for (const grok of ['grok-4.5', 'grok-4.6']) {
       expect(catalog.models.find((model) => model.id === grok)?.route)
         .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
+    }
+    for (const slug of ['deepseek-v4-flash', 'deepseek-v4-pro']) {
+      expect(catalog.models.find((model) => model.id === slug)?.route)
+        .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
     }
     expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)
       .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })

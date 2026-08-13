@@ -216,6 +216,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          expect.objectContaining({ id: 'deepseek-v4-flash' }),
+          expect.objectContaining({ id: 'deepseek-v4-pro' }),
           expect.objectContaining({ id: 'grok-4.6' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
@@ -320,6 +322,14 @@ describe('AgentManager model settings catalog and snapshot', () => {
             route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
           }),
           expect.objectContaining({
+            id: 'deepseek-v4-flash',
+            route: expect.objectContaining({ channelId: 'rightcode-deepseek' }),
+          }),
+          expect.objectContaining({
+            id: 'deepseek-v4-pro',
+            route: expect.objectContaining({ channelId: 'rightcode-deepseek' }),
+          }),
+          expect.objectContaining({
             id: 'grok-4.6',
             route: expect.objectContaining({ channelId: 'rightcode-grok' }),
           }),
@@ -371,6 +381,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
       'qwen3.8-max',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',

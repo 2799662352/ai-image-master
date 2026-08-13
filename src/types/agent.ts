@@ -217,11 +217,12 @@ export interface CodexModelContextConfig {
 }
 
 /**
- * 决定一个模型走网关内的哪条 Channel。`qwen` 是独立一族而不是并进 `other`：
- * `other` 会落到 standard 渠道（各网关自己的 OpenAI 兼容端点），而 qwen 挂在
- * Miau（new-api）上，baseUrl 与 Key 都不同，必须自成一条。
+ * 决定一个模型走网关内的哪条 Channel。`qwen` / `deepseek` 都是独立一族而不是
+ * 并进 `other`：`other` 会落到 standard 渠道（各网关自己的 OpenAI 兼容端点）。
+ * qwen 挂在 Miau（new-api）上，baseUrl 与 Key 都不同；deepseek 挂在
+ * Right.Codes 的 `/deepseek` 端点上，standard 的 `/codex` 不卖这两个 slug。
  */
-export type AgentModelFamily = 'openai' | 'xai' | 'anthropic' | 'qwen' | 'other'
+export type AgentModelFamily = 'openai' | 'xai' | 'anthropic' | 'qwen' | 'deepseek' | 'other'
 
 export interface AgentModelRoute {
   gatewayId: string

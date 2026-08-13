@@ -34,11 +34,13 @@ import { useAgentChatStore } from './store'
 // headline channel on these gateways, so it gets the top slot in the picker.
 // A family absent from this list is silently dropped from the picker (see the
 // bucket build below), so every `AgentModelFamily` member must appear here.
-// QWEN 排在 XAI 之上是产品要求（通义千问三档要在 Grok 上面）。分组顺序就是这个
-// 数组的顺序 —— 注意它与 `sortByCanonicalOrder`（组内顺序）是两层：这里排分组，
-// 那里排组内。两处都要动才能真正改变用户看到的位置。
+// QWEN 排在 XAI 之上是产品要求（通义千问三档要在 Grok 上面）。DEEPSEEK 夹在
+// 两者之间：同是独立家族渠道，选择器里跟在千问后面、Grok 前面。分组顺序就是
+// 这个数组的顺序 —— 注意它与 `sortByCanonicalOrder`（组内顺序）是两层：这里排
+// 分组，那里排组内。两处都要动才能真正改变用户看到的位置。
 const FAMILY_ORDER: readonly AgentModelFamily[] = [
   'qwen',
+  'deepseek',
   'xai',
   'openai',
   'anthropic',
@@ -50,6 +52,7 @@ const FAMILY_LABEL: Record<AgentModelFamily, string> = {
   xai: 'XAI',
   anthropic: 'ANTHROPIC',
   qwen: 'QWEN',
+  deepseek: 'DEEPSEEK',
   other: 'OTHER',
 }
 

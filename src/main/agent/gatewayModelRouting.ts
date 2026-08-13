@@ -136,10 +136,10 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'rightcode',
     name: 'Right.Codes',
-    description: 'Right.Codes Codex 与 Grok 网关',
+    description: 'Right.Codes Codex、Grok 与 DeepSeek 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-claude', 'rightcode-qwen'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek', 'rightcode-claude', 'rightcode-qwen'],
   }),
 ])
 
@@ -214,6 +214,38 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // with 422 on every second turn) plus namespace flatten/restore so
     // subagent tools stay callable instead of being stripped upstream.
     compatibilityPolicy: 'responses-namespace-bridge',
+  }),
+  Object.freeze({
+    id: 'rightcode-deepseek',
+    gatewayId: 'rightcode',
+    name: 'Right.Codes DeepSeek',
+    // Official OpenAI-format pool at `/deepseek` (Right.Codes model list,
+    // 官方正价渠道, 官方同价). DeepSeek V4 natively speaks the Responses API
+    // (`POST /responses`, https://api-docs.deepseek.com/api/create-response)
+    // — slugs `deepseek-v4-flash` / `deepseek-v4-pro` only.
+    //
+    // Two sibling pools on the same vendor are deliberately unused:
+    // `/deepseek/anthropic` speaks Messages, which would need the Claude
+    // bridge for no gain (Codex already speaks Responses); `/cn-sale` lists
+    // the same slugs at 0.3x from a self-hosted box the vendor itself tags
+    // as 稳定性差. Official-price `/deepseek` is the one we can stand behind.
+    //
+    // Native Responses is not the same as "codex can talk to it unbridged":
+    // Codex wraps MCP tools as `{"type":"namespace"}` (openai/codex#23186),
+    // and DeepSeek's docs say unknown tool types are ignored. That is the
+    // silent-drop failure the qwen channel already hit — flatten/restore
+    // here for the same reason, not because the wire protocol is foreign.
+    baseUrl: 'https://rightapi.ai/deepseek/v1',
+    envKey: 'OPENAI_API_KEY',
+    // Official default chat is Flash (the cheap/fast size). Flipping this
+    // to Pro would silently move every user who never picked a model.
+    model: 'deepseek-v4-flash',
+    allowedModels: Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']),
+    requiresOpenaiAuth: true,
+    compatibilityPolicy: 'responses-namespace-bridge',
+    // This host lists only the two V4 slugs. A GPT memoriesModel would
+    // 400 the same way it does on rightcode-grok; leave unset so side
+    // requests ride the channel's own chat model.
   }),
   Object.freeze({
     id: 'rightcode-claude',
@@ -312,9 +344,10 @@ export function inferModelFamily(modelId: string): AgentModelFamily {
   if (normalized.startsWith('grok')) return 'xai'
   if (normalized.startsWith('claude')) return 'anthropic'
   if (normalized.startsWith('gpt-') || /^o\d/.test(normalized)) return 'openai'
-  // qwen 必须早于 `other` 兜底：`other` 落 standard 渠道（网关自家的端点），
-  // 而 qwen 在 Miau 上，端点和 Key 都是另一套。
+  // qwen / deepseek 必须早于 `other` 兜底：`other` 落 standard 渠道
+  // （网关自家的端点），而这两族各有独立 host。
   if (normalized.startsWith('qwen')) return 'qwen'
+  if (normalized.startsWith('deepseek')) return 'deepseek'
   return 'other'
 }
 
@@ -332,6 +365,7 @@ const FAMILY_CHANNEL_SUFFIX: Readonly<Record<AgentModelFamily, string>> =
     xai: 'grok',
     anthropic: 'claude',
     qwen: 'qwen',
+    deepseek: 'deepseek',
   })
 
 function customGatewayModelRoute(
