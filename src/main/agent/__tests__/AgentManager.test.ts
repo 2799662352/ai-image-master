@@ -250,6 +250,7 @@ describe('AgentManager persisted Gateway/model startup routing', () => {
     expect(channels.map((channel) => channel.id)).toEqual([
       'rightcode-standard',
       'rightcode-grok',
+      'rightcode-deepseek',
       'rightcode-claude',
       'rightcode-qwen',
     ])

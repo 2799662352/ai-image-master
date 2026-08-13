@@ -15,6 +15,13 @@ export const UNKNOWN_MODEL_CONTEXT_WINDOW = 200_000
 export const EXPERIMENTAL_CONTEXT_WINDOW = 1_000_000
 /** xAI documents 500K for the whole Grok 4.x line (4.5 and 4.6 alike). */
 export const GROK_CONTEXT_WINDOW = 500_000
+/**
+ * DeepSeek documents 1M as the default across all official V4 services
+ * (https://api-docs.deepseek.com/news/news260424 — "1M Standard").
+ * This is not the GPT-family experimental 1M flag; it is the model's
+ * documented window, so auto-compaction waits until 900K.
+ */
+export const DEEPSEEK_CONTEXT_WINDOW = 1_000_000
 
 export interface ModelContextOption {
   value: number
@@ -140,6 +147,20 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
+    id: 'deepseek-v4-flash',
+    displayName: 'DeepSeek V4 Flash',
+    tier: 'High',
+    description: 'Fast 1M-context V4. Native Responses API; official default chat.',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-pro',
+    displayName: 'DeepSeek V4 Pro',
+    tier: 'Extra High',
+    description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
+    isDefault: false,
+  },
+  {
     id: 'grok-4.6',
     displayName: 'Grok 4.6',
     tier: 'Extra High',
@@ -204,6 +225,14 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
   }],
   ['grok-4.6', {
     defaultWindow: GROK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  ['deepseek-v4-flash', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  ['deepseek-v4-pro', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
   // Codex 0.144.6 hotfix corrected the GPT-5.6 family from 372K to 272K
@@ -277,10 +306,29 @@ const GROK_REASONING: ProviderReasoningPolicy = {
   supportedEfforts: ['low', 'medium', 'high'],
 }
 
+/**
+ * DeepSeek V4 Responses API documents none/minimal/low/medium/high/xhigh/max
+ * (https://api-docs.deepseek.com/guides/thinking_mode). Thinking is on by
+ * default at `high`. The actual mapped effort is:
+ *   low → low; medium/high/xhigh → high; max → max; none disables thinking.
+ *
+ * We only expose the three that are not aliases of each other. Offering
+ * medium or xhigh would let the user pick a higher label and get `high`
+ * with no error — a silent no-op, worse than omitting the row. `none` is
+ * not in our picker enum. Promote the aliases only if a live call needs
+ * them as distinct UX (it will not change what the model does).
+ */
+const DEEPSEEK_REASONING: ProviderReasoningPolicy = {
+  defaultEffort: 'high',
+  supportedEfforts: ['low', 'high', 'max'],
+}
+
 const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> = new Map([
   ['apiyi:apiyi-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
+  ['rightcode:rightcode-deepseek:deepseek-v4-flash', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek:deepseek-v4-pro', DEEPSEEK_REASONING],
   ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
     (key) => [key, ANTHROPIC_ADAPTIVE_REASONING] as const,
   ),

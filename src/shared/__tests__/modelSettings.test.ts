@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CANONICAL_MODEL_SETTINGS_ROWS,
+  DEEPSEEK_CONTEXT_WINDOW,
   EXPERIMENTAL_CONTEXT_WINDOW,
   GROK_CONTEXT_WINDOW,
   UNKNOWN_MODEL_CONTEXT_WINDOW,
@@ -87,6 +88,57 @@ describe('model settings capabilities', () => {
       defaultContextWindow: GROK_CONTEXT_WINDOW,
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['low', 'medium', 'high'],
+    })
+  })
+
+  it('publishes provider-neutral DeepSeek V4 metadata', () => {
+    expect(
+      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'deepseek-v4-flash'),
+    ).toEqual({
+      id: 'deepseek-v4-flash',
+      displayName: 'DeepSeek V4 Flash',
+      tier: 'High',
+      description: 'Fast 1M-context V4. Native Responses API; official default chat.',
+      isDefault: false,
+    })
+    expect(
+      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'deepseek-v4-pro'),
+    ).toEqual({
+      id: 'deepseek-v4-pro',
+      displayName: 'DeepSeek V4 Pro',
+      tier: 'Extra High',
+      description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
+      isDefault: false,
+    })
+  })
+
+  /**
+   * Official V4 ships 1M as the default window, not an experimental flag.
+   * Over-claiming is not the risk here — under-claiming (falling back to
+   * UNKNOWN_MODEL_CONTEXT_WINDOW 200K) would compact a 1M model at 180K.
+   */
+  it('keeps DeepSeek V4 on the documented 1M, including on Right.Codes', () => {
+    expect(defaultContextWindowForModel('deepseek-v4-flash')).toBe(DEEPSEEK_CONTEXT_WINDOW)
+    expect(defaultContextWindowForModel('deepseek-v4-pro')).toBe(DEEPSEEK_CONTEXT_WINDOW)
+    expect(
+      defaultContextWindowForModel('deepseek-v4-pro', 'rightcode', 'rightcode-deepseek'),
+    ).toBe(DEEPSEEK_CONTEXT_WINDOW)
+    expect(modelContextOptions('deepseek-v4-flash', 'rightcode', 'rightcode-deepseek')).toEqual([
+      { value: DEEPSEEK_CONTEXT_WINDOW, experimental: false },
+    ])
+  })
+
+  it('offers only non-aliased DeepSeek reasoning efforts on Right.Codes', () => {
+    expect(
+      mergeModelSettingsCapabilities({
+        model: 'deepseek-v4-pro',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-deepseek',
+      }),
+    ).toMatchObject({
+      defaultContextWindow: DEEPSEEK_CONTEXT_WINDOW,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['low', 'high', 'max'],
     })
   })
 

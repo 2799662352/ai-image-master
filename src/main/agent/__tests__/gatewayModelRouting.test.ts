@@ -67,6 +67,34 @@ describe('gatewayModelRouting', () => {
       .toThrow(ModelUnavailableInGatewayError)
   })
 
+  it('serves DeepSeek V4 on Right.Codes /deepseek only, never on API Yi or /codex', () => {
+    expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-flash')).toEqual({
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-deepseek',
+      modelId: 'deepseek-v4-flash',
+      family: 'deepseek',
+    })
+    expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-pro')).toEqual({
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-deepseek',
+      modelId: 'deepseek-v4-pro',
+      family: 'deepseek',
+    })
+    const channel = resolveProviderChannel('rightcode-deepseek')
+    expect(channel.baseUrl).toBe('https://rightapi.ai/deepseek/v1')
+    expect(channel.model).toBe('deepseek-v4-flash')
+    expect(channel.allowedModels).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
+    expect(channel.compatibilityPolicy).toBe('responses-namespace-bridge')
+    expect(channel.memoriesModel).toBeUndefined()
+    // API Yi has no DeepSeek pool. Routing there would put a picker row
+    // that 404s every turn. Unlisted slugs on the Right.Codes pool are
+    // refused the same way — they must not fall through to /codex.
+    expect(() => resolveGatewayModelRoute('apiyi', 'deepseek-v4-pro'))
+      .toThrow(ModelUnavailableInGatewayError)
+    expect(() => resolveGatewayModelRoute('rightcode', 'deepseek-chat'))
+      .toThrow(ModelUnavailableInGatewayError)
+  })
+
   it('routes Claude models to the Anthropic-native pool with the bridge on', () => {
     const route = resolveGatewayModelRoute('rightcode', 'claude-opus-5')
     const channel = resolveProviderChannel(route.channelId)

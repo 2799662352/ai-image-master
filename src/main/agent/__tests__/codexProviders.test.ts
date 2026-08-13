@@ -49,6 +49,7 @@ describe('codexProviders', () => {
       'apiyi-grok',
       'rightcode-standard',
       'rightcode-grok',
+      'rightcode-deepseek',
       'rightcode-claude',
       'apiyi-claude',
       // 同一个 Miau 端点在两个网关下各注册一次（过渡态，见 QWEN_CHANNELS 注释）。
@@ -109,6 +110,19 @@ describe('codexProviders', () => {
     expect(grok).not.toHaveProperty('reasoningEffort')
     expect(grok).not.toHaveProperty('verbosity')
 
+    const deepseek = resolveProviderChannel('rightcode-deepseek')
+    expect(deepseek).toMatchObject({
+      name: 'Right.Codes DeepSeek',
+      baseUrl: 'https://rightapi.ai/deepseek/v1',
+      envKey: 'OPENAI_API_KEY',
+      // Flash is the official default chat; Pro is opt-in from the picker.
+      model: 'deepseek-v4-flash',
+      allowedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+      requiresOpenaiAuth: true,
+      compatibilityPolicy: 'responses-namespace-bridge',
+    })
+    expect(deepseek).not.toHaveProperty('memoriesModel')
+
     const apiyiGrok = resolveProviderChannel('apiyi-grok')
     expect(apiyiGrok).toMatchObject({
       name: 'API Yi Grok',
@@ -131,6 +145,7 @@ describe('codexProviders', () => {
     expect(channelsForGateway('rightcode').map((channel) => channel.id)).toEqual([
       'rightcode-standard',
       'rightcode-grok',
+      'rightcode-deepseek',
       'rightcode-claude',
       'rightcode-qwen',
     ])
