@@ -100,8 +100,10 @@ describe('codexProviders', () => {
       name: 'Right.Codes Grok',
       baseUrl: 'https://rightapi.ai/grok/v1',
       envKey: 'OPENAI_API_KEY',
+      // Two slugs, one endpoint. The pinned default stays 4.5 so nobody who
+      // never picked a model gets silently moved; 4.6 is opt-in from the picker.
       model: 'grok-4.5',
-      allowedModels: ['grok-4.5'],
+      allowedModels: ['grok-4.6', 'grok-4.5'],
       requiresOpenaiAuth: true,
     })
     expect(grok).not.toHaveProperty('reasoningEffort')

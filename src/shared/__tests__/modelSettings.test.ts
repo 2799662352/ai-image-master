@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CANONICAL_MODEL_SETTINGS_ROWS,
   EXPERIMENTAL_CONTEXT_WINDOW,
-  GROK_4_5_CONTEXT_WINDOW,
+  GROK_CONTEXT_WINDOW,
   UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
   isConcreteModelReasoningEffort,
@@ -31,9 +31,9 @@ describe('model settings capabilities', () => {
   })
 
   it('uses Gateway + Channel Grok 4.5 context limits', () => {
-    expect(defaultContextWindowForModel('grok-4.5')).toBe(GROK_4_5_CONTEXT_WINDOW)
+    expect(defaultContextWindowForModel('grok-4.5')).toBe(GROK_CONTEXT_WINDOW)
     expect(defaultContextWindowForModel('grok-4.5', 'apiyi', 'apiyi-grok')).toBe(
-      GROK_4_5_CONTEXT_WINDOW,
+      GROK_CONTEXT_WINDOW,
     )
     expect(defaultContextWindowForModel('grok-4.5', 'rightcode', 'rightcode-grok')).toBe(
       EXPERIMENTAL_CONTEXT_WINDOW,
@@ -45,6 +45,48 @@ describe('model settings capabilities', () => {
     expect(modelContextOptions('grok-4.5', 'rightcode', 'rightcode-grok')).toContainEqual({
       value: 1_000_000,
       experimental: false,
+    })
+  })
+
+  it('publishes provider-neutral Grok 4.6 metadata', () => {
+    expect(
+      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'grok-4.6'),
+    ).toEqual({
+      id: 'grok-4.6',
+      displayName: 'Grok 4.6',
+      tier: 'Extra High',
+      description: 'Newest xAI flagship: coding, tool calling and long-running agents.',
+      isDefault: false,
+    })
+  })
+
+  /**
+   * The interesting half is the Right.Codes route: 4.5 carries a 1M override
+   * there, and 4.6 must NOT pick it up. Over-claiming the window pushes
+   * auto-compaction to 900K on a model the vendor refuses past 500K, which
+   * fails a long thread outright rather than degrading it.
+   */
+  it('keeps Grok 4.6 on the documented 500K, including on Right.Codes', () => {
+    expect(defaultContextWindowForModel('grok-4.6')).toBe(GROK_CONTEXT_WINDOW)
+    expect(defaultContextWindowForModel('grok-4.6', 'rightcode', 'rightcode-grok')).toBe(
+      GROK_CONTEXT_WINDOW,
+    )
+    expect(modelContextOptions('grok-4.6', 'rightcode', 'rightcode-grok')).toEqual([
+      { value: GROK_CONTEXT_WINDOW, experimental: false },
+    ])
+  })
+
+  it('offers verified reasoning efforts for Right.Codes Grok 4.6', () => {
+    expect(
+      mergeModelSettingsCapabilities({
+        model: 'grok-4.6',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-grok',
+      }),
+    ).toMatchObject({
+      defaultContextWindow: GROK_CONTEXT_WINDOW,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
     })
   })
 
@@ -69,7 +111,7 @@ describe('model settings capabilities', () => {
   })
 
   it.each([
-    ['apiyi', 'apiyi-grok', GROK_4_5_CONTEXT_WINDOW],
+    ['apiyi', 'apiyi-grok', GROK_CONTEXT_WINDOW],
     ['rightcode', 'rightcode-grok', EXPERIMENTAL_CONTEXT_WINDOW],
   ])('uses verified Grok reasoning capabilities for %s/%s', (
     gatewayId,
@@ -199,7 +241,7 @@ describe('model settings capabilities', () => {
   )
 
   it.each([
-    ['grok-4.5', GROK_4_5_CONTEXT_WINDOW],
+    ['grok-4.5', GROK_CONTEXT_WINDOW],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
@@ -315,7 +357,7 @@ describe('model context pin', () => {
   })
 
   it('always pins models without Codex-native metadata', () => {
-    expect(resolveModelContextPin('grok-4.5', GROK_4_5_CONTEXT_WINDOW)).toEqual({
+    expect(resolveModelContextPin('grok-4.5', GROK_CONTEXT_WINDOW)).toEqual({
       modelContextWindow: 500_000,
       modelAutoCompactTokenLimit: 450_000,
     })

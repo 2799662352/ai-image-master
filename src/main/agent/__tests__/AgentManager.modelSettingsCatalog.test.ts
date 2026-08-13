@@ -154,6 +154,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          // No 4.6 here on purpose: it is declared on the Right.Codes Grok
+          // channel only, so the API Yi catalog stays one row shorter.
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),
@@ -214,6 +216,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          expect.objectContaining({ id: 'grok-4.6' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),
@@ -317,6 +320,10 @@ describe('AgentManager model settings catalog and snapshot', () => {
             route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
           }),
           expect.objectContaining({
+            id: 'grok-4.6',
+            route: expect.objectContaining({ channelId: 'rightcode-grok' }),
+          }),
+          expect.objectContaining({
             id: 'grok-4.5',
             route: expect.objectContaining({ channelId: 'rightcode-grok' }),
           }),
@@ -364,6 +371,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
       'qwen3.8-max',
+      'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
       'claude-opus-5',
@@ -395,6 +403,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
+          // No 4.6 here on purpose: it is declared on the Right.Codes Grok
+          // channel only, so the API Yi catalog stays one row shorter.
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),
