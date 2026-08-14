@@ -154,6 +154,14 @@ describe('万相 transport', () => {
     expect(r.status).toBe('running')
   })
 
+  it('没配密钥时报万相自己的话,不提火山', async () => {
+    // 原先 submit 硬查 Seedance 密钥,只配了 Miau 的用户会被要求去配一个这条路
+    // 根本用不到的火山密钥。
+    const t = createWan3Transport(wan3Client(), () => '   ')
+    expect(() => t.requireApiKey()).toThrow(/Miau/)
+    expect(() => t.requireApiKey()).not.toThrow(/SEEDANCE/)
+  })
+
   it('密钥现取,不在建 transport 时固化 —— 用户改完密钥下一次提交就该生效', async () => {
     const client = wan3Client()
     let key = 'old'
