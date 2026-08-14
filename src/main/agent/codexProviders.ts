@@ -172,7 +172,13 @@ function findInternalChannelProvider(id: string): ProviderPreset | undefined {
   const channel = BUILTIN_CHANNEL_PRESETS.find((preset) => preset.id === id)
   if (!channel) return undefined
   const { gatewayId, ...provider } = channel
-  return { ...provider, credentialId: gatewayId }
+  // 通道自己声明了凭据槽就听它的，没声明才回落到所在网关。
+  //
+  // 曾经无条件写成 `credentialId: gatewayId`，把 qwen 通道显式声明的
+  // `credentialId: 'qwen'`（Miau token，与图片生成共用那枚）覆盖掉了 —— 于是选
+  // 千问就拿 apiyi/rightcode 的 Key 去打 Miau 端点，必然 401；而设置页还会催用户
+  // 去配一枚这条路根本不用的密钥。声明摆在那儿却不生效，比没有声明更难查。
+  return { ...provider, credentialId: channel.credentialId || gatewayId }
 }
 
 export function isBuiltinProviderId(id: string): boolean {
