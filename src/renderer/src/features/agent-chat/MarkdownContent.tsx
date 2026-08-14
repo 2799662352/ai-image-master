@@ -6,6 +6,8 @@ import { useFileExplorerStore } from '../file-explorer/store'
 import { useAgentChatStore } from './store'
 import { isImageHref } from '../file-explorer/revealInExplorer'
 import { parseFileCitation, type FileCitation } from '../file-explorer/fileCitation'
+import { rawFromChatPathHref, remarkChatPaths } from './chatPathLinkify'
+import { usePathExists } from './usePathExists'
 import type { AttachmentRef } from '../../../../types/agent-timeline'
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
@@ -34,6 +36,8 @@ function mimeFromHref(href: string): string {
  * don't widen the attack surface.
  */
 function chatUrlTransform(url: string): string {
+  // 我们自己的哨兵(remarkChatPaths 造的),默认清洗器不认识它的 scheme。
+  if (rawFromChatPathHref(url) !== null) return url
   if (parseFileCitation(url, { workspaceRoot: currentWorkspaceRoot() })) return url
   return defaultUrlTransform(url)
 }
@@ -126,6 +130,15 @@ function MarkdownContentImpl({ source }: { source: string }) {
     () => ({
       // Disable raw HTML; default react-markdown already sanitises.
       a: ({ href, children, ...rest }) => {
+        // 正文里的裸路径候选:是不是链接要问过磁盘才知道,单独一条路。
+        const candidate = href ? rawFromChatPathHref(href) : null
+        if (candidate !== null) {
+          return (
+            <PathCandidate raw={candidate} workspaceRoot={workspaceRoot}>
+              {children}
+            </PathCandidate>
+          )
+        }
         const target = classifyChatHref(href, workspaceRoot)
         // Nothing we can do with it → render the label as plain text rather
         // than a blue link that eats the click. See classifyChatHref.
@@ -213,7 +226,11 @@ function MarkdownContentImpl({ source }: { source: string }) {
 
   return (
     <div className="markdown-content text-[13px] leading-[1.55] text-zinc-100">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={chatUrlTransform} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkChatPaths]}
+        urlTransform={chatUrlTransform}
+        components={components}
+      >
         {source}
       </ReactMarkdown>
     </div>
@@ -221,6 +238,50 @@ function MarkdownContentImpl({ source }: { source: string }) {
 }
 
 export const MarkdownContent = memo(MarkdownContentImpl)
+
+/**
+ * 正文里一个裸路径候选。**先验证,再决定长什么样**。
+ *
+ * 三种状态只有两种外观:
+ *  - 未验证 / 在途 / 验证不通过 → 原样纯文本(行内代码仍是行内代码)
+ *  - 验证通过 → 蓝色可点,点了在文件展示栏打开并跳到行号
+ *
+ * 「在途也按纯文本渲染」是刻意的:流式回复每来一个 delta 就重解析,如果先标蓝
+ * 再回退,正文会一路闪烁。宁可晚半拍变蓝,不要闪。
+ */
+function PathCandidate({
+  raw,
+  workspaceRoot,
+  children,
+}: {
+  raw: string
+  workspaceRoot: string | null
+  children: React.ReactNode
+}) {
+  const citation = useMemo(
+    () => parseFileCitation(raw, { workspaceRoot }),
+    [raw, workspaceRoot],
+  )
+  const exists = usePathExists(citation?.path)
+
+  if (!citation || exists !== true) return <>{children}</>
+
+  const { path, line, col } = citation
+  return (
+    <a
+      href={`file://${path}`}
+      draggable={false}
+      title={line ? `${path}:${line}` : path}
+      onClick={(e) => {
+        e.preventDefault()
+        void useFileExplorerStore.getState().revealPath(path, line ? { line, col } : undefined)
+      }}
+      className="cursor-pointer select-text text-cyan-300 underline-offset-2 hover:underline"
+    >
+      {children}
+    </a>
+  )
+}
 
 interface LanguageInfo {
   isBlock: boolean

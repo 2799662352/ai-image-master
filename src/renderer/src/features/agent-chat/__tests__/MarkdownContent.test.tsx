@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownContent, parseLanguageInfo } from '../MarkdownContent'
 import { useFileExplorerStore } from '../../file-explorer/store'
+import { __resetPathExistsCache } from '../usePathExists'
 
 afterEach(cleanup)
 
@@ -167,3 +168,92 @@ describe('MarkdownContent · Codex 文件引用', () => {
     expect(a.getAttribute('href')).toBe('https://github.com/o/r/pull/1')
   })
 })
+
+/**
+ * 正文里的裸路径与行内代码。核心契约是**先验证再标蓝**:磁盘上确实有这个文件
+ * 才变成链接,否则原样留成文本 —— 否则就是在修「点不动的蓝字」的过程中又造一批。
+ */
+describe('MarkdownContent · 正文裸路径', () => {
+  const ROOT = 'D:\\proj'
+  let stat: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    __resetPathExistsCache()
+    useFileExplorerStore.setState({ workspaceRoot: ROOT })
+    stat = vi.fn(async (p: string) =>
+      p === 'D:\\proj\\src\\a.ts' || p === 'D:\\proj\\latest.yml'
+        ? { ok: true }
+        : { ok: false },
+    )
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = { fs: { stat } }
+  })
+
+  it('磁盘上有的裸路径会变成链接', async () => {
+    const { container } = render(<MarkdownContent source={'我改了 src/a.ts 这个文件'} />)
+    await waitFor(() => expect(container.querySelector('a')).toBeTruthy())
+    expect(container.querySelector('a')?.textContent).toBe('src/a.ts')
+  })
+
+  it('行内代码里的文件名也能点,而且仍然是行内代码', async () => {
+    const { container } = render(<MarkdownContent source={'看 `latest.yml` 的第一行'} />)
+    await waitFor(() => expect(container.querySelector('a')).toBeTruthy())
+    expect(container.querySelector('a code')).toBeTruthy()
+    expect(container.querySelector('a')?.textContent).toBe('latest.yml')
+  })
+
+  it('磁盘上没有的路径留成纯文本', async () => {
+    const { container } = render(<MarkdownContent source={'也许在 src/nope.ts 里'} />)
+    await waitFor(() => expect(stat).toHaveBeenCalled())
+    expect(container.querySelector('a')).toBeNull()
+    expect(container.textContent).toContain('src/nope.ts')
+  })
+
+  it('验证通过前不标蓝 —— 流式回复不能一路闪烁', () => {
+    const { container } = render(<MarkdownContent source={'我改了 src/a.ts 这个文件'} />)
+    // 同步这一帧 stat 还没回来
+    expect(container.querySelector('a')).toBeNull()
+    expect(container.textContent).toContain('src/a.ts')
+  })
+
+  it('点击裸路径链接在文件展示栏打开', async () => {
+    const spy = vi
+      .spyOn(useFileExplorerStore.getState(), 'revealPath')
+      .mockResolvedValue(undefined)
+    const { container } = render(<MarkdownContent source={'崩在 src/a.ts:42 那行'} />)
+    await waitFor(() => expect(container.querySelector('a')).toBeTruthy())
+    fireEvent.click(container.querySelector('a') as HTMLAnchorElement)
+    expect(spy).toHaveBeenCalledWith('D:\\proj\\src\\a.ts', { line: 42, col: undefined })
+    spy.mockRestore()
+  })
+
+  it('版本号不会去问磁盘', async () => {
+    render(<MarkdownContent source={'发到 4.5.9 了'} />)
+    await Promise.resolve()
+    expect(stat).not.toHaveBeenCalled()
+  })
+
+  it('同一个路径只问一次磁盘(缓存)', async () => {
+    const { container } = render(
+      <MarkdownContent source={'src/a.ts 和 src/a.ts 是同一个'} />,
+    )
+    await waitFor(() => expect(container.querySelectorAll('a').length).toBe(2))
+    expect(stat).toHaveBeenCalledTimes(1)
+  })
+
+  it('markdown 链接的标签不会被再标一次', async () => {
+    const { container } = render(<MarkdownContent source={'[src/a.ts](https://example.com)'} />)
+    await Promise.resolve()
+    const anchors = container.querySelectorAll('a')
+    expect(anchors.length).toBe(1)
+    expect(anchors[0].getAttribute('href')).toBe('https://example.com')
+  })
+
+  it('围栏代码块里的路径不参与,交给 Copy/Apply', async () => {
+    const { container } = render(
+      <MarkdownContent source={'```ts\nimport x from "src/a.ts"\n```'} />,
+    )
+    await Promise.resolve()
+    expect(container.querySelector('a')).toBeNull()
+  })
+})
+
