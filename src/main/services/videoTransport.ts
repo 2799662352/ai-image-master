@@ -146,9 +146,11 @@ export interface VideoTransportRegistry {
  */
 export function transportFor(
   registry: VideoTransportRegistry,
-  model: VideoModelAlias | undefined,
+  model: string | undefined,
 ): VideoTransport {
-  const provider = capabilitiesFor(model ?? '2.0').provider
-  if (provider === 'miau' && registry.wan3) return registry.wan3
+  // 认不出的别名（持久化里的旧值、手改过的载荷）按 Seedance 走 —— 与其抛错让
+  // 一条已经在上游跑着的任务失去跟踪，不如按老路问一次。
+  const caps = model ? capabilitiesFor(model as VideoModelAlias) : undefined
+  if (caps?.provider === 'miau' && registry.wan3) return registry.wan3
   return registry.seedance
 }

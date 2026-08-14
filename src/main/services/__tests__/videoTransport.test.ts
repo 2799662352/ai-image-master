@@ -64,6 +64,14 @@ describe('transportFor', () => {
     const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
     expect(transportFor({ seedance }, undefined)).toBe(seedance)
   })
+
+  it('认不出的别名按 Seedance 走,不抛错', () => {
+    // 持久化里的旧别名、手改过的载荷都可能落到这里。抛错会让一条已经在上游
+    // 跑着的任务彻底失去跟踪 —— 按老路问一次至少还有救。
+    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+    const wan3 = createWan3Transport(wan3Client(), () => 'k')
+    expect(transportFor({ seedance, wan3 }, 'bogus-model')).toBe(seedance)
+  })
 })
 
 describe('translateVideoTaskError（两家翻译表汇合）', () => {

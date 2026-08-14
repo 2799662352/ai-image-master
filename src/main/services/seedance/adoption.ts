@@ -15,6 +15,7 @@
 import { SeedanceApiError } from './client'
 import type { AdoptParams } from './taskManager'
 import type { SeedanceModelAlias } from './types'
+import { SEEDANCE_MODEL_CAPABILITIES } from './types'
 import type {
   VideoWorkbenchReconcileItem,
   VideoWorkbenchReconcileResult,
@@ -23,8 +24,14 @@ import type {
 export interface ReconcileDeps {
   /** 主进程是否仍在跟踪该任务（没重启过的情况）。 */
   isTracked: (taskId: string) => boolean
-  /** 探测上游任务是否还在；抛错交由本模块分类。 */
-  probe: (taskId: string) => Promise<unknown>
+  /**
+   * 探测上游任务是否还在；抛错交由本模块分类。
+   *
+   * 带 `model` 是因为要打对上游 —— 万相的任务在 Ark 那边查不到，会被
+   * `meansTaskIsGone` 判成「任务没了」，于是一条还在跑、已经付过钱的任务被
+   * 错杀成失败卡片。
+   */
+  probe: (taskId: string, model: SeedanceModelAlias) => Promise<unknown>
   /** 重新登记并恢复轮询。 */
   adopt: (params: AdoptParams) => void
   /** 上游错误原文转成给用户看的中文。 */
@@ -39,7 +46,16 @@ function meansTaskIsGone(error: unknown): boolean {
   return error instanceof SeedanceApiError && !error.retryable
 }
 
-const MODEL_ALIASES: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
+/**
+ * 从能力表取，不手写。
+ *
+ * 手写的那份漏了 `2.5` 和 `wan3` —— 重启后这两种任务会被静默归一成 `2.0`，
+ * 于是卡片显示错模型、按错单价估费、按错能力表校验，而上游那条任务其实好好的。
+ * 每加一个模型就要记得改这里，正是这张表存在的理由。
+ */
+const MODEL_ALIASES: readonly SeedanceModelAlias[] = Object.keys(
+  SEEDANCE_MODEL_CAPABILITIES,
+) as SeedanceModelAlias[]
 
 function normalizeAdoptParams(item: VideoWorkbenchReconcileItem): AdoptParams {
   const raw = item as unknown as Record<string, unknown>
@@ -73,8 +89,10 @@ export async function reconcileInFlightTasks(
       results.push({ taskId, outcome: 'tracked' })
       continue
     }
+    // 先归一化：probe 要按 model 选上游，而 model 的容错就在这个函数里。
+    const params = normalizeAdoptParams({ ...item, taskId })
     try {
-      await deps.probe(taskId)
+      await deps.probe(taskId, params.model)
     } catch (e) {
       if (meansTaskIsGone(e)) {
         results.push({
@@ -87,7 +105,7 @@ export async function reconcileInFlightTasks(
       // 暂时问不到：继续往下接管，交给 pollLoop 带退避重试。
       console.warn(`[seedance] reconcile probe failed for ${taskId}, adopting anyway:`, e)
     }
-    deps.adopt(normalizeAdoptParams({ ...item, taskId }))
+    deps.adopt(params)
     results.push({ taskId, outcome: 'adopted' })
   }
   return results

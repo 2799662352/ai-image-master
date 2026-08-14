@@ -51,7 +51,7 @@ import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
-import { createWan3Transport } from '../videoTransport'
+import { createSeedanceTransport, createWan3Transport, transportFor } from '../videoTransport'
 import { translateVideoTaskError } from '../videoTaskError'
 import type {
   PortraitOverlayMutation,
@@ -419,15 +419,28 @@ export function initSeedanceRuntime(opts: {
     () => undefined,
   )
 
+  // 万相那条路。fetch 在这里注入而不是由客户端默认取,是为了让 wan3/client.ts
+  // 不必顶层 import electron —— 那会让它在 Electron 之外根本加载不了。
+  const wan3Transport = createWan3Transport(
+    createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
+    getWan3ApiKey,
+  )
+  /**
+   * 按模型选上游。除了提交与轮询(taskManager 内部自己选),另外两条路也认
+   * taskId —— **重启接管**与**按任务号重取过期地址** —— 它们此前写死了
+   * Seedance:万相的任务在 Ark 那边查不到,前者会把一条还在跑、已付费的任务
+   * 错杀成失败卡片,后者会让「重新保存」报一句「任务不存在」。
+   */
+  const transportOf = (model: string | undefined) =>
+    transportFor(
+      { seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey), wan3: wan3Transport },
+      model,
+    )
+
   const taskManager = new SeedanceTaskManager({
     client: seedanceClient,
     getApiKey: getSeedanceApiKey,
-    // 万相那条路。fetch 在这里注入而不是由客户端默认取,是为了让 wan3/client.ts
-    // 不必顶层 import electron —— 那会让它在 Electron 之外根本加载不了。
-    wan3Transport: createWan3Transport(
-      createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
-      getWan3ApiKey,
-    ),
+    wan3Transport,
     // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
     // （提交只走一次，轮询要走几十次）。
     translateError: translateVideoTaskError,
@@ -446,8 +459,8 @@ export function initSeedanceRuntime(opts: {
 
   const persistDeps: PersistVideoDeps = {
     downloadVideo: (url, dest) => seedanceClient.downloadVideo(url, dest),
-    refreshVideoUrl: async (taskId) => {
-      const r = await seedanceClient.queryTask(taskId, getSeedanceApiKey())
+    refreshVideoUrl: async (taskId, model) => {
+      const r = await transportOf(model).queryTask(taskId)
       return r.content?.video_url
     },
     ingest: (threadId, files) => attachments.ingest(threadId, files),
@@ -636,7 +649,7 @@ export function initSeedanceRuntime(opts: {
   ipcMain.handle('video-workbench:reconcile', async (_event, rawItems: unknown) =>
     reconcileInFlightTasks(Array.isArray(rawItems) ? rawItems : [], {
       isTracked: (taskId) => Boolean(taskManager.get(taskId)),
-      probe: (taskId) => seedanceClient.queryTask(taskId, getSeedanceApiKey()),
+      probe: (taskId, model) => transportOf(model).queryTask(taskId),
       adopt: (params) => { taskManager.adopt(params) },
       translateError: translateVideoTaskError,
     }),
