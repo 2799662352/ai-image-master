@@ -73,7 +73,7 @@ describe('MessageBubble evidence grouping', () => {
     useFileExplorerStore.setState({ tabs: [], activeTabId: null, openReference } as never)
   })
 
-  it('renders narrative text with adjacent shell and file evidence as compact chips', () => {
+  it('renders narrative text with shell evidence as a compact chip, but file edits as their own card', () => {
     renderMessage([
       textItem('text_1', 'Here is the result.'),
       shellItem('cmd_1'),
@@ -82,9 +82,11 @@ describe('MessageBubble evidence grouping', () => {
 
     expect(screen.getByText('Here is the result.')).toBeTruthy()
     expect(screen.getByRole('button', { name: /cmd npm run test success · exit 0/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /file src\/App\.tsx \+1 -1/i })).toBeTruthy()
+    // 改文件不再折叠成药丸 —— 它有自己的卡片,diff 直接摊开(见 evidenceModel
+    // 里 fileEdit 的逃逸口)。
+    expect(screen.queryByRole('button', { name: /file src\/App\.tsx \+1 -1/i })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Open diff for src/App.tsx' })).toBeTruthy()
     expect(screen.queryByText('Open output')).toBeNull()
-    expect(screen.queryByText('Open diff')).toBeNull()
   })
 
   it('keeps separate evidence placements when narrative text appears between evidence items', () => {
@@ -109,7 +111,7 @@ describe('MessageBubble evidence grouping', () => {
     ])
 
     expect(screen.getByRole('button', { name: /cmd echo first success · exit 0/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /file src\/second\.ts \+2 -0/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open diff for src/second.ts' })).toBeTruthy()
 
     const renderedText = document.body.textContent ?? ''
     expect(renderedText.indexOf('Before evidence')).toBeLessThan(renderedText.indexOf('echo first'))

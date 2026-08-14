@@ -32,10 +32,20 @@ function assertNever(value: never): never {
 export function isEvidenceItem(item: TimelineItem): boolean {
   switch (item.type) {
     case 'shell':
-    case 'fileEdit':
     case 'activity':
     case 'attachment':
       return true
+    case 'fileEdit':
+      // 改磁盘上的文件和跑一次网页搜索,不该是同一个视觉重量。
+      //
+      // 这里曾经和 shell/activity/attachment 并列 `return true`,于是 fileEdit
+      // 永远被折叠成一个灰药丸(`FILE  src/App.tsx  +1 -1  Show`),而
+      // `TimelineItemRenderer` 里那条 `fileEdit → FileEditCard` 分支永远到不了
+      // —— 连带 `openAiChange`(并排 diff 的唯一入口)在全仓变成零调用方。
+      // artifact / choiceRequest 都有各自的逃逸口,fileEdit 漏了,是漂移不是设计。
+      //
+      // 空改动(没有任何 change)没什么可看的,留在证据堆里别占地方。
+      return item.changes.length === 0
     case 'artifact':
       // Codex in-app image generations carry a `status` and render inline as a
       // prominent card (spinner → thumbnail → error) instead of a collapsed

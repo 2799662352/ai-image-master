@@ -4,6 +4,7 @@ import { getMessageText } from '../../../../types/agent-timeline'
 import { EvidenceStack } from './evidence/EvidenceStack'
 import { groupTimelineItemsForChat } from './evidence/evidenceModel'
 import { TimelineItemRenderer } from './TimelineItemRenderer'
+import { FileChangeSummary } from './FileChangeSummary'
 import { formatRelativeTime } from './relativeTime'
 import { useAgentChatStore } from './store'
 
@@ -266,6 +267,9 @@ function MessageBubbleImpl({ message }: { message: Message }) {
         {message.items.length === 0 && (
           <span className="italic text-zinc-500">Empty message</span>
         )}
+        {/* 回合级账单,压在时间线之后:单次编辑看上面的卡,「这一轮一共动了什么」
+            看这里。自己判断少于两个文件就不渲染。 */}
+        {!isUser && <FileChangeSummary message={message} />}
       </div>
     </article>
   )
