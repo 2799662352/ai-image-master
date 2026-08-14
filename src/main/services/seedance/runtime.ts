@@ -49,6 +49,9 @@ import type {
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
+import { createWan3Client } from '../wan3/client'
+import { getWan3ApiKey } from '../wan3/credentials'
+import { createWan3Transport } from '../videoTransport'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
@@ -418,6 +421,12 @@ export function initSeedanceRuntime(opts: {
   const taskManager = new SeedanceTaskManager({
     client: seedanceClient,
     getApiKey: getSeedanceApiKey,
+    // 万相那条路。fetch 在这里注入而不是由客户端默认取,是为了让 wan3/client.ts
+    // 不必顶层 import electron —— 那会让它在 Electron 之外根本加载不了。
+    wan3Transport: createWan3Transport(
+      createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
+      getWan3ApiKey,
+    ),
     broadcast: (update) => {
       const win = getWindow()
       if (win && !win.isDestroyed()) {

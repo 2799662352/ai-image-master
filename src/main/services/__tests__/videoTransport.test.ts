@@ -1,0 +1,165 @@
+// 传输层 —— provider 分派的唯一一处。
+//
+// 这些用例守的是同一件事:taskManager 不该知道 provider 的存在。组包、密钥、
+// 取消能力的差异全部收敛在这里,加第三家 provider 时 taskManager 一行不用改。
+
+import { describe, expect, it, vi } from 'vitest'
+import {
+  createSeedanceTransport,
+  createWan3Transport,
+  transportFor,
+  type VideoSubmitContext,
+} from '../videoTransport'
+import type { SeedanceContentItem } from '../seedance/types'
+
+const IMG = 'https://cos.example/a.png'
+
+function ctx(over: Partial<VideoSubmitContext> = {}): VideoSubmitContext {
+  const content: SeedanceContentItem[] = [{ type: 'text', text: '一只橘猫' }]
+  return {
+    input: { prompt: '一只橘猫' },
+    content,
+    model: '2.0',
+    resolution: '720p',
+    ratio: '16:9',
+    duration: 5,
+    ...over,
+  }
+}
+
+function seedanceClient() {
+  return {
+    createTask: vi.fn(async () => ({ id: 'ark-1' })),
+    queryTask: vi.fn(async () => ({ id: 'ark-1', status: 'running' as const })),
+    downloadVideo: vi.fn(async () => 'x.mp4'),
+    deleteTask: vi.fn(async () => {}),
+  }
+}
+
+function wan3Client() {
+  return {
+    createTask: vi.fn(async () => ({ id: 'task_gw' })),
+    queryTask: vi.fn(async () => ({ id: 'task_gw', status: 'running' as const })),
+  }
+}
+
+describe('transportFor', () => {
+  it('按模型的 provider 选路', () => {
+    const seedance = createSeedanceTransport(seedanceClient(), () => 'ark-key')
+    const wan3 = createWan3Transport(wan3Client(), () => 'miau-key')
+    const registry = { seedance, wan3 }
+
+    expect(transportFor(registry, '2.0')).toBe(seedance)
+    expect(transportFor(registry, '2.5')).toBe(seedance)
+    expect(transportFor(registry, 'wan3')).toBe(wan3)
+  })
+
+  it('没注册万相时回落 Seedance —— 老调用方按老路走,不抛错', () => {
+    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+    expect(transportFor({ seedance }, 'wan3')).toBe(seedance)
+  })
+
+  it('模型缺省按 2.0', () => {
+    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+    expect(transportFor({ seedance }, undefined)).toBe(seedance)
+  })
+})
+
+describe('Seedance transport', () => {
+  it('组 Ark 请求体并带 Ark 密钥', async () => {
+    const client = seedanceClient()
+    await createSeedanceTransport(client, () => 'ark-key').createTask(ctx())
+
+    const [body, key] = client.createTask.mock.calls[0] as [Record<string, unknown>, string]
+    expect(key).toBe('ark-key')
+    expect(body).toMatchObject({ ratio: '16:9', resolution: '720p', duration: 5, generate_audio: true })
+    expect(body.content).toEqual(ctx().content)
+  })
+
+  it('seed / 联网 / taskMode 不给就完全不出现', async () => {
+    const client = seedanceClient()
+    await createSeedanceTransport(client, () => 'k').createTask(ctx())
+    const body = client.createTask.mock.calls[0][0] as Record<string, unknown>
+    for (const key of ['seed', 'tools', 'taskMode']) {
+      expect(Object.hasOwn(body, key)).toBe(false)
+    }
+  })
+
+  it('给了就带上', async () => {
+    const client = seedanceClient()
+    await createSeedanceTransport(client, () => 'k').createTask(
+      ctx({ input: { prompt: 'p', seed: 7.4, webSearch: true }, model: '2.5', taskMode: 'extend' }),
+    )
+    const body = client.createTask.mock.calls[0][0] as Record<string, unknown>
+    expect(body.seed).toBe(7)
+    expect(body.tools).toEqual([{ type: 'web_search' }])
+    expect(body.taskMode).toBe('extend')
+  })
+
+  it('取消走上游 DELETE', async () => {
+    const client = seedanceClient()
+    await createSeedanceTransport(client, () => 'k').deleteTask?.('t-1')
+    expect(client.deleteTask).toHaveBeenCalledWith('t-1', 'k')
+  })
+})
+
+describe('万相 transport', () => {
+  it('组万相请求体并带 Miau 密钥 —— 两套密钥不能串', async () => {
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'miau-key').createTask(ctx({ model: 'wan3' }))
+
+    const [body, key] = client.createTask.mock.calls[0] as [Record<string, unknown>, string]
+    expect(key).toBe('miau-key')
+    expect(body.model).toBe('wan3.0-video')
+    expect(body).toHaveProperty('metadata')
+  })
+
+  it('提示词取 content 里的 text —— 那才是最终会发出去的那份(已过引用归一化)', async () => {
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'k').createTask(
+      ctx({
+        model: 'wan3',
+        input: { prompt: '原始提示词' },
+        content: [{ type: 'text', text: '归一化后的提示词' }],
+      }),
+    )
+    expect((client.createTask.mock.calls[0][0] as { prompt: string }).prompt).toBe('归一化后的提示词')
+  })
+
+  it('素材从 content 取,按模式落进对应的槽', async () => {
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'k').createTask(
+      ctx({
+        model: 'wan3',
+        input: { prompt: 'p', mode: 'first_frame' },
+        content: [
+          { type: 'text', text: 'p' },
+          { type: 'image_url', role: 'first_frame', image_url: { url: IMG } },
+        ],
+      }),
+    )
+    const body = client.createTask.mock.calls[0][0] as { metadata: { input: { media: unknown[] } } }
+    expect(body.metadata.input.media).toEqual([{ type: 'first_frame', url: IMG }])
+  })
+
+  it('不提供 deleteTask —— 取消接口没验证过,宁可让上层说实话', async () => {
+    // 发一个没验证过的请求、再把它的失败报成「取消失败」,会让用户以为钱本来能省。
+    expect(createWan3Transport(wan3Client(), () => 'k').deleteTask).toBeUndefined()
+  })
+
+  it('查询直接透传给万相客户端', async () => {
+    const client = wan3Client()
+    const r = await createWan3Transport(client, () => 'k').queryTask('task_gw')
+    expect(client.queryTask).toHaveBeenCalledWith('task_gw', 'k')
+    expect(r.status).toBe('running')
+  })
+
+  it('密钥现取,不在建 transport 时固化 —— 用户改完密钥下一次提交就该生效', async () => {
+    const client = wan3Client()
+    let key = 'old'
+    const transport = createWan3Transport(client, () => key)
+    key = 'new'
+    await transport.createTask(ctx({ model: 'wan3' }))
+    expect(client.createTask.mock.calls[0][1]).toBe('new')
+  })
+})
