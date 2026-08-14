@@ -111,6 +111,20 @@ export function serializeDocumentOrLink(value: Wan3DocumentOrLink | null | undef
   return JSON.stringify(value)
 }
 
+/**
+ * 「序列化 JSON」与「裸 URL」两种写法都认。
+ *
+ * 两个入口写进来的形状不同：UI / 持久化存的是 `serializeDocumentOrLink` 的 JSON，
+ * 而 MCP 工具收的是一个普通 http(s) 地址（让 agent 自己拼 `{type,url}` 只会多出
+ * 一处可能与实际不符的输入 —— type 本来就该由后缀判定）。
+ *
+ * 不归一的后果是静默的：agent 写进去一个裸 URL，`parseDocumentOrLink` 返回 null，
+ * 槽位被当成「没设置」直接丢掉，而 agent 收到的是一次成功的写卡片回执。
+ */
+export function coerceDocumentOrLink(raw: string | undefined | null): Wan3DocumentOrLink | null {
+  return parseDocumentOrLink(raw) ?? documentOrLinkFromUrl(raw ?? '')
+}
+
 export function parseDocumentOrLink(raw: string | undefined | null): Wan3DocumentOrLink | null {
   if (typeof raw !== 'string' || !raw.trim()) return null
   try {
