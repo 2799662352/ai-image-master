@@ -3,11 +3,25 @@
 
 import type { SeedanceModelAlias } from '../../../../types/seedance'
 
+/**
+ * 按 token 计费的模型不适用时的标记。
+ *
+ * 万相 3.0 是**按秒**计费的（官方刊例 480P/720P/1080P = ¥0.3/0.6/1.2 每秒），
+ * 它的 task 压根不回传 `completion_tokens`，套不进这张表。这里不填一个假数字
+ * 蒙混 —— 那会让界面显示一个凭空捏造的价格，比不显示糟得多。
+ *
+ * 用显式标记而不是把表改成 `Partial`，是为了保住穷尽性：下一个按 token 计费的
+ * 模型漏填时仍然编译报错，而不是悄悄拿不到价。
+ */
+const NOT_TOKEN_BILLED = 'not-token-billed' as const
+
+type TokenPriceTier = { noVideo: number; withVideo: number }
+type TokenPriceEntry =
+  | { standard: TokenPriceTier; fhd?: TokenPriceTier }
+  | typeof NOT_TOKEN_BILLED
+
 /** $ / 1M tokens。standard = 480p/720p;fhd = 1080p(仅 2.0 满血有此档)。 */
-const PRICE_TABLE: Record<
-  SeedanceModelAlias,
-  { standard: { noVideo: number; withVideo: number }; fhd?: { noVideo: number; withVideo: number } }
-> = {
+const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   '2.0': {
     standard: { noVideo: 7.0, withVideo: 4.3 },
     fhd: { noVideo: 7.7, withVideo: 4.7 },
@@ -24,6 +38,9 @@ const PRICE_TABLE: Record<
   '2.5': {
     standard: { noVideo: 10.7, withVideo: 6.4 },
   },
+  // 按秒计费，见 NOT_TOKEN_BILLED。接完传输层后若要出价，得单开一条
+  // 「秒数 × 单价」的公式并解决人民币→美元的换算口径，不是往这张表加一行。
+  wan3: NOT_TOKEN_BILLED,
 }
 
 /** 单价($/1M tokens)。未知组合(如 fast/mini 配 1080p)返回 null。 */
@@ -33,7 +50,7 @@ export function unitPriceUsd(
   hasVideoInput: boolean,
 ): number | null {
   const entry = PRICE_TABLE[model]
-  if (!entry) return null
+  if (!entry || entry === NOT_TOKEN_BILLED) return null
   const tier = resolution === '1080p' ? entry.fhd : entry.standard
   if (!tier) return null
   return hasVideoInput ? tier.withVideo : tier.noVideo

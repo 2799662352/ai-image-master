@@ -1,5 +1,11 @@
-// Seedance 视频生成 —— main / preload / renderer 三端共享类型。
+// 视频生成 —— main / preload / renderer 三端共享类型。
+//
+// 文件名还叫 seedance 是历史原因（工作台最初只接 Seedance）；自 wan3 起这里是
+// **多 provider** 的模型能力真源，见 `VideoModelAlias` / `VideoModelProvider`。
 // 主进程实现细节见 src/main/services/seedance/。
+
+import type { VideoWorkbenchMode } from './videoModes'
+import { ALL_VIDEO_WORKBENCH_MODES } from './videoModes'
 
 /**
  * 上游任务状态（Ark 协议原样）。`cancelled` 由 DELETE 接口在 queued 阶段产生，
@@ -27,7 +33,27 @@ export interface SeedanceCancelResult {
 export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
 
 /** 对外暴露的友好模型名（mini = 最便宜档,仅 480p/720p）。 */
-export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5'
+/**
+ * 工作台能选的全部视频模型。
+ *
+ * 名字里没有 "Seedance" 是有意的:`wan3` 走的是完全不同的上游(阿里万相 3.0,
+ * 经 Miau 网关的 DashScope task),只是共用这张能力表、共用工作台 UI、共用任务
+ * 轮询与落盘那一整套。真正按 provider 分派的只有四处 —— 请求组包、响应解析、
+ * 计费公式、base URL,见各自的 `provider` 分支。
+ */
+export type VideoModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5' | 'wan3'
+
+/**
+ * @deprecated 用 `VideoModelAlias`。保留这个名字只是为了让既有的十几处引用不必
+ * 在同一个 PR 里全改;新代码不要再用。
+ */
+export type SeedanceModelAlias = VideoModelAlias
+
+/**
+ * 上游归属。决定请求体形状、响应取值路径、计费公式与 base URL —— 除此之外的
+ * 一切(能力校验、模式、素材管线、任务生命周期)都是共享的。
+ */
+export type VideoModelProvider = 'vvdance' | 'miau'
 
 /**
  * 2.5 独有的任务模式（文档 4.9）。两者都**必须带视频参考**、比例被上游强制
@@ -36,9 +62,24 @@ export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5'
 export type SeedanceTaskMode = 'edit' | 'extend'
 
 export interface SeedanceModelCapabilities {
+  /** 上游归属。见 `VideoModelProvider`。 */
+  provider: VideoModelProvider
+  /**
+   * 这个模型开放哪几种生成模式。
+   *
+   * 加它之前模式下拉是**无差别列全部 7 个**的,于是 2.0 也能选到它并不支持的
+   * 「编辑视频 / 延长视频」—— 只是提交时被 `validateSeedanceRequest` 拦下来给
+   * 个人话错误。能选到一个必然失败的选项本身就是 bug,顺手一起修了。
+   */
+  modes: readonly VideoWorkbenchMode[]
   /** 固定秒数区间；`-1`（智能时长）任何模型都额外允许。 */
   duration: { min: number; max: number }
-  /** 上游接受的 `resolution` 白名单。 */
+  /**
+   * 上游接受的 `resolution` 白名单。
+   *
+   * 内部一律小写(`'720p'`),UI 与校验都按这个口径;万相上行要的是大写 `'720P'`,
+   * 由它的请求组包在最后一刻转换 —— 不把大小写差异漏进 UI。
+   */
   resolutions: readonly string[]
   maxImages: number
   maxVideos: number
@@ -53,6 +94,23 @@ export interface SeedanceModelCapabilities {
   audioOnlyReference: boolean
 }
 
+/** 2.0 家族：没有 edit/extend，其余全开。 */
+const SEEDANCE_2_0_MODES: readonly VideoWorkbenchMode[] = [
+  'text2video',
+  'first_frame',
+  'first_last_frame',
+  'reference_images',
+  'multimodal_ref',
+] as const
+
+/** 万相 3.0：只开四种，理由见下面 `wan3` 那行的注释。 */
+const WAN3_MODES: readonly VideoWorkbenchMode[] = [
+  'text2video',
+  'first_frame',
+  'first_last_frame',
+  'multimodal_ref',
+] as const
+
 /**
  * 各模型的上游约束 —— 「9/3/3」「4-15」这类数字的**唯一**出处。
  *
@@ -66,6 +124,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   SeedanceModelCapabilities
 > = {
   '2.0': {
+    provider: 'vvdance',
+    modes: SEEDANCE_2_0_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p', '1080p', '4k'],
     maxImages: 9,
@@ -77,6 +137,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     audioOnlyReference: false,
   },
   '2.0-fast': {
+    provider: 'vvdance',
+    modes: SEEDANCE_2_0_MODES,
     duration: { min: 4, max: 15 },
     // 1080p 只配 2.0 —— 这条不是文档写的（文档只点名 4k 归 2.0 独占），是
     // videoTools 早先就立着的实战规则，收编进表时原样保留，不擅自放宽。
@@ -90,6 +152,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     audioOnlyReference: false,
   },
   '2.0-mini': {
+    provider: 'vvdance',
+    modes: SEEDANCE_2_0_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p'],
     maxImages: 9,
@@ -101,6 +165,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     audioOnlyReference: false,
   },
   '2.5': {
+    provider: 'vvdance',
+    // 2.5 是唯一有 edit/extend 的,所以它拿全集。
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 30 },
     resolutions: ['480p', '720p'],
     maxImages: 30,
@@ -109,6 +176,34 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     maxMaterialsTotal: 50,
     taskModes: ['edit', 'extend'],
     subtitleErase: false,
+    audioOnlyReference: true,
+  },
+  /**
+   * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
+   *
+   * 数字出自官方《万相 3.0 视频生成 API 参考》：多模态上限 图 10 / 视频 5 /
+   * 音频 5；时长 2–30 秒整数或 `-1`（智能时长）；分辨率 480P/720P/1080P。
+   *
+   * 模式按产品口径**只开四种**：文生、首帧、首尾帧、全能参考。刻意不开
+   * 「参考图」（与全能参考重复）、「编辑视频 / 延长视频」（官方虽有视频延长，
+   * 但不在本次范围内）。
+   *
+   * `maxMaterialsTotal` 取 20 = 10+5+5，即三类各自打满 —— 官方没有单独的总数
+   * 上限，所以这里不额外收紧。
+   */
+  wan3: {
+    provider: 'miau',
+    modes: WAN3_MODES,
+    duration: { min: 2, max: 30 },
+    resolutions: ['480p', '720p', '1080p'],
+    maxImages: 10,
+    maxVideos: 5,
+    maxAudios: 5,
+    maxMaterialsTotal: 20,
+    taskModes: [],
+    // 擦字幕是 Seedance 侧的开关，万相没有对应参数，传了会被上游拒。
+    subtitleErase: false,
+    // 官方允许「只给参考音频」的组合。
     audioOnlyReference: true,
   },
 }

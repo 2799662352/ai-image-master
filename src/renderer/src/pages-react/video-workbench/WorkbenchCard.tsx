@@ -58,6 +58,9 @@ const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   '2.0': 'Seedance 2.0 满血',
   '2.0-fast': 'Seedance 2.0 Fast',
   '2.0-mini': 'Seedance 2.0 Mini(最省)',
+  // 传输层未接完前 region.ts 的 NOT_YET_SELECTABLE 会把它挡在下拉之外;
+  // 标签先备着,免得开闸时又要回来补一处。
+  wan3: '万相 3.0',
 }
 /** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
 const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']

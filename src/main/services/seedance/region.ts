@@ -9,6 +9,17 @@ export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
 }
 
 /**
+ * 万相 3.0 的上游模型 ID。
+ *
+ * region 对它**没有意义** —— 它不走 vvdance 的任何一个站点，而是经 Miau 网关打
+ * DashScope，两边填的都是同一个 id。仍然在下面两张 region 表里各登记一次，是为了
+ * 保住 `Record<VideoModelAlias, string>` 的穷尽性：正是这个穷尽性在加 wan3 时把
+ * 「你还没决定这个模型的 id」直接编译报错报了出来。改成 Partial 会让下一个模型
+ * 悄悄漏掉。
+ */
+export const WAN3_UPSTREAM_MODEL_ID = 'wan3.0-video'
+
+/**
  * 海外 GLOBAL（默认）直连 vvdance.ai Ark → dreamina-*；
  * 国内直连 yongmuai.com → doubao-*。MCP 别名仍是 2.0 / 2.0-fast。
  *
@@ -25,12 +36,14 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     '2.0-fast': 'dreamina-seedance-2-0-fast-260128',
     '2.0-mini': 'dreamina-seedance-2-0-mini-260615',
     '2.5': 'dreamina-seedance-2-5-260628',
+    wan3: WAN3_UPSTREAM_MODEL_ID,
   },
   cn: {
     '2.0': 'doubao-seedance-2-0-260128',
     '2.0-fast': 'doubao-seedance-2-0-fast-260128',
     '2.0-mini': 'doubao-seedance-2-0-mini-260615',
     '2.5': 'doubao-seedance-2-5-260628',
+    wan3: WAN3_UPSTREAM_MODEL_ID,
   },
 }
 
@@ -51,6 +64,18 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
  */
 export const SEEDANCE_CN_2_5_ENABLED = true
 
+/**
+ * 还没接完传输层、因而**不可选**的模型。
+ *
+ * 万相 3.0 的能力表、模式白名单、上游 ID 都已就位，但请求组包（`metadata.input.
+ * media[]` + `parameters`）、响应解析（DashScope `output.video_url`）与按秒计费
+ * 还没落地。在那之前放进下拉，用户能选到一个必然失败的选项 —— 与其让他撞一次
+ * 上游错误，不如先不给点。
+ *
+ * 接完把这里的 `wan3` 删掉即可，其余代码不用动。
+ */
+const NOT_YET_SELECTABLE: ReadonlySet<SeedanceModelAlias> = new Set(['wan3'])
+
 const CN_ONLY_GATED: ReadonlySet<SeedanceModelAlias> = new Set(['2.5'])
 
 function cn25Enabled(): boolean {
@@ -65,6 +90,7 @@ export function isSeedanceModelAvailable(
   alias: SeedanceModelAlias,
   region: SeedanceRegion = getSeedanceRegion(),
 ): boolean {
+  if (NOT_YET_SELECTABLE.has(alias)) return false
   if (region === 'cn' && CN_ONLY_GATED.has(alias)) return cn25Enabled()
   return true
 }

@@ -15,20 +15,14 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskStatus,
 } from './seedance'
+import type { VideoWorkbenchMode } from './videoModes'
 
 /**
- * 生成模式（移植自 soraui 旧工作台 VolcengineArkVideoMode）：
- * 文生视频 / 首帧 / 首尾帧 / 参考图 / 全能参考(多模态) / 编辑视频 / 延长视频。
- * 模式决定素材上限与提交时的 role 语义（首帧/尾帧 vs reference_*）。
+ * 生成模式。定义搬到了 `./videoModes` —— 能力表要按模型声明可用模式，而本文件
+ * 与 `seedance.ts` 都有运行时导出，互相 import 会成真环。这里 re-export，现有
+ * 引用不受影响。
  */
-export type VideoWorkbenchMode =
-  | 'text2video'
-  | 'first_frame'
-  | 'first_last_frame'
-  | 'reference_images'
-  | 'multimodal_ref'
-  | 'edit_video'
-  | 'extend_video'
+export type { VideoWorkbenchMode } from './videoModes'
 
 /** 工作台卡片可编辑的视频规格（Seedance 支持的参数面）。 */
 export interface VideoWorkbenchSpec {

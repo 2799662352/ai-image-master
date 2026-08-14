@@ -60,7 +60,65 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-fast',
       '2.0-mini',
       '2.5',
+      'wan3',
     ])
+  })
+
+  it('每个模型都声明了 provider 与可用模式', () => {
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      const caps = capabilitiesFor(alias)
+      expect(['vvdance', 'miau']).toContain(caps.provider)
+      expect(caps.modes.length).toBeGreaterThan(0)
+      // 文生视频是所有模型的最低保证,没有它这张卡什么都提交不了。
+      expect(caps.modes).toContain('text2video')
+    }
+  })
+
+  it('只有 2.5 开放 edit/extend —— 别的模型选到就是必然失败', () => {
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      const caps = capabilitiesFor(alias)
+      const hasEditModes = caps.modes.includes('edit_video') || caps.modes.includes('extend_video')
+      expect(hasEditModes).toBe(alias === '2.5')
+      // 模式白名单与 taskModes 必须同进同退,否则 UI 给得出、校验拦得下。
+      expect(hasEditModes).toBe(caps.taskModes.length > 0)
+    }
+  })
+})
+
+describe('万相 3.0 能力', () => {
+  it('多模态上限 10/5/5、时长 2-30、三档分辨率', () => {
+    const caps = capabilitiesFor('wan3')
+    expect([caps.maxImages, caps.maxVideos, caps.maxAudios]).toEqual([10, 5, 5])
+    expect(caps.duration).toEqual({ min: 2, max: 30 })
+    expect(caps.resolutions).toEqual(['480p', '720p', '1080p'])
+  })
+
+  it('走 miau,允许纯音频参考,没有擦字幕', () => {
+    const caps = capabilitiesFor('wan3')
+    expect(caps.provider).toBe('miau')
+    expect(caps.audioOnlyReference).toBe(true)
+    expect(caps.subtitleErase).toBe(false)
+  })
+
+  it('只开四种模式 —— 不含参考图与编辑/延长', () => {
+    expect(capabilitiesFor('wan3').modes).toEqual([
+      'text2video',
+      'first_frame',
+      'first_last_frame',
+      'multimodal_ref',
+    ])
+  })
+
+  it('时长接受 -1(智能时长)与 2 秒下限', () => {
+    expect(validateSeedanceRequest('wan3', { duration: -1 })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { duration: 2 })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { duration: 1 })).not.toEqual([])
+    expect(validateSeedanceRequest('wan3', { duration: 31 })).not.toEqual([])
+  })
+
+  it('分辨率按内部小写口径校验(大写转换留给上行组包)', () => {
+    expect(validateSeedanceRequest('wan3', { resolution: '1080p' })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { resolution: '4k' })).not.toEqual([])
   })
 })
 
