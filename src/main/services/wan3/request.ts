@@ -68,15 +68,13 @@ export interface Wan3MediaItem {
 // 显示成「文档」还是「链接」，主进程只负责把它追加进 media[]。同一个形状只此一份。
 export type { Wan3DocumentOrLink } from '../../../shared/wan3Document'
 
-/** 官方接受的画幅。`adaptive` = 跟随首帧/参考。 */
-export const WAN3_ALLOWED_RATIOS: readonly string[] = [
-  'adaptive',
-  '16:9',
-  '4:3',
-  '1:1',
-  '3:4',
-  '9:16',
-] as const
+/**
+ * 官方接受的画幅。`adaptive` = 跟随首帧/参考。
+ *
+ * 从能力表取，不再在这里写第二份 —— 渲染层的下拉也读同一份，两处若各写一份，
+ * 界面上能选的和这里放行的迟早对不上。
+ */
+export const WAN3_ALLOWED_RATIOS: readonly string[] = capabilitiesFor('wan3').ratios
 
 /** 首帧 / 首尾帧模式 —— 与文档、参考视频、参考音频互斥。 */
 const FRAME_MODES: ReadonlySet<VideoWorkbenchMode> = new Set(['first_frame', 'first_last_frame'])

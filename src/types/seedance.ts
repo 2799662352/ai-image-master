@@ -65,6 +65,19 @@ export interface SeedanceModelCapabilities {
   /** 上游归属。见 `VideoModelProvider`。 */
   provider: VideoModelProvider
   /**
+   * 这个模型接受的画幅。
+   *
+   * 曾经是 `WorkbenchCard.tsx` 里一个写死的数组 —— 分辨率和时长早就改成按模型
+   * 现算了，画幅漏了。后果是万相卡片上摆着一个 `21:9`（它不支持）、却没有
+   * `adaptive`（它的默认值），选中即提交失败。
+   */
+  ratios: readonly string[]
+  /**
+   * 随机种子上限（含）。Seedance 是 uint32，万相官方写明 [0, 2147483647]。
+   * 差这一位的后果是：用户填了个大数，界面收下了，上游拒了。
+   */
+  seedMax: number
+  /**
    * 这个模型开放哪几种生成模式。
    *
    * ⚠️ 别把它和 `taskModes` 搞混（我第一版就搞混了）：
@@ -101,6 +114,15 @@ export interface SeedanceModelCapabilities {
   audioOnlyReference: boolean
 }
 
+/** Seedance 全家的画幅集合。万相不一样（有 adaptive、没有 21:9），见它那行。 */
+const SEEDANCE_RATIOS: readonly string[] = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
+
+/**
+ * 万相的画幅。`adaptive` 是官方默认值（跟随输入素材与意图自动定），
+ * 且**没有** 21:9。
+ */
+const WAN3_RATIOS: readonly string[] = ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1'] as const
+
 /** 万相 3.0：只开四种，理由见下面 `wan3` 那行的注释。 */
 const WAN3_MODES: readonly VideoWorkbenchMode[] = [
   'text2video',
@@ -123,6 +145,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
 > = {
   '2.0': {
     provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p', '1080p', '4k'],
@@ -136,6 +160,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.0-fast': {
     provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     // 1080p 只配 2.0 —— 这条不是文档写的（文档只点名 4k 归 2.0 独占），是
@@ -151,6 +177,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.0-mini': {
     provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p'],
@@ -164,6 +192,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.5': {
     provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 30 },
     resolutions: ['480p', '720p'],
@@ -190,6 +220,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   wan3: {
     provider: 'miau',
+    ratios: WAN3_RATIOS,
+    // 官方写明 [0, 2147483647]，比 Seedance 的 uint32 小一半。
+    seedMax: 2_147_483_647,
     modes: WAN3_MODES,
     duration: { min: 2, max: 30 },
     resolutions: ['480p', '720p', '1080p'],

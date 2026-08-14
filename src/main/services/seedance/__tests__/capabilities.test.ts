@@ -64,6 +64,25 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
     ])
   })
 
+  it('画幅按模型分:万相有 adaptive 没有 21:9,Seedance 反过来', () => {
+    // 这两个数字曾经写死在 WorkbenchCard 的一个数组里,于是万相卡片上摆着一个
+    // 提交必被拒的 21:9,却没有它官方的默认值 adaptive。
+    const wan3 = capabilitiesFor('wan3').ratios
+    expect(wan3).toContain('adaptive')
+    expect(wan3).not.toContain('21:9')
+
+    const seedance = capabilitiesFor('2.0').ratios
+    expect(seedance).toContain('21:9')
+    expect(seedance).not.toContain('adaptive')
+  })
+
+  it('seed 上限按模型分 —— 万相只到 2147483647', () => {
+    // 官方写明 [0, 2147483647],比 Seedance 的 uint32 小一半。差这一位的后果是
+    // 界面收下了用户填的大数,上游拒了。
+    expect(capabilitiesFor('wan3').seedMax).toBe(2_147_483_647)
+    expect(capabilitiesFor('2.0').seedMax).toBe(4_294_967_295)
+  })
+
   it('每个模型都声明了 provider 与可用模式', () => {
     for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
       const caps = capabilitiesFor(alias)

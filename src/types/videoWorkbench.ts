@@ -29,7 +29,8 @@ export interface VideoWorkbenchSpec {
   prompt: string
   model: SeedanceModelAlias
   resolution: '480p' | '720p' | '1080p'
-  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  /** `adaptive` 仅万相有（它的官方默认值）；`21:9` 仅 Seedance 有。见能力表 `ratios`。 */
+  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   /** 视频时长（秒，4–15;-1 = 智能时长,模型自动决定,文档 8.1）。 */
   duration: number
   generateAudio: boolean
@@ -278,7 +279,7 @@ export interface VideoWorkbenchCardInput {
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'
-  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration?: number
   generateAudio?: boolean
   mode?: VideoWorkbenchMode
@@ -313,7 +314,8 @@ export interface VideoWorkbenchVersionSpec {
   prompt: string
   model: SeedanceModelAlias
   resolution: '480p' | '720p' | '1080p'
-  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  /** `adaptive` 仅万相有（它的官方默认值）；`21:9` 仅 Seedance 有。见能力表 `ratios`。 */
+  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration: number
   generateAudio: boolean
   mode: VideoWorkbenchMode
@@ -432,7 +434,7 @@ export interface WorkbenchIRCard {
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'
-  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration?: number
   generateAudio?: boolean
   mode?: VideoWorkbenchMode

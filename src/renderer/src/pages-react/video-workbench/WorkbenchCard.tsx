@@ -75,7 +75,7 @@ const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
 }
 /** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
 const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
-const RATIO_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
+/** 画幅按模型现算（`capabilitiesFor(model).ratios`），这里不再留写死的数组。 */
 
 /**
  * 分辨率与时长都**按所选模型现算**,不再写死一张 2.0 的表。
@@ -219,15 +219,19 @@ function DocumentOrLinkSlot({
   onChange: (next: string) => void
 }) {
   const parsed = parseDocumentOrLink(value)
-  const [draft, setDraft] = useState(parsed?.url ?? '')
+  // 有值时收成 chip，空着时是一条虚线添加位，只有真正在输入时才展开成输入框。
+  // 这个槽位是可选的，常驻一个空输入框会让每张卡都显得比实际复杂。
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
 
-  // 卡片被外部改动（agent 写 IR / 撤销）时跟随，但输入中不打断。
+  // 卡片被外部改动（agent 写 IR / 撤销）时跟随，但不打断正在输入的人。
   useEffect(() => {
-    setDraft(parseDocumentOrLink(value)?.url ?? '')
-  }, [value])
+    if (!editing) setDraft(parseDocumentOrLink(value)?.url ?? '')
+  }, [value, editing])
 
   const commit = (raw: string): void => {
     const trimmed = raw.trim()
+    setEditing(false)
     if (!trimmed) {
       onChange('')
       return
@@ -237,50 +241,74 @@ function DocumentOrLinkSlot({
     if (next) onChange(serializeDocumentOrLink(next))
   }
 
-  const invalid = draft.trim().length > 0 && classifyWan3DocumentOrLink(draft) === null
+  const invalid = editing && draft.trim().length > 0 && classifyWan3DocumentOrLink(draft) === null
+
+  if (parsed && !editing) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs">
+        <button
+          type="button"
+          disabled={busy}
+          title={`${parsed.url}\n点击修改`}
+          className="flex items-center gap-1.5 min-w-0 max-w-full border border-[#3F3F46] bg-[#18181B] px-2 py-1 text-white/75 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors disabled:opacity-60"
+          onClick={() => { setDraft(parsed.url); setEditing(true) }}
+        >
+          {/* 判定结果必须看得见 —— 用户没有手动开关，得知道系统认成了什么 */}
+          <span className="shrink-0">{parsed.type === 'file' ? '📄' : '🔗'}</span>
+          <span className="truncate">{parsed.displayName ?? parsed.url}</span>
+        </button>
+        <button
+          type="button"
+          aria-label="移除文档或链接"
+          disabled={busy}
+          className="text-white/40 hover:text-red-400 px-1 shrink-0 disabled:opacity-60"
+          onClick={() => onChange('')}
+        >
+          ✕
+        </button>
+      </div>
+    )
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        title="万相 3.0 可以附带一份文档或一个网页链接作为参考（各限 1 个，二选一）"
+        className="flex items-center gap-1.5 border border-dashed border-[#3F3F46] px-2 py-1 text-xs text-white/40 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors disabled:opacity-60"
+        onClick={() => setEditing(true)}
+      >
+        <span aria-hidden="true">＋</span> 文档 / 网页链接
+      </button>
+    )
+  }
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-white/50 shrink-0" title="万相 3.0 支持附带一份文档或一个网页链接作为参考">
-          📎 文档/链接
-        </span>
-        <input
-          type="url"
-          value={draft}
-          disabled={busy}
-          placeholder="粘贴 PDF/Word 等文档地址，或一个网页链接"
-          aria-label="文档或网页链接"
-          className={`flex-1 min-w-0 bg-[#18181B] border px-2 py-1.5 text-white/80 focus:outline-none focus:border-[#FCE300] disabled:opacity-60 ${
-            invalid ? 'border-orange-400/60' : 'border-[#3F3F46]'
-          }`}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={(e) => commit(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value)
-          }}
-        />
-        {parsed && (
-          <button
-            type="button"
-            aria-label="清除文档或链接"
-            className="text-white/40 hover:text-red-400 px-1 shrink-0"
-            disabled={busy}
-            onClick={() => { setDraft(''); onChange('') }}
-          >
-            ✕
-          </button>
-        )}
-      </div>
-      {/* 判定结果要显示出来 —— 用户没有手动开关，得看得见系统认成了什么 */}
-      {parsed && (
-        <p className="text-white/40 text-[10px] truncate" title={parsed.url}>
-          {parsed.type === 'file' ? '📄 文档' : '🔗 链接'} · {parsed.displayName ?? parsed.url}
-        </p>
-      )}
-      {invalid && (
-        <p className="text-orange-300 text-[10px]">需要 http(s) 开头的公网地址</p>
-      )}
+      <input
+        type="url"
+        autoFocus
+        value={draft}
+        disabled={busy}
+        placeholder="粘贴 PDF / Word 等文档地址，或一个网页链接"
+        aria-label="文档或网页链接"
+        className={`w-full bg-[#18181B] border px-2 py-1.5 text-xs text-white/80 focus:outline-none focus:border-[#FCE300] disabled:opacity-60 ${
+          invalid ? 'border-orange-400/60' : 'border-[#3F3F46]'
+        }`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit((e.target as HTMLInputElement).value)
+          // Esc 放弃这次编辑，回到原值 —— 不写入任何东西。
+          if (e.key === 'Escape') { setEditing(false); setDraft(parsed?.url ?? '') }
+        }}
+      />
+      <p className={`text-[10px] ${invalid ? 'text-orange-300' : 'text-white/35'}`}>
+        {invalid
+          ? '需要 http(s) 开头的公网地址'
+          : '按后缀自动判定文档还是链接；回车确认，Esc 取消'}
+      </p>
     </div>
   )
 }
@@ -1048,10 +1076,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             value={card.ratio}
             disabled={busy}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
-            onChange={(e) => updateCard(card.id, { ratio: e.target.value as typeof RATIO_OPTIONS[number] })}
+            onChange={(e) => updateCard(card.id, { ratio: e.target.value as VideoWorkbenchCard['ratio'] })}
           >
-            {RATIO_OPTIONS.map((r) => (
-              <option key={r} value={r}>{r}</option>
+            {modelCaps.ratios.map((r) => (
+              <option key={r} value={r}>{r === 'adaptive' ? '✨ 自适应' : r}</option>
             ))}
           </select>
           <select
@@ -1084,7 +1112,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             <input
               type="number"
               min={0}
-              max={4294967295}
+              max={modelCaps.seedMax}
               step={1}
               value={card.seed ?? ''}
               disabled={busy}
@@ -1113,7 +1141,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
         {/* 文档 / 网页链接槽 —— 仅万相 3.0 有这个入参。
             没有 file/link 单选框:后缀判得比人准,多一个选择只会让人停下来想
             「我该选哪个」(判据见 shared/wan3Document)。 */}
-        {capabilitiesFor(card.model).provider === 'miau' && (
+        {modelCaps.provider === 'miau' && (
           <DocumentOrLinkSlot
             value={card.documentOrLink}
             busy={busy}
