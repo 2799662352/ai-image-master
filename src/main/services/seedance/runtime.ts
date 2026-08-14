@@ -217,12 +217,24 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
   const refVideos = [...(input.referenceVideos ?? []), ...(input.referenceVideo ? [input.referenceVideo] : [])]
   const refAudios = [...(input.referenceAudios ?? []), ...(input.referenceAudio ? [input.referenceAudio] : [])]
 
+  // 万相只认公网 URL —— 必须跳过 ≤512KB 的内联捷径。
+  //
+  // 默认策略是小素材直接读成 base64 内联进 content[](见 mediaResolve 的
+  // MAX_INLINE_FILE_BYTES,注释里明说「视频路径不传这个开关,保留内联线」)。
+  // Seedance 吃这一套,DashScope 不吃:它只接受可下载的 https 地址。不开这个开关
+  // 的后果很隐蔽 —— 大图正常、小图报错,而用户完全想不到是体积的问题。
+  const mediaOptions = usesSeedanceAssetLibrary(input.model) ? undefined : { alwaysRelay: true }
+
   const [firstFrameUrl, lastFrameUrl, imageUrls, videoUrls, audioUrls] = await Promise.all([
-    input.firstFrame ? resolveMediaUrl(input.firstFrame, 'firstFrame') : Promise.resolve(null),
-    input.lastFrame ? resolveMediaUrl(input.lastFrame, 'lastFrame') : Promise.resolve(null),
-    Promise.all(refImages.map((ref, i) => resolveMediaUrl(ref, `referenceImages[${i}]`))),
-    Promise.all(refVideos.map((ref, i) => resolveMediaUrl(ref, `referenceVideos[${i}]`))),
-    Promise.all(refAudios.map((ref, i) => resolveMediaUrl(ref, `referenceAudios[${i}]`))),
+    input.firstFrame
+      ? resolveMediaUrl(input.firstFrame, 'firstFrame', undefined, mediaOptions)
+      : Promise.resolve(null),
+    input.lastFrame
+      ? resolveMediaUrl(input.lastFrame, 'lastFrame', undefined, mediaOptions)
+      : Promise.resolve(null),
+    Promise.all(refImages.map((ref, i) => resolveMediaUrl(ref, `referenceImages[${i}]`, undefined, mediaOptions))),
+    Promise.all(refVideos.map((ref, i) => resolveMediaUrl(ref, `referenceVideos[${i}]`, undefined, mediaOptions))),
+    Promise.all(refAudios.map((ref, i) => resolveMediaUrl(ref, `referenceAudios[${i}]`, undefined, mediaOptions))),
   ])
 
   const content: SeedanceContentItem[] = [

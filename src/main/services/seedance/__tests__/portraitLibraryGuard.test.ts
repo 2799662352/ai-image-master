@@ -44,6 +44,18 @@ describe('两个提交入口都必须问过这个谓词', () => {
     expect(guards.length).toBe(verifyCalls.length + importCalls.length)
   })
 
+  // 另一个同源的坑:小素材(≤512KB)默认被读成 base64 内联进 content[],不是 URL。
+  // Seedance 吃这一套,DashScope 只认可下载的 https。不跳过内联捷径的后果很隐蔽 ——
+  // 大图正常、小图报错,用户完全想不到是体积的问题。
+  it('非 Seedance provider 必须跳过内联捷径(alwaysRelay)', () => {
+    expect(runtimeSource).toContain(
+      'usesSeedanceAssetLibrary(input.model) ? undefined : { alwaysRelay: true }',
+    )
+    // buildContent 里五处素材解析都要带上这个选项,漏一处就是那一类素材内联。
+    const withOptions = runtimeSource.match(/resolveMediaUrl\([^)]*mediaOptions\)/g) ?? []
+    expect(withOptions).toHaveLength(5)
+  })
+
   it('没有任何一处裸调用(守卫之外直接调)', () => {
     // 把「守卫 + 紧随其后的调用」整段抠掉,剩下的正文里不该再出现这两个调用。
     const stripped = runtimeSource.replace(
