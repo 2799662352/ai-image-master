@@ -66,6 +66,14 @@ export interface SeedanceTaskManagerDeps {
    */
   wan3Transport?: VideoTransport
   /**
+   * 把上游裸错误翻成人话。缺省 = 原样透出。
+   *
+   * 注入而不是直接 import：本类是状态机，不该知道有哪些 provider、更不该按
+   * provider 挑翻译表。轮询失败这条路原先完全没翻译 —— 而它恰恰是上游错误
+   * 最常出现的地方（提交只走一次，轮询要走几十次）。
+   */
+  translateError?: (raw: string) => string
+  /**
    * 下载 + 落盘（线程 uploads 目录）并转存历史桶（COS）。返回本地 mp4 绝对
    * 路径与永久 https URL（COS 上传失败时 remoteUrl 缺省，降级用本地路径）。
    * 抛错只影响 persistence 状态，不影响任务 succeeded。
@@ -137,6 +145,11 @@ export class SeedanceTaskManager {
 
   private random(): number {
     return this.deps.random ? this.deps.random() : Math.random()
+  }
+
+  /** 上游裸错误 → 人话。没注入翻译器就原样透出。 */
+  private humanError(raw: string): string {
+    return this.deps.translateError ? this.deps.translateError(raw) : raw
   }
 
   /**
@@ -473,7 +486,7 @@ export class SeedanceTaskManager {
         // 密钥失效 / 参数非法 / 任务不存在：重试到 30 分钟也不会变好，而且最后只会
         // 报一句与真因无关的「轮询超时」。立刻如实失败。
         if (e instanceof SeedanceApiError && !e.retryable) {
-          this.update(taskId, { status: 'failed', error: e.message })
+          this.update(taskId, { status: 'failed', error: this.humanError(e.message) })
           this.scheduleCleanup(taskId)
           return
         }
@@ -494,7 +507,9 @@ export class SeedanceTaskManager {
         const err = result.error
         this.update(taskId, {
           status: 'failed',
-          error: err ? `${err.code ?? 'error'}: ${err.message ?? 'unknown'}` : '生成失败（上游未给出原因）',
+          error: err
+            ? this.humanError(`${err.code ?? 'error'}: ${err.message ?? 'unknown'}`)
+            : '生成失败（上游未给出原因）',
         })
         this.scheduleCleanup(taskId)
         return

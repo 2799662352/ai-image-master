@@ -11,6 +11,7 @@ import {
   type VideoSubmitContext,
 } from '../videoTransport'
 import type { SeedanceContentItem } from '../seedance/types'
+import { translateVideoTaskError } from '../videoTaskError'
 
 const IMG = 'https://cos.example/a.png'
 
@@ -62,6 +63,22 @@ describe('transportFor', () => {
   it('模型缺省按 2.0', () => {
     const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
     expect(transportFor({ seedance }, undefined)).toBe(seedance)
+  })
+})
+
+describe('translateVideoTaskError（两家翻译表汇合）', () => {
+  it('万相的码走万相表', () => {
+    expect(translateVideoTaskError('DataInspectionFailed: bad')).toMatch(/内容审核/)
+  })
+
+  it('Seedance 的码走 Seedance 表', () => {
+    expect(translateVideoTaskError('LOCAL_ASSET_NOT_FOUND asset://abc')).toMatch(/素材/)
+  })
+
+  it('两家都不认的原样返回 —— 串联不能把原文吃掉', () => {
+    // 两个翻译器都遵守「认不出原样返回」,所以顺序串联是安全的。
+    const raw = 'SomeUnknownUpstreamCode: 上游新加的'
+    expect(translateVideoTaskError(raw)).toBe(raw)
   })
 })
 

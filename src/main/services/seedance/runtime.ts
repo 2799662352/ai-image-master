@@ -52,6 +52,7 @@ import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
 import { createWan3Transport } from '../videoTransport'
+import { translateVideoTaskError } from '../videoTaskError'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
@@ -427,6 +428,9 @@ export function initSeedanceRuntime(opts: {
       createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
       getWan3ApiKey,
     ),
+    // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
+    // （提交只走一次，轮询要走几十次）。
+    translateError: translateVideoTaskError,
     broadcast: (update) => {
       const win = getWindow()
       if (win && !win.isDestroyed()) {
@@ -515,7 +519,7 @@ export function initSeedanceRuntime(opts: {
       // 把预备卡片落成 failed，避免气泡永远转圈；随后照旧把错误抛给工具层出横幅。
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)先翻译成人话再透出。
       const raw = e instanceof Error ? e.message : String(e)
-      const message = translateSeedanceTaskError(raw)
+      const message = translateVideoTaskError(raw)
       taskManager.announceFailed({ clientId, input, threadId, error: message })
       throw message === raw && e instanceof Error ? e : new Error(message)
     }
@@ -603,7 +607,7 @@ export function initSeedanceRuntime(opts: {
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。
       return {
         success: false,
-        error: translateSeedanceTaskError(e instanceof Error ? e.message : String(e)),
+        error: translateVideoTaskError(e instanceof Error ? e.message : String(e)),
       }
     }
   })
@@ -630,7 +634,7 @@ export function initSeedanceRuntime(opts: {
       isTracked: (taskId) => Boolean(taskManager.get(taskId)),
       probe: (taskId) => seedanceClient.queryTask(taskId, getSeedanceApiKey()),
       adopt: (params) => { taskManager.adopt(params) },
-      translateError: translateSeedanceTaskError,
+      translateError: translateVideoTaskError,
     }),
   )
 
