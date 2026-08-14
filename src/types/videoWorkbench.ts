@@ -552,6 +552,19 @@ export interface VideoWorkbenchSubmitPayload {
    * 这个参数 —— 也就是说 2.5 之前选「编辑视频」发出去的其实是一次普通生成。
    */
   taskMode?: SeedanceTaskMode
+  /**
+   * 卡片的原始模式。
+   *
+   * Seedance 那条路不需要它 —— 模式已经被 `buildModeMedia` 摊平进
+   * firstFrame / lastFrame / reference* 了。万相需要：它的组包按模式选分支，并且
+   * 要拿模式去核对模型能力表（`caps.modes`）。
+   *
+   * 刻意**不**从摊平后的字段反推。反推在「首帧+尾帧」这类形状上确实还原得回来，
+   * 但 `edit_video` / `extend_video` 会被反推成「带参考视频的多模态参考」——
+   * 用户选的是「编辑视频」，发出去的却是一次普通生成，而且不报任何错。
+   * 这个坑上游 taskMode 已经踩过一次（见上一个字段的注释）。
+   */
+  mode?: VideoWorkbenchMode
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]

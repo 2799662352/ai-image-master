@@ -47,6 +47,7 @@ import type {
   SeedanceTaskMode,
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
+import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import type {
   PortraitOverlayMutation,
@@ -554,6 +555,11 @@ export function initSeedanceRuntime(opts: {
           : Math.min(caps.duration.max, Math.max(caps.duration.min, Math.round(durationRaw))),
       generateAudio: payload?.generateAudio !== false,
       ...(taskMode ? { taskMode } : {}),
+      // 卡片原始模式。只认该模型能力表里开放的模式 —— 载荷是渲染端来的,不能
+      // 当成可信输入;不认识就不带,由 resolveVideoMode 按素材形状兜底。
+      ...(typeof payload?.mode === 'string' && (caps.modes as readonly string[]).includes(payload.mode)
+        ? { mode: payload.mode as VideoWorkbenchMode }
+        : {}),
       // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
       ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
       ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),

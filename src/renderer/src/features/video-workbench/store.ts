@@ -1791,6 +1791,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         ...(card.seed !== undefined ? { seed: card.seed } : {}),
         ...(card.webSearch ? { webSearch: true } : {}),
         ...(taskModeForCard(card) ? { taskMode: taskModeForCard(card) } : {}),
+        // 原始模式。Seedance 用不上(已被 buildModeMedia 摊平),万相的组包要按它
+        // 选分支并核对能力表 —— 反推会把「编辑视频」悄悄变成普通生成。
+        mode: card.mode,
         // 总闸随每次提交带过去 —— 关着时主进程不把这批参考图登记进人像库。
         autoImportPortrait: get().autoImportPortrait,
         ...buildModeMedia(card),
