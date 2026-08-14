@@ -47,6 +47,7 @@ import type {
   SeedanceTaskMode,
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
+import { usesSeedanceAssetLibrary } from './wan3Request'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
@@ -474,13 +475,18 @@ export function initSeedanceRuntime(opts: {
       const content = await buildContent(input)
       // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
       // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
-      await verifyContentAssetReferences(content, {
-        apiKey: getSeedanceApiKey(),
-        apiSecret: getSeedanceApiSecret(),
-      })
+      // 只对 Seedance 那条路做:万相不认识素材库,理由见 usesSeedanceAssetLibrary。
+      if (usesSeedanceAssetLibrary(input.model)) {
+        await verifyContentAssetReferences(content, {
+          apiKey: getSeedanceApiKey(),
+          apiSecret: getSeedanceApiSecret(),
+        })
+      }
       const state = await taskManager.submit({ input, content, threadId, clientId })
       // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
-      void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
+      if (usesSeedanceAssetLibrary(input.model)) {
+        void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
+      }
       return state
     } catch (e) {
       // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
@@ -548,12 +554,13 @@ export function initSeedanceRuntime(opts: {
     try {
       if (!input.prompt.trim()) throw new Error('提示词不能为空')
       const content = await buildContent(input)
-      // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
-      // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
-      await verifyContentAssetReferences(content, {
-        apiKey: getSeedanceApiKey(),
-        apiSecret: getSeedanceApiSecret(),
-      })
+      // 同上:只有 Seedance 那条路才碰素材库 / 人像库。见 usesSeedanceAssetLibrary。
+      if (usesSeedanceAssetLibrary(input.model)) {
+        await verifyContentAssetReferences(content, {
+          apiKey: getSeedanceApiKey(),
+          apiSecret: getSeedanceApiSecret(),
+        })
+      }
       const state = await taskManager.submit({
         input,
         content,
@@ -561,7 +568,9 @@ export function initSeedanceRuntime(opts: {
         ...(clientId ? { clientId } : {}),
       })
       // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
-      void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
+      if (usesSeedanceAssetLibrary(input.model)) {
+        void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
+      }
       return { success: true, taskId: state.taskId }
     } catch (e) {
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。
