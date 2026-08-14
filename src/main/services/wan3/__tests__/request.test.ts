@@ -245,6 +245,14 @@ describe('buildWan3CreateBody', () => {
     ).toBe(false)
   })
 
+  it('固定发 watermark: false —— 无水印是我们的保证,不是上游默认值的副产品', () => {
+    // 上游当前默认就是 false,所以这个字段今天是个 no-op。留着是因为「默认值」
+    // 不是承诺:哪天上游翻成 true,成片就带水印出去了,而我们不会收到任何提示。
+    for (const mode of ['text2video', 'multimodal_ref'] as const) {
+      expect(buildWan3CreateBody({ prompt: '猫', mode }, {}).metadata.parameters.watermark).toBe(false)
+    }
+  })
+
   it('空提示词直接拒', () => {
     expect(() => buildWan3CreateBody({ prompt: '   ', mode: 'text2video' }, {})).toThrow(/提示词/)
   })

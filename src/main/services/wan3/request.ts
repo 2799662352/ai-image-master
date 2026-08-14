@@ -283,6 +283,8 @@ export interface Wan3CreateTaskBody {
     parameters: {
       prompt_extend: boolean
       audio: boolean
+      /** 恒为 false，理由见 `buildWan3CreateBody`。 */
+      watermark: boolean
       resolution?: string
       ratio?: string
       duration?: number
@@ -323,6 +325,10 @@ export function buildWan3CreateBody(
         prompt_extend: true,
         // 官方默认有声；只有用户显式关掉才传 false。
         audio: input.generateAudio !== undefined ? Boolean(input.generateAudio) : true,
+        // 恒为 false，且**不做成开关**。上游当前默认也是 false，所以这行今天不改变
+        // 任何行为 —— 留着是因为「默认值」不是承诺：哪天上游翻成 true，成片就带着
+        // 水印发出去了，而这种事不会有任何编译期或运行期提示，只会由用户来告诉我们。
+        watermark: false,
         ...(resolution ? { resolution } : {}),
         ...(ratio ? { ratio } : {}),
         ...(duration !== undefined ? { duration } : {}),
