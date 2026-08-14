@@ -89,10 +89,30 @@ describe('buildWan3ReferenceMedia', () => {
     )
   })
 
-  it('首帧模式排斥参考视频/音频', () => {
+  // 官方原文:「reference_xx/file/link 类型和 first_frame/last_frame 类型互斥,
+  // 不能在同一请求中混用」。混用时上游回的是
+  // "The two modes are mutually exclusive. Do not pass reference_xx and
+  //  first_frame/last_frame at the same time." —— 与其等这句英文回来,不如本地拦。
+  it('首帧模式排斥一切 reference_xx —— 图、视频、音频都不行', () => {
+    for (const extra of [
+      { videoUrls: [VID] },
+      { audioUrls: [AUD] },
+      { imageUrls: [IMG2] },
+    ]) {
+      expect(() => buildWan3ReferenceMedia('first_frame', { firstFrameUrl: IMG, ...extra })).toThrow(
+        /互斥|不支持/,
+      )
+    }
+  })
+
+  it('首尾帧模式同样排斥参考图(不能静默丢掉)', () => {
     expect(() =>
-      buildWan3ReferenceMedia('first_frame', { firstFrameUrl: IMG, videoUrls: [VID] }),
-    ).toThrow(/不支持参考视频或参考音频/)
+      buildWan3ReferenceMedia('first_last_frame', {
+        firstFrameUrl: IMG,
+        lastFrameUrl: IMG2,
+        imageUrls: [IMG],
+      }),
+    ).toThrow(/互斥|不支持/)
   })
 
   it('全能参考按 图→视频→音频 排列(顺序即提示词里的编号)', () => {

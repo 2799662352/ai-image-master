@@ -199,8 +199,15 @@ export function buildWan3ReferenceMedia(
   }
 
   if (FRAME_MODES.has(mode)) {
-    if (videos.length || audios.length) {
-      throw new Wan3RequestError('首帧 / 首尾帧模式不支持参考视频或参考音频')
+    // 官方原文:「reference_xx / file / link 类型和 first_frame / last_frame 类型
+    // **互斥**,不能在同一请求中混用」。混用时上游回的是
+    //   "The two modes are mutually exclusive. Do not pass reference_xx and
+    //    first_frame/last_frame at the same time."
+    // 注意参考**图**也在互斥范围内 —— 早先只拦了视频/音频,图会被静默丢掉:
+    // 请求照样发得出去、也照样出片,只是用户挂的那几张参考图根本没参与,
+    // 而他不会收到任何提示。
+    if (images.length || videos.length || audios.length) {
+      throw new Wan3RequestError('首帧 / 首尾帧模式与参考图 / 参考视频 / 参考音频互斥，不能混用')
     }
     const first = resolved.firstFrameUrl
     if (!first) throw new Wan3RequestError('首帧模式需要一张首帧图')
@@ -263,7 +270,22 @@ export interface Wan3CreateBodyInput {
   documentOrLink?: Wan3DocumentOrLink | null
 }
 
-/** 发给 Miau `/v1/video/generations` 的请求体。 */
+/**
+ * 发给 **Miau 网关** `/v1/video/generations` 的请求体。
+ *
+ * ⚠️ 与官方文档的形状不同,别照着官方 curl 改这里。官方直连 DashScope 是:
+ *
+ * ```
+ * POST https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/
+ *      video-generation/video-synthesis
+ * { "model", "input": { "prompt", "media" }, "parameters": {...} }
+ * ```
+ *
+ * 而我们打的是 Miau(new-api)的 OpenAI 兼容端点,它把上游请求整个收在 `metadata`
+ * 里反序列化 —— 所以是 `metadata.input.media` 而不是顶层 `input.media`。两者都
+ * 「对」,取决于对端是谁。走网关的理由:密钥与 base URL 都已经在应用里了
+ * (`apiKeys['qwen']`),直连还要用户另配一份百炼 API Key 和 WorkspaceId。
+ */
 export interface Wan3CreateTaskBody {
   model: string
   prompt: string
