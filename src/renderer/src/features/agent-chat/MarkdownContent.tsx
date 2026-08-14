@@ -4,7 +4,8 @@ import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { useAgentChatStore } from './store'
-import { osPathFromHref, isImageHref } from '../file-explorer/revealInExplorer'
+import { isImageHref } from '../file-explorer/revealInExplorer'
+import { parseFileCitation, type FileCitation } from '../file-explorer/fileCitation'
 import type { AttachmentRef } from '../../../../types/agent-timeline'
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
@@ -25,37 +26,71 @@ function mimeFromHref(href: string): string {
 
 /**
  * react-markdown's default URL sanitizer strips every non-http(s) scheme,
- * including `file://` and Windows drive paths (`C:\...`). That nukes the exact
- * links we want to make actionable (chat citations of generated images). Keep
- * local-file refs intact (osPathFromHref already blocks `..` traversal); defer
- * everything else to the default sanitizer so we don't widen the attack surface.
+ * including `file://`, Windows drive paths (`C:\...`) AND the editor citation
+ * URIs Codex emits by default (`vscode://file/...` — see fileCitation.ts for
+ * why those show up at all). A stripped href renders as a blue underlined link
+ * whose click does nothing, which is the worst of both worlds. Keep anything we
+ * can resolve to a real file; defer the rest to the default sanitizer so we
+ * don't widen the attack surface.
  */
 function chatUrlTransform(url: string): string {
-  if (osPathFromHref(url)) return url
+  if (parseFileCitation(url, { workspaceRoot: currentWorkspaceRoot() })) return url
   return defaultUrlTransform(url)
+}
+
+function currentWorkspaceRoot(): string | null {
+  return useFileExplorerStore.getState().workspaceRoot
+}
+
+type ChatHrefKind =
+  | { kind: 'file'; citation: FileCitation }
+  | { kind: 'image'; href: string }
+  | { kind: 'external'; href: string }
+  | { kind: 'dead' }
+
+/**
+ * What should a click on this href do? Resolved at RENDER time, not click time,
+ * so we can refuse to render an anchor we know we cannot honour — a link that
+ * looks clickable and silently does nothing is a bug report waiting to happen,
+ * and in a packaged build that is exactly what happens: the renderer runs over
+ * `file://`, so anything not http(s) is swallowed by the main process
+ * `setWindowOpenHandler` deny with no feedback at all.
+ */
+function classifyChatHref(href: string | undefined, workspaceRoot: string | null): ChatHrefKind {
+  if (!href) return { kind: 'dead' }
+
+  const citation = parseFileCitation(href, { workspaceRoot })
+  if (citation) return { kind: 'file', citation }
+
+  if (/^https?:\/\//i.test(href)) {
+    return isImageHref(href) ? { kind: 'image', href } : { kind: 'external', href }
+  }
+  // In-document anchors and mailto: keep working through the browser default.
+  if (href.startsWith('#') || /^(mailto|tel):/i.test(href)) return { kind: 'external', href }
+
+  return { kind: 'dead' }
 }
 
 /**
  * A link click in an assistant message. We never want a chat citation of an
- * app-generated image to open an external browser tab:
- *  - LOCAL file (`file://` / `C:\...` / `/abs`) → reveal + open it in the left
- *    FILES panel (and its viewer).
+ * app-generated file to open an external browser tab:
+ *  - LOCAL file (`vscode://file/...` / `file://` / `C:\...` / `src/a.ts:42`) →
+ *    reveal + open it in the left FILES panel, jumping to the cited line.
  *  - Remote IMAGE url (R2/COS https) → open the in-chat lightbox, mirroring how
  *    chat image thumbnails behave ("点击后在聊天栏展示").
  *  - Anything else (real external links) → default browser behaviour.
  */
-function handleChatLinkClick(e: React.MouseEvent<HTMLAnchorElement>, href: string | undefined): void {
-  if (!href) return
-
-  const osPath = osPathFromHref(href)
-  if (osPath) {
+function handleChatLinkClick(e: React.MouseEvent<HTMLAnchorElement>, target: ChatHrefKind): void {
+  if (target.kind === 'file') {
     e.preventDefault()
-    void useFileExplorerStore.getState().revealPath(osPath)
+    const { path, line, col } = target.citation
+    void useFileExplorerStore.getState().revealPath(path, line ? { line, col } : undefined)
     return
   }
 
-  if (/^https?:\/\//i.test(href) && isImageHref(href)) {
+  if (target.kind === 'image') {
     e.preventDefault()
+    const href = target.href
     const ref: AttachmentRef = {
       id: `chat-link-${Date.now()}`,
       kind: 'image',
@@ -86,30 +121,38 @@ function handleChatLinkClick(e: React.MouseEvent<HTMLAnchorElement>, href: strin
 // reparses as it grows — coalescing bounds that to ~1/frame; settled bubbles
 // never reparse). Single primitive prop → default shallow compare is exact.
 function MarkdownContentImpl({ source }: { source: string }) {
+  const workspaceRoot = useFileExplorerStore((s) => s.workspaceRoot)
   const components = useMemo<Components>(
     () => ({
       // Disable raw HTML; default react-markdown already sanitises.
-      a: ({ href, children, ...rest }) => (
-        // `draggable={false}` is load-bearing, not cosmetic: Chromium/Electron
-        // makes every `<a href>` draggable by default, so dragging across the
-        // link starts a NATIVE LINK DRAG instead of a text selection — the user
-        // can never select/copy the blue text — and a click with the slightest
-        // pointer movement is swallowed as a drag-start so `onClick` never fires
-        // (= "can't jump"). Disabling drag restores both copy (drag → text
-        // selection) and reliable clicks. `select-text` defends against any
-        // ancestor `select-none` leaking in.
-        <a
-          {...rest}
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          draggable={false}
-          onClick={(e) => handleChatLinkClick(e, href)}
-          className="cursor-pointer select-text text-cyan-300 underline-offset-2 hover:underline"
-        >
-          {children}
-        </a>
-      ),
+      a: ({ href, children, ...rest }) => {
+        const target = classifyChatHref(href, workspaceRoot)
+        // Nothing we can do with it → render the label as plain text rather
+        // than a blue link that eats the click. See classifyChatHref.
+        if (target.kind === 'dead') return <>{children}</>
+        return (
+          // `draggable={false}` is load-bearing, not cosmetic: Chromium/Electron
+          // makes every `<a href>` draggable by default, so dragging across the
+          // link starts a NATIVE LINK DRAG instead of a text selection — the user
+          // can never select/copy the blue text — and a click with the slightest
+          // pointer movement is swallowed as a drag-start so `onClick` never fires
+          // (= "can't jump"). Disabling drag restores both copy (drag → text
+          // selection) and reliable clicks. `select-text` defends against any
+          // ancestor `select-none` leaking in.
+          <a
+            {...rest}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            draggable={false}
+            title={target.kind === 'file' ? target.citation.path : undefined}
+            onClick={(e) => handleChatLinkClick(e, target)}
+            className="cursor-pointer select-text text-cyan-300 underline-offset-2 hover:underline"
+          >
+            {children}
+          </a>
+        )
+      },
       h1: ({ children }) => (
         <div className="mt-3 text-[15px] font-semibold text-zinc-50">{children}</div>
       ),
@@ -165,7 +208,7 @@ function MarkdownContentImpl({ source }: { source: string }) {
       // double-padding/double-borders.
       pre: ({ children }) => <>{children}</>,
     }),
-    [],
+    [workspaceRoot],
   )
 
   return (

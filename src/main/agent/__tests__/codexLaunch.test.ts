@@ -24,6 +24,9 @@ describe('buildCodexLaunchArgs', () => {
       // even when reasoningOutputTokens > 0.
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
+      // Pinned, not inherited: the default moves the chat panel's file-citation
+      // links between "clickable" and "dead text". See codexLaunch.ts.
+      '-c', 'file_opener="vscode"',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -67,6 +70,9 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'web_search="live"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
+      // Pinned, not inherited: the default moves the chat panel's file-citation
+      // links between "clickable" and "dead text". See codexLaunch.ts.
+      '-c', 'file_opener="vscode"',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
