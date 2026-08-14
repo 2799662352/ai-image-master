@@ -104,6 +104,12 @@ type State = {
    * 挂载后自取。`token` 单调递增,保证连点同一行也能重新跳一次。
    */
   pendingGoto: { path: string; line: number; col?: number; token: number } | null
+  /**
+   * 「打不开」的说明。`openTab` 以前撞到 stat 失败是直接 return 的 —— 面板已经
+   * 被 revealPath 打开、路径也已经选中,然后什么都不发生,和「点了没反应」在用户
+   * 眼里是同一件事。文件被移走/删掉/越界都会走到这里,得说一声。
+   */
+  openError: { path: string; reason: string; token: number } | null
 }
 
 type Actions = {
@@ -158,6 +164,8 @@ type Actions = {
   revealPath: (absPath: string, at?: { line?: number; col?: number }) => Promise<void>
   /** FileViewer 消费完 pendingGoto 后回收。token 不匹配说明已有更新的请求,不动。 */
   clearPendingGoto: (token: number) => void
+  /** 关掉「打不开」提示条。 */
+  dismissOpenError: () => void
   clearSelection: () => void
   setSelectedPaths: (paths: string[]) => void
   selectAllVisible: (visiblePaths: string[]) => void
@@ -516,6 +524,7 @@ function makeInitialState(): State {
     clipboard: null,
     pendingNewNode: null,
     pendingGoto: null,
+    openError: null,
   }
 }
 
@@ -724,7 +733,14 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
     const api = getApi()
     const stat = await api.fs.stat(p)
-    if (!stat.ok) return
+    if (!stat.ok) {
+      // 静默 return 过一版,代价是「面板开了、什么都没发生」。所有入口都受影响
+      // (聊天引用、附件 chip、文件树),不只是新加的裸路径链接。
+      set((s) => ({
+        openError: { path: p, reason: stat.reason ?? '', token: (s.openError?.token ?? 0) + 1 },
+      }))
+      return
+    }
     const kind = classify(p.split(/[\\/]/).pop() ?? p, stat.size, stat.mime)
     let content = ''
     if (kind === 'text') {
@@ -744,7 +760,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       diskMtime: stat.mtime,
       dirty: false,
     }
-    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }))
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id, openError: null }))
     ensureWatchSubscription(get)
   },
 
@@ -1125,6 +1141,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
 
   clearPendingGoto: (token) => {
     set((s) => (s.pendingGoto?.token === token ? { pendingGoto: null } : {}))
+  },
+
+  dismissOpenError: () => {
+    set({ openError: null })
   },
 
   clearSelection: () => set({ selectedPaths: [], lastSelectedPath: null }),
