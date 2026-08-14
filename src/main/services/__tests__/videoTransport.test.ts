@@ -192,6 +192,32 @@ describe('万相 transport', () => {
     ])
   })
 
+  it('文档槽也认裸 URL —— MCP 工具收的就是这个形状', async () => {
+    // 不认的话:agent 写进去一个裸 URL,parse 返回 null,槽位被当成「没设置」
+    // 直接丢掉,而 agent 收到的是一次成功回执。
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'k').createTask(
+      ctx({
+        model: 'wan3',
+        input: { prompt: 'p', mode: 'text2video', documentOrLink: 'https://x/spec.pdf' },
+      }),
+    )
+    const body = client.createTask.mock.calls[0][0] as { metadata: { input: { media: unknown[] } } }
+    expect(body.metadata.input.media).toEqual([{ type: 'file', url: 'https://x/spec.pdf' }])
+  })
+
+  it('裸 URL 的类型由后缀判定,不是文档就是链接', async () => {
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'k').createTask(
+      ctx({
+        model: 'wan3',
+        input: { prompt: 'p', mode: 'text2video', documentOrLink: 'https://news.example/article/42' },
+      }),
+    )
+    const body = client.createTask.mock.calls[0][0] as { metadata: { input: { media: unknown[] } } }
+    expect(body.metadata.input.media).toEqual([{ type: 'link', url: 'https://news.example/article/42' }])
+  })
+
   it('槽位是坏数据时当没设置,不让整张卡提交不了', async () => {
     const client = wan3Client()
     await createWan3Transport(client, () => 'k').createTask(
