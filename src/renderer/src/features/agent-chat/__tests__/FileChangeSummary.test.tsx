@@ -8,7 +8,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileChange, Message } from '../../../../../types/agent-timeline'
-import { FileChangeSummary, collectFileChanges, mergeChangesByPath } from '../FileChangeSummary'
+import {
+  FileChangeSummary,
+  SCOPE_NOTE,
+  collectFileChanges,
+  mergeChangesByPath,
+} from '../FileChangeSummary'
 import { MessageBubble } from '../MessageBubble'
 import { useFileExplorerStore } from '../../file-explorer/store'
 
@@ -108,6 +113,13 @@ describe('FileChangeSummary', () => {
     // 写「本轮改动了 N 个文件」就是在承诺一个我们拿不到的数字。
     render(<FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
     expect(screen.getByTestId('file-change-summary').textContent).toContain('agent 编辑了 2 个文件')
+  })
+
+  it('口径摆在够得着的地方 —— 被这个坑到的人不会自己想明白', () => {
+    render(<FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
+    const note = screen.getByRole('note')
+    expect(note.getAttribute('title')).toBe(SCOPE_NOTE)
+    expect(SCOPE_NOTE).toContain('命令行改的文件')
   })
 
   // 一行三个动作,取自 Codex review pane(点文件名进编辑器 / 点行背景就地展开)。

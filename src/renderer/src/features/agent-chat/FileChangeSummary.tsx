@@ -57,6 +57,9 @@ export function collectFileChanges(message: Message): FileChange[] {
   return mergeChangesByPath(changes)
 }
 
+export const SCOPE_NOTE =
+  '只统计 agent 通过文件编辑工具做的改动。它用命令行改的文件（例如跑构建、安装依赖）不在这里。'
+
 const OPERATION_LABEL: Record<FileChange['operation'], string> = {
   create: '新建',
   edit: '修改',
@@ -155,8 +158,19 @@ export function FileChangeSummary({ message }: { message: Message }) {
       data-testid="file-change-summary"
       className="my-2 overflow-hidden rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04]"
     >
-      <div className="flex items-center gap-2 border-b border-cyan-500/15 px-2.5 py-1.5 text-[11px]">
+      <div className="flex items-center gap-1.5 border-b border-cyan-500/15 px-2.5 py-1.5 text-[11px]">
         <span className="font-medium text-zinc-100">agent 编辑了 {changes.length} 个文件</span>
+        {/* 口径提示。列表来自 Codex 的 fileChange item,只覆盖它通过文件编辑工具
+            做的改动;shell 命令改的文件不在其中(见模块注释)。被这个坑到的人不会
+            知道为什么,所以把口径摆在够得着的地方 —— 但只做成一个 ⓘ,不占正文。 */}
+        <span
+          role="note"
+          title={SCOPE_NOTE}
+          aria-label={SCOPE_NOTE}
+          className="cursor-help text-zinc-500 transition hover:text-zinc-300"
+        >
+          ⓘ
+        </span>
         <span className="ml-auto text-emerald-300">+{added}</span>
         <span className="text-red-300">-{removed}</span>
       </div>
