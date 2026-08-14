@@ -92,6 +92,28 @@ describe('queryTask', () => {
     expect(result.content?.video_url).toBe('https://x/v.mp4')
   })
 
+  it('认 Miau 查询信封 —— 视频地址在 data.data.output,任务号用网关 id', async () => {
+    const fetchImpl = jsonFetch({
+      code: 'success',
+      data: {
+        task_id: 'task_gw',
+        status: 'SUCCESS',
+        result_url: 'https://oss.example/v.mp4',
+        data: {
+          output: {
+            task_id: 'uuid-dashscope',
+            task_status: 'SUCCEEDED',
+            video_url: 'https://oss.example/v.mp4',
+          },
+        },
+      },
+    })
+    const result = await createWan3Client({ fetchImpl }).queryTask('task_gw', 'k')
+    expect(result.status).toBe('succeeded')
+    expect(result.id).toBe('task_gw')
+    expect(result.content?.video_url).toBe('https://oss.example/v.mp4')
+  })
+
   it('任务号做过 URL 编码,不让奇怪的 id 拼坏路径', async () => {
     const fetchImpl = jsonFetch({ output: { task_status: 'RUNNING' } })
     await createWan3Client({ fetchImpl }).queryTask('a/b c', 'k')

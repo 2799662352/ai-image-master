@@ -5,13 +5,11 @@
  *   POST {base}/video/generations       创建任务
  *   GET  {base}/video/generations/{id}  查询任务
  *
- * `fetch` 由外部注入，默认用 Electron 的 `net.fetch`（走主进程网络栈，继承系统
- * 代理与证书）。注入的意义不只是可测：它让整条请求塑形能在没有 Electron 的环境
- * 下被断言，而这条链路我们**无法本地实测**（需要真实密钥与邀测资格），单测是
- * 唯一能钉住「URL、头、体到底发了什么」的手段。
+ * `fetch` 由外部注入，默认由调用方传入 Electron 的 `net.fetch`。注入的意义不只是
+ * 可测：整条请求塑形能在没有 Electron 的环境下被断言。查询信封已于 2026-08-14
+ * 用真网关钉死（见 `response.ts`），单测用那份真实回形做夹具。
  */
 
-import { net } from 'electron'
 import { MIAU_BASE_URL } from '../../../shared/miau'
 import { SeedanceApiError } from '../seedance/apiError'
 import { retrySubmit, type RetrySubmitOptions } from '../seedance/submitRetry'
@@ -33,7 +31,12 @@ export interface Wan3Client {
 }
 
 export interface Wan3ClientOptions {
-  fetchImpl?: FetchLike
+  /**
+   * 必填，而不是默认取 Electron 的 `net.fetch`。顶层 `import { net } from 'electron'`
+   * 会让这个模块在 Electron 之外根本加载不了 —— 注入 fetch 的意义就废了一半，
+   * 连对着真网关跑烟测都做不到。Electron 依赖留在组合根（调用方本来就在主进程）。
+   */
+  fetchImpl: FetchLike
   baseUrl?: string
   /** 提交重试的注入点，测试用来去掉真实等待。 */
   retryOptions?: RetrySubmitOptions
@@ -142,11 +145,9 @@ async function request(
   return json ?? {}
 }
 
-export function createWan3Client(options: Wan3ClientOptions = {}): Wan3Client {
+export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
   const baseUrl = (options.baseUrl ?? MIAU_BASE_URL).replace(/\/+$/, '')
-  // 默认走 Electron 的 net.fetch(系统代理/证书);测试注入自己的。
-  const fetchImpl: FetchLike =
-    options.fetchImpl ?? ((url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]))
+  const { fetchImpl } = options
 
   return {
     async createTask(body, apiKey) {

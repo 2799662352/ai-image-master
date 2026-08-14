@@ -87,6 +87,113 @@ describe('parseWan3TaskResult · 任务号与错误', () => {
   })
 })
 
+describe('parseWan3TaskResult · Miau 查询信封（2026-08-14 真网关钉死）', () => {
+  // GET /video/generations/{id} 的真实回形。组包指南写的是顶层 output.video_url,
+  // 那是直连 DashScope / 另一套 BFF 的形状。我们打的 Miau 把任务记录包在 data 里,
+  // DashScope 原文再套一层 data.data.output。按指南解析会把已完成的任务当成还在
+  // 跑 —— pollLoop 空转到 30 分钟超时,而成片已经躺在 OSS 上没人认领。
+
+  const queued = {
+    code: 'success',
+    data: {
+      task_id: 'task_gw',
+      status: 'QUEUED',
+      progress: '20%',
+      data: { output: { task_id: 'uuid-dashscope', task_status: 'PENDING' } },
+    },
+  }
+
+  const running = {
+    code: 'success',
+    data: {
+      task_id: 'task_gw',
+      status: 'IN_PROGRESS',
+      progress: '30%',
+      data: {
+        output: {
+          task_id: 'uuid-dashscope',
+          task_status: 'RUNNING',
+          scheduled_time: '2026-08-14 14:20:23.043',
+        },
+      },
+    },
+  }
+
+  const succeeded = {
+    code: 'success',
+    data: {
+      task_id: 'task_gw',
+      status: 'SUCCESS',
+      result_url: 'https://oss.example/v.mp4',
+      progress: '100%',
+      fail_reason: '',
+      data: {
+        output: {
+          task_id: 'uuid-dashscope',
+          task_status: 'SUCCEEDED',
+          video_url: 'https://oss.example/v.mp4',
+        },
+        usage: { duration: 5, output_video_duration: 5, SR: 720 },
+      },
+    },
+  }
+
+  it('排队 / 运行认网关 status 与内层 task_status', () => {
+    expect(parseWan3TaskResult(queued).status).toBe('queued')
+    expect(parseWan3TaskResult(running).status).toBe('running')
+  })
+
+  it('成功时取出 video_url,状态为 succeeded', () => {
+    const r = parseWan3TaskResult(succeeded)
+    expect(r.status).toBe('succeeded')
+    expect(r.content?.video_url).toBe('https://oss.example/v.mp4')
+    // 信封自己的 code:"success" 不是错误码,不能当成失败原因带出去。
+    expect(r.error).toBeUndefined()
+  })
+
+  it('任务号用网关的 task_id,不用内层 DashScope uuid', () => {
+    // 内层 uuid 拿去再查 GET /video/generations/{uuid} 会 400 task_not_exist。
+    expect(parseWan3TaskResult(succeeded).id).toBe('task_gw')
+    expect(parseWan3TaskResult(queued).id).toBe('task_gw')
+  })
+
+  it('网关 numeric id 不是任务号', () => {
+    expect(
+      parseWan3TaskResult({
+        code: 'success',
+        data: { id: 98866, task_id: 'task_gw', status: 'QUEUED' },
+      }).id,
+    ).toBe('task_gw')
+  })
+
+  it('result_url 作为 video_url 的兜底 —— 内层偶发缺字段时网关层仍有地址', () => {
+    const r = parseWan3TaskResult({
+      code: 'success',
+      data: {
+        task_id: 'task_gw',
+        status: 'SUCCESS',
+        result_url: 'https://gateway/v.mp4',
+        data: { output: { task_status: 'SUCCEEDED' } },
+      },
+    })
+    expect(r.content?.video_url).toBe('https://gateway/v.mp4')
+  })
+
+  it('失败时把 fail_reason 带出来', () => {
+    const r = parseWan3TaskResult({
+      code: 'success',
+      data: {
+        task_id: 'task_gw',
+        status: 'FAILURE',
+        fail_reason: 'InvalidParameter: duration',
+        data: { output: { task_status: 'FAILED' } },
+      },
+    })
+    expect(r.status).toBe('failed')
+    expect(r.error?.message).toBe('InvalidParameter: duration')
+  })
+})
+
 describe('parseWan3TaskResult · 健壮性', () => {
   it('null / 非对象不抛错', () => {
     expect(parseWan3TaskResult(null).status).toBe('running')
