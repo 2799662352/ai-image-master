@@ -67,9 +67,16 @@ export interface SeedanceModelCapabilities {
   /**
    * 这个模型开放哪几种生成模式。
    *
-   * 加它之前模式下拉是**无差别列全部 7 个**的,于是 2.0 也能选到它并不支持的
-   * 「编辑视频 / 延长视频」—— 只是提交时被 `validateSeedanceRequest` 拦下来给
-   * 个人话错误。能选到一个必然失败的选项本身就是 bug,顺手一起修了。
+   * ⚠️ 别把它和 `taskModes` 搞混（我第一版就搞混了）：
+   *
+   *   - `modes` 是**工作台 UI 模式**,决定这张卡收哪几类素材。「编辑视频 /
+   *     延长视频」Seedance 全家都有 —— 在 2.5 之前它们只是素材组合预设
+   *     (edit 带图+视频+音频、extend 只带视频),发出去是一次普通生成。
+   *   - `taskModes` 是**上游 API 参数**,2.5 独有(文档 4.9),由
+   *     `taskModeForCard` 按这张表派生,其余模型返回 undefined。
+   *
+   * 所以 Seedance 四个型号的 `modes` 都是全集;这个字段今天唯一真正收窄的是
+   * 万相 3.0。
    */
   modes: readonly VideoWorkbenchMode[]
   /** 固定秒数区间；`-1`（智能时长）任何模型都额外允许。 */
@@ -94,15 +101,6 @@ export interface SeedanceModelCapabilities {
   audioOnlyReference: boolean
 }
 
-/** 2.0 家族：没有 edit/extend，其余全开。 */
-const SEEDANCE_2_0_MODES: readonly VideoWorkbenchMode[] = [
-  'text2video',
-  'first_frame',
-  'first_last_frame',
-  'reference_images',
-  'multimodal_ref',
-] as const
-
 /** 万相 3.0：只开四种，理由见下面 `wan3` 那行的注释。 */
 const WAN3_MODES: readonly VideoWorkbenchMode[] = [
   'text2video',
@@ -125,7 +123,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
 > = {
   '2.0': {
     provider: 'vvdance',
-    modes: SEEDANCE_2_0_MODES,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p', '1080p', '4k'],
     maxImages: 9,
@@ -138,7 +136,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.0-fast': {
     provider: 'vvdance',
-    modes: SEEDANCE_2_0_MODES,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     // 1080p 只配 2.0 —— 这条不是文档写的（文档只点名 4k 归 2.0 独占），是
     // videoTools 早先就立着的实战规则，收编进表时原样保留，不擅自放宽。
@@ -153,7 +151,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.0-mini': {
     provider: 'vvdance',
-    modes: SEEDANCE_2_0_MODES,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p'],
     maxImages: 9,
@@ -166,7 +164,6 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.5': {
     provider: 'vvdance',
-    // 2.5 是唯一有 edit/extend 的,所以它拿全集。
     modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 30 },
     resolutions: ['480p', '720p'],

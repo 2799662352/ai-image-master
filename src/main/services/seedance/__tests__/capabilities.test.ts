@@ -74,14 +74,25 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
     }
   })
 
-  it('只有 2.5 开放 edit/extend —— 别的模型选到就是必然失败', () => {
-    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+  // 回归:第一版把 UI 模式 `edit_video/extend_video` 与上游参数 `taskModes` 当成
+  // 了一回事,于是把 2.0 家族的这两个模式砍掉了。实际上它们 Seedance 全家都有 ——
+  // 2.5 之前只是素材组合预设(edit 带图+视频+音频、extend 只带视频),发出去是一次
+  // 普通生成,`taskModeForCard` 不会为它们派生 taskMode。
+  it('Seedance 全家都有编辑/延长视频模式,taskMode 才是 2.5 独有', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
       const caps = capabilitiesFor(alias)
-      const hasEditModes = caps.modes.includes('edit_video') || caps.modes.includes('extend_video')
-      expect(hasEditModes).toBe(alias === '2.5')
-      // 模式白名单与 taskModes 必须同进同退,否则 UI 给得出、校验拦得下。
-      expect(hasEditModes).toBe(caps.taskModes.length > 0)
+      expect(caps.modes).toContain('edit_video')
+      expect(caps.modes).toContain('extend_video')
     }
+    expect(capabilitiesFor('2.0').taskModes).toEqual([])
+    expect(capabilitiesFor('2.5').taskModes).toEqual(['edit', 'extend'])
+  })
+
+  it('今天真正被模式白名单收窄的只有万相 3.0', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(capabilitiesFor(alias).modes).toHaveLength(7)
+    }
+    expect(capabilitiesFor('wan3').modes).toHaveLength(4)
   })
 })
 
