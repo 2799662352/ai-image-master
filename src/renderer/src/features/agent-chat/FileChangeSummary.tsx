@@ -1,6 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { FileChange, Message } from '../../../../types/agent-timeline'
 import { useFileExplorerStore } from '../file-explorer/store'
+import { FileDiffBlock } from './cards/FileDiffBlock'
 
 /**
  * 回合级「本轮改了哪些文件」汇总条,挂在助手气泡末尾。
@@ -73,8 +74,74 @@ function splitPath(path: string): { dir: string; name: string } {
   return idx >= 0 ? { dir: path.slice(0, idx + 1), name: path.slice(idx + 1) } : { dir: '', name: path }
 }
 
-export function FileChangeSummary({ message }: { message: Message }) {
+/**
+ * 汇总条里的一行。**一行三个动作**,取自 Codex review pane 的设计:点文件名进
+ * 编辑器、点行背景就地展开内联 diff —— 多文件回合里想快速扫一眼三个文件改了
+ * 什么,不该被迫开三个标签页。
+ *
+ * 与 Codex 的映射有一处出入,是 HTML 逼的:按钮不能套按钮,要让「点行背景」可
+ * 访问就得整行是一个 `<button>`,那文件名就没法再是独立按钮。于是把**最常见的
+ * 意图**(「改了什么」)给最大的点击面积,打开文件退成右侧一个明确的按钮:
+ *
+ *  - 整行     → 就地展开/收起内联 diff
+ *  - 「打开」 → 在文件展示栏打开这个文件(revealPath:开面板、展开目录、选中)
+ *  - 「并排」 → 展开后才出现,进 CodeMirror 并排对比
+ */
+function SummaryRow({ change }: { change: FileChange }) {
+  const [expanded, setExpanded] = useState(false)
   const openAiChange = useFileExplorerStore((s) => s.openAiChange)
+  const revealPath = useFileExplorerStore((s) => s.revealPath)
+  const { dir, name } = splitPath(change.path)
+  const hasDiff = change.diff.trim().length > 0
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-[11px] text-zinc-300">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? '收起' : '展开'} ${change.path} 的改动`}
+          disabled={!hasDiff}
+          onClick={() => setExpanded((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-cyan-500/10 disabled:cursor-default disabled:hover:bg-transparent"
+        >
+          <span className={`w-8 shrink-0 ${OPERATION_CLASS[change.operation]}`}>
+            {OPERATION_LABEL[change.operation]}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
+            <span className="text-zinc-500">{dir}</span>
+            <span className="text-zinc-200">{name}</span>
+          </span>
+          <span className="shrink-0 text-emerald-300">+{change.added}</span>
+          <span className="shrink-0 text-red-300">-{change.removed}</span>
+        </button>
+        <button
+          type="button"
+          aria-label={`在文件栏打开 ${change.path}`}
+          onClick={() => void revealPath(change.path)}
+          className="mr-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] text-cyan-200/70 transition hover:bg-cyan-500/15 hover:text-cyan-100"
+        >
+          打开
+        </button>
+      </div>
+      {expanded && hasDiff && (
+        <div className="border-t border-cyan-500/10 bg-black/20 px-2.5 pt-1.5">
+          <FileDiffBlock change={change} />
+          <button
+            type="button"
+            aria-label={`并排对比 ${change.path}`}
+            onClick={() => void openAiChange(change)}
+            className="mb-2 rounded border border-cyan-500/30 px-1.5 py-0.5 text-[10px] text-cyan-200 transition hover:bg-cyan-500/10"
+          >
+            并排对比
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function FileChangeSummary({ message }: { message: Message }) {
   const changes = useMemo(() => collectFileChanges(message), [message.items])
 
   // 单文件时上面那张 FileEditCard 已经把话说完了,再来一条汇总纯属噪音。
@@ -94,28 +161,9 @@ export function FileChangeSummary({ message }: { message: Message }) {
         <span className="text-red-300">-{removed}</span>
       </div>
       <div className="divide-y divide-cyan-500/10">
-        {changes.map((change) => {
-          const { dir, name } = splitPath(change.path)
-          return (
-            <button
-              key={change.path}
-              type="button"
-              aria-label={`打开 ${change.path} 的改动对比`}
-              onClick={() => void openAiChange(change)}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-zinc-300 transition hover:bg-cyan-500/10"
-            >
-              <span className={`w-8 shrink-0 ${OPERATION_CLASS[change.operation]}`}>
-                {OPERATION_LABEL[change.operation]}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
-                <span className="text-zinc-500">{dir}</span>
-                <span className="text-zinc-200">{name}</span>
-              </span>
-              <span className="shrink-0 text-emerald-300">+{change.added}</span>
-              <span className="shrink-0 text-red-300">-{change.removed}</span>
-            </button>
-          )
-        })}
+        {changes.map((change) => (
+          <SummaryRow key={change.path} change={change} />
+        ))}
       </div>
     </div>
   )
