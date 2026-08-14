@@ -11,6 +11,7 @@ import {
 } from './icons'
 import { FileTabStrip } from './FileTabStrip'
 import { LatestPreviewBanner } from './LatestPreviewBanner'
+import { FileOpenErrorBanner } from './FileOpenErrorBanner'
 import { FileViewer } from './FileViewer'
 import { ImageViewer } from './ImageViewer'
 import { VideoViewer } from './VideoViewer'
@@ -395,6 +396,7 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
           aria-hidden={viewerOnly}
           className={`flex min-w-0 flex-1 flex-col ${viewerOnly ? 'pointer-events-none invisible' : ''}`}
         >
+          <FileOpenErrorBanner />
           <LatestPreviewBanner />
           <FileTabStrip />
           <div className="min-h-0 flex-1 overflow-auto bg-black/40">
