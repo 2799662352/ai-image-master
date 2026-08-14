@@ -27,6 +27,11 @@ export interface SeedanceQueryResult {
   status: SeedanceTaskStatus
   content?: { video_url?: string }
   usage?: { completion_tokens?: number; total_tokens?: number }
+  /**
+   * 按秒计费的 provider（万相）回传的实际出片秒数。与 `usage.completion_tokens`
+   * 互斥 —— 单位和单价表都不同，合成一个字段就得再带一个「这是什么」的标记。
+   */
+  billedSeconds?: number
   /** 上游实际使用的随机种子（文档 3.1;含随机 seed 的最终值,可复现）。 */
   seed?: number
   error?: { code?: string; message?: string }

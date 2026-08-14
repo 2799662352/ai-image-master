@@ -36,6 +36,11 @@ export interface Wan3TaskResult {
   status: SeedanceTaskStatus
   content?: { video_url?: string }
   error?: { code?: string; message?: string }
+  /**
+   * 实际计费秒数 —— 万相的 `completion_tokens` 对应物：上游生成完才回传的
+   * 真实口径。定价按秒，所以这是唯一能算出「已经花了多少」的输入。
+   */
+  billedSeconds?: number
 }
 
 /** DashScope 大写状态 + Miau 网关大写状态 → 内部小写状态。 */
@@ -107,6 +112,20 @@ function unwrapGatewayRecord(body: Record<string, unknown>): Record<string, unkn
   return body
 }
 
+/**
+ * 实际出片秒数。取 `output_video_duration` 而不是 `duration`：后者是请求里那个，
+ * 智能时长（`-1`）下两者根本不是一回事，而计费按真出了多少秒算。
+ *
+ * 取不到就返回 undefined，绝不退回用户选的时长凑数 —— 那会让界面显示一个我们
+ * 其实不知道的金额。
+ */
+function billedSecondsFrom(usage: Record<string, unknown>): number | undefined {
+  for (const raw of [usage.output_video_duration, usage.duration]) {
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw
+  }
+  return undefined
+}
+
 /** 信封自己的 `code: "success"` 不是错误码。 */
 function envelopeErrorCode(value: unknown): string | undefined {
   const text = asString(value)
@@ -127,12 +146,14 @@ export function parseWan3TaskResult(raw: unknown): Wan3TaskResult {
   const videoUrl = resolveVideoUrl(output) ?? asString(record.result_url)
   const code = asString(output.code) ?? envelopeErrorCode(body.code)
   const message = asString(output.message) ?? asString(record.fail_reason) ?? asString(body.message)
+  const billedSeconds = billedSecondsFrom(asRecord(asRecord(record.data).usage ?? body.usage))
 
   return {
     id,
     status,
     ...(videoUrl ? { content: { video_url: videoUrl } } : {}),
     ...(code || message ? { error: { ...(code ? { code } : {}), ...(message ? { message } : {}) } } : {}),
+    ...(billedSeconds !== undefined ? { billedSeconds } : {}),
   }
   // 刻意不透传 completion_tokens:万相按秒计费,没有这个口径。透传会让 pricing
   // 以为能按 token 估价,算出一个凭空的数字 —— 比不显示价格糟得多。

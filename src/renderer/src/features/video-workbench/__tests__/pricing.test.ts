@@ -3,9 +3,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   type CostCardLike,
+  estimateCostCny,
   estimateCostUsd,
+  formatCostParts,
   formatCostUsd,
   summarizeCostUsd,
+  unitPriceCnyPerSecond,
   unitPriceUsd,
 } from '../pricing'
 
@@ -54,6 +57,36 @@ describe('formatCostUsd', () => {
   })
 })
 
+describe('按秒计费(万相)', () => {
+  it('¥/秒 单价只对按秒计费的模型有值', () => {
+    expect(unitPriceCnyPerSecond('wan3', '480p')).toBe(0.3)
+    expect(unitPriceCnyPerSecond('wan3', '720p')).toBe(0.6)
+    expect(unitPriceCnyPerSecond('wan3', '1080p')).toBe(1.2)
+    // 按 token 计费的模型走不到这条路。
+    expect(unitPriceCnyPerSecond('2.0', '720p')).toBeNull()
+    expect(unitPriceCnyPerSecond('wan3', '4k')).toBeNull()
+  })
+
+  it('费用 = 实际出片秒数 × 单价', () => {
+    expect(estimateCostCny('wan3', '720p', 5)).toBeCloseTo(3.0, 6)
+    expect(estimateCostCny('wan3', '480p', 10)).toBeCloseTo(3.0, 6)
+  })
+
+  it('没有秒数就算不出 —— 绝不拿用户选的时长凑数', () => {
+    // 智能时长(-1)时用户选的那个数和真出了多少秒根本不是一回事。
+    expect(estimateCostCny('wan3', '720p', undefined)).toBeNull()
+    expect(estimateCostCny('wan3', '720p', 0)).toBeNull()
+  })
+
+  it('两种货币并列显示,不相加', () => {
+    // 相加就得写死汇率,等于把今天的汇率冻进代码而没人会记得它过期。
+    expect(formatCostParts(0.056, 3)).toBe('$0.056 + ¥3.00')
+    expect(formatCostParts(0.056, 0)).toBe('$0.056')
+    expect(formatCostParts(0, 3)).toBe('¥3.00')
+    expect(formatCostParts(0, 0)).toBeNull()
+  })
+})
+
 describe('summarizeCostUsd(跨卡汇总)', () => {
   const card = (patch: Partial<CostCardLike> = {}): CostCardLike => ({
     model: '2.0-fast',
@@ -70,6 +103,38 @@ describe('summarizeCostUsd(跨卡汇总)', () => {
     expect(s.unpriced).toBe(0)
     // 单卡 $0.056 × 3
     expect(s.usd).toBeCloseTo(0.056 * 3, 6)
+  })
+
+  it('万相按秒计入 cny,不污染 usd,也不算「估不出」', () => {
+    // 万相压根不回传 token。若不先走按秒那条路,它会被记成「已出片但估不出价」,
+    // 而它其实算得出来 —— 用户会看到一个凭空的「N 张未计入」。
+    const s = summarizeCostUsd(
+      [card({ model: 'wan3', resolution: '720p', completionTokens: undefined, billedSeconds: 5 })],
+      noVideo,
+    )
+    expect(s.cny).toBeCloseTo(3.0, 6)
+    expect(s.usd).toBe(0)
+    expect(s.counted).toBe(1)
+    expect(s.unpriced).toBe(0)
+  })
+
+  it('两种计费口径可以同时存在于一个看板', () => {
+    const s = summarizeCostUsd(
+      [card(), card({ model: 'wan3', resolution: '480p', completionTokens: undefined, billedSeconds: 10 })],
+      noVideo,
+    )
+    expect(s.usd).toBeCloseTo(0.056, 6)
+    expect(s.cny).toBeCloseTo(3.0, 6)
+    expect(s.counted).toBe(2)
+  })
+
+  it('万相出了片却没回传秒数 —— 如实记成估不出,不装作没花钱', () => {
+    const s = summarizeCostUsd(
+      [card({ model: 'wan3', completionTokens: undefined, billedSeconds: undefined })],
+      noVideo,
+    )
+    expect(s.unpriced).toBe(1)
+    expect(s.cny).toBe(0)
   })
 
   it('hasVideoInput 走调用方注入 —— 含视频输入单价更低', () => {
@@ -89,7 +154,7 @@ describe('summarizeCostUsd(跨卡汇总)', () => {
       ],
       noVideo,
     )
-    expect(s).toEqual({ usd: 0, counted: 0, unpriced: 0 })
+    expect(s).toEqual({ usd: 0, cny: 0, counted: 0, unpriced: 0 })
   })
 
   it('出了片但没回传 tokens → 记进 unpriced(钱花了,算不出)', () => {
@@ -112,7 +177,7 @@ describe('summarizeCostUsd(跨卡汇总)', () => {
   })
 
   it('空列表返回全零', () => {
-    expect(summarizeCostUsd([], noVideo)).toEqual({ usd: 0, counted: 0, unpriced: 0 })
+    expect(summarizeCostUsd([], noVideo)).toEqual({ usd: 0, cny: 0, counted: 0, unpriced: 0 })
   })
 
   // 锁求值顺序:算不出价的卡不许问 hasVideoInput。生产侧判定已是 O(1),但这条

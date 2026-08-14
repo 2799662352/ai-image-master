@@ -306,6 +306,14 @@ export interface SeedanceTaskState {
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
   completionTokens?: number
   /**
+   * succeeded 时上游回传的**实际出片秒数**（万相 `usage.output_video_duration`）。
+   *
+   * 与 `completionTokens` 互斥：按 token 计费的模型给前者，按秒计费的给后者。
+   * 不合成一个字段，是因为两者单位与单价表都不同 —— 合了之后必须再带一个
+   * 「这个数是什么」的标记，等于把类型信息塞进值里。
+   */
+  billedSeconds?: number
+  /**
    * 渲染端用的「气泡身份」。generate_video 在真正 createTask 之前先用一个临时
    * clientId 广播一张「准备中」卡片；createTask 成功后真实任务的每条广播都带
    * 同一个 clientId，渲染端据此复用同一张卡片（见 SeedanceTaskListener）。

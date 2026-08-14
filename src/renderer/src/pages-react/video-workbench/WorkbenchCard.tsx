@@ -22,7 +22,12 @@ import type {
   VideoWorkbenchMode,
 } from '../../../../types/videoWorkbench'
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
-import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
+import {
+  estimateCostCny,
+  estimateCostUsd,
+  formatCostCny,
+  formatCostUsd,
+} from '../../features/video-workbench/pricing'
 import {
   mediaToken,
   remapTokensForMove,
@@ -1091,6 +1096,17 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                       card.completionTokens,
                     )
                     return cost != null ? ` ≈ ${formatCostUsd(cost)}` : ''
+                  })()}
+                </span>
+              )}
+              {/* 按秒计费(万相):口径是上游回传的**实际出片秒数**,不是用户选的
+                  时长 —— 智能时长下两者不是一回事。 */}
+              {card.billedSeconds !== undefined && (
+                <span title="上游回传的实际出片秒数(按秒计费口径)">
+                  {card.billedSeconds}s
+                  {(() => {
+                    const cost = estimateCostCny(card.model, card.resolution, card.billedSeconds)
+                    return cost != null ? ` ≈ ${formatCostCny(cost)}` : ''
                   })()}
                 </span>
               )}

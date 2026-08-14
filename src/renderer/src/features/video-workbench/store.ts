@@ -675,6 +675,7 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
       ...(card.actualSeed !== undefined ? { actualSeed: card.actualSeed } : {}),
       ...(card.completionTokens !== undefined ? { completionTokens: card.completionTokens } : {}),
+      ...(card.billedSeconds !== undefined ? { billedSeconds: card.billedSeconds } : {}),
       spec: versionSpecOf(card),
     },
   ]
@@ -696,6 +697,7 @@ function upgradeLatestVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[]
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
       ...(card.actualSeed !== undefined ? { actualSeed: card.actualSeed } : {}),
       ...(card.completionTokens !== undefined ? { completionTokens: card.completionTokens } : {}),
+      ...(card.billedSeconds !== undefined ? { billedSeconds: card.billedSeconds } : {}),
     },
   ]
 }
@@ -1768,6 +1770,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             remoteUrl: undefined,
             actualSeed: undefined,
             completionTokens: undefined,
+            billedSeconds: undefined,
             historyRecorded: undefined,
             cancelRequested: undefined,
             // 秒表起点。不能用 updatedAt —— 每条进度广播都会 bump 它，秒表会归零。
@@ -1974,6 +1977,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...(update.remoteUrl ? { remoteUrl: update.remoteUrl } : {}),
           ...(typeof update.actualSeed === 'number' ? { actualSeed: update.actualSeed } : {}),
           ...(typeof update.completionTokens === 'number' ? { completionTokens: update.completionTokens } : {}),
+          ...(typeof update.billedSeconds === 'number' ? { billedSeconds: update.billedSeconds } : {}),
           persistence: update.persistence,
           ...(update.error ? { error: update.error } : {}),
           updatedAt: Date.now(),

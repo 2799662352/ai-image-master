@@ -244,6 +244,8 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   actualSeed?: number
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径）。 */
   completionTokens?: number
+  /** succeeded 时上游回传的实际出片秒数（按秒计费的模型用它estimate，如万相）。 */
+  billedSeconds?: number
   /** 该任务的成功结果已写入「历史记录」(防重:重载/重复广播不再入库)。 */
   historyRecorded?: boolean
   /**
@@ -332,6 +334,7 @@ export interface VideoWorkbenchVersion {
   videoUrl?: string
   actualSeed?: number
   completionTokens?: number
+  billedSeconds?: number
   spec: VideoWorkbenchVersionSpec
 }
 

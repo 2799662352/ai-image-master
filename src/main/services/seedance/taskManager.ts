@@ -517,6 +517,8 @@ export class SeedanceTaskManager {
           ...(typeof result.usage?.completion_tokens === 'number'
             ? { completionTokens: result.usage.completion_tokens }
             : {}),
+          // 按秒计费的 provider 走这条（万相）。两者互斥，谁回传谁的。
+          ...(typeof result.billedSeconds === 'number' ? { billedSeconds: result.billedSeconds } : {}),
         })
         await this.persistWithRetry(taskId)
         this.scheduleCleanup(taskId)

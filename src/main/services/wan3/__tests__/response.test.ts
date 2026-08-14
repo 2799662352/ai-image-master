@@ -309,6 +309,40 @@ describe('parseWan3TaskResult · 逐字真实样本（2026-08-14 task_7p7tCl…�
     const r = parseWan3TaskResult(succeeded) as { completionTokens?: number }
     expect(r.completionTokens).toBeUndefined()
   })
+
+  it('取出 output_video_duration 作为计费秒数', () => {
+    // 这是 completion_tokens 的对应物:上游生成完才回传的真实计费口径。
+    // 用它而不是用户选的 duration —— 智能时长(-1)时两者根本不是一回事。
+    expect(parseWan3TaskResult(succeeded).billedSeconds).toBe(5)
+  })
+})
+
+describe('parseWan3TaskResult · 计费秒数', () => {
+  function withUsage(usage: unknown): unknown {
+    return { code: 'success', data: { task_id: 't', status: 'SUCCESS', data: { output: { task_status: 'SUCCEEDED' }, usage } } }
+  }
+
+  it('没有 usage 时不编造秒数', () => {
+    // 编一个数字出来,界面就会显示一个凭空的金额 —— 比不显示糟得多。
+    expect(parseWan3TaskResult(withUsage(undefined)).billedSeconds).toBeUndefined()
+  })
+
+  it('优先 output_video_duration,而不是 duration', () => {
+    // duration 是请求里那个;output_video_duration 是真出了多少秒。
+    // 智能时长(-1)时只有后者说得准。
+    const r = parseWan3TaskResult(withUsage({ duration: 5, output_video_duration: 8 }))
+    expect(r.billedSeconds).toBe(8)
+  })
+
+  it('只有 duration 时退而用它', () => {
+    expect(parseWan3TaskResult(withUsage({ duration: 5 })).billedSeconds).toBe(5)
+  })
+
+  it('非正数与非数字一律不采信', () => {
+    for (const bad of [0, -1, 'five', null, Number.NaN]) {
+      expect(parseWan3TaskResult(withUsage({ output_video_duration: bad })).billedSeconds).toBeUndefined()
+    }
+  })
 })
 
 describe('parseWan3TaskResult · 健壮性', () => {
