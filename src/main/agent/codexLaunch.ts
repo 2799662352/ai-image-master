@@ -462,6 +462,22 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // values (`true` / `"auto"`).
     '-c', `show_raw_agent_reasoning=${sessionConfig.showRawReasoning}`,
     '-c', `model_reasoning_summary=${quote(sessionConfig.reasoningSummary)}`,
+    // Pin the file-citation URI scheme instead of inheriting the default.
+    //
+    // `file_opener` decides how codex rewrites the file references in its prose:
+    // `vscode` (the DEFAULT) turns `src/a.ts:42` into a markdown link targeting
+    // `vscode://file/<abs>:42`; `none` leaves bare text with no link at all.
+    // Our chat panel parses that URI and reveals the file in the FILES panel at
+    // the cited line (`fileCitation.ts`) — the URI never reaches the OS, we ARE
+    // the editor here.
+    //
+    // Pinned rather than inherited because the default is a documented value
+    // that can move between codex releases, and either direction breaks us
+    // silently: `none` would strip the links we now depend on, and a different
+    // scheme would fall through the renderer's parser back into "blue text that
+    // eats the click". Parser-side we accept all four editor schemes anyway, so
+    // a user-level config.toml override still works.
+    '-c', 'file_opener="vscode"',
     // Official per-tool-call output budget. codex-rs/models-manager/
     // models.json pins truncation at 10_000 tokens for gpt-5.6/5.5/5.4
     // (10_000 bytes for 5.2 and unknown slugs). Without this pin a

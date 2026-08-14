@@ -236,6 +236,33 @@ export function FileViewer({ tab }: { tab: FileTab }) {
     })
   }, [tab.state, tab.diskContent])
 
+  /**
+   * 聊天里点「`src/a.ts:42`」这类带行号的引用 → 跳到那一行并选中它。
+   *
+   * 读 store 而不是听 `file-explorer:reveal` 事件:发出请求时这个查看器多半还
+   * 没挂载(openTab 要先 stat 再读盘),一次性事件送不到。待办留在 state 里,
+   * 挂载后自取,取完按 token 回收。
+   *
+   * 光标同时落到该行,这样键盘接着就能用 —— 只滚动不落光标的话,用户按一下
+   * 方向键画面又跳回原处。
+   */
+  const pendingGoto = useFileExplorerStore((s) => s.pendingGoto)
+  useEffect(() => {
+    if (!pendingGoto || !view) return
+    if (pendingGoto.path !== tab.path) return
+    const { line, col, token } = pendingGoto
+    const clamped = Math.min(Math.max(line, 1), view.state.doc.lines)
+    const target = view.state.doc.line(clamped)
+    const pos = Math.min(target.from + Math.max((col ?? 1) - 1, 0), target.to)
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+      scrollIntoView: false,
+    })
+    view.focus()
+    useFileExplorerStore.getState().clearPendingGoto(token)
+  }, [pendingGoto, view, tab.path])
+
   const changeMode = useCallback(
     (next: MdViewMode) => {
       modeByPath.set(tab.path, next)

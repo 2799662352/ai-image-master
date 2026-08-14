@@ -97,6 +97,13 @@ type State = {
   lastSelectedPath: string | null
   clipboard: Clipboard
   pendingNewNode: PendingNewNode
+  /**
+   * 「打开这个文件并跳到第 N 行」的待办。聊天里的引用带行号(Codex 默认就会
+   * 写 `...:42`),而 revealPath→openTab 是异步的:发出请求时目标查看器多半还
+   * 没挂载,所以不能像树的滚动那样靠一次性事件送达 —— 存进 state,由 FileViewer
+   * 挂载后自取。`token` 单调递增,保证连点同一行也能重新跳一次。
+   */
+  pendingGoto: { path: string; line: number; col?: number; token: number } | null
 }
 
 type Actions = {
@@ -143,8 +150,14 @@ type Actions = {
    * Open the panel, expand to + select an absolute path, and broadcast a
    * `file-explorer:reveal` event so the matching tree row scrolls into view.
    * Used by chat-link clicks ("show this generated image in FILES").
+   *
+   * `at.line` (1-based) additionally parks a `pendingGoto` that FileViewer
+   * consumes once the tab is mounted — chat citations carry line numbers and
+   * revealing the file at line 1 is only half the jump.
    */
-  revealPath: (absPath: string) => Promise<void>
+  revealPath: (absPath: string, at?: { line?: number; col?: number }) => Promise<void>
+  /** FileViewer 消费完 pendingGoto 后回收。token 不匹配说明已有更新的请求,不动。 */
+  clearPendingGoto: (token: number) => void
   clearSelection: () => void
   setSelectedPaths: (paths: string[]) => void
   selectAllVisible: (visiblePaths: string[]) => void
@@ -502,6 +515,7 @@ function makeInitialState(): State {
     lastSelectedPath: null,
     clipboard: null,
     pendingNewNode: null,
+    pendingGoto: null,
   }
 }
 
@@ -1043,9 +1057,23 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     })
   },
 
-  revealPath: async (absPath) => {
+  revealPath: async (absPath, at) => {
     if (typeof absPath !== 'string' || absPath.length === 0) return
     get().setFxOpen(true)
+
+    // 先挂再打开:openTab 之后才 set 会与 FileViewer 的挂载竞速,快的机器上
+    // 查看器已经挂好了才拿到待办,那一跳就丢了。
+    const line = at?.line
+    if (typeof line === 'number' && Number.isFinite(line) && line > 0) {
+      set((s) => ({
+        pendingGoto: {
+          path: absPath,
+          line: Math.floor(line),
+          ...(at?.col ? { col: Math.floor(at.col) } : {}),
+          token: (s.pendingGoto?.token ?? 0) + 1,
+        },
+      }))
+    }
 
     const source = inferSource(get().workspaceTree, absPath)
     if (source === 'workspace') {
@@ -1093,6 +1121,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       fire()
       setTimeout(fire, 80)
     }
+  },
+
+  clearPendingGoto: (token) => {
+    set((s) => (s.pendingGoto?.token === token ? { pendingGoto: null } : {}))
   },
 
   clearSelection: () => set({ selectedPaths: [], lastSelectedPath: null }),
