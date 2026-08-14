@@ -140,6 +140,52 @@ describe('提交重试', () => {
 })
 
 describe('错误处理', () => {
+  // 下面两种信封都是对着真网关探出来的,不是猜的:
+  //   网关自己的错误  → {"error":{"code":"model_not_found","message":"...","type":"new_api_error"}}
+  //   上游透传的错误  → {"code":"task_not_exist","message":"task_not_exist","data":null}
+  // 只认其中一种,另一种就会退化成一句没有信息量的「万相 API 5xx」。
+  it('认网关信封 {error:{code,message}}', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { code: 'model_not_found', message: 'No available channel', type: 'new_api_error' },
+          }),
+          { status: 503 },
+        ),
+    )
+    await expect(createWan3Client({ fetchImpl }).createTask(BODY, 'k')).rejects.toThrow(
+      /model_not_found.*No available channel/s,
+    )
+  })
+
+  it('认上游透传信封 {code,message}', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 'task_not_exist', message: 'task_not_exist' }), {
+          status: 400,
+        }),
+    )
+    await expect(createWan3Client({ fetchImpl }).queryTask('t', 'k')).rejects.toThrow(
+      /task_not_exist/,
+    )
+  })
+
+  it('model_not_found 不重试 —— 网关拿它当 503,但「这个 key 没有该模型通道」不会自愈', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { code: 'model_not_found', message: 'x' } }), {
+          status: 503,
+        }),
+    )
+    const client = createWan3Client({
+      fetchImpl,
+      retryOptions: { sleep: async () => {}, random: () => 0.5 },
+    })
+    await expect(client.createTask(BODY, 'k')).rejects.toThrow(/model_not_found/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('4xx 带上状态码与上游 message', async () => {
     const fetchImpl = vi.fn(
       async () =>

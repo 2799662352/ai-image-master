@@ -62,6 +62,50 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+/**
+ * 错误信封有两种，都是对着真网关探出来的：
+ *   网关自身  {"error":{"code":"model_not_found","message":"...","type":"new_api_error"}}
+ *   上游透传  {"code":"task_not_exist","message":"task_not_exist","data":null}
+ * 只认一种，另一种就退化成一句没有信息量的「万相 API 5xx」。
+ */
+function extractError(json: Record<string, unknown> | null): { code?: string; message?: string } {
+  for (const layer of [asRecord(json?.error), json ?? {}, asRecord(json?.output)]) {
+    const code = asString(layer.code)
+    const message = asString(layer.message)
+    if (code || message) return { code, message }
+  }
+  return {}
+}
+
+/**
+ * 网关把这些当 5xx 回，但它们是永久性的：`model_not_found` 意思是「当前 key 的分组
+ * 下没有该模型的通道」，重发三次只是让用户多等十秒再看到同一句话。
+ */
+const PERMANENT_GATEWAY_CODES = new Set(['model_not_found', 'invalid_api_key', 'insufficient_quota'])
+
+/**
+ * 保留 `SeedanceApiError` 的身份（下游 pollLoop / submitRetry 都按它判断），只在
+ * 上面盖一层「按错误码判永久」的覆盖。
+ */
+class Wan3ApiError extends SeedanceApiError {
+  constructor(
+    message: string,
+    status: number,
+    private readonly permanent: boolean,
+  ) {
+    super(message, status)
+    this.name = 'Wan3ApiError'
+  }
+
+  override get retryable(): boolean {
+    return this.permanent ? false : super.retryable
+  }
+}
+
 async function request(
   fetchImpl: FetchLike,
   url: string,
@@ -87,13 +131,12 @@ async function request(
 
   const json = await readJson(res)
   if (!res.ok) {
-    const code = asString(json?.code) ?? asString((json?.output as Record<string, unknown>)?.code)
-    const message =
-      asString(json?.message) ?? asString((json?.output as Record<string, unknown>)?.message)
+    const { code, message } = extractError(json)
     const detail = [code, message].filter(Boolean).join(': ')
-    throw new SeedanceApiError(
+    throw new Wan3ApiError(
       `万相 API ${res.status}${detail ? `: ${detail}` : ''}`,
       res.status,
+      code ? PERMANENT_GATEWAY_CODES.has(code) : false,
     )
   }
   return json ?? {}
