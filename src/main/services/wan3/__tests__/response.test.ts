@@ -194,6 +194,123 @@ describe('parseWan3TaskResult · Miau 查询信封（2026-08-14 真网关钉死�
   })
 })
 
+describe('parseWan3TaskResult · 逐字真实样本（2026-08-14 task_7p7tCl…）', () => {
+  // 上面那组夹具是精简过的;这里放**一字未改**的两份真实回包。价值在于证明真实
+  // 字段集(quota / platform / properties / usage / 数字 id 这些我们不关心的键)
+  // 不会干扰信封识别 —— 精简夹具恰恰把可能出问题的噪音都删掉了。
+
+  const running = {
+    code: 'success',
+    message: '',
+    data: {
+      id: 98894,
+      created_at: 1786690344,
+      updated_at: 1786690547,
+      task_id: 'task_7p7tClwgXFIj4vMjRLFjQCb8Uli2Yg1D',
+      platform: '17',
+      user_id: 1,
+      group: 'default',
+      channel_id: 8,
+      quota: 1500000,
+      action: 'textGenerate',
+      status: 'IN_PROGRESS',
+      fail_reason: '',
+      submit_time: 1786690344,
+      start_time: 1786690362,
+      finish_time: 0,
+      progress: '30%',
+      properties: {
+        input: '',
+        upstream_model_name: 'wan3.0-video',
+        origin_model_name: 'wan3.0-video',
+      },
+      data: {
+        output: {
+          scheduled_time: '2026-08-14 14:52:24.323',
+          submit_time: '2026-08-14 14:52:24.262',
+          task_id: '316bb68d-414d-4ee1-b852-7ae9da5f089e',
+          task_status: 'RUNNING',
+        },
+        request_id: 'e44d138f-eaf9-9908-a2f7-49f3823ad4f2',
+      },
+    },
+  }
+
+  const succeeded = {
+    code: 'success',
+    message: '',
+    data: {
+      id: 98894,
+      created_at: 1786690344,
+      updated_at: 1786690586,
+      task_id: 'task_7p7tClwgXFIj4vMjRLFjQCb8Uli2Yg1D',
+      platform: '17',
+      user_id: 1,
+      group: 'default',
+      channel_id: 8,
+      quota: 1500000,
+      action: 'textGenerate',
+      status: 'SUCCESS',
+      fail_reason: '',
+      result_url: 'https://oss.example/316bb68d.mp4?Expires=1786776976',
+      submit_time: 1786690344,
+      start_time: 1786690362,
+      finish_time: 1786690586,
+      progress: '100%',
+      properties: {
+        input: '',
+        upstream_model_name: 'wan3.0-video',
+        origin_model_name: 'wan3.0-video',
+      },
+      data: {
+        output: {
+          end_time: '2026-08-14 14:56:18.180',
+          orig_prompt: '一只橘猫走在阳光海滩上，电影感布光，镜头缓慢推进',
+          scheduled_time: '2026-08-14 14:52:24.323',
+          submit_time: '2026-08-14 14:52:24.262',
+          task_id: '316bb68d-414d-4ee1-b852-7ae9da5f089e',
+          task_status: 'SUCCEEDED',
+          video_url: 'https://oss.example/316bb68d.mp4?Expires=1786776976',
+        },
+        request_id: 'f1d0a4a5-020d-95b7-a9da-e70d7305a4d5',
+        usage: {
+          SR: 720,
+          duration: 5,
+          fps: 30,
+          input_video_duration: 0,
+          output_video_duration: 5,
+          ratio: '16:9',
+          video_count: 1,
+        },
+      },
+    },
+  }
+
+  it('IN_PROGRESS 判成 running,不带地址也不带错误', () => {
+    const r = parseWan3TaskResult(running)
+    expect(r.status).toBe('running')
+    expect(r.id).toBe('task_7p7tClwgXFIj4vMjRLFjQCb8Uli2Yg1D')
+    expect(r.content).toBeUndefined()
+    // fail_reason 是空串,不能变成一条「有错误但说不出原因」的提示。
+    expect(r.error).toBeUndefined()
+  })
+
+  it('SUCCESS 取出地址,任务号仍是网关 id', () => {
+    const r = parseWan3TaskResult(succeeded)
+    expect(r.status).toBe('succeeded')
+    expect(r.id).toBe('task_7p7tClwgXFIj4vMjRLFjQCb8Uli2Yg1D')
+    expect(r.content?.video_url).toBe('https://oss.example/316bb68d.mp4?Expires=1786776976')
+    expect(r.error).toBeUndefined()
+  })
+
+  it('usage 里的 duration 不会被当成计费 token 透传', () => {
+    // 万相按秒计费。usage.output_video_duration=5 是秒数,不是 token 数,
+    // 混进 completionTokens 会让 pricing 按 token 单价算出一个凭空的金额。
+    const r = parseWan3TaskResult(succeeded) as { completionTokens?: number }
+    expect(r.completionTokens).toBeUndefined()
+  })
+})
+
 describe('parseWan3TaskResult · 健壮性', () => {
   it('null / 非对象不抛错', () => {
     expect(parseWan3TaskResult(null).status).toBe('running')
