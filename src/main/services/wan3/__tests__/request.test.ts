@@ -253,6 +253,18 @@ describe('buildWan3CreateBody', () => {
     }
   })
 
+  it('seed 给了就带上,不给完全不出现', () => {
+    // 上游是否支持这个字段我们没有实测证据(未知字段网关会忽略,试不出来)。
+    // 但两害相权:传了最坏是被忽略,不传则是「用户设了种子却毫无作用」的静默
+    // 分歧 —— 而用户从界面上根本看不出区别,只会以为这模型不可复现。
+    expect(
+      buildWan3CreateBody({ prompt: '猫', mode: 'text2video', seed: 42 }, {}).metadata.parameters.seed,
+    ).toBe(42)
+    expect(
+      Object.hasOwn(buildWan3CreateBody({ prompt: '猫', mode: 'text2video' }, {}).metadata.parameters, 'seed'),
+    ).toBe(false)
+  })
+
   it('空提示词直接拒', () => {
     expect(() => buildWan3CreateBody({ prompt: '   ', mode: 'text2video' }, {})).toThrow(/提示词/)
   })

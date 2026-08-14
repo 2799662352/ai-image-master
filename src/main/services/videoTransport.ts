@@ -115,6 +115,9 @@ export function createWan3Transport(client: Wan3Client, getApiKey: () => string)
           ratio: ctx.ratio,
           duration: ctx.duration,
           ...(ctx.input.generateAudio !== undefined ? { generateAudio: ctx.input.generateAudio } : {}),
+          ...(typeof ctx.input.seed === 'number' && Number.isFinite(ctx.input.seed)
+            ? { seed: ctx.input.seed }
+            : {}),
         },
         resolved,
       )

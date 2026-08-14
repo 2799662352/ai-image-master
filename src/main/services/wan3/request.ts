@@ -247,6 +247,8 @@ export interface Wan3CreateBodyInput {
   ratio?: string
   duration?: number
   generateAudio?: boolean
+  /** 随机种子。缺省 = 上游随机。 */
+  seed?: number
   documentOrLink?: Wan3DocumentOrLink | null
 }
 
@@ -288,6 +290,7 @@ export interface Wan3CreateTaskBody {
       resolution?: string
       ratio?: string
       duration?: number
+      seed?: number
     }
   }
 }
@@ -332,6 +335,12 @@ export function buildWan3CreateBody(
         ...(resolution ? { resolution } : {}),
         ...(ratio ? { ratio } : {}),
         ...(duration !== undefined ? { duration } : {}),
+        // 上游是否认这个字段没有实测证据 —— 未知字段被网关静默忽略，试不出来。
+        // 但两害相权：传了最坏是被忽略；不传则是「用户设了种子却毫无作用」，
+        // 而他从界面上看不出区别，只会以为这个模型不可复现。
+        ...(typeof input.seed === 'number' && Number.isFinite(input.seed)
+          ? { seed: Math.round(input.seed) }
+          : {}),
       },
     },
   }

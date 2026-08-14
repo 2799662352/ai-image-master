@@ -68,14 +68,13 @@ export const SEEDANCE_CN_2_5_ENABLED = true
 /**
  * 还没接完传输层、因而**不可选**的模型。
  *
- * 万相 3.0 的能力表、模式白名单、上游 ID 都已就位，但请求组包（`metadata.input.
- * media[]` + `parameters`）、响应解析（DashScope `output.video_url`）与按秒计费
- * 还没落地。在那之前放进下拉，用户能选到一个必然失败的选项 —— 与其让他撞一次
- * 上游错误，不如先不给点。
+ * 现在是空的：万相 3.0 的传输层已于 2026-08-14 接通并对着真网关跑通端到端
+ * （`scripts/smoke-wan3.ts`：提交 → queued → running → succeeded → 取到地址）。
  *
- * 接完把这里的 `wan3` 删掉即可，其余代码不用动。
+ * 留着这个集合而不是删掉：下一个模型进来时，「能力表已落位但传输层还没接」
+ * 之间总有一段窗口，那段时间它不该出现在下拉里让用户选到一个必然失败的选项。
  */
-const NOT_YET_SELECTABLE: ReadonlySet<SeedanceModelAlias> = new Set(['wan3'])
+const NOT_YET_SELECTABLE: ReadonlySet<SeedanceModelAlias> = new Set([])
 
 const CN_ONLY_GATED: ReadonlySet<SeedanceModelAlias> = new Set(['2.5'])
 
