@@ -8,6 +8,7 @@ import type {
   ProviderCompatibilityPolicy,
 } from './codexLaunch'
 import type { ProviderPreset } from './codexProviders'
+import { MIAU_BASE_URL } from '../../shared/miau'
 
 /** User-facing gateway card with its internal channel ids. */
 export interface GatewayPreset extends AgentGatewayRecord {
@@ -85,14 +86,12 @@ const QWEN_MIAU_MODELS = Object.freeze([
  * 无论用户当前选 apiyi 还是 rightcode,都能在对话栏里看到 qwen —— 所以只能重复
  * 一份。后续把 apiyi / rightcode 都并入 Miau 之后,这两条应当合并成一条。
  */
-const QWEN_MIAU_BASE_URL = 'https://miauapi.13797248455.xyz/v1'
-
 function qwenChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
   return Object.freeze({
     id: `${gatewayId}-qwen`,
     gatewayId,
     name: '通义千问 (Miau)',
-    baseUrl: QWEN_MIAU_BASE_URL,
+    baseUrl: MIAU_BASE_URL,
     envKey: 'MIAU_API_KEY',
     credentialId: 'qwen',
     model: 'qwen3.7-max-dashscope',
