@@ -7,7 +7,7 @@
 // 而多认一种没有任何代价。
 
 import { describe, expect, it } from 'vitest'
-import { parseWan3TaskResult } from '../wan3Response'
+import { parseWan3TaskResult } from '../response'
 
 describe('parseWan3TaskResult · 状态映射', () => {
   it('DashScope 的大写状态映射到内部小写状态', () => {

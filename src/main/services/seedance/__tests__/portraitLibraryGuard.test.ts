@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { usesSeedanceAssetLibrary } from '../wan3Request'
+import { usesSeedanceAssetLibrary } from '../assetLibraryPolicy'
 
 describe('usesSeedanceAssetLibrary', () => {
   it('Seedance 全家走素材库 / 人像库', () => {

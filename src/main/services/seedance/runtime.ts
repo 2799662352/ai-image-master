@@ -47,7 +47,7 @@ import type {
   SeedanceTaskMode,
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
-import { usesSeedanceAssetLibrary } from './wan3Request'
+import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,

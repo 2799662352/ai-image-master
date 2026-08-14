@@ -2,6 +2,7 @@
 // 持久化由 credentials.ts 读写；本模块只持会话级当前值。
 
 import type { SeedanceModelAlias, SeedanceRegion } from '../../../types/seedance'
+import { WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
   global: 'https://vvdance.ai',
@@ -9,15 +10,15 @@ export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
 }
 
 /**
- * 万相 3.0 的上游模型 ID。
+ * 万相 3.0 的上游模型 ID —— 定义在 `../wan3/model`（region 是 vvdance 的站点概念，
+ * 万相不分区域，让它的 id 住在这里会误导）。
  *
- * region 对它**没有意义** —— 它不走 vvdance 的任何一个站点，而是经 Miau 网关打
- * DashScope，两边填的都是同一个 id。仍然在下面两张 region 表里各登记一次，是为了
- * 保住 `Record<VideoModelAlias, string>` 的穷尽性：正是这个穷尽性在加 wan3 时把
+ * 仍然在下面两张 region 表里各登记一次，是为了保住
+ * `Record<VideoModelAlias, string>` 的穷尽性：正是这个穷尽性在加 wan3 时把
  * 「你还没决定这个模型的 id」直接编译报错报了出来。改成 Partial 会让下一个模型
  * 悄悄漏掉。
  */
-export const WAN3_UPSTREAM_MODEL_ID = 'wan3.0-video'
+export { WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 /**
  * 海外 GLOBAL（默认）直连 vvdance.ai Ark → dreamina-*；

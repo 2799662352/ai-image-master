@@ -11,7 +11,7 @@ import {
   normalizeWan3Duration,
   normalizeWan3Ratio,
   normalizeWan3Resolution,
-} from '../wan3Request'
+} from '../request'
 
 const IMG = 'https://cos.example.com/a.png'
 const IMG2 = 'https://cos.example.com/b.png'
