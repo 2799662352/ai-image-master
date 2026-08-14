@@ -102,6 +102,11 @@ export interface CreateVideoTaskInput {
    * 模式概念的路留的，工作台一律显式带。
    */
   mode?: VideoWorkbenchMode
+  /**
+   * 文档 / 网页链接槽（仅万相）。序列化 JSON，由 `shared/wan3Document` 解析。
+   * Seedance 那条路完全忽略它。
+   */
+  documentOrLink?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceVideos。 */
   referenceVideo?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceAudios。 */

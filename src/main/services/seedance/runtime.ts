@@ -573,6 +573,10 @@ export function initSeedanceRuntime(opts: {
       ...(typeof payload?.mode === 'string' && (caps.modes as readonly string[]).includes(payload.mode)
         ? { mode: payload.mode as VideoWorkbenchMode }
         : {}),
+      // 文档/网页链接槽(仅万相)。原样带过去,由组包层解析与校验。
+      ...(typeof payload?.documentOrLink === 'string' && payload.documentOrLink
+        ? { documentOrLink: payload.documentOrLink }
+        : {}),
       // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
       ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
       ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),

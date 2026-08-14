@@ -159,6 +159,40 @@ describe('万相 transport', () => {
     expect(body.metadata.input.media).toEqual([{ type: 'first_frame', url: IMG }])
   })
 
+  it('文档/链接槽从卡片一路走到 media[] 末尾', async () => {
+    // 追加到末尾而不是插入:提示词里的「图片1」指的是 media[] 的位置,
+    // 文档不该把图的序号挤位。
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'k').createTask(
+      ctx({
+        model: 'wan3',
+        input: {
+          prompt: 'p',
+          mode: 'multimodal_ref',
+          documentOrLink: JSON.stringify({ type: 'file', url: 'https://x/shots.pdf', displayName: 'shots.pdf' }),
+        },
+        content: [
+          { type: 'text', text: 'p' },
+          { type: 'image_url', role: 'reference_image', image_url: { url: IMG } },
+        ],
+      }),
+    )
+    const body = client.createTask.mock.calls[0][0] as { metadata: { input: { media: unknown[] } } }
+    expect(body.metadata.input.media).toEqual([
+      { type: 'reference_image', url: IMG },
+      { type: 'file', url: 'https://x/shots.pdf' },
+    ])
+  })
+
+  it('槽位是坏数据时当没设置,不让整张卡提交不了', async () => {
+    const client = wan3Client()
+    await createWan3Transport(client, () => 'k').createTask(
+      ctx({ model: 'wan3', input: { prompt: 'p', mode: 'text2video', documentOrLink: '{坏 JSON' } }),
+    )
+    const body = client.createTask.mock.calls[0][0] as { metadata: { input: { media: unknown[] } } }
+    expect(body.metadata.input.media).toEqual([])
+  })
+
   it('不提供 deleteTask —— 取消接口没验证过,宁可让上层说实话', async () => {
     // 发一个没验证过的请求、再把它的失败报成「取消失败」,会让用户以为钱本来能省。
     expect(createWan3Transport(wan3Client(), () => 'k').deleteTask).toBeUndefined()

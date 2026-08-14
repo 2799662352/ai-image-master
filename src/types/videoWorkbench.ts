@@ -39,6 +39,13 @@ export interface VideoWorkbenchSpec {
   seed?: number
   /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。仅 Seedance 2.0。 */
   webSearch: boolean
+  /**
+   * 文档 / 网页链接槽（仅万相 3.0）。存**序列化后的 JSON 字符串**，空/缺省 = 未设置。
+   *
+   * 不直接存对象：那样持久化 schema 要跟着加一层嵌套并做迁移，而这里「有/无」
+   * 两态就够了。读写用 `shared/wan3Document` 的 parse/serialize，别手搓 JSON。
+   */
+  documentOrLink?: string
   /** 参考图（≤9）：data: URL / 本地路径 / https / asset://。 */
   referenceImages: VideoWorkbenchMaterial[]
   /** 参考视频（≤3，总时长 ≤15s）。 */
@@ -278,6 +285,8 @@ export interface VideoWorkbenchCardInput {
   /** 随机种子;传 null 表示清除（恢复随机）。 */
   seed?: number | null
   webSearch?: boolean
+  /** 文档 / 网页链接槽（仅万相）。序列化 JSON；空串 = 清除。 */
+  documentOrLink?: string
   /**
    * 字符串源（本地路径 / https / asset:// / data:，会包成 Material），
    * 或已解析好的 Material 对象（MCP 写入侧给 asset:// 引用带 previewUrl）。
@@ -429,6 +438,7 @@ export interface WorkbenchIRCard {
   mode?: VideoWorkbenchMode
   seed?: number
   webSearch?: boolean
+  documentOrLink?: string
   referenceImages?: WorkbenchIRMaterial[]
   referenceVideos?: WorkbenchIRMaterial[]
   referenceAudios?: WorkbenchIRMaterial[]
@@ -568,6 +578,8 @@ export interface VideoWorkbenchSubmitPayload {
    * 这个坑上游 taskMode 已经踩过一次（见上一个字段的注释）。
    */
   mode?: VideoWorkbenchMode
+  /** 文档 / 网页链接槽（仅万相）。序列化 JSON；缺省 = 没有。 */
+  documentOrLink?: string
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]

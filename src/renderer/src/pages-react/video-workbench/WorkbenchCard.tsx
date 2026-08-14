@@ -16,6 +16,12 @@ import type {
   SeedanceModelAlias,
 } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
+import {
+  classifyWan3DocumentOrLink,
+  documentOrLinkFromUrl,
+  parseDocumentOrLink,
+  serializeDocumentOrLink,
+} from '../../../../shared/wan3Document'
 import type {
   VideoWorkbenchCard,
   VideoWorkbenchMaterial,
@@ -192,6 +198,92 @@ function statusLabel(card: VideoWorkbenchCard, elapsed: number): string {
   }
 }
 
+
+/**
+ * 万相的「文档 / 网页链接」槽。
+ *
+ * 一个输入框，粘什么就是什么：`.pdf` 地址 → 文档，文章地址 → 链接。分类逻辑在
+ * `shared/wan3Document`（判 pathname 的扩展名，不看 query/hash），与主进程组包
+ * 共用同一份，避免界面上标着「文档」而发出去被当成链接。
+ *
+ * 用本地 state 缓输入中的原文而不是每次按键都写卡片：地址打到一半必然不是合法
+ * URL，边打边写会让卡片在「已设置/未设置」之间反复横跳，还会污染撤销栈。
+ */
+function DocumentOrLinkSlot({
+  value,
+  busy,
+  onChange,
+}: {
+  value: string | undefined
+  busy: boolean
+  onChange: (next: string) => void
+}) {
+  const parsed = parseDocumentOrLink(value)
+  const [draft, setDraft] = useState(parsed?.url ?? '')
+
+  // 卡片被外部改动（agent 写 IR / 撤销）时跟随，但输入中不打断。
+  useEffect(() => {
+    setDraft(parseDocumentOrLink(value)?.url ?? '')
+  }, [value])
+
+  const commit = (raw: string): void => {
+    const trimmed = raw.trim()
+    if (!trimmed) {
+      onChange('')
+      return
+    }
+    const next = documentOrLinkFromUrl(trimmed)
+    // 不是 http(s) 就不写入 —— 万相只认公网直链，存下来只会在提交时才炸。
+    if (next) onChange(serializeDocumentOrLink(next))
+  }
+
+  const invalid = draft.trim().length > 0 && classifyWan3DocumentOrLink(draft) === null
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-white/50 shrink-0" title="万相 3.0 支持附带一份文档或一个网页链接作为参考">
+          📎 文档/链接
+        </span>
+        <input
+          type="url"
+          value={draft}
+          disabled={busy}
+          placeholder="粘贴 PDF/Word 等文档地址，或一个网页链接"
+          aria-label="文档或网页链接"
+          className={`flex-1 min-w-0 bg-[#18181B] border px-2 py-1.5 text-white/80 focus:outline-none focus:border-[#FCE300] disabled:opacity-60 ${
+            invalid ? 'border-orange-400/60' : 'border-[#3F3F46]'
+          }`}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value)
+          }}
+        />
+        {parsed && (
+          <button
+            type="button"
+            aria-label="清除文档或链接"
+            className="text-white/40 hover:text-red-400 px-1 shrink-0"
+            disabled={busy}
+            onClick={() => { setDraft(''); onChange('') }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+      {/* 判定结果要显示出来 —— 用户没有手动开关，得看得见系统认成了什么 */}
+      {parsed && (
+        <p className="text-white/40 text-[10px] truncate" title={parsed.url}>
+          {parsed.type === 'file' ? '📄 文档' : '🔗 链接'} · {parsed.displayName ?? parsed.url}
+        </p>
+      )}
+      {invalid && (
+        <p className="text-orange-300 text-[10px]">需要 http(s) 开头的公网地址</p>
+      )}
+    </div>
+  )
+}
 
 interface WorkbenchCardProps {
   card: VideoWorkbenchCard
@@ -1017,6 +1109,17 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             🌐 联网
           </label>
         </div>
+
+        {/* 文档 / 网页链接槽 —— 仅万相 3.0 有这个入参。
+            没有 file/link 单选框:后缀判得比人准,多一个选择只会让人停下来想
+            「我该选哪个」(判据见 shared/wan3Document)。 */}
+        {capabilitiesFor(card.model).provider === 'miau' && (
+          <DocumentOrLinkSlot
+            value={card.documentOrLink}
+            busy={busy}
+            onChange={(next) => updateCard(card.id, { documentOrLink: next })}
+          />
+        )}
 
         {/* 状态区 */}
         {busy && (
