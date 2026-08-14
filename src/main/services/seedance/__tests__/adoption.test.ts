@@ -50,6 +50,34 @@ describe('reconcileInFlightTasks', () => {
     expect(adopted[0]).toMatchObject({ taskId: 'task-1', source: 'workbench', prompt: ITEM.prompt })
   })
 
+  it('探测带上 model —— 万相的任务在 Ark 那边查不到', async () => {
+    // 这条路此前写死了 Seedance 客户端。后果是应用重启后,一条还在跑、已经付过
+    // 钱的万相任务会被问到 Ark 去,拿回一个「任务不存在」,再被 meansTaskIsGone
+    // 判成 unknown —— 错杀成失败卡片,而视频照样生成、照样扣费。
+    const { deps } = makeDeps()
+    await reconcileInFlightTasks([{ ...ITEM, model: 'wan3' }], deps)
+
+    expect(deps.probe).toHaveBeenCalledWith('task-1', 'wan3')
+  })
+
+  it('2.5 / wan3 都认得,不再被静默归一成 2.0', async () => {
+    // 白名单曾是手写的 ['2.0','2.0-fast','2.0-mini'],漏了这两个 —— 重启后卡片
+    // 显示错模型、按错单价估费、按错能力表校验,而上游那条任务其实好好的。
+    for (const model of ['2.5', 'wan3'] as const) {
+      const { deps, adopted } = makeDeps()
+      await reconcileInFlightTasks([{ ...ITEM, model }], deps)
+      expect(adopted[0]).toMatchObject({ model })
+    }
+  })
+
+  it('model 认不出时探测按 2.0 走,与接管参数同一套容错', async () => {
+    const { deps, adopted } = makeDeps()
+    await reconcileInFlightTasks([{ ...ITEM, model: 'bogus' as never }], deps)
+
+    expect(deps.probe).toHaveBeenCalledWith('task-1', '2.0')
+    expect(adopted[0]).toMatchObject({ model: '2.0' })
+  })
+
   it('404：上游明确说没有这个任务 → unknown，卡片可以落 failed', async () => {
     const { deps } = makeDeps({
       probe: vi.fn(async () => { throw new SeedanceApiError('Seedance API 404: task not found', 404) }),

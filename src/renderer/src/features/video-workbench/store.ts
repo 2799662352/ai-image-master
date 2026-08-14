@@ -675,6 +675,7 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
       ...(card.actualSeed !== undefined ? { actualSeed: card.actualSeed } : {}),
       ...(card.completionTokens !== undefined ? { completionTokens: card.completionTokens } : {}),
+      ...(card.billedSeconds !== undefined ? { billedSeconds: card.billedSeconds } : {}),
       spec: versionSpecOf(card),
     },
   ]
@@ -696,6 +697,7 @@ function upgradeLatestVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[]
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
       ...(card.actualSeed !== undefined ? { actualSeed: card.actualSeed } : {}),
       ...(card.completionTokens !== undefined ? { completionTokens: card.completionTokens } : {}),
+      ...(card.billedSeconds !== undefined ? { billedSeconds: card.billedSeconds } : {}),
     },
   ]
 }
@@ -1768,6 +1770,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             remoteUrl: undefined,
             actualSeed: undefined,
             completionTokens: undefined,
+            billedSeconds: undefined,
             historyRecorded: undefined,
             cancelRequested: undefined,
             // 秒表起点。不能用 updatedAt —— 每条进度广播都会 bump 它，秒表会归零。
@@ -1791,6 +1794,10 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         ...(card.seed !== undefined ? { seed: card.seed } : {}),
         ...(card.webSearch ? { webSearch: true } : {}),
         ...(taskModeForCard(card) ? { taskMode: taskModeForCard(card) } : {}),
+        // 原始模式。Seedance 用不上(已被 buildModeMedia 摊平),万相的组包要按它
+        // 选分支并核对能力表 —— 反推会把「编辑视频」悄悄变成普通生成。
+        mode: card.mode,
+        ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
         // 总闸随每次提交带过去 —— 关着时主进程不把这批参考图登记进人像库。
         autoImportPortrait: get().autoImportPortrait,
         ...buildModeMedia(card),
@@ -1971,6 +1978,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...(update.remoteUrl ? { remoteUrl: update.remoteUrl } : {}),
           ...(typeof update.actualSeed === 'number' ? { actualSeed: update.actualSeed } : {}),
           ...(typeof update.completionTokens === 'number' ? { completionTokens: update.completionTokens } : {}),
+          ...(typeof update.billedSeconds === 'number' ? { billedSeconds: update.billedSeconds } : {}),
           persistence: update.persistence,
           ...(update.error ? { error: update.error } : {}),
           updatedAt: Date.now(),

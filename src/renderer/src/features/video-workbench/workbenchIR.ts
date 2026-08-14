@@ -43,6 +43,7 @@ import {
   normalizeSpec,
   specEquals,
 } from './cardSpec'
+import { parseDocumentOrLink } from '../../../../shared/wan3Document'
 /** IR 导出/apply 只需要 store 的这几个字段,方便测试直接喂普通对象。 */
 export interface WorkbenchIRSource {
   cards: VideoWorkbenchCard[]
@@ -104,6 +105,7 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
     mode: card.mode,
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     webSearch: card.webSearch,
+    ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
     referenceImages: card.referenceImages.map((m, i) => exportMaterial(m, card.id, 'referenceImages', i)),
     referenceVideos: card.referenceVideos.map((m, i) => exportMaterial(m, card.id, 'referenceVideos', i)),
     referenceAudios: card.referenceAudios.map((m, i) => exportMaterial(m, card.id, 'referenceAudios', i)),
@@ -203,6 +205,12 @@ function describeSpecDrift(cur: VideoWorkbenchSpec, next: VideoWorkbenchSpec): s
   if (cur.webSearch !== next.webSearch) {
     parts.push(`webSearch(现 ${cur.webSearch} / 你写 ${next.webSearch})`)
   }
+  if ((cur.documentOrLink ?? '') !== (next.documentOrLink ?? '')) {
+    // 只报「有/无」与展示名 —— 序列化 JSON 原样打进冲突提示没人读得懂。
+    const label = (raw: string | undefined): string =>
+      parseDocumentOrLink(raw)?.displayName ?? (raw ? '已设置' : '无')
+    parts.push(`documentOrLink(现 ${label(cur.documentOrLink)} / 你写 ${label(next.documentOrLink)})`)
+  }
   for (const [key, label] of [
     ['referenceImages', '参考图'],
     ['referenceVideos', '参考视频'],
@@ -269,7 +277,7 @@ function resolveMaterials(
  */
 const IR_CARD_CONTENT_KEYS = [
   'prompt', 'model', 'resolution', 'ratio', 'duration',
-  'generateAudio', 'mode', 'seed', 'webSearch',
+  'generateAudio', 'mode', 'seed', 'webSearch', 'documentOrLink',
   'referenceImages', 'referenceVideos', 'referenceAudios',
 ] as const satisfies readonly (keyof WorkbenchIRCard)[]
 
@@ -308,6 +316,8 @@ function irCardToInput(
     // IR 是声明式的:没写 seed 就是「随机」,而不是「沿用旧值」。
     seed: card.seed ?? null,
     webSearch: card.webSearch,
+    // 同样是声明式:没写就是「清掉」,不沿用旧值。
+    documentOrLink: card.documentOrLink ?? '',
     referenceImages: resolveMaterials(card.referenceImages, cardById, skipped, card.id),
     referenceVideos: resolveMaterials(card.referenceVideos, cardById, skipped, card.id),
     referenceAudios: resolveMaterials(card.referenceAudios, cardById, skipped, card.id),

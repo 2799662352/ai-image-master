@@ -13,7 +13,7 @@ import {
   mountWorkbenchTaskListener,
   useVideoWorkbenchStore,
 } from '../features/video-workbench/store'
-import { formatCostUsd, summarizeCostUsd } from '../features/video-workbench/pricing'
+import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/pricing'
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
@@ -135,12 +135,16 @@ export default function VideoWorkbenchPage() {
                   ? `${boardCost.unpriced} 张已出片但估不出价(上游未回传 token 或价目表无此组合)——所以这是下限`
                   : null,
                 totalCost.counted !== boardCost.counted || totalCost.unpriced !== boardCost.unpriced
-                  ? `全部页合计 ≈ ${formatCostUsd(totalCost.usd)}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
+                  ? `全部页合计 ≈ ${formatCostParts(totalCost.usd, totalCost.cny) ?? '—'}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
                   : null,
-                '按 usage.completion_tokens × 官方价目估算,非实际账单',
+                // 两种货币并列而不相加:换算要写死汇率,那等于把今天的汇率冻进代码。
+                boardCost.cny > 0 && boardCost.usd > 0
+                  ? '按 token 计费(¥)与按秒计费(¥)口径不同,分开显示、不做汇率换算'
+                  : null,
+                '按 usage.completion_tokens / 出片秒数 × 官方价目估算,非实际账单',
               ].filter(Boolean).join('\n')}
             >
-              · 已花费 ≈ {formatCostUsd(boardCost.usd)}
+              · 已花费 ≈ {formatCostParts(boardCost.usd, boardCost.cny) ?? '—'}
               {boardCost.unpriced > 0 ? `＋${boardCost.unpriced} 张未计入` : ''}
             </span>
           )}

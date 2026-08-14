@@ -16,13 +16,24 @@ import type {
   SeedanceModelAlias,
 } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
+import {
+  classifyWan3DocumentOrLink,
+  documentOrLinkFromUrl,
+  parseDocumentOrLink,
+  serializeDocumentOrLink,
+} from '../../../../shared/wan3Document'
 import type {
   VideoWorkbenchCard,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
 } from '../../../../types/videoWorkbench'
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
-import { estimateCostUsd, formatCostUsd } from '../../features/video-workbench/pricing'
+import {
+  estimateCostCny,
+  estimateCostUsd,
+  formatCostCny,
+  formatCostUsd,
+} from '../../features/video-workbench/pricing'
 import {
   mediaToken,
   remapTokensForMove,
@@ -58,10 +69,13 @@ const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   '2.0': 'Seedance 2.0 满血',
   '2.0-fast': 'Seedance 2.0 Fast',
   '2.0-mini': 'Seedance 2.0 Mini(最省)',
+  // 传输层未接完前 region.ts 的 NOT_YET_SELECTABLE 会把它挡在下拉之外;
+  // 标签先备着,免得开闸时又要回来补一处。
+  wan3: '万相 3.0',
 }
 /** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
 const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
-const RATIO_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
+/** 画幅按模型现算（`capabilitiesFor(model).ratios`），这里不再留写死的数组。 */
 
 /**
  * 分辨率与时长都**按所选模型现算**,不再写死一张 2.0 的表。
@@ -184,6 +198,120 @@ function statusLabel(card: VideoWorkbenchCard, elapsed: number): string {
   }
 }
 
+
+/**
+ * 万相的「文档 / 网页链接」槽。
+ *
+ * 一个输入框，粘什么就是什么：`.pdf` 地址 → 文档，文章地址 → 链接。分类逻辑在
+ * `shared/wan3Document`（判 pathname 的扩展名，不看 query/hash），与主进程组包
+ * 共用同一份，避免界面上标着「文档」而发出去被当成链接。
+ *
+ * 用本地 state 缓输入中的原文而不是每次按键都写卡片：地址打到一半必然不是合法
+ * URL，边打边写会让卡片在「已设置/未设置」之间反复横跳，还会污染撤销栈。
+ */
+function DocumentOrLinkSlot({
+  value,
+  busy,
+  onChange,
+}: {
+  value: string | undefined
+  busy: boolean
+  onChange: (next: string) => void
+}) {
+  const parsed = parseDocumentOrLink(value)
+  // 有值时收成 chip，空着时是一条虚线添加位，只有真正在输入时才展开成输入框。
+  // 这个槽位是可选的，常驻一个空输入框会让每张卡都显得比实际复杂。
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  // 卡片被外部改动（agent 写 IR / 撤销）时跟随，但不打断正在输入的人。
+  useEffect(() => {
+    if (!editing) setDraft(parseDocumentOrLink(value)?.url ?? '')
+  }, [value, editing])
+
+  const commit = (raw: string): void => {
+    const trimmed = raw.trim()
+    setEditing(false)
+    if (!trimmed) {
+      onChange('')
+      return
+    }
+    const next = documentOrLinkFromUrl(trimmed)
+    // 不是 http(s) 就不写入 —— 万相只认公网直链，存下来只会在提交时才炸。
+    if (next) onChange(serializeDocumentOrLink(next))
+  }
+
+  const invalid = editing && draft.trim().length > 0 && classifyWan3DocumentOrLink(draft) === null
+
+  if (parsed && !editing) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs">
+        <button
+          type="button"
+          disabled={busy}
+          title={`${parsed.url}\n点击修改`}
+          className="flex items-center gap-1.5 min-w-0 max-w-full border border-[#3F3F46] bg-[#18181B] px-2 py-1 text-white/75 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors disabled:opacity-60"
+          onClick={() => { setDraft(parsed.url); setEditing(true) }}
+        >
+          {/* 判定结果必须看得见 —— 用户没有手动开关，得知道系统认成了什么 */}
+          <span className="shrink-0">{parsed.type === 'file' ? '📄' : '🔗'}</span>
+          <span className="truncate">{parsed.displayName ?? parsed.url}</span>
+        </button>
+        <button
+          type="button"
+          aria-label="移除文档或链接"
+          disabled={busy}
+          className="text-white/40 hover:text-red-400 px-1 shrink-0 disabled:opacity-60"
+          onClick={() => onChange('')}
+        >
+          ✕
+        </button>
+      </div>
+    )
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        title="万相 3.0 可以附带一份文档或一个网页链接作为参考（各限 1 个，二选一）"
+        className="flex items-center gap-1.5 border border-dashed border-[#3F3F46] px-2 py-1 text-xs text-white/40 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors disabled:opacity-60"
+        onClick={() => setEditing(true)}
+      >
+        <span aria-hidden="true">＋</span> 文档 / 网页链接
+      </button>
+    )
+  }
+
+  return (
+    <div className="space-y-1">
+      <input
+        type="url"
+        autoFocus
+        value={draft}
+        disabled={busy}
+        placeholder="粘贴 PDF / Word 等文档地址，或一个网页链接"
+        aria-label="文档或网页链接"
+        className={`w-full bg-[#18181B] border px-2 py-1.5 text-xs text-white/80 focus:outline-none focus:border-[#FCE300] disabled:opacity-60 ${
+          invalid ? 'border-orange-400/60' : 'border-[#3F3F46]'
+        }`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit((e.target as HTMLInputElement).value)
+          // Esc 放弃这次编辑，回到原值 —— 不写入任何东西。
+          if (e.key === 'Escape') { setEditing(false); setDraft(parsed?.url ?? '') }
+        }}
+      />
+      <p className={`text-[10px] ${invalid ? 'text-orange-300' : 'text-white/35'}`}>
+        {invalid
+          ? '需要 http(s) 开头的公网地址'
+          : '按后缀自动判定文档还是链接；回车确认，Esc 取消'}
+      </p>
+    </div>
+  )
+}
 
 interface WorkbenchCardProps {
   card: VideoWorkbenchCard
@@ -948,10 +1076,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             value={card.ratio}
             disabled={busy}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
-            onChange={(e) => updateCard(card.id, { ratio: e.target.value as typeof RATIO_OPTIONS[number] })}
+            onChange={(e) => updateCard(card.id, { ratio: e.target.value as VideoWorkbenchCard['ratio'] })}
           >
-            {RATIO_OPTIONS.map((r) => (
-              <option key={r} value={r}>{r}</option>
+            {modelCaps.ratios.map((r) => (
+              <option key={r} value={r}>{r === 'adaptive' ? '✨ 自适应' : r}</option>
             ))}
           </select>
           <select
@@ -984,7 +1112,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             <input
               type="number"
               min={0}
-              max={4294967295}
+              max={modelCaps.seedMax}
               step={1}
               value={card.seed ?? ''}
               disabled={busy}
@@ -1009,6 +1137,17 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             🌐 联网
           </label>
         </div>
+
+        {/* 文档 / 网页链接槽 —— 仅万相 3.0 有这个入参。
+            没有 file/link 单选框:后缀判得比人准,多一个选择只会让人停下来想
+            「我该选哪个」(判据见 shared/wan3Document)。 */}
+        {modelCaps.provider === 'miau' && (
+          <DocumentOrLinkSlot
+            value={card.documentOrLink}
+            busy={busy}
+            onChange={(next) => updateCard(card.id, { documentOrLink: next })}
+          />
+        )}
 
         {/* 状态区 */}
         {busy && (
@@ -1088,6 +1227,17 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                       card.completionTokens,
                     )
                     return cost != null ? ` ≈ ${formatCostUsd(cost)}` : ''
+                  })()}
+                </span>
+              )}
+              {/* 按秒计费(万相):口径是上游回传的**实际出片秒数**,不是用户选的
+                  时长 —— 智能时长下两者不是一回事。 */}
+              {card.billedSeconds !== undefined && (
+                <span title="上游回传的实际出片秒数(按秒计费口径)">
+                  {card.billedSeconds}s
+                  {(() => {
+                    const cost = estimateCostCny(card.model, card.resolution, card.billedSeconds)
+                    return cost != null ? ` ≈ ${formatCostCny(cost)}` : ''
                   })()}
                 </span>
               )}

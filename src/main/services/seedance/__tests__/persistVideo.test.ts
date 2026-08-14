@@ -103,7 +103,8 @@ describe('persistVideoBytes · 按 taskId 重查地址', () => {
     const deps = makeDeps({ refreshVideoUrl: vi.fn(async () => 'https://fresh/v.mp4') })
     await persistVideoBytes(TASK, deps)
 
-    expect(deps.refreshVideoUrl).toHaveBeenCalledWith('task-12345678')
+    // 带 model:重查得打对上游 —— 万相的任务在 Ark 那边查不到。
+    expect(deps.refreshVideoUrl).toHaveBeenCalledWith('task-12345678', TASK.model)
     expect(deps.downloadVideo).toHaveBeenCalledWith('https://fresh/v.mp4', expect.any(String))
   })
 

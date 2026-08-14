@@ -23,7 +23,12 @@ import type {
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
 } from './types'
-import { resolveSeedanceModelId, validateSeedanceRequest } from './types'
+import { validateSeedanceRequest } from './types'
+import {
+  createSeedanceTransport,
+  transportFor,
+  type VideoTransport,
+} from '../videoTransport'
 
 /** content[] 里某类素材的条数 —— 校验按真正会发出去的东西算，而不是入参字段。 */
 function countContent(
@@ -55,6 +60,19 @@ const PERSIST_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const
 export interface SeedanceTaskManagerDeps {
   client: SeedanceClient
   getApiKey: () => string
+  /**
+   * 万相（Miau）的传输层。缺省时万相模型会回落到 Seedance 那条路 —— 只有还没
+   * 接线的调用方（老测试）会走到，见 `transportFor`。
+   */
+  wan3Transport?: VideoTransport
+  /**
+   * 把上游裸错误翻成人话。缺省 = 原样透出。
+   *
+   * 注入而不是直接 import：本类是状态机，不该知道有哪些 provider、更不该按
+   * provider 挑翻译表。轮询失败这条路原先完全没翻译 —— 而它恰恰是上游错误
+   * 最常出现的地方（提交只走一次，轮询要走几十次）。
+   */
+  translateError?: (raw: string) => string
   /**
    * 下载 + 落盘（线程 uploads 目录）并转存历史桶（COS）。返回本地 mp4 绝对
    * 路径与永久 https URL（COS 上传失败时 remoteUrl 缺省，降级用本地路径）。
@@ -107,12 +125,31 @@ export class SeedanceTaskManager {
 
   constructor(private deps: SeedanceTaskManagerDeps) {}
 
+  /**
+   * 这个模型该走哪条传输层。**本类里唯一与 provider 有关的一行** —— 提交、轮询、
+   * 取消都经由它，此后代码不再区分 provider（见 videoTransport.ts 的文件头）。
+   */
+  private transport(model: SeedanceModelAlias | undefined): VideoTransport {
+    return transportFor(
+      {
+        seedance: createSeedanceTransport(this.deps.client, this.deps.getApiKey),
+        ...(this.deps.wan3Transport ? { wan3: this.deps.wan3Transport } : {}),
+      },
+      model,
+    )
+  }
+
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now()
   }
 
   private random(): number {
     return this.deps.random ? this.deps.random() : Math.random()
+  }
+
+  /** 上游裸错误 → 人话。没注入翻译器就原样透出。 */
+  private humanError(raw: string): string {
+    return this.deps.translateError ? this.deps.translateError(raw) : raw
   }
 
   /**
@@ -134,10 +171,11 @@ export class SeedanceTaskManager {
 
   async submit(params: SubmitParams): Promise<SeedanceTaskState> {
     const { input, content, threadId } = params
-    const apiKey = this.deps.getApiKey()
-    if (!apiKey) throw new Error('SEEDANCE_KEY_MISSING')
-
     const model: SeedanceModelAlias = input.model ?? '2.0'
+    // 密钥检查交给这条路自己的 transport —— 只配了 Miau 密钥的用户生成万相时,
+    // 不该被要求去配一个用不到的火山密钥。
+    this.transport(model).requireApiKey()
+
     const resolution = input.resolution ?? '720p'
     const duration = input.duration ?? 5
     const taskMode = input.taskMode
@@ -158,20 +196,16 @@ export class SeedanceTaskManager {
     // 比例、再让 UI 显示一个与成片不符的值，不如提交时就写成真实生效的那个。
     const ratio = taskMode ? 'adaptive' : (input.ratio ?? '16:9')
 
-    const body: SeedanceCreateTaskBody = {
-      model: resolveSeedanceModelId(model),
+    // 组包归传输层 —— 两家 provider 的请求体毫无共同点,这里只交出已解析的事实。
+    const { id } = await this.transport(model).createTask({
+      input,
       content,
-      ratio,
+      model,
       resolution,
+      ratio,
       duration,
-      generate_audio: input.generateAudio ?? true,
-      // seed / 联网搜索 / taskMode:spread-omit,不传时字段完全不出现(兼容旧上游)。
-      ...(typeof input.seed === 'number' && Number.isFinite(input.seed) ? { seed: Math.round(input.seed) } : {}),
-      ...(input.webSearch ? { tools: [{ type: 'web_search' as const }] } : {}),
       ...(taskMode ? { taskMode } : {}),
-    }
-
-    const { id } = await this.deps.client.createTask(body, apiKey)
+    })
     const state: SeedanceTaskState = {
       taskId: id,
       clientId: params.clientId,
@@ -292,9 +326,14 @@ export class SeedanceTaskManager {
 
     let billed = true
     let reason: string | undefined
-    if (task.status === 'queued') {
+    const deleteTask = this.transport(task.model).deleteTask
+    if (task.status === 'queued' && !deleteTask) {
+      // 该 provider 没有验证过的取消接口。发一个没把握的请求、再把它的失败报成
+      // 「取消失败」,会让用户以为这笔钱本来能省下来 —— 如实说。
+      reason = '该模型不支持取消，已停止等待结果（本次生成仍会计费）'
+    } else if (task.status === 'queued' && deleteTask) {
       try {
-        await this.deps.client.deleteTask(taskId, this.deps.getApiKey())
+        await deleteTask(taskId)
         billed = false
       } catch (e) {
         // 取消请求没打通 → 任务可能仍在排队并最终计费。如实上报，不假装省了钱。
@@ -442,12 +481,12 @@ export class SeedanceTaskManager {
 
       let result
       try {
-        result = await this.deps.client.queryTask(taskId, this.deps.getApiKey())
+        result = await this.transport(task.model).queryTask(taskId)
       } catch (e) {
         // 密钥失效 / 参数非法 / 任务不存在：重试到 30 分钟也不会变好，而且最后只会
         // 报一句与真因无关的「轮询超时」。立刻如实失败。
         if (e instanceof SeedanceApiError && !e.retryable) {
-          this.update(taskId, { status: 'failed', error: e.message })
+          this.update(taskId, { status: 'failed', error: this.humanError(e.message) })
           this.scheduleCleanup(taskId)
           return
         }
@@ -468,7 +507,9 @@ export class SeedanceTaskManager {
         const err = result.error
         this.update(taskId, {
           status: 'failed',
-          error: err ? `${err.code ?? 'error'}: ${err.message ?? 'unknown'}` : '生成失败（上游未给出原因）',
+          error: err
+            ? this.humanError(`${err.code ?? 'error'}: ${err.message ?? 'unknown'}`)
+            : '生成失败（上游未给出原因）',
         })
         this.scheduleCleanup(taskId)
         return
@@ -491,6 +532,8 @@ export class SeedanceTaskManager {
           ...(typeof result.usage?.completion_tokens === 'number'
             ? { completionTokens: result.usage.completion_tokens }
             : {}),
+          // 按秒计费的 provider 走这条（万相）。两者互斥，谁回传谁的。
+          ...(typeof result.billedSeconds === 'number' ? { billedSeconds: result.billedSeconds } : {}),
         })
         await this.persistWithRetry(taskId)
         this.scheduleCleanup(taskId)

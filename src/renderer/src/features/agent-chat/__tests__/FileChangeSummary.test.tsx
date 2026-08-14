@@ -8,7 +8,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileChange, Message } from '../../../../../types/agent-timeline'
-import { FileChangeSummary, collectFileChanges, mergeChangesByPath } from '../FileChangeSummary'
+import {
+  FileChangeSummary,
+  SCOPE_NOTE,
+  collectFileChanges,
+  mergeChangesByPath,
+} from '../FileChangeSummary'
 import { MessageBubble } from '../MessageBubble'
 import { useFileExplorerStore } from '../../file-explorer/store'
 
@@ -18,7 +23,7 @@ function change(path: string, over: Partial<FileChange> = {}): FileChange {
   return {
     path,
     operation: 'edit',
-    diff: `@@\n-old\n+new`,
+    diff: '@@\n-old\n+new',
     added: 1,
     removed: 1,
     ...over,
@@ -106,20 +111,67 @@ describe('FileChangeSummary', () => {
   it('文案说的是「agent 编辑了」,不承诺是全部改动', () => {
     // shell 命令改的文件不会产生 fileEdit item,所以这里给不出全集。
     // 写「本轮改动了 N 个文件」就是在承诺一个我们拿不到的数字。
-    render(
-      <FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />,
-    )
+    render(<FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
     expect(screen.getByTestId('file-change-summary').textContent).toContain('agent 编辑了 2 个文件')
   })
 
-  it('点一行打开那个文件的并排 diff', () => {
-    const spy = vi.spyOn(useFileExplorerStore.getState(), 'openAiChange').mockResolvedValue(undefined)
-    render(
-      <FileChangeSummary message={assistantMessage([[change('src/a.ts')], [change('src/b.ts')]])} />,
-    )
-    fireEvent.click(screen.getByLabelText('打开 src/b.ts 的改动对比'))
-    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ path: 'src/b.ts' }))
-    spy.mockRestore()
+  it('口径摆在够得着的地方 —— 被这个坑到的人不会自己想明白', () => {
+    render(<FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
+    const note = screen.getByRole('note')
+    expect(note.getAttribute('title')).toBe(SCOPE_NOTE)
+    expect(SCOPE_NOTE).toContain('命令行改的文件')
+  })
+
+  // 一行三个动作,取自 Codex review pane(点文件名进编辑器 / 点行背景就地展开)。
+  // 我们把最常见的意图「改了什么」给最大的点击面积,理由见组件注释。
+  describe('一行三个动作', () => {
+    function renderTwoFiles() {
+      return render(
+        <FileChangeSummary message={assistantMessage([[change('src/a.ts')], [change('src/b.ts')]])} />,
+      )
+    }
+
+    it('点整行就地展开内联 diff,不用切走', () => {
+      const { container } = renderTwoFiles()
+      expect(container.querySelector('pre')).toBeNull()
+      fireEvent.click(screen.getByLabelText('展开 src/b.ts 的改动'))
+      expect(container.querySelector('pre')).toBeTruthy()
+    })
+
+    it('再点一次收起', () => {
+      const { container } = renderTwoFiles()
+      fireEvent.click(screen.getByLabelText('展开 src/b.ts 的改动'))
+      fireEvent.click(screen.getByLabelText('收起 src/b.ts 的改动'))
+      expect(container.querySelector('pre')).toBeNull()
+    })
+
+    it('「打开」在文件栏打开这个文件', () => {
+      const spy = vi.spyOn(useFileExplorerStore.getState(), 'revealPath').mockResolvedValue(undefined)
+      renderTwoFiles()
+      fireEvent.click(screen.getByLabelText('在文件栏打开 src/b.ts'))
+      expect(spy).toHaveBeenCalledWith('src/b.ts')
+      spy.mockRestore()
+    })
+
+    it('展开后才有「并排对比」,点了进 MergeView', () => {
+      const spy = vi.spyOn(useFileExplorerStore.getState(), 'openAiChange').mockResolvedValue(undefined)
+      renderTwoFiles()
+      expect(screen.queryByLabelText('并排对比 src/b.ts')).toBeNull()
+      fireEvent.click(screen.getByLabelText('展开 src/b.ts 的改动'))
+      fireEvent.click(screen.getByLabelText('并排对比 src/b.ts'))
+      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ path: 'src/b.ts' }))
+      spy.mockRestore()
+    })
+
+    it('没有 diff 的改动展不开,但仍然能打开文件', () => {
+      render(
+        <FileChangeSummary
+          message={assistantMessage([[change('a.ts', { diff: '' })], [change('b.ts')]])}
+        />,
+      )
+      expect(screen.getByLabelText('展开 a.ts 的改动')).toHaveProperty('disabled', true)
+      expect(screen.getByLabelText('在文件栏打开 a.ts')).toBeTruthy()
+    })
   })
 })
 

@@ -3,11 +3,25 @@
 
 import type { SeedanceModelAlias } from '../../../../types/seedance'
 
+/**
+ * 按 token 计费的模型不适用时的标记。
+ *
+ * 万相 3.0 是**按秒**计费的（官方刊例 480P/720P/1080P = ¥0.3/0.6/1.2 每秒），
+ * 它的 task 压根不回传 `completion_tokens`，套不进这张表。这里不填一个假数字
+ * 蒙混 —— 那会让界面显示一个凭空捏造的价格，比不显示糟得多。
+ *
+ * 用显式标记而不是把表改成 `Partial`，是为了保住穷尽性：下一个按 token 计费的
+ * 模型漏填时仍然编译报错，而不是悄悄拿不到价。
+ */
+const NOT_TOKEN_BILLED = 'not-token-billed' as const
+
+type TokenPriceTier = { noVideo: number; withVideo: number }
+type TokenPriceEntry =
+  | { standard: TokenPriceTier; fhd?: TokenPriceTier }
+  | typeof NOT_TOKEN_BILLED
+
 /** $ / 1M tokens。standard = 480p/720p;fhd = 1080p(仅 2.0 满血有此档)。 */
-const PRICE_TABLE: Record<
-  SeedanceModelAlias,
-  { standard: { noVideo: number; withVideo: number }; fhd?: { noVideo: number; withVideo: number } }
-> = {
+const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   '2.0': {
     standard: { noVideo: 7.0, withVideo: 4.3 },
     fhd: { noVideo: 7.7, withVideo: 4.7 },
@@ -24,6 +38,28 @@ const PRICE_TABLE: Record<
   '2.5': {
     standard: { noVideo: 10.7, withVideo: 6.4 },
   },
+  // 按秒计费，走 CNY_PER_SECOND 那条路，不在这张表里出价。
+  wan3: NOT_TOKEN_BILLED,
+}
+
+/**
+ * ¥ / 秒。万相 3.0 官方刊例（480P / 720P / 1080P）。
+ *
+ * **刻意不换算成美元。** 汇率是会变的外部量，写死一个就是把「今天的汇率」冻进
+ * 代码，而没有任何东西会提醒我们它已经过时；用户看到的会是一个既不是账单、
+ * 也说不清哪天口径的数。所以两种货币各算各的、各显示各的 —— 界面上多一个符号，
+ * 好过一个看起来精确的错数。
+ */
+const CNY_PER_SECOND: Record<string, number> = {
+  '480p': 0.3,
+  '720p': 0.6,
+  '1080p': 1.2,
+}
+
+/** ¥/秒 单价。非按秒计费的模型、或未知分辨率返回 null。 */
+export function unitPriceCnyPerSecond(model: SeedanceModelAlias, resolution: string): number | null {
+  if (PRICE_TABLE[model] !== NOT_TOKEN_BILLED) return null
+  return CNY_PER_SECOND[resolution.toLowerCase()] ?? null
 }
 
 /** 单价($/1M tokens)。未知组合(如 fast/mini 配 1080p)返回 null。 */
@@ -33,7 +69,7 @@ export function unitPriceUsd(
   hasVideoInput: boolean,
 ): number | null {
   const entry = PRICE_TABLE[model]
-  if (!entry) return null
+  if (!entry || entry === NOT_TOKEN_BILLED) return null
   const tier = resolution === '1080p' ? entry.fhd : entry.standard
   if (!tier) return null
   return hasVideoInput ? tier.withVideo : tier.noVideo
@@ -45,6 +81,11 @@ export function unitPriceUsd(
  */
 function hasUsableTokens(completionTokens: number | undefined): completionTokens is number {
   return typeof completionTokens === 'number' && Number.isFinite(completionTokens) && completionTokens > 0
+}
+
+/** 同上，按秒计费那条路的对应判据。 */
+function hasUsableSeconds(billedSeconds: number | undefined): billedSeconds is number {
+  return typeof billedSeconds === 'number' && Number.isFinite(billedSeconds) && billedSeconds > 0
 }
 
 /** 按上游回传的 completion_tokens 估算本次费用(USD)。无法估算返回 null。 */
@@ -60,10 +101,38 @@ export function estimateCostUsd(
   return (completionTokens / 1_000_000) * price
 }
 
+/** 按实际出片秒数估算本次费用(CNY)。无法估算返回 null。 */
+export function estimateCostCny(
+  model: SeedanceModelAlias,
+  resolution: string,
+  billedSeconds: number | undefined,
+): number | null {
+  if (!hasUsableSeconds(billedSeconds)) return null
+  const price = unitPriceCnyPerSecond(model, resolution)
+  if (price == null) return null
+  return billedSeconds * price
+}
+
 /** 展示格式:$0.056(3 位小数,<0.001 显示 <$0.001)。 */
 export function formatCostUsd(cost: number): string {
   if (cost > 0 && cost < 0.001) return '<$0.001'
   return `$${cost.toFixed(3)}`
+}
+
+/** 展示格式:¥1.50。两位小数 —— 按秒计费的最小档是 ¥0.3/秒,不会小到看不见。 */
+export function formatCostCny(cost: number): string {
+  return `¥${cost.toFixed(2)}`
+}
+
+/**
+ * 两种货币的合计怎么显示成一句话。都为 0 时返回 null（调用方据此整块不渲染）。
+ * 有两种时并列，**不相加** —— 理由见 CNY_PER_SECOND。
+ */
+export function formatCostParts(usd: number, cny: number): string | null {
+  const parts = [usd > 0 ? formatCostUsd(usd) : null, cny > 0 ? formatCostCny(cny) : null].filter(
+    (p): p is string => p !== null,
+  )
+  return parts.length > 0 ? parts.join(' + ') : null
 }
 
 /** summarizeCostUsd 需要的最小卡片形状(不依赖 store,便于直接喂普通对象测)。 */
@@ -71,12 +140,19 @@ export interface CostCardLike {
   model: SeedanceModelAlias
   resolution: string
   completionTokens?: number
+  /** 按秒计费的模型（万相）用它。与 completionTokens 互斥。 */
+  billedSeconds?: number
   status: string
 }
 
 export interface WorkbenchCostSummary {
   /** 能算出单价的卡片费用合计(USD)。 */
   usd: number
+  /**
+   * 按秒计费部分的合计(CNY)。**与 `usd` 并列，不相加** —— 换算要写死汇率，
+   * 那等于把今天的汇率冻进代码，而没有任何东西会提醒它过期。
+   */
+  cny: number
   /** 计入合计的卡片数。 */
   counted: number
   /**
@@ -105,9 +181,22 @@ export function summarizeCostUsd<T extends CostCardLike>(
   hasVideoInput: (card: T) => boolean,
 ): WorkbenchCostSummary {
   let usd = 0
+  let cny = 0
   let counted = 0
   let unpriced = 0
   for (const card of cards) {
+    // 按秒计费那条路(万相)先走完 —— 它压根不回传 token,落到下面必然被记成
+    // 「已出片但估不出价」,而它其实是算得出来的。
+    if (hasUsableSeconds(card.billedSeconds)) {
+      const cost = estimateCostCny(card.model, card.resolution, card.billedSeconds)
+      if (cost != null) {
+        cny += cost
+        counted += 1
+      } else {
+        unpriced += 1
+      }
+      continue
+    }
     // 先判 token 再问 hasVideoInput:看板上绝大多数是草稿,算不出价,问了白烧。
     // 生产侧的判定本身已经是 O(1) 布尔(`cardHasVideoInput`),这条顺序纪律仍留着
     // —— 万一以后又有人塞回重型推导,草稿热路径不该为此买单。
@@ -125,5 +214,5 @@ export function summarizeCostUsd<T extends CostCardLike>(
     // token 可用却仍算不出 —— 价目表里没有这个 模型 × 分辨率 组合。
     unpriced += 1
   }
-  return { usd, counted, unpriced }
+  return { usd, cny, counted, unpriced }
 }

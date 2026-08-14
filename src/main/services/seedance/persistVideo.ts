@@ -29,8 +29,11 @@ export interface PersistVideoDeps {
   /**
    * 按 taskId 重查任务，拿一条**新签发**的 `content.video_url`（开发文档 §3.1/§3.4）。
    * 不提供时退化为只用调用方给的旧地址。
+   *
+   * 要 `model` 是因为重查得打对上游：万相的任务在 Ark 那边查不到。少这个参数
+   * 时万相卡片的「重新保存」会问错地方，然后报一句「任务不存在」。
    */
-  refreshVideoUrl?: (taskId: string) => Promise<string | undefined>
+  refreshVideoUrl?: (taskId: string, model: string) => Promise<string | undefined>
   ingest: (
     threadId: string,
     files: { name: string; mime: string; size: number; path: string }[],
@@ -66,7 +69,7 @@ async function resolveVideoUrl(
 ): Promise<string> {
   if (deps.refreshVideoUrl) {
     try {
-      const fresh = await deps.refreshVideoUrl(task.taskId)
+      const fresh = await deps.refreshVideoUrl(task.taskId, task.model)
       if (fresh) return fresh
       console.warn('[seedance] task re-query returned no video_url; falling back to stored URL')
     } catch (e) {

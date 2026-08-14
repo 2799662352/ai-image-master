@@ -1,5 +1,11 @@
-// Seedance 视频生成 —— main / preload / renderer 三端共享类型。
+// 视频生成 —— main / preload / renderer 三端共享类型。
+//
+// 文件名还叫 seedance 是历史原因（工作台最初只接 Seedance）；自 wan3 起这里是
+// **多 provider** 的模型能力真源，见 `VideoModelAlias` / `VideoModelProvider`。
 // 主进程实现细节见 src/main/services/seedance/。
+
+import type { VideoWorkbenchMode } from './videoModes'
+import { ALL_VIDEO_WORKBENCH_MODES } from './videoModes'
 
 /**
  * 上游任务状态（Ark 协议原样）。`cancelled` 由 DELETE 接口在 queued 阶段产生，
@@ -27,7 +33,27 @@ export interface SeedanceCancelResult {
 export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
 
 /** 对外暴露的友好模型名（mini = 最便宜档,仅 480p/720p）。 */
-export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5'
+/**
+ * 工作台能选的全部视频模型。
+ *
+ * 名字里没有 "Seedance" 是有意的:`wan3` 走的是完全不同的上游(阿里万相 3.0,
+ * 经 Miau 网关的 DashScope task),只是共用这张能力表、共用工作台 UI、共用任务
+ * 轮询与落盘那一整套。真正按 provider 分派的只有四处 —— 请求组包、响应解析、
+ * 计费公式、base URL,见各自的 `provider` 分支。
+ */
+export type VideoModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5' | 'wan3'
+
+/**
+ * @deprecated 用 `VideoModelAlias`。保留这个名字只是为了让既有的十几处引用不必
+ * 在同一个 PR 里全改;新代码不要再用。
+ */
+export type SeedanceModelAlias = VideoModelAlias
+
+/**
+ * 上游归属。决定请求体形状、响应取值路径、计费公式与 base URL —— 除此之外的
+ * 一切(能力校验、模式、素材管线、任务生命周期)都是共享的。
+ */
+export type VideoModelProvider = 'vvdance' | 'miau'
 
 /**
  * 2.5 独有的任务模式（文档 4.9）。两者都**必须带视频参考**、比例被上游强制
@@ -36,9 +62,44 @@ export type SeedanceModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5'
 export type SeedanceTaskMode = 'edit' | 'extend'
 
 export interface SeedanceModelCapabilities {
+  /** 上游归属。见 `VideoModelProvider`。 */
+  provider: VideoModelProvider
+  /**
+   * 这个模型接受的画幅。
+   *
+   * 曾经是 `WorkbenchCard.tsx` 里一个写死的数组 —— 分辨率和时长早就改成按模型
+   * 现算了，画幅漏了。后果是万相卡片上摆着一个 `21:9`（它不支持）、却没有
+   * `adaptive`（它的默认值），选中即提交失败。
+   */
+  ratios: readonly string[]
+  /**
+   * 随机种子上限（含）。Seedance 是 uint32，万相官方写明 [0, 2147483647]。
+   * 差这一位的后果是：用户填了个大数，界面收下了，上游拒了。
+   */
+  seedMax: number
+  /**
+   * 这个模型开放哪几种生成模式。
+   *
+   * ⚠️ 别把它和 `taskModes` 搞混（我第一版就搞混了）：
+   *
+   *   - `modes` 是**工作台 UI 模式**,决定这张卡收哪几类素材。「编辑视频 /
+   *     延长视频」Seedance 全家都有 —— 在 2.5 之前它们只是素材组合预设
+   *     (edit 带图+视频+音频、extend 只带视频),发出去是一次普通生成。
+   *   - `taskModes` 是**上游 API 参数**,2.5 独有(文档 4.9),由
+   *     `taskModeForCard` 按这张表派生,其余模型返回 undefined。
+   *
+   * 所以 Seedance 四个型号的 `modes` 都是全集;这个字段今天唯一真正收窄的是
+   * 万相 3.0。
+   */
+  modes: readonly VideoWorkbenchMode[]
   /** 固定秒数区间；`-1`（智能时长）任何模型都额外允许。 */
   duration: { min: number; max: number }
-  /** 上游接受的 `resolution` 白名单。 */
+  /**
+   * 上游接受的 `resolution` 白名单。
+   *
+   * 内部一律小写(`'720p'`),UI 与校验都按这个口径;万相上行要的是大写 `'720P'`,
+   * 由它的请求组包在最后一刻转换 —— 不把大小写差异漏进 UI。
+   */
   resolutions: readonly string[]
   maxImages: number
   maxVideos: number
@@ -53,6 +114,23 @@ export interface SeedanceModelCapabilities {
   audioOnlyReference: boolean
 }
 
+/** Seedance 全家的画幅集合。万相不一样（有 adaptive、没有 21:9），见它那行。 */
+const SEEDANCE_RATIOS: readonly string[] = ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] as const
+
+/**
+ * 万相的画幅。`adaptive` 是官方默认值（跟随输入素材与意图自动定），
+ * 且**没有** 21:9。
+ */
+const WAN3_RATIOS: readonly string[] = ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1'] as const
+
+/** 万相 3.0：只开四种，理由见下面 `wan3` 那行的注释。 */
+const WAN3_MODES: readonly VideoWorkbenchMode[] = [
+  'text2video',
+  'first_frame',
+  'first_last_frame',
+  'multimodal_ref',
+] as const
+
 /**
  * 各模型的上游约束 —— 「9/3/3」「4-15」这类数字的**唯一**出处。
  *
@@ -66,6 +144,10 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   SeedanceModelCapabilities
 > = {
   '2.0': {
+    provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p', '1080p', '4k'],
     maxImages: 9,
@@ -77,6 +159,10 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     audioOnlyReference: false,
   },
   '2.0-fast': {
+    provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     // 1080p 只配 2.0 —— 这条不是文档写的（文档只点名 4k 归 2.0 独占），是
     // videoTools 早先就立着的实战规则，收编进表时原样保留，不擅自放宽。
@@ -90,6 +176,10 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     audioOnlyReference: false,
   },
   '2.0-mini': {
+    provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 15 },
     resolutions: ['480p', '720p'],
     maxImages: 9,
@@ -101,6 +191,10 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     audioOnlyReference: false,
   },
   '2.5': {
+    provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 30 },
     resolutions: ['480p', '720p'],
     maxImages: 30,
@@ -109,6 +203,37 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     maxMaterialsTotal: 50,
     taskModes: ['edit', 'extend'],
     subtitleErase: false,
+    audioOnlyReference: true,
+  },
+  /**
+   * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
+   *
+   * 数字出自官方《万相 3.0 视频生成 API 参考》：多模态上限 图 10 / 视频 5 /
+   * 音频 5；时长 2–30 秒整数或 `-1`（智能时长）；分辨率 480P/720P/1080P。
+   *
+   * 模式按产品口径**只开四种**：文生、首帧、首尾帧、全能参考。刻意不开
+   * 「参考图」（与全能参考重复）、「编辑视频 / 延长视频」（官方虽有视频延长，
+   * 但不在本次范围内）。
+   *
+   * `maxMaterialsTotal` 取 20 = 10+5+5，即三类各自打满 —— 官方没有单独的总数
+   * 上限，所以这里不额外收紧。
+   */
+  wan3: {
+    provider: 'miau',
+    ratios: WAN3_RATIOS,
+    // 官方写明 [0, 2147483647]，比 Seedance 的 uint32 小一半。
+    seedMax: 2_147_483_647,
+    modes: WAN3_MODES,
+    duration: { min: 2, max: 30 },
+    resolutions: ['480p', '720p', '1080p'],
+    maxImages: 10,
+    maxVideos: 5,
+    maxAudios: 5,
+    maxMaterialsTotal: 20,
+    taskModes: [],
+    // 擦字幕是 Seedance 侧的开关，万相没有对应参数，传了会被上游拒。
+    subtitleErase: false,
+    // 官方允许「只给参考音频」的组合。
     audioOnlyReference: true,
   },
 }
@@ -213,6 +338,14 @@ export interface SeedanceTaskState {
   actualSeed?: number
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
   completionTokens?: number
+  /**
+   * succeeded 时上游回传的**实际出片秒数**（万相 `usage.output_video_duration`）。
+   *
+   * 与 `completionTokens` 互斥：按 token 计费的模型给前者，按秒计费的给后者。
+   * 不合成一个字段，是因为两者单位与单价表都不同 —— 合了之后必须再带一个
+   * 「这个数是什么」的标记，等于把类型信息塞进值里。
+   */
+  billedSeconds?: number
   /**
    * 渲染端用的「气泡身份」。generate_video 在真正 createTask 之前先用一个临时
    * clientId 广播一张「准备中」卡片；createTask 成功后真实任务的每条广播都带

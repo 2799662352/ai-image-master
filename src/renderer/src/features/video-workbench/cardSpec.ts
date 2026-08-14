@@ -21,6 +21,27 @@ import type {
 import type { SeedanceModelAlias } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
+import { parseDocumentOrLink } from '../../../../shared/wan3Document'
+
+/**
+ * 值不在这个模型的支持集里就退回默认值。
+ *
+ * 退回而不是报错：切模型是个随手动作，为此弹一个错误对话框太重；但**留着**
+ * 一个必被上游拒的值更糟 —— 用户要等一次网络往返才看到失败，而且失败信息里
+ * 不会提「因为你换了模型」。
+ */
+function clampToSupported<T extends string>(
+  value: T | undefined,
+  supported: readonly string[],
+  fallback: T,
+): T {
+  return value && supported.includes(value) ? value : fallback
+}
+
+/** 万相的官方默认画幅是 `adaptive`（跟随素材）；Seedance 家族是 16:9。 */
+function defaultRatioFor(model: SeedanceModelAlias): VideoWorkbenchSpec['ratio'] {
+  return capabilitiesFor(model).ratios.includes('adaptive') ? 'adaptive' : '16:9'
+}
 
 // 素材条数上限没有「与模型无关」的版本 —— 2.0 家族 9/3/3、2.5 是 30/10/10。
 // 这里曾摆着一组 MAX_REFERENCE_* 常量「给不知道模型的旧调用点用」,结果 2.5 接进来
@@ -127,13 +148,22 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
   return {
     prompt: input.prompt ?? '',
     model,
+    // 分辨率**刻意不收敛**：不支持的组合由 `canStart` 拦下并说明原因（「1080p
+    // 只有 2.0 支持」），那比悄悄把用户选的档位改掉更好。
     resolution: input.resolution ?? '720p',
-    ratio: input.ratio ?? '16:9',
+    // 画幅则必须收敛，因为它没有那层 canStart 检查，而且 `<select>` 的 value
+    // 落在选项之外时会渲染成**空白** —— 用户看到的是一个没有值的下拉框。
+    ratio: clampToSupported(input.ratio, capabilitiesFor(model).ratios, defaultRatioFor(model)),
     duration: lockDurationForMode(mode, normalizeDuration(input.duration ?? 5, model)),
     generateAudio: input.generateAudio !== false,
     mode,
     ...(seed !== undefined ? { seed } : {}),
     webSearch: input.webSearch !== false,
+    // 只保留能解析出来的:坏数据(手改过的持久化/旧格式)当没设置,
+    // 而不是原样留着等到提交时才炸。
+    ...(parseDocumentOrLink(input.documentOrLink)
+      ? { documentOrLink: input.documentOrLink as string }
+      : {}),
     referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages', model),
     referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos', model),
     referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios', model),
@@ -177,6 +207,7 @@ export function pickSpec(spec: VideoWorkbenchSpec): VideoWorkbenchSpec {
     mode: spec.mode,
     ...(spec.seed !== undefined ? { seed: spec.seed } : {}),
     webSearch: spec.webSearch,
+    ...(spec.documentOrLink ? { documentOrLink: spec.documentOrLink } : {}),
     referenceImages: spec.referenceImages,
     referenceVideos: spec.referenceVideos,
     referenceAudios: spec.referenceAudios,
@@ -205,6 +236,8 @@ export function specEquals(a: VideoWorkbenchSpec, b: VideoWorkbenchSpec): boolea
     && a.mode === b.mode
     && a.seed === b.seed
     && a.webSearch === b.webSearch
+    // 序列化字符串直接比:同一个槽位值序列化结果稳定(字段顺序由 serialize 固定)。
+    && (a.documentOrLink ?? '') === (b.documentOrLink ?? '')
     && materialsEqual(a.referenceImages, b.referenceImages)
     && materialsEqual(a.referenceVideos, b.referenceVideos)
     && materialsEqual(a.referenceAudios, b.referenceAudios)

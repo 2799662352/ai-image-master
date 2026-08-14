@@ -98,6 +98,17 @@ describe('buildCard 新字段默认值', () => {
 
   it('非法 mode 回退全能参考;seed 越界收敛', () => {
     expect(buildCard({ mode: 'bogus' as any }, 0).mode).toBe('multimodal_ref')
+  })
+
+  it('画幅按模型收敛 —— 换成万相后 21:9 不能原样留着', () => {
+    // 画幅没有 canStart 那层检查(分辨率有),而且 <select> 的 value 落在选项之外
+    // 时会渲染成空白。留着的话用户看到的是一个没有值的下拉框,提交还必被拒。
+    expect(buildCard({ model: 'wan3', ratio: '21:9' as any }, 0).ratio).toBe('adaptive')
+    // 万相支持的画幅原样保留。
+    expect(buildCard({ model: 'wan3', ratio: '9:16' }, 0).ratio).toBe('9:16')
+    // Seedance 的默认仍是 16:9,不受影响。
+    expect(buildCard({ model: '2.0' }, 0).ratio).toBe('16:9')
+    expect(buildCard({ model: '2.0', ratio: '21:9' }, 0).ratio).toBe('21:9')
     expect(buildCard({ seed: 99999999999 }, 0).seed).toBe(4294967295)
     expect(buildCard({ seed: -3 }, 0).seed).toBeUndefined()
   })

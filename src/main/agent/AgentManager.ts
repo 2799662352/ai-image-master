@@ -1628,7 +1628,7 @@ export class AgentManager {
           ),
         })),
         customProviders,
-        hasCredential: Boolean(this.codexApiKey),
+        hasCredential: (credentialId) => this.hasCredentialFor(credentialId),
         availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
           ?? new Map(),
       })
@@ -2157,10 +2157,28 @@ export class AgentManager {
         isDefault: row.isDefault,
       })),
       customProviders,
-      hasCredential: Boolean(this.codexApiKey),
+      hasCredential: (credentialId) => this.hasCredentialFor(credentialId),
       availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
         ?? new Map(),
     })
+  }
+
+  /**
+   * 某个凭据槽配好了没有。
+   *
+   * 当前网关那枚走内存副本 `codexApiKey`（它随 provider 事务实时更新，比回读
+   * store 准）；其余槽位（qwen/Miau 等借用别处凭据的通道）回落到持久化的
+   * `apiKeys`。不这么分的话，只配了 Miau 密钥的用户会看到 qwen 模型被标成
+   * 「请先配置网关 Key」——一枚它们根本不用的密钥。
+   */
+  private hasCredentialFor(credentialId: string): boolean {
+    const persisted = this.providerStore.loadSync()
+    const activeCredentialId = credentialIdForProvider(
+      this.activeGatewayId,
+      persisted.customProviders,
+    )
+    if (credentialId === activeCredentialId) return Boolean(this.codexApiKey)
+    return Boolean((persisted.apiKeys[credentialId] ?? '').trim())
   }
 
   private modelRoute(providerId: string, modelId: string) {
