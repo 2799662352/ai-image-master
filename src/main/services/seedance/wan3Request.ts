@@ -40,6 +40,7 @@
 import { capabilitiesFor } from '../../../types/seedance'
 import type { VideoModelAlias } from '../../../types/seedance'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
+import type { Wan3DocumentOrLink } from '../../../shared/wan3Document'
 import { WAN3_UPSTREAM_MODEL_ID } from './region'
 
 /**
@@ -83,12 +84,9 @@ export interface Wan3MediaItem {
   url: string
 }
 
-/** 文档 / 网页链接槽。`displayName` 只进 UI 与任务记录，**不上行**。 */
-export interface Wan3DocumentOrLink {
-  type: 'file' | 'link'
-  url: string
-  displayName?: string
-}
+// 槽位的类型与分类逻辑在 `shared/wan3Document`：渲染层的输入框要按后缀即时判断
+// 显示成「文档」还是「链接」，主进程只负责把它追加进 media[]。同一个形状只此一份。
+export type { Wan3DocumentOrLink } from '../../../shared/wan3Document'
 
 /** 官方接受的画幅。`adaptive` = 跟随首帧/参考。 */
 export const WAN3_ALLOWED_RATIOS: readonly string[] = [
