@@ -30,6 +30,18 @@ export interface ProviderChannelPreset extends CodexProviderConfig {
    * `gpt-5.5-openai-compact` — so the picker still offers it.
    */
   extraCatalogModels?: readonly string[]
+  /**
+   * 这个通道读哪一个凭据槽。缺省 = 所在网关那枚。
+   *
+   * qwen 是唯一的例外：它挂在 apiyi / rightcode 名下，用的却是
+   * `apiKeys['qwen']`（Miau token，与图片生成共用那枚）。
+   *
+   * ⚠️ 这个字段此前**没有声明**，qwen 通道那句 `credentialId: 'qwen'` 是凭空
+   * 多写进对象里的 —— 于是没有任何东西强制 `findInternalChannelProvider` 去
+   * 尊重它，它也确实被一行 `credentialId: gatewayId` 覆盖了整整一个版本。
+   * 声明出来，编译器才有立场。
+   */
+  credentialId?: string
   compatibilityPolicy: ProviderCompatibilityPolicy
 }
 
