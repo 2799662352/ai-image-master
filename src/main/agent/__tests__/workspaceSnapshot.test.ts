@@ -23,7 +23,34 @@ async function write(rel: string, content: string | Buffer): Promise<void> {
   await fs.writeFile(full, content)
 }
 
+/** Windows 上没开发者模式/管理员权限就建不了链接,建不了就让调用方跳过用例。 */
+async function trySymlink(target: string, rel: string, type: 'dir' | 'file'): Promise<boolean> {
+  try {
+    await fs.symlink(target, path.join(root, rel), type)
+    return true
+  } catch {
+    return false
+  }
+}
+
 describe('takeSnapshot', () => {
+  // 这条现在是靠 Dirent 的 lstat 语义自动成立的。钉住它,是因为哪天有人把
+  // isFile() 换成 fs.stat(跟随链接),环就会静悄悄地回来,而症状是扫描变慢
+  // 或整轮作废 —— 不会有人第一时间想到链接。
+  it('不跟符号链接 —— 目录环不能把遍历带进无限深,链接文件也不收内容', async (ctx) => {
+    await write('real.md', 'real\n')
+    // root/loop → root 自己:跟进去就是无限递归。
+    const madeDirLink = await trySymlink(root, 'loop', 'dir')
+    const madeFileLink = await trySymlink(path.join(root, 'real.md'), 'alias.md', 'file')
+    if (!madeDirLink || !madeFileLink) ctx.skip()
+
+    const snap = await takeSnapshot([root])
+
+    expect(snap.complete).toBe(true)
+    expect([...snap.files.keys()]).toEqual([path.join(root, 'real.md')])
+    expect(snap.skipped.has(path.join(root, 'alias.md'))).toBe(false)
+  })
+
   it('收下文本文件的内容', async () => {
     await write('a.md', 'hello\n')
     await write('sub/b.ts', 'export const x = 1\n')

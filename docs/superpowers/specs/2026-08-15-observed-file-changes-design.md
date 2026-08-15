@@ -31,10 +31,12 @@
 
 **和我们现在的口径完全一致,盲区也一样。** 所以上游核心层给不出答案。
 
-两个值得抄的纪律:
+两个值得抄的纪律,**两条都已落地**:
 - `track_delta` 里 `delta.is_exact()` 为假时直接 `invalidate()` 作废整轮,而不是
-  展示一份可能不准的。
-- diff 渲染有 100ms 超时,病态输入宁可降级也不卡住工具返回。
+  展示一份可能不准的。→ 对应我们「基线不可信就整轮作废」。
+- diff 渲染有 100ms 超时,病态输入宁可降级也不卡住工具返回。→ 对应
+  `snapshotDiff.DIFF_TIMEOUT_MS`;区别是我们超时后仍保留这条改动记录、只把正文
+  换成说明,因为漏报「这文件被改过」比不展示内容更坏。
 
 ### 二、`/diff` 命令
 
@@ -46,9 +48,15 @@ repository」。对非 git 目录无效——而内容创作类工作区(剧本�
 Desktop 会往用户仓库写 `refs/codex/turn-diffs/checkpoints/`,把整棵工作区树写成
 git 对象。**这正是「回合快照」思路的持久化版本,而它的代价在 issue 里摆着:**
 
+> 口径说明:这部分代码**不在开源仓库里**(repo 内搜 `turn-diffs` / `update-ref` /
+> `enable_git_checkpoints` 零命中),下面全部是从 issue 里的可观测症状反推的,
+> 不是读源码得到的结论。原帖把根因指向 `git-utils/src/baseline.rs`,那个指认是
+> **错的** —— 该模块只服务 `~/.codex/memories`。所以别把「它调了什么函数」当事实
+> 引用;能站住的只有症状本身,而症状已经足够支撑我们的取舍。
+
 | Issue | 后果 |
 |---|---|
-| [#29388](https://github.com/openai/codex/issues/29388) | 单项目 `.git/objects` 涨到 **102 GB**。`write_tree()` 遍历整个项目,每个文件 `write_blob` 写成 loose object,不认 `.gitignore`,不做 GC |
+| [#29388](https://github.com/openai/codex/issues/29388) | 单项目 `.git/objects` 涨到 **101.86 GiB**(8476 个 loose object,429 个 blob 超 100MB,仓库从 5.7 GB 涨到 140 GB)。不认 `.gitignore`,不做 GC |
 | [#30214](https://github.com/openai/codex/issues/30214) | **数据丢失**:连续三次 rollback 写坏内部 git 仓库,`HEAD` 变二进制垃圾,工作区文件永久丢失 |
 | [#37559](https://github.com/openai/codex/issues/37559) / [#35910](https://github.com/openai/codex/issues/35910) | checkpoint ref 路径 214 字符,超 Windows MAX_PATH |
 | [#31962](https://github.com/openai/codex/issues/31962) | `enable_git_checkpoints = false` 关不掉 |

@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { diffSnapshots } from '../snapshotDiff'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { structuredPatch } from 'diff'
+import { DIFF_TIMEOUT_MS, diffSnapshots } from '../snapshotDiff'
 import type { Snapshot } from '../workspaceSnapshot'
+
+// 默认走真实实现;只有超时那条用 mockReturnValueOnce 造出 jsdiff 放弃的返回值。
+// 真造一个能跑满 100ms 的病态输入既慢又会随机器快慢翻脸。
+vi.mock('diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('diff')>()
+  return { ...actual, structuredPatch: vi.fn(actual.structuredPatch) }
+})
 
 function snap(files: Record<string, string>, over: Partial<Snapshot> = {}): Snapshot {
   return {
@@ -12,6 +20,10 @@ function snap(files: Record<string, string>, over: Partial<Snapshot> = {}): Snap
 }
 
 describe('diffSnapshots', () => {
+  beforeEach(() => {
+    vi.mocked(structuredPatch).mockClear()
+  })
+
   it('内容变了 → edit,只给 hunk 不给 ---/+++ —— FileDiffBlock 按行首上色会把文件头当成删/增行', () => {
     const out = diffSnapshots(snap({ '/w/a.md': 'one\ntwo\n' }), snap({ '/w/a.md': 'one\nTWO\n' }))
 
@@ -68,6 +80,48 @@ describe('diffSnapshots', () => {
     const after = snap({}, { skipped: new Set(['/w/locked.md']) })
 
     expect(diffSnapshots(before, after)).toEqual([])
+  })
+
+  it('渲染带 timeout 上限 —— 病态输入不能把主进程卡在 Myers 里', () => {
+    diffSnapshots(snap({ '/w/a.md': 'one\n' }), snap({ '/w/a.md': 'two\n' }))
+
+    expect(vi.mocked(structuredPatch)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(structuredPatch).mock.calls[0]?.[6]).toMatchObject({
+      timeout: DIFF_TIMEOUT_MS,
+    })
+  })
+
+  it('渲染超时 → 这条改动照出,正文换成说明 —— 咽掉它就是漏报「这文件被命令行改过」', () => {
+    vi.mocked(structuredPatch).mockReturnValueOnce(undefined as never)
+
+    const out = diffSnapshots(
+      snap({ '/w/huge.json': 'before\n' }),
+      snap({ '/w/huge.json': 'after\n' }),
+    )
+
+    expect(out).toHaveLength(1)
+    expect(out[0].path).toBe('/w/huge.json')
+    expect(out[0].operation).toBe('edit')
+    expect(out[0].source).toBe('observed')
+    expect(out[0].diff).toContain('差异过大')
+    // 占位行不能以 +/- 开头,否则 FileDiffBlock 会把它上成增删色、countDiffLines 会数进去。
+    expect(out[0].diff).not.toMatch(/^[+-]/m)
+    expect(out[0].added).toBe(0)
+    expect(out[0].removed).toBe(0)
+  })
+
+  it('一个文件渲染超时不连累同轮其他文件', () => {
+    vi.mocked(structuredPatch).mockReturnValueOnce(undefined as never)
+
+    const out = diffSnapshots(
+      snap({ '/w/a.md': 'one\n', '/w/b.md': 'one\n' }),
+      snap({ '/w/a.md': 'two\n', '/w/b.md': 'two\n' }),
+    )
+
+    expect(out.map((c) => c.path)).toEqual(['/w/a.md', '/w/b.md'])
+    expect(out[0].diff).toContain('差异过大')
+    expect(out[1].diff).toContain('+two')
+    expect(out[1].added).toBe(1)
   })
 
   it('按路径排序,输出稳定', () => {

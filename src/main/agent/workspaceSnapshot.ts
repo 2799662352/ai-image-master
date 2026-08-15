@@ -27,6 +27,17 @@
  * 都留不下,却要实打实地 stat + 读满十万次,两个闸门谁都不会跳。而快照在交互
  * 路径上、每回合跑两次,扫描本身就是要防的成本。所以另设 maxEntries 直接数
  * 「看过几个文件条目」(留下的和跳过的都算),让预算真的是硬闸。
+ *
+ * ## 符号链接一律不跟
+ *
+ * 跟链接会带来两个真问题:`a/link → a` 这类环让遍历无限深(只有 maxEntries 兜
+ * 得住,而那是拿整轮作废换的);指向工作区外的链接则把不属于这里的文件算进
+ * 预算、甚至读进内存。所以链接既不递归也不收内容。
+ *
+ * 这一条**目前是靠 Dirent 的语义自动成立的** —— `withFileTypes` 给的是 lstat
+ * 口径,链接的 `isFile()` 和 `isDirectory()` 都是 false,于是被下面那句
+ * `!entry.isFile()` 直接滤掉。写在这里是因为它太隐蔽:哪天有人把判断换成
+ * `fs.stat`(跟随链接)就会静悄悄地把环放进来。已有测试钉住这个行为。
  */
 
 import { promises as fs } from 'node:fs'
@@ -112,6 +123,7 @@ export async function takeSnapshot(
         await walk(full, false)
         continue
       }
+      // 符号链接、FIFO、socket 全在这里被滤掉。链接不跟的理由见文件头。
       if (!entry.isFile()) continue
 
       entriesSeen += 1
