@@ -487,7 +487,7 @@ function createWindow(): void {
           // it the canvas edit pipeline can't produce a targetImagePath (export throws
           // "Refused to connect"/timeout), so annotations never reach the edit queue.
           // 同上:下载/复制老图走 fetch(url),所以 connect-src 也得继续认这台主机。
-          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
+          "connect-src 'self' https: wss: data: blob: local-file: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
             // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
             // and local-file:// for the file-explorer video previewer.
             "media-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",

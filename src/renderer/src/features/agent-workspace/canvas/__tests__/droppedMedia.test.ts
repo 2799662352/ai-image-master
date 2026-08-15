@@ -85,4 +85,25 @@ describe('canvasBridge.insertFileAt routing', () => {
     expect(card.meta.assetPath).toBe('C:/notes.txt')
     expect(card.props.kind).toBe('file')
   })
+
+  it('places an image via local-file:// without attachments.readThumb (no IPC bytes)', async () => {
+    const { editor, shapes } = makeEditor()
+    canvasBridge.setEditor(editor)
+    delete (window as { electronAPI?: unknown }).electronAPI
+    const res = await canvasBridge.insertFileAt('D:/work/shot.png', { x: 10, y: 20 })
+    expect(res).toEqual({ ok: true, kind: 'image' })
+    const asset = shapes.find((s) => s.typeName === 'asset')
+    expect(asset.props.src).toBe('local-file:///D%3A/work/shot.png')
+    expect(String(asset.props.src).startsWith('data:')).toBe(false)
+  })
+
+  it('places a video via the streamable media host without attachments.readThumb', async () => {
+    const { editor, shapes } = makeEditor()
+    canvasBridge.setEditor(editor)
+    delete (window as { electronAPI?: unknown }).electronAPI
+    const res = await canvasBridge.insertFileAt('D:/clips/out.mp4', { x: 0, y: 0 })
+    expect(res).toEqual({ ok: true, kind: 'video' })
+    const asset = shapes.find((s) => s.typeName === 'asset')
+    expect(asset.props.src).toBe(`local-file://media/?p=${encodeURIComponent('D:/clips/out.mp4')}`)
+  })
 })

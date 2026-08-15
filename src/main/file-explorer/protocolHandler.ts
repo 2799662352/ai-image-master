@@ -187,6 +187,11 @@ export function isAllowedLocalFileFetchSite(
   dest: string | null = null,
 ): boolean {
   if (dest === 'image' || dest === 'video' || dest === 'audio') return true
+  // tldraw's toImageDataUrl / dimension helpers `fetch()` asset src. Chromium
+  // labels that dest as `empty`. The renderer is our own trusted page; the
+  // protocol still rejects `..` traversal. Blocking this is what forced the
+  // canvas to inline multi-MB data: URLs (the OOM / relaunch loop).
+  if (dest === 'empty') return true
   return site == null || site === 'same-origin' || site === 'none'
 }
 
