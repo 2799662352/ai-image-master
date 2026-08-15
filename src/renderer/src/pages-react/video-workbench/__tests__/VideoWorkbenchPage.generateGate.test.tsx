@@ -62,6 +62,25 @@ describe('批量生成二次确认', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
   })
 
+  it('确认态下卡片集合变了就撤销确认 —— 不能拿旧数字骗人', async () => {
+    const submit = mockSubmit()
+    act(() => {
+      useVideoWorkbenchStore.getState().addCards([{ prompt: '猫' }])
+    })
+    render(<VideoWorkbenchPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /全部生成/ }))
+    expect(await screen.findByRole('button', { name: /确认生成 1 张/ })).toBeTruthy()
+
+    // agent 在这 3.5s 里又填了几张(人机同一块看板,这是常态)
+    act(() => {
+      useVideoWorkbenchStore.getState().addCards([{ prompt: '狗' }, { prompt: '鸟' }])
+    })
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /确认生成/ })).toBeNull())
+    expect(submit).not.toHaveBeenCalled()
+  })
+
   it('确认后按钮回到未确认态,不会连点两批', async () => {
     mockSubmit()
     act(() => {
