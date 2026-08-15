@@ -7,7 +7,7 @@
 // 人机协同:本页与 MCP video_workbench_* 工具操作同一个 useVideoWorkbenchStore,
 // agent 填卡/启动时页面实时可见;生成进度经 seedance:task-update 广播回流。
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   cardHasVideoInput,
   mountWorkbenchTaskListener,
@@ -55,6 +55,23 @@ export default function VideoWorkbenchPage() {
   const selectedCardIds = useVideoWorkbenchStore((s) => s.selectedCardIds)
   const clearSelection = useVideoWorkbenchStore((s) => s.clearSelection)
   const removeCards = useVideoWorkbenchStore((s) => s.removeCards)
+  const agentAutoStart = useVideoWorkbenchStore((s) => s.agentAutoStart)
+  const setAgentAutoStart = useVideoWorkbenchStore((s) => s.setAgentAutoStart)
+
+  // 批量生成的两步确认。一次误点烧的是整批额度,而这颗按钮的邻居是「添加卡片」
+  // 和「删除选中」—— 挨得近、后果不对称,所以要一道确认。3.5s 无操作自动复位,
+  // 与 BoardTabs 的删除确认同一套做法(不用 window.confirm:jsdom 里被禁用)。
+  const [confirmingStart, setConfirmingStart] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+  const disarmConfirm = (): void => {
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    setConfirmingStart(false)
+  }
 
   // 这份挂载是给「不经 AppLayout」的宿主用的(react-app/main.tsx 把本页单独
   // 渲进自己的 root)。在 AppLayout 宿主里 App 级已经挂了一份常驻,引用计数
@@ -101,6 +118,9 @@ export default function VideoWorkbenchPage() {
     allCards.some((c) => c.id === id && isWorthStarting(c)),
   ).length
   const batchDisabled = selectedCardIds.length > 0 ? selectedStartableCount === 0 : startableCount === 0
+  // 确认文案里的张数用的是「真会被启动的数量」,不是选中数 —— 用户凭这个数字
+  // 判断自己有没有点错,报大了就是骗人。
+  const batchStartCount = selectedCardIds.length > 0 ? selectedStartableCount : startableCount
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
   // cardHasVideoInput 与单卡显示 / 提交拆分同源,但不为布尔分配三个数组。
@@ -171,17 +191,54 @@ export default function VideoWorkbenchPage() {
             >
               {autoImportPortrait ? '◉' : '○'} 默认上传人像库
             </button>
+            {/* AI 自动生成总闸:关掉后 agent 只能填卡,最后那一下留给用户 */}
             <button
               type="button"
-              className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors disabled:opacity-40"
-              disabled={batchDisabled}
-              onClick={() => void startCards()}
+              aria-pressed={agentAutoStart}
+              title={
+                '允许 AI 自动生成(默认开)。开启:AI 可以自己按下生成。'
+                + '关闭:AI 照样能填卡片、改规格、排版,但不会替你点生成 —— '
+                + '它会把卡片准备好然后请你自己按「全部生成」。'
+              }
+              className={[
+                'text-xs px-3 py-2 border transition-colors',
+                agentAutoStart
+                  ? 'border-[#FCE300] bg-[#FCE300]/15 text-[#FCE300]'
+                  : 'border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300]',
+              ].join(' ')}
+              onClick={() => setAgentAutoStart(!agentAutoStart)}
             >
-              {/* 文案必须随选中态变 —— 否则用户会以为点的是「全部生成」而烧掉一批额度 */}
-              {selectedCardIds.length > 0
-                ? `⚡ 生成选中 ${selectedCardIds.length} 张`
-                : `⚡ 全部生成${startableCount > 0 ? `(${startableCount})` : ''}`}
+              {agentAutoStart ? '◉' : '○'} 允许 AI 自动生成
             </button>
+            {confirmingStart ? (
+              <button
+                type="button"
+                className="text-xs border border-[#FCE300] bg-[#FCE300]/20 text-[#FCE300] font-bold px-3 py-2 transition-colors"
+                onClick={() => {
+                  disarmConfirm()
+                  void startCards()
+                }}
+              >
+                ⚡ 确认生成 {batchStartCount} 张
+              </button>
+            ) : (
+              <button
+                type="button"
+                title="批量生成需二次确认"
+                className="text-xs border border-[#3F3F46] text-white/70 hover:border-[#FCE300] hover:text-[#FCE300] px-3 py-2 transition-colors disabled:opacity-40"
+                disabled={batchDisabled}
+                onClick={() => {
+                  setConfirmingStart(true)
+                  if (confirmTimer.current) clearTimeout(confirmTimer.current)
+                  confirmTimer.current = setTimeout(() => setConfirmingStart(false), 3500)
+                }}
+              >
+                {/* 文案必须随选中态变 —— 否则用户会以为点的是「全部生成」而烧掉一批额度 */}
+                {selectedCardIds.length > 0
+                  ? `⚡ 生成选中 ${selectedCardIds.length} 张`
+                  : `⚡ 全部生成${startableCount > 0 ? `(${startableCount})` : ''}`}
+              </button>
+            )}
             {selectedCardIds.length > 0 && (
               <>
                 <button

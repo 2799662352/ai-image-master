@@ -298,6 +298,13 @@ export function snapshotWorkbench(
 export interface StartResult {
   started: string[]
   skipped: Array<{ cardId: string; reason: string }>
+  /**
+   * 整批被「允许 AI 自动生成」总闸拦下,一次提交都没发。只会出现在 agent 那条路
+   * (startCardsFromAgent);用户自己点的生成永远不过这道闸。
+   */
+  blocked?: boolean
+  /** blocked 时给 agent 的一句话,让它照原样转告用户下一步怎么做。 */
+  hint?: string
 }
 
 /** 单张卡片的取消结果（`billed` 直接来自上游分档，见 SeedanceCancelResult）。 */
@@ -431,8 +438,20 @@ export interface VideoWorkbenchState {
   /** 「默认上传人像库」全局开关(localStorage 持久化,默认关)。 */
   autoImportPortrait: boolean
   setAutoImportPortrait: (enabled: boolean) => void
+  /** 「允许 AI 自动生成」总闸(localStorage 持久化,默认开)。 */
+  agentAutoStart: boolean
+  setAgentAutoStart: (enabled: boolean) => void
   /** 启动生成:缺省=全部可启动卡片;可指定 id 列表。并发提交。 */
   startCards: (ids?: string[]) => Promise<StartResult>
+  /**
+   * agent(MCP)专用的启动入口。总闸关着时一张都不提交,返回 blocked 让 agent
+   * 转告用户去工作台自己点。
+   *
+   * 单独开一个方法而不是在 startCards 里按调用方分支:MCP 有两条自动启动入口
+   * (video_workbench_start / add_tasks 的 autoStart),把闸门收在这一个函数里,
+   * 将来加第三条也漏不掉;而用户点的 startCards 永远不受影响。
+   */
+  startCardsFromAgent: (ids?: string[]) => Promise<StartResult>
   /**
    * 取消/放弃进行中的卡片。返回每张卡的计费口径 —— 上游只允许取消 queued
    * (不计费),running 无法取消(照样扣费),UI 据此写文案。
@@ -734,6 +753,9 @@ let hydrationPromise: Promise<void> | null = null
 /** 「默认上传人像库」开关的 localStorage 键。 */
 export const AUTO_IMPORT_PORTRAIT_KEY = 'vw-auto-import-portrait'
 
+/** 「允许 AI 自动生成」总闸的 localStorage 键。 */
+export const AGENT_AUTO_START_KEY = 'vw-agent-auto-start'
+
 /** 当前激活「页」的 localStorage 键(轻量元数据,不进 IndexedDB)。 */
 export const ACTIVE_BOARD_KEY = 'vw-active-board'
 
@@ -894,6 +916,20 @@ function readAutoImportPortrait(): boolean {
 }
 
 /**
+ * 未写过键默认**开** —— 这是既有行为,升级不该让人发现 agent 突然不干活了。
+ * 要挡住 agent 花钱是显式选择,所以只有显式 `'0'` 才关。
+ */
+function readAgentAutoStart(): boolean {
+  try {
+    const v = globalThis.localStorage?.getItem(AGENT_AUTO_START_KEY)
+    if (v == null) return true
+    return v !== '0'
+  } catch {
+    return true
+  }
+}
+
+/**
  * 一次整板写入的计划:内存里的新状态 + 只列真正变了的落盘增量。
  * 看板 IR 的 apply 与撤销/重做共用同一套提交路径。
  */
@@ -1017,6 +1053,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   undoStack: [],
   redoStack: [],
   autoImportPortrait: readAutoImportPortrait(),
+  agentAutoStart: readAgentAutoStart(),
 
   setAutoImportPortrait: (enabled) => {
     set({ autoImportPortrait: enabled })
@@ -1026,6 +1063,15 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       // localStorage 不可用(隐私模式等)时仅内存生效
     }
     mirrorAutoImportPortraitToMain(enabled)
+  },
+
+  setAgentAutoStart: (enabled) => {
+    set({ agentAutoStart: enabled })
+    try {
+      globalThis.localStorage?.setItem(AGENT_AUTO_START_KEY, enabled ? '1' : '0')
+    } catch {
+      // localStorage 不可用(隐私模式等)时仅内存生效
+    }
   },
 
   ensureHydrated: async () => {
@@ -1712,6 +1758,24 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (updated) schedulePersist(updated)
   },
 
+  startCardsFromAgent: async (ids) => {
+    if (get().agentAutoStart) return get().startCards(ids)
+    // 拦下时**不碰卡片状态** —— 留一张假的 preparing 比不启动更糟:用户会等一个
+    // 永远不来的结果。卡片保持原样,agent 拿着 hint 去请用户自己按。
+    return {
+      started: [],
+      skipped: (ids ?? []).map((cardId) => ({
+        cardId,
+        reason: '用户关闭了「允许 AI 自动生成」',
+      })),
+      blocked: true,
+      hint:
+        '用户在视频工作台关闭了「允许 AI 自动生成」,所以这批卡片没有提交。'
+        + '卡片已经填好了 —— 请告诉用户去工作台点「全部生成」,'
+        + '或者让他把那个开关打开后你再重试。不要反复重试。',
+    }
+  },
+
   startCards: async (ids) => {
     const api = getApi()?.videoWorkbench
     const result: StartResult = { started: [], skipped: [] }
@@ -2261,6 +2325,7 @@ export function resetWorkbenchStoreForTest(): void {
       undoStack: [],
       redoStack: [],
       autoImportPortrait: readAutoImportPortrait(),
+      agentAutoStart: readAgentAutoStart(),
     })
   } finally {
     restoringHistory = false
