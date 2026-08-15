@@ -24,6 +24,17 @@ import type {
  * its state entry. State lives in `<userData>/plugin-marketplace-state.json`,
  * separate from the per-skill marketplace ledger.
  *
+ * Upgrading diffs against the previous record and removes skills the plugin no
+ * longer ships. Without that pass a dropped skill would linger forever: the
+ * install loop only walks the NEW zip, and the ledger is replaced wholesale, so
+ * nothing would even remember the directory belonged to this plugin — it would
+ * be both un-updatable and un-uninstallable.
+ *
+ * We need this because skills land in one FLAT SHARED namespace. Codex's own
+ * marketplaces are git checkouts whose whole tree is replaced on
+ * `marketplace/upgrade`, so deletions propagate for free; per-item installers
+ * (us, Homebrew) have to reconcile explicitly instead.
+ *
  * Dependency-injected fetcher + paths keep this fully unit-testable without
  * Electron or real network — see `__tests__/pluginMarketplaceService.test.ts`.
  */
@@ -158,7 +169,30 @@ export class PluginMarketplaceService {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
     }
 
-    // 4. Record state.
+    const state = await this.loadState()
+
+    // 4. 升级差集:清掉「上一版有、这一版没有」的 skill 目录。
+    //
+    // 安装只按新包里的目录名逐个覆盖,从不回看上一次装了什么。所以插件删掉一个
+    // skill 时,那个目录会留在盘上永不更新;而紧接着台账被整条替换成新列表,
+    // 它连卸载都碰不到 —— 既不更新也删不掉的孤儿。
+    //
+    // 放在移动成功之后:安装失败已经回滚过,这时不该再动用户的盘。
+    // 放在写台账之前:清理用的是**旧**记录,写完就查不到了。
+    const previous = state.installed[pluginName]
+    if (previous) {
+      const stillShipped = new Set(installedSkills)
+      const ownedByOthers = await this.skillsOwnedByOthers(state, pluginName)
+      for (const skillName of previous.skills) {
+        if (stillShipped.has(skillName) || ownedByOthers.has(skillName)) continue
+        // 尽力而为:安装本身已经成功,清不掉一个孤儿不该让整次升级失败。
+        await fs
+          .rm(path.join(this.opts.userSkillsDir, skillName), { recursive: true, force: true })
+          .catch(() => {})
+      }
+    }
+
+    // 5. Record state.
     const record: InstalledPluginRecord = {
       name: pluginName,
       version: entry.version,
@@ -166,7 +200,6 @@ export class PluginMarketplaceService {
       sha256: digest,
       skills: installedSkills.sort(),
     }
-    const state = await this.loadState()
     state.installed[pluginName] = record
     await this.saveState(state)
 
@@ -178,17 +211,7 @@ export class PluginMarketplaceService {
     const record = state.installed[pluginName]
     if (!record) return
 
-    // Don't delete a skill dir that something else still owns: another
-    // installed plugin, or the per-skill marketplace ledger. Otherwise
-    // uninstalling this plugin would silently destroy an independently-managed
-    // skill (review finding I2).
-    const keep = new Set<string>()
-    for (const [name, rec] of Object.entries(state.installed)) {
-      if (name === pluginName) continue
-      for (const s of rec.skills) keep.add(s)
-    }
-    for (const s of await this.readSkillLedgerNames()) keep.add(s)
-
+    const keep = await this.skillsOwnedByOthers(state, pluginName)
     for (const skillName of record.skills) {
       if (keep.has(skillName)) continue
       const targetDir = path.join(this.opts.userSkillsDir, skillName)
@@ -197,6 +220,28 @@ export class PluginMarketplaceService {
 
     delete state.installed[pluginName]
     await this.saveState(state)
+  }
+
+  /**
+   * 除 `excludePlugin` 外,还有谁占着 skill 目录。
+   *
+   * skill 装在**共享的平铺命名空间** `<userSkillsDir>/<name>/` 下,同一个目录可能
+   * 同时被另一个已装插件、或单技能市场的台账拥有。删之前必须问一遍,否则会静默毁掉
+   * 别人管理的 skill(review finding I2)。
+   *
+   * 卸载与升级差集共用这一份判定 —— 两处各写一份的话,迟早只有一处记得问。
+   */
+  private async skillsOwnedByOthers(
+    state: PluginMarketplaceState,
+    excludePlugin: string,
+  ): Promise<Set<string>> {
+    const owned = new Set<string>()
+    for (const [name, rec] of Object.entries(state.installed)) {
+      if (name === excludePlugin) continue
+      for (const s of rec.skills) owned.add(s)
+    }
+    for (const s of await this.readSkillLedgerNames()) owned.add(s)
+    return owned
   }
 
   /** Best-effort read of skill names owned by the per-skill marketplace. */
