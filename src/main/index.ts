@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance, AutoUpdater } from './updater'
 import { resolveMainWindowShortcut } from './keyboardShortcuts'
+import { classifyContextMenuLink } from './contextMenuLink'
 import {
   submitSplit,
   cancelTask,
@@ -799,19 +800,48 @@ function createWindow(): void {
     }
 
     if (params.linkURL) {
-      menuTemplate.push(
-        {
-          label: '复制链接',
-          click: () => {
-            clipboard.writeText(params.linkURL)
-          }
-        },
-        {
-          label: '在浏览器中打开',
-          click: () => shell.openExternal(params.linkURL)
-        },
-        { type: 'separator' }
-      )
+      // 本地文件和网页链接要给不同的动作 —— 对着一条 `D:\...\脚本.md` 给
+      // 「在浏览器中打开」,用户得到的是「点了没反应」。见 contextMenuLink.ts。
+      const link = classifyContextMenuLink(params.linkURL)
+      if (link.kind === 'file') {
+        menuTemplate.push(
+          {
+            label: '在文件夹中显示',
+            click: () => shell.showItemInFolder(link.osPath)
+          },
+          {
+            label: '用默认程序打开',
+            click: () => {
+              void shell.openPath(link.osPath).then((err) => {
+                // openPath 用返回值报错而不是抛。静默失败会让这一项看起来和
+                // 修好之前一模一样。
+                if (err) dialog.showErrorBox('打开文件失败', err)
+              })
+            }
+          },
+          {
+            label: '复制路径',
+            click: () => {
+              clipboard.writeText(link.osPath)
+            }
+          },
+          { type: 'separator' }
+        )
+      } else {
+        menuTemplate.push(
+          {
+            label: '复制链接',
+            click: () => {
+              clipboard.writeText(link.url)
+            }
+          },
+          {
+            label: '在浏览器中打开',
+            click: () => shell.openExternal(link.url)
+          },
+          { type: 'separator' }
+        )
+      }
     }
 
     if (params.selectionText) {
