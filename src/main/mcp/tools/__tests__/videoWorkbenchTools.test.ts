@@ -524,7 +524,14 @@ describe('handlers → router.call 透传与 banner', () => {
   })
 
   it('add_tasks:结果 JSON 进回包;autoStart 时 banner 明令不许轮询、说明完成会推送', async () => {
-    const { tools, server, router } = capture({ cardIds: ['c1', 'c2'], total: 2 })
+    // 假数据必须带 start —— 真实渲染端在 autoStart 时一定回它,而 banner 现在按
+    // **结果**说话(用户可以关掉「允许 AI 自动生成」,那时一张都没提交,照请求参数
+    // 宣布「已开始渲染」就是对用户说假话)。
+    const { tools, server, router } = capture({
+      cardIds: ['c1', 'c2'],
+      total: 2,
+      start: { started: ['c1', 'c2'], skipped: [] },
+    })
     registerVideoWorkbenchTools(server, router)
     const tool = toolByName(tools, 'video_workbench_add_tasks')
     const res = await tool.handler({ tasks: [{ prompt: 'a' }, { prompt: 'b' }], autoStart: true })

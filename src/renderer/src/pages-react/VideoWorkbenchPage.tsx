@@ -122,6 +122,15 @@ export default function VideoWorkbenchPage() {
   // 判断自己有没有点错,报大了就是骗人。
   const batchStartCount = selectedCardIds.length > 0 ? selectedStartableCount : startableCount
 
+  // 确认态期间待启动集合变了(agent 又填了卡、用户改了选中、某张卡跑完了)就撤销
+  // 确认。否则按钮上写着「确认生成 2 张」,点下去启动的却是 7 张 —— 这颗按钮存在
+  // 的全部意义就是那个数字,它一旦过期,确认比不确认更坏。
+  useEffect(() => {
+    disarmConfirm()
+    // disarmConfirm 只碰 ref 与 setState,不需要进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchStartCount])
+
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
   // cardHasVideoInput 与单卡显示 / 提交拆分同源,但不为布尔分配三个数组。
   const boardCost = summarizeCostUsd(cards, cardHasVideoInput)

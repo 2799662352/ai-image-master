@@ -214,6 +214,28 @@ const cardSnapshotSchema = z.looseObject({
 const startResultShape = {
   started: z.array(z.string()),
   skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })),
+  blocked: z.boolean().optional().describe(
+    'true = 用户在工作台关闭了「允许 AI 自动生成」,整批一张都没提交。不要重试,'
+    + '请用户自己点「全部生成」或让他打开那个开关。',
+  ),
+  hint: z.string().optional().describe('blocked 时给用户的原话。'),
+}
+
+/**
+ * 「整批被总闸拦下」的横幅。
+ *
+ * 单独提出来是因为这句话必须按**结果**说,不能按请求参数说 —— add_tasks 以前是
+ * 看 `params.autoStart` 写横幅的,于是开关关着时它照旧宣布「Rendering started」
+ * 并承诺完成推送,模型转头就告诉用户在渲染了,然后等一条永远不来的推送。
+ */
+const AUTO_START_BLOCKED_BANNER =
+  '🚫 没有启动任何渲染:用户在视频工作台关闭了「允许 AI 自动生成」。卡片已经填好了。'
+  + '不要重试、不要改用别的工具绕过 —— 请告诉用户去工作台点「全部生成」,'
+  + '或者让他把「允许 AI 自动生成」打开后你再启动。'
+
+/** 渲染端 start 结果里「被总闸拦下」的判定(两个工具共用一份口径)。 */
+function isAutoStartBlocked(result: unknown): boolean {
+  return (result as { blocked?: unknown } | null | undefined)?.blocked === true
 }
 
 const addTasksOutputSchema = z.looseObject({
@@ -562,7 +584,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
       'multiple boards/pages — see video_workbench_status). Each card carries a prompt + Seedance spec ' +
       '(model/resolution/ratio/duration) + reference materials. By default this only FILLS the cards ' +
-      '(user reviews and clicks generate); pass autoStart:true to start rendering immediately. The app ' +
+      '(user reviews and clicks generate); pass autoStart:true to start rendering immediately — but the ' +
+      'user can switch off 「允许 AI 自动生成」 in the workbench, and then autoStart is REFUSED (the result ' +
+      'says blocked; ask them to click 「全部生成」 themselves instead of retrying). The app ' +
       'auto-navigates to the workbench tab so the user watches the cards appear. The result includes a ' +
       'compact `workbench` overview (boards + global status counts) so you always see the whole ' +
       'workbench after writing. Use this when the user asks to 排卡片/批量准备视频任务/在生成视频页帮我' +
@@ -605,11 +629,19 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_add_tasks', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      // 按**结果**决定第二句,不按 params.autoStart —— 用户可能把总闸关了,
+      // 那时一张都没提交,宣布「已开始渲染」就是对用户说假话。
+      const start = (result as { start?: unknown } | null | undefined)?.start
+      const startedCount = Array.isArray((start as { started?: unknown } | undefined)?.started)
+        ? (start as { started: string[] }).started.length
+        : 0
       return okResult([
         '✅ video_workbench_add_tasks — cards added to the workbench page (visible to the user).',
-        (params as { autoStart?: boolean }).autoStart
-          ? 'Rendering started — this returned IMMEDIATELY and a normal render takes 1–3 minutes. Do NOT poll and do NOT wait: a 「[视频工作台] 批次渲染完成」 summary is pushed to you automatically once every card settles. Results play inline on the workbench page and are saved locally + to COS automatically. Answer the user now and stay available.'
-          : 'Cards are FILLED but not started. Ask the user to review, or call video_workbench_start to begin rendering.',
+        isAutoStartBlocked(start)
+          ? AUTO_START_BLOCKED_BANNER
+          : startedCount > 0
+            ? 'Rendering started — this returned IMMEDIATELY and a normal render takes 1–3 minutes. Do NOT poll and do NOT wait: a 「[视频工作台] 批次渲染完成」 summary is pushed to you automatically once every card settles. Results play inline on the workbench page and are saved locally + to COS automatically. Answer the user now and stay available.'
+            : 'Cards are FILLED but not started. Ask the user to review, or call video_workbench_start to begin rendering.',
       ], result)
     } catch (error) {
       return errorResult('video_workbench_add_tasks', error)
@@ -881,7 +913,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'with started/skipped plus a compact `workbench` overview — it does NOT wait for the renders. ' +
       'Do NOT poll video_workbench_status afterwards: when every card in the batch settles you are ' +
       'pushed a 「[视频工作台] 批次渲染完成」 summary listing successes, failures and output paths. ' +
-      'The user watches live progress on the workbench page meanwhile.',
+      'The user watches live progress on the workbench page meanwhile. ' +
+      'The user can switch off 「允许 AI 自动生成」 in the workbench; then this call starts NOTHING and ' +
+      'comes back with blocked:true — do not retry, ask them to click 「全部生成」 themselves.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
     }),
@@ -894,9 +928,13 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         skipped: Array<{ cardId: string; reason: string }>
       }
       return okResult([
-        result.started.length > 0
-          ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
-          : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
+        isAutoStartBlocked(result)
+          // 「see skipped reasons」在这条路上会骗人:不带 cardIds 的调用被拦时
+          // skipped 是空的,模型被指向一个不存在的东西,永远猜不到是开关关着。
+          ? AUTO_START_BLOCKED_BANNER
+          : result.started.length > 0
+            ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
+            : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
       ], result)
     } catch (error) {
       return errorResult('video_workbench_start', error)
