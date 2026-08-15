@@ -4750,16 +4750,22 @@ export class AgentManager {
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
-      // 回合一开始就异步拍基线。没跑过命令 / 赛跑输了 / 超预算都会在 finish
-      // 里收敛成空数组 —— 判断集中在 observedChanges.ts,这里只负责喂依赖。
       const makeObserver = (): ObservedChangeTracker =>
         beginObservedChanges({
           roots: () => [...this.allowedRoots],
           snapshot: (roots) => takeSnapshot(roots),
           diff: diffSnapshots,
         })
-      let observer: ObservedChangeTracker | null = makeObserver()
+      let observer: ObservedChangeTracker | null = null
+      // 武装动作放进 try 里:这个功能是装饰性的,连它的构造都不该有能力弄坏一个回合。
+      // (今天 makeObserver 也抛不出来 —— takeSnapshot 是 async 函数 —— 但那是巧合
+      // 而非结构保证,而巧合会在别人改动它签名的那天失效。)
+      //
+      // 又必须尽早:基线拍完得赶在第一条命令之前,晚一拍就多一分输掉赛跑、整轮作废
+      // 的概率。所以是在 for-await 之前武装,而不是等第一个事件进来 —— 首个事件可能
+      // 隔着一整个网络往返。
       try {
+        observer = makeObserver()
         for await (const event of eventStream) {
           // 追踪器和 assistantItems 同寿:turn_completed 处把它卸掉,这里在下一个
           // 回合的第一个事件上重新武装。常态下迭代器在 turn_completed 之后就结束,

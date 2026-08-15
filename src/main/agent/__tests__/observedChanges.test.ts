@@ -4,7 +4,7 @@
 // 「快照不完整」和「快照抛错」各拆成起始/结束两条:两次快照共用一个假实现时,
 // 一条用例会同时满足两个判断,删掉其中任何一个它都还是绿的 —— 那样的用例挡不住
 // 任何回归。所以这里用「第 1 次成功、第 2 次出问题」的假实现把两端分开考。
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
 import { beginObservedChanges } from '../observedChanges'
 import type { Snapshot } from '../workspaceSnapshot'
@@ -39,17 +39,32 @@ function deps(over: Partial<Parameters<typeof beginObservedChanges>[0]> = {}) {
 }
 
 describe('beginObservedChanges', () => {
+  // 作废是静默的,查起来无迹可寻,所以「不可信」的出口都要留一行日志。反过来,
+  // 常态(没跑命令 / 跑了但没改动)不能记 —— 那会把日志变成噪音,真出事时反而看不见。
+  let warn: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warn.mockRestore()
+  })
+
   it('跑过命令且基线可信 → 给出观察到的改动', async () => {
     const t = beginObservedChanges(deps())
     t.noteShellStarted()
 
     await expect(t.finish(new Set())).resolves.toEqual([change('/w/a.md')])
+    expect(warn).not.toHaveBeenCalled()
   })
 
   it('本轮没跑过命令 → 不显示(apply_patch 那条路已全覆盖,不该猜)', async () => {
     const t = beginObservedChanges(deps())
 
     await expect(t.finish(new Set())).resolves.toEqual([])
+    // 这是常态,不是异常:一个只聊天的回合不该往日志里写东西。
+    expect(warn).not.toHaveBeenCalled()
   })
 
   it('命令比起始快照先到 → 基线可能已被污染,整轮作废', async () => {
@@ -63,6 +78,7 @@ describe('beginObservedChanges', () => {
     release()
 
     await expect(t.finish(new Set())).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledOnce()
   })
 
   it('起始快照不完整 → 作废(结束那次是完整的,只能靠 before 挡下来)', async () => {
@@ -72,6 +88,7 @@ describe('beginObservedChanges', () => {
     t.noteShellStarted()
 
     await expect(t.finish(new Set())).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledOnce()
   })
 
   it('结束快照不完整 → 作废(起始那次是完整的,只能靠 after 挡下来)', async () => {
@@ -81,6 +98,7 @@ describe('beginObservedChanges', () => {
     t.noteShellStarted()
 
     await expect(t.finish(new Set())).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledOnce()
   })
 
   it('起始快照抛错 → 作废,不炸掉回合', async () => {
@@ -95,6 +113,8 @@ describe('beginObservedChanges', () => {
     t.noteShellStarted()
 
     await expect(t.finish(new Set())).resolves.toEqual([])
+    // 抛错走的是 before === null 那条,不能被误记成「赛跑输了」。
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('起始快照抛错'))
   })
 
   it('结束快照抛错 → 作废,不炸掉回合(起始那次成功,走的是另一条 catch)', async () => {
@@ -109,6 +129,7 @@ describe('beginObservedChanges', () => {
     t.noteShellStarted()
 
     await expect(t.finish(new Set())).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('结束快照抛错'))
   })
 
   it('apply_patch 已报告过的路径要减掉,否则同一个文件出现两条', async () => {

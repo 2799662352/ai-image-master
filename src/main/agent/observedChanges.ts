@@ -110,20 +110,33 @@ export function beginObservedChanges(deps: ObservedChangesDeps): ObservedChangeT
   // 首次调用传进来的 reportedPaths 即为准,本就每回合只调一次。
   let result: Promise<FileChange[]> | null = null
 
+  /**
+   * 作废是静默的,而这正是它的危险之处:用户只会看到「卡片没出来」,分不清是本轮
+   * 真的没改动(常态,不该有日志)还是基线不可信被整轮丢掉了(异常,查起来无迹可寻)。
+   * 所以只在**不可信**的四个出口记一行 —— 没跑过命令、以及「跑了但没改动」都不记。
+   */
+  function discard(reason: string): FileChange[] {
+    console.warn(`[observedChanges] 本轮命令行改动不予显示:${reason}`)
+    return []
+  }
+
   async function compute(reportedPaths: Set<string>): Promise<FileChange[]> {
     if (!sawShell) return []
-    if (!(await baselineWon)) return []
+    if (!(await baselineWon)) {
+      return discard('第一条命令早于起始快照拍完,基线可能已被它自己污染')
+    }
 
     const before = await baseline
-    if (!before || !before.complete) return []
+    if (!before) return discard('起始快照抛错')
+    if (!before.complete) return discard('起始快照超预算或有目录读不动')
 
     let after: Snapshot
     try {
       after = await deps.snapshot(roots)
     } catch {
-      return []
+      return discard('结束快照抛错')
     }
-    if (!after.complete) return []
+    if (!after.complete) return discard('结束快照超预算或有目录读不动')
 
     const reportedKeys = comparableKeys(reportedPaths, roots)
     return deps.diff(before, after).filter((change) => !reportedKeys.has(comparableKey(change.path)))
