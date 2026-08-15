@@ -283,10 +283,20 @@ test('video and storyboard instructions match runtime limits and orchestration c
   assert.match(sd2, /生产文字优先在后期用确定性字幕\/图层叠加/)
   assert.match(sd2, /生成后必须做内容 QA/)
 
-  for (const runtimeContract of [videoTool, videoCraft, capabilities]) {
-    assert.match(runtimeContract, /480p[\s\S]*720p[\s\S]*1080p/)
-    assert.match(runtimeContract, /16:9[\s\S]*9:16[\s\S]*4:3[\s\S]*3:4[\s\S]*1:1[\s\S]*21:9/)
+  // skill 文档里仍然逐字列出选项 —— 它们是给人读的，没有别的真源可依。
+  for (const skillDoc of [videoCraft, capabilities]) {
+    assert.match(skillDoc, /480p[\s\S]*720p[\s\S]*1080p/)
+    assert.match(skillDoc, /16:9[\s\S]*9:16[\s\S]*4:3[\s\S]*3:4[\s\S]*1:1[\s\S]*21:9/)
   }
+
+  // 运行时工具**不**再逐字列 —— 它从能力表派生（万相接进来时，手填的那份漏了
+  // wan3，而这正是 2.5 踩过的坑：导出含该模型卡片的板子再 apply 会被 zod 当场拒）。
+  // 断言因此从「字面量对得上」升级为「确实取自单一真源」，这是更强的保证：
+  // 加模型时工具自动跟上，不需要有人记得同步这里。
+  assert.match(videoTool, /ALL_VIDEO_MODEL_ALIASES/)
+  assert.match(videoTool, /ALL_VIDEO_RESOLUTIONS/)
+  assert.match(videoTool, /ALL_VIDEO_RATIOS/)
+  assert.doesNotMatch(videoTool, /z\.enum\(\['480p', '720p', '1080p'\]\)/)
 })
 
 test('skill-authored media tokens use @ while runtime canonicalization stays explicit', async () => {
