@@ -71,6 +71,16 @@ export interface FileChange {
   diff: string
   added: number
   removed: number
+  /**
+   * 这条改动是怎么知道的。
+   *
+   * - `reported`(缺省)—— agent 通过 apply_patch / 文件编辑工具报告的,可信。
+   * - `observed` —— 我们对比回合前后的工作区快照观察到的。**不保证是 agent
+   *   改的**:用户在别的编辑器里的改动、后台进程写出的产物都可能落进来。
+   *
+   * 可选是为了已经落库的历史行仍然合法。
+   */
+  source?: 'reported' | 'observed'
 }
 
 export interface FileEditItem extends BaseItem {
