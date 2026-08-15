@@ -15,27 +15,22 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskStatus,
 } from './seedance'
+import type { VideoWorkbenchMode } from './videoModes'
 
 /**
- * 生成模式（移植自 soraui 旧工作台 VolcengineArkVideoMode）：
- * 文生视频 / 首帧 / 首尾帧 / 参考图 / 全能参考(多模态) / 编辑视频 / 延长视频。
- * 模式决定素材上限与提交时的 role 语义（首帧/尾帧 vs reference_*）。
+ * 生成模式。定义搬到了 `./videoModes` —— 能力表要按模型声明可用模式，而本文件
+ * 与 `seedance.ts` 都有运行时导出，互相 import 会成真环。这里 re-export，现有
+ * 引用不受影响。
  */
-export type VideoWorkbenchMode =
-  | 'text2video'
-  | 'first_frame'
-  | 'first_last_frame'
-  | 'reference_images'
-  | 'multimodal_ref'
-  | 'edit_video'
-  | 'extend_video'
+export type { VideoWorkbenchMode } from './videoModes'
 
 /** 工作台卡片可编辑的视频规格（Seedance 支持的参数面）。 */
 export interface VideoWorkbenchSpec {
   prompt: string
   model: SeedanceModelAlias
   resolution: '480p' | '720p' | '1080p'
-  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  /** `adaptive` 仅万相有（它的官方默认值）；`21:9` 仅 Seedance 有。见能力表 `ratios`。 */
+  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   /** 视频时长（秒，4–15;-1 = 智能时长,模型自动决定,文档 8.1）。 */
   duration: number
   generateAudio: boolean
@@ -45,6 +40,13 @@ export interface VideoWorkbenchSpec {
   seed?: number
   /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。仅 Seedance 2.0。 */
   webSearch: boolean
+  /**
+   * 文档 / 网页链接槽（仅万相 3.0）。存**序列化后的 JSON 字符串**，空/缺省 = 未设置。
+   *
+   * 不直接存对象：那样持久化 schema 要跟着加一层嵌套并做迁移，而这里「有/无」
+   * 两态就够了。读写用 `shared/wan3Document` 的 parse/serialize，别手搓 JSON。
+   */
+  documentOrLink?: string
   /** 参考图（≤9）：data: URL / 本地路径 / https / asset://。 */
   referenceImages: VideoWorkbenchMaterial[]
   /** 参考视频（≤3，总时长 ≤15s）。 */
@@ -250,6 +252,8 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   actualSeed?: number
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径）。 */
   completionTokens?: number
+  /** succeeded 时上游回传的实际出片秒数（按秒计费的模型用它estimate，如万相）。 */
+  billedSeconds?: number
   /** 该任务的成功结果已写入「历史记录」(防重:重载/重复广播不再入库)。 */
   historyRecorded?: boolean
   /**
@@ -275,13 +279,15 @@ export interface VideoWorkbenchCardInput {
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'
-  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration?: number
   generateAudio?: boolean
   mode?: VideoWorkbenchMode
   /** 随机种子;传 null 表示清除（恢复随机）。 */
   seed?: number | null
   webSearch?: boolean
+  /** 文档 / 网页链接槽（仅万相）。序列化 JSON；空串 = 清除。 */
+  documentOrLink?: string
   /**
    * 字符串源（本地路径 / https / asset:// / data:，会包成 Material），
    * 或已解析好的 Material 对象（MCP 写入侧给 asset:// 引用带 previewUrl）。
@@ -308,7 +314,8 @@ export interface VideoWorkbenchVersionSpec {
   prompt: string
   model: SeedanceModelAlias
   resolution: '480p' | '720p' | '1080p'
-  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  /** `adaptive` 仅万相有（它的官方默认值）；`21:9` 仅 Seedance 有。见能力表 `ratios`。 */
+  ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration: number
   generateAudio: boolean
   mode: VideoWorkbenchMode
@@ -338,6 +345,7 @@ export interface VideoWorkbenchVersion {
   videoUrl?: string
   actualSeed?: number
   completionTokens?: number
+  billedSeconds?: number
   spec: VideoWorkbenchVersionSpec
 }
 
@@ -426,12 +434,13 @@ export interface WorkbenchIRCard {
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'
-  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9'
+  ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration?: number
   generateAudio?: boolean
   mode?: VideoWorkbenchMode
   seed?: number
   webSearch?: boolean
+  documentOrLink?: string
   referenceImages?: WorkbenchIRMaterial[]
   referenceVideos?: WorkbenchIRMaterial[]
   referenceAudios?: WorkbenchIRMaterial[]
@@ -558,6 +567,21 @@ export interface VideoWorkbenchSubmitPayload {
    * 这个参数 —— 也就是说 2.5 之前选「编辑视频」发出去的其实是一次普通生成。
    */
   taskMode?: SeedanceTaskMode
+  /**
+   * 卡片的原始模式。
+   *
+   * Seedance 那条路不需要它 —— 模式已经被 `buildModeMedia` 摊平进
+   * firstFrame / lastFrame / reference* 了。万相需要：它的组包按模式选分支，并且
+   * 要拿模式去核对模型能力表（`caps.modes`）。
+   *
+   * 刻意**不**从摊平后的字段反推。反推在「首帧+尾帧」这类形状上确实还原得回来，
+   * 但 `edit_video` / `extend_video` 会被反推成「带参考视频的多模态参考」——
+   * 用户选的是「编辑视频」，发出去的却是一次普通生成，而且不报任何错。
+   * 这个坑上游 taskMode 已经踩过一次（见上一个字段的注释）。
+   */
+  mode?: VideoWorkbenchMode
+  /** 文档 / 网页链接槽（仅万相）。序列化 JSON；缺省 = 没有。 */
+  documentOrLink?: string
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]

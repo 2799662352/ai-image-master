@@ -38,7 +38,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId: 'rightcode',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -81,7 +81,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId,
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5'), dynamicModel('claude-fable-5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -96,7 +96,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId: 'apiyi',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map([
         ['grok-4.5', { status: 'unauthorized', reason: '当前 Key 未开通' }],
       ]),
@@ -114,7 +114,7 @@ describe('buildGatewayModelCatalog', () => {
         displayName: 'Dynamic Grok',
         description: 'From Codex',
       })],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -131,7 +131,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId: 'apiyi',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: false,
+      hasCredential: () => false,
       availabilityByModel: new Map(),
     })
 
@@ -139,12 +139,51 @@ describe('buildGatewayModelCatalog', () => {
       .toBe(true)
   })
 
+  it('可用性按每个模型真正要用的凭据判定,而不是当前网关那一枚', () => {
+    // qwen 挂在 apiyi/rightcode 名下,凭据却是 'qwen'(Miau token,与图片生成共用)。
+    // 只配了 Miau 密钥的用户原先会看到 qwen3.8-max 被标成「请先配置网关 Key」
+    // 并且选不了 —— 被要求去配一枚这些模型根本用不到的密钥。
+    const catalog = buildGatewayModelCatalog({
+      gatewayId: 'apiyi',
+      dynamicSource: 'codex',
+      dynamicModels: [dynamicModel('gpt-5.5')],
+      hasCredential: (credentialId) => credentialId === 'qwen',
+      availabilityByModel: new Map(),
+    })
+
+    const availabilityOf = (id: string) =>
+      catalog.models.find((model) => model.id === id)?.availability
+
+    expect(availabilityOf('qwen3.8-max')).toEqual({ status: 'available' })
+    expect(availabilityOf('qwen3.7-max-dashscope')).toEqual({ status: 'available' })
+    // 反过来,真正用网关那枚的模型仍然如实标缺。
+    expect(availabilityOf('gpt-5.5')).toMatchObject({ status: 'needs-key' })
+  })
+
+  it('缺哪一枚就说哪一枚 —— 不把人指向错误的设置项', () => {
+    const catalog = buildGatewayModelCatalog({
+      gatewayId: 'apiyi',
+      dynamicSource: 'codex',
+      dynamicModels: [dynamicModel('gpt-5.5')],
+      hasCredential: () => false,
+      availabilityByModel: new Map(),
+    })
+
+    const reasonOf = (id: string) => {
+      const availability = catalog.models.find((model) => model.id === id)?.availability
+      return availability?.status === 'needs-key' ? availability.reason : undefined
+    }
+
+    expect(reasonOf('qwen3.8-max')).toMatch(/Miau/)
+    expect(reasonOf('gpt-5.5')).toBe('请先配置网关 Key')
+  })
+
   it('uses mixed source when static declared models augment Codex rows', () => {
     const catalog = buildGatewayModelCatalog({
       gatewayId: 'rightcode',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -156,7 +195,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId: 'apiyi',
       dynamicSource: 'fallback',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -168,7 +207,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId: 'rightcode',
       dynamicSource: 'fallback',
       dynamicModels: [dynamicModel('grok-4.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -182,7 +221,7 @@ describe('buildGatewayModelCatalog', () => {
       gatewayId: 'apiyi',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -198,7 +237,7 @@ describe('buildGatewayModelCatalog', () => {
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('acme-vision-1')],
       customProviders: [CUSTOM_PROVIDER],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -218,7 +257,7 @@ describe('buildGatewayModelCatalog', () => {
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('missing-model')],
       customProviders: [],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })).toThrow('Unknown Codex gateway "missing-gateway"')
   })
@@ -233,7 +272,7 @@ describe('buildGatewayModelCatalog', () => {
         // allows grok-4.5 — this row must be skipped, not crash the catalog.
         dynamicModel('grok-3'),
       ],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -256,14 +295,14 @@ describe('modelCatalogRevision', () => {
       gatewayId: 'rightcode',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
     const again = buildGatewayModelCatalog({
       gatewayId: 'rightcode',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
 
@@ -276,14 +315,14 @@ describe('modelCatalogRevision', () => {
       gatewayId: 'apiyi',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map(),
     })
     const unauthorized = buildGatewayModelCatalog({
       gatewayId: 'apiyi',
       dynamicSource: 'codex',
       dynamicModels: [dynamicModel('gpt-5.5')],
-      hasCredential: true,
+      hasCredential: () => true,
       availabilityByModel: new Map([
         ['grok-4.5', { status: 'unauthorized', reason: 'blocked' }],
       ]),

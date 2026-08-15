@@ -154,6 +154,7 @@ import type {
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
+import { setWan3TokenSource } from '../services/wan3/credentials'
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
 /**
@@ -611,6 +612,11 @@ export class AgentManager {
       credentialIdForProvider(this.activeGatewayId, persisted.customProviders)
     ] ?? ''
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
+    // 万相 3.0 打的是同一个 Miau 网关,复用这枚 token,用户不必另配。视频服务
+    // 自己去 import agent 是错的依赖方向(而另开一个 store 实例则会各缓存各的,
+    // 用户改完密钥那边还是旧值),所以由这里往下推一个读实时字段的闭包 ——
+    // 推一次即可,`setProviderApiKey` 刷新 `miauToken` 后自动可见。
+    setWan3TokenSource(() => this.miauToken)
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
@@ -1628,7 +1634,7 @@ export class AgentManager {
           ),
         })),
         customProviders,
-        hasCredential: Boolean(this.codexApiKey),
+        hasCredential: (credentialId) => this.hasCredentialFor(credentialId),
         availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
           ?? new Map(),
       })
@@ -2157,10 +2163,28 @@ export class AgentManager {
         isDefault: row.isDefault,
       })),
       customProviders,
-      hasCredential: Boolean(this.codexApiKey),
+      hasCredential: (credentialId) => this.hasCredentialFor(credentialId),
       availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
         ?? new Map(),
     })
+  }
+
+  /**
+   * 某个凭据槽配好了没有。
+   *
+   * 当前网关那枚走内存副本 `codexApiKey`（它随 provider 事务实时更新，比回读
+   * store 准）；其余槽位（qwen/Miau 等借用别处凭据的通道）回落到持久化的
+   * `apiKeys`。不这么分的话，只配了 Miau 密钥的用户会看到 qwen 模型被标成
+   * 「请先配置网关 Key」——一枚它们根本不用的密钥。
+   */
+  private hasCredentialFor(credentialId: string): boolean {
+    const persisted = this.providerStore.loadSync()
+    const activeCredentialId = credentialIdForProvider(
+      this.activeGatewayId,
+      persisted.customProviders,
+    )
+    if (credentialId === activeCredentialId) return Boolean(this.codexApiKey)
+    return Boolean((persisted.apiKeys[credentialId] ?? '').trim())
   }
 
   private modelRoute(providerId: string, modelId: string) {

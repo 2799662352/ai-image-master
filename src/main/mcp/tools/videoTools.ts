@@ -30,6 +30,17 @@ import type {
   SeedanceTaskState,
 } from '../../services/seedance/types'
 import { validateSeedanceRequest } from '../../services/seedance/types'
+import {
+  ALL_VIDEO_MODEL_ALIASES,
+  ALL_VIDEO_RATIOS,
+  ALL_VIDEO_RESOLUTIONS,
+} from '../../../types/seedance'
+
+/**
+ * 枚举取全模型并集，逐模型收窄交给 `validateSeedanceRequest`。从能力表派生而不是
+ * 手填 —— 手填的那份漏过 `2.5`，`wan3` 会以同样方式漏第二次。
+ */
+const zEnumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
 
@@ -285,13 +296,15 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'Video description. Supports shot language (运镜/景别), dialogue lines, and -- style ' +
         'parameters appended at the end.',
       ),
-      model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional().describe(
-        'Seedance model alias. Upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only).',
+      model: zEnumOf(ALL_VIDEO_MODEL_ALIASES).optional().describe(
+        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive".',
       ),
-      resolution: z.enum(['480p', '720p', '1080p']).optional().describe(
-        'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0" (NOT "2.5").',
+      resolution: zEnumOf(ALL_VIDEO_RESOLUTIONS).optional().describe(
+        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0" or "wan3" (NOT "2.5"); 4k is "2.0" only.',
       ),
-      ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored (forced adaptive) when taskMode is set.'),
+      ratio: zEnumOf(ALL_VIDEO_RATIOS).optional().describe(
+        'Aspect ratio. Default 16:9. "21:9" is Seedance-only; "adaptive" is wan3-only (and is wan3\'s default). Ignored (forced adaptive) when taskMode is set.',
+      ),
       // 朴素整数区间而非 union:后者转成 JSON Schema 是 anyOf，客户端校验器对它支持参差，
     // 实测有客户端拿它校验 -1 直接判失败、请求根本发不出来（见 videoWorkbenchTools
     // 里 cardInputSchema.duration 的长注释）。0–3 由 validateSeedanceRequest 拦。
@@ -329,6 +342,12 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       ),
       referenceVideo: z.string().optional().describe('Deprecated single alias for referenceVideos — prefer referenceVideos.'),
       referenceAudio: z.string().optional().describe('Deprecated single alias for referenceAudios — prefer referenceAudios.'),
+      documentOrLink: z.string().optional().describe(
+        'wan3 ONLY. One document or web-page URL used as reference (upstream allows exactly one, and it '
+        + 'cannot be combined with a first/last frame). Pass a plain http(s) URL — document vs web page is '
+        + 'decided by the path extension (pdf/doc/docx/xls/xlsx/ppt/pptx/txt/md/key/pages/numbers = document). '
+        + 'Ignored by Seedance models.',
+      ),
     }),
   }, async (params, ctx?: unknown) => {
     // 提交前按模型能力自查（4k/1080p 归属、时长区间、taskMode 前提、素材上限）。

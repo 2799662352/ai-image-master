@@ -36,15 +36,55 @@ import {
 } from '../../../types/videoWorkbench'
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
+import {
+  ALL_VIDEO_MODEL_ALIASES,
+  ALL_VIDEO_RATIOS,
+  ALL_VIDEO_RESOLUTIONS,
+} from '../../../types/seedance'
+
+/**
+ * 枚举取**全模型并集**，逐模型收窄交给 `validateSeedanceRequest`。
+ *
+ * 从能力表派生而不是手填 —— 手填那版漏过 `2.5`，导致「导出含 2.5 卡片的板子再
+ * apply 被 zod 当场拒掉」，往返整条断而卡片本身完全合法。`wan3` 会以同样方式漏
+ * 第二次。工厂函数是因为 zod schema 对象不能跨字段复用（同一个实例被多处引用时
+ * 报 `_zod` 未定义，本文件下方有那次事故的注释）。
+ */
+const zEnumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
+const zModelAlias = () => zEnumOf(ALL_VIDEO_MODEL_ALIASES)
+const zResolution = () => zEnumOf(ALL_VIDEO_RESOLUTIONS)
+const zRatio = () => zEnumOf(ALL_VIDEO_RATIOS)
+
+/**
+ * 万相的「文档 / 网页链接」槽。
+ *
+ * 收的是**一个 http(s) 地址**，不是 `{type,url}` 对象：file 还是 link 由后缀判定
+ * （`shared/wan3Document`），让调用方自己声明类型只会多一处可能与实际不符的输入。
+ * 空串 = 清除。非 http(s) 会在组包时被拒。
+ */
+const zDocumentOrLink = () =>
+  z.string().optional().describe(
+    'wan3 ONLY. One document or web-page URL used as reference (upstream allows exactly one, '
+    + 'and it cannot be combined with first_frame / first_last_frame). Pass a plain http(s) URL — '
+    + 'whether it counts as a document or a link is decided by the path extension '
+    + '(pdf/doc/docx/xls/xlsx/ppt/pptx/txt/md/key/pages/numbers = document, anything else = web page). '
+    + 'Pass "" to clear. Ignored by Seedance models.',
+  )
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
-  model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional().describe(
-    'Seedance model. Default "2.0" (full quality); "2.5" for长镜头 up to 30s, 30/10/10 materials and edit/extend '
-    + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only).',
+  model: zModelAlias().optional().describe(
+    'Video model. Default "2.0" (full quality); "2.5" for长镜头 up to 30s, 30/10/10 materials and edit/extend '
+    + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only). '
+    + '"wan3" = 阿里万相 3.0 (All-in-One): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, '
+    + 'accepts one document or web link as reference, billed per second (¥) instead of per token. '
+    + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive".',
   ),
-  resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0" (NOT "2.5").'),
-  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored for edit_video / extend_video on "2.5" (forced adaptive).'),
+  resolution: zResolution().optional().describe('Default 720p. 1080p requires model "2.0" or "wan3" (NOT "2.5").'),
+  ratio: zRatio().optional().describe(
+    'Aspect ratio. Default 16:9 (wan3 defaults to "adaptive"). "21:9" is Seedance-only; "adaptive" is wan3-only. '
+    + 'Ignored for edit_video / extend_video on "2.5" (forced adaptive).',
+  ),
   // 刻意用**朴素整数区间**而不是 union([literal(-1), int().min(4)])。
   //
   // 那个 union 转成 JSON Schema 是 `anyOf: [{enum:[-1]}, {type:integer, minimum:4}]`,
@@ -78,6 +118,7 @@ const cardInputSchema = z.object({
     'Up to 3 reference audios, combined ≤15s — model "2.5" raises this to 10 audios combined ≤30s '
     + 'and is the only model that accepts audio-only references.',
   ),
+  documentOrLink: zDocumentOrLink(),
 })
 
 // ---------------------------------------------------------------------------
@@ -173,6 +214,28 @@ const cardSnapshotSchema = z.looseObject({
 const startResultShape = {
   started: z.array(z.string()),
   skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })),
+  blocked: z.boolean().optional().describe(
+    'true = 用户在工作台关闭了「允许 AI 自动生成」,整批一张都没提交。不要重试,'
+    + '请用户自己点「全部生成」或让他打开那个开关。',
+  ),
+  hint: z.string().optional().describe('blocked 时给用户的原话。'),
+}
+
+/**
+ * 「整批被总闸拦下」的横幅。
+ *
+ * 单独提出来是因为这句话必须按**结果**说,不能按请求参数说 —— add_tasks 以前是
+ * 看 `params.autoStart` 写横幅的,于是开关关着时它照旧宣布「Rendering started」
+ * 并承诺完成推送,模型转头就告诉用户在渲染了,然后等一条永远不来的推送。
+ */
+const AUTO_START_BLOCKED_BANNER =
+  '🚫 没有启动任何渲染:用户在视频工作台关闭了「允许 AI 自动生成」。卡片已经填好了。'
+  + '不要重试、不要改用别的工具绕过 —— 请告诉用户去工作台点「全部生成」,'
+  + '或者让他把「允许 AI 自动生成」打开后你再启动。'
+
+/** 渲染端 start 结果里「被总闸拦下」的判定(两个工具共用一份口径)。 */
+function isAutoStartBlocked(result: unknown): boolean {
+  return (result as { blocked?: unknown } | null | undefined)?.blocked === true
 }
 
 const addTasksOutputSchema = z.looseObject({
@@ -263,9 +326,10 @@ const irCardSchema = z.looseObject({
   // 枚举与区间都取**全模型并集**，逐模型收窄交给 validateSeedanceRequest。
   // 漏掉 '2.5' 不只是「设不了 2.5」：export 一块含 2.5 卡片的板子再 apply，
   // 会被 zod 当场拒掉 —— 往返路径整条断，而卡片本身完全合法。
-  model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional(),
-  resolution: z.enum(['480p', '720p', '1080p']).optional(),
-  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
+  model: zModelAlias().optional(),
+  resolution: zResolution().optional(),
+  ratio: zRatio().optional(),
+  documentOrLink: zDocumentOrLink(),
   // 同上:避开 anyOf
   duration: z.number().int().min(-1).max(30).optional().describe(
     'Seconds, or -1 = smart duration. Coerced to -1 when mode is edit_video (upstream takes nothing '
@@ -520,7 +584,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
       'multiple boards/pages — see video_workbench_status). Each card carries a prompt + Seedance spec ' +
       '(model/resolution/ratio/duration) + reference materials. By default this only FILLS the cards ' +
-      '(user reviews and clicks generate); pass autoStart:true to start rendering immediately. The app ' +
+      '(user reviews and clicks generate); pass autoStart:true to start rendering immediately — but the ' +
+      'user can switch off 「允许 AI 自动生成」 in the workbench, and then autoStart is REFUSED (the result ' +
+      'says blocked; ask them to click 「全部生成」 themselves instead of retrying). The app ' +
       'auto-navigates to the workbench tab so the user watches the cards appear. The result includes a ' +
       'compact `workbench` overview (boards + global status counts) so you always see the whole ' +
       'workbench after writing. Use this when the user asks to 排卡片/批量准备视频任务/在生成视频页帮我' +
@@ -563,11 +629,19 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_add_tasks', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      // 按**结果**决定第二句,不按 params.autoStart —— 用户可能把总闸关了,
+      // 那时一张都没提交,宣布「已开始渲染」就是对用户说假话。
+      const start = (result as { start?: unknown } | null | undefined)?.start
+      const startedCount = Array.isArray((start as { started?: unknown } | undefined)?.started)
+        ? (start as { started: string[] }).started.length
+        : 0
       return okResult([
         '✅ video_workbench_add_tasks — cards added to the workbench page (visible to the user).',
-        (params as { autoStart?: boolean }).autoStart
-          ? 'Rendering started — this returned IMMEDIATELY and a normal render takes 1–3 minutes. Do NOT poll and do NOT wait: a 「[视频工作台] 批次渲染完成」 summary is pushed to you automatically once every card settles. Results play inline on the workbench page and are saved locally + to COS automatically. Answer the user now and stay available.'
-          : 'Cards are FILLED but not started. Ask the user to review, or call video_workbench_start to begin rendering.',
+        isAutoStartBlocked(start)
+          ? AUTO_START_BLOCKED_BANNER
+          : startedCount > 0
+            ? 'Rendering started — this returned IMMEDIATELY and a normal render takes 1–3 minutes. Do NOT poll and do NOT wait: a 「[视频工作台] 批次渲染完成」 summary is pushed to you automatically once every card settles. Results play inline on the workbench page and are saved locally + to COS automatically. Answer the user now and stay available.'
+            : 'Cards are FILLED but not started. Ask the user to review, or call video_workbench_start to begin rendering.',
       ], result)
     } catch (error) {
       return errorResult('video_workbench_add_tasks', error)
@@ -839,7 +913,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'with started/skipped plus a compact `workbench` overview — it does NOT wait for the renders. ' +
       'Do NOT poll video_workbench_status afterwards: when every card in the batch settles you are ' +
       'pushed a 「[视频工作台] 批次渲染完成」 summary listing successes, failures and output paths. ' +
-      'The user watches live progress on the workbench page meanwhile.',
+      'The user watches live progress on the workbench page meanwhile. ' +
+      'The user can switch off 「允许 AI 自动生成」 in the workbench; then this call starts NOTHING and ' +
+      'comes back with blocked:true — do not retry, ask them to click 「全部生成」 themselves.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
     }),
@@ -852,9 +928,13 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         skipped: Array<{ cardId: string; reason: string }>
       }
       return okResult([
-        result.started.length > 0
-          ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
-          : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
+        isAutoStartBlocked(result)
+          // 「see skipped reasons」在这条路上会骗人:不带 cardIds 的调用被拦时
+          // skipped 是空的,模型被指向一个不存在的东西,永远猜不到是开关关着。
+          ? AUTO_START_BLOCKED_BANNER
+          : result.started.length > 0
+            ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
+            : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
       ], result)
     } catch (error) {
       return errorResult('video_workbench_start', error)

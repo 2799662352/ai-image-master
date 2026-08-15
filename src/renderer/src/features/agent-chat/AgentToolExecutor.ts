@@ -429,7 +429,8 @@ export class AgentToolExecutor {
         }
         let start: unknown
         if (params.autoStart === true) {
-          const started = await useVideoWorkbenchStore.getState().startCards(cardIds)
+          // 经 agent 专用入口:用户可以在工作台关掉「允许 AI 自动生成」。
+          const started = await useVideoWorkbenchStore.getState().startCardsFromAgent(cardIds)
           // 登记批次：跑完后由 batchCompletion watcher 主动推给本线程，
           // 模型不需要（也不应该）轮询 video_workbench_status 等结果。
           registerAgentBatch(started.started, threadId)
@@ -577,7 +578,7 @@ export class AgentToolExecutor {
         const ids = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : undefined
-        const result = await store.startCards(ids)
+        const result = await store.startCardsFromAgent(ids)
         // 同上：批次跑完主动推送，取代轮询。
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }

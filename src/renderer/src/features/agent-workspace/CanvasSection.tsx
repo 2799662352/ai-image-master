@@ -7,6 +7,7 @@ import { getAgentApi } from '../../utils/agentBridge'
 import { canvasBridge } from './canvas/canvasBridge'
 import { canvasShapeUtils } from './canvas/FileCardShapeUtil'
 import { makeFileAssetHandlerWithDiskPath, makeFilesContentHandlerWithPlaceholders } from './canvas/shapeOps'
+import { makeCanvasAssetStore } from './canvas/canvasAssetStore'
 import { useAgentChatStore } from '../agent-chat/store'
 import { parseFileDrop } from '../file-explorer/dragHelpers'
 
@@ -24,6 +25,19 @@ const AUTO_SUBMIT_IDLE_MS = 1500
 // 原生 OS 文件拖拽 / 粘贴这条 tldraw 默认 asset 流水线。
 const CANVAS_MAX_ASSET_SIZE = 2 * 1024 * 1024 * 1024 // 2GB
 const CANVAS_MAX_IMAGE_DIMENSION = 8192 // 支持到 8K 长边,超过才降采样
+
+/**
+ * v1 (`catimation-canvas`) persisted tldraw's default asset store: whole
+ * images/videos as `data:` URLs + IndexedDB blobs. Hydrating that store on
+ * canvas open OOMs the renderer and Electron relaunches the app in a loop.
+ * v2 keeps only path-backed `local-file://` srcs (this asset store).
+ */
+const CANVAS_PERSISTENCE_KEY = 'catimation-canvas-v2'
+
+const canvasAssetStore = makeCanvasAssetStore({
+  resolveDiskPath: (file, threadId) => canvasBridge.resolveDroppedFileDiskPath(file, threadId),
+  getThreadId: () => useAgentChatStore.getState().threadId ?? '',
+})
 
 export function CanvasSection(): React.JSX.Element {
   const editorRef = useRef<Editor | null>(null)
@@ -301,7 +315,8 @@ export function CanvasSection(): React.JSX.Element {
   return (
     <div ref={wrapperRef} className="relative h-full min-h-0 w-full">
       <Tldraw
-        persistenceKey="catimation-canvas"
+        persistenceKey={CANVAS_PERSISTENCE_KEY}
+        assets={canvasAssetStore}
         // Do NOT grab global keyboard/clipboard on mount — see the FOCUS
         // OWNERSHIP block in handleMount. We focus the editor ourselves on
         // pointer-enter/down and blur it when the user moves to the chat, so the

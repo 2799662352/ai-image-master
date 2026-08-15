@@ -88,7 +88,7 @@ Seedance 2.0 在本 app 中支持文本/图像/视频/音频参考并可生成�
 2. **选模式**(见上表),默认全能参考。
 3. **分配参考配额**(9 图/3 视频/3 音频)——见 `references/all-around-reference.md`。
 4. **写提示词**——在上游 sd2-pe 工程化结果之上(路径 A 可独立完成,路径 B /
-   多镜 / 混合媒介已按需加载 seedance-cinematic-format；两者都覆盖八大要素、
+   多镜 / 混合媒介已按需加载 cinematic-prompt-format；两者都覆盖八大要素、
    12 项内容与五大必备块,**本层只增补内容,不得漏掉既有要素**),按
    `references/prompt-engineering.md` 做 Seedance 模型对齐补充:单一主导动作、
    首帧霸权(图生视频不复述静态帧)、运动矢量语言、主动写声音、**默认只写正向

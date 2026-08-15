@@ -60,7 +60,95 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-fast',
       '2.0-mini',
       '2.5',
+      'wan3',
     ])
+  })
+
+  it('画幅按模型分:万相有 adaptive 没有 21:9,Seedance 反过来', () => {
+    // 这两个数字曾经写死在 WorkbenchCard 的一个数组里,于是万相卡片上摆着一个
+    // 提交必被拒的 21:9,却没有它官方的默认值 adaptive。
+    const wan3 = capabilitiesFor('wan3').ratios
+    expect(wan3).toContain('adaptive')
+    expect(wan3).not.toContain('21:9')
+
+    const seedance = capabilitiesFor('2.0').ratios
+    expect(seedance).toContain('21:9')
+    expect(seedance).not.toContain('adaptive')
+  })
+
+  it('seed 上限按模型分 —— 万相只到 2147483647', () => {
+    // 官方写明 [0, 2147483647],比 Seedance 的 uint32 小一半。差这一位的后果是
+    // 界面收下了用户填的大数,上游拒了。
+    expect(capabilitiesFor('wan3').seedMax).toBe(2_147_483_647)
+    expect(capabilitiesFor('2.0').seedMax).toBe(4_294_967_295)
+  })
+
+  it('每个模型都声明了 provider 与可用模式', () => {
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      const caps = capabilitiesFor(alias)
+      expect(['vvdance', 'miau']).toContain(caps.provider)
+      expect(caps.modes.length).toBeGreaterThan(0)
+      // 文生视频是所有模型的最低保证,没有它这张卡什么都提交不了。
+      expect(caps.modes).toContain('text2video')
+    }
+  })
+
+  // 回归:第一版把 UI 模式 `edit_video/extend_video` 与上游参数 `taskModes` 当成
+  // 了一回事,于是把 2.0 家族的这两个模式砍掉了。实际上它们 Seedance 全家都有 ——
+  // 2.5 之前只是素材组合预设(edit 带图+视频+音频、extend 只带视频),发出去是一次
+  // 普通生成,`taskModeForCard` 不会为它们派生 taskMode。
+  it('Seedance 全家都有编辑/延长视频模式,taskMode 才是 2.5 独有', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      const caps = capabilitiesFor(alias)
+      expect(caps.modes).toContain('edit_video')
+      expect(caps.modes).toContain('extend_video')
+    }
+    expect(capabilitiesFor('2.0').taskModes).toEqual([])
+    expect(capabilitiesFor('2.5').taskModes).toEqual(['edit', 'extend'])
+  })
+
+  it('今天真正被模式白名单收窄的只有万相 3.0', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(capabilitiesFor(alias).modes).toHaveLength(7)
+    }
+    expect(capabilitiesFor('wan3').modes).toHaveLength(4)
+  })
+})
+
+describe('万相 3.0 能力', () => {
+  it('多模态上限 10/5/5、时长 2-30、三档分辨率', () => {
+    const caps = capabilitiesFor('wan3')
+    expect([caps.maxImages, caps.maxVideos, caps.maxAudios]).toEqual([10, 5, 5])
+    expect(caps.duration).toEqual({ min: 2, max: 30 })
+    expect(caps.resolutions).toEqual(['480p', '720p', '1080p'])
+  })
+
+  it('走 miau,允许纯音频参考,没有擦字幕', () => {
+    const caps = capabilitiesFor('wan3')
+    expect(caps.provider).toBe('miau')
+    expect(caps.audioOnlyReference).toBe(true)
+    expect(caps.subtitleErase).toBe(false)
+  })
+
+  it('只开四种模式 —— 不含参考图与编辑/延长', () => {
+    expect(capabilitiesFor('wan3').modes).toEqual([
+      'text2video',
+      'first_frame',
+      'first_last_frame',
+      'multimodal_ref',
+    ])
+  })
+
+  it('时长接受 -1(智能时长)与 2 秒下限', () => {
+    expect(validateSeedanceRequest('wan3', { duration: -1 })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { duration: 2 })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { duration: 1 })).not.toEqual([])
+    expect(validateSeedanceRequest('wan3', { duration: 31 })).not.toEqual([])
+  })
+
+  it('分辨率按内部小写口径校验(大写转换留给上行组包)', () => {
+    expect(validateSeedanceRequest('wan3', { resolution: '1080p' })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { resolution: '4k' })).not.toEqual([])
   })
 })
 

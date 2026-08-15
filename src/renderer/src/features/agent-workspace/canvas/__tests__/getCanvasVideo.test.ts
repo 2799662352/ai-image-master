@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// canvasBridge.state() → readCanvasState() calls tldraw's getSnapshot(editor.store);
-// stub it so a bare fake editor (no real store) works in jsdom.
+// readCanvasState no longer embeds getSnapshot (that cloned asset bytes).
+// Keep the stub so older fakes without a store still import cleanly.
 vi.mock('tldraw', async (importOriginal) => {
   const actual = await importOriginal<typeof import('tldraw')>()
   return { ...actual, getSnapshot: () => ({}) }

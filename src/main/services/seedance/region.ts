@@ -2,11 +2,23 @@
 // 持久化由 credentials.ts 读写；本模块只持会话级当前值。
 
 import type { SeedanceModelAlias, SeedanceRegion } from '../../../types/seedance'
+import { WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
   global: 'https://vvdance.ai',
   cn: 'https://vvdance.yongmuai.com',
 }
+
+/**
+ * 万相 3.0 的上游模型 ID —— 定义在 `../wan3/model`（region 是 vvdance 的站点概念，
+ * 万相不分区域，让它的 id 住在这里会误导）。
+ *
+ * 仍然在下面两张 region 表里各登记一次，是为了保住
+ * `Record<VideoModelAlias, string>` 的穷尽性：正是这个穷尽性在加 wan3 时把
+ * 「你还没决定这个模型的 id」直接编译报错报了出来。改成 Partial 会让下一个模型
+ * 悄悄漏掉。
+ */
+export { WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 /**
  * 海外 GLOBAL（默认）直连 vvdance.ai Ark → dreamina-*；
@@ -25,12 +37,14 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     '2.0-fast': 'dreamina-seedance-2-0-fast-260128',
     '2.0-mini': 'dreamina-seedance-2-0-mini-260615',
     '2.5': 'dreamina-seedance-2-5-260628',
+    wan3: WAN3_UPSTREAM_MODEL_ID,
   },
   cn: {
     '2.0': 'doubao-seedance-2-0-260128',
     '2.0-fast': 'doubao-seedance-2-0-fast-260128',
     '2.0-mini': 'doubao-seedance-2-0-mini-260615',
     '2.5': 'doubao-seedance-2-5-260628',
+    wan3: WAN3_UPSTREAM_MODEL_ID,
   },
 }
 
@@ -51,6 +65,17 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
  */
 export const SEEDANCE_CN_2_5_ENABLED = true
 
+/**
+ * 还没接完传输层、因而**不可选**的模型。
+ *
+ * 现在是空的：万相 3.0 的传输层已于 2026-08-14 接通并对着真网关跑通端到端
+ * （`scripts/smoke-wan3.ts`：提交 → queued → running → succeeded → 取到地址）。
+ *
+ * 留着这个集合而不是删掉：下一个模型进来时，「能力表已落位但传输层还没接」
+ * 之间总有一段窗口，那段时间它不该出现在下拉里让用户选到一个必然失败的选项。
+ */
+const NOT_YET_SELECTABLE: ReadonlySet<SeedanceModelAlias> = new Set([])
+
 const CN_ONLY_GATED: ReadonlySet<SeedanceModelAlias> = new Set(['2.5'])
 
 function cn25Enabled(): boolean {
@@ -65,6 +90,7 @@ export function isSeedanceModelAvailable(
   alias: SeedanceModelAlias,
   region: SeedanceRegion = getSeedanceRegion(),
 ): boolean {
+  if (NOT_YET_SELECTABLE.has(alias)) return false
   if (region === 'cn' && CN_ONLY_GATED.has(alias)) return cn25Enabled()
   return true
 }

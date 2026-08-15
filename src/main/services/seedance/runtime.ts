@@ -47,6 +47,12 @@ import type {
   SeedanceTaskMode,
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
+import type { VideoWorkbenchMode } from '../../../types/videoModes'
+import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
+import { createWan3Client } from '../wan3/client'
+import { getWan3ApiKey } from '../wan3/credentials'
+import { createSeedanceTransport, createWan3Transport, transportFor } from '../videoTransport'
+import { translateVideoTaskError } from '../videoTaskError'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
@@ -216,12 +222,24 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
   const refVideos = [...(input.referenceVideos ?? []), ...(input.referenceVideo ? [input.referenceVideo] : [])]
   const refAudios = [...(input.referenceAudios ?? []), ...(input.referenceAudio ? [input.referenceAudio] : [])]
 
+  // 万相只认公网 URL —— 必须跳过 ≤512KB 的内联捷径。
+  //
+  // 默认策略是小素材直接读成 base64 内联进 content[](见 mediaResolve 的
+  // MAX_INLINE_FILE_BYTES,注释里明说「视频路径不传这个开关,保留内联线」)。
+  // Seedance 吃这一套,DashScope 不吃:它只接受可下载的 https 地址。不开这个开关
+  // 的后果很隐蔽 —— 大图正常、小图报错,而用户完全想不到是体积的问题。
+  const mediaOptions = usesSeedanceAssetLibrary(input.model) ? undefined : { alwaysRelay: true }
+
   const [firstFrameUrl, lastFrameUrl, imageUrls, videoUrls, audioUrls] = await Promise.all([
-    input.firstFrame ? resolveMediaUrl(input.firstFrame, 'firstFrame') : Promise.resolve(null),
-    input.lastFrame ? resolveMediaUrl(input.lastFrame, 'lastFrame') : Promise.resolve(null),
-    Promise.all(refImages.map((ref, i) => resolveMediaUrl(ref, `referenceImages[${i}]`))),
-    Promise.all(refVideos.map((ref, i) => resolveMediaUrl(ref, `referenceVideos[${i}]`))),
-    Promise.all(refAudios.map((ref, i) => resolveMediaUrl(ref, `referenceAudios[${i}]`))),
+    input.firstFrame
+      ? resolveMediaUrl(input.firstFrame, 'firstFrame', undefined, mediaOptions)
+      : Promise.resolve(null),
+    input.lastFrame
+      ? resolveMediaUrl(input.lastFrame, 'lastFrame', undefined, mediaOptions)
+      : Promise.resolve(null),
+    Promise.all(refImages.map((ref, i) => resolveMediaUrl(ref, `referenceImages[${i}]`, undefined, mediaOptions))),
+    Promise.all(refVideos.map((ref, i) => resolveMediaUrl(ref, `referenceVideos[${i}]`, undefined, mediaOptions))),
+    Promise.all(refAudios.map((ref, i) => resolveMediaUrl(ref, `referenceAudios[${i}]`, undefined, mediaOptions))),
   ])
 
   const content: SeedanceContentItem[] = [
@@ -401,9 +419,31 @@ export function initSeedanceRuntime(opts: {
     () => undefined,
   )
 
+  // 万相那条路。fetch 在这里注入而不是由客户端默认取,是为了让 wan3/client.ts
+  // 不必顶层 import electron —— 那会让它在 Electron 之外根本加载不了。
+  const wan3Transport = createWan3Transport(
+    createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
+    getWan3ApiKey,
+  )
+  /**
+   * 按模型选上游。除了提交与轮询(taskManager 内部自己选),另外两条路也认
+   * taskId —— **重启接管**与**按任务号重取过期地址** —— 它们此前写死了
+   * Seedance:万相的任务在 Ark 那边查不到,前者会把一条还在跑、已付费的任务
+   * 错杀成失败卡片,后者会让「重新保存」报一句「任务不存在」。
+   */
+  const transportOf = (model: string | undefined) =>
+    transportFor(
+      { seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey), wan3: wan3Transport },
+      model,
+    )
+
   const taskManager = new SeedanceTaskManager({
     client: seedanceClient,
     getApiKey: getSeedanceApiKey,
+    wan3Transport,
+    // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
+    // （提交只走一次，轮询要走几十次）。
+    translateError: translateVideoTaskError,
     broadcast: (update) => {
       const win = getWindow()
       if (win && !win.isDestroyed()) {
@@ -419,8 +459,8 @@ export function initSeedanceRuntime(opts: {
 
   const persistDeps: PersistVideoDeps = {
     downloadVideo: (url, dest) => seedanceClient.downloadVideo(url, dest),
-    refreshVideoUrl: async (taskId) => {
-      const r = await seedanceClient.queryTask(taskId, getSeedanceApiKey())
+    refreshVideoUrl: async (taskId, model) => {
+      const r = await transportOf(model).queryTask(taskId)
       return r.content?.video_url
     },
     ingest: (threadId, files) => attachments.ingest(threadId, files),
@@ -474,20 +514,25 @@ export function initSeedanceRuntime(opts: {
       const content = await buildContent(input)
       // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
       // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
-      await verifyContentAssetReferences(content, {
-        apiKey: getSeedanceApiKey(),
-        apiSecret: getSeedanceApiSecret(),
-      })
+      // 只对 Seedance 那条路做:万相不认识素材库,理由见 usesSeedanceAssetLibrary。
+      if (usesSeedanceAssetLibrary(input.model)) {
+        await verifyContentAssetReferences(content, {
+          apiKey: getSeedanceApiKey(),
+          apiSecret: getSeedanceApiSecret(),
+        })
+      }
       const state = await taskManager.submit({ input, content, threadId, clientId })
       // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
-      void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
+      if (usesSeedanceAssetLibrary(input.model)) {
+        void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
+      }
       return state
     } catch (e) {
       // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
       // 把预备卡片落成 failed，避免气泡永远转圈；随后照旧把错误抛给工具层出横幅。
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)先翻译成人话再透出。
       const raw = e instanceof Error ? e.message : String(e)
-      const message = translateSeedanceTaskError(raw)
+      const message = translateVideoTaskError(raw)
       taskManager.announceFailed({ clientId, input, threadId, error: message })
       throw message === raw && e instanceof Error ? e : new Error(message)
     }
@@ -536,6 +581,15 @@ export function initSeedanceRuntime(opts: {
           : Math.min(caps.duration.max, Math.max(caps.duration.min, Math.round(durationRaw))),
       generateAudio: payload?.generateAudio !== false,
       ...(taskMode ? { taskMode } : {}),
+      // 卡片原始模式。只认该模型能力表里开放的模式 —— 载荷是渲染端来的,不能
+      // 当成可信输入;不认识就不带,由 resolveVideoMode 按素材形状兜底。
+      ...(typeof payload?.mode === 'string' && (caps.modes as readonly string[]).includes(payload.mode)
+        ? { mode: payload.mode as VideoWorkbenchMode }
+        : {}),
+      // 文档/网页链接槽(仅万相)。原样带过去,由组包层解析与校验。
+      ...(typeof payload?.documentOrLink === 'string' && payload.documentOrLink
+        ? { documentOrLink: payload.documentOrLink }
+        : {}),
       // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
       ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
       ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
@@ -548,12 +602,13 @@ export function initSeedanceRuntime(opts: {
     try {
       if (!input.prompt.trim()) throw new Error('提示词不能为空')
       const content = await buildContent(input)
-      // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
-      // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
-      await verifyContentAssetReferences(content, {
-        apiKey: getSeedanceApiKey(),
-        apiSecret: getSeedanceApiSecret(),
-      })
+      // 同上:只有 Seedance 那条路才碰素材库 / 人像库。见 usesSeedanceAssetLibrary。
+      if (usesSeedanceAssetLibrary(input.model)) {
+        await verifyContentAssetReferences(content, {
+          apiKey: getSeedanceApiKey(),
+          apiSecret: getSeedanceApiSecret(),
+        })
+      }
       const state = await taskManager.submit({
         input,
         content,
@@ -561,13 +616,15 @@ export function initSeedanceRuntime(opts: {
         ...(clientId ? { clientId } : {}),
       })
       // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
-      void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
+      if (usesSeedanceAssetLibrary(input.model)) {
+        void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
+      }
       return { success: true, taskId: state.taskId }
     } catch (e) {
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。
       return {
         success: false,
-        error: translateSeedanceTaskError(e instanceof Error ? e.message : String(e)),
+        error: translateVideoTaskError(e instanceof Error ? e.message : String(e)),
       }
     }
   })
@@ -592,9 +649,9 @@ export function initSeedanceRuntime(opts: {
   ipcMain.handle('video-workbench:reconcile', async (_event, rawItems: unknown) =>
     reconcileInFlightTasks(Array.isArray(rawItems) ? rawItems : [], {
       isTracked: (taskId) => Boolean(taskManager.get(taskId)),
-      probe: (taskId) => seedanceClient.queryTask(taskId, getSeedanceApiKey()),
+      probe: (taskId, model) => transportOf(model).queryTask(taskId),
       adopt: (params) => { taskManager.adopt(params) },
-      translateError: translateSeedanceTaskError,
+      translateError: translateVideoTaskError,
     }),
   )
 

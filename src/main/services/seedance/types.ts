@@ -5,6 +5,7 @@
 // docs/superpowers/specs/2026-06-12-seedance-video-mcp-design.md
 
 import type { SeedanceModelAlias, SeedanceTaskMode } from '../../../types/seedance'
+import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
 
 export type {
@@ -95,6 +96,17 @@ export interface CreateVideoTaskInput {
    * `edit` 另外锁死 `duration: -1` —— 这些都在提交前由 validateSeedanceRequest 兜住。
    */
   taskMode?: SeedanceTaskMode
+  /**
+   * 卡片的原始模式（万相组包要用；Seedance 那条路已被摊平成 firstFrame/reference*）。
+   * 缺省时由 `resolveVideoMode` 从素材形状兜底反推 —— 那是给 MCP agent 那条没有
+   * 模式概念的路留的，工作台一律显式带。
+   */
+  mode?: VideoWorkbenchMode
+  /**
+   * 文档 / 网页链接槽（仅万相）。序列化 JSON，由 `shared/wan3Document` 解析。
+   * Seedance 那条路完全忽略它。
+   */
+  documentOrLink?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceVideos。 */
   referenceVideo?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceAudios。 */

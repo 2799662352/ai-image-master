@@ -53,9 +53,15 @@ describe('protocolHandler.isAllowedLocalFileFetchSite', () => {
   )
 
   it.each(['cross-site', 'same-site'])(
-    'rejects cross-origin fetch/XHR even when site is %s and dest is empty',
+    'allows dest=empty fetch (tldraw canvas asset resolve) when site is %s',
     (site) => {
-      expect(isAllowedLocalFileFetchSite(site, 'empty')).toBe(false)
+      expect(isAllowedLocalFileFetchSite(site, 'empty')).toBe(true)
+    },
+  )
+
+  it.each(['cross-site', 'same-site'])(
+    'still rejects dest-unset requests when site is %s',
+    (site) => {
       expect(isAllowedLocalFileFetchSite(site, null)).toBe(false)
     },
   )

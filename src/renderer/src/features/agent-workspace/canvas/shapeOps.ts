@@ -1,4 +1,4 @@
-import { AssetRecordType, Box, type Editor, createBindingId, createShapeId, getSnapshot, toRichText } from 'tldraw'
+import { AssetRecordType, Box, type Editor, createBindingId, createShapeId, toRichText } from 'tldraw'
 import type { BlurryShape, Bounds, CanvasStatePayload, ImageShapeListItem, PeripheralShapeCluster, Point, ShapeSummary } from '../../../../../types/canvas'
 
 /**
@@ -1236,7 +1236,9 @@ export function readCanvasState(editor: Editor, base: CanvasStatePayload): Canva
   const selectionShapes = shapes.filter((shape) => selectedShapeIds.includes(shape.id))
   return {
     ...base,
-    snapshot: getSnapshot(editor.store),
+    // Do NOT embed getSnapshot() here. The raw store can still hold leftover
+    // data: URLs; putting them on CanvasStatePayload clones them on every
+    // tool call. Checkpoints go through stripSnapshotAssetBytes instead.
     shapes,
     selection: {
       canvasId: base.canvasId,
@@ -1247,12 +1249,38 @@ export function readCanvasState(editor: Editor, base: CanvasStatePayload): Canva
   }
 }
 
+/**
+ * Probe an image's intrinsic dimensions. Mirrors loadVideoDimensions: resolves
+ * with a square default on error OR after a timeout, and NEVER rejects. A
+ * `local-file://` src fires neither onload nor onerror under jsdom (unknown
+ * scheme), and a deleted file can stall the load — dimension probing must
+ * never hang a canvas write.
+ */
 function loadImageDimensions(src: string): Promise<{ w: number; h: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve({ w: image.naturalWidth || 1024, h: image.naturalHeight || 1024 })
-    image.onerror = () => reject(new Error(`Could not load image: ${src}`))
-    image.src = src
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (dims: { w: number; h: number }): void => {
+      if (!done) {
+        done = true
+        resolve(dims)
+      }
+    }
+    const timer = setTimeout(() => finish({ w: 1024, h: 1024 }), 4000)
+    try {
+      const image = new Image()
+      image.onload = () => {
+        clearTimeout(timer)
+        finish({ w: image.naturalWidth || 1024, h: image.naturalHeight || 1024 })
+      }
+      image.onerror = () => {
+        clearTimeout(timer)
+        finish({ w: 1024, h: 1024 })
+      }
+      image.src = src
+    } catch {
+      clearTimeout(timer)
+      finish({ w: 1024, h: 1024 })
+    }
   })
 }
 
@@ -1405,7 +1433,7 @@ export function insertFilePlaceholder(
   const y = Number(payload.y ?? 100)
   const w = 320
   // Extra row for the inline audio player: either a directly playable src OR a
-  // disk path (FileCardShapeUtil resolves paths to blob: via the attachments IPC).
+  // disk path (FileCardShapeUtil plays via local-file://media/, same as AudioViewer).
   const playable =
     payload.kind === 'audio' &&
     ((typeof payload.assetUrl === 'string' && /^(data|blob|https?):/.test(payload.assetUrl)) ||

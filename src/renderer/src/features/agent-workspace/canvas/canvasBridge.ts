@@ -1,11 +1,10 @@
 import { Box, getSnapshot, loadSnapshot, type Editor } from 'tldraw'
 import type { Bounds, CanvasStatePayload } from '../../../../../types/canvas'
+import { osPathFromCanvasAssetUrl, stripSnapshotAssetBytes, toCanvasAssetUrl } from './canvasAssetUrl'
 import { arrangeShapes, buildCanvasLints, buildTieredShapes, computeFocusTarget, createHolder, createImageVersion, createSimpleShape, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type CreateSimpleShapeParams, type PlaceParams, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
-
-type AttachmentsApi = { readThumb: (p: string) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }> }
 
 const BASE_STATE: CanvasStatePayload = {
   canvasId: 'catimation-canvas',
@@ -197,14 +196,14 @@ class CanvasBridge {
     return readCanvasState(this.requireEditor(), BASE_STATE)
   }
 
-  /** Resolve a local file path (or data/http URL) to a browser-loadable src. */
-  private async toLoadable(pathOrUrl: string): Promise<string> {
-    if (pathOrUrl.startsWith('data:') || pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl
-    const api = (window as Window & { electronAPI?: { attachments?: AttachmentsApi } }).electronAPI?.attachments
-    if (!api?.readThumb) throw new Error('attachments API unavailable to load image')
-    const res = await api.readThumb(pathOrUrl)
-    if (!res.ok) throw new Error(`Cannot read image ${pathOrUrl}: ${res.reason}`)
-    return `data:${res.mime};base64,${res.base64}`
+  /**
+   * Resolve a local file path (or data/http URL) to a browser-loadable src.
+   * Disk paths become `local-file://` (file-explorer / video-workbench contract).
+   * NEVER pull bytes through attachments.readThumb — that IPC copy is the
+   * renderer OOM / app-relaunch loop when the canvas hydrates.
+   */
+  private toLoadable(pathOrUrl: string): string {
+    return toCanvasAssetUrl(pathOrUrl)
   }
 
   /**
@@ -239,7 +238,7 @@ class CanvasBridge {
       }
       return { ok: true, kind }
     }
-    const assetUrl = await this.toLoadable(path)
+    const assetUrl = this.toLoadable(path)
     const res = isVideo
       ? await this.safeWrite('insert_video', () => insertVideo(editor, { assetUrl, assetPath: path, x: point.x, y: point.y, title }))
       : await this.safeWrite('insert_image_at', () => insertImageAt(editor, { assetUrl, assetPath: path, x: point.x, y: point.y, title }))
@@ -282,15 +281,14 @@ class CanvasBridge {
         // load, so a bad id returns candidates instead of "Holder not found".
         const holderId = resolveShapeId(editor, params.holderShapeId, { preferType: 'geo' })
         if (!holderId.ok) return { ok: false, failed: true, tool: 'insert_image_into_holder', error: holderId.error }
-        const assetUrl = await this.toLoadable(String(params.imagePath))
+        const assetUrl = this.toLoadable(String(params.imagePath))
         return this.safeWrite('insert_image_into_holder', () => insertImageIntoHolder(editor, { holderShapeId: holderId.id, assetUrl, assetPath: String(params.imagePath), title: params.title as string | undefined }))
       }
       case 'insert_video': {
         const editor = this.requireEditor()
-        // Reuse toLoadable: a disk path → data: URL via the mime-gated attachments
-        // IPC (its whitelist already allows video/*), so the video shape gets a
-        // browser-playable src without tripping the connect-src CSP.
-        const assetUrl = await this.toLoadable(String(params.videoPath))
+        // Disk path → local-file://media/?p=… (Range-capable stream). Do not
+        // inline the clip as a data: URL — that is what OOM-restarts the app.
+        const assetUrl = this.toLoadable(String(params.videoPath))
         return this.safeWrite('insert_video', () =>
           insertVideo(editor, {
             assetUrl,
@@ -314,7 +312,7 @@ class CanvasBridge {
         const editor = this.requireEditor()
         const sourceId = resolveShapeId(editor, params.sourceShapeId, { preferType: 'image' })
         if (!sourceId.ok) return { ok: false, failed: true, tool: 'create_image_version', error: sourceId.error }
-        const assetUrl = await this.toLoadable(String(params.imagePath))
+        const assetUrl = this.toLoadable(String(params.imagePath))
         return this.safeWrite('create_image_version', () => createImageVersion(editor, { sourceShapeId: sourceId.id, assetUrl, assetPath: String(params.imagePath), title: params.title as string | undefined }))
       }
       case 'save_snapshot': {
@@ -783,6 +781,12 @@ class CanvasBridge {
     if (sel.assetPath) {
       return { ok: true, shapeId: sel.shapeId, videoPath: sel.assetPath, assetPath: sel.assetPath, assetUrl: sel.assetUrl, title: sel.title, materialized: false }
     }
+    // Assets now carry `local-file://` srcs, so the on-disk path is recoverable
+    // directly — no export round-trip just to tell the agent where the clip is.
+    const fromUrl = sel.assetUrl ? osPathFromCanvasAssetUrl(sel.assetUrl) : null
+    if (fromUrl) {
+      return { ok: true, shapeId: sel.shapeId, videoPath: fromUrl, assetPath: fromUrl, assetUrl: sel.assetUrl, title: sel.title, materialized: false }
+    }
     const materialized = threadId ? await this.exportSelectedVideoFile(sel.shapeId, threadId) : undefined
     return {
       ok: true,
@@ -972,7 +976,10 @@ class CanvasBridge {
     const api = this.canvasApi()
     if (!api?.saveCheckpoint) return { ok: false, error: 'canvas checkpoint API unavailable' }
     const shapeCount = editor.getCurrentPageShapeIds().size
-    const snapshotJson = JSON.stringify(getSnapshot(editor.store))
+    // Strip inline data: bytes BEFORE the JSON crosses IPC. A multi-MB
+    // snapshotJson is cloned into the main process and is the other half of
+    // the "memory lives in IPC" crash.
+    const snapshotJson = JSON.stringify(stripSnapshotAssetBytes(getSnapshot(editor.store)))
     const res = await api.saveCheckpoint({ name, snapshotJson, shapeCount })
     if (!res.ok) return { ok: false, error: res.reason }
     return { ok: true, checkpointId: res.checkpointId, path: res.path, shapeCount }

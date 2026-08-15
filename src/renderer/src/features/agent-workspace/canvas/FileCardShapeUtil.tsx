@@ -1,6 +1,7 @@
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLShape } from 'tldraw'
-import React, { useEffect, useState } from 'react'
-import { resolveMediaSrcOnce } from '../../../components/shared/media/useResolvedMediaSrc'
+import React from 'react'
+import { toStreamableUri } from '../../file-explorer/uri'
+import { CANVAS_INLINE_ASSET_MAX_CHARS } from './canvasAssetUrl'
 
 /**
  * Custom tldraw shape: a proper CARD for files tldraw cannot render natively
@@ -33,44 +34,27 @@ export type FileCardShape = TLShape<'file-card'>
 
 /** Src schemes an <audio> element can load directly, without IPC resolution. */
 function isDirectlyPlayableSrc(src: string): boolean {
-  return src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('http:') || src.startsWith('https:')
+  return (
+    src.startsWith('blob:') ||
+    src.startsWith('http:') ||
+    src.startsWith('https:') ||
+    src.startsWith('local-file://')
+  )
 }
 
 /**
- * Resolve the audio src for the inline player. Direct schemes (data/blob/http)
- * pass through; otherwise fall back to the on-disk path, pulled through the
- * full-fidelity attachments IPC (`attachments:read-thumb`) into a blob: URL —
- * the sandboxed renderer cannot load `file://` and OS drops only give us a
- * disk path. Revokes the created blob URL when the card unmounts.
+ * Inline player src. Disk paths use the same streamable `local-file://media/`
+ * URI as VideoViewer / AudioViewer — never attachments.readThumb → blob.
+ * Huge `data:` URLs are refused (that is the canvas OOM path).
  */
-function useAudioSrc(kind: 'audio' | 'file', assetUrl: string, assetPath: string): string | null {
-  const direct = kind === 'audio' && isDirectlyPlayableSrc(assetUrl) ? assetUrl : null
-  const osPath = !direct && kind === 'audio' && assetPath ? assetPath : null
-  const [resolved, setResolved] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!osPath) {
-      setResolved(null)
-      return
-    }
-    let cancelled = false
-    let createdBlobUrl: string | null = null
-    resolveMediaSrcOnce(osPath, 'auto', { fullFidelity: true }).then((url) => {
-      if (cancelled) {
-        if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
-        return
-      }
-      createdBlobUrl = url
-      setResolved(url)
-    })
-    return () => {
-      cancelled = true
-      if (createdBlobUrl?.startsWith('blob:')) URL.revokeObjectURL(createdBlobUrl)
-      setResolved(null)
-    }
-  }, [osPath])
-
-  return direct ?? resolved
+function audioSrcFromCard(kind: 'audio' | 'file', assetUrl: string, assetPath: string): string | null {
+  if (kind !== 'audio') return null
+  if (assetUrl.startsWith('data:') && assetUrl.length > CANVAS_INLINE_ASSET_MAX_CHARS) {
+    return assetPath ? toStreamableUri(assetPath) : null
+  }
+  if (isDirectlyPlayableSrc(assetUrl)) return assetUrl
+  if (assetPath) return toStreamableUri(assetPath)
+  return null
 }
 
 function fileExt(title: string): string {
@@ -109,7 +93,7 @@ export class FileCardShapeUtil extends ShapeUtil<FileCardShape> {
     const { kind, title, assetPath, assetUrl, w, h } = shape.props
     // tldraw invokes component() inside a per-shape React wrapper, so hooks
     // are legal here (same pattern as the official interactive-shape examples).
-    const audioSrc = useAudioSrc(kind, assetUrl, assetPath)
+    const audioSrc = audioSrcFromCard(kind, assetUrl, assetPath)
     const ext = fileExt(title)
     return (
       <HTMLContainer

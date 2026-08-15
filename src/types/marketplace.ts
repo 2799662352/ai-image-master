@@ -13,6 +13,19 @@ export interface CatalogEntry {
   size: number
   sha256: string
   url: string
+  /**
+   * 这个 skill 曾经用过的名字，安装时按它清掉旧目录并迁移台账。
+   *
+   * 我们和 Homebrew 同一类模型：逐条目安装进一个共享的平铺命名空间，所以改名
+   * 必须**在清单里显式声明** —— 客户端没有别的办法知道 `a` 和 `b` 是同一个东西。
+   * （Codex 不需要这种字段，因为它的市场是 git 仓库、升级即整棵树检出，删除与
+   * 改名自动传播；那是另一种模型，见 `pluginMarketplaceService` 文件头。）
+   *
+   * ⚠️ **链必须折叠**：`a → b → c` 要写成 `renamedFrom: ['a', 'b']`，
+   * 不能让 b 再去指向 a。否则客户端得做传递解析，而只升级过一次的用户会被漏掉。
+   * 这条由 `skill-renames` 的校验强制，不靠人记（Homebrew 用文档规定同一件事）。
+   */
+  renamedFrom?: string[]
 }
 
 export interface Catalog {

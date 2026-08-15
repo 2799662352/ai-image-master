@@ -6,7 +6,7 @@ import type {
   AgentModelSettingsCatalog,
   AgentModelSettingsEntry,
 } from '../../types/agent'
-import type { ProviderPreset } from './codexProviders'
+import { credentialIdForProvider, type ProviderPreset } from './codexProviders'
 import {
   CANONICAL_MODEL_SETTINGS_ROWS,
   mergeModelSettingsCapabilities,
@@ -42,7 +42,15 @@ export interface GatewayModelCatalogInput {
   dynamicModels: readonly GatewayModelCatalogDynamicRow[]
   /** Custom Gateway records used by the pure routing boundary. */
   customProviders?: readonly ProviderPreset[]
-  hasCredential: boolean
+  /**
+   * 这个**凭据槽**配好了没有 —— 参数是 `credentialId`，不是网关 id。
+   *
+   * 曾经是个布尔（整个网关一个答案）。问题出在 qwen：它挂在 apiyi / rightcode
+   * 名下，用的却是 `credentialId: 'qwen'`（Miau token，与图片生成共用那枚）。
+   * 只配了 Miau 密钥的用户，会看到 qwen3.7 / qwen3.8 被标成「请先配置网关 Key」
+   * 并且选不了 —— 被要求去配一枚这些模型根本用不到的密钥。
+   */
+  hasCredential: (credentialId: string) => boolean
   availabilityByModel: ReadonlyMap<string, AgentModelAvailability>
 }
 
@@ -95,13 +103,41 @@ function tryResolveGatewayModelRoute(
   }
 }
 
+/**
+ * 缺哪一枚就说哪一枚。默认那句「网关 Key」对绝大多数通道是对的，但对借用别处
+ * 凭据的通道就是把人指向错误的设置项。
+ */
+const CREDENTIAL_KEY_HINTS: Readonly<Record<string, string>> = {
+  qwen: '请先配置 Miau 密钥（与图片生成共用同一枚）',
+}
+
+/**
+ * 可用性按**该模型实际要用的凭据**判定，而不是当前网关那一枚。
+ *
+ * 路由已经定下了 channel，`credentialIdForProvider` 再把 channel 映射到它真正
+ * 读取的凭据槽 —— 这一步不能省：qwen 通道挂在 apiyi/rightcode 名下，凭据却是
+ * Miau 的那枚。
+ */
 function resolveAvailability(
   input: GatewayModelCatalogInput,
   modelId: string,
+  route: AgentModelRoute,
 ): AgentModelAvailability {
-  return input.hasCredential
-    ? input.availabilityByModel.get(modelId) ?? { status: 'available' }
-    : { status: 'needs-key', reason: '请先配置网关 Key' }
+  const customProviders = input.customProviders ?? []
+  // `credentialIdForProvider` 认不出某个 id 时会把它原样返回。自定义网关的通道
+  // 叫 `custom:<gatewayId>`，凭据却存在网关名下 —— 这种认不出的情况一律回落到
+  // 网关那枚，也就是这次改动之前所有通道的行为。
+  const fromChannel = credentialIdForProvider(route.channelId, customProviders)
+  const credentialId = fromChannel === route.channelId
+    ? credentialIdForProvider(route.gatewayId, customProviders)
+    : fromChannel
+  if (!input.hasCredential(credentialId)) {
+    return {
+      status: 'needs-key',
+      reason: CREDENTIAL_KEY_HINTS[credentialId] ?? '请先配置网关 Key',
+    }
+  }
+  return input.availabilityByModel.get(modelId) ?? { status: 'available' }
 }
 
 /**
@@ -190,7 +226,7 @@ export function buildGatewayModelCatalog(
       isDefault: row.isDefault,
       family: route.family,
       route,
-      availability: resolveAvailability(input, row.id),
+      availability: resolveAvailability(input, row.id, route),
       capabilities: withConservativeContext(
         mergeModelSettingsCapabilities({
           model: row.id,
@@ -221,7 +257,7 @@ export function buildGatewayModelCatalog(
       isDefault: false,
       family: route.family,
       route,
-      availability: resolveAvailability(input, modelId),
+      availability: resolveAvailability(input, modelId, route),
       capabilities: withConservativeContext(
         mergeModelSettingsCapabilities({
           model: modelId,

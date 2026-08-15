@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance, AutoUpdater } from './updater'
 import { resolveMainWindowShortcut } from './keyboardShortcuts'
+import { classifyContextMenuLink } from './contextMenuLink'
 import {
   submitSplit,
   cancelTask,
@@ -487,7 +488,7 @@ function createWindow(): void {
           // it the canvas edit pipeline can't produce a targetImagePath (export throws
           // "Refused to connect"/timeout), so annotations never reach the edit queue.
           // 同上:下载/复制老图走 fetch(url),所以 connect-src 也得继续认这台主机。
-          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
+          "connect-src 'self' https: wss: data: blob: local-file: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
             // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
             // and local-file:// for the file-explorer video previewer.
             "media-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
@@ -799,19 +800,48 @@ function createWindow(): void {
     }
 
     if (params.linkURL) {
-      menuTemplate.push(
-        {
-          label: '复制链接',
-          click: () => {
-            clipboard.writeText(params.linkURL)
-          }
-        },
-        {
-          label: '在浏览器中打开',
-          click: () => shell.openExternal(params.linkURL)
-        },
-        { type: 'separator' }
-      )
+      // 本地文件和网页链接要给不同的动作 —— 对着一条 `D:\...\脚本.md` 给
+      // 「在浏览器中打开」,用户得到的是「点了没反应」。见 contextMenuLink.ts。
+      const link = classifyContextMenuLink(params.linkURL)
+      if (link.kind === 'file') {
+        menuTemplate.push(
+          {
+            label: '在文件夹中显示',
+            click: () => shell.showItemInFolder(link.osPath)
+          },
+          {
+            label: '用默认程序打开',
+            click: () => {
+              void shell.openPath(link.osPath).then((err) => {
+                // openPath 用返回值报错而不是抛。静默失败会让这一项看起来和
+                // 修好之前一模一样。
+                if (err) dialog.showErrorBox('打开文件失败', err)
+              })
+            }
+          },
+          {
+            label: '复制路径',
+            click: () => {
+              clipboard.writeText(link.osPath)
+            }
+          },
+          { type: 'separator' }
+        )
+      } else {
+        menuTemplate.push(
+          {
+            label: '复制链接',
+            click: () => {
+              clipboard.writeText(link.url)
+            }
+          },
+          {
+            label: '在浏览器中打开',
+            click: () => shell.openExternal(link.url)
+          },
+          { type: 'separator' }
+        )
+      }
     }
 
     if (params.selectionText) {
