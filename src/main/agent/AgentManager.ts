@@ -124,7 +124,7 @@ import type {
   CodexWorkspacePaths,
   ItemDeltaPatch,
 } from '../../types/agent'
-import type { AttachmentRef, DelegationSnapshot, TimelineItem } from '../../types/agent-timeline'
+import type { AttachmentRef, DelegationSnapshot, FileChange, TimelineItem } from '../../types/agent-timeline'
 import { dropSupersededStreamItems, trimRetriedStreamItems } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
@@ -153,7 +153,7 @@ import type {
 } from '../../types/codexPlugins'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
-import { beginObservedChanges } from './observedChanges'
+import { beginObservedChanges, type ObservedChangeTracker } from './observedChanges'
 import { takeSnapshot } from './workspaceSnapshot'
 import { diffSnapshots } from './snapshotDiff'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
@@ -4752,13 +4752,19 @@ export class AgentManager {
       let assistantItems: TimelineItem[] = []
       // 回合一开始就异步拍基线。没跑过命令 / 赛跑输了 / 超预算都会在 finish
       // 里收敛成空数组 —— 判断集中在 observedChanges.ts,这里只负责喂依赖。
-      const observer = beginObservedChanges({
-        roots: () => [...this.allowedRoots],
-        snapshot: (roots) => takeSnapshot(roots),
-        diff: diffSnapshots,
-      })
+      const makeObserver = (): ObservedChangeTracker =>
+        beginObservedChanges({
+          roots: () => [...this.allowedRoots],
+          snapshot: (roots) => takeSnapshot(roots),
+          diff: diffSnapshots,
+        })
+      let observer: ObservedChangeTracker | null = makeObserver()
       try {
         for await (const event of eventStream) {
+          // 追踪器和 assistantItems 同寿:turn_completed 处把它卸掉,这里在下一个
+          // 回合的第一个事件上重新武装。常态下迭代器在 turn_completed 之后就结束,
+          // 这一行不会付任何代价。
+          observer ??= makeObserver()
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
           }
@@ -4811,12 +4817,12 @@ export class AgentManager {
                 item.type === 'fileEdit' ? item.changes.map((c) => c.path) : [],
               ),
             )
-            const observedChanges = await observer.finish(reportedPaths).catch(() => [])
+            const observedChanges = await observer.finish(reportedPaths).catch(() => [] as FileChange[])
             if (observedChanges.length > 0) {
               const observedEvent: AgentStreamEvent = {
                 type: 'item_completed',
                 threadId: dbThreadId,
-                itemId: `observed-${Date.now()}`,
+                itemId: createTimelineId(),
                 itemType: 'fileEdit',
                 final: {
                   changes: observedChanges,
@@ -4851,6 +4857,11 @@ export class AgentManager {
             // (Practically the iterator ends after turn_completed, but keep this
             // defensive in case backend yields multi-turn streams later.)
             assistantItems = []
+            // 追踪器必须跟着一起卸。finish() 是记忆化的 —— 同一条 stream 上真来了
+            // 第二个回合时复用它,会把第一回合的改动原样再报一次,那是一张**错的**
+            // 卡,不是白费一次 IO。置 null 而不是就地重建:重建等于每个回合末尾都
+            // 白拍一份完整工作区快照,而且那份孤儿快照还会在后台一直扫下去。
+            observer = null
 
             if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
               this.firstTurnDoneByThread.set(dbThreadId, true)
