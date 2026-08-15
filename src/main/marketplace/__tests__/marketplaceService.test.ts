@@ -225,6 +225,108 @@ describe('MarketplaceService', () => {
     expect(await readFile(path.join(userSkillsDir, 'dual', 'SKILL.md'), 'utf8')).toContain('v2')
   })
 
+  // 改名迁移 —— 我们逐条目装进**共享平铺命名空间**,改名之后新名字装进来,旧目录
+  // 既不被覆盖(不在新包里)也不被删除(没人记得它),变成既不更新也删不掉的孤儿,
+  // 而它的正文引用的还是老名字,新旧两套会同时被 agent 看见。做法同 Homebrew 的
+  // formula_renames.json:改名必须在清单里显式声明,客户端没法自己看出来。
+  it('install 按 renamedFrom 清掉旧目录并迁移台账', async () => {
+    const zipBuf = await buildZipBuffer({ 'SKILL.md': '---\nname: new-name\n---\nv2' })
+    const entry: CatalogEntry = {
+      ...makeEntry('new-name', '2.0.0', sha256Hex(zipBuf), 'https://example.com/skills/new-name-2.0.0.zip'),
+      renamedFrom: ['old-name'],
+    }
+    const catalog = makeCatalog([entry])
+    const blobs = new Map<string, Buffer>([[entry.url, zipBuf]])
+
+    // 盘上有旧名字的安装,台账里也有它。
+    await mkdir(path.join(userSkillsDir, 'old-name'), { recursive: true })
+    await writeFile(
+      path.join(userSkillsDir, 'old-name', 'SKILL.md'),
+      '---\nname: old-name\n---\nv1',
+      'utf8',
+    )
+    await writeFile(
+      stateFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        installed: {
+          'old-name': {
+            name: 'old-name',
+            version: '1.0.0',
+            installedAt: new Date(0).toISOString(),
+            sha256: '0'.repeat(64),
+            source: 'marketplace',
+          },
+        },
+      }),
+      'utf8',
+    )
+
+    const svc = new MarketplaceService({
+      catalogUrl: 'https://example.com/skills/catalog.json',
+      userSkillsDir,
+      stateFile,
+      fetcher: makeFetcher(catalog, blobs),
+    })
+    await svc.install('new-name')
+
+    expect(await exists(path.join(userSkillsDir, 'old-name'))).toBe(false)
+    expect(await exists(path.join(userSkillsDir, 'new-name'))).toBe(true)
+    const st = JSON.parse(await readFile(stateFile, 'utf8'))
+    expect(st.installed['old-name']).toBeUndefined()
+    expect(st.installed['new-name']).toMatchObject({ version: '2.0.0' })
+  })
+
+  it('旧名字目录不存在时,改名迁移是安全的 no-op', async () => {
+    // 绝大多数用户从没装过旧名字 —— 迁移不能因此报错或留下痕迹。
+    const zipBuf = await buildZipBuffer({ 'SKILL.md': '---\nname: fresh\n---\n' })
+    const entry: CatalogEntry = {
+      ...makeEntry('fresh', '1.0.0', sha256Hex(zipBuf), 'https://example.com/skills/fresh-1.0.0.zip'),
+      renamedFrom: ['never-had-this'],
+    }
+    const svc = new MarketplaceService({
+      catalogUrl: 'https://example.com/skills/catalog.json',
+      userSkillsDir,
+      stateFile,
+      fetcher: makeFetcher(makeCatalog([entry]), new Map([[entry.url, zipBuf]])),
+    })
+    await expect(svc.install('fresh')).resolves.toMatchObject({ name: 'fresh' })
+    expect(await exists(path.join(userSkillsDir, 'fresh'))).toBe(true)
+  })
+
+  it('旧名字如果仍在 catalog 里,就不是改名 —— 不删它', async () => {
+    // 防御一次手滑:改名表把一个仍在售的 skill 写成了别人的旧名。删掉它等于
+    // 静默卸载用户正在用的东西,而 catalog 明明还在提供它。
+    const oldZip = await buildZipBuffer({ 'SKILL.md': '---\nname: still-listed\n---\n' })
+    const newZip = await buildZipBuffer({ 'SKILL.md': '---\nname: claimer\n---\n' })
+    const stillListed = makeEntry(
+      'still-listed',
+      '1.0.0',
+      sha256Hex(oldZip),
+      'https://example.com/skills/still-listed-1.0.0.zip',
+    )
+    const claimer: CatalogEntry = {
+      ...makeEntry('claimer', '1.0.0', sha256Hex(newZip), 'https://example.com/skills/claimer-1.0.0.zip'),
+      renamedFrom: ['still-listed'],
+    }
+    const svc = new MarketplaceService({
+      catalogUrl: 'https://example.com/skills/catalog.json',
+      userSkillsDir,
+      stateFile,
+      fetcher: makeFetcher(
+        makeCatalog([stillListed, claimer]),
+        new Map([[stillListed.url, oldZip], [claimer.url, newZip]]),
+      ),
+    })
+
+    await svc.install('still-listed')
+    await svc.install('claimer')
+
+    expect(await exists(path.join(userSkillsDir, 'still-listed'))).toBe(true)
+    const st = JSON.parse(await readFile(stateFile, 'utf8'))
+    expect(st.installed['still-listed']).toBeDefined()
+  })
+
   it('uninstall removes the skill directory and its state entry', async () => {
     const zipBuf = await buildZipBuffer({ 'SKILL.md': '---\nname: dropme\n---\n' })
     const entry = makeEntry(
