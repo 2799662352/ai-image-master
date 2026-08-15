@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { structuredPatch } from 'diff'
-import { DIFF_TIMEOUT_MS, diffSnapshots } from '../snapshotDiff'
+import { DIFF_TIMEOUT_MS, TOTAL_DIFF_BUDGET_MS, diffSnapshots } from '../snapshotDiff'
 import type { Snapshot } from '../workspaceSnapshot'
 
 // 默认走真实实现;只有超时那条用 mockReturnValueOnce 造出 jsdiff 放弃的返回值。
@@ -108,6 +108,39 @@ describe('diffSnapshots', () => {
     expect(out[0].diff).not.toMatch(/^[+-]/m)
     expect(out[0].added).toBe(0)
     expect(out[0].removed).toBe(0)
+  })
+
+  it('总预算用尽 → 剩下的文件不再尝试渲染,但一条都不少报', () => {
+    // 假时钟:第一个文件渲染完就把墙钟推过预算。不依赖真实耗时,不会因机器快慢翻脸。
+    let t = 0
+    const now = () => {
+      const v = t
+      t += TOTAL_DIFF_BUDGET_MS // 每次读表都跳一整个预算
+      return v
+    }
+
+    const out = diffSnapshots(
+      snap({ '/w/a.md': 'one\n', '/w/b.md': 'one\n', '/w/c.md': 'one\n' }),
+      snap({ '/w/a.md': 'two\n', '/w/b.md': 'two\n', '/w/c.md': 'two\n' }),
+      now,
+    )
+
+    // 三个文件全部出现 —— 预算管的是「能不能说清内容」,不是「报不报」。
+    expect(out.map((c) => c.path)).toEqual(['/w/a.md', '/w/b.md', '/w/c.md'])
+    expect(out.every((c) => c.diff.includes('渲染总预算'))).toBe(true)
+    // 关键:超预算之后一次 structuredPatch 都不能再调,否则每个文件又是最多 100ms。
+    expect(vi.mocked(structuredPatch)).not.toHaveBeenCalled()
+  })
+
+  it('预算充裕时照常逐个渲染 —— 别把日常路径也降级了', () => {
+    const out = diffSnapshots(
+      snap({ '/w/a.md': 'one\n', '/w/b.md': 'one\n' }),
+      snap({ '/w/a.md': 'two\n', '/w/b.md': 'two\n' }),
+      () => 0,
+    )
+
+    expect(vi.mocked(structuredPatch)).toHaveBeenCalledTimes(2)
+    expect(out.every((c) => c.diff.includes('+two'))).toBe(true)
   })
 
   it('一个文件渲染超时不连累同轮其他文件', () => {
