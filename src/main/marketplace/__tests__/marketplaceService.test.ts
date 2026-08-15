@@ -402,6 +402,74 @@ describe('MarketplaceService', () => {
     expect(list.map((r) => r.name)).toEqual(['pre-existing'])
   })
 
+  it('adoptExisting 顺带完成改名迁移 —— 用户不必先去装新名字', async () => {
+    // 缺口:install 时的迁移只在用户**主动安装新名字**时触发。装了旧名字之后
+    // 什么都不做的用户,会永远留着那个孤儿。adoptExisting 每次启动都跑
+    // (src/main/index.ts),它已经在扫目录、手里也有 catalog —— 让它顺带做,
+    // 用户下次开应用就自动迁移。
+    const renamedEntry: CatalogEntry = {
+      ...makeEntry('new-id', '2.0.0', '0'.repeat(64), 'https://example.com/skills/new-id-2.0.0.zip'),
+      renamedFrom: ['legacy-id'],
+    }
+    await mkdir(path.join(userSkillsDir, 'legacy-id'), { recursive: true })
+    await writeFile(
+      path.join(userSkillsDir, 'legacy-id', 'SKILL.md'),
+      '---\nname: legacy-id\n---\nold',
+      'utf8',
+    )
+    await writeFile(
+      stateFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        installed: {
+          'legacy-id': {
+            name: 'legacy-id',
+            version: '1.0.0',
+            installedAt: new Date(0).toISOString(),
+            sha256: '0'.repeat(64),
+            source: 'marketplace',
+          },
+        },
+      }),
+      'utf8',
+    )
+
+    const svc = new MarketplaceService({
+      catalogUrl: 'https://example.com/skills/catalog.json',
+      userSkillsDir,
+      stateFile,
+      fetcher: makeFetcher(makeCatalog([renamedEntry]), new Map()),
+    })
+    await svc.adoptExisting()
+
+    expect(await exists(path.join(userSkillsDir, 'legacy-id'))).toBe(false)
+    const st = JSON.parse(await readFile(stateFile, 'utf8'))
+    expect(st.installed['legacy-id']).toBeUndefined()
+  })
+
+  it('adoptExisting 不认领旧名字 —— 它该被清掉,不是被登记成已安装', async () => {
+    // 旧名字仍在 catalog 的 renamedFrom 里,但它不是一个可安装条目。认领它等于
+    // 把一个已经改名的东西登记成「已安装」,用户会在列表里看到一个装不了、
+    // 更新不了的幽灵。
+    const renamedEntry: CatalogEntry = {
+      ...makeEntry('cur', '1.0.0', '0'.repeat(64), 'https://example.com/skills/cur-1.0.0.zip'),
+      renamedFrom: ['gone'],
+    }
+    await mkdir(path.join(userSkillsDir, 'gone'), { recursive: true })
+    await writeFile(path.join(userSkillsDir, 'gone', 'SKILL.md'), '---\nname: gone\n---\n', 'utf8')
+
+    const svc = new MarketplaceService({
+      catalogUrl: 'https://example.com/skills/catalog.json',
+      userSkillsDir,
+      stateFile,
+      fetcher: makeFetcher(makeCatalog([renamedEntry]), new Map()),
+    })
+    const adopted = await svc.adoptExisting()
+
+    expect(adopted.map((r) => r.name)).not.toContain('gone')
+    expect(await exists(path.join(userSkillsDir, 'gone'))).toBe(false)
+  })
+
   it('adoptExisting is idempotent — second call returns empty, listInstalled unchanged', async () => {
     const entry = makeEntry(
       'p1',

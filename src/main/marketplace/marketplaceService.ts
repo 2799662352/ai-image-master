@@ -169,10 +169,36 @@ export class MarketplaceService {
       throw err
     }
 
+    // 曾用名 → 现名。改名迁移在这里也做一次:`install` 那条只在用户**主动装
+    // 新名字**时触发,而装了旧名字之后什么都不做的用户占大多数 —— 他们会永远
+    // 留着那个孤儿。本方法每次启动都跑(src/main/index.ts),正是补这一刀的地方。
+    const currentNameByOldName = new Map<string, string>()
+    for (const s of catalog.skills) {
+      for (const oldName of s.renamedFrom ?? []) {
+        if (!catalogByName.has(oldName)) currentNameByOldName.set(oldName, s.name)
+      }
+    }
+    let migrated = false
+
     const newlyAdopted: InstalledRecord[] = []
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      const skillName = entry.name
+      // `readdir(withFileTypes)` 的 Dirent.name 在当前 @types/node 下解析成 Buffer,
+      // 而下面每一处都要拿它当字符串用(Map 键、路径段、台账索引)。归一一次,
+      // 好过在每个用点各写一次断言。
+      const skillName = String(entry.name)
+
+      // 曾用名的目录该被清掉,而不是被认领 —— 认领等于把一个已改名的东西登记成
+      // 「已安装」,用户会在列表里看到一个装不了也更新不了的幽灵。
+      if (currentNameByOldName.has(skillName)) {
+        await fs
+          .rm(path.join(this.opts.userSkillsDir, skillName), { recursive: true, force: true })
+          .catch(() => {})
+        if (state.installed[skillName]) delete state.installed[skillName]
+        migrated = true
+        continue
+      }
+
       // Already tracked? Skip.
       if (state.installed[skillName]) continue
       // Must look like a real skill (has SKILL.md).
@@ -198,7 +224,9 @@ export class MarketplaceService {
       newlyAdopted.push(record)
     }
 
-    if (newlyAdopted.length > 0) {
+    // 迁移也要落盘 —— 只按 newlyAdopted 判会让「只清理、没认领」的那次白跑,
+    // 下次启动重新清一遍(目录已经没了,但台账里的幽灵条目会一直留着)。
+    if (newlyAdopted.length > 0 || migrated) {
       await this.saveState(state)
     }
     return newlyAdopted
