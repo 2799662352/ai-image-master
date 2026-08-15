@@ -12,23 +12,31 @@ function snap(files: Record<string, string>, over: Partial<Snapshot> = {}): Snap
 }
 
 describe('diffSnapshots', () => {
-  it('内容变了 → edit,并给出带 @@ 的 diff', () => {
+  it('内容变了 → edit,只给 hunk 不给 ---/+++ —— FileDiffBlock 按行首上色会把文件头当成删/增行', () => {
     const out = diffSnapshots(snap({ '/w/a.md': 'one\ntwo\n' }), snap({ '/w/a.md': 'one\nTWO\n' }))
 
     expect(out).toHaveLength(1)
     expect(out[0].path).toBe('/w/a.md')
     expect(out[0].operation).toBe('edit')
+    expect(out[0].source).toBe('observed')
     expect(out[0].diff).toContain('@@')
     expect(out[0].diff).toContain('-two')
     expect(out[0].diff).toContain('+TWO')
+    // createPatch / createTwoFilesPatch 会吐 ---/+++ 头行;countDiffLines 会跳过它们,
+    // 所以 added/removed 仍是 1/1。必须按行锚定,证明输出是纯 hunk。
+    expect(out[0].diff).not.toMatch(/^(---|\+\+\+) /m)
     expect(out[0].added).toBe(1)
     expect(out[0].removed).toBe(1)
   })
 
   it('每条都标成 observed —— 渲染层据此和 agent 自报的区分开', () => {
-    const out = diffSnapshots(snap({}), snap({ '/w/n.md': 'x\n' }))
+    const created = diffSnapshots(snap({}), snap({ '/w/n.md': 'x\n' }))
+    const edited = diffSnapshots(snap({ '/w/a.md': 'one\n' }), snap({ '/w/a.md': 'two\n' }))
+    const deleted = diffSnapshots(snap({ '/w/g.md': 'x\n' }), snap({}))
 
-    expect(out[0].source).toBe('observed')
+    expect(created[0].source).toBe('observed')
+    expect(edited[0].source).toBe('observed')
+    expect(deleted[0].source).toBe('observed')
   })
 
   it('后有前无 → create;前有后无 → delete', () => {
@@ -51,6 +59,13 @@ describe('diffSnapshots', () => {
   it('任一侧 skipped 的路径都不报 —— 读不动的文件不该变成「新建」', () => {
     const before = snap({}, { skipped: new Set(['/w/locked.md']) })
     const after = snap({ '/w/locked.md': 'now readable\n' })
+
+    expect(diffSnapshots(before, after)).toEqual([])
+  })
+
+  it('后侧 skipped 的路径也不报 —— 否则前有后读不动会被当成「删了」', () => {
+    const before = snap({ '/w/locked.md': 'was readable\n' })
+    const after = snap({}, { skipped: new Set(['/w/locked.md']) })
 
     expect(diffSnapshots(before, after)).toEqual([])
   })
