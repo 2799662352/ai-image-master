@@ -10,18 +10,25 @@
  * 宁可不给也不给错的:这条纪律抄自上游 `TurnDiffTracker`,它在 patch 不能被
  * 精确表示时直接 `invalidate()` 丢掉整轮,而不是展示一份可能不准的。
  *
- * ## 为什么赛跑判定要晚一个微任务
+ * ## 赛跑判定为什么写成一场 Promise.race
  *
- * `baselineReady` 是在 promise 的回调里置位的,而 promise 回调**永远**跑在微
- * 任务队列上 —— 即便快照瞬间就完成了,只要 `noteShellStarted()` 和回合开始处
- * 在同一个同步块里(测试如此,真实回合里同 tick 到达的命令事件亦然),同步去
- * 读这个 flag 读到的必然是 false,于是每一轮都被误判成「赛跑输了」,整个功能
- * 静默失效 —— 而且失效方向是「永远不显示」,没有任何报错会提醒我们。
+ * 要问的是「基线真的赶在第一条命令之前拍完了吗」,这是个**先后**问题。所以两边
+ * 各自在自己的自然时刻登记一个反应 —— 快照那边在发起时登记,命令那边在命令到达
+ * 时 resolve —— 交给 `Promise.race` 去比:先 settle 的一方,回调先进微任务队列
+ * (FIFO,规范保证),race 就采信它。判据落在两者真实的 settle 先后上,而不是某个
+ * 布尔量在「探针恰好排到第几层微任务」时的取值,后者会随任何一方多绕一层微任务
+ * 而翻转。
  *
- * 所以判定推迟一个微任务再做:此时**已经 settle** 的基线一定已经置位,而**真正
- * 还在跑**的基线(还压着一次 fs 往返)一定还没有。两者由此可区分。这不会放松
- * 纪律:真实快照的完成回调跑在另一个宏任务里,要么早于命令事件(基线可信),
- * 要么晚于本次探针(判定为输)—— 中间不存在会让脏基线蒙混过关的窗口。
+ * ## 一条需要更正的说法
+ *
+ * 别把「同步读 flag」写成线上故障。生产里 `noteShellStarted` 由事件流回调触发,
+ * 离 `beginObservedChanges` 隔着许多个宏任务,那时快照的回调早跑完了;陈旧窗口只在
+ * 「与 promise settle 处于同一个同步块」时才观察得到,而只有测试里瞬间 resolve 的
+ * 假快照会造出这种情形。改用 race 不是在修一个正在发生的线上故障,而是为了让判据
+ * 不再依赖回调排在第几层。
+ *
+ * 失败方向始终是安全的:命令到达时基线若仍是 pending(真在跑 fs,或被人包了一层
+ * async 转发),这一轮判为不可信 —— 结果是**不给**,而不是拿脏基线**给错**。
  */
 
 import type { FileChange } from '../../types/agent-timeline'
@@ -42,42 +49,37 @@ export interface ObservedChangeTracker {
 
 export function beginObservedChanges(deps: ObservedChangesDeps): ObservedChangeTracker {
   const roots = deps.roots()
-  let baselineReady = false
   let sawShell = false
-  let raceLost = false
-  /** 首个命令的赛跑判定,`finish` 必须等它有结论才敢用基线。 */
-  let raceSettled: Promise<void> | null = null
+
+  let resolveFirstShell: () => void = () => {}
+  const firstShell = new Promise<void>((r) => {
+    resolveFirstShell = r
+  })
 
   // 不 await:回合开始不该为此多等。失败收敛成 null,由 finish 统一作废。
-  // 成功/失败两个回调必须挂在同一层 then 上,否则失败路径要多绕一个微任务才
-  // 置位 baselineReady,会被探针误判成赛跑输了 —— 那样「快照抛错」这条用例就
-  // 是靠错误的理由变绿的。
-  const baseline: Promise<Snapshot | null> = deps.snapshot(roots).then(
-    (snap) => {
-      baselineReady = true
-      return snap
-    },
-    () => {
-      baselineReady = true
-      return null
-    },
+  const snapshotting = deps.snapshot(roots)
+  const baseline: Promise<Snapshot | null> = snapshotting.then(
+    (snap) => snap,
+    () => null,
   )
+
+  // 抛错也算「拍完了」:那份基线可不可信由 finish 的 before === null 认定,与先后无关。
+  // 两个分支都给 true,免得失败路径靠「赛跑输了」这个错误的理由被作废。
+  const baselineWon: Promise<boolean> = Promise.race([
+    snapshotting.then(() => true, () => true),
+    firstShell.then(() => false),
+  ])
 
   return {
     noteShellStarted(): void {
       sawShell = true
-      // 只认第一条命令:它赢了就说明基线在任何命令之前就已拍完,后面的命令
-      // 再多也不会让一份已经拍好的基线变脏。
-      if (raceSettled) return
-      raceSettled = Promise.resolve().then(() => {
-        if (!baselineReady) raceLost = true
-      })
+      // 只有第一条命令能改变判定:基线一旦赶在任何命令之前拍完,后面的命令再多也
+      // 弄不脏一份已经拍好的快照。resolve 本身幂等,不需要额外的「只认第一条」开关。
+      resolveFirstShell()
     },
     async finish(reportedPaths: Set<string>): Promise<FileChange[]> {
       if (!sawShell) return []
-      // 先等赛跑有结论,再读 raceLost —— 直接读会读到探针跑之前的初值。
-      if (raceSettled) await raceSettled
-      if (raceLost) return []
+      if (!(await baselineWon)) return []
 
       const before = await baseline
       if (!before || !before.complete) return []
