@@ -135,6 +135,7 @@
     "browser-image-compression": "^2.0.2",
     "choices.js": "^11.1.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
+    "diff": "^9.0.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "express": "^5.2.1",

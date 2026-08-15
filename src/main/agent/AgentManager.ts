@@ -124,7 +124,7 @@ import type {
   CodexWorkspacePaths,
   ItemDeltaPatch,
 } from '../../types/agent'
-import type { AttachmentRef, DelegationSnapshot, TimelineItem } from '../../types/agent-timeline'
+import type { AttachmentRef, DelegationSnapshot, FileChange, TimelineItem } from '../../types/agent-timeline'
 import { dropSupersededStreamItems, trimRetriedStreamItems } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
@@ -153,6 +153,9 @@ import type {
 } from '../../types/codexPlugins'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
+import { beginObservedChanges, type ObservedChangeTracker } from './observedChanges'
+import { takeSnapshot } from './workspaceSnapshot'
+import { diffSnapshots } from './snapshotDiff'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 import { setWan3TokenSource } from '../services/wan3/credentials'
 
@@ -4747,8 +4750,37 @@ export class AgentManager {
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
+      const makeObserver = (): ObservedChangeTracker =>
+        beginObservedChanges({
+          roots: () => [...this.allowedRoots],
+          snapshot: (roots) => takeSnapshot(roots),
+          diff: diffSnapshots,
+        })
+      /**
+       * 武装追踪器。装饰性的功能不该有能力弄坏一个回合,所以自己吞掉异常:交给外层
+       * 那个 catch 是不够的 —— 它会拿异常去比对 `isPoisonedThreadError`,可能白烧掉
+       * 一次性的重试名额,比不接还糟。今天 `takeSnapshot` 是 async 函数、抛不出同步
+       * 异常,但那是巧合不是结构保证。
+       *
+       * 时机上必须尽早:基线得赶在第一条命令之前拍完,晚一拍就多一分输掉赛跑、整轮
+       * 作废的概率。所以在 for-await 之前武装,而不是等第一个事件进来 —— 首个事件可能
+       * 隔着一整个网络往返。
+       */
+      const armObserver = (): ObservedChangeTracker | null => {
+        try {
+          return makeObserver()
+        } catch (err) {
+          console.warn('[AgentManager] 观察追踪器武装失败,本轮不显示命令行改动:', err)
+          return null
+        }
+      }
+      let observer: ObservedChangeTracker | null = armObserver()
       try {
         for await (const event of eventStream) {
+          // 追踪器和 assistantItems 同寿:turn_completed 处把它卸掉,这里在下一个
+          // 回合的第一个事件上重新武装。常态下迭代器在 turn_completed 之后就结束,
+          // 这一行不会付任何代价。
+          observer ??= armObserver()
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
           }
@@ -4790,7 +4822,36 @@ export class AgentManager {
 
           assistantItems = applyAssistantEvent(assistantItems, event)
 
+          if (event.type === 'item_started' && event.itemType === 'shell') {
+            observer?.noteShellStarted()
+          }
+
           if (event.type === 'turn_completed') {
+            // 落库之前把观察到的改动补进去,这样直播和历史看到的是同一份。
+            const reportedPaths = new Set(
+              assistantItems.flatMap((item) =>
+                item.type === 'fileEdit' ? item.changes.map((c) => c.path) : [],
+              ),
+            )
+            const observedChanges: FileChange[] = observer
+              ? await observer.finish(reportedPaths).catch(() => [])
+              : []
+            if (observedChanges.length > 0) {
+              const observedEvent: AgentStreamEvent = {
+                type: 'item_completed',
+                threadId: dbThreadId,
+                itemId: createTimelineId(),
+                itemType: 'fileEdit',
+                final: {
+                  changes: observedChanges,
+                  totalAdded: observedChanges.reduce((s, c) => s + c.added, 0),
+                  totalRemoved: observedChanges.reduce((s, c) => s + c.removed, 0),
+                },
+              }
+              this.emitEvent(observedEvent)
+              assistantItems = applyAssistantEvent(assistantItems, observedEvent)
+            }
+
             if (this.store && assistantItems.length > 0) {
               try {
                 // TimelineItem is a discriminated union; Prisma's InputJsonValue
@@ -4814,6 +4875,11 @@ export class AgentManager {
             // (Practically the iterator ends after turn_completed, but keep this
             // defensive in case backend yields multi-turn streams later.)
             assistantItems = []
+            // 追踪器必须跟着一起卸。finish() 是记忆化的 —— 同一条 stream 上真来了
+            // 第二个回合时复用它,会把第一回合的改动原样再报一次,那是一张**错的**
+            // 卡,不是白费一次 IO。置 null 而不是就地重建:重建等于每个回合末尾都
+            // 白拍一份完整工作区快照,而且那份孤儿快照还会在后台一直扫下去。
+            observer = null
 
             if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
               this.firstTurnDoneByThread.set(dbThreadId, true)
