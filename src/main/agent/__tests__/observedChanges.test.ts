@@ -5,6 +5,7 @@
 // 一条用例会同时满足两个判断,删掉其中任何一个它都还是绿的 —— 那样的用例挡不住
 // 任何回归。所以这里用「第 1 次成功、第 2 次出问题」的假实现把两端分开考。
 import { describe, expect, it, vi } from 'vitest'
+import path from 'node:path'
 import { beginObservedChanges } from '../observedChanges'
 import type { Snapshot } from '../workspaceSnapshot'
 import type { FileChange } from '../../../types/agent-timeline'
@@ -133,6 +134,51 @@ describe('beginObservedChanges', () => {
 
     expect(snapshot).toHaveBeenCalledTimes(2) // 起始 1 次 + 结束 1 次,没有第 3 次
     expect(second).toEqual(first)
+  })
+
+  // 上面那条同格式用例挡不住真正的病:两侧都写 `/w/a.md` 时,任何比较方式都能过。
+  // 线上两侧压根不是同一种写法 —— reported 来自 codex 的 wire 值,`parseChange`
+  // 原样透传;observed 是快照键,由 `path.join(path.resolve(root), …)` 生成的原生
+  // 绝对路径。写法一错,`Set.has` 永远不命中,去重就成了死代码,同一个文件会既出现
+  // 在 apply_patch 卡里、又出现在 observed 卡里。
+  describe('reported 与快照键的写法不同,要归一化之后再比', () => {
+    const root = path.resolve('/w')
+    const target = path.join(root, 'src', 'a.md')
+    const other = path.join(root, 'src', 'keep.md')
+
+    /** 固定产出 target + other 两条观察结果,返回减掉 `reported` 之后还剩谁。 */
+    async function remainingAfterSubtracting(reported: string): Promise<string[]> {
+      const t = beginObservedChanges(
+        deps({ roots: () => [root], diff: vi.fn(() => [change(target), change(other)]) }),
+      )
+      t.noteShellStarted()
+      const out = await t.finish(new Set([reported]))
+      return out.map((c) => c.path)
+    }
+
+    it('绝对原生路径', async () => {
+      await expect(remainingAfterSubtracting(target)).resolves.toEqual([other])
+    })
+
+    it('绝对 POSIX 路径 —— D:/w/src/a.md 和 D:\\w\\src\\a.md 是同一个文件', async () => {
+      await expect(remainingAfterSubtracting(target.replace(/\\/g, '/'))).resolves.toEqual([other])
+    })
+
+    it('工作区相对路径 —— 仓库里所有 codex fixture 都是这种写法', async () => {
+      await expect(remainingAfterSubtracting('src/a.md')).resolves.toEqual([other])
+    })
+
+    it.skipIf(process.platform !== 'win32')('相对反斜杠路径', async () => {
+      await expect(remainingAfterSubtracting('src\\a.md')).resolves.toEqual([other])
+    })
+
+    it.skipIf(process.platform !== 'win32')('大小写不同 —— NTFS 不区分,同一个文件', async () => {
+      await expect(remainingAfterSubtracting(target.toUpperCase())).resolves.toEqual([other])
+    })
+
+    it('同名不同目录不能误杀 —— 归一化不是「只比文件名」', async () => {
+      await expect(remainingAfterSubtracting('other/a.md')).resolves.toEqual([target, other])
+    })
   })
 
   it('起始快照在构造时就拍掉,不是等第一条命令来了才拍', async () => {

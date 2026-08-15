@@ -31,8 +31,43 @@
  * async 转发),这一轮判为不可信 —— 结果是**不给**,而不是拿脏基线**给错**。
  */
 
+import path from 'node:path'
 import type { FileChange } from '../../types/agent-timeline'
 import type { Snapshot } from './workspaceSnapshot'
+
+/**
+ * 把一个绝对路径压成可比较的键。
+ *
+ * 只用于**比较的那一瞬**,不改任何一侧存下来的原值 —— `parseChange` 透传的 wire
+ * 路径同时被 fileEdit 卡片、`revealPath`、`openAiChange` 消费,归一化到它们身上
+ * 会波及本功能之外的东西。
+ *
+ * Windows 上顺带 lowercase:NTFS 不区分大小写,`D:\W\A.md` 与 `d:\w\a.md` 是同一
+ * 个文件。POSIX 不能这么做,那边大小写敏感,一 lowercase 就会把两个不同的文件当成
+ * 同一个、误杀掉本该显示的改动。
+ */
+function comparableKey(absPath: string): string {
+  const unified = path.resolve(absPath).replace(/\\/g, '/')
+  return process.platform === 'win32' ? unified.toLowerCase() : unified
+}
+
+/**
+ * apply_patch 报来的路径没有约定写法:仓库里的 codex fixture 是工作区相对的
+ * (`src/a.ts`),线上也见过绝对的,分隔符还随平台走。快照键则一律是
+ * `path.join(path.resolve(root), …)` 的原生绝对路径。所以相对路径要先按本回合的
+ * roots 逐个还原成绝对候选(一个相对写法可能落在多个 root 下,全收)。
+ */
+function comparableKeys(reportedPaths: Iterable<string>, roots: string[]): Set<string> {
+  const keys = new Set<string>()
+  for (const reported of reportedPaths) {
+    if (path.isAbsolute(reported)) {
+      keys.add(comparableKey(reported))
+      continue
+    }
+    for (const root of roots) keys.add(comparableKey(path.resolve(root, reported)))
+  }
+  return keys
+}
 
 export interface ObservedChangesDeps {
   roots: () => string[]
@@ -90,7 +125,8 @@ export function beginObservedChanges(deps: ObservedChangesDeps): ObservedChangeT
     }
     if (!after.complete) return []
 
-    return deps.diff(before, after).filter((change) => !reportedPaths.has(change.path))
+    const reportedKeys = comparableKeys(reportedPaths, roots)
+    return deps.diff(before, after).filter((change) => !reportedKeys.has(comparableKey(change.path)))
   }
 
   return {
