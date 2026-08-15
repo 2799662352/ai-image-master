@@ -35,6 +35,12 @@ import { fileURLToPath } from 'node:url'
 
 import JSZip from 'jszip'
 
+import {
+  loadSkillRenames,
+  renamedFromByCurrentName,
+  validateSkillRenames,
+} from './lib/skill-renames.mjs'
+
 // `cos-nodejs-sdk-v5` and `dotenv` ship as CJS; pull in via dynamic require.
 import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
@@ -161,6 +167,17 @@ async function main() {
     .map((d) => d.name)
     .sort()
 
+  // 改名表:发布前先验不变量。链没折叠就发出去,只升级过一次的用户永远收不到
+  // 清理 —— 那种孤儿事后无法补救(客户端已经不知道那个目录属于谁)。
+  const renames = await loadSkillRenames(REPO_ROOT)
+  const renameProblems = validateSkillRenames(renames)
+  if (renameProblems.length > 0) {
+    console.error('✗ skill-renames.json 违反不变量:')
+    for (const p of renameProblems) console.error(`   - ${p}`)
+    process.exit(1)
+  }
+  const renamedFrom = renamedFromByCurrentName(renames)
+
   const catalogEntries = []
   let unknownInVersions = 0
   let missingDirs = 0
@@ -211,6 +228,10 @@ async function main() {
       size,
       sha256: digest,
       url,
+      // 改名过的 skill 带上历史名字,客户端据此清掉用户盘上的旧目录并迁移台账。
+      // 没改过名的条目不出现这个字段(而不是空数组)—— catalog 是内容寻址的,
+      // 多一个恒为 [] 的键会让所有 skill 的 sha 无谓变一次。
+      ...(renamedFrom.has(skillName) ? { renamedFrom: renamedFrom.get(skillName) } : {}),
     })
   }
 
