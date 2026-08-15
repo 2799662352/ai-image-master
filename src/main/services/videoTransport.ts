@@ -21,7 +21,7 @@
 
 import { toWan3ResolvedMedia, resolveVideoMode } from './wan3/fromContent'
 import { buildWan3CreateBody } from './wan3/request'
-import { parseDocumentOrLink } from '../../shared/wan3Document'
+import { coerceDocumentOrLink } from '../../shared/wan3Document'
 import type { Wan3Client } from './wan3/client'
 import type { SeedanceClient, SeedanceQueryResult } from './seedance/client'
 import type {
@@ -119,10 +119,12 @@ export function createWan3Transport(client: Wan3Client, getApiKey: () => string)
           ...(typeof ctx.input.seed === 'number' && Number.isFinite(ctx.input.seed)
             ? { seed: ctx.input.seed }
             : {}),
-          // 坏数据当没设置（parse 已经把这条兜住），不让一张卡因此提交不了。
-          ...(parseDocumentOrLink(ctx.input.documentOrLink)
-            ? { documentOrLink: parseDocumentOrLink(ctx.input.documentOrLink) }
-            : {}),
+          // 两种写法都认：UI / 持久化是序列化 JSON，MCP 工具收的是裸 URL。
+          // 认不出的当没设置，不让一张卡因此提交不了。
+          ...(() => {
+            const doc = coerceDocumentOrLink(ctx.input.documentOrLink)
+            return doc ? { documentOrLink: doc } : {}
+          })(),
         },
         resolved,
       )

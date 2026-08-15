@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ZodTypeAny } from 'zod'
+import { z, type ZodTypeAny } from 'zod'
+import { ALL_VIDEO_MODEL_ALIASES, ALL_VIDEO_RATIOS } from '../../../../types/seedance'
 import {
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
@@ -443,6 +444,45 @@ describe('registerVideoWorkbenchTools / schemas', () => {
     expect(schema.safeParse({ cardId: 'c1', oldText: 'a' }).success).toBe(false)
     expect(schema.safeParse({ oldText: 'a', newText: 'b' }).success).toBe(false)
   })
+})
+
+describe('模型/画幅枚举必须是能力表的全集', () => {
+  // 手填那版漏过 2.5:导出一块含 2.5 卡片的板子再 apply,会被 zod 当场拒掉 ——
+  // 往返整条断,而卡片本身完全合法。wan3 会以同样方式漏第二次,所以改成从能力表
+  // 派生,并由这条测试钉住「派生」这件事本身。
+  /** 两个写入口都要覆盖:add_tasks 起草卡片,apply 是整板往返(2.5 就是在这条上断的)。 */
+  function schemaJson(toolName: string): string {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    return JSON.stringify(
+      z.toJSONSchema(toolByName(tools, toolName).config.inputSchema, { io: 'input' }),
+    )
+  }
+
+  it.each(['video_workbench_add_tasks', 'video_workbench_apply'])(
+    '%s 的 model 覆盖全部模型（含 wan3）',
+    (toolName) => {
+      const json = schemaJson(toolName)
+      for (const alias of ALL_VIDEO_MODEL_ALIASES) expect(json).toContain(`"${alias}"`)
+    },
+  )
+
+  it.each(['video_workbench_add_tasks', 'video_workbench_apply'])(
+    '%s 的画幅枚举同时含 Seedance 的 21:9 与万相的 adaptive',
+    (toolName) => {
+      const json = schemaJson(toolName)
+      for (const ratio of ALL_VIDEO_RATIOS) expect(json).toContain(`"${ratio}"`)
+      expect(json).toContain('"adaptive"')
+      expect(json).toContain('"21:9"')
+    },
+  )
+
+  it.each(['video_workbench_add_tasks', 'video_workbench_apply'])(
+    '%s 带万相的文档/链接槽',
+    (toolName) => {
+      expect(schemaJson(toolName)).toContain('documentOrLink')
+    },
+  )
 })
 
 describe('handlers → router.call 透传与 banner', () => {

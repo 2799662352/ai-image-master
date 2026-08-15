@@ -242,6 +242,26 @@ export function capabilitiesFor(alias: SeedanceModelAlias): SeedanceModelCapabil
   return SEEDANCE_MODEL_CAPABILITIES[alias]
 }
 
+function unionOf(pick: (caps: SeedanceModelCapabilities) => readonly string[]): readonly string[] {
+  return [...new Set(Object.values(SEEDANCE_MODEL_CAPABILITIES).flatMap(pick))]
+}
+
+/**
+ * 全模型并集 —— 给 MCP 的 zod 枚举用，**逐模型收窄交给 `validateSeedanceRequest`**。
+ *
+ * 从能力表派生而不是手填。手填那版漏过 `2.5`，代价不只是「设不了 2.5」：导出一块
+ * 含 2.5 卡片的板子再 apply，会被 zod 当场拒掉 —— 往返整条断，而卡片本身完全合法。
+ * wan3 会以同样的方式漏第二次，所以改成派生：加模型时这里自动跟上。
+ */
+export const ALL_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = Object.keys(
+  SEEDANCE_MODEL_CAPABILITIES,
+) as VideoModelAlias[]
+
+export const ALL_VIDEO_RESOLUTIONS: readonly string[] = unionOf((caps) => caps.resolutions)
+
+/** 含万相的 `adaptive` 与 Seedance 的 `21:9` —— 谁支持谁由能力表 `ratios` 说了算。 */
+export const ALL_VIDEO_RATIOS: readonly string[] = unionOf((caps) => caps.ratios)
+
 export interface SeedanceRequestShape {
   duration?: number
   resolution?: string

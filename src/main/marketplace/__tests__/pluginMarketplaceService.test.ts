@@ -217,6 +217,88 @@ describe('PluginMarketplaceService', () => {
     expect(await readFile(path.join(userSkillsDir, 'skill-a', 'SKILL.md'), 'utf8')).toContain('V2')
   })
 
+  // 升级差集。没有这一步的话,插件删掉的 skill 会留在盘上永不更新,而台账被整条
+  // 替换后连卸载都碰不到它 —— 既不更新也删不掉的孤儿。
+  //
+  // 我们需要显式对账,是因为 skill 装在一个**共享的平铺命名空间**里。Codex 自己的
+  // 市场是 git 检出、`marketplace/upgrade` 整棵树替换,删除自动传播;逐条目安装的
+  // (我们、Homebrew)只能自己对。
+  it('upgrade removes skills the new version no longer ships', async () => {
+    const v1 = await buildPluginZip('catimation-demo', {
+      'skill-a': '---\nname: skill-a\n---\nA',
+      'skill-gone': '---\nname: skill-gone\n---\nGONE',
+    })
+    const v2 = await buildPluginZip('catimation-demo', { 'skill-a': '---\nname: skill-a\n---\nA2' })
+    const e1 = makeEntry('catimation-demo', '1.0.0', sha256Hex(v1), 'https://example.com/plugins/d-1.0.0.zip')
+    const e2 = makeEntry('catimation-demo', '1.1.0', sha256Hex(v2), 'https://example.com/plugins/d-1.1.0.zip')
+    let active = makeCatalog([e1])
+    const blobs = new Map<string, Buffer>([[e1.url, v1], [e2.url, v2]])
+    const svc = new PluginMarketplaceService({
+      catalogUrl: 'https://example.com/plugins/plugins-catalog.json',
+      userSkillsDir,
+      stateFile,
+      fetcher: async (url) => {
+        if (url.endsWith('catalog.json')) return Buffer.from(JSON.stringify(active), 'utf8')
+        const b = blobs.get(url)
+        if (!b) throw new Error(`no blob for ${url}`)
+        return b
+      },
+    })
+
+    await svc.install('catimation-demo')
+    expect(await exists(path.join(userSkillsDir, 'skill-gone'))).toBe(true)
+
+    active = makeCatalog([e2])
+    await svc.fetchCatalog(true)
+    const rec = await svc.install('catimation-demo')
+
+    expect(await exists(path.join(userSkillsDir, 'skill-gone'))).toBe(false)
+    expect(await exists(path.join(userSkillsDir, 'skill-a'))).toBe(true)
+    // 台账也不能再声称拥有它,否则卸载时会去删一个已经不存在的目录。
+    expect(rec.skills).toEqual(['skill-a'])
+  })
+
+  it('upgrade does NOT remove a dropped skill that something else owns', async () => {
+    // 与卸载共用同一份所有权判定:另一个插件或单技能台账占着的目录不能删,
+    // 否则升级 A 会静默毁掉 B 管理的 skill。
+    const v1 = await buildPluginZip('catimation-demo', {
+      'skill-a': '---\nname: skill-a\n---\nA',
+      'shared': '---\nname: shared\n---\nS',
+    })
+    const v2 = await buildPluginZip('catimation-demo', { 'skill-a': '---\nname: skill-a\n---\nA2' })
+    const e1 = makeEntry('catimation-demo', '1.0.0', sha256Hex(v1), 'https://example.com/plugins/s-1.0.0.zip')
+    const e2 = makeEntry('catimation-demo', '1.1.0', sha256Hex(v2), 'https://example.com/plugins/s-1.1.0.zip')
+    let active = makeCatalog([e1])
+    const blobs = new Map<string, Buffer>([[e1.url, v1], [e2.url, v2]])
+
+    const skillStateFile = path.join(path.dirname(stateFile), 'marketplace-state.json')
+    await writeFile(
+      skillStateFile,
+      JSON.stringify({ schemaVersion: 1, installed: { shared: { name: 'shared' } } }),
+      'utf8',
+    )
+
+    const svc = new PluginMarketplaceService({
+      catalogUrl: 'https://example.com/plugins/plugins-catalog.json',
+      userSkillsDir,
+      stateFile,
+      skillStateFile,
+      fetcher: async (url) => {
+        if (url.endsWith('catalog.json')) return Buffer.from(JSON.stringify(active), 'utf8')
+        const b = blobs.get(url)
+        if (!b) throw new Error(`no blob for ${url}`)
+        return b
+      },
+    })
+
+    await svc.install('catimation-demo')
+    active = makeCatalog([e2])
+    await svc.fetchCatalog(true)
+    await svc.install('catimation-demo')
+
+    expect(await exists(path.join(userSkillsDir, 'shared'))).toBe(true)
+  })
+
   it('uninstall keeps skill dirs the per-skill marketplace ledger owns (I2)', async () => {
     const zipBuf = await buildPluginZip('catimation-demo', {
       'skill-a': '---\nname: skill-a\n---\nA',
