@@ -1,21 +1,29 @@
 ---
 name: seedance-cinematic-format
 description: >-
-  Seedance 12-item completeness and media-profile leaf for complex prompt work.
-  Load with sd2-pe for path B, multishot, mixed-media, or expanded director /
+  Model-agnostic 12-item completeness and media-profile leaf for complex video
+  prompt work. Load with whichever prompt base the task's model selects (2.0,
+  2.5, or 万相 3.0) for path B, multishot, mixed-media, or expanded director /
   reference work; path A may skip it. Provides format-free content definitions,
   live-action/2D/3D profiles, language defaults, and checks. No routing or QA.
 ---
 
-# Seedance Cinematic Prompt Format
+# Cinematic Prompt Format（内容完整性 · 与模型无关）
 
 <!-- skill-budget: fast -->
 
+> **名字里的 `seedance-` 是历史命名,不是适用范围。** 本篇没有一个模型参数 ——
+> 12 项内容清单、真人/2D/3D 媒介 profile、语言纪律与自检,换哪个上游都成立。
+> 与三个提示词底座(2.0 / 2.5 / 万相 3.0)都配合使用;底座之间不同的是语法与排版,
+> 不是要不要写清主体、镜头、光线、音效。
+>
+> 改名要动市场 skill id,会在已安装用户那里留下永不更新的旧副本,故暂不改。
+
 ## 条件触发（复杂提示词结构叶子）
 复杂、多镜、混合媒介、需要展开导演/作品参考或用户明确要求完整结构时进入
-路径 B，与 sd2-pe 一起加载；这些条件优先于生成/编辑/延长/组合等任务类型，
-明确多镜本身就是充分条件。路径 A 只处理简单单镜的轻量连续任务，可跳过本叶子，
-由上游直接完成八大要素、12 项覆盖清单和五大内容块。类别 reference 仍按需渐进披露。
+路径 B，与**当前 model 对应的底座**一起加载；这些条件优先于生成/编辑/延长/组合
+等任务类型，明确多镜本身就是充分条件。
+路径 A 只处理简单单镜的轻量连续任务，可跳过本叶子，由上游直接完成八大要素、12 项覆盖清单和五大内容块。类别 reference 仍按需渐进披露。
 
 ## 角色与边界
 
