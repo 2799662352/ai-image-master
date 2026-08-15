@@ -6,7 +6,7 @@
 // 任何回归。所以这里用「第 1 次成功、第 2 次出问题」的假实现把两端分开考。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
-import { beginObservedChanges } from '../observedChanges'
+import { beginObservedChanges, comparableKey } from '../observedChanges'
 import type { Snapshot } from '../workspaceSnapshot'
 import type { FileChange } from '../../../types/agent-timeline'
 
@@ -199,6 +199,54 @@ describe('beginObservedChanges', () => {
 
     it('同名不同目录不能误杀 —— 归一化不是「只比文件名」', async () => {
       await expect(remainingAfterSubtracting('other/a.md')).resolves.toEqual([target, other])
+    })
+  })
+
+  // 上面两条大小写用例带 skipIf,而单测跑在 ubuntu、主要发行的却是 Windows ——
+  // 也就是说把 `.toLowerCase()` 删掉,CI 照样全绿。所以把平台这一维显式注进来考。
+  describe('comparableKey 的大小写折叠按平台走', () => {
+    const lower = path.resolve('/w/src/a.md')
+    const upper = path.resolve('/w/src/A.md')
+
+    it.each<NodeJS.Platform>(['win32', 'darwin'])(
+      '%s 上折叠 —— NTFS 与 APFS 都不区分大小写,不折叠就减不掉,同一个文件出两张卡',
+      (platform) => {
+        expect(comparableKey(upper, platform)).toBe(comparableKey(lower, platform))
+      },
+    )
+
+    it('linux 上不折叠 —— 那边 A.md 和 a.md 真是两个文件,折叠会误杀掉真改动', () => {
+      expect(comparableKey(upper, 'linux')).not.toBe(comparableKey(lower, 'linux'))
+    })
+
+    it('分隔符一律统一成正斜杠,与平台无关', () => {
+      expect(comparableKey(path.resolve('/w/src/a.md'), 'linux')).not.toContain('\\')
+    })
+  })
+
+  describe('快照拖太久要放弃 —— 结束快照是在落库前 await 的', () => {
+    it('起始快照挂住由赛跑闸兜底,不需要自己的时限 —— 这里钉的是「别再加一条死分支」', async () => {
+      const t = beginObservedChanges(
+        deps({ snapshot: vi.fn(() => new Promise<Snapshot>(() => {})), deadlineMs: 5 }),
+      )
+      t.noteShellStarted()
+
+      await expect(t.finish(new Set())).resolves.toEqual([])
+      // 走到 `await baseline` 的前提是 baselineWon 为 true,而那意味着起始快照
+      // 已经 settle —— 所以它永远不会在那儿等,给它加超时是加一段跑不到的代码。
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('第一条命令早于起始快照'))
+    })
+
+    it('结束快照超时 → 作废,而不是把这一轮的消息一起拖住', async () => {
+      const snapshot = vi
+        .fn<(roots: string[]) => Promise<Snapshot>>()
+        .mockResolvedValueOnce(snap())
+        .mockImplementation(() => new Promise<Snapshot>(() => {}))
+      const t = beginObservedChanges(deps({ snapshot, deadlineMs: 5 }))
+      t.noteShellStarted()
+
+      await expect(t.finish(new Set())).resolves.toEqual([])
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('结束快照超过 5ms'))
     })
   })
 

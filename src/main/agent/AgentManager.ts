@@ -4756,21 +4756,31 @@ export class AgentManager {
           snapshot: (roots) => takeSnapshot(roots),
           diff: diffSnapshots,
         })
-      let observer: ObservedChangeTracker | null = null
-      // 武装动作放进 try 里:这个功能是装饰性的,连它的构造都不该有能力弄坏一个回合。
-      // (今天 makeObserver 也抛不出来 —— takeSnapshot 是 async 函数 —— 但那是巧合
-      // 而非结构保证,而巧合会在别人改动它签名的那天失效。)
-      //
-      // 又必须尽早:基线拍完得赶在第一条命令之前,晚一拍就多一分输掉赛跑、整轮作废
-      // 的概率。所以是在 for-await 之前武装,而不是等第一个事件进来 —— 首个事件可能
-      // 隔着一整个网络往返。
+      /**
+       * 武装追踪器。装饰性的功能不该有能力弄坏一个回合,所以自己吞掉异常:交给外层
+       * 那个 catch 是不够的 —— 它会拿异常去比对 `isPoisonedThreadError`,可能白烧掉
+       * 一次性的重试名额,比不接还糟。今天 `takeSnapshot` 是 async 函数、抛不出同步
+       * 异常,但那是巧合不是结构保证。
+       *
+       * 时机上必须尽早:基线得赶在第一条命令之前拍完,晚一拍就多一分输掉赛跑、整轮
+       * 作废的概率。所以在 for-await 之前武装,而不是等第一个事件进来 —— 首个事件可能
+       * 隔着一整个网络往返。
+       */
+      const armObserver = (): ObservedChangeTracker | null => {
+        try {
+          return makeObserver()
+        } catch (err) {
+          console.warn('[AgentManager] 观察追踪器武装失败,本轮不显示命令行改动:', err)
+          return null
+        }
+      }
+      let observer: ObservedChangeTracker | null = armObserver()
       try {
-        observer = makeObserver()
         for await (const event of eventStream) {
           // 追踪器和 assistantItems 同寿:turn_completed 处把它卸掉,这里在下一个
           // 回合的第一个事件上重新武装。常态下迭代器在 turn_completed 之后就结束,
           // 这一行不会付任何代价。
-          observer ??= makeObserver()
+          observer ??= armObserver()
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
           }
@@ -4813,7 +4823,7 @@ export class AgentManager {
           assistantItems = applyAssistantEvent(assistantItems, event)
 
           if (event.type === 'item_started' && event.itemType === 'shell') {
-            observer.noteShellStarted()
+            observer?.noteShellStarted()
           }
 
           if (event.type === 'turn_completed') {
@@ -4823,7 +4833,9 @@ export class AgentManager {
                 item.type === 'fileEdit' ? item.changes.map((c) => c.path) : [],
               ),
             )
-            const observedChanges = await observer.finish(reportedPaths).catch(() => [] as FileChange[])
+            const observedChanges: FileChange[] = observer
+              ? await observer.finish(reportedPaths).catch(() => [])
+              : []
             if (observedChanges.length > 0) {
               const observedEvent: AgentStreamEvent = {
                 type: 'item_completed',

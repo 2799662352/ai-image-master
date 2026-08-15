@@ -35,6 +35,9 @@ import path from 'node:path'
 import type { FileChange } from '../../types/agent-timeline'
 import type { Snapshot } from './workspaceSnapshot'
 
+/** 大小写不敏感的文件系统。在这些平台上 `A.md` 与 `a.md` 是同一个文件。 */
+const CASE_INSENSITIVE_PLATFORMS = new Set<NodeJS.Platform>(['win32', 'darwin'])
+
 /**
  * 把一个绝对路径压成可比较的键。
  *
@@ -42,20 +45,29 @@ import type { Snapshot } from './workspaceSnapshot'
  * 路径同时被 fileEdit 卡片、`revealPath`、`openAiChange` 消费,归一化到它们身上
  * 会波及本功能之外的东西。
  *
- * Windows 上顺带 lowercase:NTFS 不区分大小写,`D:\W\A.md` 与 `d:\w\a.md` 是同一
- * 个文件。POSIX 不能这么做,那边大小写敏感,一 lowercase 就会把两个不同的文件当成
- * 同一个、误杀掉本该显示的改动。
+ * 大小写:NTFS 与 APFS(默认配置)都不区分,`D:\W\A.md` 与 `d:\w\a.md` 是同一个
+ * 文件 —— 不折叠就减不掉,同一个文件出两张卡,那是「给错的」。Linux 上绝不能折叠,
+ * 那边大小写敏感,一折叠就会把两个不同的文件当成同一个、误杀掉本该显示的改动。
+ *
+ * `platform` 可注入的唯一理由是**可测**:仓库的单元测试跑在 ubuntu 上,而我们主要
+ * 发行 Windows。不注入的话,谁把 `.toLowerCase()` 删掉 CI 都是绿的。
  */
-function comparableKey(absPath: string): string {
+export function comparableKey(absPath: string, platform: NodeJS.Platform = process.platform): string {
   const unified = path.resolve(absPath).replace(/\\/g, '/')
-  return process.platform === 'win32' ? unified.toLowerCase() : unified
+  return CASE_INSENSITIVE_PLATFORMS.has(platform) ? unified.toLowerCase() : unified
 }
 
 /**
  * apply_patch 报来的路径没有约定写法:仓库里的 codex fixture 是工作区相对的
  * (`src/a.ts`),线上也见过绝对的,分隔符还随平台走。快照键则一律是
  * `path.join(path.resolve(root), …)` 的原生绝对路径。所以相对路径要先按本回合的
- * roots 逐个还原成绝对候选(一个相对写法可能落在多个 root 下,全收)。
+ * roots 逐个还原成绝对候选。
+ *
+ * **一个相对写法会对所有 root 展开**,于是多 root 且同名时(两个工作区都有
+ * `src/a.md`)会多减一个:root B 里那次真实的命令行改动被连带减掉,不显示。这是有意
+ * 选的方向 —— 相对路径本身不携带「属于哪个 root」的信息,猜错的另一半是**多显示一条
+ * 归错因的改动**,而本功能的纪律是宁可不给。多 root 同名本就少见,真要根治得让上游
+ * 把路径发全。
  */
 function comparableKeys(reportedPaths: Iterable<string>, roots: string[]): Set<string> {
   const keys = new Set<string>()
@@ -69,10 +81,36 @@ function comparableKeys(reportedPaths: Iterable<string>, roots: string[]): Set<s
   return keys
 }
 
+/**
+ * 两次快照各自的上限。预算闸卡的是**体量**(文件数 / 字节数),卡不住**时间** ——
+ * 一个挂在 SMB / 映射盘上的 root 可以在远没到 3000 个文件时就让一次扫描拖上几十秒。
+ *
+ * 这条线非划不可,因为结束快照是在**落库之前** await 的:拖住它就等于拖住这一轮
+ * 助手消息的持久化。装饰性的卡片不能有这个权力。超时按不可信处理 —— 不给,而不是
+ * 拿一份可能已经过时的快照去给错的。
+ */
+const DEFAULT_SNAPSHOT_DEADLINE_MS = 3000
+
+const TIMED_OUT = Symbol('snapshot-timed-out')
+
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms)
+    // 别让这个计时器把 Electron 主进程的事件循环钉住。
+    timer.unref?.()
+  })
+  return Promise.race([work, deadline]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
 export interface ObservedChangesDeps {
   roots: () => string[]
   snapshot: (roots: string[]) => Promise<Snapshot>
   diff: (before: Snapshot, after: Snapshot) => FileChange[]
+  /** 单次快照的时间上限。省略时用 3s;测试用它把超时变成确定事件。 */
+  deadlineMs?: number
 }
 
 export interface ObservedChangeTracker {
@@ -120,22 +158,29 @@ export function beginObservedChanges(deps: ObservedChangesDeps): ObservedChangeT
     return []
   }
 
+  const deadlineMs = deps.deadlineMs ?? DEFAULT_SNAPSHOT_DEADLINE_MS
+
   async function compute(reportedPaths: Set<string>): Promise<FileChange[]> {
     if (!sawShell) return []
     if (!(await baselineWon)) {
       return discard('第一条命令早于起始快照拍完,基线可能已被它自己污染')
     }
 
+    // 起始快照不需要自己的时限:走到这里说明 baselineWon 已经为 true,而它为 true
+    // 的唯一途径就是 snapshotting 先 settle 了 —— 这个 await 不会等。真挂住的起始
+    // 快照会被上面的赛跑闸判负,理由也更准确(那时基线确实不可信)。
     const before = await baseline
     if (!before) return discard('起始快照抛错')
     if (!before.complete) return discard('起始快照超预算或有目录读不动')
 
-    let after: Snapshot
+    let after: Snapshot | typeof TIMED_OUT
     try {
-      after = await deps.snapshot(roots)
+      after = await withDeadline(deps.snapshot(roots), deadlineMs)
     } catch {
       return discard('结束快照抛错')
     }
+    // 这一条守的是回合本身:结束快照是在落库前 await 的,拖住它就是拖住这轮消息。
+    if (after === TIMED_OUT) return discard(`结束快照超过 ${deadlineMs}ms 仍未完成`)
     if (!after.complete) return discard('结束快照超预算或有目录读不动')
 
     const reportedKeys = comparableKeys(reportedPaths, roots)
