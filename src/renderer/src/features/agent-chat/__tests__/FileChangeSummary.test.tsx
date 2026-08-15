@@ -119,7 +119,9 @@ describe('FileChangeSummary', () => {
     render(<FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
     const note = screen.getByRole('note')
     expect(note.getAttribute('title')).toBe(SCOPE_NOTE)
-    expect(SCOPE_NOTE).toContain('命令行改的文件')
+    // 口径要讲清两种来源的差别,别退化成一句空话。
+    expect(SCOPE_NOTE).toContain('命令行')
+    expect(SCOPE_NOTE).toContain('文件编辑工具')
   })
 
   // 一行三个动作,取自 Codex review pane(点文件名进编辑器 / 点行背景就地展开)。
@@ -190,5 +192,52 @@ describe('MessageBubble · fileEdit 渲染契约', () => {
   it('多个 fileEdit item 时气泡末尾出现回合级汇总', () => {
     render(<MessageBubble message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
     expect(screen.getByTestId('file-change-summary')).toBeTruthy()
+  })
+})
+
+describe('observed 改动的口径', () => {
+  const observedChange = (path: string) => ({
+    path,
+    operation: 'edit' as const,
+    diff: '@@ -1 +1 @@\n-a\n+b',
+    added: 1,
+    removed: 1,
+    source: 'observed' as const,
+  })
+
+  it('observed 的行带「命令行」标记,和 agent 自报的区分开', () => {
+    render(
+      <FileChangeSummary
+        message={assistantMessage([[change('a.ts')], [observedChange('b.md')]])}
+      />,
+    )
+
+    expect(screen.getByText('命令行')).toBeTruthy()
+  })
+
+  it('混入 observed 时标题改口 —— 不能再说「agent 编辑了」', () => {
+    render(
+      <FileChangeSummary
+        message={assistantMessage([[change('a.ts')], [observedChange('b.md')]])}
+      />,
+    )
+
+    expect(screen.getByText('本轮改动了 2 个文件')).toBeTruthy()
+  })
+
+  it('全是 agent 自报时维持原文案', () => {
+    render(<FileChangeSummary message={assistantMessage([[change('a.ts')], [change('b.ts')]])} />)
+
+    expect(screen.getByText('agent 编辑了 2 个文件')).toBeTruthy()
+  })
+
+  it('口径说明要讲明 observed 不保证是 agent 改的', () => {
+    render(
+      <FileChangeSummary
+        message={assistantMessage([[change('a.ts')], [observedChange('b.md')]])}
+      />,
+    )
+
+    expect(screen.getByRole('note').getAttribute('aria-label')).toContain('不保证')
   })
 })

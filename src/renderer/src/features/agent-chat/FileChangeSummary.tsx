@@ -14,16 +14,19 @@ import { FileDiffBlock } from './cards/FileDiffBlock'
  * 放在气泡末尾而不是像 VS Code 那样浮在输入框上方:那边浮动条只服务最新一轮,
  * 而这里是可滚动的聊天记录,往回翻要能看到当时那一轮的账。
  *
- * ## 口径:只统计 agent 报告过的编辑
+ * ## 口径:两种来源,可信度不同
  *
- * 数据来自 Codex 的 `fileChange` item,也就是它通过 apply_patch / 文件编辑工具做的
- * 改动。**agent 用 shell 命令改的文件不在其中** —— 它跑 `sed -i`、跑构建、
- * `npm install` 动 lockfile,都只会产生 commandExecution 的 stdout,不会有
- * fileChange。用户自己的改动、重命名、二进制文件同样不在。
+ * `source: 'reported'`(缺省)来自 Codex 的 `fileChange` item,即 agent 通过
+ * apply_patch / 文件编辑工具做的改动 —— 确定是它干的。
  *
- * 所以文案写「agent 编辑了 N 个文件」而不是「本轮改动了 N 个文件」—— 后者是在
- * 承诺一个我们给不出的全集。真要全集得读 git(Codex 自己的 review pane 就是那么
- * 做的),那是另一件事。
+ * `source: 'observed'` 来自回合前后的工作区快照对比,补的是 agent 用 shell 命令
+ * 改出来的文件(`sed -i`、跑构建、`npm install` 动 lockfile 都只留 stdout,不产生
+ * fileChange)。代价是**归因不确定**:同一时间窗里你在别的编辑器里的改动、后台
+ * 进程写出的产物,都会一并落进来。所以这类行单独打「命令行」标记,口径说明如实
+ * 交代这一点,而不是混进来假装同样可信。
+ *
+ * 标题跟着来源走:全是 reported 时说「agent 编辑了 N 个文件」;一旦混入 observed
+ * 就改口「本轮改动了 N 个文件」—— 后者不声称是谁改的。
  */
 
 /** 同一个文件在一轮里可能被改多次,按路径合并成一行,行数累加。 */
@@ -58,7 +61,7 @@ export function collectFileChanges(message: Message): FileChange[] {
 }
 
 export const SCOPE_NOTE =
-  '只统计 agent 通过文件编辑工具做的改动。它用命令行改的文件（例如跑构建、安装依赖）不在这里。'
+  '「命令行」标记的行来自回合前后的工作区对比，不保证都是 agent 改的——你在其它编辑器里的改动、后台进程写出的产物都可能落入。其余来自 agent 的文件编辑工具，可信。'
 
 const OPERATION_LABEL: Record<FileChange['operation'], string> = {
   create: '新建',
@@ -111,6 +114,11 @@ function SummaryRow({ change }: { change: FileChange }) {
           <span className={`w-8 shrink-0 ${OPERATION_CLASS[change.operation]}`}>
             {OPERATION_LABEL[change.operation]}
           </span>
+          {change.source === 'observed' && (
+            <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[9px] text-amber-200/80">
+              命令行
+            </span>
+          )}
           <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
             <span className="text-zinc-500">{dir}</span>
             <span className="text-zinc-200">{name}</span>
@@ -159,10 +167,14 @@ export function FileChangeSummary({ message }: { message: Message }) {
       className="my-2 overflow-hidden rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04]"
     >
       <div className="flex items-center gap-1.5 border-b border-cyan-500/15 px-2.5 py-1.5 text-[11px]">
-        <span className="font-medium text-zinc-100">agent 编辑了 {changes.length} 个文件</span>
-        {/* 口径提示。列表来自 Codex 的 fileChange item,只覆盖它通过文件编辑工具
-            做的改动;shell 命令改的文件不在其中(见模块注释)。被这个坑到的人不会
-            知道为什么,所以把口径摆在够得着的地方 —— 但只做成一个 ⓘ,不占正文。 */}
+        <span className="font-medium text-zinc-100">
+          {changes.some((c) => c.source === 'observed')
+            ? `本轮改动了 ${changes.length} 个文件`
+            : `agent 编辑了 ${changes.length} 个文件`}
+        </span>
+        {/* 口径提示。两种来源可信度不同(见模块注释):带「命令行」标记的行归因
+            不确定。被这个坑到的人不会自己想明白,所以把口径摆在够得着的地方 ——
+            但只做成一个 ⓘ,不占正文。 */}
         <span
           role="note"
           title={SCOPE_NOTE}
