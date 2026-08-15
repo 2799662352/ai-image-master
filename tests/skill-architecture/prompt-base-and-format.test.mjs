@@ -43,7 +43,7 @@ test('sd2-pe routes light and complex tasks without lowering content coverage', 
   assert.match(source, /五大必备内容块缺一不可/)
   assert.match(source, /媒介 profile.*真人.*2D 动画.*3D 动画/s)
   assert.match(source, /电影.*检索.*意图词/s)
-  assert.match(source, /seedance-cinematic-format/)
+  assert.match(source, /cinematic-prompt-format/)
   assert.match(source, /路径 A 可跳过该叶子/)
   assert.match(source, /路径 B、混合媒介或需要展开导演\/作品参考时再加载该叶子/)
   assert.match(source, /只减少结构开销，不降低交付要求/)
@@ -68,9 +68,9 @@ test('sd2-pe routes light and complex tasks without lowering content coverage', 
 
 test('storyboard grids and art-direction boards use explicit loose or exact reference paths', async () => {
   const sd2 = await read(`${skillRoot}/sd2-pe/SKILL.md`)
-  const helper = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
+  const helper = await read(`${skillRoot}/cinematic-prompt-format/SKILL.md`)
   const template = await read(
-    `${skillRoot}/seedance-cinematic-format/references/prompt-output-template.md`,
+    `${skillRoot}/cinematic-prompt-format/references/prompt-output-template.md`,
   )
   const videoEntry = await read(`${skillRoot}/catimation-video/SKILL.md`)
   const grid = await read(
@@ -147,18 +147,18 @@ test('storyboard grids and art-direction boards use explicit loose or exact refe
 test('video and storyboard instructions match runtime limits and orchestration contracts', async () => {
   const videoEntry = await read(`${skillRoot}/catimation-video/SKILL.md`)
   const sd2 = await read(`${skillRoot}/sd2-pe/SKILL.md`)
-  const helper = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
+  const helper = await read(`${skillRoot}/cinematic-prompt-format/SKILL.md`)
   const outputTemplate = await read(
-    `${skillRoot}/seedance-cinematic-format/references/prompt-output-template.md`,
+    `${skillRoot}/cinematic-prompt-format/references/prompt-output-template.md`,
   )
   const liveAction = await read(
-    `${skillRoot}/seedance-cinematic-format/references/live-action-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/live-action-film.md`,
   )
   const animation2d = await read(
-    `${skillRoot}/seedance-cinematic-format/references/2d-animation-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/2d-animation-film.md`,
   )
   const animation3d = await read(
-    `${skillRoot}/seedance-cinematic-format/references/3d-animation-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/3d-animation-film.md`,
   )
   const researchPrompting = await read(
     `${skillRoot}/codex-research-grounded-prompting/SKILL.md`,
@@ -216,7 +216,7 @@ test('video and storyboard instructions match runtime limits and orchestration c
   assert.match(videoEntry, /路径 A[\s\S]*跳过结构叶子/)
   assert.match(
     videoEntry,
-    /复杂、多镜、混合媒介[\s\S]*路径 B[\s\S]*seedance-cinematic-format/,
+    /复杂、多镜、混合媒介[\s\S]*路径 B[\s\S]*cinematic-prompt-format/,
   )
   assert.match(videoEntry, /STILL RUNNING \+ taskId[\s\S]*check_video_task/)
   assert.match(videoEntry, /自动修正[\s\S]*最多 2 次/)
@@ -301,12 +301,12 @@ test('video and storyboard instructions match runtime limits and orchestration c
 
 test('skill-authored media tokens use @ while runtime canonicalization stays explicit', async () => {
   const videoEntry = await read(`${skillRoot}/catimation-video/SKILL.md`)
-  const helper = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
+  const helper = await read(`${skillRoot}/cinematic-prompt-format/SKILL.md`)
   const animation2d = await read(
-    `${skillRoot}/seedance-cinematic-format/references/2d-animation-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/2d-animation-film.md`,
   )
   const outputTemplate = await read(
-    `${skillRoot}/seedance-cinematic-format/references/prompt-output-template.md`,
+    `${skillRoot}/cinematic-prompt-format/references/prompt-output-template.md`,
   )
   const videoCraft = await read(`${skillRoot}/seedance-video-craft/SKILL.md`)
   const timeAllocation = await read(
@@ -357,7 +357,7 @@ test('skill-authored media tokens use @ while runtime canonicalization stays exp
 })
 
 test('cinematic format helper is a conditional leaf with 12 content indexes and three profiles', async () => {
-  const source = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
+  const source = await read(`${skillRoot}/cinematic-prompt-format/SKILL.md`)
   const marketplaceSync = await read('scripts/sync-plugin-skills-to-codex.mjs')
 
   assert.match(source, /角色.*纯知识辅助模块/s)
@@ -391,7 +391,7 @@ test('cinematic format helper is a conditional leaf with 12 content indexes and 
     'references/3d-animation-film.md',
   ]) {
     assert.ok(source.includes(categoryReference), `missing category reference: ${categoryReference}`)
-    const category = await read(`${skillRoot}/seedance-cinematic-format/${categoryReference}`)
+    const category = await read(`${skillRoot}/cinematic-prompt-format/${categoryReference}`)
     assert.match(category, /不得遗漏通用 12 项内容/)
     assert.match(category, /标题[\s\S]*语义索引/)
     assert.match(category, /导演与参考作品.*可替换/s)
@@ -404,7 +404,7 @@ test('cinematic format helper is a conditional leaf with 12 content indexes and 
 
   assert.match(
     marketplaceSync,
-    /ADD_LIST[\s\S]*seedance-cinematic-format/,
+    /ADD_LIST[\s\S]*cinematic-prompt-format/,
     'standalone sd2-pe must ship its companion helper too',
   )
   assert.match(
@@ -416,21 +416,21 @@ test('cinematic format helper is a conditional leaf with 12 content indexes and 
 
 test('media profiles stay flexible, inherit dialogue language, and preserve template provenance', async () => {
   const sd2 = await read(`${skillRoot}/sd2-pe/SKILL.md`)
-  const helper = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
+  const helper = await read(`${skillRoot}/cinematic-prompt-format/SKILL.md`)
   const liveAction = await read(
-    `${skillRoot}/seedance-cinematic-format/references/live-action-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/live-action-film.md`,
   )
   const animation2d = await read(
-    `${skillRoot}/seedance-cinematic-format/references/2d-animation-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/2d-animation-film.md`,
   )
   const animation3d = await read(
-    `${skillRoot}/seedance-cinematic-format/references/3d-animation-film.md`,
+    `${skillRoot}/cinematic-prompt-format/references/3d-animation-film.md`,
   )
   const research = await read(
-    `${skillRoot}/seedance-cinematic-format/references/research-methods.md`,
+    `${skillRoot}/cinematic-prompt-format/references/research-methods.md`,
   )
   const template = await read(
-    `${skillRoot}/seedance-cinematic-format/references/prompt-output-template.md`,
+    `${skillRoot}/cinematic-prompt-format/references/prompt-output-template.md`,
   )
   const hooks = await Promise.all([
     read('resources/plugins/catimation-video/hooks/session-start'),
@@ -509,7 +509,7 @@ test('media profiles stay flexible, inherit dialogue language, and preserve temp
   // hook 只断言「它还是个短指针」，不再逐句复制正文。
   //
   // 这里原本断言 7 句话——媒介 profile、台词语言、路径 A/B 条件、12 项内容、参考候选——
-  // 而那些正是把 catimation-video / seedance-cinematic-format 的正文提前搬进每一轮会话的
+  // 而那些正是把 catimation-video / cinematic-prompt-format 的正文提前搬进每一轮会话的
   // 元凶：注入串因此涨到约 1900 字符，模型把它当成「每次都要照做的清单」而不是索引，
   // 拆个脚本都要先过一遍分级和闸门。这些不变量在上面已经对 sd2-pe、helper、template
   // 的正文各断言过一次，在 hook 里再断言一遍只是逼着 hook 保持臃肿。

@@ -57,10 +57,10 @@ const onlyNames = onlyArg
 const ADD_LIST = new Set([
   'storyboard-grid-to-seedance',
   'catimation-video-director-router',
-  'seedance-cinematic-format',
+  'cinematic-prompt-format',
   // 2.5 的提示词底座，与已策展的 sd2-pe 同级 —— 只放一个进市场，用户装到的就是
   // 只会写 2.0 八大要素的那半套。它引的两个下游（sd2-pe 本身已策展、
-  // seedance-cinematic-format 就在上面）都在名单内，单装不会留悬空指针。
+  // cinematic-prompt-format 就在上面）都在名单内，单装不会留悬空指针。
   'sd25-pe',
   // 万相 3.0 的提示词底座，与 sd2-pe / sd25-pe 同级（按 model 三选一）。它按题材
   // 引出的两个专项叶子必须同时在名单里 —— 否则单装底座会留两个悬空指针，用户点

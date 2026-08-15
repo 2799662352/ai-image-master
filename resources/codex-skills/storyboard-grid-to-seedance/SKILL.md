@@ -132,7 +132,7 @@ primary/hard/strong/atmosphere-loose/free 职责解释；它不是模型权重�
    用户选定的 identity-hard 资产负责。
 4. **分段**：长片按生成单元分别出片，再用动作、视线、遮挡、构图或声音桥接剪辑。
 5. **工程化**：两条路径的最终视频提示词都交 `sd2-pe` 覆盖八大要素、12 项内容
-   与五大必备块再生成；复杂多镜/混合媒介任务加载 seedance-cinematic-format,
+   与五大必备块再生成；复杂多镜/混合媒介任务加载 cinematic-prompt-format,
    轻量连续任务可跳过，输出标题与分段形式自由。
 
 ## Common Mistakes

@@ -1,5 +1,5 @@
 ---
-name: seedance-cinematic-format
+name: cinematic-prompt-format
 description: >-
   Model-agnostic 12-item completeness and media-profile leaf for complex video
   prompt work. Load with whichever prompt base the task's model selects (2.0,
@@ -12,12 +12,13 @@ description: >-
 
 <!-- skill-budget: fast -->
 
-> **名字里的 `seedance-` 是历史命名,不是适用范围。** 本篇没有一个模型参数 ——
-> 12 项内容清单、真人/2D/3D 媒介 profile、语言纪律与自检,换哪个上游都成立。
-> 与三个提示词底座(2.0 / 2.5 / 万相 3.0)都配合使用;底座之间不同的是语法与排版,
-> 不是要不要写清主体、镜头、光线、音效。
+> **与模型无关。** 本篇没有一个模型参数 —— 12 项内容清单、真人/2D/3D 媒介 profile、
+> 语言纪律与自检,换哪个上游都成立。与三个提示词底座(2.0 / 2.5 / 万相 3.0)都配合
+> 使用;底座之间不同的是语法与排版,不是要不要写清主体、镜头、光线、音效。
 >
-> 改名要动市场 skill id,会在已安装用户那里留下永不更新的旧副本,故暂不改。
+> 曾用名 `seedance-cinematic-format`。改名是因为那个前缀让人(和 agent)以为它只服务
+> Seedance,万相任务会跳过它,白白少掉 12 项内容覆盖。旧名字登记在
+> `resources/codex-skills/skill-renames.json`,已装过旧版的用户下次启动应用时自动迁移。
 
 ## 条件触发（复杂提示词结构叶子）
 复杂、多镜、混合媒介、需要展开导演/作品参考或用户明确要求完整结构时进入

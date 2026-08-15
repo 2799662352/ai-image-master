@@ -85,7 +85,7 @@ description: >-
 
 ### G5 · 图生视频(Animate)— 分镜多参,用上全部可用资产
 - **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 写作用 `@图片N/@视频N/<主体N>` 在 prompt 里逐一绑定(工具边界自动归一)。**有素材却只发纯文字 = 错。** 引用故事板/多宫格/美术设定板时,mandatory 氛围板前缀必须位于正文之前。分配全能参考配额;生成前做爆款体检。
-- **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准。整片/多镜属于路径 B,加载 `seedance-cinematic-format`,每镜覆盖八大要素、12 项内容与五大必备块;标题、分段与散文形式自由。动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
+- **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准。整片/多镜属于路径 B,加载 `cinematic-prompt-format`,每镜覆盖八大要素、12 项内容与五大必备块;标题、分段与散文形式自由。动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
 - **门 G5:** 每镜先过 `ffmpeg-win` 视觉门——抽帧拼 3×3 九宫格 contact sheet,`view_image` 那张宫格图自检(首尾帧/连续性/穿帮);要看懂剧情/连续性用 `catimation-understand` 的 `understand_video`,但别拿 `view_image` 开 MP4、别把原始字节塞进聊天;通过后再用 animation-craft 的审查 rubric(先故事/连贯后打磨)交用户审。
 
 ### G6 · 配音配乐(Sound)
