@@ -10,7 +10,7 @@ description: Seedance 2.0 提示词工程化 — sd2-pe 总兜底引擎,把任�
    按用户需要选择大头+全身/多视图/其它确认资产；多套拿不准时询问；运行时兼容
    归一化 @Image/@图片 等别名)。
 4. **Step 3** 仅在关键歧义时打断;非关键缺失自动补全并透明披露。
-5. **Step 3.3/4** 落笔前主动检索核实 2–3 个真实影视参考候选给用户选(先复用 reference-receipts 知识库)。路径 A 可跳过 `seedance-cinematic-format`;路径 B 加载它。最终覆盖八大要素、12 项内容与五大必备块；路径 B 覆盖总体设定、镜头流程、风格与约束三组语义，但标题、分段和散文形式自由。
+5. **Step 3.3/4** 落笔前主动检索核实 2–3 个真实影视参考候选给用户选(先复用 reference-receipts 知识库)。路径 A 可跳过 `cinematic-prompt-format`;路径 B 加载它。最终覆盖八大要素、12 项内容与五大必备块；路径 B 覆盖总体设定、镜头流程、风格与约束三组语义，但标题、分段和散文形式自由。
 
 产出工程化提示词后,再按需叠加衍生技法:`seedance-video-craft`(模型对齐/配额/爆款体检)、`storyboard-*`(逐镜画面打磨)、`director-orchestrator`(成套分镜的 13 维定位)。最终交 `catimation-video` 的 `generate_video` 出片。
 

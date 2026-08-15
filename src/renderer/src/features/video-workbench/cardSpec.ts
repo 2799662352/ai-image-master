@@ -21,7 +21,7 @@ import type {
 import type { SeedanceModelAlias } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
-import { parseDocumentOrLink } from '../../../../shared/wan3Document'
+import { coerceDocumentOrLink, serializeDocumentOrLink } from '../../../../shared/wan3Document'
 
 /**
  * 值不在这个模型的支持集里就退回默认值。
@@ -159,11 +159,12 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
     mode,
     ...(seed !== undefined ? { seed } : {}),
     webSearch: input.webSearch !== false,
-    // 只保留能解析出来的:坏数据(手改过的持久化/旧格式)当没设置,
-    // 而不是原样留着等到提交时才炸。
-    ...(parseDocumentOrLink(input.documentOrLink)
-      ? { documentOrLink: input.documentOrLink as string }
-      : {}),
+    // 归一成序列化形态:UI 写 JSON、MCP 写裸 URL,两种都认(coerce)。
+    // 认不出的(坏数据/手改过的持久化)当没设置,而不是原样留着等提交时才炸。
+    ...(() => {
+      const doc = coerceDocumentOrLink(input.documentOrLink)
+      return doc ? { documentOrLink: serializeDocumentOrLink(doc) } : {}
+    })(),
     referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages', model),
     referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos', model),
     referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios', model),

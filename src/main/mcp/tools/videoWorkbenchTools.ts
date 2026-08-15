@@ -36,15 +36,55 @@ import {
 } from '../../../types/videoWorkbench'
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
+import {
+  ALL_VIDEO_MODEL_ALIASES,
+  ALL_VIDEO_RATIOS,
+  ALL_VIDEO_RESOLUTIONS,
+} from '../../../types/seedance'
+
+/**
+ * 枚举取**全模型并集**，逐模型收窄交给 `validateSeedanceRequest`。
+ *
+ * 从能力表派生而不是手填 —— 手填那版漏过 `2.5`，导致「导出含 2.5 卡片的板子再
+ * apply 被 zod 当场拒掉」，往返整条断而卡片本身完全合法。`wan3` 会以同样方式漏
+ * 第二次。工厂函数是因为 zod schema 对象不能跨字段复用（同一个实例被多处引用时
+ * 报 `_zod` 未定义，本文件下方有那次事故的注释）。
+ */
+const zEnumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
+const zModelAlias = () => zEnumOf(ALL_VIDEO_MODEL_ALIASES)
+const zResolution = () => zEnumOf(ALL_VIDEO_RESOLUTIONS)
+const zRatio = () => zEnumOf(ALL_VIDEO_RATIOS)
+
+/**
+ * 万相的「文档 / 网页链接」槽。
+ *
+ * 收的是**一个 http(s) 地址**，不是 `{type,url}` 对象：file 还是 link 由后缀判定
+ * （`shared/wan3Document`），让调用方自己声明类型只会多一处可能与实际不符的输入。
+ * 空串 = 清除。非 http(s) 会在组包时被拒。
+ */
+const zDocumentOrLink = () =>
+  z.string().optional().describe(
+    'wan3 ONLY. One document or web-page URL used as reference (upstream allows exactly one, '
+    + 'and it cannot be combined with first_frame / first_last_frame). Pass a plain http(s) URL — '
+    + 'whether it counts as a document or a link is decided by the path extension '
+    + '(pdf/doc/docx/xls/xlsx/ppt/pptx/txt/md/key/pages/numbers = document, anything else = web page). '
+    + 'Pass "" to clear. Ignored by Seedance models.',
+  )
 
 const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
-  model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional().describe(
-    'Seedance model. Default "2.0" (full quality); "2.5" for长镜头 up to 30s, 30/10/10 materials and edit/extend '
-    + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only).',
+  model: zModelAlias().optional().describe(
+    'Video model. Default "2.0" (full quality); "2.5" for长镜头 up to 30s, 30/10/10 materials and edit/extend '
+    + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only). '
+    + '"wan3" = 阿里万相 3.0 (All-in-One): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, '
+    + 'accepts one document or web link as reference, billed per second (¥) instead of per token. '
+    + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive".',
   ),
-  resolution: z.enum(['480p', '720p', '1080p']).optional().describe('Default 720p. 1080p requires model "2.0" (NOT "2.5").'),
-  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9. Ignored for edit_video / extend_video on "2.5" (forced adaptive).'),
+  resolution: zResolution().optional().describe('Default 720p. 1080p requires model "2.0" or "wan3" (NOT "2.5").'),
+  ratio: zRatio().optional().describe(
+    'Aspect ratio. Default 16:9 (wan3 defaults to "adaptive"). "21:9" is Seedance-only; "adaptive" is wan3-only. '
+    + 'Ignored for edit_video / extend_video on "2.5" (forced adaptive).',
+  ),
   // 刻意用**朴素整数区间**而不是 union([literal(-1), int().min(4)])。
   //
   // 那个 union 转成 JSON Schema 是 `anyOf: [{enum:[-1]}, {type:integer, minimum:4}]`,
@@ -78,6 +118,7 @@ const cardInputSchema = z.object({
     'Up to 3 reference audios, combined ≤15s — model "2.5" raises this to 10 audios combined ≤30s '
     + 'and is the only model that accepts audio-only references.',
   ),
+  documentOrLink: zDocumentOrLink(),
 })
 
 // ---------------------------------------------------------------------------
@@ -263,9 +304,10 @@ const irCardSchema = z.looseObject({
   // 枚举与区间都取**全模型并集**，逐模型收窄交给 validateSeedanceRequest。
   // 漏掉 '2.5' 不只是「设不了 2.5」：export 一块含 2.5 卡片的板子再 apply，
   // 会被 zod 当场拒掉 —— 往返路径整条断，而卡片本身完全合法。
-  model: z.enum(['2.0', '2.0-fast', '2.0-mini', '2.5']).optional(),
-  resolution: z.enum(['480p', '720p', '1080p']).optional(),
-  ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional(),
+  model: zModelAlias().optional(),
+  resolution: zResolution().optional(),
+  ratio: zRatio().optional(),
+  documentOrLink: zDocumentOrLink(),
   // 同上:避开 anyOf
   duration: z.number().int().min(-1).max(30).optional().describe(
     'Seconds, or -1 = smart duration. Coerced to -1 when mode is edit_video (upstream takes nothing '

@@ -282,7 +282,7 @@ fallback_plan: ""
 
 - 视频提示词最终经 `sd2-pe` 工程化(八大要素 + 多模态绑定 + 12 项内容 +
   五大必备块)后再交生成工具；制片包的多镜任务属于路径 B,加载
-  `seedance-cinematic-format`,但标题、分段与散文形式自由；每次 Seedance 生成 4–15s。
+  `cinematic-prompt-format`,但标题、分段与散文形式自由；每次 Seedance 生成 4–15s。
 - 端到端"做成片"由上层成片编排器负责,在其分镜阶段调用本 skill 产出制片包;单镜画面打磨交单点画面工艺技能库(两者的名称与分工见本插件入口卡 references/family-catalog.md)。
 
 ### 制片包的出口:落到视频工作台
