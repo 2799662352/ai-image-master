@@ -206,8 +206,6 @@ function looksBinary(buf: Buffer): boolean {
   return buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)
 }
 
-const EMPTY_SNAPSHOT: Snapshot = { files: new Map(), skipped: new Set(), complete: false }
-
 export async function takeSnapshot(
   roots: string[],
   budget: SnapshotBudget = DEFAULT_SNAPSHOT_BUDGET,
@@ -273,11 +271,6 @@ export async function takeSnapshot(
 
   if (overBudget) return { files: new Map(), skipped: new Set(), complete: false }
   return { files, skipped, complete: true }
-}
-
-/** 供调用方在「压根没拍」时构造一个明确不可用的快照。 */
-export function unavailableSnapshot(): Snapshot {
-  return { files: new Map(EMPTY_SNAPSHOT.files), skipped: new Set(), complete: false }
 }
 ```
 
@@ -740,10 +733,14 @@ describe('observed 改动的合成事件', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [ ] **Step 2: 跑测试确认它现在就通过**
 
 Run: `npx vitest run --pool=threads --maxWorkers=2 src/main/agent/__tests__/AgentManager.observedChanges.test.ts`
-Expected: FAIL —— `source` 字段还没进类型时会报类型错;若 Task 2 已完成则此条应直接 PASS(它验证的是既有 reducer 的契约),继续下一步。
+Expected: PASS。
+
+这一条是**契约固化测试**,不是 TDD 的红灯:`applyAssistantEvent` 已经能处理
+`item_completed` / `fileEdit`,本任务依赖的正是这个既有行为。写下来是为了防止日后
+有人改 reducer 时悄悄弄坏我们合成事件的这条路——那种坏法不会有任何别的测试报警。
 
 - [ ] **Step 3: 在 AgentManager 里接线**
 
