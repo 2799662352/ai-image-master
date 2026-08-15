@@ -70,6 +70,29 @@ export function beginObservedChanges(deps: ObservedChangesDeps): ObservedChangeT
     firstShell.then(() => false),
   ])
 
+  // 记忆化的不只是一次 IO,更是「结束时刻」本身:第二次 finish 会拍一份更晚的
+  // 结束快照,把回合结束之后发生的改动算进这一轮 —— 那是「给错的」,不是浪费。
+  // 首次调用传进来的 reportedPaths 即为准,本就每回合只调一次。
+  let result: Promise<FileChange[]> | null = null
+
+  async function compute(reportedPaths: Set<string>): Promise<FileChange[]> {
+    if (!sawShell) return []
+    if (!(await baselineWon)) return []
+
+    const before = await baseline
+    if (!before || !before.complete) return []
+
+    let after: Snapshot
+    try {
+      after = await deps.snapshot(roots)
+    } catch {
+      return []
+    }
+    if (!after.complete) return []
+
+    return deps.diff(before, after).filter((change) => !reportedPaths.has(change.path))
+  }
+
   return {
     noteShellStarted(): void {
       sawShell = true
@@ -77,22 +100,9 @@ export function beginObservedChanges(deps: ObservedChangesDeps): ObservedChangeT
       // 弄不脏一份已经拍好的快照。resolve 本身幂等,不需要额外的「只认第一条」开关。
       resolveFirstShell()
     },
-    async finish(reportedPaths: Set<string>): Promise<FileChange[]> {
-      if (!sawShell) return []
-      if (!(await baselineWon)) return []
-
-      const before = await baseline
-      if (!before || !before.complete) return []
-
-      let after: Snapshot
-      try {
-        after = await deps.snapshot(roots)
-      } catch {
-        return []
-      }
-      if (!after.complete) return []
-
-      return deps.diff(before, after).filter((change) => !reportedPaths.has(change.path))
+    finish(reportedPaths: Set<string>): Promise<FileChange[]> {
+      result ??= compute(reportedPaths)
+      return result
     },
   }
 }

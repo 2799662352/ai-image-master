@@ -153,6 +153,9 @@ import type {
 } from '../../types/codexPlugins'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
+import { beginObservedChanges } from './observedChanges'
+import { takeSnapshot } from './workspaceSnapshot'
+import { diffSnapshots } from './snapshotDiff'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 import { setWan3TokenSource } from '../services/wan3/credentials'
 
@@ -4747,6 +4750,13 @@ export class AgentManager {
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
+      // 回合一开始就异步拍基线。没跑过命令 / 赛跑输了 / 超预算都会在 finish
+      // 里收敛成空数组 —— 判断集中在 observedChanges.ts,这里只负责喂依赖。
+      const observer = beginObservedChanges({
+        roots: () => [...this.allowedRoots],
+        snapshot: (roots) => takeSnapshot(roots),
+        diff: diffSnapshots,
+      })
       try {
         for await (const event of eventStream) {
           if (event.type === 'thread_created' && event.threadId) {
@@ -4790,7 +4800,34 @@ export class AgentManager {
 
           assistantItems = applyAssistantEvent(assistantItems, event)
 
+          if (event.type === 'item_started' && event.itemType === 'shell') {
+            observer.noteShellStarted()
+          }
+
           if (event.type === 'turn_completed') {
+            // 落库之前把观察到的改动补进去,这样直播和历史看到的是同一份。
+            const reportedPaths = new Set(
+              assistantItems.flatMap((item) =>
+                item.type === 'fileEdit' ? item.changes.map((c) => c.path) : [],
+              ),
+            )
+            const observedChanges = await observer.finish(reportedPaths).catch(() => [])
+            if (observedChanges.length > 0) {
+              const observedEvent: AgentStreamEvent = {
+                type: 'item_completed',
+                threadId: dbThreadId,
+                itemId: `observed-${Date.now()}`,
+                itemType: 'fileEdit',
+                final: {
+                  changes: observedChanges,
+                  totalAdded: observedChanges.reduce((s, c) => s + c.added, 0),
+                  totalRemoved: observedChanges.reduce((s, c) => s + c.removed, 0),
+                },
+              }
+              this.emitEvent(observedEvent)
+              assistantItems = applyAssistantEvent(assistantItems, observedEvent)
+            }
+
             if (this.store && assistantItems.length > 0) {
               try {
                 // TimelineItem is a discriminated union; Prisma's InputJsonValue

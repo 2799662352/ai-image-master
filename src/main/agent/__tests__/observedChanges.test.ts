@@ -121,6 +121,20 @@ describe('beginObservedChanges', () => {
     expect(out.map((c) => c.path)).toEqual(['/w/b.md'])
   })
 
+  it('finish 重复调用只算一次:第二次不能拿更晚的工作区当结束快照', async () => {
+    // 这不是省一次 IO 的问题。第二次 finish 会重新拍一份**更晚**的结束快照,
+    // 把回合结束之后发生的改动算进这一轮 —— 正是「给错的」。所以结果要记忆化。
+    const snapshot = vi.fn(async () => snap())
+    const t = beginObservedChanges(deps({ snapshot }))
+    t.noteShellStarted()
+
+    const first = await t.finish(new Set())
+    const second = await t.finish(new Set())
+
+    expect(snapshot).toHaveBeenCalledTimes(2) // 起始 1 次 + 结束 1 次,没有第 3 次
+    expect(second).toEqual(first)
+  })
+
   it('起始快照在构造时就拍掉,不是等第一条命令来了才拍', async () => {
     const snapshot = vi.fn(async () => snap())
     const t = beginObservedChanges(deps({ snapshot }))
