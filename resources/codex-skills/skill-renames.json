@@ -12,5 +12,7 @@
     "写进来只是噪音,还会让人误以为发生过一次真实改名。"
   ],
   "schemaVersion": 1,
-  "renames": {}
+  "renames": {
+    "seedance-cinematic-format": "cinematic-prompt-format"
+  }
 }

@@ -29,7 +29,7 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 > **本文说「底座」时,指的就是当前这张卡的 model 对应的那一个。** 工作台的纪律
 > (素材绑定、多镜拆卡、资产门、摘要、跨卡锚点)与模型无关,三个底座上都成立。
 >
-> 几处**点名**了具体 skill(路径 A/B 与 seedance-cinematic-format、八大要素、
+> 几处**点名**了具体 skill(路径 A/B 与 cinematic-prompt-format、八大要素、
 > create-storyboard 制片包的 `scenedance_prompt`),那些名字带 seedance 只是历史
 > 命名 —— 它们讲的是通用工艺,三个底座都适用。
 >
@@ -144,7 +144,7 @@ digraph when_to_use {
 - **风格 / 调色 / 光位描述**逐字复制(不变量)
 - **本镜的道具与场景状态**(变量,例:椅子已翻倒在地)
 
-多镜走路径 B,还要过 seedance-cinematic-format 的 12 项覆盖清单。两条路径都要过,
+多镜走路径 B,还要过 cinematic-prompt-format 的 12 项覆盖清单。两条路径都要过,
 路径分流只决定展开程度,不豁免交付内容。**这个结构叶子三个底座通用**(它没有写死
 任何模型参数,名字带 seedance 是历史命名)。
 

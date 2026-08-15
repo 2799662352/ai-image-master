@@ -91,7 +91,7 @@
     "publish:marketplace": "node scripts/publish-marketplace.mjs",
     "publish:marketplace:dry": "node scripts/publish-marketplace.mjs --dry-run",
     "publish:marketplace:test": "node --test scripts/lib/marketplace-versioning.test.mjs",
-    "test:skill-arch": "node --test scripts/lib/skill-architecture-validator.test.mjs tests/skill-architecture/repository-architecture.test.mjs tests/skill-architecture/sd2-pe-cinematic-format.test.mjs",
+    "test:skill-arch": "node --test scripts/lib/skill-architecture-validator.test.mjs tests/skill-architecture/repository-architecture.test.mjs tests/skill-architecture/prompt-base-and-format.test.mjs",
     "audit:skill-arch": "node scripts/audit-skill-architecture.mjs",
     "skills:gen": "node scripts/generate-first-party-skills.mjs && node scripts/sync-top-level-skills.mjs",
     "skills:gen:check": "node scripts/generate-first-party-skills.mjs --check && node scripts/sync-top-level-skills.mjs --check",
