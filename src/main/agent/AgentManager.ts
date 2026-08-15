@@ -154,6 +154,7 @@ import type {
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
+import { setWan3TokenSource } from '../services/wan3/credentials'
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
 /**
@@ -611,6 +612,11 @@ export class AgentManager {
       credentialIdForProvider(this.activeGatewayId, persisted.customProviders)
     ] ?? ''
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
+    // 万相 3.0 打的是同一个 Miau 网关,复用这枚 token,用户不必另配。视频服务
+    // 自己去 import agent 是错的依赖方向(而另开一个 store 实例则会各缓存各的,
+    // 用户改完密钥那边还是旧值),所以由这里往下推一个读实时字段的闭包 ——
+    // 推一次即可,`setProviderApiKey` 刷新 `miauToken` 后自动可见。
+    setWan3TokenSource(() => this.miauToken)
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
