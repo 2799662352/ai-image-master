@@ -62,6 +62,12 @@ const ADD_LIST = new Set([
   // 只会写 2.0 八大要素的那半套。它引的两个下游（sd2-pe 本身已策展、
   // seedance-cinematic-format 就在上面）都在名单内，单装不会留悬空指针。
   'sd25-pe',
+  // 万相 3.0 的提示词底座，与 sd2-pe / sd25-pe 同级（按 model 三选一）。它按题材
+  // 引出的两个专项叶子必须同时在名单里 —— 否则单装底座会留两个悬空指针，用户点
+  // 「产品 TVC」却什么都加载不到。
+  'wan3-cinematic-30s',
+  'wan3-product-tvc',
+  'wan3-emotion-shotlist',
 ])
 
 async function listDirs(dir) {

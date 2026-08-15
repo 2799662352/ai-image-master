@@ -55,6 +55,9 @@
     "storyboard-grid-to-seedance": "1.0.7",
     "catimation-video-director-router": "1.0.2",
     "seedance-cinematic-format": "1.0.14",
-    "sd25-pe": "1.0.2"
+    "sd25-pe": "1.0.2",
+    "wan3-cinematic-30s": "1.0.0",
+    "wan3-emotion-shotlist": "1.0.0",
+    "wan3-product-tvc": "1.0.0"
   }
 }
