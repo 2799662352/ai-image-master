@@ -58,45 +58,21 @@ export function FileEditCard({ item }: { item: FileEditItem }) {
         <span className="text-red-300">-{item.totalRemoved}</span>
       </div>
 
-      {item.changes.length > 1 ? (
-        <div className="divide-y divide-zinc-800/70">
-          {item.changes.map((change) => (
-            <button
-              key={`${change.operation}:${change.path}`}
-              type="button"
-              aria-label={`Open diff for ${change.path}`}
-              onClick={() => void openAiChange(change)}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-zinc-300 transition hover:bg-cyan-500/5"
-            >
-              <span className="w-14 shrink-0 text-cyan-200/70">{operationLabel(change.operation)}</span>
-              <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
-                {change.path}
-              </span>
-              <span className="text-emerald-300">+{change.added}</span>
-              <span className="text-red-300">-{change.removed}</span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        item.changes.map((change) => (
-          <div key={`${change.operation}:${change.path}`} className="p-1.5">
-            <button
-              type="button"
-              aria-label={`Open diff for ${change.path}`}
-              onClick={() => void openAiChange(change)}
-              className="mb-1 flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[11px] text-zinc-300 hover:bg-cyan-500/5"
-            >
-              <span className="text-cyan-200/70">{operationLabel(change.operation)}</span>
-              <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
-                {change.path}
-              </span>
-              <span className="text-emerald-300">+{change.added}</span>
-              <span className="text-red-300">-{change.removed}</span>
-            </button>
-            <FileDiffBlock change={change} />
-          </div>
-        ))
-      )}
+      {/*
+        单文件和多文件走同一条路径。改造前这里是分叉的:1 个文件摊开成一面
+        3500px 的墙,2 个以上反而一条 diff 都不给,只能跳去右侧并排视图 ——
+        同一张卡按数量长成两个样子,是它最刺眼的地方。
+        现在一律是「每个文件一行,默认收起,想看哪个点哪个」。
+      */}
+      <div className="p-1.5">
+        {item.changes.map((change) => (
+          <FileDiffBlock
+            key={`${change.operation}:${change.path}`}
+            change={change}
+            onOpen={() => void openAiChange(change)}
+          />
+        ))}
+      </div>
     </div>
   )
 }
