@@ -302,6 +302,33 @@ export interface CodexLaunchOptions {
    * reports the missing key.
    */
   dashVectorKey?: string
+  /**
+   * Freshly-resolved stdio transport for the bundled cinematography-kb-mcp:
+   * `command` from `resolveApiyiCommand` (system node, else Electron-as-Node)
+   * and `args[0]` = this build's `resources/cinematography-kb-mcp/index.js`.
+   *
+   * WHY THIS EXISTS — the boot seed alone was not enough. It writes the
+   * transport into `~/.codex/config.toml` ONCE and its convergence pass only
+   * repairs two shapes (missing transport / legacy python wrapper), so an entry
+   * whose `args[0]` points at a PREVIOUS install directory looks healthy and is
+   * skipped forever. Field case 2026-08-16: a user moved the app from
+   * `D:\懒人猫平台\…` to `…\AppData\Local\Programs\…`; node was handed a script
+   * that no longer existed, died instantly, and codex reported
+   * `connection closed: initialize response`. apiyi survived (its seed
+   * force-converges every field each boot) and so did catimation (it is never
+   * persisted — recomputed per spawn). This option gives cinematography_kb the
+   * catimation property: `-c` lands on the SessionFlags layer, which wins over
+   * config.toml, so a stale on-disk entry can no longer break an in-app session.
+   *
+   * The seed stays: it is what external `codex` CLI users (who never launch
+   * through this app) rely on.
+   */
+  cinematographyKbStdio?: {
+    command: string
+    args: string[]
+    /** `{}` for system node; `{ ELECTRON_RUN_AS_NODE: '1' }` for the Electron fallback. */
+    env: Record<string, string>
+  }
 }
 
 function quote(value: string): string {
@@ -758,6 +785,31 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   } else {
     // (C) No key in 设置 → dormant, see rationale above.
     args.push('-c', 'mcp_servers.apiyi.enabled=false')
+  }
+
+  // cinematography-kb-mcp TRANSPORT overlay — the catimation treatment.
+  //
+  // Recomputed every spawn and pushed through `-c` (SessionFlags beats
+  // config.toml), so a `command`/`args` written by an older install can never
+  // decide whether this server starts. See CodexLaunchOptions
+  // .cinematographyKbStdio for the incident this fixes.
+  //
+  // `enabled` is deliberately NOT forced here: a user who switched this server
+  // off in the MCP panel should stay switched off. We only guarantee that IF it
+  // runs, it runs the right binary on the right script.
+  const kbStdio = options?.cinematographyKbStdio
+  if (kbStdio?.command && kbStdio.args.length > 0) {
+    args.push(
+      '-c', `mcp_servers.cinematography_kb.command=${quote(kbStdio.command)}`,
+      '-c', `mcp_servers.cinematography_kb.args=[${kbStdio.args.map(quote).join(', ')}]`,
+    )
+    // Dotted leaves, NOT an `env={...}` table: this server's env is assembled
+    // from several independent `-c` overlays below (DashScope key / DashVector
+    // key / endpoint). A table assignment would clobber them depending on
+    // argument order — a guaranteed regression.
+    for (const [k, v] of Object.entries(kbStdio.env)) {
+      args.push('-c', `mcp_servers.cinematography_kb.env.${k}=${quote(v)}`)
+    }
   }
 
   // cinematography-kb-mcp key overlay (设置 → 运镜知识库). Dotted `-c` merges the
