@@ -4,7 +4,7 @@ import { promises as fs, type WriteStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { assertCodexModelContextConfig } from '../../shared/modelSettings'
-import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexProviderConfig } from './codexLaunch'
+import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexLaunchOptions, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
@@ -142,6 +142,14 @@ export interface CodexLocalBackendOptions {
    * tool. Only used on the spawn path.
    */
   catimationMcp?: CatimationMcpLaunchInfo
+  /**
+   * Freshly-resolved stdio transport for the bundled cinematography-kb-mcp,
+   * forwarded verbatim to `buildCodexLaunchArgs`. Same "recompute, never trust
+   * the persisted copy" treatment catimation gets — see
+   * {@link CodexLaunchOptions.cinematographyKbStdio} for the stale-path
+   * incident it fixes.
+   */
+  cinematographyKbStdio?: CodexLaunchOptions['cinematographyKbStdio']
   /**
    * Resolves the qwen3.7-max-dashscope understanding provider (Path B) at spawn
    * time. When it returns a config + token, the spawned codex registers an
@@ -500,6 +508,7 @@ export class CodexLocalBackend implements IAgentBackend {
         sessionConfig: this.sessionConfig,
         modelContextConfig,
         catimationMcp: this.options.catimationMcp,
+        cinematographyKbStdio: this.options.cinematographyKbStdio,
         extraProviders: [
           ...(understandProvider ? [understandProvider] : []),
           ...gatewayChannelProviders,
