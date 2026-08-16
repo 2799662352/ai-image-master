@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 /**
  * 仍然截断。限高解决的是「视觉高度」,不是「渲染成本」—— 一个 5000 行的 diff
@@ -68,6 +68,19 @@ function toRows(diff: string): DiffRow[] {
  * 反而看不清改了什么。GitHub / Cursor 都是「淡底 + 靠行号栏和边条区分」。
  * 色相保持 emerald / red / cyan 三系不变。
  */
+/**
+ * 取最后 `maxLines` 行,不切分整个字符串。行数不够就原样返回。
+ */
+function tailWindow(diff: string, maxLines: number): string {
+  let cut = diff.length
+  for (let seen = 0; seen < maxLines; seen += 1) {
+    const prev = diff.lastIndexOf('\n', cut - 1)
+    if (prev === -1) return diff
+    cut = prev
+  }
+  return diff.slice(cut + 1)
+}
+
 const ROW_CLASS: Record<DiffRow['kind'], string> = {
   hunk: 'border-l-2 border-cyan-400/30 bg-cyan-500/[0.04] text-cyan-300/50',
   add: 'border-l-2 border-emerald-400/50 bg-emerald-500/[0.06] text-emerald-100/90',
@@ -82,8 +95,16 @@ const GUTTER_CLASS: Record<DiffRow['kind'], string> = {
   ctx: 'text-zinc-600',
 }
 
+/** 距底多少像素以内算「还贴着底」。一行约 18px,留一行多的余量。 */
+const STICK_TO_BOTTOM_SLACK = 24
+
 export interface DiffBodyProps {
   diff: string
+  /**
+   * 内容还在增长(agent 正在写这个文件)。开启后:截断保留**尾部**而不是
+   * 开头,并且在用户没有主动往回翻的前提下自动滚到底。
+   */
+  followTail?: boolean
 }
 
 /**
@@ -92,16 +113,43 @@ export interface DiffBodyProps {
  * 之所以和 `FileDiffBlock` 拆开:`FileChangeSummary` 和 `EvidenceDetails` 已经
  * 各自带了 header 和折叠,如果内容层也自带一套,那边就成了折叠套娃。
  */
-export function DiffBody({ diff }: DiffBodyProps) {
+export function DiffBody({ diff, followTail = false }: DiffBodyProps) {
   const [showAll, setShowAll] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // 用户主动往回翻之后就别再抢滚动条 —— 他正想看上面某一行,结果每来一段
+  // 增量就被拽回底部,是这类「跟随」实现最常见的毛病。
+  const stickRef = useRef(true)
 
-  const rows = toRows(diff)
-  const truncated = !showAll && rows.length > MAX_VISIBLE_LINES
-  const visible = truncated ? rows.slice(0, MAX_VISIBLE_LINES) : rows
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_SLACK
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!followTail || !stickRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [diff, followTail])
+
+  // 流式期间只解析**尾部窗口**。toRows 每一行分配一个对象,而这个组件在写入
+  // 过程中是展开的、每帧都重渲染(diff 每帧都变,useMemo 永远命不中)——
+  // 整块解析几十 KB 的 diff 就是每秒几十次、每次上千个短命对象,GC 压力正好
+  // 压在用户盯着看的那段时间里。反正也只渲染最后 MAX_VISIBLE_LINES 行。
+  //
+  // 截断方向跟着看的方向走:收起态看的是「这次改了什么」,从头截合理;流式态
+  // 看的是「现在正写到哪」,从头截等于永远停在开头,后面写的一个字都看不到。
+  const windowed = followTail && !showAll
+  const source = windowed ? tailWindow(diff, MAX_VISIBLE_LINES) : diff
+  const rows = toRows(source)
+  const hasMore = windowed ? source.length < diff.length : rows.length > MAX_VISIBLE_LINES
+  const visible = !windowed && hasMore && !showAll ? rows.slice(0, MAX_VISIBLE_LINES) : rows
 
   return (
     <div>
       <div
+        ref={scrollRef}
+        onScroll={onScroll}
         data-diff-scroll
         className="max-h-[320px] overflow-y-auto overflow-x-auto rounded border border-zinc-800/60 bg-zinc-950/70 font-mono text-[11px] leading-[1.6]"
       >
@@ -130,13 +178,19 @@ export function DiffBody({ diff }: DiffBodyProps) {
           </div>
         ))}
       </div>
-      {rows.length > MAX_VISIBLE_LINES && (
+      {hasMore && (
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
           className="mt-1 text-[10px] text-cyan-400/80 transition hover:text-cyan-300 hover:underline"
         >
-          {showAll ? `收起,只看前 ${MAX_VISIBLE_LINES} 行` : `显示全部 ${rows.length} 行`}
+          {showAll
+            ? `收起,只看${followTail ? '后' : '前'} ${MAX_VISIBLE_LINES} 行`
+            : // 流式态不报总行数:窗口外的部分没解析,数不出来;而且它每帧都在
+              // 涨,报出来也只是一个跳个不停的数字。
+              windowed
+              ? '显示全部'
+              : `显示全部 ${rows.length} 行`}
         </button>
       )}
     </div>

@@ -860,10 +860,50 @@ function pickUsageCounter(params: Record<string, unknown>): TokenCounter | null 
   return null
 }
 
+/**
+ * 判断一段文本是不是 unified diff 的开头。只看第一条非空行 —— diff 一定以
+ * 文件头或 hunk 头起手,而 apply_patch 的工具返回是自然语言
+ * (`Success. Updated the following files:` / `M src/a.ts`),不会撞上。
+ */
+function looksLikeUnifiedDiff(text: string): boolean {
+  // 只取第一条非空行,不要 split 整个字符串:这个函数是按增量调用的,而传进来
+  // 的是**累积后的全文** —— split 一次就分配一整个行数组,几百个增量下来就是
+  // O(n²) 的主进程开销,而结果只用得上第一行。
+  let cursor = 0
+  while (cursor < text.length) {
+    const newline = text.indexOf('\n', cursor)
+    const end = newline === -1 ? text.length : newline
+    const line = text.slice(cursor, end)
+    if (line.trim().length > 0) {
+      return (
+        line.startsWith('@@') ||
+        line.startsWith('--- ') ||
+        line.startsWith('+++ ') ||
+        line.startsWith('diff --git') ||
+        line.startsWith('Index: ')
+      )
+    }
+    if (newline === -1) break
+    cursor = newline + 1
+  }
+  return false
+}
+
 export class CodexNotificationRouter {
   private readonly streamedDeltaItemIds = new Set<string>()
   private readonly streamedReasoningItemIds = new Set<string>()
   private readonly fileChangeOutputByItemId = new Map<string, string>()
+  /**
+   * 已经从某条**快照**通道拿到过完整 changes 的 item —— `item/started` 或
+   * `item/fileChange/patchUpdated` 都算。
+   *
+   * 一旦有快照,裸文本的 outputDelta 就不再往渲染层递:「整体替换 changes」和
+   * 「往 changes[0] 追加文本」会互相覆盖让卡片来回跳,更糟的是同一份 diff 会
+   * 被拼两遍、+N/−N 直接翻倍。
+   */
+  private readonly authoritativeChangesItemIds = new Set<string>()
+  /** 已经递给渲染层的字节数,按 item 记。见 outputDelta 分支的守卫。 */
+  private readonly emittedDiffLenByItemId = new Map<string, number>()
   /**
    * Canonical agentMessage tracking for cumulative-snapshot gateways
    * ("对话重复" source fix). Some Responses-API relays (apiyi, live
@@ -889,6 +929,12 @@ export class CodexNotificationRouter {
     }
     for (const key of this.fileChangeOutputByItemId.keys()) {
       if (key.startsWith(prefix)) this.fileChangeOutputByItemId.delete(key)
+    }
+    for (const key of this.authoritativeChangesItemIds) {
+      if (key.startsWith(prefix)) this.authoritativeChangesItemIds.delete(key)
+    }
+    for (const key of this.emittedDiffLenByItemId.keys()) {
+      if (key.startsWith(prefix)) this.emittedDiffLenByItemId.delete(key)
     }
     this.lastAgentTextByThread.delete(threadId)
   }
@@ -937,14 +983,35 @@ export class CodexNotificationRouter {
                 ...(item.cwd != null ? { cwd: item.cwd } : {}),
               },
             }
-          case 'fileChange':
+          case 'fileChange': {
+            // 上游 README 的审批时序第 1 步:「item/started emits a fileChange
+            // item with `changes` (diff chunk summaries) … Show the proposed
+            // edits and paths to the user」。完整的提议改动在这一刻就有了 ——
+            // 无条件、不看 feature flag、也不依赖 gateway 转发哪条增量通知。
+            // 此前这里只取 path 把 changes 扔了,于是明明手上有 diff,卡片还是
+            // 空着一路等到 item/completed。
+            const startedRaw = Array.isArray(item.changes) ? item.changes : []
+            const startedChanges = (startedRaw as Parameters<typeof parseChange>[0][]).map(parseChange)
+            if (startedChanges.length > 0) {
+              // 这也是一份权威快照,后续裸文本不能再往上追加。
+              const startedKey = itemStateKey(params.threadId, item.id)
+              if (startedKey) this.authoritativeChangesItemIds.add(startedKey)
+            }
             return {
               type: 'item_started',
               threadId: params.threadId,
               itemId: item.id,
               itemType: 'fileEdit',
-              payload: {},
+              // 退化路径:没给 changes 时至少把 path 带上,让卡片能显示文件名
+              // 而不是「正在写入」。两个都没有就留空,不编一个路径出来。
+              payload:
+                startedChanges.length > 0
+                  ? { changes: startedChanges }
+                  : typeof item.path === 'string' && item.path.length > 0
+                    ? { path: item.path }
+                    : {},
             }
+          }
           case 'plan':
             // `plan` ThreadItems carry only a pre-rendered text blob in v2
             // (`{ type: 'plan', id, text }` per the v2 ThreadItem schema). The
@@ -1059,11 +1126,66 @@ export class CodexNotificationRouter {
             : typeof params.data === 'string'
               ? params.data
               : ''
-        if (typeof itemId === 'string' && itemId.length > 0 && text.length > 0) {
-          const key = itemStateKey(params.threadId, itemId)
-          if (key) this.fileChangeOutputByItemId.set(key, `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`)
+        if (typeof itemId !== 'string' || itemId.length === 0 || text.length === 0) return null
+        const key = itemStateKey(params.threadId, itemId)
+        // 继续攒:completed 时 gateway 若没给 unifiedDiff,要靠这份兜底。
+        const buffered = key
+          ? `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`
+          : text
+        if (key) this.fileChangeOutputByItemId.set(key, buffered)
+        // 结构化通道已经在喂这张卡了,裸文本只留兜底,不再往渲染层递。
+        if (key && this.authoritativeChangesItemIds.has(key)) return null
+        // 守卫:上游 README 明确写着这条通道装的是 **apply_patch 的工具返回**
+        // (「contains the tool call response of the underlying apply_patch tool
+        // call」),不是正在写的 diff —— 和 commandExecution 那条「streams
+        // stdout/stderr」的措辞是有意区分的。合规 Codex 在这里发的是
+        // 「Success. Updated the following files: M src/a.ts」之类,直接当 diff
+        // 渲染就是往卡片里灌工具日志。
+        //
+        // 但兜底路径又确实是为「某些中继网关把 diff 塞在这里」建的(那批用例还
+        // 在)。所以两边都留:攒照旧无条件攒,只有拼出来的内容**真的长得像
+        // unified diff** 才往渲染层递。
+        // 判定要看拼接后的全文:增量会切在半行上,第一段可能只有 '@',单看它
+        // 判不出来。所以按「已递出多少字节」补发差额,而不是发本段。
+        const emitted = key ? (this.emittedDiffLenByItemId.get(key) ?? 0) : 0
+        // 已经开始递了就说明早判定过是 diff,别再对着越来越长的全文重判。
+        if (emitted === 0 && !looksLikeUnifiedDiff(buffered)) return null
+        const pending = buffered.slice(emitted)
+        if (pending.length === 0) return null
+        if (key) this.emittedDiffLenByItemId.set(key, buffered.length)
+        return {
+          type: 'item_delta',
+          threadId: params.threadId,
+          itemId,
+          itemType: 'fileEdit',
+          patch: { kind: 'appendText', field: 'diff', text: pending },
         }
-        return null
+      }
+
+      case 'item/fileChange/patchUpdated': {
+        // 与 outputDelta 并列注册的通知,带的是**累积的 changes 数组**,形状
+        // 和 item/completed 的一样:有真实路径、支持多文件、是真 unified diff。
+        // 因此这里整体合并而不是追加 —— 每条通知都是当前完整状态。
+        const itemId = params.itemId as string | undefined
+        const raw = Array.isArray(params.changes) ? params.changes : null
+        if (typeof itemId !== 'string' || itemId.length === 0 || !raw) return null
+        const key = itemStateKey(params.threadId, itemId)
+        if (key) this.authoritativeChangesItemIds.add(key)
+        const changes = (raw as Parameters<typeof parseChange>[0][]).map(parseChange)
+        return {
+          type: 'item_delta',
+          threadId: params.threadId,
+          itemId,
+          itemType: 'fileEdit',
+          patch: {
+            kind: 'mergeFields',
+            fields: {
+              changes,
+              totalAdded: changes.reduce((sum, c) => sum + c.added, 0),
+              totalRemoved: changes.reduce((sum, c) => sum + c.removed, 0),
+            },
+          },
+        }
       }
 
       case 'item/plan/delta':
@@ -1180,7 +1302,11 @@ export class CodexNotificationRouter {
             const rawChanges = Array.isArray(item.changes) ? item.changes : []
             const key = itemStateKey(params.threadId, item.id)
             const fallbackDiff = key ? this.fileChangeOutputByItemId.get(key) : undefined
-            if (key) this.fileChangeOutputByItemId.delete(key)
+            if (key) {
+              this.fileChangeOutputByItemId.delete(key)
+              this.authoritativeChangesItemIds.delete(key)
+              this.emittedDiffLenByItemId.delete(key)
+            }
             const fallbackRawChanges =
               rawChanges.length === 0 && fallbackDiff && typeof item.path === 'string' && item.path.length > 0
                 ? [{ path: item.path, kind: 'edit' }]

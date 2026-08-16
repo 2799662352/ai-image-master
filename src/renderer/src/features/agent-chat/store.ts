@@ -24,7 +24,7 @@ import type {
 import type { ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
 import type { PluginInstalledResponse } from '../../../../types/codexPlugins'
 import type { AgentReference } from '../../../../types/agent-reference'
-import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
+import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, FileChange, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
   dropSupersededStreamItemsInLastMessage,
   trimRetriedStreamItemsInLastMessage,
@@ -58,6 +58,7 @@ import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
+import { appendStreamedDiff } from '../../../../shared/diffUtils'
 import { getAgentApi } from '../../utils/agentBridge'
 
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
@@ -1399,8 +1400,32 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
         stdout: '',
         stderr: '',
       }
-    case 'fileEdit':
-      return { type: 'fileEdit', id: itemId, startedAt: now, changes: [], totalAdded: 0, totalRemoved: 0 }
+    case 'fileEdit': {
+      // codex 在 item/started 就把提议的 changes 全给了(含 diff),直接用 ——
+      // 这是最早、最可靠的一份,不依赖任何增量通道。
+      const started = Array.isArray(payload.changes) ? (payload.changes as FileChange[]) : []
+      if (started.length > 0) {
+        return {
+          type: 'fileEdit',
+          id: itemId,
+          startedAt: now,
+          changes: started,
+          totalAdded: started.reduce((sum, c) => sum + c.added, 0),
+          totalRemoved: started.reduce((sum, c) => sum + c.removed, 0),
+        }
+      }
+      // 退化路径:只有 path 时先放一个空 diff 的占位改动,让流式增量有地方落、
+      // 卡片也能立刻显示文件名,而不是先空白一段再整块弹出。
+      const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : null
+      return {
+        type: 'fileEdit',
+        id: itemId,
+        startedAt: now,
+        changes: path ? [{ path, operation: 'edit', diff: '', added: 0, removed: 0 }] : [],
+        totalAdded: 0,
+        totalRemoved: 0,
+      }
+    }
     case 'attachment':
       return { type: 'attachment', id: itemId, startedAt: now, attachments: [] }
     case 'artifact':
@@ -1473,6 +1498,9 @@ function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem
     }
     if (item.type === 'shell' && (field === 'stdout' || field === 'stderr')) {
       return { ...item, [field]: item[field] + text }
+    }
+    if (field === 'diff' && item.type === 'fileEdit') {
+      return appendStreamedDiff(item, text)
     }
     return item
   }

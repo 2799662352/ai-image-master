@@ -64,11 +64,29 @@ export function FileEditCard({ item }: { item: FileEditItem }) {
         同一张卡按数量长成两个样子,是它最刺眼的地方。
         现在一律是「每个文件一行,默认收起,想看哪个点哪个」。
       */}
+      {/*
+        写的时候摊开、写完收起。默认收起是给**读历史**的人省地方的;正在写的
+        那一刻恰恰相反 —— 那是这一屏唯一值得盯着看的东西,却要用户手动点开
+        才看得见,而等他点开时往往已经写完了。
+      */}
       <div className="p-1.5">
-        {item.changes.map((change) => (
+        {/*
+          key 用下标而不是 path:流式期间路径会**中途变**。上游
+          `PatchApplyUpdated` 的 changes 带的是未经 cwd 解析的原始 hunk 路径,
+          而 item/completed 带的是解析后的路径(openai/codex#18289 的 P2 评审
+          意见),同一个文件会从 `src/a.ts` 变成 `D:/repo/src/a.ts`。按 path 做
+          key 会让 React 当成另一个文件、整行卸载重建,用户手动收起的那一行会
+          自己弹开。下标在这里是稳定的:两条通道给的都是同序的完整数组。
+        */}
+        {item.changes.map((change, index) => (
           <FileDiffBlock
-            key={`${change.operation}:${change.path}`}
+            key={index}
             change={change}
+            // 有内容才摊开。item/started 的 changes 按上游说法是「diff chunk
+            // summaries」,可能只有 path 没有正文 —— 那样展开出来是一个写着
+            // +0 −0 的空框,整个编辑过程都挂在那儿,比收起还难看。
+            defaultExpanded={isRunning && change.diff.length > 0}
+            followTail={isRunning}
             onOpen={() => void openAiChange(change)}
           />
         ))}

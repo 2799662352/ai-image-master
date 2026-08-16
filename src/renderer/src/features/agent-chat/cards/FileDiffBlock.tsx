@@ -20,8 +20,13 @@ export interface FileDiffBlockProps {
    * 的约束这么排版了。
    */
   onOpen?: () => void
-  /** 宿主决定初始展开状态。 */
+  /**
+   * 宿主决定展开状态。**值变化时会覆盖**用户当前的手动展开/收起 —— 流式卡
+   * 靠这一点做到「写的时候摊开、写完收起」;值没变时用户的点击不受干扰。
+   */
   defaultExpanded?: boolean
+  /** 展开时让内容跟着新写进来的行往下滚。 */
+  followTail?: boolean
 }
 
 /**
@@ -34,8 +39,15 @@ export interface FileDiffBlockProps {
  * 折叠的形态照搬 `ReasoningCard` / `ShellCard`:药丸形 header 按钮 + `▾`/`▸`
  * 字形 + 条件渲染(仓库里没有任何一处用高度动画,别在这里破例)。
  */
-export function FileDiffBlock({ change, onOpen, defaultExpanded = false }: FileDiffBlockProps) {
+export function FileDiffBlock({ change, onOpen, defaultExpanded = false, followTail = false }: FileDiffBlockProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
+  // 「渲染期间根据 prop 调整 state」的官方写法。换成 useEffect 会先渲染一帧
+  // 旧状态再改,写完那一瞬间会看到卡片闪一下才收起。
+  const [prevDefault, setPrevDefault] = useState(defaultExpanded)
+  if (prevDefault !== defaultExpanded) {
+    setPrevDefault(defaultExpanded)
+    setExpanded(defaultExpanded)
+  }
   const badge = OPERATION_BADGE[change.operation]
 
   return (
@@ -58,7 +70,8 @@ export function FileDiffBlock({ change, onOpen, defaultExpanded = false }: FileD
             {badge.label}
           </span>
           <code className="min-w-0 flex-1 truncate font-medium text-zinc-200" title={change.path}>
-            {change.path}
+            {/* 流式改动在拿到 path 之前路径是空的,别渲染成一条空白行。 */}
+            {change.path || <span className="text-zinc-500">正在写入…</span>}
           </code>
           <span className="shrink-0 text-emerald-400/90">+{change.added}</span>
           <span className="shrink-0 text-red-400/90">−{change.removed}</span>
@@ -76,7 +89,7 @@ export function FileDiffBlock({ change, onOpen, defaultExpanded = false }: FileD
       </div>
       {expanded && (
         <div className="mt-1">
-          <DiffBody diff={change.diff} />
+          <DiffBody diff={change.diff} followTail={followTail} />
         </div>
       )}
     </div>

@@ -319,13 +319,15 @@ describe('CodexNotificationRouter', () => {
         itemType: 'fileEdit',
       })
 
+      // 增量现在同时往渲染层递(见 codexNotificationRouter.fileChangeStreaming
+       // .test.ts)。这条用例关心的是**兜底通道**没被这个改动弄坏。
       expect(
         router.route('item/fileChange/outputDelta', {
           threadId: 'thread-1',
           itemId: 'file-1',
           delta: '@@\n-old\n+new\n',
         }),
-      ).toBeNull()
+      ).toMatchObject({ type: 'item_delta', itemType: 'fileEdit' })
 
       expect(
         router.route('item/completed', {

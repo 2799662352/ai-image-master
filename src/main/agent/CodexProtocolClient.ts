@@ -246,6 +246,8 @@ export class CodexProtocolClient {
   private queues = new Map<string, TurnQueue>()
   private turnIdByThread = new Map<string, string>()
   private readonly notificationRouter = new CodexNotificationRouter()
+  /** 见 {@link tallyDiffChannel}。 */
+  private diffChannelHits = { sawFileChange: false, patchUpdated: 0, outputDelta: 0, turnDiff: 0 }
   // Methods we've already logged-once as "unhandled" so dev sessions see the
   // shape of the upstream notification stream without flooding (e.g.
   // `item/agentMessage/delta` would otherwise log thousands of times). Crucial
@@ -1026,6 +1028,44 @@ export class CodexProtocolClient {
     })
   }
 
+  /**
+   * 数清楚每一轮里三条 file-change 通知各响了几次,在改过文件的 turn 结束时打
+   * 一行出来。
+   *
+   * 存在的理由是「零」这个值必须被**显式打印**:三条都没发,和我们压根没打这
+   * 条日志,在日志里长得一模一样 —— 都是什么都没有。而这两种情况的处置完全
+   * 相反(前者要去接新通道,后者要去查渲染层)。上游 #38695 报的正是前者:
+   * per-file 事件十天一次没发过,新版改发了聚合的 turn/diff/updated。
+   *
+   * 只在真的产生过 fileChange item 的 turn 里打,否则每轮都是 0/0/0 的噪音。
+   */
+  private tallyDiffChannel(method: string, itemType: string | null): void {
+    if (method === 'item/started' && itemType === 'fileChange') {
+      this.diffChannelHits.sawFileChange = true
+      return
+    }
+    if (method === 'item/fileChange/patchUpdated') {
+      this.diffChannelHits.patchUpdated += 1
+      return
+    }
+    if (method === 'item/fileChange/outputDelta') {
+      this.diffChannelHits.outputDelta += 1
+      return
+    }
+    if (method === 'turn/diff/updated') {
+      this.diffChannelHits.turnDiff += 1
+      return
+    }
+    if (method !== 'turn/completed') return
+    const hits = this.diffChannelHits
+    this.diffChannelHits = { sawFileChange: false, patchUpdated: 0, outputDelta: 0, turnDiff: 0 }
+    if (!hits.sawFileChange) return
+    this.options.onLog?.(
+      `[codex diag] file-change channels this turn: patchUpdated=${hits.patchUpdated} ` +
+        `outputDelta=${hits.outputDelta} turnDiff=${hits.turnDiff}`,
+    )
+  }
+
   private routeNotification(method: string, params: Record<string, any>): void {
     if (method === 'serverRequest/resolved') {
       this.handleServerRequestResolved(params)
@@ -1040,7 +1080,13 @@ export class CodexProtocolClient {
     const itemType =
       typeof params?.item?.type === 'string' ? (params.item.type as string) : null
     const dumpKey = itemType ? `${method}#${itemType}` : method
-    if ((method.startsWith('item/') || method === 'turn/completed') && !this.fullDumpedKeys.has(dumpKey)) {
+    // `turn/diff/updated` 单独列进来:它是 turn/ 开头又不是 turn/completed,
+    // 原条件正好漏掉。而它恰恰是上游 #38695 里「新版改发的聚合事件」,是判断
+    // 我们这版走哪条实时通道的关键一票。
+    if (
+      (method.startsWith('item/') || method === 'turn/completed' || method === 'turn/diff/updated') &&
+      !this.fullDumpedKeys.has(dumpKey)
+    ) {
       this.fullDumpedKeys.add(dumpKey)
       let json: string
       try {
@@ -1051,11 +1097,13 @@ export class CodexProtocolClient {
       this.options.onLog?.(`[codex trace] ${dumpKey} ${json.slice(0, 4000)}`)
     }
 
+    this.tallyDiffChannel(method, itemType)
+
     const event = this.notificationRouter.route(method, params)
     if (!event) {
       // Log each unhandled method once per session so we can diagnose missing
       // UI features without flooding the log. Examples that legitimately drop:
-      // thread/started, turn/started, warning, item/fileChange/outputDelta,
+      // thread/started, turn/started, warning,
       // remoteControl/status/changed (0.145+ remote-control daemon status —
       // we never pair a remote controller, so it is always "disabled" noise).
       // If a NEW method (e.g. an undocumented mcp progress notification) shows

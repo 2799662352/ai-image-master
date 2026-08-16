@@ -126,6 +126,7 @@ import type {
 } from '../../types/agent'
 import type { AttachmentRef, DelegationSnapshot, FileChange, TimelineItem } from '../../types/agent-timeline'
 import { dropSupersededStreamItems, trimRetriedStreamItems } from '../../types/agent-timeline'
+import { appendStreamedDiff } from '../../shared/diffUtils'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import { createBackendRpcFacade } from './backendRpcFacade'
@@ -5194,8 +5195,30 @@ function createItemFromStarted(
         stdout: '',
         stderr: '',
       }
-    case 'fileEdit':
-      return { type: 'fileEdit', id: itemId, startedAt: now, changes: [], totalAdded: 0, totalRemoved: 0 }
+    case 'fileEdit': {
+      // 与渲染层 store 保持同构:item/started 就带 changes 时直接用,只有
+      // path 时先占位让流式增量有地方落。
+      const started = Array.isArray(payload.changes) ? (payload.changes as FileChange[]) : []
+      if (started.length > 0) {
+        return {
+          type: 'fileEdit',
+          id: itemId,
+          startedAt: now,
+          changes: started,
+          totalAdded: started.reduce((sum, c) => sum + c.added, 0),
+          totalRemoved: started.reduce((sum, c) => sum + c.removed, 0),
+        }
+      }
+      const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : null
+      return {
+        type: 'fileEdit',
+        id: itemId,
+        startedAt: now,
+        changes: path ? [{ path, operation: 'edit', diff: '', added: 0, removed: 0 }] : [],
+        totalAdded: 0,
+        totalRemoved: 0,
+      }
+    }
     case 'attachment':
       return { type: 'attachment', id: itemId, startedAt: now, attachments: [] }
     case 'artifact':
@@ -5234,6 +5257,9 @@ function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem
     }
     if (item.type === 'shell' && (patch.field === 'stdout' || patch.field === 'stderr')) {
       return { ...item, [patch.field]: item[patch.field] + patch.text }
+    }
+    if (patch.field === 'diff' && item.type === 'fileEdit') {
+      return appendStreamedDiff(item, patch.text)
     }
     return item
   }
