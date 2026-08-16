@@ -860,6 +860,25 @@ function pickUsageCounter(params: Record<string, unknown>): TokenCounter | null 
   return null
 }
 
+/**
+ * 判断一段文本是不是 unified diff 的开头。只看第一条非空行 —— diff 一定以
+ * 文件头或 hunk 头起手,而 apply_patch 的工具返回是自然语言
+ * (`Success. Updated the following files:` / `M src/a.ts`),不会撞上。
+ */
+function looksLikeUnifiedDiff(text: string): boolean {
+  for (const line of text.split('\n')) {
+    if (line.trim().length === 0) continue
+    return (
+      line.startsWith('@@') ||
+      line.startsWith('--- ') ||
+      line.startsWith('+++ ') ||
+      line.startsWith('diff --git') ||
+      line.startsWith('Index: ')
+    )
+  }
+  return false
+}
+
 export class CodexNotificationRouter {
   private readonly streamedDeltaItemIds = new Set<string>()
   private readonly streamedReasoningItemIds = new Set<string>()
@@ -870,6 +889,8 @@ export class CodexNotificationRouter {
    * 「整体替换 changes」和「往 changes[0] 追加文本」会互相覆盖,卡片来回跳。
    */
   private readonly structuredPatchItemIds = new Set<string>()
+  /** 已经递给渲染层的字节数,按 item 记。见 outputDelta 分支的守卫。 */
+  private readonly emittedDiffLenByItemId = new Map<string, number>()
   /**
    * Canonical agentMessage tracking for cumulative-snapshot gateways
    * ("对话重复" source fix). Some Responses-API relays (apiyi, live
@@ -898,6 +919,9 @@ export class CodexNotificationRouter {
     }
     for (const key of this.structuredPatchItemIds) {
       if (key.startsWith(prefix)) this.structuredPatchItemIds.delete(key)
+    }
+    for (const key of this.emittedDiffLenByItemId.keys()) {
+      if (key.startsWith(prefix)) this.emittedDiffLenByItemId.delete(key)
     }
     this.lastAgentTextByThread.delete(threadId)
   }
@@ -1073,17 +1097,35 @@ export class CodexNotificationRouter {
         if (typeof itemId !== 'string' || itemId.length === 0 || text.length === 0) return null
         const key = itemStateKey(params.threadId, itemId)
         // 继续攒:completed 时 gateway 若没给 unifiedDiff,要靠这份兜底。
-        if (key) this.fileChangeOutputByItemId.set(key, `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`)
+        const buffered = key
+          ? `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`
+          : text
+        if (key) this.fileChangeOutputByItemId.set(key, buffered)
         // 结构化通道已经在喂这张卡了,裸文本只留兜底,不再往渲染层递。
         if (key && this.structuredPatchItemIds.has(key)) return null
-        // 同时往渲染层递。以前只攒不发,于是 diff 的字节明明已经在主进程里了,
-        // 用户却要一直盯着「Applying changes...」的空卡等到 completed。
+        // 守卫:上游 README 明确写着这条通道装的是 **apply_patch 的工具返回**
+        // (「contains the tool call response of the underlying apply_patch tool
+        // call」),不是正在写的 diff —— 和 commandExecution 那条「streams
+        // stdout/stderr」的措辞是有意区分的。合规 Codex 在这里发的是
+        // 「Success. Updated the following files: M src/a.ts」之类,直接当 diff
+        // 渲染就是往卡片里灌工具日志。
+        //
+        // 但兜底路径又确实是为「某些中继网关把 diff 塞在这里」建的(那批用例还
+        // 在)。所以两边都留:攒照旧无条件攒,只有拼出来的内容**真的长得像
+        // unified diff** 才往渲染层递。
+        if (!looksLikeUnifiedDiff(buffered)) return null
+        // 判定要看拼接后的全文:增量会切在半行上,第一段可能只有 '@@ -1',
+        // 单看它判不出来。所以按「已递出多少字节」补发差额,而不是发本段。
+        const emitted = key ? (this.emittedDiffLenByItemId.get(key) ?? 0) : 0
+        const pending = buffered.slice(emitted)
+        if (pending.length === 0) return null
+        if (key) this.emittedDiffLenByItemId.set(key, buffered.length)
         return {
           type: 'item_delta',
           threadId: params.threadId,
           itemId,
           itemType: 'fileEdit',
-          patch: { kind: 'appendText', field: 'diff', text },
+          patch: { kind: 'appendText', field: 'diff', text: pending },
         }
       }
 
@@ -1230,6 +1272,7 @@ export class CodexNotificationRouter {
             if (key) {
               this.fileChangeOutputByItemId.delete(key)
               this.structuredPatchItemIds.delete(key)
+              this.emittedDiffLenByItemId.delete(key)
             }
             const fallbackRawChanges =
               rawChanges.length === 0 && fallbackDiff && typeof item.path === 'string' && item.path.length > 0

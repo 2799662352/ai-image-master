@@ -62,12 +62,12 @@ describe('fileChange patchUpdated 结构化流式', () => {
     })
 
     expect(
-      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '+new\n' }),
+      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '@@ -1 +1 @@\n+new\n' }),
     ).toBeNull()
 
     // 另一个 item 不受影响。
     expect(
-      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-2', delta: '+x\n' }),
+      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-2', delta: '@@ -9 +9 @@\n+x\n' }),
     ).toMatchObject({ type: 'item_delta', itemId: 'fc-2' })
 
     // 兜底缓存仍然收到了 fc-1 的那段文本。
@@ -76,7 +76,7 @@ describe('fileChange patchUpdated 结构化流式', () => {
         threadId: 't',
         item: { id: 'fc-1', type: 'fileChange', changes: [{ path: 'src/a.ts', kind: 'edit' }] },
       }),
-    ).toMatchObject({ final: { changes: [{ path: 'src/a.ts', diff: '+new\n' }] } })
+    ).toMatchObject({ final: { changes: [{ path: 'src/a.ts', diff: '@@ -1 +1 @@\n+new\n' }] } })
   })
 
   it('turn 结束后清掉抑制标记,下一轮的同名 item 不受影响', () => {
@@ -90,7 +90,7 @@ describe('fileChange patchUpdated 结构化流式', () => {
     router.route('turn/completed', { threadId: 't', turn: { id: 'turn-1' } })
 
     expect(
-      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '+new\n' }),
+      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '@@ -1 +1 @@\n+new\n' }),
     ).toMatchObject({ type: 'item_delta' })
   })
 })

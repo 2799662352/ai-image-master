@@ -54,6 +54,60 @@ describe('fileChange 流式透传', () => {
     expect(router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '' })).toBeNull()
   })
 
+  /**
+   * 上游 README 的 fileChange 小节写得很明确:这条通道装的是 **apply_patch 的
+   * 工具返回**(「contains the tool call response of the underlying apply_patch
+   * tool call」),不是正在写的 diff —— 措辞和 commandExecution 那条「streams
+   * stdout/stderr … render live output」是有意区分的。
+   *
+   * 合规 Codex 在这里发的是自然语言回执,原样当 diff 追加就是往卡片里灌工具
+   * 日志。兜底路径又确实是为「某些中继把 diff 塞这里」建的,所以两边都得留。
+   */
+  it('工具回执文本不往渲染层递,但仍然进兜底缓存', () => {
+    const router = new CodexNotificationRouter()
+
+    expect(
+      router.route('item/fileChange/outputDelta', {
+        threadId: 't',
+        itemId: 'fc-1',
+        delta: 'Success. Updated the following files:\nM src/a.ts\n',
+      }),
+    ).toBeNull()
+
+    // 兜底照旧:completed 缺 unifiedDiff 时这段文本还得能顶上。
+    expect(
+      router.route('item/completed', {
+        threadId: 't',
+        item: { id: 'fc-1', type: 'fileChange', changes: [{ path: 'src/a.ts', kind: 'edit' }] },
+      }),
+    ).toMatchObject({
+      final: { changes: [{ path: 'src/a.ts', diff: 'Success. Updated the following files:\nM src/a.ts\n' }] },
+    })
+  })
+
+  it('增量切在半行上时,靠拼接后的全文判定并补发差额', () => {
+    const router = new CodexNotificationRouter()
+
+    // 第一段只有一个 '@',还判不出是不是 diff,此时不该发。
+    expect(
+      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '@' }),
+    ).toBeNull()
+
+    // 第二段补齐了 hunk 头,这时应当把**前面攒的一起**递出去,而不是只发本段。
+    expect(
+      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '@ -1 +1 @@\n-old\n' }),
+    ).toMatchObject({
+      patch: { kind: 'appendText', field: 'diff', text: '@@ -1 +1 @@\n-old\n' },
+    })
+
+    // 之后只发差额,不重发。
+    expect(
+      router.route('item/fileChange/outputDelta', { threadId: 't', itemId: 'fc-1', delta: '+new\n' }),
+    ).toMatchObject({
+      patch: { kind: 'appendText', field: 'diff', text: '+new\n' },
+    })
+  })
+
   it('item/started 带上 path,好让卡片在第一个增量到达前就有文件名', () => {
     const router = new CodexNotificationRouter()
 
