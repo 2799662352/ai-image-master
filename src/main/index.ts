@@ -1138,6 +1138,38 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
         console.warn('[AgentRuntime] catimation bridge listener unavailable — falling back to HTTP transport')
       }
     }
+    // cinematography-kb-mcp transport, resolved HERE (per launch) rather than
+    // trusted from `~/.codex/config.toml`. The boot seed still writes that file
+    // for external `codex` CLI users, but its convergence pass never re-checks
+    // whether `args[0]` still exists — so a user who reinstalls the app to a new
+    // directory keeps a healthy-looking entry pointing at the OLD one, node gets
+    // a missing script, and codex reports `connection closed: initialize
+    // response`. Recomputing per spawn is exactly what keeps catimation immune.
+    let cinematographyKbStdio: { command: string; args: string[]; env: Record<string, string> } | undefined
+    try {
+      const kbEntry = getCinematographyKbMcpEntryPath({
+        appPath: app.getAppPath(),
+        isPackaged: app.isPackaged,
+        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+      })
+      // Guard like the catimation bridge does: injecting a path we know is
+      // missing would replace a possibly-working on-disk entry with a certainly
+      // broken one.
+      if (fs.existsSync(kbEntry)) {
+        const resolved = await resolveApiyiCommand(process.execPath)
+        cinematographyKbStdio = {
+          command: resolved.command,
+          args: [kbEntry],
+          env: { ...resolved.extraEnv },
+        }
+        console.log('[AgentRuntime] cinematography_kb transport:', resolved.command, kbEntry)
+      } else {
+        console.warn('[AgentRuntime] cinematography-kb script missing at', kbEntry, '— leaving the seeded entry alone')
+      }
+    } catch (err) {
+      console.warn('[AgentRuntime] cinematography_kb transport resolve failed:', err)
+    }
+
     agentManager = new AgentManager({
       userDataDir: app.getPath('userData'),
       win,
@@ -1148,6 +1180,7 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
       // `generate_image` tool. Undefined when the listener failed to bind
       // (agent still works, sans tools).
       mcpRuntime: catimationMcpLaunch,
+      cinematographyKbStdio,
     })
     // Let the MCP ToolRouter reverse-map Codex thread UUIDs (carried in each
     // tool call's `_meta`) to our DB thread ids, so renderer tools like

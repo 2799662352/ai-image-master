@@ -298,6 +298,14 @@ export interface AgentManagerOptions {
    * local MCP listener failed to bind.
    */
   mcpRuntime?: CatimationMcpLaunchInfo
+  /**
+   * Freshly-resolved stdio transport for the bundled cinematography-kb-mcp
+   * (command + `resources/cinematography-kb-mcp/index.js` of THIS install).
+   * Forwarded to the default `CodexLocalBackend` so every spawn overrides
+   * whatever `~/.codex/config.toml` happens to hold — the same treatment
+   * catimation gets. Omitted when the script is missing from this build.
+   */
+  cinematographyKbStdio?: CodexLocalBackendOptions['cinematographyKbStdio']
 }
 
 function resolvePersistedStartupProvider(
@@ -635,6 +643,7 @@ export class AgentManager {
         sessionConfig: this.sessionConfig,
         getModelContextConfig: () => this.currentContextPin(),
         catimationMcp: opts.mcpRuntime,
+        cinematographyKbStdio: opts.cinematographyKbStdio,
         // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
         // composer's Plan preset; collaborationMode/list). Smoke-verified on the
         // bundled binary: initialize + stable RPC behaviour are unaffected.

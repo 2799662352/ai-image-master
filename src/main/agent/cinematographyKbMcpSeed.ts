@@ -27,12 +27,30 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Legacy shapes that must be rebuilt to the vendored Node entry:
+ * Shapes that must be rebuilt to THIS build's vendored Node entry:
  *  - the pre-internalization manual entry that spawned the Python wrapper
- *    (`command = "python"`, args ending in `cinematography-kb-mcp/server.py`), or
- *  - a "missing transport" entry (no `command` AND no `url`) that codex rejects.
+ *    (`command = "python"`, args ending in `cinematography-kb-mcp/server.py`),
+ *  - a "missing transport" entry (no `command` AND no `url`) that codex rejects,
+ *  - **a transport pointing somewhere other than this build** — a stale
+ *    `command` (the node that got uninstalled / the Electron of a previous
+ *    install) or a stale `args[0]` (the previous install directory).
+ *
+ * That last case is the one that bit a user on 2026-08-16: they reinstalled the
+ * app from `D:\懒人猫平台\…` to `…\AppData\Local\Programs\…`, and this function
+ * kept answering "healthy" because a `command` existed and it wasn't Python. So
+ * node was handed a script that no longer existed, died before the handshake,
+ * and codex reported `connection closed: initialize response` on every launch —
+ * forever, since nothing ever re-checked. apiyi self-healed (it force-converges
+ * every field each boot); this one had no such pass.
+ *
+ * Transport is APP-MANAGED, so converging it is safe. `env` is NOT — it stays
+ * user territory and is merged additively by the caller (a hand-typed key or a
+ * self-hosted DASHVECTOR_ENDPOINT must survive).
  */
-function needsTransportRepair(entry: Record<string, unknown>): boolean {
+function needsTransportRepair(
+  entry: Record<string, unknown>,
+  canonical: { command: string; entryPath: string },
+): boolean {
   const hasCommand = 'command' in entry && typeof entry.command === 'string'
   const hasUrl = 'url' in entry && typeof entry.url === 'string'
   if (!hasCommand && !hasUrl) return true
@@ -40,7 +58,10 @@ function needsTransportRepair(entry: Record<string, unknown>): boolean {
   const pointsAtPythonWrapper = args.some(
     (a) => typeof a === 'string' && /cinematography-kb-mcp[\\/]server\.py$/.test(a),
   )
-  return pointsAtPythonWrapper
+  if (pointsAtPythonWrapper) return true
+  // Diverged from this build → stale install path or stale interpreter.
+  if (entry.command !== canonical.command) return true
+  return args.length !== 1 || args[0] !== canonical.entryPath
 }
 
 /**
@@ -114,7 +135,7 @@ export async function seedCinematographyKbMcpEntry(
     : null
 
   if (existing) {
-    if (needsTransportRepair(existing)) {
+    if (needsTransportRepair(existing, { command: input.command, entryPath: input.entryPath })) {
       // Always resolve to a concrete object so the TOML serializer never sees an
       // `undefined` env. `mergeEnvWithScaffold` returns null when there is
       // nothing to add (empty scaffold); fall back to the user's existing env
