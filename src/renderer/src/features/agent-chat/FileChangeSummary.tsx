@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { FileChange, Message } from '../../../../types/agent-timeline'
 import { useFileExplorerStore } from '../file-explorer/store'
-import { FileDiffBlock } from './cards/FileDiffBlock'
+import { DiffBody } from './cards/DiffBody'
 
 /**
  * 回合级「本轮改了哪些文件」汇总条,挂在助手气泡末尾。
@@ -137,7 +137,14 @@ function SummaryRow({ change }: { change: FileChange }) {
       </div>
       {expanded && hasDiff && (
         <div className="border-t border-cyan-500/10 bg-black/20 px-2.5 pt-1.5">
-          <FileDiffBlock change={change} />
+          {/*
+            这里用内容层而不是 FileDiffBlock:这一行**自己**已经是折叠头了
+            (路径、+N/−N、aria-expanded 都在上面),再套一个自带 header 的
+            组件就是折叠套娃 —— 展开一行,看到的是另一个收起的行。
+          */}
+          <div className="mb-1.5">
+            <DiffBody diff={change.diff} />
+          </div>
           <button
             type="button"
             aria-label={`并排对比 ${change.path}`}

@@ -86,7 +86,13 @@ function FileEditDetails({ item }: { item: FileEditItem }) {
     <div>
       {item.changes.map((change, index) =>
         change.diff.trim().length > 0 ? (
-          <FileDiffBlock key={`${change.operation}:${change.path}:${index}`} change={change} />
+          <FileDiffBlock
+            key={`${change.operation}:${change.path}:${index}`}
+            change={change}
+            // 用户已经展开了这条证据才会走到这里。只有一个文件时再让他点第二下
+            // 纯属折磨;多文件仍然收起,否则又变回一屏摊开。
+            defaultExpanded={item.changes.length === 1}
+          />
         ) : (
           <div
             key={`${change.operation}:${change.path}:${index}`}

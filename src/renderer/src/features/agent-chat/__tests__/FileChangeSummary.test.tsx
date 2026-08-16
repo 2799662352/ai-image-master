@@ -133,18 +133,21 @@ describe('FileChangeSummary', () => {
       )
     }
 
+    // 断言的是「有没有渲染出 diff 行」。以前拿 <pre> 当代理,但内容层加了行号栏
+    // 之后每一行是 flex 布局,不再是单个 <pre> —— 标签名本来就不是这条测试要
+    // 守的东西。
     it('点整行就地展开内联 diff,不用切走', () => {
       const { container } = renderTwoFiles()
-      expect(container.querySelector('pre')).toBeNull()
+      expect(container.querySelector('[data-diff-row]')).toBeNull()
       fireEvent.click(screen.getByLabelText('展开 src/b.ts 的改动'))
-      expect(container.querySelector('pre')).toBeTruthy()
+      expect(container.querySelector('[data-diff-row]')).toBeTruthy()
     })
 
     it('再点一次收起', () => {
       const { container } = renderTwoFiles()
       fireEvent.click(screen.getByLabelText('展开 src/b.ts 的改动'))
       fireEvent.click(screen.getByLabelText('收起 src/b.ts 的改动'))
-      expect(container.querySelector('pre')).toBeNull()
+      expect(container.querySelector('[data-diff-row]')).toBeNull()
     })
 
     it('「打开」在文件栏打开这个文件', () => {
