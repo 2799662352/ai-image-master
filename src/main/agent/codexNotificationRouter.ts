@@ -865,6 +865,12 @@ export class CodexNotificationRouter {
   private readonly streamedReasoningItemIds = new Set<string>()
   private readonly fileChangeOutputByItemId = new Map<string, string>()
   /**
+   * 见过 `item/fileChange/patchUpdated` 的 item。两条通道可能同时来,结构化的
+   * 那份是权威 —— 一旦有它,裸文本的 outputDelta 就不再往渲染层递,否则
+   * 「整体替换 changes」和「往 changes[0] 追加文本」会互相覆盖,卡片来回跳。
+   */
+  private readonly structuredPatchItemIds = new Set<string>()
+  /**
    * Canonical agentMessage tracking for cumulative-snapshot gateways
    * ("对话重复" source fix). Some Responses-API relays (apiyi, live
    * 2026-06-10) never stream `item/agentMessage/delta`; instead every SSE
@@ -889,6 +895,9 @@ export class CodexNotificationRouter {
     }
     for (const key of this.fileChangeOutputByItemId.keys()) {
       if (key.startsWith(prefix)) this.fileChangeOutputByItemId.delete(key)
+    }
+    for (const key of this.structuredPatchItemIds) {
+      if (key.startsWith(prefix)) this.structuredPatchItemIds.delete(key)
     }
     this.lastAgentTextByThread.delete(threadId)
   }
@@ -1065,6 +1074,8 @@ export class CodexNotificationRouter {
         const key = itemStateKey(params.threadId, itemId)
         // 继续攒:completed 时 gateway 若没给 unifiedDiff,要靠这份兜底。
         if (key) this.fileChangeOutputByItemId.set(key, `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`)
+        // 结构化通道已经在喂这张卡了,裸文本只留兜底,不再往渲染层递。
+        if (key && this.structuredPatchItemIds.has(key)) return null
         // 同时往渲染层递。以前只攒不发,于是 diff 的字节明明已经在主进程里了,
         // 用户却要一直盯着「Applying changes...」的空卡等到 completed。
         return {
@@ -1073,6 +1084,32 @@ export class CodexNotificationRouter {
           itemId,
           itemType: 'fileEdit',
           patch: { kind: 'appendText', field: 'diff', text },
+        }
+      }
+
+      case 'item/fileChange/patchUpdated': {
+        // 与 outputDelta 并列注册的通知,带的是**累积的 changes 数组**,形状
+        // 和 item/completed 的一样:有真实路径、支持多文件、是真 unified diff。
+        // 因此这里整体合并而不是追加 —— 每条通知都是当前完整状态。
+        const itemId = params.itemId as string | undefined
+        const raw = Array.isArray(params.changes) ? params.changes : null
+        if (typeof itemId !== 'string' || itemId.length === 0 || !raw) return null
+        const key = itemStateKey(params.threadId, itemId)
+        if (key) this.structuredPatchItemIds.add(key)
+        const changes = (raw as Parameters<typeof parseChange>[0][]).map(parseChange)
+        return {
+          type: 'item_delta',
+          threadId: params.threadId,
+          itemId,
+          itemType: 'fileEdit',
+          patch: {
+            kind: 'mergeFields',
+            fields: {
+              changes,
+              totalAdded: changes.reduce((sum, c) => sum + c.added, 0),
+              totalRemoved: changes.reduce((sum, c) => sum + c.removed, 0),
+            },
+          },
         }
       }
 
@@ -1190,7 +1227,10 @@ export class CodexNotificationRouter {
             const rawChanges = Array.isArray(item.changes) ? item.changes : []
             const key = itemStateKey(params.threadId, item.id)
             const fallbackDiff = key ? this.fileChangeOutputByItemId.get(key) : undefined
-            if (key) this.fileChangeOutputByItemId.delete(key)
+            if (key) {
+              this.fileChangeOutputByItemId.delete(key)
+              this.structuredPatchItemIds.delete(key)
+            }
             const fallbackRawChanges =
               rawChanges.length === 0 && fallbackDiff && typeof item.path === 'string' && item.path.length > 0
                 ? [{ path: item.path, kind: 'edit' }]

@@ -1055,7 +1055,7 @@ export class CodexProtocolClient {
     if (!event) {
       // Log each unhandled method once per session so we can diagnose missing
       // UI features without flooding the log. Examples that legitimately drop:
-      // thread/started, turn/started, warning, item/fileChange/outputDelta,
+      // thread/started, turn/started, warning,
       // remoteControl/status/changed (0.145+ remote-control daemon status —
       // we never pair a remote controller, so it is always "disabled" noise).
       // If a NEW method (e.g. an undocumented mcp progress notification) shows
