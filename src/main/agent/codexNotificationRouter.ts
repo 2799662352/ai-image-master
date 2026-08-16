@@ -866,15 +866,25 @@ function pickUsageCounter(params: Record<string, unknown>): TokenCounter | null 
  * (`Success. Updated the following files:` / `M src/a.ts`),不会撞上。
  */
 function looksLikeUnifiedDiff(text: string): boolean {
-  for (const line of text.split('\n')) {
-    if (line.trim().length === 0) continue
-    return (
-      line.startsWith('@@') ||
-      line.startsWith('--- ') ||
-      line.startsWith('+++ ') ||
-      line.startsWith('diff --git') ||
-      line.startsWith('Index: ')
-    )
+  // 只取第一条非空行,不要 split 整个字符串:这个函数是按增量调用的,而传进来
+  // 的是**累积后的全文** —— split 一次就分配一整个行数组,几百个增量下来就是
+  // O(n²) 的主进程开销,而结果只用得上第一行。
+  let cursor = 0
+  while (cursor < text.length) {
+    const newline = text.indexOf('\n', cursor)
+    const end = newline === -1 ? text.length : newline
+    const line = text.slice(cursor, end)
+    if (line.trim().length > 0) {
+      return (
+        line.startsWith('@@') ||
+        line.startsWith('--- ') ||
+        line.startsWith('+++ ') ||
+        line.startsWith('diff --git') ||
+        line.startsWith('Index: ')
+      )
+    }
+    if (newline === -1) break
+    cursor = newline + 1
   }
   return false
 }
@@ -970,16 +980,30 @@ export class CodexNotificationRouter {
                 ...(item.cwd != null ? { cwd: item.cwd } : {}),
               },
             }
-          case 'fileChange':
+          case 'fileChange': {
+            // 上游 README 的审批时序第 1 步:「item/started emits a fileChange
+            // item with `changes` (diff chunk summaries) … Show the proposed
+            // edits and paths to the user」。完整的提议改动在这一刻就有了 ——
+            // 无条件、不看 feature flag、也不依赖 gateway 转发哪条增量通知。
+            // 此前这里只取 path 把 changes 扔了,于是明明手上有 diff,卡片还是
+            // 空着一路等到 item/completed。
+            const startedRaw = Array.isArray(item.changes) ? item.changes : []
+            const startedChanges = (startedRaw as Parameters<typeof parseChange>[0][]).map(parseChange)
             return {
               type: 'item_started',
               threadId: params.threadId,
               itemId: item.id,
               itemType: 'fileEdit',
-              // path 让卡片在第一个 outputDelta 到达之前就能显示文件名。没有
-              // 就留空,由渲染层显示「正在写入」而不是编一个路径出来。
-              payload: typeof item.path === 'string' && item.path.length > 0 ? { path: item.path } : {},
+              // 退化路径:没给 changes 时至少把 path 带上,让卡片能显示文件名
+              // 而不是「正在写入」。两个都没有就留空,不编一个路径出来。
+              payload:
+                startedChanges.length > 0
+                  ? { changes: startedChanges }
+                  : typeof item.path === 'string' && item.path.length > 0
+                    ? { path: item.path }
+                    : {},
             }
+          }
           case 'plan':
             // `plan` ThreadItems carry only a pre-rendered text blob in v2
             // (`{ type: 'plan', id, text }` per the v2 ThreadItem schema). The
@@ -1113,10 +1137,11 @@ export class CodexNotificationRouter {
         // 但兜底路径又确实是为「某些中继网关把 diff 塞在这里」建的(那批用例还
         // 在)。所以两边都留:攒照旧无条件攒,只有拼出来的内容**真的长得像
         // unified diff** 才往渲染层递。
-        if (!looksLikeUnifiedDiff(buffered)) return null
-        // 判定要看拼接后的全文:增量会切在半行上,第一段可能只有 '@@ -1',
-        // 单看它判不出来。所以按「已递出多少字节」补发差额,而不是发本段。
+        // 判定要看拼接后的全文:增量会切在半行上,第一段可能只有 '@',单看它
+        // 判不出来。所以按「已递出多少字节」补发差额,而不是发本段。
         const emitted = key ? (this.emittedDiffLenByItemId.get(key) ?? 0) : 0
+        // 已经开始递了就说明早判定过是 diff,别再对着越来越长的全文重判。
+        if (emitted === 0 && !looksLikeUnifiedDiff(buffered)) return null
         const pending = buffered.slice(emitted)
         if (pending.length === 0) return null
         if (key) this.emittedDiffLenByItemId.set(key, buffered.length)

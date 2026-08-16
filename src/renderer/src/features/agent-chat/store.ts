@@ -24,7 +24,7 @@ import type {
 import type { ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
 import type { PluginInstalledResponse } from '../../../../types/codexPlugins'
 import type { AgentReference } from '../../../../types/agent-reference'
-import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
+import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, FileChange, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
   dropSupersededStreamItemsInLastMessage,
   trimRetriedStreamItemsInLastMessage,
@@ -1401,8 +1401,21 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
         stderr: '',
       }
     case 'fileEdit': {
-      // 有 path 就先放一个空 diff 的占位改动,让流式增量有地方落、卡片也能
-      // 立刻显示文件名,而不是先空白一段再整块弹出。
+      // codex 在 item/started 就把提议的 changes 全给了(含 diff),直接用 ——
+      // 这是最早、最可靠的一份,不依赖任何增量通道。
+      const started = Array.isArray(payload.changes) ? (payload.changes as FileChange[]) : []
+      if (started.length > 0) {
+        return {
+          type: 'fileEdit',
+          id: itemId,
+          startedAt: now,
+          changes: started,
+          totalAdded: started.reduce((sum, c) => sum + c.added, 0),
+          totalRemoved: started.reduce((sum, c) => sum + c.removed, 0),
+        }
+      }
+      // 退化路径:只有 path 时先放一个空 diff 的占位改动,让流式增量有地方落、
+      // 卡片也能立刻显示文件名,而不是先空白一段再整块弹出。
       const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : null
       return {
         type: 'fileEdit',

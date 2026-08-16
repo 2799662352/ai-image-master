@@ -5196,7 +5196,19 @@ function createItemFromStarted(
         stderr: '',
       }
     case 'fileEdit': {
-      // 与渲染层 store 保持同构:有 path 就先占位,流式增量才有地方落。
+      // 与渲染层 store 保持同构:item/started 就带 changes 时直接用,只有
+      // path 时先占位让流式增量有地方落。
+      const started = Array.isArray(payload.changes) ? (payload.changes as FileChange[]) : []
+      if (started.length > 0) {
+        return {
+          type: 'fileEdit',
+          id: itemId,
+          startedAt: now,
+          changes: started,
+          totalAdded: started.reduce((sum, c) => sum + c.added, 0),
+          totalRemoved: started.reduce((sum, c) => sum + c.removed, 0),
+        }
+      }
       const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : null
       return {
         type: 'fileEdit',
