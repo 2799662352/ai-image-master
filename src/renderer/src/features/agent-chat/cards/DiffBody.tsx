@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 /**
  * 仍然截断。限高解决的是「视觉高度」,不是「渲染成本」—— 一个 5000 行的 diff
@@ -82,8 +82,16 @@ const GUTTER_CLASS: Record<DiffRow['kind'], string> = {
   ctx: 'text-zinc-600',
 }
 
+/** 距底多少像素以内算「还贴着底」。一行约 18px,留一行多的余量。 */
+const STICK_TO_BOTTOM_SLACK = 24
+
 export interface DiffBodyProps {
   diff: string
+  /**
+   * 内容还在增长(agent 正在写这个文件)。开启后:截断保留**尾部**而不是
+   * 开头,并且在用户没有主动往回翻的前提下自动滚到底。
+   */
+  followTail?: boolean
 }
 
 /**
@@ -92,16 +100,36 @@ export interface DiffBodyProps {
  * 之所以和 `FileDiffBlock` 拆开:`FileChangeSummary` 和 `EvidenceDetails` 已经
  * 各自带了 header 和折叠,如果内容层也自带一套,那边就成了折叠套娃。
  */
-export function DiffBody({ diff }: DiffBodyProps) {
+export function DiffBody({ diff, followTail = false }: DiffBodyProps) {
   const [showAll, setShowAll] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // 用户主动往回翻之后就别再抢滚动条 —— 他正想看上面某一行,结果每来一段
+  // 增量就被拽回底部,是这类「跟随」实现最常见的毛病。
+  const stickRef = useRef(true)
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_SLACK
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!followTail || !stickRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [diff, followTail])
 
   const rows = toRows(diff)
   const truncated = !showAll && rows.length > MAX_VISIBLE_LINES
-  const visible = truncated ? rows.slice(0, MAX_VISIBLE_LINES) : rows
+  // 截断方向跟着看的方向走:收起态看的是「这次改了什么」,从头截合理;流式态
+  // 看的是「现在正写到哪」,从头截等于永远停在开头,后面写的一个字都看不到。
+  const visible = !truncated ? rows : followTail ? rows.slice(-MAX_VISIBLE_LINES) : rows.slice(0, MAX_VISIBLE_LINES)
 
   return (
     <div>
       <div
+        ref={scrollRef}
+        onScroll={onScroll}
         data-diff-scroll
         className="max-h-[320px] overflow-y-auto overflow-x-auto rounded border border-zinc-800/60 bg-zinc-950/70 font-mono text-[11px] leading-[1.6]"
       >
@@ -136,7 +164,9 @@ export function DiffBody({ diff }: DiffBodyProps) {
           onClick={() => setShowAll((v) => !v)}
           className="mt-1 text-[10px] text-cyan-400/80 transition hover:text-cyan-300 hover:underline"
         >
-          {showAll ? `收起,只看前 ${MAX_VISIBLE_LINES} 行` : `显示全部 ${rows.length} 行`}
+          {showAll
+            ? `收起,只看${followTail ? '后' : '前'} ${MAX_VISIBLE_LINES} 行`
+            : `显示全部 ${rows.length} 行`}
         </button>
       )}
     </div>

@@ -943,7 +943,9 @@ export class CodexNotificationRouter {
               threadId: params.threadId,
               itemId: item.id,
               itemType: 'fileEdit',
-              payload: {},
+              // path 让卡片在第一个 outputDelta 到达之前就能显示文件名。没有
+              // 就留空,由渲染层显示「正在写入」而不是编一个路径出来。
+              payload: typeof item.path === 'string' && item.path.length > 0 ? { path: item.path } : {},
             }
           case 'plan':
             // `plan` ThreadItems carry only a pre-rendered text blob in v2
@@ -1059,11 +1061,19 @@ export class CodexNotificationRouter {
             : typeof params.data === 'string'
               ? params.data
               : ''
-        if (typeof itemId === 'string' && itemId.length > 0 && text.length > 0) {
-          const key = itemStateKey(params.threadId, itemId)
-          if (key) this.fileChangeOutputByItemId.set(key, `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`)
+        if (typeof itemId !== 'string' || itemId.length === 0 || text.length === 0) return null
+        const key = itemStateKey(params.threadId, itemId)
+        // 继续攒:completed 时 gateway 若没给 unifiedDiff,要靠这份兜底。
+        if (key) this.fileChangeOutputByItemId.set(key, `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`)
+        // 同时往渲染层递。以前只攒不发,于是 diff 的字节明明已经在主进程里了,
+        // 用户却要一直盯着「Applying changes...」的空卡等到 completed。
+        return {
+          type: 'item_delta',
+          threadId: params.threadId,
+          itemId,
+          itemType: 'fileEdit',
+          patch: { kind: 'appendText', field: 'diff', text },
         }
-        return null
       }
 
       case 'item/plan/delta':

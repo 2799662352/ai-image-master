@@ -58,6 +58,7 @@ import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
+import { appendStreamedDiff } from '../../../../shared/diffUtils'
 import { getAgentApi } from '../../utils/agentBridge'
 
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
@@ -1399,8 +1400,19 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
         stdout: '',
         stderr: '',
       }
-    case 'fileEdit':
-      return { type: 'fileEdit', id: itemId, startedAt: now, changes: [], totalAdded: 0, totalRemoved: 0 }
+    case 'fileEdit': {
+      // 有 path 就先放一个空 diff 的占位改动,让流式增量有地方落、卡片也能
+      // 立刻显示文件名,而不是先空白一段再整块弹出。
+      const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : null
+      return {
+        type: 'fileEdit',
+        id: itemId,
+        startedAt: now,
+        changes: path ? [{ path, operation: 'edit', diff: '', added: 0, removed: 0 }] : [],
+        totalAdded: 0,
+        totalRemoved: 0,
+      }
+    }
     case 'attachment':
       return { type: 'attachment', id: itemId, startedAt: now, attachments: [] }
     case 'artifact':
@@ -1473,6 +1485,9 @@ function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem
     }
     if (item.type === 'shell' && (field === 'stdout' || field === 'stderr')) {
       return { ...item, [field]: item[field] + text }
+    }
+    if (field === 'diff' && item.type === 'fileEdit') {
+      return appendStreamedDiff(item, text)
     }
     return item
   }

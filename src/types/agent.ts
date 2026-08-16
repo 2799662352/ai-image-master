@@ -665,7 +665,12 @@ export interface AgentToolEvent {
 }
 
 export type ItemDeltaPatch =
-  | { kind: 'appendText'; field: 'content' | 'stdout' | 'stderr'; text: string }
+  /**
+   * `diff` 追加到 fileEdit 的 changes[0].diff 上。用追加而不是 mergeFields
+   * 整块重发,是因为 diff 会长到几十 KB —— 每个增量都带上全文就是 O(n²) 的
+   * IPC 流量。
+   */
+  | { kind: 'appendText'; field: 'content' | 'stdout' | 'stderr' | 'diff'; text: string }
   | { kind: 'mergeFields'; fields: Record<string, unknown> }
 
 export interface AgentTokenUsageDelta {

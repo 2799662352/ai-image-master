@@ -64,11 +64,18 @@ export function FileEditCard({ item }: { item: FileEditItem }) {
         同一张卡按数量长成两个样子,是它最刺眼的地方。
         现在一律是「每个文件一行,默认收起,想看哪个点哪个」。
       */}
+      {/*
+        写的时候摊开、写完收起。默认收起是给**读历史**的人省地方的;正在写的
+        那一刻恰恰相反 —— 那是这一屏唯一值得盯着看的东西,却要用户手动点开
+        才看得见,而等他点开时往往已经写完了。
+      */}
       <div className="p-1.5">
         {item.changes.map((change) => (
           <FileDiffBlock
             key={`${change.operation}:${change.path}`}
             change={change}
+            defaultExpanded={isRunning}
+            followTail={isRunning}
             onOpen={() => void openAiChange(change)}
           />
         ))}
