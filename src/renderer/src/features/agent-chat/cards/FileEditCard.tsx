@@ -82,7 +82,10 @@ export function FileEditCard({ item }: { item: FileEditItem }) {
           <FileDiffBlock
             key={index}
             change={change}
-            defaultExpanded={isRunning}
+            // 有内容才摊开。item/started 的 changes 按上游说法是「diff chunk
+            // summaries」,可能只有 path 没有正文 —— 那样展开出来是一个写着
+            // +0 −0 的空框,整个编辑过程都挂在那儿,比收起还难看。
+            defaultExpanded={isRunning && change.diff.length > 0}
             followTail={isRunning}
             onOpen={() => void openAiChange(change)}
           />

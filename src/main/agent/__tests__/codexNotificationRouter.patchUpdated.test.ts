@@ -79,6 +79,34 @@ describe('fileChange patchUpdated 结构化流式', () => {
     ).toMatchObject({ final: { changes: [{ path: 'src/a.ts', diff: '@@ -1 +1 @@\n+new\n' }] } })
   })
 
+  /**
+   * item/started 已经给了完整快照,它同样是权威来源 —— 后续的裸文本不能再往
+   * 上追加,否则同一份 diff 会被拼两遍、+N/−N 直接翻倍。
+   *
+   * 这个洞是「先有 patchUpdated 抑制、后加 item/started 快照」留下的:抑制集
+   * 合当初只在 patchUpdated 分支填,新增第二个快照源时没跟着扩。
+   */
+  it('item/started 带了 changes 之后,outputDelta 不再往上追加', () => {
+    const router = new CodexNotificationRouter()
+
+    router.route('item/started', {
+      threadId: 't',
+      item: {
+        id: 'fc-1',
+        type: 'fileChange',
+        changes: [{ path: 'src/a.ts', kind: 'edit', unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n' }],
+      },
+    })
+
+    expect(
+      router.route('item/fileChange/outputDelta', {
+        threadId: 't',
+        itemId: 'fc-1',
+        delta: '@@ -1 +1 @@\n-old\n+new\n',
+      }),
+    ).toBeNull()
+  })
+
   it('turn 结束后清掉抑制标记,下一轮的同名 item 不受影响', () => {
     const router = new CodexNotificationRouter()
 

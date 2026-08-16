@@ -894,11 +894,14 @@ export class CodexNotificationRouter {
   private readonly streamedReasoningItemIds = new Set<string>()
   private readonly fileChangeOutputByItemId = new Map<string, string>()
   /**
-   * 见过 `item/fileChange/patchUpdated` 的 item。两条通道可能同时来,结构化的
-   * 那份是权威 —— 一旦有它,裸文本的 outputDelta 就不再往渲染层递,否则
-   * 「整体替换 changes」和「往 changes[0] 追加文本」会互相覆盖,卡片来回跳。
+   * 已经从某条**快照**通道拿到过完整 changes 的 item —— `item/started` 或
+   * `item/fileChange/patchUpdated` 都算。
+   *
+   * 一旦有快照,裸文本的 outputDelta 就不再往渲染层递:「整体替换 changes」和
+   * 「往 changes[0] 追加文本」会互相覆盖让卡片来回跳,更糟的是同一份 diff 会
+   * 被拼两遍、+N/−N 直接翻倍。
    */
-  private readonly structuredPatchItemIds = new Set<string>()
+  private readonly authoritativeChangesItemIds = new Set<string>()
   /** 已经递给渲染层的字节数,按 item 记。见 outputDelta 分支的守卫。 */
   private readonly emittedDiffLenByItemId = new Map<string, number>()
   /**
@@ -927,8 +930,8 @@ export class CodexNotificationRouter {
     for (const key of this.fileChangeOutputByItemId.keys()) {
       if (key.startsWith(prefix)) this.fileChangeOutputByItemId.delete(key)
     }
-    for (const key of this.structuredPatchItemIds) {
-      if (key.startsWith(prefix)) this.structuredPatchItemIds.delete(key)
+    for (const key of this.authoritativeChangesItemIds) {
+      if (key.startsWith(prefix)) this.authoritativeChangesItemIds.delete(key)
     }
     for (const key of this.emittedDiffLenByItemId.keys()) {
       if (key.startsWith(prefix)) this.emittedDiffLenByItemId.delete(key)
@@ -989,6 +992,11 @@ export class CodexNotificationRouter {
             // 空着一路等到 item/completed。
             const startedRaw = Array.isArray(item.changes) ? item.changes : []
             const startedChanges = (startedRaw as Parameters<typeof parseChange>[0][]).map(parseChange)
+            if (startedChanges.length > 0) {
+              // 这也是一份权威快照,后续裸文本不能再往上追加。
+              const startedKey = itemStateKey(params.threadId, item.id)
+              if (startedKey) this.authoritativeChangesItemIds.add(startedKey)
+            }
             return {
               type: 'item_started',
               threadId: params.threadId,
@@ -1126,7 +1134,7 @@ export class CodexNotificationRouter {
           : text
         if (key) this.fileChangeOutputByItemId.set(key, buffered)
         // 结构化通道已经在喂这张卡了,裸文本只留兜底,不再往渲染层递。
-        if (key && this.structuredPatchItemIds.has(key)) return null
+        if (key && this.authoritativeChangesItemIds.has(key)) return null
         // 守卫:上游 README 明确写着这条通道装的是 **apply_patch 的工具返回**
         // (「contains the tool call response of the underlying apply_patch tool
         // call」),不是正在写的 diff —— 和 commandExecution 那条「streams
@@ -1162,7 +1170,7 @@ export class CodexNotificationRouter {
         const raw = Array.isArray(params.changes) ? params.changes : null
         if (typeof itemId !== 'string' || itemId.length === 0 || !raw) return null
         const key = itemStateKey(params.threadId, itemId)
-        if (key) this.structuredPatchItemIds.add(key)
+        if (key) this.authoritativeChangesItemIds.add(key)
         const changes = (raw as Parameters<typeof parseChange>[0][]).map(parseChange)
         return {
           type: 'item_delta',
@@ -1296,7 +1304,7 @@ export class CodexNotificationRouter {
             const fallbackDiff = key ? this.fileChangeOutputByItemId.get(key) : undefined
             if (key) {
               this.fileChangeOutputByItemId.delete(key)
-              this.structuredPatchItemIds.delete(key)
+              this.authoritativeChangesItemIds.delete(key)
               this.emittedDiffLenByItemId.delete(key)
             }
             const fallbackRawChanges =

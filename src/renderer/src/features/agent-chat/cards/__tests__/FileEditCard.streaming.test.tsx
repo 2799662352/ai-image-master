@@ -73,6 +73,26 @@ describe('FileEditCard 流式展开', () => {
    * 开的状态和滚动位置全丢。流式之前不会踩到,因为卡片只在 completed 时渲染
    * 一次、路径不会变。
    */
+  /**
+   * item/started 的 changes 按 README 说法是「diff chunk **summaries**」——
+   * 有可能只有 path 和 kind、没有 diff 正文。这时自动展开会给每个文件摊开一个
+   * 空的 DiffBody,上面写着 +0 −0,整个编辑过程都挂在那儿,比改造前的收起态
+   * 还难看。没内容就别展开。
+   */
+  it('改动还没有 diff 正文时不自动展开,不摊开一个空框', () => {
+    render(
+      <FileEditCard
+        item={item({
+          changes: [{ path: 'src/a.ts', operation: 'edit', diff: '', added: 0, removed: 0 }],
+        })}
+      />,
+    )
+
+    expect(document.querySelector('[data-diff-scroll]')).toBeNull()
+    // 折叠头本身还在,用户仍然看得到「正在改哪个文件」。
+    expect(screen.getByText('src/a.ts')).toBeTruthy()
+  })
+
   it('路径从相对变绝对时不重建行,用户手动收起的状态保留', () => {
     const { rerender } = render(
       <FileEditCard

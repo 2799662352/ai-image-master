@@ -68,6 +68,19 @@ function toRows(diff: string): DiffRow[] {
  * 反而看不清改了什么。GitHub / Cursor 都是「淡底 + 靠行号栏和边条区分」。
  * 色相保持 emerald / red / cyan 三系不变。
  */
+/**
+ * 取最后 `maxLines` 行,不切分整个字符串。行数不够就原样返回。
+ */
+function tailWindow(diff: string, maxLines: number): string {
+  let cut = diff.length
+  for (let seen = 0; seen < maxLines; seen += 1) {
+    const prev = diff.lastIndexOf('\n', cut - 1)
+    if (prev === -1) return diff
+    cut = prev
+  }
+  return diff.slice(cut + 1)
+}
+
 const ROW_CLASS: Record<DiffRow['kind'], string> = {
   hunk: 'border-l-2 border-cyan-400/30 bg-cyan-500/[0.04] text-cyan-300/50',
   add: 'border-l-2 border-emerald-400/50 bg-emerald-500/[0.06] text-emerald-100/90',
@@ -119,11 +132,18 @@ export function DiffBody({ diff, followTail = false }: DiffBodyProps) {
     if (el) el.scrollTop = el.scrollHeight
   }, [diff, followTail])
 
-  const rows = toRows(diff)
-  const truncated = !showAll && rows.length > MAX_VISIBLE_LINES
+  // 流式期间只解析**尾部窗口**。toRows 每一行分配一个对象,而这个组件在写入
+  // 过程中是展开的、每帧都重渲染(diff 每帧都变,useMemo 永远命不中)——
+  // 整块解析几十 KB 的 diff 就是每秒几十次、每次上千个短命对象,GC 压力正好
+  // 压在用户盯着看的那段时间里。反正也只渲染最后 MAX_VISIBLE_LINES 行。
+  //
   // 截断方向跟着看的方向走:收起态看的是「这次改了什么」,从头截合理;流式态
   // 看的是「现在正写到哪」,从头截等于永远停在开头,后面写的一个字都看不到。
-  const visible = !truncated ? rows : followTail ? rows.slice(-MAX_VISIBLE_LINES) : rows.slice(0, MAX_VISIBLE_LINES)
+  const windowed = followTail && !showAll
+  const source = windowed ? tailWindow(diff, MAX_VISIBLE_LINES) : diff
+  const rows = toRows(source)
+  const hasMore = windowed ? source.length < diff.length : rows.length > MAX_VISIBLE_LINES
+  const visible = !windowed && hasMore && !showAll ? rows.slice(0, MAX_VISIBLE_LINES) : rows
 
   return (
     <div>
@@ -158,7 +178,7 @@ export function DiffBody({ diff, followTail = false }: DiffBodyProps) {
           </div>
         ))}
       </div>
-      {rows.length > MAX_VISIBLE_LINES && (
+      {hasMore && (
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
@@ -166,7 +186,11 @@ export function DiffBody({ diff, followTail = false }: DiffBodyProps) {
         >
           {showAll
             ? `收起,只看${followTail ? '后' : '前'} ${MAX_VISIBLE_LINES} 行`
-            : `显示全部 ${rows.length} 行`}
+            : // 流式态不报总行数:窗口外的部分没解析,数不出来;而且它每帧都在
+              // 涨,报出来也只是一个跳个不停的数字。
+              windowed
+              ? '显示全部'
+              : `显示全部 ${rows.length} 行`}
         </button>
       )}
     </div>
