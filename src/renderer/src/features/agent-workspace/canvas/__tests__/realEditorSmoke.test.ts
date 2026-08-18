@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Box, Editor, createShapeId, createTLStore, defaultAddFontsFromNode, defaultBindingUtils, defaultShapeUtils, defaultTools, tipTapDefaultExtensions } from 'tldraw'
+import { canvasAssetUtils } from '../canvasAssetUtils'
 import { canvasBridge } from '../canvasBridge'
 import { canvasShapeUtils } from '../FileCardShapeUtil'
 import { TIERED_SNAPSHOT_THRESHOLD } from '../shapeOps'
@@ -41,7 +42,10 @@ function makeRealEditor(): Editor {
     shapeUtils,
     bindingUtils: defaultBindingUtils,
     tools: defaultTools,
-    store: createTLStore({ shapeUtils, bindingUtils: defaultBindingUtils }),
+    // Mirror <Tldraw> exactly, asset schema included — `createTLStore` does NOT
+    // add the defaults back, so omitting assetUtils here would test a store the
+    // app never runs (that gap is how the local-file `src` crash shipped).
+    store: createTLStore({ shapeUtils, bindingUtils: defaultBindingUtils, assetUtils: canvasAssetUtils }),
     getContainer: () => document.body,
     // The <Tldraw> component wires these by default; a raw headless Editor
     // throws "Cannot use text without setting textOptions" on richText writes.

@@ -8,6 +8,7 @@ import { canvasBridge } from './canvas/canvasBridge'
 import { canvasShapeUtils } from './canvas/FileCardShapeUtil'
 import { makeFileAssetHandlerWithDiskPath, makeFilesContentHandlerWithPlaceholders } from './canvas/shapeOps'
 import { makeCanvasAssetStore } from './canvas/canvasAssetStore'
+import { canvasAssetUtils } from './canvas/canvasAssetUtils'
 import { useAgentChatStore } from '../agent-chat/store'
 import { parseFileDrop } from '../file-explorer/dragHelpers'
 
@@ -328,6 +329,10 @@ export function CanvasSection(): React.JSX.Element {
         // Custom shapes: file-card renders audio/zip/pdf drops as a real card
         // (icon + name + path + inline audio player) instead of a grey note.
         shapeUtils={canvasShapeUtils}
+        // Asset schema that accepts the `local-file://` / `blob:` srcs our asset
+        // store writes. Without it every image/video insert throws "Expected a
+        // valid url" at store.put and unmounts the editor. See canvasAssetUtils.
+        assetUtils={canvasAssetUtils}
       />
       {/* Focus affordance: a soft ring when the canvas owns the keyboard, so the
           user always knows whether zoom/undo/delete shortcuts will land here vs.
