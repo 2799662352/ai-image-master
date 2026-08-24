@@ -166,15 +166,42 @@ function totalMegabytes(dir) {
   return Math.round(bytes / 1024 / 1024)
 }
 
+/**
+ * Run the pinned `codex:fetch`.
+ *
+ * `shell: true` is REQUIRED on Windows, not cosmetic: `pnpm` there is `pnpm.cmd`,
+ * and since Node 18.20 / 20.12 (the CVE-2024-27980 mitigation) `spawnSync` refuses
+ * to launch a `.cmd`/`.bat` without a shell — it fails with EINVAL before pnpm ever
+ * starts. Verified 2026-08-24: same args, no shell → `status=null error=EINVAL`;
+ * with shell → exit 0.
+ *
+ * This went unnoticed because the old "presence counts as satisfied" rule meant
+ * this path almost never ran; making the version check real is what exposed it.
+ *
+ * Safe to shell out: every argument here is a literal, nothing comes from user or
+ * repo input.
+ */
+/** 拆出来只为可测:真跑一次是 350MB 下载,测不了,但「怎么起这个进程」正是出错的地方。 */
+export function pinnedFetchSpawn() {
+  return {
+    command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+    args: ['exec', 'tsx', 'scripts/fetch-codex.ts'],
+    shell: true,
+  }
+}
+
 function runPinnedFetch(reason) {
   log(`${reason} — downloading the pinned version`)
-  const result = spawnSync(
-    process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-    ['exec', 'tsx', 'scripts/fetch-codex.ts'],
-    { cwd: projectRoot, stdio: 'inherit' },
-  )
-  if (result.status !== 0) {
-    throw new Error('codex:fetch failed — run `pnpm codex:fetch` and read its output')
+  const { command, args, shell } = pinnedFetchSpawn()
+  const result = spawnSync(command, args, { cwd: projectRoot, stdio: 'inherit', shell })
+  if (result.error || result.status !== 0) {
+    // Surface the spawn error itself. Without it the message was just
+    // "codex:fetch failed", which points at the download when the real cause can
+    // be that the child never launched.
+    const detail = result.error
+      ? ` (${result.error.code ?? result.error.message})`
+      : ` (exit ${result.status})`
+    throw new Error(`codex:fetch failed${detail} — run \`pnpm codex:fetch\` and read its output`)
   }
 }
 
