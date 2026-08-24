@@ -116,6 +116,14 @@ export default function GeneratePage() {
         addToast({ message: '图层分离需要先上传一张待拆分的图', type: 'warning' })
         return
       }
+      // 上游一次只吃一张待拆图,多的会被静默丢掉 —— 参考图区本来就是为多图融合
+      // 设计的(SD5 Pro 收 10 张),用户很自然会拖好几张进来。不拦,但必须说。
+      if (referenceImages.length > 1) {
+        addToast({
+          message: `图层分离一次只拆一张，本次用第 1 张（其余 ${referenceImages.length - 1} 张忽略）`,
+          type: 'warning',
+        })
+      }
     } else if (!prompt.trim()) {
       addToast({ message: '请输入提示词', type: 'warning' })
       return

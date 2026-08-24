@@ -313,7 +313,8 @@ export function ImageParamControls({
             </span>
           </label>
           <div className="mt-1 text-[11px] text-white/50">
-            {layerDecomposition ? '需上传 1 张待拆分的图' : '把参考图拆成底图 + 透明图层'}
+            {/* 只拆第 1 张是上游的硬约束，不写清楚用户会传一堆然后奇怪只出了一组 */}
+            {layerDecomposition ? '拆参考图的第 1 张' : '把参考图拆成底图 + 透明图层'}
           </div>
         </div>
       )}
