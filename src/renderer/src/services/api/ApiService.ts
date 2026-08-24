@@ -7,6 +7,7 @@
 import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
+import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
 
 export interface ApiSite {
   name: string
@@ -1305,6 +1306,17 @@ export class ApiService {
       }
     }
 
+    // 上游只吃 png/jpeg,而本 app 存在 COS 的历史图是 **webp** —— 「对一张历史图点拆分」
+    // 是必然踩中的主路径,不转的话用户拿到的是一句 image format is not supported。
+    // 放在这个收口处而不是各调用方:工具栏 / 批量 worker / MCP agent 全都经过 generateImage。
+    let splitInput: string | undefined
+    if (layerDecomposition) {
+      const source = imageBase64 || referenceImages?.[0] || ''
+      const prepared = await ensureLayerSplitInputFormat(source)
+      if (!prepared.image) return { success: false, error: prepared.error }
+      splitInput = prepared.image
+    }
+
     try {
       const response = await this.withRetry(
         () => this.makeApiRequest({
@@ -1313,8 +1325,9 @@ export class ApiService {
           ratio,
           resolution,
           quality,
-          referenceImages,
-          imageBase64,
+          // 拆分模式下输入图已归一化为 png/jpeg,用它顶掉原始来源(payload 只取一张)。
+          referenceImages: splitInput ? [splitInput] : referenceImages,
+          imageBase64: splitInput ?? imageBase64,
           negativePrompt,
           seed,
           count,

@@ -10,6 +10,14 @@ interface Props {
   onGenerate: () => void
   onCancel?: () => void
   leftSlot?: ReactNode
+  /**
+   * 已选中待拆的图 —— 主按钮改名「拆图」并**恒可点**,批次正在跑也一样。
+   *
+   * 这条「恒可点」是刻意的:平时批次一跑,主按钮就退化成不可点的「正在生成」状态
+   * 指示器(只剩取消),那会把拆分堵死 —— 想连着拆第二张得先等整批跑完。拆分只是
+   * 往队列里塞一张,由空闲 worker 捡走,没有任何理由要等。
+   */
+  splitArmed?: boolean
 }
 
 /**
@@ -26,6 +34,7 @@ export default function BatchActionBar({
   onGenerate,
   onCancel,
   leftSlot,
+  splitArmed = false,
 }: Props) {
   const progress = total > 0 ? Math.round(((done + failed) / total) * 100) : 0
 
@@ -33,10 +42,12 @@ export default function BatchActionBar({
   // "发送一个任务必须等它完成才能发第二个" 的 UX 出口。
   const canEnqueueDuringRun = running && willEnqueue > 0
   const canStart = !running && (willEnqueue > 0 || pendingCount > 0)
-  const buttonEnabled = canEnqueueDuringRun || canStart
+  const buttonEnabled = splitArmed || canEnqueueDuringRun || canStart
 
   let buttonText: string
-  if (running) {
+  if (splitArmed) {
+    buttonText = '拆图 // 图层分离'
+  } else if (running) {
     buttonText = canEnqueueDuringRun
       ? `加入队列 × ${willEnqueue}`
       : `正在生成 (${done}/${total})`
@@ -47,9 +58,11 @@ export default function BatchActionBar({
   // 运行中 + 没有新增 = 主按钮是纯状态指示 (dim yellow), 不可点。
   // 其它情况主按钮都全亮 yellow 可点。
   const buttonStyle =
-    running && !canEnqueueDuringRun
+    running && !canEnqueueDuringRun && !splitArmed
       ? 'flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-cyberpunk-yellow/40 text-cyberpunk-black font-orbitron font-bold text-xl uppercase tracking-tight cursor-not-allowed'
-      : 'flex-1 min-w-[280px] flex items-center justify-center gap-3 px-6 py-4 bg-cyberpunk-yellow text-cyberpunk-black font-orbitron font-bold text-xl uppercase tracking-tight hover:bg-cyberpunk-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
+      : `flex-1 min-w-[280px] flex items-center justify-center gap-3 px-6 py-4 ${
+          splitArmed ? 'bg-amber-400' : 'bg-cyberpunk-yellow'
+        } text-cyberpunk-black font-orbitron font-bold text-xl uppercase tracking-tight hover:bg-cyberpunk-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed`
 
   return (
     <div className="border-2 border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
@@ -65,11 +78,13 @@ export default function BatchActionBar({
             disabled={!buttonEnabled}
             className={buttonStyle}
           >
-            {running && !canEnqueueDuringRun && (
+            {/* ▶▶▶ 是「正在跑、点不动」的样子;可点时用尾部单个 ▶。
+                splitArmed 属于可点,别让它顶着运行中的进度样式。 */}
+            {running && !canEnqueueDuringRun && !splitArmed && (
               <span className="font-mono">▶▶▶</span>
             )}
             <span>{buttonText}</span>
-            {!(running && !canEnqueueDuringRun) && (
+            {(splitArmed || !(running && !canEnqueueDuringRun)) && (
               <span className="font-mono">▶</span>
             )}
           </button>

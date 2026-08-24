@@ -2,7 +2,7 @@ import { useRef, useMemo, useCallback, useState } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import { useApi } from '../hooks/useService'
-import { LAYER_SPLIT_MODEL, type GenerateSnapshot } from '../stores/useGenerateStore'
+import type { GenerateSnapshot } from '../stores/useGenerateStore'
 import type { BatchRefImage } from '../stores/useBatchStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
@@ -15,7 +15,6 @@ import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../compon
 import '../components/shared/media-tokens/media-tokens.css'
 import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
 import { toUpstreamFetchableImage } from '../components/shared/image-editors/referenceTargets'
-import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -28,12 +27,12 @@ export default function GeneratePage() {
   const resolution = useGenerateStore((s) => s.resolution)
   const quality = useGenerateStore((s) => s.quality)
   const count = useGenerateStore((s) => s.count)
-  const layerDecomposition = useGenerateStore((s) => s.layerDecomposition)
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
   const resultMeta = useGenerateStore((s) => s.resultMeta)
   const referenceImages = useGenerateStore((s) => s.referenceImages)
+  const splitDraft = useGenerateStore((s) => s.splitDraft)
 
   const {
     setPrompt,
@@ -41,7 +40,6 @@ export default function GeneratePage() {
     setResolution,
     setQuality,
     setCount,
-    setLayerDecomposition,
     addReferenceImage,
     removeReferenceImage,
     clearReferenceImages,
@@ -49,6 +47,9 @@ export default function GeneratePage() {
     clearResults,
     generate,
     restoreForEdit,
+    enterSplitMode,
+    exitSplitMode,
+    runSplit,
   } = useGenerateStore.getState()
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -111,21 +112,22 @@ export default function GeneratePage() {
   // 失败两次时,依赖 [error] 的 effect 第二次不会重跑,那一次就悄无声息了。
 
   const handleGenerate = async () => {
-    // 拆分模式的两条前置与普通出图相反:空提示词是合法的(=自动全拆),但必须有一张待拆的图。
-    if (layerDecomposition) {
-      if (referenceImages.length === 0) {
-        addToast({ message: '图层分离需要先上传一张待拆分的图', type: 'warning' })
+    // 拆图状态下主按钮已改名「拆图」,走的是另一条路:模型钉死 SD5 Pro、不吃比例/张数。
+    // prompt 照吃 —— 上游用它指定「要拆出什么」(如「女人抠出来」),空串才是自动全拆,
+    // 所以下面那条「请输入提示词」的守卫不适用于这条路。
+    // 在这里分流而不是让两套 UI 各自有按钮,是因为「一个主行动按钮」才说得清
+    // 当下点下去会发生什么。
+    if (splitDraft) {
+      addToast({ message: '正在拆分图层…（按张计费，最多 17 张）', type: 'info' })
+      const { added, error: failure } = await runSplit(api)
+      if (failure) {
+        addToast({ message: failure, type: 'error' })
         return
       }
-      // 上游一次只吃一张待拆图,多的会被静默丢掉 —— 参考图区本来就是为多图融合
-      // 设计的(SD5 Pro 收 10 张),用户很自然会拖好几张进来。不拦,但必须说。
-      if (referenceImages.length > 1) {
-        addToast({
-          message: `图层分离一次只拆一张，本次用第 1 张（其余 ${referenceImages.length - 1} 张忽略）`,
-          type: 'warning',
-        })
-      }
-    } else if (!prompt.trim()) {
+      if (added > 0) addToast({ message: `图层分离完成（${added} 层）`, type: 'success' })
+      return
+    }
+    if (!prompt.trim()) {
       addToast({ message: '请输入提示词', type: 'warning' })
       return
     }
@@ -149,34 +151,22 @@ export default function GeneratePage() {
   }
 
   /**
-   * 对某张已有结果图一键图层分离。
+   * 点「图层分离」:选中待拆的图,主按钮随之改名「拆图」。再点一次取消。
    *
-   * 走 `generate` 的 overrides 通道:**不碰表单**(用户正写着的下一条 prompt
-   * 不该被这次操作洗掉),渠道强制 SD5 Pro(换渠道这动作根本做不了),
-   * prompt 传空 = 自动全拆。产出照常进结果区,自动收成一张「▤ N 层」的卡片。
+   * 不当场发是因为拆分按张计费(一张复杂图能出 17 张)—— 一次误点就是一次扣费。
+   * 状态只有一个 bit,由那个按钮自己的按下态表达,不另起 UI。
    */
   const handleLayerSplit = useCallback(async (imageUrl: string) => {
-    // 按张计费,一张复杂图可能拆出 17 张 —— 点之前先让用户知道正在花钱。
-    addToast({ message: '正在拆分图层…（按张计费，最多 17 张）', type: 'info' })
-    // base64 直出模型(nano2 4K 等)的结果图是 blob:,只在本渲染进程内有效;
-    // 直接发出去会被 normalizeImageSource 当成裸 base64 拼成垃圾 data URL。
-    const source = await toUpstreamFetchableImage(imageUrl)
-    const { added, error: failure } = await generate(api, LAYER_SPLIT_MODEL, {
-      prompt: '',
-      referenceImages: [source],
-      layerDecomposition: true,
-      // 不跟表单的分辨率:你就是要拆眼前这张,输出该跟随它的尺寸与宽高比。
-      // 跟着表单发 2K,拆一张 1024² 的图会回来一张尺寸对不上的底图。
-      resolution: LAYER_SPLIT_DEFAULT_RESOLUTION,
-    })
-    if (failure) {
-      addToast({ message: failure, type: 'error' })
+    if (useGenerateStore.getState().splitDraft) {
+      exitSplitMode()
       return
     }
-    if (added > 0) {
-      addToast({ message: `图层分离完成（${added} 层）`, type: 'success' })
-    }
-  }, [api, generate, addToast])
+    // base64 直出模型(nano2 4K 等)的结果图是 blob:,只在本渲染进程内有效;
+    // 直接发出去会被 normalizeImageSource 当成裸 base64 拼成垃圾 data URL。
+    // 在选中时就归一化,而不是等点「拆图」—— 那时再失败就晚了(用户以为已就绪)。
+    const source = await toUpstreamFetchableImage(imageUrl)
+    enterSplitMode(source)
+  }, [enterSplitMode, exitSplitMode])
 
   /**
    * 点 [重编辑] 按钮: 把对应结果的 snapshot 灌回表单。
@@ -219,7 +209,12 @@ export default function GeneratePage() {
       <TemplateInline context="generate" />
 
       {/* 视觉 prompt 辅助:[多角度][打光](复用 Batch 的共享组件,接 useGenerateStore) */}
-      <BatchPromptHelperBar refImages={refImageObjs} onInject={handleInjectPrompt} />
+      <BatchPromptHelperBar
+        refImages={refImageObjs}
+        onInject={handleInjectPrompt}
+        onLayerSplit={handleLayerSplit}
+        splitArmed={!!splitDraft}
+      />
 
       <div className="relative">
         <textarea
@@ -255,8 +250,6 @@ export default function GeneratePage() {
         onQualityChange={setQuality}
         count={count}
         onCountChange={setCount}
-        layerDecomposition={layerDecomposition}
-        onLayerDecompositionChange={setLayerDecomposition}
       />
 
       {/* 参考图:复用 Batch 的拖拽上传 + 自动压缩 + 点击预览 */}
@@ -271,10 +264,19 @@ export default function GeneratePage() {
 
       <button
         onClick={handleGenerate}
-        disabled={!prompt.trim() || !currentModelKey}
-        className="w-full py-3 bg-cyberpunk-yellow text-cyberpunk-black font-bold text-lg uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50"
+        // 拆图状态不看 prompt(空 prompt = 自动全拆),也不看当前模型(渠道钉死 SD5 Pro)。
+        disabled={splitDraft ? false : !prompt.trim() || !currentModelKey}
+        className={`w-full py-3 font-bold text-lg uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50 ${
+          splitDraft
+            ? 'bg-amber-400 text-cyberpunk-black'
+            : 'bg-cyberpunk-yellow text-cyberpunk-black'
+        }`}
       >
-        {generating ? `加入队列 (运行中 × ${inFlightCount})` : '开始生成'}
+        {splitDraft
+          ? '拆图 // 图层分离'
+          : generating
+            ? `加入队列 (运行中 × ${inFlightCount})`
+            : '开始生成'}
       </button>
 
       {resultUrls.length > 0 && (
