@@ -250,8 +250,16 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview, onLayerSpl
       )}
       {layerGroup && (
         <LayerStackViewer
-          metas={layerGroup.map((g) => g.meta)}
-          urls={layerGroup.map((g) => g.url)}
+          layers={layerGroup.map((g) => ({
+            id: g.meta.id,
+            // 用 urls[i] 而不是 meta 里存的地址:上传完成后 store 会把它热切成
+            // cosUrl,拿 meta 自带的那份等于用一条会过期的临时链接。
+            url: g.url,
+            zIndex: g.meta.layer?.zIndex ?? 0,
+            ...(g.meta.layer?.name ? { name: g.meta.layer.name } : {}),
+            ...(g.meta.layer?.description ? { description: g.meta.layer.description } : {}),
+            ...(g.meta.layer?.boundingBox ? { boundingBox: g.meta.layer.boundingBox } : {}),
+          }))}
           onClose={() => setLayerGroup(null)}
         />
       )}

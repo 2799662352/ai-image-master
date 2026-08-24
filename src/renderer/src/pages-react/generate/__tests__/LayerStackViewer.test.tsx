@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within, fireEvent } from '@testing-library/react'
-import { LayerStackViewer, layerBoxStyle } from '../LayerStackViewer'
+import { LayerStackViewer, layerBoxStyle, type LayerStackEntry } from '../LayerStackViewer'
 import { groupResultItems } from '../ResultGrid'
 import type { ResultUploadMeta } from '../../../stores/useGenerateStore'
 
@@ -23,6 +23,18 @@ function layerMeta(
     layerGroupId: 'g1',
     layer: { zIndex, ...extra },
   }
+}
+
+/** 把 store 侧的 meta + url 摊成查看器的中性入参（同 ResultGrid 里的适配）。 */
+function toEntries(metas: ResultUploadMeta[], urls: string[]): LayerStackEntry[] {
+  return metas.map((m, i) => ({
+    id: m.id,
+    url: urls[i],
+    zIndex: m.layer?.zIndex ?? 0,
+    ...(m.layer?.name ? { name: m.layer.name } : {}),
+    ...(m.layer?.description ? { description: m.layer.description } : {}),
+    ...(m.layer?.boundingBox ? { boundingBox: m.layer.boundingBox } : {}),
+  }))
 }
 
 /** 底图 + 两层。故意乱序传入，组件必须自己排。 */
@@ -55,7 +67,7 @@ const REAL_URLS = ['https://x/base.png', 'https://x/star.png', 'https://x/hello.
 
 describe('LayerStackViewer', () => {
   it('列表自上而下 = 从最上层到最下层（PS/Figma 铁律，与 store 的升序相反）', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
 
     const rows = within(screen.getByTestId('layer-list')).getAllByRole('listitem')
     // 传入是 top/base/mid，store 里是升序(base→mid→top)，列表必须是 top→mid→base
@@ -67,7 +79,7 @@ describe('LayerStackViewer', () => {
   })
 
   it('z0 显示成「底图」而不是「图层 0」', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
     expect(screen.getByText('底图')).toBeTruthy()
     expect(screen.queryByText('图层 0')).toBeNull()
   })
@@ -75,8 +87,10 @@ describe('LayerStackViewer', () => {
   it('没有 name 的图层兜底成「图层 N」，不显示空标题', () => {
     render(
       <LayerStackViewer
-        metas={[layerMeta('base', 0), layerMeta('l1', 1)]}
-        urls={['https://x/base.png', 'https://x/l1.png']}
+        layers={toEntries(
+          [layerMeta('base', 0), layerMeta('l1', 1)],
+          ['https://x/base.png', 'https://x/l1.png'],
+        )}
         onClose={() => {}}
       />,
     )
@@ -84,7 +98,7 @@ describe('LayerStackViewer', () => {
   })
 
   it('叠加预览按 zIndex 升序渲染（后面的 DOM 覆盖前面的 = 正确叠放顺序）', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
 
     const canvas = screen.getByTestId('layer-preview-canvas')
     const srcs = [...canvas.querySelectorAll('img')].map((img) => img.getAttribute('src'))
@@ -92,7 +106,7 @@ describe('LayerStackViewer', () => {
   })
 
   it('底图撑起坐标系（流式布局），图层绝对定位贴上去', () => {
-    render(<LayerStackViewer metas={REAL_METAS} urls={REAL_URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(REAL_METAS, REAL_URLS)} onClose={() => {}} />)
 
     const base = screen.getByTestId('layer-base-image')
     // 底图不能 absolute —— 它得撑起容器高度，bbox 百分比才有对齐的对象
@@ -101,7 +115,7 @@ describe('LayerStackViewer', () => {
   })
 
   it('图层按 bbox 的千分比定位缩放，而不是 inset-0 铺满（实测:层是裁切放大的）', () => {
-    render(<LayerStackViewer metas={REAL_METAS} urls={REAL_URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(REAL_METAS, REAL_URLS)} onClose={() => {}} />)
 
     const positioned = screen.getAllByTestId('layer-overlay-positioned')
     expect(positioned).toHaveLength(2)
@@ -117,14 +131,14 @@ describe('LayerStackViewer', () => {
   })
 
   it('没有 bbox 的图层退回整幅（尽力而为，别让它凭空消失）', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
     // METAS 三层都没给 bbox，除底图外两层都走整幅兜底
     expect(screen.getAllByTestId('layer-overlay-fullbleed')).toHaveLength(2)
     expect(screen.queryAllByTestId('layer-overlay-positioned')).toHaveLength(0)
   })
 
   it('单层查看看的是原始裁切图，不做 bbox 定位', () => {
-    render(<LayerStackViewer metas={REAL_METAS} urls={REAL_URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(REAL_METAS, REAL_URLS)} onClose={() => {}} />)
 
     fireEvent.click(screen.getByText('白色实心五角星图标'))
 
@@ -165,12 +179,12 @@ describe('layerBoxStyle', () => {
   })
 
   it('默认全部可见 —— 打开就该看到还原后的完整画面', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
     expect(screen.getByTestId('layer-preview-mode').textContent).toContain('3/3 层可见')
   })
 
   it('眼睛开关隐藏该层，预览里用 visibility 隐藏而不是卸载', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
 
     fireEvent.click(screen.getByLabelText('隐藏前景人物'))
 
@@ -185,7 +199,7 @@ describe('layerBoxStyle', () => {
   })
 
   it('点行进入单层查看，只渲染那一层', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
 
     fireEvent.click(screen.getByTitle('站立的女性'))
 
@@ -197,7 +211,7 @@ describe('layerBoxStyle', () => {
 
   it('Esc 逐级退出：单层态先回叠加，不直接关窗', () => {
     const onClose = vi.fn()
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={onClose} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={onClose} />)
 
     fireEvent.click(screen.getByTitle('站立的女性'))
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -209,7 +223,7 @@ describe('layerBoxStyle', () => {
   })
 
   it('讲清计费口径 —— 用户最容易误判的就是「一次拆分算几张钱」', () => {
-    render(<LayerStackViewer metas={METAS} urls={URLS} onClose={() => {}} />)
+    render(<LayerStackViewer layers={toEntries(METAS, URLS)} onClose={() => {}} />)
     expect(screen.getByText(/1 底图 \+ 2 图层/)).toBeTruthy()
     expect(screen.getByText('按张计费')).toBeTruthy()
   })

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ResultLayerMeta, ResultUploadMeta } from '../../stores/useGenerateStore'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import { appendCosThumb } from '../../utils/cosThumb'
 
@@ -25,11 +24,37 @@ import { appendCosThumb } from '../../utils/cosThumb'
  *    「抠出来的到底是什么形状」这个最关键的信息就丢了。
  */
 
+/** 图层包围盒。两套坐标系按上游给什么带什么，都是 `[left, top, right, bottom]`。 */
+export interface LayerStackBox {
+  absolute?: number[]
+  /** 归一化 0–1000 千分比（不是 0~1）。 */
+  normalized?: number[]
+}
+
+/**
+ * 查看器的入参单元 —— 刻意**不绑任何一个 store 的 meta 类型**。
+ *
+ * 出图页的结果是 `resultUrls[] + resultMeta[]` 两条平行数组，批量页是 `BatchItem[]`
+ * 卡片队列，两边形状完全不同；查看器只需要「一层图长什么样」这几个字段，绑死其中
+ * 一边就等于另一边用不了（或者被迫造一堆假 meta）。
+ *
+ * `url` 由调用方负责给**当前该显示的那个**（两边都会在 COS 上传完成后热切成 cosUrl），
+ * 所以这里不存任何持久化状态。
+ */
+export interface LayerStackEntry {
+  /** 稳定 key，用于 React key 与可见性/单层选中的标识。 */
+  id: string
+  url: string
+  /** 叠放层级，0 = 底图。 */
+  zIndex: number
+  name?: string
+  description?: string
+  boundingBox?: LayerStackBox
+}
+
 interface LayerStackViewerProps {
-  /** 同一组图层的 meta，顺序不限（本组件自己排）。 */
-  metas: ResultUploadMeta[]
-  /** 与 metas 同序的展示 url（来自 store 的 resultUrls，已被 COS 热切过）。 */
-  urls: string[]
+  /** 同一组图层，顺序不限（本组件自己按 zIndex 排）。 */
+  layers: LayerStackEntry[]
   onClose: () => void
 }
 
@@ -40,10 +65,10 @@ const MAX_LAYER_IMAGES = 17
 const CHECKER =
   'repeating-conic-gradient(#3f3f46 0% 25%, #27272a 0% 50%) 50% / 16px 16px'
 
-function layerLabel(meta: ResultUploadMeta, indexFromBase: number): string {
-  if (meta.layer?.zIndex === 0) return '底图'
+function layerLabel(entry: LayerStackEntry, indexFromBase: number): string {
+  if (entry.zIndex === 0) return '底图'
   // 模型给的名字（如「Seedream标题文字」）比「图层 N」有信息量，优先用它。
-  return meta.layer?.name?.trim() || `图层 ${indexFromBase}`
+  return entry.name?.trim() || `图层 ${indexFromBase}`
 }
 
 async function downloadLayer(url: string, filename: string): Promise<void> {
@@ -91,7 +116,7 @@ function LayerThumb({ url, alt }: { url: string; alt: string }) {
  * 返回 null = 这一层没法定位（底图本身、或上游没给 bbox），调用方按整幅处理。
  */
 export function layerBoxStyle(
-  box: ResultLayerMeta['boundingBox'] | undefined,
+  box: LayerStackBox | undefined,
 ): { left: string; top: string; width: string; height: string } | null {
   const n = box?.normalized
   if (!Array.isArray(n) || n.length < 4) return null
@@ -150,7 +175,7 @@ function OverlayImage({
 }: {
   url: string
   alt: string
-  box: ResultLayerMeta['boundingBox'] | undefined
+  box: LayerStackBox | undefined
   hidden?: boolean
 }) {
   const src = useDisplaySrc(url)
@@ -174,15 +199,11 @@ function OverlayImage({
   )
 }
 
-export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps) {
+export function LayerStackViewer({ layers, onClose }: LayerStackViewerProps) {
   // 升序（底图在前）= 叠加的绘制顺序。列表要用的降序在下面单独派生。
   const ascending = useMemo(
-    () =>
-      metas
-        .map((meta, i) => ({ meta, url: urls[i] }))
-        .filter((entry) => !!entry.url)
-        .sort((a, b) => (a.meta.layer?.zIndex ?? 0) - (b.meta.layer?.zIndex ?? 0)),
-    [metas, urls],
+    () => layers.filter((entry) => !!entry.url).sort((a, b) => a.zIndex - b.zIndex),
+    [layers],
   )
 
   // 默认全部可见 —— 打开就该看到还原后的完整画面，而不是一片空白让用户自己勾。
@@ -204,8 +225,8 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
   if (ascending.length === 0) return null
 
   const descending = [...ascending].reverse()
-  const soloEntry = soloId ? ascending.find((e) => e.meta.id === soloId) : undefined
-  const visibleCount = ascending.filter((e) => !hiddenIds.has(e.meta.id)).length
+  const soloEntry = soloId ? ascending.find((e) => e.id === soloId) : undefined
+  const visibleCount = ascending.filter((e) => !hiddenIds.has(e.id)).length
 
   const toggle = (id: string) =>
     setHiddenIds((prev) => {
@@ -255,7 +276,7 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
             <div className="flex items-center gap-2 px-3 py-2 font-mono text-[11px] text-zinc-400">
               <span data-testid="layer-preview-mode">
                 {soloEntry
-                  ? `单层：${layerLabel(soloEntry.meta, ascending.indexOf(soloEntry))}`
+                  ? `单层：${layerLabel(soloEntry, ascending.indexOf(soloEntry))}`
                   : `叠加预览（${visibleCount}/${ascending.length} 层可见）`}
               </span>
               {soloEntry && (
@@ -277,7 +298,7 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
                 >
                   <SoloImage
                     url={soloEntry.url}
-                    alt={layerLabel(soloEntry.meta, ascending.indexOf(soloEntry))}
+                    alt={layerLabel(soloEntry, ascending.indexOf(soloEntry))}
                   />
                 </div>
               ) : (
@@ -289,18 +310,18 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
                   data-testid="layer-preview-canvas"
                 >
                   {ascending.map((entry, i) => {
-                    const alt = layerLabel(entry.meta, i)
-                    const hidden = hiddenIds.has(entry.meta.id)
+                    const alt = layerLabel(entry, i)
+                    const hidden = hiddenIds.has(entry.id)
                     // 升序渲染 = 后面的 DOM 节点覆盖前面的，天然等于 zIndex 叠放顺序。
                     // 隐藏用 visibility 而不是卸载:切回来不用重新解码/重新走 blob 解析。
                     return i === 0 ? (
-                      <BaseImage key={entry.meta.id} url={entry.url} alt={alt} hidden={hidden} />
+                      <BaseImage key={entry.id} url={entry.url} alt={alt} hidden={hidden} />
                     ) : (
                       <OverlayImage
-                        key={entry.meta.id}
+                        key={entry.id}
                         url={entry.url}
                         alt={alt}
-                        box={entry.meta.layer?.boundingBox}
+                        box={entry.boundingBox}
                         hidden={hidden}
                       />
                     )
@@ -325,12 +346,12 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
             </div>
             <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" data-testid="layer-list">
               {descending.map((entry) => {
-                const label = layerLabel(entry.meta, ascending.indexOf(entry))
-                const isHidden = hiddenIds.has(entry.meta.id)
-                const isBase = entry.meta.layer?.zIndex === 0
-                const isSolo = soloId === entry.meta.id
+                const label = layerLabel(entry, ascending.indexOf(entry))
+                const isHidden = hiddenIds.has(entry.id)
+                const isBase = entry.zIndex === 0
+                const isSolo = soloId === entry.id
                 return (
-                  <li key={entry.meta.id}>
+                  <li key={entry.id}>
                     <div
                       className={`mb-1 flex items-center gap-2 border-2 px-2 py-1.5 transition-colors ${
                         isSolo
@@ -340,7 +361,7 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
                     >
                       <button
                         type="button"
-                        onClick={() => toggle(entry.meta.id)}
+                        onClick={() => toggle(entry.id)}
                         aria-label={`${isHidden ? '显示' : '隐藏'}${label}`}
                         aria-pressed={!isHidden}
                         title={isHidden ? '显示这一层' : '隐藏这一层'}
@@ -352,8 +373,8 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSoloId(isSolo ? null : entry.meta.id)}
-                        title={entry.meta.layer?.description || '单独查看这一层'}
+                        onClick={() => setSoloId(isSolo ? null : entry.id)}
+                        title={entry.description || '单独查看这一层'}
                         className="flex min-w-0 flex-1 items-center gap-2 text-left"
                       >
                         <LayerThumb url={entry.url} alt={label} />
@@ -366,7 +387,7 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
                             {label}
                           </span>
                           <span className="block font-mono text-[10px] text-zinc-500">
-                            {isBase ? 'z0 · 背景' : `z${entry.meta.layer?.zIndex ?? '?'}`}
+                            {isBase ? 'z0 · 背景' : `z${entry.zIndex ?? '?'}`}
                           </span>
                         </span>
                       </button>
@@ -391,7 +412,7 @@ export function LayerStackViewer({ metas, urls, onClose }: LayerStackViewerProps
                   // 逐张触发下载。不打包成 zip:那要把 17 张 2K PNG 全读进内存
                   // 再压一遍,渲染进程的瞬时峰值不值得省这几次点击。
                   ascending.forEach((entry, i) => {
-                    void downloadLayer(entry.url, `${layerLabel(entry.meta, i)}.png`)
+                    void downloadLayer(entry.url, `${layerLabel(entry, i)}.png`)
                   })
                 }}
                 className="w-full border-2 border-cyberpunk-yellow bg-cyberpunk-yellow px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wider text-cyberpunk-black transition-colors hover:bg-cyberpunk-accent"

@@ -14,6 +14,7 @@ import type { MediaRef } from '../components/shared/media-tokens/types'
 import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
 import '../components/shared/media-tokens/media-tokens.css'
 import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
+import { toUpstreamFetchableImage } from '../components/shared/image-editors/referenceTargets'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -148,9 +149,12 @@ export default function GeneratePage() {
   const handleLayerSplit = useCallback(async (imageUrl: string) => {
     // 按张计费,一张复杂图可能拆出 17 张 —— 点之前先让用户知道正在花钱。
     addToast({ message: '正在拆分图层…（按张计费，最多 17 张）', type: 'info' })
+    // base64 直出模型(nano2 4K 等)的结果图是 blob:,只在本渲染进程内有效;
+    // 直接发出去会被 normalizeImageSource 当成裸 base64 拼成垃圾 data URL。
+    const source = await toUpstreamFetchableImage(imageUrl)
     const { added, error: failure } = await generate(api, LAYER_SPLIT_MODEL, {
       prompt: '',
-      referenceImages: [imageUrl],
+      referenceImages: [source],
       layerDecomposition: true,
     })
     if (failure) {
