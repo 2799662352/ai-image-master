@@ -15,6 +15,7 @@ import {
 } from '../utils/imageResources'
 import { toRenderableUri } from '../features/file-explorer/uri'
 import { LAYER_SPLIT_MODEL } from './useGenerateStore'
+import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
 
 export type BatchMode = 'card' | 'multi'
 
@@ -525,7 +526,9 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               prompt: finalPrompt,
               model: itemModel,
               ratio: itemRatio !== 'auto' ? itemRatio : undefined,
-              resolution,
+              // 拆分不跟表单分辨率:输出该跟随被拆那张图的尺寸与宽高比,
+              // 发 2K 会让底图按 2K 档重出、与原图对不上。
+              resolution: item.layerDecomposition ? LAYER_SPLIT_DEFAULT_RESOLUTION : resolution,
               quality,
               count,
               referenceImages: itemRefs.length > 0 ? itemRefs : undefined,

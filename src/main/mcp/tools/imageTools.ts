@@ -397,9 +397,17 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       model: modelSchema,
       ratio: ratioSchema,
       resolution: z
-        .enum(['1K', '2K', '4K'])
+        .enum(['auto', '1K', '1.5K', '2K', '4K'])
         .optional()
-        .describe('Resolution tier. 2K is the default/recommended choice. Use 1K only when the user asks for fast/cheap/draft. Use 4K only for explicit print/ultra-detail requests.'),
+        .describe(
+          'Resolution tier. For ordinary generation: 2K is the default/recommended choice; use 1K ' +
+          'only when the user asks for fast/cheap/draft, 4K only for explicit print/ultra-detail. ' +
+          'For `layerDecomposition` the tiers are DIFFERENT — only `auto` / `1K` / `1.5K` / `2K` ' +
+          'are meaningful there, and `auto` is both the default and the right answer almost always ' +
+          '(it makes the output follow the input image\'s size and aspect ratio; a fixed tier ' +
+          'reprints the base layer at that tier so it no longer matches the image you asked to split). ' +
+          '`auto` / `1.5K` are split-only — on ordinary generation they fall back to the model default.',
+        ),
       quality: z
         .enum(['auto', 'low', 'medium', 'high'])
         .optional()

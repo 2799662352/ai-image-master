@@ -104,6 +104,9 @@ const LAYER_DECOMPOSITION_CHANNEL = 'doubao-seedream-5-0-pro-260628'
 /** 空 prompt 是拆分的「自动全拆」模式，但气泡不能空着 —— 给个能读的占位。 */
 const LAYER_DECOMPOSITION_BUBBLE_LABEL = '图层分离'
 
+/** 拆分的默认分辨率档位:跟随原图。见 LAYER_SPLIT_RESOLUTION_OPTIONS 的说明。 */
+const LAYER_SPLIT_RESOLUTION = 'auto'
+
 type AgentElectronApi = {
   attachments?: {
     save: (args: {
@@ -1066,7 +1069,11 @@ export class AgentToolExecutor {
       ...params,
       referenceImages,
       model,
-      resolution: params.resolution ?? CODEX_DEFAULT_RESOLUTION,
+      // 拆分的默认档位不是 2K:输出该跟随被拆那张图的尺寸与宽高比,发 2K 会让
+      // 底图按 2K 档重出、与原图对不上。agent 显式给了就听它的。
+      resolution:
+        params.resolution ??
+        (params.layerDecomposition ? LAYER_SPLIT_RESOLUTION : CODEX_DEFAULT_RESOLUTION),
       // Pin Miau-only channels to the Miau API site so they always reach the
       // gateway regardless of the user's currently selected site (the renderer
       // otherwise rewrites the endpoint host with the active site's host).

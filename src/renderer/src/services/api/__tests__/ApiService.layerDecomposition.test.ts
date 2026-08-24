@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { ApiService, extractLayersFromApiResponse } from '../ApiService'
+import {
+  ApiService,
+  extractLayersFromApiResponse,
+  LAYER_DECOMPOSITION_SIZE_TIERS,
+} from '../ApiService'
 
 /**
  * Seedream 5.0 Pro 图层拆分（Ark `layer_decomposition`）。
@@ -192,6 +196,24 @@ describe('requiredSiteKey — 只经 Miau 提供的渠道钉住站点', () => {
         // 过了站点/Key 解析，停在拆分的输入图守卫上 —— 说明没被钉回 Miau 而报缺 Key。
         expect(result.error).toContain('需要一张待拆分的输入图')
       })
+  })
+})
+
+describe('分辨率档位:界面能选到的必须等于协议认的', () => {
+  it('UI 档位与 LAYER_DECOMPOSITION_SIZE_TIERS 逐字一致', async () => {
+    const { LAYER_SPLIT_RESOLUTION_OPTIONS } = await import('../imageParamControls')
+    // 两边分开定义(纯模块不能 import ApiService,那会把整个重家伙拖进组件),
+    // 所以必须有这道锁:漂了就是「界面上选了个上游不认的档位」或者
+    // 「协议支持却永远选不到」—— 后者正是这次修的病。
+    expect(LAYER_SPLIT_RESOLUTION_OPTIONS.map((o) => o.key)).toEqual([
+      ...LAYER_DECOMPOSITION_SIZE_TIERS,
+    ])
+  })
+
+  it('默认档位是 auto —— 拆分要跟随原图，固定档会把底图重出成别的尺寸', async () => {
+    const { LAYER_SPLIT_DEFAULT_RESOLUTION } = await import('../imageParamControls')
+    expect(LAYER_SPLIT_DEFAULT_RESOLUTION).toBe('auto')
+    expect(LAYER_DECOMPOSITION_SIZE_TIERS).toContain(LAYER_SPLIT_DEFAULT_RESOLUTION)
   })
 })
 

@@ -151,7 +151,12 @@ export interface GenerateState {
   generate: (
     api: ApiActions,
     modelKey: string,
-    overrides?: { prompt?: string; referenceImages?: string[]; layerDecomposition?: boolean },
+    overrides?: {
+      prompt?: string
+      referenceImages?: string[]
+      layerDecomposition?: boolean
+      resolution?: string
+    },
   ) => Promise<GenerateOutcome>
   /**
    * 把一组表单参数回灌到当前 store, 用于"重新编辑"。
@@ -258,7 +263,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
     const form = get()
-    const { ratio, resolution, quality, count } = form
+    const { ratio, quality, count } = form
+    const resolution = overrides?.resolution ?? form.resolution
     const prompt = overrides?.prompt ?? form.prompt
     const referenceImages = overrides?.referenceImages ?? form.referenceImages
     const layerDecomposition = overrides?.layerDecomposition ?? form.layerDecomposition

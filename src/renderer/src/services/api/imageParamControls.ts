@@ -76,6 +76,28 @@ export const FALLBACK_RESOLUTION_OPTIONS: ParamOption[] = [
 ]
 
 /**
+ * 图层分离的分辨率**档位**（不是像素尺寸）。
+ *
+ * 与普通出图的分辨率是两套东西:拆分场景上游只收档位串,发 `宽x高` 会把底图强行
+ * 改成那个比例、与图层坐标系错位。所以开关打开时整个选择器换成这一组。
+ *
+ * `auto` 是**推荐默认**:拆分是对着一张已有图做的,输出该跟随原图的尺寸与宽高比。
+ * 拿 2K 去拆一张 1024×1024 的图,上游会按 2K 档重出底图,尺寸和原图对不上。
+ *
+ * 档位取值必须与 ApiService 的 `LAYER_DECOMPOSITION_SIZE_TIERS` 一致 —— 那边是
+ * 发请求时的最终裁决者,这边只负责让它们在界面上选得到。有测试锁住两边不漂移。
+ */
+export const LAYER_SPLIT_RESOLUTION_OPTIONS: ParamOption[] = [
+  { key: 'auto', label: '自适应', description: '按原图，推荐' },
+  { key: '1K', label: '1K' },
+  { key: '1.5K', label: '1.5K' },
+  { key: '2K', label: '2K' },
+]
+
+/** 拆分默认档位。见 LAYER_SPLIT_RESOLUTION_OPTIONS 的说明。 */
+export const LAYER_SPLIT_DEFAULT_RESOLUTION = 'auto'
+
+/**
  * 根据模型配置派生三轴控件状态。输入为 getCurrentModel() 快照(可为 null)。
  */
 export function deriveImageParamControls(

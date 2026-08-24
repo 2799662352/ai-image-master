@@ -171,6 +171,60 @@ describe('ImageParamControls', () => {
     expect(screen.getByLabelText('分辨率')).toBeTruthy()
   })
 
+  it('开启拆分: 分辨率换成拆分档位（auto / 1.5K 在普通出图那两档里根本选不到）', () => {
+    render(
+      <ImageParamControls
+        variant="cyberpunk"
+        modelConfig={SEEDREAM_5_PRO}
+        ratio="auto"
+        onRatioChange={noop}
+        resolution="auto"
+        onResolutionChange={noop}
+        layerDecomposition
+        onLayerDecompositionChange={noop}
+      />,
+    )
+    const opts = [...screen.getByLabelText<HTMLSelectElement>('分辨率').options].map((o) => o.value)
+    expect(opts).toEqual(['auto', '1K', '1.5K', '2K'])
+  })
+
+  it('关闭拆分: 分辨率回到模型自带的档位', () => {
+    render(
+      <ImageParamControls
+        variant="cyberpunk"
+        modelConfig={SEEDREAM_5_PRO}
+        ratio="auto"
+        onRatioChange={noop}
+        resolution="2K"
+        onResolutionChange={noop}
+        layerDecomposition={false}
+        onLayerDecompositionChange={noop}
+      />,
+    )
+    const opts = [...screen.getByLabelText<HTMLSelectElement>('分辨率').options].map((o) => o.value)
+    expect(opts).toEqual(['1K', '2K'])
+  })
+
+  it('开关从关到开: 落到推荐的 auto（停在 2K 会把底图按 2K 档重出，与原图对不上）', () => {
+    const onResolutionChange = vi.fn()
+    const props = {
+      variant: 'cyberpunk' as const,
+      modelConfig: SEEDREAM_5_PRO,
+      ratio: 'auto',
+      onRatioChange: noop,
+      resolution: '2K',
+      onResolutionChange,
+      onLayerDecompositionChange: noop,
+    }
+    const { rerender } = render(<ImageParamControls {...props} layerDecomposition={false} />)
+    onResolutionChange.mockClear()
+
+    rerender(<ImageParamControls {...props} layerDecomposition />)
+
+    // 2K 凑巧也是合法拆分档位，靠归位不会动它 —— 必须显式落到 auto
+    expect(onResolutionChange).toHaveBeenCalledWith('auto')
+  })
+
   it('切到不支持拆分的模型: 自动把开关关掉', () => {
     // 开关此时已经不渲染，用户看不到也关不掉；留着 true 会一路发到 ApiService
     // 被能力守卫拒掉，表现为「换个模型就生成不了了」。

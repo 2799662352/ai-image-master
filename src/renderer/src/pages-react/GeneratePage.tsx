@@ -15,6 +15,7 @@ import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../compon
 import '../components/shared/media-tokens/media-tokens.css'
 import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
 import { toUpstreamFetchableImage } from '../components/shared/image-editors/referenceTargets'
+import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -164,6 +165,9 @@ export default function GeneratePage() {
       prompt: '',
       referenceImages: [source],
       layerDecomposition: true,
+      // 不跟表单的分辨率:你就是要拆眼前这张,输出该跟随它的尺寸与宽高比。
+      // 跟着表单发 2K,拆一张 1024² 的图会回来一张尺寸对不上的底图。
+      resolution: LAYER_SPLIT_DEFAULT_RESOLUTION,
     })
     if (failure) {
       addToast({ message: failure, type: 'error' })

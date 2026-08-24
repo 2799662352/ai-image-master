@@ -1,7 +1,9 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import {
   deriveImageParamControls,
   normalizeOption,
+  LAYER_SPLIT_RESOLUTION_OPTIONS,
+  LAYER_SPLIT_DEFAULT_RESOLUTION,
   type ImageParamModelConfig,
   type ParamOption,
 } from '../../services/api/imageParamControls'
@@ -121,7 +123,7 @@ export function ImageParamControls({
   const theme = THEMES[variant]
   const {
     ratioOptions,
-    resolutionOptions,
+    resolutionOptions: normalResolutionOptions,
     qualityOptions,
     supportsResolution,
     supportsQuality,
@@ -145,6 +147,14 @@ export function ImageParamControls({
   // 开启拆分后比例/数量由上游按图内容决定,发过去也是被忽略 —— 灰掉而不是留着骗人。
   const splitting = showLayerDecomposition && layerDecomposition === true
 
+  // 分辨率在拆分下是**另一套档位**(auto/1K/1.5K/2K),不是普通出图那两档。
+  // 继续用模型自带的 resolutions 会让 auto 和 1.5K 在界面上永远选不到,
+  // 而 auto 恰恰是这个场景的推荐值。
+  const resolutionOptions = splitting ? LAYER_SPLIT_RESOLUTION_OPTIONS : normalResolutionOptions
+  const effectiveDefaultResolution = splitting ? LAYER_SPLIT_DEFAULT_RESOLUTION : defaultResolution
+  // 拆分下分辨率恒可选:档位与模型的 resolutionControl 无关。
+  const showResolution = splitting || supportsResolution
+
   // 模型切换后自动归位(当前值不在新选项内时)
   useEffect(() => {
     const next = normalizeOption(ratio, ratioOptions, preferRatio)
@@ -153,11 +163,24 @@ export function ImageParamControls({
   }, [ratioOptions])
 
   useEffect(() => {
-    if (!supportsResolution) return
-    const next = normalizeOption(resolution, resolutionOptions, defaultResolution)
+    if (!showResolution) return
+    const next = normalizeOption(resolution, resolutionOptions, effectiveDefaultResolution)
     if (next !== resolution) onResolutionChange(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolutionOptions, supportsResolution])
+  }, [resolutionOptions, showResolution])
+
+  // 开关**从关到开**的那一刻落到推荐档位 auto。
+  //
+  // 只靠上面的归位不够:普通出图停在 '2K' 时它凑巧也是合法拆分档位,归位不会动它,
+  // 于是用户拿到的是「按 2K 档重出底图」而不是「跟随原图尺寸」—— 拆一张 1024²
+  // 的图会回来一张尺寸对不上的底图。用 ref 认转变而不是认 splitting 的当前值,
+  // 这样组件重挂载(切页回来)不会把用户在拆分模式里选的 1K 洗回 auto。
+  const prevSplitting = useRef(splitting)
+  useEffect(() => {
+    if (splitting && !prevSplitting.current) onResolutionChange(LAYER_SPLIT_DEFAULT_RESOLUTION)
+    prevSplitting.current = splitting
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitting])
 
   useEffect(() => {
     if (!showQuality) return
@@ -229,10 +252,10 @@ export function ImageParamControls({
         )}
       </div>
 
-      {/* 分辨率 1K/2K/4K */}
-      <div className={supportsResolution ? theme.card : theme.cardDisabled}>
+      {/* 分辨率:普通出图是 1K/2K/4K,拆分下换成 auto/1K/1.5K/2K 档位 */}
+      <div className={showResolution ? theme.card : theme.cardDisabled}>
         {theme.renderLabel('分辨率', 'fa-expand-arrows-alt')}
-        {supportsResolution ? (
+        {showResolution ? (
           <select
             value={resolution}
             onChange={(e) => onResolutionChange(e.target.value)}
