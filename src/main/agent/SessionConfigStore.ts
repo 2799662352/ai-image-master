@@ -42,6 +42,27 @@ interface PersistedSessionConfigV1 {
 }
 
 /**
+ * Rewrite the retired `approvalPolicy: 'untrusted'` to `on-request`.
+ *
+ * openai/codex#39630 (0.149.0) removed the value outright — an explicit
+ * `approval_policy = "untrusted"` now fails config load, so a snapshot written
+ * by an older build would take the whole `app-server` down on launch. Upstream's
+ * replacement behaviour for untrusted projects is "request approval for every
+ * command", which makes `on-request` the closest surviving value.
+ *
+ * Migrating here rather than inside {@link validateSessionConfigPatch} keeps the
+ * IPC path strict: the settings panel no longer offers the retired value and
+ * must not be able to send it. Without this hop the read would still fail safe,
+ * but rejecting the whole file also discards every unrelated override the user
+ * saved alongside it (sandbox mode, web search, personality).
+ */
+function migrateRetiredApprovalPolicy(candidate: Record<string, unknown>): void {
+  if (candidate.approvalPolicy === 'untrusted') {
+    candidate.approvalPolicy = 'on-request'
+  }
+}
+
+/**
  * User-confirmed session-config defaults, persisted across app restarts
  * (docs/plans/2026-07-19-session-settings-batch2.md, batch 1).
  *
@@ -107,6 +128,7 @@ export class SessionConfigStore {
     for (const key of PERSISTABLE_KEYS) {
       if (key in overrides) candidate[key] = (overrides as Record<string, unknown>)[key]
     }
+    migrateRetiredApprovalPolicy(candidate)
     try {
       // Reuse the IPC patch validator so persisted values can never be looser
       // than what the settings panel is allowed to send.

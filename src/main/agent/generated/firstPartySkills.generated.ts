@@ -1476,11 +1476,11 @@ description: >-
 
 ## 别在 view_image 前面加压缩(实测,2026-08-08)
 
-**\`view_image\` 已经自己压过了,而且本 app 把原图那条路显式关死了。** 0.147 二进制的
-原话:\`omit 'detail' for default high resized behavior\` —— 不传 \`detail\` 就是缩过的。
-原图要 \`detail:"original"\`,而启动参数里钉了 \`features.image_detail_original=false\`,
-所以这条路在本 app 里走不通。结论:**在 view_image 之前再跑一遍 ffmpeg 压到 2K,
-是多一次工具往返去重复它已经做完的事,只会更慢。**
+**\`view_image\` 已经自己压过了,而且本 app 把原图那条路关死了。** codex 侧「一律缩图」
+现在是无条件的内建行为(\`resize_all_images\`),本 app 又额外开了 \`unified_image_budget\`
+——统一按 6000 像素 / 10000 patch 预处理,并把 \`detail\` 控件整个藏掉,所以模型连
+「传 \`detail:"original"\` 要原图」这个动作都做不出来。结论:**在 view_image 之前再跑
+一遍 ffmpeg 压到 2K,是多一次工具往返去重复它已经做完的事,只会更慢。**
 
 那 view_image 贵在哪?贵在两件**压缩解决不了**的事:
 
