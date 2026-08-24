@@ -24,11 +24,30 @@
  * that copies `resources/`. Without a git dir (tarball checkout) it falls back
  * to the user cache dir and pays a copy.
  *
- * Version handling is deliberately shallow: presence of the binary counts as
- * satisfied, exactly like today's manual flow. A version BUMP goes through
- * `codex:fetch`, which overwrites `resources/` directly — this script never
- * second-guesses it, and the cache is keyed by version so an old entry is
- * simply never asked for again.
+ * Versions are checked by ASKING THE BINARY (`codex --version`), not by assuming
+ * whatever sits in `resources/` matches the pin.
+ *
+ * The old rule was "presence counts as satisfied", on the theory that a version
+ * bump goes through `codex:fetch` by hand. It doesn't hold, and the failure is
+ * silent in both directions (observed 2026-08-24: pin said 0.149.1, a long-lived
+ * checkout still ran 0.145.0):
+ *
+ *   - a checkout that already has ANY binary never picks up a bump — `dev` runs
+ *     the old CLI with no hint that it is stale, which is how you end up shipping
+ *     mitigations for an upstream break you are not actually running into yet;
+ *   - worse, the seeding step then copied that stale binary into the cache slot
+ *     NAMED AFTER THE PIN. Every fresh worktree afterwards took path 2, got the
+ *     old binary, and believed it had the new one. One stale checkout poisons the
+ *     whole machine.
+ *
+ * So: probe before trusting, on both sides. A mismatch in `resources/` is
+ * replaced; a cache entry that lies about its version is discarded rather than
+ * linked. The probe costs one process spawn (tens of ms) in front of `dev`.
+ *
+ * The one case that still defers to presence: the binary exists but will not run
+ * (AV quarantine, half-written file, unreadable output). Forcing a 350MB download
+ * on every `dev` for that would be worse than the status quo — so it is left
+ * alone, but it is NEVER used to seed the cache, which is the part that spreads.
  */
 import { spawnSync } from 'node:child_process'
 import {
@@ -61,6 +80,36 @@ function pinnedVersion() {
     throw new Error('package.json is missing `codexCliVersion`')
   }
   return manifest.codexCliVersion
+}
+
+/**
+ * Pull the version out of `codex --version` output. `null` when there isn't one.
+ *
+ * Split from {@link probeVersion} because this is the part with actual logic and
+ * the part worth testing exhaustively — spawning a fake binary to exercise it is
+ * a fight with platform exec rules (Windows won't `spawnSync` a `.cmd` without a
+ * shell), and that fight tests the harness, not the regex.
+ *
+ * Only the SHAPE is pinned, not the `codex-cli ` prefix: a prefix change upstream
+ * should not silently turn every checkout into "unknown version".
+ */
+export function parseVersion(output) {
+  const match = /(\d+\.\d+\.\d+)/.exec(String(output ?? ''))
+  return match ? match[1] : null
+}
+
+/**
+ * Ask a codex binary which version it is.
+ *
+ * `null` means "could not tell" — missing file, non-zero exit, or output we
+ * cannot parse. Callers must treat that as *unknown*, never as *matching*:
+ * assuming a match is exactly how the stale binary spread through the cache.
+ */
+export function probeVersion(binary) {
+  if (!existsSync(binary)) return null
+  const result = spawnSync(binary, ['--version'], { encoding: 'utf8', timeout: 30_000 })
+  if (result.status !== 0) return null
+  return parseVersion(`${result.stdout ?? ''}${result.stderr ?? ''}`)
 }
 
 /**
@@ -117,8 +166,8 @@ function totalMegabytes(dir) {
   return Math.round(bytes / 1024 / 1024)
 }
 
-function runPinnedFetch() {
-  log('no cached copy — downloading the pinned version')
+function runPinnedFetch(reason) {
+  log(`${reason} — downloading the pinned version`)
   const result = spawnSync(
     process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
     ['exec', 'tsx', 'scripts/fetch-codex.ts'],
@@ -134,22 +183,50 @@ function main() {
   const cacheDir = path.join(cacheRoot(), version, target)
   const cachedBinary = path.join(cacheDir, binaryName)
 
-  if (!existsSync(destBinary)) {
-    if (existsSync(cachedBinary)) {
+  const installed = probeVersion(destBinary)
+
+  if (installed !== version) {
+    // Present but unreadable → leave it (see the header: a broken probe must not
+    // cost a 350MB download), and fall through WITHOUT seeding: an unverified
+    // binary is the one thing we must never publish to other checkouts.
+    if (installed === null && existsSync(destBinary)) {
+      log(`cannot read the version of ${destBinary} — leaving it as-is and not seeding the cache`)
+      return
+    }
+
+    if (installed !== null) log(`resources has ${installed}, pin is ${version} — replacing`)
+
+    if (probeVersion(cachedBinary) === version) {
+      // Wipe first, but ONLY on this path: `materialize` skips files that already
+      // exist, so linking onto a stale tree would keep the old binary and
+      // silently "succeed". Safe here because the replacement is already on disk.
+      // (Deliberately NOT done before the fetch below — wiping and then failing
+      // to download would leave the checkout with no codex at all, which is worse
+      // than the stale one we started with.)
+      rmSync(destDir, { recursive: true, force: true })
       const { linked, copied } = materialize(cacheDir, destDir)
       log(`provisioned ${version} from cache (${linked} linked, ${copied} copied)`)
     } else {
-      runPinnedFetch()
-      if (!existsSync(destBinary)) {
-        throw new Error(`codex:fetch reported success but ${destBinary} is missing`)
+      if (existsSync(cacheDir)) {
+        // A slot that does not contain what its name claims is worse than an
+        // empty one — every fresh worktree would take it and be wrong.
+        log(`cache slot for ${version} does not hold ${version} — discarding it`)
+        rmSync(cacheDir, { recursive: true, force: true })
+      }
+      runPinnedFetch(installed === null ? 'not provisioned yet' : `have ${installed}, need ${version}`)
+      const fetched = probeVersion(destBinary)
+      if (fetched !== version) {
+        throw new Error(
+          `codex:fetch reported success but ${destBinary} is ${fetched ?? 'unreadable'}, expected ${version}`,
+        )
       }
     }
   }
 
-  if (!existsSync(cachedBinary) && existsSync(destBinary)) {
-    // Seed from whatever this checkout has so the NEXT worktree skips the
-    // download. Best-effort: a failure here costs the next checkout a fetch,
-    // which is the status quo, so it must never block `dev`.
+  // Seed only from a binary we have VERIFIED is the pinned version.
+  if (!existsSync(cachedBinary) && probeVersion(destBinary) === version) {
+    // Best-effort: a failure here costs the next checkout a fetch, which is the
+    // status quo, so it must never block `dev`.
     try {
       const { linked, copied } = materialize(destDir, cacheDir)
       log(`cached ${version} for other checkouts (${linked} linked, ${copied} copied,`
@@ -163,9 +240,16 @@ function main() {
   }
 }
 
-try {
-  main()
-} catch (error) {
-  console.error(`[ensure-codex] ${error instanceof Error ? error.message : error}`)
-  process.exit(1)
+// Only run when invoked as a script. Without this, importing the module to test
+// `probeVersion` would kick off a real provision (and possibly a 350MB download).
+const invokedDirectly =
+  !!process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)
+
+if (invokedDirectly) {
+  try {
+    main()
+  } catch (error) {
+    console.error(`[ensure-codex] ${error instanceof Error ? error.message : error}`)
+    process.exit(1)
+  }
 }
