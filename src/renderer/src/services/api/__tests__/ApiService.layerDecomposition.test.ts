@@ -139,6 +139,94 @@ describe('generateImage layer decomposition guards', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('需要一张待拆分的输入图')
   })
+
+  it('输入图不是 png/jpeg 时先转码 —— 本 app 的 COS 历史图是 webp，是必经之路', async () => {
+    // 上游对 webp 只回一句 image format is not supported，参数名/模型/开关全对，
+    // 唯独不说该转成什么。收口在 generateImage:工具栏 / 批量 worker / MCP 都经过这里。
+    const service = makeService()
+    const sent: any[] = []
+    service.makeApiRequest = async (args: any) => {
+      sent.push(args)
+      return { ok: true, json: async () => ({ data: [{ url: 'https://x/out.png' }] }) }
+    }
+
+    const g = globalThis as Record<string, any>
+    const savedFetch = g.fetch
+    const savedBitmap = g.createImageBitmap
+    const savedCanvas = g.OffscreenCanvas
+    const savedReader = g.FileReader
+    g.fetch = async () => ({ ok: true, status: 200, blob: async () => ({ type: 'image/webp' }) })
+    g.createImageBitmap = async () => ({ width: 1024, height: 1024, close() {} })
+    g.OffscreenCanvas = class {
+      constructor(public width: number, public height: number) {}
+      getContext() { return { drawImage() {} } }
+      async convertToBlob() { return { type: 'image/png' } }
+    }
+    g.FileReader = class {
+      result: string | null = null
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,PNGDATA'
+        this.onload?.()
+      }
+    }
+
+    try {
+      await service.generateImage({
+        prompt: '',
+        model: 'doubao-seedream-5-0-pro-260628',
+        referenceImages: ['https://cos.example.com/image-history/a.webp'],
+        layerDecomposition: true,
+      })
+    } finally {
+      g.fetch = savedFetch
+      g.createImageBitmap = savedBitmap
+      g.OffscreenCanvas = savedCanvas
+      g.FileReader = savedReader
+    }
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0].referenceImages).toEqual(['data:image/png;base64,PNGDATA'])
+    expect(sent[0].imageBase64).toBe('data:image/png;base64,PNGDATA')
+  })
+
+  it('输入图已是 png 时不动它 —— 保持 URL 形态，别把几 MB base64 塞进请求体', async () => {
+    const service = makeService()
+    const sent: any[] = []
+    service.makeApiRequest = async (args: any) => {
+      sent.push(args)
+      return { ok: true, json: async () => ({ data: [{ url: 'https://x/out.png' }] }) }
+    }
+
+    const url = 'https://cos.example.com/image-history/a.png'
+    await service.generateImage({
+      prompt: '',
+      model: 'doubao-seedream-5-0-pro-260628',
+      referenceImages: [url],
+      layerDecomposition: true,
+    })
+
+    expect(sent[0].referenceImages).toEqual([url])
+  })
+
+  it('普通出图不过转码这一步（只有拆分才有格式约束）', async () => {
+    const service = makeService()
+    const sent: any[] = []
+    service.makeApiRequest = async (args: any) => {
+      sent.push(args)
+      return { ok: true, json: async () => ({ data: [{ url: 'https://x/out.png' }] }) }
+    }
+
+    const webp = 'https://cos.example.com/image-history/a.webp'
+    await service.generateImage({
+      prompt: 'a cat',
+      model: 'doubao-seedream-5-0-pro-260628',
+      referenceImages: [webp],
+    })
+
+    expect(sent[0].referenceImages).toEqual([webp])
+  })
 })
 
 describe('requiredSiteKey — 只经 Miau 提供的渠道钉住站点', () => {
@@ -199,17 +287,7 @@ describe('requiredSiteKey — 只经 Miau 提供的渠道钉住站点', () => {
   })
 })
 
-describe('分辨率档位:界面能选到的必须等于协议认的', () => {
-  it('UI 档位与 LAYER_DECOMPOSITION_SIZE_TIERS 逐字一致', async () => {
-    const { LAYER_SPLIT_RESOLUTION_OPTIONS } = await import('../imageParamControls')
-    // 两边分开定义(纯模块不能 import ApiService,那会把整个重家伙拖进组件),
-    // 所以必须有这道锁:漂了就是「界面上选了个上游不认的档位」或者
-    // 「协议支持却永远选不到」—— 后者正是这次修的病。
-    expect(LAYER_SPLIT_RESOLUTION_OPTIONS.map((o) => o.key)).toEqual([
-      ...LAYER_DECOMPOSITION_SIZE_TIERS,
-    ])
-  })
-
+describe('分辨率档位:发起方用的必须是协议认的', () => {
   it('默认档位是 auto —— 拆分要跟随原图，固定档会把底图重出成别的尺寸', async () => {
     const { LAYER_SPLIT_DEFAULT_RESOLUTION } = await import('../imageParamControls')
     expect(LAYER_SPLIT_DEFAULT_RESOLUTION).toBe('auto')

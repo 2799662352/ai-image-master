@@ -8,6 +8,7 @@ import {
   registerCosUploadHandler,
 } from '../utils/cosUploadDispatcher'
 import { materializeImageUrls, revokeLater, isPersistableUrl } from '../utils/imageResources'
+import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
 import { toRenderableUri } from '../features/file-explorer/uri'
 
 /**
@@ -83,6 +84,17 @@ export interface GenerateOutcome {
   error?: string
 }
 
+/** 待执行的一次图层分离。字段就这两个 —— 拆分不吃 prompt/比例/张数。 */
+export interface SplitDraft {
+  /** 待拆的那张图,已归一化成上游可取的形态(http(s) 或 data:)。 */
+  imageUrl: string
+  /**
+   * 分辨率**档位**(auto/1K/1.5K/2K),不是像素尺寸,也不复用出图表单那一套。
+   * 默认 auto = 跟随原图:拆的就是眼前这张,底图该保持它的尺寸与宽高比。
+   */
+  resolution: string
+}
+
 export interface GenerateState {
   prompt: string
   ratio: string
@@ -92,11 +104,6 @@ export interface GenerateState {
   quality: string
   /** 出图张数(组图); 仅 multipleImages 模型有效, 万相 wan2.7 多张走 enable_sequential 系列一致 */
   count: number
-  /**
-   * 图层分离(Ark `layer_decomposition`); 仅 capabilities.layerDecomposition 的模型有效。
-   * 开启后这一次不是出新图, 而是把参考图拆成 1 张底图 + 若干透明 PNG 图层。
-   */
-  layerDecomposition: boolean
   /**
    * True when at least one in-flight generate call exists.
    * Derived from `inFlightCount > 0`. Kept as a discrete field for cheap
@@ -118,13 +125,27 @@ export interface GenerateState {
   referenceImages: string[]
   /** Latest error message (overwritten on each failure). */
   error: string | null
+  /**
+   * 拆图状态。非 null = 页面处于「图层分离」待执行状态:主按钮从「生成」改名
+   * 「拆图」,点它跑的是拆分而不是出图;状态里还能改档位、换待拆的图。
+   *
+   * 为什么是**独立状态**而不是出图表单的一个字段:
+   * - 表单字段(prompt/ratio/count/resolution/refs)描述「下一次出图长什么样」。
+   *   拆分不出新图,它只吃一张图 + 一个档位,与那些字段一个都不共用。
+   *   混进去的后果上一版试过了:比例/数量得灰掉、切模型得自动关、分辨率得换一套
+   *   档位再换回来 —— 全是为了让拆分假装成一次出图而付的税。
+   * - 独立状态下,退出 = 置 null,出图表单原封不动(用户正写的 prompt 还在)。
+   *
+   * 与「点一下直接发」的区别:拆分按张计费,一张复杂图能出 17 张。给个能反悔、
+   * 能调档位的中间态,比点错了直接扣钱好。
+   */
+  splitDraft: SplitDraft | null
 
   setPrompt: (v: string) => void
   setRatio: (v: string) => void
   setResolution: (v: string) => void
   setQuality: (v: string) => void
   setCount: (v: number) => void
-  setLayerDecomposition: (v: boolean) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
   clearReferenceImages: () => void
@@ -143,10 +164,15 @@ export interface GenerateState {
    * 结果直接回给调用方而不是只写进 store:这个页面允许并发点,靠"全局结果
    * 张数差"反推本次成没成,会把并发那一次的图算到自己头上。
    *
-   * `overrides` 用于**不经表单的一次性生成** —— 目前只有「对某张已有结果图点
-   * 图层分离」。给了就用它替换对应的表单快照值,表单本身一个字都不动
-   * (用户正在写的下一条 prompt 不该被这次操作洗掉)。产出照常进结果区,
-   * 复用同一条物化 / FIFO / COS 上传流水线。
+   * `overrides` 用于**不经表单的一次性生成** —— 目前只有图层分离。给了就用它替换
+   * 对应的表单快照值,**表单本身一个字都不动**(用户正在写的下一条 prompt 不该被洗掉)。
+   *
+   * 这是图层分离与正常出图的分界线,刻意如此:它曾经是参数区的一个开关,勾了之后
+   * 「生成」按钮的语义就变了,还得连带把比例/数量灰掉、切模型时自动关 —— 两件事
+   * 焊死在一起。现在拆分自带入参(见 `splitDraft`),出图表单不知道有这回事。
+   *
+   * 产出照常进结果区,复用同一条物化 / FIFO / COS 上传流水线 —— 复用管线不等于耦合
+   * 语义,那条管线只关心「有 N 张图要落盘」。
    */
   generate: (
     api: ApiActions,
@@ -158,6 +184,22 @@ export interface GenerateState {
       resolution?: string
     },
   ) => Promise<GenerateOutcome>
+  /** 进入拆图状态。已在状态中则换掉待拆的图,档位保留(用户刚调过的不该被重置)。 */
+  enterSplitMode: (imageUrl: string) => void
+  /** 状态中调参(目前只有档位)。不在状态中是 no-op。 */
+  updateSplitDraft: (patch: Partial<SplitDraft>) => void
+  /** 退出拆图状态。出图表单不受影响。 */
+  exitSplitMode: () => void
+  /**
+   * 执行当前拆图状态。不在状态中返回 `added: 0`。
+   *
+   * 用出图框里那句当 prompt —— 上游拿它指定「要拆出什么」(如「只把人抠出来」),
+   * 空串才是自动全拆。模型钉死 SD5 Pro,不看用户当前选的是什么:拆分只有它能做,
+   * 按选中模型跑只会拿到一句能力守卫的报错,而用户并不知道该先去切模型。
+   *
+   * **跑完不退出状态** —— 同一张图常要换几种说法试,退出由用户显式点按钮完成。
+   */
+  runSplit: (api: ApiActions) => Promise<GenerateOutcome>
   /**
    * 把一组表单参数回灌到当前 store, 用于"重新编辑"。
    * 不会触发生成 —— 只是恢复表单状态, 让用户能继续修改后再点生成。
@@ -179,13 +221,13 @@ export const initialState = {
   resolution: '2K',
   quality: 'auto',
   count: 1,
-  layerDecomposition: false,
   generating: false,
   inFlightCount: 0,
   resultUrls: [] as string[],
   resultMeta: [] as ResultUploadMeta[],
   referenceImages: [] as string[],
   error: null as string | null,
+  splitDraft: null as SplitDraft | null,
 }
 
 /** 生成稳定 id —— 优先 crypto.randomUUID, 兼容老浏览器和测试环境。 */
@@ -212,6 +254,9 @@ const MAX_RESULT_HISTORY = 200
  */
 export const LAYER_SPLIT_MODEL = 'doubao-seedream-5-0-pro-260628'
 
+/** 拆图状态的默认档位 = 跟随原图。见 LAYER_SPLIT_DEFAULT_RESOLUTION 的说明。 */
+const SPLIT_DEFAULT_RESOLUTION = LAYER_SPLIT_DEFAULT_RESOLUTION
+
 export const useGenerateStore = create<GenerateState>((set, get) => ({
   ...initialState,
 
@@ -220,7 +265,6 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   setResolution: (v) => set({ resolution: v }),
   setQuality: (v) => set({ quality: v }),
   setCount: (v) => set({ count: v }),
-  setLayerDecomposition: (v) => set({ layerDecomposition: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
     set((s) => ({
@@ -242,6 +286,32 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     // blob: 结果延迟 revoke 释放堆外 Blob(http/cos URL no-op)。
     for (const u of get().resultUrls) revokeLater(u)
     set({ resultUrls: [], resultMeta: [], error: null })
+  },
+
+  enterSplitMode: (imageUrl) =>
+    set((s) => ({
+      // 已在状态里换图时保留档位:用户刚把它调到 1K,换张图不该把这个选择洗回 auto。
+      splitDraft: { imageUrl, resolution: s.splitDraft?.resolution ?? SPLIT_DEFAULT_RESOLUTION },
+    })),
+
+  updateSplitDraft: (patch) =>
+    set((s) => (s.splitDraft ? { splitDraft: { ...s.splitDraft, ...patch } } : {})),
+
+  exitSplitMode: () => set({ splitDraft: null }),
+
+  runSplit: async (api) => {
+    const { splitDraft: draft, prompt } = get()
+    if (!draft) return { added: 0 }
+    // **状态跑完不掉**:拆同一张图常常要试几种说法(「只要人」「去掉背景」「拆出文字」),
+    // 每次都得重新选图就没法比。退出由用户点工具栏那个按钮显式完成。
+    return get().generate(api, LAYER_SPLIT_MODEL, {
+      // prompt 就是出图框里那句 —— 上游用它指定「要拆出什么」;空串才是自动全拆。
+      // 不套出图模板(见 generate 里的 layerDecomposition 分支)。
+      prompt,
+      referenceImages: [draft.imageUrl],
+      layerDecomposition: true,
+      resolution: draft.resolution,
+    })
   },
 
   restoreForEdit: (snapshot) => {
@@ -267,7 +337,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     const resolution = overrides?.resolution ?? form.resolution
     const prompt = overrides?.prompt ?? form.prompt
     const referenceImages = overrides?.referenceImages ?? form.referenceImages
-    const layerDecomposition = overrides?.layerDecomposition ?? form.layerDecomposition
+    const layerDecomposition = overrides?.layerDecomposition ?? false
     const templateKey = useTemplateStore.getState().getSelection('generate')
     // 拆分模式下 prompt 的语义是「要拆出什么」,空串=自动全拆。套上出图模板会把
     // 「自动全拆」变成一句风格描述,直接改掉这次请求的含义 —— 所以不套。

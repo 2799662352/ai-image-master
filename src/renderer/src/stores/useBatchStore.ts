@@ -107,6 +107,12 @@ export interface BatchItem {
    */
   modelKey?: string
   /**
+   * 入队时锁定的分辨率档位。目前只有拆分项在用:拆分的档位是「跟随原图 / 1K /
+   * 1.5K / 2K」这一套,与出图表单那套(1K/2K/4K)不是一个东西,不能跟着表单走。
+   * 缺省 = 用闭包里的表单值(普通批量项的原行为)。
+   */
+  resolution?: string
+  /**
    * 在 worker 把 item flip 为 `generating` 时挂上 —— 之前(pending)
    * 阶段为 undefined。重编辑时:
    *   - 有 snapshot 就用 snapshot.{prompt, ratio, referenceImages, modelKey}
@@ -187,7 +193,12 @@ export interface BatchState {
    * `imageUrl` 必须是上游能取到的形态(http / data),调用方负责先过
    * `toUpstreamFetchableImage` —— blob: 只在本渲染进程有效。
    */
-  addLayerSplitItem: (imageUrl: string) => void
+  /**
+   * 入队一次图层分离。
+   * - `prompt`:上游拿它指定「要拆出什么」(如「只把人抠出来」);空串 = 自动全拆。
+   * - `resolution`:拆分档位(auto/1K/1.5K/2K),缺省跟随原图。
+   */
+  addLayerSplitItem: (imageUrl: string, opts?: { prompt?: string; resolution?: string }) => void
   removeItem: (id: string) => void
   clearAll: () => void
   runBatch: (api: ApiActions, modelKey: string, opts?: BatchRunOpts) => Promise<void>
@@ -328,20 +339,20 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     if (spawn && get().running) spawn()
   },
 
-  addLayerSplitItem: (imageUrl) => {
+  addLayerSplitItem: (imageUrl, opts) => {
     set((s) => ({
       items: trimItems([
         ...s.items,
         {
           id: crypto.randomUUID(),
-          // 卡片标题:空 prompt 是「自动全拆」的正确形态,但卡上不能空着。
-          // 真正发出去的 prompt 由 worker 从 item.prompt 取 —— 所以这里必须是
-          // 空串,标题另走 layerDecomposition 分支显示(见 PunkResultGrid)。
-          prompt: '',
+          // 用户那句话就是「要拆出什么」,原样发给上游;空串 = 自动全拆,也是合法形态
+          // (卡片标题另走 layerDecomposition 分支显示,不靠 prompt 撑,见 PunkResultGrid)。
+          prompt: opts?.prompt ?? '',
           status: 'pending',
           referenceImages: [imageUrl],
           layerDecomposition: true,
           modelKey: LAYER_SPLIT_MODEL,
+          resolution: opts?.resolution ?? LAYER_SPLIT_DEFAULT_RESOLUTION,
         },
       ]),
     }))
@@ -526,9 +537,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               prompt: finalPrompt,
               model: itemModel,
               ratio: itemRatio !== 'auto' ? itemRatio : undefined,
-              // 拆分不跟表单分辨率:输出该跟随被拆那张图的尺寸与宽高比,
-              // 发 2K 会让底图按 2K 档重出、与原图对不上。
-              resolution: item.layerDecomposition ? LAYER_SPLIT_DEFAULT_RESOLUTION : resolution,
+              // 拆分不跟表单分辨率:那是另一套档位(跟随原图/1K/1.5K/2K),
+              // 发表单的 2K 会让底图按 2K 档重出、与被拆那张对不上。
+              // 档位在入队时就锁进 item(用户在状态条里选的),这里只负责取。
+              resolution: item.resolution ?? resolution,
               quality,
               count,
               referenceImages: itemRefs.length > 0 ? itemRefs : undefined,
