@@ -18,6 +18,20 @@ interface Props {
   containerClassName?: string
   /** 工具栏容器附加 style(punk 用) */
   containerStyle?: React.CSSProperties
+  /**
+   * 提供后,工具栏出现「图层分离」—— 把**选中的那张参考图**拆成底图 + 透明图层栈。
+   *
+   * 这是个**开关**:按下=选中待拆的图,页面主按钮随之改名「拆图」,点主按钮才真跑
+   * (拆分按张计费,一次能出 17 张,不做成点一下就扣钱)。再按一次取消。
+   *
+   * 用这个按钮自身的按下态当唯一的状态凭据,不另起横条 —— 状态就一个 bit,
+   * 值不上一整行 UI。
+   *
+   * 「拆哪张」在这一排有明确答案:用参考图选择器选中的那张(单张时就是它)。
+   */
+  onLayerSplit?: (imageUrl: string) => void
+  /** 已进入拆图状态(按钮显示为按下)。由宿主持有,因为主按钮的文案也要跟着变。 */
+  splitArmed?: boolean
 }
 
 /** 选图缩略图 —— useDisplaySrc 处理 blob/cos 跨进程可读问题 */
@@ -85,6 +99,8 @@ export default function VisualPromptBar({
   variant = 'cyber',
   containerClassName,
   containerStyle,
+  onLayerSplit,
+  splitArmed = false,
 }: Props) {
   const enabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -330,6 +346,38 @@ export default function VisualPromptBar({
         >
           {variant === 'cyber' ? '导演台 // 3d' : '[ 导演台 // 3D ]'}
         </button>
+
+        {/* 图层分离:把选中的参考图拆成 1 底图 + 最多 16 层透明 PNG。
+            渠道由动作自己钉住 Seedream 5.0 Pro,所以按钮**不随模型出现/消失** ——
+            用户不该为了看见它先去切模型。 */}
+        {onLayerSplit && (
+          <button
+            type="button"
+            disabled={!hasRef}
+            aria-pressed={splitArmed}
+            onClick={() => hasRef && onLayerSplit(imageChoices[safeIndex].url)}
+            title={
+              !hasRef
+                ? '请先上传参考图'
+                : splitArmed
+                  ? '已选中待拆的图 —— 点下方主按钮开始拆分；再按一次取消'
+                  : '把选中的参考图拆成底图 + 透明图层（Seedream 5.0 Pro，按张计费，最多 17 张）'
+            }
+            {...btnProps(hasRef)}
+            style={{
+              ...btnProps(hasRef).style,
+              ...(splitArmed
+                ? isPunk
+                  ? { background: 'var(--punk-toxic)', boxShadow: '3px 3px 0 var(--punk-pink)' }
+                  : { borderColor: '#eab308', color: '#eab308', background: 'rgba(234,179,8,0.12)' }
+                : null),
+            }}
+          >
+            {variant === 'cyber'
+              ? `图层分离 // split${splitArmed ? ' ✓' : ''}`
+              : `[ 图层分离 // SPLIT${splitArmed ? ' ✓' : ''} ]`}
+          </button>
+        )}
 
         {!hasRef && (
           <span className={hintClass} style={hintStyle}>

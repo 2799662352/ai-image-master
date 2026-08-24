@@ -3,7 +3,10 @@ import { useModelStore, useToastStore, useBatchStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import ImageEditActions, { type ImageEditorType } from '../components/shared/image-editors/ImageEditActions'
 import ImageEditorModal from '../components/shared/image-editors/ImageEditorModal'
-import { addImageUrlToReferences } from '../components/shared/image-editors/referenceTargets'
+import {
+  addImageUrlToReferences,
+  toUpstreamFetchableImage,
+} from '../components/shared/image-editors/referenceTargets'
 import '../components/shared/image-editors/image-editors.css'
 import type { BatchItem } from '../stores/useBatchStore'
 import { useApi } from '../hooks/useService'
@@ -108,6 +111,25 @@ export default function BatchPage() {
     setLightbox(null)
     setEditorState({ url, type })
   }, [])
+
+  /**
+   * 拆图状态,与出图页同一套:点工具栏「图层分离」选中待拆的图(按钮显示按下),
+   * 主按钮随之改名「拆图」,点主按钮才开跑。再点一次那个按钮取消。
+   *
+   * 状态只有一个 bit —— 拆哪张。不值一整行 UI,所以没有状态条、没有额外的
+   * 确认/取消按钮,由那个工具栏按钮自己的按下态表达。
+   */
+  const [splitImageUrl, setSplitImageUrl] = useState<string | null>(null)
+
+  const handleLayerSplit = useCallback(async (imageUrl: string) => {
+    if (splitImageUrl) {
+      setSplitImageUrl(null)
+      return
+    }
+    // 参考图可能是 blob:(只在本渲染进程有效),直接发会被当成裸 base64 拼成垃圾 URL。
+    // 在选中时就归一化,而不是等点主按钮 —— 那时再失败用户以为已就绪。
+    setSplitImageUrl(await toUpstreamFetchableImage(imageUrl))
+  }, [splitImageUrl])
 
   // ---- 当前 model 的 ratio / resolution 选项 ----
   // 纯从 model store 派生(与 GeneratePage 的 currentModel 同源),切换模型即同步更新。
@@ -252,6 +274,27 @@ export default function BatchPage() {
   }
 
   const handleGenerate = async () => {
+    // 拆图状态下主按钮已改名「拆图」:入队那一张待拆的图。批次没在跑就顺手带起来;
+    // **在跑就只入队,交给 live-claim worker 捡走** —— 不等当前批次、不打断它,
+    // 所以可以连着点几次,互不阻塞。不看当前模型(渠道钉死 SD5 Pro)。
+    //
+    // 提示词照发:上游用它指定「要拆出什么」(如「女人抠出来」),空串才是自动全拆。
+    // 状态**点完不掉** —— 换一句说法再点一次是常规用法,退出由工具栏那个按钮负责。
+    if (splitImageUrl) {
+      const splitPrompt = (mode === 'card' ? cardPrompt : multiText).trim()
+      useBatchStore.getState().addLayerSplitItem(splitImageUrl, { prompt: splitPrompt })
+      if (!useBatchStore.getState().running && currentModelKey) {
+        // 闭包参数要给全:同一批 worker 也可能捡到队列里的普通卡,少给 ratio/resolution
+        // 会让那些卡按 undefined 发出去(拆分项自带 model/resolution,不受影响)。
+        void runBatch(api, currentModelKey, {
+          ratio,
+          resolution,
+          concurrency,
+          referenceImages: refImages.map((r) => r.base64),
+        })
+      }
+      return
+    }
     if (!currentModelKey) {
       addToast({ message: '请先在顶部选择模型', type: 'warning' })
       return
@@ -366,6 +409,8 @@ export default function BatchPage() {
                 cur.setMultiText(cur.multiText + sep(cur.multiText) + text)
               }
             }}
+            onLayerSplit={handleLayerSplit}
+            splitArmed={!!splitImageUrl}
           />
           {mode === 'card' ? (
             <BatchPromptCard
@@ -422,6 +467,7 @@ export default function BatchPage() {
         willEnqueue={willEnqueue}
         onGenerate={handleGenerate}
         onCancel={handleCancel}
+        splitArmed={!!splitImageUrl}
         leftSlot={
           <BatchBudgetReceipt
             modelName={modelDisplayName}

@@ -104,7 +104,7 @@ const LAYER_DECOMPOSITION_CHANNEL = 'doubao-seedream-5-0-pro-260628'
 /** 空 prompt 是拆分的「自动全拆」模式，但气泡不能空着 —— 给个能读的占位。 */
 const LAYER_DECOMPOSITION_BUBBLE_LABEL = '图层分离'
 
-/** 拆分的默认分辨率档位:跟随原图。见 LAYER_SPLIT_RESOLUTION_OPTIONS 的说明。 */
+/** 拆分的默认分辨率档位:跟随原图。见 LAYER_SPLIT_DEFAULT_RESOLUTION 的说明。 */
 const LAYER_SPLIT_RESOLUTION = 'auto'
 
 type AgentElectronApi = {

@@ -464,7 +464,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'tool where a near-empty prompt is correct — an empty/whitespace prompt means "split ' +
           'everything automatically", which is what a bare 图层分离 request wants. `ratio` and ' +
           '`count` are ignored here (the layer count is decided by the image content); `resolution` ' +
-          'is read as a tier, so use 1K or 2K (4K falls back to auto).',
+          'is read as a tier and defaults to `auto` (follow the input image) — leave it alone unless ' +
+          'the user asks for a specific tier. The input image must be PNG or JPEG at 512px or larger; ' +
+          'other formats (e.g. WebP) are transcoded automatically before the request goes out.',
         ),
     }).refine(
       // 空 prompt 只在图层拆分下合法 —— 上游把「缺席的 prompt」当作「自动全拆」，这是

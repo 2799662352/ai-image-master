@@ -285,7 +285,14 @@ describe('useGenerateStore', () => {
   })
 
   describe('generate — 图层分离', () => {
-    it('关闭时不发 layerDecomposition 字段(普通出图请求形状不变)', async () => {
+    it('表单里没有 layerDecomposition 这个字段 —— 拆分只能从 overrides 进来', () => {
+      // 它曾经是表单状态 + 参数区一个开关，勾上就改掉「生成」按钮的语义。
+      // 现在拆分是自己的动作，出图表单不知道有这回事。这条守住它别回来。
+      expect(useGenerateStore.getState()).not.toHaveProperty('layerDecomposition')
+      expect(useGenerateStore.getState()).not.toHaveProperty('setLayerDecomposition')
+    })
+
+    it('普通出图不发 layerDecomposition 字段(请求形状不变)', async () => {
       useGenerateStore.setState({ prompt: 'a cat', ratio: '1:1' })
       const api = createMockApi()
 
@@ -296,15 +303,15 @@ describe('useGenerateStore', () => {
       )
     })
 
-    it('开启时把 layerDecomposition 发给 ApiService', async () => {
-      useGenerateStore.setState({
+    it('走 overrides 时把 layerDecomposition 发给 ApiService', async () => {
+      useGenerateStore.setState({ prompt: '用户正在写的下一条' })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', {
         prompt: '只拆出前景人物',
         referenceImages: ['https://cos.example.com/scene.png'],
         layerDecomposition: true,
       })
-      const api = createMockApi()
-
-      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
 
       expect(api.generateImage).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -315,15 +322,15 @@ describe('useGenerateStore', () => {
       )
     })
 
-    it('开启时空 prompt 原样发出 —— 那是「自动全拆」，不是待补全的输入', async () => {
-      useGenerateStore.setState({
+    it('空 prompt 原样发出 —— 那是「自动全拆」，不是待补全的输入', async () => {
+      useGenerateStore.setState({ prompt: '用户正在写的下一条' })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', {
         prompt: '',
         referenceImages: ['https://cos.example.com/scene.png'],
         layerDecomposition: true,
       })
-      const api = createMockApi()
-
-      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
 
       expect(api.generateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: '' }))
     })
@@ -347,10 +354,10 @@ describe('useGenerateStore', () => {
     }
 
     it('同批共享一个 layerGroupId，逐张带自己的 zIndex / name', async () => {
-      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      useGenerateStore.setState({ prompt: '' })
       const api = createMockApi({ generateImage: vi.fn().mockResolvedValue(LAYER_RESULT) })
 
-      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', { layerDecomposition: true })
 
       const meta = useGenerateStore.getState().resultMeta
       expect(meta).toHaveLength(3)
@@ -362,10 +369,10 @@ describe('useGenerateStore', () => {
     })
 
     it('layer 里不存 url —— 上传热切后自带的那份就是过期链接', async () => {
-      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      useGenerateStore.setState({ prompt: '' })
       const api = createMockApi({ generateImage: vi.fn().mockResolvedValue(LAYER_RESULT) })
 
-      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', { layerDecomposition: true })
 
       for (const m of useGenerateStore.getState().resultMeta) {
         expect(m.layer).not.toHaveProperty('url')
@@ -373,10 +380,10 @@ describe('useGenerateStore', () => {
     })
 
     it('带上 boundingBox / description，不在 store 层丢信息', async () => {
-      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      useGenerateStore.setState({ prompt: '' })
       const api = createMockApi({ generateImage: vi.fn().mockResolvedValue(LAYER_RESULT) })
 
-      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', { layerDecomposition: true })
 
       const meta = useGenerateStore.getState().resultMeta
       expect(meta[1].layer?.description).toBe('站立的女性')
@@ -398,7 +405,7 @@ describe('useGenerateStore', () => {
     })
 
     it('layers 与图片数量不一致时整批不认 —— 宁可退化平铺，也不要把图层名错配到别的图上', async () => {
-      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      useGenerateStore.setState({ prompt: '' })
       const api = createMockApi({
         generateImage: vi.fn().mockResolvedValue({
           success: true,
@@ -407,7 +414,7 @@ describe('useGenerateStore', () => {
         }),
       })
 
-      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', { layerDecomposition: true })
 
       const meta = useGenerateStore.getState().resultMeta
       expect(meta).toHaveLength(3)
@@ -421,7 +428,6 @@ describe('useGenerateStore', () => {
       useGenerateStore.setState({
         prompt: '用户正在写的下一条',
         referenceImages: ['data:ref-user'],
-        layerDecomposition: false,
       })
       const api = createMockApi()
 
@@ -442,7 +448,6 @@ describe('useGenerateStore', () => {
       const after = useGenerateStore.getState()
       expect(after.prompt).toBe('用户正在写的下一条')
       expect(after.referenceImages).toEqual(['data:ref-user'])
-      expect(after.layerDecomposition).toBe(false)
     })
 
     it('不给 overrides 时照旧读表单（原行为不变）', async () => {
