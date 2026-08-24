@@ -14,8 +14,10 @@ const SANDBOX_MODES = new Set<CodexSandboxMode>([
   'workspace-write',
   'danger-full-access',
 ])
+// `untrusted` is absent on purpose — openai/codex#39630 retired it in 0.149.0
+// and the panel no longer offers it, so the IPC path must reject it outright.
+// Legacy persisted values are migrated in `SessionConfigStore.loadSync`.
 const APPROVAL_POLICIES = new Set<CodexApprovalPolicy>([
-  'untrusted',
   'on-request',
   'never',
 ])

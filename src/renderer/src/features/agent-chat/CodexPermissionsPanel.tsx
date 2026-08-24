@@ -25,8 +25,10 @@ const SANDBOX_OPTIONS: PanelOption<CodexSandboxMode>[] = [
   { value: 'workspace-write', label: '工作区可写' },
   { value: 'danger-full-access', label: '完全访问' },
 ]
+// `untrusted`(旧「严格审批」)已被 openai/codex#39630 在 0.149.0 退役,显式传入
+// 会让 app-server 在 config 加载阶段直接失败。最接近的存活档是 on-request——
+// 上游对 untrusted 项目的替代行为就是「每条命令都请求审批」。
 const APPROVAL_OPTIONS: PanelOption<CodexApprovalPolicy>[] = [
-  { value: 'untrusted', label: '严格审批' },
   { value: 'on-request', label: '按需审批' },
   { value: 'never', label: '免审批' },
 ]

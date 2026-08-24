@@ -104,6 +104,32 @@ describe('SessionConfigStore', () => {
     expect(new SessionConfigStore(tmpDir).loadSync()).toEqual({})
   })
 
+  it('migrates the retired untrusted approval policy to on-request', () => {
+    writeFileSync(storePath(), JSON.stringify({
+      version: 1,
+      overrides: { approvalPolicy: 'untrusted' },
+    }), 'utf8')
+    expect(new SessionConfigStore(tmpDir).loadSync()).toEqual({ approvalPolicy: 'on-request' })
+  })
+
+  it('keeps sibling overrides when migrating a retired approval policy', () => {
+    // The whole-file rejection path would drop these too, which is exactly what
+    // the migration exists to avoid.
+    writeFileSync(storePath(), JSON.stringify({
+      version: 1,
+      overrides: {
+        approvalPolicy: 'untrusted',
+        sandboxMode: 'workspace-write',
+        personality: 'pragmatic',
+      },
+    }), 'utf8')
+    expect(new SessionConfigStore(tmpDir).loadSync()).toEqual({
+      approvalPolicy: 'on-request',
+      sandboxMode: 'workspace-write',
+      personality: 'pragmatic',
+    })
+  })
+
   it('ignores writableRoots smuggled into a persisted file', () => {
     writeFileSync(storePath(), JSON.stringify({
       version: 1,
