@@ -12,6 +12,8 @@ interface Props {
    * 返回 Promise<boolean>:成功 true / 已满或失败 false。用于按钮反馈。
    */
   onAddReference?: (imageUrl: string) => boolean | Promise<boolean>
+  /** 提供后,工具栏出现「图层分离」一键(把这一张拆成底图 + 透明图层栈)。 */
+  onLayerSplit?: (imageUrl: string) => void
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * 按钮本体在共享的 ImageEditActions 里;本组件只负责
  * 「hover 才显示 + 顶部居中定位 + UI 偏好开关」这层壳。
  */
-export default function ImageEditToolbar({ theme, imageUrl, onOpenEditor, onInjectPrompt, onAddReference }: Props) {
+export default function ImageEditToolbar({ theme, imageUrl, onOpenEditor, onInjectPrompt, onAddReference, onLayerSplit }: Props) {
   const enabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
   if (!enabled || !imageUrl) return null
 
@@ -39,6 +41,7 @@ export default function ImageEditToolbar({ theme, imageUrl, onOpenEditor, onInje
         onOpenEditor={onOpenEditor}
         onInjectPrompt={onInjectPrompt}
         onAddReference={onAddReference}
+        onLayerSplit={onLayerSplit}
       />
     </div>
   )

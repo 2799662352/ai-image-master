@@ -2,7 +2,7 @@ import { useRef, useMemo, useCallback, useState } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import { useApi } from '../hooks/useService'
-import type { GenerateSnapshot } from '../stores/useGenerateStore'
+import { LAYER_SPLIT_MODEL, type GenerateSnapshot } from '../stores/useGenerateStore'
 import type { BatchRefImage } from '../stores/useBatchStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
@@ -14,6 +14,8 @@ import type { MediaRef } from '../components/shared/media-tokens/types'
 import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
 import '../components/shared/media-tokens/media-tokens.css'
 import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
+import { toUpstreamFetchableImage } from '../components/shared/image-editors/referenceTargets'
+import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -26,6 +28,7 @@ export default function GeneratePage() {
   const resolution = useGenerateStore((s) => s.resolution)
   const quality = useGenerateStore((s) => s.quality)
   const count = useGenerateStore((s) => s.count)
+  const layerDecomposition = useGenerateStore((s) => s.layerDecomposition)
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
@@ -38,6 +41,7 @@ export default function GeneratePage() {
     setResolution,
     setQuality,
     setCount,
+    setLayerDecomposition,
     addReferenceImage,
     removeReferenceImage,
     clearReferenceImages,
@@ -107,7 +111,21 @@ export default function GeneratePage() {
   // 失败两次时,依赖 [error] 的 effect 第二次不会重跑,那一次就悄无声息了。
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) {
+    // 拆分模式的两条前置与普通出图相反:空提示词是合法的(=自动全拆),但必须有一张待拆的图。
+    if (layerDecomposition) {
+      if (referenceImages.length === 0) {
+        addToast({ message: '图层分离需要先上传一张待拆分的图', type: 'warning' })
+        return
+      }
+      // 上游一次只吃一张待拆图,多的会被静默丢掉 —— 参考图区本来就是为多图融合
+      // 设计的(SD5 Pro 收 10 张),用户很自然会拖好几张进来。不拦,但必须说。
+      if (referenceImages.length > 1) {
+        addToast({
+          message: `图层分离一次只拆一张，本次用第 1 张（其余 ${referenceImages.length - 1} 张忽略）`,
+          type: 'warning',
+        })
+      }
+    } else if (!prompt.trim()) {
       addToast({ message: '请输入提示词', type: 'warning' })
       return
     }
@@ -129,6 +147,36 @@ export default function GeneratePage() {
       addToast({ message: `生成完成 (+${added} 张)`, type: 'success' })
     }
   }
+
+  /**
+   * 对某张已有结果图一键图层分离。
+   *
+   * 走 `generate` 的 overrides 通道:**不碰表单**(用户正写着的下一条 prompt
+   * 不该被这次操作洗掉),渠道强制 SD5 Pro(换渠道这动作根本做不了),
+   * prompt 传空 = 自动全拆。产出照常进结果区,自动收成一张「▤ N 层」的卡片。
+   */
+  const handleLayerSplit = useCallback(async (imageUrl: string) => {
+    // 按张计费,一张复杂图可能拆出 17 张 —— 点之前先让用户知道正在花钱。
+    addToast({ message: '正在拆分图层…（按张计费，最多 17 张）', type: 'info' })
+    // base64 直出模型(nano2 4K 等)的结果图是 blob:,只在本渲染进程内有效;
+    // 直接发出去会被 normalizeImageSource 当成裸 base64 拼成垃圾 data URL。
+    const source = await toUpstreamFetchableImage(imageUrl)
+    const { added, error: failure } = await generate(api, LAYER_SPLIT_MODEL, {
+      prompt: '',
+      referenceImages: [source],
+      layerDecomposition: true,
+      // 不跟表单的分辨率:你就是要拆眼前这张,输出该跟随它的尺寸与宽高比。
+      // 跟着表单发 2K,拆一张 1024² 的图会回来一张尺寸对不上的底图。
+      resolution: LAYER_SPLIT_DEFAULT_RESOLUTION,
+    })
+    if (failure) {
+      addToast({ message: failure, type: 'error' })
+      return
+    }
+    if (added > 0) {
+      addToast({ message: `图层分离完成（${added} 层）`, type: 'success' })
+    }
+  }, [api, generate, addToast])
 
   /**
    * 点 [重编辑] 按钮: 把对应结果的 snapshot 灌回表单。
@@ -207,6 +255,8 @@ export default function GeneratePage() {
         onQualityChange={setQuality}
         count={count}
         onCountChange={setCount}
+        layerDecomposition={layerDecomposition}
+        onLayerDecompositionChange={setLayerDecomposition}
       />
 
       {/* 参考图:复用 Batch 的拖拽上传 + 自动压缩 + 点击预览 */}
@@ -247,6 +297,7 @@ export default function GeneratePage() {
         meta={resultMeta}
         onEditFromResult={handleEditFromResult}
         onPreview={(index) => setLightbox({ urls: resultUrls, index })}
+        onLayerSplit={handleLayerSplit}
       />
 
       {/* ===== 共享预览 lightbox(←/→ 左右切换,结果区/参考图共用) ===== */}

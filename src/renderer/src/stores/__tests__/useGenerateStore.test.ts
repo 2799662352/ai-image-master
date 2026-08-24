@@ -284,6 +284,207 @@ describe('useGenerateStore', () => {
     })
   })
 
+  describe('generate — 图层分离', () => {
+    it('关闭时不发 layerDecomposition 字段(普通出图请求形状不变)', async () => {
+      useGenerateStore.setState({ prompt: 'a cat', ratio: '1:1' })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'flux')
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.not.objectContaining({ layerDecomposition: expect.anything() }),
+      )
+    })
+
+    it('开启时把 layerDecomposition 发给 ApiService', async () => {
+      useGenerateStore.setState({
+        prompt: '只拆出前景人物',
+        referenceImages: ['https://cos.example.com/scene.png'],
+        layerDecomposition: true,
+      })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          layerDecomposition: true,
+          prompt: '只拆出前景人物',
+          referenceImages: ['https://cos.example.com/scene.png'],
+        }),
+      )
+    })
+
+    it('开启时空 prompt 原样发出 —— 那是「自动全拆」，不是待补全的输入', async () => {
+      useGenerateStore.setState({
+        prompt: '',
+        referenceImages: ['https://cos.example.com/scene.png'],
+        layerDecomposition: true,
+      })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+
+      expect(api.generateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: '' }))
+    })
+  })
+
+  describe('generate — 图层元数据落进 resultMeta', () => {
+    const LAYER_RESULT = {
+      success: true,
+      urls: ['base.png', 'mid.png', 'top.png'],
+      layers: [
+        { url: 'base.png', mimeType: 'image/png', zIndex: 0 },
+        { url: 'mid.png', mimeType: 'image/png', zIndex: 1, name: '前景人物', description: '站立的女性' },
+        {
+          url: 'top.png',
+          mimeType: 'image/png',
+          zIndex: 2,
+          name: '标题文字',
+          boundingBox: { normalized: [100, 200, 900, 400] },
+        },
+      ],
+    }
+
+    it('同批共享一个 layerGroupId，逐张带自己的 zIndex / name', async () => {
+      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      const api = createMockApi({ generateImage: vi.fn().mockResolvedValue(LAYER_RESULT) })
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+
+      const meta = useGenerateStore.getState().resultMeta
+      expect(meta).toHaveLength(3)
+      const gid = meta[0].layerGroupId
+      expect(gid).toBeTruthy()
+      expect(meta.every((m) => m.layerGroupId === gid)).toBe(true)
+      expect(meta.map((m) => m.layer?.zIndex)).toEqual([0, 1, 2])
+      expect(meta.map((m) => m.layer?.name)).toEqual([undefined, '前景人物', '标题文字'])
+    })
+
+    it('layer 里不存 url —— 上传热切后自带的那份就是过期链接', async () => {
+      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      const api = createMockApi({ generateImage: vi.fn().mockResolvedValue(LAYER_RESULT) })
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+
+      for (const m of useGenerateStore.getState().resultMeta) {
+        expect(m.layer).not.toHaveProperty('url')
+      }
+    })
+
+    it('带上 boundingBox / description，不在 store 层丢信息', async () => {
+      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      const api = createMockApi({ generateImage: vi.fn().mockResolvedValue(LAYER_RESULT) })
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+
+      const meta = useGenerateStore.getState().resultMeta
+      expect(meta[1].layer?.description).toBe('站立的女性')
+      expect(meta[2].layer?.boundingBox).toEqual({ normalized: [100, 200, 900, 400] })
+    })
+
+    it('普通出图不带 layerGroupId（不分组，网格行为不变）', async () => {
+      useGenerateStore.setState({ prompt: 'a cat' })
+      const api = createMockApi({
+        generateImage: vi.fn().mockResolvedValue({ success: true, urls: ['a.jpg', 'b.jpg'] }),
+      })
+
+      await useGenerateStore.getState().generate(api, 'flux')
+
+      for (const m of useGenerateStore.getState().resultMeta) {
+        expect(m.layerGroupId).toBeUndefined()
+        expect(m.layer).toBeUndefined()
+      }
+    })
+
+    it('layers 与图片数量不一致时整批不认 —— 宁可退化平铺，也不要把图层名错配到别的图上', async () => {
+      useGenerateStore.setState({ prompt: '', layerDecomposition: true })
+      const api = createMockApi({
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          urls: ['a.png', 'b.png', 'c.png'],
+          layers: [{ url: 'a.png', mimeType: 'image/png', zIndex: 0 }],
+        }),
+      })
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628')
+
+      const meta = useGenerateStore.getState().resultMeta
+      expect(meta).toHaveLength(3)
+      expect(meta.every((m) => m.layerGroupId === undefined)).toBe(true)
+    })
+  })
+
+  describe('generate overrides — 对已有图一键拆分', () => {
+    it('用 overrides 发请求，且一个字都不动表单', async () => {
+      // 用户正写着下一条 prompt、挂着别的参考图 —— 点某张结果图拆层不该洗掉它们
+      useGenerateStore.setState({
+        prompt: '用户正在写的下一条',
+        referenceImages: ['data:ref-user'],
+        layerDecomposition: false,
+      })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', {
+        prompt: '',
+        referenceImages: ['https://x/target.png'],
+        layerDecomposition: true,
+      })
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '',
+          referenceImages: ['https://x/target.png'],
+          layerDecomposition: true,
+          model: 'doubao-seedream-5-0-pro-260628',
+        }),
+      )
+      const after = useGenerateStore.getState()
+      expect(after.prompt).toBe('用户正在写的下一条')
+      expect(after.referenceImages).toEqual(['data:ref-user'])
+      expect(after.layerDecomposition).toBe(false)
+    })
+
+    it('不给 overrides 时照旧读表单（原行为不变）', async () => {
+      useGenerateStore.setState({ prompt: 'a cat', referenceImages: ['data:ref1'] })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'flux')
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: 'a cat', referenceImages: ['data:ref1'] }),
+      )
+    })
+
+    it('overrides 的产出照常进结果区并归组', async () => {
+      useGenerateStore.setState({ prompt: '别动我' })
+      const api = createMockApi({
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          urls: ['base.png', 'l1.png'],
+          layers: [
+            { url: 'base.png', mimeType: 'image/png', zIndex: 0 },
+            { url: 'l1.png', mimeType: 'image/png', zIndex: 1, name: '前景' },
+          ],
+        }),
+      })
+
+      const { added } = await useGenerateStore
+        .getState()
+        .generate(api, 'doubao-seedream-5-0-pro-260628', {
+          prompt: '',
+          referenceImages: ['https://x/target.png'],
+          layerDecomposition: true,
+        })
+
+      expect(added).toBe(2)
+      const meta = useGenerateStore.getState().resultMeta
+      expect(meta).toHaveLength(2)
+      expect(meta[0].layerGroupId).toBeTruthy()
+      expect(meta[0].layerGroupId).toBe(meta[1].layerGroupId)
+    })
+  })
+
   describe('restoreForEdit', () => {
     it('writes prompt / ratio / referenceImages back into the form', () => {
       useGenerateStore.setState({

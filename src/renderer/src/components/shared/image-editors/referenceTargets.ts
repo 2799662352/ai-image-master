@@ -40,6 +40,27 @@ async function toDataUrl(url: string): Promise<string> {
   }
 }
 
+/**
+ * 把「界面上正在显示的这张图的地址」变成**上游真能取到**的形式。
+ *
+ * 三种来源要区别对待，混为一谈会踩两个反方向的坑：
+ *  - `http(s):` —— 原样透传。上游自己去 fetch，别在这儿转 base64:一张 2K 图内联
+ *    进请求体是几 MB，而 seedream 那条链路明确要求 URL 直传（见
+ *    ApiService.seedream50Pro 的「不把 COS/URL 参考图内联成 base64」用例）。
+ *  - `data:` —— 已经是自包含的，原样透传。
+ *  - `blob:` 及其它本地形态 —— **必须转**。blob: 只在本渲染进程内有效，发出去上游
+ *    取不到；更糟的是 ApiService.normalizeImageSource 会把它当成一段裸 base64，
+ *    拼成 `data:image/jpeg;base64,blob:http://…` 这种垃圾，请求照发不误、错误也
+ *    不会指向真正的原因。base64 直出模型（nano2 4K 等）的结果图全都是 blob:。
+ *
+ * 取数据失败时回落原始 URL —— 让上游去报一个真实的错，比我们这里静默造一个假的好。
+ */
+export async function toUpstreamFetchableImage(url: string): Promise<string> {
+  if (!url) return url
+  if (/^https?:\/\//i.test(url) || url.startsWith('data:')) return url
+  return toDataUrl(url)
+}
+
 const BATCH_REF_CAP = 16
 
 /**

@@ -14,6 +14,8 @@ import {
   type MaterializedImage,
 } from '../utils/imageResources'
 import { toRenderableUri } from '../features/file-explorer/uri'
+import { LAYER_SPLIT_MODEL } from './useGenerateStore'
+import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
 
 export type BatchMode = 'card' | 'multi'
 
@@ -64,6 +66,31 @@ export interface BatchItem {
   uploadStatus?: BatchUploadStatus
   uploadError?: string
   error?: string
+  /**
+   * 同一次图层分离产出的所有卡片共享这个 id。结果区据此把它们收成**一张**卡
+   * —— 一次拆分最多 17 张,平铺开会让用户以为自己一次生成了 17 张图,而图层
+   * 是按 bbox 裁切放大的,平铺看就是一堆尺寸奇怪的碎片。
+   *
+   * 复用既有的「兄弟卡」通路(组图那条):底图回填原 item,图层作为兄弟卡插在
+   * 其后,只是额外打上这个组标记 + 逐卡的 layer 元数据。
+   */
+  /**
+   * 这一项是「把 referenceImages[0] 拆成图层」而不是「按 prompt 出一张新图」。
+   *
+   * 走同一条队列而不是另开一条旁路:物化 → 兄弟卡 → COS 入队 → 写 history 这段
+   * 是 item 作用域的一整套,复制一份迟早漂移。worker 见到这个标志时做三件事 ——
+   * 不套提示词模板(空 prompt = 自动全拆,套模板会把它变成按模板那句话拆)、
+   * 渠道强制 SD5 Pro、请求带上 layerDecomposition。
+   */
+  layerDecomposition?: boolean
+  layerGroupId?: string
+  /** 本卡在图层栈里的位置与命名。与 layerGroupId 同时出现。 */
+  layer?: {
+    zIndex: number
+    name?: string
+    description?: string
+    boundingBox?: { absolute?: number[]; normalized?: number[] }
+  }
   /**
    * 入队时锁定的参考图(base64 带 data: 前缀)。如果用户在 batch 运行中
    * 改了参考图又点"加入队列", 新 item 携带的是修改后的 refs, 不会被
@@ -151,6 +178,16 @@ export interface BatchState {
 
   // ---- actions: 队列 ----
   addItem: (prompt: string, opts?: { referenceImages?: string[]; ratio?: string; model?: string }) => void
+  /**
+   * 把「拆这张图的图层」作为一项排进队列。
+   *
+   * 走队列而不是旁路调一次 API:产出要经过物化 → 兄弟卡 → COS 上传 → 写 history
+   * 这一整套 item 作用域的后处理,那段不该复制第二份。
+   *
+   * `imageUrl` 必须是上游能取到的形态(http / data),调用方负责先过
+   * `toUpstreamFetchableImage` —— blob: 只在本渲染进程有效。
+   */
+  addLayerSplitItem: (imageUrl: string) => void
   removeItem: (id: string) => void
   clearAll: () => void
   runBatch: (api: ApiActions, modelKey: string, opts?: BatchRunOpts) => Promise<void>
@@ -287,6 +324,27 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     // so the user reported "二次任务我发上去了 第二次 第一个 任务不会
     // 开始" because they had to wait for batch 1 to resolve a slot.
     // Now each addItem during a run can grow the pool up to HARD_MAX.
+    const spawn = get()._spawnWorker
+    if (spawn && get().running) spawn()
+  },
+
+  addLayerSplitItem: (imageUrl) => {
+    set((s) => ({
+      items: trimItems([
+        ...s.items,
+        {
+          id: crypto.randomUUID(),
+          // 卡片标题:空 prompt 是「自动全拆」的正确形态,但卡上不能空着。
+          // 真正发出去的 prompt 由 worker 从 item.prompt 取 —— 所以这里必须是
+          // 空串,标题另走 layerDecomposition 分支显示(见 PunkResultGrid)。
+          prompt: '',
+          status: 'pending',
+          referenceImages: [imageUrl],
+          layerDecomposition: true,
+          modelKey: LAYER_SPLIT_MODEL,
+        },
+      ]),
+    }))
     const spawn = get()._spawnWorker
     if (spawn && get().running) spawn()
   },
@@ -441,25 +499,41 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
           try {
             const templateKey = useTemplateStore.getState().getSelection('batch')
-            const finalPrompt = composePromptWithTemplate(templateKey, item.prompt)
+            // 拆分项不套模板:它的 prompt 语义是「要拆出什么」,空串=自动全拆。
+            // 套上出图模板会把「自动全拆」变成一句风格描述,直接改掉请求的含义。
+            const finalPrompt = item.layerDecomposition
+              ? item.prompt
+              : composePromptWithTemplate(templateKey, item.prompt)
             // item 自身可能携带入队时锁定的 refs/ratio/model (用户 mid-run 切了
             // 模型 / 改了 refs 后追加的新 item), 优先取自身值, 否则 fallback 到
             // runBatch 闭包快照。model 尤其关键: 一批在跑时切顶栏模型再加队列,
             // 新 item 必须用切换后的模型,而不是闭包捕获的旧 modelKey。
-            const itemModel = item.modelKey ?? modelKey
+            // 拆分只有 SD5 Pro 能做,不看用户当前选的模型 —— 按选中模型跑只会拿到
+            // 一个能力守卫的报错,而用户并不知道该先去切模型。
+            const itemModel = item.layerDecomposition
+              ? LAYER_SPLIT_MODEL
+              : (item.modelKey ?? modelKey)
             const itemRatio = item.ratio ?? ratio
-            const itemRefs = item.referenceImages
-              ? item.referenceImages.map(stripDataUrl).filter(Boolean)
-              : referenceImages
+            // 拆分项不过 stripDataUrl:它会把 data URL 削成裸 base64,再由
+            // normalizeImageSource 用默认 mime(jpeg)包回去 —— 一张 PNG 图层源
+            // 就这么被贴上 jpeg 的标签。普通批量项沿用原行为不动。
+            const itemRefs = item.layerDecomposition
+              ? (item.referenceImages ?? [])
+              : item.referenceImages
+                ? item.referenceImages.map(stripDataUrl).filter(Boolean)
+                : referenceImages
             const result = await api.generateImage({
               prompt: finalPrompt,
               model: itemModel,
               ratio: itemRatio !== 'auto' ? itemRatio : undefined,
-              resolution,
+              // 拆分不跟表单分辨率:输出该跟随被拆那张图的尺寸与宽高比,
+              // 发 2K 会让底图按 2K 档重出、与原图对不上。
+              resolution: item.layerDecomposition ? LAYER_SPLIT_DEFAULT_RESOLUTION : resolution,
               quality,
               count,
               referenceImages: itemRefs.length > 0 ? itemRefs : undefined,
               signal: ac.signal,
+              ...(item.layerDecomposition ? { layerDecomposition: true } : {}),
             })
 
             if (ac.signal.aborted) break
@@ -500,19 +574,48 @@ export const useBatchStore = create<BatchState>((set, get) => ({
             }
             const url = materialized[0].displayUrl
 
+            // 图层分离:ApiService 已把 layers 按 zIndex 升序排好并用它覆盖过 urls 的
+            // 顺序,所以 layers[i] 恒对应 materialized[i](底图在 0 位,正好回填原卡)。
+            // 长度不等就整批不认 —— 宁可退化成普通兄弟卡平铺,也不要把图层名错配到
+            // 别的图上。
+            const layers =
+              result.layers && result.layers.length === materialized.length
+                ? result.layers
+                : undefined
+            const layerGroupId = layers ? crypto.randomUUID() : undefined
+            const layerAt = (i: number) =>
+              layers && layerGroupId
+                ? {
+                    layerGroupId,
+                    layer: {
+                      zIndex: layers[i].zIndex,
+                      ...(layers[i].name ? { name: layers[i].name } : {}),
+                      ...(layers[i].description ? { description: layers[i].description } : {}),
+                      ...(layers[i].boundingBox ? { boundingBox: layers[i].boundingBox } : {}),
+                    },
+                  }
+                : {}
+
             // 为多出来的系列图(urls[1..])建兄弟卡, 复用原 item 的 prompt/ratio/refs/snapshot。
-            const siblings: BatchItem[] = materialized.slice(1).map((m) => ({
+            const siblings: BatchItem[] = materialized.slice(1).map((m, i) => ({
               ...item,
               id: crypto.randomUUID(),
               status: 'done' as const,
               resultUrl: m.displayUrl,
               uploadStatus: 'uploading' as const,
+              ...layerAt(i + 1),
             }))
 
             set((state) => {
               const mapped = state.items.map((i) =>
                 i.id === item.id
-                  ? { ...i, status: 'done' as const, resultUrl: url, uploadStatus: 'uploading' as const }
+                  ? {
+                      ...i,
+                      status: 'done' as const,
+                      resultUrl: url,
+                      uploadStatus: 'uploading' as const,
+                      ...layerAt(0),
+                    }
                   : i
               )
               if (siblings.length === 0) return { items: mapped }

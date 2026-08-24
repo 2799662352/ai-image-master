@@ -38,6 +38,23 @@ export interface GenerateSnapshot {
   modelKey: string
 }
 
+/**
+ * 图层拆分产物的元数据。**只存元数据，不存 url** —— url 一律从同索引的
+ * `resultUrls[i]` 取。
+ *
+ * 这不是洁癖:上传完成后 store 会把 `resultUrls[i]` 热切成 cosUrl(模型直出链
+ * 24h 过期)。图层要是自带一份 url，热切之后图层面板里就还是那条过期链接，
+ * 表现为「关掉重开图层就全裂了」。
+ */
+export interface ResultLayerMeta {
+  /** 叠放层级，0 = 底图。同组内唯一，升序即从下到上的绘制顺序。 */
+  zIndex: number
+  /** 上游给的图层名（如「前景人物」）；可能缺席，UI 兜底成「图层 N」。 */
+  name?: string
+  description?: string
+  boundingBox?: { absolute?: number[]; normalized?: number[] }
+}
+
 export interface ResultUploadMeta {
   id: string
   modelUrl: string
@@ -51,6 +68,13 @@ export interface ResultUploadMeta {
   uploadStatus: ResultUploadStatus
   uploadError?: string
   snapshot?: GenerateSnapshot
+  /**
+   * 同一次图层拆分产出的所有图共享这个 id。ResultGrid 据此把它们收成**一张**卡片
+   * —— 平铺成 N 张会让「一个带内部结构的产物」看起来像 N 个互不相干的结果。
+   */
+  layerGroupId?: string
+  /** 本张图在图层栈里的位置与命名。与 layerGroupId 同时出现。 */
+  layer?: ResultLayerMeta
 }
 
 /** 一次 generate() 的结局:新增了几张,以及失败时的原因。 */
@@ -68,6 +92,11 @@ export interface GenerateState {
   quality: string
   /** 出图张数(组图); 仅 multipleImages 模型有效, 万相 wan2.7 多张走 enable_sequential 系列一致 */
   count: number
+  /**
+   * 图层分离(Ark `layer_decomposition`); 仅 capabilities.layerDecomposition 的模型有效。
+   * 开启后这一次不是出新图, 而是把参考图拆成 1 张底图 + 若干透明 PNG 图层。
+   */
+  layerDecomposition: boolean
   /**
    * True when at least one in-flight generate call exists.
    * Derived from `inFlightCount > 0`. Kept as a discrete field for cheap
@@ -95,6 +124,7 @@ export interface GenerateState {
   setResolution: (v: string) => void
   setQuality: (v: string) => void
   setCount: (v: number) => void
+  setLayerDecomposition: (v: boolean) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
   clearReferenceImages: () => void
@@ -112,8 +142,22 @@ export interface GenerateState {
    *
    * 结果直接回给调用方而不是只写进 store:这个页面允许并发点,靠"全局结果
    * 张数差"反推本次成没成,会把并发那一次的图算到自己头上。
+   *
+   * `overrides` 用于**不经表单的一次性生成** —— 目前只有「对某张已有结果图点
+   * 图层分离」。给了就用它替换对应的表单快照值,表单本身一个字都不动
+   * (用户正在写的下一条 prompt 不该被这次操作洗掉)。产出照常进结果区,
+   * 复用同一条物化 / FIFO / COS 上传流水线。
    */
-  generate: (api: ApiActions, modelKey: string) => Promise<GenerateOutcome>
+  generate: (
+    api: ApiActions,
+    modelKey: string,
+    overrides?: {
+      prompt?: string
+      referenceImages?: string[]
+      layerDecomposition?: boolean
+      resolution?: string
+    },
+  ) => Promise<GenerateOutcome>
   /**
    * 把一组表单参数回灌到当前 store, 用于"重新编辑"。
    * 不会触发生成 —— 只是恢复表单状态, 让用户能继续修改后再点生成。
@@ -135,6 +179,7 @@ export const initialState = {
   resolution: '2K',
   quality: 'auto',
   count: 1,
+  layerDecomposition: false,
   generating: false,
   inFlightCount: 0,
   resultUrls: [] as string[],
@@ -160,6 +205,13 @@ function nextId(): string {
  */
 const MAX_RESULT_HISTORY = 200
 
+/**
+ * 图层分离唯一支持的渠道。对某张已有图点「图层分离」时强制走它,不看用户当前
+ * 选的模型 —— 换个渠道这个动作根本做不了,让它按选中模型跑只会拿到一个能力守卫
+ * 的报错,而用户并不知道自己该先去切模型。
+ */
+export const LAYER_SPLIT_MODEL = 'doubao-seedream-5-0-pro-260628'
+
 export const useGenerateStore = create<GenerateState>((set, get) => ({
   ...initialState,
 
@@ -168,6 +220,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   setResolution: (v) => set({ resolution: v }),
   setQuality: (v) => set({ quality: v }),
   setCount: (v) => set({ count: v }),
+  setLayerDecomposition: (v) => set({ layerDecomposition: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
     set((s) => ({
@@ -205,13 +258,20 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     }))
   },
 
-  generate: async (api, modelKey) => {
+  generate: async (api, modelKey, overrides) => {
     // Snapshot form values at submit time so the user can keep typing the
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
-    const { prompt, ratio, resolution, quality, count, referenceImages } = get()
+    const form = get()
+    const { ratio, quality, count } = form
+    const resolution = overrides?.resolution ?? form.resolution
+    const prompt = overrides?.prompt ?? form.prompt
+    const referenceImages = overrides?.referenceImages ?? form.referenceImages
+    const layerDecomposition = overrides?.layerDecomposition ?? form.layerDecomposition
     const templateKey = useTemplateStore.getState().getSelection('generate')
-    const finalPrompt = composePromptWithTemplate(templateKey, prompt)
+    // 拆分模式下 prompt 的语义是「要拆出什么」,空串=自动全拆。套上出图模板会把
+    // 「自动全拆」变成一句风格描述,直接改掉这次请求的含义 —— 所以不套。
+    const finalPrompt = layerDecomposition ? prompt : composePromptWithTemplate(templateKey, prompt)
     const refsSnapshot = referenceImages.length > 0 ? [...referenceImages] : undefined
 
     // 用户实际看到 + 输入的原始 prompt(不含模板套词), 用来回灌表单 ——
@@ -238,6 +298,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         count,
         model: modelKey,
         referenceImages: refsSnapshot,
+        ...(layerDecomposition ? { layerDecomposition: true } : {}),
       })
       const rawUrls = result.urls ?? result.images ?? []
 
@@ -260,14 +321,32 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       const materialized = await materializeImageUrls(rawUrls)
       const urls = materialized.map((m) => m.displayUrl)
 
+      // 图层拆分:ApiService 已把 layers 按 zIndex 升序排好，且用它覆盖过 images
+      // 的顺序，所以 layers[i] 恒对应 urls[i]。长度不等就整批不认(宁可退化成普通
+      // 平铺，也不要把图层名错配到别的图上)。
+      const layers =
+        result.layers && result.layers.length === urls.length ? result.layers : undefined
+      const layerGroupId = layers ? nextId() : undefined
+
       // 为每张图分配 id + meta, 同步推入 resultUrls / resultMeta 两个数组。
       // snapshot 同一批 N 张图共享 — 浅引用即可, restoreForEdit 在写入时
       // 会拷一份, 这里不防御性深拷。
-      const newMetas: ResultUploadMeta[] = urls.map((u: string) => ({
+      const newMetas: ResultUploadMeta[] = urls.map((u: string, i: number) => ({
         id: nextId(),
         modelUrl: u,
         uploadStatus: 'uploading' as const,
         snapshot: editSnapshot,
+        ...(layers && layerGroupId
+          ? {
+              layerGroupId,
+              layer: {
+                zIndex: layers[i].zIndex,
+                ...(layers[i].name ? { name: layers[i].name } : {}),
+                ...(layers[i].description ? { description: layers[i].description } : {}),
+                ...(layers[i].boundingBox ? { boundingBox: layers[i].boundingBox } : {}),
+              },
+            }
+          : {}),
       }))
 
       set((s) => {

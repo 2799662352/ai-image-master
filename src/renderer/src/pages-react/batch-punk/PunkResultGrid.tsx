@@ -3,7 +3,11 @@ import type { BatchItem } from '../../stores/useBatchStore'
 import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
-import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
+import {
+  addImageUrlToReferences,
+  toUpstreamFetchableImage,
+} from '../../components/shared/image-editors/referenceTargets'
+import { LayerStackViewer } from '../generate/LayerStackViewer'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import '../../components/shared/image-editors/image-editors.css'
 
@@ -53,6 +57,46 @@ function buildFilename(index: number, prompt: string): string {
   return `batch-${seq}-${slug}-${ts}.png`
 }
 
+/**
+ * 把同一次图层分离产出的卡片收成一张。
+ *
+ * 一次拆分最多 17 张,平铺开会让用户以为自己一次生成了 17 张图;而图层是按 bbox
+ * 裁切放大的,平铺看就是一堆尺寸奇怪的碎片(502×484 的图标、1301×268 的文字条)。
+ * 所以整组只出一张卡,封面用底图(zIndex 最小),点开进图层查看器。
+ *
+ * 未分组的普通项原样保留、顺序不变 —— 批量页的卡片顺序是用户的心智锚点。
+ */
+export interface BatchGridEntry {
+  item: BatchItem
+  /** 图层组的全部成员(含底图),按入队序;非图层组为 undefined。 */
+  group?: BatchItem[]
+}
+
+export function groupBatchItems(items: BatchItem[]): BatchGridEntry[] {
+  const out: BatchGridEntry[] = []
+  const at = new Map<string, number>()
+
+  for (const item of items) {
+    const gid = item.layerGroupId
+    if (!gid) {
+      out.push({ item })
+      continue
+    }
+    const idx = at.get(gid)
+    if (idx === undefined) {
+      at.set(gid, out.length)
+      out.push({ item, group: [item] })
+      continue
+    }
+    const entry = out[idx]
+    entry.group!.push(item)
+    // 封面让位给底图 —— 拿一张透明图层当封面等于一张空白卡。
+    if ((item.layer?.zIndex ?? 0) < (entry.item.layer?.zIndex ?? 0)) entry.item = item
+  }
+
+  return out
+}
+
 const STATUS_BADGE: Record<BatchItem['status'], { cls: string; label: string }> = {
   pending:    { cls: 'p-badge--wait', label: 'WAIT' },
   generating: { cls: 'p-badge--run',  label: 'RUN' },
@@ -67,6 +111,9 @@ function ResultCard({
   onPreview,
   onOpenEditor,
   onInjectPrompt,
+  onLayerSplit,
+  group,
+  onOpenLayers,
 }: {
   item: BatchItem
   index: number
@@ -74,6 +121,11 @@ function ResultCard({
   onPreview?: (url: string) => void
   onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama' | 'director') => void
   onInjectPrompt?: (prompt: string) => void
+  /** 把这一张拆成图层(排进队列)。 */
+  onLayerSplit?: (imageUrl: string) => void
+  /** 本卡代表一整组图层时给全组;点卡片改为打开图层查看器。 */
+  group?: BatchItem[]
+  onOpenLayers?: (group: BatchItem[]) => void
 }) {
   const tilt = index % 4
   const tiltClass = ['p-tilt-l-2', 'p-tilt-r-2', 'p-tilt-l-3', 'p-tilt-r-3'][tilt]
@@ -188,16 +240,43 @@ function ResultCard({
           overflow: 'hidden',
           cursor: isDone ? 'zoom-in' : 'default',
         }}
-        onClick={() => isDone && onPreview?.(displayUrl!)}
+        onClick={() => {
+          if (!isDone) return
+          // 图层组:点卡片进查看器而不是放大单张 —— 放大一张透明图层没有意义,
+          // 用户要的是整个图层栈。
+          if (group && onOpenLayers) onOpenLayers(group)
+          else onPreview?.(displayUrl!)
+        }}
       >
-        {isDone && (
+        {isDone && !group && (
           <ImageEditToolbar
             theme="punk"
             imageUrl={displayUrl!}
             onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
             onInjectPrompt={onInjectPrompt}
             onAddReference={(url) => addImageUrlToReferences('batch', url)}
+            onLayerSplit={onLayerSplit}
           />
+        )}
+        {isDone && group && (
+          <span
+            className="p-mono"
+            data-testid="batch-layer-group-badge"
+            style={{
+              position: 'absolute',
+              top: 4,
+              left: 4,
+              zIndex: 20,
+              fontSize: 10,
+              fontWeight: 900,
+              padding: '1px 5px',
+              border: '2px solid var(--punk-black)',
+              background: 'var(--punk-pink)',
+              color: 'var(--punk-cream)',
+            }}
+          >
+            ▤ {group.length} 层
+          </span>
         )}
         {isDone && (
           <img
@@ -384,7 +463,8 @@ function ResultCard({
           minHeight: '2.6em',
         }}
       >
-        {item.prompt}
+        {/* 拆分项的 prompt 是空串(那才是「自动全拆」的正确形态),卡上不能空着。 */}
+        {item.prompt || (item.layerDecomposition ? '图层分离' : '')}
       </p>
 
       {item.error && !isFail && (
@@ -411,6 +491,7 @@ function ResultCard({
 export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
   const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' | 'director' } | null>(null)
   const [reversed, setReversed] = useState(true)
+  const [layerGroup, setLayerGroup] = useState<BatchItem[] | null>(null)
 
   const injectPrompt = (p: string) => {
     const { mode, cardPrompt, multiText, setCardPrompt, setMultiText } = useBatchStore.getState()
@@ -420,7 +501,16 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
 
   const failedItems = items.filter((i) => i.status === 'error')
   const doneItems = items.filter((i) => i.status === 'done')
-  const displayItems = reversed ? [...items].reverse() : items
+  // 先归组再反序:反序是显示顺序,归组是「哪些卡本来就是一张」,顺序不该拆散组。
+  const entries = groupBatchItems(items)
+  const displayEntries = reversed ? [...entries].reverse() : entries
+
+  const handleLayerSplit = async (imageUrl: string) => {
+    // base64 直出模型的结果图是 blob:,只在本渲染进程有效 —— 直接发出去会被
+    // normalizeImageSource 当成裸 base64 拼成垃圾 data URL。
+    const source = await toUpstreamFetchableImage(imageUrl)
+    useBatchStore.getState().addLayerSplitItem(source)
+  }
 
   if (items.length === 0) {
     return (
@@ -519,7 +609,7 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
             gap: 16,
           }}
         >
-          {displayItems.map((item) => {
+          {displayEntries.map(({ item, group }) => {
             const origIdx = items.indexOf(item)
             return (
               <ResultCard
@@ -530,6 +620,9 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
                 onPreview={onPreview}
                 onOpenEditor={(url, type) => setEditorState({ url, type })}
                 onInjectPrompt={injectPrompt}
+                onLayerSplit={handleLayerSplit}
+                group={group}
+                onOpenLayers={setLayerGroup}
               />
             )
           })}
@@ -544,6 +637,21 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
           directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
           onInjectPrompt={injectPrompt}
           onClose={() => setEditorState(null)}
+        />
+      )}
+      {layerGroup && (
+        <LayerStackViewer
+          layers={layerGroup.map((m) => ({
+            id: m.id,
+            // cosUrl 优先:上传完成后 resultUrl 会被置空并 revoke,拿它等于拿一条
+            // 已经失效的 blob。
+            url: (m.cosUrl ?? m.resultUrl) as string,
+            zIndex: m.layer?.zIndex ?? 0,
+            ...(m.layer?.name ? { name: m.layer.name } : {}),
+            ...(m.layer?.description ? { description: m.layer.description } : {}),
+            ...(m.layer?.boundingBox ? { boundingBox: m.layer.boundingBox } : {}),
+          }))}
+          onClose={() => setLayerGroup(null)}
         />
       )}
     </>

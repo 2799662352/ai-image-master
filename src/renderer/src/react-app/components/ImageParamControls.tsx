@@ -1,7 +1,9 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import {
   deriveImageParamControls,
   normalizeOption,
+  LAYER_SPLIT_RESOLUTION_OPTIONS,
+  LAYER_SPLIT_DEFAULT_RESOLUTION,
   type ImageParamModelConfig,
   type ParamOption,
 } from '../../services/api/imageParamControls'
@@ -37,6 +39,14 @@ interface ImageParamControlsProps {
    */
   negativePrompt?: string
   onNegativePromptChange?: (v: string) => void
+  /**
+   * 图层分离(Ark `layer_decomposition`);仅 `capabilities.layerDecomposition` 的模型
+   * 且传了 onLayerDecompositionChange 时渲染。开启后不是「出一张新图」而是「把参考图
+   * 拆成 1 张底图 + 若干透明图层」,因此比例/数量会被上游忽略 —— 这里同步禁用它们,
+   * 免得用户选了 16:9 却拿到一张比例不符的底图还找不到原因。
+   */
+  layerDecomposition?: boolean
+  onLayerDecompositionChange?: (v: boolean) => void
   /** 比例自动归位时优先选中的 key(默认 auto) */
   preferRatio?: string
   className?: string
@@ -105,13 +115,15 @@ export function ImageParamControls({
   onCountChange,
   negativePrompt,
   onNegativePromptChange,
+  layerDecomposition,
+  onLayerDecompositionChange,
   preferRatio = 'auto',
   className,
 }: ImageParamControlsProps) {
   const theme = THEMES[variant]
   const {
     ratioOptions,
-    resolutionOptions,
+    resolutionOptions: normalResolutionOptions,
     qualityOptions,
     supportsResolution,
     supportsQuality,
@@ -121,12 +133,27 @@ export function ImageParamControls({
     supportsCount,
     maxCount,
     supportsNegativePrompt,
+    supportsLayerDecomposition,
   } = deriveImageParamControls(modelConfig)
 
   const showQuality = supportsQuality && typeof quality === 'string' && Boolean(onQualityChange)
   const showCount = supportsCount && typeof count === 'number' && Boolean(onCountChange)
   const showNegativePrompt =
     supportsNegativePrompt && typeof negativePrompt === 'string' && Boolean(onNegativePromptChange)
+  const showLayerDecomposition =
+    supportsLayerDecomposition &&
+    typeof layerDecomposition === 'boolean' &&
+    Boolean(onLayerDecompositionChange)
+  // 开启拆分后比例/数量由上游按图内容决定,发过去也是被忽略 —— 灰掉而不是留着骗人。
+  const splitting = showLayerDecomposition && layerDecomposition === true
+
+  // 分辨率在拆分下是**另一套档位**(auto/1K/1.5K/2K),不是普通出图那两档。
+  // 继续用模型自带的 resolutions 会让 auto 和 1.5K 在界面上永远选不到,
+  // 而 auto 恰恰是这个场景的推荐值。
+  const resolutionOptions = splitting ? LAYER_SPLIT_RESOLUTION_OPTIONS : normalResolutionOptions
+  const effectiveDefaultResolution = splitting ? LAYER_SPLIT_DEFAULT_RESOLUTION : defaultResolution
+  // 拆分下分辨率恒可选:档位与模型的 resolutionControl 无关。
+  const showResolution = splitting || supportsResolution
 
   // 模型切换后自动归位(当前值不在新选项内时)
   useEffect(() => {
@@ -136,11 +163,24 @@ export function ImageParamControls({
   }, [ratioOptions])
 
   useEffect(() => {
-    if (!supportsResolution) return
-    const next = normalizeOption(resolution, resolutionOptions, defaultResolution)
+    if (!showResolution) return
+    const next = normalizeOption(resolution, resolutionOptions, effectiveDefaultResolution)
     if (next !== resolution) onResolutionChange(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolutionOptions, supportsResolution])
+  }, [resolutionOptions, showResolution])
+
+  // 开关**从关到开**的那一刻落到推荐档位 auto。
+  //
+  // 只靠上面的归位不够:普通出图停在 '2K' 时它凑巧也是合法拆分档位,归位不会动它,
+  // 于是用户拿到的是「按 2K 档重出底图」而不是「跟随原图尺寸」—— 拆一张 1024²
+  // 的图会回来一张尺寸对不上的底图。用 ref 认转变而不是认 splitting 的当前值,
+  // 这样组件重挂载(切页回来)不会把用户在拆分模式里选的 1K 洗回 auto。
+  const prevSplitting = useRef(splitting)
+  useEffect(() => {
+    if (splitting && !prevSplitting.current) onResolutionChange(LAYER_SPLIT_DEFAULT_RESOLUTION)
+    prevSplitting.current = splitting
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitting])
 
   useEffect(() => {
     if (!showQuality) return
@@ -160,6 +200,14 @@ export function ImageParamControls({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supportsCount, maxCount])
 
+  // 切到不支持拆分的模型时把开关关掉。留着 true 的话开关本身已经不渲染了,
+  // 用户看不到也关不掉,却会一路发到 ApiService 被能力守卫拒掉 —— 表现为
+  // 「换个模型就生成不了了」这种查无可查的故障。
+  useEffect(() => {
+    if (!supportsLayerDecomposition && layerDecomposition) onLayerDecompositionChange?.(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supportsLayerDecomposition])
+
   if (sizeHidden) {
     return (
       <div className={className ?? ''}>
@@ -170,7 +218,8 @@ export function ImageParamControls({
     )
   }
 
-  const colCount = 2 + (showQuality ? 1 : 0) + (showCount ? 1 : 0)
+  const colCount =
+    2 + (showQuality ? 1 : 0) + (showCount ? 1 : 0) + (showLayerDecomposition ? 1 : 0)
   const colClass =
     colCount >= 4
       ? 'grid-cols-2 sm:grid-cols-4'
@@ -181,26 +230,32 @@ export function ImageParamControls({
   return (
     <div className={className ?? `${theme.grid} ${colClass}`}>
       {/* 比例 */}
-      <div className={theme.card}>
+      <div className={splitting ? theme.cardDisabled : theme.card}>
         {theme.renderLabel('比例', 'fa-crop-alt')}
-        <select
-          value={ratio}
-          onChange={(e) => onRatioChange(e.target.value)}
-          className={theme.select}
-          aria-label="比例"
-        >
-          {ratioOptions.map((opt) => (
-            <option key={opt.key} value={opt.key}>
-              {formatOption(opt)}
-            </option>
-          ))}
-        </select>
+        {splitting ? (
+          <div className={theme.placeholder} aria-label="图层分离时比例由原图决定">
+            跟随原图
+          </div>
+        ) : (
+          <select
+            value={ratio}
+            onChange={(e) => onRatioChange(e.target.value)}
+            className={theme.select}
+            aria-label="比例"
+          >
+            {ratioOptions.map((opt) => (
+              <option key={opt.key} value={opt.key}>
+                {formatOption(opt)}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
-      {/* 分辨率 1K/2K/4K */}
-      <div className={supportsResolution ? theme.card : theme.cardDisabled}>
+      {/* 分辨率:普通出图是 1K/2K/4K,拆分下换成 auto/1K/1.5K/2K 档位 */}
+      <div className={showResolution ? theme.card : theme.cardDisabled}>
         {theme.renderLabel('分辨率', 'fa-expand-arrows-alt')}
-        {supportsResolution ? (
+        {showResolution ? (
           <select
             value={resolution}
             onChange={(e) => onResolutionChange(e.target.value)}
@@ -241,20 +296,49 @@ export function ImageParamControls({
 
       {/* 数量(组图) —— 仅 multipleImages 模型(如万相 wan2.7) */}
       {showCount && (
-        <div className={theme.card}>
+        <div className={splitting ? theme.cardDisabled : theme.card}>
           {theme.renderLabel('数量', 'fa-images')}
-          <select
-            value={count}
-            onChange={(e) => onCountChange?.(Number(e.target.value))}
-            className={theme.select}
-            aria-label="数量"
-          >
-            {Array.from({ length: maxCount }, (_, i) => i + 1).map((n) => (
-              <option key={n} value={n}>
-                {`${n} 张`}
-              </option>
-            ))}
-          </select>
+          {splitting ? (
+            <div className={theme.placeholder} aria-label="图层分离时张数由图层数决定">
+              按图层数
+            </div>
+          ) : (
+            <select
+              value={count}
+              onChange={(e) => onCountChange?.(Number(e.target.value))}
+              className={theme.select}
+              aria-label="数量"
+            >
+              {Array.from({ length: maxCount }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {`${n} 张`}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+
+      {/* 图层分离 —— 仅 capabilities.layerDecomposition(Seedream 5.0 Pro) */}
+      {showLayerDecomposition && (
+        <div className={theme.card}>
+          {theme.renderLabel('图层分离', 'fa-layer-group')}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={layerDecomposition}
+              onChange={(e) => onLayerDecompositionChange?.(e.target.checked)}
+              aria-label="图层分离"
+            />
+            {/* 两个 variant 的卡片都是深色底，文字颜色必须显式给，别指望继承 */}
+            <span className="text-xs text-white/80">
+              {layerDecomposition ? '拆成透明图层' : '关闭'}
+            </span>
+          </label>
+          <div className="mt-1 text-[11px] text-white/50">
+            {/* 只拆第 1 张是上游的硬约束，不写清楚用户会传一堆然后奇怪只出了一组 */}
+            {layerDecomposition ? '拆参考图的第 1 张' : '把参考图拆成底图 + 透明图层'}
+          </div>
         </div>
       )}
     </div>

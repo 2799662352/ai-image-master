@@ -74,6 +74,36 @@ describe('registerImageTools / generate_image schema', () => {
     expect(schema.safeParse({ prompt: '' }).success).toBe(false)
   })
 
+  it('accepts an empty prompt ONLY with layerDecomposition (that is the auto-split-everything mode)', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+
+    // 上游把「缺席的 prompt」当自动全拆；一句「图层分离」就该走这条路
+    expect(schema.safeParse({ prompt: '', layerDecomposition: true }).success).toBe(true)
+    expect(schema.safeParse({ prompt: '   ', layerDecomposition: true }).success).toBe(true)
+    // 拆分之外空 prompt 依然拒绝：放行只会烧一张图的钱换一张随机图
+    expect(schema.safeParse({ prompt: '', layerDecomposition: false }).success).toBe(false)
+    expect(schema.safeParse({ prompt: '   ' }).success).toBe(false)
+  })
+
+  it('keeps a zod object shape after the conditional-prompt refinement (the SDK needs .shape)', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    // registerTool 把 inputSchema 交给 standardSchemaToJsonSchema 生成 tools/list 的
+    // JSON Schema；refine 若把 ZodObject 降级成 ZodEffects，工具会在握手时就废掉。
+    expect(schema.shape).toBeDefined()
+    expect(Object.keys(schema.shape)).toContain('layerDecomposition')
+  })
+
+  it('rejects a non-boolean layerDecomposition', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(schema.safeParse({ prompt: 'x', layerDecomposition: 'yes' }).success).toBe(false)
+  })
+
   it('rejects out-of-enum resolution and quality', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
@@ -192,6 +222,32 @@ describe('generate_image (kick + budget + DONE/handoff)', () => {
     expect(router.call).toHaveBeenCalledWith(
       'generate_image',
       expect.objectContaining({ model: 'wan2.7-image-pro', count: 4 }),
+      undefined,
+    )
+  })
+
+  it('forwards layerDecomposition (and an empty auto-split prompt) to the renderer untouched', async () => {
+    const { tools, server, manager } = captureAsync()
+    const router = autoRouter(manager, () => ({
+      status: 'succeeded',
+      result: { ok: true, count: 3, model: 'doubao-seedream-5-0-pro-260628', paths: [] },
+    }))
+    registerImageTools(server, router as any, { manager, blockingBudgetMs: 5_000 })
+
+    await getHandler(tools, 'generate_image')({
+      prompt: '',
+      model: 'doubao-seedream-5-0-pro-260628',
+      referenceImages: ['C:\\shot.png'],
+      layerDecomposition: true,
+    })
+
+    expect(router.call).toHaveBeenCalledWith(
+      'generate_image',
+      expect.objectContaining({
+        layerDecomposition: true,
+        prompt: '',
+        referenceImages: ['C:\\shot.png'],
+      }),
       undefined,
     )
   })
