@@ -545,21 +545,30 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // prefix), which the deferral escape-hatch below keys off.
     '-c', 'features.non_prefixed_mcp_tool_names=true',
     // ─────────────────────────────────────────────────────────────────────────
-    // view_image 一律走 resized，不许发原图。
+    // 图像成本控制。看图只为回答「这张里有什么 / 是不是同一个人 / 质量过不过关」，
+    // 缩过的图足够；而原图按 32px patch 计费（openai/codex#19806 实测可达约
+    // 12000 token/张），还会**留在对话历史里每轮重放**——第 10 轮仍在为第 2 轮那张图
+    // 付钱。出图 / 出视频走的是原始文件，不经这条路，画质不受影响。
     //
-    // 0.147 的二进制自己写着：`view_image.detail only supports 'high' or
-    // 'original'; omit 'detail' for default high resized behavior`——默认是缩过的，
-    // 但 `detail` 参数**确实暴露在 schema 里**，`ModelInfo.supports_image_detail_original`
-    // 一旦为真，模型完全可能自作主张传 `original`。
+    // 旧的 `features.image_detail_original=false` 已删除：0.149.1 实测该 flag 是
+    // `stage=removed`（设了不生效），接替它的 `resize_all_images` 是
+    // `removed + default=true`，即「一律缩图」已是无条件的内建行为，无需再钉。
     //
-    // 对本 app 来说那是纯亏：我们看图是为了「这张里有什么 / 是不是同一个人 /
-    // 质量过不过关」，缩过的图足够回答；而原图会按 32px patch 计费（openai/codex#19806
-    // 实测可达约 12000 token/张），还会**留在对话历史里每轮重放**——第 10 轮仍在为
-    // 第 2 轮那张图付钱。出图 / 出视频用的是原始文件，不经这条路，画质不受影响。
+    // 下面两个都是 `underDevelopment / default=false`，我们主动打开：
+    //   • unified_image_budget（openai/codex#37206）——对支持 original detail /
+    //     Responses Lite 的模型统一按 6000 像素 / 10000 patch 预处理，并把 `detail`
+    //     控件从 view_image 与 code mode 里藏掉。从工具契约层面消灭「模型自作主张传
+    //     original」这条路，比旧开关更彻底。
+    //   • compaction_image_budget（openai/codex#40280）——远程压缩的保留预算以前只数
+    //     文字不数图片，图多的历史压完后实际上下文比预算以为的大。开启后图片计入预算，
+    //     图会更早被甩掉；本 app 图密集，受益最大的就是这条。
     //
-    // 显式关掉而不是依赖默认：这是 experimental 列表里的开关，默认值会随版本漂，
-    // 而「看图突然变贵」是那种不会报错、只会让人觉得「今天怎么这么慢」的回归。
-    '-c', 'features.image_detail_original=false',
+    // 破例开 underDevelopment 的依据：实测两者都能被 `-c` 接受并翻成 enabled，前置的
+    // `remote_compaction_v2` 是 stable + 默认开；失败模式温和（不会崩，最坏是压缩时比
+    // 以前多丢一点上下文）。真实压缩效果尚未在第三方网关上实测——那需要一段够长、图够
+    // 多的真实对话——升 stable 时应复核这两行是否还需要显式钉。
+    '-c', 'features.unified_image_budget=true',
+    '-c', 'features.compaction_image_budget=true',
     // Keep first-party MCP tools directly visible instead of deferring them behind tool_search.
     '-c', 'features.code_mode.enabled=false',
     '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',

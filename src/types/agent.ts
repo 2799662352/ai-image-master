@@ -194,7 +194,14 @@ export interface AgentThreadBranchResult {
 }
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
-export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
+/**
+ * `untrusted` was RETIRED by openai/codex#39630 (shipped in 0.149.0): an
+ * explicit `approval_policy = "untrusted"` now fails config load, which takes
+ * the whole `app-server` down rather than degrading. Snapshots written by older
+ * builds are rewritten to `on-request` at the persistence boundary
+ * (`SessionConfigStore.loadSync`).
+ */
+export type CodexApprovalPolicy = 'on-request' | 'never'
 export type CodexWebSearchMode = 'cached' | 'live' | 'indexed' | 'disabled'
 /**
  * Codex assistant personality (`-c personality` / per-thread config overlay).

@@ -34,11 +34,11 @@ describe('buildCodexLaunchArgs', () => {
       // / `generate_image` exactly as the skills document them, and so the
       // canonical namespace is the bare `catimation` the escape-hatch keys off.
       '-c', 'features.non_prefixed_mcp_tool_names=true',
-      // view_image 一律走 resized。0.147 默认就是缩过的，但 `detail` 参数暴露在
-      // schema 里、模型可能自己传 `original`（按 32px patch 计费，且会留在历史里
-      // 每轮重放）。显式关掉而不是依赖默认——这是 experimental 开关，默认值会随版本漂，
-      // 而「看图突然变贵」是那种不报错、只让人觉得变慢的回归。
-      '-c', 'features.image_detail_original=false',
+      // 图像成本控制。旧的 `image_detail_original` 在 0.149.1 已是 stage=removed
+      // （一律缩图改由 `resize_all_images` 无条件兜住），换成这两个：统一预处理上限
+      // 并藏掉 `detail` 控件，以及把图片计入远程压缩的保留预算。见 codexLaunch.ts。
+      '-c', 'features.unified_image_budget=true',
+      '-c', 'features.compaction_image_budget=true',
       // Force our MCP tools to stay DIRECTLY model-visible instead of being
       // deferred behind tool_search (codex 0.142.2 PR #29486) — the verified
       // root cause of the `ask_user` "unsupported call: catimationaskuser"
@@ -77,7 +77,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
       '-c', 'features.non_prefixed_mcp_tool_names=true',
-      '-c', 'features.image_detail_original=false',
+      '-c', 'features.unified_image_budget=true',
+      '-c', 'features.compaction_image_budget=true',
       '-c', 'features.code_mode.enabled=false',
       '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
       '-c', 'project_doc_max_bytes=65536',

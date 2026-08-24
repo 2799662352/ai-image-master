@@ -27,6 +27,14 @@ describe('validateSessionConfigPatch', () => {
       .toThrow(/approvalPolicy/i)
   })
 
+  it('rejects the retired untrusted approval policy (openai/codex#39630)', () => {
+    // Migration of legacy persisted values belongs to SessionConfigStore; the
+    // IPC path stays strict so the panel can never send a value that makes
+    // codex fail config load.
+    expect(() => validateSessionConfigPatch({ approvalPolicy: 'untrusted' }, []))
+      .toThrow(/approvalPolicy/i)
+  })
+
   it('rejects roots outside allowed workspaces', () => {
     expect(() => validateSessionConfigPatch({
       writableRoots: [path.resolve('D:/outside')],
