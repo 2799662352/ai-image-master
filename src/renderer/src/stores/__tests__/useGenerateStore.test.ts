@@ -415,6 +415,76 @@ describe('useGenerateStore', () => {
     })
   })
 
+  describe('generate overrides — 对已有图一键拆分', () => {
+    it('用 overrides 发请求，且一个字都不动表单', async () => {
+      // 用户正写着下一条 prompt、挂着别的参考图 —— 点某张结果图拆层不该洗掉它们
+      useGenerateStore.setState({
+        prompt: '用户正在写的下一条',
+        referenceImages: ['data:ref-user'],
+        layerDecomposition: false,
+      })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'doubao-seedream-5-0-pro-260628', {
+        prompt: '',
+        referenceImages: ['https://x/target.png'],
+        layerDecomposition: true,
+      })
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '',
+          referenceImages: ['https://x/target.png'],
+          layerDecomposition: true,
+          model: 'doubao-seedream-5-0-pro-260628',
+        }),
+      )
+      const after = useGenerateStore.getState()
+      expect(after.prompt).toBe('用户正在写的下一条')
+      expect(after.referenceImages).toEqual(['data:ref-user'])
+      expect(after.layerDecomposition).toBe(false)
+    })
+
+    it('不给 overrides 时照旧读表单（原行为不变）', async () => {
+      useGenerateStore.setState({ prompt: 'a cat', referenceImages: ['data:ref1'] })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'flux')
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: 'a cat', referenceImages: ['data:ref1'] }),
+      )
+    })
+
+    it('overrides 的产出照常进结果区并归组', async () => {
+      useGenerateStore.setState({ prompt: '别动我' })
+      const api = createMockApi({
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          urls: ['base.png', 'l1.png'],
+          layers: [
+            { url: 'base.png', mimeType: 'image/png', zIndex: 0 },
+            { url: 'l1.png', mimeType: 'image/png', zIndex: 1, name: '前景' },
+          ],
+        }),
+      })
+
+      const { added } = await useGenerateStore
+        .getState()
+        .generate(api, 'doubao-seedream-5-0-pro-260628', {
+          prompt: '',
+          referenceImages: ['https://x/target.png'],
+          layerDecomposition: true,
+        })
+
+      expect(added).toBe(2)
+      const meta = useGenerateStore.getState().resultMeta
+      expect(meta).toHaveLength(2)
+      expect(meta[0].layerGroupId).toBeTruthy()
+      expect(meta[0].layerGroupId).toBe(meta[1].layerGroupId)
+    })
+  })
+
   describe('restoreForEdit', () => {
     it('writes prompt / ratio / referenceImages back into the form', () => {
       useGenerateStore.setState({

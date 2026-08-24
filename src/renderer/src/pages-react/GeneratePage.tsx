@@ -2,7 +2,7 @@ import { useRef, useMemo, useCallback, useState } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import { useApi } from '../hooks/useService'
-import type { GenerateSnapshot } from '../stores/useGenerateStore'
+import { LAYER_SPLIT_MODEL, type GenerateSnapshot } from '../stores/useGenerateStore'
 import type { BatchRefImage } from '../stores/useBatchStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
@@ -139,6 +139,30 @@ export default function GeneratePage() {
   }
 
   /**
+   * 对某张已有结果图一键图层分离。
+   *
+   * 走 `generate` 的 overrides 通道:**不碰表单**(用户正写着的下一条 prompt
+   * 不该被这次操作洗掉),渠道强制 SD5 Pro(换渠道这动作根本做不了),
+   * prompt 传空 = 自动全拆。产出照常进结果区,自动收成一张「▤ N 层」的卡片。
+   */
+  const handleLayerSplit = useCallback(async (imageUrl: string) => {
+    // 按张计费,一张复杂图可能拆出 17 张 —— 点之前先让用户知道正在花钱。
+    addToast({ message: '正在拆分图层…（按张计费，最多 17 张）', type: 'info' })
+    const { added, error: failure } = await generate(api, LAYER_SPLIT_MODEL, {
+      prompt: '',
+      referenceImages: [imageUrl],
+      layerDecomposition: true,
+    })
+    if (failure) {
+      addToast({ message: failure, type: 'error' })
+      return
+    }
+    if (added > 0) {
+      addToast({ message: `图层分离完成（${added} 层）`, type: 'success' })
+    }
+  }, [api, generate, addToast])
+
+  /**
    * 点 [重编辑] 按钮: 把对应结果的 snapshot 灌回表单。
    *
    * 用户已经在 generate 页, 不用切 tab。但要:
@@ -257,6 +281,7 @@ export default function GeneratePage() {
         meta={resultMeta}
         onEditFromResult={handleEditFromResult}
         onPreview={(index) => setLightbox({ urls: resultUrls, index })}
+        onLayerSplit={handleLayerSplit}
       />
 
       {/* ===== 共享预览 lightbox(←/→ 左右切换,结果区/参考图共用) ===== */}

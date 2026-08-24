@@ -115,6 +115,11 @@ interface ResultGridProps {
    * 支持在结果集里左右切换。不传时缩略图不可点。
    */
   onPreview?: (index: number) => void
+  /**
+   * 提供后,每张结果图的悬停工具栏出现「图层分离」。图层组自己的卡片不显示
+   * (它已经是拆分产物了,再拆一次没有意义)。
+   */
+  onLayerSplit?: (imageUrl: string) => void
 }
 
 const UPLOAD_BADGE: Record<ResultUploadMeta['uploadStatus'], { cls: string; label: string; title: string }> = {
@@ -137,7 +142,7 @@ const UPLOAD_BADGE: Record<ResultUploadMeta['uploadStatus'], { cls: string; labe
 
 type EditorType = 'angle' | 'light' | 'panorama' | 'director'
 
-export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGridProps) {
+export function ResultGrid({ urls, meta, onEditFromResult, onPreview, onLayerSplit }: ResultGridProps) {
   const [editorState, setEditorState] = useState<{ url: string; type: EditorType } | null>(null)
   const [layerGroup, setLayerGroup] = useState<GridItem['group'] | null>(null)
   const items = groupResultItems(urls, meta)
@@ -204,6 +209,7 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGr
                 onOpenEditor={(type) => setEditorState({ url, type })}
                 onInjectPrompt={injectPrompt}
                 onAddReference={(u) => addImageUrlToReferences('generate', u)}
+                onLayerSplit={onLayerSplit}
               />
             )}
             {badge && (

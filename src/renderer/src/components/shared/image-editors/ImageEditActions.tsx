@@ -14,6 +14,14 @@ interface Props {
    * 返回 Promise<boolean>:成功 true / 已满或失败 false。用于按钮反馈。
    */
   onAddReference?: (imageUrl: string) => boolean | Promise<boolean>
+  /**
+   * 提供后,出现「图层分离」一键 —— 把**这一张**拆成底图 + 透明图层栈。
+   *
+   * 挂在这里而不是生成表单上:这个动作的对象是「一张已经存在的图」,不是
+   * 「一次新生成」。表单那条路要先把图重新传成参考图才能拆,而结果区里点一下
+   * 就够了。宿主不接就不显示(同 onInjectPrompt / onAddReference 的约定)。
+   */
+  onLayerSplit?: (imageUrl: string) => void
 }
 
 /**
@@ -22,7 +30,7 @@ interface Props {
  *  - ImageEditToolbar: 缩略图悬停浮层(Generate / 历史等页)
  *  - ImageLightbox renderActions: 点击放大后的预览层(Batch 页)
  */
-export default function ImageEditActions({ theme, imageUrl, onOpenEditor, onInjectPrompt, onAddReference }: Props) {
+export default function ImageEditActions({ theme, imageUrl, onOpenEditor, onInjectPrompt, onAddReference, onLayerSplit }: Props) {
   const [refState, setRefState] = useState<'idle' | 'done' | 'full'>('idle')
   if (!imageUrl) return null
 
@@ -101,6 +109,16 @@ export default function ImageEditActions({ theme, imageUrl, onOpenEditor, onInje
           title="把这张图加入参考图"
         >
           {refState === 'done' ? '✓ 已加入' : refState === 'full' ? '参考图已满' : '加为参考图'}
+        </button>
+      )}
+      {onLayerSplit && (
+        <button
+          type="button"
+          className={baseBtn}
+          onClick={(e) => { e.stopPropagation(); onLayerSplit(imageUrl) }}
+          title="把这张图拆成底图 + 透明图层（Seedream 5.0 Pro，按张计费，最多 17 张）"
+        >
+          图层分离
         </button>
       )}
     </>

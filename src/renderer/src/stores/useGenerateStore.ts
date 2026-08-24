@@ -142,8 +142,17 @@ export interface GenerateState {
    *
    * 结果直接回给调用方而不是只写进 store:这个页面允许并发点,靠"全局结果
    * 张数差"反推本次成没成,会把并发那一次的图算到自己头上。
+   *
+   * `overrides` 用于**不经表单的一次性生成** —— 目前只有「对某张已有结果图点
+   * 图层分离」。给了就用它替换对应的表单快照值,表单本身一个字都不动
+   * (用户正在写的下一条 prompt 不该被这次操作洗掉)。产出照常进结果区,
+   * 复用同一条物化 / FIFO / COS 上传流水线。
    */
-  generate: (api: ApiActions, modelKey: string) => Promise<GenerateOutcome>
+  generate: (
+    api: ApiActions,
+    modelKey: string,
+    overrides?: { prompt?: string; referenceImages?: string[]; layerDecomposition?: boolean },
+  ) => Promise<GenerateOutcome>
   /**
    * 把一组表单参数回灌到当前 store, 用于"重新编辑"。
    * 不会触发生成 —— 只是恢复表单状态, 让用户能继续修改后再点生成。
@@ -191,6 +200,13 @@ function nextId(): string {
  */
 const MAX_RESULT_HISTORY = 200
 
+/**
+ * 图层分离唯一支持的渠道。对某张已有图点「图层分离」时强制走它,不看用户当前
+ * 选的模型 —— 换个渠道这个动作根本做不了,让它按选中模型跑只会拿到一个能力守卫
+ * 的报错,而用户并不知道自己该先去切模型。
+ */
+export const LAYER_SPLIT_MODEL = 'doubao-seedream-5-0-pro-260628'
+
 export const useGenerateStore = create<GenerateState>((set, get) => ({
   ...initialState,
 
@@ -237,11 +253,15 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     }))
   },
 
-  generate: async (api, modelKey) => {
+  generate: async (api, modelKey, overrides) => {
     // Snapshot form values at submit time so the user can keep typing the
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
-    const { prompt, ratio, resolution, quality, count, referenceImages, layerDecomposition } = get()
+    const form = get()
+    const { ratio, resolution, quality, count } = form
+    const prompt = overrides?.prompt ?? form.prompt
+    const referenceImages = overrides?.referenceImages ?? form.referenceImages
+    const layerDecomposition = overrides?.layerDecomposition ?? form.layerDecomposition
     const templateKey = useTemplateStore.getState().getSelection('generate')
     // 拆分模式下 prompt 的语义是「要拆出什么」,空串=自动全拆。套上出图模板会把
     // 「自动全拆」变成一句风格描述,直接改掉这次请求的含义 —— 所以不套。
