@@ -31,6 +31,8 @@ export interface ImageParamModelConfig {
     maxOutputs?: number
     /** 上游接受独立的反向提示词字段(DashScope 原生 `parameters.negative_prompt`) */
     negativePrompt?: boolean
+    /** 支持图层拆分(Ark `layer_decomposition`,当前仅 Seedream 5.0 Pro) */
+    layerDecomposition?: boolean
   }
 }
 
@@ -50,6 +52,8 @@ export interface ImageParamControlsState {
   maxCount: number
   /** 是否渲染反向提示词输入框 */
   supportsNegativePrompt: boolean
+  /** 是否渲染图层分离开关 */
+  supportsLayerDecomposition: boolean
 }
 
 export const FALLBACK_RATIO_OPTIONS: ParamOption[] = [
@@ -108,6 +112,7 @@ export function deriveImageParamControls(
     supportsCount,
     maxCount,
     supportsNegativePrompt: Boolean(cfg.capabilities?.negativePrompt),
+    supportsLayerDecomposition: Boolean(cfg.capabilities?.layerDecomposition),
   }
 }
 

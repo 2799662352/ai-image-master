@@ -26,6 +26,7 @@ export default function GeneratePage() {
   const resolution = useGenerateStore((s) => s.resolution)
   const quality = useGenerateStore((s) => s.quality)
   const count = useGenerateStore((s) => s.count)
+  const layerDecomposition = useGenerateStore((s) => s.layerDecomposition)
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
@@ -38,6 +39,7 @@ export default function GeneratePage() {
     setResolution,
     setQuality,
     setCount,
+    setLayerDecomposition,
     addReferenceImage,
     removeReferenceImage,
     clearReferenceImages,
@@ -107,7 +109,13 @@ export default function GeneratePage() {
   // 失败两次时,依赖 [error] 的 effect 第二次不会重跑,那一次就悄无声息了。
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) {
+    // 拆分模式的两条前置与普通出图相反:空提示词是合法的(=自动全拆),但必须有一张待拆的图。
+    if (layerDecomposition) {
+      if (referenceImages.length === 0) {
+        addToast({ message: '图层分离需要先上传一张待拆分的图', type: 'warning' })
+        return
+      }
+    } else if (!prompt.trim()) {
       addToast({ message: '请输入提示词', type: 'warning' })
       return
     }
@@ -207,6 +215,8 @@ export default function GeneratePage() {
         onQualityChange={setQuality}
         count={count}
         onCountChange={setCount}
+        layerDecomposition={layerDecomposition}
+        onLayerDecompositionChange={setLayerDecomposition}
       />
 
       {/* 参考图:复用 Batch 的拖拽上传 + 自动压缩 + 点击预览 */}

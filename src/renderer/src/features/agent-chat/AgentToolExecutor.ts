@@ -94,6 +94,16 @@ function resolveEffectiveImageChannel(agentRequested: unknown): string {
   return resolveImageChannel(useAgentChatStore.getState().selectedImageChannel)
 }
 
+/**
+ * 图层拆分唯一支持的渠道。拆分请求省略 `model` 时不走上面的「用户选的渠道 / VIP」回退
+ * —— 那条路必然撞上 ApiService 的能力守卫，把「你没写 model」变成一次失败的 tool call。
+ * 拆分只有这一个渠道可选，没有歧义，直接钉住比报错更有用。
+ */
+const LAYER_DECOMPOSITION_CHANNEL = 'doubao-seedream-5-0-pro-260628'
+
+/** 空 prompt 是拆分的「自动全拆」模式，但气泡不能空着 —— 给个能读的占位。 */
+const LAYER_DECOMPOSITION_BUBBLE_LABEL = '图层分离'
+
 type AgentElectronApi = {
   attachments?: {
     save: (args: {
@@ -1034,7 +1044,9 @@ export class AgentToolExecutor {
     // Resolved BEFORE the references below because the channel decides how refs
     // must travel: nano/gemini want base64 `inline_data`, everything else wants
     // a URL. See resolveReferenceImages.
-    const model = resolveEffectiveImageChannel(params.model)
+    const model = params.layerDecomposition
+      ? LAYER_DECOMPOSITION_CHANNEL
+      : resolveEffectiveImageChannel(params.model)
 
     // Resolve reference images BEFORE showing the in-progress bubble. Codex
     // passes uploads-dir file PATHS (e.g. `C:\...\agent\uploads\<hash>.jpg`),
@@ -1073,7 +1085,14 @@ export class AgentToolExecutor {
 
     // Show a "generating" bubble immediately so the user sees in-progress
     // feedback during the (potentially long) request, then settle it in place.
-    const genId = chat.beginImageGeneration(request.prompt, reqThreadId)
+    const genId = chat.beginImageGeneration(
+      // 拆分的「自动全拆」模式 prompt 就是空的（见 LAYER_DECOMPOSITION_BUBBLE_LABEL）；
+      // 其余渠道空 prompt 进不来（MCP schema 拦掉），行为保持原样。
+      request.layerDecomposition && !request.prompt?.trim()
+        ? LAYER_DECOMPOSITION_BUBBLE_LABEL
+        : request.prompt,
+      reqThreadId,
+    )
 
     let result: GenerateResult
     try {

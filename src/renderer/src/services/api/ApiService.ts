@@ -232,6 +232,19 @@ export interface ModelConfig {
    * 大图会显著增大请求体，仅在确需 base64 内联的模型上开启(如大香蕉系列)。
    */
   inlineRefImageAsBase64?: boolean
+  /**
+   * 该模型**只经这一个网关**提供，请求必须钉在这个站点上。
+   *
+   * 为什么需要显式声明:`buildRequestUrl` 会用**当前选中站点**的 host 覆盖模型
+   * 自带的 host —— 这是中转站设计的核心（同一个 `gpt-image-2` 在 apiyi / 云雾 /
+   * 柏拉图都能跑，跟着用户选的站点走）。但少数渠道是某一家独有的（如经 Miau
+   * 代理的火山 / 腾讯 / 阿里系），host 被覆盖后就打到一个根本没有这个模型的站点，
+   * 表现为莫名的 404 / model not found，而用户完全看不出该去切站点。
+   *
+   * 声明了这个字段后，`generateImage` 在调用方没显式传 `siteKey` 时自动钉住它。
+   * 缺失的 API Key 也会因此变成一句准确的「未配置 X 站点的 API Key」。
+   */
+  requiredSiteKey?: string
 }
 
 export interface RatioOption {
@@ -274,6 +287,15 @@ export interface ModelCapabilities {
    * 打开后界面会渲染反向提示词输入框；不支持的渠道不该冒出这个框。
    */
   negativePrompt?: boolean
+  /**
+   * 支持图层拆分（Ark `layer_decomposition`）：把单张输入图拆成 1 张底图 +
+   * 最多 16 张带透明通道的 PNG 图层，每层附 z_index / bounding_box / name / description。
+   *
+   * 开启后请求形态与普通生图**不同**（size 只收档位、只发单张 image、prompt 可缺席），
+   * 详见 {@link ApiService.buildLayerDecompositionPayload}。只有确认过上游支持的渠道
+   * 才能打开——普通渠道收到这个开关会当未知字段忽略，用户看到的是「拆分没生效但也没报错」。
+   */
+  layerDecomposition?: boolean
 }
 
 export interface GenerateImageParams {
@@ -305,6 +327,53 @@ export interface GenerateImageParams {
    * 该站点必须存在且已配置对应 API Key，否则 generateImage 直接返回清晰错误。
    */
   siteKey?: string
+  /**
+   * 图层拆分模式（仅 capabilities.layerDecomposition 的模型，如 Seedream 5.0 Pro）。
+   *
+   * 开启时必须带且仅带一张输入图（referenceImages[0] 或 imageBase64）；`prompt` 可为空
+   * 串——空即「自动全拆」，非空则按提示词指定要拆出什么。ratio / count 在此模式下不生效
+   * （张数由上游按图内容决定）；`resolution` 被当作**档位**用，见 LAYER_DECOMPOSITION_SIZE_TIERS。
+   */
+  layerDecomposition?: boolean
+}
+
+/**
+ * 图层的包围盒。两种坐标系同时可能出现，按上游给什么带什么，不做换算。
+ * 两者都是 `[left, top, right, bottom]`（不是 x/y/w/h）。
+ */
+export interface ImageLayerBoundingBox {
+  /** 底图坐标系里的绝对像素位置 `[left, top, right, bottom]`。 */
+  absolute?: number[]
+  /**
+   * 归一化位置 `[left, top, right, bottom]`，**0–1000 整数**（不是 0~1）。
+   * 换算到任意画布宽 W:`x = left / 1000 * W`。
+   */
+  normalized?: number[]
+}
+
+/**
+ * 图层拆分产物中的一层。`zIndex === 0` 是底图（恒有且唯一），其余是带透明通道的 PNG。
+ *
+ * **图层不是整幅尺寸，是按 boundingBox 裁切后放大的**（2026-08-24 实测 5.0 Pro：
+ * 1024×1024 的底图，bbox 130×124 的星星图层实际是 502×484，约 3.87 倍；bbox 833×171
+ * 的文字图层是 1301×268，约 1.56 倍 —— 比例逐层自洽但各不相同，甚至可能比底图还宽）。
+ *
+ * 所以还原叠放**必须**把每层按 boundingBox 缩放定位回底图坐标系，直接 inset-0 摞起来
+ * 会把一个小图标拉成全画幅。用 `normalized`（0–1000 千分比）最省事：不需要知道底图
+ * 的像素尺寸，直接换成百分比定位即可。
+ *
+ * 这些元数据是还原图层栈的唯一依据，丢了就只剩一堆无序、无处安放的碎图。
+ */
+export interface ImageLayer {
+  /** 可直接喂给 <img> 的地址：URL 或 data URL */
+  url: string
+  mimeType: string
+  /** 叠放层级，0 = 底图；{@link ApiService} 按升序返回 */
+  zIndex: number
+  boundingBox?: ImageLayerBoundingBox
+  /** 上游给的图层名（如「前景人物」）；可能缺席 */
+  name?: string
+  description?: string
 }
 
 export interface GenerateResult {
@@ -314,16 +383,47 @@ export interface GenerateResult {
   error?: string
   rawResponse?: any
   isFluxTemporary?: boolean  // Flux 图片 10 分钟后失效
+  /**
+   * 图层拆分产物（按 zIndex 升序）。仅 layerDecomposition 请求且上游确实回了
+   * z_index 时出现；此时 `images` 是同一批图的 URL，顺序与本数组一致（底图在前）。
+   */
+  layers?: ImageLayer[]
 }
 
 /**
+ * 图层拆分场景 `size` 的合法取值。官方在拆分场景**只收档位**，生图那套「宽x高」像素值
+ * 整档被删掉，所以这里不复用模型自己的 resolutionMap。
+ *
+ * 默认 `auto` 不是随手抄的默认值：拆分要求「输出底图与被拆的原图宽高比一致」，而 UI 里
+ * 选的比例/像素来自出图面板，与当前这张待拆图的实际宽高比无关——拿 16:9 的档去拆一张
+ * 1:1 的图，底图比例就和图层坐标系对不上，bounding_box 全部失准。auto 按输入图自适应，
+ * 正好是拆分需要的语义。
+ */
+export const LAYER_DECOMPOSITION_SIZE_TIERS = ['auto', '1K', '1.5K', '2K'] as const
+export type LayerDecompositionSizeTier = (typeof LAYER_DECOMPOSITION_SIZE_TIERS)[number]
+
+/** 把 UI 的分辨率值收敛到拆分场景合法档位；不认识的（含像素串）一律回落 auto。 */
+function resolveLayerDecompositionSizeTier(value: string | undefined): LayerDecompositionSizeTier {
+  const normalized = String(value ?? '').trim()
+  return (LAYER_DECOMPOSITION_SIZE_TIERS as readonly string[]).includes(normalized)
+    ? (normalized as LayerDecompositionSizeTier)
+    : 'auto'
+}
+
+/**
+ * Miau API 站点 key。火山 / 腾讯 / 阿里那几条渠道只经这一家网关提供,模型侧用
+ * {@link ModelConfig.requiredSiteKey} 声明,请求会被钉在这里而不跟随用户选的站点。
+ */
+export const MIAU_SITE_KEY = 'antigravity'
+
+/**
  * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
- * 仅经 Miau API 提供 —— 调用方(AudioPage)固定传 siteKey='antigravity'。
+ * 仅经 Miau API 提供 —— 调用方(AudioPage)固定传 siteKey。
  * 文档:docs/seed-audio-1.0-api-guide.md(计费按输出秒数,约 ¥1/分钟;单次 ~120s 上限)。
  */
 export const SEED_AUDIO_MODEL = 'seed-audio-1.0'
 /** seed-audio 仅经 Miau API 网关提供,页面调用时固定 pin 该站点。 */
-export const SEED_AUDIO_SITE_KEY = 'antigravity'
+export const SEED_AUDIO_SITE_KEY = MIAU_SITE_KEY
 
 export interface GenerateAudioParams {
   /** 自然语言场景描述(多角色/口音/环境音/配乐),映射上游 text_prompt。 */
@@ -476,6 +576,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
     apiType: 'image-generation',
     sizeStrategy: 'seedream',
     ratios: [
@@ -535,6 +636,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
     apiType: 'openai',
     sizeStrategy: 'gpt-image-2',
     // 与 gpt-image-2 共用同一套 比例 × 分辨率 × 清晰度 规格
@@ -876,6 +978,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     time: '20s',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    requiredSiteKey: MIAU_SITE_KEY,
     apiType: 'image-generation',
     sizeStrategy: 'seedream',
     ratios: [
@@ -922,7 +1025,9 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       referenceImage: true,
       imageEdit: true,
       maxOutputs: 1,
-      resolutionControl: true
+      resolutionControl: true,
+      // 图层拆分:5.0 Pro 独有,同一 images/generations 端点靠 layer_decomposition 开关区分。
+      layerDecomposition: true
     }
   },
   'qwen-image-3.0-pro': {
@@ -931,6 +1036,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     time: '30s',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    requiredSiteKey: MIAU_SITE_KEY,
     apiType: 'image-generation',
     sizeStrategy: 'seedream',
     // 官方只用两条规则约束尺寸：像素面积 512*512 ~ 2048*2048，宽高比 1:8 ~ 8:1。
@@ -1146,12 +1252,29 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count = 1, signal, siteKey } = params
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition } = params
 
-    // 解析「本次请求的有效站点 + 令牌」：调用方传了存在的 siteKey 就强制走该站点
-    // （及其专属 Key），否则沿用当前选中站点。绝不临时改 this.apiKey/this.currentSite——
-    // codex 并行 turn 下实例级可变状态会把一个渠道的 Key 串到另一个渠道。
-    const effectiveSiteKey = siteKey && this.apiSites[siteKey] ? siteKey : this.currentSite
+    const modelKey = this.resolveModelKey(model || this.currentModel)
+    const modelConfig = this.models[modelKey]
+
+    if (!modelConfig) {
+      return { success: false, error: `未知模型: ${modelKey}` }
+    }
+
+    // 解析「本次请求的有效站点 + 令牌」，优先级：
+    //   ① 调用方显式 siteKey（codex 出图等，最高优先级，可覆盖模型声明）
+    //   ② 模型声明的 requiredSiteKey —— 只经某一家网关提供的渠道。不钉的话
+    //      buildRequestUrl 会把它的 host 换成当前站点的 host，打到一个没有这个
+    //      模型的站点上，用户只看到莫名的 404 而不知道要去切站点。
+    //   ③ 当前选中站点（普通中转渠道跟着用户选的站点走，这是中转站设计的本意）
+    // 绝不临时改 this.apiKey/this.currentSite—— codex 并行 turn 下实例级可变状态
+    // 会把一个渠道的 Key 串到另一个渠道。
+    const requiredSiteKey =
+      modelConfig.requiredSiteKey && this.apiSites[modelConfig.requiredSiteKey]
+        ? modelConfig.requiredSiteKey
+        : undefined
+    const effectiveSiteKey =
+      (siteKey && this.apiSites[siteKey] ? siteKey : undefined) ?? requiredSiteKey ?? this.currentSite
     const site = this.apiSites[effectiveSiteKey]
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
@@ -1166,11 +1289,20 @@ export class ApiService {
       }
     }
 
-    const modelKey = this.resolveModelKey(model || this.currentModel)
-    const modelConfig = this.models[modelKey]
-
-    if (!modelConfig) {
-      return { success: false, error: `未知模型: ${modelKey}` }
+    // 图层拆分的前置条件在这里一次问清 —— 这两条不满足时上游的反应都是「静默降级」:
+    // 不支持的渠道把 layer_decomposition 当未知字段丢掉、照常出一张普通图;没有输入图
+    // 就变成一次普通文生图。两种情况都会成功返回一张图,用户只会疑惑「拆分怎么没生效」。
+    if (layerDecomposition) {
+      if (!modelConfig.capabilities?.layerDecomposition) {
+        return {
+          success: false,
+          error: `${modelConfig.displayName || modelKey} 不支持图层拆分，请切换到 Seedream 5.0 Pro 后重试。`,
+        }
+      }
+      const hasInputImage = !!imageBase64 || (referenceImages?.length ?? 0) > 0
+      if (!hasInputImage) {
+        return { success: false, error: '图层拆分需要一张待拆分的输入图，请先上传参考图。' }
+      }
     }
 
     try {
@@ -1190,13 +1322,14 @@ export class ApiService {
           site,
           apiKey,
           signal,
+          layerDecomposition,
         }),
         // 瞬时网关错误(502/503/504/429)现在会从 makeApiRequest 抛出，交给这里重试；
         // 给 2 次重试(共 3 次尝试)+ 指数退避(2s、4s)，覆盖上游高峰期的短暂抖动。
         { maxRetries: 2, retryDelay: 2000 }
       )
 
-      const result = await this.parseResponse(response, modelConfig)
+      const result = await this.parseResponse(response, modelConfig, layerDecomposition)
       
       // 标记 Flux 图片为临时的
       if (modelConfig.apiType === 'flux-kontext' && result.success) {
@@ -1740,8 +1873,9 @@ export class ApiService {
     /** 本次请求使用的 API Key（由 generateImage 按有效站点解析后透传，避免实例级竞态）。 */
     apiKey: string
     signal?: AbortSignal
+    layerDecomposition?: boolean
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, site, apiKey, signal } = options
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition } = options
 
     // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
     if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
@@ -1850,7 +1984,8 @@ export class ApiService {
       negativePrompt,
       seed,
       count,
-      modelConfig
+      modelConfig,
+      layerDecomposition
     })
 
     // 检查是否需要 FormData (Flux with images)
@@ -2342,8 +2477,9 @@ export class ApiService {
     seed?: number
     count?: number
     modelConfig: ModelConfig
+    layerDecomposition?: boolean
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition } = options
 
     // Gemini Native 格式
     if (modelConfig.apiType === 'gemini-native') {
@@ -2380,7 +2516,8 @@ export class ApiService {
       negativePrompt,
       seed,
       count,
-      modelConfig
+      modelConfig,
+      layerDecomposition
     })
   }
 
@@ -2525,11 +2662,23 @@ export class ApiService {
     seed?: number
     count?: number
     modelConfig: ModelConfig
+    layerDecomposition?: boolean
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition } = options
 
     // 检查是否是图片生成 API 格式
     if (modelConfig.baseURL?.includes('/images/generations')) {
+      if (layerDecomposition) {
+        return this.buildLayerDecompositionPayload({
+          prompt,
+          model,
+          resolution,
+          referenceImages,
+          imageBase64,
+          modelConfig,
+        })
+      }
+
       // 出图张数：UI 数量选择器 → n，按模型 maxOutputs 收敛到 [1, maxOutputs]
       const maxOutputs = modelConfig.capabilities?.maxOutputs ?? 1
       const requested = Math.max(1, Math.floor(count ?? 1))
@@ -2653,6 +2802,55 @@ export class ApiService {
   }
 
   /**
+   * 构建图层拆分请求体（Ark `layer_decomposition`，当前仅 Seedream 5.0 Pro）。
+   *
+   * 挂在与普通生图相同的 images/generations 端点上，靠这个开关区分：带开关回
+   * 1 张底图 + 最多 16 张透明 PNG 图层（逐项带 z_index / bounding_box / name /
+   * description），不带就是普通生图。与普通生图构体的四处差异都是官方硬约束：
+   *
+   *  - **不发 `n`**：张数由上游按图内容决定，UI 的数量选择器在此模式下无意义；
+   *  - **`size` 只收档位**（见 LAYER_DECOMPOSITION_SIZE_TIERS），不能发 `宽x高` 像素串
+   *    —— 发了会把拆出来的底图强行改成 UI 里选的比例，与图层坐标系错位；
+   *  - **只发单张 `image`**，不发 `images`；
+   *  - **`prompt` 可缺席**：空即自动全拆。空串必须整个字段删掉而不是发 `prompt: ''`
+   *    —— 上游把空串当成一个有效（但无意义）的提示词。
+   *
+   * `response_format` 固定 url：一次最多 17 张 2K 图，b64_json 会把它们塞进同一个
+   * JSON 响应体，在渲染进程里就是几百 MB 的瞬时峰值。
+   */
+  private buildLayerDecompositionPayload(options: {
+    prompt: string
+    model: string
+    resolution?: string
+    referenceImages?: string[]
+    imageBase64?: string
+    modelConfig: ModelConfig
+  }): any {
+    const { prompt, model, resolution, referenceImages, imageBase64, modelConfig } = options
+
+    const payload: any = {
+      model,
+      layer_decomposition: true,
+      size: resolveLayerDecompositionSizeTier(resolution),
+      watermark: modelConfig.defaultParams?.watermark ?? false,
+      response_format: 'url',
+      output_format: 'png',
+    }
+
+    const source = imageBase64 || referenceImages?.[0]
+    if (source) {
+      payload.image = this.normalizeImageSource(source) ?? source
+    }
+
+    const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : ''
+    if (trimmedPrompt) {
+      payload.prompt = trimmedPrompt
+    }
+
+    return payload
+  }
+
+  /**
    * 获取图片尺寸
    *
    * 优先读模型自己的 resolutionMap(resolveImageSizeFromMap 已做 ×→x 归一化):
@@ -2727,7 +2925,11 @@ export class ApiService {
   /**
    * 解析响应
    */
-  private async parseResponse(response: Response, _modelConfig: ModelConfig): Promise<GenerateResult> {
+  private async parseResponse(
+    response: Response,
+    _modelConfig: ModelConfig,
+    layerDecomposition = false,
+  ): Promise<GenerateResult> {
     // 先读 text，再自己 JSON.parse —— 不要直接 response.json()。
     // 网关限流 / 5xx / 被劫持时常返回 HTML 错误页或空体，response.json() 会抛
     // "Unexpected token '<'" 这类无意义错误，把真实根因(上游 body)吞掉，
@@ -2797,6 +2999,19 @@ export class ApiService {
         // 把原始 body 片段带上，避免「未能从响应中提取图片」这种无信息提示
         error: `未能从响应中提取图片，响应片段：${raw.slice(0, 600)}`,
         rawResponse: data
+      }
+    }
+
+    // 图层拆分：把 z_index / bounding_box / name / description 一并带出来。上游偶尔
+    // 会在拆不动时退化成一张普通图（没有 z_index），此时 layers 为空——按普通结果返回，
+    // 不报错：图是真出来了，只是没有图层栈。
+    if (layerDecomposition) {
+      const layers = extractLayersFromApiResponse(data)
+      if (layers.length > 0) {
+        // 用 layers 的顺序覆盖 images：extractImagesFromApiResponse 按 data[] 原序返回，
+        // 而叠放顺序只有 z_index 说得准，底图必须在第一位。
+        const ordered = layers.map(layer => layer.url)
+        return { success: true, images: ordered, urls: ordered, layers }
       }
     }
 
@@ -3745,6 +3960,81 @@ function collectImagesFromText(text: string, images: string[], seen: Set<string>
       images.push(url)
     }
   }
+}
+
+/** bounding_box 的坐标数组：只留有限数字，别把 null / 字符串混进坐标系。 */
+function toFiniteNumbers(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const nums = value.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+  return nums.length > 0 ? nums : undefined
+}
+
+/**
+ * 从图层拆分响应的 `data[]` 里还原图层栈，按 zIndex 升序（底图在前）。
+ *
+ * 判据是 **`z_index` 存在**而非真值：底图的 z_index 是 0，用 `if (item.z_index)` 会把
+ * 底图判成「没有图层元数据」而整条丢掉。普通生图 / 组图没有这个字段，此时返回空数组，
+ * 调用方按普通结果处理，行为不变。
+ *
+ * `url` 优先于 base64（请求里已固定 response_format: 'url'）：一次最多 17 张 2K 图，
+ * 把 base64 收进内存就是渲染进程的瞬时峰值。
+ */
+export function extractLayersFromApiResponse(data: unknown): ImageLayer[] {
+  if (!data || typeof data !== 'object') return []
+  const body = data as Record<string, unknown>
+  if (!Array.isArray(body.data)) return []
+
+  const fallbackMime = typeof body.mime_type === 'string' && body.mime_type
+    ? body.mime_type
+    : 'image/png'
+  const layers: ImageLayer[] = []
+
+  for (const item of body.data) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+
+    const zIndex = row.z_index
+    if (typeof zIndex !== 'number' || !Number.isFinite(zIndex)) continue
+
+    let url: string | null = null
+    if (typeof row.url === 'string' && row.url.trim()) {
+      url = row.url.trim()
+    } else {
+      const base64 = typeof row.b64_json === 'string' && row.b64_json
+        ? row.b64_json
+        : (typeof row.image_data === 'string' ? row.image_data : '')
+      if (base64) url = normalizeExtractedImageSource(base64)
+    }
+    if (!url) continue
+
+    // 拆分场景 output_format 只描述底图，图层恒为 png，所以逐项读而非用顶层 mime_type。
+    const mimeType = typeof row.output_format === 'string' && row.output_format.trim()
+      ? `image/${row.output_format.trim().toLowerCase()}`
+      : fallbackMime
+
+    const layer: ImageLayer = { url, mimeType, zIndex }
+
+    const box = row.bounding_box
+    if (box && typeof box === 'object') {
+      const absolute = toFiniteNumbers((box as Record<string, unknown>).absolute)
+      const normalized = toFiniteNumbers((box as Record<string, unknown>).normalized)
+      if (absolute || normalized) {
+        layer.boundingBox = {
+          ...(absolute ? { absolute } : {}),
+          ...(normalized ? { normalized } : {}),
+        }
+      }
+    }
+
+    if (typeof row.name === 'string' && row.name.trim()) layer.name = row.name.trim()
+    if (typeof row.description === 'string' && row.description.trim()) {
+      layer.description = row.description.trim()
+    }
+
+    layers.push(layer)
+  }
+
+  return layers.sort((a, b) => a.zIndex - b.zIndex)
 }
 
 /** 从 OpenAI / DashScope / new-api(metadata) 响应中提取全部图片 URL 或 data URL */

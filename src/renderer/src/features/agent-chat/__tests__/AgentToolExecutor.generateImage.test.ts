@@ -100,6 +100,55 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(result.model).toBe('gpt-image-2-vip')
   })
 
+  it('pins layer splitting to Seedream 5.0 Pro even when the picker says VIP', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('gpt-image-2-vip')
+
+    // 拆分只有这一个渠道能做。让它回退到用户选的 VIP，只会撞上 ApiService 的能力守卫，
+    // 把「agent 没写 model」变成一次失败的 tool call —— 没有歧义就不该报错。
+    await callGenerate({ prompt: '', referenceImages: [], layerDecomposition: true })
+
+    const sent = api.generateImage.mock.calls[0][0]
+    expect(sent.model).toBe('doubao-seedream-5-0-pro-260628')
+    expect(sent.siteKey).toBe('antigravity')
+    expect(sent.layerDecomposition).toBe(true)
+  })
+
+  it('threads layerDecomposition through to ApiService without rewriting the prompt', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
+    registerFakes(api, makeHistory())
+
+    await callGenerate({
+      prompt: '只拆出前景人物',
+      model: 'doubao-seedream-5-0-pro-260628',
+      layerDecomposition: true,
+    })
+
+    const sent = api.generateImage.mock.calls[0][0]
+    expect(sent.prompt).toBe('只拆出前景人物')
+    expect(sent.layerDecomposition).toBe(true)
+  })
+
+  it('does not set layerDecomposition on ordinary generation', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+
+    await callGenerate({ prompt: 'a cat' })
+
+    expect(api.generateImage.mock.calls[0][0].layerDecomposition).toBeUndefined()
+  })
+
+  it('labels the progress bubble for an empty auto-split prompt instead of leaving it blank', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
+    registerFakes(api, makeHistory())
+
+    await callGenerate({ prompt: '', layerDecomposition: true })
+
+    const bubble = useAgentChatStore.getState().messages.find((m) => m.role === 'assistant')
+    expect(JSON.stringify(bubble)).toContain('图层分离')
+  })
+
   it('renders on the user-picked Seedream 5.0 Pro channel and pins the Miau site', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())

@@ -377,6 +377,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
       'INDEPENDENT variations of one prompt, model="qwen-image-3.0-pro" with `count`>1 (1–6). ' +
       '`count` takes effect on those two channels only; for unrelated images use generate_images. ' +
+      'This tool ALSO does 图层分离 / layer splitting (turn one image into a base + transparent PNG ' +
+      'layers) — set `layerDecomposition: true` with model="doubao-seedream-5-0-pro-260628"; see that ' +
+      'parameter for the rules. ' +
       'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
       'returns ✅ DONE if the image finishes that fast; otherwise it returns ⏳ STILL RUNNING with a ' +
       '`taskId` (this is the COMMON case for normal renders). When you get STILL RUNNING the image ' +
@@ -385,7 +388,12 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'calling this tool, briefly tell the user you are submitting the render.',
     annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
-      prompt: z.string().min(1).describe('Image description / prompt.'),
+      prompt: z
+        .string()
+        .describe(
+          'Image description / prompt. Required, EXCEPT when `layerDecomposition` is true — there an ' +
+          'empty string is the documented "split every layer automatically" mode.',
+        ),
       model: modelSchema,
       ratio: ratioSchema,
       resolution: z
@@ -434,7 +442,29 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'follows the user-provided material — do NOT silently fall back to text-to-image when a ' +
           'reference image was given.',
         ),
-    }),
+      layerDecomposition: z
+        .boolean()
+        .optional()
+        .describe(
+          'Split ONE input image into a layer stack instead of generating a new image — use it for ' +
+          '图层分离 / 拆图层 / 分层 / "把前景抠出来" / "把背景单独给我" / "拆成 PSD 那样的图层". ' +
+          'Returns one base image plus up to 16 transparent PNG layers, each with a stacking order, ' +
+          'bounding box and name. REQUIREMENTS (all enforced — a violation is rejected up front, ' +
+          'never silently degraded): you MUST set model="doubao-seedream-5-0-pro-260628" (the only ' +
+          'channel that supports it) and you MUST pass exactly the image to split as the first ' +
+          '`referenceImages` entry. `prompt` is what to split out ("只拆出前景人物"); it is the ONE ' +
+          'tool where a near-empty prompt is correct — an empty/whitespace prompt means "split ' +
+          'everything automatically", which is what a bare 图层分离 request wants. `ratio` and ' +
+          '`count` are ignored here (the layer count is decided by the image content); `resolution` ' +
+          'is read as a tier, so use 1K or 2K (4K falls back to auto).',
+        ),
+    }).refine(
+      // 空 prompt 只在图层拆分下合法 —— 上游把「缺席的 prompt」当作「自动全拆」，这是
+      // 一句「图层分离」最想要的行为。普通生图的空 prompt 仍然拒绝(否则就是烧一张图的
+      // 钱换一张随机图)，所以规则挂在对象层而不是把 prompt 整个放宽成可空。
+      (v) => v.layerDecomposition === true || v.prompt.trim().length > 0,
+      { message: 'prompt must not be empty (an empty prompt is only allowed with layerDecomposition)', path: ['prompt'] },
+    ),
   }, async (params, ctx?: unknown) => {
     // Codex stamps every MCP tool call with the requesting thread id in
     // `mcpReq._meta` (`threadId` + `x-codex-turn-metadata.thread_id`; see

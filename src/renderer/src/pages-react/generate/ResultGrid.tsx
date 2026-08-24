@@ -7,6 +7,52 @@ import { appendCosThumb } from '../../utils/cosThumb'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
 import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
+import { LayerStackViewer } from './LayerStackViewer'
+
+/**
+ * 把平行数组按 `layerGroupId` 收成「渲染单元」。
+ *
+ * 一次图层拆分产出 1 底图 + N 层,它们是**一个带内部结构的产物**,不是 N 个互不相干
+ * 的结果 —— 平铺进网格会让用户以为自己一次生成了 17 张图。所以同组收成一张卡片,
+ * 点开进 LayerStackViewer。
+ *
+ * 保留原索引:放大预览 / 重编辑都按父组件那份 urls 的下标回调,收组不能打乱它。
+ */
+interface GridItem {
+  /** 卡片代表的图在原数组里的索引（图层组取底图那张）。 */
+  index: number
+  /** 图层组的全部成员（含底图），按原索引升序；非图层组为空。 */
+  group?: Array<{ index: number; url: string; meta: ResultUploadMeta }>
+}
+
+export function groupResultItems(urls: string[], meta?: ResultUploadMeta[]): GridItem[] {
+  const items: GridItem[] = []
+  const groupPos = new Map<string, number>()
+
+  urls.forEach((url, index) => {
+    const m = meta?.[index]
+    const gid = m?.layerGroupId
+    if (!gid || !m) {
+      items.push({ index })
+      return
+    }
+    const member = { index, url, meta: m }
+    const at = groupPos.get(gid)
+    if (at === undefined) {
+      groupPos.set(gid, items.length)
+      // 卡片先认第一张为代表；下面遇到 zIndex 更小的（底图）再让位。
+      items.push({ index, group: [member] })
+      return
+    }
+    const item = items[at]
+    item.group!.push(member)
+    // 卡片封面用底图（zIndex 最小）—— 拿一张透明图层当封面等于一张空白卡。
+    const coverZ = meta?.[item.index]?.layer?.zIndex ?? 0
+    if ((m.layer?.zIndex ?? 0) < coverZ) item.index = index
+  })
+
+  return items
+}
 
 /**
  * 单格图片 —— 把 `<img>` 抽成独立组件,只为了能在循环里安全调 useDisplaySrc:
@@ -93,6 +139,8 @@ type EditorType = 'angle' | 'light' | 'panorama' | 'director'
 
 export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGridProps) {
   const [editorState, setEditorState] = useState<{ url: string; type: EditorType } | null>(null)
+  const [layerGroup, setLayerGroup] = useState<GridItem['group'] | null>(null)
+  const items = groupResultItems(urls, meta)
 
   // 注入 360 提示词 / 全景反推:追加到生成框 prompt 尾部。
   const injectPrompt = (p: string) => {
@@ -114,36 +162,50 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGr
   }
   return (
     <div className="grid grid-cols-2 gap-4">
-      {urls.map((url, i) => {
+      {items.map(({ index: i, group }) => {
+        const url = urls[i]
         const m = meta?.[i]
         const badge = m ? UPLOAD_BADGE[m.uploadStatus] : null
         const snapshot = m?.snapshot
         const canEdit = !!(onEditFromResult && snapshot)
+        // 图层组:整张卡片改成「进图层查看器」,而不是放大单张。放大一张透明图层
+        // 对用户毫无意义,他要的是图层栈。
+        const openGroup = group ? () => setLayerGroup(group) : undefined
+        const activate = openGroup ?? (onPreview ? () => onPreview(i) : undefined)
         return (
           <div
             key={m?.id ?? `${i}-${url}`}
-            onClick={() => onPreview?.(i)}
-            role={onPreview ? 'button' : undefined}
-            tabIndex={onPreview ? 0 : undefined}
+            onClick={activate}
+            role={activate ? 'button' : undefined}
+            tabIndex={activate ? 0 : undefined}
             onKeyDown={(e) => {
-              if (onPreview && (e.key === 'Enter' || e.key === ' ')) {
+              if (activate && (e.key === 'Enter' || e.key === ' ')) {
                 e.preventDefault()
-                onPreview(i)
+                activate()
               }
             }}
-            title={onPreview ? '点击放大预览' : undefined}
+            title={openGroup ? '点击查看图层' : activate ? '点击放大预览' : undefined}
             className={`group relative bg-zinc-900 border-2 border-zinc-700 overflow-hidden ${
-              onPreview ? 'cursor-zoom-in hover:border-cyberpunk-yellow transition-colors' : ''
+              activate ? 'cursor-zoom-in hover:border-cyberpunk-yellow transition-colors' : ''
             }`}
           >
-            <ResultCell url={url} alt={`Result ${i + 1}`} />
-            <ImageEditToolbar
-              theme="default"
-              imageUrl={url}
-              onOpenEditor={(type) => setEditorState({ url, type })}
-              onInjectPrompt={injectPrompt}
-              onAddReference={(u) => addImageUrlToReferences('generate', u)}
-            />
+            <ResultCell url={url} alt={group ? '图层分离底图' : `Result ${i + 1}`} />
+            {group ? (
+              <span
+                className="absolute top-1 left-1 border border-cyberpunk-yellow/70 bg-zinc-950/85 px-1.5 py-px font-mono text-[10px] font-bold uppercase tracking-wider text-cyberpunk-yellow"
+                data-testid="layer-group-badge"
+              >
+                {`▤ ${group.length} 层`}
+              </span>
+            ) : (
+              <ImageEditToolbar
+                theme="default"
+                imageUrl={url}
+                onOpenEditor={(type) => setEditorState({ url, type })}
+                onInjectPrompt={injectPrompt}
+                onAddReference={(u) => addImageUrlToReferences('generate', u)}
+              />
+            )}
             {badge && (
               <span
                 aria-label={badge.title}
@@ -178,6 +240,13 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGr
           directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
           onInjectPrompt={injectPrompt}
           onClose={() => setEditorState(null)}
+        />
+      )}
+      {layerGroup && (
+        <LayerStackViewer
+          metas={layerGroup.map((g) => g.meta)}
+          urls={layerGroup.map((g) => g.url)}
+          onClose={() => setLayerGroup(null)}
         />
       )}
     </div>

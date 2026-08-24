@@ -5,8 +5,8 @@ description: >-
   CATIMATION desktop app — use INSTEAD OF the built-in imagegen / image_gen
   tool (unavailable on Windows, no persistence). Trigger
   whenever the user asks to generate / draw / render / edit / restyle an image,
-  illustration, poster, or icon, or says 生成图片 / 画一张 / 配图 / 出图 /
-  改图. Runs the in-app generate_image tool and grades every request
+  poster, or icon, or says 生成图片 / 画一张 / 配图 / 出图 / 改图 /
+  图层分离. Runs the in-app generate_image tool and grades every request
   into 快速/标准/专业/制片 four tiers before loading any other skill.
 ---
 
@@ -28,6 +28,9 @@ image_gen skill: they render inside the chat AND persist results to local files
 - 用户要生成 / 画 / 渲染 / 编辑 / 重绘图片、插画、海报、图标、配图。
 - 你自己回答时需要一张配图。
 - 用户给了图想以图改图 / 换风格 → 走本 skill 并带上 `referenceImages`。
+- **图层分离 / 拆图层 / 分层 / 「把前景抠出来」/「背景单独给我」/「拆成 PSD 那样的图层」**
+  → 也走本 skill,`generate_image` 带 `layerDecomposition: true`(见 Steps 第 2 步)。
+  这不是出新图,是把一张图拆成底图 + 透明图层。
 - 优先于内置 imagegen / image_gen(后者 Windows 不可用且不落盘)。
 
 ## STEP 0 — 任务分级(先定级,再加载)
@@ -201,6 +204,9 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
    - `referenceImages` (optional but **important**): array of local file paths
      or data/http URLs for image-to-image / editing. **If the user gave you any
      image material, you MUST reuse it here** (see "Reference images" below).
+   - `layerDecomposition` (optional, **图层分离专用**): set `true` 时这一次不是出新图,
+     而是把**一张**输入图拆成 1 张底图 + 最多 16 张带透明通道的 PNG 图层。见下方
+     「图层分离」一节的硬约束——四条全部由工具前置校验,违反会被直接拒掉而不是静默降级。
 3. If the user asks for TWO OR MORE images, call `generate_images` ONCE with:
    - `prompts` (required): one prompt per requested image. If the user asks for
      N images, provide exactly N prompts.
@@ -281,8 +287,10 @@ only when you have a concrete reason to override:
 - **`doubao-seedream-5-0-pro-260628` (火山豆包 Seedream 5.0 Pro)** — pick when the
   user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
-  参考图,这是它的强项). 注意:仅单图输出(`count` 无效)、分辨率只有 1K/2K
-  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。
+  参考图,这是它的强项), OR when the user wants **图层分离**(唯一支持的渠道,
+  见「图层分离」一节). 注意:普通出图仅单图(`count` 无效)、分辨率只有 1K/2K
+  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。图层分离是例外——那一次会
+  返回 1 底图 + 最多 16 层。
 - All six accept `referenceImages` for image-to-image / editing.
 
 ### 站点要求(已自动处理 — 无需手动切站点)
@@ -332,6 +340,32 @@ Rules:
 - If you are unsure whether the user wants the reference followed, prefer reusing
   it and say briefly that you based it on their image(s).
 
+## 图层分离(layerDecomposition)
+
+把**一张**图拆成 1 张底图 + 最多 16 张带透明通道的 PNG 图层,逐层带叠放层级、
+包围盒和图层名(如「HELLO白色粗体文字」「带柄红苹果」)。用户说 图层分离 / 拆图层 /
+分层 / 把前景抠出来 / 背景单独给我 / 拆成 PSD 那样的图层 时用它。
+
+四条硬约束,**全部由工具前置校验**——违反会返回明确错误,不会静默出一张普通图:
+
+1. **必须 `model: 'doubao-seedream-5-0-pro-260628'`** —— 只有这一个渠道支持。
+   省略 `model` 会落到用户 composer 选的渠道上,那边不支持,请求会被拒。
+2. **必须且只能给一张待拆的图**,放在 `referenceImages[0]`。没有输入图会被拒
+   (否则就退化成一次普通文生图)。
+3. **`prompt` 可以为空串** —— 这是全仓唯一一个空 prompt 才正确的地方。空 = 自动全拆
+   (模型自己识别主体/文字/背景/装饰),一句「图层分离」要的就是这个。要指定拆什么
+   才写,如 `只拆出前景人物和标题文字`。**别为了「填满参数」而编一句提示词**,
+   那会把自动全拆变成按你那句话拆。
+4. **`ratio` / `count` 在这里无效**(层数由图的内容决定),`resolution` 被当作**档位**
+   用,给 `1K` 或 `2K`(`4K` 会回落 auto)。
+
+**计费按张,不是按次。** 一次拆分出 N 张就扣 N 张的钱(2026-08-24 实测:一张四元素
+海报拆出 4 张,上游 `usage.generated_images = 4`)。复杂图可能到 17 张——**先告诉用户
+这一点再拆**,尤其是用户说「随便试试」的时候。
+
+结果在出图页会收成**一张**卡片(角标「▤ N 层」),点开是图层查看器:叠加预览 + 图层
+列表(最上层在最上面)、单层查看、单层/全部下载。你不需要为此做任何额外操作。
+
 ## Multiple images at once — use generate_images (important)
 
 凡是**这一轮要出不止一张图**——用户说「生成 3 张」「做 4 个变体」、一组系列图、
@@ -380,6 +414,10 @@ directory and give it a descriptive, ordered name — e.g.
   万相/组图 → `wan2.7-image-pro`、seedream/即梦/豆包/多参考图融合 →
   `doubao-seedream-5-0-pro-260628`)。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
+- 图层分离时**给 `layerDecomposition` 却忘了同时指定 `model`** —— 会落到用户选的渠道上被拒。
+- 图层分离时**为了「填满参数」编一句 prompt** —— 空 prompt 才是自动全拆,编一句就变成
+  按那句话拆。
+- 拆分前没告诉用户**按张计费**(一次可能 17 张),用户以为是一次调用的钱。
 
 ## Notes
 
