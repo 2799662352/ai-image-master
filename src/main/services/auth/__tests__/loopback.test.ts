@@ -34,6 +34,39 @@ describe('startLoopbackListener', () => {
     expect(l.redirectUri).not.toContain('localhost')
   })
 
+  // 成功页把浏览器送回站点主页。不这么做的话用户被扔在 /cb 上,而地址栏里还挂着授权码
+  // (实测截图里就能看到整串 code)。
+  describe('成功页的跳转', () => {
+    it('给了 redirectTo 就用 location.replace 跳回去', async () => {
+      const l = await track(
+        startLoopbackListener({ state: 's', redirectTo: 'http://43.161.233.87/home' }),
+      )
+      const res = await get(`${l.redirectUri}?code=c&state=s`)
+      expect(res.body).toContain('登录成功')
+      expect(res.body).toContain('http://43.161.233.87/home')
+      // **必须是 replace 不是 href**:href 会把带授权码的 URL 留在浏览器历史里,
+      // 用户按后退就能翻出来。这两者渲染出来一模一样,只有断言能拦住。
+      expect(res.body).toContain('location.replace')
+      expect(res.body).not.toMatch(/location\.href\s*=/)
+    })
+
+    it('没给 redirectTo 时退化成「请手动关闭」,不注入任何跳转', async () => {
+      const l = await track(startLoopbackListener({ state: 's' }))
+      const res = await get(`${l.redirectUri}?code=c&state=s`)
+      expect(res.body).toContain('登录成功')
+      expect(res.body).toContain('可以关闭本页')
+      expect(res.body).not.toContain('location.replace')
+    })
+
+    it('留一个可点的兜底链接,JS 被禁时用户不至于卡死', async () => {
+      const l = await track(
+        startLoopbackListener({ state: 's', redirectTo: 'http://43.161.233.87/home' }),
+      )
+      const res = await get(`${l.redirectUri}?code=c&state=s`)
+      expect(res.body).toMatch(/<a href="http:\/\/43\.161\.233\.87\/home">/)
+    })
+  })
+
   it('resolves with the code when state matches', async () => {
     const l = await track(startLoopbackListener({ state: 'st-1' }))
     const pending = l.waitForCode()
@@ -76,6 +109,53 @@ describe('startLoopbackListener', () => {
     const pending = l.waitForCode()
     await get(`${l.redirectUri}?error=access_denied&state=st-1`)
     await expect(pending).rejects.toThrow(/access_denied/)
+  })
+
+  // 失败时原先只回一行裸文本 `authorization failed`:用户看到浏览器默认的黑字白底,
+  // 像页面崩了,而且不说下一步该干什么。
+  describe('失败页', () => {
+    it('是一张说明了下一步的 HTML 页,不是裸文本', async () => {
+      const l = await track(startLoopbackListener({ state: 'st-1' }))
+      const res = await get(`${l.redirectUri}?error=access_denied&state=st-1`)
+      expect(res.status).toBe(400)
+      expect(res.body).toContain('</html>')
+      expect(res.body).toContain('授权未完成')
+      expect(res.body).toContain('使用浏览器登录')
+      expect(res.body).not.toBe('authorization failed')
+    })
+
+    // 上游返回的 error 码可能被攻击者控制(拼在回调 URL 里)。把它原样回显到页面上
+    // 就是个反射型 XSS 面 —— 这页压根不需要展示它,原因已经通过 reject 抛给了主进程。
+    it('不回显 URL 里的 error 参数', async () => {
+      const l = await track(startLoopbackListener({ state: 'st-1' }))
+      const res = await get(
+        `${l.redirectUri}?error=${encodeURIComponent('<script>alert(1)</script>')}&state=st-1`,
+      )
+      expect(res.body).not.toContain('alert(1)')
+    })
+
+    // 缺 code 但也没 error(畸形回调)时走同一张页,不能漏成裸文本。
+    it('缺 code 时同样给出这张页', async () => {
+      const l = await track(startLoopbackListener({ state: 'st-1' }))
+      const res = await get(`${l.redirectUri}?state=st-1`)
+      expect(res.status).toBe(400)
+      expect(res.body).toContain('授权未完成')
+    })
+  })
+
+  // 这页只活 1.2 秒,任何外部资源(CDN 字体、logo 图片)都来不及回来,用户只会
+  // 看到一闪而过的无样式文本;离线时更糟。所以成功页必须零外部请求。
+  it('成功页不引用任何外部资源', async () => {
+    const l = await track(
+      startLoopbackListener({ state: 's', redirectTo: 'http://43.161.233.87/home' }),
+    )
+    const res = await get(`${l.redirectUri}?code=c&state=s`)
+    expect(res.body).not.toContain('<link')
+    expect(res.body).not.toMatch(/<img/i)
+    expect(res.body).not.toMatch(/https?:\/\/fonts\./i)
+    // 唯一允许出现的绝对 URL 就是跳转目标本身。
+    const urls = res.body.match(/https?:\/\/[^\s"')]+/g) ?? []
+    expect(urls.every((u) => u.startsWith('http://43.161.233.87/home'))).toBe(true)
   })
 
   // 生产路径:回调是浏览器发来的,默认 keep-alive。server.close() 不动已建立的

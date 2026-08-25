@@ -151,7 +151,12 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
     const codeChallenge = deriveCodeChallenge(codeVerifier)
     const state = generateState()
 
-    const listener = await startLoopbackListener({ state })
+    // 授权完成后把浏览器送回站点主页:否则用户被扔在 `127.0.0.1:<port>/cb?code=...` 上,
+    // 地址栏里还挂着授权码。地址由本进程的 authBaseUrl() 推导,不取自请求。
+    const listener = await startLoopbackListener({
+      state,
+      redirectTo: `${authBaseUrl()}/home`,
+    })
 
     try {
       const pairing = await startPairing(
