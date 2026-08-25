@@ -12,7 +12,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthLoginResult, AuthState } from '../../../../types/authApi'
 import { useAuthStore, __resetSubscriptionsForTesting } from '../../stores/useAuthStore'
-import { useUIPrefsStore } from '../../stores/useUIPrefsStore'
 import DesktopLoginPage from '../DesktopLoginPage'
 
 const AUTHORIZE_URL = 'https://13797248455.xyz/desktop-auth?p=p1'
@@ -76,9 +75,6 @@ beforeEach(() => {
 
   __resetSubscriptionsForTesting()
   useAuthStore.setState(useAuthStore.getInitialState(), true)
-  // useUIPrefsStore 带 persist 中间件,jsdom 的 localStorage 跨用例存活 ——
-  // 不显式重置的话,「点过稍后再说」会渗到后面的用例里。
-  useUIPrefsStore.setState({ authOnboardingDismissed: false })
 })
 
 afterEach(() => {
@@ -95,45 +91,25 @@ async function renderPage() {
   return utils
 }
 
-// 登录是软门:自带 API Key 的功能不依赖它,断网时更不该被一块黑幕挡在外面。
-// 没有这三条,下一个人重构时很容易又把它做回硬门 —— 而硬门在测试里看不出任何异常。
-describe('DesktopLoginPage 软门', () => {
-  it('未登录时提供「稍后再说」出口', async () => {
-    await renderPage()
-    expect(screen.getByRole('button', { name: '稍后再说' })).toBeTruthy()
-  })
-
-  it('点「稍后再说」后覆盖层让路,且不误伤登录按钮', async () => {
-    await renderPage()
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: '稍后再说' }))
-    })
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(auth.startLogin).not.toHaveBeenCalled()
-  })
-
-  it('跳过状态会持久化,重新挂载不再拦人', async () => {
-    useUIPrefsStore.setState({ authOnboardingDismissed: true })
+// **覆盖层只在有进行中的登录流程时现身。**
+//
+// 这几条是防回归用的。它是 `fixed inset-0 z-[75000]`,一旦在 idle 态也渲染,就会盖住
+// 整个应用:既有用户凭空多出一道墙,全部 16 个 E2E 文件点不到底下的任何东西 ——
+// 而症状是 `locator.click` 超时 30 秒,不是显式失败,极难一眼归因(CI 上真的发生过)。
+// 单测里更是完全看不出异常,所以必须有这几条钉住。
+describe('DesktopLoginPage 只在登录流程中现身', () => {
+  it('idle 态整个不渲染(启动时不挡应用)', async () => {
     await renderPage()
     expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByTestId('desktop-login-overlay')).toBeNull()
   })
 
-  // partialize 漏掉这个字段的话:本次点了有效,下次启动覆盖层又回来 ——
-  // 只在内存里生效的「跳过」不算跳过。
-  it('跳过写进了 persist 的落盘负载', async () => {
-    localStorage.removeItem('ui-prefs')
-    await renderPage()
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: '稍后再说' }))
-    })
-    const raw = localStorage.getItem('ui-prefs')
-    expect(raw).toBeTruthy()
-    expect(JSON.parse(raw!).state.authOnboardingDismissed).toBe(true)
+  it('idle 态不占据任何 DOM —— 不是靠 CSS 隐藏', async () => {
+    const { container } = await renderPage()
+    expect(container.innerHTML).toBe('')
   })
 
-  // 跳过只让 idle 态让路。用户之后主动登录时,等待/错误态照样要显示出来。
-  it('跳过之后主动发起的登录仍然显示等待态', async () => {
-    useUIPrefsStore.setState({ authOnboardingDismissed: true })
+  it('用户从设置页发起登录后(pending)才出现', async () => {
     await renderPage()
     act(() => {
       useAuthStore.setState({ pending: true, authorizeUrl: AUTHORIZE_URL })
@@ -141,10 +117,18 @@ describe('DesktopLoginPage 软门', () => {
     expect(screen.getByRole('dialog')).toBeTruthy()
   })
 
-  // 「登录以继续」是硬门的说法,与「稍后再说」并列会自相矛盾。
-  it('文案不宣称登录是使用应用的前提', async () => {
+  it('登录失败(error)时也出现,承载重试出口', async () => {
     await renderPage()
-    expect(screen.queryByText('登录以继续')).toBeNull()
+    act(() => {
+      useAuthStore.setState({ pending: false, error: '登录已超时,请重新发起' })
+    })
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.getByText('登录已超时,请重新发起')).toBeTruthy()
+  })
+
+  it('idle 态不自行发起登录', async () => {
+    await renderPage()
+    expect(auth.startLogin).not.toHaveBeenCalled()
   })
 })
 
@@ -158,14 +142,7 @@ describe('DesktopLoginPage', () => {
     expect(auth.getState).toHaveBeenCalledTimes(1)
   })
 
-  it('idle 态给出登录入口,点击后发起 startLogin', async () => {
-    await renderPage()
-    const btn = screen.getByRole('button', { name: '使用浏览器登录' })
-    await act(async () => {
-      btn.click()
-    })
-    expect(auth.startLogin).toHaveBeenCalledTimes(1)
-  })
+  // 登录入口在设置页的账号分区(见 SettingsAccountPanel.test.tsx),不在本覆盖层里。
 
   it('waiting 态提示已在浏览器打开,并给出三个出口', async () => {
     useAuthStore.setState({ pending: true, authorizeUrl: AUTHORIZE_URL })

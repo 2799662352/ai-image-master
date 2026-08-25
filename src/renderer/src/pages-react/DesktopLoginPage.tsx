@@ -14,7 +14,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useToastStore } from '../stores/useToastStore'
-import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 
 /** 登录成功后覆盖层自行退场前的停留时长,只为让用户看见「成功」这一眼。 */
 const SUCCESS_HOLD_MS = 1800
@@ -44,8 +43,6 @@ export default function DesktopLoginPage() {
   const submitCode = useAuthStore((s) => s.submitCode)
 
   const addToast = useToastStore((s) => s.addToast)
-  const onboardingDismissed = useUIPrefsStore((s) => s.authOnboardingDismissed)
-  const dismissOnboarding = useUIPrefsStore((s) => s.dismissAuthOnboarding)
 
   const [codeOpen, setCodeOpen] = useState(false)
   const [code, setCode] = useState('')
@@ -120,15 +117,19 @@ export default function DesktopLoginPage() {
   // 已登录且这一次没走过登录流程 —— 覆盖层没有存在的理由。
   if (view === 'success' && !loginStartedHere) return null
 
-  // 软门:用户点过「稍后再说」之后不再拦人。
+  // **覆盖层只在有进行中的登录流程时现身,不做首次启动的引导门。**
   //
-  // 登录不是使用本应用的前提 —— 这个应用本来就靠用户自填 API Key 在跑,账号额度只是
-  // 另一条付费通道。做成硬门会把所有既有用户一夜之间挡在门外,那是产品决策,不该由
-  // 一个覆盖层组件默默替人做主。之后随时可以从设置页的账号分区登录。
+  // 登录不是使用本应用的前提:它本来就靠用户自填 API Key 在跑,账号额度只是另一条
+  // 付费通道。启动即弹一块 `fixed inset-0` 的全屏层,对既有用户是凭空多出的一道墙;
+  // 而且会让全部 16 个 E2E 文件点不到底下的任何东西(症状是 locator.click 超时 30 秒,
+  // 不是显式失败,很难一眼归因)。
   //
-  // (注意:这里的理由**不是**「断网也能用」—— 出图本来就要打远端 API,
-  //  断网时自带 key 一样用不了。)
-  if (view === 'idle' && onboardingDismissed) return null
+  // 登录入口在设置页的账号分区。用户从那里点「登录」→ store 的 pending 翻 true →
+  // 本层随即出现,承载等待态的三个出口(取消 / 复制链接 / 手动输入授权码)。
+  //
+  // 「首次启动展示引导」是个产品决策,要做的话得连带把 E2E fixture 一起改(在统一的
+  // page fixture 里预置跳过标记),不该由这个组件顺手替人决定。
+  if (view === 'idle') return null
 
   return (
     <div
@@ -161,9 +162,6 @@ export default function DesktopLoginPage() {
         </div>
 
         <div className="px-8 py-7">
-          {view === 'idle' && (
-            <IdleView onLogin={() => void startLogin()} onSkip={dismissOnboarding} />
-          )}
           {view === 'waiting' && (
             <WaitingView
               authorizeUrl={authorizeUrl}
@@ -186,31 +184,6 @@ export default function DesktopLoginPage() {
             <ErrorView message={error as string} onRetry={() => void startLogin()} />
           )}
         </div>
-      </div>
-    </div>
-  )
-}
-
-function IdleView({ onLogin, onSkip }: { onLogin: () => void; onSkip: () => void }) {
-  return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        {/* 措辞不能是「登录以继续」——那是硬门的说法,而这里跳过就能用。 */}
-        <h2 className="text-base font-bold text-white">登录账号</h2>
-        <p className="text-sm leading-relaxed text-white/60">
-          将在系统浏览器中打开登录页,完成后自动回到应用。凭证只保存在本机。
-        </p>
-        <p className="text-xs leading-relaxed text-white/40">
-          登录后可使用账号额度。已自带 API Key 的话,不登录也能正常出图。
-        </p>
-      </div>
-      <div className="space-y-2">
-        <button type="button" onClick={onLogin} className={`w-full py-3 text-sm ${ACCENT_BTN}`}>
-          使用浏览器登录
-        </button>
-        <button type="button" onClick={onSkip} className={`w-full py-2.5 text-sm ${GHOST_BTN}`}>
-          稍后再说
-        </button>
       </div>
     </div>
   )

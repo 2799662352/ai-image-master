@@ -1,10 +1,14 @@
+import path from 'node:path'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const store = new Map<string, Buffer>()
 let encryptionAvailable = true
 
+// 用平台中立的假目录:写死盘符会让「路径拼接跟着平台走」这件事更难看出来。
+const FAKE_USER_DATA = path.join(path.sep, 'fake', 'userData')
+
 vi.mock('electron', () => ({
-  app: { getPath: () => 'C:\\fake\\userData' },
+  app: { getPath: () => path.join(path.sep, 'fake', 'userData') },
   safeStorage: {
     isEncryptionAvailable: () => encryptionAvailable,
     encryptString: (s: string) => Buffer.concat([Buffer.from('v10'), Buffer.from(s, 'utf8')]),
@@ -30,7 +34,12 @@ vi.mock('node:fs', () => ({
   },
 }))
 
-const BIN_PATH = 'C:\\fake\\userData\\auth-credentials.bin'
+// 必须用 path.join 现算,不能写死带反斜杠的字面量:实现里是
+// `path.join(app.getPath('userData'), FILENAME)`,而 path 未被 mock、分隔符随平台变 ——
+// Linux 上会拼出 `C:\fake\userData/auth-credentials.bin`(正斜杠),写死的 key 便对不上。
+// 症状很隐蔽:只走「实现写→实现读」往返的用例两边同 key 照样绿,唯独「预置文件再读回」
+// 这类会在 CI 上红,本地 Windows 完全复现不出来。
+const BIN_PATH = path.join(FAKE_USER_DATA, 'auth-credentials.bin')
 
 const CRED = {
   token: 'jwt.tok.en',
