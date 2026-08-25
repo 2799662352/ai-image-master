@@ -40,6 +40,8 @@ describe('startLoopbackListener', () => {
     const res = await get(`${l.redirectUri}?code=abc123&state=st-1`)
     expect(res.status).toBe(200)
     expect(res.body).toContain('</html>')
+    // 只断言 </html> 太弱:成功页的中文被静默重编码成乱码时测试照样绿。
+    expect(res.body).toContain('登录成功')
     await expect(pending).resolves.toBe('abc123')
   })
 
