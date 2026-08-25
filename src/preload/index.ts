@@ -346,6 +346,15 @@ const IPC_CHANNELS = {
   ] as const,
   AGENT_MCP_EVENTS: ['agent:mcp-status'] as const,
   AGENT_GOAL_EVENTS: ['agent:goal'] as const,
+  // 桌面端浏览器登录
+  AUTH: {
+    GET_STATE: 'auth:get-state',
+    START_LOGIN: 'auth:start-login',
+    CANCEL_LOGIN: 'auth:cancel-login',
+    SUBMIT_CODE: 'auth:submit-code',
+    LOGOUT: 'auth:logout',
+  },
+  AUTH_EVENTS: ['auth:state-changed', 'auth:login-result'] as const,
   // Shell helpers (clipboard / save dialog)
   SHELL: {
     COPY_IMAGE: 'shell:copy-image',
@@ -484,6 +493,18 @@ export type FileExplorerStat =
   | { ok: true; size: number; mime: string; mtime: number }
   | { ok: false; reason: string }
 
+export interface AuthState {
+  authenticated: boolean
+  username: string | null
+  displayName: string | null
+  role: string | null
+  credentialSource: 'safeStorage' | 'memory' | 'none'
+}
+
+export type AuthLoginResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string }
+
 // Provider / Gateway 的 IPC DTO 也搬到了 `src/types/agentApi.ts` —— 渲染层的
 // `useSettingsStore` 此前照抄了一份(注释还写着「redeclare it here instead of
 // importing from preload」),现在两边同吃一份。
@@ -519,6 +540,15 @@ export interface ElectronAPI {
   // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
   // 各 Section 手写 duck-type 子集的时代结束于此。
   agent: AgentApi
+  auth: {
+    getState: () => Promise<AuthState>
+    startLogin: () => Promise<{ authorizeUrl: string; expiresIn: number }>
+    cancelLogin: () => Promise<void>
+    submitCode: (grantCode: string) => Promise<void>
+    logout: () => Promise<void>
+    onStateChanged: (handler: (state: AuthState) => void) => () => void
+    onLoginResult: (handler: (result: AuthLoginResult) => void) => () => void
+  }
   // Shell helpers (clipboard / save dialog)
   shell: {
     copyImage: (uri: string) => Promise<IpcResponse>
@@ -1387,6 +1417,21 @@ const electronAPI: ElectronAPI = {
         IPC_CHANNELS.AGENT.REMOVE_CUSTOM_PROVIDER,
         id,
       ),
+  },
+
+  // ============ 桌面端浏览器登录 ============
+  auth: {
+    getState: () => safeInvoke<AuthState>(IPC_CHANNELS.AUTH.GET_STATE),
+    startLogin: () =>
+      safeInvoke<{ authorizeUrl: string; expiresIn: number }>(IPC_CHANNELS.AUTH.START_LOGIN),
+    cancelLogin: () => safeInvoke<void>(IPC_CHANNELS.AUTH.CANCEL_LOGIN),
+    submitCode: (grantCode: string) =>
+      safeInvoke<void>(IPC_CHANNELS.AUTH.SUBMIT_CODE, grantCode),
+    logout: () => safeInvoke<void>(IPC_CHANNELS.AUTH.LOGOUT),
+    onStateChanged: (handler: (state: AuthState) => void) =>
+      safeOnWithCleanup<AuthState>(IPC_CHANNELS.AUTH_EVENTS[0], handler, IPC_CHANNELS.AUTH_EVENTS),
+    onLoginResult: (handler: (result: AuthLoginResult) => void) =>
+      safeOnWithCleanup<AuthLoginResult>(IPC_CHANNELS.AUTH_EVENTS[1], handler, IPC_CHANNELS.AUTH_EVENTS),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
