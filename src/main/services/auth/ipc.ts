@@ -23,10 +23,6 @@ const AUTH_CHANNELS = [
 
 const CLIENT_NAME = 'CATIMATION Desktop'
 
-type AuthLoginResult =
-  | { ok: true }
-  | { ok: false; code: string; message: string }
-
 interface PendingLogin {
   pairingId: string
   codeVerifier: string
@@ -211,4 +207,8 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
     clearPending()
     for (const ch of AUTH_CHANNELS) {
       ipcMain.removeHandler(ch)
- 
+    }
+  }
+}
+
+export type { AuthState, AuthLoginResult }

@@ -5,17 +5,15 @@
 
 import { net } from 'electron'
 import { clearCredential, credentialSource, getCredential, setCredential } from './credentials'
+// `AuthState` 的单一真源在 `src/types/authApi.ts` —— preload 与渲染层同吃一份,
+// 不在这里再声明一遍(AgentApi 就是因为两处各写一份而漂移过)。
+import type { AuthState } from '../../../types/authApi'
+
 const DEFAULT_BASE_URL = 'https://13797248455.xyz'
 const REQUEST_TIMEOUT_MS = 15_000
 const PROBE_INTERVAL_MS = 60_000
 
-export interface AuthState {
-  authenticated: boolean
-  username: string | null
-  displayName: string | null
-  role: string | null
-  credentialSource: 'safeStorage' | 'memory' | 'none'
-}
+export type { AuthState }
 
 export interface PairingStart {
   pairingId: string

@@ -127,6 +127,8 @@ import type {
   CodexProviderMutationResponse,
   CodexProviderRecord,
 } from '../types/agentApi'
+// 同理:`window.electronAPI.auth` 的契约住在 `src/types/authApi.ts`。
+import type { AuthLoginResult, AuthState } from '../types/authApi'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -492,18 +494,6 @@ export type FileExplorerNode = {
 export type FileExplorerStat =
   | { ok: true; size: number; mime: string; mtime: number }
   | { ok: false; reason: string }
-
-export interface AuthState {
-  authenticated: boolean
-  username: string | null
-  displayName: string | null
-  role: string | null
-  credentialSource: 'safeStorage' | 'memory' | 'none'
-}
-
-export type AuthLoginResult =
-  | { ok: true }
-  | { ok: false; code: string; message: string }
 
 // Provider / Gateway 的 IPC DTO 也搬到了 `src/types/agentApi.ts` —— 渲染层的
 // `useSettingsStore` 此前照抄了一份(注释还写着「redeclare it here instead of
