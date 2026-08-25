@@ -12,6 +12,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthLoginResult, AuthState } from '../../../../types/authApi'
 import { useAuthStore, __resetSubscriptionsForTesting } from '../../stores/useAuthStore'
+import { useUIPrefsStore } from '../../stores/useUIPrefsStore'
 import DesktopLoginPage from '../DesktopLoginPage'
 
 const AUTHORIZE_URL = 'https://13797248455.xyz/desktop-auth?p=p1'
@@ -75,6 +76,9 @@ beforeEach(() => {
 
   __resetSubscriptionsForTesting()
   useAuthStore.setState(useAuthStore.getInitialState(), true)
+  // useUIPrefsStore 带 persist 中间件,jsdom 的 localStorage 跨用例存活 ——
+  // 不显式重置的话,「点过稍后再说」会渗到后面的用例里。
+  useUIPrefsStore.setState({ authOnboardingDismissed: false })
 })
 
 afterEach(() => {
@@ -90,6 +94,59 @@ async function renderPage() {
   await waitFor(() => expect(auth.getState).toHaveBeenCalled())
   return utils
 }
+
+// 登录是软门:自带 API Key 的功能不依赖它,断网时更不该被一块黑幕挡在外面。
+// 没有这三条,下一个人重构时很容易又把它做回硬门 —— 而硬门在测试里看不出任何异常。
+describe('DesktopLoginPage 软门', () => {
+  it('未登录时提供「稍后再说」出口', async () => {
+    await renderPage()
+    expect(screen.getByRole('button', { name: '稍后再说' })).toBeTruthy()
+  })
+
+  it('点「稍后再说」后覆盖层让路,且不误伤登录按钮', async () => {
+    await renderPage()
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '稍后再说' }))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(auth.startLogin).not.toHaveBeenCalled()
+  })
+
+  it('跳过状态会持久化,重新挂载不再拦人', async () => {
+    useUIPrefsStore.setState({ authOnboardingDismissed: true })
+    await renderPage()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  // partialize 漏掉这个字段的话:本次点了有效,下次启动覆盖层又回来 ——
+  // 只在内存里生效的「跳过」不算跳过。
+  it('跳过写进了 persist 的落盘负载', async () => {
+    localStorage.removeItem('ui-prefs')
+    await renderPage()
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '稍后再说' }))
+    })
+    const raw = localStorage.getItem('ui-prefs')
+    expect(raw).toBeTruthy()
+    expect(JSON.parse(raw!).state.authOnboardingDismissed).toBe(true)
+  })
+
+  // 跳过只让 idle 态让路。用户之后主动登录时,等待/错误态照样要显示出来。
+  it('跳过之后主动发起的登录仍然显示等待态', async () => {
+    useUIPrefsStore.setState({ authOnboardingDismissed: true })
+    await renderPage()
+    act(() => {
+      useAuthStore.setState({ pending: true, authorizeUrl: AUTHORIZE_URL })
+    })
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+
+  // 「登录以继续」是硬门的说法,与「稍后再说」并列会自相矛盾。
+  it('文案不宣称登录是使用应用的前提', async () => {
+    await renderPage()
+    expect(screen.queryByText('登录以继续')).toBeNull()
+  })
+})
 
 describe('DesktopLoginPage', () => {
   it('挂载时同时接推送(ensureSubscriptions)和拉当前状态(hydrate)', async () => {
