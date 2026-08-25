@@ -18,6 +18,7 @@ import { TemplateInline } from './components/TemplateInline'
 const AgentWorkspacePage = lazy(() => import('../pages-react/AgentWorkspacePage'))
 const MarketplacePage = lazy(() => import('../pages-react/MarketplacePage'))
 const PortraitLibraryPage = lazy(() => import('../pages-react/PortraitLibraryPage'))
+const DesktopLoginPage = lazy(() => import('../pages-react/DesktopLoginPage'))
 
 let root: Root | null = null
 let settingsRoot: Root | null = null
@@ -30,6 +31,7 @@ let smartEraseRoot: Root | null = null
 let agentWorkspaceRoot: Root | null = null
 let marketplaceRoot: Root | null = null
 let portraitLibraryRoot: Root | null = null
+let desktopLoginRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
@@ -458,6 +460,35 @@ export function mountPortraitLibraryReact(): void {
 
 export function unmountPortraitLibraryReact(): void {
   const container = document.getElementById('portrait-library-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+/**
+ * 桌面端登录覆盖层。不是标签页 —— 容器在 body 末尾、紧邻 global-toast-root,
+ * 所以这里只渲染一次就不再卸载,由组件自己按登录状态决定铺满还是渲染 null。
+ */
+export function mountDesktopLoginReact(): void {
+  const container = document.getElementById('desktop-login-react-root')
+  if (!container) {
+    console.warn('[React] desktop-login-react-root not found')
+    return
+  }
+  if (!desktopLoginRoot) {
+    desktopLoginRoot = createRoot(container)
+    desktopLoginRoot.render(
+      <Suspense fallback={null}>
+        <DesktopLoginPage />
+      </Suspense>
+    )
+    console.log('[React] DesktopLoginPage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountDesktopLoginReact(): void {
+  const container = document.getElementById('desktop-login-react-root')
   if (container) {
     container.style.display = 'none'
   }
