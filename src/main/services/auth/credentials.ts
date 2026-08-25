@@ -39,6 +39,32 @@ function notify(): void {
   invalidateCallbacks.forEach((cb) => cb())
 }
 
+/**
+ * 落盘的 JSON 不可信,必须逐字段校验后才能当成凭证。
+ *
+ * 不做这一步,一个被篡改成 `{"userId":"u1"}` 的文件仍是合法 JSON,
+ * `as StoredCredential` 会让它一路通过,下游据此发出 `Bearer undefined` ——
+ * 而正确行为是「当作没有凭证」。类型断言不是校验。
+ */
+function parseCredential(json: string): StoredCredential | null {
+  const raw: unknown = JSON.parse(json)
+  if (typeof raw !== 'object' || raw === null) return null
+  const c = raw as Record<string, unknown>
+  for (const k of ['token', 'userId', 'username', 'displayName', 'role'] as const) {
+    if (typeof c[k] !== 'string') return null
+  }
+  if (!c.token) return null
+  if (typeof c.expiresAt !== 'number' || !Number.isFinite(c.expiresAt)) return null
+  return {
+    token: c.token as string,
+    userId: c.userId as string,
+    username: c.username as string,
+    displayName: c.displayName as string,
+    role: c.role as string,
+    expiresAt: c.expiresAt,
+  }
+}
+
 function readFromSafeStorage(): StoredCredential | null {
   try {
     if (!safeStorage.isEncryptionAvailable()) return null
@@ -46,7 +72,7 @@ function readFromSafeStorage(): StoredCredential | null {
     if (!fs.existsSync(p)) return null
     const buf = fs.readFileSync(p) as Buffer
     const json = safeStorage.decryptString(buf)
-    return JSON.parse(json) as StoredCredential
+    return parseCredential(json)
   } catch (e) {
     console.warn('[auth/credentials] safeStorage read failed:', e)
     return null
@@ -74,19 +100,27 @@ function removeFromDisk(): void {
   }
 }
 
+/**
+ * 返回**副本**,不是缓存对象本身。
+ *
+ * 直接把缓存交出去的话,任何调用方改一下返回值就永久污染了本会话的缓存 ——
+ * 比如把 token 置空,后续每次读都拿到那个坏值,而磁盘上其实是好的。
+ * 写入侧同理:存进来的对象也要拷一份,免得调用方之后改它反向影响缓存。
+ */
 export function getCredential(): StoredCredential | null {
-  if (inMemoryFallback) return inMemoryFallback
+  if (inMemoryFallback) return { ...inMemoryFallback }
   if (cached === undefined) cached = readFromSafeStorage()
-  return cached
+  return cached ? { ...cached } : null
 }
 
 export function setCredential(cred: StoredCredential): void {
-  const written = writeToSafeStorage(cred)
+  const snapshot: StoredCredential = { ...cred }
+  const written = writeToSafeStorage(snapshot)
   if (written) {
     inMemoryFallback = null
-    cached = cred
+    cached = snapshot
   } else {
-    inMemoryFallback = cred
+    inMemoryFallback = snapshot
     cached = null
     console.warn('[auth/credentials] safeStorage unavailable; using in-memory fallback')
   }

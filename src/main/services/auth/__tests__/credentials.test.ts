@@ -30,6 +30,8 @@ vi.mock('node:fs', () => ({
   },
 }))
 
+const BIN_PATH = 'C:\\fake\\userData\\auth-credentials.bin'
+
 const CRED = {
   token: 'jwt.tok.en',
   userId: 'u1',
@@ -111,9 +113,80 @@ describe('auth credentials', () => {
   })
 
   it('does not touch disk at import time', async () => {
-    store.set('C:\\fake\\userData\\auth-credentials.bin', Buffer.from('v10' + JSON.stringify(CRED)))
-    const spy = vi.spyOn(store, 'get')
-    await import('../credentials')
-    expect(spy).not.toHaveBeenCalled()
+    store.set(BIN_PATH, Buffer.from('v10' + JSON.stringify(CRED)))
+    // existsSync 走 Map.has,readFileSync 走 Map.get —— 两个都要盯,
+    // 否则「导入时只调了 existsSync」会从指缝漏过去。
+    const has = vi.spyOn(store, 'has')
+    const get = vi.spyOn(store, 'get')
+    const m = await import('../credentials')
+    expect(has).not.toHaveBeenCalled()
+    expect(get).not.toHaveBeenCalled()
+    // 首次读取才落到磁盘。
+    expect(m.getCredential()).toEqual(CRED)
+    expect(has).toHaveBeenCalled()
+    has.mockRestore()
+    get.mockRestore()
+  })
+
+  it('reads a credential written by a previous session', async () => {
+    store.set(BIN_PATH, Buffer.concat([Buffer.from('v10'), Buffer.from(JSON.stringify(CRED))]))
+    const m = await import('../credentials')
+    expect(m.getCredential()).toEqual(CRED)
+    expect(m.credentialSource()).toBe('safeStorage')
+  })
+
+  it('treats malformed JSON inside a valid envelope as no credential', async () => {
+    store.set(BIN_PATH, Buffer.concat([Buffer.from('v10'), Buffer.from('{not json')]))
+    const m = await import('../credentials')
+    expect(m.getCredential()).toBeNull()
+  })
+
+  // 篡改成合法 JSON 但字段残缺时,类型断言救不了 —— 不校验的话下游会发出
+  // `Bearer undefined`,而正确行为是「当作没有凭证」。
+  it('rejects a decrypted payload missing required fields', async () => {
+    store.set(BIN_PATH, Buffer.concat([Buffer.from('v10'), Buffer.from('{"userId":"u1"}')]))
+    const m = await import('../credentials')
+    expect(m.getCredential()).toBeNull()
+    expect(m.credentialSource()).toBe('none')
+  })
+
+  it('rejects a payload whose token is empty or whose expiresAt is not a number', async () => {
+    const m0 = await import('../credentials')
+    void m0
+    for (const bad of [{ ...CRED, token: '' }, { ...CRED, expiresAt: 'soon' }]) {
+      store.clear()
+      vi.resetModules()
+      store.set(BIN_PATH, Buffer.concat([Buffer.from('v10'), Buffer.from(JSON.stringify(bad))]))
+      const m = await import('../credentials')
+      expect(m.getCredential()).toBeNull()
+    }
+  })
+
+  it('clear() also drops the in-memory fallback', async () => {
+    encryptionAvailable = false
+    const m = await import('../credentials')
+    m.setCredential(CRED)
+    expect(m.getCredential()).toEqual(CRED)
+    m.clearCredential()
+    expect(m.getCredential()).toBeNull()
+    expect(m.credentialSource()).toBe('none')
+  })
+
+  // 直接把缓存对象交出去的话,调用方改一下就永久污染本会话的缓存。
+  it('returns a copy, so a caller cannot mutate the cached credential', async () => {
+    const m = await import('../credentials')
+    m.setCredential(CRED)
+    const first = m.getCredential()
+    expect(first).not.toBeNull()
+    first!.token = 'tampered'
+    expect(m.getCredential()?.token).toBe('jwt.tok.en')
+  })
+
+  it('snapshots on write, so mutating the argument afterwards does not leak in', async () => {
+    const m = await import('../credentials')
+    const mutable = { ...CRED }
+    m.setCredential(mutable)
+    mutable.token = 'tampered-after-write'
+    expect(m.getCredential()?.token).toBe('jwt.tok.en')
   })
 })
