@@ -39,6 +39,9 @@ const errCoded = (status: number, code: string) =>
 const errBare = (status: number) =>
   ({ ok: false, status, json: async () => ({ success: false, message: '没权限' }) }) as unknown as Response
 
+/** Task 5 会持有真的 verifier;这里只需要一对稳定的 challenge/state。 */
+const PKCE = { codeChallenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', state: 'st4te' }
+
 const SESSION = {
   token: 'jwt.tok.en',
   user: { id: 'u1', username: 'alice' }, // 刻意不给 displayName / role
@@ -63,26 +66,42 @@ describe('auth session', () => {
     expect(m.authBaseUrl()).toBe('https://staging.example.com')
   })
 
-  it('startPairing 打对端点、带上回环参数,并接受 201', async () => {
+  // 后端缺 codeChallenge / state 会 400,所以这里用 toEqual 逐字段钉死整个请求体。
+  // 原来用的是 toMatchObject + 只列三个字段,那样即使 PKCE 根本没进 body 也照样绿 ——
+  // 测试全绿、真机必挂,正是这个缺口让签名漏掉了 pkce 参数。
+  it('startPairing 打对端点,请求体含 PKCE 与回环参数,并接受 201', async () => {
     fetchMock.mockResolvedValue(ok({ pairingId: 'p1', authorizeUrl: 'https://x/y', expiresIn: 300 }, 201))
     const m = await import('../session')
-    const r = await m.startPairing('CATIMATION', { host: '127.0.0.1', port: 51789 })
+    const r = await m.startPairing('CATIMATION', { host: '127.0.0.1', port: 51789 }, PKCE)
 
     expect(r).toEqual({ pairingId: 'p1', authorizeUrl: 'https://x/y', expiresIn: 300 })
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('https://13797248455.xyz/api/auth/desktop/start')
     expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body)).toMatchObject({
+    expect(JSON.parse(init.body)).toEqual({
+      codeChallenge: PKCE.codeChallenge,
+      state: PKCE.state,
       clientName: 'CATIMATION',
       callbackHost: '127.0.0.1',
       callbackPort: 51789,
     })
   })
 
+  it('无回环参数时不发 callbackHost / callbackPort', async () => {
+    fetchMock.mockResolvedValue(ok({ pairingId: 'p1', authorizeUrl: 'https://x/y', expiresIn: 300 }, 201))
+    const m = await import('../session')
+    await m.startPairing('CATIMATION', null, PKCE)
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      codeChallenge: PKCE.codeChallenge,
+      state: PKCE.state,
+      clientName: 'CATIMATION',
+    })
+  })
+
   it('startPairing 抛出带 code 的错误,供 IPC 层转成用户文案', async () => {
     fetchMock.mockResolvedValue(errCoded(400, 'INVALID_CALLBACK_HOST'))
     const m = await import('../session')
-    await expect(m.startPairing('CATIMATION', null)).rejects.toMatchObject({
+    await expect(m.startPairing('CATIMATION', null, PKCE)).rejects.toMatchObject({
       code: 'INVALID_CALLBACK_HOST',
     })
   })
@@ -205,7 +224,7 @@ describe('auth session', () => {
   it('每个请求都挂 AbortSignal,不会无限期挂起', async () => {
     fetchMock.mockResolvedValue(ok({ pairingId: 'p', authorizeUrl: 'u', expiresIn: 300 }, 201))
     const m = await import('../session')
-    await m.startPairing('CATIMATION', null)
+    await m.startPairing('CATIMATION', null, PKCE)
     expect(fetchMock.mock.calls[0][1].signal).toBeDefined()
   })
 
@@ -226,7 +245,7 @@ describe('auth session', () => {
   it('响应体没有 error.code 时,按状态码合成一个', async () => {
     fetchMock.mockResolvedValue(errBare(401))
     const m = await import('../session')
-    await expect(m.startPairing('CATIMATION', null)).rejects.toMatchObject({
+    await expect(m.startPairing('CATIMATION', null, PKCE)).rejects.toMatchObject({
       code: 'HTTP_401',
       status: 401,
     })

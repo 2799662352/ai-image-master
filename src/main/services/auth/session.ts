@@ -5,8 +5,6 @@
 
 import { net } from 'electron'
 import { clearCredential, credentialSource, getCredential, setCredential } from './credentials'
-import { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce'
-
 const DEFAULT_BASE_URL = 'https://13797248455.xyz'
 const REQUEST_TIMEOUT_MS = 15_000
 const PROBE_INTERVAL_MS = 60_000
@@ -114,26 +112,22 @@ function requireString(v: unknown, field: string, status: number): string {
 /**
  * `POST /api/auth/desktop/start` —— 公开端点,成功是 **201** 而不是 200。
  *
- * ⚠️ `pkce` 是可选参数,但真机路径上**必须由调用方传**:后端强制要求 `codeChallenge`
- * 与 `state`(缺任一 → 400 MISSING_CODE_CHALLENGE / MISSING_STATE),而 claim 阶段要用
- * 与之配对的 `codeVerifier`。按计划书的分工,verifier/state 归 IPC 编排层(Task 5)持有,
- * 所以它必须把自己那份 challenge/state 传进来。省略时这里会**自行生成一对**以保证请求
- * 合法,但生成的 verifier 不会返回,那条配对随后必然 claim 失败(PKCE_MISMATCH)——
- * 因此省略仅适用于不打算走完 claim 的调用方(如只验证请求形状的单测)。
+ * `pkce` 是**必填**的,不是可选的。后端缺 `codeChallenge` 或 `state` 会 400,而 claim
+ * 阶段还要用与之配对的 `codeVerifier` —— verifier 归 IPC 编排层(Task 5)持有,所以
+ * challenge/state 必须由它传进来。
+ *
+ * 这里刻意**不**提供「省略时自行生成一对」的兜底:那样 start 会成功,但生成的 verifier
+ * 无人持有,失败要推迟到两步之后的 claim 才以 `PKCE_MISMATCH` 的面目出现,比 start 处
+ * 一个响亮的 400 难查得多。设成必填,忘记传就是编译错误,连运行都到不了。
  */
 export async function startPairing(
   clientName: string,
   callback: { host: string; port: number } | null,
-  pkce?: { codeChallenge: string; state: string },
+  pkce: { codeChallenge: string; state: string },
 ): Promise<PairingStart> {
-  const pair = pkce ?? {
-    codeChallenge: deriveCodeChallenge(generateCodeVerifier()),
-    state: generateState(),
-  }
-
   const body: Record<string, unknown> = {
-    codeChallenge: pair.codeChallenge,
-    state: pair.state,
+    codeChallenge: pkce.codeChallenge,
+    state: pkce.state,
     clientName,
   }
   if (callback) {
