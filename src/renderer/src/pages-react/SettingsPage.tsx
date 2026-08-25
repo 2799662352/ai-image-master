@@ -6,6 +6,7 @@ import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
 import { CodexProviderManager } from './settings/CodexProviderManager'
+import { AccountSection } from './settings/AccountSection'
 import { getAgentApi } from '../utils/agentBridge'
 import {
   CINEMATOGRAPHY_KB_MCP_PROVIDER_ID,
@@ -521,10 +522,13 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* 账号在最前面 —— 它是身份,逻辑上先于 API 站点。后面几节的编号相应顺延。 */}
+      <AccountSection />
+
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">
-            1
+            2
           </span>
           <span className="font-bold text-white uppercase tracking-tight">选择 API 站点</span>
         </div>
@@ -559,7 +563,7 @@ export default function SettingsPage() {
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">
-            2
+            3
           </span>
           <span className="font-bold text-white uppercase tracking-tight">输入 API Key</span>
         </div>

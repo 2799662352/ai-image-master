@@ -54,6 +54,7 @@ import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
+import { registerAuthIpc } from './services/auth/ipc'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
@@ -1316,6 +1317,10 @@ app.whenReady().then(async () => {
   // "No handler registered" reject,页面随即钉死在「人像库未就绪」,只能整页
   // 刷新才恢复。提前注册即可让人像库启动即自动连接。
   registerSeedanceRendererIpc(
+    () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
+  )
+
+  registerAuthIpc(
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
 

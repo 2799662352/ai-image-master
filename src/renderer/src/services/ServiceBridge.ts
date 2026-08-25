@@ -64,6 +64,7 @@ import {
   mountPortraitLibraryReact,
   unmountPortraitLibraryReact,
   mountGlobalToast,
+  mountDesktopLoginReact,
   mountComparePromptHelper,
 } from '../react-app/main'
 import { useModelStore, type ModelInfo } from '../stores/useModelStore'
@@ -330,6 +331,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       } catch { /* 非关键路径，静默降级 */ }
 
       mountGlobalToast()
+      // 登录覆盖层与 toast 一样常驻(不属于任何标签页):已登录时组件自己渲染 null。
+      mountDesktopLoginReact()
       // Generate 已由整页 React (GeneratePage) 接管:模板/风格走页内 <TemplateInline>,
       // @ 引用走页内 TokenAutocomplete,故不再挂 vanilla 的 token/template/prompt-helper 三个岛。
       // Compare 仍是 vanilla,保留它的 prompt helper。
