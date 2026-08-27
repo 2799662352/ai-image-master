@@ -183,6 +183,20 @@ export interface UsageQuery {
 // 原生充值
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * 单笔充值上限 ¥4000（后端 `payment.ts:28` 的 `BALANCE_RECHARGE_MAX_CNY`）。
+ *
+ * 这不是可以随手调大的业务参数：影子账户的 quota 是 **int32**，物理上限 ¥4294.96
+ * （`4294.96 × 500000 ≈ 2^31`）。4000 是留了余量后的取整。
+ *
+ * **住在 types 里是为了让主进程与渲染层吃同一份。** 渲染层要它在用户输入时就地拦下
+ * 超限（不然要等一个 RTT 才告诉用户金额超了），主进程要它做最后一道闸。两边各写一个
+ * 4000 必然漂移：改了一处另一处继续放行，错的那侧要么白发请求、要么把合法金额拦在
+ * 门外。跨进程共用常量的房规先例是 `types/videoWorkbench.ts` 的
+ * `WORKBENCH_STATUS_MAX_PAGE_SIZE`。
+ */
+export const MAX_RECHARGE_CNY = 4000
+
 export type RechargeOrderStatus = 'PENDING' | 'PAID' | 'CREDITED' | 'CLOSED'
 
 export interface RechargeOrder {

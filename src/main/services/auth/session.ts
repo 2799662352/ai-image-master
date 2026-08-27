@@ -8,6 +8,7 @@ import { clearCredential, credentialSource, getCredential, setCredential } from 
 // `AuthState` 的单一真源在 `src/types/authApi.ts` —— preload 与渲染层同吃一份,
 // 不在这里再声明一遍(AgentApi 就是因为两处各写一份而漂移过)。
 import type { AuthState } from '../../../types/authApi'
+import { MAX_RECHARGE_CNY } from '../../../types/authApi'
 
 const DEFAULT_BASE_URL = 'https://13797248455.xyz'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -360,13 +361,11 @@ const MAX_PAGE_SIZE = 100
  */
 const DEFAULT_PAGE_SIZE = 20
 
-/**
- * 单笔充值上限 ¥4000(`payment.ts:28`)。
- *
- * 这不是可以随手调大的业务参数:影子账户的 quota 是 **int32**,物理上限 ¥4294.96
- * (`4294.96 * 500000 ≈ 2^31`)。4000 是给它留了余量之后的取整。
- */
-const MAX_RECHARGE_CNY = 4000
+// 单笔充值上限住在 `types/authApi.ts`,因为**渲染层也要它** —— 充值弹窗要在用户输入时
+// 就地拦下超限,不能等一个 RTT 回来才说「金额超限」。跨进程共用一个常量的房规范例是
+// `types/videoWorkbench.ts` 的 `WORKBENCH_STATUS_MAX_PAGE_SIZE`(主进程与渲染层各 import
+// 同一份)。在两边各写一个 4000 必然漂移:改了一处、另一处继续放行,而错的那一侧要么
+// 白发一次请求、要么把合法金额拦在门外。
 
 export interface UsageLogRow {
   id: number
