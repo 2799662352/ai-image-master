@@ -434,6 +434,49 @@ describe('RechargeModal', () => {
   })
 
   describe('轮询生命周期', () => {
+    // 🚨 迟到的响应绝不能把已经到手的成功推回去。
+    //
+    // 3 秒一跳,只要某一跳的响应超过 3 秒就会和下一跳重叠。若第 N 跳(慢,回 PENDING)
+    // 在第 N+1 跳(快,回 CREDITED)之后才 resolve,没有守卫的实现会:
+    //   success → setStage('waiting') → polling 变回 true → interval 重启
+    //     → 一路轮到超时 → 告诉用户「未确认到账」
+    // 而钱其实已经到账、`refreshBalance()` 也已经调过了。用户看到的是「充值成功」闪一下
+    // 然后变成失败,最可能的下一步动作是**再付一次**。
+    //
+    // 守卫是「只有最后发起的那一跳的结果允许写 state」——与明细抽屉同一个模式。
+    it('迟到的旧响应不覆盖新结果:先到的 CREDITED 不被后到的 PENDING 顶掉', async () => {
+      vi.useFakeTimers()
+      pickPersonalPool()
+      openModal()
+      await clickPay()
+
+      // 第 1 跳:挂住不 resolve,模拟一次超过 3 秒的慢查单。
+      let releaseSlow: ((v: unknown) => void) | undefined
+      auth.getRechargeOrder.mockImplementationOnce(
+        () => new Promise((resolve) => {
+          releaseSlow = resolve
+        }),
+      )
+      await advance(3000)
+      expect(auth.getRechargeOrder).toHaveBeenCalledTimes(1)
+
+      // 第 2 跳:立刻回 CREDITED。
+      auth.getRechargeOrder.mockResolvedValueOnce({ ok: true, data: order({ status: 'CREDITED' }) })
+      await advance(3000)
+      expect(statusText()).toContain('成功')
+
+      // 现在才让第 1 跳带着 PENDING 回来。
+      await act(async () => {
+        releaseSlow?.({ ok: true, data: order({ status: 'PENDING' }) })
+      })
+
+      expect(statusText()).toContain('成功')
+      // 顺带钉住「没有重启轮询」:成功之后不该再有新的查单。
+      const callsAtSuccess = auth.getRechargeOrder.mock.calls.length
+      await advance(30_000)
+      expect(auth.getRechargeOrder).toHaveBeenCalledTimes(callsAtSuccess)
+    })
+
     // interval 活在 window 上:不清就会在弹窗关掉之后继续打接口,
     // 并把 setState 打到已经卸载的树上。
     it('关闭弹窗后不再查单', async () => {

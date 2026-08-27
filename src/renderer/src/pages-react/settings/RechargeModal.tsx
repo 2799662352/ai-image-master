@@ -151,6 +151,19 @@ export function RechargeModal({ open, onClose }: RechargeModalProps) {
   // 于是每次都清掉重建 interval,计数永远回到 0 —— 超时线就再也到不了了。
   const pollsRef = useRef(0)
 
+  /**
+   * 单调递增的查单序号 —— **只有最后发起的那一跳的结果允许写 state。**
+   *
+   * 3 秒一跳,任何一跳的响应超过 3 秒就会与下一跳重叠。没有这个守卫时,若第 N 跳(慢,
+   * 回 PENDING)在第 N+1 跳(快,回 CREDITED)之后才 resolve:
+   *   success → setStage('waiting') → polling 变回 true → interval 重启 → 轮到超时
+   * 用户看到「充值成功」闪一下变成「未确认到账」,而钱已经到账、`refreshBalance()` 也调过了。
+   * 那一刻他最可能的动作是**再付一次**。
+   *
+   * 与明细抽屉是同一个模式(那边守的是「切了时间范围却显示上一个范围的数据」)。
+   */
+  const tickSeqRef = useRef(0)
+
   const target = useMemo(
     () => deriveTarget(selectedPool, personalBillingProjectId),
     [selectedPool, personalBillingProjectId],
@@ -224,8 +237,12 @@ export function RechargeModal({ open, onClose }: RechargeModalProps) {
 
     pollsRef.current += 1
     const overdue = pollsRef.current >= MAX_POLLS
+    const mySeq = ++tickSeqRef.current
 
     const res = await api.getRechargeOrder(outTradeNo)
+    // 已经有更晚发起的一跳了 —— 这次的结果是旧的,丢掉。见 `tickSeqRef` 上方那段。
+    if (mySeq !== tickSeqRef.current) return
+
     if (!res.ok) {
       // 单次查单失败不判死:钱可能已经在路上,断网抖一下就宣告失败会诱使用户重复付款。
       // 只在到了超时线时才升级成终态。
