@@ -163,6 +163,72 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().authorizeUrl).toBeNull()
   })
 
+  // 取消的同时若有一条失败推送落进来,留着 error 会让覆盖层从「等待」切到无法退出的
+  // 「错误」态 —— 用户以为点了取消,结果更出不去了。
+  it('cancelLogin 也清掉错误', async () => {
+    useAuthStore.getState().ensureSubscriptions()
+    await useAuthStore.getState().startLogin()
+    resultHandler!({ ok: false, code: 'PAIRING_EXPIRED', message: '登录已超时,请重新发起' })
+    expect(useAuthStore.getState().error).toBeTruthy()
+
+    await useAuthStore.getState().cancelLogin()
+    expect(useAuthStore.getState().error).toBeNull()
+  })
+
+  // **没有这个动作时 error 无人可清**,而覆盖层是 `error ? 'error' : …` 派生的:
+  // 登录失败一次就把用户永久挡在应用外面,只能重启进程。实机撞过。
+  describe('dismissLogin', () => {
+    it('清掉错误,让用户回到应用', async () => {
+      useAuthStore.getState().ensureSubscriptions()
+      await useAuthStore.getState().startLogin()
+      resultHandler!({ ok: false, code: 'NETWORK', message: '无法连接登录服务' })
+      expect(useAuthStore.getState().error).toBeTruthy()
+
+      useAuthStore.getState().dismissLogin()
+      expect(useAuthStore.getState().error).toBeNull()
+      expect(useAuthStore.getState().pending).toBe(false)
+      expect(useAuthStore.getState().authorizeUrl).toBeNull()
+    })
+
+    // 走到 error 态时主进程的配对流程已结束、回环监听器已关闭,没有东西要取消。
+    // 发一次多余的 IPC 只会在主进程那边找不到配对而报错。
+    it('不发 IPC —— 纯清渲染层状态', async () => {
+      useAuthStore.getState().ensureSubscriptions()
+      await useAuthStore.getState().startLogin()
+      resultHandler!({ ok: false, code: 'NETWORK', message: '无法连接登录服务' })
+      auth.cancelLogin.mockClear()
+
+      useAuthStore.getState().dismissLogin()
+      expect(auth.cancelLogin).not.toHaveBeenCalled()
+    })
+
+    // 清干净才能再来一次:残留的 error 会让下一次 startLogin 的 pending 被判成错误态。
+    it('清完之后还能正常再发起登录', async () => {
+      useAuthStore.getState().ensureSubscriptions()
+      await useAuthStore.getState().startLogin()
+      resultHandler!({ ok: false, code: 'NETWORK', message: '无法连接登录服务' })
+      useAuthStore.getState().dismissLogin()
+
+      await useAuthStore.getState().startLogin()
+      expect(useAuthStore.getState().pending).toBe(true)
+      expect(useAuthStore.getState().error).toBeNull()
+    })
+
+    // 登录态与登录流程是两件事:撤下失败提示不该把已有的登录身份也一起清了。
+    it('不动已登录的身份', () => {
+      useAuthStore.setState({
+        authenticated: true,
+        username: 'alice',
+        displayName: 'Alice',
+        error: '无法连接登录服务',
+      })
+      useAuthStore.getState().dismissLogin()
+
+      expect(useAuthStore.getState().authenticated).toBe(true)
+      expect(useAuthStore.getState().username).toBe('alice')
+    })
+  })
+
   it('submitCode 透传给主进程,失败仍由推送汇报', async () => {
     useAuthStore.getState().ensureSubscriptions()
     await useAuthStore.getState().startLogin()

@@ -27,6 +27,28 @@ export interface LoopbackListener {
   close(): void
 }
 
+export type LoopbackAbortReason = 'cancelled' | 'timeout'
+
+/**
+ * 「没等到授权码」与「授权本身失败」是两回事,调用方必须能分开。
+ *
+ * 此前两者都是裸 `Error`,上层 `mapLoginFailure` 认不出来就落进兜底的
+ * 「无法连接登录服务,请检查网络或代理后重试」—— 结果**用户点一下取消,
+ * 就被告知网络有问题**(实机撞到)。超时同样被误报成网络故障。
+ *
+ * 用类而不是比对 message:文案随时会被改,`instanceof` + `reason` 不会。
+ */
+export class LoopbackAbortError extends Error {
+  readonly reason: LoopbackAbortReason
+
+  constructor(reason: LoopbackAbortReason) {
+    // 文案保持原样,既有测试按 /timed out/i 与 /cancell?ed/i 匹配。
+    super(reason === 'timeout' ? 'loopback callback timed out' : 'loopback listener cancelled')
+    this.name = 'LoopbackAbortError'
+    this.reason = reason
+  }
+}
+
 /** 成功页停留多久再跳走 —— 只为让用户看见「登录成功」这一眼。 */
 const REDIRECT_DELAY_MS = 1200
 
@@ -190,7 +212,7 @@ export async function startLoopbackListener(opts: {
   const timer = setTimeout(() => {
     if (settled) return
     settled = true
-    rejectCode(new Error('loopback callback timed out'))
+    rejectCode(new LoopbackAbortError('timeout'))
     close()
   }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
@@ -203,7 +225,7 @@ export async function startLoopbackListener(opts: {
     server.closeAllConnections()
     if (!settled) {
       settled = true
-      rejectCode(new Error('loopback listener cancelled'))
+      rejectCode(new LoopbackAbortError('cancelled'))
     }
   }
 

@@ -23,6 +23,17 @@ interface AuthStoreActions {
   ensureSubscriptions: () => void
   startLogin: () => Promise<void>
   cancelLogin: () => Promise<void>
+  /**
+   * 把失败的登录流程从界面上撤下来,让用户回到应用继续用自己的 API Key。
+   *
+   * 必须存在:`error` 此前没有任何动作会清掉(cancelLogin 只清 pending 与
+   * authorizeUrl),而覆盖层是 `error ? 'error' : …` 派生的 —— 少了这个动作,
+   * 登录失败一次就把用户永久挡在应用外,只能重启进程。
+   *
+   * 刻意**不发 IPC**:走到 error 态时主进程那边的配对流程已经结束、回环监听器
+   * 已关闭,没有东西需要取消。等待态的退出走 cancelLogin,那才需要通知主进程。
+   */
+  dismissLogin: () => void
   submitCode: (grantCode: string) => Promise<void>
   logout: () => Promise<void>
 }
@@ -109,7 +120,13 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const api = getAuthApi()
     if (!api) return
     await api.cancelLogin()
-    set({ pending: false, authorizeUrl: null })
+    // error 一并清掉:若取消的同时有一条失败推送落进来,留着它会让覆盖层从
+    // 「等待」直接切到无法退出的「错误」态,用户以为点了取消却更出不去了。
+    set({ pending: false, authorizeUrl: null, error: null })
+  },
+
+  dismissLogin: () => {
+    set({ pending: false, authorizeUrl: null, error: null })
   },
 
   submitCode: async (grantCode: string) => {

@@ -1,7 +1,7 @@
 // 桌面端浏览器登录 IPC 编排。PKCE verifier 与 pending 状态只活在主进程,渲染层不可见。
 
 import { ipcMain, shell, type BrowserWindow } from 'electron'
-import { startLoopbackListener, type LoopbackListener } from './loopback'
+import { LoopbackAbortError, startLoopbackListener, type LoopbackListener } from './loopback'
 import { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce'
 import {
   AuthError,
@@ -45,6 +45,11 @@ const NETWORK_MESSAGE = '无法连接登录服务,请检查网络或代理后重
  * 没有任何测试能杀死的死代码。合并后这条判据本身是被测的。
  */
 function mapLoginFailure(err: unknown): { code: string; message: string } {
+  // 五分钟没等到回调 ≠ 连不上服务。归进网络兜底的话,用户会去查网络和代理,
+  // 而真正该做的是回浏览器把授权点完。取消不走这里 —— 它在上游就被静默掉了。
+  if (err instanceof LoopbackAbortError && err.reason === 'timeout') {
+    return { code: 'LOOPBACK_TIMEOUT', message: '等待浏览器授权超时,请重新发起登录' }
+  }
   if (err instanceof AuthError && err.status !== 0) {
     switch (err.code) {
       case 'PKCE_MISMATCH':
@@ -128,6 +133,20 @@ function detachWaitAndClaim(
   void active.listener.waitForCode().then(
     (grantCode) => completeClaim(getWindow, active, grantCode),
     (err) => {
+      // **取消必须静默。** 关掉监听器会让 waitForCode 以 'cancelled' 拒绝,而它此前
+      // 是个裸 Error、被 mapLoginFailure 归进兜底的网络故障 —— 用户点一下取消,
+      // 反被告知「无法连接登录服务,请检查网络或代理后重试」(实机撞到),而且渲染层
+      // 那个 error 一旦置上就再也退不出去。
+      //
+      // 更隐蔽的一处:`clearPending()` 也被 auth:start-login 调用。所以重复发起登录时,
+      // 上一轮的取消会立刻把新一轮刚建立的等待态覆盖成错误 —— 静默之后这条也一并没了。
+      if (err instanceof LoopbackAbortError && err.reason === 'cancelled') {
+        if (pending === active) {
+          active.listener.close()
+          pending = null
+        }
+        return
+      }
       broadcastLoginResult(getWindow, { ok: false, ...mapLoginFailure(err) })
       if (pending === active) {
         active.listener.close()

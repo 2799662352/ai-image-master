@@ -26,7 +26,16 @@ const listener = {
   close: vi.fn(),
 }
 const startLoopbackListener = vi.fn(async () => listener)
-vi.mock('../loopback', () => ({ startLoopbackListener: (o: unknown) => startLoopbackListener(o) }))
+// 只替掉「起监听器」这一件事,`LoopbackAbortError` 用真的 —— ipc.ts 靠
+// `instanceof` + reason 区分「用户取消」「等码超时」和真正的失败,拿个假类来测
+// 等于把这条判据整个绕开(而且假类漏了的话 instanceof undefined 会直接抛)。
+vi.mock('../loopback', async () => {
+  const actual = await vi.importActual<typeof import('../loopback')>('../loopback')
+  return {
+    startLoopbackListener: (o: unknown) => startLoopbackListener(o),
+    LoopbackAbortError: actual.LoopbackAbortError,
+  }
+})
 
 vi.mock('../pkce', () => ({
   generateCodeVerifier: () => 'the-verifier',
@@ -212,8 +221,9 @@ describe('auth IPC 编排', () => {
   })
 
   it('等码超时也关端口并报错', async () => {
+    const { LoopbackAbortError } = await import('../loopback')
     startPairing.mockResolvedValue(OK_START)
-    listener.waitForCode.mockRejectedValue(new Error('timeout'))
+    listener.waitForCode.mockRejectedValue(new LoopbackAbortError('timeout'))
     await register()
 
     await call('auth:start-login')
@@ -221,6 +231,22 @@ describe('auth IPC 编排', () => {
 
     expect(listener.close).toHaveBeenCalled()
     expect((sent[sent.length - 1] as { payload: { ok: boolean } }).payload.ok).toBe(false)
+  })
+
+  // 五分钟没等到回调 ≠ 连不上服务。归进网络兜底的话,用户会去查网络和代理,
+  // 而真正该做的是回浏览器把授权点完。
+  it('超时文案指向「回浏览器完成授权」,不是网络故障', async () => {
+    const { LoopbackAbortError } = await import('../loopback')
+    startPairing.mockResolvedValue(OK_START)
+    listener.waitForCode.mockRejectedValue(new LoopbackAbortError('timeout'))
+    await register()
+
+    await call('auth:start-login')
+    await flush()
+
+    const last = sent[sent.length - 1] as { payload: { message: string } }
+    expect(last.payload.message).toMatch(/超时/)
+    expect(last.payload.message).not.toMatch(/网络|代理/)
   })
 
   it('cancel-login 关端口', async () => {
@@ -233,6 +259,27 @@ describe('auth IPC 编排', () => {
     expect(listener.close).toHaveBeenCalled()
   })
 
+  // **用户主动取消不是失败,一个字都不该广播。**
+  //
+  // 实机撞到:关掉监听器会让 waitForCode 以 'cancelled' 拒绝,而它此前是个裸 Error、
+  // 被 mapLoginFailure 归进兜底的网络故障 —— 用户点一下取消,反被告知「无法连接
+  // 登录服务,请检查网络或代理后重试」。再叠上渲染层当时没有退出错误态的路径,
+  // 人就被永久挡在应用外面了。
+  it('取消登录不广播任何失败结果', async () => {
+    const { LoopbackAbortError } = await import('../loopback')
+    startPairing.mockResolvedValue(OK_START)
+    // 真实语义:close() 会让等码的 promise 以 cancelled 拒绝。
+    listener.waitForCode.mockRejectedValue(new LoopbackAbortError('cancelled'))
+    await register()
+
+    await call('auth:start-login')
+    await call('auth:cancel-login')
+    await flush()
+
+    const results = sent.filter((s) => s.channel === 'auth:login-result')
+    expect(results).toEqual([])
+  })
+
   it('重复 start-login 先关掉上一个监听器,不泄漏端口', async () => {
     startPairing.mockResolvedValue(OK_START)
     listener.waitForCode.mockReturnValue(new Promise(() => {}))
@@ -242,6 +289,21 @@ describe('auth IPC 编排', () => {
     expect(listener.close).not.toHaveBeenCalled()
     await call('auth:start-login')
     expect(listener.close).toHaveBeenCalledTimes(1)
+  })
+
+  // clearPending() 也被 start-login 调用,所以上一轮的取消会以 cancelled 拒绝。
+  // 不静默的话,它会把新一轮刚建立的等待态立刻覆盖成错误 —— 第二次点登录必然坏掉。
+  it('重复 start-login 不会因上一轮被取消而广播失败', async () => {
+    const { LoopbackAbortError } = await import('../loopback')
+    startPairing.mockResolvedValue(OK_START)
+    listener.waitForCode.mockRejectedValue(new LoopbackAbortError('cancelled'))
+    await register()
+
+    await call('auth:start-login')
+    await call('auth:start-login')
+    await flush()
+
+    expect(sent.filter((s) => s.channel === 'auth:login-result')).toEqual([])
   })
 
   it('submit-code 用 pending 里的 verifier,而不是渲染层传来的东西', async () => {
