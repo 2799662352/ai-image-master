@@ -71,6 +71,52 @@ afterEach(() => {
 })
 
 describe('useQuotaStore', () => {
+  // 🚨 抛出的异常绝不能逃出 store 变成未处理 rejection。
+  //
+  // 调用点是组件里的 `void loadQuota()` —— 没有 catch。任何 throw 都会成为一个
+  // unhandled rejection:vitest 会因此**判整轮失败**(哪怕每条断言都过),而在生产里
+  // 用户什么提示都看不到,只有控制台一行红字。
+  //
+  // 触发路径不止「网络挂了」:`getApi()` 只挡住「整个桥没挂上」,挡不住「桥在但某个
+  // 方法不存在」—— 那时 `api.getOrganizations()` 是同步的 TypeError。实测撞到过:
+  // 一个既有测试的假桥只 mock 了登录相关方法,于是 4 条 unhandled rejection 把整轮
+  // 474 个通过的测试判成红的。
+  describe('异常不许逃出去', () => {
+    it('某个方法压根不存在时,落到 error 而不是 reject', async () => {
+      Object.defineProperty(window, 'electronAPI', {
+        // 故意只给一半:这正是那个既有测试的假桥形状。
+        value: { auth: { getPaymentConfig: auth.getPaymentConfig } },
+        configurable: true,
+      })
+
+      await expect(useQuotaStore.getState().load()).resolves.toBeUndefined()
+      expect(useQuotaStore.getState().error).toBeTruthy()
+      // loading 必须落回来,否则 UI 永远转圈。
+      expect(useQuotaStore.getState().loading).toBe(false)
+    })
+
+    it('查询 reject 时也落到 error,不往上抛', async () => {
+      auth.getOrganizations.mockRejectedValue(new Error('桥断了'))
+
+      await expect(useQuotaStore.getState().load()).resolves.toBeUndefined()
+      expect(useQuotaStore.getState().error).toBeTruthy()
+      expect(useQuotaStore.getState().loading).toBe(false)
+    })
+
+    it('refreshBalance 抛出时保留旧余额,只写 error', async () => {
+      useQuotaStore.setState({
+        selectedPool: { projectId: 342, producerProjectId: null },
+        balanceYuan: 7.5,
+      })
+      auth.getBalance.mockRejectedValue(new Error('超时'))
+
+      await expect(useQuotaStore.getState().refreshBalance()).resolves.toBeUndefined()
+      // 显示 0 会让用户以为余额空了 —— 比「旧值 + 报错」糟得多。
+      expect(useQuotaStore.getState().balanceYuan).toBe(7.5)
+      expect(useQuotaStore.getState().error).toBeTruthy()
+    })
+  })
+
   it('初始态什么都没加载,不假装有余额', () => {
     const s = useQuotaStore.getState()
     expect(s.organizations).toEqual([])

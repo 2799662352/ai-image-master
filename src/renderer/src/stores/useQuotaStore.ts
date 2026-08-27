@@ -103,6 +103,25 @@ function unwrap<T>(r: QuotaRpc<T>): { data?: T; error?: string } {
   return r.ok ? { data: r.data } : { error: r.error.message }
 }
 
+/**
+ * 🚨 **异常绝不许逃出这些 action。**
+ *
+ * 调用点全是组件里的 `void loadQuota()` / `void selectPool(...)` —— 没有 catch。逃出去的
+ * 异常会成为一个 unhandled rejection:vitest 因此**判整轮失败**(哪怕每条断言都过),
+ * 而在生产里用户什么提示都看不到,只剩控制台一行红字。
+ *
+ * 别以为「主进程回信封所以不会抛」:`getApi()` 只挡住「整个桥没挂上」,挡不住「桥在但
+ * 某个方法不存在」—— 那时调用它是一个**同步** TypeError。实测撞过:一个既有测试的假桥
+ * 只 mock 了登录相关方法,4 条 unhandled rejection 把 474 个通过的测试判成红的。
+ *
+ * `message` 直接透出而不做映射:这一层的异常都是「桥/网络层面出了意外」,没有需要
+ * 分支处理的业务 code —— 有 code 的那些走信封,由 `unwrap` 处理。
+ */
+function unexpected(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  return `额度查询失败:${msg}`
+}
+
 export const useQuotaStore = create<QuotaStore>((set, get) => ({
   ...initialState,
 
@@ -111,18 +130,24 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     if (!api) return
 
     set({ loading: true, error: null })
-    // 两个查询彼此独立,并行发 —— 任一失败不该让另一个的结果丢掉。
-    const [orgsRes, cfgRes] = await Promise.all([api.getOrganizations(), api.getPaymentConfig()])
+    try {
+      // 两个查询彼此独立,并行发 —— 任一失败不该让另一个的结果丢掉。
+      const [orgsRes, cfgRes] = await Promise.all([api.getOrganizations(), api.getPaymentConfig()])
 
-    const orgs = unwrap(orgsRes)
-    const cfg = unwrap(cfgRes)
+      const orgs = unwrap(orgsRes)
+      const cfg = unwrap(cfgRes)
 
-    set({
-      loading: false,
-      organizations: orgs.data ?? [],
-      personalBillingProjectId: cfg.data?.personalBillingProjectId ?? null,
-      error: orgs.error ?? cfg.error ?? null,
-    })
+      set({
+        loading: false,
+        organizations: orgs.data ?? [],
+        personalBillingProjectId: cfg.data?.personalBillingProjectId ?? null,
+        error: orgs.error ?? cfg.error ?? null,
+      })
+    } catch (e) {
+      // loading 必须落回来,否则 UI 永远转圈。
+      set({ loading: false, error: unexpected(e) })
+      return
+    }
 
     // 恢复上次选的池。**只恢复选择本身,余额单独拉** —— 上次的余额早就过期了。
     const stored = readStoredPool()
@@ -163,10 +188,16 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     const pool = get().selectedPool
     if (!api || !pool) return
 
-    const res = await api.getBalance(pool.projectId, pool.producerProjectId ?? undefined)
-    const r = unwrap(res)
+    // 意外异常与信封错误在这里**同样处置**:都只写 error、保留旧余额。
+    // 显示 0 会让用户以为余额空了 —— 比「旧值 + 报错」糟得多。
+    let r: { data?: AccountBalance; error?: string }
+    try {
+      r = unwrap(await api.getBalance(pool.projectId, pool.producerProjectId ?? undefined))
+    } catch (e) {
+      set({ error: unexpected(e) })
+      return
+    }
     if (r.error !== undefined) {
-      // **失败时保留旧余额。** 显示 0 会让用户以为余额空了 —— 比「旧值 + 报错」糟得多。
       set({ error: r.error })
       return
     }
