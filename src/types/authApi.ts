@@ -95,3 +95,132 @@ export interface PaymentConfig {
    */
   personalBillingProjectId: number | null
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// 用量明细
+//
+// 真源同上:`services/auth/session.ts`(它把后端全 snake_case 的 `model.Log` 归一成
+// camelCase)。这里的形状必须与之逐字一致。
+//
+// 🚨 命名:这几个类型一律带 `Usage` 前缀且语义唯一。网页端
+// `sora-ui/src/api/backend-api.ts` 把 `UsageSummaryItem` **export 了两次**(`:602-608`
+// 的 VideoTask 统计 + `:1547-1552` 的用量汇总),TypeScript 的接口声明合并把两者悄悄
+// 合成一个九字段类型 —— `UsageDrawer.tsx:6` 导入的就是那个合并体,访问 `s.name`
+// 编译不报错、运行时是 undefined。**不要复用 `UsageSummaryItem` 这个名字。**
+// ───────────────────────────────────────────────────────────────────────────
+
+export interface UsageLogRow {
+  id: number
+  /** Unix **秒**(不是毫秒)。喂给 `new Date()` 前要乘 1000。 */
+  createdAt: number
+  /** `2` = 消费,`6` = 退款。完整枚举见后端 `log.go:53-61`。 */
+  type: number
+  modelName: string
+  /**
+   * 原始 quota 整数,**退款为负**。500000 = ¥1。
+   *
+   * 显示时不要取绝对值 —— 那会让一笔退款看起来像「又花了一笔钱」。退款行应加 `+` 前缀。
+   */
+  quota: number
+  promptTokens: number
+  completionTokens: number
+  feature: string | null
+  tokenName: string | null
+  projectId: number | null
+  producerProjectId: number | null
+}
+
+export interface UsageLogPage {
+  rows: UsageLogRow[]
+  /**
+   * 后端这个 count **不按 type 过滤**,所以它含退款行,与汇总的口径不同(见
+   * `UsageModelSummary.totalQuota`)。分页要用它,不要拿它当「消费笔数」。
+   */
+  total: number
+  /** **0 基**。显示页码要 `page + 1`。 */
+  page: number
+  pageSize: number
+}
+
+export interface UsageModelSummary {
+  /** 后端按 `model_name` 分组,GROUP BY 出来的那一组可以是 NULL → 这里是 null。 */
+  modelName: string | null
+  /**
+   * **毛消费额,不含退款。**
+   *
+   * 汇总 SQL 带 `WHERE type = LogTypeConsume`,而明细的 where 没有 type 过滤 ——
+   * 一条退款会出现在列表里、却不进这个数。所以汇总卡的标题必须写「消费合计(不含退款)」
+   * 而不是「总费用」。
+   *
+   * 也**不要**在渲染层拿当前页的 rows 硬算净额:列表是分页的,算出来的「净额」只对
+   * 当前页成立,比毛额更误导。
+   */
+  totalQuota: number
+  totalRequests: number
+  totalTokens: number
+}
+
+export interface UsageQuery {
+  /**
+   * `0` = 不过滤。**0 是合法值,不是「没传」** —— 别用 falsy 判断筛它。
+   *
+   * ⚠️ 用量接口**只收这一个** id,不收 `producerProjectId`。而 producer 池的键是
+   * `(projectId, producerProjectId)` 两半,所以选中 producer 池时查出来的是该 project 下
+   * **全部**子项目的用量。这个含糊性无法在客户端修掉(汇总是服务端预聚合的),
+   * 只能在 UI 上明说。
+   */
+  projectId: number
+  /** **0 基**(`offset = page * pageSize`)。汇总不用这个字段。 */
+  page?: number
+  /** 上限 100,主进程会 clamp。汇总不用这个字段。 */
+  pageSize?: number
+  /** Unix **秒**。后端 `>0` 才生效。 */
+  startTime?: number
+  endTime?: number
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 原生充值
+// ───────────────────────────────────────────────────────────────────────────
+
+export type RechargeOrderStatus = 'PENDING' | 'PAID' | 'CREDITED' | 'CLOSED'
+
+export interface RechargeOrder {
+  outTradeNo: string
+  /**
+   * 🚨 **`PAID` 不是完成,`CREDITED` 才是。** 支付宝收到钱、但入账影子账户失败时状态就停在
+   * `PAID`(此时 `creditError` 非空)。轮询的成功判定只能是 `status === 'CREDITED'`。
+   *
+   * 主进程对未知状态一律退化成 `PENDING`(宁可等到超时,也不误报到账)。
+   */
+  status: RechargeOrderStatus
+  /**
+   * 十进制字符串(如 `"100.00"`)。**刻意是 string 不是 number** ——
+   * `parseFloat` 再格式化一趟就能把 ¥100 显示成 ¥99.99999。
+   */
+  totalAmount: string
+  /** `PAID` 但入账失败时非空,UI 应显示「入账中」而不是「成功」。 */
+  creditError: string | null
+}
+
+export interface RechargeOrderCreated extends RechargeOrder {
+  /**
+   * 支付宝 SDK **现签**的一次性链接,带 `timeout_express`(默认 10m)。
+   *
+   * 只能交给 `shell.openExternal` —— 应用内导航会被 `will-navigate` 静默拦下(白名单只放
+   * 同源与 `file:`)。也**不能缓存或预生成**:存下来的链接过期后点开是支付宝的报错页。
+   */
+  payUrl: string
+}
+
+/**
+ * 项目上下文**严格三选一**,不是三个可选字段。多发一组的后果不是被忽略,而是 403:
+ * 个人计费落点刻意不在组织列表里,一旦夹带 `projectId` 就会走进成员校验分支、查不到
+ * `joined` → fail-closed。
+ *
+ * `producer` 的两半必须成对,缺一后端 400 —— 池键是 `(producerId, producerProjectId)`。
+ */
+export type RechargeTarget =
+  | { kind: 'personal' }
+  | { kind: 'project'; projectId: number }
+  | { kind: 'producer'; producerId: number; producerProjectId: number }

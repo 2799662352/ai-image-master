@@ -2,6 +2,9 @@
 // 后端两套错误信封、201 vs 200、可选字段兜底,每一条错了都只在真机上才暴露。
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+// 仅类型 —— 编译期被擦除,不会在 `vi.mock` 之前把真模块拉进来。用它给 it.each 的
+// 「换个函数、同一套断言」表格标注参数类型,免得每个函数各抄一遍同样的用例。
+import type * as SessionModule from '../session'
 
 const fetchMock = vi.fn()
 vi.mock('electron', () => ({ net: { fetch: (...a: unknown[]) => fetchMock(...a) } }))
@@ -26,6 +29,14 @@ vi.mock('../credentials', () => ({
 /** 后端配对路由的信封。注意 start 是 201。 */
 const ok = (data: unknown, status = 200) =>
   ({ ok: status < 400, status, json: async () => ({ success: true, data }) }) as unknown as Response
+
+/**
+ * payment 路由的成功信封是 `{ok:true,data}`,usage 路由是 `{success:true,data}`
+ * (计划 §1.3 / §1.1)。两者都把负载放在 `data` 下,所以主进程一套解包够用 ——
+ * 但得有一条用例真的喂 `ok:true` 那一套,否则「只认 success」的实现也能全绿。
+ */
+const okPay = (data: unknown, status = 200) =>
+  ({ ok: status < 400, status, json: async () => ({ ok: true, data }) }) as unknown as Response
 
 /** 配对路由的错误信封:带 error.code。 */
 const errCoded = (status: number, code: string) =>
@@ -373,6 +384,456 @@ describe('auth session', () => {
       fetchMock.mockResolvedValue(errCoded(403, 'FORBIDDEN_PROJECT'))
       const m = await import('../session')
       await expect(m.fetchBalance(1)).rejects.toMatchObject({ code: 'FORBIDDEN_PROJECT' })
+    })
+  })
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 用量明细与充值。盯的全是**只在真机上才暴露**的契约细节:
+  //   - BFF 收 camelCase 自己改名转发,客户端提前改成 snake_case 会被整组忽略
+  //   - `page` 是 0 基,第一页就是那个会被 falsy 判断吞掉的 0
+  //   - 明细响应全 snake_case、未脱敏
+  //   - payment 与 usage 两套成功信封
+  //   - 项目上下文三选一互斥,多发一个字段就 403
+  //   - `PAID` ≠ 完成,`CREDITED` 才是
+  // ─────────────────────────────────────────────────────────────────────
+  describe('用量明细与充值', () => {
+    function login() {
+      cred.current = {
+        token: 'jwt.tok.en',
+        userId: 'u1',
+        username: 'a',
+        displayName: 'a',
+        role: 'USER',
+        expiresAt: 1,
+      }
+      cred.source = 'safeStorage'
+    }
+
+    /** 一条真实形状的消费流水:Go `model.Log` 整体序列化,全 snake_case(计划 §1.1)。 */
+    const CONSUME_ROW = {
+      id: 90_210,
+      created_at: 1_756_200_000,
+      type: 2,
+      model_name: 'seedance-1-0-pro',
+      quota: 12_500,
+      prompt_tokens: 31,
+      completion_tokens: 0,
+      feature: 'video',
+      token_name: 'sk-desktop',
+      project_id: 342,
+      producer_project_id: 5,
+    }
+
+    /** 退款流水:type=6,`quota` 是**负数**。 */
+    const REFUND_ROW = { ...CONSUME_ROW, id: 90_211, type: 6, quota: -2_500 }
+
+    const CREATED = {
+      outTradeNo: 'RC20260827001',
+      payUrl: 'https://openapi.alipay.com/gateway.do?biz_content=%7B%7D&sign=abc',
+      totalAmount: '100.00',
+      pointsAmount: 50_000_000,
+      status: 'PENDING',
+    }
+
+    it('fetchUsageLogs 用 camelCase 拼参数,page 按 0 基原样送出', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [], total: 0, page: 2, page_size: 20 }))
+      const m = await import('../session')
+
+      await m.fetchUsageLogs({
+        projectId: 342,
+        page: 2,
+        pageSize: 20,
+        startTime: 1_756_000_000,
+        endTime: 1_756_300_000,
+      })
+
+      const url = new URL(fetchMock.mock.calls[0][0] as string)
+      expect(url.pathname).toBe('/api/user/usage-logs')
+      // 逐字段 toEqual 而不是逐个 get():BFF 自己把 camelCase 改名成 snake_case 再转发给 Go
+      // (`userOrg.ts:356-359`)。客户端提前改成 snake_case 的话参数会被整组忽略、静默退化成
+      // 默认值 —— 用户看到的是「筛选没生效」,而不是任何报错。toEqual 同时钉住「没有多余参数」。
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        projectId: '342',
+        page: '2',
+        pageSize: '20',
+        startTime: '1756000000',
+        endTime: '1756300000',
+      })
+      expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer jwt.tok.en')
+    })
+
+    // `page` 是 0 基(offset = page * pageSize),所以第一页就是 0。用 `if (query.page)`
+    // 之类的 falsy 判断会把第一页的参数整个吞掉 —— 恰好在最常用的那一页上出错。
+    // 同理 `projectId: 0` 是「不过滤」这个合法语义,不是「没传」。
+    it('page 与 projectId 为 0 时照样送出,不被 falsy 判断吞掉', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [], total: 0, page: 0, page_size: 20 }))
+      const m = await import('../session')
+
+      await m.fetchUsageLogs({ projectId: 0, page: 0 })
+      const url = new URL(fetchMock.mock.calls[0][0] as string)
+      expect(url.searchParams.get('page')).toBe('0')
+      expect(url.searchParams.get('projectId')).toBe('0')
+      // 没给时间范围就一个都不发:后端 `>0` 才生效,发 0 只是噪音。
+      expect(url.searchParams.has('startTime')).toBe(false)
+      expect(url.searchParams.has('endTime')).toBe(false)
+    })
+
+    // 硬上限 100(计划 §1.1)。别指望后端兜 —— 它兜不兜是另一份代码的事,
+    // 而超限的后果是一次几百行的响应打进主进程再经 IPC 结构化克隆一遍。
+    it.each<[number | undefined, string]>([
+      [500, '100'],
+      [undefined, '20'],
+      [0, '20'],
+    ])('pageSize=%s 时送出 %s', async (input, expected) => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [], total: 0, page: 0, page_size: 20 }))
+      const m = await import('../session')
+
+      await m.fetchUsageLogs({ projectId: 1, pageSize: input })
+      expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('pageSize')).toBe(
+        expected,
+      )
+    })
+
+    // §2.2:用量接口**只收 `projectId`**(`userOrg.ts:350-354`),而 producer 池的键是
+    // `(projectId, producerProjectId)` 两半。客户端自己造一个 producerProjectId 参数
+    // 只会被后端忽略,却让人误以为过滤生效了 —— 这条钉住「接口收不了,就别发」。
+    it('不发 producerProjectId —— 用量接口收不了这一半池键', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [CONSUME_ROW], total: 1, page: 0, page_size: 20 }))
+      const m = await import('../session')
+
+      await m.fetchUsageLogs({ projectId: 342 })
+      const url = new URL(fetchMock.mock.calls[0][0] as string)
+      expect(url.searchParams.has('producerProjectId')).toBe(false)
+      expect(url.searchParams.has('producerId')).toBe(false)
+    })
+
+    it('明细响应全 snake_case,逐字段归一成 camelCase', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [CONSUME_ROW], total: 137, page: 0, page_size: 50 }))
+      const m = await import('../session')
+
+      const r = await m.fetchUsageLogs({ projectId: 342, pageSize: 50 })
+      expect(r).toEqual({
+        total: 137,
+        page: 0,
+        pageSize: 50,
+        rows: [
+          {
+            id: 90_210,
+            createdAt: 1_756_200_000,
+            type: 2,
+            modelName: 'seedance-1-0-pro',
+            quota: 12_500,
+            promptTokens: 31,
+            completionTokens: 0,
+            feature: 'video',
+            tokenName: 'sk-desktop',
+            projectId: 342,
+            producerProjectId: 5,
+          },
+        ],
+      })
+    })
+
+    // 未脱敏的整体序列化意味着字段可能整个缺席(旧数据、非 New API 来源的流水)。
+    // 缺席时给 null 而不是 0/'' —— UI 要能区分「这条没有 token 名」和「token 名是空串」。
+    it('明细缺省字段落成 null,logs 不是数组时退化成空页', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [{ id: 7 }], total: 1, page: 0, page_size: 20 }))
+      const m = await import('../session')
+
+      const r = await m.fetchUsageLogs({ projectId: 1 })
+      expect(r.rows[0]).toEqual({
+        id: 7,
+        createdAt: 0,
+        type: 0,
+        modelName: '',
+        quota: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        feature: null,
+        tokenName: null,
+        projectId: null,
+        producerProjectId: null,
+      })
+
+      fetchMock.mockResolvedValue(ok({ total: 0 }))
+      const r2 = await m.fetchUsageLogs({ projectId: 1, pageSize: 50 })
+      expect(r2.rows).toEqual([])
+      // page_size 缺席时回落到**本次请求实际送出的**值,而不是 0 ——
+      // UI 拿 pageSize 算总页数,0 会算出 Infinity。
+      expect(r2.pageSize).toBe(50)
+    })
+
+    // §2.1:汇总 SQL 带 `WHERE type = LogTypeConsume`(`log.go:365`),明细的 where
+    // **没有** type 过滤(`log.go:333-342`)。所以一条退款会出现在列表里、却不进汇总。
+    //
+    // 主进程**不做**净额换算:列表是分页的,算不出全量净额,算出来的「净额」只对当前页成立,
+    // 比毛额更误导。这里如实透出这个不一致,由 UI 把汇总标题写成「消费合计(不含退款)」。
+    // 顺带钉住:退款的 `quota` 是负数,不许 Math.abs —— 一旦取了绝对值,
+    // 退款在列表里会显示成又花了一笔钱。
+    it('退款行进列表但不进汇总,负 quota 原样透出', async () => {
+      login()
+      fetchMock.mockResolvedValue(
+        ok({ logs: [CONSUME_ROW, REFUND_ROW], total: 2, page: 0, page_size: 20 }),
+      )
+      const m = await import('../session')
+
+      const page = await m.fetchUsageLogs({ projectId: 342 })
+      expect(page.rows.map((x) => x.type)).toEqual([2, 6])
+      expect(page.rows[1].quota).toBe(-2_500)
+
+      // 同一区间的汇总只算 type=2,所以它比列表的算术和大 2500 —— 这是后端口径,不是 bug。
+      fetchMock.mockResolvedValue(
+        ok([{ model_name: 'seedance-1-0-pro', total_quota: 12_500, total_requests: 1, total_tokens: 31 }]),
+      )
+      const summary = await m.fetchUsageSummary({ projectId: 342 })
+      expect(summary[0].totalQuota).toBe(12_500)
+      expect(page.rows.reduce((s, x) => s + x.quota, 0)).toBe(10_000)
+    })
+
+    it('fetchUsageSummary 只发 projectId 与时间范围,不发分页参数', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok([]))
+      const m = await import('../session')
+
+      await m.fetchUsageSummary({ projectId: 342, startTime: 1_756_000_000, endTime: 1_756_300_000 })
+      const url = new URL(fetchMock.mock.calls[0][0] as string)
+      expect(url.pathname).toBe('/api/user/usage-summary')
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        projectId: '342',
+        startTime: '1756000000',
+        endTime: '1756300000',
+      })
+    })
+
+    // 汇总按 `model_name` 分组,GROUP BY 出来的那一组可以是 NULL(旧流水没记模型名)。
+    // 落成 `''` 的话 UI 会渲染一行没有名字的空白条目,与「模型名就是空串」分不开;
+    // 落成 null 才能显示「未标注模型」。
+    it('汇总的 model_name 缺省时 modelName 为 null 而不是空串', async () => {
+      login()
+      fetchMock.mockResolvedValue(
+        ok([
+          { model_name: 'gemini-3-pro', total_quota: 8_000, total_requests: 4, total_tokens: 120 },
+          { total_quota: 500, total_requests: 1, total_tokens: 0 },
+        ]),
+      )
+      const m = await import('../session')
+
+      const r = await m.fetchUsageSummary({ projectId: 1 })
+      expect(r).toEqual([
+        { modelName: 'gemini-3-pro', totalQuota: 8_000, totalRequests: 4, totalTokens: 120 },
+        { modelName: null, totalQuota: 500, totalRequests: 1, totalTokens: 0 },
+      ])
+      expect(r[1].modelName).toBeNull()
+    })
+
+    // 后端**不给顶层合计**(计划 §1.2),主进程也不替它算 —— 算了就得决定「合计里算不算
+    // NULL 那组」,而那是 UI 的呈现决定。这里只保证数组原样透出、长度不被压扁。
+    it('汇总不做顶层合计,原样透出分组数组', async () => {
+      login()
+      fetchMock.mockResolvedValue(
+        ok([
+          { model_name: 'a', total_quota: 1, total_requests: 1, total_tokens: 1 },
+          { model_name: 'b', total_quota: 2, total_requests: 2, total_tokens: 2 },
+        ]),
+      )
+      const m = await import('../session')
+      expect(await m.fetchUsageSummary({ projectId: 1 })).toHaveLength(2)
+    })
+
+    it('用量查询把后端错误信封原样抛成 AuthError', async () => {
+      login()
+      fetchMock.mockResolvedValue(errBare(403))
+      const m = await import('../session')
+      await expect(m.fetchUsageLogs({ projectId: 1 })).rejects.toMatchObject({ code: 'HTTP_403' })
+    })
+
+    // 与额度查询同一条约定(见上一组最要紧的那条):用量查询也真打后端,
+    // **不**与存活探测共用节流窗口,否则打开抽屉会顺手把封号检测的间隔往后推。
+    it('用量查询不把存活探测的窗口往后推', async () => {
+      login()
+      fetchMock.mockResolvedValue(ok({ logs: [], total: 0, page: 0, page_size: 20 }))
+      const m = await import('../session')
+      const probeUrl = 'https://13797248455.xyz/api/user/balance'
+      const probeCount = () =>
+        fetchMock.mock.calls.filter((c) => (c[0] as string) === probeUrl).length
+
+      const t0 = Date.now()
+      await m.probeLiveness()
+      expect(probeCount()).toBe(1)
+
+      vi.spyOn(Date, 'now').mockReturnValue(t0 + 61_000)
+      await m.fetchUsageLogs({ projectId: 1 })
+      await m.probeLiveness()
+      expect(probeCount()).toBe(2)
+    })
+
+    // 三选一互斥(`payment.ts:122-174`)。个人计费再夹带 projectId,后端就走成员校验分支,
+    // 而个人落点刻意**不在** `/api/user/organizations` 的返回里 → `joined` 查不到 → 403。
+    // 逐字段 toEqual 才钉得住「不许夹带」;toMatchObject 对多出来的字段是瞎的。
+    it('建单:个人计费只发 personal', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay(CREATED))
+      const m = await import('../session')
+
+      const r = await m.createRechargeOrder(100, { kind: 'personal' })
+
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(url).toBe('https://13797248455.xyz/api/payment/alipay/orders')
+      expect(init.method).toBe('POST')
+      expect(JSON.parse(init.body)).toEqual({
+        amountCny: 100,
+        orderType: 'balance_recharge',
+        personal: true,
+      })
+      // payment 是 `{ok:true,data}` 那套信封 —— 只认 `success` 的解包会在这里拿到空对象。
+      expect(r).toEqual({
+        outTradeNo: 'RC20260827001',
+        payUrl: CREATED.payUrl,
+        status: 'PENDING',
+        totalAmount: '100.00',
+        creditError: null,
+      })
+    })
+
+    it('建单:普通 project 只发 projectId', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay(CREATED))
+      const m = await import('../session')
+
+      await m.createRechargeOrder(30, { kind: 'project', projectId: 342 }, '桌面端充值')
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+        amountCny: 30,
+        orderType: 'balance_recharge',
+        projectId: 342,
+        subject: '桌面端充值',
+      })
+    })
+
+    // producer 两半必须**成对**,缺一后端 400。也不许顺手补一个 projectId ——
+    // producer 池的 `producerId` 与普通 project 的 `projectId` 是不同的落点。
+    it('建单:producer 池成对发 producerId 与 producerProjectId', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay(CREATED))
+      const m = await import('../session')
+
+      await m.createRechargeOrder(50, { kind: 'producer', producerId: 7, producerProjectId: 5 })
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+        amountCny: 50,
+        orderType: 'balance_recharge',
+        producerId: 7,
+        producerProjectId: 5,
+      })
+    })
+
+    // 上限 ¥4000(`payment.ts:28`)。物理上限来自影子账户 quota 是 int32 —— ¥4294.96,
+    // 4000 是给它留了余量的业务上限。越界在主进程就拒:打到后端换一个 400 回来,
+    // 用户要多等一个 RTT 才看到「金额超限」,而这条判断本地就能下。
+    it.each([0, -1, 4001, Number.NaN, Number.POSITIVE_INFINITY])(
+      '建单:金额 %s 在主进程就被拒,net.fetch 一次都没被调',
+      async (amount) => {
+        login()
+        const m = await import('../session')
+        await expect(m.createRechargeOrder(amount, { kind: 'personal' })).rejects.toMatchObject({
+          code: 'INVALID_AMOUNT',
+        })
+        expect(fetchMock).not.toHaveBeenCalled()
+      },
+    )
+
+    it('建单:4000 是含边界,放行', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay(CREATED))
+      const m = await import('../session')
+
+      await m.createRechargeOrder(4000, { kind: 'personal' })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).amountCny).toBe(4000)
+    })
+
+    // 成员校验 fail-closed:目标项目必须 `joined === true`,否则 403 FORBIDDEN。
+    // UI 要按 code 分支引导「先加入该项目」,所以 code 不能在这一层被吞掉。
+    it('建单:后端 403 FORBIDDEN 带 code 抛出', async () => {
+      login()
+      fetchMock.mockResolvedValue(errCoded(403, 'FORBIDDEN'))
+      const m = await import('../session')
+      await expect(
+        m.createRechargeOrder(10, { kind: 'project', projectId: 9 }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    })
+
+    // 🚨 `PAID` 不是完成态。支付宝收到钱了但入账到影子账户失败时,状态是 `PAID` 且
+    // `creditError` 非空 —— 此时把它当成功,用户会以为余额已经加上了。
+    it('订单查询:PAID + creditError 非空时如实透出', async () => {
+      login()
+      fetchMock.mockResolvedValue(
+        okPay({
+          outTradeNo: 'RC20260827001',
+          status: 'PAID',
+          totalAmount: '100.00',
+          creditError: 'shadow account not found',
+        }),
+      )
+      const m = await import('../session')
+
+      const r = await m.fetchRechargeOrder('RC20260827001')
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://13797248455.xyz/api/payment/alipay/orders/RC20260827001',
+      )
+      expect(r).toEqual({
+        outTradeNo: 'RC20260827001',
+        status: 'PAID',
+        totalAmount: '100.00',
+        creditError: 'shadow account not found',
+      })
+    })
+
+    it('订单查询:CREDITED 才是终态成功', async () => {
+      login()
+      fetchMock.mockResolvedValue(
+        okPay({ outTradeNo: 'RC1', status: 'CREDITED', totalAmount: '30.00' }),
+      )
+      const m = await import('../session')
+
+      const r = await m.fetchRechargeOrder('RC1')
+      expect(r.status).toBe('CREDITED')
+      expect(r.creditError).toBeNull()
+    })
+
+    // 后端日后加一个新状态(比如 REFUNDED)时,退化方向必须是 `PENDING`:轮询等到超时、
+    // 显示「未完成」。退化成 `CREDITED` 是灾难 —— 没到账却告诉用户到账了。
+    it('订单查询:未知状态退化成 PENDING,绝不当成 CREDITED', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay({ outTradeNo: 'RC1', status: 'REFUNDED' }))
+      const m = await import('../session')
+      expect((await m.fetchRechargeOrder('RC1')).status).toBe('PENDING')
+    })
+
+    // 金额一律按字符串透出。后端偶尔回数字,但绝不能在这里 parseFloat 再格式化 ——
+    // 浮点一趟就能把 ¥100 显示成 ¥99.99999。
+    it('订单查询:数字金额也按字符串透出,不做算术', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay({ outTradeNo: 'RC1', status: 'PENDING', totalAmount: 30 }))
+      const m = await import('../session')
+      expect((await m.fetchRechargeOrder('RC1')).totalAmount).toBe('30')
+    })
+
+    // 四个函数共用 `requireToken()`,所以未登录必须是同一个 code。IPC 层按它引导重新登录;
+    // 落成别的 code(或裸抛)UI 就只能显示一句无从下手的通用错误。
+    it.each<[string, (m: typeof SessionModule) => Promise<unknown>]>([
+      ['fetchUsageLogs', (m) => m.fetchUsageLogs({ projectId: 1 })],
+      ['fetchUsageSummary', (m) => m.fetchUsageSummary({ projectId: 1 })],
+      ['createRechargeOrder', (m) => m.createRechargeOrder(10, { kind: 'personal' })],
+      ['fetchRechargeOrder', (m) => m.fetchRechargeOrder('RC1')],
+    ])('%s 未登录时抛 NOT_AUTHENTICATED,一次请求都不发', async (_name, call) => {
+      const m = await import('../session')
+      await expect(call(m)).rejects.toMatchObject({ code: 'NOT_AUTHENTICATED' })
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 
