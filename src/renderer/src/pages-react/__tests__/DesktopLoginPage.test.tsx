@@ -213,6 +213,83 @@ describe('DesktopLoginPage', () => {
     expect(auth.submitCode).not.toHaveBeenCalled()
   })
 
+  // **错误态必须有退出路径。**
+  //
+  // 实机撞上的死锁:登录失败(比如连不上登录服务)后 error 置上,而此前没有任何动作
+  // 会清掉它 —— cancelLogin 只清 pending 和 authorizeUrl。view 于是永远算成 'error',
+  // 这块 `fixed inset-0 z-[75000]` 的层再也不会返回 null,用户被永久挡在应用外面,
+  // 只能重启进程。而登录本来只是可选的付费通道:应用靠用户自填 API Key 就能跑。
+  describe('错误态的退出路径', () => {
+    it('给出「先用 API Key 继续」出口,点了之后覆盖层整个消失', async () => {
+      useAuthStore.setState({ error: EXPIRED_MESSAGE })
+      const { container } = await renderPage()
+      expect(screen.getByRole('dialog')).toBeTruthy()
+
+      await act(async () => {
+        screen.getByRole('button', { name: /先用 API Key/ }).click()
+      })
+
+      // 断在「整个不占 DOM」而不是「不可见」:靠 CSS 隐藏的话它仍然吃点击。
+      expect(container.innerHTML).toBe('')
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('退出是清状态而不是重试 —— 不该顺手再发起一次登录', async () => {
+      useAuthStore.setState({ error: EXPIRED_MESSAGE })
+      await renderPage()
+      await act(async () => {
+        screen.getByRole('button', { name: /先用 API Key/ }).click()
+      })
+      expect(auth.startLogin).not.toHaveBeenCalled()
+    })
+
+    // error 必须真被清掉,否则用户回设置页再点登录时,pending 与残留的 error 打架:
+    // view 会立刻判成 'error' 而不是 'waiting',等于登录按钮坏掉。
+    it('退出后 error 被清空,能再次正常发起登录', async () => {
+      useAuthStore.setState({ error: EXPIRED_MESSAGE })
+      await renderPage()
+      await act(async () => {
+        screen.getByRole('button', { name: /先用 API Key/ }).click()
+      })
+
+      expect(useAuthStore.getState().error).toBeNull()
+
+      act(() => {
+        useAuthStore.setState({ pending: true, authorizeUrl: AUTHORIZE_URL })
+      })
+      expect(screen.getByText(/已在浏览器中打开/)).toBeTruthy()
+    })
+
+    // 这层声明了 role="dialog" aria-modal="true",Esc 关闭是随之而来的契约 ——
+    // 键盘用户不该只能靠鼠标点按钮才逃得出去。
+    it('按 Esc 同样能退出', async () => {
+      useAuthStore.setState({ error: EXPIRED_MESSAGE })
+      const { container } = await renderPage()
+      await act(async () => {
+        fireEvent.keyDown(window, { key: 'Escape' })
+      })
+      expect(container.innerHTML).toBe('')
+    })
+
+    // 光给个按钮不够 —— 用户不知道「不登录」意味着什么,会以为功能残缺而继续死磕登录。
+    it('明确告诉用户不登录也能用', async () => {
+      useAuthStore.setState({ error: EXPIRED_MESSAGE })
+      await renderPage()
+      expect(screen.getByText(/不登录也能用自己的 API Key/)).toBeTruthy()
+    })
+  })
+
+  // 等待态的 Esc 语义不同:那时主进程还挂着回环监听器,必须走 cancelLogin 把它关掉,
+  // 光清渲染层状态会把端口和 5 分钟超时留在后面。
+  it('waiting 态按 Esc 走 cancelLogin(而非只清本地状态)', async () => {
+    useAuthStore.setState({ pending: true, authorizeUrl: AUTHORIZE_URL })
+    await renderPage()
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' })
+    })
+    expect(auth.cancelLogin).toHaveBeenCalledTimes(1)
+  })
+
   it('走完一次登录后显示成功提示', async () => {
     useAuthStore.setState({ pending: true, authorizeUrl: AUTHORIZE_URL })
     await renderPage()

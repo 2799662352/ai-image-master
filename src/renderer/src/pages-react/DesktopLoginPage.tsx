@@ -40,6 +40,7 @@ export default function DesktopLoginPage() {
   const ensureSubscriptions = useAuthStore((s) => s.ensureSubscriptions)
   const startLogin = useAuthStore((s) => s.startLogin)
   const cancelLogin = useAuthStore((s) => s.cancelLogin)
+  const dismissLogin = useAuthStore((s) => s.dismissLogin)
   const submitCode = useAuthStore((s) => s.submitCode)
 
   const addToast = useToastStore((s) => s.addToast)
@@ -91,6 +92,23 @@ export default function DesktopLoginPage() {
     const t = setTimeout(() => setLoginStartedHere(false), SUCCESS_HOLD_MS)
     return () => clearTimeout(t)
   }, [view, loginStartedHere])
+
+  // Esc 退出。这层声明了 `aria-modal="true"`,Esc 关闭是随之而来的契约 —— 键盘用户
+  // 不该只能靠鼠标点按钮才逃得出去。
+  //
+  // 两态语义不同:等待态走 cancelLogin,因为主进程那边还挂着回环监听器,光清渲染层
+  // 状态会把端口和 5 分钟超时留在后面;错误态那边流程已结束,只需清状态。
+  // 成功态不给 Esc —— 它 1.8 秒后自己退场,让用户提前打断没有意义。
+  useEffect(() => {
+    if (view !== 'waiting' && view !== 'error') return
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      if (view === 'waiting') void cancelLogin()
+      else dismissLogin()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [view, cancelLogin, dismissLogin])
 
   const handleCopy = useCallback(async () => {
     if (!authorizeUrl) return
@@ -181,7 +199,11 @@ export default function DesktopLoginPage() {
           )}
           {view === 'error' && (
             // error 是主进程映射好的文案,原样呈现。
-            <ErrorView message={error as string} onRetry={() => void startLogin()} />
+            <ErrorView
+              message={error as string}
+              onRetry={() => void startLogin()}
+              onDismiss={dismissLogin}
+            />
           )}
         </div>
       </div>
@@ -295,7 +317,15 @@ function SuccessView({ name, sessionOnly }: { name: string | null; sessionOnly: 
   )
 }
 
-function ErrorView({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorView({
+  message,
+  onRetry,
+  onDismiss,
+}: {
+  message: string
+  onRetry: () => void
+  onDismiss: () => void
+}) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -308,10 +338,22 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
           {message}
         </p>
       </div>
-      {/* 重试一律重新发起 —— 授权码一次性,重放 submitCode 只会拿到 409。 */}
-      <button type="button" onClick={onRetry} className={`w-full py-3 text-sm ${ACCENT_BTN}`}>
-        重试
-      </button>
+
+      <div className="space-y-2">
+        {/* 重试一律重新发起 —— 授权码一次性,重放 submitCode 只会拿到 409。 */}
+        <button type="button" onClick={onRetry} className={`w-full py-3 text-sm ${ACCENT_BTN}`}>
+          重试
+        </button>
+        {/* **这个出口不能少。** 登录只是可选的付费通道,应用靠用户自填 API Key 就能跑;
+            没有它,一次登录失败就把用户永久挡在应用外面(只能重启进程)。 */}
+        <button type="button" onClick={onDismiss} className={`w-full py-3 text-sm ${GHOST_BTN}`}>
+          先用 API Key 继续
+        </button>
+      </div>
+
+      <p className="text-xs leading-relaxed text-white/40">
+        登录只用于云端额度与素材同步。不登录也能用自己的 API Key 正常出图。
+      </p>
     </div>
   )
 }
