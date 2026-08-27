@@ -38,6 +38,17 @@ const ok = (data: unknown, status = 200) =>
 const okPay = (data: unknown, status = 200) =>
   ({ ok: status < 400, status, json: async () => ({ ok: true, data }) }) as unknown as Response
 
+/**
+ * **查单**的响应信封 —— 比建单多包一层 `data.order`（`payment.ts:310-329` vs
+ * `:151,219`）。同一个资源、两个形状。
+ *
+ * 单独给它一个助手而不是让调用点手写 `okPay({ order: … })`：这层嵌套是实测来的，
+ * 一开始整套用例都误用了扁平形状、于是和同样漏剥一层的实现一起全绿。少剥这一层
+ * 不会报错，字段全读成 undefined、status 经 `toRechargeStatus` 退化成 `PENDING`，
+ * 表现是轮询永远等不到 `CREDITED`：钱到账了却一直显示「未完成」直到超时。
+ */
+const okOrder = (order: unknown) => okPay({ order })
+
 /** 配对路由的错误信封:带 error.code。 */
 const errCoded = (status: number, code: string) =>
   ({
@@ -772,7 +783,7 @@ describe('auth session', () => {
     it('订单查询:PAID + creditError 非空时如实透出', async () => {
       login()
       fetchMock.mockResolvedValue(
-        okPay({
+        okOrder({
           outTradeNo: 'RC20260827001',
           status: 'PAID',
           totalAmount: '100.00',
@@ -796,7 +807,7 @@ describe('auth session', () => {
     it('订单查询:CREDITED 才是终态成功', async () => {
       login()
       fetchMock.mockResolvedValue(
-        okPay({ outTradeNo: 'RC1', status: 'CREDITED', totalAmount: '30.00' }),
+        okOrder({ outTradeNo: 'RC1', status: 'CREDITED', totalAmount: '30.00' }),
       )
       const m = await import('../session')
 
@@ -809,7 +820,7 @@ describe('auth session', () => {
     // 显示「未完成」。退化成 `CREDITED` 是灾难 —— 没到账却告诉用户到账了。
     it('订单查询:未知状态退化成 PENDING,绝不当成 CREDITED', async () => {
       login()
-      fetchMock.mockResolvedValue(okPay({ outTradeNo: 'RC1', status: 'REFUNDED' }))
+      fetchMock.mockResolvedValue(okOrder({ outTradeNo: 'RC1', status: 'REFUNDED' }))
       const m = await import('../session')
       expect((await m.fetchRechargeOrder('RC1')).status).toBe('PENDING')
     })
@@ -818,9 +829,33 @@ describe('auth session', () => {
     // 浮点一趟就能把 ¥100 显示成 ¥99.99999。
     it('订单查询:数字金额也按字符串透出,不做算术', async () => {
       login()
-      fetchMock.mockResolvedValue(okPay({ outTradeNo: 'RC1', status: 'PENDING', totalAmount: 30 }))
+      fetchMock.mockResolvedValue(okOrder({ outTradeNo: 'RC1', status: 'PENDING', totalAmount: 30 }))
       const m = await import('../session')
       expect((await m.fetchRechargeOrder('RC1')).totalAmount).toBe('30')
+    })
+
+    // 建单与查单的形状不对称,是这条线上最容易静默踩中的坑 —— 漏剥 `data.order` 不抛错、
+    // 只是把状态退化成 `PENDING`,于是轮询永不终止。这条直接钉住嵌套本身。
+    it('订单查询:剥掉 data.order 那一层,漏剥会把 CREDITED 读成 PENDING', async () => {
+      login()
+      fetchMock.mockResolvedValue(okOrder({ outTradeNo: 'RC9', status: 'CREDITED' }))
+      const m = await import('../session')
+
+      const r = await m.fetchRechargeOrder('RC9')
+      // outTradeNo 一起断言:漏剥时它会是空串,单看 status 可能被别处的兜底遮住。
+      expect(r).toMatchObject({ outTradeNo: 'RC9', status: 'CREDITED' })
+    })
+
+    // 建单那半**没有**这层嵌套(`payment.ts:151,219` 直接 `data: result`)。
+    // 两边共用 `toRechargeOrder`,所以「统一改成只认 data.order」会把建单弄坏。
+    it('建单:data 直接就是订单,没有 order 那一层', async () => {
+      login()
+      fetchMock.mockResolvedValue(okPay(CREATED))
+      const m = await import('../session')
+
+      expect((await m.createRechargeOrder(10, { kind: 'personal' })).outTradeNo).toBe(
+        'RC20260827001',
+      )
     })
 
     // 四个函数共用 `requireToken()`,所以未登录必须是同一个 code。IPC 层按它引导重新登录;

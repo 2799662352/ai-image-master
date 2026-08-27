@@ -662,6 +662,18 @@ export async function createRechargeOrder(
 /**
  * 查单。轮询到 `CREDITED` 才算充值完成 —— 见 `toRechargeOrder` 里那条 🚨。
  * 刻意不做任何缓存或节流:这就是那个用户盯着看的数字。
+ *
+ * ⚠️ **建单与查单的响应形状不对称**:建单是 `{ok,data}` 且 `data` 直接就是订单
+ * (`payment.ts:151,219`),查单在外面**多包一层** `data.order`(`payment.ts:310-329`)。
+ * 同一个资源、两个形状。
+ *
+ * 漏剥这一层不会抛任何错:字段全读成 `undefined`,`toRechargeStatus` 把它退化成
+ * `PENDING`(那个退化方向本身是对的),于是轮询**永远等不到 `CREDITED`** —— 用户付了钱、
+ * 钱也到了账,应用一路显示「未完成」直到 5 分钟超时。这条最初就是这么写错的,连测试
+ * 都用了扁平 mock 陪着一起绿,直到拿后端源码对账才露出来。
+ *
+ * 写成 `data.order ?? data` 而不是只认 `data.order`:两个函数共用 `toRechargeOrder`,
+ * 只认嵌套会反过来把建单弄坏。两条形状各有一条用例钉着。
  */
 export async function fetchRechargeOrder(outTradeNo: string): Promise<RechargeOrder> {
   const token = requireToken()
@@ -671,7 +683,10 @@ export async function fetchRechargeOrder(outTradeNo: string): Promise<RechargeOr
     { token },
   )
   if (status >= 400) throw toAuthError(status, body)
-  return toRechargeOrder((body.data ?? body) as Record<string, unknown>)
+
+  const data = (body.data ?? body) as Record<string, unknown>
+  const order = (data.order ?? data) as Record<string, unknown>
+  return toRechargeOrder(order)
 }
 
 let lastProbeAt = 0
