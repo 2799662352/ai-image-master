@@ -7,18 +7,29 @@ import {
   AuthError,
   authBaseUrl,
   claimPairing,
+  fetchBalance,
+  fetchOrganizations,
+  fetchPaymentConfig,
+  fetchQuota,
   getAuthState,
   logout,
   startPairing,
 } from './session'
 import type { AuthLoginResult, AuthState } from '../../../types/authApi'
 
+// ⚠️ 新增通道必须同时加进这个数组 —— 它是 dispose 时逐个 `removeHandler` 的唯一依据。
+// 漏加的症状是热重载后 `ipcMain.handle` 对同一通道抛「second handler」,而不是
+// 「某个功能不工作」,所以第一次遇到时很难归因。
 const AUTH_CHANNELS = [
   'auth:get-state',
   'auth:start-login',
   'auth:cancel-login',
   'auth:submit-code',
   'auth:logout',
+  'auth:get-organizations',
+  'auth:get-balance',
+  'auth:get-quota',
+  'auth:get-payment-config',
 ] as const
 
 const CLIENT_NAME = 'CATIMATION Desktop'
@@ -91,6 +102,34 @@ function clearPending(): void {
   if (!pending) return
   pending.listener.close()
   pending = null
+}
+
+/** `0` / `NaN` / 缺省都视作「没有 producerProjectId」—— 0 不是合法的池键成分。 */
+function toOptionalNumber(v: unknown): number | undefined {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+type QuotaRpcResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } }
+
+/**
+ * 把一次额度查询包成信封。
+ *
+ * `code` 保证是非空字符串:非 `AuthError`(断网、DNS 失败、超时)也合成一个,
+ * 否则渲染层按 code 分支时会落到 `undefined`,表现成「什么提示都没有」。
+ */
+async function quotaRpc<T>(work: () => Promise<T>): Promise<QuotaRpcResult<T>> {
+  try {
+    return { ok: true, data: await work() }
+  } catch (e) {
+    if (e instanceof AuthError) {
+      return { ok: false, error: { code: e.code, message: e.message } }
+    }
+    return {
+      ok: false,
+      error: { code: 'QUERY_FAILED', message: e instanceof Error ? e.message : String(e) },
+    }
+  }
 }
 
 function assertAuthorizeOrigin(authorizeUrl: string): void {
@@ -207,6 +246,18 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
     logout()
     broadcastState(getWindow)
   })
+
+  // ── 额度查询 ──
+  //
+  // 一律回 `{ ok, data } | { ok: false, error }` 信封,**不裸抛**。
+  // 裸抛经 IPC 会被包成 "Error invoking remote method '…'",后端的 error code 全部
+  // 丢失 —— 而 UI 要按 code 分支(余额不足 / 无权访问该项目 / 未登录 三种动作不同)。
+  ipcMain.handle('auth:get-organizations', () => quotaRpc(() => fetchOrganizations()))
+  ipcMain.handle('auth:get-balance', (_e, projectId: unknown, producerProjectId: unknown) =>
+    quotaRpc(() => fetchBalance(Number(projectId), toOptionalNumber(producerProjectId))),
+  )
+  ipcMain.handle('auth:get-quota', () => quotaRpc(() => fetchQuota()))
+  ipcMain.handle('auth:get-payment-config', () => quotaRpc(() => fetchPaymentConfig()))
 
   return () => {
     clearPending()

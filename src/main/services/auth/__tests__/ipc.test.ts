@@ -37,6 +37,10 @@ vi.mock('../pkce', () => ({
 const startPairing = vi.fn()
 const claimPairing = vi.fn()
 const logoutFn = vi.fn()
+const fetchOrganizations = vi.fn()
+const fetchBalance = vi.fn()
+const fetchQuota = vi.fn()
+const fetchPaymentConfig = vi.fn()
 let authState = {
   authenticated: false,
   username: null as string | null,
@@ -56,6 +60,10 @@ vi.mock('../session', () => ({
   getAuthState: () => authState,
   logout: () => logoutFn(),
   probeLiveness: async () => {},
+  fetchOrganizations: (...a: unknown[]) => fetchOrganizations(...a),
+  fetchBalance: (...a: unknown[]) => fetchBalance(...a),
+  fetchQuota: (...a: unknown[]) => fetchQuota(...a),
+  fetchPaymentConfig: (...a: unknown[]) => fetchPaymentConfig(...a),
   AuthError,
 }))
 
@@ -89,13 +97,124 @@ describe('auth IPC 编排', () => {
     startPairing.mockReset()
     claimPairing.mockReset()
     logoutFn.mockClear()
+    fetchOrganizations.mockReset()
+    fetchBalance.mockReset()
+    fetchQuota.mockReset()
+    fetchPaymentConfig.mockReset()
     authState = { authenticated: false, username: null, displayName: null, role: null, credentialSource: 'none' }
   })
 
-  it('注册全部五个通道', async () => {
+  // ─────────────────────────────────────────────────────────────────────
+  // 额度查询通道(第一期)。
+  //
+  // 这几条盯的是**编排**而不是查询本身(那些在 session.test.ts):通道有没有注册进
+  // AUTH_CHANNELS(漏加会在热重载后泄漏 handler)、错误有没有被转成渲染层能用的形状。
+  // ─────────────────────────────────────────────────────────────────────
+  describe('额度查询通道', () => {
+    it('四个额度通道都注册了,且都在卸载清单里', async () => {
+      const dispose = await register()
+      const quotaChannels = [
+        'auth:get-organizations',
+        'auth:get-balance',
+        'auth:get-quota',
+        'auth:get-payment-config',
+      ]
+      for (const ch of quotaChannels) {
+        expect(handlers.has(ch)).toBe(true)
+      }
+      // 漏加进 AUTH_CHANNELS 的症状:dispose 后 handler 还挂着,
+      // 热重载再注册时 ipcMain.handle 对同一通道抛「second handler」。
+      dispose()
+      for (const ch of quotaChannels) {
+        expect(handlers.has(ch)).toBe(false)
+      }
+    })
+
+    it('get-balance 把 projectId 与 producerProjectId 透传给 session', async () => {
+      fetchBalance.mockResolvedValue({ balanceYuan: 0.26, balanceQuota: 130_000 })
+      await register()
+
+      const r = await call('auth:get-balance', 342, 9)
+      expect(fetchBalance).toHaveBeenCalledWith(342, 9)
+      expect(r).toEqual({ ok: true, data: { balanceYuan: 0.26, balanceQuota: 130_000 } })
+    })
+
+    // 渲染层拿到的必须是 { ok, error } 信封而不是裸抛 —— 裸抛经 IPC 会丢掉 code,
+    // 只剩一句 "Error invoking remote method"，UI 无法按 code 分支。
+    it('查询失败时回信封,带上后端错误码', async () => {
+      fetchBalance.mockRejectedValue(new AuthError('FORBIDDEN_PROJECT', 403, '无权访问该项目'))
+      await register()
+
+      const r = (await call('auth:get-balance', 1)) as {
+        ok: boolean
+        error?: { code: string; message: string }
+      }
+      expect(r.ok).toBe(false)
+      expect(r.error?.code).toBe('FORBIDDEN_PROJECT')
+      expect(r.error?.message).toBe('无权访问该项目')
+    })
+
+    // 非 AuthError(网络故障等)也要有 code,否则 UI 的 switch 会落到 undefined 分支。
+    it('非 AuthError 也合成一个 code', async () => {
+      fetchBalance.mockRejectedValue(new Error('ECONNREFUSED'))
+      await register()
+
+      const r = (await call('auth:get-balance', 1)) as { ok: boolean; error?: { code: string } }
+      expect(r.ok).toBe(false)
+      expect(typeof r.error?.code).toBe('string')
+      expect(r.error?.code).toBeTruthy()
+    })
+
+    it('get-organizations 原样透出列表', async () => {
+      fetchOrganizations.mockResolvedValue([
+        { id: 1, name: '个人计费', studioName: null, balanceYuan: 0.26, joined: true },
+      ])
+      await register()
+
+      const r = (await call('auth:get-organizations')) as { ok: boolean; data: unknown[] }
+      expect(r.ok).toBe(true)
+      expect(r.data).toHaveLength(1)
+    })
+
+    it('get-payment-config 透出个人计费落点', async () => {
+      fetchPaymentConfig.mockResolvedValue({ personalBillingProjectId: 342 })
+      await register()
+      expect(await call('auth:get-payment-config')).toEqual({
+        ok: true,
+        data: { personalBillingProjectId: 342 },
+      })
+    })
+
+    // 额度查询绝不能把 token 递出去 —— 它只活在主进程。
+    it('返回值里不含 token', async () => {
+      fetchBalance.mockResolvedValue({ balanceYuan: 1, balanceQuota: 500_000 })
+      fetchOrganizations.mockResolvedValue([])
+      await register()
+
+      const payloads = [
+        await call('auth:get-balance', 1),
+        await call('auth:get-organizations'),
+      ]
+      expect(JSON.stringify(payloads)).not.toMatch(/token|jwt|verifier/i)
+    })
+  })
+
+  // 通道清单按字面锁住,而不是只断言个数 —— 加通道时会在这里显式失败,提醒同时把它
+  // 加进 AUTH_CHANNELS(卸载依赖那个数组,漏加会让 handler 在热重载后泄漏)。
+  it('注册全部九个通道', async () => {
     await register()
     expect([...handlers.keys()].sort()).toEqual(
-      ['auth:cancel-login', 'auth:get-state', 'auth:logout', 'auth:start-login', 'auth:submit-code'].sort(),
+      [
+        'auth:cancel-login',
+        'auth:get-balance',
+        'auth:get-organizations',
+        'auth:get-payment-config',
+        'auth:get-quota',
+        'auth:get-state',
+        'auth:logout',
+        'auth:start-login',
+        'auth:submit-code',
+      ].sort(),
     )
   })
 

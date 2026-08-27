@@ -128,7 +128,14 @@ import type {
   CodexProviderRecord,
 } from '../types/agentApi'
 // 同理:`window.electronAPI.auth` 的契约住在 `src/types/authApi.ts`。
-import type { AuthLoginResult, AuthState } from '../types/authApi'
+import type {
+  AccountBalance,
+  AccountOrganization,
+  AuthLoginResult,
+  AuthState,
+  PaymentConfig,
+  QuotaRpc,
+} from '../types/authApi'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -355,6 +362,10 @@ const IPC_CHANNELS = {
     CANCEL_LOGIN: 'auth:cancel-login',
     SUBMIT_CODE: 'auth:submit-code',
     LOGOUT: 'auth:logout',
+    GET_ORGANIZATIONS: 'auth:get-organizations',
+    GET_BALANCE: 'auth:get-balance',
+    GET_QUOTA: 'auth:get-quota',
+    GET_PAYMENT_CONFIG: 'auth:get-payment-config',
   },
   AUTH_EVENTS: ['auth:state-changed', 'auth:login-result'] as const,
   // Shell helpers (clipboard / save dialog)
@@ -538,6 +549,15 @@ export interface ElectronAPI {
     logout: () => Promise<void>
     onStateChanged: (handler: (state: AuthState) => void) => () => void
     onLoginResult: (handler: (result: AuthLoginResult) => void) => () => void
+    // 额度查询。一律回 { ok, data } | { ok: false, error } 信封 —— 主进程刻意不裸抛,
+    // 裸抛经 IPC 会丢掉后端的 error code,而 UI 要按 code 分支。
+    getOrganizations: () => Promise<QuotaRpc<AccountOrganization[]>>
+    getBalance: (
+      projectId: number,
+      producerProjectId?: number,
+    ) => Promise<QuotaRpc<AccountBalance>>
+    getQuota: () => Promise<QuotaRpc<Record<string, unknown>>>
+    getPaymentConfig: () => Promise<QuotaRpc<PaymentConfig>>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -1422,6 +1442,17 @@ const electronAPI: ElectronAPI = {
       safeOnWithCleanup<AuthState>(IPC_CHANNELS.AUTH_EVENTS[0], handler, IPC_CHANNELS.AUTH_EVENTS),
     onLoginResult: (handler: (result: AuthLoginResult) => void) =>
       safeOnWithCleanup<AuthLoginResult>(IPC_CHANNELS.AUTH_EVENTS[1], handler, IPC_CHANNELS.AUTH_EVENTS),
+    getOrganizations: () =>
+      safeInvoke<QuotaRpc<AccountOrganization[]>>(IPC_CHANNELS.AUTH.GET_ORGANIZATIONS),
+    getBalance: (projectId: number, producerProjectId?: number) =>
+      safeInvoke<QuotaRpc<AccountBalance>>(
+        IPC_CHANNELS.AUTH.GET_BALANCE,
+        projectId,
+        producerProjectId,
+      ),
+    getQuota: () => safeInvoke<QuotaRpc<Record<string, unknown>>>(IPC_CHANNELS.AUTH.GET_QUOTA),
+    getPaymentConfig: () =>
+      safeInvoke<QuotaRpc<PaymentConfig>>(IPC_CHANNELS.AUTH.GET_PAYMENT_CONFIG),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
