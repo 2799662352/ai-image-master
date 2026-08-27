@@ -7,15 +7,24 @@ import {
   AuthError,
   authBaseUrl,
   claimPairing,
+  createRechargeOrder,
   fetchBalance,
   fetchOrganizations,
   fetchPaymentConfig,
   fetchQuota,
+  fetchRechargeOrder,
+  fetchUsageLogs,
+  fetchUsageSummary,
   getAuthState,
   logout,
   startPairing,
 } from './session'
-import type { AuthLoginResult, AuthState } from '../../../types/authApi'
+import type {
+  AuthLoginResult,
+  AuthState,
+  RechargeTarget,
+  UsageQuery,
+} from '../../../types/authApi'
 
 // ⚠️ 新增通道必须同时加进这个数组 —— 它是 dispose 时逐个 `removeHandler` 的唯一依据。
 // 漏加的症状是热重载后 `ipcMain.handle` 对同一通道抛「second handler」,而不是
@@ -30,6 +39,10 @@ const AUTH_CHANNELS = [
   'auth:get-balance',
   'auth:get-quota',
   'auth:get-payment-config',
+  'auth:get-usage-logs',
+  'auth:get-usage-summary',
+  'auth:create-recharge-order',
+  'auth:get-recharge-order',
 ] as const
 
 const CLIENT_NAME = 'CATIMATION Desktop'
@@ -108,6 +121,119 @@ function clearPending(): void {
 function toOptionalNumber(v: unknown): number | undefined {
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+/**
+ * 只认真正的有限 number,**不用 `Number(v)` 强转**。
+ *
+ * 与上面的 `toOptionalNumber` 是两件不同的事,不能合并:那个刻意把 `0` 当「没有」
+ * (0 不是合法池键),而用量参数里 `0` 全是合法语义 —— `projectId: 0` 是「不过滤」、
+ * `page: 0` 是 0 基分页的第一页。而 `Number(null)` 与 `Number('')` 都是 `0`,
+ * 强转会把「渲染层压根没给这个字段」静默变成一次语义不同的查询,查出来的东西
+ * 看着还挺像对的。
+ */
+function toFiniteNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/**
+ * 渲染层递来的是 `unknown`,这里窄化成 `UsageQuery`。
+ *
+ * 窄化失败**抛 `AuthError`** 而不是 `as` 硬转往下发:形状不对的对象递到 `session.ts`
+ * 只会让 `num(undefined)` 回落成 `0`,于是查到一份别人口径的数据、没有任何报错。
+ * 抛在这里、由 `quotaRpc` 兜成信封,UI 才能按 code 分支。
+ */
+function toUsageQuery(raw: unknown): UsageQuery {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AuthError('INVALID_QUERY', 400, '用量查询参数必须是对象')
+  }
+  const src = raw as Record<string, unknown>
+
+  const projectId = toFiniteNumber(src.projectId)
+  if (projectId === undefined) {
+    throw new AuthError('INVALID_QUERY', 400, '用量查询缺少 projectId')
+  }
+
+  // 逐个显式判 `undefined` 而不是 `if (src.page)`:`page: 0` 是最常用的那一页,
+  // falsy 判断恰好在那里把它吞掉,表现成「翻到第二页才有数据」。
+  // 反过来也不能无条件塞:凭空造出 `pageSize: 0` 会让 session 走进「没传」的回落分支,
+  // 与 UI 以为自己指定的页大小不一致。
+  const query: UsageQuery = { projectId }
+  const page = toFiniteNumber(src.page)
+  if (page !== undefined) query.page = page
+  const pageSize = toFiniteNumber(src.pageSize)
+  if (pageSize !== undefined) query.pageSize = pageSize
+  const startTime = toFiniteNumber(src.startTime)
+  if (startTime !== undefined) query.startTime = startTime
+  const endTime = toFiniteNumber(src.endTime)
+  if (endTime !== undefined) query.endTime = endTime
+  return query
+}
+
+/**
+ * 窄化成三选一的 `RechargeTarget`。
+ *
+ * 按 kind 逐分支**重建**对象而不是透传原对象:渲染层多送的字段必须在这里被丢掉。
+ * `personal` 夹带一个 `projectId` 的后果不是被忽略,而是后端走进成员校验分支 ——
+ * 个人计费落点刻意不出现在组织列表里 → 查不到 `joined` → fail-closed 403。
+ *
+ * 反向的 `producer` 两半则**一个都不能丢**:池键是 `(producerId, producerProjectId)`,
+ * 缺一后端 400。在这里拒掉比让后端拒省一个 RTT,且错误信息指向真正的原因。
+ *
+ * 这里用不了 `session.ts` 那种 `never` 兜底:入参是 `unknown`,default 分支是可达的
+ * 运行时路径而不是编译期断言。
+ */
+function toRechargeTarget(raw: unknown): RechargeTarget {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AuthError('INVALID_TARGET', 400, '充值目标必须是对象')
+  }
+  const src = raw as Record<string, unknown>
+
+  switch (src.kind) {
+    case 'personal':
+      return { kind: 'personal' }
+    case 'project': {
+      const projectId = toFiniteNumber(src.projectId)
+      if (projectId === undefined) {
+        throw new AuthError('INVALID_TARGET', 400, '充值目标 project 缺少 projectId')
+      }
+      return { kind: 'project', projectId }
+    }
+    case 'producer': {
+      const producerId = toFiniteNumber(src.producerId)
+      const producerProjectId = toFiniteNumber(src.producerProjectId)
+      if (producerId === undefined || producerProjectId === undefined) {
+        throw new AuthError(
+          'INVALID_TARGET',
+          400,
+          'producer 充值目标的 producerId 与 producerProjectId 必须成对',
+        )
+      }
+      return { kind: 'producer', producerId, producerProjectId }
+    }
+    default:
+      throw new AuthError('INVALID_TARGET', 400, `未知的充值目标 kind ${String(src.kind)}`)
+  }
+}
+
+/**
+ * 只保证「是个数字」。**区间校验归 `session.ts`** —— 上限常量在那边,两处各写一份必然漂移。
+ *
+ * 但 code 与那边保持一致(`INVALID_AMOUNT`):同一种毛病在 UI 上只该有一个分支。
+ */
+function toAmountCny(raw: unknown): number {
+  const amount = toFiniteNumber(raw)
+  if (amount === undefined) {
+    throw new AuthError('INVALID_AMOUNT', 400, `充值金额必须是数字(当前 ${String(raw)})`)
+  }
+  return amount
+}
+
+function toOutTradeNo(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) {
+    throw new AuthError('INVALID_ORDER_NO', 400, '订单号无效')
+  }
+  return raw
 }
 
 type QuotaRpcResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } }
@@ -258,6 +384,34 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
   )
   ipcMain.handle('auth:get-quota', () => quotaRpc(() => fetchQuota()))
   ipcMain.handle('auth:get-payment-config', () => quotaRpc(() => fetchPaymentConfig()))
+
+  // ── 用量明细与原生充值 ──
+  //
+  // 同一套信封。窄化刻意放在 `quotaRpc` 的**闭包内**而不是 handler 开头:放在外面
+  // 窄化失败就是裸抛,那正是 code 会被 Electron 吞掉的那条路径 —— 而 UI 对
+  // INVALID_QUERY / INVALID_TARGET / INVALID_AMOUNT 的动作各不相同。
+  ipcMain.handle('auth:get-usage-logs', (_e, query: unknown) =>
+    quotaRpc(() => fetchUsageLogs(toUsageQuery(query))),
+  )
+  ipcMain.handle('auth:get-usage-summary', (_e, query: unknown) =>
+    quotaRpc(() => fetchUsageSummary(toUsageQuery(query))),
+  )
+  ipcMain.handle(
+    'auth:create-recharge-order',
+    (_e, amountCny: unknown, target: unknown, subject: unknown) =>
+      quotaRpc(() =>
+        createRechargeOrder(
+          toAmountCny(amountCny),
+          toRechargeTarget(target),
+          // 空串会让 session 把 `subject` 整个字段省掉(它自己也判了一次),
+          // 但在这里就归一成 undefined,免得两层各有一套「什么算没填」。
+          typeof subject === 'string' && subject ? subject : undefined,
+        ),
+      ),
+  )
+  ipcMain.handle('auth:get-recharge-order', (_e, outTradeNo: unknown) =>
+    quotaRpc(() => fetchRechargeOrder(toOutTradeNo(outTradeNo))),
+  )
 
   return () => {
     clearPending()

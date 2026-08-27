@@ -41,6 +41,10 @@ const fetchOrganizations = vi.fn()
 const fetchBalance = vi.fn()
 const fetchQuota = vi.fn()
 const fetchPaymentConfig = vi.fn()
+const fetchUsageLogs = vi.fn()
+const fetchUsageSummary = vi.fn()
+const createRechargeOrder = vi.fn()
+const fetchRechargeOrder = vi.fn()
 let authState = {
   authenticated: false,
   username: null as string | null,
@@ -64,6 +68,10 @@ vi.mock('../session', () => ({
   fetchBalance: (...a: unknown[]) => fetchBalance(...a),
   fetchQuota: (...a: unknown[]) => fetchQuota(...a),
   fetchPaymentConfig: (...a: unknown[]) => fetchPaymentConfig(...a),
+  fetchUsageLogs: (...a: unknown[]) => fetchUsageLogs(...a),
+  fetchUsageSummary: (...a: unknown[]) => fetchUsageSummary(...a),
+  createRechargeOrder: (...a: unknown[]) => createRechargeOrder(...a),
+  fetchRechargeOrder: (...a: unknown[]) => fetchRechargeOrder(...a),
   AuthError,
 }))
 
@@ -101,6 +109,10 @@ describe('auth IPC 编排', () => {
     fetchBalance.mockReset()
     fetchQuota.mockReset()
     fetchPaymentConfig.mockReset()
+    fetchUsageLogs.mockReset()
+    fetchUsageSummary.mockReset()
+    createRechargeOrder.mockReset()
+    fetchRechargeOrder.mockReset()
     authState = { authenticated: false, username: null, displayName: null, role: null, credentialSource: 'none' }
   })
 
@@ -199,18 +211,354 @@ describe('auth IPC 编排', () => {
     })
   })
 
+  // ─────────────────────────────────────────────────────────────────────
+  // 用量明细与原生充值通道。
+  //
+  // 这一层唯一的职责是**窄化 + 原样透传 + 包信封**,所以被测的就是这三件的失败面:
+  // 渲染层递来的是 `unknown`,窄化写松了会把 `page: 0`(0 基分页的第一页)吞掉、
+  // 或把 producer 池键的一半丢掉;窄化写严了又不能裸抛,否则 code 过不了 IPC。
+  //
+  // mock 的形状取自 `session.ts` 那四个函数的**返回类型**(已归一成 camelCase、
+  // 已剥掉 `data.order` 那层),不是后端线上的 JSON —— 按「ipc.ts 里怎么读的」造 mock
+  // 只会让测试把实现的假设复述一遍。
+  // ─────────────────────────────────────────────────────────────────────
+  describe('用量与充值通道', () => {
+    const USAGE_PAGE = {
+      rows: [
+        {
+          id: 9001,
+          createdAt: 1_756_000_000,
+          type: 2,
+          modelName: 'seedance-2.0',
+          quota: 130_000,
+          promptTokens: 12,
+          completionTokens: 34,
+          feature: 'video',
+          tokenName: null,
+          projectId: 342,
+          producerProjectId: null,
+        },
+      ],
+      total: 1,
+      page: 0,
+      pageSize: 50,
+    }
+    const CREATED = {
+      outTradeNo: 'NO-1',
+      status: 'PENDING' as const,
+      totalAmount: '100.00',
+      creditError: null,
+      payUrl: 'https://openapi.alipay.com/gateway.do?x=1',
+    }
+
+    const usageChannels = [
+      'auth:get-usage-logs',
+      'auth:get-usage-summary',
+      'auth:create-recharge-order',
+      'auth:get-recharge-order',
+    ]
+
+    it('四条通道都注册了,且都在卸载清单里', async () => {
+      const dispose = await register()
+      for (const ch of usageChannels) {
+        expect(handlers.has(ch), `${ch} 未注册`).toBe(true)
+      }
+      // 漏加进 AUTH_CHANNELS 的症状不是「功能不工作」,而是 dispose 后 handler 还挂着,
+      // 热重载再注册时 ipcMain.handle 对同一通道抛「second handler」—— 很难归因。
+      dispose()
+      for (const ch of usageChannels) {
+        expect(handlers.has(ch), `${ch} 卸载后仍挂着`).toBe(false)
+      }
+    })
+
+    // `page: 0` 与 `projectId: 0` 都是**合法值**:前者是 0 基分页的第一页(最常用的一页),
+    // 后者是「不过滤」。任何 falsy 挑字段的写法都恰好在这两处出错,而查出来的东西看着像对的。
+    it('get-usage-logs 整份 UsageQuery 原样透传,page:0 与 projectId:0 都不被吞', async () => {
+      fetchUsageLogs.mockResolvedValue(USAGE_PAGE)
+      await register()
+
+      const r = await call('auth:get-usage-logs', {
+        projectId: 0,
+        page: 0,
+        pageSize: 50,
+        startTime: 1_755_000_000,
+        endTime: 1_756_000_000,
+      })
+
+      expect(fetchUsageLogs).toHaveBeenCalledWith({
+        projectId: 0,
+        page: 0,
+        pageSize: 50,
+        startTime: 1_755_000_000,
+        endTime: 1_756_000_000,
+      })
+      expect(r).toEqual({ ok: true, data: USAGE_PAGE })
+    })
+
+    // 反向:没传的可选字段不能被凭空造出来。造了 `startTime: 0` 之类的值本身无害
+    // (session 会滤掉),但 `pageSize: 0` 会让 session 走进「没传」的回落分支,
+    // 与 UI 以为自己指定的页大小不一致。
+    it('get-usage-logs 只透传实际给了的字段', async () => {
+      fetchUsageLogs.mockResolvedValue(USAGE_PAGE)
+      await register()
+
+      await call('auth:get-usage-logs', { projectId: 342 })
+      expect(fetchUsageLogs).toHaveBeenCalledWith({ projectId: 342 })
+    })
+
+    it('get-usage-summary 透传 projectId 与时间范围', async () => {
+      const summary = [
+        { modelName: 'seedance-2.0', totalQuota: 130_000, totalRequests: 3, totalTokens: 46 },
+        { modelName: null, totalQuota: 500, totalRequests: 1, totalTokens: 0 },
+      ]
+      fetchUsageSummary.mockResolvedValue(summary)
+      await register()
+
+      const r = await call('auth:get-usage-summary', {
+        projectId: 342,
+        startTime: 1_755_000_000,
+        endTime: 1_756_000_000,
+      })
+
+      expect(fetchUsageSummary).toHaveBeenCalledWith({
+        projectId: 342,
+        startTime: 1_755_000_000,
+        endTime: 1_756_000_000,
+      })
+      expect(r).toEqual({ ok: true, data: summary })
+    })
+
+    // 窄化失败必须自己回一个带 code 的信封,不能把形状不对的对象递给 session ——
+    // 那边只会把 `undefined` 当成 0(「不过滤」),于是查出来的是别人的口径。
+    it('缺 projectId 时回 INVALID_QUERY 信封,一次都不打 session', async () => {
+      await register()
+
+      const r = (await call('auth:get-usage-logs', { page: 1 })) as {
+        ok: boolean
+        error?: { code: string; message: string }
+      }
+      expect(r.ok).toBe(false)
+      expect(r.error?.code).toBe('INVALID_QUERY')
+      expect(r.error?.message).toBeTruthy()
+      expect(fetchUsageLogs).not.toHaveBeenCalled()
+    })
+
+    // `Number(null)` 与 `Number('')` 都是 0,而 0 在这一层是「不过滤」的合法语义 ——
+    // 强转会把「字段没传」静默变成一次语义不同的查询。
+    it('projectId 为 null / 空串时不被强转成 0', async () => {
+      await register()
+
+      for (const bad of [null, '', undefined, 'abc', {}]) {
+        fetchUsageLogs.mockClear()
+        const r = (await call('auth:get-usage-logs', { projectId: bad })) as {
+          ok: boolean
+          error?: { code: string }
+        }
+        expect(r.ok, `projectId=${JSON.stringify(bad)} 被放行了`).toBe(false)
+        expect(r.error?.code).toBe('INVALID_QUERY')
+        expect(fetchUsageLogs).not.toHaveBeenCalled()
+      }
+    })
+
+    it('非对象的 query 也回信封而不是裸抛', async () => {
+      await register()
+      const r = (await call('auth:get-usage-summary', null)) as { ok: boolean; error?: { code: string } }
+      expect(r.ok).toBe(false)
+      expect(r.error?.code).toBe('INVALID_QUERY')
+    })
+
+    // 池键是 `(producerId, producerProjectId)` 两半。丢了后一半后端 400,而这一层若
+    // 静默丢掉,报错发生在一个 RTT 之后、错误信息还指向「参数缺失」而不是「透传漏了」。
+    it('create-recharge-order 的 producer 目标两半都透传', async () => {
+      createRechargeOrder.mockResolvedValue(CREATED)
+      await register()
+
+      const r = await call('auth:create-recharge-order', 100, {
+        kind: 'producer',
+        producerId: 7,
+        producerProjectId: 88,
+      })
+
+      expect(createRechargeOrder).toHaveBeenCalledWith(
+        100,
+        { kind: 'producer', producerId: 7, producerProjectId: 88 },
+        undefined,
+      )
+      expect(r).toEqual({ ok: true, data: CREATED })
+    })
+
+    it('create-recharge-order 的 project 目标透传 projectId', async () => {
+      createRechargeOrder.mockResolvedValue(CREATED)
+      await register()
+
+      await call('auth:create-recharge-order', 30, { kind: 'project', projectId: 342 })
+      expect(createRechargeOrder).toHaveBeenCalledWith(30, { kind: 'project', projectId: 342 }, undefined)
+    })
+
+    // 个人计费落点刻意不在组织列表里,夹带 projectId 会让后端走进成员校验分支 →
+    // 查不到 joined → fail-closed 403。所以 personal 分支必须**只**剩 kind。
+    it('personal 目标不夹带渲染层多送的 projectId', async () => {
+      createRechargeOrder.mockResolvedValue(CREATED)
+      await register()
+
+      await call('auth:create-recharge-order', 10, {
+        kind: 'personal',
+        projectId: 342,
+        producerProjectId: 88,
+      })
+      expect(createRechargeOrder).toHaveBeenCalledWith(10, { kind: 'personal' }, undefined)
+    })
+
+    it('producer 目标缺一半时回 INVALID_TARGET,不打 session', async () => {
+      await register()
+
+      const r = (await call('auth:create-recharge-order', 100, {
+        kind: 'producer',
+        producerId: 7,
+      })) as { ok: boolean; error?: { code: string } }
+      expect(r.ok).toBe(false)
+      expect(r.error?.code).toBe('INVALID_TARGET')
+      expect(createRechargeOrder).not.toHaveBeenCalled()
+    })
+
+    it('未知 kind 的目标回 INVALID_TARGET,不打 session', async () => {
+      await register()
+
+      for (const bad of [{ kind: 'org', projectId: 1 }, {}, null, 'personal']) {
+        createRechargeOrder.mockClear()
+        const r = (await call('auth:create-recharge-order', 100, bad)) as {
+          ok: boolean
+          error?: { code: string }
+        }
+        expect(r.ok, `target=${JSON.stringify(bad)} 被放行了`).toBe(false)
+        expect(r.error?.code).toBe('INVALID_TARGET')
+        expect(createRechargeOrder).not.toHaveBeenCalled()
+      }
+    })
+
+    // 金额的**区间**校验归 session(上限常量在那边),这一层只保证递过去的是个数字 ——
+    // 但 code 要与 session 一致,否则同一种毛病在 UI 上分两支处理。
+    it('金额不是数字时回 INVALID_AMOUNT,不打 session', async () => {
+      await register()
+
+      for (const bad of ['100', null, undefined, Number.NaN, {}]) {
+        createRechargeOrder.mockClear()
+        const r = (await call('auth:create-recharge-order', bad, { kind: 'personal' })) as {
+          ok: boolean
+          error?: { code: string }
+        }
+        expect(r.ok, `amount=${JSON.stringify(bad)} 被放行了`).toBe(false)
+        expect(r.error?.code).toBe('INVALID_AMOUNT')
+        expect(createRechargeOrder).not.toHaveBeenCalled()
+      }
+    })
+
+    it('subject 是非空字符串时透传,否则给 undefined', async () => {
+      createRechargeOrder.mockResolvedValue(CREATED)
+      await register()
+
+      await call('auth:create-recharge-order', 10, { kind: 'personal' }, '余额充值')
+      expect(createRechargeOrder).toHaveBeenLastCalledWith(10, { kind: 'personal' }, '余额充值')
+
+      await call('auth:create-recharge-order', 10, { kind: 'personal' }, '')
+      expect(createRechargeOrder).toHaveBeenLastCalledWith(10, { kind: 'personal' }, undefined)
+    })
+
+    // `PAID` + creditError 非空是「钱收到了但入账失败」,UI 要显示「入账中」而不是「成功」。
+    // 这一层不许对状态做任何加工 —— 判定口径只在 session 与 UI 两头。
+    it('get-recharge-order 透传单号并原样透出订单(含 PAID + creditError)', async () => {
+      const order = {
+        outTradeNo: 'NO-1',
+        status: 'PAID' as const,
+        totalAmount: '100.00',
+        creditError: 'shadow account not found',
+      }
+      fetchRechargeOrder.mockResolvedValue(order)
+      await register()
+
+      const r = await call('auth:get-recharge-order', 'NO-1')
+      expect(fetchRechargeOrder).toHaveBeenCalledWith('NO-1')
+      expect(r).toEqual({ ok: true, data: order })
+    })
+
+    it('单号为空或非字符串时回信封,不打 session', async () => {
+      await register()
+
+      for (const bad of ['', null, undefined, 42]) {
+        fetchRechargeOrder.mockClear()
+        const r = (await call('auth:get-recharge-order', bad)) as {
+          ok: boolean
+          error?: { code: string }
+        }
+        expect(r.ok, `outTradeNo=${JSON.stringify(bad)} 被放行了`).toBe(false)
+        expect(r.error?.code).toBeTruthy()
+        expect(fetchRechargeOrder).not.toHaveBeenCalled()
+      }
+    })
+
+    // 四条通道逐条盯住信封:少包一条,这里就在那一条上变红。裸抛经 IPC 会被 Electron
+    // 包成 "Error invoking remote method '…'",后端的 code 全丢,UI 无法按 code 分支
+    // (NOT_AUTHENTICATED 要引导重新登录、INVALID_AMOUNT 提示金额、FORBIDDEN 提示换池)。
+    it('session 抛 AuthError 时四条通道都回信封而不是裸抛', async () => {
+      const boom = () => Promise.reject(new AuthError('NOT_AUTHENTICATED', 401, '尚未登录'))
+      fetchUsageLogs.mockImplementation(boom)
+      fetchUsageSummary.mockImplementation(boom)
+      createRechargeOrder.mockImplementation(boom)
+      fetchRechargeOrder.mockImplementation(boom)
+      await register()
+
+      const invocations: Array<[string, unknown[]]> = [
+        ['auth:get-usage-logs', [{ projectId: 342 }]],
+        ['auth:get-usage-summary', [{ projectId: 342 }]],
+        ['auth:create-recharge-order', [100, { kind: 'personal' }]],
+        ['auth:get-recharge-order', ['NO-1']],
+      ]
+      for (const [ch, args] of invocations) {
+        const r = (await call(ch, ...args)) as {
+          ok: boolean
+          error?: { code: string; message: string }
+        }
+        expect(r.ok, `${ch} 没回信封`).toBe(false)
+        expect(r.error?.code, `${ch} 丢了 code`).toBe('NOT_AUTHENTICATED')
+        expect(r.error?.message, `${ch} 丢了 message`).toBe('尚未登录')
+      }
+    })
+
+    // 非 AuthError(断网、DNS 失败)也要合成一个 code,否则 UI 的 switch 落到 undefined。
+    it('非 AuthError 也合成 code', async () => {
+      fetchUsageLogs.mockRejectedValue(new Error('ECONNREFUSED'))
+      await register()
+
+      const r = (await call('auth:get-usage-logs', { projectId: 1 })) as {
+        ok: boolean
+        error?: { code: string }
+      }
+      expect(r.ok).toBe(false)
+      expect(typeof r.error?.code).toBe('string')
+      expect(r.error?.code).toBeTruthy()
+    })
+
+    // 这里刻意**不**照抄额度那批的 `not.toMatch(/token/i)`:用量行本身就带
+    // `tokenName` / `promptTokens` / `completionTokens` 三个合法字段名,那条正则在这一层
+    // 只会稳定误报。凭证不外泄由 authApi.ts 的类型边界与 session 层保证。
+  })
+
   // 通道清单按字面锁住,而不是只断言个数 —— 加通道时会在这里显式失败,提醒同时把它
   // 加进 AUTH_CHANNELS(卸载依赖那个数组,漏加会让 handler 在热重载后泄漏)。
-  it('注册全部九个通道', async () => {
+  it('注册全部十三个通道', async () => {
     await register()
     expect([...handlers.keys()].sort()).toEqual(
       [
         'auth:cancel-login',
+        'auth:create-recharge-order',
         'auth:get-balance',
         'auth:get-organizations',
         'auth:get-payment-config',
         'auth:get-quota',
+        'auth:get-recharge-order',
         'auth:get-state',
+        'auth:get-usage-logs',
+        'auth:get-usage-summary',
         'auth:logout',
         'auth:start-login',
         'auth:submit-code',

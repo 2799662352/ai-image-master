@@ -135,6 +135,12 @@ import type {
   AuthState,
   PaymentConfig,
   QuotaRpc,
+  RechargeOrder,
+  RechargeOrderCreated,
+  RechargeTarget,
+  UsageLogPage,
+  UsageModelSummary,
+  UsageQuery,
 } from '../types/authApi'
 
 // ==================== IPC 通道常量 ====================
@@ -366,6 +372,10 @@ const IPC_CHANNELS = {
     GET_BALANCE: 'auth:get-balance',
     GET_QUOTA: 'auth:get-quota',
     GET_PAYMENT_CONFIG: 'auth:get-payment-config',
+    GET_USAGE_LOGS: 'auth:get-usage-logs',
+    GET_USAGE_SUMMARY: 'auth:get-usage-summary',
+    CREATE_RECHARGE_ORDER: 'auth:create-recharge-order',
+    GET_RECHARGE_ORDER: 'auth:get-recharge-order',
   },
   AUTH_EVENTS: ['auth:state-changed', 'auth:login-result'] as const,
   // Shell helpers (clipboard / save dialog)
@@ -558,6 +568,18 @@ export interface ElectronAPI {
     ) => Promise<QuotaRpc<AccountBalance>>
     getQuota: () => Promise<QuotaRpc<Record<string, unknown>>>
     getPaymentConfig: () => Promise<QuotaRpc<PaymentConfig>>
+    // 用量明细。同一套信封 —— 主进程连「参数形状不对」都回信封(INVALID_QUERY),
+    // 因为窄化失败与查询失败对 UI 是同一件事:显示一条带 code 的错误而不是空列表。
+    getUsageLogs: (query: UsageQuery) => Promise<QuotaRpc<UsageLogPage>>
+    getUsageSummary: (query: UsageQuery) => Promise<QuotaRpc<UsageModelSummary[]>>
+    // 原生充值三步的第一步与第三步。第二步是渲染层拿 `payUrl` 调
+    // `shell.openExternal` —— 应用内导航会被 `will-navigate` 静默拦下。
+    createRechargeOrder: (
+      amountCny: number,
+      target: RechargeTarget,
+      subject?: string,
+    ) => Promise<QuotaRpc<RechargeOrderCreated>>
+    getRechargeOrder: (outTradeNo: string) => Promise<QuotaRpc<RechargeOrder>>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -1453,6 +1475,21 @@ const electronAPI: ElectronAPI = {
     getQuota: () => safeInvoke<QuotaRpc<Record<string, unknown>>>(IPC_CHANNELS.AUTH.GET_QUOTA),
     getPaymentConfig: () =>
       safeInvoke<QuotaRpc<PaymentConfig>>(IPC_CHANNELS.AUTH.GET_PAYMENT_CONFIG),
+    // `query` / `target` 整个对象递过去,不在这里拆字段:拆一次就多一处会漏掉
+    // `page: 0` 或 producer 池键那一半的地方。窄化只在主进程做一遍。
+    getUsageLogs: (query: UsageQuery) =>
+      safeInvoke<QuotaRpc<UsageLogPage>>(IPC_CHANNELS.AUTH.GET_USAGE_LOGS, query),
+    getUsageSummary: (query: UsageQuery) =>
+      safeInvoke<QuotaRpc<UsageModelSummary[]>>(IPC_CHANNELS.AUTH.GET_USAGE_SUMMARY, query),
+    createRechargeOrder: (amountCny: number, target: RechargeTarget, subject?: string) =>
+      safeInvoke<QuotaRpc<RechargeOrderCreated>>(
+        IPC_CHANNELS.AUTH.CREATE_RECHARGE_ORDER,
+        amountCny,
+        target,
+        subject,
+      ),
+    getRechargeOrder: (outTradeNo: string) =>
+      safeInvoke<QuotaRpc<RechargeOrder>>(IPC_CHANNELS.AUTH.GET_RECHARGE_ORDER, outTradeNo),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
