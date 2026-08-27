@@ -204,6 +204,138 @@ export function getAuthState(): AuthState {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 账号额度查询
+//
+// **与下面的存活探测严格分开,不共用节流。** 探测刻意**不传** projectId,靠后端在
+// `userOrg.ts:138-143` 提前 400 短路、在触达 `newApiService` 之前返回,所以正常路径
+// 零外部依赖。额度查询要真传 projectId,会真打 New API —— 两者混用一个节流窗口的
+// 后果是:余额查询顺手重置探测窗口,封号检测的实际间隔被拉长到不可预期。
+//
+// 这几个函数刻意**不做缓存**:余额是用户随时会盯着的数字(充值后、切组织后必须立刻变),
+// 缓存带来的「显示旧值」比多发一次请求糟得多。调用频率由 UI 控制。
+// ───────────────────────────────────────────────────────────────────────────
+
+/** 500000 quota = ¥1。取自 `new-api/constant/org.go:40`,不要在别处另写一份。 */
+const QUOTA_PER_YUAN = 500_000
+
+export interface AccountBalance {
+  balanceYuan: number
+  balanceQuota: number | null
+}
+
+export interface AccountOrganization {
+  id: number
+  name: string
+  studioName: string | null
+  balanceYuan: number
+  joined: boolean
+  /**
+   * 仅 producer 项目有。**它是池键的另一半** —— 两个 producer project 可以共用一个
+   * `id`,只按 `id` 认会把两个不同的池悄悄合并、把钱记到错的地方。
+   */
+  producerProjectId?: number
+}
+
+export interface PaymentConfig {
+  /** 个人计费落点 project id;后端未配置 `PERSONAL_BILLING_PROJECT_ID` 时为 null。 */
+  personalBillingProjectId: number | null
+}
+
+function requireToken(): string {
+  const cred = getCredential()
+  if (!cred) throw new AuthError('NOT_AUTHENTICATED', 401, '未登录')
+  return cred.token
+}
+
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/**
+ * 余额。
+ *
+ * 两种字段拼法都要认:project 池回 `balance_yuan`,producer 池回 `quota_yuan`
+ * (shortdrama 的 `billing/platform.ts:136` 实测踩到过)。只认一种会静默显示 ¥0,
+ * 而用户看到 0 会以为余额空了 —— 比报错更糟。两个都没有时用 quota 自己换算。
+ */
+export async function fetchBalance(
+  projectId: number,
+  producerProjectId?: number,
+): Promise<AccountBalance> {
+  const token = requireToken()
+  const path = producerProjectId
+    ? `/api/user/producer-balance?producerId=${projectId}&producerProjectId=${producerProjectId}`
+    : `/api/user/balance?projectId=${projectId}`
+
+  const { status, body } = await sendJson(path, 'GET', { token })
+  if (status >= 400) throw toAuthError(status, body)
+
+  const data = (body.data ?? body) as Record<string, unknown>
+  const quota = num(data.balance_quota)
+  const yuan = num(data.balance_yuan) ?? num(data.quota_yuan)
+  return {
+    balanceQuota: quota,
+    balanceYuan: yuan ?? (quota === null ? 0 : quota / QUOTA_PER_YUAN),
+  }
+}
+
+/**
+ * 用户可用的计费池。
+ *
+ * 用**用户自己的 token** 打,所以后端不可能返回他无权访问的池 —— 权限校验不需要在
+ * 客户端再做一遍。注意后端响应里的 `role` 是硬编码的 `'member'`(`userOrg.ts:109`),
+ * 没有信息量,这里不透出。
+ */
+export async function fetchOrganizations(): Promise<AccountOrganization[]> {
+  const token = requireToken()
+  const { status, body } = await sendJson('/api/user/organizations', 'GET', { token })
+  if (status >= 400) throw toAuthError(status, body)
+
+  const raw = Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : []
+  return (raw as Record<string, unknown>[]).map((p) => {
+    const ppid = num(p.producerProjectId)
+    return {
+      id: num(p.id) ?? 0,
+      name: typeof p.name === 'string' ? p.name : '',
+      studioName: typeof p.studioName === 'string' ? p.studioName : null,
+      balanceYuan: num(p.balanceYuan) ?? 0,
+      joined: p.joined === true,
+      // 只在 > 0 时带上:后端对普通 project 回 0 或缺省,而 0 不是一个合法的池键成分。
+      ...(ppid !== null && ppid > 0 ? { producerProjectId: ppid } : {}),
+    }
+  })
+}
+
+/**
+ * 按次/按秒配额 —— 与 ¥ 余额**互相独立的第二道闸**,任一为零都会拒绝生成。
+ * 原样透出后端字段,由 UI 决定怎么呈现;这里不做「够不够」的判断。
+ */
+export async function fetchQuota(): Promise<Record<string, unknown>> {
+  const token = requireToken()
+  const { status, body } = await sendJson('/api/user/quota', 'GET', { token })
+  if (status >= 400) throw toAuthError(status, body)
+  return (body.data ?? body) as Record<string, unknown>
+}
+
+/**
+ * 支付配置 —— 只为拿「个人计费」的落点 project id。
+ *
+ * **绝不要硬编码这个 id。** 它由后端 env `PERSONAL_BILLING_PROJECT_ID` 下发
+ * (`utils/personalBilling.ts`),且该 project 刻意**不出现在** `/api/user/organizations`
+ * 的返回里 —— 那是它的设计前提,不是漏掉了。
+ */
+export async function fetchPaymentConfig(): Promise<PaymentConfig> {
+  const token = requireToken()
+  const { status, body } = await sendJson('/api/payment/config', 'GET', { token })
+  if (status >= 400) throw toAuthError(status, body)
+
+  const data = (body.data ?? body) as Record<string, unknown>
+  const pb = data.personalBilling as { enabled?: unknown; projectId?: unknown } | undefined
+  const id = num(pb?.projectId)
+  return { personalBillingProjectId: pb?.enabled === true && id !== null ? id : null }
+}
+
 let lastProbeAt = 0
 
 /**
