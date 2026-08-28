@@ -51,7 +51,8 @@ import type {
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from './assetLibraryPolicy'
-import { getActivePoolToken } from '../auth/gatewayToken'
+import { getActivePool, getActivePoolToken } from '../auth/gatewayToken'
+import { ensureAsset } from '../portraitLibrary/ensureAsset'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
 import { createSeedanceGatewayClient } from '../seedanceGateway/client'
@@ -202,6 +203,59 @@ async function importImagesToPortraitLibrary(
         rememberAssetThumb(asset, url)
       } catch (e) {
         console.warn('[seedance] portrait-library import failed (generation unaffected):', e)
+      }
+    }),
+  )
+}
+
+/**
+ * 上面那条的**平台余额版**。同一件事,换一个库。
+ *
+ * 为什么必须有它:`usesSeedanceAssetLibrary` 在平台模式下返回 false,把
+ * `verifyContentAssetReferences` 与 `importImagesToPortraitLibrary` **一起**关掉了。
+ * 关前者是必须的(拿 vvdance 凭据去校验平台 asset id 会硬拦下整次提交);
+ * 关后者是过度 —— 结果是平台用户生成用的参考图不会自动成为可复用的 `asset://`
+ * 锚点,下次跨镜锁同一张脸得手动再传一次,而 vvdance 用户有这个自动化。
+ *
+ * 池取**主进程的 `activePool`**,不是渲染层递来的:提交用的 token 就来自它,
+ * 两者不同源的话素材会登记进一个与计费池不同的组,而跨池的 asset 读不出来。
+ * 完整论证见 `auth/gatewayToken.ts` 的 `getActivePool()`。
+ *
+ * 走 `ensureAsset` 而不是直接 `registerAsset`:前者自带同图同池去重(进程内 +
+ * 落盘绑定),否则同一张脸出现在几个镜头里就会在上游留下几份真实副本 ——
+ * 占配额、占列表分页预算,而配额只有显式 purge 才回收。
+ *
+ * 与上面那条一样全程吞异常、在提交之后后台跑。`ensureAsset` 等不到就绪时会抛
+ * `ASSET_NOT_READY`,这里当没发生:登记本身已经落库了,只是还没 Active,
+ * 下一次引用它时会自愈。
+ */
+async function importImagesToPlatformLibrary(
+  content: SeedanceContentItem[],
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return
+  const pool = getActivePool()
+  if (!pool) return
+  const scope = {
+    projectId: pool.projectId,
+    ...(pool.producerProjectId !== null ? { producerProjectId: pool.producerProjectId } : {}),
+  }
+  const images = content.filter(
+    (item): item is Extract<SeedanceContentItem, { type: 'image_url' }> =>
+      item.type === 'image_url' && !item.image_url.url.startsWith('asset://'),
+  )
+  await Promise.all(
+    images.map(async (item) => {
+      try {
+        const raw = item.image_url.url
+        // 平台库只收公网 URL(上游火山要能自己去拉),data: 一律先过 COS 换永久链。
+        const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
+        await ensureAsset(
+          { url, name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}` },
+          scope,
+        )
+      } catch (e) {
+        console.warn('[seedance] platform-library import failed (generation unaffected):', e)
       }
     }),
   )
@@ -591,6 +645,8 @@ export function initSeedanceRuntime(opts: {
       // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
       if (usesSeedanceAssetLibrary(input.model, billing)) {
         void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
+      } else if (billing === 'platform') {
+        void importImagesToPlatformLibrary(content, autoImportPortraitEnabled)
       }
       return state
     } catch (e) {
@@ -693,6 +749,8 @@ export function initSeedanceRuntime(opts: {
       // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
       if (usesSeedanceAssetLibrary(input.model, billing)) {
         void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
+      } else if (billing === 'platform') {
+        void importImagesToPlatformLibrary(content, payload?.autoImportPortrait !== false)
       }
       return { success: true, taskId: state.taskId }
     } catch (e) {

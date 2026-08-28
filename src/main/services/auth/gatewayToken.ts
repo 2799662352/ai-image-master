@@ -58,6 +58,25 @@ export function getActivePoolToken(): string | null {
   return cache.get(poolKey(activePool)) ?? null
 }
 
+/**
+ * 当前计费池本身(不含凭据)。
+ *
+ * 存在的理由只有一个:**素材登记必须落在正在计费的那个池里**。上游把 group 按
+ * `project-<id>` / `project-<id>-pp-<ppId>` 懒创建,登记进 A 池的 asset 在 B 池下
+ * 读不出来(不是陈旧,是不存在)——所以「用哪枚 token 提交」与「素材登记进哪个池」
+ * 必须同源。这里回的正是 `getActivePoolToken()` 取 token 用的那个池。
+ *
+ * ⚠️ **不要改成从渲染层传池。** 渲染层的池认知与主进程之间存在已知的失步窗口
+ * (`seedanceGateway/credentials.ts` 的「已知缺口」),两边不同源的后果是素材登记进
+ * 一个与计费池不同的组,而那时 `asset://` 会在提交时解析失败 —— 且报出来的错
+ * 完全指不到成因。
+ *
+ * 回的是拷贝:调用方拿去传给别的模块,不该能改到本模块的状态。
+ */
+export function getActivePool(): Pool | null {
+  return activePool ? { ...activePool } : null
+}
+
 export async function getGatewayToken(pool: Pool): Promise<string> {
   const key = poolKey(pool)
   const hit = cache.get(key)

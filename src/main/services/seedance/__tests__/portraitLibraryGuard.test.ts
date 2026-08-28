@@ -110,6 +110,26 @@ describe('两个提交入口都必须问过这个谓词', () => {
     expect(withOptions).toHaveLength(5)
   })
 
+  /**
+   * 平台模式下「自动入库」必须**改道**到平台库,而不是跳过。
+   *
+   * 这条是补一个我自己造出来的缺口:修「平台模式别碰 vvdance 素材库」时,
+   * `verifyContentAssetReferences` 与 `importImagesToPortraitLibrary` 共用同一个谓词,
+   * 于是被一起关掉了。关 verify 是必须的(拿 vvdance 凭据去校验平台 id 会硬拦下提交);
+   * 关 import 是**过度** —— 结果是平台用户生成用的参考图不会自动成为可复用的
+   * `asset://` 锚点,下次跨镜锁同一张脸得手动再传一次,而 vvdance 用户有这个自动化。
+   *
+   * 两个提交入口都要有,漏一个的表现是「MCP 出的片进库、工作台出的不进」这种
+   * 说不清的不一致。
+   */
+  it('平台模式下自动入库改道平台库,两个入口都要有', () => {
+    const platformCalls = runtimeSource.match(/void importImagesToPlatformLibrary\(/g) ?? []
+    const vvdanceCalls = runtimeSource.match(/void importImagesToPortraitLibrary\(/g) ?? []
+    // 每一条 vvdance 的自动入库都要有一条平台侧的对等物,数量必须一样。
+    expect(platformCalls.length).toBe(vvdanceCalls.length)
+    expect(platformCalls.length).toBeGreaterThan(0)
+  })
+
   it('没有任何一处裸调用(守卫之外直接调)', () => {
     // 把「守卫 + 紧随其后的调用」整段抠掉,剩下的正文里不该再出现这两个调用。
     const stripped = runtimeSource.replace(
