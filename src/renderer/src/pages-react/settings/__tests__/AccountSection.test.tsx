@@ -400,6 +400,36 @@ describe('AccountSection', () => {
       expect(screen.getByTestId('billing-own-key').getAttribute('aria-pressed')).toBe('true')
     })
 
+    // 🚨 这句文案是用户判断「我这次花的是谁的钱」的**唯一依据**,所以它必须被钉住。
+    //
+    // 曾经写的是「仅对『Miau API』站点生效」—— 那承诺的是**站点级**覆盖,而实现是
+    // **按请求路径**的:标记头只由 `applyAuthHeaders` 打,图像理解那三条
+    // (`understandImage` / `analyzeImagesStream` / `understand`)打的是同一个站点、
+    // 却从不经过它,照旧扣自填 Key 的钱。于是用户以为在这个站点上花的都是账号余额。
+    //
+    // ⚠️ 现成的断言**杀不掉这个变异**,两条都不行:
+    //  - 下面「站点本来就不是网关时」那条断的是 `/Miau/` —— 旧文案里同样有「Miau」;
+    //  - 断 `/自填密钥/` 也不行 —— 旧文案的后半句正是「其余站点仍走各自的自填密钥」。
+    // 真正能分辨新旧的只有两处,所以正反各钉一条:
+    //  1. 正面:必须点名**图像理解**这个已核实的例外(旧文案里没有这四个字);
+    //  2. 反面:不许再出现「站点生效」那句站点级承诺。
+    //
+    // 只点名图像理解、不写「其余功能一律不覆盖」是刻意的:TTS 其实**是**覆盖的,
+    // 把话说满会在另一个方向上再假一次。
+    it('平台模式的文案把覆盖范围说到请求粒度,不承诺整站生效', async () => {
+      await renderLoggedIn()
+      selectPool()
+      act(() => {
+        useQuotaStore.setState({ billingSource: 'platform' })
+      })
+
+      const hint = screen.getByTestId('billing-hint').textContent ?? ''
+
+      expect(hint).toMatch(/图像理解/)
+      expect(hint).toMatch(/仍扣自填密钥/)
+      expect(hint).not.toMatch(/站点生效/)
+    })
+
     it('未登录时压根没有这个开关', async () => {
       render(<AccountSection />)
       await waitFor(() => expect(auth.getState).toHaveBeenCalled())
