@@ -119,6 +119,15 @@ function findVideoUrl(body: Record<string, unknown>, record: Record<string, unkn
     output,
     asRecord(inner.output),
     inner.content,
+    // `metadata` 是这条上游**实际**放地址的地方 —— 2026-08-29 真机抓到的
+    // `doubao-seedance-2-0-260128` 完成响应长这样：
+    //   { status: 'completed', progress: 100,
+    //     metadata: { upstream_task_id: 'cgt-…', url: 'https://…tos-cn-beijing…' } }
+    // 顶层没有任何 url 键。漏了这一格不会报错,而是让这条任务**永远拿不到成片**:
+    // 完成判据就是「URL 存在」,于是卡片一路 running 到 30 分钟超时,
+    // 而片子早就出好了、钱也早就扣了。光看 status 发现不了 —— 它写着 completed。
+    record.metadata,
+    inner.metadata,
     record,
     body,
   ]

@@ -7,6 +7,59 @@ import { parseSeedanceGatewayTaskResult } from '../response'
 
 const URL_A = 'https://cdn.example.com/out/a.mp4'
 
+/**
+ * **真机抓到的响应**（2026-08-29，测试网关 `43.161.233.87:3000`，
+ * `doubao-seedance-2-0-260128`，带一条平台人像库的 `asset://` 参考图）。
+ *
+ * 这一组是这个文件里唯一不是我编出来的载荷。它揪出的 bug：URL 落在 **`metadata.url`**，
+ * 而兜底容器列表里没有 `metadata` —— 顶层没有任何 `url` 键，于是解析器一次都找不到。
+ * 后果不是报错，是这条任务**永远拿不到成片**：完成判据就是「URL 存在」，
+ * 于是卡片一路 running 到 30 分钟超时，而片子其实早就出好了、钱也早就扣了。
+ *
+ * 光看 status 是发现不了的 —— 它老老实实写着 `completed`。
+ */
+const REAL_COMPLETED = {
+  id: 'task_Ppjzz9F8tsqkyqpJTKlXRTWIo7Vea1be',
+  task_id: 'task_Ppjzz9F8tsqkyqpJTKlXRTWIo7Vea1be',
+  object: 'video',
+  model: 'doubao-seedance-2-0-260128',
+  status: 'completed',
+  progress: 100,
+  created_at: 1787951646,
+  completed_at: 1787951721,
+  metadata: {
+    upstream_task_id: 'cgt-20260829051406-bdkrp',
+    url: 'https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/0217879516469440000.mp4',
+  },
+} as const
+
+const REAL_RUNNING = {
+  id: 'task_Ppjzz9F8tsqkyqpJTKlXRTWIo7Vea1be',
+  task_id: 'task_Ppjzz9F8tsqkyqpJTKlXRTWIo7Vea1be',
+  object: 'video',
+  model: 'doubao-seedance-2-0-260128',
+  status: 'in_progress',
+  progress: 50,
+  created_at: 1787951646,
+  completed_at: 1787951650,
+  metadata: { upstream_task_id: 'cgt-20260829051406-bdkrp', url: '' },
+} as const
+
+describe('真机响应（2026-08-29 实测）', () => {
+  it('URL 在 metadata.url 里也要找得到', () => {
+    const r = parseSeedanceGatewayTaskResult(REAL_COMPLETED)
+    expect(r.content?.video_url).toBe(REAL_COMPLETED.metadata.url)
+    expect(r.status).toBe('succeeded')
+    expect(r.id).toBe(REAL_COMPLETED.task_id)
+  })
+
+  it('进行中那一版 metadata.url 是空串,不能被当成拿到了地址', () => {
+    const r = parseSeedanceGatewayTaskResult(REAL_RUNNING)
+    expect(r.content?.video_url).toBeUndefined()
+    expect(r.status).not.toBe('succeeded')
+  })
+})
+
 describe('完成判据 = URL 存在', () => {
   it('认不出的终态词也算成功 —— 网关中转多个上游,succeeded/completed/done 不统一', () => {
     for (const status of ['succeeded', 'completed', 'complete', 'done', 'finished', 'FINISH', '收工了']) {
