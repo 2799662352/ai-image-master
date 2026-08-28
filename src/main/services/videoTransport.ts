@@ -253,7 +253,16 @@ export function transportFor(
   // （`metadata.input.media[]` vs `metadata.content[]`），上游只会回一句 400，
   // 里面不会有任何一个字提到路由错了。
   if (key === 'wan3') return registry.wan3 ?? registry.seedance
-  if (key === 'seedance' && options?.billing === 'platform' && registry.seedanceGateway) {
+  if (key === 'seedance' && options?.billing === 'platform') {
+    // 🚨 **这一条不能回落。** 上面万相那条回落是良性的（同一个钱包、只是换个组包器），
+    // 这一条不是：回落到 `registry.seedance` 意味着扣的是用户自己的 vvdance key，
+    // 而他以为花的是平台余额。`seedanceGateway/credentials.ts` 已经为同一件事立过规矩
+    // （「静默回落 = 用户以为在花平台余额、实际在花自己的钱」），分派这一侧要一致。
+    //
+    // 平台通道没就绪是**配置问题**，不是「换一条计费路继续跑」的理由。
+    if (!registry.seedanceGateway) {
+      throw new Error('平台余额通道未就绪，无法按平台余额提交。请改用自填 Key，或稍后重试。')
+    }
     return registry.seedanceGateway
   }
   return registry.seedance

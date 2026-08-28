@@ -72,6 +72,41 @@ describe('transportFor', () => {
     const wan3 = createWan3Transport(wan3Client(), () => 'k')
     expect(transportFor({ seedance, wan3 }, 'bogus-model')).toBe(seedance)
   })
+
+  /**
+   * 🧬 变异点:把这条改回 `&& registry.seedanceGateway` 的静默回落,必红。
+   *
+   * 这是**不能回落**的那一类。同一个提交里的 `seedanceGateway/credentials.ts` 已经
+   * 立过规矩:「刻意不回落到自填 Key:静默回落 = 用户以为在花平台余额、实际在花自己的钱」。
+   * 而分派这一侧原先做的正是那件事 —— 平台通道没注册就把人送去 vvdance 直连,
+   * 用户的 vvdance key 被扣,而他以为花的是平台余额。
+   *
+   * 今天还够不着(registry 尚未接线,那条回落是给「只注入 seedance 的老测试」用的),
+   * 但接线的那一刻它就活了。抛错是对的:平台通道没就绪是**配置问题**,
+   * 不是「换一条计费路继续跑」的理由。
+   */
+  it('要平台余额但通道没注册时抛错,绝不悄悄改走自填 Key 那条路', () => {
+    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+
+    expect(() => transportFor({ seedance }, '2.0', { billing: 'platform' })).toThrow(/平台余额/)
+    // 反面:没要平台余额的照常回落,老调用方不受影响。
+    expect(transportFor({ seedance }, '2.0')).toBe(seedance)
+    expect(transportFor({ seedance }, '2.0', { billing: 'own-key' })).toBe(seedance)
+  })
+
+  it('平台通道注册了就走它', () => {
+    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+    const seedanceGateway = createSeedanceTransport(seedanceClient(), () => 'gw')
+
+    expect(transportFor({ seedance, seedanceGateway }, '2.0', { billing: 'platform' })).toBe(
+      seedanceGateway,
+    )
+    // 万相不受计费模式影响:它是另一套请求体,劫走只会换来一句没头没脑的 400。
+    const wan3 = createWan3Transport(wan3Client(), () => 'k')
+    expect(transportFor({ seedance, seedanceGateway, wan3 }, 'wan3', { billing: 'platform' })).toBe(
+      wan3,
+    )
+  })
 })
 
 describe('translateVideoTaskError（两家翻译表汇合）', () => {
