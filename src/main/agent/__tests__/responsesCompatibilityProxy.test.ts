@@ -662,6 +662,40 @@ describe('平台余额组头', () => {
   })
 })
 
+describe('上游连不上时的 502 可定位性', () => {
+  /**
+   * 回归 2026-08-29:用户拿到的是「unexpected status 502 Bad Gateway: fetch failed」,
+   * 既没有上游地址也没有失败原因 —— undici 对 DNS/拒绝/证书全都只说 `fetch failed`,
+   * 真因埋在 `error.cause` 里,而 502 分支当时只回 `error.message`。
+   */
+  it('把上游 origin 和 cause 的错误码一起写进 502 正文', async () => {
+    // 先绑一个临时端口再立刻关掉:拿到的端口保证无人监听,连过去必然 ECONNREFUSED。
+    // 不用 1 这类保留端口 —— fetch 规范把它们列为 bad port,请求在到达 TCP 前就被
+    // 拒了,cause 里没有 errno,验不到我们真正关心的那条链路。
+    const deadPort = await new Promise<number>((resolve) => {
+      const probe = createServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const { port } = probe.address() as AddressInfo
+        probe.close(() => resolve(port))
+      })
+    })
+    const proxy = await startResponsesCompatibilityProxy(`http://127.0.0.1:${deadPort}/v1`)
+    try {
+      const response = await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(response.status).toBe(502)
+      const message = ((await response.json()) as { error: { message: string } }).error.message
+      expect(message).toContain(`http://127.0.0.1:${deadPort}`)
+      expect(message).toContain('ECONNREFUSED')
+    } finally {
+      await proxy.close()
+    }
+  })
+})
+
 describe('Anthropic Messages bridge', () => {
   it('bridges Claude channels, including ones whose preset forgot to say so', () => {
     expect(resolveCompatibilityBridge(resolveProviderChannel('rightcode-claude')))

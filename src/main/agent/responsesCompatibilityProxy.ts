@@ -350,6 +350,41 @@ function requestHeaders(headers: IncomingHttpHeaders): Headers {
   return forwarded
 }
 
+/**
+ * 把桥接失败翻译成能定位的一句话。
+ *
+ * undici 的 `fetch` 对**一切**传输层失败都只给一句 `fetch failed` —— DNS 没解出来、
+ * 端口拒绝、证书不过、代理挡了,全长一个样,真实原因埋在 `error.cause` 里。原来的
+ * 502 只回 `error.message`,于是用户看到的就是「unexpected status 502 Bad Gateway:
+ * fetch failed」,既不知道打的哪个地址,也不知道为什么。
+ *
+ * 补上 origin 而不是整条 URL:路径可能带查询串,而定位只需要知道打的是哪一家。
+ */
+function describeBridgeFailure(error: unknown, target: URL | undefined): string {
+  const base = error instanceof Error ? error.message : String(error)
+  const causes: string[] = []
+  let cause: unknown = error instanceof Error ? error.cause : undefined
+  // 链式展开:undici 常见形状是 TypeError('fetch failed') → AggregateError → 逐个 Error。
+  for (let depth = 0; depth < 4 && cause; depth += 1) {
+    if (cause instanceof AggregateError && cause.errors.length > 0) {
+      causes.push(cause.errors.map((e) => describeCauseNode(e)).join('; '))
+      cause = cause.errors[0] instanceof Error ? cause.errors[0].cause : undefined
+      continue
+    }
+    causes.push(describeCauseNode(cause))
+    cause = cause instanceof Error ? cause.cause : undefined
+  }
+  const where = target ? ` (upstream ${target.origin})` : ''
+  const why = causes.length > 0 ? `: ${causes.join(' <- ')}` : ''
+  return `${base}${where}${why}`
+}
+
+function describeCauseNode(cause: unknown): string {
+  if (!(cause instanceof Error)) return String(cause)
+  const code = (cause as NodeJS.ErrnoException).code
+  return code ? `${code} ${cause.message}` : cause.message
+}
+
 function upstreamUrl(baseUrl: URL, requestUrl: string): URL {
   const incoming = new URL(requestUrl, 'http://127.0.0.1')
   const basePath = baseUrl.pathname.replace(/\/+$/, '')
@@ -482,10 +517,12 @@ async function startCompatibilityBridgeServer(
     }
     request.once('aborted', abortUpstream)
     response.once('close', abortOnEarlyClose)
+    // 提到 try 外面,只为让 502 分支能报出「打的是哪个上游」。
+    let target: URL | undefined
     try {
       const method = request.method ?? 'GET'
       const rawBody = await readRequestBody(request)
-      const target = transport.resolveTarget(request.url ?? '/')
+      target = transport.resolveTarget(request.url ?? '/')
       if (!target) {
         response.statusCode = 404
         response.setHeader('content-type', 'application/json')
@@ -564,7 +601,7 @@ async function startCompatibilityBridgeServer(
       response.setHeader('content-type', 'application/json')
       response.end(JSON.stringify({
         error: {
-          message: error instanceof Error ? error.message : String(error),
+          message: describeBridgeFailure(error, target),
         },
       }))
     } finally {
