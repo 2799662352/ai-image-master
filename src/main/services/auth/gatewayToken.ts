@@ -30,6 +30,14 @@ const cache = new Map<string, string>()
 /** 同一个池的并发请求合流成一次网络往返,避免 N 个出图任务同时打后端。 */
 const inflight = new Map<string, Promise<string>>()
 let activePool: Pool | null = null
+/**
+ * 登出代际。`clearGatewayTokens()` 自增,在途请求靠它判断自己是不是已经过期。
+ *
+ * 清 `inflight` 只删 Map 条目,**取消不了已经建好的 promise 链** —— 那条链稍后
+ * 仍会 resolve 并接着写缓存、落盘,而 `fs.rm` 早就跑完了。结果是用户点完登出,
+ * 盘上又躺回一枚永不过期、无法单独吊销的 token。
+ */
+let generation = 0
 
 export function setActivePool(pool: Pool | null): void {
   activePool = pool
@@ -56,8 +64,13 @@ export async function getGatewayToken(pool: Pool): Promise<string> {
   const running = inflight.get(key)
   if (running) return running
 
+  const gen = generation
   const task = fetchToken(pool)
     .then(async (token) => {
+      // 出发之后有人登出了。token 照常还给调用方(它自己会撞 401,不必额外造错),
+      // 但**一个字节的状态都不能写** —— 写了就是把刚清空的缓存和刚删掉的加密
+      // 文件原样填回去。
+      if (gen !== generation) return token
       cache.set(key, token)
       await persist().catch(() => {})
       return token
@@ -118,36 +131,47 @@ function storePath(): string {
 }
 
 /**
- * Linux 上有没有真的加密。
+ * 有没有**真的**加密。三道判断,每道都有依据:
  *
- * `isEncryptionAvailable()` 在 `basic_text` 后端下**也返回 true** —— 它只回答
- * 「有没有加密能力」,不回答「这个加密有没有用」。而 basic_text 用的是硬编码
- * 明文口令,等于没加密。我们出 AppImage,那正是最容易没有 secret store 的场景。
+ * 1. 问 `isAsyncEncryptionAvailable()` 而不是同步的 `isEncryptionAvailable()`。
+ *    异步加密器是惰性初始化的(electron.d.ts:11881),两者结论可以不一致;不一致
+ *    时 `encryptStringAsync` 会 reject,而调用处的 `.catch(() => {})` 把它整个吞
+ *    掉 —— 表现为「以为落了盘,其实一直没落」,零信号。落盘走异步链路,就得问
+ *    异步链路自己的可用性。
+ * 2. 非 Linux 直接认为有效。`getSelectedStorageBackend()` 标着 `@platform linux`
+ *    (electron.d.ts:11874);Electron 43.2.0 + win32 实测 `typeof` 就是
+ *    `'undefined'`,调用直接抛 TypeError。不短路的话它会掉进下面的 catch,等于
+ *    **在我们的主力平台上永久关掉落盘** —— 每次重启白白多一次网络往返,还不报错。
+ * 3. Linux 上只否掉 `basic_text`。它用硬编码明文口令,等于没加密,而
+ *    `isEncryptionAvailable()` 在这个后端下**照样返回 true**(它只回答「有没有加密
+ *    能力」,不回答「这加密有没有用」)。我们出 AppImage,那正是最容易没有 secret
+ *    store 的场景。
  *
- * 判据写成「等于 basic_text」而不是「不在白名单里」:该方法是 Linux 语义,
- * Windows/macOS 上可能返回 'unknown',用白名单会把这两个平台一起误伤。
+ *    判据是「等于 basic_text」而不是「在白名单里」:后端枚举一直在长(kwallet →
+ *    kwallet5 → kwallet6),白名单写死在今天,明天 Electron 加个 kwallet7 就会静默
+ *    停止落盘。只否掉已知坏的那一个,新来的按好的用。
  */
-function encryptionIsReal(): boolean {
-  if (!safeStorage.isEncryptionAvailable()) return false
+async function encryptionIsReal(): Promise<boolean> {
   try {
-    // app ready 之前调会返回 'unknown',所以这个函数只能在 ready 之后用。
+    if (!(await safeStorage.isAsyncEncryptionAvailable())) return false
+    if (process.platform !== 'linux') return true
+    // app ready 之前调会返回 'unknown',但那时上面一步已经是 false,走不到这里。
     return safeStorage.getSelectedStorageBackend() !== 'basic_text'
   } catch {
-    // 该方法在部分平台上可能不存在(老版本 Electron)。存在性未知时按「不确定」
-    // 处理,而不确定时宁可不落盘。
+    // 判不出来就当没加密:宁可每次重取,不可明文落盘。
     return false
   }
 }
 
 async function persist(): Promise<void> {
-  if (!encryptionIsReal()) return // 只留内存,重启后重取
+  if (!(await encryptionIsReal())) return // 只留内存,重启后重取
   const payload = JSON.stringify(Object.fromEntries(cache))
   const buf = await safeStorage.encryptStringAsync(payload)
   await fs.writeFile(storePath(), buf)
 }
 
 export async function loadPersisted(): Promise<void> {
-  if (!encryptionIsReal()) return
+  if (!(await encryptionIsReal())) return
   try {
     const buf = await fs.readFile(storePath())
     // 异步版**不返回字符串**,返回 `{ shouldReEncrypt, result }`(electron.d.ts
@@ -169,5 +193,7 @@ export async function clearGatewayTokens(): Promise<void> {
   cache.clear()
   inflight.clear()
   activePool = null
+  // 必须在 rm 之前:在途请求要靠它判断自己该不该继续写状态。
+  generation += 1
   await fs.rm(storePath(), { force: true }).catch(() => {})
 }
