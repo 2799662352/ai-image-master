@@ -11,6 +11,15 @@ const MARKER_LC = BILLING_MARKER_HEADER.toLowerCase()
 const tokenRef = { value: null as string | null }
 vi.mock('../gatewayToken', () => ({ getActivePoolToken: () => tokenRef.value }))
 
+/**
+ * `isPackaged` 可变,因为本文件最要紧的一条断言就是「打包后必须忽略覆盖」。
+ * 写死成常量的话那条断言就成了摆设。
+ */
+const electronApp = { isPackaged: false }
+vi.mock('electron', () => ({ app: electronApp }))
+
+const GATEWAY_ORIGIN_ENV = 'CATIMATION_GATEWAY_ORIGIN'
+
 /** 把注册进去的 listener 抓出来直接调,不起真 session。 */
 function fakeSession() {
   let captured: ((d: any, cb: (r: any) => void) => void) | null = null
@@ -35,6 +44,8 @@ describe('gatewayHeaderInjector', () => {
   beforeEach(() => {
     vi.resetModules()
     tokenRef.value = null
+    electronApp.isPackaged = false
+    delete process.env[GATEWAY_ORIGIN_ENV]
   })
 
   it('带标记头且有 token 时，换成 Authorization 并删掉标记', async () => {
@@ -123,5 +134,72 @@ describe('gatewayHeaderInjector', () => {
     m.installGatewayHeaderInjector(s as any)
 
     expect(s.filter!.urls).toEqual(['https://miauapi.13797248455.xyz/*'])
+  })
+
+  // ── 开发构建专用的网关覆盖 ────────────────────────────────────────────────
+  //
+  // 存在的理由:整条链路在生产之外根本没法验证 —— 认证后端能用环境变量指到测试服,
+  // 而网关地址写死,于是测试服换来的 token 会被发到生产网关、必定 401。
+  // 「攻击者不能改」和「开发时也不能改」是两回事,只做前者会让这条链路不可验证,
+  // 而不可验证本身也是风险。
+  describe('网关地址覆盖', () => {
+    it('开发构建下,环境变量能把过滤器指到别处', async () => {
+      electronApp.isPackaged = false
+      process.env[GATEWAY_ORIGIN_ENV] = 'http://43.161.233.87:3000'
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+
+      expect(s.filter!.urls).toEqual(['http://43.161.233.87:3000/*'])
+    })
+
+    // 🔒 **本组最要紧的一条。** 环境变量是攻击者也能设的 —— 同一登录用户下的任何
+    // 进程、快捷方式属性、外面套一层批处理都能设。打包产物若也读它,就等于把
+    // 「凭据只发给我们的网关」从编译期保证降级成攻击者同样握有开关的运行期配置:
+    // 改一个环境变量,真凭据就送到他自己的服务器上。
+    it('打包产物必须无视覆盖,哪怕环境变量设着', async () => {
+      electronApp.isPackaged = true
+      process.env[GATEWAY_ORIGIN_ENV] = 'https://evil.example.com'
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+
+      expect(s.filter!.urls).toEqual([`${m.DEFAULT_GATEWAY_ORIGIN}/*`])
+      // 单独断一次:凭据绝不能出现在指向那个 origin 的请求上。
+      expect(s.filter!.urls.join()).not.toContain('evil.example.com')
+    })
+
+    // 配置写错不能变成安全事故 —— 解析失败必须退回默认,绝不放宽。
+    it('覆盖值不是合法 URL 时退回默认,不放宽过滤器', async () => {
+      electronApp.isPackaged = false
+      process.env[GATEWAY_ORIGIN_ENV] = 'not a url'
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+
+      expect(s.filter!.urls).toEqual([`${m.DEFAULT_GATEWAY_ORIGIN}/*`])
+    })
+
+    // 带路径的输入会拼出 `<origin>/<path>/*` 这种匹配不到东西的模式,
+    // 表现成「覆盖了但一次都没生效」—— 只取 origin。
+    it('覆盖值带路径时只取 origin', async () => {
+      electronApp.isPackaged = false
+      process.env[GATEWAY_ORIGIN_ENV] = 'http://localhost:3000/v1/images'
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+
+      expect(s.filter!.urls).toEqual(['http://localhost:3000/*'])
+    })
+
+    it('环境变量为空串时按没设处理', async () => {
+      electronApp.isPackaged = false
+      process.env[GATEWAY_ORIGIN_ENV] = '   '
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+
+      expect(s.filter!.urls).toEqual([`${m.DEFAULT_GATEWAY_ORIGIN}/*`])
+    })
   })
 })

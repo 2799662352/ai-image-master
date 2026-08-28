@@ -437,6 +437,47 @@ export const MIAU_SITE_KEY = 'antigravity'
 // import 主进程模块」)。那条理由只对**主进程模块**成立,而常量本身可以住在两边共吃的
 // `src/types/authApi.ts` 里 —— 现在就在那儿,连同它为什么必须只有一份的说明。
 
+/** 生产网关。开发构建可被 `CATIMATION_GATEWAY_ORIGIN` 覆盖，见下。 */
+export const DEFAULT_GATEWAY_BASE_URL = 'https://miauapi.13797248455.xyz'
+
+/**
+ * Miau 网关根地址。**只有开发构建能覆盖。**
+ *
+ * 为什么需要覆盖：整条平台余额链路在生产之外没法验证 —— 认证后端能用
+ * `CATIMATION_AUTH_BASE_URL` 指到测试服，而网关地址若写死，测试服换来的 token
+ * 会被发到生产网关、必定 401。「攻击者不能改」和「开发时也不能改」是两回事，
+ * 只做前者会让这条链路不可验证，而不可验证本身也是风险。
+ *
+ * 为什么必须只在开发构建：这个值同时决定**请求发给谁**和**要不要打计费标记**
+ * （`shouldUsePlatformBilling` 拿请求 URL 与它比 origin），所以改它等于改凭据的
+ * 落点。环境变量是攻击者也能设的 —— 同一登录用户下的任何进程、快捷方式属性、
+ * 外面套一层批处理都能设。
+ *
+ * 闸门用 `import.meta.env.DEV` 而不是运行时判断：它是 electron-vite 的**构建期
+ * 常量**，生产构建里整个分支连同 `process.env` 读取会被 tree-shake 掉，安装包里
+ * 根本不存在这段代码 —— 比任何运行时检查都硬。
+ *
+ * ⚠️ 主进程侧有对应的一半（`main/services/auth/gatewayHeaderInjector.ts` 的
+ * `resolveGatewayOrigin`，闸门是 `!app.isPackaged`）。**两边必须用同一个环境变量、
+ * 同时生效**：只改一边的后果是渲染层发到 A、注入器只认 B，凭据一次都注不进去。
+ */
+function resolveGatewayBaseUrl(): string {
+  if (!import.meta.env.DEV) return DEFAULT_GATEWAY_BASE_URL
+
+  const raw = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+    ?.CATIMATION_GATEWAY_ORIGIN?.trim()
+  if (!raw) return DEFAULT_GATEWAY_BASE_URL
+
+  try {
+    // 只取 origin：带路径的输入会让下游拼出 `<origin>/<path>/v1/images/...`，
+    // 表现成「覆盖了但每个请求 404」。
+    return new URL(raw).origin
+  } catch {
+    console.warn('[ApiService] CATIMATION_GATEWAY_ORIGIN 不是合法 URL，已忽略')
+    return DEFAULT_GATEWAY_BASE_URL
+  }
+}
+
 /**
  * 本次请求实际会打到的 host 源。
  *
@@ -608,7 +649,7 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     // 走加速域名而非源站 IP(2026-07-28)。只有 https 可达 —— 明文 http 连不上,
     // 端口也不再需要。同一台 new-api 实例(401 报文形状一致),换域名后 CSP 里
     // 那几条 `http://175.178.198.17:*` 例外也随之取消。
-    baseURL: 'https://miauapi.13797248455.xyz',
+    baseURL: resolveGatewayBaseUrl(),
     // 谷歌原生端点走这里(EdgeOne 不支持那条路径,详见 ApiSite.directBaseURL)。
     directBaseURL: 'http://175.178.198.17:3000',
     description: 'Miau API 服务',
