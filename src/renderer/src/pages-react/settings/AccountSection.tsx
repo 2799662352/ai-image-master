@@ -55,8 +55,10 @@ export function AccountSection() {
   const balanceYuan = useQuotaStore((s) => s.balanceYuan)
   const personalBillingProjectId = useQuotaStore((s) => s.personalBillingProjectId)
   const quotaError = useQuotaStore((s) => s.error)
+  const billingSource = useQuotaStore((s) => s.billingSource)
   const loadQuota = useQuotaStore((s) => s.load)
   const selectPool = useQuotaStore((s) => s.selectPool)
+  const setBillingSource = useQuotaStore((s) => s.setBillingSource)
 
   // 接推送 + 拉当前状态,缺一不可:漏前者则登录完成后这一块不动,
   // 漏后者则重启后已登录也显示未登录。ensureSubscriptions 幂等。
@@ -116,6 +118,26 @@ export function AccountSection() {
    * 才告诉用户「你还没选池」,而这件事本地就知道。
    */
   const poolReady = selectedPool !== null
+
+  /**
+   * 切换中禁用两个按钮。
+   *
+   * 这一步要跨一趟 IPC(主进程去后端换影子账户凭据),不锁住的话用户连点两下会打出
+   * 两次 arm —— 后一次的结果覆盖前一次,而 UI 上按下去的顺序早就看不出来了。
+   * 用局部 state 而不是 store 的 `loading`:那个是组织列表的转圈,借用会让整块闪一下。
+   */
+  const [switching, setSwitching] = useState(false)
+  const switchBilling = useCallback(
+    async (next: 'platform' | 'own-key') => {
+      setSwitching(true)
+      try {
+        await setBillingSource(next)
+      } finally {
+        setSwitching(false)
+      }
+    },
+    [setBillingSource],
+  )
 
   const openUsage = useCallback(() => {
     setUsageOpen(true)
@@ -230,12 +252,59 @@ export function AccountSection() {
               )}
             </div>
 
-            {/* 出图仍走「API 站点」里那把自填 Key —— 账号额度的出图链路还没接上
-                (第二期)。不说清楚的话,用户会以为选了池就等于出图开始扣账号余额。 */}
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              这里的余额用于云端出图与素材同步。当前出图仍使用下方「API 站点」里配置的
-              密钥,尚未切换到账号额度。
-            </p>
+            {/* 出图的钱从哪出。
+                
+                二选一而不是单个 checkbox:两种模式都是正常状态,不存在「默认那个」在
+                语义上更对 —— 让当前态自己亮着,比让用户从一个勾的有无去推断强。
+                
+                未选池时禁用平台那一侧:没有池就没有影子账户可扣,本地就知道的事不必
+                发一趟 IPC 去换一个报错。原因写在下面的 hint 里,不然禁用了也没人知道
+                该怎么办。 */}
+            <div className="space-y-1 pt-1">
+              <div className="text-xs text-zinc-400">出图计费</div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  data-testid="billing-own-key"
+                  aria-pressed={billingSource === 'own-key'}
+                  disabled={switching}
+                  onClick={() => void switchBilling('own-key')}
+                  className={`flex-1 px-3 py-2 border-2 text-xs font-bold uppercase tracking-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    billingSource === 'own-key'
+                      ? 'bg-cyberpunk-yellow border-cyberpunk-yellow text-cyberpunk-black'
+                      : 'bg-zinc-900 border-zinc-700 text-white hover:border-zinc-500'
+                  }`}
+                >
+                  自有 Key
+                </button>
+                <button
+                  type="button"
+                  data-testid="billing-platform"
+                  aria-pressed={billingSource === 'platform'}
+                  disabled={!poolReady || switching}
+                  onClick={() => void switchBilling('platform')}
+                  className={`flex-1 px-3 py-2 border-2 text-xs font-bold uppercase tracking-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    billingSource === 'platform'
+                      ? 'bg-cyberpunk-yellow border-cyberpunk-yellow text-cyberpunk-black'
+                      : 'bg-zinc-900 border-zinc-700 text-white hover:border-zinc-500'
+                  }`}
+                >
+                  平台余额
+                </button>
+              </div>
+              {/* 「仅 Miau API 站点生效」不是免责声明,是必须说的事:平台余额只覆盖那
+                  一个计费域,切到别的站点出图会照旧扣自填 Key 的钱。 */}
+              <p
+                data-testid="billing-hint"
+                className="text-xs text-zinc-500 leading-relaxed"
+              >
+                {!poolReady
+                  ? '先在上面选一个计费池,才能用平台余额出图。'
+                  : billingSource === 'platform'
+                    ? '当前用账号余额出图,仅对「Miau API」站点生效;其余站点仍走各自的自填密钥。'
+                    : '当前用下方「API 站点」里配置的密钥出图,不扣这里的账号余额。'}
+              </p>
+            </div>
           </div>
 
           {quotaError && (

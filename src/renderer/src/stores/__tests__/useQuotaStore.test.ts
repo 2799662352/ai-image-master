@@ -11,13 +11,15 @@
 // - 未加入的池(`joined: false`)不能被选中 —— 没有 allocation 行就没有影子账户可扣。
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { useQuotaStore, __resetQuotaStoreForTesting } from '../useQuotaStore'
+import { useQuotaStore, __resetQuotaStoreForTesting, type Pool } from '../useQuotaStore'
 
 const auth = {
   getOrganizations: vi.fn(),
   getBalance: vi.fn(),
   getQuota: vi.fn(),
   getPaymentConfig: vi.fn(),
+  setBillingPool: vi.fn(),
+  clearBillingPool: vi.fn(),
 }
 
 const ORG_PERSONAL = {
@@ -59,6 +61,8 @@ beforeEach(() => {
   auth.getBalance.mockResolvedValue({ ok: true, data: { balanceYuan: 0.26, balanceQuota: 130_000 } })
   auth.getQuota.mockResolvedValue({ ok: true, data: {} })
   auth.getPaymentConfig.mockResolvedValue({ ok: true, data: { personalBillingProjectId: 342 } })
+  auth.setBillingPool.mockResolvedValue({ ok: true, data: { ready: true } })
+  auth.clearBillingPool.mockResolvedValue({ ok: true, data: null })
 
   localStorage.clear()
   __resetQuotaStoreForTesting()
@@ -252,5 +256,237 @@ describe('useQuotaStore', () => {
   it('store 状态里不含 token 之类的机密字段', async () => {
     await useQuotaStore.getState().load()
     expect(JSON.stringify(useQuotaStore.getState())).not.toMatch(/token|jwt|verifier|sk-/i)
+  })
+
+  // 出图的钱从哪出。
+  //
+  // 这一组守的是整条链路上**唯一一个会静默把钱记到别处**的开关。渲染层永远拿不到
+  // 网关凭据(那条 IPC 通道刻意不存在),它只能声明「这次走平台余额」;声明与主进程
+  // 的实际状态一旦不同步,用户看到的是「开着平台余额」而账单上什么都没少。
+  describe('计费来源', () => {
+    async function pickPersonalPool(): Promise<void> {
+      await useQuotaStore.getState().load()
+      await useQuotaStore.getState().selectPool({ projectId: 342, producerProjectId: null })
+    }
+
+    // 平台余额是**新增的第二条路**,默认关闭 —— 老用户升级上来什么都不该变。
+    it('默认走自有 Key', () => {
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+    })
+
+    it('切到平台余额时把选中的池递给主进程,拿到 ready 才真的切过去', async () => {
+      await pickPersonalPool()
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      expect(auth.setBillingPool).toHaveBeenCalledWith({ projectId: 342, producerProjectId: null })
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+      expect(useQuotaStore.getState().error).toBeNull()
+    })
+
+    // **池键是一对,递过去时两半都得在。** producer 那一半在组织列表里是
+    // `number | undefined`,而主进程收的是 `number | null` —— 不显式补 `?? null`,
+    // undefined 到那头会被 Number() 变成 NaN,arm 的就不是这个池。
+    it('producer 池把两半都递过去', async () => {
+      auth.getOrganizations.mockResolvedValue({ ok: true, data: [ORG_PRODUCER_A] })
+      await useQuotaStore.getState().load()
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
+
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      expect(auth.setBillingPool).toHaveBeenCalledWith({ projectId: 700, producerProjectId: 5 })
+    })
+
+    // 池键的另一半在 IPC 边界上**必须是 null,不能是 undefined**。
+    //
+    // 主进程那头收的是 `number | null`,拿到值就 `Number()` —— `Number(undefined)`
+    // 是 NaN,arm 的就不是这个池(而且不会报错,只是悄悄记到别处)。类型上 `Pool` 已经
+    // 写死了 `number | null`,但这个引用一路上会经过 `AccountOrganization`
+    // (那半是 `number | undefined`)、localStorage 反序列化、以及各处 `setState` ——
+    // 任何一处漏了归一,undefined 就会溜到这里。所以在**发出去之前**再兜一次底。
+    //
+    // 这里刻意绕开 `selectPool` 直接塞一个缺字段的池,就是为了让那个兜底成为
+    // 唯一挡住它的东西 —— 走正常路径的话上游早就补好了,测不出这一层。
+    it('产出的池引用里 producerProjectId 是 null,不是 undefined', async () => {
+      await useQuotaStore.getState().load()
+      useQuotaStore.setState({ selectedPool: { projectId: 342 } as unknown as Pool })
+
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      const arg = auth.setBillingPool.mock.calls.at(-1)?.[0] as Record<string, unknown>
+      // `toHaveBeenCalledWith` 认不出 `{a:1}` 与 `{a:1,b:undefined}` 的区别,
+      // 而这恰恰就是会在 IPC 边界上变成 NaN 的那个差异 —— 只能显式断 null。
+      expect(arg.producerProjectId).toBeNull()
+      expect(Object.is(arg.producerProjectId, undefined)).toBe(false)
+    })
+
+    // 🚨 这一组是本文件最重要的三条。
+    //
+    // 切平台失败却静默留在 platform 态 = 渲染层继续打标记头,主进程收到标记后
+    // **先无条件删掉 Authorization**(注入器刻意如此,免得静默花用户自己的钱),
+    // 而它手上又没凭据可写 —— 于是每一个请求 401,用户只看到莫名其妙的网关错误。
+    describe('切平台失败必须回落自有 Key', () => {
+      it('信封报错时回落,并把错误摊出来', async () => {
+        await pickPersonalPool()
+        auth.setBillingPool.mockResolvedValue({
+          ok: false,
+          error: { code: 'UPSTREAM_UNREACHABLE', message: 'gateway down' },
+        })
+
+        await useQuotaStore.getState().setBillingSource('platform')
+
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+        expect(useQuotaStore.getState().error).toBeTruthy()
+      })
+
+      // 「调用成功但凭据没到手」。主进程是先取凭据、成功了才置 active,
+      // 所以 ready:false 与报错同等对待 —— 只看 ok 会漏掉这一支。
+      it('ready:false 时也回落,不当成功', async () => {
+        await pickPersonalPool()
+        auth.setBillingPool.mockResolvedValue({ ok: true, data: { ready: false } })
+
+        await useQuotaStore.getState().setBillingSource('platform')
+
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+        expect(useQuotaStore.getState().error).toBeTruthy()
+      })
+
+      it('IPC 抛异常时回落,且异常不逃出去', async () => {
+        await pickPersonalPool()
+        auth.setBillingPool.mockRejectedValue(new Error('桥断了'))
+
+        await expect(
+          useQuotaStore.getState().setBillingSource('platform'),
+        ).resolves.toBeUndefined()
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+        expect(useQuotaStore.getState().error).toBeTruthy()
+      })
+
+      // 桥在但方法不存在(老版本 preload)。直接调是一个**同步** TypeError。
+      //
+      // 光靠外面那圈 try/catch 也能回落,但摊给用户的会是
+      // 「额度查询失败:api.setBillingPool is not a function」—— 一句他既看不懂、
+      // 也无法据此做任何事的话。所以这里额外断**文案是给人看的**,让前置守卫成为
+      // 真正被测到的东西,而不是一段删了也照样绿的摆设。
+      it('主进程没有这个方法时回落,给的是人话不是 TypeError', async () => {
+        await pickPersonalPool()
+        Object.defineProperty(window, 'electronAPI', {
+          value: { auth: { ...auth, setBillingPool: undefined } },
+          configurable: true,
+        })
+
+        await expect(
+          useQuotaStore.getState().setBillingSource('platform'),
+        ).resolves.toBeUndefined()
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+        expect(useQuotaStore.getState().error).toMatch(/不支持|通道/)
+        expect(useQuotaStore.getState().error).not.toMatch(/is not a function|undefined/)
+      })
+    })
+
+    // 没选池就没有影子账户可扣。本地就知道的事,不必发一趟 IPC 去换一个 400。
+    //
+    // 文案同样要断:少了前置守卫的话,`pool.projectId` 会抛,外圈 try/catch 一样能把
+    // 状态收回 own-key —— 但摊给用户的是「Cannot read properties of null」。
+    // 回落对了、提示废了,等于用户点一下什么也没发生。
+    it('没选池时拒绝切平台,不发 IPC,并告诉用户去选池', async () => {
+      await useQuotaStore.getState().load()
+      expect(useQuotaStore.getState().selectedPool).toBeNull()
+
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      expect(auth.setBillingPool).not.toHaveBeenCalled()
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+      expect(useQuotaStore.getState().error).toMatch(/计费池/)
+      expect(useQuotaStore.getState().error).not.toMatch(/null|undefined|Cannot read/)
+    })
+
+    // UI 至少要把「换组织」和「稍后重试」分开:前者要用户去上面换一行,
+    // 后者原地再点一次就行。只把 message 原样摊出来,用户看到「无权访问该项目」
+    // 也不知道该往哪点。
+    it('按 error code 给出不同的下一步动作', async () => {
+      await pickPersonalPool()
+
+      auth.setBillingPool.mockResolvedValue({
+        ok: false,
+        error: { code: 'PROJECT_NOT_ALLOCATED', message: 'not a member' },
+      })
+      await useQuotaStore.getState().setBillingSource('platform')
+      const notAllocated = useQuotaStore.getState().error ?? ''
+
+      auth.setBillingPool.mockResolvedValue({
+        ok: false,
+        error: { code: 'UPSTREAM_UNREACHABLE', message: 'gateway down' },
+      })
+      await useQuotaStore.getState().setBillingSource('platform')
+      const unreachable = useQuotaStore.getState().error ?? ''
+
+      expect(notAllocated).toMatch(/换.*组织|组织/)
+      expect(unreachable).toMatch(/稍后重试|重试/)
+      expect(notAllocated).not.toBe(unreachable)
+    })
+
+    it('切回自有 Key 时通知主进程把凭据清掉', async () => {
+      await pickPersonalPool()
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      await useQuotaStore.getState().setBillingSource('own-key')
+
+      expect(auth.clearBillingPool).toHaveBeenCalledTimes(1)
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+    })
+
+    // 清不掉不影响「已经切回自有 Key」这个事实 —— 不打标记,注入器根本不会被触发。
+    it('清凭据失败也照样切回自有 Key', async () => {
+      await pickPersonalPool()
+      await useQuotaStore.getState().setBillingSource('platform')
+      auth.clearBillingPool.mockRejectedValue(new Error('桥断了'))
+
+      await expect(
+        useQuotaStore.getState().setBillingSource('own-key'),
+      ).resolves.toBeUndefined()
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+    })
+
+    // **换池必须重新 arm。** 不重新 arm 的话主进程还揣着上一个池的凭据,而 UI 已经
+    // 把高亮打在新池上 —— 钱继续从旧池扣。这就是「池键是一对」那条教训的动态版本:
+    // 换掉一半也算换了池。
+    it('平台模式下换池会重新 arm 主进程', async () => {
+      auth.getOrganizations.mockResolvedValue({
+        ok: true,
+        data: [ORG_PRODUCER_A, ORG_PRODUCER_B],
+      })
+      await useQuotaStore.getState().load()
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
+      await useQuotaStore.getState().setBillingSource('platform')
+      auth.setBillingPool.mockClear()
+
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 6 })
+
+      expect(auth.setBillingPool).toHaveBeenCalledWith({ projectId: 700, producerProjectId: 6 })
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+    })
+
+    it('自有 Key 模式下换池不去打扰主进程', async () => {
+      auth.getOrganizations.mockResolvedValue({ ok: true, data: [ORG_PRODUCER_A] })
+      await useQuotaStore.getState().load()
+
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
+
+      expect(auth.setBillingPool).not.toHaveBeenCalled()
+    })
+
+    // ⚠️ 刻意不持久化。记住 'platform' 的话,下次启动渲染层一上来就打标记,
+    // 而主进程还没 arm —— 每个请求 401,用户以为是网关坏了。
+    it('平台模式不跨重启保留', async () => {
+      await pickPersonalPool()
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      // 模拟重启:清 store 但保留 localStorage
+      useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+      __resetQuotaStoreForTesting()
+      await useQuotaStore.getState().load()
+
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+    })
   })
 })

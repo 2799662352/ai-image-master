@@ -52,6 +52,8 @@ const auth = {
   getUsageSummary: vi.fn(),
   createRechargeOrder: vi.fn(),
   getRechargeOrder: vi.fn(),
+  setBillingPool: vi.fn(),
+  clearBillingPool: vi.fn(),
 }
 const shell = { openExternal: vi.fn() }
 
@@ -77,6 +79,8 @@ beforeEach(() => {
     data: { rows: [], total: 0, page: 0, pageSize: 50 },
   })
   auth.getUsageSummary.mockResolvedValue({ ok: true, data: [] })
+  auth.setBillingPool.mockResolvedValue({ ok: true, data: { ready: true } })
+  auth.clearBillingPool.mockResolvedValue({ ok: true, data: null })
 
   localStorage.clear()
   __resetSubscriptionsForTesting()
@@ -301,6 +305,99 @@ describe('AccountSection', () => {
         screen.getByTestId('usage-close').click()
       })
       expect(screen.queryByTestId('usage-drawer-root')).toBeNull()
+    })
+  })
+
+  // 出图的钱从哪出。这个开关是整个设置页里**唯一一个会改变账单落点**的控件,
+  // 所以它的失败路径比成功路径更值得测:切不过去却停在「平台余额」上,用户会以为
+  // 在花平台的钱,而实际上每个请求都在 401(或者更糟,在花自己的)。
+  describe('计费来源开关', () => {
+    it('默认停在自有 Key', async () => {
+      await renderLoggedIn()
+      selectPool()
+
+      expect(
+        (screen.getByTestId('billing-own-key') as HTMLButtonElement).getAttribute('aria-pressed'),
+      ).toBe('true')
+      expect(
+        (screen.getByTestId('billing-platform') as HTMLButtonElement).getAttribute('aria-pressed'),
+      ).toBe('false')
+    })
+
+    // 没选池就没有影子账户可扣。禁用 + 写明原因,比让用户点一下再看报错好。
+    it('未选池时平台余额不可点,并说明原因', async () => {
+      await renderLoggedIn()
+
+      const btn = screen.getByTestId('billing-platform') as HTMLButtonElement
+      expect(btn.disabled).toBe(true)
+
+      await act(async () => {
+        btn.click()
+      })
+      expect(auth.setBillingPool).not.toHaveBeenCalled()
+      expect(screen.getByTestId('billing-hint').textContent).toMatch(/计费池/)
+    })
+
+    it('选了池后点平台余额,把两半都递给主进程并切过去', async () => {
+      await renderLoggedIn()
+      selectPool()
+
+      await act(async () => {
+        screen.getByTestId('billing-platform').click()
+      })
+
+      expect(auth.setBillingPool).toHaveBeenCalledWith({ projectId: 342, producerProjectId: null })
+      await waitFor(() =>
+        expect(
+          screen.getByTestId('billing-platform').getAttribute('aria-pressed'),
+        ).toBe('true'),
+      )
+    })
+
+    // 🚨 最重要的一条。切失败必须**看得见地**停在自有 Key —— 停在平台态上
+    // 意味着每个出图请求都会被主进程剥掉 Authorization 又补不上 token。
+    it('切换失败时停在自有 Key,并把原因显示出来', async () => {
+      auth.setBillingPool.mockResolvedValue({
+        ok: false,
+        error: { code: 'PROJECT_NOT_ALLOCATED', message: 'not a member' },
+      })
+      await renderLoggedIn()
+      selectPool()
+
+      await act(async () => {
+        screen.getByTestId('billing-platform').click()
+      })
+
+      await waitFor(() =>
+        expect(screen.getByTestId('billing-own-key').getAttribute('aria-pressed')).toBe('true'),
+      )
+      expect(screen.getByTestId('billing-platform').getAttribute('aria-pressed')).toBe('false')
+      // 「换组织」这一类要引导用户去上面那个下拉换一行,不能只说「失败了」。
+      expect(screen.getByText(/组织/)).toBeTruthy()
+    })
+
+    it('切回自有 Key 时通知主进程清掉凭据', async () => {
+      await renderLoggedIn()
+      selectPool()
+      await act(async () => {
+        screen.getByTestId('billing-platform').click()
+      })
+      await waitFor(() =>
+        expect(screen.getByTestId('billing-platform').getAttribute('aria-pressed')).toBe('true'),
+      )
+
+      await act(async () => {
+        screen.getByTestId('billing-own-key').click()
+      })
+
+      expect(auth.clearBillingPool).toHaveBeenCalled()
+      expect(screen.getByTestId('billing-own-key').getAttribute('aria-pressed')).toBe('true')
+    })
+
+    it('未登录时压根没有这个开关', async () => {
+      render(<AccountSection />)
+      await waitFor(() => expect(auth.getState).toHaveBeenCalled())
+      expect(screen.queryByTestId('billing-platform')).toBeNull()
     })
   })
 

@@ -4,6 +4,7 @@
  * 处理与 AI 图片生成 API 的所有通信
  */
 
+import { useQuotaStore } from '../../stores/useQuotaStore'
 import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
@@ -430,6 +431,19 @@ function resolveLayerDecompositionSizeTier(value: string | undefined): LayerDeco
  * {@link ModelConfig.requiredSiteKey} 声明,请求会被钉在这里而不跟随用户选的站点。
  */
 export const MIAU_SITE_KEY = 'antigravity'
+
+/**
+ * 「本次请求走平台余额」的标记头。
+ *
+ * ⚠️ **真源在主进程的 `services/auth/gatewayHeaderInjector.ts`,两边必须字面一致。**
+ * 这里重新声明是因为渲染层不能 import 主进程模块;改名/改值要两处同步改,
+ * 只改一边的症状是「看着接好了、一次都不生效」—— 注入器认不出标记就直接放行,
+ * 而我们又没发 Authorization,于是网关 401。
+ *
+ * 值本身不含任何凭据:它只是一句声明,真 `Authorization` 由主进程在出网前换上。
+ */
+export const BILLING_MARKER_HEADER = 'X-Catimation-Billing'
+export const BILLING_MARKER_VALUE = 'platform'
 
 /**
  * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
@@ -1437,8 +1451,7 @@ export class ApiService {
         // 必须带 Accept 才走 JSON 响应(只改 Content-Type 不行,见接入文档 §7)
         'Accept': 'application/json',
       }
-      if (site.authType === 'bearer') headers['Authorization'] = `Bearer ${apiKey}`
-      else headers['x-api-key'] = apiKey
+      this.applyAuthHeaders(headers, site, apiKey)
 
       const response = await this.withRetry(
         async () => {
@@ -1907,6 +1920,53 @@ export class ApiService {
   }
 
   /**
+   * 本次请求是否改用平台账号余额出图。
+   *
+   * 两个条件缺一不可:
+   * 1. 用户在「账号」分区把计费来源切到了 `platform`(切的那一刻主进程已按池取好凭据);
+   * 2. 请求确实打向 Miau 网关。**平台余额只覆盖这一个计费域** —— 主进程的注入器只在
+   *    那个 host 上挂过滤器,别的站点(apiyi / 自建)打了标记也换不到凭据,反而因为
+   *    我们不再发 Authorization 而直接 401。
+   *
+   * 第 2 条按 **baseURL 而不是站点键**判定,理由是注入器认的就是 host:用户完全可以
+   * 自建一个指向同一网关的自定义站点条目,那种请求照样会被注入,所以也该打标记。
+   * 反过来只认站点键会漏掉它 —— 症状是「同一个网关,换个站点条目就静默用自填 Key」。
+   */
+  private shouldUsePlatformBilling(site: ApiSite | undefined): boolean {
+    if (useQuotaStore.getState().billingSource !== 'platform') return false
+    const gateway = this.apiSites[MIAU_SITE_KEY]
+    return !!site && !!gateway && site.baseURL === gateway.baseURL
+  }
+
+  /**
+   * 给请求头装上认证信息。
+   *
+   * 平台模式下**只打标记、绝不发 Authorization**:凭据在主进程,由
+   * `onBeforeSendHeaders` 在出网前换上。渲染层是 `nodeIntegration: true` 且无
+   * contextIsolation 的环境,不放凭据。发用户那把旧 Key 更糟 —— 注入一旦没生效,
+   * 请求就会**静默地用用户自己的钱出图成功**,而他以为在花平台余额。
+   *
+   * 抽成一个方法,是因为请求头装配散在 6 个地方(通用 JSON 出图 / gpt-image-2 JSON /
+   * Flux multipart / 腾讯 image2 JSON / gpt-image-2 multipart / TTS)。漏掉任何一处的
+   * 症状都是「有的模型走平台余额、有的模型静默用自填 Key」——两条计费链路同时在跑,
+   * 而账单要到月底才对得出来。新增出网点请一律走这里,别再手写那三条分支。
+   */
+  private applyAuthHeaders(
+    headers: Record<string, string>,
+    site: ApiSite,
+    apiKey: string,
+  ): Record<string, string> {
+    if (this.shouldUsePlatformBilling(site)) {
+      headers[BILLING_MARKER_HEADER] = BILLING_MARKER_VALUE
+    } else if (site.authType === 'bearer') {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    } else {
+      headers['x-api-key'] = apiKey
+    }
+    return headers
+  }
+
+  /**
    * 发起 API 请求
    */
   private async makeApiRequest(options: {
@@ -1977,11 +2037,7 @@ export class ApiService {
         const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-        if (site.authType === 'bearer') {
-          headers['Authorization'] = `Bearer ${apiKey}`
-        } else {
-          headers['x-api-key'] = apiKey
-        }
+        this.applyAuthHeaders(headers, site, apiKey)
         const fetchSignal = this.composeTimeoutSignal(signal, timeoutMs)
         const resp = await fetch(genUrl, {
           method: 'POST',
@@ -2049,11 +2105,7 @@ export class ApiService {
       'Content-Type': 'application/json'
     }
 
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey)
 
     // 所有模型(nano/gemini、wan、sora、通用 OpenAI-compat)统一打印请求体到 F12，
     // 方便核对发出去的到底是 URL 还是 base64；base64/超长串会被截断，避免刷屏。
@@ -2161,11 +2213,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey)
 
     const fetchSignal = this.composeTimeoutSignal(signal, 2_000_000)
 
@@ -2306,11 +2354,7 @@ export class ApiService {
     this.logImageRequest(model, url, body)
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey)
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
     const resp = await fetch(url, {
@@ -2383,11 +2427,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey)
 
     // FormData 不是 JSON：打印结构化摘要(含参考图源)到 F12，标注 multipart。
     this.logImageRequest(model, url, {

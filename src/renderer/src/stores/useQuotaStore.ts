@@ -12,6 +12,7 @@ import { create } from 'zustand'
 import type {
   AccountBalance,
   AccountOrganization,
+  BillingPoolRef,
   PaymentConfig,
   QuotaRpc,
 } from '../../../types/authApi'
@@ -30,11 +31,28 @@ export interface Pool {
 
 const STORAGE_KEY = 'catimation_billing_pool'
 
+/**
+ * 出图时这一次的钱从哪出。
+ *
+ * `'platform'` = 平台账号余额,凭据只在主进程,渲染层出网时只打一个标记头;
+ * `'own-key'` = 用户在「API 站点」里自填的 Key,沿用一直以来的老路。
+ */
+export type BillingSource = 'platform' | 'own-key'
+
 type QuotaApi = {
   getOrganizations: () => Promise<QuotaRpc<AccountOrganization[]>>
   getBalance: (projectId: number, producerProjectId?: number) => Promise<QuotaRpc<AccountBalance>>
   getQuota: () => Promise<QuotaRpc<Record<string, unknown>>>
   getPaymentConfig: () => Promise<QuotaRpc<PaymentConfig>>
+  /**
+   * 两个计费池方法标成可选,是因为**桥可能在但方法不存在** —— 老版本 preload、
+   * 或测试里只 mock 了一半的假桥。直接调用不存在的方法是一个同步 TypeError,
+   * 会变成 unhandled rejection 把整轮测试判红(见下面 `unexpected` 的注释)。
+   *
+   * 回的信封里只有 `ready`,**没有也不会有 token** —— 那条通道刻意不存在。
+   */
+  setBillingPool?: (pool: BillingPoolRef) => Promise<QuotaRpc<{ ready: boolean }>>
+  clearBillingPool?: () => Promise<QuotaRpc<null>>
 }
 
 interface QuotaStoreState {
@@ -42,6 +60,14 @@ interface QuotaStoreState {
   selectedPool: Pool | null
   balanceYuan: number | null
   personalBillingProjectId: number | null
+  /**
+   * ⚠️ **刻意不持久化,每次启动都回到 `'own-key'`。**
+   *
+   * 平台凭据活在主进程内存里,重启后要重新按池取。若这里记住了 `'platform'`,
+   * 下次启动渲染层会一上来就打标记头,而主进程还没 arm —— 注入器删掉 Authorization
+   * 又写不回 token,于是**每一个请求 401**,用户还以为是网关坏了。
+   */
+  billingSource: BillingSource
   loading: boolean
   error: string | null
 }
@@ -51,6 +77,7 @@ interface QuotaStoreActions {
   selectPool: (pool: Pool) => Promise<void>
   refreshBalance: () => Promise<void>
   isSelected: (pool: Pool) => boolean
+  setBillingSource: (s: BillingSource) => Promise<void>
 }
 
 type QuotaStore = QuotaStoreState & QuotaStoreActions
@@ -94,8 +121,39 @@ const initialState: QuotaStoreState = {
   selectedPool: null,
   balanceYuan: null,
   personalBillingProjectId: null,
+  billingSource: 'own-key',
   loading: false,
   error: null,
+}
+
+/**
+ * 启用平台余额失败时给用户的下一步动作。
+ *
+ * **按 code 分支而不是照抄 message,是这一层存在的理由。** 主进程已经把后端错误翻译
+ * 成了有意义的 code,而这几类要引导的动作完全不同:换组织 / 重新登录 / 稍后重试 ——
+ * 只把 message 摊出来,用户看到「无权访问该项目」也不知道该去哪儿点。
+ *
+ * 未命中的 code 一律当「可重试」处理并附上原始 message:漏掉一个新 code 时,
+ * 「稍后重试」比「什么都不说」强,而 message 保证用户还能把原文报给客服。
+ */
+const BILLING_POOL_HINT: Record<string, string> = {
+  NOT_LOGGED_IN: '登录已失效,请重新登录后再启用平台余额。',
+  PROJECT_NOT_ALLOCATED: '你不是这个计费池的成员,请在上面换一个组织后重试。',
+  INVALID_POOL: '这个计费池不可用,请换一个计费池。',
+  UPSTREAM_UNREACHABLE: '暂时连不上账号服务,请稍后重试。',
+  NETWORK: '网络异常,请稍后重试。',
+  MALFORMED_RESPONSE: '账号服务返回了无法识别的内容,请稍后重试。',
+}
+
+/**
+ * 失败文案。
+ *
+ * 前缀里**必须**写明「已切回自有 Key」:静默留在 platform 态是这条链路最坏的失败 ——
+ * 用户以为在花平台余额,实际每个请求都 401(甚至更糟:在花自己的钱)。
+ */
+function billingPoolFailure(code: string, message: string): string {
+  const hint = BILLING_POOL_HINT[code] ?? (/^HTTP_5\d\d$/.test(code) ? '账号服务暂时不可用,请稍后重试。' : message)
+  return `平台余额未启用(已切回自有 Key):${hint}`
 }
 
 /** 把信封摊开。失败返回 undefined 并把文案交给调用方落到 error。 */
@@ -181,6 +239,13 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     set({ selectedPool: pool, error: null })
     writeStoredPool(pool)
     await get().refreshBalance()
+
+    // 已经在平台模式下换池时**必须重新 arm 主进程**。不换的话主进程还揣着上一个池的
+    // 凭据,渲染层却已经把 UI 高亮打在新池上 —— 钱继续从旧池扣,而这正是「两个
+    // producer 池共用一个 projectId」那条教训的动态版本:池键换了一半也算换了池。
+    if (get().billingSource === 'platform') {
+      await get().setBillingSource('platform')
+    }
   },
 
   refreshBalance: async () => {
@@ -205,6 +270,73 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
   },
 
   isSelected: (pool) => samePool(get().selectedPool, pool),
+
+  /**
+   * 切换出图的钱从哪出。
+   *
+   * 🚨 **切 platform 失败时一律回落 `'own-key'`,绝不静默留在 platform 态。**
+   * 留下的后果不是「少个提示」:渲染层会继续打标记头,主进程收到标记后**先无条件删掉
+   * Authorization**(注入器刻意如此,免得静默用用户自己的钱出图),而它手上又没有凭据
+   * 可写 —— 于是每一个请求 401,用户只看到一串莫名其妙的网关错误。
+   *
+   * 切回 own-key 是**本地就成立的事实**(不打标记 = 注入器根本不会被触发),所以
+   * 先落状态再尽力通知主进程清凭据;清不掉也不影响计费正确性,只是主进程多留一份
+   * 内存缓存到下次登出。
+   */
+  setBillingSource: async (next) => {
+    const api = getApi()
+
+    if (next === 'own-key') {
+      set({ billingSource: 'own-key', error: null })
+      try {
+        await api?.clearBillingPool?.()
+      } catch {
+        // 见上:清不掉不影响「已经切回自有 Key」这个事实。异常在这里咽掉,
+        // 逃出去只会变成一条 unhandled rejection。
+      }
+      return
+    }
+
+    const pool = get().selectedPool
+    if (!pool) {
+      set({ billingSource: 'own-key', error: '先在上面选一个计费池,再启用平台余额。' })
+      return
+    }
+    if (!api?.setBillingPool) {
+      set({ billingSource: 'own-key', error: '当前环境不支持平台余额(缺少主进程通道)。' })
+      return
+    }
+
+    let r: QuotaRpc<{ ready: boolean }>
+    try {
+      // 两半都递过去,`producerProjectId` **显式补 `?? null`**:池键的这一半在组织列表
+      // 那边是 `number | undefined`,而主进程收的是 `number | null` —— 直接透传
+      // undefined 会在那头被 Number() 变成 NaN,arm 的就不是这个池了。
+      r = await api.setBillingPool({
+        projectId: pool.projectId,
+        producerProjectId: pool.producerProjectId ?? null,
+      })
+    } catch (e) {
+      set({ billingSource: 'own-key', error: unexpected(e) })
+      return
+    }
+
+    if (!r.ok) {
+      set({ billingSource: 'own-key', error: billingPoolFailure(r.error.code, r.error.message) })
+      return
+    }
+    // `ready: false` 是「调用成功但凭据没到手」——主进程是先取凭据、成功了才置 active,
+    // 所以这一支同样不能进 platform 态。只看 ok 会漏掉它。
+    if (!r.data?.ready) {
+      set({
+        billingSource: 'own-key',
+        error: '平台余额未启用(已切回自有 Key):凭据未就绪,请稍后重试。',
+      })
+      return
+    }
+
+    set({ billingSource: 'platform', error: null })
+  },
 }))
 
 /**
