@@ -1,8 +1,10 @@
 import { app, safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+// 基址取自叶子模块而不是 `./session`:session 现在要 import 本模块(账号被后台停用时
+// 一并清网关 token),再反向 import 回去就成环。见 `authBaseUrl.ts` 顶部。
+import { authBaseUrl } from './authBaseUrl'
 import { getCredential } from './credentials'
-import { authBaseUrl } from './session'
 
 export interface Pool {
   projectId: number

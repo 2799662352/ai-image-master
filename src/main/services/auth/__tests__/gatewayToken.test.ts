@@ -7,7 +7,10 @@ const cred = { current: null as unknown }
 vi.mock('../credentials', () => ({
   getCredential: () => cred.current,
 }))
-vi.mock('../session', () => ({ authBaseUrl: () => 'https://example.test' }))
+// 基址已从 `../session` 搬到叶子模块 `../authBaseUrl`(拆环,见那边顶部注释),
+// 所以 mock 也跟着挪 —— 挂在 `../session` 上的话不再有任何效果,而真实现会去读
+// 环境变量、把断言里的 example.test 变成线上域名。
+vi.mock('../authBaseUrl', () => ({ authBaseUrl: () => 'https://example.test' }))
 
 // 落盘开关。默认值就是 brief 原始 mock 里那两个字面量(不可用 / 'unknown'),
 // 由下面的 beforeEach 每条用例还原;只有落盘那几条会临时改。

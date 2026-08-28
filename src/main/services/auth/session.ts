@@ -4,13 +4,14 @@
 // 继承系统代理与企业根证书;后者两样都不继承,在有代理的办公网里直接失败。
 
 import { net } from 'electron'
+import { authBaseUrl } from './authBaseUrl'
 import { clearCredential, credentialSource, getCredential, setCredential } from './credentials'
+import { clearGatewayTokens } from './gatewayToken'
 // `AuthState` 的单一真源在 `src/types/authApi.ts` —— preload 与渲染层同吃一份,
 // 不在这里再声明一遍(AgentApi 就是因为两处各写一份而漂移过)。
 import type { AuthState } from '../../../types/authApi'
 import { MAX_RECHARGE_CNY } from '../../../types/authApi'
 
-const DEFAULT_BASE_URL = 'https://13797248455.xyz'
 const REQUEST_TIMEOUT_MS = 15_000
 const PROBE_INTERVAL_MS = 60_000
 
@@ -34,14 +35,10 @@ export class AuthError extends Error {
   }
 }
 
-/**
- * 每次调用都重读环境变量 —— 不能在模块加载时求值。
- * 主进程模块在 `app` ready 之前就被 import,那时测试或启动脚本可能还没写入覆盖值。
- */
-export function authBaseUrl(): string {
-  const raw = process.env.CATIMATION_AUTH_BASE_URL?.trim() || DEFAULT_BASE_URL
-  return raw.replace(/\/+$/, '')
-}
+// 实现搬去了叶子模块 `./authBaseUrl`(理由见那边的注释:本文件要 import
+// `gatewayToken`,而 `gatewayToken` 要用基址,留在这里就成环)。这里 re-export,
+// 让 `ipc.ts` 与既有测试里「从 `./session` 取 authBaseUrl」的写法一行都不用改。
+export { authBaseUrl }
 
 /**
  * 非 2xx **不抛异常**,原样交回 `{ status, body }`。
@@ -727,7 +724,15 @@ export async function probeLiveness(): Promise<void> {
   }
 
   // **只有** 401/403 才清凭证。其余状态码(含正常路径上的 400)一律视为存活。
-  if (status === 401 || status === 403) clearCredential()
+  if (status === 401 || status === 403) {
+    clearCredential()
+    // 网关 token 是第二套凭据,而且**永不过期、泄漏后无法单独吊销**。401/403 正是账号
+    // 被后台停用 / 被踢下线的那一刻 —— 这恰恰是它最不该被留下的时刻:不清的话,被停用
+    // 的账号仍能接着花平台余额,直到用户自己想起来点一次登出。
+    //
+    // 必须 await:里面压着一次 `fs.rm`,不等它就返回,进程随后退出会把删盘截断。
+    await clearGatewayTokens()
+  }
 }
 
 export function logout(): void {

@@ -303,13 +303,22 @@ function detachWaitAndClaim(
   )
 }
 
+/**
+ * 注册全部 auth IPC 通道,并返回 disposer。
+ *
+ * ⚠️ **名字只说了一半:它同时是 auth 子系统的启动钩子。** 除了挂通道,它还会把上次
+ * 会话加密落盘的网关 token 读回内存(`loadPersisted()`)。
+ *
+ * 为什么这件事挂在这儿:
+ * - **时机**:`loadPersisted` 内部要用 `app.getPath('userData')` 与 safeStorage,两者
+ *   在 app ready 之前都不可用(与 `credentials.ts` 顶部那条「不得在模块加载时读盘」
+ *   同源)。本函数只被 `app.whenReady()` 里的启动序列调到,时机由构造保证。
+ * - **可测**:另一个选择是在 `src/main/index.ts` 里裸调一行,但那是个 2900 行的入口
+ *   模块,在 vitest 里 import 不起来(会拉起 prisma / MCP / electron 全家桶),只能靠
+ *   「读源码文本做断言」这种脆测试来守。放在这里,`ipc.test.ts` 能真测到它被调用、
+ *   且**没有**在模块加载期被调用。
+ */
 export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => void {
-  // 平台余额:把上次会话加密落盘的网关 token 读回内存。
-  //
-  // 挂在这里而不是模块顶层:`loadPersisted` 内部要用 `app.getPath('userData')` 与
-  // safeStorage,两者在 app ready 之前都不可用(与 credentials.ts 顶部那条「不得在
-  // 模块加载时读盘」同源),而本函数只被 `app.whenReady()` 里的启动序列调到。
-  //
   // 刻意不 await:读盘 + 解密不该挡在窗口创建前面,而它晚到也不会出错 ——
   // `loadPersisted` 自带登出代际守卫,填回内存前会再比一次,不会把刚清掉的 token 复活。
   void loadPersisted()

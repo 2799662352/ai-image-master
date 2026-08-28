@@ -26,6 +26,13 @@ vi.mock('../credentials', () => ({
   credentialSource: () => cred.source,
 }))
 
+// 网关 token 是平台余额那条路的第二套凭据。这里 mock 掉,免得把真模块拉进来 ——
+// 它模块级就 import 了 `app` / `safeStorage`,而本文件的 electron mock 只给了 `net`。
+const clearGatewayTokens = vi.fn()
+vi.mock('../gatewayToken', () => ({
+  clearGatewayTokens: () => clearGatewayTokens(),
+}))
+
 /** 后端配对路由的信封。注意 start 是 201。 */
 const ok = (data: unknown, status = 200) =>
   ({ ok: status < 400, status, json: async () => ({ success: true, data }) }) as unknown as Response
@@ -77,6 +84,10 @@ describe('auth session', () => {
     cred.current = null
     cred.source = 'none'
     delete process.env.CATIMATION_AUTH_BASE_URL
+    // mockReset + 重设实现,不用 mockClear:下面有一条用例把它换成永不 resolve 的闸门,
+    // mockClear 不清实现,那个闸门会漏到后面每一条探测用例上、把它们全挂住。
+    clearGatewayTokens.mockReset()
+    clearGatewayTokens.mockResolvedValue(undefined)
     vi.useRealTimers()
   })
   afterEach(() => vi.useRealTimers())
@@ -226,6 +237,61 @@ describe('auth session', () => {
     await m.probeLiveness()
     expect(cred.current).toBeNull()
     expect(m.getAuthState().authenticated).toBe(false)
+  })
+
+  // 401/403 正是**账号被后台停用 / 被踢下线**的那一刻。网关 token 永不过期、无法单独
+  // 吊销 —— 这恰恰是它最不该被留下的时刻:不清的话,被停用的账号仍能接着花平台余额,
+  // 直到用户自己想起来点一次登出。
+  it.each([401, 403])('%i 时一并清掉网关 token,而不只是平台凭据', async (status) => {
+    cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
+    cred.source = 'safeStorage'
+    fetchMock.mockResolvedValue(errBare(status))
+    const m = await import('../session')
+
+    await m.probeLiveness()
+
+    expect(clearGatewayTokens).toHaveBeenCalled()
+  })
+
+  // 存活(400)时**不能**清 —— 顺手多清一次的代价是每 60 秒把缓存和落盘全丢掉,
+  // 之后每张图都要多一次网络往返去重取 token,而且一个信号都没有。
+  it('探测判定存活时不碰网关 token', async () => {
+    cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
+    cred.source = 'safeStorage'
+    fetchMock.mockResolvedValue(errCoded(400, 'VALIDATION_ERROR'))
+    const m = await import('../session')
+
+    await m.probeLiveness()
+
+    expect(clearGatewayTokens).not.toHaveBeenCalled()
+  })
+
+  // `clearGatewayTokens` 是 async,里面压着一次 `fs.rm`。不 await 的话 probeLiveness
+  // 提前返回,删盘还在半路 —— 进程此时退出会把它截断,token 原样留在盘上。
+  // 用可控闸门把那个间隙变成确定的。
+  it('探测清号时会等网关 token 真的删完才返回', async () => {
+    cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
+    cred.source = 'safeStorage'
+    fetchMock.mockResolvedValue(errBare(401))
+    let release!: () => void
+    clearGatewayTokens.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          release = () => r()
+        }),
+    )
+    const m = await import('../session')
+
+    let settled = false
+    const done = m.probeLiveness().then(() => {
+      settled = true
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(settled).toBe(false)
+
+    release()
+    await done
+    expect(settled).toBe(true)
   })
 
   it('未登录时探测不发任何请求', async () => {
