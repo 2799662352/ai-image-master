@@ -67,10 +67,19 @@ export interface PortraitAsset {
   UpdateTime?: string
   Error?: { Code?: string; Message?: string }
   /**
-   * 已「移出素材库」(软删)。后端只打标不过滤。
+   * 已「移出素材库」(软删)。
    *
-   * 🚨 **过滤必须在展示层做,严禁在 store 层。** store 那个数组同时用于解析已有引用的
-   * `asset://`,在 store 过滤会让画布上已经引用它的素材直接失效。
+   * **后端的行为按端点不同,别记成一句话**(逐条核对过 `volcengineAssetController.ts`):
+   *
+   *   - `GET /assets` 列表:**真过滤**。正常视图 `filter(!hidden)`、回收站 `filter(hidden)`
+   *     (`:348-350`)。所以正常视图里**不会**出现 `Hidden: true` 的条目。
+   *   - `GET /assets/:id` 与 `/poll`:**只打标不过滤**(`:218-221`、`:398-403`),
+   *     注释写明「画布上已有节点的 asset:// 必须继续解析得到」。
+   *
+   * 🚨 **所以过滤只能在展示层做,数据源层与 store 层严禁过滤。** 那个数组同时用于解析
+   * 已有引用的 `asset://` —— 在源头过滤会让画布上已经引用它的素材直接失效
+   * (解析退化成 `undefined`),而这条路正是靠 `getAsset`/`poll` 那两个**不过滤**的端点
+   * 才成立的。展示层多过滤一道是无害的冗余(列表本来就不会给),源头少过滤一道则是 bug。
    */
   Hidden?: boolean
 }
