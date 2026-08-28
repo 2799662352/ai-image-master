@@ -1438,6 +1438,11 @@ export class ApiService {
       }
     }
 
+    // 走到这里 `apiKey` 可能是 null（平台模式放行的那一支），而下游签名要 `string`。
+    // 归一成空串，**不放宽下游签名**：放宽会让每一个下游都得重新判断「null 是什么意思」，
+    // 而这里只有一种含义 —— `applyAuthHeaders` 会走平台分支打标记，根本不读它。
+    const resolvedApiKey = apiKey ?? ''
+
     // 图层拆分的前置条件在这里一次问清 —— 这两条不满足时上游的反应都是「静默降级」:
     // 不支持的渠道把 layer_decomposition 当未知字段丢掉、照常出一张普通图;没有输入图
     // 就变成一次普通文生图。两种情况都会成功返回一张图,用户只会疑惑「拆分怎么没生效」。
@@ -1481,7 +1486,7 @@ export class ApiService {
           count,
           modelConfig,
           site,
-          apiKey,
+          apiKey: resolvedApiKey,
           signal,
           layerDecomposition,
         }),
