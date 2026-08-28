@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { promises as fs } from 'node:fs'
+import { promises as fs, type Dirent } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import JSZip from 'jszip'
@@ -161,7 +161,12 @@ export class MarketplaceService {
     const catalogByName = new Map(catalog.skills.map((s) => [s.name, s]))
     const state = await this.loadState()
 
-    let entries: Awaited<ReturnType<typeof fs.readdir>> = []
+    // 写死 `Dirent[]`,不要用 `Awaited<ReturnType<typeof fs.readdir>>`:readdir 是
+    // 重载函数,`ReturnType` 只取**最后一个**重载,而那个是 `encoding:'buffer'` +
+    // `withFileTypes:true` 的变体(@types/node 20.19 fs/promises.d.ts:734),于是
+    // 声明成了 `Dirent<NonSharedBuffer>[]` —— 和下面这次不带 encoding 的调用
+    // (名字是 string)对不上,还会把 Buffer 传染给每个 entry.name 的使用点。
+    let entries: Dirent[] = []
     try {
       entries = await fs.readdir(this.opts.userSkillsDir, { withFileTypes: true })
     } catch (err) {
@@ -183,10 +188,7 @@ export class MarketplaceService {
     const newlyAdopted: InstalledRecord[] = []
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      // `readdir(withFileTypes)` 的 Dirent.name 在当前 @types/node 下解析成 Buffer,
-      // 而下面每一处都要拿它当字符串用(Map 键、路径段、台账索引)。归一一次,
-      // 好过在每个用点各写一次断言。
-      const skillName = String(entry.name)
+      const skillName = entry.name
 
       // 曾用名的目录该被清掉,而不是被认领 —— 认领等于把一个已改名的东西登记成
       // 「已安装」,用户会在列表里看到一个装不了也更新不了的幽灵。
