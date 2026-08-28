@@ -16,6 +16,33 @@ import {
   startProviderCompatibilityProxies,
   type ProviderCompatibilityProxyGroup,
 } from './responsesCompatibilityProxy'
+import { resolveGatewayOrigin } from '../services/auth/gatewayHeaderInjector'
+import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gatewayToken'
+
+/**
+ * 让 agent 聊天也能花平台余额。
+ *
+ * codex 自己带的是用户自填的 Miau Key(provider 的 `env_key="MIAU_API_KEY"`)。
+ * 而 `qwen3.8-max` 这一路打的就是 Miau 网关,所以平台池的钱同样付得了它 ——
+ * 用户登录之后不该还要为聊天单独填一枚 key。
+ *
+ * ## 两道闸,缺一不可
+ *
+ * 1. **上游必须是 Miau 网关。** `rightcode-claude` / `grok` / `deepseek` 打的是
+ *    别家的本地代理,把平台影子 token 发过去就是**凭据外泄** —— 这与出网注入器
+ *    的 host 白名单是同一条纪律,那边的注释写了为什么不能放宽。
+ * 2. **必须已 arm 平台池。** 没 arm 时回 null,codex 自带的 Key 原样透传,
+ *    行为与这个功能上线之前逐字节相同。
+ *
+ * 拿到的是 `gatewayPlatformHeaders` 的**整份**(Authorization + 计费归属):
+ * 少了归属那几个,钱扣对了但用量明细里查不到,而且一个错都不报。
+ */
+function gatewayPlatformHeadersFor(target: URL): Record<string, string> | null {
+  if (target.origin !== resolveGatewayOrigin()) return null
+  const token = getActivePoolToken()
+  if (!token) return null
+  return gatewayPlatformHeaders(token)
+}
 import type {
   AgentStreamEvent,
   CodexApprovalRequest,
@@ -481,7 +508,9 @@ export class CodexLocalBackend implements IAgentBackend {
         providerConfigs.map((provider) => provider.id),
       )
       compatibilityProxies = providerConfigs.length > 0
-        ? await startProviderCompatibilityProxies(providerConfigs)
+        ? await startProviderCompatibilityProxies(providerConfigs, {
+          platformHeaders: gatewayPlatformHeadersFor,
+        })
         : null
       let providerIndex = 0
       const activeProvider = this.currentProvider

@@ -559,6 +559,109 @@ async function startFakeMessagesUpstream(): Promise<{
   }
 }
 
+/**
+ * agent 聊天走平台余额。
+ *
+ * codex 自己带的是用户自填的 Miau Key,而 `qwen3.8-max` 那一路打的就是 Miau 网关,
+ * 所以平台池的钱同样付得了它 —— 用户登录之后不该还要为聊天单独填一枚 key。
+ *
+ * 这一组守的是两件事,第二件比第一件重要得多。
+ */
+describe('平台余额组头', () => {
+  async function startCapturingUpstream(): Promise<{
+    baseUrl: string
+    headers: () => Record<string, string>
+    close: () => Promise<void>
+  }> {
+    let seen: Record<string, string> = {}
+    const server = createServer((request, response) => {
+      seen = Object.fromEntries(
+        Object.entries(request.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : (v ?? '')]),
+      )
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      headers: () => seen,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  it('上游是网关时,用平台整份头顶掉 codex 自带的 Key', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => ({
+        Authorization: 'Bearer sk-platform',
+        'X-Platform-User-Id': 'user-1',
+        'X-Project-Id': '345',
+      }),
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      const h = upstream.headers()
+      expect(h.authorization).toBe('Bearer sk-platform')
+      expect(h['x-platform-user-id']).toBe('user-1')
+      expect(h['x-project-id']).toBe('345')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  /**
+   * 🧬 变异点:把 `CodexLocalBackend.gatewayPlatformHeadersFor` 里的 origin 判定删掉
+   * (改成只看有没有 token),线上就会把平台影子 token 发给 rightcode-claude /
+   * grok / deepseek 那几个**别家**的代理 —— 那是凭据外泄,与出网注入器的 host
+   * 白名单是同一条纪律。
+   *
+   * 这里用「resolver 回 null」代表「上游不是网关」,守的是代理这一侧:
+   * 回 null 时必须**原样透传** codex 自带的 Key,不能自作主张动它。
+   */
+  it('resolver 回 null 时原样透传 codex 自带的 Key', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => null,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      const h = upstream.headers()
+      expect(h.authorization).toBe('Bearer sk-user-own')
+      expect(h['x-platform-user-id']).toBeUndefined()
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  it('不传这个选项时行为与上线前逐字节相同', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      expect(upstream.headers().authorization).toBe('Bearer sk-user-own')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+})
+
 describe('Anthropic Messages bridge', () => {
   it('bridges Claude channels, including ones whose preset forgot to say so', () => {
     expect(resolveCompatibilityBridge(resolveProviderChannel('rightcode-claude')))

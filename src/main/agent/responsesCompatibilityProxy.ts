@@ -52,6 +52,16 @@ export interface ResponsesCompatibilityProxy {
 export const PROXY_KEEP_ALIVE_TIMEOUT_MS = 120_000
 export const PROXY_HEADERS_TIMEOUT_MS = 125_000
 
+/**
+ * 桥接代理的可选行为。
+ *
+ * 只有一项:平台余额组头。**Anthropic 桥不接它** —— 那条路的上游是 Claude,
+ * 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+ */
+export interface CompatibilityProxyOptions {
+  platformHeaders?: (target: URL) => Record<string, string> | null
+}
+
 export interface ProviderCompatibilityProxyGroup {
   providers: CodexProviderConfig[]
   close: () => Promise<void>
@@ -433,6 +443,18 @@ interface CompatibilityBridgeTransport {
    */
   resolveTarget: (requestUrl: string) => URL | undefined
   fetch: typeof fetch
+  /**
+   * 平台余额组头。给定这次请求的**上游** URL,回一整份要覆盖上去的头
+   * (`Authorization` + 计费归属),或 `null` 表示这条不走平台余额。
+   *
+   * **注入而不是 import**:真实实现要读 `auth/gatewayToken`,那个模块顶层 import
+   * electron —— 本文件刻意保持在 Electron 之外可加载(同 wan3/seedanceGateway 的纪律),
+   * 直接 import 会让这里二十多条现成测试全部需要 mock electron。
+   *
+   * 缺省不传 = 逐字节的旧行为:原样转发 codex 自己带的 `Authorization`
+   * (那是用户自填的 Miau Key)。
+   */
+  platformHeaders?: (target: URL) => Record<string, string> | null
   /** Optional in-place tweak applied to a `/responses` body after flattening. */
   transformBody?: (body: JsonObject) => void
 }
@@ -486,11 +508,22 @@ async function startCompatibilityBridgeServer(
         bindings = flattened.bindings
       }
 
+      // 平台余额:把 codex 带来的自填 Key 换成影子 token + 计费归属。
+      //
+      // **判据是上游 target 的 origin,不是「有没有 token」。** rightcode-claude /
+      // grok / deepseek 打的是别家的本地代理,把平台凭据发过去就是凭据外泄 ——
+      // 这与出网注入器的 host 白名单是同一条纪律。
+      const forwarded = requestHeaders(request.headers)
+      const platform = transport.platformHeaders?.(target)
+      if (platform) {
+        for (const [name, value] of Object.entries(platform)) forwarded.set(name, value)
+      }
+
       const upstreamResponse = await transport.fetch(
         target,
         {
           method,
-          headers: requestHeaders(request.headers),
+          headers: forwarded,
           body: method === 'GET' || method === 'HEAD' ? undefined : body,
           signal: abortController.signal,
         },
@@ -581,12 +614,14 @@ function parseUpstreamBase(upstreamBaseUrl: string, label: string): URL {
  */
 export async function startResponsesCompatibilityProxy(
   upstreamBaseUrl: string,
+  options: CompatibilityProxyOptions = {},
 ): Promise<ResponsesCompatibilityProxy> {
   const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Responses')
   return startCompatibilityBridgeServer({
     basePath: upstreamBase.pathname.replace(/\/+$/, ''),
     resolveTarget: (requestUrl) => upstreamUrl(upstreamBase, requestUrl),
     fetch,
+    ...(options.platformHeaders ? { platformHeaders: options.platformHeaders } : {}),
   })
 }
 
@@ -715,6 +750,7 @@ export async function startAnthropicMessagesBridge(
  */
 export async function startProviderCompatibilityProxies(
   providers: readonly CodexProviderConfig[],
+  options: CompatibilityProxyOptions = {},
 ): Promise<ProviderCompatibilityProxyGroup> {
   const proxies: ResponsesCompatibilityProxy[] = []
   try {
@@ -729,7 +765,9 @@ export async function startProviderCompatibilityProxies(
         ? await startAnthropicMessagesBridge(provider.baseUrl, {
           promptCacheBreakpoints: provider.promptCacheBreakpoints,
         })
-        : await startResponsesCompatibilityProxy(provider.baseUrl)
+        // 只有 Responses 这条给平台组头:Anthropic 桥的上游是 Claude,
+        // 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+        : await startResponsesCompatibilityProxy(provider.baseUrl, options)
       proxies.push(proxy)
       rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
     }
