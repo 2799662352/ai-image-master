@@ -1,3 +1,5 @@
+import { app } from 'electron'
+import { resolveMiauBaseUrl } from '../../shared/miau'
 import type { CodexProviderConfig } from './codexLaunch'
 import {
   BUILTIN_CHANNELS,
@@ -86,7 +88,9 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   name: 'Qwen Understanding (DashScope via new-api)',
   // 加速域名(2026-07-28),仅 https 可达。这个常量在每次 spawn 时现读、不落库,
   // 所以改了下次启动即生效,老用户无需迁移。
-  baseUrl: 'https://miauapi.13797248455.xyz/v1',
+  // 开发构建吃 `CATIMATION_GATEWAY_ORIGIN`(见 `shared/miau.resolveMiauBaseUrl`),
+  // 否则连测试服时这一路仍打生产,而平台影子 token 是测试服签的。
+  baseUrl: resolveMiauBaseUrl(app?.isPackaged === true),
   envKey: 'MIAU_API_KEY',
   model: 'qwen3.7-plus-dashscope',
   wireApi: 'responses',

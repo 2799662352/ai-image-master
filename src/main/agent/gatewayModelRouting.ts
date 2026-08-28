@@ -8,7 +8,8 @@ import type {
   ProviderCompatibilityPolicy,
 } from './codexLaunch'
 import type { ProviderPreset } from './codexProviders'
-import { MIAU_BASE_URL } from '../../shared/miau'
+import { app } from 'electron'
+import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
 
 /** User-facing gateway card with its internal channel ids. */
 export interface GatewayPreset extends AgentGatewayRecord {
@@ -103,7 +104,9 @@ function qwenChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
     id: `${gatewayId}-qwen`,
     gatewayId,
     name: '通义千问 (Miau)',
-    baseUrl: MIAU_BASE_URL,
+    // 开发构建吃 `CATIMATION_GATEWAY_ORIGIN`,否则连测试服时 agent 聊天仍打生产 ——
+    // 而平台影子 token 是测试服签的,发过去就是一句 Invalid token。
+    baseUrl: resolveMiauBaseUrl(app?.isPackaged === true),
     envKey: 'MIAU_API_KEY',
     credentialId: 'qwen',
     model: 'qwen3.7-max-dashscope',
