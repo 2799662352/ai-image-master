@@ -95,7 +95,9 @@ export class IntelligentResizeManager {
 
     // 检查是否有参考图
     const generatePage = this.pages?.generate || (window as any).generatePage
-    const hasReferenceImages = generatePage?.referenceImages?.length > 0
+    // referenceImages 是可选字段,页面还没建好时整条链都是 undefined。
+    // `undefined > 0` 运行时本就是 false,补 ?? 0 只是把这层写进类型。
+    const hasReferenceImages = (generatePage?.referenceImages?.length ?? 0) > 0
 
     console.log('检查参考图状态:', hasReferenceImages, generatePage?.referenceImages?.length, 'generatePage存在:', !!generatePage)
 

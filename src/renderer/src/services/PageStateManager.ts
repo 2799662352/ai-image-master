@@ -302,7 +302,9 @@ export class PageStateManager {
             try {
               const imageId = `${prefix}_${pageId}_${idx}_${Date.now()}`
               const result = await storageBridge.saveImage(img.base64, imageId)
-              if (result.success) {
+              // 连 url 一起判:StorageResult.url 是可选字段,没有它就没有能替换
+              // base64 的引用,标成 _savedToFile 只会留下一张加载不出来的图。
+              if (result.success && result.url) {
                 console.log(`📁 大图片已保存到本地: ${imageId} (${Math.round(estimatedSize / 1024)}KB)`)
                 return {
                   ...img,
