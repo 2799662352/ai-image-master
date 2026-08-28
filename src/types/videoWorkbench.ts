@@ -241,6 +241,16 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   cancelRequested?: boolean
   /** createTask 成功后的上游任务 id（可用 check_video_task 续轮询）。 */
   taskId?: string
+  /**
+   * 这一轮提交时的计费来源（取自 `useQuotaStore.billingSource`）。
+   *
+   * **是结果不是意图** —— 挂在 Card 上而不是 Spec 上：它不参与 specEquals、
+   * 不进 IR、不涨 rev，用户在设置里切计费来源不该让每张卡都变成「改过」。
+   *
+   * 留着它是因为 taskId 只在**签发它的那条通道**里有效：重启对账与「重新保存」
+   * 都得拿它打回同一条上游，否则一律回「任务不存在」。每轮提交刷新。
+   */
+  billing?: VideoBillingSource
   /** succeeded 时上游临时结果地址（有效期未知，兜底播放源）。 */
   videoUrl?: string
   /** 落盘后的本地 mp4 绝对路径（权威结果）。 */
