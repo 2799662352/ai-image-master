@@ -12,6 +12,7 @@
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import type { BillingPoolRef } from '../../../../types/authApi'
+import { useAuthStore } from '../useAuthStore'
 import { useQuotaStore, __resetQuotaStoreForTesting, type Pool } from '../useQuotaStore'
 
 /** 手搓的 deferred（`Promise.withResolvers` 要 Node 22+，这里不赌运行时版本）。 */
@@ -90,6 +91,9 @@ beforeEach(() => {
   localStorage.clear()
   __resetQuotaStoreForTesting()
   useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+  // 计费模式要跟着登录态走,所以这两个 store 的重置必须成对 —— 只重置一半会让
+  // 上一条用例留下的 `authenticated: false` 在下一条里立刻把平台模式踢掉。
+  useAuthStore.setState(useAuthStore.getInitialState(), true)
 })
 
 afterEach(() => {
@@ -545,6 +549,76 @@ describe('useQuotaStore', () => {
       expect(useQuotaStore.getState().billingSource).toBe('platform')
     })
 
+    // 🚨 本文件最重要的一条:**换池的瞬间钱还从旧池扣**。
+    //
+    // UI 在 `set({ selectedPool })` 那一行就宣称「你现在用新池」,而主进程要到重新 arm
+    // 落地之后才真的换过去。中间隔着一次余额刷新往返 + 整个 `armChain` 队列 —— 期间
+    // 主进程的 activePool 仍是旧池、旧 token 仍在缓存里,`getActivePoolToken()` 交给
+    // 注入器的是**旧池的凭据**,网关扣的是旧池的钱。
+    //
+    // 更糟的是 `armChain` 在它本该保护的那个场景里**拉长了**这个窗口:用方向键连翻
+    // 五个池会串行五次往返,全程活跃的是**第一个**池。
+    //
+    // 这是静默的、跨组织的、事后从桌面端查不出来的 —— 正是平台余额这个功能本身要防的
+    // 失效类别。修法是在宣称换池**之前**先让主进程的旧池失效,把窗口从「扣错池」变成
+    // fail-closed:没有 activePool → 注入器删掉 Authorization 又写不回 → 401,响亮、
+    // 且一分钱不花。
+    //
+    // 断言记的是**调用顺序 + 调用当时的 selectedPool**,而不是「两个都调过」。三种变异
+    // 各自杀得掉:删掉 clear → 少一项;clear 挪到 set 之后 → 记下的池变成新池;
+    // clear 挪到 arm 之后 → 顺序反了。
+    it('换池时先让主进程的旧池失效,再宣称换到新池', async () => {
+      auth.getOrganizations.mockResolvedValue({
+        ok: true,
+        data: [ORG_PRODUCER_A, ORG_PRODUCER_B],
+      })
+      await useQuotaStore.getState().load()
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      const order: string[] = []
+      auth.clearBillingPool.mockImplementation(async () => {
+        // 记下**清的那一刻** store 认为自己在哪个池上。必须还是旧池 5 ——
+        // 若这里读到 6,说明 UI 已经先宣称换过去了,窗口依然存在。
+        order.push(`clear@${useQuotaStore.getState().selectedPool?.producerProjectId}`)
+        return { ok: true, data: null }
+      })
+      auth.setBillingPool.mockImplementation(async (p: BillingPoolRef) => {
+        order.push(`arm@${p.producerProjectId}`)
+        return { ok: true, data: { ready: true } }
+      })
+
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 6 })
+
+      expect(order).toEqual(['clear@5', 'arm@6'])
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+    })
+
+    // 清不掉就**不能**宣称换池成功:那正是「UI 在新池、钱从旧池扣」的那个窗口。
+    // 退回 own-key 是本地就成立的事实(不打标记 → 注入器根本不会被触发),并且要留下
+    // 文案 —— 静默退回等于用户以为在花平台余额、实际在花自己的钱。
+    it('旧池清不掉时退回自有 Key,不硬着头皮换过去', async () => {
+      auth.getOrganizations.mockResolvedValue({
+        ok: true,
+        data: [ORG_PRODUCER_A, ORG_PRODUCER_B],
+      })
+      await useQuotaStore.getState().load()
+      await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      auth.setBillingPool.mockClear()
+      auth.clearBillingPool.mockRejectedValue(new Error('桥断了'))
+
+      await expect(
+        useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 6 }),
+      ).resolves.toBeUndefined()
+
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+      expect(useQuotaStore.getState().error).toBeTruthy()
+      // 退回了就不该再去 arm —— 那会把刚判定为不安全的平台模式又接回去。
+      expect(auth.setBillingPool).not.toHaveBeenCalled()
+    })
+
     it('自有 Key 模式下换池不去打扰主进程', async () => {
       auth.getOrganizations.mockResolvedValue({ ok: true, data: [ORG_PRODUCER_A] })
       await useQuotaStore.getState().load()
@@ -552,20 +626,111 @@ describe('useQuotaStore', () => {
       await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
 
       expect(auth.setBillingPool).not.toHaveBeenCalled()
+      // 自有 Key 模式下主进程本来就没有 activePool,清它只是白发一趟 IPC。
+      // 这条同时钉住上面那个 clear 是**带条件**的,不是无脑每次换池都发。
+      expect(auth.clearBillingPool).not.toHaveBeenCalled()
     })
 
-    // ⚠️ 刻意不持久化。记住 'platform' 的话,下次启动渲染层一上来就打标记,
-    // 而主进程还没 arm —— 每个请求 401,用户以为是网关坏了。
-    it('平台模式不跨重启保留', async () => {
+    // 🚨 登出后渲染层不能被钉在平台模式。
+    //
+    // 主进程一登出就清了缓存与 activePool,渲染层若仍返回 'platform',每个 Miau 请求
+    // 都会带着标记头出去 —— 注入器**先无条件删掉 Authorization**,而它手上已经没有
+    // token 可写,于是**每一次出图都 401**。
+    //
+    // 而 `AccountSection` 里那两个计费来源按钮**只在已登录分支渲染**,所以登出之后
+    // 会话内没有任何路径能切回自有 Key:用户只能重启应用。
+    it('登出后自动切回自有 Key,不把用户钉在平台模式', async () => {
+      await pickPersonalPool()
+      await useAuthStore.setState({ authenticated: true })
+      await useQuotaStore.getState().setBillingSource('platform')
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+
+      // 真实触发源是主进程推来的 `auth:state-changed`,`useAuthStore` 把它落到这里。
+      useAuthStore.setState({ authenticated: false, username: null, displayName: null })
+
+      expect(useQuotaStore.getState().billingSource).toBe('own-key')
+    })
+
+    // 订阅是模块级单例,重复装会让一次登出触发 N 次复位。
+    it('反复切平台不会把登出订阅装多份', async () => {
+      await pickPersonalPool()
+      useAuthStore.setState({ authenticated: true })
+      await useQuotaStore.getState().setBillingSource('platform')
+      await useQuotaStore.getState().setBillingSource('own-key')
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      let resets = 0
+      const stop = useQuotaStore.subscribe((s, prev) => {
+        if (prev.billingSource === 'platform' && s.billingSource === 'own-key') resets += 1
+      })
+      useAuthStore.setState({ authenticated: false })
+      stop()
+
+      expect(resets).toBe(1)
+    })
+
+    // 已登录状态下的其它状态推送(改了 displayName、刷新了 role)不该顺手把计费模式踢掉。
+    it('仍登录时的状态推送不影响平台模式', async () => {
+      await pickPersonalPool()
+      useAuthStore.setState({ authenticated: true })
+      await useQuotaStore.getState().setBillingSource('platform')
+
+      useAuthStore.setState({ authenticated: true, displayName: '改了个名' })
+
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+    })
+
+    // ⚠️ 真正要守的不变量是「**平台模式绝不能在主进程没 arm 的情况下为真**」。
+    //
+    // 这条最初写成「load() 之后必须是 own-key」,守的是「裸持久化」那种实现:
+    // 把 'platform' 记进 localStorage、下次启动直接恢复 —— 渲染层一上来就打标记而
+    // 主进程还没 arm,每个请求 401,用户以为是网关坏了。
+    //
+    // 现在 `load()` 会主动开平台模式,但走的是 `setBillingSource('platform')`,
+    // 那个动作**先 arm 再置位、arm 失败自己回落**。所以旧断言的字面已经不成立,
+    // 它的精神反而被更好地满足了。改成直接钉不变量本身。
+    it('重启后自动开平台模式,但必须先 arm 过主进程', async () => {
       await pickPersonalPool()
       await useQuotaStore.getState().setBillingSource('platform')
 
       // 模拟重启:清 store 但保留 localStorage
       useQuotaStore.setState(useQuotaStore.getInitialState(), true)
       __resetQuotaStoreForTesting()
+      auth.setBillingPool.mockClear()
+      await useQuotaStore.getState().load()
+
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+      // 关键:置位之前 arm 过。少了这条,一个「直接 set platform 不 arm」的实现照样绿,
+      // 而那正是这条用例最初要防的东西。
+      expect(auth.setBillingPool).toHaveBeenCalled()
+    })
+
+    // arm 失败时绝不能停在 platform —— 否则用户以为在花平台余额,实际每个请求都 401。
+    it('自动开启失败时留在 own-key,并给出原因', async () => {
+      await pickPersonalPool()
+      useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+      __resetQuotaStoreForTesting()
+      auth.setBillingPool.mockResolvedValue({
+        ok: false,
+        error: { code: 'PROJECT_NOT_ALLOCATED', message: '该项目没有配额' },
+      })
+
       await useQuotaStore.getState().load()
 
       expect(useQuotaStore.getState().billingSource).toBe('own-key')
+      expect(useQuotaStore.getState().error).toBeTruthy()
+    })
+
+    // 用户手动关掉过就别再自作主张打开 —— 只在 own-key 且「没被手动关过」时抬手。
+    // 今天的实现是每次 load() 都试,所以这条钉的是「至少不会在已经是 platform 时重复 arm」。
+    it('已经是 platform 时不重复 arm', async () => {
+      await pickPersonalPool()
+      await useQuotaStore.getState().setBillingSource('platform')
+      auth.setBillingPool.mockClear()
+
+      await useQuotaStore.getState().load()
+
+      expect(auth.setBillingPool).not.toHaveBeenCalled()
     })
   })
 })

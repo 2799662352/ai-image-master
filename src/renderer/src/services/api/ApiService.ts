@@ -1421,7 +1421,14 @@ export class ApiService {
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
 
-    if (!apiKey) {
+    // ⚠️ 平台余额模式下**本来就没有 key**，凭据由主进程在出网时按 host 注入。
+    // 少了这个豁免，这道门会在请求头装配之前就把每一次出图拒掉 —— 表现是用户登录了、
+    // 开关也开着，却一直被要求「请先设置 API Key」，而整条平台计费链路一次都到不了。
+    //
+    // 判据用 `willUsePlatformBilling` 而不是直接读 store：站点不对（apiyi / 自建）或
+    // 模型绕开网关（gemini-native 走明文源站）时，这次请求实际会回落到自填 Key，
+    // 那就仍然需要它 —— 这两种情况下豁免会放行一个注定 401 的请求，反而更难查。
+    if (!apiKey && !this.willUsePlatformBilling(modelKey, effectiveSiteKey)) {
       return {
         success: false,
         error:
@@ -2055,6 +2062,26 @@ export class ApiService {
     if (useQuotaStore.getState().billingSource !== 'platform') return false
     const gateway = this.apiSites[MIAU_SITE_KEY]
     return !!gateway && isSameOrigin(requestUrl, gateway.baseURL)
+  }
+
+  /**
+   * 「这次请求会走平台余额吗」—— 给**出图前的前置门**用，此时请求 URL 还没拼出来。
+   *
+   * 与 {@link shouldUsePlatformBilling} 是同一个问题的两个时点：那个按已成型的请求
+   * URL 判（装配请求头时），这个按 模型 + 站点 提前判（决定要不要放行没有 key 的请求）。
+   * 两者必须给出一致的结论，否则会出现「门放行了但头没装上」= 裸奔撞 401，
+   * 或者「门拦下了但本该走平台」= 登录了还被要求填 key。
+   *
+   * 复用 `evaluatePlatformBillingEligibility`，所以 gemini-native 那三个绕开网关的
+   * 模型在这里也会被判成不合格 —— 它们确实需要自填 Key，门该照常拦。
+   */
+  private willUsePlatformBilling(modelKey: string, effectiveSiteKey: string): boolean {
+    if (useQuotaStore.getState().billingSource !== 'platform') return false
+    return evaluatePlatformBillingEligibility(
+      this.models[modelKey],
+      this.apiSites[effectiveSiteKey],
+      this.apiSites[MIAU_SITE_KEY],
+    ).eligible
   }
 
   /**

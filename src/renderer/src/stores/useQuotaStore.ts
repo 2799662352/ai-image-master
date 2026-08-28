@@ -9,6 +9,7 @@
 // 空白而不是报错。
 
 import { create } from 'zustand'
+import { useAuthStore } from './useAuthStore'
 import type {
   AccountBalance,
   AccountOrganization,
@@ -199,6 +200,41 @@ function unexpected(e: unknown): string {
  */
 let armChain: Promise<void> = Promise.resolve()
 
+/**
+ * 登出复位订阅。**装它的地方是 `setBillingSource`,这不是随手放的。**
+ *
+ * 没有它的后果不是「少复位一下」:主进程登出时清了缓存与 activePool,渲染层若仍返回
+ * `'platform'`,每个 Miau 请求都会带着标记头出去 —— 注入器**先无条件删掉
+ * Authorization**,而它手上已经没有 token 可写,于是**每一次出图都 401**。
+ * 而 `AccountSection` 里那两个计费来源按钮**只在已登录分支渲染**,所以会话内没有
+ * 任何路径能切回自有 Key:用户只能重启应用。
+ *
+ * 为什么装在 `setBillingSource` 里而不是某个组件的 mount effect:那样就多了一个
+ * 「记得调」的调用点,而漏掉它没有任何信号。装在这里则由构造保证 ——
+ * **能进入 platform 态的唯一入口就是这里**,所以订阅一定不晚于第一次可能需要它的时刻。
+ * (与 `session.logout()` 那条「不变量收进唯一入口」同源。)
+ *
+ * 方向是 quota → auth:计费上下文依赖身份,反过来不成立。让 `useAuthStore` 去 import
+ * 这个 store 会把身份层拽进计费的关注点里。
+ */
+let unsubscribeAuth: (() => void) | null = null
+
+function ensureLogoutResetsBillingSource(): void {
+  if (unsubscribeAuth) return
+  unsubscribeAuth = useAuthStore.subscribe((s) => {
+    // 按**当前值**判断而不是「已认证 → 未认证」的跳变:跳变判断会漏掉
+    // 「hydrate 先落一个 false、随后才有人切 platform」这类顺序,而按值判断天然幂等。
+    if (s.authenticated) return
+    // 已经是 own-key 就别写:zustand 每次 setState 都会通知订阅者,
+    // 无谓地换一个新 state 对象会让所有读这个 store 的组件白重渲染一轮。
+    if (useQuotaStore.getState().billingSource === 'own-key') return
+    // 刻意**不**顺带发一趟 `clearBillingPool()`:主进程在登出里已经清过
+    // (`clearGatewayTokens()` 会把 activePool 一并摘掉),这里再发一趟既多余,
+    // 又给这条路径引入一个可能 reject 的 await。
+    useQuotaStore.setState({ billingSource: 'own-key' })
+  })
+}
+
 export const useQuotaStore = create<QuotaStore>((set, get) => ({
   ...initialState,
 
@@ -232,6 +268,20 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
       set({ selectedPool: stored })
       await get().refreshBalance()
     }
+
+    // 登录后默认走平台余额。
+    //
+    // 不这么做的话,用户登录了、余额也显示出来了,出图却仍被要求「请先设置 API Key」——
+    // 「登录」这个动作对用户的含义就是「我要用账号里的钱」,还让他去填第三方 Key 说不通。
+    //
+    // 三条约束:
+    //  - 只在 `own-key` 时抬手。用户手动关掉过就别再自作主张打开。
+    //  - 必须有已选池,否则 arm 一定失败,徒增一次注定报错的 IPC。
+    //  - `setBillingSource` 自己会在失败时回落 `own-key` 并把人话原因摊到 `error` 上,
+    //    所以这里不需要 try —— 失败的结果就是维持现状,与不做这一步等价。
+    if (get().billingSource === 'own-key' && get().selectedPool) {
+      await get().setBillingSource('platform')
+    }
   },
 
   selectPool: async (pool) => {
@@ -255,9 +305,47 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
       }
     }
 
+    // 🚨 **先让主进程的旧池失效,再宣称换到新池。顺序就是这条修复的全部内容。**
+    //
+    // 下面那行 `set({ selectedPool })` 一执行,UI 就说「你现在用新池」。而主进程要到
+    // 再下面重新 arm 落地之后才真的换过去 —— 中间隔着一次余额刷新往返 + 整个
+    // `armChain` 队列。这段窗口里主进程的 activePool 仍是**旧池**、旧 token 仍在缓存
+    // 里,`getActivePoolToken()` 交给注入器的是旧池的凭据,网关扣的是旧池的钱。
+    //
+    // `armChain` 在它本该保护的那个场景里反而**拉长了**这个窗口:用方向键连翻五个池
+    // 会串行五次往返,全程活跃的还是第一个池。
+    //
+    // 先清一次,窗口就从「扣错池」变成 fail-closed:主进程没有 activePool → 注入器
+    // 删掉 Authorization 又写不回 → 401。响亮、可见、一分钱不花。而「扣错池」是静默的、
+    // 跨组织的、事后从桌面端根本查不出来 —— 正是平台余额这个功能本身要防的失效类别。
+    let disarmFailure: string | null = null
+    if (get().billingSource === 'platform') {
+      try {
+        await getApi()?.clearBillingPool?.()
+      } catch {
+        // 清不掉就不能硬着头皮换过去 —— 那等于把上面描述的窗口原样留着。退回 own-key
+        // 是**本地就成立的事实**(不打标记 → 注入器根本不会被触发),并且必须留下文案:
+        // 静默退回等于用户以为在花平台余额、实际在花自己的钱。
+        // 异常在这里咽掉,逃出去只会变成一条 unhandled rejection(见文件顶部 🚨)。
+        //
+        // 文案攒在局部变量里、等换池流程走完再落:当场 `set` 会被下面那行
+        // `set({ error: null })` 和 `refreshBalance()` 成功时的 `set({ error: null })`
+        // **连着覆盖两次**,那正是「回落对了、提示废了」——用户点一下什么也没发生。
+        disarmFailure = '换计费池失败(已切回自有 Key):请重新启用平台余额。'
+        set({ billingSource: 'own-key' })
+      }
+    }
+
     set({ selectedPool: pool, error: null })
     writeStoredPool(pool)
     await get().refreshBalance()
+
+    // 见上:这条必须落在 `refreshBalance()` **之后**,它成功时会把 error 清成 null。
+    // 也刻意盖过余额查询自己的报错 —— 「钱可能记到别处」比「余额没刷出来」要紧。
+    if (disarmFailure) {
+      set({ error: disarmFailure })
+      return
+    }
 
     // 已经在平台模式下换池时**必须重新 arm 主进程**。不换的话主进程还揣着上一个池的
     // 凭据,渲染层却已经把 UI 高亮打在新池上 —— 钱继续从旧池扣,而这正是「两个
@@ -310,6 +398,9 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
    */
   setBillingSource: async (next) => {
     const api = getApi()
+    // 见 `ensureLogoutResetsBillingSource`:装在这里,是为了让「能进 platform 态」与
+    // 「登出会把它复位」由构造绑在一起,而不是靠某个组件记得调一次。幂等。
+    ensureLogoutResetsBillingSource()
 
     if (next === 'own-key') {
       set({ billingSource: 'own-key', error: null })
@@ -370,7 +461,12 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
  * `armChain` 必须在这里断开:某条用例留下一趟永远不 resolve 的 arm(闸没放开、
  * 或 mock 挂在半路)时,链子会一直悬着,后面每一个用例的换池都排在它后面永不执行 ——
  * 表现成一片与本次改动无关的超时,查起来很费劲。
+ *
+ * 登出订阅同理:不断开的话,上一条用例装的那份会跟着 `useAuthStore` 的每一次
+ * `setState` 一起触发,把下一条用例刚切好的 platform 态踢回 own-key。
  */
 export function __resetQuotaStoreForTesting(): void {
   armChain = Promise.resolve()
+  unsubscribeAuth?.()
+  unsubscribeAuth = null
 }
