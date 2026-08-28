@@ -50,7 +50,7 @@ import type {
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
-import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
+import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import { getActivePoolToken } from '../auth/gatewayToken'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
@@ -255,7 +255,7 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
   // MAX_INLINE_FILE_BYTES,注释里明说「视频路径不传这个开关,保留内联线」)。
   // Seedance 吃这一套,DashScope 不吃:它只接受可下载的 https 地址。不开这个开关
   // 的后果很隐蔽 —— 大图正常、小图报错,而用户完全想不到是体积的问题。
-  const mediaOptions = usesSeedanceAssetLibrary(input.model) ? undefined : { alwaysRelay: true }
+  const mediaOptions = upstreamAcceptsInlineMedia(input.model) ? undefined : { alwaysRelay: true }
 
   const [firstFrameUrl, lastFrameUrl, imageUrls, videoUrls, audioUrls] = await Promise.all([
     input.firstFrame
@@ -571,21 +571,25 @@ export function initSeedanceRuntime(opts: {
     const clientId = taskManager.announcePreparing({ input, threadId })
     try {
       const content = await buildContent(input)
+      // agent 这条路没有渲染层、拿不到用户的意向,所以在这里用与 taskManager 同一个
+      // resolver 落一次锤。**必须在这里落而不是交给 submit 内部兜底** —— 下面的素材库
+      // 守卫要用同一个结论;各判各的会长出「按平台余额提交、却拿 vvdance 凭据校验」
+      // 这种组合,而它的表现是一句关于素材不存在的中文错误,根因完全看不出来。
+      // 那个 resolver 自身的已知缺口写在 seedanceGateway/credentials.ts。
+      const billing = resolveVideoBilling()
       // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
       // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
-      // 只对 Seedance 那条路做:万相不认识素材库,理由见 usesSeedanceAssetLibrary。
-      if (usesSeedanceAssetLibrary(input.model)) {
+      // 只对 vvdance 直连那条路做:万相不认识素材库、平台余额用的是另一个池,
+      // 理由见 usesSeedanceAssetLibrary。
+      if (usesSeedanceAssetLibrary(input.model, billing)) {
         await verifyContentAssetReferences(content, {
           apiKey: getSeedanceApiKey(),
           apiSecret: getSeedanceApiSecret(),
         })
       }
-      // 刻意不带 billing:agent 这条路没有渲染层,拿不到用户的意向,交给
-      // taskManager 注入的 resolveBilling 兜底(看主进程手上有没有影子 token)。
-      // 那个兜底的已知缺口写在 seedanceGateway/credentials.ts。
-      const state = await taskManager.submit({ input, content, threadId, clientId })
+      const state = await taskManager.submit({ input, content, threadId, clientId, billing })
       // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
-      if (usesSeedanceAssetLibrary(input.model)) {
+      if (usesSeedanceAssetLibrary(input.model, billing)) {
         void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
       }
       return state
@@ -671,8 +675,9 @@ export function initSeedanceRuntime(opts: {
     try {
       if (!input.prompt.trim()) throw new Error('提示词不能为空')
       const content = await buildContent(input)
-      // 同上:只有 Seedance 那条路才碰素材库 / 人像库。见 usesSeedanceAssetLibrary。
-      if (usesSeedanceAssetLibrary(input.model)) {
+      // 同上:只有 vvdance 直连那条路才碰它的素材库 / 人像库。见 usesSeedanceAssetLibrary。
+      // `billing` 缺省(旧渲染层的载荷没有这个字段)时按自填 Key 处理,行为不变。
+      if (usesSeedanceAssetLibrary(input.model, billing)) {
         await verifyContentAssetReferences(content, {
           apiKey: getSeedanceApiKey(),
           apiSecret: getSeedanceApiSecret(),
@@ -686,7 +691,7 @@ export function initSeedanceRuntime(opts: {
         ...(clientId ? { clientId } : {}),
       })
       // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
-      if (usesSeedanceAssetLibrary(input.model)) {
+      if (usesSeedanceAssetLibrary(input.model, billing)) {
         void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
       }
       return { success: true, taskId: state.taskId }
