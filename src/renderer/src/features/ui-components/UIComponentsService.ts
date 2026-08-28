@@ -172,7 +172,9 @@ export class UIComponents {
     const decorativeElements = document.querySelectorAll<HTMLElement>('.glass-effect')
     decorativeElements.forEach((el) => {
       el.style.backdropFilter = 'none'
-      el.style.webkitBackdropFilter = 'none'
+      // 厂商前缀属性不在 `CSSStyleDeclaration` 的类型里(lib.dom 只声明标准属性),
+      // `setProperty` 才是 DOM 为这种情况提供的入口 —— 运行时等价,且不用强转。
+      el.style.setProperty('-webkit-backdrop-filter', 'none')
     })
 
     document.body.classList.add('mobile-optimized')
@@ -186,7 +188,7 @@ export class UIComponents {
     const decorativeElements = document.querySelectorAll<HTMLElement>('.glass-effect')
     decorativeElements.forEach((el) => {
       el.style.backdropFilter = 'blur(10px)'
-      el.style.webkitBackdropFilter = 'blur(10px)'
+      el.style.setProperty('-webkit-backdrop-filter', 'blur(10px)')
     })
 
     document.body.classList.remove('mobile-optimized')
