@@ -180,6 +180,25 @@ function unexpected(e: unknown): string {
   return `额度查询失败:${msg}`
 }
 
+/**
+ * 换池重新 arm 的**串行闸**。
+ *
+ * 池选择器是个原生 `<select>`,键盘方向键每翻一格就触发一次 `change` —— 在 5 个池里
+ * 翻一遍就是 5 趟 setBillingPool。主进程是**异步取到凭据之后**才写下它们的,所以并发
+ * 发出去时最后落地的是最后**返回**的那趟,而 UI 高亮的一定是最后**选中**的那个。
+ * 两者不同池时,症状恰好就是重新 arm 这件事本身要消灭的 bug:界面在新池、钱从旧池扣。
+ *
+ * **排队,而不是在 arm 期间禁用控件。** `AccountSection` 里那两个计费来源按钮用的是
+ * `switching` 局部 state(见那边的注释,理由同源:连点两下会打出两次 arm)—— 按钮那么
+ * 做没问题,但把 `<select>` 禁掉会打断键盘导航,而键盘导航正是最容易触发这条竞态的
+ * 操作方式。何况正确性不该依赖某一个控件记得加锁:守在 store 这层,所有调用点都算数。
+ *
+ * 不需要另配「只保留最后一次」的序号:队列里每一趟都在**执行时**现读 `selectedPool`,
+ * 中途被翻过去的池不会留下过期的引用 —— 排在最后的那趟发的一定是用户最后停下的池。
+ * 重复 arm 同一个池只是多一趟往返,不会记错账。
+ */
+let armChain: Promise<void> = Promise.resolve()
+
 export const useQuotaStore = create<QuotaStore>((set, get) => ({
   ...initialState,
 
@@ -243,8 +262,14 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     // 已经在平台模式下换池时**必须重新 arm 主进程**。不换的话主进程还揣着上一个池的
     // 凭据,渲染层却已经把 UI 高亮打在新池上 —— 钱继续从旧池扣,而这正是「两个
     // producer 池共用一个 projectId」那条教训的动态版本:池键换了一半也算换了池。
+    //
+    // 上一趟 arm 落地了才发下一趟,理由见 `armChain`。`catch` 只是保险:
+    // `setBillingSource` 自己吞掉所有异常,但链子一旦 reject 就再也不会往下走,
+    // 那之后的每一次换池都会静默地不再 arm。
     if (get().billingSource === 'platform') {
-      await get().setBillingSource('platform')
+      const run = armChain.then(() => get().setBillingSource('platform'))
+      armChain = run.catch(() => {})
+      await run
     }
   },
 
@@ -340,10 +365,12 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
 }))
 
 /**
- * Test-only：这个 store 目前没有模块级单例状态，但保留这个钩子与
- * `useAuthStore.__resetSubscriptionsForTesting` 对称 —— 将来加了余额轮询定时器
- * (那是模块级的)时，清理逻辑有个既定的落点，不用再改一遍所有测试。
+ * Test-only：清掉模块级单例状态。与 `useAuthStore.__resetSubscriptionsForTesting` 对称。
+ *
+ * `armChain` 必须在这里断开:某条用例留下一趟永远不 resolve 的 arm(闸没放开、
+ * 或 mock 挂在半路)时,链子会一直悬着,后面每一个用例的换池都排在它后面永不执行 ——
+ * 表现成一片与本次改动无关的超时,查起来很费劲。
  */
 export function __resetQuotaStoreForTesting(): void {
-  // 目前无模块级状态需要清理。
+  armChain = Promise.resolve()
 }

@@ -1,4 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+// 送进来的标记刻意用**共享常量**而不是照抄字面量。照抄的话,这个文件只能证明「注入器
+// 认得它自己那份」—— 而渲染层发的是不是同一份,恰恰是这条链路最容易断、断了又最不响
+// 的地方(见 `types/authApi.ts` 里 BILLING_MARKER_HEADER 的注释)。改成从真源取之后,
+// 谁在主进程重新声明一份本地字面量,这里就会红。
+import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../types/authApi'
+
+/** 渲染层走 `fetch()`,Fetch 规范要求 `Headers` 把头名归一化成小写。 */
+const MARKER_LC = BILLING_MARKER_HEADER.toLowerCase()
 
 const tokenRef = { value: null as string | null }
 vi.mock('../gatewayToken', () => ({ getActivePoolToken: () => tokenRef.value }))
@@ -35,11 +43,11 @@ describe('gatewayHeaderInjector', () => {
     const m = await import('../gatewayHeaderInjector')
     m.installGatewayHeaderInjector(s as any)
 
-    const r = await s.invoke({ 'X-Catimation-Billing': 'platform' })
+    const r = await s.invoke({ [BILLING_MARKER_HEADER]: BILLING_MARKER_VALUE })
 
     expect(r.requestHeaders.Authorization).toBe('Bearer sk-live')
     // 标记必须删掉：它是内部协议，泄漏到上游没有意义，且会出现在网关日志里。
-    expect(r.requestHeaders['X-Catimation-Billing']).toBeUndefined()
+    expect(r.requestHeaders[BILLING_MARKER_HEADER]).toBeUndefined()
   })
 
   // HTTP 头名本来就大小写不敏感,而渲染层出图走的是 `fetch()` —— Fetch 规范要求
@@ -51,10 +59,10 @@ describe('gatewayHeaderInjector', () => {
     const m = await import('../gatewayHeaderInjector')
     m.installGatewayHeaderInjector(s as any)
 
-    const r = await s.invoke({ 'x-catimation-billing': 'platform' })
+    const r = await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
 
     expect(r.requestHeaders.Authorization).toBe('Bearer sk-live')
-    expect(r.requestHeaders['x-catimation-billing']).toBeUndefined()
+    expect(r.requestHeaders[MARKER_LC]).toBeUndefined()
   })
 
   // 打了标记就是声明「本次走平台余额」。取不到 token 时若把渲染层原有的 Authorization
@@ -67,7 +75,7 @@ describe('gatewayHeaderInjector', () => {
     m.installGatewayHeaderInjector(s as any)
 
     const r = await s.invoke({
-      'X-Catimation-Billing': 'platform',
+      [BILLING_MARKER_HEADER]: BILLING_MARKER_VALUE,
       Authorization: 'Bearer user-own-key',
     })
 
@@ -84,7 +92,7 @@ describe('gatewayHeaderInjector', () => {
     m.installGatewayHeaderInjector(s as any)
 
     const r = await s.invoke({
-      'x-catimation-billing': 'platform',
+      [MARKER_LC]: BILLING_MARKER_VALUE,
       authorization: 'Bearer user-own-key',
     })
 

@@ -11,7 +11,30 @@
 // - 未加入的池(`joined: false`)不能被选中 —— 没有 allocation 行就没有影子账户可扣。
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import type { BillingPoolRef } from '../../../../types/authApi'
 import { useQuotaStore, __resetQuotaStoreForTesting, type Pool } from '../useQuotaStore'
+
+/** 手搓的 deferred（`Promise.withResolvers` 要 Node 22+，这里不赌运行时版本）。 */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+/**
+ * 把已排队的微任务放干。
+ *
+ * 用宏任务而不是数微任务个数:被测路径里每个 `await` 落在哪一拍取决于实现细节
+ * (`refreshBalance` 里有几层 await),数拍子的写法改一行实现就会假绿/假红。
+ * 这里所有 mock 的 IPC 都是立即 resolve 的,让出一次宏任务就足够跑到底。
+ */
+async function settleQueuedWork(): Promise<void> {
+  for (let i = 0; i < 3; i += 1) {
+    await new Promise((r) => setTimeout(r, 0))
+  }
+}
 
 const auth = {
   getOrganizations: vi.fn(),
@@ -463,6 +486,62 @@ describe('useQuotaStore', () => {
       await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 6 })
 
       expect(auth.setBillingPool).toHaveBeenCalledWith({ projectId: 700, producerProjectId: 6 })
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+    })
+
+    // 🚨 换池的重新 arm 必须**串行**,否则它自己就是一个新的错账通道。
+    //
+    // 池选择器是个原生 `<select>`,键盘方向键每翻一格就触发一次 `change` —— 在 5 个池
+    // 里翻一遍就是 5 趟并发的 setBillingPool。主进程是**异步取到凭据之后**才写下它们的,
+    // 所以并发发出去时最后落地的是最后**返回**的那趟,而 UI 高亮的一定是最后**选中**
+    // 的那个。两者不同池时,症状恰好就是重新 arm 这件事本身要消灭的 bug:
+    // 界面在新池、钱从旧池扣。
+    //
+    // 用例刻意让**先发的那趟后返回**。不这么摆的话调用顺序恰好等于返回顺序,断言
+    // `mock.calls` 的最后一项永远是对的 —— 守卫删掉照样绿,等于没测。
+    // 同理,`landed` 记的是 **resolve 的那一刻**而不是被调用的那一刻:后者是渲染层的
+    // 发送顺序,前者才是主进程真正写下凭据的顺序。
+    it('连续换池时最终落地的是最后选中的池,不是最后返回的那趟 IPC', async () => {
+      auth.getOrganizations.mockResolvedValue({
+        ok: true,
+        data: [ORG_PERSONAL, ORG_PRODUCER_A, ORG_PRODUCER_B],
+      })
+      await useQuotaStore.getState().load()
+      await useQuotaStore.getState().selectPool({ projectId: 342, producerProjectId: null })
+      await useQuotaStore.getState().setBillingSource('platform')
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
+
+      const landed: Array<number | null> = []
+      const firstArmSent = deferred()
+      const firstArmGate = deferred()
+      let armCount = 0
+
+      auth.setBillingPool.mockReset()
+      auth.setBillingPool.mockImplementation(async (p: BillingPoolRef) => {
+        armCount += 1
+        if (armCount === 1) {
+          // 先发的这趟卡在半路,好让第二次换池发生在它**在途**时 —— 方向键连按
+          // 就是这个时序:第一趟 IPC 已经出门,用户又按了一下。
+          firstArmSent.resolve()
+          await firstArmGate.promise
+        }
+        landed.push(p.producerProjectId)
+        return { ok: true, data: { ready: true } }
+      })
+
+      const first = useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 5 })
+      await firstArmSent.promise
+
+      const second = useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 6 })
+      // 不加闸的实现会在这里就把 6 号池 arm 完:它不必等在途的 5 号。
+      await settleQueuedWork()
+
+      firstArmGate.resolve()
+      await Promise.all([first, second])
+
+      // 用户最后停在 6 号池,主进程最后写下的凭据就必须是 6 号池的。
+      expect(landed.at(-1)).toBe(6)
+      expect(useQuotaStore.getState().selectedPool).toEqual({ projectId: 700, producerProjectId: 6 })
       expect(useQuotaStore.getState().billingSource).toBe('platform')
     })
 

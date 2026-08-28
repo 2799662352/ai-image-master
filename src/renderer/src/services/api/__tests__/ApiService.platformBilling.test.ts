@@ -15,6 +15,11 @@
 // 打了标记也换不到凭据,反而因为缺 Authorization 直接 401。
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+// 断言刻意用**共享常量**而不是照抄字面量。照抄的话,这个文件只能证明「渲染层发的是
+// 它自己那份」—— 而主进程认的是不是同一份,恰恰是这条链路最容易断、断了又最不响的
+// 地方(见 `types/authApi.ts` 里 BILLING_MARKER_HEADER 的注释)。改成从真源取之后,
+// 谁在渲染层重新声明一份本地字面量,这里就会红。
+import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../../types/authApi'
 
 /**
  * 跑一次出图,把发出去的请求头抓回来。
@@ -72,7 +77,7 @@ describe('平台计费模式下的请求头', () => {
   it('平台模式：打标记头，且不发 Authorization', async () => {
     const headers = await captureHeadersFor({ billingSource: 'platform', site: 'antigravity' })
 
-    expect(headers['X-Catimation-Billing']).toBe('platform')
+    expect(headers[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
     // 关键：渲染层根本没有 token 可发。发了空 Bearer 会被主进程覆盖，
     // 但发了用户的旧 key 就会在主进程注入失败时静默走错账。
     expect(headers.Authorization).toBeUndefined()
@@ -82,7 +87,7 @@ describe('平台计费模式下的请求头', () => {
     const headers = await captureHeadersFor({ billingSource: 'own-key', site: 'antigravity' })
 
     expect(headers.Authorization).toBe('Bearer user-typed-key')
-    expect(headers['X-Catimation-Billing']).toBeUndefined()
+    expect(headers[BILLING_MARKER_HEADER]).toBeUndefined()
   })
 
   // 平台余额只覆盖 Miau 网关。别的站点（apiyi / 自建）是另外的计费域，
@@ -90,7 +95,7 @@ describe('平台计费模式下的请求头', () => {
   it('非 Miau 站点即使开着平台模式也不打标记', async () => {
     const headers = await captureHeadersFor({ billingSource: 'platform', site: 'apiyi' })
 
-    expect(headers['X-Catimation-Billing']).toBeUndefined()
+    expect(headers[BILLING_MARKER_HEADER]).toBeUndefined()
     expect(headers.Authorization).toBe('Bearer user-typed-key')
   })
 })

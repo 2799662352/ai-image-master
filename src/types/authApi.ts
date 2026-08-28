@@ -112,6 +112,25 @@ export interface BillingPoolRef {
   producerProjectId: number | null
 }
 
+/**
+ * 「本次请求走平台余额」的标记头。
+ *
+ * 🚨 **跨进程共用这一份,任何一侧都不要再声明自己的字面量。** 渲染层
+ * (`services/api/ApiService.ts`)出网前打上它,主进程的
+ * `services/auth/gatewayHeaderInjector.ts` 靠它认出这一趟该把 Authorization 换成平台
+ * 凭据。两边各写一份的话,**只改一边不会有任何东西变红** —— 两边的测试各自硬编码
+ * 自己那份,双绿。而失效症状是「看着接好了、一次都不生效」:请求带着认不出的标记
+ * 出网,注入器直接放行,Authorization 没被换上,用户拿到一串 401,极易误判成后端故障。
+ *
+ * 用标记头而不是让主进程无条件注入,是因为用户仍可以用自己填的 API Key —— 无条件
+ * 注入会把它覆盖掉。标记本身在出网前会被主进程删除,不让内部协议泄漏到上游日志里。
+ *
+ * 值里不含任何凭据:它只是一句声明,真 `Authorization` 由主进程在出网前换上。
+ * 跨进程共用常量的房规先例见 {@link MAX_RECHARGE_CNY}。
+ */
+export const BILLING_MARKER_HEADER = 'X-Catimation-Billing'
+export const BILLING_MARKER_VALUE = 'platform'
+
 // ───────────────────────────────────────────────────────────────────────────
 // 用量明细
 //

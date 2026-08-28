@@ -1,14 +1,9 @@
 import type { Session } from 'electron'
+// 渲染层用这个标记声明「本次请求走平台余额」。**常量只有 `types/authApi.ts` 那一份**
+// (那边写了为什么):这里曾经也有一份同字面量的副本,而两份副本的漂移不会让任何
+// 测试变红 —— 两边测试各自硬编码自己那份,只改一边照样双绿,线上却每个请求 401。
+import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../types/authApi'
 import { getActivePoolToken } from './gatewayToken'
-
-/**
- * 渲染层用它声明「本次请求走平台余额」。
- *
- * 用标记头而不是无条件注入,是因为用户仍可以用自己填的 API Key —— 无条件注入
- * 会把它覆盖掉。标记在出网前会被删除,不让内部协议泄漏到上游日志里。
- */
-export const BILLING_MARKER_HEADER = 'X-Catimation-Billing'
-export const BILLING_MARKER_VALUE = 'platform'
 
 const BILLING_MARKER_HEADER_LC = BILLING_MARKER_HEADER.toLowerCase()
 const AUTHORIZATION_HEADER = 'Authorization'

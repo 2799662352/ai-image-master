@@ -4,6 +4,7 @@
  * 处理与 AI 图片生成 API 的所有通信
  */
 
+import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../types/authApi'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
@@ -432,18 +433,9 @@ function resolveLayerDecompositionSizeTier(value: string | undefined): LayerDeco
  */
 export const MIAU_SITE_KEY = 'antigravity'
 
-/**
- * 「本次请求走平台余额」的标记头。
- *
- * ⚠️ **真源在主进程的 `services/auth/gatewayHeaderInjector.ts`,两边必须字面一致。**
- * 这里重新声明是因为渲染层不能 import 主进程模块;改名/改值要两处同步改,
- * 只改一边的症状是「看着接好了、一次都不生效」—— 注入器认不出标记就直接放行,
- * 而我们又没发 Authorization,于是网关 401。
- *
- * 值本身不含任何凭据:它只是一句声明,真 `Authorization` 由主进程在出网前换上。
- */
-export const BILLING_MARKER_HEADER = 'X-Catimation-Billing'
-export const BILLING_MARKER_VALUE = 'platform'
+// 「本次请求走平台余额」的标记头曾在这里重复声明过一份(理由写的是「渲染层不能
+// import 主进程模块」)。那条理由只对**主进程模块**成立,而常量本身可以住在两边共吃的
+// `src/types/authApi.ts` 里 —— 现在就在那儿,连同它为什么必须只有一份的说明。
 
 /**
  * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
