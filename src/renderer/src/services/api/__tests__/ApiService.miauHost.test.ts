@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MIAU_BASE_URL } from '../../../../../shared/miau'
 
 /**
@@ -93,6 +93,17 @@ describe('Miau 网关地址', () => {
   // 里写了为什么那次的重复是致命的:两边测试各自硬编码自己那份,只改一边照样双绿。
   // 这条测试存在的意义,就是不让那种「双绿」再发生一次。
   it('注入器、渲染层站点、shared 基址三处的网关 host 必须一致', async () => {
+    // ⚠️ 必须先清掉开发覆盖再 import。
+    //
+    // `import.meta.env.DEV` 在 vitest 下**为真**,所以 `resolveGatewayBaseUrl()` 会去读
+    // `CATIMATION_GATEWAY_ORIGIN`。开发者本地只要设过它(比如为了拿测试服跑一次真机),
+    // 这条测试就会拿覆盖值去比默认值、莫名其妙地红 —— 而红的原因跟他改的代码毫无关系。
+    //
+    // 站点定义是模块级常量、在 import 那一刻就定死,所以清环境变量必须在 import **之前**,
+    // 且要 resetModules 让上一条用例的模块图作废。
+    delete process.env.CATIMATION_GATEWAY_ORIGIN
+    vi.resetModules()
+
     const { ApiService, DEFAULT_GATEWAY_BASE_URL, MIAU_SITE_KEY } = await import('../ApiService')
 
     const injectorHost = new URL(readInjectorDefaultOrigin()).host
@@ -102,5 +113,19 @@ describe('Miau 网关地址', () => {
     // 站点定义本身也要比一次,而不只是比那个常量:有人在 `apiSites` 里直接写死一个
     // 别的字面量、绕开 `resolveGatewayBaseUrl()`,上面两条照样绿。
     expect(new URL(new ApiService().getAllSites()[MIAU_SITE_KEY].baseURL).host).toBe(injectorHost)
+  })
+
+  // 覆盖生效时,站点地址必须跟着走 —— 否则渲染层发到 A、注入器只认 B,凭据一次都注不进去。
+  // 与上一条是一对:那条守「安装包里的默认值」,这条守「开发构建里覆盖真的贯通」。
+  it('开发构建下,覆盖会同时改掉站点地址', async () => {
+    process.env.CATIMATION_GATEWAY_ORIGIN = 'https://gw.example.test'
+    vi.resetModules()
+    try {
+      const { ApiService, MIAU_SITE_KEY } = await import('../ApiService')
+      expect(new ApiService().getAllSites()[MIAU_SITE_KEY].baseURL).toBe('https://gw.example.test')
+    } finally {
+      delete process.env.CATIMATION_GATEWAY_ORIGIN
+      vi.resetModules()
+    }
   })
 })
