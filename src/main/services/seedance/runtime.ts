@@ -12,6 +12,7 @@ import type { ToolRouter } from '../../mcp/ToolRouter'
 import { MAX_PATH_ATTACHMENT_BYTES, type AttachmentService } from '../../agent/AttachmentService'
 import { CHECK_LONG_POLL_MS } from '../../mcp/tools/videoTools'
 import { reconcileInFlightTasks } from './adoption'
+import { coerceVideoBillingSource, createVideoBillingResolver } from './billing'
 import { seedanceClient } from './client'
 import {
   getSeedanceApiKey,
@@ -45,13 +46,23 @@ import type {
   SeedanceContentItem,
   SeedanceModelAlias,
   SeedanceTaskMode,
+  VideoBillingSource,
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { usesSeedanceAssetLibrary } from './assetLibraryPolicy'
+import { getActivePoolToken } from '../auth/gatewayToken'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
-import { createSeedanceTransport, createWan3Transport, transportFor } from '../videoTransport'
+import { createSeedanceGatewayClient } from '../seedanceGateway/client'
+import { createSeedanceGatewayTokenResolver } from '../seedanceGateway/credentials'
+import type { SeedanceGatewayTokenSources } from '../seedanceGateway/credentials'
+import {
+  createSeedanceGatewayTransport,
+  createSeedanceTransport,
+  createWan3Transport,
+  transportFor,
+} from '../videoTransport'
 import { translateVideoTaskError } from '../videoTaskError'
 import type {
   PortraitOverlayMutation,
@@ -72,6 +83,22 @@ const DOWNLOAD_DEADLINE_MS = 45_000
 
 /** 无 threadId 的任务(手动 MCP 调用等)落到这个伪线程目录。 */
 const FALLBACK_THREAD_ID = 'seedance'
+
+/**
+ * 网关视频的两枚候选凭据。**决策本身不在这里** —— 见
+ * `seedanceGateway/credentials.ts`,那份文件解释了为什么不走
+ * `gatewayHeaderInjector`、以及主进程这份 activePool 与渲染层状态之间的已知缺口。
+ */
+const gatewayTokenSources: SeedanceGatewayTokenSources = {
+  platformToken: getActivePoolToken,
+  ownKey: getWan3ApiKey,
+}
+
+/**
+ * 这一次的钱从哪出。路由与取 token 共用这一个结论,理由见
+ * `billing.ts` 的 `createVideoBillingResolver`。
+ */
+const resolveVideoBilling = createVideoBillingResolver(gatewayTokenSources)
 
 /** 从扩展名 / mime / data: 头推断素材 kind(供 add_to_portrait_library 自动判断)。 */
 function inferAssetKind(src: string, explicit?: string): 'image' | 'video' | 'audio' {
@@ -425,22 +452,50 @@ export function initSeedanceRuntime(opts: {
     createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
     getWan3ApiKey,
   )
+
   /**
-   * 按模型选上游。除了提交与轮询(taskManager 内部自己选),另外两条路也认
-   * taskId —— **重启接管**与**按任务号重取过期地址** —— 它们此前写死了
-   * Seedance:万相的任务在 Ark 那边查不到,前者会把一条还在跑、已付费的任务
-   * 错杀成失败卡片,后者会让「重新保存」报一句「任务不存在」。
+   * 平台余额下的 Seedance —— 与 vvdance 直连**平行**的第三条路。fetch 同样注入,
+   * 理由与万相一致(顶层 import electron 会让客户端在 Electron 之外加载不了)。
+   *
+   * 取 token 的意向**钉死成 platform**:能走到这条 transport 就说明分派已经判定
+   * 「这一次花平台余额」。再让它按「手上有什么用什么」兜底的话,影子 token 一旦
+   * 恰好取不到就会静默换成用户自填的 Miau Key —— 那正是 credentials.ts 明令禁止
+   * 的跨模式回落。钉死之后那种情况会在 requireApiKey 抛出「请先选择计费池」。
    */
-  const transportOf = (model: string | undefined) =>
+  const seedanceGatewayTransport = createSeedanceGatewayTransport(
+    createSeedanceGatewayClient({
+      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+    }),
+    createSeedanceGatewayTokenResolver(
+      gatewayTokenSources,
+      () => 'platform',
+    ),
+  )
+
+  /**
+   * 按模型 + 计费模式选上游。除了提交与轮询(taskManager 内部自己选),另外两条路
+   * 也认 taskId —— **重启接管**与**按任务号重取过期地址** —— 它们此前写死了
+   * Seedance:万相的任务在 Ark 那边查不到,前者会把一条还在跑、已付费的任务
+   * 错杀成失败卡片,后者会让「重新保存」报一句「任务不存在」。平台余额那条任务
+   * 是影子 token 建的,不带 billing 去问会撞上同一组症状。
+   */
+  const transportOf = (model: string | undefined, billing: VideoBillingSource | undefined) =>
     transportFor(
-      { seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey), wan3: wan3Transport },
+      {
+        seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey),
+        wan3: wan3Transport,
+        seedanceGateway: seedanceGatewayTransport,
+      },
       model,
+      { ...(billing ? { billing } : {}) },
     )
 
   const taskManager = new SeedanceTaskManager({
     client: seedanceClient,
     getApiKey: getSeedanceApiKey,
     wan3Transport,
+    seedanceGatewayTransport,
+    resolveBilling: resolveVideoBilling,
     // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
     // （提交只走一次，轮询要走几十次）。
     translateError: translateVideoTaskError,
@@ -459,8 +514,8 @@ export function initSeedanceRuntime(opts: {
 
   const persistDeps: PersistVideoDeps = {
     downloadVideo: (url, dest) => seedanceClient.downloadVideo(url, dest),
-    refreshVideoUrl: async (taskId, model) => {
-      const r = await transportOf(model).queryTask(taskId)
+    refreshVideoUrl: async (taskId, model, billing) => {
+      const r = await transportOf(model, billing).queryTask(taskId)
       return r.content?.video_url
     },
     ingest: (threadId, files) => attachments.ingest(threadId, files),
@@ -490,12 +545,16 @@ export function initSeedanceRuntime(opts: {
     if (!taskId && !videoUrl) {
       return { ok: false, error: '这张卡既没有任务号也没有视频地址，只能重新生成' }
     }
+    // 卡片记着自己是哪种计费模式建的。少了它这次重查会打错通道,回一句
+    // 「任务不存在」—— 而重查恰恰是上游地址过期后唯一不用花钱的补救。
+    const billing = coerceVideoBillingSource(payload?.billing)
     try {
       const { localPath, remoteUrl } = await persistVideoBytes({
         videoUrl,
         model: String(payload?.model ?? '2.0'),
         taskId: taskId || randomUUID(),
         threadId: typeof payload?.threadId === 'string' ? payload.threadId : undefined,
+        ...(billing ? { billing } : {}),
       }, taskId ? persistDeps : { ...persistDeps, refreshVideoUrl: undefined })
       return { ok: true, localPath, remoteUrl }
     } catch (e) {
@@ -521,6 +580,9 @@ export function initSeedanceRuntime(opts: {
           apiSecret: getSeedanceApiSecret(),
         })
       }
+      // 刻意不带 billing:agent 这条路没有渲染层,拿不到用户的意向,交给
+      // taskManager 注入的 resolveBilling 兜底(看主进程手上有没有影子 token)。
+      // 那个兜底的已知缺口写在 seedanceGateway/credentials.ts。
       const state = await taskManager.submit({ input, content, threadId, clientId })
       // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
       if (usesSeedanceAssetLibrary(input.model)) {
@@ -548,6 +610,13 @@ export function initSeedanceRuntime(opts: {
   ipcMain.removeHandler('video-workbench:submit')
   ipcMain.handle('video-workbench:submit', async (_event, payload: Record<string, unknown>) => {
     const clientId = String(payload?.clientId ?? '')
+    // 🚨 意向必须从渲染层带过来,主进程**不能自己猜**。主进程手上那份 activePool
+    // 只是渲染层 `billingSource` 的镜像,而 `setBillingSource('own-key')` 先落
+    // 本地状态、再尽力调 `clearBillingPool()`,那一步失败时被吞掉 —— 于是存在
+    // 一个窗口:渲染层已是自填 Key,主进程仍握着 activePool。此刻去猜,猜出来的
+    // 是平台余额,用户在不知情的情况下花掉组织的钱。
+    // (完整论证见 seedanceGateway/credentials.ts 的「已知缺口」。)
+    const billing = coerceVideoBillingSource(payload?.billing)
     const asStringArray = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
     const seedRaw = Number(payload?.seed)
@@ -613,6 +682,7 @@ export function initSeedanceRuntime(opts: {
         input,
         content,
         source: 'workbench',
+        ...(billing ? { billing } : {}),
         ...(clientId ? { clientId } : {}),
       })
       // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
@@ -649,7 +719,7 @@ export function initSeedanceRuntime(opts: {
   ipcMain.handle('video-workbench:reconcile', async (_event, rawItems: unknown) =>
     reconcileInFlightTasks(Array.isArray(rawItems) ? rawItems : [], {
       isTracked: (taskId) => Boolean(taskManager.get(taskId)),
-      probe: (taskId, model) => transportOf(model).queryTask(taskId),
+      probe: (taskId, model, billing) => transportOf(model, billing).queryTask(taskId),
       adopt: (params) => { taskManager.adopt(params) },
       translateError: translateVideoTaskError,
     }),

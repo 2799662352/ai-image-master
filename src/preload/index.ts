@@ -87,6 +87,7 @@ import type {
   SeedanceOfficialMaterialsResult,
   SeedanceRegion,
   SeedanceTaskUpdate,
+  VideoBillingSource,
 } from '../types/seedance'
 import type {
   VideoWorkbenchReconcileItem,
@@ -1711,7 +1712,15 @@ const electronAPI: ElectronAPI = {
     setAutoImportPortrait: (enabled: boolean) => {
       ipcRenderer.send('video-workbench:set-auto-import-portrait', enabled)
     },
-    repersist: (payload: { videoUrl: string; model?: string; taskId?: string; threadId?: string }) =>
+    // billing:这张卡是哪种计费模式建的。重查地址得打回同一条通道，否则一律
+    // 回「任务不存在」——而重查是上游地址过期后唯一不用花钱的补救。
+    repersist: (payload: {
+      videoUrl: string
+      model?: string
+      taskId?: string
+      threadId?: string
+      billing?: VideoBillingSource
+    }) =>
       safeInvoke<{ ok: boolean; localPath?: string; remoteUrl?: string; error?: string }>(
         'video-workbench:repersist', payload,
       ),
