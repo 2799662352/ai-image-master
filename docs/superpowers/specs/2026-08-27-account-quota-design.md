@@ -223,9 +223,29 @@ X-Feature: image_gen
 **CATIMATION 主进程**：新增 `src/main/services/auth/gatewayToken.ts`：
 
 - 缓存按 `(projectId, producerProjectId)` 这**一对**做键（RFC 8693：按 subject + audience 做键；只按用户做键会把为 A 铸的 token 交给 B）。
-- 按 Codex 的 **5 分钟近过期窗口**提前刷新，401 时被动刷一次。
+- **按本地缓存年龄刷新，不按服务端给的过期时刻**（2026-08-28 据 Codex 源码修正，见下）。默认 5 分钟。
+- 401 时被动刷一次。
 - **非 2xx 绝不写缓存**（Codex 的 `server.rs` 就是这样：非 2xx 立刻 `return Err`，`ExchangedTokens` 压根不构造）。
-- 提供**显式强制刷新**入口（对齐 Codex 的 `account/read { refreshToken: true }`）—— 用户刚充值完、或刚切换组织时需要。
+- **换 token 期间要持锁**，避免批量出图时 N 个并发请求各铸一枚。
+
+> **2026-08-28 修正（依据：Codex `codex-rs` 源码，经 Context7 取证）**
+>
+> 原文写的是「按 5 分钟近过期窗口提前刷新」并让端点返回 `expires_at`（绝对 unix 秒）。查 Codex 实际实现后这两处都要改：
+>
+> **① 端点返回 `expires_in`（相对秒），不返回 `expires_at`。** Codex 的 `ExchangedTokens` 结构里**根本没有过期字段**，缓存判定用的是本地的 `fetched_at.elapsed()`。它从不信任服务端时间戳 —— 因为客户端是用户机器，时钟偏几分钟是常事：偏快会疯狂刷新，偏慢会拿着已死的 token 打请求，而后者表现为「莫名其妙的 401」，极难排查。RFC 8693 用 `expires_in` 也是同一个理由。
+>
+> **② 刷新判据是「缓存年龄 > 间隔」而不是「快到期了」。** `external_bearer.rs` 的 `resolve()`：
+> ```rust
+> let should_use_cached_token = match self.state.config.refresh_interval() {
+>     Some(refresh_interval) => cached_token.fetched_at.elapsed() < refresh_interval,
+>     None => true,
+> };
+> ```
+> `refresh_interval_ms` 默认 `300_000`（`config_types.rs`），`0` 表示关闭主动刷新、只走 401 路径。
+>
+> **③ `resolve()` 与 `refresh()` 是两个独立函数**，不是一个带 force 参数的。前者认缓存，后者无条件重取并覆盖（401 路径走它）。所以原文「提供显式强制刷新入口」应落成一个独立的 `refresh()`，而不是给 `resolve()` 加旗标。
+>
+> **④ 缓存锁刻意跨 await 持有**，`external_bearer.rs` 的注释原文是 *"deliberately held across the command to avoid duplicate refreshes"*。原文完全漏了这一条：批量出图时 N 张图并发，不持锁就会并发铸 N 枚 token（每一枚都是一行真实的数据库记录）。
 
 **CATIMATION 渲染层**：
 
