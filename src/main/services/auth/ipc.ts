@@ -77,6 +77,13 @@ const NETWORK_MESSAGE = '无法连接登录服务,请检查网络或代理后重
  * `status === 0` 与非 AuthError 合并成一个条件而不是各写一支:`session.ts` 的
  * `toAuthError` 只在 `status >= 400` 时构造,所以 0 今天不可达 —— 单独写一支就是
  * 没有任何测试能杀死的死代码。合并后这条判据本身是被测的。
+ *
+ * ⚠️ **「0 不可达」是一条会被本文件自己破坏的不变量,不只取决于 `session.ts`。**
+ * 本文件里还有一处在**手工构造** `AuthError`:`requireGatewayToken` 把
+ * `GatewayTokenError` 翻成 `AuthError` 时要凭空补一个 status。它现在补 `400`,
+ * 「0 不可达」才继续成立。改那边之前先回来看这里:一旦补成 `0`,这个分支会把那条
+ * 翻译过来的 code 整个丢掉、换成 `NETWORK_ERROR` —— 而那个翻译层存在的全部理由
+ * 就是保住 code。
  */
 function mapLoginFailure(err: unknown): { code: string; message: string } {
   if (err instanceof AuthError && err.status !== 0) {
@@ -274,8 +281,19 @@ function toBillingPool(raw: unknown): Pool {
  * `NOT_LOGGED_IN` 要引导去登录、余额类要引导去充值、权限类要引导换个池。压成同一个
  * code 等于把信封退化回「出错了」—— 那正是当初不裸抛的理由。
  *
- * `status` 给 `0`:`GatewayTokenError` 没有这一维(HTTP 码已经编进它的 code 里,形如
- * `HTTP_502`),而 `quotaRpc` 不读 status。
+ * `status` 给 `400`,而**绝不能给 `0`**。`GatewayTokenError` 本身没有这一维(HTTP 码已经
+ * 编进它的 code 里,形如 `HTTP_502`),所以这个数字是我们凭空补的 —— 但补什么不是随意的:
+ *
+ * 审计范围是**本文件所有读 `status` 的地方**,不只是 `quotaRpc`(它确实不读)。今天还有
+ * 一个:`mapLoginFailure` 把 `status === 0` 当作「压根没拿到 HTTP 状态码 ⇒ 网络问题」的
+ * 哨兵,进而**丢弃 code**、一律回 `NETWORK_ERROR`。也就是说 `0` 恰好是全仓唯一一个会让
+ * code 被压平的取值 —— 而这个翻译层存在的全部理由就是不让 code 被压平。
+ *
+ * 今天这两条路还没接上(本函数只被 `auth:set-billing-pool` 调,异常就地被 `quotaRpc`
+ * 吃掉,逃不到 `mapLoginFailure`),所以填 0 不是活 bug。但只要有人把「登录成功、取网关
+ * token 失败」接进登录失败映射,填 0 就会静默复现这个翻译层要解决的那个问题。
+ * `400` 与同文件其余几处窄化(`INVALID_QUERY` / `INVALID_TARGET` / `INVALID_AMOUNT` /
+ * `INVALID_POOL`)一致,且稳稳落在 `status !== 0` 那条保住 code 的分支里。
  *
  * **返回 void 而不是 token。** 调用方只需要「取到了」这个事实;把 token 摆到这一层
  * 的局部变量里,下一个人顺手 `return { ready: true, token }` 就成了。
@@ -284,7 +302,7 @@ async function requireGatewayToken(pool: Pool): Promise<void> {
   try {
     await getGatewayToken(pool)
   } catch (e) {
-    if (e instanceof GatewayTokenError) throw new AuthError(e.code, 0, e.message)
+    if (e instanceof GatewayTokenError) throw new AuthError(e.code, 400, e.message)
     throw e
   }
 }

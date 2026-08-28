@@ -52,9 +52,19 @@ let authState = {
   role: null as string | null,
   credentialSource: 'none' as const,
 }
+/**
+ * 每一次 `AuthError` 构造都记一笔。
+ *
+ * 为什么要有这个:`status` **不出现在信封里**(`quotaRpc` 只取 code 与 message),
+ * 所以任何盯返回值的断言都守不住它。而 `ipc.ts` 里有一处是**手工补** status 的
+ * (`requireGatewayToken` 把 `GatewayTokenError` 翻成 `AuthError`),补错了没有任何
+ * 可观测后果 —— 只能从构造现场看。
+ */
+const authErrorsBuilt: Array<{ code: string; status: number; message: string }> = []
 class AuthError extends Error {
   constructor(public code: string, public status: number, msg: string) {
     super(msg)
+    authErrorsBuilt.push({ code, status, message: msg })
   }
 }
 vi.mock('../session', () => ({
@@ -155,6 +165,7 @@ describe('auth IPC 编排', () => {
     getGatewayToken.mockReset()
     getGatewayToken.mockResolvedValue(GATEWAY_TOKEN)
     setActivePool.mockReset()
+    authErrorsBuilt.length = 0
     authState = { authenticated: false, username: null, displayName: null, role: null, credentialSource: 'none' }
   })
 
@@ -611,6 +622,13 @@ describe('auth IPC 编排', () => {
     // handler,直接 `.catch` 会在遍历到第一个同步通道时抛 TypeError —— 那样这条断言
     // 连一个通道都验不到就死了,而失败信息看着像「实现有问题」。同一处理法在下面
     // 「窗口已销毁时广播不抛」那条里已有先例。
+    //
+    // ⚠️ **「遍历到」不等于「守得住」。** 循环确实覆盖全部 15 条通道,但真正有杀伤力的
+    // 只有 `set-billing-pool` 一条 —— 只有它的依赖(`getGatewayToken`)在 beforeEach 里
+    // 被喂了一个 `sk-` 形状的默认值。其余 14 条的依赖 mock 经 `mockReset()` 之后没有实现、
+    // 一律回 `undefined`,序列化出来是空的,**无论实现怎么写都匹配不到**。
+    // 所以给新通道加这道防线时,必须同时让它的依赖 mock 回一个 `sk-` 形状的值,
+    // 否则这条断言对那条新通道是死的 —— 别以为新通道会被自动守住。
     it('没有任何通道会把 token 回给渲染层', async () => {
       await register()
       for (const [, handler] of handlers) {
@@ -706,6 +724,26 @@ describe('auth IPC 编排', () => {
         expect(r.error?.code, `${code} 被压成了别的 code`).toBe(code)
         expect(r.error?.message).toBe(message)
       }
+    })
+
+    // 翻译时凭空补的那个 status **绝不能是 `0`**:同文件的 `mapLoginFailure` 把
+    // `status === 0` 当作「压根没拿到 HTTP 状态码 ⇒ 网络问题」的哨兵,会**丢掉 code**、
+    // 一律换成 `NETWORK_ERROR` —— 而这个翻译层存在的全部理由就是保住 code。
+    //
+    // 必须盯构造现场而不是返回值:status 不进信封,上面那条「code 带出信封」在
+    // status 填 0 时照样全绿(已实测)。今天两条路还没接上,所以这是一条**防回归**的
+    // 断言,不是在测活 bug。
+    it('翻译 GatewayTokenError 时补的 status 不是网络哨兵值 0', async () => {
+      getGatewayToken.mockRejectedValue(
+        new GatewayTokenError('NOT_LOGGED_IN', '未登录,无法使用平台余额'),
+      )
+      await register()
+
+      await call('auth:set-billing-pool', { projectId: 342 })
+
+      const translated = authErrorsBuilt.filter((e) => e.code === 'NOT_LOGGED_IN')
+      expect(translated).toHaveLength(1)
+      expect(translated[0].status, 'status 0 会让 mapLoginFailure 把 code 压成 NETWORK_ERROR').not.toBe(0)
     })
 
     // 非 GatewayTokenError(比如 mock 之外的意外)也不能裸抛出 IPC。
