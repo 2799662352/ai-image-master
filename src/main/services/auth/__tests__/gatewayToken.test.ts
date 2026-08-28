@@ -28,13 +28,54 @@ function setPlatform(value: NodeJS.Platform): void {
 function restorePlatform(): void {
   if (realPlatform) Object.defineProperty(process, 'platform', realPlatform)
 }
-const encryptStringAsync = vi.fn(async (s: string) => Buffer.from(s, 'utf8'))
+// 可控闸门。用来把「登出正好落在加密/解密进行中」这个瞬间变成确定性的:时序 bug
+// 本地必然通过,必须在假实现里**故意卡住**才能做红绿验证。
+// `reached` 让用例知道代码真的进到了那一步 —— 这一点是必需的,不是保险:登出如果早
+// 于进入加密,外层 getGatewayToken 那道守卫会先拦下,persist() 根本不被调用,用例就
+// 退化成在测已覆盖的路径,杀不掉本轮的变异。
+interface Gate {
+  /** 用例 await 它,确认代码真的卡在了这一步。 */
+  reached: Promise<void>
+  /** 用例调它放行。 */
+  open: () => void
+  wait: Promise<void>
+  arrive: () => void
+}
+function makeGate(): Gate {
+  let open!: () => void
+  let arrive!: () => void
+  const wait = new Promise<void>((r) => {
+    open = r
+  })
+  const reached = new Promise<void>((r) => {
+    arrive = r
+  })
+  return { reached, open, wait, arrive }
+}
+// 写成可变对象、由 beforeEach 还原成 null,与上面 storage 同一个套路 —— 比
+// mockImplementationOnce 稳:beforeEach 用的是 mockClear,它不清未被消费的 once
+// 实现,那种残留会漏到下一条用例。
+const gates: { encrypt: Gate | null; decrypt: Gate | null } = { encrypt: null, decrypt: null }
+// 先通知「到了」,再真正阻塞。
+async function passGate(gate: Gate | null): Promise<void> {
+  if (!gate) return
+  gate.arrive()
+  await gate.wait
+}
+
+const encryptStringAsync = vi.fn(async (s: string) => {
+  await passGate(gates.encrypt)
+  return Buffer.from(s, 'utf8')
+})
 // 异步版返回的是 `{ shouldReEncrypt, result }`,不是字符串 —— 照着真 API 的形状 mock,
 // 否则「实现直接把它丢给 JSON.parse」这个真实存在的坑测不出来。
-const decryptStringAsync = vi.fn(async (b: Buffer) => ({
-  shouldReEncrypt: false,
-  result: b.toString('utf8'),
-}))
+const decryptStringAsync = vi.fn(async (b: Buffer) => {
+  await passGate(gates.decrypt)
+  return {
+    shouldReEncrypt: false,
+    result: b.toString('utf8'),
+  }
+})
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -89,6 +130,8 @@ beforeEach(() => {
   storage.available = false
   storage.asyncAvailable = false
   storage.backend = 'unknown'
+  gates.encrypt = null
+  gates.decrypt = null
   // 用 mockClear 而不是 mockReset:后者会把上面那几个 implementation 一起抹掉,
   // 于是 readFile 不再抛 ENOENT、writeFile 返回 undefined 而不是 Promise。
   encryptStringAsync.mockClear()
@@ -462,6 +505,59 @@ describe('gatewayToken 落盘', () => {
     const m = await import('../gatewayToken')
 
     await expect(m.loadPersisted()).resolves.toBeUndefined()
+  })
+
+  // 与「登出后在途请求」那条同一个 bug 的第二个落点。外层 getGatewayToken 的守卫只
+  // 管到 cache.set,persist() 内部还隔着两个 await(可用性探测 + 加密);登出落在
+  // 加密那一段时,payload 已经在登出**之前**快照好了,密文里带着 token,而 fs.rm
+  // 早已跑完 —— 写下去等于把 token 亲手送回盘上。
+  it('登出落在「加密完成、还没写盘」之间时,密文不得落回磁盘', async () => {
+    setPlatform('linux')
+    storage.available = true
+    storage.asyncAvailable = true
+    storage.backend = 'gnome_libsecret'
+    const gate = makeGate()
+    gates.encrypt = gate
+    fetchMock.mockResolvedValue(ok('sk-persist-race'))
+    const m = await import('../gatewayToken')
+
+    const pending = m.getGatewayToken(POOL)
+    // 必须等到真的进了 encryptStringAsync 才登出。早一步的话外层那道守卫会先拦下,
+    // persist() 压根不被调用,这条用例就退化成在测已经覆盖过的路径。
+    await gate.reached
+    await m.clearGatewayTokens()
+    gate.open()
+    // token 照常还给调用方,和另一条竞态用例一致:修法是不写状态,不是让请求失败。
+    await expect(pending).resolves.toBe('sk-persist-race')
+
+    expect(fsMock.writeFile).not.toHaveBeenCalled()
+  })
+
+  // 第三个落点:loadPersisted() 此前一道守卫都没有。登出落在读盘或解密期间时,
+  // 盘上那份会被解回内存,getActivePoolToken() 随后就能把它交给 header 注入器,
+  // 下一次 persist() 再把它写回盘 —— 登出被整个撤销。
+  it('登出落在「读盘、解密」期间时,盘上那份不得被解回内存', async () => {
+    setPlatform('linux')
+    storage.available = true
+    storage.asyncAvailable = true
+    storage.backend = 'gnome_libsecret'
+    fsMock.readFile.mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ '342:': 'sk-from-disk' }), 'utf8'),
+    )
+    const gate = makeGate()
+    gates.decrypt = gate
+    const m = await import('../gatewayToken')
+
+    const pending = m.loadPersisted()
+    await gate.reached
+    await m.clearGatewayTokens()
+    gate.open()
+    await expect(pending).resolves.toBeUndefined()
+
+    // activePool 在 clear **之后**才设:否则「activePool 被清了」会替「缓存空了」
+    // 把这条撑绿。
+    m.setActivePool(POOL)
+    expect(m.getActivePoolToken()).toBeNull()
   })
 
   // clearGatewayTokens 里唯一与安全相关的那半边:内存清干净了、盘上那份还在,

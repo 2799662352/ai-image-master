@@ -72,10 +72,18 @@ export async function getGatewayToken(pool: Pool): Promise<string> {
       // 文件原样填回去。
       if (gen !== generation) return token
       cache.set(key, token)
-      await persist().catch(() => {})
+      // `gen` 要继续往下传:这道守卫只管到 `cache.set`,`persist()` 内部还隔着两个
+      // await(可用性探测 + 加密),那两段里登出的话密文照样会被写回盘。
+      await persist(gen).catch(() => {})
       return token
     })
     .finally(() => {
+      // 已知的 ABA,**刻意不修**:t0 建 taskA → 登出 `inflight.clear()` → t2 建
+      // 同键的 taskB → taskA 的这个 finally 把 taskB 的条目删掉。于是第三个并发
+      // 调用不再合流,会另起一次网络往返、再多一次磁盘写。
+      // 之所以只是浪费而不是错误:`generation` 守卫保证被误删的那个任务写不坏
+      // 任何状态,两个任务拿到的也都是同一个池的合法 token。
+      // 真要修就是 `if (inflight.get(key) === task) inflight.delete(key)`。
       inflight.delete(key)
     })
   inflight.set(key, task)
@@ -150,6 +158,11 @@ function storePath(): string {
  *    判据是「等于 basic_text」而不是「在白名单里」:后端枚举一直在长(kwallet →
  *    kwallet5 → kwallet6),白名单写死在今天,明天 Electron 加个 kwallet7 就会静默
  *    停止落盘。只否掉已知坏的那一个,新来的按好的用。
+ *
+ * ⚠️ **这个函数是 async,调用处必须 `await`。** 写成 `if (!encryptionIsReal())` 的话,
+ * 对 Promise 取 `!` **恒为 false**(Promise 永远 truthy),而 TS **不会报错**(`!`
+ * 接受任意类型)。后果是整个落盘判据静默失效:basic_text 明文后端照样落盘,一个
+ * 信号都没有。当前两个调用点(`persist()` / `loadPersisted()`)都已 `await`。
  */
 async function encryptionIsReal(): Promise<boolean> {
   try {
@@ -163,14 +176,22 @@ async function encryptionIsReal(): Promise<boolean> {
   }
 }
 
-async function persist(): Promise<void> {
+/** `gen` 是调用方出发时的代际,见下面写盘前那道守卫。 */
+async function persist(gen: number): Promise<void> {
   if (!(await encryptionIsReal())) return // 只留内存,重启后重取
   const payload = JSON.stringify(Object.fromEntries(cache))
   const buf = await safeStorage.encryptStringAsync(payload)
+  // 上面两个 await 之间都可能有人登出。`payload` 是登出**之前**快照的,密文里带着
+  // token,而 `fs.rm` 早已跑完 —— 写下去就是把一枚永不过期、无法单独吊销的 token
+  // 亲手送回盘上。所以落地前必须再比一次,而不是只信调用处那道。
+  if (gen !== generation) return
   await fs.writeFile(storePath(), buf)
 }
 
 export async function loadPersisted(): Promise<void> {
+  // 在第一个 await 之前记下代际:下面读盘、解密全是 await,任何一段里登出,
+  // 填回内存就等于把刚清掉的 token 复活。
+  const gen = generation
   if (!(await encryptionIsReal())) return
   try {
     const buf = await fs.readFile(storePath())
@@ -181,6 +202,9 @@ export async function loadPersisted(): Promise<void> {
     // 「落盘了但重启后永远读不回来」,一个错都不报。
     // `shouldReEncrypt` 刻意不处理:token 是可丢弃的缓存,下次取用时会重新落盘。
     const { result: json } = await safeStorage.decryptStringAsync(buf)
+    // 填回去的话,`getActivePoolToken()` 立刻就能把它交给 header 注入器,
+    // 下一次 `persist()` 又会把它写回盘 —— 登出被整个撤销。
+    if (gen !== generation) return
     for (const [k, v] of Object.entries(JSON.parse(json) as Record<string, string>)) {
       if (typeof v === 'string' && v) cache.set(k, v)
     }
