@@ -147,7 +147,10 @@ describe('auth IPC 编排', () => {
     startLoopbackListener.mockClear()
     startPairing.mockReset()
     claimPairing.mockReset()
-    logoutFn.mockClear()
+    // mockReset 而不是 mockClear:下面有一条用例把 logout 换成永不 resolve 的闸门
+    // (它现在是 async —— 里面压着 clearGatewayTokens 的 fs.rm),mockClear 不清实现,
+    // 那个闸门会漏到后面每一条 logout 用例上、把它们全挂住。
+    logoutFn.mockReset()
     fetchOrganizations.mockReset()
     fetchBalance.mockReset()
     fetchQuota.mockReset()
@@ -974,22 +977,30 @@ describe('auth IPC 编排', () => {
     expect(sent[0]).toEqual({ channel: 'auth:state-changed', payload: expect.objectContaining({ authenticated: false }) })
   })
 
-  // `logout()` 只清平台凭据,网关 token 是另一套。漏掉这一步的话,用户点完登出,
-  // 盘上仍躺着一枚**永不过期、泄漏后无法单独吊销**的 token,下次启动还会被读回内存。
-  it('logout 一并清掉网关 token', async () => {
+  // 清网关 token 的责任**在 `session.logout()` 里面**,不在这一层。
+  //
+  // 曾经是这里自己补一句 `clearGatewayTokens()`:那让「清凭据必同时清网关 token」这条
+  // 不变量散在调用方身上,下一个直接调 `logout()` 的人会无声地造出第三条泄漏路径
+  // (网关 token 永不过期、泄漏后无法单独吊销)。收进 `logout()` 之后,这一层只需要
+  // 把它 await 掉。这条钉住「不再重复清」——重新加回来就是每次登出多跑一遍。
+  it('logout 不自己清网关 token,那是 session.logout() 的事', async () => {
     await register()
 
     await call('auth:logout')
 
-    expect(clearGatewayTokens).toHaveBeenCalled()
+    expect(logoutFn).toHaveBeenCalled()
+    expect(clearGatewayTokens).not.toHaveBeenCalled()
   })
 
-  // `clearGatewayTokens` 是 async,里面还压着一次 `fs.rm`。不 await 的话 handler 提前
-  // 返回,渲染层立刻显示「已登出」,而删盘还在半路 —— 用户此时关掉应用,进程退出会把
-  // 它截断,token 原样留在盘上。这条用可控闸门把那个间隙变成确定的。
-  it('logout 会等网关 token 真的删完才返回', async () => {
+  // `logout()` 现在是 async,里面压着 `clearGatewayTokens` 的那次 `fs.rm`。不 await 的话
+  // handler 提前广播「已登出」,而删盘还在半路 —— 用户此时关掉应用,进程退出会把它截断,
+  // token 原样留在盘上。
+  //
+  // 从前这个 await 是「顺带」成立的(挡在中间的是 handler 自己那句 clearGatewayTokens);
+  // 现在它是结构性的:漏掉 `await`,广播就会跑在登出前面。用可控闸门把间隙变确定。
+  it('logout 会等 session.logout() 真的跑完才广播', async () => {
     let release!: () => void
-    clearGatewayTokens.mockImplementation(
+    logoutFn.mockImplementation(
       () =>
         new Promise<void>((r) => {
           release = () => r()
@@ -1003,10 +1014,13 @@ describe('auth IPC 编排', () => {
     })
     await flush()
     expect(settled).toBe(false)
+    // 广播必须排在登出之后 —— 否则渲染层会先收到「已登出」,而凭据还没清完。
+    expect(sent).toHaveLength(0)
 
     release()
     await done
     expect(settled).toBe(true)
+    expect(sent).toHaveLength(1)
   })
 
   // 上次会话落盘的网关 token 得读回内存,否则每次重启都白白多一次网络往返 ——

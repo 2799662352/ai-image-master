@@ -242,7 +242,11 @@ describe('auth session', () => {
   // 401/403 正是**账号被后台停用 / 被踢下线**的那一刻。网关 token 永不过期、无法单独
   // 吊销 —— 这恰恰是它最不该被留下的时刻:不清的话,被停用的账号仍能接着花平台余额,
   // 直到用户自己想起来点一次登出。
-  it.each([401, 403])('%i 时一并清掉网关 token,而不只是平台凭据', async (status) => {
+  //
+  // ⚠️ 这条探测路径**目前没有生产调用方**(`probeLiveness` 全仓只有定义与测试),
+  // 所以它守的是「将来接上定时探测时这段仍然对」,而不是今天线上真有这层防护。
+  // 断言两件事一起发生,是因为它现在走的是 `logout()` —— 不变量在那里,不在这里。
+  it.each([401, 403])('%i 时走 logout(),平台凭据与网关 token 一起清', async (status) => {
     cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
     cred.source = 'safeStorage'
     fetchMock.mockResolvedValue(errBare(status))
@@ -250,6 +254,7 @@ describe('auth session', () => {
 
     await m.probeLiveness()
 
+    expect(cred.current).toBeNull()
     expect(clearGatewayTokens).toHaveBeenCalled()
   })
 
@@ -942,9 +947,54 @@ describe('auth session', () => {
     cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
     cred.source = 'safeStorage'
     const m = await import('../session')
-    m.logout()
+    await m.logout()
     expect(cred.current).toBeNull()
     expect(m.getAuthState().authenticated).toBe(false)
+  })
+
+  // 🚨 「清平台凭据」与「清网关 token」是**一条**不变量,必须由 `logout()` 自己保证。
+  //
+  // 两者分家的时候,不变量散在调用方:IPC 的登出 handler 记得清,停用探测也记得清 ——
+  // 于是下一个直接调 `logout()` 的人会无声地造出第三条泄漏路径。网关 token
+  // `expired_time = -1`(永不过期)且被服务端四处共用,泄漏后**无法单独吊销**,
+  // 所以「什么时候清掉它」是整个方案的核心不变量,不能靠调用方的记性。
+  it('logout 自己清掉网关 token,不依赖调用方顺手清', async () => {
+    cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
+    cred.source = 'safeStorage'
+    const m = await import('../session')
+
+    await m.logout()
+
+    expect(clearGatewayTokens).toHaveBeenCalled()
+  })
+
+  // `clearGatewayTokens` 是 async,里面压着一次 `fs.rm`。`logout()` 不 await 的话它提前
+  // 返回,调用方立刻广播「已登出」而删盘还在半路 —— 用户此时关掉应用,进程退出会把它
+  // 截断,token 原样留在盘上。用可控闸门把那个间隙变成确定的。
+  //
+  // 这条同时钉死了 `logout()` 的**签名**:返回 void 的实现无法通过。
+  it('logout 会等网关 token 真的删完才返回', async () => {
+    cred.current = { token: 't', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
+    cred.source = 'safeStorage'
+    let release!: () => void
+    clearGatewayTokens.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          release = () => r()
+        }),
+    )
+    const m = await import('../session')
+
+    let settled = false
+    const done = Promise.resolve(m.logout()).then(() => {
+      settled = true
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(settled).toBe(false)
+
+    release()
+    await done
+    expect(settled).toBe(true)
   })
 
   it('每个请求都挂 AbortSignal,不会无限期挂起', async () => {

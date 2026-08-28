@@ -3,7 +3,6 @@
 import { ipcMain, shell, type BrowserWindow } from 'electron'
 import {
   GatewayTokenError,
-  clearGatewayTokens,
   getGatewayToken,
   loadPersisted,
   setActivePool,
@@ -459,13 +458,10 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
   })
 
   ipcMain.handle('auth:logout', async () => {
-    logout()
-    // `logout()` 只清平台凭据。网关 token 是另一套,而且**永不过期、泄漏后无法单独
-    // 吊销** —— 留在盘上等于登出没登干净,下次启动 `loadPersisted()` 还会读回来。
-    //
-    // 必须 await:里面压着一次 `fs.rm`,不等它就广播「已登出」,用户此刻关掉应用,
-    // 进程退出会把删盘截断。
-    await clearGatewayTokens()
+    // `logout()` 自己把网关 token 一起清掉(见 `session.logout()` 的注释:那条不变量
+    // 刻意收在那里,不散在调用方)。这里**只需要 await** —— 里面压着一次 `fs.rm`,
+    // 不等它就广播「已登出」,用户此刻关掉应用,进程退出会把删盘截断。
+    await logout()
     broadcastState(getWindow)
   })
 
