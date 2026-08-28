@@ -82,7 +82,18 @@ export function clearGatewayTokens(): void                              // 登�
 
 代价：派生 token 的 key 不再有 `dk` 前缀。可以接受——全仓 grep 确认 key 前缀**没有任何代码依赖**（`pa` 前缀纯人肉可读性），程序化识别一律走 `Name`。
 
-### U2. 每用户令牌数有硬上限，所以幂等复用是必须项
+### U2. 每用户令牌数有硬上限，所以「每个池永远只有一行」是必须项
+
+> **2026-08-28 二次修正。** 本节初稿写的是「幂等复用」，并声称「每个池稳定只占 1 行」——**那是错的**。只做「未过期时复用」只挡住热路径，每过一个 TTL 窗口仍会多一行死行。三种做法的累积速度：
+>
+> | 做法 | 每天新增行（按活跃 8h、TTL 15min） | 撞上 1000 上限 |
+> |---|---|---|
+> | 每次调用都新建 | ~96 | ~10 天 |
+> | 只做「未过期复用」 | ~32 | ~1 个月 |
+> | **原地轮换**（现方案） | **0** | 永不 |
+>
+> 正确做法是过期时**原地改那一行**（换 key、延 `expired_time`、重新启用）而不是插新行。顺带白得一次密钥轮换。并发下用 `WHERE id = ? AND key = <旧>` 做乐观锁——否则两个并发请求各写各的，其中一方返回给调用方的 key 根本不在库里，表现为「刚拿到的 token 立刻 401」。
+
 
 ```191:203:D:\tecx\text\25\soraui_4.0\new-api\controller\token.go
 	maxTokens := operation_setting.GetMaxUserTokens()
@@ -261,28 +272,83 @@ func InternalMintDerivedToken(c *gin.Context) {
 	// 上游对 Name 有 50 字符上限(token.go:174-177),这个格式远低于。
 	name := fmt.Sprintf("桌面端-%d", req.ProjectId)
 
-	// 幂等:同一个池已有未过期的派生 token 就直接复用。
+	// 每个池**永远只有一行**:未过期就复用,过期就原地换 key + 延期,绝不插新行。
 	//
 	// **这不是优化,是必须项。** 上游对每用户令牌数有硬上限(默认 1000,
-	// token_setting.go:12),而 AddToken 到顶就直接拒(token.go:191-203)。每次都新建的话
-	// 15 分钟 TTL 下约 96 枚/天,重度用户十来天就把自己的账号铸废。
+	// token_setting.go:12),AddToken 到顶直接拒(token.go:191-203)。三种做法的累积速度:
+	//   - 每次新建：           ~96 行/天  → 约 10 天铸废账号
+	//   - 只做「未过期时复用」：~32 行/天  → 约 1 个月铸废（过期行仍在堆积）
+	//   - 原地轮换（本实现）：  0 行/天    → 永不
 	//
-	// 复用不削弱安全性:同一枚 token 只在它本来的 TTL 内被继续用,泄漏窗口与每次新铸一致。
+	// 「只做未过期复用」是个半吊子解法:它只挡住热路径上的重复调用,每过一个 TTL 窗口
+	// 仍然多一行死行。别被「已经幂等了」这句话骗过去。
+	//
+	// 原地换 key 顺带白得一次密钥轮换。旧 key 立刻失效不构成问题 —— 走到这个分支时它
+	// 本来就已经过期了。
 	var existing model.Token
-	err = model.DB.Where("user_id = ? AND name = ? AND status = ? AND expired_time > ?",
-		alloc.NewapiUserId, name, common.TokenStatusEnabled, now).First(&existing).Error
-	if err == nil {
+	err = model.DB.Where("user_id = ? AND name = ?", alloc.NewapiUserId, name).
+		First(&existing).Error
+
+	switch {
+	case err == nil && existing.Status == common.TokenStatusEnabled && existing.ExpiredTime > now:
+		// 还活着,原样复用。
 		c.JSON(http.StatusOK, gin.H{
 			"token_key":      "sk-" + existing.Key,
 			"expires_in":     existing.ExpiredTime - now,
 			"newapi_user_id": alloc.NewapiUserId,
 		})
 		return
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+
+	case err == nil:
+		// 行在但已过期(或被 Task 2b 吊销过):原地换 key、延期、重新启用。
+		//
+		// 条件里带上 `key = ?` 是**乐观锁**:两个并发请求会同时读到同一行、各自算出
+		// 不同的新 key,没有这个条件的话两边都以为自己写成功了,而其中一个返回给调用方的
+		// key 根本不在库里 —— 表现为「刚拿到的 token 立刻 401」。
+		newKey, kerr := common.GenerateKey()
+		if kerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate key"})
+			return
+		}
+		res := model.DB.Model(&model.Token{}).
+			Where("id = ? AND `key` = ?", existing.Id, existing.Key).
+			Updates(map[string]interface{}{
+				"key":           newKey,
+				"status":        common.TokenStatusEnabled,
+				"expired_time":  now + ttl,
+				"accessed_time": now,
+			})
+		if res.Error != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate token"})
+			return
+		}
+		if res.RowsAffected == 0 {
+			// 输给了并发的那一方。它已经写好了一枚可用的,重读返回即可。
+			var winner model.Token
+			if e := model.DB.Where("user_id = ? AND name = ?", alloc.NewapiUserId, name).
+				First(&winner).Error; e != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reload token"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"token_key":      "sk-" + winner.Key,
+				"expires_in":     winner.ExpiredTime - now,
+				"newapi_user_id": alloc.NewapiUserId,
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"token_key":      "sk-" + newKey,
+			"expires_in":     ttl,
+			"newapi_user_id": alloc.NewapiUserId,
+		})
+		return
+
+	case !errors.Is(err, gorm.ErrRecordNotFound):
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query existing token"})
 		return
 	}
+	// 落到这里 = 该池第一次铸,往下走新建流程。
 
 	// key 用上游的生成器,不要手搓。
 	//
@@ -349,7 +415,15 @@ Expected: PASS
 
 - [ ] **Step 7: 补齐剩余用例并跑全**
 
-补：无 allocation → 404；缺 `platform_user_id` → 400；`ttl_seconds` 传 5 与 99999 各断言被 clamp 成 60 / 3600；producer 池路径（`producer_project_id > 0`）能查到。
+**「永不累积」这组是本 Task 的核心，一条都不能少**（少了任何一条，插新行的实现都能蒙混过关）：
+
+- **未过期时复用**：连续调两次，第二次返回的 `token_key` 与第一次**相同**，且该 `(user_id, name)` 下只有 **1 行**
+- **过期后原地轮换**：把现有那行的 `expired_time` 改成过去时间，再调一次，断言三件事 —— ① 拿到**新的** key；② 该 `(user_id, name)` 下**仍然只有 1 行**；③ 那一行的 `id` 与之前**相同**。
+  - ② 和 ③ 缺一不可：只断言 ① 的话「插新行」也能过；只断言 ② 的话「DELETE + INSERT」也能过。**③ 才是「原地 UPDATE」的证明。**
+- **循环不涨**：重复「置过期 → 调用」5 轮，全程该 `(user_id, name)` 下始终只有 1 行
+- **被吊销后能复活**：把那行 status 置成 disabled（模拟 Task 2b 吊销过），再调一次，断言拿到新 key 且 status 回到 enabled、行数仍为 1
+
+其余：无 allocation → 404；缺 `platform_user_id` → 400；`ttl_seconds` 传 5 与 99999 各断言被 clamp 成 60 / 3600；producer 池路径（`producer_project_id > 0`）能查到。
 
 Run: `go test ./controller/... ./service/...`
 Expected: PASS，且既有 allocation / user-balance 测试无回归
