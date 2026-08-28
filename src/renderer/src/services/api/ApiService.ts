@@ -299,6 +299,20 @@ export interface ModelCapabilities {
   layerDecomposition?: boolean
 }
 
+/**
+ * 参考图 / 输入图的合法源形态,与 {@link ApiService.normalizeImageSource} 认得的
+ * 分支一一对应:裸字符串（http(s) URL / data URL / 纯 base64），或带
+ * `dataUrl` / `url` / `base64` 之一的对象（`mimeType` 只在裸 base64 时用于拼
+ * data URL 前缀）。
+ *
+ * 注意**没有** `{ data }` 这一支：归一化不认这个键，传进来的图会被静默丢掉。
+ */
+export type ReferenceImageSource =
+  | string
+  | { dataUrl: string; mimeType?: string }
+  | { url: string; mimeType?: string }
+  | { base64: string; mimeType?: string }
+
 export interface GenerateImageParams {
   prompt: string
   model?: string
@@ -1491,18 +1505,43 @@ export class ApiService {
    */
   async generateImageWithReference(
     prompt: string,
-    referenceImages: Array<string | { data: string; mimeType?: string }>,
+    referenceImages: ReferenceImageSource[],
     ratio: string = '1:1',
     count: number = 1,
     resolution?: string
   ): Promise<GenerateResult> {
     return this.generateImage({
       prompt,
-      referenceImages,
+      referenceImages: this.flattenReferenceSources(referenceImages),
       ratio,
       count,
       resolution
     })
+  }
+
+  /**
+   * 把旧签名允许的对象形态参考图压成 generateImage 声明的 `string[]`。
+   *
+   * generateImage 往下每一站（拆分预处理、resolveSourcesToDataUrls、各家 payload
+   * 构造）都按「元素是字符串源」写的，只有最末端的 normalizeImageSource 兼容对象。
+   * 所以在入口就用同一套规则压平：压出来的字符串与末端自己归一化出的结果一致，
+   * 而字符串元素原样透传、不提前改写。
+   */
+  private flattenReferenceSources(sources: ReferenceImageSource[]): string[] {
+    const flattened: string[] = []
+    for (const source of sources) {
+      if (typeof source === 'string') {
+        flattened.push(source)
+        continue
+      }
+      const normalized = this.normalizeImageSource(source)
+      if (normalized) {
+        flattened.push(normalized)
+      } else {
+        console.warn('[ApiService] generateImageWithReference: 参考图形态无法识别，已跳过')
+      }
+    }
+    return flattened
   }
 
   /**
@@ -3614,10 +3653,11 @@ export class ApiService {
             resolution: resolution || undefined,
             count: n
           })
+          // success 由 `...result` 提供（GenerateResult.success 是必填项）。之前在展开
+          // 之前还显式写了一遍同值的 success，展开必然盖掉它，纯属死代码。
           const resultData = {
             index: promptIndex,
             prompt,
-            success: result.success,
             ...result
           }
 
@@ -3714,10 +3754,10 @@ export class ApiService {
             referenceImages,
             count: n
           })
+          // 同 batchGenerate：success 以 `...result` 为准，显式那一份是被覆盖的死代码。
           const resultData = {
             index: promptIndex,
             prompt,
-            success: result.success,
             ...result
           }
 

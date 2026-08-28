@@ -615,6 +615,25 @@ export interface ElectronAPI {
       | { success: true; url: string; key: string }
       | { success: false; error: string }
     >
+    /** await 版:直接拿回 COS URL,给「生成完立刻要显示」的一次性流程用。 */
+    uploadImageFromUrl: (
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<
+      | { success: true; url: string; key: string }
+      | { success: false; error: string }
+    >
+    /**
+     * 真 fire-and-forget: 立即入队, IPC 立刻 resolve。
+     * 实际上传完成后, main 进程通过 `onUploadResult` 推回结果。
+     */
+    enqueueUploadFromUrl: (
+      requestId: string,
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<{ queued: true } | { queued: false; error: string }>
     /**
      * 字节版 fire-and-forget 入队 (P0 闪退修复 2026-07-09)。
      * 渲染端传 ArrayBuffer(结构化克隆原始字节), 避免 40MB 级 base64
@@ -626,6 +645,16 @@ export interface ElectronAPI {
       mimeType?: string,
       metadata?: Record<string, unknown>,
     ) => Promise<{ queued: true } | { queued: false; error: string }>
+    /** 两个 enqueue 通道的统一回流口;返回值是取消订阅函数。 */
+    onUploadResult: (
+      cb: (
+        result:
+          // localPath (2026-07-09): 主进程上传前先把字节落到
+          // userData/generated-images 的本地副本路径; 写盘失败时缺省。
+          | { requestId: string; success: true; url: string; key: string; localPath?: string }
+          | { requestId: string; success: false; error: string; localPath?: string },
+      ) => void,
+    ) => () => void
   }
   // Seedance 视频生成（codex `generate_video` 工具）。Key 走主进程
   // safeStorage，渲染端只见 masked 状态；任务进度经 `seedance:task-update`

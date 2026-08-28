@@ -528,8 +528,18 @@ function createWindow(): void {
   //   3. F11 是 v4.3.12 重新接回的 affordance:`Menu.setApplicationMenu(null)`
   //      去掉默认菜单后副作用是 togglefullscreen role 的 accelerator 也丢,
   //      这里在 keyDown 上显式 toggle 把行为还回来。
+  //   4. Electron 把 `Input.type` 声明成宽 `string`(运行时只会是 keyDown/keyUp),
+  //      所以这里先做一次运行时收窄再往下传。keyDown 的取舍仍留在被测的
+  //      resolveMainWindowShortcut 里,本文件不重复那个判断。
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    const action = resolveMainWindowShortcut(input)
+    if (input.type !== 'keyDown' && input.type !== 'keyUp') return
+    const action = resolveMainWindowShortcut({
+      key: input.key,
+      type: input.type,
+      control: input.control,
+      meta: input.meta,
+      shift: input.shift,
+    })
     if (!action || !mainWindow) return
     switch (action.type) {
       case 'toggleDevTools':
