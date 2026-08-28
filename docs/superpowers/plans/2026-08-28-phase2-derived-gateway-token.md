@@ -8,6 +8,19 @@
 
 **Tech Stack:** Go 1.x + gin + gorm（new-api）、Node/Express/Prisma + vitest（sora-ui-backend）、Electron 43 + TypeScript + vitest（CATIMATION）
 
+> ## ⚠️ 本计划已作废（2026-08-28）
+>
+> 用户决定**不做派生 token**，改为桌面端直接使用现有的影子账号 allocation token。新计划见 `2026-08-28-phase2-direct-shadow-token.md`。
+>
+> 保留本文档的唯一理由：将来若要升级到两层 token，这里的上游取证（U1–U5）与下面两条实施期发现仍然有效，不必重新挖。
+>
+> **实施期发现（来自一次跑到全绿但未提交的实现）：**
+>
+> 1. **Step 4 的代码有编译级 bug。** 响应里写的是 `"sk-" + suffix`，但同一函数里变量名是 `key`（`suffix` 是初版手搓 key 方案的遗留名）。照抄会 `undefined: suffix`。正确写法是 `"sk-" + key`。
+> 2. **producer 池路径的幂等有个缺口。** 复用键 `name` 用的是 `桌面端-{project_id}`，而 producer 池是靠 `producer_project_id` 找 allocation 的。调用方若对同一个 `producer_project_id` 先后传不同的 `project_id`，会在同一影子用户上铸出两个不同名的派生 token——幂等失效（每个名字仍各自 1 行，不是安全问题，也远达不到 1000 上限）。要堵就把 producer 路径的名字改用 `producer_project_id`，但那会改变 `Name` 契约格式。
+>
+> **另**：`common.GenerateKey()` 已核实在 `common/utils.go:251` → `GenerateRandomCharsKey(48)`，48 字符，远低于 `Token.Key` 的 `varchar(128)`，不存在截断。
+
 ## Global Constraints
 
 - **绝不修改 `PersonalAllocation.NewapiTokenKey`，也不改那枚 allocation token 的任何字段。** 整个方案成立的前提是「现有那枚一动不动」——它被 sora-ui-backend 的 relay、`projectAuth.ts` 的成员校验、shortdrama、Python 后端四处共用。
