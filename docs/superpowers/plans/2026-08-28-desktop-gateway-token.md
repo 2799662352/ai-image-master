@@ -78,7 +78,7 @@ Authorization: Bearer <平台 JWT>
 - Test: `src/main/services/auth/__tests__/gatewayToken.test.ts`
 
 **Interfaces:**
-- Consumes: `getCredentials()` from `./credentials`（现有，返回含 `token` 的平台 JWT 凭据）；`authBaseUrl()` from `./session`（现有）
+- Consumes: `getCredential(): StoredCredential | null` from `./credentials`（**单数**，已核实 `credentials.ts:110`；返回含 `token` 的平台 JWT 凭据）；`authBaseUrl(): string` from `./session`（已核实 `session.ts:41`）
 - Produces:
   - `getGatewayToken(pool: Pool): Promise<string>` — 主进程内部用，抛 `GatewayTokenError`
   - `setActivePool(pool: Pool | null): void`
@@ -97,7 +97,7 @@ vi.stubGlobal('fetch', fetchMock)
 
 const cred = { current: null as unknown }
 vi.mock('../credentials', () => ({
-  getCredentials: () => cred.current,
+  getCredential: () => cred.current,
 }))
 vi.mock('../session', () => ({ authBaseUrl: () => 'https://example.test' }))
 vi.mock('electron', () => ({
@@ -157,7 +157,7 @@ Expected: FAIL —— `Cannot find module '../gatewayToken'`
 import { app, safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { getCredentials } from './credentials'
+import { getCredential } from './credentials'
 import { authBaseUrl } from './session'
 
 export interface Pool {
@@ -226,7 +226,7 @@ export async function getGatewayToken(pool: Pool): Promise<string> {
 }
 
 async function fetchToken(pool: Pool): Promise<string> {
-  const cred = getCredentials()
+  const cred = getCredential()
   if (!cred?.token) {
     throw new GatewayTokenError('NOT_LOGGED_IN', '未登录，无法使用平台余额')
   }
