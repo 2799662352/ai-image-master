@@ -94,9 +94,15 @@ describe('分派：三条路不再有歧义', () => {
     expect(transportFor(r, 'wan3', { billing: 'own-key' })).toBe(r.wan3)
   })
 
-  it('网关 transport 没注册时,平台余额也回落 vvdance 直连 —— 老调用方不抛错', () => {
+  // 这条曾经断言「回落 vvdance 直连」,是接线之前的口径。`11351683` 把它改成抛错:
+  // 回落意味着扣用户自己的 vvdance key,而他以为花的是平台余额 —— 与
+  // `seedanceGateway/credentials.ts` 立的「绝不跨模式回落」是同一条规矩。
+  // 完整的变异说明在 videoTransport.test.ts「要平台余额但通道没注册时抛错」。
+  it('网关 transport 没注册时抛错 —— 平台余额绝不悄悄改走自填 Key', () => {
     const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
-    expect(transportFor({ seedance }, '2.0', { billing: 'platform' })).toBe(seedance)
+    expect(() => transportFor({ seedance }, '2.0', { billing: 'platform' })).toThrow(/平台余额/)
+    // 反面:没要平台余额的照常走老路,老调用方不受影响。
+    expect(transportFor({ seedance }, '2.0')).toBe(seedance)
   })
 
   it('认不出的别名即便在平台余额下也按 Seedance 直连走', () => {

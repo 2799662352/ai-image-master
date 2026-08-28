@@ -19,6 +19,7 @@ export type {
   SeedanceTaskUpdate,
   SeedanceKeyState,
   SeedanceCancelResult,
+  VideoBillingSource,
 } from '../../../types/seedance'
 
 export {
