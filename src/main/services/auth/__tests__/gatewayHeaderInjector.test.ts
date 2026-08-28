@@ -9,7 +9,11 @@ import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../types/a
 const MARKER_LC = BILLING_MARKER_HEADER.toLowerCase()
 
 const tokenRef = { value: null as string | null }
-vi.mock('../gatewayToken', () => ({ getActivePoolToken: () => tokenRef.value }))
+const attributionRef = { value: {} as Record<string, string> }
+vi.mock('../gatewayToken', () => ({
+  getActivePoolToken: () => tokenRef.value,
+  gatewayAttributionHeaders: () => attributionRef.value,
+}))
 
 /**
  * `isPackaged` 可变,因为本文件最要紧的一条断言就是「打包后必须忽略覆盖」。
@@ -44,8 +48,49 @@ describe('gatewayHeaderInjector', () => {
   beforeEach(() => {
     vi.resetModules()
     tokenRef.value = null
+    attributionRef.value = {}
     electronApp.isPackaged = false
     delete process.env[GATEWAY_ORIGIN_ENV]
+  })
+
+  /**
+   * 🧬 变异点:删掉注入器里那行 `Object.assign(headers, gatewayAttributionHeaders())`,
+   * 这两条必红。
+   *
+   * 少了归属头,上游会把这笔消费以 `platform_user_id=''` / `project_id=0` 落库
+   * (`new-api/model/log.go:400-423` 是从请求头取的),而查询按
+   * `WHERE platform_user_id=? AND project_id=?` 走 —— **钱扣对了、流水一条都查不到**。
+   * 2026-08-29 真机撞到过:余额准确减少,后台却显示「共 0 条」。
+   */
+  it('注入凭据时一并带上计费归属头', async () => {
+    tokenRef.value = 'sk-real'
+    attributionRef.value = {
+      'X-Platform-User-Id': 'user-1',
+      'X-Project-Id': '345',
+    }
+    const s = fakeSession()
+    const { installGatewayHeaderInjector } = await import('../gatewayHeaderInjector')
+    installGatewayHeaderInjector(s as never)
+
+    const r = await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
+
+    expect(r.requestHeaders['X-Platform-User-Id']).toBe('user-1')
+    expect(r.requestHeaders['X-Project-Id']).toBe('345')
+  })
+
+  // 取不到 token 时请求本来就会 401。给一个注定失败的请求打上「这是某某的消费」
+  // 没有意义,反而可能在上游留下一条归属明确、金额为零的噪音。
+  it('没有 token 时不发归属头', async () => {
+    tokenRef.value = null
+    attributionRef.value = { 'X-Platform-User-Id': 'user-1', 'X-Project-Id': '345' }
+    const s = fakeSession()
+    const { installGatewayHeaderInjector } = await import('../gatewayHeaderInjector')
+    installGatewayHeaderInjector(s as never)
+
+    const r = await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
+
+    expect(r.requestHeaders['X-Platform-User-Id']).toBeUndefined()
+    expect(r.requestHeaders['X-Project-Id']).toBeUndefined()
   })
 
   it('带标记头且有 token 时，换成 Authorization 并删掉标记', async () => {

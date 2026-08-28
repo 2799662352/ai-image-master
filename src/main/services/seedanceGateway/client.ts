@@ -48,6 +48,15 @@ export interface SeedanceGatewayClientOptions {
   baseUrl?: string
   /** 见 {@link SEEDANCE_GATEWAY_QUERY_PATH}。烟测用它试另一条路径。 */
   queryPath?: string
+  /**
+   * 计费归属头(`X-Platform-User-Id` / `X-Project-Id` / `X-Producer-Project-Id`)。
+   *
+   * **现取而不是构造时定死**:用户中途切池,下一次提交就该记到新池上,
+   * 而 transport 的生命周期跟着整个视频服务走、不跟着一次提交走。
+   *
+   * 缺省回空对象 = 不发这些头,行为与补这个功能之前一致(钱照扣、流水查不到)。
+   */
+  attributionHeaders?: () => Record<string, string>
   /** 提交重试的注入点，测试用来去掉真实等待。 */
   retryOptions?: RetrySubmitOptions
 }
@@ -123,6 +132,7 @@ async function request(
   url: string,
   init: RequestInit,
   apiKey: string,
+  attribution: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), SEEDANCE_GATEWAY_REQUEST_TIMEOUT_MS)
@@ -134,6 +144,11 @@ async function request(
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        // 计费归属。上游是**从请求头**认这笔消费属于谁的,只发 Authorization 的话
+        // 钱扣对了、流水却查不到(`auth/gatewayToken.gatewayAttributionHeaders` 有
+        // 完整论证与真机证据)。提交与轮询都带 —— 轮询触发的差额结算会再写一条
+        // 退款日志,那条同样需要归属。
+        ...attribution,
         ...(init.headers as Record<string, string> | undefined),
       },
     })
@@ -160,6 +175,7 @@ export function createSeedanceGatewayClient(
   const baseUrl = (options.baseUrl ?? MIAU_BASE_URL).replace(/\/+$/, '')
   const queryPath = options.queryPath ?? SEEDANCE_GATEWAY_QUERY_PATH
   const { fetchImpl } = options
+  const attribution = options.attributionHeaders ?? ((): Record<string, string> => ({}))
 
   return {
     async createTask(body, apiKey) {
@@ -173,6 +189,7 @@ export function createSeedanceGatewayClient(
           `${baseUrl}${SEEDANCE_GATEWAY_CREATE_PATH}`,
           { method: 'POST', body: JSON.stringify(body) },
           key,
+          attribution(),
         )
         const nested = asRecord(json.data)
         const id =
@@ -197,6 +214,7 @@ export function createSeedanceGatewayClient(
         `${baseUrl}${queryPath}/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
         key,
+        attribution(),
       )
       return parseSeedanceGatewayTaskResult(json)
     },

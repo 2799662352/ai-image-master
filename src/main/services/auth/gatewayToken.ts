@@ -77,6 +77,51 @@ export function getActivePool(): Pool | null {
   return activePool ? { ...activePool } : null
 }
 
+/**
+ * 计费归属请求头。**发凭据时必须一起发,否则这笔消费在流水里查不到。**
+ *
+ * ## 为什么需要
+ *
+ * 上游 new-api 的归属字段是从**请求头**取的,不是从 token 反查的:
+ *
+ *   - 任务:`controller/relay.go:801-806`
+ *     `task.PrivateData.PlatformUserId = c.GetHeader("X-Platform-User-Id")`
+ *   - 消费日志:`model/log.go:400-423` 同款回退,另有 producer 两个头
+ *
+ * 而查询是 `WHERE platform_user_id = ? AND project_id = ?`
+ * (`model/log.go:332-336`)。只发 `Authorization` 的话,行会以
+ * `platform_user_id=''` / `project_id=0` 落库 —— **不是没写,是写成了查不到的样子**。
+ *
+ * 扣费不受影响(走 token 的 allocation),所以这个 bug 的症状是
+ * 「余额少了、流水 0 条」,用户第一反应必然是钱被吞了。2026-08-29 真机确认过:
+ * new-api 侧任务记录 `quota=2504700 status=SUCCESS` 齐全,平台侧流水却停在五天前。
+ *
+ * ## 为什么缺了就回空对象,而不是发空串
+ *
+ * `X-Platform-User-Id: ''` 与不发是两回事:前者会让上游把空串当成一个合法的归属值
+ * 写进去,与今天的坏状态一样查不到,却更难在事后分辨「没带头」和「带了个空的」。
+ *
+ * ## producer 池要发两半
+ *
+ * 池键是 `(projectId, producerProjectId)`。少发一半,流水会记到错的子项目上 ——
+ * 后台那句「无法单独拆出当前池」正是这个问题的表现。
+ * 与网页版 `getAuthHeaders()` 发的两个头保持一致(它今天的流水是能查到的)。
+ */
+export function gatewayAttributionHeaders(): Record<string, string> {
+  const pool = activePool
+  if (!pool) return {}
+  const userId = getCredential()?.userId
+  if (!userId) return {}
+
+  return {
+    'X-Platform-User-Id': userId,
+    'X-Project-Id': String(pool.projectId),
+    ...(pool.producerProjectId !== null && pool.producerProjectId > 0
+      ? { 'X-Producer-Project-Id': String(pool.producerProjectId) }
+      : {}),
+  }
+}
+
 export async function getGatewayToken(pool: Pool): Promise<string> {
   const key = poolKey(pool)
   const hit = cache.get(key)
