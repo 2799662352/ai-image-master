@@ -7,7 +7,9 @@
 // ……),不要混进全屏登录页的字面 hex。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getApiService } from '../../services/api/ApiService'
 import { useAuthStore } from '../../stores/useAuthStore'
+import { useModelStore } from '../../stores/useModelStore'
 import { useQuotaStore, type Pool } from '../../stores/useQuotaStore'
 import { RechargeModal } from './RechargeModal'
 import { UsageDrawer } from './UsageDrawer'
@@ -138,6 +140,29 @@ export function AccountSection() {
     },
     [setBillingSource],
   )
+
+  /**
+   * 当前选中的模型是否用不了平台余额。
+   *
+   * 场景很窄但很痛:站点选了 Miau、开关也开着,偏偏那几个谷歌原生模型的请求会绕开
+   * 平台网关(源站直连,判据见 `evaluatePlatformBillingEligibility`)—— 不提示的话
+   * 用户点出图只会收到一个没有上下文的 401,而他刚把计费切到平台余额,只会去怀疑
+   * 余额或账号。
+   *
+   * 只认 `model-bypasses-gateway` 这一种原因:站点不对时下面那句 hint 已经说清楚了,
+   * 这里再冒一条会让人误以为「换个模型就行」。
+   *
+   * **每次渲染现算,不做 memo。** 判据是两次对象查表,比维护依赖数组便宜;而依赖数组
+   * 这里恰恰容易漏 —— 站点是从 service 现读的,它变了并不会改任何 props/state,
+   * memo 反而会把结论钉在过期的站点上。
+   */
+  const currentModelKey = useModelStore((s) => s.currentModelKey)
+  const unsupportedModelName =
+    billingSource === 'platform' &&
+    getApiService().getPlatformBillingEligibility(currentModelKey).blocker ===
+      'model-bypasses-gateway'
+      ? (getApiService().getModelConfig(currentModelKey)?.name ?? currentModelKey)
+      : null
 
   const openUsage = useCallback(() => {
     setUsageOpen(true)
@@ -304,6 +329,22 @@ export function AccountSection() {
                     ? '当前用账号余额出图,仅对「Miau API」站点生效;其余站点仍走各自的自填密钥。'
                     : '当前用下方「API 站点」里配置的密钥出图,不扣这里的账号余额。'}
               </p>
+              {/* 站点对了、开关也开了,模型仍可能用不了 —— 见上面 unsupportedModelName
+                  的注释。这条比上面那句更醒目(黄色左边框),因为它说的是「你以为在用
+                  平台余额,但这一次不是」,而不是一般性说明。 */}
+              {unsupportedModelName && (
+                <p
+                  data-testid="billing-model-hint"
+                  className="text-xs text-yellow-300/80 border-l-2 border-cyberpunk-yellow pl-3 py-1 leading-relaxed"
+                >
+                  {/* 整句走模板串而不是散在 JSX 文本里:JSX 会把换行缩进折成一个
+                      空格,中文句子里会平白多出「端点, 请求」这样的空格。 */}
+                  {`当前模型「${unsupportedModelName}」用不了平台余额:` +
+                    '它走谷歌原生端点,请求绕开了平台网关。' +
+                    '这次出图会改用下方「API 站点」里配置的密钥;' +
+                    '想用平台余额请先换一个模型。'}
+                </p>
+              )}
             </div>
           </div>
 

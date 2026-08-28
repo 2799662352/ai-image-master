@@ -438,6 +438,86 @@ export const MIAU_SITE_KEY = 'antigravity'
 // `src/types/authApi.ts` 里 —— 现在就在那儿,连同它为什么必须只有一份的说明。
 
 /**
+ * 本次请求实际会打到的 host 源。
+ *
+ * **`buildRequestUrl` 与平台余额判定共用这一个函数,别各写各的。** 这两件事此前是
+ * 一对隐性耦合:前者会把谷歌原生模型的 host 换成 `directBaseURL`(源站直连),后者却
+ * 照着 `site.baseURL` 判断 —— 于是「站点是网关」为真、「请求打向网关」为假。症状见
+ * {@link evaluatePlatformBillingEligibility}。
+ */
+export function resolveRequestHostSource(
+  modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
+  site: Pick<ApiSite, 'baseURL' | 'directBaseURL'>,
+): string {
+  return modelConfig?.apiType === 'gemini-native' && site.directBaseURL
+    ? site.directBaseURL
+    : site.baseURL
+}
+
+/**
+ * 两个地址是否同源(protocol + host)。
+ *
+ * 按 origin 而不是字符串相等来比,是因为**主进程注入器认的就是 host**
+ * (`gatewayHeaderInjector` 的 URL 过滤器)。字符串相等会被一个尾斜杠骗过去,
+ * 而那种站点条目的请求其实照样会被注入。
+ */
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a)
+    const right = new URL(b)
+    return left.protocol === right.protocol && left.host === right.host
+  } catch {
+    return false
+  }
+}
+
+/** 平台余额用不了的原因。`null` 表示能用。 */
+export type PlatformBillingBlocker =
+  | 'unknown-model'
+  | 'no-site'
+  /** 站点整个不在平台计费域内(apiyi / 自建 / 本地)。 */
+  | 'site-not-gateway'
+  /** 站点对,但这个模型的请求绕开了注入器覆盖的 host。 */
+  | 'model-bypasses-gateway'
+
+export interface PlatformBillingEligibility {
+  eligible: boolean
+  blocker: PlatformBillingBlocker | null
+}
+
+/**
+ * 这个模型在这个站点上能不能用平台余额。
+ *
+ * 判据只有一条:**请求最终打到的 host 必须落在注入器的过滤器里**。凭据在主进程,
+ * 渲染层只打一个标记头,由 `onBeforeSendHeaders` 在出网前换成真 `Authorization` ——
+ * 而那个过滤器只挂在网关那一个 host 上。打到别处的请求有两个后果,都不响:
+ *   1. 标记换不到凭据、我们又刻意不发用户自填的 Key,于是**必定 401**;
+ *   2. 内部协议标记头会原样出网(注入器本该在出网前删掉它)。
+ *
+ * 谷歌原生模型正是这种情况:加速域名前面的 EdgeOne 不支持 `:generateContent`
+ * 那条路径(一律 524),所以 `buildRequestUrl` 把它们改道到 `directBaseURL` ——
+ * 一个**明文 HTTP 的源站 IP**。那个地址绝不能加进注入器白名单(等于让一枚永不过期、
+ * 无法单独吊销的凭据在网络上裸奔),所以这些模型只能回落到自填 Key。
+ *
+ * 站点级原因优先于模型级:站点就不对的时候再说「换个模型」是误导。
+ */
+export function evaluatePlatformBillingEligibility(
+  modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
+  site: Pick<ApiSite, 'baseURL' | 'directBaseURL'> | undefined,
+  gateway: Pick<ApiSite, 'baseURL'> | undefined,
+): PlatformBillingEligibility {
+  if (!modelConfig) return { eligible: false, blocker: 'unknown-model' }
+  if (!site || !gateway) return { eligible: false, blocker: 'no-site' }
+  if (!isSameOrigin(site.baseURL, gateway.baseURL)) {
+    return { eligible: false, blocker: 'site-not-gateway' }
+  }
+  if (!isSameOrigin(resolveRequestHostSource(modelConfig, site), gateway.baseURL)) {
+    return { eligible: false, blocker: 'model-bypasses-gateway' }
+  }
+  return { eligible: true, blocker: null }
+}
+
+/**
  * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
  * 仅经 Miau API 提供 —— 调用方(AudioPage)固定传 siteKey。
  * 文档:docs/seed-audio-1.0-api-guide.md(计费按输出秒数,约 ¥1/分钟;单次 ~120s 上限)。
@@ -1443,7 +1523,7 @@ export class ApiService {
         // 必须带 Accept 才走 JSON 响应(只改 Content-Type 不行,见接入文档 §7)
         'Accept': 'application/json',
       }
-      this.applyAuthHeaders(headers, site, apiKey)
+      this.applyAuthHeaders(headers, site, apiKey, url)
 
       const response = await this.withRetry(
         async () => {
@@ -1895,10 +1975,12 @@ export class ApiService {
     // 谷歌原生端点绕开 CDN:加速域名前面的 EdgeOne 不支持
     // `/v1beta/models/...:generateContent`,走它必 524(且报成 CORS 错误)。
     // 按 apiType 判定而不是逐个模型打标记 —— 以后新增谷歌模型自动跟随。
-    const hostSource =
-      modelConfig.apiType === 'gemini-native' && site.directBaseURL
-        ? site.directBaseURL
-        : site.baseURL
+    //
+    // ⚠️ 改这里之前先看 {@link evaluatePlatformBillingEligibility} 与
+    // `shouldUsePlatformBilling`:**改道会同时改掉计费落点**。平台余额的凭据由主进程
+    // 按 host 注入,改道到一个注入器看不见的 host 就等于让那些模型静默 401。所以
+    // host 的选择只有 `resolveRequestHostSource` 这一个出处,两边共用。
+    const hostSource = resolveRequestHostSource(modelConfig, site)
 
     try {
       const modelUrl = new URL(sourceUrl)
@@ -1920,14 +2002,37 @@ export class ApiService {
    *    那个 host 上挂过滤器,别的站点(apiyi / 自建)打了标记也换不到凭据,反而因为
    *    我们不再发 Authorization 而直接 401。
    *
-   * 第 2 条按 **baseURL 而不是站点键**判定,理由是注入器认的就是 host:用户完全可以
-   * 自建一个指向同一网关的自定义站点条目,那种请求照样会被注入,所以也该打标记。
-   * 反过来只认站点键会漏掉它 —— 症状是「同一个网关,换个站点条目就静默用自填 Key」。
+   * 第 2 条按 **实际请求 URL 而不是站点键、也不是 site.baseURL** 判定,两条理由:
+   * - 注入器认的就是 host。用户完全可以自建一个指向同一网关的自定义站点条目,那种
+   *   请求照样会被注入,所以也该打标记 —— 只认站点键会漏掉它。
+   * - **`site.baseURL` 不等于请求真正打向的 host**。`buildRequestUrl` 会把谷歌原生
+   *   模型改道到 `directBaseURL`(见那里的注释),站点仍是网关、请求却已经不是了。
+   *   照 baseURL 判的那段时间里,那三个 Nano Banana 模型在平台模式下必定 401。
+   *   模型维度的同一判据见 {@link evaluatePlatformBillingEligibility}(UI 提示用它)。
    */
-  private shouldUsePlatformBilling(site: ApiSite | undefined): boolean {
+  private shouldUsePlatformBilling(requestUrl: string): boolean {
     if (useQuotaStore.getState().billingSource !== 'platform') return false
     const gateway = this.apiSites[MIAU_SITE_KEY]
-    return !!site && !!gateway && site.baseURL === gateway.baseURL
+    return !!gateway && isSameOrigin(requestUrl, gateway.baseURL)
+  }
+
+  /**
+   * 「当前设置下这个模型能不能走平台余额」—— 给 UI 用的入口。
+   *
+   * 站点解析照 `generateImage` 那套优先级(requiredSiteKey → 当前站点),不能让组件
+   * 自己抄一份:抄错的症状是提示与实际计费落点不一致,比没有提示更糟。
+   */
+  getPlatformBillingEligibility(modelKey: string): PlatformBillingEligibility {
+    const modelConfig = this.getModelConfig(modelKey)
+    const siteKey =
+      modelConfig?.requiredSiteKey && this.apiSites[modelConfig.requiredSiteKey]
+        ? modelConfig.requiredSiteKey
+        : this.currentSite
+    return evaluatePlatformBillingEligibility(
+      modelConfig,
+      this.apiSites[siteKey],
+      this.apiSites[MIAU_SITE_KEY],
+    )
   }
 
   /**
@@ -1942,13 +2047,19 @@ export class ApiService {
    * Flux multipart / 腾讯 image2 JSON / gpt-image-2 multipart / TTS)。漏掉任何一处的
    * 症状都是「有的模型走平台余额、有的模型静默用自填 Key」——两条计费链路同时在跑,
    * 而账单要到月底才对得出来。新增出网点请一律走这里,别再手写那三条分支。
+   *
+   * `requestUrl` 是本次请求**真正要 fetch 的那个地址**,不是站点根地址 —— 平台余额
+   * 判定按它的 host 走(理由见 `shouldUsePlatformBilling`)。每个出网点手上本来就有
+   * 这个值,传它比传 modelConfig 更难写错:URL 是既成事实,而 modelConfig 在
+   * TTS / multipart 那几条路径上压根不在作用域里。
    */
   private applyAuthHeaders(
     headers: Record<string, string>,
     site: ApiSite,
     apiKey: string,
+    requestUrl: string,
   ): Record<string, string> {
-    if (this.shouldUsePlatformBilling(site)) {
+    if (this.shouldUsePlatformBilling(requestUrl)) {
       headers[BILLING_MARKER_HEADER] = BILLING_MARKER_VALUE
     } else if (site.authType === 'bearer') {
       headers['Authorization'] = `Bearer ${apiKey}`
@@ -2029,7 +2140,7 @@ export class ApiService {
         const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-        this.applyAuthHeaders(headers, site, apiKey)
+        this.applyAuthHeaders(headers, site, apiKey, genUrl)
         const fetchSignal = this.composeTimeoutSignal(signal, timeoutMs)
         const resp = await fetch(genUrl, {
           method: 'POST',
@@ -2097,7 +2208,7 @@ export class ApiService {
       'Content-Type': 'application/json'
     }
 
-    this.applyAuthHeaders(headers, site, apiKey)
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     // 所有模型(nano/gemini、wan、sora、通用 OpenAI-compat)统一打印请求体到 F12，
     // 方便核对发出去的到底是 URL 还是 base64；base64/超长串会被截断，避免刷屏。
@@ -2205,7 +2316,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    this.applyAuthHeaders(headers, site, apiKey)
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     const fetchSignal = this.composeTimeoutSignal(signal, 2_000_000)
 
@@ -2346,7 +2457,7 @@ export class ApiService {
     this.logImageRequest(model, url, body)
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    this.applyAuthHeaders(headers, site, apiKey)
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
     const resp = await fetch(url, {
@@ -2419,7 +2530,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    this.applyAuthHeaders(headers, site, apiKey)
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     // FormData 不是 JSON：打印结构化摘要(含参考图源)到 F12，标注 multipart。
     this.logImageRequest(model, url, {

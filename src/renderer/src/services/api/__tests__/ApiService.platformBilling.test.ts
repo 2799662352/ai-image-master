@@ -34,6 +34,8 @@ import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../../type
 async function captureHeadersFor(opts: {
   billingSource: 'platform' | 'own-key'
   site: string
+  /** 默认那个 Seedream 走标准 OpenAI 兼容端点；要验谷歌原生绕道就显式换模型。 */
+  model?: string
 }): Promise<Record<string, string>> {
   let seen: Record<string, string> = {}
   vi.stubGlobal(
@@ -59,7 +61,11 @@ async function captureHeadersFor(opts: {
   const { ApiService } = await import('../ApiService')
   const svc = new ApiService()
   await svc
-    .generateImage({ prompt: 'x', model: 'doubao-seedream-5-0-pro-260628', siteKey: opts.site })
+    .generateImage({
+      prompt: 'x',
+      model: opts.model ?? 'doubao-seedream-5-0-pro-260628',
+      siteKey: opts.site,
+    })
     .catch(() => {})
   return seen
 }
@@ -97,5 +103,177 @@ describe('平台计费模式下的请求头', () => {
 
     expect(headers[BILLING_MARKER_HEADER]).toBeUndefined()
     expect(headers.Authorization).toBe('Bearer user-typed-key')
+  })
+
+  // 站点对了模型也可能不对。谷歌原生端点绕开加速域名直连源站(EdgeOne 不支持那条
+  // 路径),而注入器只挂在加速域名那一个 host 上 —— 打了标记也换不到 Authorization,
+  // 结果是必定 401,外加把内部协议头明文发给一个注入器看不见的 IP。
+  it('谷歌原生模型即使在 Miau 站点也不打标记(它绕开了注入器覆盖的 host)', async () => {
+    const headers = await captureHeadersFor({
+      billingSource: 'platform',
+      site: 'antigravity',
+      model: 'gemini-3.1-flash-image',
+    })
+
+    expect(headers[BILLING_MARKER_HEADER]).toBeUndefined()
+    // 回落到自填 Key。不回落的话这条请求既没 Authorization 也换不到 token,必 401。
+    expect(headers.Authorization).toBe('Bearer user-typed-key')
+  })
+})
+
+/**
+ * 「这个模型能不能用平台余额」的判据。
+ *
+ * 之所以要独立成纯函数并单测:这件事此前是**两处隐性耦合**——`buildRequestUrl` 决定
+ * 请求实际打向哪个 host(谷歌原生模型会被换成 `directBaseURL`),而计费判定看的是
+ * `site.baseURL`。两处谁也不知道谁存在,于是「站点是 Miau」为真、「请求打到 Miau」为假,
+ * 标记头照打、凭据换不到 —— 静默 401。
+ *
+ * 判据收进 `evaluatePlatformBillingEligibility` 之后,下面那条 **真源一致性** 用例会
+ * 遍历全部模型,拿它的结论和 `buildRequestUrl` 的实际产物对账。谁再单独改一边,这里就红。
+ */
+describe('平台余额 × 模型可用性', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    localStorage.clear()
+  })
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  const GOOGLE_NATIVE_MODELS = [
+    'gemini-3.1-flash-image',
+    'gemini-3-pro-image',
+    'gemini-2.5-flash-image',
+  ]
+
+  async function load() {
+    const mod = await import('../ApiService')
+    const svc = new mod.ApiService()
+    const internals = svc as unknown as {
+      models: Record<string, unknown>
+      apiSites: Record<string, unknown>
+      buildRequestUrl(model: unknown, site: unknown): string
+    }
+    return { ...mod, svc, internals }
+  }
+
+  it('谷歌原生模型在 Miau 站点上不可用,并说明是模型绕开了网关', async () => {
+    const { evaluatePlatformBillingEligibility, internals } = await load()
+    const gateway = internals.apiSites['antigravity']
+
+    for (const key of GOOGLE_NATIVE_MODELS) {
+      const verdict = evaluatePlatformBillingEligibility(
+        internals.models[key] as never,
+        gateway as never,
+        gateway as never,
+      )
+      expect(verdict.eligible, `${key} 不该被判为可用`).toBe(false)
+      expect(verdict.blocker).toBe('model-bypasses-gateway')
+    }
+  })
+
+  it('普通模型在 Miau 站点上可用', async () => {
+    const { evaluatePlatformBillingEligibility, internals } = await load()
+    const gateway = internals.apiSites['antigravity']
+
+    const verdict = evaluatePlatformBillingEligibility(
+      internals.models['doubao-seedream-5-0-pro-260628'] as never,
+      gateway as never,
+      gateway as never,
+    )
+    expect(verdict.eligible).toBe(true)
+    expect(verdict.blocker).toBeNull()
+  })
+
+  // 判据必须挂在「站点有没有配源站直连」上,而不是硬编码那三个模型名。
+  // 站点没配 directBaseURL 时谷歌模型照旧走加速域名,那就是可用的。
+  it('站点没配源站直连时,谷歌原生模型照样可用(不硬编码模型名单)', async () => {
+    const { evaluatePlatformBillingEligibility, internals } = await load()
+    const gateway = internals.apiSites['antigravity'] as Record<string, unknown>
+    const siteWithoutDirect = { ...gateway, directBaseURL: undefined }
+
+    const verdict = evaluatePlatformBillingEligibility(
+      internals.models['gemini-3.1-flash-image'] as never,
+      siteWithoutDirect as never,
+      gateway as never,
+    )
+    expect(verdict.eligible).toBe(true)
+  })
+
+  it('非网关站点给出的是站点级原因,不是模型级', async () => {
+    const { evaluatePlatformBillingEligibility, internals } = await load()
+
+    const verdict = evaluatePlatformBillingEligibility(
+      internals.models['gemini-3.1-flash-image'] as never,
+      internals.apiSites['apiyi'] as never,
+      internals.apiSites['antigravity'] as never,
+    )
+    expect(verdict.eligible).toBe(false)
+    // 站点就不对,再谈模型没有意义 —— UI 那边已经有一句「仅 Miau 站点生效」了,
+    // 这里若报 model-bypasses-gateway 会让用户以为换个模型就好。
+    expect(verdict.blocker).toBe('site-not-gateway')
+  })
+
+  it('站点缺失时不崩,给出 no-site', async () => {
+    const { evaluatePlatformBillingEligibility, internals } = await load()
+
+    const verdict = evaluatePlatformBillingEligibility(
+      internals.models['gemini-3.1-flash-image'] as never,
+      undefined,
+      internals.apiSites['antigravity'] as never,
+    )
+    expect(verdict.eligible).toBe(false)
+    expect(verdict.blocker).toBe('no-site')
+  })
+
+  // 🚨 防漂移。这条用例的价值不在于断言某个模型,而在于:任何人改了 buildRequestUrl
+  // 的 host 选择逻辑(加一类绕道、去掉一类绕道)而没同步计费判定,这里立刻红。
+  it('真源一致性:每个模型的判定都和 buildRequestUrl 的实际产物对得上', async () => {
+    const { evaluatePlatformBillingEligibility, internals } = await load()
+    const gateway = internals.apiSites['antigravity'] as { baseURL: string }
+
+    const mismatched: string[] = []
+    for (const [key, cfg] of Object.entries(internals.models)) {
+      const actualUrl = internals.buildRequestUrl(cfg, gateway)
+      const actuallyHitsGateway = new URL(actualUrl).host === new URL(gateway.baseURL).host
+      const verdict = evaluatePlatformBillingEligibility(
+        cfg as never,
+        gateway as never,
+        gateway as never,
+      )
+      if (verdict.eligible !== actuallyHitsGateway) mismatched.push(key)
+    }
+
+    expect(mismatched).toEqual([])
+  })
+
+  // UI 要用的入口:它手上只有一个模型 key,站点解析(requiredSiteKey → 当前站点)
+  // 得由 service 按请求路径那套优先级来,不能让组件自己抄一份。
+  it('getPlatformBillingEligibility 按当前站点解析,并跟随 requiredSiteKey', async () => {
+    localStorage.setItem('current_site', 'antigravity')
+    const { svc } = await load()
+
+    expect(svc.getPlatformBillingEligibility('gemini-3.1-flash-image').eligible).toBe(false)
+    expect(svc.getPlatformBillingEligibility('doubao-seedream-5-0-pro-260628').eligible).toBe(true)
+  })
+
+  it('当前站点不是网关时,getPlatformBillingEligibility 报站点级原因', async () => {
+    localStorage.setItem('current_site', 'apiyi')
+    const { svc } = await load()
+
+    expect(svc.getPlatformBillingEligibility('gemini-3.1-flash-image').blocker).toBe(
+      'site-not-gateway',
+    )
+    // requiredSiteKey 钉在 Miau 的模型不受当前站点影响。
+    expect(svc.getPlatformBillingEligibility('doubao-seedream-5-0-pro-260628').eligible).toBe(true)
+  })
+
+  it('模型不认识时不下判断(别对着一个空 key 报警)', async () => {
+    localStorage.setItem('current_site', 'antigravity')
+    const { svc } = await load()
+
+    expect(svc.getPlatformBillingEligibility('').blocker).toBe('unknown-model')
+    expect(svc.getPlatformBillingEligibility('no-such-model').blocker).toBe('unknown-model')
   })
 })

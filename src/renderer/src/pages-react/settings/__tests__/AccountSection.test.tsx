@@ -15,7 +15,9 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthState } from '../../../../../types/authApi'
+import { resetApiService } from '../../../services/api/ApiService'
 import { useAuthStore, __resetSubscriptionsForTesting } from '../../../stores/useAuthStore'
+import { useModelStore } from '../../../stores/useModelStore'
 import { useQuotaStore, __resetQuotaStoreForTesting } from '../../../stores/useQuotaStore'
 import { AccountSection } from '../AccountSection'
 
@@ -87,6 +89,10 @@ beforeEach(() => {
   __resetQuotaStoreForTesting()
   useAuthStore.setState(useAuthStore.getInitialState(), true)
   useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+  // 单例会把「当前站点」在构造时从 localStorage 读进实例字段,不重置的话
+  // 上一条用例设的站点会漏到下一条。模型 store 同理。
+  useModelStore.setState({ currentModelKey: '' })
+  resetApiService()
 })
 
 afterEach(() => {
@@ -398,6 +404,69 @@ describe('AccountSection', () => {
       render(<AccountSection />)
       await waitFor(() => expect(auth.getState).toHaveBeenCalled())
       expect(screen.queryByTestId('billing-platform')).toBeNull()
+    })
+  })
+
+  // 站点选对了、开关也开着,模型却仍然用不了平台余额 —— 谷歌原生那几个走源站直连,
+  // 绕开了主进程注入器覆盖的 host。这种情况**必须说出来**:不说的话用户点了出图只会
+  // 收到一个没有上下文的 401,而他刚刚才把计费切到平台余额,只会以为是余额或账号出了问题。
+  describe('模型不支持平台余额时的提示', () => {
+    /** 把「站点=Miau + 模型=X」这套现场摆好。站点由 ApiService 从 localStorage 现读。 */
+    function useSiteAndModel(site: string, modelKey: string): void {
+      localStorage.setItem('current_site', site)
+      resetApiService()
+      act(() => {
+        useModelStore.setState({ currentModelKey: modelKey })
+      })
+    }
+
+    function usePlatformBilling(): void {
+      act(() => {
+        useQuotaStore.setState({ billingSource: 'platform' })
+      })
+    }
+
+    it('平台模式下选中谷歌原生模型时,明说这次会回落到自填密钥', async () => {
+      useSiteAndModel('antigravity', 'gemini-3.1-flash-image')
+      await renderLoggedIn()
+      selectPool()
+      usePlatformBilling()
+
+      const hint = screen.getByTestId('billing-model-hint')
+      // 三件事都要有:是哪个模型、这次不走平台余额、那走什么。
+      expect(hint.textContent).toContain('Nano Banana 2')
+      expect(hint.textContent).toMatch(/平台余额/)
+      expect(hint.textContent).toMatch(/密钥|API Key/)
+    })
+
+    it('平台模式下选中受支持的模型时不提示', async () => {
+      useSiteAndModel('antigravity', 'doubao-seedream-5-0-pro-260628')
+      await renderLoggedIn()
+      selectPool()
+      usePlatformBilling()
+
+      expect(screen.queryByTestId('billing-model-hint')).toBeNull()
+    })
+
+    // 没开平台模式的时候这条提示毫无意义 —— 用户本来就在用自填 Key。
+    it('自有 Key 模式下即使模型不支持也不唠叨', async () => {
+      useSiteAndModel('antigravity', 'gemini-3.1-flash-image')
+      await renderLoggedIn()
+      selectPool()
+
+      expect(screen.queryByTestId('billing-model-hint')).toBeNull()
+    })
+
+    // 站点就不在计费域内时,原因是站点而不是模型。这里再冒一条模型提示会让用户以为
+    // 「换个模型就行」—— 站点级那句话(billing-hint)已经把话说完了。
+    it('站点本来就不是网关时,交给站点级提示,不重复报模型', async () => {
+      useSiteAndModel('apiyi', 'gemini-3.1-flash-image')
+      await renderLoggedIn()
+      selectPool()
+      usePlatformBilling()
+
+      expect(screen.queryByTestId('billing-model-hint')).toBeNull()
+      expect(screen.getByTestId('billing-hint').textContent).toMatch(/Miau/)
     })
   })
 
