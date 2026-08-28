@@ -117,6 +117,39 @@ function writeStoredPool(pool: Pool | null): void {
   }
 }
 
+/**
+ * 「用户**自己**把平台余额关掉过」。
+ *
+ * `load()` 由设置页的 AccountSection 在挂载时触发,而它会在 `own-key` + 已选池时
+ * 自动抬手。没有这个标记的话:用户明确关掉、离开设置页再回来,它自己开回去,
+ * 继续花组织的钱 —— 用户没做任何动作,也不会收到任何提示。
+ *
+ * 🚨 **只记用户的显式动作。** arm 失败时的内部回落走的是裸 `set({ billingSource })`,
+ * 不经过 `setBillingSource`,所以不会写这个标记 —— 那是刻意的:一次网络抖动
+ * 不该等于「用户不想用平台余额」,否则自动抬手就被一次 502 永久关掉了。
+ *
+ * 落 localStorage 而不是内存:它要跨重启有效,否则重开一次应用又回到老样子。
+ */
+const AUTO_ARM_OPT_OUT_KEY = 'catimation_billing_auto_arm_opt_out'
+
+function readAutoArmOptOut(): boolean {
+  try {
+    return localStorage.getItem(AUTO_ARM_OPT_OUT_KEY) === '1'
+  } catch {
+    // 隐私模式/被禁用时读不到。当作「没关过」—— 与这个功能上线之前的行为一致。
+    return false
+  }
+}
+
+function writeAutoArmOptOut(optedOut: boolean): void {
+  try {
+    if (optedOut) localStorage.setItem(AUTO_ARM_OPT_OUT_KEY, '1')
+    else localStorage.removeItem(AUTO_ARM_OPT_OUT_KEY)
+  } catch {
+    // 写不进去只影响「下次还会不会自动抬手」,不该让切换动作本身失败。
+  }
+}
+
 const initialState: QuotaStoreState = {
   organizations: [],
   selectedPool: null,
@@ -275,11 +308,13 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     // 「登录」这个动作对用户的含义就是「我要用账号里的钱」,还让他去填第三方 Key 说不通。
     //
     // 三条约束:
-    //  - 只在 `own-key` 时抬手。用户手动关掉过就别再自作主张打开。
+    //  - 只在 `own-key` **且用户没自己关过**时抬手(`readAutoArmOptOut`)。
+    //    这个标记只由 `setBillingSource('own-key')` 写 —— 内部回落走裸 `set()`,
+    //    不该被记成用户意图,否则一次网络抖动就永久关掉了自动抬手。
     //  - 必须有已选池,否则 arm 一定失败,徒增一次注定报错的 IPC。
     //  - `setBillingSource` 自己会在失败时回落 `own-key` 并把人话原因摊到 `error` 上,
     //    所以这里不需要 try —— 失败的结果就是维持现状,与不做这一步等价。
-    if (get().billingSource === 'own-key' && get().selectedPool) {
+    if (get().billingSource === 'own-key' && get().selectedPool && !readAutoArmOptOut()) {
       await get().setBillingSource('platform')
     }
   },
@@ -403,6 +438,9 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     ensureLogoutResetsBillingSource()
 
     if (next === 'own-key') {
+      // 走到这里一定是用户自己点的:内部回落用的是裸 `set()`,不经过本函数。
+      // 记下来,免得 `load()` 下次挂载时又把它抬回去。
+      writeAutoArmOptOut(true)
       set({ billingSource: 'own-key', error: null })
       try {
         await api?.clearBillingPool?.()
@@ -451,6 +489,8 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
       return
     }
 
+    // 用户自己开回来了,把「关过」这件事忘掉 —— 否则他每次重启都得手动再点一次。
+    writeAutoArmOptOut(false)
     set({ billingSource: 'platform', error: null })
   },
 }))

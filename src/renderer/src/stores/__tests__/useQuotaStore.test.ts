@@ -721,8 +721,6 @@ describe('useQuotaStore', () => {
       expect(useQuotaStore.getState().error).toBeTruthy()
     })
 
-    // 用户手动关掉过就别再自作主张打开 —— 只在 own-key 且「没被手动关过」时抬手。
-    // 今天的实现是每次 load() 都试,所以这条钉的是「至少不会在已经是 platform 时重复 arm」。
     it('已经是 platform 时不重复 arm', async () => {
       await pickPersonalPool()
       await useQuotaStore.getState().setBillingSource('platform')
@@ -731,6 +729,86 @@ describe('useQuotaStore', () => {
       await useQuotaStore.getState().load()
 
       expect(auth.setBillingPool).not.toHaveBeenCalled()
+    })
+
+    /**
+     * 「用户手动关掉过就别再自作主张打开」—— 这句话此前只存在于注释里。
+     *
+     * 🧬 变异点:把 `load()` 抬手条件里的 `!readAutoArmOptOut()` 去掉,这三条必红。
+     *
+     * `load()` 由设置页的 AccountSection 在挂载时触发,所以缺了这个标记的表现是:
+     * 用户明确关掉平台余额、离开设置页再回来,它自己开回去,继续花组织的钱 ——
+     * 而用户没做任何动作,也不会收到任何提示。
+     *
+     * 关键在于**只认用户的显式动作**:arm 失败时的内部回落走的是裸 `set()`,
+     * 不该被记成「用户不想用平台余额」,否则一次网络抖动就把自动抬手永久关掉了。
+     */
+    describe('自动抬手要记住用户手动关过', () => {
+      it('手动关掉后,load() 不再自作主张打开', async () => {
+        await pickPersonalPool()
+        await useQuotaStore.getState().setBillingSource('platform')
+        await useQuotaStore.getState().setBillingSource('own-key')
+        auth.setBillingPool.mockClear()
+
+        await useQuotaStore.getState().load()
+
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+        expect(auth.setBillingPool).not.toHaveBeenCalled()
+      })
+
+      it('标记跨重启有效 —— 它落在 localStorage,不是内存', async () => {
+        await pickPersonalPool()
+        await useQuotaStore.getState().setBillingSource('platform')
+        await useQuotaStore.getState().setBillingSource('own-key')
+
+        useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+        __resetQuotaStoreForTesting()
+        auth.setBillingPool.mockClear()
+        await useQuotaStore.getState().load()
+
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+        expect(auth.setBillingPool).not.toHaveBeenCalled()
+      })
+
+      it('用户自己再开回来,标记就清掉', async () => {
+        await pickPersonalPool()
+        await useQuotaStore.getState().setBillingSource('own-key')
+        await useQuotaStore.getState().setBillingSource('platform')
+
+        useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+        __resetQuotaStoreForTesting()
+        auth.setBillingPool.mockClear()
+        await useQuotaStore.getState().load()
+
+        expect(useQuotaStore.getState().billingSource).toBe('platform')
+        expect(auth.setBillingPool).toHaveBeenCalled()
+      })
+
+      // 这一条把「用户意图」与「内部回落」分开。混在一起的话,一次 arm 失败
+      // (网络抖动、后端 502)就等于替用户永久关掉了自动抬手,而他从未表达过这个意思。
+      it('arm 失败的回落不算「手动关过」,下次 load 仍然会试', async () => {
+        await pickPersonalPool()
+        useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+        __resetQuotaStoreForTesting()
+        auth.setBillingPool.mockResolvedValue({
+          ok: false,
+          error: { code: 'UPSTREAM_UNREACHABLE', message: '暂时连不上' },
+        })
+
+        await useQuotaStore.getState().load()
+        expect(useQuotaStore.getState().billingSource).toBe('own-key')
+
+        // 恢复正常后再来一次:不该被上一次失败挡住。
+        useQuotaStore.setState(useQuotaStore.getInitialState(), true)
+        __resetQuotaStoreForTesting()
+        auth.setBillingPool.mockResolvedValue({ ok: true, data: { ready: true } })
+        auth.setBillingPool.mockClear()
+
+        await useQuotaStore.getState().load()
+
+        expect(auth.setBillingPool).toHaveBeenCalled()
+        expect(useQuotaStore.getState().billingSource).toBe('platform')
+      })
     })
   })
 })
