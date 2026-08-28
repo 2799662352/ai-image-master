@@ -1,6 +1,7 @@
 // 桌面端浏览器登录 IPC 编排。PKCE verifier 与 pending 状态只活在主进程,渲染层不可见。
 
 import { ipcMain, shell, type BrowserWindow } from 'electron'
+import { clearGatewayTokens, loadPersisted } from './gatewayToken'
 import { startLoopbackListener, type LoopbackListener } from './loopback'
 import { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce'
 import {
@@ -303,6 +304,16 @@ function detachWaitAndClaim(
 }
 
 export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => void {
+  // 平台余额:把上次会话加密落盘的网关 token 读回内存。
+  //
+  // 挂在这里而不是模块顶层:`loadPersisted` 内部要用 `app.getPath('userData')` 与
+  // safeStorage,两者在 app ready 之前都不可用(与 credentials.ts 顶部那条「不得在
+  // 模块加载时读盘」同源),而本函数只被 `app.whenReady()` 里的启动序列调到。
+  //
+  // 刻意不 await:读盘 + 解密不该挡在窗口创建前面,而它晚到也不会出错 ——
+  // `loadPersisted` 自带登出代际守卫,填回内存前会再比一次,不会把刚清掉的 token 复活。
+  void loadPersisted()
+
   for (const ch of AUTH_CHANNELS) {
     ipcMain.removeHandler(ch)
   }
@@ -370,6 +381,12 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
 
   ipcMain.handle('auth:logout', async () => {
     logout()
+    // `logout()` 只清平台凭据。网关 token 是另一套,而且**永不过期、泄漏后无法单独
+    // 吊销** —— 留在盘上等于登出没登干净,下次启动 `loadPersisted()` 还会读回来。
+    //
+    // 必须 await:里面压着一次 `fs.rm`,不等它就广播「已登出」,用户此刻关掉应用,
+    // 进程退出会把删盘截断。
+    await clearGatewayTokens()
     broadcastState(getWindow)
   })
 

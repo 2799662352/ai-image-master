@@ -55,6 +55,7 @@ import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { registerAuthIpc } from './services/auth/ipc'
+import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
@@ -464,6 +465,10 @@ function createWindow(): void {
       experimentalFeatures: false
     }
   })
+
+  // 平台余额：出网时把标记头换成真凭据。必须用同一个 session 对象 ——
+  // 用 session.defaultSession 在设了 partition 的窗口上会挂错地方。
+  installGatewayHeaderInjector(mainWindow.webContents.session)
 
   // 安全: 设置 Content Security Policy
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
@@ -1330,6 +1335,8 @@ app.whenReady().then(async () => {
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
 
+  // 顺带把上次会话落盘的网关 token 读回内存(registerAuthIpc 内的 loadPersisted)。
+  // 它要用 app.getPath / safeStorage,所以只能挂在 whenReady 之后的这条路径上。
   registerAuthIpc(
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )

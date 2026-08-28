@@ -75,6 +75,15 @@ vi.mock('../session', () => ({
   AuthError,
 }))
 
+// 网关 token 是平台余额那条路的第二套凭据,与 `credentials.ts` 里的平台凭据分开存。
+// 这里 mock 掉,免得把真模块拉进来(它模块级就 import 了 `app` / `safeStorage`)。
+const clearGatewayTokens = vi.fn()
+const loadPersisted = vi.fn()
+vi.mock('../gatewayToken', () => ({
+  clearGatewayTokens: () => clearGatewayTokens(),
+  loadPersisted: () => loadPersisted(),
+}))
+
 const fakeWindow = () =>
   ({
     isDestroyed: () => windowDestroyed,
@@ -113,6 +122,12 @@ describe('auth IPC 编排', () => {
     fetchUsageSummary.mockReset()
     createRechargeOrder.mockReset()
     fetchRechargeOrder.mockReset()
+    // 用 mockReset + 重设实现,不用 mockClear:下面有一条用例把 clearGatewayTokens
+    // 换成了永不 resolve 的闸门,mockClear 不清实现,会漏到后面每一条 logout 用例上。
+    clearGatewayTokens.mockReset()
+    clearGatewayTokens.mockResolvedValue(undefined)
+    loadPersisted.mockReset()
+    loadPersisted.mockResolvedValue(undefined)
     authState = { authenticated: false, username: null, displayName: null, role: null, credentialSource: 'none' }
   })
 
@@ -739,6 +754,58 @@ describe('auth IPC 编排', () => {
     await call('auth:logout')
     expect(logoutFn).toHaveBeenCalled()
     expect(sent[0]).toEqual({ channel: 'auth:state-changed', payload: expect.objectContaining({ authenticated: false }) })
+  })
+
+  // `logout()` 只清平台凭据,网关 token 是另一套。漏掉这一步的话,用户点完登出,
+  // 盘上仍躺着一枚**永不过期、泄漏后无法单独吊销**的 token,下次启动还会被读回内存。
+  it('logout 一并清掉网关 token', async () => {
+    await register()
+
+    await call('auth:logout')
+
+    expect(clearGatewayTokens).toHaveBeenCalled()
+  })
+
+  // `clearGatewayTokens` 是 async,里面还压着一次 `fs.rm`。不 await 的话 handler 提前
+  // 返回,渲染层立刻显示「已登出」,而删盘还在半路 —— 用户此时关掉应用,进程退出会把
+  // 它截断,token 原样留在盘上。这条用可控闸门把那个间隙变成确定的。
+  it('logout 会等网关 token 真的删完才返回', async () => {
+    let release!: () => void
+    clearGatewayTokens.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          release = () => r()
+        }),
+    )
+    await register()
+
+    let settled = false
+    const done = Promise.resolve(call('auth:logout')).then(() => {
+      settled = true
+    })
+    await flush()
+    expect(settled).toBe(false)
+
+    release()
+    await done
+    expect(settled).toBe(true)
+  })
+
+  // 上次会话落盘的网关 token 得读回内存,否则每次重启都白白多一次网络往返 ——
+  // 而那次往返只在用户点了出图之后才发生,表现成「重启后第一张图特别慢」。
+  it('注册时把上次落盘的网关 token 读回内存', async () => {
+    await register()
+
+    expect(loadPersisted).toHaveBeenCalled()
+  })
+
+  // `loadPersisted` 内部要用 `app.getPath('userData')` 与 safeStorage,两者在 app ready
+  // 之前都不可用 —— 与 credentials.ts 顶部那条「不得在模块加载时读盘」同源。所以它只能
+  // 挂在 registerAuthIpc 上(那是 whenReady 里才跑的),不能写成模块顶层的副作用。
+  it('模块加载期不碰盘,只有 registerAuthIpc 之后才读', async () => {
+    await import('../ipc')
+
+    expect(loadPersisted).not.toHaveBeenCalled()
   })
 
   it('窗口已销毁时广播不抛', async () => {
