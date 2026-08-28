@@ -35,7 +35,8 @@ function mockBridge(opts: { normal?: PortraitAsset[]; trash?: PortraitAsset[] } 
   const bridge = {
     list,
     poll: vi.fn(async (_s: unknown, id: string) => okEnvelope(asset({ Id: id }))),
-    upload: vi.fn(async () =>
+    // 形参写出来是为了让 `mock.calls[0][1]` 有类型可索引(无参 mock 的 calls 是 `[]`)。
+    upload: vi.fn(async (_scope: unknown, _file: unknown) =>
       okEnvelope({ url: `${COS}/new.png`, cosKey: 'k', fileSize: 1, assetType: 'Image' }),
     ),
     register: vi.fn(async () =>
