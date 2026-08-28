@@ -149,6 +149,18 @@ export function createWan3Transport(client: Wan3Client, getApiKey: () => string)
  * 海外站直连时代的 id），平台模式本身也没有 region 概念——走平台余额的用户不该
  * 关心机房在哪。跟着 global region 走的话，海外站用户一提交就是一句
  * `model_not_found`，而他完全想不到那是「站点设置」造成的。
+ *
+ * ## ⚠️ 网关目录里到底有哪几个 doubao-seedance-* —— 尚未证实（待烟测）
+ *
+ * 四个别名（`2.0` / `2.0-fast` / `2.0-mini` / `2.5`）现在都会被路由到网关。
+ * 「网关侧没有 `-mini` 的对等物」这个说法**唯一的依据是参考实现只列了三个模型**
+ * ——那不等于网关目录里没有第四个。
+ *
+ * 所以这里刻意**不加排除名单**：一份猜出来的名单会把一个其实可用的档位永久关掉，
+ * 而且关得悄无声息；猜错的另一个方向只是提交时拿一句 `model_not_found` ——
+ * 响亮、指名道姓、一分钱不花。拿真网关跑一次就能定，定了把结论和日期写在这里。
+ * 在那之前不要凭参考实现反推。（同 `seedanceGateway/client.ts` 里轮询路径那条
+ * 待办，都归在计划的 Task 6 烟测。）
  */
 const GATEWAY_MODEL_REGION = 'cn' as const
 
