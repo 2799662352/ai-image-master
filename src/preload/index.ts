@@ -133,6 +133,7 @@ import type {
   AccountOrganization,
   AuthLoginResult,
   AuthState,
+  BillingPoolRef,
   PaymentConfig,
   QuotaRpc,
   RechargeOrder,
@@ -376,6 +377,8 @@ const IPC_CHANNELS = {
     GET_USAGE_SUMMARY: 'auth:get-usage-summary',
     CREATE_RECHARGE_ORDER: 'auth:create-recharge-order',
     GET_RECHARGE_ORDER: 'auth:get-recharge-order',
+    SET_BILLING_POOL: 'auth:set-billing-pool',
+    CLEAR_BILLING_POOL: 'auth:clear-billing-pool',
   },
   AUTH_EVENTS: ['auth:state-changed', 'auth:login-result'] as const,
   // Shell helpers (clipboard / save dialog)
@@ -580,6 +583,14 @@ export interface ElectronAPI {
       subject?: string,
     ) => Promise<QuotaRpc<RechargeOrderCreated>>
     getRechargeOrder: (outTradeNo: string) => Promise<QuotaRpc<RechargeOrder>>
+    // 平台计费池的开关。**这里没有、也不会有取 token 的方法** —— 渲染层只需要知道
+    // 「平台计费此刻可不可用」;那枚凭据永不过期、泄漏后无法单独吊销,而渲染层是
+    // nodeIntegration 环境,递过去一次就是永久交出去。
+    //
+    // `ready` 为 true 才代表凭据真的到手了:主进程是先取凭据、成功了才置 active。
+    // 失败时回的是带 code 的信封(NOT_LOGGED_IN / 余额类 / 权限类,三种引导不同)。
+    setBillingPool: (pool: BillingPoolRef) => Promise<QuotaRpc<{ ready: boolean }>>
+    clearBillingPool: () => Promise<QuotaRpc<null>>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -1519,6 +1530,12 @@ const electronAPI: ElectronAPI = {
       ),
     getRechargeOrder: (outTradeNo: string) =>
       safeInvoke<QuotaRpc<RechargeOrder>>(IPC_CHANNELS.AUTH.GET_RECHARGE_ORDER, outTradeNo),
+    // `pool` 整个对象递过去,不在这里拆两半:拆一次就多一处会漏掉 `producerProjectId`
+    // 的地方,而那是池键的另一半 —— 漏了会把两个共用 projectId 的池当成同一个。
+    setBillingPool: (pool: BillingPoolRef) =>
+      safeInvoke<QuotaRpc<{ ready: boolean }>>(IPC_CHANNELS.AUTH.SET_BILLING_POOL, pool),
+    clearBillingPool: () =>
+      safeInvoke<QuotaRpc<null>>(IPC_CHANNELS.AUTH.CLEAR_BILLING_POOL),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============

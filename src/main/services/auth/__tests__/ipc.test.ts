@@ -79,10 +79,34 @@ vi.mock('../session', () => ({
 // 这里 mock 掉,免得把真模块拉进来(它模块级就 import 了 `app` / `safeStorage`)。
 const clearGatewayTokens = vi.fn()
 const loadPersisted = vi.fn()
+const getGatewayToken = vi.fn()
+const setActivePool = vi.fn()
+/** 与 `gatewayToken.ts` 的真类同形:code 在前、无 status、带 retryable。 */
+class GatewayTokenError extends Error {
+  constructor(
+    public code: string,
+    msg: string,
+    public retryable = false,
+  ) {
+    super(msg)
+  }
+}
 vi.mock('../gatewayToken', () => ({
   clearGatewayTokens: () => clearGatewayTokens(),
   loadPersisted: () => loadPersisted(),
+  getGatewayToken: (...a: unknown[]) => getGatewayToken(...a),
+  setActivePool: (...a: unknown[]) => setActivePool(...a),
+  GatewayTokenError,
 }))
+
+/**
+ * 长得像真凭据的假 token。
+ *
+ * 形状必须能被下面那条安全正则 `/sk-[A-Za-z0-9_-]{8,}/` 逮住 —— 这不是装饰:
+ * 若 `getGatewayToken` 的默认返回是 `undefined`,那条「没有任何通道会把 token 回给
+ * 渲染层」的断言就永远绿,连一个真把 token 塞进返回值的实现都杀不掉。
+ */
+const GATEWAY_TOKEN = 'sk-gw-test-Aa1Bb2Cc3Dd4'
 
 const fakeWindow = () =>
   ({
@@ -128,6 +152,9 @@ describe('auth IPC 编排', () => {
     clearGatewayTokens.mockResolvedValue(undefined)
     loadPersisted.mockReset()
     loadPersisted.mockResolvedValue(undefined)
+    getGatewayToken.mockReset()
+    getGatewayToken.mockResolvedValue(GATEWAY_TOKEN)
+    setActivePool.mockReset()
     authState = { authenticated: false, username: null, displayName: null, role: null, credentialSource: 'none' }
   })
 
@@ -558,9 +585,160 @@ describe('auth IPC 编排', () => {
     // 只会稳定误报。凭证不外泄由 authApi.ts 的类型边界与 session 层保证。
   })
 
+  // ─────────────────────────────────────────────────────────────────────
+  // 平台计费池切换。
+  //
+  // 这是整条「用平台余额出图」链路上唯一的生产调用方:在此之前 `setActivePool()`
+  // 从没被调用过,于是 `getActivePoolToken()` 永远回 null、出网注入器永远注入不到
+  // 东西。所以这一层被测的不是「能不能切」,而是两件只在异常面上暴露的事 ——
+  // 切换的**顺序**(先取到凭据再置 active),以及**回什么**(只回可用性,不回凭据)。
+  // ─────────────────────────────────────────────────────────────────────
+  describe('平台计费通道', () => {
+    it('两个通道都注册了,且都在卸载清单里', async () => {
+      const dispose = await register()
+      for (const ch of ['auth:set-billing-pool', 'auth:clear-billing-pool']) {
+        expect(handlers.has(ch)).toBe(true)
+      }
+      dispose()
+      for (const ch of ['auth:set-billing-pool', 'auth:clear-billing-pool']) {
+        expect(handlers.has(ch)).toBe(false)
+      }
+    })
+
+    // 这条是安全断言:任何一个通道只要回传了形如 sk- 的字符串就红。
+    //
+    // `Promise.resolve()` 那层不是装饰:`auth:get-state` / `auth:cancel-login` 是**同步**
+    // handler,直接 `.catch` 会在遍历到第一个同步通道时抛 TypeError —— 那样这条断言
+    // 连一个通道都验不到就死了,而失败信息看着像「实现有问题」。同一处理法在下面
+    // 「窗口已销毁时广播不抛」那条里已有先例。
+    it('没有任何通道会把 token 回给渲染层', async () => {
+      await register()
+      for (const [, handler] of handlers) {
+        const out = await Promise.resolve(
+          handler({}, { projectId: 342, producerProjectId: null }),
+        ).catch(() => null)
+        expect(JSON.stringify(out ?? '')).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/)
+      }
+    })
+
+    // 池键是 `(projectId, producerProjectId)` 两半。只递前一半会让两个共用 projectId
+    // 的 producer 池共用同一枚 token —— 钱记到别人头上,且没有任何报错。
+    it('池键两半都递给 getGatewayToken,并原样置成 active', async () => {
+      await register()
+
+      const r = await call('auth:set-billing-pool', { projectId: 342, producerProjectId: 88 })
+
+      expect(getGatewayToken).toHaveBeenCalledWith({ projectId: 342, producerProjectId: 88 })
+      expect(setActivePool).toHaveBeenCalledWith({ projectId: 342, producerProjectId: 88 })
+      expect(r).toEqual({ ok: true, data: { ready: true } })
+    })
+
+    // `0` / 缺省 / 非数字都是「这不是 producer 池」。留着 `NaN` 或 `0` 进池键会造出
+    // 一个与真池不同的缓存键,表现成每次切池都重取一次 token。
+    it('非 producer 池的另一半归一成 null', async () => {
+      await register()
+
+      for (const bad of [undefined, null, 0, 'abc', {}]) {
+        getGatewayToken.mockClear()
+        setActivePool.mockClear()
+        await call('auth:set-billing-pool', { projectId: 342, producerProjectId: bad })
+        expect(getGatewayToken, `producerProjectId=${JSON.stringify(bad)}`).toHaveBeenCalledWith({
+          projectId: 342,
+          producerProjectId: null,
+        })
+        expect(setActivePool).toHaveBeenCalledWith({ projectId: 342, producerProjectId: null })
+      }
+    })
+
+    it('projectId 不合法时回 INVALID_POOL,一次 token 都不取', async () => {
+      await register()
+
+      for (const bad of [undefined, null, 0, -1, 'abc', {}]) {
+        getGatewayToken.mockClear()
+        setActivePool.mockClear()
+        const r = (await call('auth:set-billing-pool', { projectId: bad })) as {
+          ok: boolean
+          error?: { code: string; message: string }
+        }
+        expect(r.ok, `projectId=${JSON.stringify(bad)} 被放行了`).toBe(false)
+        expect(r.error?.code).toBe('INVALID_POOL')
+        expect(r.error?.message).toBeTruthy()
+        expect(getGatewayToken).not.toHaveBeenCalled()
+        expect(setActivePool).not.toHaveBeenCalled()
+      }
+    })
+
+    // 🚨 顺序是这条链路上最贵的一个约束:必须**先取到 token 再置 active**。
+    // 反过来写(先 setActivePool 再 await)时,取凭据失败的用户会看到「已切换到平台
+    // 余额」,而注入器手里什么都没有 —— 他以为自己在花平台的钱,实际每一张图都还在
+    // 扣自填 key,或者干脆一直失败而不知道原因。
+    it('取 token 失败时不置 active pool', async () => {
+      getGatewayToken.mockRejectedValue(new GatewayTokenError('NOT_LOGGED_IN', '未登录,无法使用平台余额'))
+      await register()
+
+      const r = (await call('auth:set-billing-pool', {
+        projectId: 342,
+        producerProjectId: null,
+      })) as { ok: boolean }
+
+      expect(r.ok).toBe(false)
+      expect(setActivePool).not.toHaveBeenCalled()
+    })
+
+    // `GatewayTokenError` 不是 `AuthError`,直接交给 quotaRpc 会被合成 `QUERY_FAILED` ——
+    // 而这个通道是唯一会抛它的地方,三种引导(去登录 / 去充值 / 换个池)全靠这个 code
+    // 分流。压成一个 code 等于把信封退化成「出错了」。
+    it('取 token 失败时把 GatewayTokenError 的 code 带出信封', async () => {
+      await register()
+
+      const cases: Array<[string, string]> = [
+        ['NOT_LOGGED_IN', '未登录,无法使用平台余额'],
+        ['NETWORK', '连不上服务器,请检查网络后重试'],
+        ['insufficient_quota', '余额不足'],
+      ]
+      for (const [code, message] of cases) {
+        getGatewayToken.mockRejectedValue(new GatewayTokenError(code, message))
+        const r = (await call('auth:set-billing-pool', { projectId: 342 })) as {
+          ok: boolean
+          error?: { code: string; message: string }
+        }
+        expect(r.ok).toBe(false)
+        expect(r.error?.code, `${code} 被压成了别的 code`).toBe(code)
+        expect(r.error?.message).toBe(message)
+      }
+    })
+
+    // 非 GatewayTokenError(比如 mock 之外的意外)也不能裸抛出 IPC。
+    it('取 token 抛非 GatewayTokenError 时也回信封', async () => {
+      getGatewayToken.mockRejectedValue(new Error('boom'))
+      await register()
+
+      const r = (await call('auth:set-billing-pool', { projectId: 342 })) as {
+        ok: boolean
+        error?: { code: string }
+      }
+      expect(r.ok).toBe(false)
+      expect(typeof r.error?.code).toBe('string')
+      expect(r.error?.code).toBeTruthy()
+      expect(setActivePool).not.toHaveBeenCalled()
+    })
+
+    // 关掉平台计费只是把 active 置空,**不清缓存** —— 缓存清空是登出的事
+    // (`clearGatewayTokens`)。在这里顺手清掉的话,用户来回切两次池就多两次网络往返。
+    it('clear-billing-pool 把 active pool 置空,不动 token 缓存', async () => {
+      await register()
+
+      const r = await call('auth:clear-billing-pool')
+
+      expect(setActivePool).toHaveBeenCalledWith(null)
+      expect(clearGatewayTokens).not.toHaveBeenCalled()
+      expect(r).toEqual({ ok: true, data: null })
+    })
+  })
+
   // 通道清单按字面锁住,而不是只断言个数 —— 加通道时会在这里显式失败,提醒同时把它
   // 加进 AUTH_CHANNELS(卸载依赖那个数组,漏加会让 handler 在热重载后泄漏)。
-  it('注册全部十三个通道', async () => {
+  it('注册全部十五个通道', async () => {
     await register()
     expect([...handlers.keys()].sort()).toEqual(
       [
@@ -577,6 +755,8 @@ describe('auth IPC 编排', () => {
         'auth:logout',
         'auth:start-login',
         'auth:submit-code',
+        'auth:set-billing-pool',
+        'auth:clear-billing-pool',
       ].sort(),
     )
   })

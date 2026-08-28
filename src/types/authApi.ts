@@ -96,6 +96,22 @@ export interface PaymentConfig {
   personalBillingProjectId: number | null
 }
 
+/**
+ * 计费池引用。**必须与主进程 `services/auth/gatewayToken.ts` 的 `Pool` 保持一致** ——
+ * 那边是真源,这里是渲染层侧的镜像。
+ *
+ * `producerProjectId` 是池键的另一半,不是可选装饰:两个 producer 项目可以共用
+ * 同一个 `projectId`,只按 `projectId` 认会把两个不同的钱包合并。
+ *
+ * ⚠️ 与上面的 `AccountOrganization` 不同,这里的另一半写成 `number | null` 而**不是**
+ * 可选属性 —— 主进程那边就是 `number | null`,两边形状不一致会在 IPC 边界上静默错位。
+ * 从组织列表构造这个引用时要显式补 `?? null`,别直接把 `producerProjectId` 透传过来。
+ */
+export interface BillingPoolRef {
+  projectId: number
+  producerProjectId: number | null
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // 用量明细
 //

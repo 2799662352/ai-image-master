@@ -1,7 +1,14 @@
 // 桌面端浏览器登录 IPC 编排。PKCE verifier 与 pending 状态只活在主进程,渲染层不可见。
 
 import { ipcMain, shell, type BrowserWindow } from 'electron'
-import { clearGatewayTokens, loadPersisted } from './gatewayToken'
+import {
+  GatewayTokenError,
+  clearGatewayTokens,
+  getGatewayToken,
+  loadPersisted,
+  setActivePool,
+  type Pool,
+} from './gatewayToken'
 import { startLoopbackListener, type LoopbackListener } from './loopback'
 import { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce'
 import {
@@ -44,6 +51,8 @@ const AUTH_CHANNELS = [
   'auth:get-usage-summary',
   'auth:create-recharge-order',
   'auth:get-recharge-order',
+  'auth:set-billing-pool',
+  'auth:clear-billing-pool',
 ] as const
 
 const CLIENT_NAME = 'CATIMATION Desktop'
@@ -235,6 +244,49 @@ function toOutTradeNo(raw: unknown): string {
     throw new AuthError('INVALID_ORDER_NO', 400, '订单号无效')
   }
   return raw
+}
+
+/**
+ * 窄化成计费池引用。真源类型是 `gatewayToken.ts` 的 `Pool`。
+ *
+ * 这里用 `Number()` 强转而不是上面的 `toFiniteNumber`,是因为本字段的合法域不含 `0`:
+ * `Number(null)` / `Number('')` 都落成 `0`,而 `0` 在这里本来就要被拒 —— 强转带来的
+ * 那个歧义在这一格恰好不存在(与用量查询相反,那边 `projectId: 0` 是「不过滤」)。
+ *
+ * `producerProjectId` 归一成 **`null` 而不是 `undefined`**:它是池键的另一半,
+ * `gatewayToken.ts` 拿两半拼缓存键。塞 `undefined` 会拼出一个与真池不同的键,
+ * 表现成每次切池都白白重取一次 token,而且没有任何报错。
+ */
+function toBillingPool(raw: unknown): Pool {
+  const src = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const projectId = Number(src.projectId)
+  if (!Number.isFinite(projectId) || projectId <= 0) {
+    throw new AuthError('INVALID_POOL', 400, `projectId 不合法(当前 ${String(src.projectId)})`)
+  }
+  return { projectId, producerProjectId: toOptionalNumber(src.producerProjectId) ?? null }
+}
+
+/**
+ * 取网关凭据,并把 `GatewayTokenError` 翻成 `AuthError`,好让它的 code 过得了信封。
+ *
+ * `quotaRpc` 只认 `AuthError`,别的一律合成 `QUERY_FAILED`。而本文件里唯一会抛
+ * `GatewayTokenError` 的就是这条路径,它的 code 恰恰是 UI 唯一的分流依据:
+ * `NOT_LOGGED_IN` 要引导去登录、余额类要引导去充值、权限类要引导换个池。压成同一个
+ * code 等于把信封退化回「出错了」—— 那正是当初不裸抛的理由。
+ *
+ * `status` 给 `0`:`GatewayTokenError` 没有这一维(HTTP 码已经编进它的 code 里,形如
+ * `HTTP_502`),而 `quotaRpc` 不读 status。
+ *
+ * **返回 void 而不是 token。** 调用方只需要「取到了」这个事实;把 token 摆到这一层
+ * 的局部变量里,下一个人顺手 `return { ready: true, token }` 就成了。
+ */
+async function requireGatewayToken(pool: Pool): Promise<void> {
+  try {
+    await getGatewayToken(pool)
+  } catch (e) {
+    if (e instanceof GatewayTokenError) throw new AuthError(e.code, 0, e.message)
+    throw e
+  }
 }
 
 type QuotaRpcResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } }
@@ -437,6 +489,37 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
   )
   ipcMain.handle('auth:get-recharge-order', (_e, outTradeNo: unknown) =>
     quotaRpc(() => fetchRechargeOrder(toOutTradeNo(outTradeNo))),
+  )
+
+  // ── 平台计费池 ──
+  //
+  // 这两条是「用平台余额出图」整条链路上唯一的生产调用方。在它们之前
+  // `setActivePool()` 从没被调用过,于是 `getActivePoolToken()` 永远回 null、
+  // 出网时的凭据注入器永远注入不到东西 —— 前两个任务的成果一直是死的。
+  //
+  // **刻意没有任何一条通道会回 token。** 渲染层只需要知道「平台计费此刻可不可用」;
+  // 那枚凭据永不过期、泄漏后无法单独吊销,而渲染层是 `nodeIntegration: true` 且无
+  // contextIsolation 的环境 —— 递过去一次就等于永久交出去。
+  ipcMain.handle('auth:set-billing-pool', (_e, raw: unknown) =>
+    quotaRpc(async () => {
+      const pool = toBillingPool(raw)
+      // 🚨 顺序不能反:**先取到凭据,再置 active**。反过来写的话,取凭据失败的用户
+      // 会看到「已切换到平台余额」,而注入器手里什么都没有 —— 他以为自己在花平台的
+      // 钱,实际要么还在扣自填 key,要么每张图都失败而找不到原因。
+      await requireGatewayToken(pool)
+      setActivePool(pool)
+      // 只回「能不能用」,不回凭据本身。
+      return { ready: true }
+    }),
+  )
+
+  ipcMain.handle('auth:clear-billing-pool', () =>
+    quotaRpc(async () => {
+      // 只摘 active,**不清缓存** —— 清缓存是登出的事(`clearGatewayTokens`)。
+      // 在这里顺手清掉的话,用户来回切两次池就多两次网络往返。
+      setActivePool(null)
+      return null
+    }),
   )
 
   return () => {
