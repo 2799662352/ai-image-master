@@ -102,21 +102,19 @@ describe('describeMissingGatewayToken', () => {
 })
 
 describe('createSeedanceGatewayTokenResolver', () => {
-  it('产出 VideoTransport 要的 () => string', () => {
-    const getApiKey = createSeedanceGatewayTokenResolver(
-      sources({ platformToken: () => 'shadow-1' }),
-    )
-    expect(getApiKey()).toBe('shadow-1')
+  it('回的是 token 与 billing 一对 —— 缺席时要靠 billing 决定报哪一句人话', () => {
+    const resolve = createSeedanceGatewayTokenResolver(sources({ platformToken: () => 'shadow-1' }))
+    expect(resolve()).toEqual({ billing: 'platform', token: 'shadow-1' })
   })
 
   it('意向每次现读 —— 用户中途切了计费模式不必重建 transport', () => {
     let prefer: 'platform' | 'own-key' | undefined = 'own-key'
-    const getApiKey = createSeedanceGatewayTokenResolver(
+    const resolve = createSeedanceGatewayTokenResolver(
       sources({ platformToken: () => 'shadow-1', ownKey: () => 'own-1' }),
       () => prefer,
     )
-    expect(getApiKey()).toBe('own-1')
+    expect(resolve().token).toBe('own-1')
     prefer = 'platform'
-    expect(getApiKey()).toBe('shadow-1')
+    expect(resolve().token).toBe('shadow-1')
   })
 })

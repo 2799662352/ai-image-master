@@ -105,7 +105,11 @@ export function describeMissingGatewayToken(billing: GatewayBillingSource): stri
 }
 
 /**
- * 适配成 `VideoTransport` 要的 `() => string`。
+ * 绑定好取值来源与意向的现取函数,交给 transport 用。
+ *
+ * 返回整个 `ResolvedGatewayToken` 而不只是 token 字符串：缺席时要报**哪一句**
+ * 人话取决于 `billing`,只回字符串的话 transport 就只能给一句「凭据缺失」,
+ * 而两种缺席的补救动作完全不同。
  *
  * `getPreference` 每次现读而不是构造时定死：用户中途切计费模式不该需要重建
  * transport（transport 的生命周期跟着整个视频服务走,不跟着一次提交走）。
@@ -113,6 +117,6 @@ export function describeMissingGatewayToken(billing: GatewayBillingSource): stri
 export function createSeedanceGatewayTokenResolver(
   sources: SeedanceGatewayTokenSources,
   getPreference?: () => GatewayBillingSource | undefined,
-): () => string {
-  return () => resolveSeedanceGatewayToken(sources, getPreference?.()).token
+): () => ResolvedGatewayToken {
+  return () => resolveSeedanceGatewayToken(sources, getPreference?.())
 }
