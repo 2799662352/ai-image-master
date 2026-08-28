@@ -44,10 +44,27 @@ export interface BackendRequestOptions {
    */
   form?: FormData
   token?: string
-  /** 额外请求头。**不能覆盖** Authorization / Accept / Content-Type —— 那三个由本函数拥有。 */
+  /**
+   * 额外请求头。**不能覆盖** Authorization / Accept / Content-Type —— 那三个由本函数拥有,
+   * 调用方传进来的同名键(**不分大小写**)在组头时被抹掉,见 `OWNED_HEADERS`。
+   */
   headers?: Record<string, string>
   /** 默认 15s。服务端长轮询类端点必须显式放大到超过服务端自己的上限。 */
   timeoutMs?: number
+}
+
+/**
+ * 本函数拥有的三个头。HTTP 头名**大小写不敏感**,而 `{...opts.headers, Accept: …}` 只在
+ * 同大小写时才是「覆盖」—— 调用方传个小写 `authorization`,两个键就会**并存**,fetch 构造
+ * Headers 时合并成 `Bearer A, Bearer B` → 401,而从调用点看不出任何异常。
+ * 所以在组头时按小写比对逐个抹掉,让「本函数拥有」是结构上成立的,而不是靠人记。
+ */
+const OWNED_HEADERS = ['authorization', 'accept', 'content-type']
+
+function dropOwnedHeaders(headers: Record<string, string>): void {
+  for (const k of Object.keys(headers)) {
+    if (OWNED_HEADERS.includes(k.toLowerCase())) delete headers[k]
+  }
 }
 
 /**
@@ -68,15 +85,12 @@ export async function sendJson(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? REQUEST_TIMEOUT_MS)
   try {
-    const headers: Record<string, string> = { ...opts.headers, Accept: 'application/json' }
-    if (opts.form) {
-      // 调用方可能好心地传了一个 —— 结构上抹掉,免得这条不变量靠人记。
-      for (const k of Object.keys(headers)) {
-        if (k.toLowerCase() === 'content-type') delete headers[k]
-      }
-    } else if (opts.body !== undefined) {
-      headers['Content-Type'] = 'application/json'
-    }
+    const headers: Record<string, string> = { ...opts.headers }
+    dropOwnedHeaders(headers)
+    headers.Accept = 'application/json'
+    // 走 form 分支时一个 Content-Type 都不设:少了 fetch 自己生成的 boundary,
+    // 服务端 multer 解不出任何字段。
+    if (!opts.form && opts.body !== undefined) headers['Content-Type'] = 'application/json'
     if (opts.token) headers.Authorization = `Bearer ${opts.token}`
 
     const res = await net.fetch(`${authBaseUrl()}${path}`, {
@@ -107,4 +121,22 @@ export function requireToken(): string {
   const cred = getCredential()
   if (!cred) throw new AuthError('NOT_AUTHENTICATED', 401, '未登录')
   return cred.token
+}
+
+/**
+ * 2xx 响应里**声明成必填**的字符串字段的守卫 —— 缺了就抛,不让 `undefined` 顶着
+ * `string` 的类型往下游流。
+ *
+ * 判据是「缺了还能不能继续」而不是「重不重要」:`session.ts` 用它守 `payUrl`(缺了
+ * 就无处可跳,只能把用户送到 about:blank)、`platformAssets.ts` 用它守资产 `Id`
+ * (缺了 poll 会打出 `/assets/undefined/poll`,而这个 id 还要被持久化)。
+ *
+ * 和 `sendJson`/`AuthError` 同住这个叶子,是因为两拨调用方都要用它,而放在 `session.ts`
+ * 会把 token 缓存拖进人像库的依赖图(理由同本文件顶部);各写一份则必然漂移成两个错误码。
+ */
+export function requireString(v: unknown, field: string, status: number): string {
+  if (typeof v !== 'string' || !v) {
+    throw new AuthError('MALFORMED_RESPONSE', status, `响应缺少字段 ${field}`)
+  }
+  return v
 }

@@ -3,7 +3,7 @@
 import { authBaseUrl } from './authBaseUrl'
 import { clearCredential, credentialSource, getCredential, setCredential } from './credentials'
 import { clearGatewayTokens } from './gatewayToken'
-import { AuthError, requireToken, sendJson } from './httpJson'
+import { AuthError, requireString, requireToken, sendJson } from './httpJson'
 // `AuthState` 的单一真源在 `src/types/authApi.ts` —— preload 与渲染层同吃一份,
 // 不在这里再声明一遍(AgentApi 就是因为两处各写一份而漂移过)。
 import type { AuthState } from '../../../types/authApi'
@@ -42,13 +42,6 @@ function toAuthError(status: number, body: Record<string, unknown>): AuthError {
     (typeof body.message === 'string' && body.message) ||
     `请求失败(HTTP ${status})`
   return new AuthError(code, status, message)
-}
-
-function requireString(v: unknown, field: string, status: number): string {
-  if (typeof v !== 'string' || !v) {
-    throw new AuthError('MALFORMED_RESPONSE', status, `响应缺少字段 ${field}`)
-  }
-  return v
 }
 
 /**

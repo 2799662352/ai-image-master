@@ -76,6 +76,23 @@ describe('platformAssets', () => {
     expect(lastHeaders()['X-Producer-Project-Id']).toBe('7')
   })
 
+  /**
+   * 🚨 `producerProjectId: 0` 必须与「没给」同义。它是**计费池键的另一半**
+   * (见 `session.ts:177-181`):带上去后端 `optionalProducerProjectId` 会认成一个
+   * producer 池,于是钱记到错的池、素材落进错的池 —— 而两边都不报错。
+   *
+   * 只有 `SCOPE` / `SCOPE_PP` 两种夹具时,把实现的 `ppId > 0` 放宽成 `ppId !== undefined`
+   * 一条断言都不会红,这条边界完全没有回归保护。
+   */
+  it('producerProjectId 为 0 时与没给同义,不带这个头', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(ok({ Items: [], TotalCount: 0 }))
+
+    await m.listAssets({ projectId: 42, producerProjectId: 0 })
+    expect(lastHeaders()['X-Producer-Project-Id']).toBeUndefined()
+    expect(lastHeaders()['X-Project-Id']).toBe('42')
+  })
+
   // `X-Project-Id` 缺失或 ≤0 时后端一律 400(controller:21-27)。本地就拒,省一个 RTT,
   // 而且错误话术比后端那句「缺少有效的 X-Project-Id」更能指向「没选计费池」。
   it('projectId 非正数在本地就拒,一个请求都不发', async () => {
@@ -110,13 +127,58 @@ describe('platformAssets', () => {
   /**
    * 🚨 `POST /assets` 的返回**只有** `{Id, URL, PreviewUrl, cosUrl}`(controller:189,
    * 而 `result` 的类型是 `{Id:string}`)。网页版的 `VolcAsset` 类型声明它返回 `Status`/
-   * `Name`/`CreateTime`,那是**假的**。类型如实反映,免得下游拿着 `Status` 去分支。
+   * `Name`/`CreateTime`,那是**假的**。照抄它会让下游写出 `if (r.Status === 'Active')`
+   * 这种永远走不到的分支 —— 所以这里连**合成**一个都不行。
+   *
+   * 用例名只声称到这里为止:`toEqual` 证得了「没凭空多出字段」,证不了「声明的那四个
+   * 就是后端真给的」—— 后者是下面几条缺字段用例的事。
    */
-  it('registerAsset 的返回体不含 Status/Name/CreateTime,不臆造', async () => {
+  it('registerAsset 不凭空合成 Status/Name/CreateTime', async () => {
     const m = await import('../platformAssets')
     fetchMock.mockResolvedValue(ok({ Id: 'a1', URL: 'u', PreviewUrl: 'p', cosUrl: 'c' }))
     const r = await m.registerAsset({ url: 'https://cos/x.png', assetType: 'Image' }, SCOPE)
     expect(r).toEqual({ Id: 'a1', URL: 'u', PreviewUrl: 'p', cosUrl: 'c' })
+  })
+
+  /**
+   * 🚨 `RegisteredPlatformAsset` 四个字段全声明成必填 `string`,所以四个都得校验 ——
+   * 否则 2xx 而 `data` 缺字段时,`(body.data ?? {}) as T` 只兜 `null`,返回的是一个
+   * `Id` 为 `undefined`、类型却说它是 `string` 的对象,**不抛错,沉默往下游流**:
+   * 调用方拿它去 `pollAsset`,`encodeURIComponent(undefined)` 打出 `/assets/undefined/poll`;
+   * 而按 Task 2 这个 id 还会和 pool 成对持久化到本地映射,重启也不消失。
+   *
+   * 硬失败的理由与 `session.ts:593` 的 `payUrl` 一字不差:缺了就无处可去,让它响亮地抛。
+   *
+   * 四个字段一起校验而不只校验 `Id`:controller:189 是
+   * `{...result, URL: url, PreviewUrl: url, cosUrl: url}` —— 三个 URL 是**同一个**已校验
+   * 入参的回声,在一条对象字面量里同生共死,不存在「只缺其中一个」的真实分支。
+   */
+  it.each(['Id', 'URL', 'PreviewUrl', 'cosUrl'])(
+    'registerAsset 在 2xx 但缺 %s 时抛 MALFORMED_RESPONSE,不返回半个对象',
+    async (missing) => {
+      const m = await import('../platformAssets')
+      const full: Record<string, string> = { Id: 'a1', URL: 'u', PreviewUrl: 'p', cosUrl: 'c' }
+      delete full[missing]
+      fetchMock.mockResolvedValue(ok(full))
+
+      await expect(
+        m.registerAsset({ url: 'https://cos/x.png', assetType: 'Image' }, SCOPE),
+      ).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE', message: expect.stringContaining(missing) })
+    },
+  )
+
+  // `data` 整个缺席(反向代理吃掉 body / 后端换了信封)也走同一条硬失败,而不是回一个
+  // 四个字段全 undefined 的对象。
+  it('registerAsset 在 2xx 但没有 data 时抛 MALFORMED_RESPONSE', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true }),
+    } as unknown as Response)
+    await expect(
+      m.registerAsset({ url: 'https://cos/x.png', assetType: 'Image' }, SCOPE),
+    ).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
   })
 
   // 后端 `name.slice(0,64)`(controller:177)是**静默**的:用户看到的名字被砍了一截,
@@ -185,6 +247,37 @@ describe('platformAssets', () => {
     expect(r.Truncated).toBe(false)
   })
 
+  /**
+   * 🚨 `Items` 整个数组裸转会让没有 `Id` 的条目原样进数组,而 `PlatformAsset.Id` 声明
+   * 的是必填 `string`。**这个坑本仓踩过**:`seedance/assets.ts:245-253` 记着线上实测
+   * 部分条目 `assetId` 为 null,渲染层 key / 多选字典撞 null key,表现成网格重复渲染 +
+   * 点一张全带 ✓。那边的结论是归一,这边照做 —— 没有 `Id` 的条目连引用都构造不出来,
+   * 留在数组里只会去污染 key。
+   *
+   * `TotalCount` **不跟着减**:它本来就不等于 `Items.length`(见类型上的注释),
+   * 那是后端算的可见总数,不是本地过滤后的条数。
+   */
+  it('listAssets 丢掉没有 Id 的条目,TotalCount 不动', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(
+      ok({
+        Items: [{ Id: 'a1' }, { Status: 'Active' }, { Id: '', Name: '空串也不算' }, { Id: 'a2' }],
+        TotalCount: 4,
+      }),
+    )
+    const r = await m.listAssets(SCOPE)
+    expect(r.Items).toEqual([{ Id: 'a1' }, { Id: 'a2' }])
+    expect(r.TotalCount).toBe(4)
+  })
+
+  // 上游把 Items 回成对象 / null 时不能让 `.map` 炸在主进程里。
+  it('listAssets 在 Items 不是数组时回落成空数组', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(ok({ Items: { nope: 1 }, TotalCount: 0 }))
+    const r = await m.listAssets(SCOPE)
+    expect(r.Items).toEqual([])
+  })
+
   it('listAssets 回收站视图带 hidden=1', async () => {
     const m = await import('../platformAssets')
     fetchMock.mockResolvedValue(ok({ Items: [], TotalCount: 0 }))
@@ -201,6 +294,23 @@ describe('platformAssets', () => {
     expect(lastUrl().pathname).toBe('/api/volcengine-asset/assets/a%2F1')
     expect(lastCall()[1].method).toBe('GET')
     expect(r.Id).toBe('a/1')
+  })
+
+  /**
+   * 🚨 `Id` 是 `PlatformAsset` 上**唯一**的必填字段,校验掉它这个类型就不再撒谎了
+   * (其余字段本来就声明成可选)。
+   *
+   * 这里刻意不拿入参 `assetId` 兜底:`pollAsset` 的调用方是按 `Status` 分支的,
+   * 合成一个 `{Id}`、`Status` 为 undefined 的对象与「还在处理中」完全无法区分 ——
+   * 等就绪会永远转圈,而两边日志都干净。宁可响亮地抛。
+   */
+  it.each([
+    ['getAsset', (m: typeof import('../platformAssets')) => m.getAsset('a1', SCOPE)],
+    ['pollAsset', (m: typeof import('../platformAssets')) => m.pollAsset('a1', SCOPE)],
+  ])('%s 在 2xx 但条目没有 Id 时抛 MALFORMED_RESPONSE', async (_name, call) => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(ok({ Status: 'Active', URL: 'u' }))
+    await expect(call(m)).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
   })
 
   // ── pollAsset ───────────────────────────────────────────────────────────
@@ -293,6 +403,30 @@ describe('platformAssets', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  /**
+   * 🚨 空名是**另一条**守卫,不是上一条的冗余重复:`{name:''}` 过得了「两个字段都没给」
+   * 那一关(`name !== undefined` 为真),却会被后端 400
+   * (controller:490 `typeof name !== 'string' || !name || name.length > 64`)。
+   *
+   * 没有这条用例,那三行守卫删掉一条测试都不红 —— 下次重构会把它当死代码清掉,
+   * 空名重命名就退化成一次白跑的后端 400,而这个文件存在的全部理由就是不让这种事发生。
+   */
+  it('patchAsset 的 name 为空串时本地就拒,一个请求都不发', async () => {
+    const m = await import('../platformAssets')
+    await expect(m.patchAsset('a1', { name: '' }, SCOPE)).rejects.toThrow(/不能为空/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  // 与 registerAsset 同理:`{Id: string}` 说了必填就得校验,否则重命名成功后
+  // 回一个 `Id` 为 undefined 的对象,调用方拿它去刷新列表就对不上任何一行。
+  it('patchAsset 在 2xx 但缺 Id 时抛 MALFORMED_RESPONSE', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(ok({}))
+    await expect(m.patchAsset('a1', { hidden: false }, SCOPE)).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE',
+    })
+  })
+
   // ── uploadMedia ─────────────────────────────────────────────────────────
 
   it('uploadMedia 打 POST /upload-media,字段名 file,返回 url/cosKey/fileSize/assetType', async () => {
@@ -306,8 +440,54 @@ describe('platformAssets', () => {
     expect(lastCall()[1].method).toBe('POST')
     const form = lastCall()[1].body as FormData
     expect(form).toBeInstanceOf(FormData)
-    expect((form.get('file') as File).name).toBe('a.mp4')
+    const part = form.get('file') as File
+    expect(part.name).toBe('a.mp4')
+    // 只断文件名的话,把 `new Blob([file.data], …)` 改成 `new Blob([], …)`(即传一个空文件)
+    // 这条用例照样全绿 —— 字节和 MIME 才是后端 multer 真正读的两样东西。
+    expect(part.size).toBe(1234)
+    expect(part.type).toBe('video/mp4')
     expect(r).toEqual({ url: 'https://cos/a.mp4', cosKey: 'k/a.mp4', fileSize: 1234, assetType: 'Video' })
+  })
+
+  /**
+   * 🚨 `url` 是两步走的接力棒:它直接喂给 `registerAsset`。缺了而不抛,发出去的是
+   * `{url: undefined}`,换回一句后端的「缺少 url 参数」400 —— 报错点离真正的病灶
+   * (上传那一步的响应是坏的)隔了一整个网络往返。
+   */
+  it.each(['url', 'cosKey'])('uploadMedia 在 2xx 但缺 %s 时抛 MALFORMED_RESPONSE', async (missing) => {
+    const m = await import('../platformAssets')
+    const full: Record<string, unknown> = {
+      url: 'https://cos/a.png',
+      cosKey: 'k/a.png',
+      fileSize: 10,
+      assetType: 'Image',
+    }
+    delete full[missing]
+    fetchMock.mockResolvedValue(ok(full))
+
+    await expect(
+      m.uploadMedia({ data: bytes(10), filename: 'a.png', mimeType: 'image/png' }, SCOPE),
+    ).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE', message: expect.stringContaining(missing) })
+  })
+
+  // `assetType` 也是接力棒的一部分(注释说它「可直接喂给 registerAsset」)。后端回一个
+  // 白名单外的值时在这里就拒,免得它一路走到 registerAsset 才以 INVALID_ASSET_TYPE
+  // 的面目出现 —— 那个错误码指的是「调用方传错了」,会把人引向错的地方。
+  it('uploadMedia 在后端回的 assetType 不在白名单时抛 MALFORMED_RESPONSE', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(ok({ url: 'u', cosKey: 'k', fileSize: 10, assetType: 'image' }))
+    await expect(
+      m.uploadMedia({ data: bytes(10), filename: 'a.png', mimeType: 'image/png' }, SCOPE),
+    ).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+  })
+
+  // 声明成必填 `number` 就得校验:缺了会让 UI 的体积一栏渲染成 "NaN KB"。
+  it('uploadMedia 在缺 fileSize 时抛 MALFORMED_RESPONSE', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue(ok({ url: 'u', cosKey: 'k', assetType: 'Image' }))
+    await expect(
+      m.uploadMedia({ data: bytes(10), filename: 'a.png', mimeType: 'image/png' }, SCOPE),
+    ).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE', message: expect.stringContaining('fileSize') })
   })
 
   /**
@@ -417,6 +597,26 @@ describe('platformAssets', () => {
       code: 'AssetNotFound',
       status: 502,
       message: expect.stringContaining('火山接口失败'),
+    })
+  })
+
+  /**
+   * 第一种信封(配对路由那套 `{error:{code,message}}`,desktopAuth.ts:17)也要认。
+   * 它今天不挂在 `/api/volcengine-asset/*` 上,但认它只要三行:不认的话
+   * `typeof body.error === 'string'` 为假、顶层 `body.code` 又是 undefined,
+   * 结果 code 退成 `HTTP_400`、**后端那句话整条丢失** —— 与本文件开头要挡的是同一个坑。
+   */
+  it('把嵌套 error 对象的信封也映射成带 code 与正文的错误', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ success: false, error: { code: 'BadRequest', message: '素材不存在' } }),
+    } as unknown as Response)
+    await expect(m.getAsset('a1', SCOPE)).rejects.toMatchObject({
+      code: 'BadRequest',
+      status: 400,
+      message: '素材不存在',
     })
   })
 

@@ -10,7 +10,7 @@
 // 这批端点的失败模式几乎全是**静默**的 —— 后端不报错,只是悄悄换掉你的入参。所以下面
 // 每一处看起来多余的客户端校验,挡的都是一个「测试全绿、真机出怪事」的坑。
 
-import { AuthError, requireToken, sendJson } from '../auth/httpJson'
+import { AuthError, requireString, requireToken, sendJson } from '../auth/httpJson'
 
 const PREFIX = '/api/volcengine-asset'
 
@@ -160,8 +160,13 @@ export interface PlatformMediaFile {
 }
 
 /**
- * 三个头每次都带。缺 `X-Project-Id` 或它 ≤0 时后端一律 400(controller:21-27),
- * 所以这里先自己拦一道:错误话术能指向「没选计费池」,比后端那句更接近用户能做的事。
+ * 三个头每次都带。缺 `X-Project-Id` 或它 ≤0 时后端 400(`requireProjectId`,controller:21-27),
+ * 本地先拦一道:错误话术能指向「没选计费池」,比后端那句更接近用户能做的事。
+ *
+ * ⚠️ `upload-media` 是**例外** —— 它整条 handler 都不调 `requireProjectId`(controller:618-653),
+ * 不选池也能把字节推上去。这里仍然对它一视同仁地拦,但理由换成另一条:上传后紧跟的
+ * `registerAsset` 一定要池,**在推 50MB 之前失败比之后失败好**。
+ * 别据此在 UI 上加「不选池就不给选文件」的前置门 —— 后端并不要求,那是我们自己的取舍。
  */
 function scopeHeaders(scope: PlatformAssetScope): Record<string, string> {
   if (!Number.isFinite(scope.projectId) || scope.projectId <= 0) {
@@ -189,12 +194,23 @@ function scopeHeaders(scope: PlatformAssetScope): Record<string, string> {
  * `undefined`:错误码退化成 `HTTP_400` 还算走运,**后端说的那句话整条丢失** ——
  * 用户看到「请求失败(HTTP 400)」,而后端明明写了「缺少 url 参数」。
  *
+ * 反过来,配对路由那套嵌套形状(`{error:{code,message}}`,desktopAuth.ts:17)今天并不挂在
+ * `/api/volcengine-asset/*` 上,但也一并认了:漏掉它就是上面那句话反着再犯一遍。
+ *
  * `code` 保证是非空字符串:IPC 层的信封按 code 分支,落到 undefined 就成了「未知错误」。
  */
 function toAssetError(status: number, body: Record<string, unknown>): AuthError {
-  const upstreamCode = typeof body.code === 'string' && body.code ? body.code : null
+  const nested =
+    typeof body.error === 'object' && body.error !== null
+      ? (body.error as { code?: unknown; message?: unknown })
+      : null
+  const upstreamCode =
+    (typeof body.code === 'string' && body.code) ||
+    (typeof nested?.code === 'string' && nested.code) ||
+    null
   const detail =
     (typeof body.error === 'string' && body.error) ||
+    (typeof nested?.message === 'string' && nested.message) ||
     (typeof body.message === 'string' && body.message) ||
     null
   // requestId 是向上游提工单时唯一的抓手,丢了就查不动了。
@@ -212,12 +228,47 @@ async function assetRequest(
   method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
   scope: PlatformAssetScope,
   opts: { body?: Record<string, unknown>; form?: FormData; timeoutMs?: number } = {},
-): Promise<Record<string, unknown>> {
+): Promise<{ status: number; body: Record<string, unknown> }> {
   const headers = scopeHeaders(scope)
   const token = requireToken()
   const { status, body } = await sendJson(`${PREFIX}${path}`, method, { token, headers, ...opts })
   if (status >= 400) throw toAssetError(status, body)
-  return body
+  return { status, body }
+}
+
+/**
+ * 成功信封的负载。`data` 不是对象(整个缺席、或被网关换成了别的东西)时回空对象 ——
+ * 这一层不猜,该不该抛交给各调用点对**必填**字段的校验。
+ */
+function payload(body: Record<string, unknown>): Record<string, unknown> {
+  const data = body.data
+  return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}
+}
+
+/**
+ * `Id` 是 `PlatformAsset` 上唯一的必填字段,校验掉它这个类型就不再撒谎了(其余字段
+ * 本来就声明成可选,`undefined` 在类型内)。
+ *
+ * 刻意**不**拿入参 `assetId` 兜底:`pollAsset` 的调用方按 `Status` 分支,合成一个
+ * `Status` 为 undefined 的对象与「还在处理中」完全无法区分 —— 等就绪会永远转圈,
+ * 而两边日志都干净。宁可响亮地抛。
+ */
+function requireAsset(body: Record<string, unknown>, status: number): PlatformAsset {
+  const data = body.data
+  const asset = (typeof data === 'object' && data !== null ? data : {}) as PlatformAsset
+  requireString(asset.Id, 'Id', status)
+  return asset
+}
+
+/**
+ * 没有 `Id` 的列表条目直接丢掉。**本仓踩过**:`seedance/assets.ts:245-253` 记着线上实测
+ * 部分条目 `assetId` 为 null,原样透传让渲染层的 key / 多选字典撞 null key,表现成网格
+ * 重复渲染 + 点一张全带 ✓。没有 `Id` 的条目连一次引用都构造不出来,留着只会去污染 key。
+ */
+function hasId(item: unknown): item is PlatformAsset {
+  if (typeof item !== 'object' || item === null) return false
+  const id = (item as { Id?: unknown }).Id
+  return typeof id === 'string' && id.length > 0
 }
 
 /** 后端 createAsset 的 `name.slice(0,64)` 是静默的,updateAsset 则直接 400。两边都自己先截。 */
@@ -245,14 +296,23 @@ export async function registerAsset(
   scope: PlatformAssetScope,
 ): Promise<RegisteredPlatformAsset> {
   assertAssetType(input.assetType)
-  const body = await assetRequest('/assets', 'POST', scope, {
+  const { status, body } = await assetRequest('/assets', 'POST', scope, {
     body: {
       url: input.url,
       assetType: input.assetType,
       ...(input.name === undefined ? {} : { name: clampName(input.name) }),
     },
   })
-  return (body.data ?? {}) as RegisteredPlatformAsset
+  // 四个都校验而不只校验 `Id`:controller:189 是 `{...result, URL: url, PreviewUrl: url,
+  // cosUrl: url}`,三个 URL 是同一个已校验入参的回声,在一条对象字面量里同生共死。
+  // 少校验一个,类型就又开始撒谎 —— 而 `<img src={undefined}>` 是不报错的。
+  const data = payload(body)
+  return {
+    Id: requireString(data.Id, 'Id', status),
+    URL: requireString(data.URL, 'URL', status),
+    PreviewUrl: requireString(data.PreviewUrl, 'PreviewUrl', status),
+    cosUrl: requireString(data.cosUrl, 'cosUrl', status),
+  }
 }
 
 /**
@@ -277,10 +337,11 @@ export async function listAssets(
     ...(options.hidden ? { hidden: '1' } : {}),
   })
 
-  const body = await assetRequest(`/assets?${query}`, 'GET', scope)
-  const data = (body.data ?? {}) as Record<string, unknown>
+  const { body } = await assetRequest(`/assets?${query}`, 'GET', scope)
+  const data = payload(body)
   return {
-    Items: (Array.isArray(data.Items) ? data.Items : []) as PlatformAsset[],
+    // `TotalCount` 不跟着减:它是后端算的可见总数,本来就不等于 `Items.length`。
+    Items: Array.isArray(data.Items) ? data.Items.filter(hasId) : [],
     TotalCount: typeof data.TotalCount === 'number' ? data.TotalCount : 0,
     // 缺省要有确定的回落值,否则「回收站 (N)」会渲染成 "回收站 (undefined)"。
     HiddenCount: typeof data.HiddenCount === 'number' ? data.HiddenCount : 0,
@@ -289,8 +350,8 @@ export async function listAssets(
 }
 
 export async function getAsset(assetId: string, scope: PlatformAssetScope): Promise<PlatformAsset> {
-  const body = await assetRequest(`/assets/${encodeURIComponent(assetId)}`, 'GET', scope)
-  return (body.data ?? {}) as PlatformAsset
+  const { status, body } = await assetRequest(`/assets/${encodeURIComponent(assetId)}`, 'GET', scope)
+  return requireAsset(body, status)
 }
 
 /**
@@ -302,13 +363,13 @@ export async function pollAsset(assetId: string, scope: PlatformAssetScope): Pro
     interval: String(POLL_INTERVAL_MS),
     timeout: String(POLL_SERVER_TIMEOUT_MS),
   })
-  const body = await assetRequest(
+  const { status, body } = await assetRequest(
     `/assets/${encodeURIComponent(assetId)}/poll?${query}`,
     'GET',
     scope,
     { timeoutMs: POLL_HTTP_TIMEOUT_MS },
   )
-  return (body.data ?? {}) as PlatformAsset
+  return requireAsset(body, status)
 }
 
 /**
@@ -321,7 +382,7 @@ export async function hideAsset(
   assetId: string,
   scope: PlatformAssetScope,
 ): Promise<{ purged: boolean }> {
-  const body = await assetRequest(`/assets/${encodeURIComponent(assetId)}`, 'DELETE', scope)
+  const { body } = await assetRequest(`/assets/${encodeURIComponent(assetId)}`, 'DELETE', scope)
   return { purged: body.purged === true }
 }
 
@@ -330,7 +391,11 @@ export async function purgeAsset(
   assetId: string,
   scope: PlatformAssetScope,
 ): Promise<{ purged: boolean }> {
-  const body = await assetRequest(`/assets/${encodeURIComponent(assetId)}?purge=1`, 'DELETE', scope)
+  const { body } = await assetRequest(
+    `/assets/${encodeURIComponent(assetId)}?purge=1`,
+    'DELETE',
+    scope,
+  )
   return { purged: body.purged === true }
 }
 
@@ -354,13 +419,18 @@ export async function patchAsset(
     throw new AuthError('INVALID_PATCH', 400, 'name 不能为空')
   }
 
-  const body = await assetRequest(`/assets/${encodeURIComponent(assetId)}`, 'PATCH', scope, {
-    body: {
-      ...(wantsRename ? { name: clampName(patch.name as string) } : {}),
-      ...(wantsVisibility ? { hidden: patch.hidden } : {}),
+  const { status, body } = await assetRequest(
+    `/assets/${encodeURIComponent(assetId)}`,
+    'PATCH',
+    scope,
+    {
+      body: {
+        ...(wantsRename ? { name: clampName(patch.name as string) } : {}),
+        ...(wantsVisibility ? { hidden: patch.hidden } : {}),
+      },
     },
-  })
-  return (body.data ?? {}) as { Id: string }
+  )
+  return { Id: requireString(payload(body).Id, 'Id', status) }
 }
 
 /** 与后端 `uploadMedia` 的判定同口径(controller:626-628):按 MIME 前缀,不看后缀。 */
@@ -395,9 +465,31 @@ export async function uploadMedia(
   const form = new FormData()
   form.append('file', new Blob([file.data], { type: file.mimeType }), file.filename)
 
-  const body = await assetRequest('/upload-media', 'POST', scope, {
+  const { status, body } = await assetRequest('/upload-media', 'POST', scope, {
     form,
     timeoutMs: UPLOAD_HTTP_TIMEOUT_MS,
   })
-  return (body.data ?? {}) as UploadedMedia
+  const data = payload(body)
+  // `assetType` 是接力棒的一部分(下一步直接喂给 `registerAsset`)。在这里就拒,
+  // 免得它一路走到 registerAsset 才以 `INVALID_ASSET_TYPE` 的面目出现 —— 那个码
+  // 的意思是「调用方传错了」,会把排查引向错的一侧。
+  const returnedType = data.assetType
+  if (!ASSET_TYPES.includes(returnedType as PlatformAssetType)) {
+    throw new AuthError(
+      'MALFORMED_RESPONSE',
+      status,
+      `响应的 assetType 不在白名单内(${String(returnedType)})`,
+    )
+  }
+  if (typeof data.fileSize !== 'number' || !Number.isFinite(data.fileSize)) {
+    throw new AuthError('MALFORMED_RESPONSE', status, '响应缺少字段 fileSize')
+  }
+  return {
+    // `url` 是两步走的接力棒:缺了而不抛,发出去的是 `{url: undefined}`,换回后端一句
+    // 「缺少 url 参数」400 —— 报错点离真正的病灶隔了一整个网络往返。
+    url: requireString(data.url, 'url', status),
+    cosKey: requireString(data.cosKey, 'cosKey', status),
+    fileSize: data.fileSize,
+    assetType: returnedType as PlatformAssetType,
+  }
 }
