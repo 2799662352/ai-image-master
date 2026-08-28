@@ -55,6 +55,7 @@ import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { registerAuthIpc } from './services/auth/ipc'
+import { registerPortraitLibraryIpc } from './services/portraitLibrary/ipc'
 import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
@@ -1340,6 +1341,13 @@ app.whenReady().then(async () => {
   registerAuthIpc(
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
+
+  // 平台人像库(走平台余额那条路)。与上面 vvdance 那套人像库并存,两边素材互不可见。
+  //
+  // 同样必须在 createWindow 之前:人像库页面挂载即调 list(),晚注册会被
+  // 「No handler registered」reject,页面钉死在空状态。这一层没有启动副作用、
+  // 不读盘(绑定文件是懒读的),所以放在这里不增加启动开销。
+  registerPortraitLibraryIpc()
 
   // 关键路径：创建窗口
   createWindow()

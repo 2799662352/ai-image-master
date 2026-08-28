@@ -127,6 +127,8 @@ import type {
   CodexProviderMutationResponse,
   CodexProviderRecord,
 } from '../types/agentApi'
+// 同理:`window.electronAPI.portraitLibrary` 的契约住在 `src/types/portraitApi.ts`。
+import type { PortraitLibraryApi } from '../types/portraitApi'
 // 同理:`window.electronAPI.auth` 的契约住在 `src/types/authApi.ts`。
 import type {
   AccountBalance,
@@ -554,6 +556,9 @@ export interface ElectronAPI {
   // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
   // 各 Section 手写 duck-type 子集的时代结束于此。
   agent: AgentApi
+  // 平台人像库(走平台余额那条路)。与上面 `seedance.*` 那套 vvdance 人像库**并存**,
+  // 两边素材互不可见 —— 上游是两个不同的资产池,`asset://` 不通用。
+  portraitLibrary: PortraitLibraryApi
   auth: {
     getState: () => Promise<AuthState>
     startLogin: () => Promise<{ authorizeUrl: string; expiresIn: number }>
@@ -1490,6 +1495,30 @@ const electronAPI: ElectronAPI = {
         id,
       ),
   },
+
+  // ============ 平台人像库 ============
+  //
+  // 全部回信封,**不裸抛** —— 裸抛经 IPC 会被包成 "Error invoking remote method",
+  // 后端 code 全丢,而 UI 要按 code 分支(ASSET_NOT_READY 是「稍等」、ASSET_FAILED 是
+  // 「换一张」,两个动作完全不同)。窄化失败也走信封,理由同 `auth` 那批的 INVALID_QUERY。
+  //
+  // `scope` 每次显式传:主进程刻意不猜当前池 —— 池错了不是计费错,是素材登记进错的组,
+  // 而跨池的 asset 根本读不出来(理由见 `services/portraitLibrary/ipc.ts` 顶部)。
+  portraitLibrary: {
+    list: (scope, options) => safeInvoke('portrait:list', scope, options),
+    resolve: (scope, assetId) => safeInvoke('portrait:resolve', scope, assetId),
+    poll: (scope, assetId) => safeInvoke('portrait:poll', scope, assetId),
+    register: (scope, input) => safeInvoke('portrait:register', scope, input),
+    // `file.data` 必须是 ArrayBuffer:`File`/`Blob` 过不了结构化克隆,到主进程是个 `{}`,
+    // 上传照发但 0 字节。渲染层写 `data: await file.arrayBuffer()`。
+    upload: (scope, file) => safeInvoke('portrait:upload', scope, file),
+    hide: (scope, assetId) => safeInvoke('portrait:hide', scope, assetId),
+    purge: (scope, assetId) => safeInvoke('portrait:purge', scope, assetId),
+    patch: (scope, assetId, patch) => safeInvoke('portrait:patch', scope, assetId, patch),
+    ensure: (scope, input) => safeInvoke('portrait:ensure', scope, input),
+    lookupBinding: (scope, url) => safeInvoke('portrait:lookup-binding', scope, url),
+    clearResolutionCache: () => safeInvoke('portrait:clear-resolution-cache'),
+  } satisfies PortraitLibraryApi,
 
   // ============ 桌面端浏览器登录 ============
   auth: {
