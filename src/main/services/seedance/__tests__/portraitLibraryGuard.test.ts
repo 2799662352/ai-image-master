@@ -130,6 +130,19 @@ describe('两个提交入口都必须问过这个谓词', () => {
     expect(platformCalls.length).toBeGreaterThan(0)
   })
 
+  /**
+   * 网关地址必须与出网注入器**同源解析**,不能各写各的。
+   *
+   * 分叉的表现是「注入器盯着 A、视频提交打到 B」:测试服签的影子 token 发到生产网关
+   * 一律 401,而错误里不会有任何一个字提到是地址配错了 —— 只会看见「Invalid token」,
+   * 于是人去查 token 而不是查地址。
+   *
+   * 🧬 变异点:把 `baseUrl` 那一行删掉(退回默认的 `MIAU_BASE_URL`),这条必红。
+   */
+  it('网关视频客户端与注入器共用同一个 origin 解析', () => {
+    expect(runtimeSource).toContain('baseUrl: `${resolveGatewayOrigin()}/v1`')
+  })
+
   it('没有任何一处裸调用(守卫之外直接调)', () => {
     // 把「守卫 + 紧随其后的调用」整段抠掉,剩下的正文里不该再出现这两个调用。
     const stripped = runtimeSource.replace(

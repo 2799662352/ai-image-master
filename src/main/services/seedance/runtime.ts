@@ -52,6 +52,7 @@ import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import { getActivePool, getActivePoolToken } from '../auth/gatewayToken'
+import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { ensureAsset } from '../portraitLibrary/ensureAsset'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
@@ -519,6 +520,13 @@ export function initSeedanceRuntime(opts: {
   const seedanceGatewayTransport = createSeedanceGatewayTransport(
     createSeedanceGatewayClient({
       fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      // 与出网注入器**共用同一个** origin 解析(开发构建才认 `CATIMATION_GATEWAY_ORIGIN`,
+      // 打包产物读都不读 —— 理由见 `gatewayHeaderInjector.resolveGatewayOrigin`)。
+      //
+      // 各写各的话会分叉成「注入器盯着 A、视频提交打到 B」:测试服签的影子 token
+      // 发到生产网关一律 401,而错误里不会有任何一个字提到是地址配错了。
+      // `MIAU_BASE_URL` 自带 `/v1`,这里的 origin 没有,所以要补上。
+      baseUrl: `${resolveGatewayOrigin()}/v1`,
     }),
     createSeedanceGatewayTokenResolver(
       gatewayTokenSources,

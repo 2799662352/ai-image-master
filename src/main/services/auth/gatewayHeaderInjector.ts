@@ -56,7 +56,7 @@ const GATEWAY_ORIGIN_ENV = 'CATIMATION_GATEWAY_ORIGIN'
  * 拿得到,是因为「完全不能改」和「攻击者不能改」是两回事 —— 前者会让这条链路
  * 无法在任何非生产环境里被验证,而不可验证本身也是一种风险。
  */
-function resolveGatewayOrigin(): string {
+export function resolveGatewayOrigin(): string {
   // `app` 在单测里被 mock,`isPackaged` 可能是 undefined —— 那按「非打包」处理,
   // 否则测试就够不到覆盖分支。真实主进程里它一定是布尔值。
   if (app?.isPackaged === true) return DEFAULT_GATEWAY_ORIGIN
