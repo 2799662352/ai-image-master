@@ -63,6 +63,67 @@ export function clearGatewayTokens(): void                              // 登�
 
 ---
 
+## 上游取证（2026-08-28 补，本节推翻了本计划初版的三处写法）
+
+> 初版计划是在没有查上游代码与 issues 的情况下写的。补查之后有三处必须改，其中一处是「会必然失败」而不是「不够优雅」。
+
+### U1. `AddToken` 已经存在，别从零造
+
+`POST /api/token/` → `controller.AddToken`（`controller/token.go:167`，路由 `router/api-router.go:267`）**本来就接受 `ExpiredTime` / `UnlimitedQuota` / `ModelLimits` / `AllowIps` / `Group`**。我们不能直接调它（它挂 `middleware.UserAuth()`，按 `c.GetInt("id")` 给**当前登录用户**铸，而影子用户没有会话），但**必须复用它的构件**，否则等于在 fork 里维护一份会漂移的劣化副本：
+
+| 上游做法 | 出处 | 初版计划的错误做法 |
+|---|---|---|
+| `common.GenerateKey()` | `token.go:204` | 手搓 `fmt.Sprintf("dk%s%d%s", …)` + 两段 `GenerateInviteCode()` + 碰撞重试 |
+| `cleanToken.Insert()` | `token.go:225` | 裸 `model.DB.Create(&token)` |
+| 设 `AccessedTime` | `token.go:215` | 漏了 |
+| 名字长度 ≤ 50 校验 | `token.go:174-177` | 漏了 |
+
+用 `common.GenerateKey()` 顺带**消掉了初版最脏的一块**：初版照抄 `service/allocation.go:395-398` 的后缀生成，那段把随机段拼在末尾再截到 45 字符——**截掉的正是熵**。allocation token 每个 `(user, project)` 只铸一次所以从没暴露，高频铸造会直接踩上。改用上游生成器之后，截断、熵、碰撞重试这三个问题一起消失。
+
+代价：派生 token 的 key 不再有 `dk` 前缀。可以接受——全仓 grep 确认 key 前缀**没有任何代码依赖**（`pa` 前缀纯人肉可读性），程序化识别一律走 `Name`。
+
+### U2. 每用户令牌数有硬上限，所以幂等复用是必须项
+
+```191:203:D:\tecx\text\25\soraui_4.0\new-api\controller\token.go
+	maxTokens := operation_setting.GetMaxUserTokens()
+	count, err := model.CountUserTokens(c.GetInt("id"))
+	...
+	if int(count) >= maxTokens {
+		... "已达到最大令牌数量限制 (%d)"
+```
+
+默认 **1000**（`setting/operation_setting/token_setting.go:12`）。15 分钟 TTL、每次都新建的话约 96 枚/天 —— **重度用户约 10 天就把自己的账号铸废**，之后铸币端点硬失败。
+
+所以 C1 的语义从「铸一枚」改成「**取一枚可用的**」：同一 `(影子用户, 池)` 下已有未过期的派生 token 就直接复用。这样每个池稳定只占 1 行，上限问题消失，也不需要额外的清理任务。
+
+安全性没有削弱：复用只是让同一枚 token 在它本来的 TTL 内被继续使用，泄漏窗口与「每次新铸」完全一致。
+
+### U3. 上游 issue #5446 —— 看着像命中，实际不是
+
+标题是 *"Potential cross-request response mixing between different tokens under the same user"*，正好长成我们方案的样子（同一用户挂多枚 token）。逐条读完线程后判定**与本方案无关**：
+
+- 另一位报告者补充**不同用户之间也会出现** → 不是「同用户多 token」现象
+- 决定性的一条：报告者用**两套完全独立、不同网络、无主从无负载均衡的 new-api 容器**连同一个 vLLM 上游，串扰照样复现 → 归因指向上游模型服务而非 new-api 的 token 处理
+- 维护者指出报告者的 `v0.13.2` 过老，且直连官方订阅也有人反馈同样现象
+
+**记在这里是为了防止将来有人 grep 到这条 issue 后重新推翻本方案。** 它仍是 OPEN 状态，我们的网关本身就是一个 new-api 部署，所以万一线上真出现串响应，这条线程是现成的先例。
+
+官方文档：https://docs.newapi.ai/ ；DeepWiki：https://deepwiki.com/QuantumNous/new-api
+
+### U4. `ReactivatePersonalAllocation` 会无条件复活历史 token
+
+`model/personal_allocation.go:83-85` 是 `Where("user_id = ?").Update("status", 1)`，**没有过期过滤**。用户「退项目→重新加入」会把该影子用户名下所有历史 token 的 status 改回 1。
+
+目前**不构成漏洞**：`model/token.go:216` 的过期检查独立于 status，过期的照样过不了。但这是只差一步的隐患。采用 U2 的幂等复用之后风险进一步收窄（每个池只有 1 行历史），本期**不改这段代码**（改它会打破「纯新增」约束、且波及既有回收路径），仅在此记录。
+
+### U5. `ValidateUserToken` 的错误不可区分
+
+过期、被禁用、额度耗尽**全部返回同一个 `ErrTokenInvalid`**（`model/token.go:205-243`）。所以桌面端拿不到「你的 key 过期了」这种可判定信号。
+
+**这不影响本方案**：C3 的刷新判据本来就是本地缓存年龄，不依赖服务端的过期信号；401 一律触发一次 `refreshGatewayToken`，无论真实原因是过期还是被禁用——两种情况下「重取一枚」都是正确动作（被禁用时重取会失败并冒泡，这正是我们要的）。
+
+---
+
 ## Task 1: new-api —— 铸派生 token 的内部端点
 
 **Files:**
@@ -190,29 +251,65 @@ func InternalMintDerivedToken(c *gin.Context) {
 		return
 	}
 
-	// `dk` 前缀把派生 token 与 allocation 的 `pa` 前缀区分开 —— 排查时一眼能看出
-	// 哪枚是短命票据。注意 Token.Key 存的是**不带 sk- 前缀**的 suffix(与
-	// service/allocation.go:395-402 同约定),sk- 只在交出去时拼上。
-	suffix := fmt.Sprintf("dk%s%d%s", shortUID(alloc.NewapiUserId), req.ProjectId, model.GenerateInviteCode())
-	if len(suffix) > 45 {
-		suffix = suffix[:45]
+	now := time.Now().Unix()
+	// 这个名字有三重作用,不是装饰:
+	//   ① 它会出现在用户的使用明细里(Log.TokenName)。同项目所有派生 token 同名,
+	//      明细里聚合成一行,不会冒出上千个陌生名字让用户以为账串了。
+	//   ② 它是**唯一能程序化识别派生 token 的东西** —— key 前缀在全仓没有任何代码
+	//      依赖(见计划 U1),不能靠它。
+	//   ③ 下面的幂等复用就是按 (user_id, name) 找现有那枚。
+	// 上游对 Name 有 50 字符上限(token.go:174-177),这个格式远低于。
+	name := fmt.Sprintf("桌面端-%d", req.ProjectId)
+
+	// 幂等:同一个池已有未过期的派生 token 就直接复用。
+	//
+	// **这不是优化,是必须项。** 上游对每用户令牌数有硬上限(默认 1000,
+	// token_setting.go:12),而 AddToken 到顶就直接拒(token.go:191-203)。每次都新建的话
+	// 15 分钟 TTL 下约 96 枚/天,重度用户十来天就把自己的账号铸废。
+	//
+	// 复用不削弱安全性:同一枚 token 只在它本来的 TTL 内被继续用,泄漏窗口与每次新铸一致。
+	var existing model.Token
+	err = model.DB.Where("user_id = ? AND name = ? AND status = ? AND expired_time > ?",
+		alloc.NewapiUserId, name, common.TokenStatusEnabled, now).First(&existing).Error
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"token_key":      "sk-" + existing.Key,
+			"expires_in":     existing.ExpiredTime - now,
+			"newapi_user_id": alloc.NewapiUserId,
+		})
+		return
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query existing token"})
+		return
 	}
 
-	now := time.Now().Unix()
+	// key 用上游的生成器,不要手搓。
+	//
+	// service/allocation.go:395-398 那个模板把随机段拼在末尾再截到 45 字符 ——
+	// **截掉的正是熵**。allocation token 每个 (user, project) 只铸一次所以从没暴露,
+	// 高频铸造会直接踩上。用 common.GenerateKey() 之后,截断、熵、碰撞重试三个问题一起消失。
+	key, err := common.GenerateKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate key"})
+		return
+	}
+
 	token := model.Token{
-		UserId: alloc.NewapiUserId,
-		Key:    suffix,
-		// 这个名字会出现在用户的使用明细里(Log.TokenName)。两枚 token 意味着明细会
-		// 出现两种名字,起个能看懂的,否则用户会以为账串了。
-		Name:           fmt.Sprintf("桌面端-%d", req.ProjectId),
-		Status:         1,
-		UnlimitedQuota: true,
-		CreatedTime:    now,
+		UserId:       alloc.NewapiUserId,
+		Key:          key,
+		Name:         name,
+		Status:       common.TokenStatusEnabled,
+		CreatedTime:  now,
+		AccessedTime: now, // 上游 AddToken 也设(token.go:215),漏了会让令牌列表显示异常
 		// 🚨 **绝不能是 -1。** -1 = 永不过期 = 退回到「把长期钥匙交给客户端」,
 		// 整个两层设计就白做了。
-		ExpiredTime: now + ttl,
+		ExpiredTime:    now + ttl,
+		UnlimitedQuota: true,
 	}
-	if err := model.DB.Create(&token).Error; err != nil {
+	// 用 Insert() 而不是裸 DB.Create —— 上游 AddToken 走的就是它(token.go:225),
+	// 它可能带缓存失效等副作用,绕过去会埋下不一致。
+	if err := token.Insert(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
 		return
 	}
@@ -396,10 +493,28 @@ router.get('/gateway-token', authMiddleware, async (req, res) => {
 	const isPersonal = personalId !== null && projectId === personalId && !producerProjectId
 
 	if (!isPersonal) {
-		// 核不了就拒。shortdrama 在同一位置的注释值得原样遵守:
+		// ⚠️ **不要用 `requireOwnedProjectId`。** 它故意把「不是成员」与「上游查不到」
+		// 都归成 403（`projectAuth.ts:10-16` 的注释明写了这个取舍），而这里必须区分：
+		// 核不了要 503，既不能当「不是成员」拒掉，更不能放行。
+		//
+		// 底层早就有三态，`getUserToken` 自己的 docstring 就说它是兼容层、要区分的
+		// 新调用方应当用 `getUserTokenResult`（`newApiService.ts:476-482`）。
+		//
+		// 为什么核不了宁可 503 也不放行 —— shortdrama 在同一位置的注释值得原样遵守：
 		// "'likely' is not the standard for the one call in this app that spends somebody's money."
-		const auth = await requireOwnedProjectId(userId, projectId, producerProjectId)
-		if (!auth.ok) return res.status(auth.err.status).json({ success: false, error: auth.err })
+		const lookup = await newApiService.getUserTokenResult(userId, projectId, producerProjectId)
+		if (lookup.outcome === 'not_allocated') {
+			return res.status(403).json({
+				success: false,
+				error: { code: 'FORBIDDEN', message: 'project access denied' },
+			})
+		}
+		if (lookup.outcome !== 'found') {
+			return res.status(503).set('Retry-After', '5').json({
+				success: false,
+				error: { code: 'UPSTREAM_UNREACHABLE', message: '暂时无法校验项目权限，请稍后重试' },
+			})
+		}
 	}
 
 	try {
@@ -426,8 +541,27 @@ Expected: PASS
 
 补：未登录 401；非成员 403；上游 404 透传；响应体不含 `newapi_user_id`；**新增代码路径上没有任何 `console.*` 打印到 token**（逐行看一遍，并加一条断言 mock 的 logger 未收到含 `sk-` 的字符串）。
 
+**四个实施注意（都是踩过的，别重犯）：**
+
+1. **`vitest.config.ts` 的 include 是白名单，不是通配。** `src/routes/__tests__/**/*.test.ts` 是通配（`:14`），路由测试会自动跑；但 `src/services/__tests__/` 是**逐文件枚举**的。新增 service 测试文件如果不加进 include，`npx vitest run src/services/__tests__/` 会**静默不执行它** —— 看起来全绿，其实根本没跑。加文件的同时必须改 config。
+
+2. **「未登录 → 401」在模板的形状下测不到。** `userOrg.balance.test.ts:9-15` 把 `authMiddleware` 整个 `vi.mock` 掉、无条件注入用户。要钉 401 得另起一个挂真中间件的 app，或让 mock 读某个 header 决定放行与否。
+
+3. **用 `req.user.userId` 不是 `.id`。** `userOrg.ts` 全文统一用前者（`:103`、`:137`、`:263`…）。`authService.verifyToken` 两个字段返回同一个值，功能等价，但按文件一致性应当用 `userId`。
+
+4. **成员资格有最长 10 分钟的缓存滞后。** `lookupUserToken` 把 `found` 写进 Redis 600 秒（负结果不缓存）。也就是说用户被移出项目后，最长 10 分钟内仍能换到派生 token。**本期显式接受这个窗口**：它是既有行为、影响的是「已经被移出的成员多花 10 分钟自己池子里的钱」，而收紧它要动共享的缓存策略、波及所有调用方。记在这里以免将来被当成新引入的漏洞。
+
 Run: `npx vitest run src/routes/__tests__/ src/services/__tests__/`
 Expected: PASS，既有套件无回归
+
+- [ ] **Step 9b: 确认 `ECONNABORTED` 是否落进 503（待验证）**
+
+`NETWORK_LAYER_ERROR_CODES`（`src/routes/userOrg.ts:27-34`）里有 `ETIMEDOUT` 但**没有 `ECONNABORTED`**，而 axios 默认（`transitional.clarifyTimeoutError` 为 false）超时抛的正是后者。若属实，上游 10 秒超时会掉进 500 `INTERNAL_ERROR` 而不是本端点要求的 503 + `Retry-After`。
+
+写一条针对 `forwardNewApiError` 的单测，直接喂一个 `code: 'ECONNABORTED'` 的错误，断言得到 503。
+
+- **红了** → 这是既有缺陷，影响所有走 `forwardNewApiError` 的端点，不只本次。**先报告再决定要不要在本 PR 里修** —— 它超出本计划范围。
+- **绿了** → 说明该项目已配 `clarifyTimeoutError` 或另有归一，把这条测试留下当回归护栏。
 
 - [ ] **Step 10: 提交**
 
@@ -668,6 +802,17 @@ git commit -m "feat(auth): 主进程新增派生网关 token 的取用与刷新"
 **3. 类型一致性：** `Pool` 在 Task 3 与渲染层 `useQuotaStore` 的 `Pool` 同形（`{ projectId, producerProjectId: number | null }`）；契约 C1 的 snake_case 与 C2 的 camelCase 边界在 Task 2 Step 6 的 `mintDerivedToken` 里显式转换。
 
 **4. 已知缺口（需要你确认的验收项）：** spec §六提到「别让后端也预扣一次」——桌面端走直连时不得调 `preDeduct` / `reserveVideoTaskBillingV2`。这条没有对应的自动化测试，因为它是「不要做某事」。列为人工验收项。
+
+**5. 上游取证补做后的修订记录（2026-08-28 第二版）：** 本计划初版是在没查上游代码与 issues 的情况下写的，补查后改了四处，全部记在「上游取证」一节：
+
+| # | 初版错在哪 | 后果 |
+|---|---|---|
+| U1 | 手搓 key 生成（照抄 allocation 那段先拼随机段再截断的写法） | **截掉的正是熵**；且重复实现了上游 `common.GenerateKey()` |
+| U2 | 每次调用都新建 Token 行 | 上游每用户令牌数硬上限默认 1000，重度用户约 **10 天铸废账号** |
+| Task 2 | 用 `requireOwnedProjectId` 并期待它给 503 | 它**故意**把 403/503 合并，需求中的 503 永远不会出现 |
+| Task 2 | `req.user.id` | 该文件统一用 `userId` |
+
+另有两条只记录不改：U4（`ReactivatePersonalAllocation` 无过期过滤地复活历史 token —— 目前不构成漏洞，因为过期检查独立于 status）、U5（`ErrTokenInvalid` 不可区分 —— 不影响本方案，因为刷新判据是本地缓存年龄而非服务端信号）。
 
 ---
 
