@@ -317,8 +317,16 @@ export function AccountSection() {
                   平台余额
                 </button>
               </div>
-              {/* 「仅 Miau API 站点生效」不是免责声明,是必须说的事:平台余额只覆盖那
-                  一个计费域,切到别的站点出图会照旧扣自填 Key 的钱。 */}
+              {/* 这句不是免责声明,是必须说清的事实,而且**范围比站点更窄**。
+                  
+                  曾经写的是「仅对『Miau API』站点生效」—— 那承诺的是**站点级**覆盖,
+                  而实现是**按请求路径**的:标记头由 `applyAuthHeaders` 打,只有 6 个出图/
+                  TTS 出网点会走它。图像理解(`understandImage` / `analyzeImagesStream` /
+                  `understand`)打的就是这个站点,却从不经过那个方法,照旧扣自填 Key 的钱。
+                  所以那句话对用户是假的:他以为在这个站点上花的都是账号余额。
+                  
+                  这里刻意只点名「图像理解」这一个已核实的例外,不写「其余功能一律不覆盖」
+                  —— TTS 其实是覆盖的,把话说满会在另一个方向上再假一次。 */}
               <p
                 data-testid="billing-hint"
                 className="text-xs text-zinc-500 leading-relaxed"
@@ -326,7 +334,7 @@ export function AccountSection() {
                 {!poolReady
                   ? '先在上面选一个计费池,才能用平台余额出图。'
                   : billingSource === 'platform'
-                    ? '当前用账号余额出图,仅对「Miau API」站点生效;其余站点仍走各自的自填密钥。'
+                    ? '当前用账号余额出图,仅覆盖「Miau API」站点上的出图请求。图像理解走的是同一个站点,但仍扣自填密钥;其余站点也各走各的密钥。'
                     : '当前用下方「API 站点」里配置的密钥出图,不扣这里的账号余额。'}
               </p>
               {/* 站点对了、开关也开了,模型仍可能用不了 —— 见上面 unsupportedModelName

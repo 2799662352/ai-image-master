@@ -1,4 +1,25 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { MIAU_BASE_URL } from '../../../../../shared/miau'
+
+/**
+ * 主进程注入器里的默认网关 origin。
+ *
+ * **读源码文本而不是 import 它**:那个模块的 import 链会拉进 `electron`
+ * (`app` / `safeStorage`)与整个 gatewayToken 落盘模块 —— 在这个渲染层测试文件里
+ * 把它们 mock 起来实测会让 vitest worker 直接超时挂死。而这条测试要的只是一个
+ * 字面量,不需要模块语义。
+ *
+ * 代价是没有类型检查,所以下面**必须**先断言「真的读到了」:常量一旦改名,正则匹配
+ * 不到就会静默跳过比对 —— 一条永远绿的测试比没有测试更糟。
+ */
+function readInjectorDefaultOrigin(): string {
+  const file = resolve(process.cwd(), 'src/main/services/auth/gatewayHeaderInjector.ts')
+  const matched = /DEFAULT_GATEWAY_ORIGIN\s*=\s*'([^']+)'/.exec(readFileSync(file, 'utf8'))
+  expect(matched, `没能从 ${file} 里读出 DEFAULT_GATEWAY_ORIGIN`).not.toBeNull()
+  return matched![1]
+}
 
 /**
  * 内置配置不许再指回 Miau 的源站 IP。
@@ -49,5 +70,37 @@ describe('Miau 网关地址', () => {
 
     expect(site).toBeDefined()
     expect(site.baseURL.startsWith('https://')).toBe(true)
+  })
+
+  // 🚨 网关 host 在仓库里有**三份互相独立的字面量**,彼此没有任何编译期联系:
+  //
+  //   1. `main/services/auth/gatewayHeaderInjector.ts` 的 `DEFAULT_GATEWAY_ORIGIN`
+  //      —— 注入器 URL 过滤器的默认值,决定**哪些请求会被换上平台凭据**;
+  //   2. `ApiService.ts` 的 `DEFAULT_GATEWAY_BASE_URL`(经 `resolveGatewayBaseUrl()`
+  //      成为 `apiSites[MIAU_SITE_KEY].baseURL`)—— 决定**哪些请求会被打上计费标记头**;
+  //   3. `shared/miau.ts` 的 `MIAU_BASE_URL` —— agent 对话/理解与万相 3.0 那两条路的基址。
+  //
+  // 三处目前一致,但漂移的**方向性后果完全不同**:
+  //   - 改 (2) → 渲染层打标记、注入器不认 → 401。响亮,查得出来。
+  //   - 改 (1) → **渲染层不再打标记,而请求照样打到网关** → 静默用自填 Key 计费。
+  //     用户以为在花平台余额,实际在花自己的钱,桌面端一个信号都没有。
+  //
+  // 开发构建的 `CATIMATION_GATEWAY_ORIGIN` 覆盖两边已经共用同一个变量名(各自的测试
+  // 盯着),这里守的是**默认值**这一半 —— 那是安装包里唯一会生效的那个值。
+  //
+  // 刻意不做重构(把三处收成一份要同时动主进程 / 渲染层 / shared 三个边界),一道闸够了。
+  // 同一分支上刚为 `BILLING_MARKER_HEADER` 做过同类的真源收拢,`src/types/authApi.ts`
+  // 里写了为什么那次的重复是致命的:两边测试各自硬编码自己那份,只改一边照样双绿。
+  // 这条测试存在的意义,就是不让那种「双绿」再发生一次。
+  it('注入器、渲染层站点、shared 基址三处的网关 host 必须一致', async () => {
+    const { ApiService, DEFAULT_GATEWAY_BASE_URL, MIAU_SITE_KEY } = await import('../ApiService')
+
+    const injectorHost = new URL(readInjectorDefaultOrigin()).host
+
+    expect(new URL(DEFAULT_GATEWAY_BASE_URL).host).toBe(injectorHost)
+    expect(new URL(MIAU_BASE_URL).host).toBe(injectorHost)
+    // 站点定义本身也要比一次,而不只是比那个常量:有人在 `apiSites` 里直接写死一个
+    // 别的字面量、绕开 `resolveGatewayBaseUrl()`,上面两条照样绿。
+    expect(new URL(new ApiService().getAllSites()[MIAU_SITE_KEY].baseURL).host).toBe(injectorHost)
   })
 })

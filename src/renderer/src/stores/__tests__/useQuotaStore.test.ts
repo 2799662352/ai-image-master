@@ -651,22 +651,22 @@ describe('useQuotaStore', () => {
       expect(useQuotaStore.getState().billingSource).toBe('own-key')
     })
 
-    // 订阅是模块级单例,重复装会让一次登出触发 N 次复位。
+    // 订阅是模块级单例,装第二份就是一次登出触发 N 次复位、以及 N 份永不释放的引用。
+    //
+    // 断言**订阅次数**而不是「复位了几次」:后者杀不掉这个变异。装三份的话,第一份就把
+    // billingSource 写成 own-key 了,另外两份撞上「已经是 own-key 就别写」那道幂等闸
+    // 直接返回 —— 可观测的复位次数仍然是 1,测试照样绿。只有盯 `subscribe` 本身才算数。
     it('反复切平台不会把登出订阅装多份', async () => {
+      const subscribeSpy = vi.spyOn(useAuthStore, 'subscribe')
       await pickPersonalPool()
       useAuthStore.setState({ authenticated: true })
+
       await useQuotaStore.getState().setBillingSource('platform')
       await useQuotaStore.getState().setBillingSource('own-key')
       await useQuotaStore.getState().setBillingSource('platform')
 
-      let resets = 0
-      const stop = useQuotaStore.subscribe((s, prev) => {
-        if (prev.billingSource === 'platform' && s.billingSource === 'own-key') resets += 1
-      })
-      useAuthStore.setState({ authenticated: false })
-      stop()
-
-      expect(resets).toBe(1)
+      expect(subscribeSpy).toHaveBeenCalledTimes(1)
+      subscribeSpy.mockRestore()
     })
 
     // 已登录状态下的其它状态推送(改了 displayName、刷新了 role)不该顺手把计费模式踢掉。
