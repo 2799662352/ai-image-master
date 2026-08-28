@@ -78,9 +78,22 @@ export function getActivePool(): Pool | null {
 }
 
 /**
- * 计费归属请求头。**发凭据时必须一起发,否则这笔消费在流水里查不到。**
+ * 打网关所需的**完整**请求头:`Authorization` 与计费归属绑在一起。
  *
- * ## 为什么需要
+ * ## 为什么是一个函数,而不是「取 token」+「取归属」两个
+ *
+ * 分开取的那一天,就是归属被忘掉的那一天 —— 而忘掉**不报任何错**:
+ * 钱照扣、图照出、片照生成,唯一的症状是事后在用量明细里查不到这笔消费。
+ * 2026-08-29 真机撞过一次:余额准确减少、后台显示「共 0 条」,
+ * 第一反应是钱被吞了,查了很久才落到请求头上。
+ *
+ * 所以这里**不提供只拿归属、或只拿 Authorization 的入口**。
+ * 想给网关发请求,就只能拿到这一整份。
+ *
+ * (`getActivePoolToken()` 仍然导出,但它是给**判定**用的 ——
+ * 「此刻有没有平台凭据」——不是给出网组头用的。)
+ *
+ * ## 为什么必须带归属
  *
  * 上游 new-api 的归属字段是从**请求头**取的,不是从 token 反查的:
  *
@@ -107,19 +120,19 @@ export function getActivePool(): Pool | null {
  * 后台那句「无法单独拆出当前池」正是这个问题的表现。
  * 与网页版 `getAuthHeaders()` 发的两个头保持一致(它今天的流水是能查到的)。
  */
-export function gatewayAttributionHeaders(): Record<string, string> {
-  const pool = activePool
-  if (!pool) return {}
-  const userId = getCredential()?.userId
-  if (!userId) return {}
+export function gatewayPlatformHeaders(token: string): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
 
-  return {
-    'X-Platform-User-Id': userId,
-    'X-Project-Id': String(pool.projectId),
-    ...(pool.producerProjectId !== null && pool.producerProjectId > 0
-      ? { 'X-Producer-Project-Id': String(pool.producerProjectId) }
-      : {}),
+  const pool = activePool
+  const userId = getCredential()?.userId
+  if (!pool || !userId) return headers
+
+  headers['X-Platform-User-Id'] = userId
+  headers['X-Project-Id'] = String(pool.projectId)
+  if (pool.producerProjectId !== null && pool.producerProjectId > 0) {
+    headers['X-Producer-Project-Id'] = String(pool.producerProjectId)
   }
+  return headers
 }
 
 export async function getGatewayToken(pool: Pool): Promise<string> {

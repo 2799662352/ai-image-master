@@ -1,15 +1,18 @@
-// 计费归属请求头。
+// 打网关的完整请求头:`Authorization` 与计费归属**绑在一起**。
 //
-// 真机查出来的那个 bug:钱扣对了,但用量流水一条都查不到。
+// 真机撞到的那个 bug:钱扣对了,但用量流水一条都查不到。
 //
-// 根因在 new-api 侧:任务与消费日志的归属字段是**从请求头取的**
-// (`controller/relay.go:801-806` 的 `task.PrivateData.PlatformUserId = c.GetHeader(...)`,
-// `model/log.go:400-423` 有同款回退),而桌面端只发了 `Authorization`。于是行写进去时
-// `platform_user_id=''` / `project_id=0`,而查询是
-// `WHERE platform_user_id=<uuid> AND project_id=<id>` —— 一条都匹配不上。
+// 根因在 new-api 侧是**按请求头认归属**
+// (`controller/relay.go:801-806` 把 X-Platform-User-Id 读进 task.PrivateData,
+// `model/log.go:400-423` 有同款回退),而桌面端当时只发了 Authorization。于是行以
+// `platform_user_id=''` / `project_id=0` 落库,而查询按
+// `WHERE platform_user_id=? AND project_id=?` 走 —— 一条都匹配不上。
 //
-// 扣费不受影响(它走 token 的 allocation,与请求头无关),所以症状是
-// 「钱少了、记录为 0」,用户第一反应必然是钱被吞了。
+// 扣费不受影响(走 token 的 allocation),所以症状是「余额少了、记录为 0」,
+// 用户第一反应必然是钱被吞了。
+//
+// 所以这个函数**不提供只取 Authorization、或只取归属的入口** —— 分开取的那一天
+// 就是归属被忘掉的那一天,而忘掉不报任何错。
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -36,30 +39,34 @@ const LOGGED_IN = {
   expiresAt: 0,
 }
 
-describe('gatewayAttributionHeaders', () => {
+describe('gatewayPlatformHeaders', () => {
   beforeEach(() => {
     cred.current = { ...LOGGED_IN }
   })
 
-  it('普通池:带上 platform user 与 project,不带 producer', async () => {
+  it('普通池:Authorization 与归属一起给,不带 producer', async () => {
     const m = await import('../gatewayToken')
     m.setActivePool({ projectId: 345, producerProjectId: null })
 
-    expect(m.gatewayAttributionHeaders()).toEqual({
+    expect(m.gatewayPlatformHeaders('sk-abc')).toEqual({
+      Authorization: 'Bearer sk-abc',
       'X-Platform-User-Id': 'user-uuid-1',
       'X-Project-Id': '345',
     })
   })
 
   /**
-   * producer 池的池键是两半。少发一半的后果不是报错,是流水记到错的子项目上 ——
-   * 而那正是后台那句「无法单独拆出当前池(子项目 #82)」要解决的问题。
+   * 🧬 变异点:把 producer 那一支删掉,这条必红。
+   *
+   * 池键是两半。少发一半,流水会记到错的子项目上 —— 后台那句
+   * 「无法单独拆出当前池(子项目 #82)」正是这个问题的表现。
    */
   it('producer 池:两半都带', async () => {
     const m = await import('../gatewayToken')
     m.setActivePool({ projectId: 346, producerProjectId: 82 })
 
-    expect(m.gatewayAttributionHeaders()).toEqual({
+    expect(m.gatewayPlatformHeaders('sk-abc')).toEqual({
+      Authorization: 'Bearer sk-abc',
       'X-Platform-User-Id': 'user-uuid-1',
       'X-Project-Id': '346',
       'X-Producer-Project-Id': '82',
@@ -67,20 +74,25 @@ describe('gatewayAttributionHeaders', () => {
   })
 
   /**
-   * 没登录 / 没选池时**不发空头**。`X-Platform-User-Id: ''` 与不发是两回事:
-   * 前者会让上游把空串当成一个合法的归属值写进去,而那与今天的坏状态一模一样,
-   * 只是从「没写」变成「明确写了个空的」,更难在事后分辨。
+   * 缺池或缺登录时**只回 Authorization,不发空串头**。
+   *
+   * `X-Platform-User-Id: ''` 与不发是两回事:前者会让上游把空串当成一个合法的
+   * 归属值写进去,与今天的坏状态一样查不到,却更难在事后分辨「没带头」和
+   * 「带了个空的」。
+   *
+   * 仍然回 Authorization 而不是整个失败:请求该不该发是调用方的决定,
+   * 这一层只负责「要发的话,头长什么样」。
    */
-  it('没选池时回空对象,不发空串头', async () => {
+  it('没选池时只回 Authorization,不发空串归属', async () => {
     const m = await import('../gatewayToken')
     m.setActivePool(null)
-    expect(m.gatewayAttributionHeaders()).toEqual({})
+    expect(m.gatewayPlatformHeaders('sk-abc')).toEqual({ Authorization: 'Bearer sk-abc' })
   })
 
-  it('没登录时回空对象', async () => {
+  it('没登录时同理', async () => {
     const m = await import('../gatewayToken')
     m.setActivePool({ projectId: 345, producerProjectId: null })
     cred.current = null
-    expect(m.gatewayAttributionHeaders()).toEqual({})
+    expect(m.gatewayPlatformHeaders('sk-abc')).toEqual({ Authorization: 'Bearer sk-abc' })
   })
 })

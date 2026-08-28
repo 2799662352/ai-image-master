@@ -4,7 +4,7 @@ import type { Session } from 'electron'
 // (那边写了为什么):这里曾经也有一份同字面量的副本,而两份副本的漂移不会让任何
 // 测试变红 —— 两边测试各自硬编码自己那份,只改一边照样双绿,线上却每个请求 401。
 import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../types/authApi'
-import { gatewayAttributionHeaders, getActivePoolToken } from './gatewayToken'
+import { gatewayPlatformHeaders, getActivePoolToken } from './gatewayToken'
 
 const BILLING_MARKER_HEADER_LC = BILLING_MARKER_HEADER.toLowerCase()
 const AUTHORIZATION_HEADER = 'Authorization'
@@ -109,14 +109,10 @@ export function installGatewayHeaderInjector(session: Session): void {
 
     const token = getActivePoolToken()
     if (token) {
-      headers[AUTHORIZATION_HEADER] = `Bearer ${token}`
-      // 归属头必须跟凭据一起发。上游是**从请求头**认这笔消费属于谁的
-      // (`relay.go:801-806` / `log.go:400-423`),只发 Authorization 的话钱扣对了、
-      // 流水却查不到 —— 详见 `gatewayToken.gatewayAttributionHeaders`。
-      //
-      // 与 token 同一个 `if` 内:没 token 这次请求本来就会 401,补归属头没有意义,
-      // 反而会给一个注定失败的请求打上「这是某某的消费」的标。
-      Object.assign(headers, gatewayAttributionHeaders())
+      // 整份拿。`gatewayPlatformHeaders` 把 Authorization 与计费归属绑在一起给,
+      // 刻意不提供只取其一的入口 —— 少了归属头,这笔消费会以空归属落库,
+      // 钱扣对了却在用量明细里查不到,而且**一个错都不报**。
+      Object.assign(headers, gatewayPlatformHeaders(token))
     }
     callback({ requestHeaders: headers })
   })

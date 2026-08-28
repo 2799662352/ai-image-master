@@ -12,7 +12,12 @@ const tokenRef = { value: null as string | null }
 const attributionRef = { value: {} as Record<string, string> }
 vi.mock('../gatewayToken', () => ({
   getActivePoolToken: () => tokenRef.value,
-  gatewayAttributionHeaders: () => attributionRef.value,
+  // 真实实现把 Authorization 与归属绑在一起回。这里照同样的形状,
+  // 否则这个 mock 会替注入器把「只写了 Authorization」这种实现撑绿。
+  gatewayPlatformHeaders: (token: string) => ({
+    Authorization: `Bearer ${token}`,
+    ...attributionRef.value,
+  }),
 }))
 
 /**

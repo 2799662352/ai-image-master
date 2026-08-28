@@ -49,14 +49,18 @@ export interface SeedanceGatewayClientOptions {
   /** 见 {@link SEEDANCE_GATEWAY_QUERY_PATH}。烟测用它试另一条路径。 */
   queryPath?: string
   /**
-   * 计费归属头(`X-Platform-User-Id` / `X-Project-Id` / `X-Producer-Project-Id`)。
+   * 由 token 组出这次请求的**完整**鉴权头。
+   *
+   * 生产上传的是 `auth/gatewayToken.gatewayPlatformHeaders` —— 它把 Authorization
+   * 与计费归属绑在一起,刻意不给只取其一的入口:少了归属头,消费会以空归属落库,
+   * 钱扣对了却在用量明细里查不到,而且一个错都不报。
    *
    * **现取而不是构造时定死**:用户中途切池,下一次提交就该记到新池上,
    * 而 transport 的生命周期跟着整个视频服务走、不跟着一次提交走。
    *
-   * 缺省回空对象 = 不发这些头,行为与补这个功能之前一致(钱照扣、流水查不到)。
+   * 缺省只给 Authorization —— 单测与将来可能的自填 Key 直连用。
    */
-  attributionHeaders?: () => Record<string, string>
+  authHeaders?: (apiKey: string) => Record<string, string>
   /** 提交重试的注入点，测试用来去掉真实等待。 */
   retryOptions?: RetrySubmitOptions
 }
@@ -131,8 +135,7 @@ async function request(
   fetchImpl: FetchLike,
   url: string,
   init: RequestInit,
-  apiKey: string,
-  attribution: Record<string, string>,
+  auth: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), SEEDANCE_GATEWAY_REQUEST_TIMEOUT_MS)
@@ -142,13 +145,10 @@ async function request(
       ...init,
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        // 计费归属。上游是**从请求头**认这笔消费属于谁的,只发 Authorization 的话
-        // 钱扣对了、流水却查不到(`auth/gatewayToken.gatewayAttributionHeaders` 有
-        // 完整论证与真机证据)。提交与轮询都带 —— 轮询触发的差额结算会再写一条
-        // 退款日志,那条同样需要归属。
-        ...attribution,
+        // 鉴权与计费归属整份来自 `authHeaders` —— 提交与轮询都带。
+        // 轮询触发的差额结算会再写一条退款日志,那条同样需要归属。
+        ...auth,
         ...(init.headers as Record<string, string> | undefined),
       },
     })
@@ -175,7 +175,8 @@ export function createSeedanceGatewayClient(
   const baseUrl = (options.baseUrl ?? MIAU_BASE_URL).replace(/\/+$/, '')
   const queryPath = options.queryPath ?? SEEDANCE_GATEWAY_QUERY_PATH
   const { fetchImpl } = options
-  const attribution = options.attributionHeaders ?? ((): Record<string, string> => ({}))
+  const authHeaders =
+    options.authHeaders ?? ((key: string): Record<string, string> => ({ Authorization: `Bearer ${key}` }))
 
   return {
     async createTask(body, apiKey) {
@@ -188,8 +189,7 @@ export function createSeedanceGatewayClient(
           fetchImpl,
           `${baseUrl}${SEEDANCE_GATEWAY_CREATE_PATH}`,
           { method: 'POST', body: JSON.stringify(body) },
-          key,
-          attribution(),
+          authHeaders(key),
         )
         const nested = asRecord(json.data)
         const id =
@@ -213,8 +213,7 @@ export function createSeedanceGatewayClient(
         fetchImpl,
         `${baseUrl}${queryPath}/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
-        key,
-        attribution(),
+        authHeaders(key),
       )
       return parseSeedanceGatewayTaskResult(json)
     },

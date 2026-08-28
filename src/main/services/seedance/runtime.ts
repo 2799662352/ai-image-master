@@ -51,11 +51,7 @@ import type {
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from './assetLibraryPolicy'
-import {
-  gatewayAttributionHeaders,
-  getActivePool,
-  getActivePoolToken,
-} from '../auth/gatewayToken'
+import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../auth/gatewayToken'
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { ensureAsset } from '../portraitLibrary/ensureAsset'
 import { createWan3Client } from '../wan3/client'
@@ -531,8 +527,9 @@ export function initSeedanceRuntime(opts: {
       // 发到生产网关一律 401,而错误里不会有任何一个字提到是地址配错了。
       // `MIAU_BASE_URL` 自带 `/v1`,这里的 origin 没有,所以要补上。
       baseUrl: `${resolveGatewayOrigin()}/v1`,
-      // 没有它,钱扣对了但用量流水一条都查不到 —— 上游按请求头认归属。
-      attributionHeaders: gatewayAttributionHeaders,
+      // 整份组头。少了里面的归属那几个,钱扣对了但用量流水一条都查不到 ——
+      // 上游按请求头认归属,而这个函数刻意不给只取 Authorization 的入口。
+      authHeaders: gatewayPlatformHeaders,
     }),
     createSeedanceGatewayTokenResolver(
       gatewayTokenSources,
