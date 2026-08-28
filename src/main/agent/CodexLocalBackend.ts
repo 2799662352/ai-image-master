@@ -16,6 +16,7 @@ import {
   startProviderCompatibilityProxies,
   type ProviderCompatibilityProxyGroup,
 } from './responsesCompatibilityProxy'
+import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
 import { resolveGatewayOrigin } from '../services/auth/gatewayHeaderInjector'
 import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gatewayToken'
 
@@ -37,6 +38,26 @@ import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gat
  * 拿到的是 `gatewayPlatformHeaders` 的**整份**(Authorization + 计费归属):
  * 少了归属那几个,钱扣对了但用量明细里查不到,而且一个错都不报。
  */
+/**
+ * 开发期把 Miau 的生产地址换成 `CATIMATION_GATEWAY_ORIGIN`。
+ *
+ * **这一步必须在主进程做。** 那批 provider preset 住在 `gatewayModelRouting.ts`,
+ * 而那个文件被渲染层直接 import(`agent-chat/ModelPicker.tsx`)—— 在它顶层写
+ * `import { app } from 'electron'` 会让渲染进程加载即失败,表现是「应用初始化超时」
+ * 加整页空白。所以 preset 里留生产常量,覆盖在这里落。
+ *
+ * 打包产物原样返回:`resolveMiauBaseUrl` 自己有那道闸,理由见它的注释。
+ */
+function withDevGatewayOverride(
+  providers: readonly CodexProviderConfig[],
+): CodexProviderConfig[] {
+  const resolved = resolveMiauBaseUrl(app.isPackaged)
+  if (resolved === MIAU_BASE_URL) return [...providers]
+  return providers.map((provider) =>
+    provider.baseUrl === MIAU_BASE_URL ? { ...provider, baseUrl: resolved } : { ...provider },
+  )
+}
+
 function gatewayPlatformHeadersFor(target: URL): Record<string, string> | null {
   if (target.origin !== resolveGatewayOrigin()) return null
   const token = getActivePoolToken()
@@ -497,11 +518,13 @@ export class CodexLocalBackend implements IAgentBackend {
       // can route a thread to any of them without a codex restart.
       const gatewayChannels = (this.options.getGatewayChannelProviders?.() ?? [])
         .filter((channel) => channel.id !== this.currentProvider?.id)
-      const providerConfigs = [
+      // 开发期把 Miau 生产地址换成 `CATIMATION_GATEWAY_ORIGIN`。preset 里留的是
+      // 生产常量,因为那批 preset 的文件被渲染层 import,不能碰 electron。
+      const providerConfigs = withDevGatewayOverride([
         ...(this.currentProvider ? [this.currentProvider] : []),
         ...(understand ? [understand.provider] : []),
         ...gatewayChannels,
-      ]
+      ])
       // Records what THIS spawn can serve: only ids in this set are valid
       // in-process `thread/start.modelProvider` targets (Plan B).
       this.registeredProviderChannelIds = new Set(

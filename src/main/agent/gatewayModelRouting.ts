@@ -8,8 +8,7 @@ import type {
   ProviderCompatibilityPolicy,
 } from './codexLaunch'
 import type { ProviderPreset } from './codexProviders'
-import { app } from 'electron'
-import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
+import { MIAU_BASE_URL } from '../../shared/miau'
 
 /** User-facing gateway card with its internal channel ids. */
 export interface GatewayPreset extends AgentGatewayRecord {
@@ -104,9 +103,15 @@ function qwenChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
     id: `${gatewayId}-qwen`,
     gatewayId,
     name: '通义千问 (Miau)',
-    // 开发构建吃 `CATIMATION_GATEWAY_ORIGIN`,否则连测试服时 agent 聊天仍打生产 ——
-    // 而平台影子 token 是测试服签的,发过去就是一句 Invalid token。
-    baseUrl: resolveMiauBaseUrl(app?.isPackaged === true),
+    // ⚠️ **这里必须是生产常量,不能在这个文件里做环境覆盖。**
+    //
+    // 本文件被**渲染层**直接 import(`agent-chat/ModelPicker.tsx`),所以顶层
+    // 不能出现 `import { app } from 'electron'` —— 渲染进程拿不到 `app`,模块
+    // 加载即失败,表现是「应用初始化超时」+ 整页空白(2026-08-29 撞过一次)。
+    //
+    // 开发期覆盖在主进程侧做:`CodexLocalBackend` 起兼容代理之前会把这条
+    // baseUrl 过一遍 `resolveMiauBaseUrl`。
+    baseUrl: MIAU_BASE_URL,
     envKey: 'MIAU_API_KEY',
     credentialId: 'qwen',
     model: 'qwen3.7-max-dashscope',
