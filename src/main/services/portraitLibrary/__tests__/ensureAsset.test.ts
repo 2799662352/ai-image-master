@@ -272,6 +272,33 @@ describe('ensureAsset', () => {
     })
   })
 
+  /**
+   * 🧬 变异点:把 `catch` 里的驱逐条件改回只认 `isGone(e)`,这条必红。
+   *
+   * 与「彻底删除」那个死局是**同一个形状**,只是入口不同:终态 Failed 的绑定留在盘上,
+   * 下一次调用命中 `stored`、跳过登记、再 poll 还是 Failed —— 而 `ASSET_FAILED` 是本地
+   * 合成的 409,不满足 `isGone` 的 404/403,于是永远不驱逐。这张图在这个池里就此**卡死**。
+   *
+   * 更糟的是文案:`ASSET_FAILED` 说的是「请换一张或**重新导入**」,而重新导入同一个 URL
+   * 会撞上同一条绑定,`dropBinding` 又不导出 —— 承诺了一条用户走不通的路。
+   *
+   * 驱逐之后每次**用户发起**的重试会重登记一个新 asset。这是有界的(界是用户的动作,
+   * 不是循环),而代价那一侧是「永久不可用且无补救」—— 后者贵得多。
+   */
+  it('复用的 id 终态失败时驱逐绑定,让下一次能重新登记', async () => {
+    seed({ [URL_A]: [{ projectId: 42, assetId: 'asset-dead' }] })
+    const m = await import('../ensureAsset')
+    pollAsset.mockResolvedValue({ Id: 'asset-dead', Status: 'Failed' })
+
+    await expect(m.ensureAsset({ url: URL_A }, POOL)).rejects.toMatchObject({
+      code: 'ASSET_FAILED',
+    })
+
+    // 断在「绑定没了」而不是「下次会重登记」:后者要再摆一轮 mock,而真正的不变量
+    // 是这条绑定不能留下 —— 留下就等于把死局写进盘里,重启也带着。
+    expect(m.lookupAssetBinding(URL_A, POOL)).toBeNull()
+  })
+
   it('返回值永远是 asset id,类型上不给「回落成 URL」留位置', async () => {
     const m = await import('../ensureAsset')
     const id = await m.ensureAsset({ url: URL_A }, POOL)

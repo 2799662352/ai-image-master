@@ -204,6 +204,25 @@ function isGone(e: unknown): boolean {
 }
 
 /**
+ * 这条绑定已经没救了 —— 留着只会让同一个死结每次重现。
+ *
+ * 两个入口,同一个形状:
+ *   - **404/403**:素材被「彻底删除」了,或这个 id 根本不属于当前池
+ *   - **`ASSET_FAILED`**:上游对这个 asset 的终态判决,再 poll 一万次也还是 Failed
+ *
+ * 后者容易漏,因为它是本地合成的 409、不满足 `isGone`。而漏掉它比漏掉前者更刺眼:
+ * 那句文案说的是「请换一张或**重新导入**」,可重新导入同一个 URL 会撞上同一条绑定,
+ * `dropBinding` 又不导出 —— 等于承诺了一条用户走不通的路,而死结还写进了盘里、
+ * 重启也带着。
+ *
+ * 驱逐的代价是每次**用户发起**的重试会重登记一个新 asset(旧的成为孤儿)。这是有界的
+ * —— 界是用户的动作而不是循环 —— 而另一侧是「永久不可用且无补救」。后者贵得多。
+ */
+function isDeadBinding(e: unknown): boolean {
+  return isGone(e) || (e as { code?: unknown })?.code === 'ASSET_FAILED'
+}
+
+/**
  * 等就绪。`pollAsset` 是**服务端长轮询**(一次请求,后端在里面循环等),不要在外面
  * 再包 setInterval。
  *
@@ -299,12 +318,12 @@ async function ensureOnce(
   } catch (e) {
     // 只驱逐**复用**的 id。「彻底删除」就在人像库 UI 上,删掉之后这条绑定指向一个不
     // 存在的 asset,不驱逐的话这张图在这个池里永远用不了、而用户没有任何补救 ——
-    // 驱逐后下一次调用会重新登记,所以「稍等重试」这句话届时真的有用。
+    // 驱逐后下一次调用会重新登记,所以那句「重新导入」届时真的有用。
     //
-    // 刚登记的 id 就 404 则**不**驱逐:那更可能是上游的传播竞态,而立刻重登记会在每次
+    // 刚登记的 id 就失败则**不**驱逐:404 更可能是上游的传播竞态,而立刻重登记会在每次
     // 失败上再叠一个孤儿。它仍然自愈,只是慢一步 —— 下一次调用时它已经是「复用的 id」,
     // 走上面那条路。
-    if (stored && isGone(e)) dropBinding(input.url, pool)
+    if (stored && isDeadBinding(e)) dropBinding(input.url, pool)
     throw e
   }
   return assetId
