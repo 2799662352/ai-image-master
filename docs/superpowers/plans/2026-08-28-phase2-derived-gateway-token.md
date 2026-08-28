@@ -572,6 +572,80 @@ git commit -m "feat(user): 新增 gateway-token 端点,按 JWT 身份换取短�
 
 ---
 
+## Task 2b: 显式吊销（2026-08-28 追加需求）
+
+> **为什么要有。** 到此为止「吊销」只有两种被动形式：等 TTL 到点（最长 15 分钟），或撞上既有的回收路径（退项目 / 停用组织）。缺的是**主动的、立即生效的**吊销 —— 最典型的场景是共用电脑上退出登录：`clearGatewayTokens()` 只清本地缓存，那枚 key 在上游仍然有效，还能再花 15 分钟的钱。
+
+### 选择器：靠 `expired_time != -1`，不靠名字也不加字段
+
+```sql
+WHERE user_id = <影子用户> AND expired_time != -1
+```
+
+**这个条件由构造保证只命中派生 token：**
+
+- allocation token 是 `ExpiredTime: -1`（`service/allocation.go:407`，producer 变体 `:901`）—— 它是该影子用户上唯一带 `-1` 的
+- 影子用户是合成账号，**没有任何人能登录它**去建 token（`AddToken` 按 `c.GetInt("id")` 给当前登录用户铸）
+- 所以「这个影子用户名下、有真实过期时间的 token」⇔「我们铸的派生 token」
+
+比另外两种识别方式都好：`Name` 模糊匹配是拿展示字段当安全选择器（脆），加数据库列则打破「不改现有模型」。
+
+> **前提假设（可检查）：** 除 `service/allocation.go:400` 与 `:894` 外，没有第三处会在影子用户上创建 Token。实现时 grep 一遍 `model.Token{` 确认；若将来新增了别的铸造点，这个选择器要重新评估。
+
+- [ ] **Step 1: new-api 加吊销端点**
+
+`POST /api/internal/derived-token/revoke`，body `{ platform_user_id, project_id, producer_project_id? }`，响应 `{ "revoked": <int> }`。
+
+实现：按与铸造端相同的方式定位 alloc，然后
+
+```go
+	res := model.DB.Model(&model.Token{}).
+		Where("user_id = ? AND expired_time != -1 AND status = ?",
+			alloc.NewapiUserId, common.TokenStatusEnabled).
+		Update("status", common.TokenStatusDisabled)
+```
+
+**`expired_time != -1` 这个条件一个字都不能少** —— 少了就会把 allocation token 一起禁掉，那正是本方案全力避免的连坐（会同时弄断该用户的网页出图与 `projectAuth.ts:59` 的成员判定）。
+
+- [ ] **Step 2: 测试 —— 吊销后 allocation token 仍可用**
+
+这是本 Task 的核心断言，比「吊销成功」更重要：
+
+```go
+func TestRevokeDerivedTokens_LeavesAllocationTokenEnabled(t *testing.T) {
+	seedAllocation(t, "u1", 342, 100, "sk-pa-original") // ExpiredTime: -1
+	mintDerived(t, "u1", 342)                            // ExpiredTime: now+900
+
+	code, body := postRevoke(t, router, `{"platform_user_id":"u1","project_id":342}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.EqualValues(t, 1, body["revoked"])
+
+	// 派生的被禁用
+	var derived model.Token
+	require.NoError(t, model.DB.Where("user_id = ? AND expired_time != -1", 100).First(&derived).Error)
+	assert.Equal(t, common.TokenStatusDisabled, derived.Status)
+
+	// 🚨 allocation 那枚**必须**还是 enabled —— 连坐就是本方案要避免的全部
+	var alloc model.Token
+	require.NoError(t, model.DB.Where("user_id = ? AND expired_time = -1", 100).First(&alloc).Error)
+	assert.Equal(t, common.TokenStatusEnabled, alloc.Status)
+}
+```
+
+再加一条：吊销后立刻再调铸造端点，应当拿到**新的一枚**（证明被禁用的那枚不会被幂等复用命中 —— 复用条件里的 `status = enabled` 正是为此）。
+
+- [ ] **Step 3: sora-ui-backend 封装**
+
+`POST /api/user/gateway-token/revoke`，挂 `authMiddleware`，`platformUserId` 同样**只从 JWT 取**。成员校验可以省：吊销自己的 token 不需要证明项目权限，而 userId 来自 JWT 保证了只能吊销自己的。
+
+- [ ] **Step 4: 桌面端在登出时调用**
+
+`session.ts` 的 `logout()` 里，先对所有已缓存的池调一次吊销，再 `clearGatewayTokens()`。
+
+**吊销失败不能阻断登出** —— 用户点了退出就必须退出。失败时本地凭据照清，只在日志里留痕。写一条测试钉住：上游吊销返回 500 时，`logout()` 仍然完成且本地凭据已清。
+
+---
+
 ## Task 3: CATIMATION 主进程 —— gatewayToken.ts
 
 **Files:**
