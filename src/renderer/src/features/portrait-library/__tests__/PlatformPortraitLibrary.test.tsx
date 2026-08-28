@@ -225,6 +225,29 @@ describe('三个删除动作在 UI 上是三件事', () => {
     expect(screen.getByTestId('platform-card-a1')).toBeTruthy()
   })
 
+  // 批量到一半失败:前面几条在服务端已经生效了。不重拉的话网格显示的是一个
+  // 从未存在过的中间态 —— 比「全都没删」还难解释。
+  it('批量移出中途失败 → 报错,但已生效的那几条要重拉出来', async () => {
+    const bridge = mockBridge({
+      normal: [asset({ Id: 'a1', Name: '甲' }), asset({ Id: 'a2', Name: '乙' })],
+    })
+    bridge.hide
+      .mockResolvedValueOnce(okEnvelope({ purged: false }) as never)
+      .mockResolvedValueOnce(errEnvelope('HTTP_500', '后端炸了') as never)
+    await renderPanel()
+    await selectCard('a1')
+    await selectCard('a2')
+    const before = bridge.list.mock.calls.length
+
+    await act(async () => {
+      screen.getByRole('button', { name: /移出素材库/ }).click()
+    })
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.some((t) => t.type === 'error')).toBe(true),
+    )
+    await waitFor(() => expect(bridge.list.mock.calls.length).toBeGreaterThan(before))
+  })
+
   it('回收站里是「恢复」+「彻底删除」两个动作,不是一个', async () => {
     mockBridge({ trash: [asset({ Id: 't1', Name: '回收的', Hidden: true })] })
     await renderPanel()

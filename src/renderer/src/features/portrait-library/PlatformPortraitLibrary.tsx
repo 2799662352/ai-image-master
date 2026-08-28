@@ -199,31 +199,53 @@ export function PlatformPortraitLibrary() {
     [addToast, clearSelection, load, trash],
   )
 
+  /**
+   * 对选中的每一条依次执行,**逐条串行** —— 批量接口不存在,而并发发十几条
+   * DELETE 只会把上游打出限流。
+   *
+   * 中途失败就停,但**已经成功的那几条照样要重拉**:它们在服务端已经生效了,
+   * 不重拉的话网格显示的是一个从未存在过的中间态。一条都没成时不动本地状态 ——
+   * 那正是「不做乐观删除」。
+   */
+  const runOnSelected = useCallback(
+    async (
+      action: (assetId: string) => Promise<PortraitOpResult<unknown>>,
+      okMessage: (count: number) => string,
+    ) => {
+      if (selectedCards.length === 0) return
+      let done = 0
+      let failure: string | null = null
+      for (const card of selectedCards) {
+        const r = await action(card.assetId)
+        if (!r.ok) {
+          failure = `「${card.name}」${r.message}`
+          break
+        }
+        done += 1
+      }
+      addToast(
+        failure ? { message: failure, type: 'error' } : { message: okMessage(done), type: 'success' },
+      )
+      if (done === 0) return
+      clearSelection()
+      await load({ trash })
+    },
+    [selectedCards, addToast, clearSelection, load, trash],
+  )
+
   const handleRemove = useCallback(async () => {
     if (!scope) return
-    for (const card of selectedCards) {
-      // 逐条串行:批量接口不存在,而并发发十几条 DELETE 只会把上游打出限流。
-      const r = await removeFromLibrary(scope, card.assetId)
-      if (!r.ok) {
-        addToast({ message: `「${card.name}」${r.message}`, type: 'error' })
-        return
-      }
-    }
-    await settle({ ok: true, data: null }, `已移出 ${selectedCards.length} 个素材(可在回收站恢复)`)
-  }, [scope, selectedCards, addToast, settle])
+    await runOnSelected(
+      (id) => removeFromLibrary(scope, id),
+      (n) => `已移出 ${n} 个素材(可在回收站恢复)`,
+    )
+  }, [scope, runOnSelected])
 
+  // 恢复只回一个 `{ Id }`,本地那张卡的其余字段不保证还对 —— 所以走同一条重拉的路。
   const handleRestore = useCallback(async () => {
     if (!scope) return
-    for (const card of selectedCards) {
-      const r = await restoreFromTrash(scope, card.assetId)
-      if (!r.ok) {
-        addToast({ message: `「${card.name}」${r.message}`, type: 'error' })
-        return
-      }
-    }
-    // 恢复只回一个 `{ Id }`,本地那张卡的其余字段不保证还对 —— 必须重拉。
-    await settle({ ok: true, data: null }, `已恢复 ${selectedCards.length} 个素材`)
-  }, [scope, selectedCards, addToast, settle])
+    await runOnSelected((id) => restoreFromTrash(scope, id), (n) => `已恢复 ${n} 个素材`)
+  }, [scope, runOnSelected])
 
   const handlePurgeConfirmed = useCallback(async () => {
     if (!scope || !purgeTarget) return
