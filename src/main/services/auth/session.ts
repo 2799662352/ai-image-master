@@ -1,18 +1,14 @@
 // IdP 客户端与派生的会话状态。token 只存在于主进程,渲染层只看得到 `getAuthState()`。
-//
-// 出网一律走 `net.fetch`(electron)而不是 Node 全局 fetch:前者走 Chromium 网络栈,
-// 继承系统代理与企业根证书;后者两样都不继承,在有代理的办公网里直接失败。
 
-import { net } from 'electron'
 import { authBaseUrl } from './authBaseUrl'
 import { clearCredential, credentialSource, getCredential, setCredential } from './credentials'
 import { clearGatewayTokens } from './gatewayToken'
+import { AuthError, requireToken, sendJson } from './httpJson'
 // `AuthState` 的单一真源在 `src/types/authApi.ts` —— preload 与渲染层同吃一份,
 // 不在这里再声明一遍(AgentApi 就是因为两处各写一份而漂移过)。
 import type { AuthState } from '../../../types/authApi'
 import { MAX_RECHARGE_CNY } from '../../../types/authApi'
 
-const REQUEST_TIMEOUT_MS = 15_000
 const PROBE_INTERVAL_MS = 60_000
 
 export type { AuthState }
@@ -23,61 +19,11 @@ export interface PairingStart {
   expiresIn: number
 }
 
-/** 带后端错误码的异常,供 IPC 层映射成用户文案(`PAIRING_EXPIRED` → 「二维码过期了」)。 */
-export class AuthError extends Error {
-  constructor(
-    public readonly code: string,
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'AuthError'
-  }
-}
-
-// 实现搬去了叶子模块 `./authBaseUrl`(理由见那边的注释:本文件要 import
-// `gatewayToken`,而 `gatewayToken` 要用基址,留在这里就成环)。这里 re-export,
-// 让 `ipc.ts` 与既有测试里「从 `./session` 取 authBaseUrl」的写法一行都不用改。
-export { authBaseUrl }
-
-/**
- * 非 2xx **不抛异常**,原样交回 `{ status, body }`。
- *
- * 配对路径要把错误码抛给调用方,存活探测却要按状态码分支(401/403 清凭证、其余视为存活),
- * 两者对「失败」的定义不同。在这一层就抛的话,探测端要靠 catch 里反解异常来区分,
- * 分不清「HTTP 403」和「网络断了」—— 而这两者的正确处置恰好相反。
- */
-async function sendJson(
-  path: string,
-  method: 'GET' | 'POST',
-  opts: { body?: Record<string, unknown>; token?: string } = {},
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  try {
-    const headers: Record<string, string> = { Accept: 'application/json' }
-    if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
-    if (opts.token) headers.Authorization = `Bearer ${opts.token}`
-
-    const res = await net.fetch(`${authBaseUrl()}${path}`, {
-      method,
-      headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-      signal: controller.signal,
-    })
-
-    let body: Record<string, unknown> = {}
-    try {
-      const parsed: unknown = await res.json()
-      if (typeof parsed === 'object' && parsed !== null) body = parsed as Record<string, unknown>
-    } catch {
-      // 空响应体(如 204)或非 JSON 错误页。状态码本身已经够用了。
-    }
-    return { status: res.status, body }
-  } finally {
-    clearTimeout(timer)
-  }
-}
+// 两个实现都搬去了叶子模块(`./authBaseUrl`、`./httpJson`),理由见那两处顶部:本文件要
+// import `gatewayToken`,而它们两拨调用方都要用,留在这里就成环 / 就把 token 缓存拖进
+// 人像库的依赖图。这里 re-export,让 `ipc.ts` 与既有测试里「从 `./session` 取」的写法
+// 一行都不用改。
+export { authBaseUrl, AuthError }
 
 /**
  * 后端有**两套**错误信封,两套都要认:
@@ -238,12 +184,6 @@ export interface AccountOrganization {
 export interface PaymentConfig {
   /** 个人计费落点 project id;后端未配置 `PERSONAL_BILLING_PROJECT_ID` 时为 null。 */
   personalBillingProjectId: number | null
-}
-
-function requireToken(): string {
-  const cred = getCredential()
-  if (!cred) throw new AuthError('NOT_AUTHENTICATED', 401, '未登录')
-  return cred.token
 }
 
 function num(v: unknown): number | null {
