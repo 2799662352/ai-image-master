@@ -46,6 +46,7 @@ import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { modeLimit } from './modes'
 import { getWorkbenchDb } from './WorkbenchDb'
 import { useToastStore } from '../../stores/useToastStore'
+import { useQuotaStore } from '../../stores/useQuotaStore'
 import {
   type MaterialKind,
   buildCard,
@@ -649,6 +650,10 @@ function toReconcileItem(card: VideoWorkbenchCard): VideoWorkbenchReconcileItem 
     ratio: card.ratio,
     duration: card.duration,
     ...(card.startedAt ? { createdAt: card.startedAt } : {}),
+    // 送回提交那一轮用的计费模式:主进程要拿它打回同一条上游。少了它,一条
+    // 平台余额的任务会被拿自填 Key 去探,回一句「任务不存在」,而对账把那当成
+    // 「任务没了」—— 一条还在跑、已经付过钱的任务当场被判成失败卡片。
+    ...(card.billing ? { billing: card.billing } : {}),
   }
 }
 
@@ -1229,6 +1234,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       model: card.model,
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
       ...(card.taskId ? { taskId: card.taskId } : {}),
+      // 重查地址得打回签发 taskId 的那条通道 —— 拿错通道只会回「任务不存在」,
+      // 而这条路正是上游地址过期后唯一不用花钱的补救。
+      ...(card.billing ? { billing: card.billing } : {}),
     }).catch((e: unknown): Resaved => ({ ok: false, error: e instanceof Error ? e.message : String(e) }))
 
     set((s) => ({
@@ -1815,6 +1823,14 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       }
 
       const clientId = `wb-${card.id}-${Date.now()}`
+      // 🚨 提交那一刻现读,而且**必须由这里给出** —— 主进程刻意不猜。
+      //
+      // 它手上那份 activePool 只是本 store 的镜像:`setBillingSource('own-key')`
+      // 先落本地状态、再尽力调 `clearBillingPool()`,那一步失败时被吞掉。于是
+      // 存在一个窗口 —— 渲染层已经是自填 Key,主进程仍握着 activePool。此刻让
+      // 主进程猜,猜出来的是平台余额,用户在不知情的情况下花掉组织的钱。
+      // 完整论证见 seedanceGateway/credentials.ts 的「已知缺口」。
+      const billing = useQuotaStore.getState().billingSource
       let submitted: VideoWorkbenchCard | null = null
       set((state) => ({
         cards: state.cards.map((c) => {
@@ -1826,6 +1842,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             ...c,
             status: 'preparing',
             clientId,
+            // 每轮刷新:上一轮可能是平台余额、这一轮是自填 Key,而对账与
+            // 「重新保存」都靠它决定去问谁。
+            billing,
             taskId: undefined,
             videoUrl: undefined,
             error: undefined,
@@ -1864,6 +1883,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
         // 总闸随每次提交带过去 —— 关着时主进程不把这批参考图登记进人像库。
         autoImportPortrait: get().autoImportPortrait,
+        billing,
         ...buildModeMedia(card),
       }
 

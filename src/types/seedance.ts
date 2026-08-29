@@ -329,6 +329,19 @@ export function validateSeedanceRequest(
 /** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
 export type SeedanceRegion = 'global' | 'cn'
 
+/**
+ * 这一次生成的钱从哪出。
+ *
+ * 放在三端共享类型里而不是主进程内部,是因为**真相源在渲染层**
+ * (`useQuotaStore.billingSource`):意向要经 IPC 载荷一路带到主进程的
+ * `transportFor`,途中每一层都要能说出这个类型。
+ *
+ * 主进程内部同一个联合叫 `GatewayBillingSource`（`seedanceGateway/credentials.ts`）,
+ * 那边是「取哪枚 token」的视角、这边是「走哪条上游」的视角,值域刻意保持一致 ——
+ * 两个视角必须给出同一个结论,否则就是「按平台余额提交、拿自填 Key 去查」。
+ */
+export type VideoBillingSource = 'platform' | 'own-key'
+
 /** 任务快照（也是 `seedance:task-update` IPC 的载荷）。 */
 export interface SeedanceTaskState {
   taskId: string
@@ -386,6 +399,17 @@ export interface SeedanceTaskState {
    * 气泡/聊天历史）。缺省 = 聊天/MCP `generate_video` 链路，行为不变。
    */
   source?: 'workbench'
+  /**
+   * 这条任务是**用哪种计费模式建的**。提交时定下,此后轮询、取消、重取过期地址
+   * 都必须照它走。
+   *
+   * 不是装饰字段:平台余额那条路用的是按计费池签发的影子 token,拿用户自填的
+   * vvdance key 去查同一个 taskId,上游只会回一句「任务不存在」—— 而卡片会把它
+   * 报成「生成失败」,用户以为片子没出来,其实它正在跑、钱也已经花了。
+   *
+   * 缺省 = 自填 Key（接入网关之前的全部历史任务都是这样）。
+   */
+  billing?: VideoBillingSource
 }
 
 export type SeedanceTaskUpdate = SeedanceTaskState

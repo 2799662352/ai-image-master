@@ -31,7 +31,13 @@ function screenshotFile(): { file: File; bytes: Uint8Array } {
 }
 
 describe('MentionInput clipboard screenshots', () => {
-  const sendMessage = vi.fn(async () => ({ threadId: 'thread-1' }))
+  // 参数**必须**声明出来。写成 `vi.fn(async () => …)` 时,推断出的调用签名是零参 ——
+  // 于是 `mock.calls` 的元素类型是空元组 `[]`,`calls[0][0]` 既越界(TS2493)、类型又是
+  // `undefined`(往 AgentSendMessagePayload 强转触发 TS2352)。声明参数之后
+  // `calls[0][0]` 天然就是 payload 类型,下面那个 `as` 也就不需要了。
+  const sendMessage = vi.fn(async (_payload: AgentSendMessagePayload) => ({
+    threadId: 'thread-1',
+  }))
 
   beforeEach(() => {
     sendMessage.mockClear()
@@ -75,7 +81,7 @@ describe('MentionInput clipboard screenshots', () => {
     fireEvent.submit(textarea.closest('form')!)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    const payload = sendMessage.mock.calls[0][0] as AgentSendMessagePayload
+    const payload = sendMessage.mock.calls[0][0]
     expect(payload.attachments?.[0]).toMatchObject({
       name: 'image.png',
       mime: 'image/png',

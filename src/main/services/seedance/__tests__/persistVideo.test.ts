@@ -104,8 +104,17 @@ describe('persistVideoBytes · 按 taskId 重查地址', () => {
     await persistVideoBytes(TASK, deps)
 
     // 带 model:重查得打对上游 —— 万相的任务在 Ark 那边查不到。
-    expect(deps.refreshVideoUrl).toHaveBeenCalledWith('task-12345678', TASK.model)
+    // 带 billing:同一个理由的第二层 —— 平台余额那条任务是影子 token 建的,
+    // 拿用户自填的 key 去重查会拿回「任务不存在」,「重新保存」于是永远失败。
+    expect(deps.refreshVideoUrl).toHaveBeenCalledWith('task-12345678', TASK.model, undefined)
     expect(deps.downloadVideo).toHaveBeenCalledWith('https://fresh/v.mp4', expect.any(String))
+  })
+
+  it('重查带上任务自己的计费模式', async () => {
+    const deps = makeDeps({ refreshVideoUrl: vi.fn(async () => 'https://fresh/v.mp4') })
+    await persistVideoBytes({ ...TASK, billing: 'platform' }, deps)
+
+    expect(deps.refreshVideoUrl).toHaveBeenCalledWith('task-12345678', TASK.model, 'platform')
   })
 
   it('重查抛错时退回旧地址，不因此放弃', async () => {

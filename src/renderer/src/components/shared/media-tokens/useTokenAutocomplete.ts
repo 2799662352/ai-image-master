@@ -88,7 +88,9 @@ export function useTokenAutocomplete({
   const [position, setPosition] = useState({ top: 0, left: 0 })
 
   const pendingCursorRef = useRef<number | null>(null)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  // React 19 的 useRef 不再有零参重载,初值必须显式给 —— 空 ref 的 undefined
+  // 现在要写进类型里(debounce 定时器在首次输入前本来就是没有的)。
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const atPosRef = useRef(-1)
 
   // stable refs for latest values inside callbacks

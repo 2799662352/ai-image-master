@@ -4,6 +4,8 @@
  * 处理与 AI 图片生成 API 的所有通信
  */
 
+import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../types/authApi'
+import { useQuotaStore } from '../../stores/useQuotaStore'
 import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
@@ -299,6 +301,20 @@ export interface ModelCapabilities {
   layerDecomposition?: boolean
 }
 
+/**
+ * 参考图 / 输入图的合法源形态,与 {@link ApiService.normalizeImageSource} 认得的
+ * 分支一一对应:裸字符串（http(s) URL / data URL / 纯 base64），或带
+ * `dataUrl` / `url` / `base64` 之一的对象（`mimeType` 只在裸 base64 时用于拼
+ * data URL 前缀）。
+ *
+ * 注意**没有** `{ data }` 这一支：归一化不认这个键，传进来的图会被静默丢掉。
+ */
+export type ReferenceImageSource =
+  | string
+  | { dataUrl: string; mimeType?: string }
+  | { url: string; mimeType?: string }
+  | { base64: string; mimeType?: string }
+
 export interface GenerateImageParams {
   prompt: string
   model?: string
@@ -417,6 +433,131 @@ function resolveLayerDecompositionSizeTier(value: string | undefined): LayerDeco
  */
 export const MIAU_SITE_KEY = 'antigravity'
 
+// 「本次请求走平台余额」的标记头曾在这里重复声明过一份(理由写的是「渲染层不能
+// import 主进程模块」)。那条理由只对**主进程模块**成立,而常量本身可以住在两边共吃的
+// `src/types/authApi.ts` 里 —— 现在就在那儿,连同它为什么必须只有一份的说明。
+
+/** 生产网关。开发构建可被 `CATIMATION_GATEWAY_ORIGIN` 覆盖，见下。 */
+export const DEFAULT_GATEWAY_BASE_URL = 'https://miauapi.13797248455.xyz'
+
+/**
+ * Miau 网关根地址。**只有开发构建能覆盖。**
+ *
+ * 为什么需要覆盖：整条平台余额链路在生产之外没法验证 —— 认证后端能用
+ * `CATIMATION_AUTH_BASE_URL` 指到测试服，而网关地址若写死，测试服换来的 token
+ * 会被发到生产网关、必定 401。「攻击者不能改」和「开发时也不能改」是两回事，
+ * 只做前者会让这条链路不可验证，而不可验证本身也是风险。
+ *
+ * 为什么必须只在开发构建：这个值同时决定**请求发给谁**和**要不要打计费标记**
+ * （`shouldUsePlatformBilling` 拿请求 URL 与它比 origin），所以改它等于改凭据的
+ * 落点。环境变量是攻击者也能设的 —— 同一登录用户下的任何进程、快捷方式属性、
+ * 外面套一层批处理都能设。
+ *
+ * 闸门用 `import.meta.env.DEV` 而不是运行时判断：它是 electron-vite 的**构建期
+ * 常量**，生产构建里整个分支连同 `process.env` 读取会被 tree-shake 掉，安装包里
+ * 根本不存在这段代码 —— 比任何运行时检查都硬。
+ *
+ * ⚠️ 主进程侧有对应的一半（`main/services/auth/gatewayHeaderInjector.ts` 的
+ * `resolveGatewayOrigin`，闸门是 `!app.isPackaged`）。**两边必须用同一个环境变量、
+ * 同时生效**：只改一边的后果是渲染层发到 A、注入器只认 B，凭据一次都注不进去。
+ */
+function resolveGatewayBaseUrl(): string {
+  if (!import.meta.env.DEV) return DEFAULT_GATEWAY_BASE_URL
+
+  const raw = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+    ?.CATIMATION_GATEWAY_ORIGIN?.trim()
+  if (!raw) return DEFAULT_GATEWAY_BASE_URL
+
+  try {
+    // 只取 origin：带路径的输入会让下游拼出 `<origin>/<path>/v1/images/...`，
+    // 表现成「覆盖了但每个请求 404」。
+    return new URL(raw).origin
+  } catch {
+    console.warn('[ApiService] CATIMATION_GATEWAY_ORIGIN 不是合法 URL，已忽略')
+    return DEFAULT_GATEWAY_BASE_URL
+  }
+}
+
+/**
+ * 本次请求实际会打到的 host 源。
+ *
+ * **`buildRequestUrl` 与平台余额判定共用这一个函数,别各写各的。** 这两件事此前是
+ * 一对隐性耦合:前者会把谷歌原生模型的 host 换成 `directBaseURL`(源站直连),后者却
+ * 照着 `site.baseURL` 判断 —— 于是「站点是网关」为真、「请求打向网关」为假。症状见
+ * {@link evaluatePlatformBillingEligibility}。
+ */
+export function resolveRequestHostSource(
+  modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
+  site: Pick<ApiSite, 'baseURL' | 'directBaseURL'>,
+): string {
+  return modelConfig?.apiType === 'gemini-native' && site.directBaseURL
+    ? site.directBaseURL
+    : site.baseURL
+}
+
+/**
+ * 两个地址是否同源(protocol + host)。
+ *
+ * 按 origin 而不是字符串相等来比,是因为**主进程注入器认的就是 host**
+ * (`gatewayHeaderInjector` 的 URL 过滤器)。字符串相等会被一个尾斜杠骗过去,
+ * 而那种站点条目的请求其实照样会被注入。
+ */
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a)
+    const right = new URL(b)
+    return left.protocol === right.protocol && left.host === right.host
+  } catch {
+    return false
+  }
+}
+
+/** 平台余额用不了的原因。`null` 表示能用。 */
+export type PlatformBillingBlocker =
+  | 'unknown-model'
+  | 'no-site'
+  /** 站点整个不在平台计费域内(apiyi / 自建 / 本地)。 */
+  | 'site-not-gateway'
+  /** 站点对,但这个模型的请求绕开了注入器覆盖的 host。 */
+  | 'model-bypasses-gateway'
+
+export interface PlatformBillingEligibility {
+  eligible: boolean
+  blocker: PlatformBillingBlocker | null
+}
+
+/**
+ * 这个模型在这个站点上能不能用平台余额。
+ *
+ * 判据只有一条:**请求最终打到的 host 必须落在注入器的过滤器里**。凭据在主进程,
+ * 渲染层只打一个标记头,由 `onBeforeSendHeaders` 在出网前换成真 `Authorization` ——
+ * 而那个过滤器只挂在网关那一个 host 上。打到别处的请求有两个后果,都不响:
+ *   1. 标记换不到凭据、我们又刻意不发用户自填的 Key,于是**必定 401**;
+ *   2. 内部协议标记头会原样出网(注入器本该在出网前删掉它)。
+ *
+ * 谷歌原生模型正是这种情况:加速域名前面的 EdgeOne 不支持 `:generateContent`
+ * 那条路径(一律 524),所以 `buildRequestUrl` 把它们改道到 `directBaseURL` ——
+ * 一个**明文 HTTP 的源站 IP**。那个地址绝不能加进注入器白名单(等于让一枚永不过期、
+ * 无法单独吊销的凭据在网络上裸奔),所以这些模型只能回落到自填 Key。
+ *
+ * 站点级原因优先于模型级:站点就不对的时候再说「换个模型」是误导。
+ */
+export function evaluatePlatformBillingEligibility(
+  modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
+  site: Pick<ApiSite, 'baseURL' | 'directBaseURL'> | undefined,
+  gateway: Pick<ApiSite, 'baseURL'> | undefined,
+): PlatformBillingEligibility {
+  if (!modelConfig) return { eligible: false, blocker: 'unknown-model' }
+  if (!site || !gateway) return { eligible: false, blocker: 'no-site' }
+  if (!isSameOrigin(site.baseURL, gateway.baseURL)) {
+    return { eligible: false, blocker: 'site-not-gateway' }
+  }
+  if (!isSameOrigin(resolveRequestHostSource(modelConfig, site), gateway.baseURL)) {
+    return { eligible: false, blocker: 'model-bypasses-gateway' }
+  }
+  return { eligible: true, blocker: null }
+}
+
 /**
  * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
  * 仅经 Miau API 提供 —— 调用方(AudioPage)固定传 siteKey。
@@ -508,7 +649,7 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     // 走加速域名而非源站 IP(2026-07-28)。只有 https 可达 —— 明文 http 连不上,
     // 端口也不再需要。同一台 new-api 实例(401 报文形状一致),换域名后 CSP 里
     // 那几条 `http://175.178.198.17:*` 例外也随之取消。
-    baseURL: 'https://miauapi.13797248455.xyz',
+    baseURL: resolveGatewayBaseUrl(),
     // 谷歌原生端点走这里(EdgeOne 不支持那条路径,详见 ApiSite.directBaseURL)。
     directBaseURL: 'http://175.178.198.17:3000',
     description: 'Miau API 服务',
@@ -1280,7 +1421,14 @@ export class ApiService {
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
 
-    if (!apiKey) {
+    // ⚠️ 平台余额模式下**本来就没有 key**，凭据由主进程在出网时按 host 注入。
+    // 少了这个豁免，这道门会在请求头装配之前就把每一次出图拒掉 —— 表现是用户登录了、
+    // 开关也开着，却一直被要求「请先设置 API Key」，而整条平台计费链路一次都到不了。
+    //
+    // 判据用 `willUsePlatformBilling` 而不是直接读 store：站点不对（apiyi / 自建）或
+    // 模型绕开网关（gemini-native 走明文源站）时，这次请求实际会回落到自填 Key，
+    // 那就仍然需要它 —— 这两种情况下豁免会放行一个注定 401 的请求，反而更难查。
+    if (!apiKey && !this.willUsePlatformBilling(modelKey, effectiveSiteKey)) {
       return {
         success: false,
         error:
@@ -1289,6 +1437,11 @@ export class ApiService {
             : '请先设置 API Key',
       }
     }
+
+    // 走到这里 `apiKey` 可能是 null（平台模式放行的那一支），而下游签名要 `string`。
+    // 归一成空串，**不放宽下游签名**：放宽会让每一个下游都得重新判断「null 是什么意思」，
+    // 而这里只有一种含义 —— `applyAuthHeaders` 会走平台分支打标记，根本不读它。
+    const resolvedApiKey = apiKey ?? ''
 
     // 图层拆分的前置条件在这里一次问清 —— 这两条不满足时上游的反应都是「静默降级」:
     // 不支持的渠道把 layer_decomposition 当未知字段丢掉、照常出一张普通图;没有输入图
@@ -1333,7 +1486,7 @@ export class ApiService {
           count,
           modelConfig,
           site,
-          apiKey,
+          apiKey: resolvedApiKey,
           signal,
           layerDecomposition,
         }),
@@ -1423,8 +1576,7 @@ export class ApiService {
         // 必须带 Accept 才走 JSON 响应(只改 Content-Type 不行,见接入文档 §7)
         'Accept': 'application/json',
       }
-      if (site.authType === 'bearer') headers['Authorization'] = `Bearer ${apiKey}`
-      else headers['x-api-key'] = apiKey
+      this.applyAuthHeaders(headers, site, apiKey, url)
 
       const response = await this.withRetry(
         async () => {
@@ -1491,18 +1643,43 @@ export class ApiService {
    */
   async generateImageWithReference(
     prompt: string,
-    referenceImages: Array<string | { data: string; mimeType?: string }>,
+    referenceImages: ReferenceImageSource[],
     ratio: string = '1:1',
     count: number = 1,
     resolution?: string
   ): Promise<GenerateResult> {
     return this.generateImage({
       prompt,
-      referenceImages,
+      referenceImages: this.flattenReferenceSources(referenceImages),
       ratio,
       count,
       resolution
     })
+  }
+
+  /**
+   * 把旧签名允许的对象形态参考图压成 generateImage 声明的 `string[]`。
+   *
+   * generateImage 往下每一站（拆分预处理、resolveSourcesToDataUrls、各家 payload
+   * 构造）都按「元素是字符串源」写的，只有最末端的 normalizeImageSource 兼容对象。
+   * 所以在入口就用同一套规则压平：压出来的字符串与末端自己归一化出的结果一致，
+   * 而字符串元素原样透传、不提前改写。
+   */
+  private flattenReferenceSources(sources: ReferenceImageSource[]): string[] {
+    const flattened: string[] = []
+    for (const source of sources) {
+      if (typeof source === 'string') {
+        flattened.push(source)
+        continue
+      }
+      const normalized = this.normalizeImageSource(source)
+      if (normalized) {
+        flattened.push(normalized)
+      } else {
+        console.warn('[ApiService] generateImageWithReference: 参考图形态无法识别，已跳过')
+      }
+    }
+    return flattened
   }
 
   /**
@@ -1851,10 +2028,12 @@ export class ApiService {
     // 谷歌原生端点绕开 CDN:加速域名前面的 EdgeOne 不支持
     // `/v1beta/models/...:generateContent`,走它必 524(且报成 CORS 错误)。
     // 按 apiType 判定而不是逐个模型打标记 —— 以后新增谷歌模型自动跟随。
-    const hostSource =
-      modelConfig.apiType === 'gemini-native' && site.directBaseURL
-        ? site.directBaseURL
-        : site.baseURL
+    //
+    // ⚠️ 改这里之前先看 {@link evaluatePlatformBillingEligibility} 与
+    // `shouldUsePlatformBilling`:**改道会同时改掉计费落点**。平台余额的凭据由主进程
+    // 按 host 注入,改道到一个注入器看不见的 host 就等于让那些模型静默 401。所以
+    // host 的选择只有 `resolveRequestHostSource` 这一个出处,两边共用。
+    const hostSource = resolveRequestHostSource(modelConfig, site)
 
     try {
       const modelUrl = new URL(sourceUrl)
@@ -1865,6 +2044,102 @@ export class ApiService {
     } catch {
       return sourceUrl
     }
+  }
+
+  /**
+   * 本次请求是否改用平台账号余额出图。
+   *
+   * 两个条件缺一不可:
+   * 1. 用户在「账号」分区把计费来源切到了 `platform`(切的那一刻主进程已按池取好凭据);
+   * 2. 请求确实打向 Miau 网关。**平台余额只覆盖这一个计费域** —— 主进程的注入器只在
+   *    那个 host 上挂过滤器,别的站点(apiyi / 自建)打了标记也换不到凭据,反而因为
+   *    我们不再发 Authorization 而直接 401。
+   *
+   * 第 2 条按 **实际请求 URL 而不是站点键、也不是 site.baseURL** 判定,两条理由:
+   * - 注入器认的就是 host。用户完全可以自建一个指向同一网关的自定义站点条目,那种
+   *   请求照样会被注入,所以也该打标记 —— 只认站点键会漏掉它。
+   * - **`site.baseURL` 不等于请求真正打向的 host**。`buildRequestUrl` 会把谷歌原生
+   *   模型改道到 `directBaseURL`(见那里的注释),站点仍是网关、请求却已经不是了。
+   *   照 baseURL 判的那段时间里,那三个 Nano Banana 模型在平台模式下必定 401。
+   *   模型维度的同一判据见 {@link evaluatePlatformBillingEligibility}(UI 提示用它)。
+   */
+  private shouldUsePlatformBilling(requestUrl: string): boolean {
+    if (useQuotaStore.getState().billingSource !== 'platform') return false
+    const gateway = this.apiSites[MIAU_SITE_KEY]
+    return !!gateway && isSameOrigin(requestUrl, gateway.baseURL)
+  }
+
+  /**
+   * 「这次请求会走平台余额吗」—— 给**出图前的前置门**用，此时请求 URL 还没拼出来。
+   *
+   * 与 {@link shouldUsePlatformBilling} 是同一个问题的两个时点：那个按已成型的请求
+   * URL 判（装配请求头时），这个按 模型 + 站点 提前判（决定要不要放行没有 key 的请求）。
+   * 两者必须给出一致的结论，否则会出现「门放行了但头没装上」= 裸奔撞 401，
+   * 或者「门拦下了但本该走平台」= 登录了还被要求填 key。
+   *
+   * 复用 `evaluatePlatformBillingEligibility`，所以 gemini-native 那三个绕开网关的
+   * 模型在这里也会被判成不合格 —— 它们确实需要自填 Key，门该照常拦。
+   */
+  private willUsePlatformBilling(modelKey: string, effectiveSiteKey: string): boolean {
+    if (useQuotaStore.getState().billingSource !== 'platform') return false
+    return evaluatePlatformBillingEligibility(
+      this.models[modelKey],
+      this.apiSites[effectiveSiteKey],
+      this.apiSites[MIAU_SITE_KEY],
+    ).eligible
+  }
+
+  /**
+   * 「当前设置下这个模型能不能走平台余额」—— 给 UI 用的入口。
+   *
+   * 站点解析照 `generateImage` 那套优先级(requiredSiteKey → 当前站点),不能让组件
+   * 自己抄一份:抄错的症状是提示与实际计费落点不一致,比没有提示更糟。
+   */
+  getPlatformBillingEligibility(modelKey: string): PlatformBillingEligibility {
+    const modelConfig = this.getModelConfig(modelKey)
+    const siteKey =
+      modelConfig?.requiredSiteKey && this.apiSites[modelConfig.requiredSiteKey]
+        ? modelConfig.requiredSiteKey
+        : this.currentSite
+    return evaluatePlatformBillingEligibility(
+      modelConfig,
+      this.apiSites[siteKey],
+      this.apiSites[MIAU_SITE_KEY],
+    )
+  }
+
+  /**
+   * 给请求头装上认证信息。
+   *
+   * 平台模式下**只打标记、绝不发 Authorization**:凭据在主进程,由
+   * `onBeforeSendHeaders` 在出网前换上。渲染层是 `nodeIntegration: true` 且无
+   * contextIsolation 的环境,不放凭据。发用户那把旧 Key 更糟 —— 注入一旦没生效,
+   * 请求就会**静默地用用户自己的钱出图成功**,而他以为在花平台余额。
+   *
+   * 抽成一个方法,是因为请求头装配散在 6 个地方(通用 JSON 出图 / gpt-image-2 JSON /
+   * Flux multipart / 腾讯 image2 JSON / gpt-image-2 multipart / TTS)。漏掉任何一处的
+   * 症状都是「有的模型走平台余额、有的模型静默用自填 Key」——两条计费链路同时在跑,
+   * 而账单要到月底才对得出来。新增出网点请一律走这里,别再手写那三条分支。
+   *
+   * `requestUrl` 是本次请求**真正要 fetch 的那个地址**,不是站点根地址 —— 平台余额
+   * 判定按它的 host 走(理由见 `shouldUsePlatformBilling`)。每个出网点手上本来就有
+   * 这个值,传它比传 modelConfig 更难写错:URL 是既成事实,而 modelConfig 在
+   * TTS / multipart 那几条路径上压根不在作用域里。
+   */
+  private applyAuthHeaders(
+    headers: Record<string, string>,
+    site: ApiSite,
+    apiKey: string,
+    requestUrl: string,
+  ): Record<string, string> {
+    if (this.shouldUsePlatformBilling(requestUrl)) {
+      headers[BILLING_MARKER_HEADER] = BILLING_MARKER_VALUE
+    } else if (site.authType === 'bearer') {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    } else {
+      headers['x-api-key'] = apiKey
+    }
+    return headers
   }
 
   /**
@@ -1938,11 +2213,7 @@ export class ApiService {
         const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-        if (site.authType === 'bearer') {
-          headers['Authorization'] = `Bearer ${apiKey}`
-        } else {
-          headers['x-api-key'] = apiKey
-        }
+        this.applyAuthHeaders(headers, site, apiKey, genUrl)
         const fetchSignal = this.composeTimeoutSignal(signal, timeoutMs)
         const resp = await fetch(genUrl, {
           method: 'POST',
@@ -2010,11 +2281,7 @@ export class ApiService {
       'Content-Type': 'application/json'
     }
 
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     // 所有模型(nano/gemini、wan、sora、通用 OpenAI-compat)统一打印请求体到 F12，
     // 方便核对发出去的到底是 URL 还是 base64；base64/超长串会被截断，避免刷屏。
@@ -2122,11 +2389,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     const fetchSignal = this.composeTimeoutSignal(signal, 2_000_000)
 
@@ -2267,11 +2530,7 @@ export class ApiService {
     this.logImageRequest(model, url, body)
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
     const resp = await fetch(url, {
@@ -2344,11 +2603,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     // FormData 不是 JSON：打印结构化摘要(含参考图源)到 F12，标注 multipart。
     this.logImageRequest(model, url, {
@@ -3614,10 +3869,11 @@ export class ApiService {
             resolution: resolution || undefined,
             count: n
           })
+          // success 由 `...result` 提供（GenerateResult.success 是必填项）。之前在展开
+          // 之前还显式写了一遍同值的 success，展开必然盖掉它，纯属死代码。
           const resultData = {
             index: promptIndex,
             prompt,
-            success: result.success,
             ...result
           }
 
@@ -3714,10 +3970,10 @@ export class ApiService {
             referenceImages,
             count: n
           })
+          // 同 batchGenerate：success 以 `...result` 为准，显式那一份是被覆盖的死代码。
           const resultData = {
             index: promptIndex,
             prompt,
-            success: result.success,
             ...result
           }
 

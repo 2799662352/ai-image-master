@@ -17,7 +17,13 @@ export interface StorageInfo {
   imageCount: number
   totalSize: number
   storagePath: string
-  isElectron: boolean
+  /**
+   * 可选是因为**主进程从不回这个字段**:`get-storage-info` 只返回
+   * imageCount / totalSize / storagePath(src/main/index.ts)。只有下面浏览器
+   * 分支自己合成的那份带 `isElectron: false`。声明成必填等于对调用方撒谎 ——
+   * Electron 下拿到的其实是 undefined。要判环境请用 isElectronMode()。
+   */
+  isElectron?: boolean
 }
 
 export interface HistoryItem {

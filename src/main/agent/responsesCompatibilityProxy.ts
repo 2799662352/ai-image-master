@@ -52,6 +52,16 @@ export interface ResponsesCompatibilityProxy {
 export const PROXY_KEEP_ALIVE_TIMEOUT_MS = 120_000
 export const PROXY_HEADERS_TIMEOUT_MS = 125_000
 
+/**
+ * 桥接代理的可选行为。
+ *
+ * 只有一项:平台余额组头。**Anthropic 桥不接它** —— 那条路的上游是 Claude,
+ * 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+ */
+export interface CompatibilityProxyOptions {
+  platformHeaders?: (target: URL) => Record<string, string> | null
+}
+
 export interface ProviderCompatibilityProxyGroup {
   providers: CodexProviderConfig[]
   close: () => Promise<void>
@@ -340,6 +350,41 @@ function requestHeaders(headers: IncomingHttpHeaders): Headers {
   return forwarded
 }
 
+/**
+ * 把桥接失败翻译成能定位的一句话。
+ *
+ * undici 的 `fetch` 对**一切**传输层失败都只给一句 `fetch failed` —— DNS 没解出来、
+ * 端口拒绝、证书不过、代理挡了,全长一个样,真实原因埋在 `error.cause` 里。原来的
+ * 502 只回 `error.message`,于是用户看到的就是「unexpected status 502 Bad Gateway:
+ * fetch failed」,既不知道打的哪个地址,也不知道为什么。
+ *
+ * 补上 origin 而不是整条 URL:路径可能带查询串,而定位只需要知道打的是哪一家。
+ */
+function describeBridgeFailure(error: unknown, target: URL | undefined): string {
+  const base = error instanceof Error ? error.message : String(error)
+  const causes: string[] = []
+  let cause: unknown = error instanceof Error ? error.cause : undefined
+  // 链式展开:undici 常见形状是 TypeError('fetch failed') → AggregateError → 逐个 Error。
+  for (let depth = 0; depth < 4 && cause; depth += 1) {
+    if (cause instanceof AggregateError && cause.errors.length > 0) {
+      causes.push(cause.errors.map((e) => describeCauseNode(e)).join('; '))
+      cause = cause.errors[0] instanceof Error ? cause.errors[0].cause : undefined
+      continue
+    }
+    causes.push(describeCauseNode(cause))
+    cause = cause instanceof Error ? cause.cause : undefined
+  }
+  const where = target ? ` (upstream ${target.origin})` : ''
+  const why = causes.length > 0 ? `: ${causes.join(' <- ')}` : ''
+  return `${base}${where}${why}`
+}
+
+function describeCauseNode(cause: unknown): string {
+  if (!(cause instanceof Error)) return String(cause)
+  const code = (cause as NodeJS.ErrnoException).code
+  return code ? `${code} ${cause.message}` : cause.message
+}
+
 function upstreamUrl(baseUrl: URL, requestUrl: string): URL {
   const incoming = new URL(requestUrl, 'http://127.0.0.1')
   const basePath = baseUrl.pathname.replace(/\/+$/, '')
@@ -433,6 +478,18 @@ interface CompatibilityBridgeTransport {
    */
   resolveTarget: (requestUrl: string) => URL | undefined
   fetch: typeof fetch
+  /**
+   * 平台余额组头。给定这次请求的**上游** URL,回一整份要覆盖上去的头
+   * (`Authorization` + 计费归属),或 `null` 表示这条不走平台余额。
+   *
+   * **注入而不是 import**:真实实现要读 `auth/gatewayToken`,那个模块顶层 import
+   * electron —— 本文件刻意保持在 Electron 之外可加载(同 wan3/seedanceGateway 的纪律),
+   * 直接 import 会让这里二十多条现成测试全部需要 mock electron。
+   *
+   * 缺省不传 = 逐字节的旧行为:原样转发 codex 自己带的 `Authorization`
+   * (那是用户自填的 Miau Key)。
+   */
+  platformHeaders?: (target: URL) => Record<string, string> | null
   /** Optional in-place tweak applied to a `/responses` body after flattening. */
   transformBody?: (body: JsonObject) => void
 }
@@ -460,10 +517,12 @@ async function startCompatibilityBridgeServer(
     }
     request.once('aborted', abortUpstream)
     response.once('close', abortOnEarlyClose)
+    // 提到 try 外面,只为让 502 分支能报出「打的是哪个上游」。
+    let target: URL | undefined
     try {
       const method = request.method ?? 'GET'
       const rawBody = await readRequestBody(request)
-      const target = transport.resolveTarget(request.url ?? '/')
+      target = transport.resolveTarget(request.url ?? '/')
       if (!target) {
         response.statusCode = 404
         response.setHeader('content-type', 'application/json')
@@ -486,11 +545,22 @@ async function startCompatibilityBridgeServer(
         bindings = flattened.bindings
       }
 
+      // 平台余额:把 codex 带来的自填 Key 换成影子 token + 计费归属。
+      //
+      // **判据是上游 target 的 origin,不是「有没有 token」。** rightcode-claude /
+      // grok / deepseek 打的是别家的本地代理,把平台凭据发过去就是凭据外泄 ——
+      // 这与出网注入器的 host 白名单是同一条纪律。
+      const forwarded = requestHeaders(request.headers)
+      const platform = transport.platformHeaders?.(target)
+      if (platform) {
+        for (const [name, value] of Object.entries(platform)) forwarded.set(name, value)
+      }
+
       const upstreamResponse = await transport.fetch(
         target,
         {
           method,
-          headers: requestHeaders(request.headers),
+          headers: forwarded,
           body: method === 'GET' || method === 'HEAD' ? undefined : body,
           signal: abortController.signal,
         },
@@ -531,7 +601,7 @@ async function startCompatibilityBridgeServer(
       response.setHeader('content-type', 'application/json')
       response.end(JSON.stringify({
         error: {
-          message: error instanceof Error ? error.message : String(error),
+          message: describeBridgeFailure(error, target),
         },
       }))
     } finally {
@@ -581,12 +651,14 @@ function parseUpstreamBase(upstreamBaseUrl: string, label: string): URL {
  */
 export async function startResponsesCompatibilityProxy(
   upstreamBaseUrl: string,
+  options: CompatibilityProxyOptions = {},
 ): Promise<ResponsesCompatibilityProxy> {
   const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Responses')
   return startCompatibilityBridgeServer({
     basePath: upstreamBase.pathname.replace(/\/+$/, ''),
     resolveTarget: (requestUrl) => upstreamUrl(upstreamBase, requestUrl),
     fetch,
+    ...(options.platformHeaders ? { platformHeaders: options.platformHeaders } : {}),
   })
 }
 
@@ -715,6 +787,7 @@ export async function startAnthropicMessagesBridge(
  */
 export async function startProviderCompatibilityProxies(
   providers: readonly CodexProviderConfig[],
+  options: CompatibilityProxyOptions = {},
 ): Promise<ProviderCompatibilityProxyGroup> {
   const proxies: ResponsesCompatibilityProxy[] = []
   try {
@@ -729,7 +802,9 @@ export async function startProviderCompatibilityProxies(
         ? await startAnthropicMessagesBridge(provider.baseUrl, {
           promptCacheBreakpoints: provider.promptCacheBreakpoints,
         })
-        : await startResponsesCompatibilityProxy(provider.baseUrl)
+        // 只有 Responses 这条给平台组头:Anthropic 桥的上游是 Claude,
+        // 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+        : await startResponsesCompatibilityProxy(provider.baseUrl, options)
       proxies.push(proxy)
       rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
     }

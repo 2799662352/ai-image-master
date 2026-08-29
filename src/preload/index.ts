@@ -87,6 +87,7 @@ import type {
   SeedanceOfficialMaterialsResult,
   SeedanceRegion,
   SeedanceTaskUpdate,
+  VideoBillingSource,
 } from '../types/seedance'
 import type {
   VideoWorkbenchReconcileItem,
@@ -127,8 +128,24 @@ import type {
   CodexProviderMutationResponse,
   CodexProviderRecord,
 } from '../types/agentApi'
+// 同理:`window.electronAPI.portraitLibrary` 的契约住在 `src/types/portraitApi.ts`。
+import type { PortraitLibraryApi } from '../types/portraitApi'
 // 同理:`window.electronAPI.auth` 的契约住在 `src/types/authApi.ts`。
-import type { AuthLoginResult, AuthState } from '../types/authApi'
+import type {
+  AccountBalance,
+  AccountOrganization,
+  AuthLoginResult,
+  AuthState,
+  BillingPoolRef,
+  PaymentConfig,
+  QuotaRpc,
+  RechargeOrder,
+  RechargeOrderCreated,
+  RechargeTarget,
+  UsageLogPage,
+  UsageModelSummary,
+  UsageQuery,
+} from '../types/authApi'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -355,6 +372,16 @@ const IPC_CHANNELS = {
     CANCEL_LOGIN: 'auth:cancel-login',
     SUBMIT_CODE: 'auth:submit-code',
     LOGOUT: 'auth:logout',
+    GET_ORGANIZATIONS: 'auth:get-organizations',
+    GET_BALANCE: 'auth:get-balance',
+    GET_QUOTA: 'auth:get-quota',
+    GET_PAYMENT_CONFIG: 'auth:get-payment-config',
+    GET_USAGE_LOGS: 'auth:get-usage-logs',
+    GET_USAGE_SUMMARY: 'auth:get-usage-summary',
+    CREATE_RECHARGE_ORDER: 'auth:create-recharge-order',
+    GET_RECHARGE_ORDER: 'auth:get-recharge-order',
+    SET_BILLING_POOL: 'auth:set-billing-pool',
+    CLEAR_BILLING_POOL: 'auth:clear-billing-pool',
   },
   AUTH_EVENTS: ['auth:state-changed', 'auth:login-result'] as const,
   // Shell helpers (clipboard / save dialog)
@@ -530,6 +557,9 @@ export interface ElectronAPI {
   // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
   // 各 Section 手写 duck-type 子集的时代结束于此。
   agent: AgentApi
+  // 平台人像库(走平台余额那条路)。与上面 `seedance.*` 那套 vvdance 人像库**并存**,
+  // 两边素材互不可见 —— 上游是两个不同的资产池,`asset://` 不通用。
+  portraitLibrary: PortraitLibraryApi
   auth: {
     getState: () => Promise<AuthState>
     startLogin: () => Promise<{ authorizeUrl: string; expiresIn: number }>
@@ -538,6 +568,35 @@ export interface ElectronAPI {
     logout: () => Promise<void>
     onStateChanged: (handler: (state: AuthState) => void) => () => void
     onLoginResult: (handler: (result: AuthLoginResult) => void) => () => void
+    // 额度查询。一律回 { ok, data } | { ok: false, error } 信封 —— 主进程刻意不裸抛,
+    // 裸抛经 IPC 会丢掉后端的 error code,而 UI 要按 code 分支。
+    getOrganizations: () => Promise<QuotaRpc<AccountOrganization[]>>
+    getBalance: (
+      projectId: number,
+      producerProjectId?: number,
+    ) => Promise<QuotaRpc<AccountBalance>>
+    getQuota: () => Promise<QuotaRpc<Record<string, unknown>>>
+    getPaymentConfig: () => Promise<QuotaRpc<PaymentConfig>>
+    // 用量明细。同一套信封 —— 主进程连「参数形状不对」都回信封(INVALID_QUERY),
+    // 因为窄化失败与查询失败对 UI 是同一件事:显示一条带 code 的错误而不是空列表。
+    getUsageLogs: (query: UsageQuery) => Promise<QuotaRpc<UsageLogPage>>
+    getUsageSummary: (query: UsageQuery) => Promise<QuotaRpc<UsageModelSummary[]>>
+    // 原生充值三步的第一步与第三步。第二步是渲染层拿 `payUrl` 调
+    // `shell.openExternal` —— 应用内导航会被 `will-navigate` 静默拦下。
+    createRechargeOrder: (
+      amountCny: number,
+      target: RechargeTarget,
+      subject?: string,
+    ) => Promise<QuotaRpc<RechargeOrderCreated>>
+    getRechargeOrder: (outTradeNo: string) => Promise<QuotaRpc<RechargeOrder>>
+    // 平台计费池的开关。**这里没有、也不会有取 token 的方法** —— 渲染层只需要知道
+    // 「平台计费此刻可不可用」;那枚凭据永不过期、泄漏后无法单独吊销,而渲染层是
+    // nodeIntegration 环境,递过去一次就是永久交出去。
+    //
+    // `ready` 为 true 才代表凭据真的到手了:主进程是先取凭据、成功了才置 active。
+    // 失败时回的是带 code 的信封(NOT_LOGGED_IN / 余额类 / 权限类,三种引导不同)。
+    setBillingPool: (pool: BillingPoolRef) => Promise<QuotaRpc<{ ready: boolean }>>
+    clearBillingPool: () => Promise<QuotaRpc<null>>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -573,6 +632,25 @@ export interface ElectronAPI {
       | { success: true; url: string; key: string }
       | { success: false; error: string }
     >
+    /** await 版:直接拿回 COS URL,给「生成完立刻要显示」的一次性流程用。 */
+    uploadImageFromUrl: (
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<
+      | { success: true; url: string; key: string }
+      | { success: false; error: string }
+    >
+    /**
+     * 真 fire-and-forget: 立即入队, IPC 立刻 resolve。
+     * 实际上传完成后, main 进程通过 `onUploadResult` 推回结果。
+     */
+    enqueueUploadFromUrl: (
+      requestId: string,
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<{ queued: true } | { queued: false; error: string }>
     /**
      * 字节版 fire-and-forget 入队 (P0 闪退修复 2026-07-09)。
      * 渲染端传 ArrayBuffer(结构化克隆原始字节), 避免 40MB 级 base64
@@ -584,6 +662,16 @@ export interface ElectronAPI {
       mimeType?: string,
       metadata?: Record<string, unknown>,
     ) => Promise<{ queued: true } | { queued: false; error: string }>
+    /** 两个 enqueue 通道的统一回流口;返回值是取消订阅函数。 */
+    onUploadResult: (
+      cb: (
+        result:
+          // localPath (2026-07-09): 主进程上传前先把字节落到
+          // userData/generated-images 的本地副本路径; 写盘失败时缺省。
+          | { requestId: string; success: true; url: string; key: string; localPath?: string }
+          | { requestId: string; success: false; error: string; localPath?: string },
+      ) => void,
+    ) => () => void
   }
   // Seedance 视频生成（codex `generate_video` 工具）。Key 走主进程
   // safeStorage，渲染端只见 masked 状态；任务进度经 `seedance:task-update`
@@ -1409,6 +1497,30 @@ const electronAPI: ElectronAPI = {
       ),
   },
 
+  // ============ 平台人像库 ============
+  //
+  // 全部回信封,**不裸抛** —— 裸抛经 IPC 会被包成 "Error invoking remote method",
+  // 后端 code 全丢,而 UI 要按 code 分支(ASSET_NOT_READY 是「稍等」、ASSET_FAILED 是
+  // 「换一张」,两个动作完全不同)。窄化失败也走信封,理由同 `auth` 那批的 INVALID_QUERY。
+  //
+  // `scope` 每次显式传:主进程刻意不猜当前池 —— 池错了不是计费错,是素材登记进错的组,
+  // 而跨池的 asset 根本读不出来(理由见 `services/portraitLibrary/ipc.ts` 顶部)。
+  portraitLibrary: {
+    list: (scope, options) => safeInvoke('portrait:list', scope, options),
+    resolve: (scope, assetId) => safeInvoke('portrait:resolve', scope, assetId),
+    poll: (scope, assetId) => safeInvoke('portrait:poll', scope, assetId),
+    register: (scope, input) => safeInvoke('portrait:register', scope, input),
+    // `file.data` 必须是 ArrayBuffer:`File`/`Blob` 过不了结构化克隆,到主进程是个 `{}`,
+    // 上传照发但 0 字节。渲染层写 `data: await file.arrayBuffer()`。
+    upload: (scope, file) => safeInvoke('portrait:upload', scope, file),
+    hide: (scope, assetId) => safeInvoke('portrait:hide', scope, assetId),
+    purge: (scope, assetId) => safeInvoke('portrait:purge', scope, assetId),
+    patch: (scope, assetId, patch) => safeInvoke('portrait:patch', scope, assetId, patch),
+    ensure: (scope, input) => safeInvoke('portrait:ensure', scope, input),
+    lookupBinding: (scope, url) => safeInvoke('portrait:lookup-binding', scope, url),
+    clearResolutionCache: () => safeInvoke('portrait:clear-resolution-cache'),
+  } satisfies PortraitLibraryApi,
+
   // ============ 桌面端浏览器登录 ============
   auth: {
     getState: () => safeInvoke<AuthState>(IPC_CHANNELS.AUTH.GET_STATE),
@@ -1422,6 +1534,38 @@ const electronAPI: ElectronAPI = {
       safeOnWithCleanup<AuthState>(IPC_CHANNELS.AUTH_EVENTS[0], handler, IPC_CHANNELS.AUTH_EVENTS),
     onLoginResult: (handler: (result: AuthLoginResult) => void) =>
       safeOnWithCleanup<AuthLoginResult>(IPC_CHANNELS.AUTH_EVENTS[1], handler, IPC_CHANNELS.AUTH_EVENTS),
+    getOrganizations: () =>
+      safeInvoke<QuotaRpc<AccountOrganization[]>>(IPC_CHANNELS.AUTH.GET_ORGANIZATIONS),
+    getBalance: (projectId: number, producerProjectId?: number) =>
+      safeInvoke<QuotaRpc<AccountBalance>>(
+        IPC_CHANNELS.AUTH.GET_BALANCE,
+        projectId,
+        producerProjectId,
+      ),
+    getQuota: () => safeInvoke<QuotaRpc<Record<string, unknown>>>(IPC_CHANNELS.AUTH.GET_QUOTA),
+    getPaymentConfig: () =>
+      safeInvoke<QuotaRpc<PaymentConfig>>(IPC_CHANNELS.AUTH.GET_PAYMENT_CONFIG),
+    // `query` / `target` 整个对象递过去,不在这里拆字段:拆一次就多一处会漏掉
+    // `page: 0` 或 producer 池键那一半的地方。窄化只在主进程做一遍。
+    getUsageLogs: (query: UsageQuery) =>
+      safeInvoke<QuotaRpc<UsageLogPage>>(IPC_CHANNELS.AUTH.GET_USAGE_LOGS, query),
+    getUsageSummary: (query: UsageQuery) =>
+      safeInvoke<QuotaRpc<UsageModelSummary[]>>(IPC_CHANNELS.AUTH.GET_USAGE_SUMMARY, query),
+    createRechargeOrder: (amountCny: number, target: RechargeTarget, subject?: string) =>
+      safeInvoke<QuotaRpc<RechargeOrderCreated>>(
+        IPC_CHANNELS.AUTH.CREATE_RECHARGE_ORDER,
+        amountCny,
+        target,
+        subject,
+      ),
+    getRechargeOrder: (outTradeNo: string) =>
+      safeInvoke<QuotaRpc<RechargeOrder>>(IPC_CHANNELS.AUTH.GET_RECHARGE_ORDER, outTradeNo),
+    // `pool` 整个对象递过去,不在这里拆两半:拆一次就多一处会漏掉 `producerProjectId`
+    // 的地方,而那是池键的另一半 —— 漏了会把两个共用 projectId 的池当成同一个。
+    setBillingPool: (pool: BillingPoolRef) =>
+      safeInvoke<QuotaRpc<{ ready: boolean }>>(IPC_CHANNELS.AUTH.SET_BILLING_POOL, pool),
+    clearBillingPool: () =>
+      safeInvoke<QuotaRpc<null>>(IPC_CHANNELS.AUTH.CLEAR_BILLING_POOL),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
@@ -1568,7 +1712,15 @@ const electronAPI: ElectronAPI = {
     setAutoImportPortrait: (enabled: boolean) => {
       ipcRenderer.send('video-workbench:set-auto-import-portrait', enabled)
     },
-    repersist: (payload: { videoUrl: string; model?: string; taskId?: string; threadId?: string }) =>
+    // billing:这张卡是哪种计费模式建的。重查地址得打回同一条通道，否则一律
+    // 回「任务不存在」——而重查是上游地址过期后唯一不用花钱的补救。
+    repersist: (payload: {
+      videoUrl: string
+      model?: string
+      taskId?: string
+      threadId?: string
+      billing?: VideoBillingSource
+    }) =>
       safeInvoke<{ ok: boolean; localPath?: string; remoteUrl?: string; error?: string }>(
         'video-workbench:repersist', payload,
       ),

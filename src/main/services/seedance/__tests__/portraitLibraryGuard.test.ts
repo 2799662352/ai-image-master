@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { usesSeedanceAssetLibrary } from '../assetLibraryPolicy'
+import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from '../assetLibraryPolicy'
 
 describe('usesSeedanceAssetLibrary', () => {
   it('Seedance 全家走素材库 / 人像库', () => {
@@ -28,6 +28,56 @@ describe('usesSeedanceAssetLibrary', () => {
   it('缺省(未指定模型)按 2.0 处理,行为与接入万相之前一致', () => {
     expect(usesSeedanceAssetLibrary(undefined)).toBe(true)
   })
+
+  /**
+   * 🧬 变异点:把 `billing === 'platform'` 那一支删掉(退回只看 provider),这几条必红。
+   *
+   * 平台余额那条路用的是**平台的**素材库(`/api/volcengine-asset/*`,平台 JWT +
+   * X-Project-Id),与 vvdance 的 `/api/open/v1/local-assets`(HMAC)是**两个池**,
+   * `asset://` 不通用。只看 provider 的话,平台模式下仍会:
+   *
+   *   - 拿 vvdance 的 apiKey/apiSecret 去校验**平台的** asset id —— 那些 id 在
+   *     vvdance 库里根本不存在,校验判定「缺失」并**硬拦下整次提交**
+   *   - 把参考图导进 **vvdance 的**人像库,而用户看的是平台库
+   *
+   * 只配平台、没配 vvdance 密钥的用户撞不到(`assets.ts:375` 缺凭据提前 return),
+   * **但从 vvdance 迁过来的用户两边密钥都有** —— 他们是这个 bug 的靶心,
+   * 而报出来的是一句关于素材不存在的中文错误,根因完全看不出来。
+   */
+  it('平台余额下一律不碰 vvdance 素材库 —— 那是另一个池', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(usesSeedanceAssetLibrary(alias, 'platform')).toBe(false)
+    }
+  })
+
+  it('自填 Key 与缺省意向保持原行为', () => {
+    expect(usesSeedanceAssetLibrary('2.0', 'own-key')).toBe(true)
+    expect(usesSeedanceAssetLibrary('2.0', undefined)).toBe(true)
+  })
+
+  it('万相在任何计费模式下都不走', () => {
+    expect(usesSeedanceAssetLibrary('wan3', 'platform')).toBe(false)
+    expect(usesSeedanceAssetLibrary('wan3', 'own-key')).toBe(false)
+  })
+})
+
+/**
+ * 与上面那个谓词**同源但不同问题**,拆开是这次修复的核心。
+ *
+ * 「要不要碰 vvdance 素材库」取决于计费模式;「上游吃不吃 base64 内联」只取决于
+ * provider —— 平台模式下上游仍然是 Seedance(经网关中转),内联与否不因为换了钱包
+ * 而改变。合成一个谓词的后果就是这次的 bug:改对了一个问题,另一个跟着被改错。
+ */
+describe('upstreamAcceptsInlineMedia', () => {
+  it('Seedance 吃内联,与计费模式无关', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(upstreamAcceptsInlineMedia(alias)).toBe(true)
+    }
+  })
+
+  it('万相不吃 —— DashScope 只认可下载的 https', () => {
+    expect(upstreamAcceptsInlineMedia('wan3')).toBe(false)
+  })
 })
 
 describe('两个提交入口都必须问过这个谓词', () => {
@@ -37,7 +87,9 @@ describe('两个提交入口都必须问过这个谓词', () => {
     // 调用点数量与守卫数量必须对得上。新增一个提交入口却忘了加守卫,这里会红。
     const verifyCalls = runtimeSource.match(/await verifyContentAssetReferences\(/g) ?? []
     const importCalls = runtimeSource.match(/void importImagesToPortraitLibrary\(/g) ?? []
-    const guards = runtimeSource.match(/if \(usesSeedanceAssetLibrary\(input\.model\)\) \{/g) ?? []
+    // 允许带第二个实参(计费模式)。**不允许不带** —— 只传 model 的调用正是这次修的 bug,
+    // 所以这里刻意要求逗号后面有东西。
+    const guards = runtimeSource.match(/if \(usesSeedanceAssetLibrary\(input\.model, \w+\)\) \{/g) ?? []
 
     expect(verifyCalls.length).toBeGreaterThan(0)
     expect(importCalls.length).toBeGreaterThan(0)
@@ -48,18 +100,53 @@ describe('两个提交入口都必须问过这个谓词', () => {
   // Seedance 吃这一套,DashScope 只认可下载的 https。不跳过内联捷径的后果很隐蔽 ——
   // 大图正常、小图报错,用户完全想不到是体积的问题。
   it('非 Seedance provider 必须跳过内联捷径(alwaysRelay)', () => {
+    // 这一处**刻意不吃 billing**:上游吃不吃内联与钱从哪个钱包出无关。
+    // 用另一个谓词正是为了让这件事在类型上说得出口。
     expect(runtimeSource).toContain(
-      'usesSeedanceAssetLibrary(input.model) ? undefined : { alwaysRelay: true }',
+      'upstreamAcceptsInlineMedia(input.model) ? undefined : { alwaysRelay: true }',
     )
     // buildContent 里五处素材解析都要带上这个选项,漏一处就是那一类素材内联。
     const withOptions = runtimeSource.match(/resolveMediaUrl\([^)]*mediaOptions\)/g) ?? []
     expect(withOptions).toHaveLength(5)
   })
 
+  /**
+   * 平台模式下「自动入库」必须**改道**到平台库,而不是跳过。
+   *
+   * 这条是补一个我自己造出来的缺口:修「平台模式别碰 vvdance 素材库」时,
+   * `verifyContentAssetReferences` 与 `importImagesToPortraitLibrary` 共用同一个谓词,
+   * 于是被一起关掉了。关 verify 是必须的(拿 vvdance 凭据去校验平台 id 会硬拦下提交);
+   * 关 import 是**过度** —— 结果是平台用户生成用的参考图不会自动成为可复用的
+   * `asset://` 锚点,下次跨镜锁同一张脸得手动再传一次,而 vvdance 用户有这个自动化。
+   *
+   * 两个提交入口都要有,漏一个的表现是「MCP 出的片进库、工作台出的不进」这种
+   * 说不清的不一致。
+   */
+  it('平台模式下自动入库改道平台库,两个入口都要有', () => {
+    const platformCalls = runtimeSource.match(/void importImagesToPlatformLibrary\(/g) ?? []
+    const vvdanceCalls = runtimeSource.match(/void importImagesToPortraitLibrary\(/g) ?? []
+    // 每一条 vvdance 的自动入库都要有一条平台侧的对等物,数量必须一样。
+    expect(platformCalls.length).toBe(vvdanceCalls.length)
+    expect(platformCalls.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * 网关地址必须与出网注入器**同源解析**,不能各写各的。
+   *
+   * 分叉的表现是「注入器盯着 A、视频提交打到 B」:测试服签的影子 token 发到生产网关
+   * 一律 401,而错误里不会有任何一个字提到是地址配错了 —— 只会看见「Invalid token」,
+   * 于是人去查 token 而不是查地址。
+   *
+   * 🧬 变异点:把 `baseUrl` 那一行删掉(退回默认的 `MIAU_BASE_URL`),这条必红。
+   */
+  it('网关视频客户端与注入器共用同一个 origin 解析', () => {
+    expect(runtimeSource).toContain('baseUrl: `${resolveGatewayOrigin()}/v1`')
+  })
+
   it('没有任何一处裸调用(守卫之外直接调)', () => {
     // 把「守卫 + 紧随其后的调用」整段抠掉,剩下的正文里不该再出现这两个调用。
     const stripped = runtimeSource.replace(
-      /if \(usesSeedanceAssetLibrary\(input\.model\)\) \{[\s\S]*?\n {6}\}/g,
+      /if \(usesSeedanceAssetLibrary\(input\.model, \w+\)\) \{[\s\S]*?\n {6}\}/g,
       '',
     )
     expect(stripped).not.toContain('await verifyContentAssetReferences(')

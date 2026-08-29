@@ -55,6 +55,8 @@ import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { registerAuthIpc } from './services/auth/ipc'
+import { registerPortraitLibraryIpc } from './services/portraitLibrary/ipc'
+import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
@@ -465,6 +467,10 @@ function createWindow(): void {
     }
   })
 
+  // 平台余额：出网时把标记头换成真凭据。必须用同一个 session 对象 ——
+  // 用 session.defaultSession 在设了 partition 的窗口上会挂错地方。
+  installGatewayHeaderInjector(mainWindow.webContents.session)
+
   // 安全: 设置 Content Security Policy
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -528,8 +534,18 @@ function createWindow(): void {
   //   3. F11 是 v4.3.12 重新接回的 affordance:`Menu.setApplicationMenu(null)`
   //      去掉默认菜单后副作用是 togglefullscreen role 的 accelerator 也丢,
   //      这里在 keyDown 上显式 toggle 把行为还回来。
+  //   4. Electron 把 `Input.type` 声明成宽 `string`(运行时只会是 keyDown/keyUp),
+  //      所以这里先做一次运行时收窄再往下传。keyDown 的取舍仍留在被测的
+  //      resolveMainWindowShortcut 里,本文件不重复那个判断。
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    const action = resolveMainWindowShortcut(input)
+    if (input.type !== 'keyDown' && input.type !== 'keyUp') return
+    const action = resolveMainWindowShortcut({
+      key: input.key,
+      type: input.type,
+      control: input.control,
+      meta: input.meta,
+      shift: input.shift,
+    })
     if (!action || !mainWindow) return
     switch (action.type) {
       case 'toggleDevTools':
@@ -1320,9 +1336,18 @@ app.whenReady().then(async () => {
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
 
+  // 顺带把上次会话落盘的网关 token 读回内存(registerAuthIpc 内的 loadPersisted)。
+  // 它要用 app.getPath / safeStorage,所以只能挂在 whenReady 之后的这条路径上。
   registerAuthIpc(
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
+
+  // 平台人像库(走平台余额那条路)。与上面 vvdance 那套人像库并存,两边素材互不可见。
+  //
+  // 同样必须在 createWindow 之前:人像库页面挂载即调 list(),晚注册会被
+  // 「No handler registered」reject,页面钉死在空状态。这一层没有启动副作用、
+  // 不读盘(绑定文件是懒读的),所以放在这里不增加启动开销。
+  registerPortraitLibraryIpc()
 
   // 关键路径：创建窗口
   createWindow()

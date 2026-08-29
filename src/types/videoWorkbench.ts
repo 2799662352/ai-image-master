@@ -14,6 +14,7 @@ import type {
   SeedancePersistence,
   SeedanceTaskMode,
   SeedanceTaskStatus,
+  VideoBillingSource,
 } from './seedance'
 import type { VideoWorkbenchMode } from './videoModes'
 
@@ -240,6 +241,16 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   cancelRequested?: boolean
   /** createTask 成功后的上游任务 id（可用 check_video_task 续轮询）。 */
   taskId?: string
+  /**
+   * 这一轮提交时的计费来源（取自 `useQuotaStore.billingSource`）。
+   *
+   * **是结果不是意图** —— 挂在 Card 上而不是 Spec 上：它不参与 specEquals、
+   * 不进 IR、不涨 rev，用户在设置里切计费来源不该让每张卡都变成「改过」。
+   *
+   * 留着它是因为 taskId 只在**签发它的那条通道**里有效：重启对账与「重新保存」
+   * 都得拿它打回同一条上游，否则一律回「任务不存在」。每轮提交刷新。
+   */
+  billing?: VideoBillingSource
   /** succeeded 时上游临时结果地址（有效期未知，兜底播放源）。 */
   videoUrl?: string
   /** 落盘后的本地 mp4 绝对路径（权威结果）。 */
@@ -595,6 +606,18 @@ export interface VideoWorkbenchSubmitPayload {
    * 见 runtime.ts 的 setAutoImportPortraitEnabled。缺省按开处理(与 UI 默认一致)。
    */
   autoImportPortrait?: boolean
+  /**
+   * 这一次的钱从哪出 —— 值来自渲染层的 `useQuotaStore.billingSource`。
+   *
+   * **必须由渲染层带过来,不能让主进程自己猜。** 主进程手上那份 activePool 只是
+   * 渲染层状态的镜像:`setBillingSource('own-key')` 先落本地状态、再尽力调
+   * `clearBillingPool()`,而那一步失败时被吞掉。于是存在一个窗口 —— 渲染层已经
+   * 是自填 Key,主进程仍握着 activePool。此时让主进程去猜,猜出来的是平台余额。
+   * (完整论证见 `seedanceGateway/credentials.ts` 的「已知缺口」。)
+   *
+   * 缺省交给主进程兜底,那是给**没有渲染层**的 MCP `generate_video` 留的。
+   */
+  billing?: VideoBillingSource
 }
 
 /** `video-workbench:submit` 返回（成功 = 已创建上游任务，轮询在主进程后台跑）。 */
@@ -615,6 +638,12 @@ export interface VideoWorkbenchReconcileItem {
   ratio: string
   duration: number
   createdAt?: number
+  /**
+   * 提交这条任务时用的计费模式。重启后恢复的探测与轮询要打回同一条上游 ——
+   * 一条平台余额的任务拿自填 Key 去问只会回「任务不存在」,而对账会把那当成
+   * 「任务没了」,把一条还在跑、已经付过钱的任务错杀成失败卡片。
+   */
+  billing?: VideoBillingSource
 }
 
 /**

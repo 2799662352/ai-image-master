@@ -1,175 +1,13 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-25T20:27:30.185Z",
-  "expiresAt": "2026-08-31",
+  "generatedAt": "2026-08-28T03:18:35.325Z",
+  "expiresAt": "2026-10-31",
   "diagnostics": [
-    {
-      "file": "src/main/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'Input' is not assignable to parameter of type 'ShortcutInput'.",
-      "count": 1
-    },
-    {
-      "file": "src/main/marketplace/marketplaceService.ts",
-      "code": "TS2322",
-      "message": "Type 'Dirent<string>[]' is not assignable to type 'Dirent<NonSharedBuffer>[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/main/marketplace/marketplaceService.ts",
-      "code": "TS2322",
-      "message": "Type 'NonSharedBuffer' is not assignable to type 'string'.",
-      "count": 1
-    },
-    {
-      "file": "src/main/marketplace/marketplaceService.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'NonSharedBuffer' is not assignable to parameter of type 'string'.",
-      "count": 2
-    },
-    {
-      "file": "src/main/marketplace/marketplaceService.ts",
-      "code": "TS2538",
-      "message": "Type 'NonSharedBuffer' cannot be used as an index type.",
-      "count": 2
-    },
-    {
-      "file": "src/main/services/smartErase/index.ts",
-      "code": "TS2339",
-      "message": "Property 'mpsProgress' does not exist on type '{ stage: \"processing\" | \"submitting\"; mpsTaskId?: string | undefined; }'.",
-      "count": 1
-    },
     {
       "file": "src/main/services/smartErase/index.ts",
       "code": "TS2339",
       "message": "Property 'stack' does not exist on type '{ code: string; message: string; stage: string; }'.",
       "count": 4
-    },
-    {
-      "file": "src/main/services/smartErase/index.ts",
-      "code": "TS2339",
-      "message": "Property 'taskDetail' does not exist on type '{ stage: \"processing\" | \"submitting\"; mpsTaskId?: string | undefined; }'.",
-      "count": 1
-    },
-    {
-      "file": "src/main/services/smartErase/runner.ts",
-      "code": "TS2353",
-      "message": "Object literal may only specify known properties, and 'mpsProgress' does not exist in type '{ stage: \"processing\" | \"submitting\"; mpsTaskId?: string | undefined; }'.",
-      "count": 1
-    },
-    {
-      "file": "src/preload/index.ts",
-      "code": "TS2353",
-      "message": "Object literal may only specify known properties, and 'uploadImageFromUrl' does not exist in type '{ uploadImageHistory: (base64: string, mimeType: string, metadata?: Record<string, unknown> | undefined) => Promise<{ success: true; url: string; key: string; } | { success: false; error: string; }>; enqueueUploadBytes: (requestId: string, bytes: ArrayBuffer, mimeType?: string | undefined, metadata?: Record<...> | u...'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/components/donor/__tests__/DonorVirtualGrid.test.tsx",
-      "code": "TS2741",
-      "message": "Property 'isVideo' is missing in type '{ id: number; prompt: string; urls: string[]; displayUrls: string[]; status: \"ok-local\"; isBroken: false; }' but required in type 'DonorItemView'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/components/shared/media-tokens/useTokenAutocomplete.ts",
-      "code": "TS2554",
-      "message": "Expected 1 arguments, but got 0.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/agent-chat/__tests__/MentionInput.clipboardPaste.test.tsx",
-      "code": "TS2352",
-      "message": "Conversion of type 'undefined' to type 'AgentSendMessagePayload' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/agent-chat/__tests__/MentionInput.clipboardPaste.test.tsx",
-      "code": "TS2493",
-      "message": "Tuple type '[]' of length '0' has no element at index '0'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/agent-workspace/__tests__/useMcpAutoGatewayFix.test.tsx",
-      "code": "TS2741",
-      "message": "Property 'isAppBundled' is missing in type '{ name: string; type: \"http\"; url: string; enabled: true; status: \"ready\"; error: null; tools: { name: string; }[]; isBuiltin: false; }' but required in type 'McpServerCard'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/agent-workspace/__tests__/useMcpAutoGatewayFix.test.tsx",
-      "code": "TS2741",
-      "message": "Property 'isAppBundled' is missing in type '{ name: string; type: \"stdio\"; command: string; args: string[]; enabled: true; status: \"failed\"; error: string; tools: never[]; isBuiltin: false; }' but required in type 'McpServerCard'.",
-      "count": 3
-    },
-    {
-      "file": "src/renderer/src/features/file-explorer/BinaryViewer.tsx",
-      "code": "TS2339",
-      "message": "Property 'shell' does not exist on type 'ElectronAPI'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/file-explorer/ImageViewer.tsx",
-      "code": "TS2339",
-      "message": "Property 'shell' does not exist on type 'ElectronAPI'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/file-explorer/VideoViewer.tsx",
-      "code": "TS2339",
-      "message": "Property 'shell' does not exist on type 'ElectronAPI'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/intelligent-resize/IntelligentResizeManager.ts",
-      "code": "TS18048",
-      "message": "'generatePage.referenceImages.length' is possibly 'undefined'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/features/ui-components/UIComponentsService.ts",
-      "code": "TS2551",
-      "message": "Property 'webkitBackdropFilter' does not exist on type 'CSSStyleDeclaration'. Did you mean 'backdropFilter'?",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/src/features/ui-state/UIStateManager.ts",
-      "code": "TS2339",
-      "message": "Property 'type' does not exist on type 'HTMLElement'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/pages/GeneratePage.ts",
-      "code": "TS2339",
-      "message": "Property 'images' does not exist on type 'GenerateResult'.",
-      "count": 4
-    },
-    {
-      "file": "src/renderer/src/pages/index.ts",
-      "code": "TS2307",
-      "message": "Cannot find module './DirectorPage' or its corresponding type declarations.",
-      "count": 3
-    },
-    {
-      "file": "src/renderer/src/services/api/ApiService.ts",
-      "code": "TS2322",
-      "message": "Type '(string | { data: string; mimeType?: string | undefined; })[]' is not assignable to type 'string[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/api/ApiService.ts",
-      "code": "TS2783",
-      "message": "'success' is specified more than once, so this usage will be overwritten.",
-      "count": 2
-    },
-    {
-      "file": "src/renderer/src/services/PageStateManager.ts",
-      "code": "TS2322",
-      "message": "Type '(ReferenceImage | { base64: string | undefined; _savedToFile: boolean; _originalSize: number; name?: string | undefined; _oversized?: boolean | undefined; _loadFailed?: boolean | undefined; })[]' is not assignable to type 'ReferenceImage[]'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/services/storage/StorageBridge.ts",
-      "code": "TS2322",
-      "message": "Type 'ElectronStorageInfo' is not assignable to type 'StorageInfo'.",
-      "count": 1
     },
     {
       "file": "src/renderer/src/services/storage/StorageBridge.ts",
@@ -188,30 +26,6 @@
       "code": "TS2307",
       "message": "Cannot find module 'deepagents' or its corresponding type declarations.",
       "count": 1
-    },
-    {
-      "file": "src/renderer/src/utils/LazyLibraries.ts",
-      "code": "TS18047",
-      "message": "'module' is possibly 'null'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/utils/LazyLibraries.ts",
-      "code": "TS2322",
-      "message": "Type '{ default: JSZip; files: { [key: string]: JSZipObject; }; file(path: string): JSZipObject | null; file(path: RegExp): JSZipObject[]; file<T extends JSZip.InputType>(path: string, data: InputByType[T] | Promise<...>, options?: JSZipFileOptions | undefined): JSZip; file<T extends JSZip.InputType>(path: string, data: n...' is not assignable to type 'JSZip'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/utils/LazyLibraries.ts",
-      "code": "TS2322",
-      "message": "Type 'Promise<JSZip | { default: JSZip; files: { [key: string]: JSZipObject; }; file(path: string): JSZipObject | null; file(path: RegExp): JSZipObject[]; file<T extends JSZip.InputType>(path: string, data: InputByType[T] | Promise<...>, options?: JSZipFileOptions | undefined): JSZip; file<T extends JSZip.InputType>(path:...' is not assignable to type 'Promise<JSZip>'.",
-      "count": 1
-    },
-    {
-      "file": "src/renderer/src/utils/LazyLibraries.ts",
-      "code": "TS2339",
-      "message": "Property 'default' does not exist on type 'JSZip'.",
-      "count": 3
     }
   ]
 }

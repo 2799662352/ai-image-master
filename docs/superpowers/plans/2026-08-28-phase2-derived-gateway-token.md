@@ -1,0 +1,982 @@
+# 第二期 · 派生网关 token 实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 让 CATIMATION 桌面端能用登录账号自己的计费池出图，凭据是一枚短命的派生 token，而不是那枚永不过期、四个服务端共用的 allocation token。
+
+**Architecture:** RFC 8693 式两层。长期 allocation token 留在服务端不动；new-api 新增内部端点，在**同一个影子用户**（同一个钱包）上另铸带 `ExpiredTime` 的 Token 行；sora-ui-backend 加一层只认 JWT 身份的封装；桌面端主进程按本地缓存年龄取用与刷新，渲染层把网关请求的发起方从渲染进程搬到主进程。
+
+**Tech Stack:** Go 1.x + gin + gorm（new-api）、Node/Express/Prisma + vitest（sora-ui-backend）、Electron 43 + TypeScript + vitest（CATIMATION）
+
+> ## ⚠️ 本计划已作废（2026-08-28）
+>
+> 用户决定**不做派生 token**，改为桌面端直接使用现有的影子账号 allocation token。新计划见 `2026-08-28-phase2-direct-shadow-token.md`。
+>
+> 保留本文档的唯一理由：将来若要升级到两层 token，这里的上游取证（U1–U5）与下面两条实施期发现仍然有效，不必重新挖。
+>
+> **实施期发现（来自一次跑到全绿但未提交的实现）：**
+>
+> 1. **Step 4 的代码有编译级 bug。** 响应里写的是 `"sk-" + suffix`，但同一函数里变量名是 `key`（`suffix` 是初版手搓 key 方案的遗留名）。照抄会 `undefined: suffix`。正确写法是 `"sk-" + key`。
+> 2. **producer 池路径的幂等有个缺口。** 复用键 `name` 用的是 `桌面端-{project_id}`，而 producer 池是靠 `producer_project_id` 找 allocation 的。调用方若对同一个 `producer_project_id` 先后传不同的 `project_id`，会在同一影子用户上铸出两个不同名的派生 token——幂等失效（每个名字仍各自 1 行，不是安全问题，也远达不到 1000 上限）。要堵就把 producer 路径的名字改用 `producer_project_id`，但那会改变 `Name` 契约格式。
+>
+> **另**：`common.GenerateKey()` 已核实在 `common/utils.go:251` → `GenerateRandomCharsKey(48)`，48 字符，远低于 `Token.Key` 的 `varchar(128)`，不存在截断。
+
+## Global Constraints
+
+- **绝不修改 `PersonalAllocation.NewapiTokenKey`，也不改那枚 allocation token 的任何字段。** 整个方案成立的前提是「现有那枚一动不动」——它被 sora-ui-backend 的 relay、`projectAuth.ts` 的成员校验、shortdrama、Python 后端四处共用。
+- 派生 token 必须 `UnlimitedQuota: true`。设 `false` 会因 `RemainQuota` 为 0 被 `new-api/service/quota.go:147` 直接拦死。
+- 派生 token 必须 `UserId = alloc.NewapiUserId`（复用已有影子用户，**绝不新建 user**）。同一个 `UserId` 才等于同一个钱包，扣费才走 `quota.go:426` 那条既有路径。
+- 派生 token 的 `RemainQuota` **不设**（会和充值打架）。
+- 端点返回 **`expires_in`（相对秒）**，不返回绝对时间戳。理由见 spec §六的 2026-08-28 修正①。
+- 桌面端**按本地缓存年龄**决定是否重取，默认 300 秒；**不**解析或比较任何服务端时间。
+- 凭据只在主进程，`safeStorage` 加密落盘；**绝不经 IPC 下发渲染层**，**绝不进日志/错误上报**。
+- `platformUserId` 只能从 JWT 取，**绝不从 query/body 读**。上游 `X-Internal-Key` 能为任意 id 铸 token，这是全部安全性的支点。
+
+**Spec:** `docs/superpowers/specs/2026-08-27-account-quota-design.md`（§二、§六第二期）
+**方案选型依据:** `docs/superpowers/specs/2026-08-28-phase2-credential-options.md`
+
+---
+
+## 契约（先定死，三个仓库照此实现）
+
+### C1. new-api 内部端点
+
+```
+POST /api/internal/derived-token
+Header: X-Internal-Key: <NEWAPI_INTERNAL_KEY>
+Body:   { "platform_user_id": "u1", "project_id": 342,
+          "producer_project_id": 5,      // 可选，>0 走 producer 池查找
+          "ttl_seconds": 900 }           // 可选，默认 900，clamp 到 [60, 3600]
+
+200 { "token_key": "sk-dk...", "expires_in": 900, "newapi_user_id": 123 }
+404 { "error": "no allocation found" }
+400 { "error": "missing platform_user_id or project_id" }
+```
+
+### C2. sora-ui-backend 封装端点
+
+```
+GET /api/user/gateway-token?projectId=342&producerProjectId=5
+Header: Authorization: Bearer <平台 JWT>
+
+200 { "success": true, "data": { "token": "sk-dk...", "expiresIn": 900 } }
+401 未登录 / 403 不是该项目成员 / 503 成员资格核不了 / 404 无 allocation
+```
+
+**响应里只有 `token` 和 `expiresIn`。** `newapi_user_id` 不透给客户端——它是内部标识，客户端拿了没用，泄露只增加攻击面。
+
+### C3. 桌面端主进程
+
+```ts
+// src/main/services/auth/gatewayToken.ts
+export async function resolveGatewayToken(pool: Pool): Promise<string>  // 认缓存
+export async function refreshGatewayToken(pool: Pool): Promise<string>  // 无条件重取
+export function clearGatewayTokens(): void                              // 登出 / 切池时清
+```
+
+---
+
+## 上游取证（2026-08-28 补，本节推翻了本计划初版的三处写法）
+
+> 初版计划是在没有查上游代码与 issues 的情况下写的。补查之后有三处必须改，其中一处是「会必然失败」而不是「不够优雅」。
+
+### U1. `AddToken` 已经存在，别从零造
+
+`POST /api/token/` → `controller.AddToken`（`controller/token.go:167`，路由 `router/api-router.go:267`）**本来就接受 `ExpiredTime` / `UnlimitedQuota` / `ModelLimits` / `AllowIps` / `Group`**。我们不能直接调它（它挂 `middleware.UserAuth()`，按 `c.GetInt("id")` 给**当前登录用户**铸，而影子用户没有会话），但**必须复用它的构件**，否则等于在 fork 里维护一份会漂移的劣化副本：
+
+| 上游做法 | 出处 | 初版计划的错误做法 |
+|---|---|---|
+| `common.GenerateKey()` | `token.go:204` | 手搓 `fmt.Sprintf("dk%s%d%s", …)` + 两段 `GenerateInviteCode()` + 碰撞重试 |
+| `cleanToken.Insert()` | `token.go:225` | 裸 `model.DB.Create(&token)` |
+| 设 `AccessedTime` | `token.go:215` | 漏了 |
+| 名字长度 ≤ 50 校验 | `token.go:174-177` | 漏了 |
+
+用 `common.GenerateKey()` 顺带**消掉了初版最脏的一块**：初版照抄 `service/allocation.go:395-398` 的后缀生成，那段把随机段拼在末尾再截到 45 字符——**截掉的正是熵**。allocation token 每个 `(user, project)` 只铸一次所以从没暴露，高频铸造会直接踩上。改用上游生成器之后，截断、熵、碰撞重试这三个问题一起消失。
+
+代价：派生 token 的 key 不再有 `dk` 前缀。可以接受——全仓 grep 确认 key 前缀**没有任何代码依赖**（`pa` 前缀纯人肉可读性），程序化识别一律走 `Name`。
+
+### U2. 每用户令牌数有硬上限，所以「每个池永远只有一行」是必须项
+
+> **2026-08-28 二次修正。** 本节初稿写的是「幂等复用」，并声称「每个池稳定只占 1 行」——**那是错的**。只做「未过期时复用」只挡住热路径，每过一个 TTL 窗口仍会多一行死行。三种做法的累积速度：
+>
+> | 做法 | 每天新增行（按活跃 8h、TTL 15min） | 撞上 1000 上限 |
+> |---|---|---|
+> | 每次调用都新建 | ~96 | ~10 天 |
+> | 只做「未过期复用」 | ~32 | ~1 个月 |
+> | **原地轮换**（现方案） | **0** | 永不 |
+>
+> 正确做法是过期时**原地改那一行**（换 key、延 `expired_time`、重新启用）而不是插新行。顺带白得一次密钥轮换。并发下用 `WHERE id = ? AND key = <旧>` 做乐观锁——否则两个并发请求各写各的，其中一方返回给调用方的 key 根本不在库里，表现为「刚拿到的 token 立刻 401」。
+
+
+```191:203:D:\tecx\text\25\soraui_4.0\new-api\controller\token.go
+	maxTokens := operation_setting.GetMaxUserTokens()
+	count, err := model.CountUserTokens(c.GetInt("id"))
+	...
+	if int(count) >= maxTokens {
+		... "已达到最大令牌数量限制 (%d)"
+```
+
+默认 **1000**（`setting/operation_setting/token_setting.go:12`）。15 分钟 TTL、每次都新建的话约 96 枚/天 —— **重度用户约 10 天就把自己的账号铸废**，之后铸币端点硬失败。
+
+所以 C1 的语义从「铸一枚」改成「**取一枚可用的**」：同一 `(影子用户, 池)` 下已有未过期的派生 token 就直接复用。这样每个池稳定只占 1 行，上限问题消失，也不需要额外的清理任务。
+
+安全性没有削弱：复用只是让同一枚 token 在它本来的 TTL 内被继续使用，泄漏窗口与「每次新铸」完全一致。
+
+### U3. 上游 issue #5446 —— 看着像命中，实际不是
+
+标题是 *"Potential cross-request response mixing between different tokens under the same user"*，正好长成我们方案的样子（同一用户挂多枚 token）。逐条读完线程后判定**与本方案无关**：
+
+- 另一位报告者补充**不同用户之间也会出现** → 不是「同用户多 token」现象
+- 决定性的一条：报告者用**两套完全独立、不同网络、无主从无负载均衡的 new-api 容器**连同一个 vLLM 上游，串扰照样复现 → 归因指向上游模型服务而非 new-api 的 token 处理
+- 维护者指出报告者的 `v0.13.2` 过老，且直连官方订阅也有人反馈同样现象
+
+**记在这里是为了防止将来有人 grep 到这条 issue 后重新推翻本方案。** 它仍是 OPEN 状态，我们的网关本身就是一个 new-api 部署，所以万一线上真出现串响应，这条线程是现成的先例。
+
+官方文档：https://docs.newapi.ai/ ；DeepWiki：https://deepwiki.com/QuantumNous/new-api
+
+### U4. `ReactivatePersonalAllocation` 会无条件复活历史 token
+
+`model/personal_allocation.go:83-85` 是 `Where("user_id = ?").Update("status", 1)`，**没有过期过滤**。用户「退项目→重新加入」会把该影子用户名下所有历史 token 的 status 改回 1。
+
+目前**不构成漏洞**：`model/token.go:216` 的过期检查独立于 status，过期的照样过不了。但这是只差一步的隐患。采用 U2 的幂等复用之后风险进一步收窄（每个池只有 1 行历史），本期**不改这段代码**（改它会打破「纯新增」约束、且波及既有回收路径），仅在此记录。
+
+### U5. `ValidateUserToken` 的错误不可区分
+
+过期、被禁用、额度耗尽**全部返回同一个 `ErrTokenInvalid`**（`model/token.go:205-243`）。所以桌面端拿不到「你的 key 过期了」这种可判定信号。
+
+**这不影响本方案**：C3 的刷新判据本来就是本地缓存年龄，不依赖服务端的过期信号；401 一律触发一次 `refreshGatewayToken`，无论真实原因是过期还是被禁用——两种情况下「重取一枚」都是正确动作（被禁用时重取会失败并冒泡，这正是我们要的）。
+
+---
+
+## Task 1: new-api —— 铸派生 token 的内部端点
+
+**Files:**
+- Modify: `D:\tecx\text\25\soraui_4.0\new-api\controller\internal.go`（在 `InternalGetAllocation` 之后追加）
+- Modify: `D:\tecx\text\25\soraui_4.0\new-api\router\org-router.go:110-115`（注册路由）
+- Test: `D:\tecx\text\25\soraui_4.0\new-api\controller\internal_derived_token_test.go`（新建）
+
+**Interfaces:**
+- Consumes: `model.GetPersonalAllocation` / `model.GetPersonalAllocationByProducerProject`、`model.Token`、`model.GenerateInviteCode()`
+- Produces: 契约 C1
+
+- [ ] **Step 1: 写失败测试 —— 正常铸出且不动 allocation**
+
+参照 `controller/internal_allocation_test.go` 的 `newAllocationRouter()` 建 router 与内存库。
+
+```go
+func TestInternalMintDerivedToken_MintsOnSameShadowUser(t *testing.T) {
+	router := newDerivedTokenRouter()
+	seedAllocation(t, "u1", 342, 100, "sk-pa-original")
+
+	code, body := postDerivedToken(t, router,
+		`{"platform_user_id":"u1","project_id":342,"ttl_seconds":900}`)
+	require.Equal(t, http.StatusOK, code)
+
+	key, _ := body["token_key"].(string)
+	assert.True(t, strings.HasPrefix(key, "sk-"))
+	assert.NotEqual(t, "sk-pa-original", key)
+	assert.EqualValues(t, 900, body["expires_in"])
+
+	// 新 Token 行挂在同一个影子用户上，且带真实过期
+	var tok model.Token
+	require.NoError(t, model.DB.Where("`key` = ?", strings.TrimPrefix(key, "sk-")).First(&tok).Error)
+	assert.Equal(t, 100, tok.UserId)
+	assert.True(t, tok.UnlimitedQuota)
+	assert.NotEqual(t, int64(-1), tok.ExpiredTime)
+	assert.Greater(t, tok.ExpiredTime, time.Now().Unix())
+}
+```
+
+- [ ] **Step 2: 写失败测试 —— 不弄坏现有业务（这条最重要）**
+
+```go
+func TestInternalMintDerivedToken_LeavesAllocationUntouched(t *testing.T) {
+	router := newDerivedTokenRouter()
+	seedAllocation(t, "u1", 342, 100, "sk-pa-original")
+
+	_, _ = postDerivedToken(t, router, `{"platform_user_id":"u1","project_id":342}`)
+
+	// PersonalAllocation 一个字符都没变
+	var alloc model.PersonalAllocation
+	require.NoError(t, model.DB.Where("platform_user_id = ? AND project_id = ?", "u1", 342).First(&alloc).Error)
+	assert.Equal(t, "sk-pa-original", alloc.NewapiTokenKey)
+
+	// 同一个影子用户上有两枚 Token 时，allocation 端点仍返回原来那枚
+	allocRouter := newAllocationRouter()
+	code, allocBody := getAllocation(t, allocRouter, "platform_user_id=u1&project_id=342")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "sk-pa-original", allocBody["newapi_token_key"])
+}
+```
+
+- [ ] **Step 3: 跑测试确认失败**
+
+Run: `cd D:\tecx\text\25\soraui_4.0\new-api && go test ./controller/ -run DerivedToken -v`
+Expected: FAIL —— `undefined: InternalMintDerivedToken`
+
+- [ ] **Step 4: 实现 handler**
+
+```go
+// InternalMintDerivedToken 在已有影子用户上另铸一枚**带过期**的 token 交给桌面端。
+//
+// 为什么不能直接把 alloc.NewapiTokenKey 交出去：那枚 ExpiredTime 是 -1(永不过期),
+// 而且是 relay / 成员校验 / shortdrama / Python 后端四处共用的同一个字符串 ——
+// 泄漏之后无法单独吊销,作废它等于同时弄断该用户的网页出图和项目成员判定。
+//
+// 为什么 UnlimitedQuota 必须 true:它决定「这枚 token 有没有自己的子预算」。设 false
+// 会因为 RemainQuota 为 0 被 service/quota.go:147 直接拦死;设 true 才是「与钱包共用」,
+// 扣费落到 user.quota,与 allocation token 逐字同一条路径。
+//
+// 为什么 UserId 复用 alloc.NewapiUserId 而不是新建:同一个 UserId 才等于同一个钱包。
+// 新建 user 会造出第二个余额,网页与桌面立刻对不上账。
+func InternalMintDerivedToken(c *gin.Context) {
+	var req struct {
+		PlatformUserId    string `json:"platform_user_id"`
+		ProjectId         int64  `json:"project_id"`
+		ProducerProjectId int64  `json:"producer_project_id"`
+		TTLSeconds        int64  `json:"ttl_seconds"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if req.PlatformUserId == "" || req.ProjectId == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing platform_user_id or project_id"})
+		return
+	}
+
+	// clamp:别信调用方传的 TTL。上限存在的意义是「泄漏窗口以分钟计」这个前提不被绕过。
+	ttl := req.TTLSeconds
+	if ttl <= 0 {
+		ttl = derivedTokenDefaultTTL
+	}
+	if ttl < derivedTokenMinTTL {
+		ttl = derivedTokenMinTTL
+	}
+	if ttl > derivedTokenMaxTTL {
+		ttl = derivedTokenMaxTTL
+	}
+
+	// 查找逻辑与 InternalGetAllocation 一致,但**刻意不做 auto_provision**:
+	// 铸短命票据不该顺手建配额行(那等于隐式加入项目)。查不到就 404。
+	var alloc *model.PersonalAllocation
+	var err error
+	if req.ProducerProjectId > 0 {
+		alloc, err = model.GetPersonalAllocationByProducerProject(req.PlatformUserId, req.ProducerProjectId)
+	} else {
+		alloc, err = model.GetPersonalAllocation(req.PlatformUserId, req.ProjectId)
+	}
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no allocation found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query allocation"})
+		return
+	}
+
+	now := time.Now().Unix()
+	// 这个名字有三重作用,不是装饰:
+	//   ① 它会出现在用户的使用明细里(Log.TokenName)。同项目所有派生 token 同名,
+	//      明细里聚合成一行,不会冒出上千个陌生名字让用户以为账串了。
+	//   ② 它是**唯一能程序化识别派生 token 的东西** —— key 前缀在全仓没有任何代码
+	//      依赖(见计划 U1),不能靠它。
+	//   ③ 下面的幂等复用就是按 (user_id, name) 找现有那枚。
+	// 上游对 Name 有 50 字符上限(token.go:174-177),这个格式远低于。
+	name := fmt.Sprintf("桌面端-%d", req.ProjectId)
+
+	// 每个池**永远只有一行**:未过期就复用,过期就原地换 key + 延期,绝不插新行。
+	//
+	// **这不是优化,是必须项。** 上游对每用户令牌数有硬上限(默认 1000,
+	// token_setting.go:12),AddToken 到顶直接拒(token.go:191-203)。三种做法的累积速度:
+	//   - 每次新建：           ~96 行/天  → 约 10 天铸废账号
+	//   - 只做「未过期时复用」：~32 行/天  → 约 1 个月铸废（过期行仍在堆积）
+	//   - 原地轮换（本实现）：  0 行/天    → 永不
+	//
+	// 「只做未过期复用」是个半吊子解法:它只挡住热路径上的重复调用,每过一个 TTL 窗口
+	// 仍然多一行死行。别被「已经幂等了」这句话骗过去。
+	//
+	// 原地换 key 顺带白得一次密钥轮换。旧 key 立刻失效不构成问题 —— 走到这个分支时它
+	// 本来就已经过期了。
+	var existing model.Token
+	err = model.DB.Where("user_id = ? AND name = ?", alloc.NewapiUserId, name).
+		First(&existing).Error
+
+	switch {
+	case err == nil && existing.Status == common.TokenStatusEnabled && existing.ExpiredTime > now:
+		// 还活着,原样复用。
+		c.JSON(http.StatusOK, gin.H{
+			"token_key":      "sk-" + existing.Key,
+			"expires_in":     existing.ExpiredTime - now,
+			"newapi_user_id": alloc.NewapiUserId,
+		})
+		return
+
+	case err == nil:
+		// 行在但已过期(或被 Task 2b 吊销过):原地换 key、延期、重新启用。
+		//
+		// 条件里带上 `key = ?` 是**乐观锁**:两个并发请求会同时读到同一行、各自算出
+		// 不同的新 key,没有这个条件的话两边都以为自己写成功了,而其中一个返回给调用方的
+		// key 根本不在库里 —— 表现为「刚拿到的 token 立刻 401」。
+		newKey, kerr := common.GenerateKey()
+		if kerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate key"})
+			return
+		}
+		res := model.DB.Model(&model.Token{}).
+			Where("id = ? AND `key` = ?", existing.Id, existing.Key).
+			Updates(map[string]interface{}{
+				"key":           newKey,
+				"status":        common.TokenStatusEnabled,
+				"expired_time":  now + ttl,
+				"accessed_time": now,
+			})
+		if res.Error != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate token"})
+			return
+		}
+		if res.RowsAffected == 0 {
+			// 输给了并发的那一方。它已经写好了一枚可用的,重读返回即可。
+			var winner model.Token
+			if e := model.DB.Where("user_id = ? AND name = ?", alloc.NewapiUserId, name).
+				First(&winner).Error; e != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reload token"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"token_key":      "sk-" + winner.Key,
+				"expires_in":     winner.ExpiredTime - now,
+				"newapi_user_id": alloc.NewapiUserId,
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"token_key":      "sk-" + newKey,
+			"expires_in":     ttl,
+			"newapi_user_id": alloc.NewapiUserId,
+		})
+		return
+
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query existing token"})
+		return
+	}
+	// 落到这里 = 该池第一次铸,往下走新建流程。
+
+	// key 用上游的生成器,不要手搓。
+	//
+	// service/allocation.go:395-398 那个模板把随机段拼在末尾再截到 45 字符 ——
+	// **截掉的正是熵**。allocation token 每个 (user, project) 只铸一次所以从没暴露,
+	// 高频铸造会直接踩上。用 common.GenerateKey() 之后,截断、熵、碰撞重试三个问题一起消失。
+	key, err := common.GenerateKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate key"})
+		return
+	}
+
+	token := model.Token{
+		UserId:       alloc.NewapiUserId,
+		Key:          key,
+		Name:         name,
+		Status:       common.TokenStatusEnabled,
+		CreatedTime:  now,
+		AccessedTime: now, // 上游 AddToken 也设(token.go:215),漏了会让令牌列表显示异常
+		// 🚨 **绝不能是 -1。** -1 = 永不过期 = 退回到「把长期钥匙交给客户端」,
+		// 整个两层设计就白做了。
+		ExpiredTime:    now + ttl,
+		UnlimitedQuota: true,
+	}
+	// 用 Insert() 而不是裸 DB.Create —— 上游 AddToken 走的就是它(token.go:225),
+	// 它可能带缓存失效等副作用,绕过去会埋下不一致。
+	if err := token.Insert(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
+		return
+	}
+
+	// 只回相对秒。绝对时间戳要求两边时钟一致,而客户端是用户机器 —— 偏快会疯狂刷新,
+	// 偏慢会拿着死 token 打请求(表现为莫名其妙的 401)。Codex 同理,它连过期字段都不回。
+	c.JSON(http.StatusOK, gin.H{
+		"token_key":      "sk-" + suffix,
+		"expires_in":     ttl,
+		"newapi_user_id": alloc.NewapiUserId,
+	})
+}
+```
+
+同文件顶部加常量：
+
+```go
+const (
+	derivedTokenDefaultTTL = int64(900)  // 15 分钟
+	derivedTokenMinTTL     = int64(60)
+	derivedTokenMaxTTL     = int64(3600)
+)
+```
+
+- [ ] **Step 5: 注册路由**
+
+`router/org-router.go`，在 `internalApi` 组里加一行（该组已 `Use(middleware.InternalAuth())`）：
+
+```go
+		internalApi.POST("/derived-token", controller.InternalMintDerivedToken)
+```
+
+- [ ] **Step 6: 跑测试确认通过**
+
+Run: `go test ./controller/ -run DerivedToken -v`
+Expected: PASS
+
+- [ ] **Step 7: 补齐剩余用例并跑全**
+
+**「永不累积」这组是本 Task 的核心，一条都不能少**（少了任何一条，插新行的实现都能蒙混过关）：
+
+- **未过期时复用**：连续调两次，第二次返回的 `token_key` 与第一次**相同**，且该 `(user_id, name)` 下只有 **1 行**
+- **过期后原地轮换**：把现有那行的 `expired_time` 改成过去时间，再调一次，断言三件事 —— ① 拿到**新的** key；② 该 `(user_id, name)` 下**仍然只有 1 行**；③ 那一行的 `id` 与之前**相同**。
+  - ② 和 ③ 缺一不可：只断言 ① 的话「插新行」也能过；只断言 ② 的话「DELETE + INSERT」也能过。**③ 才是「原地 UPDATE」的证明。**
+- **循环不涨**：重复「置过期 → 调用」5 轮，全程该 `(user_id, name)` 下始终只有 1 行
+- **被吊销后能复活**：把那行 status 置成 disabled（模拟 Task 2b 吊销过），再调一次，断言拿到新 key 且 status 回到 enabled、行数仍为 1
+
+其余：无 allocation → 404；缺 `platform_user_id` → 400；`ttl_seconds` 传 5 与 99999 各断言被 clamp 成 60 / 3600；producer 池路径（`producer_project_id > 0`）能查到。
+
+Run: `go test ./controller/... ./service/...`
+Expected: PASS，且既有 allocation / user-balance 测试无回归
+
+- [ ] **Step 8: 提交**
+
+```bash
+cd D:\tecx\text\25\soraui_4.0\new-api
+gofmt -w controller/internal.go controller/internal_derived_token_test.go router/org-router.go
+git add controller/internal.go controller/internal_derived_token_test.go router/org-router.go
+git commit -m "feat(internal): 新增派生 token 端点,在已有影子用户上铸带过期的短命 key"
+```
+
+---
+
+## Task 2: sora-ui-backend —— 面向已登录用户的封装
+
+**Files:**
+- Modify: `src/services/newApiService.ts`（加上游调用）
+- Modify: `src/routes/userOrg.ts`（加端点，与 `/balance`、`/usage-logs` 并列）
+- Test: `src/routes/__tests__/userOrg.gatewayToken.test.ts`（新建）
+
+**Interfaces:**
+- Consumes: Task 1 的契约 C1；既有 `authMiddleware`、`forwardNewApiError`（`userOrg.ts:43-95`）、`requireOwnedProjectId`（`utils/projectAuth.ts`）、`resolvePersonalBillingProjectId`（`utils/personalBilling.ts`）
+- Produces: 契约 C2
+
+- [ ] **Step 1: 建分支**
+
+```bash
+cd D:\tecx\text\25\soraui_4.0\sora-ui-backend
+git switch -c feat/desktop-gateway-token
+```
+
+- [ ] **Step 2: 写失败测试 —— 安全支点**
+
+这条是整个 Task 的理由所在：上游 `X-Internal-Key` 能为任意 id 铸 token，所以身份**只能**来自 JWT。
+
+```ts
+it('platformUserId 只从 JWT 取,query 里塞别人的 id 不生效', async () => {
+  const res = await request(makeApp('user-A'))
+    .get('/api/user/gateway-token?projectId=342&platformUserId=user-B&platform_user_id=user-B')
+  expect(res.status).toBe(200)
+  // 上游收到的必须是 A,不是 query 里的 B
+  expect(mintDerivedTokenMock).toHaveBeenCalledWith(
+    expect.objectContaining({ platformUserId: 'user-A' }),
+  )
+})
+```
+
+- [ ] **Step 3: 写失败测试 —— 核不了成员资格时 503 而不是放行**
+
+```ts
+it('成员校验本身失败时回 503,绝不放行', async () => {
+  getUserTokenMock.mockRejectedValue(new Error('upstream down'))
+  const res = await request(makeApp('user-A')).get('/api/user/gateway-token?projectId=700')
+  expect(res.status).toBe(503)
+  expect(mintDerivedTokenMock).not.toHaveBeenCalled()
+})
+```
+
+- [ ] **Step 4: 写失败测试 —— 个人计费落点例外**
+
+个人落点刻意不出现在 `/api/user/organizations` 里（后端设计前提），所以不能走成员校验。
+
+```ts
+it('个人计费落点即使不在 organizations 列表里也放行', async () => {
+  process.env.PERSONAL_BILLING_PROJECT_ID = '342'
+  getUserTokenMock.mockResolvedValue(null) // 不是任何项目的成员
+  const res = await request(makeApp('user-A')).get('/api/user/gateway-token?projectId=342')
+  expect(res.status).toBe(200)
+})
+```
+
+- [ ] **Step 5: 跑测试确认失败**
+
+Run: `npx vitest run src/routes/__tests__/userOrg.gatewayToken.test.ts`
+Expected: FAIL —— 404（路由不存在）
+
+- [ ] **Step 6: 实现上游调用**
+
+`src/services/newApiService.ts`，照该文件既有方法的 axios + `X-Internal-Key` 写法：
+
+```ts
+	/**
+	 * 铸一枚短命的派生网关 token。
+	 *
+	 * **刻意不缓存。** 它本来就是短命凭据,缓存等于延长泄漏窗口;而且真正需要缓存的是
+	 * 桌面端(它按本地年龄复用),这里再缓一层只会让两边的过期语义打架。
+	 */
+	async mintDerivedToken(input: {
+		platformUserId: string
+		projectId: number
+		producerProjectId?: number
+		ttlSeconds?: number
+	}): Promise<{ tokenKey: string; expiresIn: number }> {
+		const resp = await client.post<{ token_key?: string; expires_in?: number }>(
+			'/api/internal/derived-token',
+			{
+				platform_user_id: input.platformUserId,
+				project_id: input.projectId,
+				...(input.producerProjectId ? { producer_project_id: input.producerProjectId } : {}),
+				...(input.ttlSeconds ? { ttl_seconds: input.ttlSeconds } : {}),
+			},
+		)
+		const tokenKey = resp.data?.token_key
+		const expiresIn = resp.data?.expires_in
+		if (!tokenKey || typeof expiresIn !== 'number') {
+			throw new Error('derived-token response malformed')
+		}
+		return { tokenKey, expiresIn }
+	}
+```
+
+- [ ] **Step 7: 实现端点**
+
+`src/routes/userOrg.ts`：
+
+```ts
+/**
+ * GET /api/user/gateway-token
+ *
+ * 桌面端拿它换一枚能直连网关、扣自己计费池的短命 token。
+ *
+ * 这一层的**唯一职责**是把「任意用户」收窄成「当前这个已登录用户」:上游
+ * `/api/internal/derived-token` 用 X-Internal-Key,那把钥匙能为任意 platform user
+ * 铸 token。所以 userId 只能来自 JWT,绝不能从 query/body 读 —— 读了就等于把内部
+ * 万能钥匙直接暴露给任何登录用户。
+ */
+router.get('/gateway-token', authMiddleware, async (req, res) => {
+	const userId: string = (req as any).user?.id
+	const projectId = parseInt(String(req.query.projectId), 10)
+	const producerProjectId = parseInt(String(req.query.producerProjectId), 10) || undefined
+
+	if (!Number.isFinite(projectId) || projectId <= 0) {
+		return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'projectId required' } })
+	}
+
+	// 个人计费落点**刻意不出现在** /api/user/organizations 里(后端设计前提),
+	// 所以对它做成员校验必然 fail-closed 403。必须先把它排除掉。
+	const personalId = resolvePersonalBillingProjectId()
+	const isPersonal = personalId !== null && projectId === personalId && !producerProjectId
+
+	if (!isPersonal) {
+		// ⚠️ **不要用 `requireOwnedProjectId`。** 它故意把「不是成员」与「上游查不到」
+		// 都归成 403（`projectAuth.ts:10-16` 的注释明写了这个取舍），而这里必须区分：
+		// 核不了要 503，既不能当「不是成员」拒掉，更不能放行。
+		//
+		// 底层早就有三态，`getUserToken` 自己的 docstring 就说它是兼容层、要区分的
+		// 新调用方应当用 `getUserTokenResult`（`newApiService.ts:476-482`）。
+		//
+		// 为什么核不了宁可 503 也不放行 —— shortdrama 在同一位置的注释值得原样遵守：
+		// "'likely' is not the standard for the one call in this app that spends somebody's money."
+		const lookup = await newApiService.getUserTokenResult(userId, projectId, producerProjectId)
+		if (lookup.outcome === 'not_allocated') {
+			return res.status(403).json({
+				success: false,
+				error: { code: 'FORBIDDEN', message: 'project access denied' },
+			})
+		}
+		if (lookup.outcome !== 'found') {
+			return res.status(503).set('Retry-After', '5').json({
+				success: false,
+				error: { code: 'UPSTREAM_UNREACHABLE', message: '暂时无法校验项目权限，请稍后重试' },
+			})
+		}
+	}
+
+	try {
+		const { tokenKey, expiresIn } = await newApiService.mintDerivedToken({
+			platformUserId: userId,   // ← 只此一处来源
+			projectId,
+			producerProjectId,
+		})
+		// 只回 token 与 expiresIn。newapi_user_id 是内部标识,客户端拿了没用,
+		// 透出去只增加攻击面。
+		return res.json({ success: true, data: { token: tokenKey, expiresIn } })
+	} catch (err) {
+		return forwardNewApiError(res, err, 'mint derived token')
+	}
+})
+```
+
+- [ ] **Step 8: 跑测试确认通过**
+
+Run: `npx vitest run src/routes/__tests__/userOrg.gatewayToken.test.ts`
+Expected: PASS
+
+- [ ] **Step 9: 补齐剩余用例 + 全量回归**
+
+补：未登录 401；非成员 403；上游 404 透传；响应体不含 `newapi_user_id`；**新增代码路径上没有任何 `console.*` 打印到 token**（逐行看一遍，并加一条断言 mock 的 logger 未收到含 `sk-` 的字符串）。
+
+**四个实施注意（都是踩过的，别重犯）：**
+
+1. **`vitest.config.ts` 的 include 是白名单，不是通配。** `src/routes/__tests__/**/*.test.ts` 是通配（`:14`），路由测试会自动跑；但 `src/services/__tests__/` 是**逐文件枚举**的。新增 service 测试文件如果不加进 include，`npx vitest run src/services/__tests__/` 会**静默不执行它** —— 看起来全绿，其实根本没跑。加文件的同时必须改 config。
+
+2. **「未登录 → 401」在模板的形状下测不到。** `userOrg.balance.test.ts:9-15` 把 `authMiddleware` 整个 `vi.mock` 掉、无条件注入用户。要钉 401 得另起一个挂真中间件的 app，或让 mock 读某个 header 决定放行与否。
+
+3. **用 `req.user.userId` 不是 `.id`。** `userOrg.ts` 全文统一用前者（`:103`、`:137`、`:263`…）。`authService.verifyToken` 两个字段返回同一个值，功能等价，但按文件一致性应当用 `userId`。
+
+4. **成员资格有最长 10 分钟的缓存滞后。** `lookupUserToken` 把 `found` 写进 Redis 600 秒（负结果不缓存）。也就是说用户被移出项目后，最长 10 分钟内仍能换到派生 token。**本期显式接受这个窗口**：它是既有行为、影响的是「已经被移出的成员多花 10 分钟自己池子里的钱」，而收紧它要动共享的缓存策略、波及所有调用方。记在这里以免将来被当成新引入的漏洞。
+
+Run: `npx vitest run src/routes/__tests__/ src/services/__tests__/`
+Expected: PASS，既有套件无回归
+
+- [ ] **Step 9b: 确认 `ECONNABORTED` 是否落进 503（待验证）**
+
+`NETWORK_LAYER_ERROR_CODES`（`src/routes/userOrg.ts:27-34`）里有 `ETIMEDOUT` 但**没有 `ECONNABORTED`**，而 axios 默认（`transitional.clarifyTimeoutError` 为 false）超时抛的正是后者。若属实，上游 10 秒超时会掉进 500 `INTERNAL_ERROR` 而不是本端点要求的 503 + `Retry-After`。
+
+写一条针对 `forwardNewApiError` 的单测，直接喂一个 `code: 'ECONNABORTED'` 的错误，断言得到 503。
+
+- **红了** → 这是既有缺陷，影响所有走 `forwardNewApiError` 的端点，不只本次。**先报告再决定要不要在本 PR 里修** —— 它超出本计划范围。
+- **绿了** → 说明该项目已配 `clarifyTimeoutError` 或另有归一，把这条测试留下当回归护栏。
+
+- [ ] **Step 10: 提交**
+
+```bash
+git add src/services/newApiService.ts src/routes/userOrg.ts src/routes/__tests__/userOrg.gatewayToken.test.ts
+git commit -m "feat(user): 新增 gateway-token 端点,按 JWT 身份换取短命派生 token"
+```
+
+---
+
+## Task 2b: 显式吊销（2026-08-28 追加需求）
+
+> **为什么要有。** 到此为止「吊销」只有两种被动形式：等 TTL 到点（最长 15 分钟），或撞上既有的回收路径（退项目 / 停用组织）。缺的是**主动的、立即生效的**吊销 —— 最典型的场景是共用电脑上退出登录：`clearGatewayTokens()` 只清本地缓存，那枚 key 在上游仍然有效，还能再花 15 分钟的钱。
+
+### 选择器：靠 `expired_time != -1`，不靠名字也不加字段
+
+```sql
+WHERE user_id = <影子用户> AND expired_time != -1
+```
+
+**这个条件由构造保证只命中派生 token：**
+
+- allocation token 是 `ExpiredTime: -1`（`service/allocation.go:407`，producer 变体 `:901`）—— 它是该影子用户上唯一带 `-1` 的
+- 影子用户是合成账号，**没有任何人能登录它**去建 token（`AddToken` 按 `c.GetInt("id")` 给当前登录用户铸）
+- 所以「这个影子用户名下、有真实过期时间的 token」⇔「我们铸的派生 token」
+
+比另外两种识别方式都好：`Name` 模糊匹配是拿展示字段当安全选择器（脆），加数据库列则打破「不改现有模型」。
+
+> **前提假设（可检查）：** 除 `service/allocation.go:400` 与 `:894` 外，没有第三处会在影子用户上创建 Token。实现时 grep 一遍 `model.Token{` 确认；若将来新增了别的铸造点，这个选择器要重新评估。
+
+- [ ] **Step 1: new-api 加吊销端点**
+
+`POST /api/internal/derived-token/revoke`，body `{ platform_user_id, project_id, producer_project_id? }`，响应 `{ "revoked": <int> }`。
+
+实现：按与铸造端相同的方式定位 alloc，然后
+
+```go
+	res := model.DB.Model(&model.Token{}).
+		Where("user_id = ? AND expired_time != -1 AND status = ?",
+			alloc.NewapiUserId, common.TokenStatusEnabled).
+		Update("status", common.TokenStatusDisabled)
+```
+
+**`expired_time != -1` 这个条件一个字都不能少** —— 少了就会把 allocation token 一起禁掉，那正是本方案全力避免的连坐（会同时弄断该用户的网页出图与 `projectAuth.ts:59` 的成员判定）。
+
+- [ ] **Step 2: 测试 —— 吊销后 allocation token 仍可用**
+
+这是本 Task 的核心断言，比「吊销成功」更重要：
+
+```go
+func TestRevokeDerivedTokens_LeavesAllocationTokenEnabled(t *testing.T) {
+	seedAllocation(t, "u1", 342, 100, "sk-pa-original") // ExpiredTime: -1
+	mintDerived(t, "u1", 342)                            // ExpiredTime: now+900
+
+	code, body := postRevoke(t, router, `{"platform_user_id":"u1","project_id":342}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.EqualValues(t, 1, body["revoked"])
+
+	// 派生的被禁用
+	var derived model.Token
+	require.NoError(t, model.DB.Where("user_id = ? AND expired_time != -1", 100).First(&derived).Error)
+	assert.Equal(t, common.TokenStatusDisabled, derived.Status)
+
+	// 🚨 allocation 那枚**必须**还是 enabled —— 连坐就是本方案要避免的全部
+	var alloc model.Token
+	require.NoError(t, model.DB.Where("user_id = ? AND expired_time = -1", 100).First(&alloc).Error)
+	assert.Equal(t, common.TokenStatusEnabled, alloc.Status)
+}
+```
+
+再加一条：吊销后立刻再调铸造端点，应当拿到**新的一枚**（证明被禁用的那枚不会被幂等复用命中 —— 复用条件里的 `status = enabled` 正是为此）。
+
+- [ ] **Step 3: sora-ui-backend 封装**
+
+`POST /api/user/gateway-token/revoke`，挂 `authMiddleware`，`platformUserId` 同样**只从 JWT 取**。成员校验可以省：吊销自己的 token 不需要证明项目权限，而 userId 来自 JWT 保证了只能吊销自己的。
+
+- [ ] **Step 4: 桌面端在登出时调用**
+
+`session.ts` 的 `logout()` 里，先对所有已缓存的池调一次吊销，再 `clearGatewayTokens()`。
+
+**吊销失败不能阻断登出** —— 用户点了退出就必须退出。失败时本地凭据照清，只在日志里留痕。写一条测试钉住：上游吊销返回 500 时，`logout()` 仍然完成且本地凭据已清。
+
+---
+
+## Task 3: CATIMATION 主进程 —— gatewayToken.ts
+
+**Files:**
+- Create: `src/main/services/auth/gatewayToken.ts`
+- Test: `src/main/services/auth/__tests__/gatewayToken.test.ts`
+
+**Interfaces:**
+- Consumes: Task 2 的契约 C2；既有 `session.ts` 的 `authBaseUrl()` / `sendJson()` / `requireToken()` / `toAuthError()`
+- Produces: 契约 C3
+
+- [ ] **Step 1: 写失败测试 —— 缓存年龄语义**
+
+```ts
+it('缓存未超龄时复用,不重复换取', async () => {
+  vi.useFakeTimers()
+  fetchMock.mockResolvedValue(okToken('sk-dk-1', 900))
+  const m = await import('../gatewayToken')
+
+  await m.resolveGatewayToken(POOL)
+  await vi.advanceTimersByTimeAsync(299_000)
+  await m.resolveGatewayToken(POOL)
+
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+it('缓存超龄后重新换取', async () => {
+  vi.useFakeTimers()
+  fetchMock.mockResolvedValue(okToken('sk-dk-1', 900))
+  const m = await import('../gatewayToken')
+
+  await m.resolveGatewayToken(POOL)
+  await vi.advanceTimersByTimeAsync(301_000)
+  await m.resolveGatewayToken(POOL)
+
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+```
+
+- [ ] **Step 2: 写失败测试 —— 并发只换一次**
+
+批量出图时 N 张图并发，不持锁会并发铸 N 枚 token（每枚都是一行真实数据库记录）。
+
+```ts
+it('并发 resolve 只触发一次换取', async () => {
+  let release: ((v: unknown) => void) | undefined
+  fetchMock.mockImplementationOnce(() => new Promise((r) => { release = r }))
+  const m = await import('../gatewayToken')
+
+  const all = Promise.all([m.resolveGatewayToken(POOL), m.resolveGatewayToken(POOL), m.resolveGatewayToken(POOL)])
+  release?.(okToken('sk-dk-1', 900))
+  const [a, b, c] = await all
+
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect([a, b, c]).toEqual(['sk-dk-1', 'sk-dk-1', 'sk-dk-1'])
+})
+```
+
+- [ ] **Step 3: 写失败测试 —— 池键是一对，且非 2xx 不写缓存**
+
+```ts
+it('池键按 (projectId, producerProjectId) 一对区分,不串号', async () => {
+  fetchMock
+    .mockResolvedValueOnce(okToken('sk-dk-A', 900))
+    .mockResolvedValueOnce(okToken('sk-dk-B', 900))
+  const m = await import('../gatewayToken')
+
+  const a = await m.resolveGatewayToken({ projectId: 700, producerProjectId: 5 })
+  const b = await m.resolveGatewayToken({ projectId: 700, producerProjectId: 6 })
+
+  expect(a).not.toBe(b)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+
+it('非 2xx 绝不写缓存,下一次仍会重试', async () => {
+  fetchMock.mockResolvedValueOnce(err(503)).mockResolvedValueOnce(okToken('sk-dk-1', 900))
+  const m = await import('../gatewayToken')
+
+  await expect(m.resolveGatewayToken(POOL)).rejects.toBeTruthy()
+  await expect(m.resolveGatewayToken(POOL)).resolves.toBe('sk-dk-1')
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+```
+
+- [ ] **Step 4: 跑测试确认失败**
+
+Run: `npx vitest run src/main/services/auth/__tests__/gatewayToken.test.ts`
+Expected: FAIL —— 模块不存在
+
+- [ ] **Step 5: 实现**
+
+```ts
+// 桌面端出图用的短命网关凭据。
+//
+// 与 `session.ts` 里那枚平台 JWT 是两回事:JWT 证明「你是谁」,这枚证明「这笔算谁的钱」。
+// 它只活在主进程,绝不经 IPC 下发渲染层 —— 渲染层只该看到派生状态。
+
+/** 缓存年龄上限。对齐 Codex 的 `refresh_interval_ms` 默认值(config_types.rs)。 */
+const MAX_AGE_MS = 300_000
+
+interface CacheEntry {
+  token: string
+  fetchedAt: number
+}
+
+/**
+ * 按 `(projectId, producerProjectId)` 这**一对**做键。
+ *
+ * 只按 projectId 做键会把为 A 池铸的 token 交给 B 池 —— 两个 producer project 可以
+ * 共用一个 projectId(见 `types/authApi.ts` 的 AccountOrganization 注释),钱会记错地方。
+ */
+function cacheKey(pool: Pool): string {
+  return `${pool.projectId}:${pool.producerProjectId ?? '-'}`
+}
+
+const cache = new Map<string, CacheEntry>()
+/** 同一个池正在进行中的换取。见下方 resolve 的注释。 */
+const inflight = new Map<string, Promise<string>>()
+
+/**
+ * 取一枚可用的 token,缓存未超龄就复用。
+ *
+ * **按本地缓存年龄判定,不看服务端给的过期时刻。** 端点回的是 `expiresIn`(相对秒)
+ * 而不是绝对时间戳,正是为了不依赖两边时钟一致 —— 客户端是用户机器,时钟偏几分钟很
+ * 常见:偏快会疯狂刷新,偏慢会拿着已死的 token 打请求(表现为莫名其妙的 401)。
+ * Codex 的 `external_bearer.rs` 同样只用本地 `fetched_at.elapsed()`。
+ *
+ * **并发合流是必须的,不是优化。** 批量出图会同时发起 N 个请求,每一次换取都会在
+ * 上游真建一行 Token 记录。Codex 用「锁跨 await 持有」达到同样效果,注释原文是
+ * "deliberately held across the command to avoid duplicate refreshes"。
+ */
+export async function resolveGatewayToken(pool: Pool): Promise<string> {
+  const key = cacheKey(pool)
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.fetchedAt < MAX_AGE_MS) return hit.token
+
+  const running = inflight.get(key)
+  if (running) return running
+
+  const p = fetchAndCache(pool, key).finally(() => inflight.delete(key))
+  inflight.set(key, p)
+  return p
+}
+
+/**
+ * 无条件重取并覆盖缓存。**401 走这条**。
+ *
+ * 与 `resolveGatewayToken` 分成两个函数而不是加一个 force 旗标,是照 Codex 的
+ * `resolve()` / `refresh()` 分工 —— 两者的语义确实不同,合成一个函数的调用点会
+ * 忘记传旗标。
+ */
+export async function refreshGatewayToken(pool: Pool): Promise<string> {
+  const key = cacheKey(pool)
+  cache.delete(key)
+  return resolveGatewayToken(pool)
+}
+
+async function fetchAndCache(pool: Pool, key: string): Promise<string> {
+  const token = await requireToken() // 平台 JWT
+  const params = new URLSearchParams({ projectId: String(pool.projectId) })
+  if (pool.producerProjectId) params.set('producerProjectId', String(pool.producerProjectId))
+
+  const { status, body } = await sendJson(`/api/user/gateway-token?${params}`, 'GET', { token })
+  // 非 2xx 绝不写缓存 —— 缓存一个失败结果会让后续每次调用都拿到坏值,直到超龄为止。
+  // Codex 的 `server.rs` 同样在非 2xx 时立刻 return Err,ExchangedTokens 压根不构造。
+  if (status >= 400) throw toAuthError(status, body)
+
+  const data = (body.data ?? body) as Record<string, unknown>
+  const gatewayToken = requireString(data.token, 'token', status)
+  cache.set(key, { token: gatewayToken, fetchedAt: Date.now() })
+  return gatewayToken
+}
+
+/** 登出、切账号时必须清 —— 否则新账号会拿着上一个账号的钱包在花钱。 */
+export function clearGatewayTokens(): void {
+  cache.clear()
+  inflight.clear()
+}
+```
+
+- [ ] **Step 6: 跑测试确认通过**
+
+Run: `npx vitest run src/main/services/auth/__tests__/gatewayToken.test.ts`
+Expected: PASS
+
+- [ ] **Step 7: 接进登出路径 + 变异测试**
+
+在 `session.ts` 的 `logout()` 里调 `clearGatewayTokens()`，并加一条测试断言登出后再 resolve 会重新换取。
+
+逐个改坏、确认变红、改回：去掉 `inflight` 合流；`cacheKey` 只用 `projectId`；非 2xx 时也写缓存；`MAX_AGE_MS` 改成 `Infinity`；`logout` 不清缓存。
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add src/main/services/auth/gatewayToken.ts src/main/services/auth/__tests__/gatewayToken.test.ts src/main/services/auth/session.ts
+git commit -m "feat(auth): 主进程新增派生网关 token 的取用与刷新"
+```
+
+---
+
+## Task 4: CATIMATION —— 把网关请求发起方搬到主进程
+
+> **这是本计划里唯一动出图主路径的任务，也是风险最高的一个。** 单独成任务、单独审。
+
+**Files:**
+- Modify: `src/main/services/auth/ipc.ts`（加 `auth:gateway-fetch` 通道）
+- Modify: `src/preload/index.ts`
+- Modify: `src/renderer/src/services/api/ApiService.ts:1294-1297`（分流点 + `if (!apiKey)` 早退守卫）
+- Test: 对应的 ipc / ApiService 测试
+
+**Interfaces:**
+- Consumes: Task 3 的 `resolveGatewayToken` / `refreshGatewayToken`
+- Produces: 渲染层可用的「用账号额度发一次网关请求」通道
+
+- [ ] **Step 1: 先写清楚分流语义的测试**
+
+三种状态必须分开呈现（回退绝不静默）：未登录 → 提示登录；已登录但余额不足 → 提示充值；已登录但本次失败 → 明确告知「本次改用你自己的 API Key」。
+
+- [ ] **Step 2–8:** 待 Task 3 落地后细化。**本任务的步骤在 Task 3 完成、真实签名确定之后再展开**——现在写死会与实际接口漂移。
+
+---
+
+## Self-Review
+
+**1. Spec coverage：** spec §六第二期的四个部分（new-api / sora-ui-backend / 主进程 / 渲染层）分别对应 Task 1/2/3/4。spec §二的字段表（`expired_time` / `unlimited_quota` / 不设 `remain_quota` / `model_limits`）在 Task 1 Step 4 逐条落到代码，唯一未实现的是 `model_limits`——它在 spec 里标的是「可设」，YAGNI，本期不做。
+
+**2. Placeholder 扫描：** Task 4 的 Step 2-8 是**有意留白**，理由已写明（依赖 Task 3 的真实签名）。这是本计划唯一的未展开处，其余每个 code step 都有完整代码。
+
+**3. 类型一致性：** `Pool` 在 Task 3 与渲染层 `useQuotaStore` 的 `Pool` 同形（`{ projectId, producerProjectId: number | null }`）；契约 C1 的 snake_case 与 C2 的 camelCase 边界在 Task 2 Step 6 的 `mintDerivedToken` 里显式转换。
+
+**4. 已知缺口（需要你确认的验收项）：** spec §六提到「别让后端也预扣一次」——桌面端走直连时不得调 `preDeduct` / `reserveVideoTaskBillingV2`。这条没有对应的自动化测试，因为它是「不要做某事」。列为人工验收项。
+
+**5. 上游取证补做后的修订记录（2026-08-28 第二版）：** 本计划初版是在没查上游代码与 issues 的情况下写的，补查后改了四处，全部记在「上游取证」一节：
+
+| # | 初版错在哪 | 后果 |
+|---|---|---|
+| U1 | 手搓 key 生成（照抄 allocation 那段先拼随机段再截断的写法） | **截掉的正是熵**；且重复实现了上游 `common.GenerateKey()` |
+| U2 | 每次调用都新建 Token 行 | 上游每用户令牌数硬上限默认 1000，重度用户约 **10 天铸废账号** |
+| Task 2 | 用 `requireOwnedProjectId` 并期待它给 503 | 它**故意**把 403/503 合并，需求中的 503 永远不会出现 |
+| Task 2 | `req.user.id` | 该文件统一用 `userId` |
+
+另有两条只记录不改：U4（`ReactivatePersonalAllocation` 无过期过滤地复活历史 token —— 目前不构成漏洞，因为过期检查独立于 status）、U5（`ErrTokenInvalid` 不可区分 —— 不影响本方案，因为刷新判据是本地缓存年龄而非服务端信号）。
+
+---
+
+## 部署依赖
+
+Task 1 改的是 Go 服务，要部署到测试服才能端到端验证 Task 2/3/4。Task 2 已能对 mock 的上游做完整单测，所以 **Task 1、2、3 可以在部署之前全部完成并测通**；只有 Task 4 的真机验证需要等部署。

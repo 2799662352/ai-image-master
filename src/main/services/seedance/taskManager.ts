@@ -22,6 +22,7 @@ import type {
   SeedanceTaskState,
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
+  VideoBillingSource,
 } from './types'
 import { validateSeedanceRequest } from './types'
 import {
@@ -66,6 +67,22 @@ export interface SeedanceTaskManagerDeps {
    */
   wan3Transport?: VideoTransport
   /**
+   * 平台余额下的 Seedance（经 Miau 网关）。缺省时按平台余额提交会**抛错**而不是
+   * 回落 —— 见 `transportFor` 里那条不能回落的分支。
+   */
+  seedanceGatewayTransport?: VideoTransport
+  /**
+   * 没有显式意向时，这一次算平台余额还是自填 Key。
+   *
+   * 注入而不是自己去读:判据是「主进程手上有没有平台影子 token」,读它要碰
+   * `auth/gatewayToken`,而本类是纯状态机(单测里不该拉起 electron)。真正的
+   * 判据函数是 `seedanceGateway/credentials.ts` 的 `resolveSeedanceGatewayToken`
+   * —— 路由与取 token 必须是**同一个**结论,所以那边也用它。
+   *
+   * 缺省 = 一律自填 Key,与接入网关之前逐字节相同。
+   */
+  resolveBilling?: (prefer?: VideoBillingSource) => VideoBillingSource
+  /**
    * 把上游裸错误翻成人话。缺省 = 原样透出。
    *
    * 注入而不是直接 import：本类是状态机，不该知道有哪些 provider、更不该按
@@ -96,6 +113,13 @@ export interface SubmitParams {
   clientId?: string
   /** 任务来源（'workbench' = 生成视频工作台页；缺省 = 聊天/MCP 链路）。 */
   source?: 'workbench'
+  /**
+   * 这一次的钱从哪出。**工作台那条路必须显式带**（值来自渲染层的
+   * `useQuotaStore.billingSource`）；MCP 那条路没有渲染层，缺省交给
+   * `deps.resolveBilling` 兜底。理由见 `seedanceGateway/credentials.ts`
+   * 的「已知缺口」：主进程的 activePool 只是渲染层状态的镜像，可能落后。
+   */
+  billing?: VideoBillingSource
 }
 
 /**
@@ -116,6 +140,12 @@ export interface AdoptParams {
   duration: number
   /** 原提交时间，用于 UI 显示真实总耗时；缺省用当前时间。 */
   createdAt?: number
+  /**
+   * 原提交时的计费模式。**接管必须带**：重启后恢复的轮询要打回同一条上游，
+   * 缺了它一条平台任务会被拿 vvdance key 去查，回一句「任务不存在」。
+   * 缺省 = 自填 Key（接网关之前建的任务都是这样）。
+   */
+  billing?: VideoBillingSource
 }
 
 export class SeedanceTaskManager {
@@ -126,17 +156,34 @@ export class SeedanceTaskManager {
   constructor(private deps: SeedanceTaskManagerDeps) {}
 
   /**
-   * 这个模型该走哪条传输层。**本类里唯一与 provider 有关的一行** —— 提交、轮询、
-   * 取消都经由它，此后代码不再区分 provider（见 videoTransport.ts 的文件头）。
+   * 这个模型 + 这种计费模式该走哪条传输层。**本类里唯一与 provider 有关的一行**
+   * —— 提交、轮询、取消都经由它，此后代码不再区分 provider（见 videoTransport.ts
+   * 的文件头）。
+   *
+   * `billing` 由调用方给到底、途中不许有默认值：提交时定下的那个值被写进任务
+   * 状态，轮询与取消再原样取回来。三处给的必须是同一个值，否则就是「按平台余额
+   * 建的任务，拿自填 Key 去查」。
    */
-  private transport(model: SeedanceModelAlias | undefined): VideoTransport {
+  private transport(
+    model: SeedanceModelAlias | undefined,
+    billing: VideoBillingSource | undefined,
+  ): VideoTransport {
     return transportFor(
       {
         seedance: createSeedanceTransport(this.deps.client, this.deps.getApiKey),
         ...(this.deps.wan3Transport ? { wan3: this.deps.wan3Transport } : {}),
+        ...(this.deps.seedanceGatewayTransport
+          ? { seedanceGateway: this.deps.seedanceGatewayTransport }
+          : {}),
       },
       model,
+      { ...(billing ? { billing } : {}) },
     )
+  }
+
+  /** 显式意向优先；没有就问兜底；连兜底都没注入就是自填 Key（老行为）。 */
+  private billingFor(prefer: VideoBillingSource | undefined): VideoBillingSource {
+    return this.deps.resolveBilling ? this.deps.resolveBilling(prefer) : (prefer ?? 'own-key')
   }
 
   private now(): number {
@@ -172,9 +219,12 @@ export class SeedanceTaskManager {
   async submit(params: SubmitParams): Promise<SeedanceTaskState> {
     const { input, content, threadId } = params
     const model: SeedanceModelAlias = input.model ?? '2.0'
+    // 意向只在这里落一次锤,之后整条任务的生命周期都用这个值 —— 用户中途切了
+    // 计费来源不该让一条已经在上游跑着的任务换一条路去轮询。
+    const billing = this.billingFor(params.billing)
     // 密钥检查交给这条路自己的 transport —— 只配了 Miau 密钥的用户生成万相时,
     // 不该被要求去配一个用不到的火山密钥。
-    this.transport(model).requireApiKey()
+    this.transport(model, billing).requireApiKey()
 
     const resolution = input.resolution ?? '720p'
     const duration = input.duration ?? 5
@@ -197,7 +247,7 @@ export class SeedanceTaskManager {
     const ratio = taskMode ? 'adaptive' : (input.ratio ?? '16:9')
 
     // 组包归传输层 —— 两家 provider 的请求体毫无共同点,这里只交出已解析的事实。
-    const { id } = await this.transport(model).createTask({
+    const { id } = await this.transport(model, billing).createTask({
       input,
       content,
       model,
@@ -210,6 +260,7 @@ export class SeedanceTaskManager {
       taskId: id,
       clientId: params.clientId,
       ...(params.source ? { source: params.source } : {}),
+      billing,
       threadId,
       prompt: input.prompt,
       model,
@@ -293,6 +344,7 @@ export class SeedanceTaskManager {
       ...(params.clientId ? { clientId: params.clientId } : {}),
       ...(params.source ? { source: params.source } : {}),
       ...(params.threadId ? { threadId: params.threadId } : {}),
+      ...(params.billing ? { billing: params.billing } : {}),
       prompt: params.prompt,
       model: params.model,
       resolution: params.resolution,
@@ -326,7 +378,9 @@ export class SeedanceTaskManager {
 
     let billed = true
     let reason: string | undefined
-    const deleteTask = this.transport(task.model).deleteTask
+    // 建任务时用的哪条路，取消就问哪条路 —— 网关那条没有取消接口，拿 vvdance 的
+    // deleteTask 去删一个网关任务只会白删，然后把「其实还在计费」报成「已取消」。
+    const deleteTask = this.transport(task.model, task.billing).deleteTask
     if (task.status === 'queued' && !deleteTask) {
       // 该 provider 没有验证过的取消接口。发一个没把握的请求、再把它的失败报成
       // 「取消失败」,会让用户以为这笔钱本来能省下来 —— 如实说。
@@ -481,7 +535,7 @@ export class SeedanceTaskManager {
 
       let result
       try {
-        result = await this.transport(task.model).queryTask(taskId)
+        result = await this.transport(task.model, task.billing).queryTask(taskId)
       } catch (e) {
         // 密钥失效 / 参数非法 / 任务不存在：重试到 30 分钟也不会变好，而且最后只会
         // 报一句与真因无关的「轮询超时」。立刻如实失败。

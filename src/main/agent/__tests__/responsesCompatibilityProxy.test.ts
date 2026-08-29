@@ -559,6 +559,143 @@ async function startFakeMessagesUpstream(): Promise<{
   }
 }
 
+/**
+ * agent 聊天走平台余额。
+ *
+ * codex 自己带的是用户自填的 Miau Key,而 `qwen3.8-max` 那一路打的就是 Miau 网关,
+ * 所以平台池的钱同样付得了它 —— 用户登录之后不该还要为聊天单独填一枚 key。
+ *
+ * 这一组守的是两件事,第二件比第一件重要得多。
+ */
+describe('平台余额组头', () => {
+  async function startCapturingUpstream(): Promise<{
+    baseUrl: string
+    headers: () => Record<string, string>
+    close: () => Promise<void>
+  }> {
+    let seen: Record<string, string> = {}
+    const server = createServer((request, response) => {
+      seen = Object.fromEntries(
+        Object.entries(request.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : (v ?? '')]),
+      )
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      headers: () => seen,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  it('上游是网关时,用平台整份头顶掉 codex 自带的 Key', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => ({
+        Authorization: 'Bearer sk-platform',
+        'X-Platform-User-Id': 'user-1',
+        'X-Project-Id': '345',
+      }),
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      const h = upstream.headers()
+      expect(h.authorization).toBe('Bearer sk-platform')
+      expect(h['x-platform-user-id']).toBe('user-1')
+      expect(h['x-project-id']).toBe('345')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  /**
+   * 🧬 变异点:把 `CodexLocalBackend.gatewayPlatformHeadersFor` 里的 origin 判定删掉
+   * (改成只看有没有 token),线上就会把平台影子 token 发给 rightcode-claude /
+   * grok / deepseek 那几个**别家**的代理 —— 那是凭据外泄,与出网注入器的 host
+   * 白名单是同一条纪律。
+   *
+   * 这里用「resolver 回 null」代表「上游不是网关」,守的是代理这一侧:
+   * 回 null 时必须**原样透传** codex 自带的 Key,不能自作主张动它。
+   */
+  it('resolver 回 null 时原样透传 codex 自带的 Key', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => null,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      const h = upstream.headers()
+      expect(h.authorization).toBe('Bearer sk-user-own')
+      expect(h['x-platform-user-id']).toBeUndefined()
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  it('不传这个选项时行为与上线前逐字节相同', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      expect(upstream.headers().authorization).toBe('Bearer sk-user-own')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+})
+
+describe('上游连不上时的 502 可定位性', () => {
+  /**
+   * 回归 2026-08-29:用户拿到的是「unexpected status 502 Bad Gateway: fetch failed」,
+   * 既没有上游地址也没有失败原因 —— undici 对 DNS/拒绝/证书全都只说 `fetch failed`,
+   * 真因埋在 `error.cause` 里,而 502 分支当时只回 `error.message`。
+   */
+  it('把上游 origin 和 cause 的错误码一起写进 502 正文', async () => {
+    // 先绑一个临时端口再立刻关掉:拿到的端口保证无人监听,连过去必然 ECONNREFUSED。
+    // 不用 1 这类保留端口 —— fetch 规范把它们列为 bad port,请求在到达 TCP 前就被
+    // 拒了,cause 里没有 errno,验不到我们真正关心的那条链路。
+    const deadPort = await new Promise<number>((resolve) => {
+      const probe = createServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const { port } = probe.address() as AddressInfo
+        probe.close(() => resolve(port))
+      })
+    })
+    const proxy = await startResponsesCompatibilityProxy(`http://127.0.0.1:${deadPort}/v1`)
+    try {
+      const response = await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(response.status).toBe(502)
+      const message = ((await response.json()) as { error: { message: string } }).error.message
+      expect(message).toContain(`http://127.0.0.1:${deadPort}`)
+      expect(message).toContain('ECONNREFUSED')
+    } finally {
+      await proxy.close()
+    }
+  })
+})
+
 describe('Anthropic Messages bridge', () => {
   it('bridges Claude channels, including ones whose preset forgot to say so', () => {
     expect(resolveCompatibilityBridge(resolveProviderChannel('rightcode-claude')))

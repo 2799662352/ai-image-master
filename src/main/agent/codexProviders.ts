@@ -1,3 +1,4 @@
+import { MIAU_BASE_URL } from '../../shared/miau'
 import type { CodexProviderConfig } from './codexLaunch'
 import {
   BUILTIN_CHANNELS,
@@ -86,7 +87,9 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   name: 'Qwen Understanding (DashScope via new-api)',
   // 加速域名(2026-07-28),仅 https 可达。这个常量在每次 spawn 时现读、不落库,
   // 所以改了下次启动即生效,老用户无需迁移。
-  baseUrl: 'https://miauapi.13797248455.xyz/v1',
+  // 生产常量。开发期覆盖在主进程侧做(`CodexLocalBackend.withDevGatewayOverride`)——
+  // 这类 preset 文件与渲染层共享,顶层不能 import electron。
+  baseUrl: MIAU_BASE_URL,
   envKey: 'MIAU_API_KEY',
   model: 'qwen3.7-plus-dashscope',
   wireApi: 'responses',
