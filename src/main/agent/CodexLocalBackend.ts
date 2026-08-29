@@ -51,7 +51,10 @@ import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gat
 function withDevGatewayOverride(
   providers: readonly CodexProviderConfig[],
 ): CodexProviderConfig[] {
-  const resolved = resolveMiauBaseUrl(app.isPackaged)
+  // `app` 在测试的 electron mock 里是 undefined。缺省按**已打包**算 —— 证不出这是
+  // 开发构建,就不该放行「改凭据去向」这种操作;顺带让测试不受本机是否设了那个
+  // 环境变量影响。
+  const resolved = resolveMiauBaseUrl(app?.isPackaged ?? true)
   if (resolved === MIAU_BASE_URL) return [...providers]
   return providers.map((provider) =>
     provider.baseUrl === MIAU_BASE_URL ? { ...provider, baseUrl: resolved } : { ...provider },
