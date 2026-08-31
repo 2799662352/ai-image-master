@@ -642,12 +642,23 @@ describe('platformAssets', () => {
     await expect(m.getAsset('a1', SCOPE)).rejects.toMatchObject({ code: 'HTTP_504', status: 504 })
   })
 
-  it('基址跟随 CATIMATION_AUTH_BASE_URL', async () => {
+  it('基址跟随 CATIMATION_AUTH_BASE_URL —— 但仅在开发构建打开闸之后', async () => {
     process.env.CATIMATION_AUTH_BASE_URL = 'https://staging.example.com/'
+    const { allowAuthBaseUrlOverride } = await import('../../auth/authBaseUrl')
     const m = await import('../platformAssets')
     fetchMock.mockResolvedValue(ok({ Items: [], TotalCount: 0 }))
+
+    // 闸默认关 = 打包产物的行为:环境变量摆在那儿也不认,老老实实打生产。
     await m.listAssets(SCOPE)
-    expect(lastCall()[0].startsWith('https://staging.example.com/api/volcengine-asset/assets')).toBe(true)
-    expect(lastUrl().origin).not.toBe(BASE)
+    expect(lastUrl().origin).toBe(BASE)
+
+    allowAuthBaseUrlOverride(true)
+    try {
+      await m.listAssets(SCOPE)
+      expect(lastCall()[0].startsWith('https://staging.example.com/api/volcengine-asset/assets')).toBe(true)
+      expect(lastUrl().origin).not.toBe(BASE)
+    } finally {
+      allowAuthBaseUrlOverride(false)
+    }
   })
 })

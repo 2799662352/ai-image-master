@@ -487,8 +487,18 @@ describe('gatewayToken 落盘', () => {
     storage.available = true
     storage.asyncAvailable = true
     storage.backend = 'gnome_libsecret'
+    // v3 信封:`authBaseUrl` 必须与本文件顶部对 `../authBaseUrl` 的 mock 一致,
+    // 否则会被当成「别的环境签的」整份丢弃(那是另一条用例在测的行为)。
     fsMock.readFile.mockResolvedValueOnce(
-      Buffer.from(JSON.stringify({ '342:': 'sk-restored' }), 'utf8'),
+      Buffer.from(
+        JSON.stringify({
+          v: 3,
+          authBaseUrl: 'https://example.test',
+          pool: null,
+          tokens: { '342:': 'sk-restored' },
+        }),
+        'utf8',
+      ),
     )
     const m = await import('../gatewayToken')
 
@@ -631,17 +641,47 @@ describe('计费池随 token 一起落盘', () => {
     expect(fresh.getActivePoolToken()).toBe('sk-live')
   })
 
-  it('v1 老信封(裸 map)仍能读回 token,池保持 null', async () => {
-    // 升级路径:盘上是旧格式。token 不能丢(丢了要重新取一趟),池没有就是没有 ——
-    // 不猜。渲染层的 `load()` 会补一次 arm,把它升级成 v2。
+  /**
+   * 契约在 2026-08-31 被**刻意反转**:v1/v2 老信封整份丢弃,不再读回 token。
+   *
+   * 旧行为(v1 的 token 照读)看着更省一趟网络往返,但那批 token **没有环境标记** ——
+   * 无法证明它们是当前 IdP 签发的。一台在测试服登录过的机器换回生产后,会把测试服的
+   * token 读回内存并 arm 上去,第一笔请求就是 `401 无效的令牌`,而错误里看不出成因。
+   *
+   * 代价只是升级后第一次用平台余额多取一次(token 本就是可丢弃的缓存)。
+   */
+  it('没有环境标记的老信封(v1/v2)整份丢弃 —— 证不出是本环境签的就不要', async () => {
+    for (const stale of [
+      JSON.stringify({ '342:': 'sk-v1' }),
+      JSON.stringify({ v: 2, pool: POOL, tokens: { '342:': 'sk-v2' } }),
+    ]) {
+      vi.resetModules()
+      fsMock.readFile.mockResolvedValueOnce(Buffer.from(stale))
+      const mod = await import('../gatewayToken')
+      await mod.loadPersisted()
+
+      expect(mod.getActivePool()).toBeNull()
+      mod.setActivePool(POOL)
+      expect(mod.getActivePoolToken()).toBeNull()
+    }
+  })
+
+  it('签发环境不符的 v3 信封同样整份丢弃', async () => {
+    // 这条才是真正要防的场景:格式是新的、内容也完整,唯独来自另一个 IdP。
     vi.resetModules()
-    fsMock.readFile.mockResolvedValueOnce(Buffer.from(JSON.stringify({ '342:': 'sk-v1' })))
+    const foreign = JSON.stringify({
+      v: 3,
+      authBaseUrl: 'https://some-other-idp.test',
+      pool: POOL,
+      tokens: { '342:': 'sk-from-elsewhere' },
+    })
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(foreign))
     const mod = await import('../gatewayToken')
     await mod.loadPersisted()
 
     expect(mod.getActivePool()).toBeNull()
     mod.setActivePool(POOL)
-    expect(mod.getActivePoolToken()).toBe('sk-v1')
+    expect(mod.getActivePoolToken()).toBeNull()
   })
 
   it('盘上的池形状不合法就当没有 —— 不许把 NaN 放进池键', async () => {

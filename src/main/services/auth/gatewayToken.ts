@@ -289,8 +289,22 @@ async function encryptionIsReal(): Promise<boolean> {
  * 「重启后主进程还没 arm,渲染层先打标记头会让每个请求 401」。池落了盘,主进程
  * 启动即 armed,那条理由就不成立了。两处改动是一对,不能只做一半。
  */
-interface PersistedV2 {
-  v: 2
+interface PersistedV3 {
+  v: 3
+  /**
+   * 签发这批 token 的 IdP 基址。**v3 存在的唯一理由。**
+   *
+   * 缓存键只有 `(projectId, producerProjectId)`,不含环境 —— 于是一台在测试服登录过的
+   * 机器,换回生产之后 `loadPersisted()` 照样把那枚**测试服**的 token 读回内存并 arm
+   * 上去,第一笔请求就是 `401 无效的令牌`。而且 v2 起池也一并落盘,这条路比以前更顺畅。
+   *
+   * 打包产物本身有硬闸(`authBaseUrl()` / `resolveGatewayOrigin()` 都无视环境变量),
+   * 但那只保证「发给谁」,保证不了「用谁签的凭据」—— 盘上的东西是上一次运行留下的。
+   *
+   * 不匹配时整份丢弃而不是逐条筛:token 是**可丢弃的缓存**,重取一次网络往返而已;
+   * 而留下任何一条来路不明的凭据,换来的是一个没人能从错误里看出成因的 401。
+   */
+  authBaseUrl: string
   /** 当前计费池。null = 登录了但没选池(或用户切回了自填 Key)。 */
   pool: Pool | null
   tokens: Record<string, string>
@@ -299,8 +313,9 @@ interface PersistedV2 {
 /** `gen` 是调用方出发时的代际,见下面写盘前那道守卫。 */
 async function persist(gen: number): Promise<void> {
   if (!(await encryptionIsReal())) return // 只留内存,重启后重取
-  const envelope: PersistedV2 = {
-    v: 2,
+  const envelope: PersistedV3 = {
+    v: 3,
+    authBaseUrl: authBaseUrl(),
     pool: activePool,
     tokens: Object.fromEntries(cache),
   }
@@ -348,14 +363,21 @@ export async function loadPersisted(): Promise<void> {
   }
 }
 
-/** 兼容 v1(裸 map)与 v2(带池的信封)。认不出的形状一律当空,不猜。 */
+const EMPTY_ENVELOPE = { tokens: {} as Record<string, string>, pool: null }
+
+/**
+ * 解析落盘信封。认不出的形状、或**来自别的环境**的,一律当空 —— 不猜、不部分采用。
+ *
+ * v1(裸 map)与 v2(带池)都没有环境标记,**无法证明它们属于当前 IdP**,所以一并丢弃。
+ * 代价只是升级后第一次用平台余额时多一趟网络往返;而留着它们,换来的是「换过环境的
+ * 机器一启动就 401,且错误里看不出成因」——那正是 v3 要消灭的东西。
+ */
 function readEnvelope(parsed: unknown): { tokens: Record<string, string>; pool: Pool | null } {
-  if (!parsed || typeof parsed !== 'object') return { tokens: {}, pool: null }
+  if (!parsed || typeof parsed !== 'object') return EMPTY_ENVELOPE
   const obj = parsed as Record<string, unknown>
-  if (obj.v !== 2) {
-    // v1:整个对象就是 poolKey → token。
-    return { tokens: parsed as Record<string, string>, pool: null }
-  }
+  if (obj.v !== 3) return EMPTY_ENVELOPE
+  // 环境不符 = 这批凭据是别处签的,一个都不能要。
+  if (obj.authBaseUrl !== authBaseUrl()) return EMPTY_ENVELOPE
   const tokens =
     obj.tokens && typeof obj.tokens === 'object'
       ? (obj.tokens as Record<string, string>)

@@ -55,6 +55,7 @@ import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { registerAuthIpc } from './services/auth/ipc'
+import { allowAuthBaseUrlOverride } from './services/auth/authBaseUrl'
 import { registerPortraitLibraryIpc } from './services/portraitLibrary/ipc'
 import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
@@ -1335,6 +1336,15 @@ app.whenReady().then(async () => {
   registerSeedanceRendererIpc(
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
+
+  // 🚨 必须**先于** registerAuthIpc:后者内部的 `loadPersisted()` 会拿 `authBaseUrl()`
+  // 去比对盘上凭据的签发环境,比对早于注入的话,开发构建会把自己上一轮在测试服存的
+  // token 判成「别的环境」而丢弃 —— 每次启动都白重取一次。
+  //
+  // 默认关、这里才打开:忘了这一行的后果是「开发时 override 不生效」(看得见);
+  // 反过来默认开的话,忘了关就是「打包产物被环境变量牵去测试服」(看不见,且表现为
+  // 一句没头没脑的 401)。见 `allowAuthBaseUrlOverride` 的注释。
+  allowAuthBaseUrlOverride(!app.isPackaged)
 
   // 顺带把上次会话落盘的网关 token 读回内存(registerAuthIpc 内的 loadPersisted)。
   // 它要用 app.getPath / safeStorage,所以只能挂在 whenReady 之后的这条路径上。
