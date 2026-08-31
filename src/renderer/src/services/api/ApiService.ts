@@ -1787,8 +1787,16 @@ export class ApiService {
   async understandImage(params: VisionParams): Promise<VisionResult> {
     const { images, prompt = '请描述这张图片', role, model = 'gemini-1.5-flash' } = params
 
+    // 站点与 URL 提到守卫之前算 —— 「这次走不走平台余额」的判据是**请求 URL 的
+    // host**（见 `shouldUsePlatformBilling`），不先把 URL 拼出来就没法豁免下面那道门。
+    const site = this.apiSites[this.currentSite]
+    const url = `${site.baseURL}/v1/chat/completions`
+
     const apiKey = this.visionApiKey || this.apiKey
-    if (!apiKey) {
+    // 平台余额模式下**本来就不该有 Key** —— 凭据在主进程，渲染层只打标记头。
+    // 少了这道豁免，用户登录了、开关也开着，图像理解却一直被要求「请先设置 API Key」，
+    // 而整条平台计费链路一次都到不了。与 `generateImage` 那道门同一个修法。
+    if (!apiKey && !this.shouldUsePlatformBilling(url)) {
       return { success: false, error: '请先设置 API Key' }
     }
 
@@ -1797,8 +1805,6 @@ export class ApiService {
     }
 
     try {
-      const site = this.apiSites[this.currentSite]
-      const url = `${site.baseURL}/v1/chat/completions`
 
       const content: any[] = []
       
@@ -1817,12 +1823,15 @@ export class ApiService {
         }
       }
 
+      // 走统一装配:平台模式打标记头(主进程换成影子 token + 计费归属),否则照旧
+      // 发自填 Key。手写 Authorization 的后果是这条路**永远**扣自填 Key 的钱,
+      // 而用户以为图像理解也在花账号余额。
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      this.applyAuthHeaders(headers, site, apiKey ?? '', url)
+
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content }],
@@ -1875,7 +1884,11 @@ export class ApiService {
     onComplete: () => void,
     onError: (error: Error) => void
   ): Promise<void> {
-    if (!this.visionApiKey) {
+    // 见 `understandImage`:URL 要先拼出来,那道门才能按「这次是否走平台余额」豁免。
+    const site = this.apiSites[this.currentSite]
+    const apiUrl = `${site.baseURL}/v1/chat/completions`
+
+    if (!this.visionApiKey && !this.shouldUsePlatformBilling(apiUrl)) {
       const error = new Error('请先设置图像理解 API Key')
       onError?.(error)
       throw error
@@ -1888,7 +1901,6 @@ export class ApiService {
     }
 
     const useMaxTokens = typeof maxTokens === 'number' && maxTokens > 0
-    const site = this.apiSites[this.currentSite]
 
     console.log('🔍 开始图像理解分析 (流式输出):', {
       model,
@@ -1931,15 +1943,15 @@ export class ApiService {
     }
 
     try {
-      const apiUrl = `${site.baseURL}/v1/chat/completions`
       console.log('🔗 图像理解流式 API 请求 URL:', apiUrl)
+
+      // 见 `understandImage`:统一装配,平台模式打标记头而不是自填 Key。
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      this.applyAuthHeaders(headers, site, this.visionApiKey ?? '', apiUrl)
 
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.visionApiKey}`
-        },
+        headers,
         body: JSON.stringify(requestBody)
       })
 
@@ -3475,9 +3487,18 @@ export class ApiService {
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
     const site = this.apiSites['antigravity']
     const key = this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity')
-    if (!key) {
+    // 平台余额模式下没有自填 Key 是正常的 —— 凭据在主进程。这道门原先无条件拦,
+    // 于是 understand_video / understand_document / web_research 这三个 MCP 工具
+    // 在平台模式下一律报「未配置 Miau API 令牌」,而用户明明已经登录并选好了计费池。
+    // 判据用请求 URL 的 host(与 `applyAuthHeaders` 内部同一个),不是站点键。
+    if (!key && !this.shouldUsePlatformBilling(`${site.baseURL}/v1/chat/completions`)) {
       return { success: false, error: '未配置 Miau API 令牌,请到设置页填入 API Key 后重试。' }
     }
+    // 走到这里 `key` 可能是 null(平台模式放行的那一支),而下游签名要 `string`。
+    // 归一成空串,**不放宽下游签名** —— 放宽会让每个下游都得重新判断「null 是什么
+    // 意思」,而这里只有一种含义:`applyAuthHeaders` 会走平台分支打标记,根本不读它。
+    // 与 `generateImage` 里 `resolvedApiKey` 同一个处理。
+    const resolvedKey = key ?? ''
 
     const content: unknown =
       input.kind === 'web'
@@ -3504,7 +3525,7 @@ export class ApiService {
     if (input.kind === 'web') baseBody.enable_search = true
 
     const primary = resolveUnderstandModel(opts.model)
-    const primaryRes = await this.understandWithModel(site.baseURL, key, baseBody, primary, opts)
+    const primaryRes = await this.understandWithModel(site, resolvedKey, baseBody, primary, opts)
     if (primaryRes.success) return primaryRes
 
     // 兜底:primary 不是 max 时(默认 plus / 显式 plus)用更强的 max 再跑一轮。可经
@@ -3512,8 +3533,8 @@ export class ApiService {
     const allowFallback = opts.fallback !== false
     if (allowFallback && primary !== QWEN_UNDERSTAND_FALLBACK_MODEL) {
       const fb = await this.understandWithModel(
-        site.baseURL,
-        key,
+        site,
+        resolvedKey,
         baseBody,
         QWEN_UNDERSTAND_FALLBACK_MODEL,
         opts,
@@ -3529,7 +3550,7 @@ export class ApiService {
    * 重试即可恢复;4xx/非 JSON 属确定性错误,不重试。默认 2 次重试、退避 600ms*attempt。
    */
   private async understandWithModel(
-    baseURL: string,
+    site: ApiSite,
     key: string,
     baseBody: Record<string, unknown>,
     model: string,
@@ -3541,7 +3562,7 @@ export class ApiService {
     let lastError = 'qwen 理解请求失败。'
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const r = await this.understandAttempt(baseURL, key, body)
+      const r = await this.understandAttempt(site, key, body)
       if (r.kind === 'ok') return { success: true, text: r.text }
       lastError = r.error
       if (!r.retryable || attempt === maxAttempts) {
@@ -3554,18 +3575,22 @@ export class ApiService {
 
   /** 单次 understand 请求。瞬时错误(网络异常 / 502·503·504)标 retryable。 */
   private async understandAttempt(
-    baseURL: string,
+    site: ApiSite,
     key: string,
     body: Record<string, unknown>,
   ): Promise<{ kind: 'ok'; text: string } | { kind: 'fail'; retryable: boolean; error: string }> {
+    const url = `${site.baseURL}/v1/chat/completions`
+    // 收 `site` 而不是裸 baseURL,就是为了能走这一步:平台模式打标记头(主进程换成
+    // 影子 token + 计费归属),否则照旧发自填 Key。手写 Authorization 的后果是
+    // understand 这一族**永远**扣自填 Key 的钱,而且在平台用量明细里一条都查不到。
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    this.applyAuthHeaders(headers, site, key, url)
+
     let resp: Response
     try {
-      resp = await fetch(`${baseURL}/v1/chat/completions`, {
+      resp = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${key}`,
-        },
+        headers,
         body: JSON.stringify(body),
       })
     } catch (e) {

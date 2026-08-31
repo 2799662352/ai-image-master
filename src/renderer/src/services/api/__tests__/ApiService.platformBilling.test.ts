@@ -122,6 +122,187 @@ describe('平台计费模式下的请求头', () => {
 })
 
 /**
+ * 理解那一族(图像理解 / 流式分析 / understand 视频·文档·联网)。
+ *
+ * 这三条此前**各自手写 `Authorization: Bearer`**,完全绕开 `applyAuthHeaders` ——
+ * 于是打的是 Miau 站点、扣的却永远是自填 Key 的钱,而且因为没有归属头,平台用量
+ * 明细里一条都查不到。MCP 的 `understand_video` / `understand_document` /
+ * `web_research` 走的正是这条路。
+ */
+describe('理解族也走平台余额', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    localStorage.clear()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  /** 抓一次请求的头。`ok` 决定要不要让被测方法走成功分支。 */
+  function stubFetch(): () => Record<string, string> {
+    let seen: Record<string, string> = {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        seen = (init?.headers ?? {}) as Record<string, string>
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: 'ok' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+    return () => seen
+  }
+
+  async function makeService(billingSource: 'platform' | 'own-key', withKey: boolean) {
+    if (withKey) {
+      localStorage.setItem('api_key_antigravity', 'user-typed-key')
+      localStorage.setItem('vision_api_key_antigravity', 'user-typed-key')
+    }
+    localStorage.setItem('current_site', 'antigravity')
+    const { useQuotaStore } = await import('../../../stores/useQuotaStore')
+    useQuotaStore.setState({ billingSource })
+    const { ApiService } = await import('../ApiService')
+    return new ApiService()
+  }
+
+  /**
+   * 🧬 变异点:把 `understandAttempt` 里的 `applyAuthHeaders` 换回手写
+   * `Authorization: Bearer ${key}`,这条必红。
+   */
+  it('understand(视频/文档/联网):平台模式打标记,不发 Authorization', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('platform', true)
+
+    await svc.understand({ kind: 'web', query: 'x' }).catch(() => {})
+
+    expect(headers()[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
+    expect(headers().Authorization).toBeUndefined()
+  })
+
+  it('understand:自有 Key 模式照旧发 Authorization', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('own-key', true)
+
+    await svc.understand({ kind: 'web', query: 'x' }).catch(() => {})
+
+    expect(headers().Authorization).toBe('Bearer user-typed-key')
+    expect(headers()[BILLING_MARKER_HEADER]).toBeUndefined()
+  })
+
+  /**
+   * 🧬 变异点:把 `understand` 里那道门改回无条件 `if (!key) return`,这条必红。
+   *
+   * 平台模式下**本来就不该有自填 Key** —— 凭据在主进程。原先这道门会把三个 MCP
+   * 理解工具在平台模式下一律拦成「未配置 Miau API 令牌」,而用户明明已经登录、
+   * 也选好了计费池。
+   */
+  it('understand:平台模式下没有自填 Key 也能发出去', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('platform', false)
+
+    const r = await svc.understand({ kind: 'web', query: 'x' })
+
+    expect(r.success, '平台模式不该被「未配置令牌」拦下').toBe(true)
+    expect(headers()[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
+  })
+
+  it('understand:自有 Key 模式下没 Key 仍然如实拦下', async () => {
+    stubFetch()
+    const svc = await makeService('own-key', false)
+
+    const r = await svc.understand({ kind: 'web', query: 'x' })
+
+    expect(r.success).toBe(false)
+    if (!r.success) expect(r.error).toMatch(/未配置 Miau/)
+  })
+
+  /** 🧬 变异点:`understandImage` 换回手写 Authorization,这条必红。 */
+  it('图像理解:平台模式打标记,不发 Authorization', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('platform', true)
+
+    await svc
+      .understandImage({ images: ['data:image/png;base64,aaa'], prompt: 'x' })
+      .catch(() => {})
+
+    expect(headers()[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
+    expect(headers().Authorization).toBeUndefined()
+  })
+
+  /**
+   * 🧬 变异点:把 `understandImage` 那道门改回无条件 `if (!apiKey)`,这条必红。
+   *
+   * 平台模式没有自填 Key 是正常的。拦下来的话用户会看到「请先设置 API Key」——
+   * 而他刚刚才登录、选好计费池,只会去怀疑登录没生效。
+   */
+  it('图像理解:平台模式下没自填 Key 也能发出去', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('platform', false)
+
+    const r = await svc.understandImage({ images: ['data:image/png;base64,aaa'], prompt: 'x' })
+
+    expect(r.success, '平台模式不该被「请先设置 API Key」拦下').toBe(true)
+    expect(headers()[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
+  })
+
+  it('图像理解:自有 Key 模式下没 Key 仍然如实拦下', async () => {
+    stubFetch()
+    const svc = await makeService('own-key', false)
+
+    const r = await svc.understandImage({ images: ['data:image/png;base64,aaa'], prompt: 'x' })
+
+    expect(r.success).toBe(false)
+    if (!r.success) expect(r.error).toMatch(/API Key/)
+  })
+
+  /**
+   * 🧬 变异点:把 `analyzeImagesStream` 那道门改回无条件 `if (!this.visionApiKey)`,
+   * 这条必红。它是**抛异常**而不是回错误对象,所以用 rejects 断言。
+   */
+  it('流式图像分析:平台模式下没自填 Key 也不抛', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('platform', false)
+
+    await expect(
+      svc.analyzeImagesStream([{ base64: 'aaa' }], 'x', 'qwen3.8-max', null, () => {}, () => {}, () => {}),
+    ).resolves.toBeUndefined()
+    expect(headers()[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
+  })
+
+  it('流式图像分析:自有 Key 模式下没 Key 仍然如实抛', async () => {
+    stubFetch()
+    const svc = await makeService('own-key', false)
+
+    await expect(
+      svc.analyzeImagesStream([{ base64: 'aaa' }], 'x', 'qwen3.8-max', null, () => {}, () => {}, () => {}),
+    ).rejects.toThrow(/图像理解 API Key/)
+  })
+
+  /** 🧬 变异点:`analyzeImagesStream` 换回手写 Authorization,这条必红。 */
+  it('流式图像分析:平台模式打标记,不发 Authorization', async () => {
+    const headers = stubFetch()
+    const svc = await makeService('platform', true)
+
+    await svc
+      .analyzeImagesStream(
+        [{ base64: 'aaa' }],
+        'x',
+        'qwen3.8-max',
+        null,
+        () => {},
+        () => {},
+        () => {},
+      )
+      .catch(() => {})
+
+    expect(headers()[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
+    expect(headers().Authorization).toBeUndefined()
+  })
+})
+
+/**
  * 「这个模型能不能用平台余额」的判据。
  *
  * 之所以要独立成纯函数并单测:这件事此前是**两处隐性耦合**——`buildRequestUrl` 决定
