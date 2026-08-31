@@ -85,15 +85,16 @@ describe('两个提交入口都必须问过这个谓词', () => {
 
   it('runtime.ts 里 verifyContentAssetReferences / importImagesToPortraitLibrary 的每一次调用都在守卫内', () => {
     // 调用点数量与守卫数量必须对得上。新增一个提交入口却忘了加守卫,这里会红。
-    const verifyCalls = runtimeSource.match(/await verifyContentAssetReferences\(/g) ?? []
-    const importCalls = runtimeSource.match(/void importImagesToPortraitLibrary\(/g) ?? []
-    // 允许带第二个实参(计费模式)。**不允许不带** —— 只传 model 的调用正是这次修的 bug,
+    // 允许带第二个实参(计费模式)。**不允许不带** —— 只传 model 的调用正是当初修的 bug,
     // 所以这里刻意要求逗号后面有东西。
-    const guards = runtimeSource.match(/if \(usesSeedanceAssetLibrary\(input\.model, \w+\)\) \{/g) ?? []
-
+    const verifyCalls = runtimeSource.match(/await verifyContentAssetReferences\(/g) ?? []
+    const verifyGuards = runtimeSource.match(/if \(usesSeedanceAssetLibrary\(input\.model, \w+\)\) \{/g) ?? []
     expect(verifyCalls.length).toBeGreaterThan(0)
-    expect(importCalls.length).toBeGreaterThan(0)
-    expect(guards.length).toBe(verifyCalls.length + importCalls.length)
+    expect(verifyGuards.length).toBe(verifyCalls.length)
+
+    // 自动入库的分派 2026-08-31 收进了 `materializeAssetRefs`(为了能在提交前改写
+    // 引用),所以它的谓词不再长在调用点上,而在那个函数里 —— 但仍必须存在。
+    expect(runtimeSource).toMatch(/usesSeedanceAssetLibrary\(model, billing\)/)
   })
 
   // 另一个同源的坑:小素材(≤512KB)默认被读成 base64 内联进 content[],不是 URL。
@@ -123,11 +124,82 @@ describe('两个提交入口都必须问过这个谓词', () => {
    * 说不清的不一致。
    */
   it('平台模式下自动入库改道平台库,两个入口都要有', () => {
-    const platformCalls = runtimeSource.match(/void importImagesToPlatformLibrary\(/g) ?? []
-    const vvdanceCalls = runtimeSource.match(/void importImagesToPortraitLibrary\(/g) ?? []
-    // 每一条 vvdance 的自动入库都要有一条平台侧的对等物,数量必须一样。
-    expect(platformCalls.length).toBe(vvdanceCalls.length)
-    expect(platformCalls.length).toBeGreaterThan(0)
+    // 分派收进了 `materializeAssetRefs`,所以「两个入口都有」现在等价于
+    // 「两个入口都调它」+「它自己两条分支都在」。
+    const entryCalls = runtimeSource.match(/await materializeAssetRefs\(/g) ?? []
+    expect(entryCalls.length).toBe(2)
+      // 第二个实参叫什么无所谓(它被改过一次名:enabled → visibleInLibrary),
+      // 这里要守的是「两个库分支都在 materializeAssetRefs 里接上了」。
+      expect(runtimeSource).toMatch(/importImagesToPortraitLibrary\(content, \w+\)/)
+      expect(runtimeSource).toMatch(/importImagesToPlatformLibrary\(content, \w+\)/)
+    })
+
+    /**
+     * 登记**不受**「默认上传人像库」开关管。
+     *
+     * 这条曾经反过来:开关关着就整个跳过。后来登记从「顺带的复用优化」变成了
+     * 「过审的前提」—— 上游对直传 https 图做真人检测,只有 `asset://` 引用能过。
+     * 于是「不登记」= 真人图必被拒,那不该由一个讲「要不要进库」的开关决定生成
+     * 能不能成。开关的语义收窄成字面意思:登记照做,只是关着时立刻软删隐藏。
+     *
+     * 回归长这样:有人把 `if (!visible) return rewrites` 加回两个 import 函数的
+     * 开头。症状是「关掉开关后真人参考图就发不出去」—— 两件看起来毫不相干的事,
+     * 用户不会把它们联系起来报给你。所以在这里钉死。
+     */
+    it('登记不被开关拦下 —— 开关只管可见性,不管入不入库', () => {
+      const importFns =
+        runtimeSource.match(
+          /async function importImagesTo(?:Portrait|Platform)Library\([\s\S]*?\n\}/g,
+        ) ?? []
+      expect(importFns.length).toBe(2)
+      for (const fn of importFns) {
+        // 从签名里取出第二个形参(即那个开关)的名字,而不是硬编码 `visible` ——
+        // 这样改名不会让守卫失效,也不会像 `if (!\w+)` 那样误伤 `!pool` / `!apiKey`
+        // 这类**合法**的早退(没登录、没凭据时本来就登记不了)。
+        const flag = /content: SeedanceContentItem\[\],\s*(\w+): boolean/.exec(fn)?.[1]
+        expect(flag).toBeDefined()
+        expect(fn).not.toMatch(new RegExp(`if \\(!${flag}\\) return`))
+      }
+      // 而隐藏这条路必须真的在:否则开关就成了纯装饰。
+      expect(runtimeSource).toMatch(/if \(!visible\) hideFromLibrary\(/)
+      expect(runtimeSource).toMatch(/!visible[\s\S]{0,120}hidePlatformAsset\(/)
+    })
+
+  /**
+   * 入库改写必须发生在 `taskManager.submit` **之前**。
+   *
+   * 这是 2026-08-31 那次改动的**全部意义**:上游对直传的 https 图做真人检测,
+   * `InputImageSensitiveContentDetected.PrivacyInformation` 会拒掉整次生成,而已登记的
+   * `asset://` 不走这道检测。登记发生在提交之后的话永远救不了当次 —— 用户看到的是
+   * 一句关于「真人」的报错,它与「入库」之间没有任何字面关联,只能靠猜。
+   *
+   * 断言「submit 收到的是改写后的 content」而不是比较代码位置:前者是真正的不变量,
+   * 有人把顺序挪回去、或者忘了把改写结果传下去,都会被抓住。
+   *
+   * 🧬 变异点:把任一处 `content: submitContent` 改回 `content`,这条必红。
+   */
+  it('提交拿到的是改写后的 content,不是原始的', () => {
+    const submits = runtimeSource.match(/taskManager\.submit\(\{[\s\S]{0,240}?\}\)/g) ?? []
+    expect(submits.length).toBe(2)
+    for (const s of submits) {
+      expect(s, `这处 submit 没用改写后的 content:\n${s}`).toContain('content: submitContent')
+    }
+  })
+
+  /**
+   * 万相必须原样放行,不能被改写成 `asset://`。
+   *
+   * `wan3/request.ts` 的 `requireHttpUrl` 见到 `asset://` 直接抛「万相 3.0 不支持
+   * 人像库素材」。所以这个判据只能按**模型**来,不能按计费 —— 按计费判的话,
+   * 平台模式下每一次万相生成都会挂,而那与本功能想解决的问题毫无关系。
+   *
+   * 🧬 变异点:删掉 `acceptsAssetRefs` 那道早退,这条必红。
+   */
+  it('只有认 asset:// 的模型才改写引用(万相原样放行)', () => {
+    expect(runtimeSource).toContain(
+      "const acceptsAssetRefs = capabilitiesFor(model ?? '2.0').provider === 'vvdance'",
+    )
+    expect(runtimeSource).toContain('if (!acceptsAssetRefs) return content')
   })
 
   /**
