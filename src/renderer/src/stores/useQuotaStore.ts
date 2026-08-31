@@ -54,6 +54,11 @@ type QuotaApi = {
    */
   setBillingPool?: (pool: BillingPoolRef) => Promise<QuotaRpc<{ ready: boolean }>>
   clearBillingPool?: () => Promise<QuotaRpc<null>>
+  /**
+   * 主进程推来的「刚花过平台余额」。可选的理由同上两个:老 preload 里没有这个
+   * 方法,测试里的假桥也常常只 mock 一半 —— 直接调不存在的方法是同步 TypeError。
+   */
+  onBalanceStale?: (handler: () => void) => () => void
 }
 
 interface QuotaStoreState {
@@ -268,6 +273,43 @@ function ensureLogoutResetsBillingSource(): void {
   })
 }
 
+/**
+ * 扣费后自动刷余额的订阅。
+ *
+ * ## 为什么需要
+ *
+ * 在这之前余额只有两个刷新时机:设置页挂载与切池。出图 / 出视频 / 聊天扣完钱
+ * 之后没有任何东西触发它,数字就一直停在旧值 —— 用户要把设置页关掉重开才看得到,
+ * 表现成「扣费了但额度没动」。主进程那三条出网路径现在会在**响应回来之后**报一次
+ * (见 `main/services/auth/platformSpend.ts`),这里接住。
+ *
+ * ## 为什么也装在 `setBillingSource` 里
+ *
+ * 与紧挨着的 `ensureLogoutResetsBillingSource` 同一个论证:平台态的唯一入口就是
+ * 那个函数,把订阅绑在这里,就由构造保证「能花平台的钱」与「花完会刷新」同时成立,
+ * 不依赖某个组件记得在 mount 里调一次 —— 漏掉那种调用没有任何信号。
+ *
+ * 不在 own-key 态下刷:信号本身只由平台消费产生,但切换模式与信号到达之间有窗口,
+ * 那个窗口里刷一次是纯浪费。
+ */
+let unsubscribeSpend: (() => void) | null = null
+
+function ensureBalanceRefreshOnSpend(): void {
+  if (unsubscribeSpend) return
+  const api = getApi()
+  // 桥在但没有这个方法(老 preload / 只 mock 了一半的假桥)时直接放弃:调用
+  // 不存在的方法是一个同步 TypeError,会把调用方整条链带崩。
+  if (!api?.onBalanceStale) return
+
+  unsubscribeSpend = api.onBalanceStale(() => {
+    const state = useQuotaStore.getState()
+    if (state.billingSource !== 'platform') return
+    // `refreshBalance` 自己会在没选池时早退,这里再挡一次只为省掉那趟无意义的 IPC。
+    if (!state.selectedPool) return
+    void state.refreshBalance()
+  })
+}
+
 export const useQuotaStore = create<QuotaStore>((set, get) => ({
   ...initialState,
 
@@ -436,6 +478,8 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     // 见 `ensureLogoutResetsBillingSource`:装在这里,是为了让「能进 platform 态」与
     // 「登出会把它复位」由构造绑在一起,而不是靠某个组件记得调一次。幂等。
     ensureLogoutResetsBillingSource()
+    // 同源:「能花平台的钱」与「花完会刷新余额」也绑在这个唯一入口上。幂等。
+    ensureBalanceRefreshOnSpend()
 
     if (next === 'own-key') {
       // 走到这里一定是用户自己点的:内部回落用的是裸 `set()`,不经过本函数。
@@ -509,4 +553,9 @@ export function __resetQuotaStoreForTesting(): void {
   armChain = Promise.resolve()
   unsubscribeAuth?.()
   unsubscribeAuth = null
+  // 不断开的话,上一条用例装的那份会跟着下一条用例的假桥一起留着 —— 而它闭包里
+  // 抓的是**上一个**假桥的退订函数,下一条用例再装时又因为非 null 被跳过,
+  // 于是那条用例的消费信号一次都收不到。
+  unsubscribeSpend?.()
+  unsubscribeSpend = null
 }

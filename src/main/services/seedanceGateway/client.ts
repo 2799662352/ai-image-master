@@ -61,9 +61,24 @@ export interface SeedanceGatewayClientOptions {
    * 缺省只给 Authorization —— 单测与将来可能的自填 Key 直连用。
    */
   authHeaders?: (apiKey: string) => Record<string, string>
+  /**
+   * 「这次往返动了钱」的回调,用来触发余额刷新。
+   *
+   * **只在真正改变余额的两个时刻调**:提交成功(上游预扣)与轮询拿到终态
+   * (上游结算差额、可能退款)。中间那些 running 轮询一分钱不动,报了就是给
+   * 一条 60 秒的视频白查二十次余额。
+   *
+   * 注入而不是直接 import:这个模块刻意保持在 Electron 之外可加载(为了能对着
+   * 真网关跑烟测),而且它自己不知道这次用的是平台余额还是用户自填 Key ——
+   * 那个结论在 `seedance/runtime.ts` 手上,由那边决定传不传。
+   */
+  onBilledExchange?: () => void
   /** 提交重试的注入点，测试用来去掉真实等待。 */
   retryOptions?: RetrySubmitOptions
 }
+
+/** 上游不会再变、余额已经结清的状态。只有走到这几个才值得刷余额。 */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'cancelled'])
 
 function requireKey(apiKey: string): string {
   const trimmed = (apiKey ?? '').trim()
@@ -177,6 +192,8 @@ export function createSeedanceGatewayClient(
   const { fetchImpl } = options
   const authHeaders =
     options.authHeaders ?? ((key: string): Record<string, string> => ({ Authorization: `Bearer ${key}` }))
+  // 缺省 no-op:自填 Key 那条路不花平台余额,没有可刷的东西。
+  const noteBilled = options.onBilledExchange ?? ((): void => {})
 
   return {
     async createTask(body, apiKey) {
@@ -201,8 +218,14 @@ export function createSeedanceGatewayClient(
           // 没有任务号就无从轮询,而任务很可能已经在上游跑起来了。抛普通 Error
           // (非 SeedanceApiError)使它落在「不安全重发」一侧：重发只会再建一个
           // 同样认领不到、同样计费的任务。
+          //
+          // 刻意**不**在这里报消费:这一支会被上层当成失败处理,而它到底扣没扣钱
+          // 无从判断。少报一次的代价是余额晚点刷新,而这条路本来就已经是异常态。
           throw new Error('网关返回里没有任务号,无法跟踪这次生成')
         }
+        // 提交成功 = 上游已预扣。报在这里而不是 `request()` 里:那样重试的每一趟
+        // 失败往返都会报一次,而失败的往返不动钱。
+        noteBilled()
         return { id }
       }, options.retryOptions)
     },
@@ -215,7 +238,10 @@ export function createSeedanceGatewayClient(
         { method: 'GET' },
         authHeaders(key),
       )
-      return parseSeedanceGatewayTaskResult(json)
+      const result = parseSeedanceGatewayTaskResult(json)
+      // 终态才结算。见 `TERMINAL_STATUSES` 与 `onBilledExchange` 的注释。
+      if (TERMINAL_STATUSES.has(result.status)) noteBilled()
+      return result
     },
   }
 }

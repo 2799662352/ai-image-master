@@ -5,6 +5,7 @@ import type { Session } from 'electron'
 // 测试变红 —— 两边测试各自硬编码自己那份,只改一边照样双绿,线上却每个请求 401。
 import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../types/authApi'
 import { gatewayPlatformHeaders, getActivePoolToken } from './gatewayToken'
+import { notePlatformSpend } from './platformSpend'
 
 const BILLING_MARKER_HEADER_LC = BILLING_MARKER_HEADER.toLowerCase()
 const AUTHORIZATION_HEADER = 'Authorization'
@@ -85,6 +86,27 @@ export function resolveGatewayOrigin(): string {
  */
 export function installGatewayHeaderInjector(session: Session): void {
   const filter = { urls: [`${resolveGatewayOrigin()}/*`] }
+
+  /**
+   * 这一轮里**真的贴了平台凭据**的请求 id。
+   *
+   * 只有它们花了平台的钱:没取到 token 的那些会裸奔去撞 401,一分不扣,报上去
+   * 只会让余额白查一次。所以判据是「注入成功」,不是「打了标记」。
+   *
+   * 不会无限涨:Electron 保证每个请求最终必然走到 `onCompleted` 或
+   * `onErrorOccurred` 之一,两处都会把 id 摘掉。
+   */
+  const billedRequestIds = new Set<number>()
+
+  /** 完成与失败都要报。失败也可能已经计费(上游把钱扣了才在传输层断掉)。 */
+  const settle = (id: number): void => {
+    if (!billedRequestIds.delete(id)) return
+    notePlatformSpend()
+  }
+
+  session.webRequest.onCompleted(filter, (details) => settle(details.id))
+  session.webRequest.onErrorOccurred(filter, (details) => settle(details.id))
+
   session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     const headers = details.requestHeaders
     const markerKey = findHeaderKey(headers, BILLING_MARKER_HEADER_LC)
@@ -113,6 +135,8 @@ export function installGatewayHeaderInjector(session: Session): void {
       // 刻意不提供只取其一的入口 —— 少了归属头,这笔消费会以空归属落库,
       // 钱扣对了却在用量明细里查不到,而且**一个错都不报**。
       Object.assign(headers, gatewayPlatformHeaders(token))
+      // 记下来,等它落地时报一次消费,好让余额跟着动。见 `billedRequestIds`。
+      billedRequestIds.add(details.id)
     }
     callback({ requestHeaders: headers })
   })

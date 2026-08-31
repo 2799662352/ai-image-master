@@ -10,6 +10,7 @@ import {
 } from './gatewayToken'
 import { startLoopbackListener, type LoopbackListener } from './loopback'
 import { deriveCodeChallenge, generateCodeVerifier, generateState } from './pkce'
+import { onPlatformSpend } from './platformSpend'
 import {
   AuthError,
   authBaseUrl,
@@ -124,6 +125,22 @@ function broadcastLoginResult(
     win.webContents.send('auth:login-result', result)
   } catch (e) {
     console.warn('[auth] login-result broadcast failed:', e)
+  }
+}
+
+/**
+ * 「刚花过平台余额,该重新拉一次了」。
+ *
+ * 不带余额数值,只是一个信号 —— 主进程手上没有权威余额(那是后端的),自己算一份
+ * 只会与真值漂移。渲染层收到后走既有的 `getBalance`,口径与它自己拉的完全一致。
+ */
+function broadcastBalanceStale(getWindow: () => BrowserWindow | null): void {
+  const win = getWindow()
+  if (!win || win.isDestroyed()) return
+  try {
+    win.webContents.send('auth:balance-stale')
+  } catch (e) {
+    console.warn('[auth] balance-stale broadcast failed:', e)
   }
 }
 
@@ -396,6 +413,11 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
     ipcMain.removeHandler(ch)
   }
 
+  // 消费信号 → 渲染层刷余额。订阅装在这里而不是模块顶层:模块加载期没有窗口,
+  // 而 dispose 时必须能退订 —— 热重载会重复调用本函数,不退订就会越叠越多,
+  // 一次消费广播 N 遍。
+  const unsubscribeSpend = onPlatformSpend(() => broadcastBalanceStale(getWindow))
+
   ipcMain.handle('auth:get-state', () => getAuthState())
 
   ipcMain.handle('auth:start-login', async () => {
@@ -538,6 +560,7 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
 
   return () => {
     clearPending()
+    unsubscribeSpend()
     for (const ch of AUTH_CHANNELS) {
       ipcMain.removeHandler(ch)
     }

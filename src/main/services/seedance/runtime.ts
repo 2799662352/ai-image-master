@@ -53,6 +53,7 @@ import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from './assetLibraryPolicy'
 import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../auth/gatewayToken'
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
+import { notePlatformSpend } from '../auth/platformSpend'
 import { ensureAsset } from '../portraitLibrary/ensureAsset'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
@@ -530,6 +531,10 @@ export function initSeedanceRuntime(opts: {
       // 整份组头。少了里面的归属那几个,钱扣对了但用量流水一条都查不到 ——
       // 上游按请求头认归属,而这个函数刻意不给只取 Authorization 的入口。
       authHeaders: gatewayPlatformHeaders,
+      // 这条 transport 是**平台余额专用**的(下面那个 resolver 写死 `'platform'`),
+      // 所以它的每一次计费往返都该让余额跟着刷新。自填 Key 走的是 wan3 /
+      // seedance 直连那两条,不经过这里。
+      onBilledExchange: notePlatformSpend,
     }),
     createSeedanceGatewayTokenResolver(
       gatewayTokenSources,
