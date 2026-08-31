@@ -21,6 +21,7 @@
 
 import { toWan3ResolvedMedia, resolveVideoMode } from './wan3/fromContent'
 import { buildWan3CreateBody } from './wan3/request'
+import { asWan3Alias } from './wan3/model'
 import { coerceDocumentOrLink } from '../../shared/wan3Document'
 import { buildSeedanceGatewayCreateBody } from './seedanceGateway/request'
 import { describeMissingGatewayToken } from './seedanceGateway/credentials'
@@ -139,6 +140,9 @@ export function createWan3Transport(
       const resolved = toWan3ResolvedMedia(ctx.content)
       const body = buildWan3CreateBody(
         {
+          // 标准档 / Prime 的唯一分叉点。`asWan3Alias` 对非万相直接抛 ——
+          // 静默兜底会变成「按标准档扣费、跑标准档模型」,而上游照常 200。
+          model: asWan3Alias(ctx.model),
           prompt: promptFrom(ctx),
           // 工作台显式带模式;agent 那条路没有模式概念,按素材形状兜底。
           mode: resolveVideoMode(ctx.input.mode, resolved),
@@ -264,6 +268,8 @@ const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
   '2.0-mini': 'seedance',
   '2.5': 'seedance',
   wan3: 'wan3',
+  // Prime 与标准档共用整条万相链路,只有上游 slug 与单价不同。
+  'wan3-prime': 'wan3',
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   normalizeWan3Ratio,
   normalizeWan3Resolution,
 } from '../request'
+import { capabilitiesFor } from '../../../../types/seedance'
 
 const IMG = 'https://cos.example.com/a.png'
 const IMG2 = 'https://cos.example.com/b.png'
@@ -43,7 +44,7 @@ describe('绝不发人像库素材', () => {
 
   it('组包结果里不可能出现 asset://', () => {
     const body = buildWan3CreateBody(
-      { prompt: '一只猫', mode: 'multimodal_ref' },
+      { model: 'wan3', prompt: '一只猫', mode: 'multimodal_ref' },
       { imageUrls: [IMG], videoUrls: [VID], audioUrls: [AUD] },
     )
     const urls = body.metadata.input.media.map((m) => m.url)
@@ -52,7 +53,7 @@ describe('绝不发人像库素材', () => {
   })
 
   it('请求体里没有任何人像库/素材库概念的字段', () => {
-    const body = buildWan3CreateBody({ prompt: '猫', mode: 'text2video' }, {})
+    const body = buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video' }, {})
     const json = JSON.stringify(body)
     for (const forbidden of ['assetId', 'asset_id', 'portrait', 'imageCategory']) {
       expect(json).not.toContain(forbidden)
@@ -201,7 +202,7 @@ describe('参数归一', () => {
 describe('buildWan3CreateBody', () => {
   it('文生视频的最小请求体', () => {
     const body = buildWan3CreateBody(
-      { prompt: '  一只橘猫在窗台晒太阳  ', mode: 'text2video', resolution: '720p', duration: 5 },
+      { model: 'wan3', prompt: '  一只橘猫在窗台晒太阳  ', mode: 'text2video', resolution: '720p', duration: 5 },
       {},
     )
     expect(body.model).toBe('wan3.0-video')
@@ -218,19 +219,19 @@ describe('buildWan3CreateBody', () => {
   })
 
   it('media 在 input.media 与 media 两处同内容 —— 跟着已验证可用的实现走', () => {
-    const body = buildWan3CreateBody({ prompt: '猫', mode: 'first_frame' }, { firstFrameUrl: IMG })
+    const body = buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'first_frame' }, { firstFrameUrl: IMG })
     expect(body.metadata.media).toEqual(body.metadata.input.media)
     expect(body.metadata.media).toEqual([{ type: 'first_frame', url: IMG }])
   })
 
   it('智能时长 -1 一路带到底(顶层与 parameters 都要有)', () => {
-    const body = buildWan3CreateBody({ prompt: '猫', mode: 'text2video', duration: -1 }, {})
+    const body = buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video', duration: -1 }, {})
     expect(body.seconds).toBe('-1')
     expect(body.metadata.parameters.duration).toBe(-1)
   })
 
   it('没给的参数字段完全不出现,不填默认值蒙混', () => {
-    const body = buildWan3CreateBody({ prompt: '猫', mode: 'text2video' }, {})
+    const body = buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video' }, {})
     expect(Object.hasOwn(body, 'seconds')).toBe(false)
     expect(Object.hasOwn(body, 'size')).toBe(false)
     expect(Object.hasOwn(body.metadata.parameters, 'ratio')).toBe(false)
@@ -238,9 +239,9 @@ describe('buildWan3CreateBody', () => {
   })
 
   it('官方默认有声,显式关掉才是 false', () => {
-    expect(buildWan3CreateBody({ prompt: '猫', mode: 'text2video' }, {}).metadata.parameters.audio).toBe(true)
+    expect(buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video' }, {}).metadata.parameters.audio).toBe(true)
     expect(
-      buildWan3CreateBody({ prompt: '猫', mode: 'text2video', generateAudio: false }, {})
+      buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video', generateAudio: false }, {})
         .metadata.parameters.audio,
     ).toBe(false)
   })
@@ -249,7 +250,7 @@ describe('buildWan3CreateBody', () => {
     // 上游当前默认就是 false,所以这个字段今天是个 no-op。留着是因为「默认值」
     // 不是承诺:哪天上游翻成 true,成片就带水印出去了,而我们不会收到任何提示。
     for (const mode of ['text2video', 'multimodal_ref'] as const) {
-      expect(buildWan3CreateBody({ prompt: '猫', mode }, {}).metadata.parameters.watermark).toBe(false)
+      expect(buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode }, {}).metadata.parameters.watermark).toBe(false)
     }
   })
 
@@ -258,20 +259,20 @@ describe('buildWan3CreateBody', () => {
     // 但两害相权:传了最坏是被忽略,不传则是「用户设了种子却毫无作用」的静默
     // 分歧 —— 而用户从界面上根本看不出区别,只会以为这模型不可复现。
     expect(
-      buildWan3CreateBody({ prompt: '猫', mode: 'text2video', seed: 42 }, {}).metadata.parameters.seed,
+      buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video', seed: 42 }, {}).metadata.parameters.seed,
     ).toBe(42)
     expect(
-      Object.hasOwn(buildWan3CreateBody({ prompt: '猫', mode: 'text2video' }, {}).metadata.parameters, 'seed'),
+      Object.hasOwn(buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video' }, {}).metadata.parameters, 'seed'),
     ).toBe(false)
   })
 
   it('空提示词直接拒', () => {
-    expect(() => buildWan3CreateBody({ prompt: '   ', mode: 'text2video' }, {})).toThrow(/提示词/)
+    expect(() => buildWan3CreateBody({ model: 'wan3', prompt: '   ', mode: 'text2video' }, {})).toThrow(/提示词/)
   })
 
   it('全能参考 + 文档的完整形态', () => {
     const body = buildWan3CreateBody(
-      {
+      { model: 'wan3',
         prompt: '参考【图片1】的角色，用【视频1】的运镜',
         mode: 'multimodal_ref',
         resolution: '1080p',
@@ -288,5 +289,42 @@ describe('buildWan3CreateBody', () => {
       { type: 'file', url: 'https://x/shots.pdf' },
     ])
     expect(body.metadata.parameters).toMatchObject({ resolution: '1080P', ratio: '16:9', duration: -1 })
+  })
+})
+
+
+/**
+ * 标准档 / Prime 的分叉 —— 这一处错了是**无声**的:上游照常 200、视频照常出,
+ * 只是跑的模型和扣的钱都不是用户选的那个。所以单独一组守住它。
+ */
+describe('万相档位 → 上游 slug', () => {
+  it('wan3 发标准档 slug', () => {
+    const body = buildWan3CreateBody({ model: 'wan3', prompt: '猫', mode: 'text2video' }, {})
+    expect(body.model).toBe('wan3.0-video')
+  })
+
+  it('wan3-prime 发 prime slug —— 不是标准档', () => {
+    const body = buildWan3CreateBody({ model: 'wan3-prime', prompt: '猫', mode: 'text2video' }, {})
+    expect(body.model).toBe('wan3.0-video-prime')
+    // 显式反断言:把三元写反、或整个分叉丢失,上面那条 toBe 会挂,但如果有人改成
+    // 「prime 也发标准档」并顺手改了断言,这一条能提醒他两者必须不同。
+    expect(body.model).not.toBe('wan3.0-video')
+  })
+
+  it('漏传 model 直接抛,不静默落到标准档', () => {
+    // 测试文件不做类型检查(tsconfig 排除 **/*.test.ts),所以这个洞只能靠运行时
+    // 校验堵。没有它的话,漏传的一方会安安静静地按标准档计费。
+    expect(() =>
+      // @ts-expect-error 故意漏传,验证运行时护栏
+      buildWan3CreateBody({ prompt: '猫', mode: 'text2video' }, {}),
+    ).toThrow(/非万相模型/)
+  })
+
+  it('两档能力完全一致 —— 分叉了就得让 request.ts 认别名', () => {
+    // request.ts 里 `capabilitiesFor('wan3')` 是**写死**的(时长/分辨率/素材上限
+    // 三处校验都读它)。今天两档规格逐项相同,写死是对的;哪天官方给 Prime 放宽
+    // 了时长或分辨率,这条会红 —— 那时要做的不是改这个断言,而是把那三处校验改成
+    // 按传入的别名取能力。
+    expect(capabilitiesFor('wan3-prime')).toEqual(capabilitiesFor('wan3'))
   })
 })

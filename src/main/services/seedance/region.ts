@@ -2,7 +2,7 @@
 // 持久化由 credentials.ts 读写；本模块只持会话级当前值。
 
 import type { SeedanceModelAlias, SeedanceRegion } from '../../../types/seedance'
-import { WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
+import { WAN3_PRIME_UPSTREAM_MODEL_ID, WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
   global: 'https://vvdance.ai',
@@ -37,7 +37,10 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     '2.0-fast': 'dreamina-seedance-2-0-fast-260128',
     '2.0-mini': 'dreamina-seedance-2-0-mini-260615',
     '2.5': 'dreamina-seedance-2-5-260628',
+    // 万相两档在两张表里填的是同一个值 —— 它不分区域（见文件头注释），登记在这里
+    // 纯粹是为了保住 `Record<VideoModelAlias, string>` 的穷尽性。
     wan3: WAN3_UPSTREAM_MODEL_ID,
+    'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
   },
   cn: {
     '2.0': 'doubao-seedance-2-0-260128',
@@ -45,6 +48,7 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     '2.0-mini': 'doubao-seedance-2-0-mini-260615',
     '2.5': 'doubao-seedance-2-5-260628',
     wan3: WAN3_UPSTREAM_MODEL_ID,
+    'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
   },
 }
 

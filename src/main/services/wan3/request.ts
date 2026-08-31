@@ -40,7 +40,8 @@
 import { capabilitiesFor } from '../../../types/seedance'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import type { Wan3DocumentOrLink } from '../../../shared/wan3Document'
-import { WAN3_UPSTREAM_MODEL_ID } from './model'
+import { asWan3Alias, wan3UpstreamModelId } from './model'
+import type { Wan3Alias } from './model'
 
 /** 业务校验失败。调用方应转成用户可读的错误，而不是 500。 */
 export class Wan3RequestError extends Error {
@@ -239,6 +240,11 @@ export function mergeWan3DocumentOrLink(
 }
 
 export interface Wan3CreateBodyInput {
+  /**
+   * 哪一档万相。**必填,刻意不给默认值** —— 默认 `'wan3'` 意味着调用方忘了传就
+   * 静默降到标准档:上游 200、视频照出、扣的却是另一个价,没有任何一处会报错。
+   */
+  model: Wan3Alias
   prompt: string
   mode: VideoWorkbenchMode
   resolution?: string
@@ -311,7 +317,10 @@ export function buildWan3CreateBody(
   const duration = normalizeWan3Duration(input.duration)
 
   return {
-    model: WAN3_UPSTREAM_MODEL_ID,
+    // 运行时也校验一次,不只靠类型。`**/*.test.ts` 被 tsconfig 排除(见其 exclude),
+    // 测试里漏传 `model` 编译期不会报,而 `undefined` 在三元里会静默落到标准档
+    // —— 那正是「界面选了 Prime、实际跑标准档」这个无声故障的入口。
+    model: wan3UpstreamModelId(asWan3Alias(input.model)),
     prompt,
     // 顶层 seconds/size 与 metadata.parameters 同时给：网关先读顶层做默认值，
     // metadata 合并在其后，`duration: -1` 因此能活着到上游（见网关 adaptor 的

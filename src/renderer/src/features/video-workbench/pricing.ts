@@ -40,6 +40,7 @@ const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   },
   // 按秒计费，走 CNY_PER_SECOND 那条路，不在这张表里出价。
   wan3: NOT_TOKEN_BILLED,
+  'wan3-prime': NOT_TOKEN_BILLED,
 }
 
 /**
@@ -56,10 +57,32 @@ const CNY_PER_SECOND: Record<string, number> = {
   '1080p': 1.2,
 }
 
+/**
+ * Prime 相对标准档的倍率。
+ *
+ * **不是刊例价,是网关实测比值。** 2026-08-31 拉 `/api/pricing`:`wan3.0-video`
+ * 的 `model_price` 为 0.6、`wan3.0-video-prime` 为 0.8,两者 `quota_type` 都是 1
+ * (按次)。0.8 / 0.6 = 4/3,乘到上面三档正好得到 0.4 / 0.8 / 1.6 三个整数
+ * —— 档位是同比例缩放的,这一点让这个倍率不只是巧合。
+ *
+ * 为什么用倍率而不是另写一张表:阿里官方刊例里**没有** prime 这一档的每秒价
+ * (我们查到的只有网关的按次价)。另写一张表就得凭空造三个数,而这个文件开头
+ * 已经立过规矩 ——「不填一个假数字蒙混,那会让界面显示一个凭空捏造的价格」。
+ * 倍率则是可追溯的:分子分母都是实测值,推导写在这里。
+ *
+ * ⚠️ 已知不精确(**两档同等程度地不精确,不是 prime 独有**):万相始终走 Miau
+ * 网关,而网关是**按次**收费的,与这里的「按秒」并不是同一个计费基。所以这一栏
+ * 给的是官方刊例口径的估算,不等于账单。要真正对齐账单,得把万相改成读网关的
+ * 按次价 —— 那是另一件事,不在本次范围内。
+ */
+const WAN3_PRIME_MULTIPLIER = 0.8 / 0.6
+
 /** ¥/秒 单价。非按秒计费的模型、或未知分辨率返回 null。 */
 export function unitPriceCnyPerSecond(model: SeedanceModelAlias, resolution: string): number | null {
   if (PRICE_TABLE[model] !== NOT_TOKEN_BILLED) return null
-  return CNY_PER_SECOND[resolution.toLowerCase()] ?? null
+  const base = CNY_PER_SECOND[resolution.toLowerCase()]
+  if (base === undefined) return null
+  return model === 'wan3-prime' ? base * WAN3_PRIME_MULTIPLIER : base
 }
 
 /** 单价($/1M tokens)。未知组合(如 fast/mini 配 1080p)返回 null。 */
