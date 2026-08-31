@@ -511,6 +511,20 @@ export function initSeedanceRuntime(opts: {
   const wan3Transport = createWan3Transport(
     createWan3Client({
       fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      // 🚨 **必须与出网注入器共用同一个 origin 解析**,理由与下面那个网关客户端
+      // 逐字相同 —— 而这里曾经漏了,代价是 2026-08-31 的一次真机故障:
+      //
+      // 不传 baseUrl 时客户端回落到写死的生产 `MIAU_BASE_URL`。于是在测试服模式下
+      // (`CATIMATION_GATEWAY_ORIGIN` 指向测试网关),codex 聊天、出图、平台版
+      // Seedance 全都跟着 override 打测试服并正常扣费,**唯独万相把测试服签发的
+      // 影子 token 发到了生产网关** —— 生产不认识那枚 token,回一句
+      // `401 无效的令牌`,而错误里不会有任何一个字提到是地址分叉了。
+      //
+      // 症状极具迷惑性:用户看得到余额、看得到已登录、别的功能都在正常扣平台余额,
+      // 只有万相失败,于是第一反应必然是去查凭据 —— 而凭据是对的,错的是收件人。
+      //
+      // `MIAU_BASE_URL` 自带 `/v1`,这里的 origin 没有,所以要补上。
+      baseUrl: `${resolveGatewayOrigin()}/v1`,
       // 平台余额那一支才真的动平台的钱;自填 Key 时 `wan3AuthHeaders` 不会带归属头,
       // 多报一次的代价只是一次白查余额,而漏报的代价是数字不动。
       onBilledExchange: notePlatformSpend,
