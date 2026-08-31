@@ -84,6 +84,10 @@ const QWEN_MIAU_MODELS = Object.freeze([
   'qwen3.7-plus-dashscope',
   'qwen3.7-max-dashscope',
   'qwen3.8-max',
+  // 2026-08-31 对着网关 `/v1/models` 实测存在(74 个模型里有它)。这一步不能省 ——
+  // 列进来的 slug 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字
+  // 提到是模型名写错了。同一条纪律见上面 grok-4.6 那段注释。
+  'qwen3.8-flash',
 ])
 
 /**

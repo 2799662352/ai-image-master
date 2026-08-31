@@ -24,6 +24,7 @@ import { buildWan3CreateBody } from './wan3/request'
 import { coerceDocumentOrLink } from '../../shared/wan3Document'
 import { buildSeedanceGatewayCreateBody } from './seedanceGateway/request'
 import { describeMissingGatewayToken } from './seedanceGateway/credentials'
+import { gatewayPlatformHeaders } from './auth/gatewayToken'
 import type { Wan3Client } from './wan3/client'
 import type { SeedanceGatewayClient } from './seedanceGateway/client'
 import type {
@@ -105,12 +106,34 @@ export function createSeedanceTransport(
   }
 }
 
-export function createWan3Transport(client: Wan3Client, getApiKey: () => string): VideoTransport {
+/**
+ * 万相**同一条 transport 服务两种计费** —— 与 Seedance 那边不同(那条是平台专用,
+ * resolver 写死 `'platform'`)。
+ *
+ * 为什么不能靠改道解决:`transportFor` 里万相那条 `if` 刻意排在计费判断之前,因为
+ * 万相和平台版 Seedance 打的是同一个 host、用的是同一类凭据,但请求体形状完全不同
+ * (`metadata.input.media[]` vs `metadata.content[]`)—— 把万相劫到网关 transport 上
+ * 只会换来一句 400,里面不会有任何一个字提到路由错了。所以**换凭据,不换 transport**。
+ *
+ * 平台那一支必须用 `gatewayPlatformHeaders` 整份组头,不能只贴 Authorization:
+ * 少了里面的三个归属头,钱扣对了但平台用量明细里一条都查不到,而且一个错都不报。
+ */
+function wan3AuthHeaders(resolved: ResolvedGatewayToken): Record<string, string> {
+  return resolved.billing === 'platform'
+    ? gatewayPlatformHeaders(resolved.token)
+    : { Authorization: `Bearer ${resolved.token}` }
+}
+
+export function createWan3Transport(
+  client: Wan3Client,
+  resolveToken: () => ResolvedGatewayToken,
+): VideoTransport {
   return {
     requireApiKey() {
-      if (!getApiKey().trim()) {
-        throw new Error('未配置 Miau 密钥，无法使用万相 3.0。请先在设置里填写图片生成的 Miau Key。')
-      }
+      const { billing, token } = resolveToken()
+      // 两种缺席的补救动作完全不同(去选计费池 / 去填 Miau Key),所以让
+      // `describeMissingGatewayToken` 按 billing 说话,而不是永远那句「请填 Key」。
+      if (!token.trim()) throw new Error(describeMissingGatewayToken(billing))
     },
     createTask(ctx) {
       const resolved = toWan3ResolvedMedia(ctx.content)
@@ -135,9 +158,11 @@ export function createWan3Transport(client: Wan3Client, getApiKey: () => string)
         },
         resolved,
       )
-      return client.createTask(body, getApiKey())
+      return client.createTask(body, wan3AuthHeaders(resolveToken()))
     },
-    queryTask: (taskId) => client.queryTask(taskId, getApiKey()),
+    // 现取而不是构造时定死:用户中途切计费模式,下一次轮询就该记到新的归属上,
+    // 而 transport 的生命周期跟着整个视频服务走、不跟着一次提交走。
+    queryTask: (taskId) => client.queryTask(taskId, wan3AuthHeaders(resolveToken())),
     // 取消接口未经证实,刻意不实现 —— 见文件头。
   }
 }

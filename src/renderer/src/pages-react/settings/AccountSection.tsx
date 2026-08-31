@@ -7,6 +7,10 @@
 // ……),不要混进全屏登录页的字面 hex。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+// 余额文案与头部账号胶囊共用一份 —— `null`(未知)和 `0`(花光了)必须显示成两句
+// 不同的话,理由见那个模块。两处各写一份的话,漂开时没有任何东西会变红。
+import { balanceText } from '../../features/account/balance'
+import { buildPoolOptions } from '../../features/account/pools'
 import { getApiService } from '../../services/api/ApiService'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useModelStore } from '../../stores/useModelStore'
@@ -25,17 +29,6 @@ function parsePoolValue(v: string): Pool | null {
   if (!Number.isFinite(projectId) || projectId <= 0) return null
   const ppid = Number(b)
   return { projectId, producerProjectId: Number.isFinite(ppid) && ppid > 0 ? ppid : null }
-}
-
-/**
- * 余额文案。
- *
- * **`null` 与 `0` 必须区分。** 余额未知（还没选池 / 查询失败）显示 `¥0.00` 会让用户
- * 以为钱花光了、跑去充值，而真实原因完全不同。所以未知给占位符。
- */
-function balanceText(yuan: number | null): string {
-  if (yuan === null) return '余额未知'
-  return `¥${yuan.toFixed(2)}`
 }
 
 export function AccountSection() {
@@ -76,30 +69,12 @@ export function AccountSection() {
     void loadQuota()
   }, [authenticated, loadQuota])
 
-  /**
-   * 下拉里的可选项。
-   *
-   * 个人计费落点**刻意不在** `/api/user/organizations` 的返回里(后端设计前提),
-   * 所以要单独补一条 —— 只渲染组织列表的话,用户最常用的那个池反而选不到。
-   */
-  const poolOptions = useMemo(() => {
-    const items = organizations
-      .filter((o) => o.joined)
-      .map((o) => ({
-        pool: { projectId: o.id, producerProjectId: o.producerProjectId ?? null } as Pool,
-        label: o.studioName ? `${o.studioName} / ${o.name}` : o.name,
-      }))
-    if (
-      personalBillingProjectId !== null &&
-      !items.some((i) => i.pool.projectId === personalBillingProjectId && i.pool.producerProjectId === null)
-    ) {
-      items.unshift({
-        pool: { projectId: personalBillingProjectId, producerProjectId: null },
-        label: '个人计费',
-      })
-    }
-    return items
-  }, [organizations, personalBillingProjectId])
+  // 与出图页的行内计费提示共用同一份构造 —— 那条「个人计费落点不在组织列表里」的
+  // 补齐逻辑各写一份的话,漏掉的那处会把用户最常用的池显示成「未知」。
+  const poolOptions = useMemo(
+    () => buildPoolOptions(organizations, personalBillingProjectId),
+    [organizations, personalBillingProjectId],
+  )
 
   const onPoolChange = useCallback(
     (v: string) => {

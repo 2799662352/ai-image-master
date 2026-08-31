@@ -51,6 +51,7 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
       'qwen3.8-max',
+      'qwen3.8-flash',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
       'grok-4.6',
@@ -178,6 +179,29 @@ describe('buildGatewayModelCatalog', () => {
     expect(reasonOf('gpt-5.5')).toBe('请先配置网关 Key')
   })
 
+  /**
+   * 新加的模型必须**同时**在两处登记才真的可用:`QWEN_MIAU_MODELS`(白名单,
+   * 决定能不能路由)与 `CANONICAL_MODEL_SETTINGS_ROWS`(展示名/档位/排序)。
+   *
+   * 🧬 变异点:只加白名单不加 canonical 行,`displayName` 会回落成裸 slug
+   * 「qwen3.8-flash」,档位也没有 —— 选择器里那一行看起来像没配好。
+   * 反过来只加 canonical 不加白名单,它根本不会出现在目录里。
+   */
+  it('qwen3.8-flash 两处都登记了:能路由,且有展示名', () => {
+    const catalog = buildGatewayModelCatalog({
+      gatewayId: 'rightcode',
+      dynamicSource: 'codex',
+      dynamicModels: [dynamicModel('gpt-5.5')],
+      hasCredential: () => true,
+      availabilityByModel: new Map(),
+    })
+
+    const flash = catalog.models.find((model) => model.id === 'qwen3.8-flash')
+    expect(flash, 'qwen3.8-flash 不在目录里 —— 白名单没加?').toBeDefined()
+    expect(flash?.displayName).toBe('Qwen 3.8 Flash')
+    expect(flash?.route.channelId).toBe('rightcode-qwen')
+  })
+
   it('uses mixed source when static declared models augment Codex rows', () => {
     const catalog = buildGatewayModelCatalog({
       gatewayId: 'rightcode',
@@ -284,6 +308,7 @@ describe('buildGatewayModelCatalog', () => {
       'grok-4.5',
       'qwen3.7-max-dashscope',
       'qwen3.7-plus-dashscope',
+      'qwen3.8-flash',
       'qwen3.8-max',
     ])
   })

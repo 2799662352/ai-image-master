@@ -147,6 +147,13 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
+    id: 'qwen3.8-flash',
+    displayName: 'Qwen 3.8 Flash',
+    tier: 'Fast',
+    description: '通义千问 3.8 Flash（Miau 网关）。最新一代里最快最便宜的一档。',
+    isDefault: false,
+  },
+  {
     id: 'deepseek-v4-flash',
     displayName: 'DeepSeek V4 Flash',
     tier: 'High',

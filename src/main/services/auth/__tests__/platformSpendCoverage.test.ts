@@ -72,6 +72,13 @@ const EXEMPT: ReadonlyMap<string, Exemption> = new Map([
       delegatesTo: 'main/agent/responsesCompatibilityProxy.ts',
     },
   ],
+  [
+    'main/services/videoTransport.ts',
+    {
+      why: '只负责按 billing 组出万相那一次的鉴权头,请求由 wan3 客户端发,上报也在那儿。',
+      delegatesTo: 'main/services/wan3/client.ts',
+    },
+  ],
 ])
 
 /**
