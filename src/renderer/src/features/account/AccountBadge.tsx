@@ -30,6 +30,7 @@ import { useQuotaStore } from '../../stores/useQuotaStore'
 import { RechargeModal } from '../../pages-react/settings/RechargeModal'
 import { UsageDrawer } from '../../pages-react/settings/UsageDrawer'
 import { balanceLevel, balanceText } from './balance'
+import { buildPoolOptions, poolLabelOf } from './pools'
 
 /** 余额档位 → 数字颜色。`unknown` 用灰,免得「未知」被误读成「告急」。 */
 const BALANCE_TONE: Record<ReturnType<typeof balanceLevel>, string> = {
@@ -55,6 +56,8 @@ export function AccountBadge() {
   const balanceYuan = useQuotaStore((s) => s.balanceYuan)
   const selectedPool = useQuotaStore((s) => s.selectedPool)
   const billingSource = useQuotaStore((s) => s.billingSource)
+  const organizations = useQuotaStore((s) => s.organizations)
+  const personalBillingProjectId = useQuotaStore((s) => s.personalBillingProjectId)
   const loadQuota = useQuotaStore((s) => s.load)
 
   const [open, setOpen] = useState(false)
@@ -125,6 +128,11 @@ export function AccountBadge() {
   const level = balanceLevel(balanceYuan)
   const name = displayName ?? username ?? '已登录'
   const poolReady = selectedPool !== null
+  // 与出图页那条计费提示共用同一份构造,免得同一个池在两处显示成不同的名字。
+  const poolName = poolLabelOf(
+    buildPoolOptions(organizations, personalBillingProjectId),
+    selectedPool,
+  )
 
   return (
     <div className="relative" ref={rootRef}>
@@ -164,8 +172,15 @@ export function AccountBadge() {
         >
           <div className="min-w-0">
             <div className="text-sm text-[#FAFAFA] font-medium truncate">{name}</div>
-            <div className="text-xs text-[#A1A1AA] mt-0.5">
-              {usingPlatform ? '出图走账号余额' : '出图走自有 Key'}
+            {/* 组织/计费池名压在账号名下面。
+                
+                这一行不是装饰 —— 一个账号下挂着多个计费池,而「这次花谁的钱」正是
+                头部胶囊要回答的核心问题。只写账号名的话,用户知道自己是谁,却仍然
+                不知道钱从哪个池出。
+                
+                查不到名字时退回泛称,不编一个 —— 一个可能过期的池名比没有更糟。 */}
+            <div data-testid="account-badge-pool" className="text-xs text-[#A1A1AA] mt-0.5 truncate">
+              {usingPlatform ? (poolName ?? '账号余额') : '出图走自有 Key'}
             </div>
           </div>
 

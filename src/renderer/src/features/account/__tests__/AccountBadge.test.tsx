@@ -163,6 +163,68 @@ describe('AccountBadge · 已登录', () => {
     expect(screen.getByTestId('account-badge-ownkey')).toBeTruthy()
   })
 
+  /**
+   * 面板里要有组织/计费池名 —— 参考 WorkBuddy 的账号菜单(账号名下压一行组织名)。
+   *
+   * 🧬 变异点:把那一行换回固定文案「出图走账号余额」,这条必红。
+   *
+   * 这一行不是装饰:一个账号下挂着多个计费池,只写账号名的话用户知道自己是谁,
+   * 却仍然不知道钱从哪个池出 —— 而那正是这枚胶囊要回答的核心问题。
+   */
+  it('面板里显示当前计费池的名字', async () => {
+    await renderLoggedIn()
+    await act(async () => {
+      useQuotaStore.setState({
+        organizations: [
+          {
+            id: 700,
+            name: 'Seedance',
+            studioName: '猫工作室',
+            balanceYuan: 12,
+            joined: true,
+            producerProjectId: 5,
+          },
+        ],
+        selectedPool: { projectId: 700, producerProjectId: 5 },
+      })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('account-badge'))
+    })
+
+    expect(screen.getByTestId('account-badge-pool').textContent).toBe('猫工作室 / Seedance')
+  })
+
+  /**
+   * 🧬 变异点:去掉 `?? '账号余额'` 兜底,这条必红。
+   *
+   * 组织列表还没拉回来 / 选的池已被移除时,`poolLabelOf` 回 null,那一行会渲染成
+   * 一片空白 —— 面板上凭空多出一条空行,看起来像组件坏了。
+   */
+  it('池名查不到时退回泛称,不是空白', async () => {
+    await renderLoggedIn()
+    await act(async () => {
+      useQuotaStore.setState({
+        organizations: [],
+        selectedPool: { projectId: 999, producerProjectId: null },
+      })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('account-badge'))
+    })
+
+    expect(screen.getByTestId('account-badge-pool').textContent).toBe('账号余额')
+  })
+
+  it('自有 Key 时那一行说的是计费方式,不是池名', async () => {
+    await renderLoggedIn({ billingSource: 'own-key' })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('account-badge'))
+    })
+
+    expect(screen.getByTestId('account-badge-pool').textContent).toContain('自有 Key')
+  })
+
   it('点开面板能看到充值与使用明细', async () => {
     await renderLoggedIn()
 
