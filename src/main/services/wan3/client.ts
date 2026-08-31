@@ -144,6 +144,49 @@ class Wan3ApiError extends SeedanceApiError {
   }
 }
 
+/**
+ * 一次提交的**可诊断摘要**。绝不含 URL 本体、绝不含 token。
+ *
+ * ## 为什么值得常驻一行日志
+ *
+ * 2026-08-31 一天之内,同一条链路上撞了三个互相看起来一模一样的故障:
+ *
+ *   1. 走了自填 Key 而非平台余额(自填位里存着 `1`)→ 上游 `401 无效的令牌`
+ *   2. 测试服签的 token 发到生产网关(客户端漏接 origin)→ 同样一句 `401 无效的令牌`
+ *   3. 「参考图好像没发出去」→ 出片正常,但看不出媒体到底带没带
+ *
+ * 三次的共同点:**错误里没有任何一个字能区分它们**,每次都要靠翻代码 + 对着网关
+ * 反复实验才能定位,一次二十分钟起。而区分它们所需的信息量其实极小 ——
+ * 打给谁、用哪种钱、带了几件什么素材。
+ *
+ * 所以这里记的是**判据**而不是内容:host(不含路径与签名)、计费模式(由归属头
+ * 是否存在推断,不读 token)、媒体件数与类型、提示词长度。任何一条都不足以泄漏
+ * 凭据或素材,合起来却能一眼分掉上面三种。
+ */
+function submitDiagnostics(
+  url: string,
+  auth: Wan3AuthHeaders,
+  body: Wan3CreateTaskBody,
+): Record<string, unknown> {
+  const media = body.metadata?.input?.media ?? []
+  return {
+    model: body.model,
+    // 只取 host:路径里有 taskId,查询串里可能有签名。
+    host: (() => {
+      try {
+        return new URL(url).host
+      } catch {
+        return '<bad-url>'
+      }
+    })(),
+    // 归属头只在平台模式下存在(见 `gatewayPlatformHeaders`),用它反推比读 token 安全。
+    billing: 'X-Platform-User-Id' in auth ? 'platform' : 'own-key',
+    mediaCount: media.length,
+    mediaTypes: media.map((m) => m.type),
+    promptLen: body.prompt.length,
+  }
+}
+
 async function request(
   fetchImpl: FetchLike,
   url: string,
@@ -174,8 +217,22 @@ async function request(
   if (!res.ok) {
     const { code, message } = extractError(json)
     const detail = [code, message].filter(Boolean).join(': ')
+    // 401 这类凭据错误必须带上「用的哪种钱、打给了谁」——上游只会回一句
+    // `Invalid token`,而同一句话在这条链路上至少对应两个完全不同的成因:
+    // 用错了钱包(自填 Key 而非平台余额),或发错了收件人(测试服 token 打生产
+    // 网关)。少了这两个字段,用户和排查者都只能去查凭据 —— 而凭据往往是对的。
+    const where =
+      res.status === 401 || res.status === 403
+        ? `（${'X-Platform-User-Id' in auth ? '平台余额' : '自填 Key'} → ${(() => {
+            try {
+              return new URL(url).host
+            } catch {
+              return url
+            }
+          })()}）`
+        : ''
     throw new Wan3ApiError(
-      `万相 API ${res.status}${detail ? `: ${detail}` : ''}`,
+      `万相 API ${res.status}${detail ? `: ${detail}` : ''}${where}`,
       res.status,
       code ? PERMANENT_GATEWAY_CODES.has(code) : false,
     )
@@ -193,12 +250,17 @@ export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
     async createTask(body, auth) {
       // 凭据校验放在重试外:它不会因为再试一次而变好。
       const headers = requireAuth(auth)
+      const submitUrl = `${baseUrl}/video/generations`
+      const diag = submitDiagnostics(submitUrl, headers, body)
+      // 常驻一行,不是临时排查代码 —— 理由见 `submitDiagnostics` 的注释:
+      // 这条链路上有三种表现完全一致、判据却完全不同的故障。
+      console.info('[wan3] submit', diag)
       // 复用 Seedance 的提交重试。它只重发「能确定上游没受理」的失败,这条判据对
       // 万相同样成立 —— 万相按秒计费,重复建任务同样是一笔没人认领、跑到完的钱。
       return retrySubmit(async () => {
         const json = await request(
           fetchImpl,
-          `${baseUrl}/video/generations`,
+          submitUrl,
           { method: 'POST', body: JSON.stringify(body) },
           headers,
         )
