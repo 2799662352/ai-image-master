@@ -504,9 +504,18 @@ export function initSeedanceRuntime(opts: {
 
   // 万相那条路。fetch 在这里注入而不是由客户端默认取,是为了让 wan3/client.ts
   // 不必顶层 import electron —— 那会让它在 Electron 之外根本加载不了。
+  //
+  // 凭据走与 Seedance 网关**同一个解析器**,但意向不钉死 —— 万相同一条 transport
+  // 要服务两种计费(理由见 `videoTransport.createWan3Transport` 的注释)。所以这里
+  // 传真实的 `resolveVideoBilling`,而不是那边写死的 `() => 'platform'`。
   const wan3Transport = createWan3Transport(
-    createWan3Client({ fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]) }),
-    getWan3ApiKey,
+    createWan3Client({
+      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      // 平台余额那一支才真的动平台的钱;自填 Key 时 `wan3AuthHeaders` 不会带归属头,
+      // 多报一次的代价只是一次白查余额,而漏报的代价是数字不动。
+      onBilledExchange: notePlatformSpend,
+    }),
+    createSeedanceGatewayTokenResolver(gatewayTokenSources, resolveVideoBilling),
   )
 
   /**

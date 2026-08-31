@@ -25,9 +25,27 @@ export const WAN3_REQUEST_TIMEOUT_MS = 30_000
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
+/**
+ * 这一次往返的**整份**鉴权头。
+ *
+ * 收整份而不是一枚 apiKey,是因为万相同一条 transport 要服务两种计费:
+ *  - 自填 Key → `{ Authorization: 'Bearer <miau key>' }`
+ *  - 平台余额 → `gatewayPlatformHeaders(<影子 token>)`,里面除了 Authorization
+ *    还有三个计费归属头。
+ *
+ * 拆成「apiKey + 可选的额外头」会重新打开那个已经堵过一次的洞:归属头漏了照样能
+ * 出片、钱也扣对,只是平台用量明细里一条都查不到,而且**一个错都不报**。
+ * (同一条纪律见 `auth/gatewayToken.gatewayPlatformHeaders` 的注释:刻意不提供
+ * 只取 Authorization 的入口。)
+ *
+ * 凭据缺席的判断因此也归调用方 —— transport 的 `requireApiKey` 早就在做这件事,
+ * 而且它分得清「没选计费池」和「没填 Miau Key」这两句完全不同的人话。
+ */
+export type Wan3AuthHeaders = Readonly<Record<string, string>>
+
 export interface Wan3Client {
-  createTask: (body: Wan3CreateTaskBody, apiKey: string) => Promise<{ id: string }>
-  queryTask: (taskId: string, apiKey: string) => Promise<Wan3TaskResult>
+  createTask: (body: Wan3CreateTaskBody, auth: Wan3AuthHeaders) => Promise<{ id: string }>
+  queryTask: (taskId: string, auth: Wan3AuthHeaders) => Promise<Wan3TaskResult>
 }
 
 export interface Wan3ClientOptions {
@@ -38,18 +56,35 @@ export interface Wan3ClientOptions {
    */
   fetchImpl: FetchLike
   baseUrl?: string
+  /**
+   * 「这次往返动了钱」的回调,用来触发余额刷新。只在**提交成功**与**轮询到终态**
+   * 时调 —— 中间那些 running 轮询一分钱不动,报了就是给一条视频白查十几次余额。
+   * 与 `seedanceGateway/client.ts` 同一个形状与同一条理由。
+   */
+  onBilledExchange?: () => void
   /** 提交重试的注入点，测试用来去掉真实等待。 */
   retryOptions?: RetrySubmitOptions
 }
 
-function requireKey(apiKey: string): string {
-  const trimmed = (apiKey ?? '').trim()
-  if (!trimmed) {
-    // 提交前就说清楚,而不是让用户等一个上游 401 —— 401 看起来像密钥填错了,
-    // 而真实情况是压根没填。
+/** 上游不会再变、余额已经结清的状态。只有走到这几个才值得刷余额。 */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'cancelled'])
+
+/**
+ * 兜底守卫。凭据缺席的**人话**归 transport 说(它分得清「没选计费池」和「没填
+ * Miau Key」),这里只挡住「头都组错了」这种编程错误,免得裸奔出去撞一个
+ * 看不懂的 401。
+ */
+function requireAuth(auth: Wan3AuthHeaders): Wan3AuthHeaders {
+  // 大小写不敏感找头名:HTTP 头本来就不区分,而调用方各写各的拼写(我们自己写
+  // `Authorization`,`gatewayPlatformHeaders` 也是,但没有任何东西保证第三处也是)。
+  const value = Object.entries(auth).find(([k]) => k.toLowerCase() === 'authorization')?.[1]
+  // 光判整串非空不够:`Bearer ` 加一个空 token 也是非空的,而它出网就是一个 401。
+  // 去掉 scheme 之后还得剩下东西。
+  const token = (value ?? '').replace(/^Bearer\s+/i, '').trim()
+  if (!token) {
     throw new Error('未配置 Miau 密钥,无法使用万相 3.0。请先在设置里填写图片生成的 Miau Key。')
   }
-  return trimmed
+  return auth
 }
 
 /** 读 body 但绝不因为解析失败而丢掉状态码 —— 502 的 HTML 页面也要能报出 502。 */
@@ -113,7 +148,7 @@ async function request(
   fetchImpl: FetchLike,
   url: string,
   init: RequestInit,
-  apiKey: string,
+  auth: Wan3AuthHeaders,
 ): Promise<Record<string, unknown>> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), WAN3_REQUEST_TIMEOUT_MS)
@@ -123,8 +158,11 @@ async function request(
       ...init,
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        // 整份铺开:平台模式下这里除了 Authorization 还带三个计费归属头,
+        // 少了它们钱扣对了但流水查不到。见 `Wan3AuthHeaders`。
+        // 提交与轮询都带 —— 轮询触发的差额结算会再写一条日志,那条同样要归属。
+        ...auth,
         ...(init.headers as Record<string, string> | undefined),
       },
     })
@@ -148,11 +186,13 @@ async function request(
 export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
   const baseUrl = (options.baseUrl ?? MIAU_BASE_URL).replace(/\/+$/, '')
   const { fetchImpl } = options
+  // 缺省 no-op:自填 Key 那条路不花平台余额,没有可刷的东西。
+  const noteBilled = options.onBilledExchange ?? ((): void => {})
 
   return {
-    async createTask(body, apiKey) {
-      // 密钥校验放在重试外:它不会因为再试一次而变好。
-      const key = requireKey(apiKey)
+    async createTask(body, auth) {
+      // 凭据校验放在重试外:它不会因为再试一次而变好。
+      const headers = requireAuth(auth)
       // 复用 Seedance 的提交重试。它只重发「能确定上游没受理」的失败,这条判据对
       // 万相同样成立 —— 万相按秒计费,重复建任务同样是一笔没人认领、跑到完的钱。
       return retrySubmit(async () => {
@@ -160,7 +200,7 @@ export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
           fetchImpl,
           `${baseUrl}/video/generations`,
           { method: 'POST', body: JSON.stringify(body) },
-          key,
+          headers,
         )
         const output = (json.output ?? {}) as Record<string, unknown>
         const id = asString(output.task_id) ?? asString(json.task_id) ?? asString(json.id)
@@ -168,21 +208,30 @@ export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
           // 没有任务号就无从轮询,而任务很可能已经在上游跑起来了。抛普通 Error
           // (非 SeedanceApiError)使它落在「不安全重发」一侧:重发只会再建一个
           // 同样认领不到的任务。
+          //
+          // 刻意**不**在这里报消费:这一支会被上层当成失败处理,而它到底扣没扣钱
+          // 无从判断。少报一次只是余额晚点刷新,而这条路本来就已经是异常态。
           throw new Error('万相返回里没有任务号,无法跟踪这次生成')
         }
+        // 提交成功 = 上游已预扣。报在这里而不是 `request()` 里:那样重试的每一趟
+        // 失败往返都会报一次,而失败的往返不动钱。
+        noteBilled()
         return { id }
       }, options.retryOptions)
     },
 
-    async queryTask(taskId, apiKey) {
-      const key = requireKey(apiKey)
+    async queryTask(taskId, auth) {
+      const headers = requireAuth(auth)
       const json = await request(
         fetchImpl,
         `${baseUrl}/video/generations/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
-        key,
+        headers,
       )
-      return parseWan3TaskResult(json)
+      const result = parseWan3TaskResult(json)
+      // 终态才结算。见 `TERMINAL_STATUSES` 与 `onBilledExchange` 的注释。
+      if (TERMINAL_STATUSES.has(result.status)) noteBilled()
+      return result
     },
   }
 }
