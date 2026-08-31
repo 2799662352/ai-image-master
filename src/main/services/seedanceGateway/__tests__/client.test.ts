@@ -175,6 +175,74 @@ describe('queryTask', () => {
   })
 })
 
+/**
+ * 「这次往返动了钱」的回调。没有它,视频扣完钱余额还停在旧值 —— 与出图那条
+ * 是同一个症状(2026-08-31)。
+ */
+describe('onBilledExchange', () => {
+  it('提交成功后报一次(上游此时已预扣)', async () => {
+    const onBilledExchange = vi.fn()
+    const fetchImpl = jsonFetch({ task_id: 't-1' })
+    await createSeedanceGatewayClient({ fetchImpl, onBilledExchange }).createTask(BODY, 'k')
+
+    expect(onBilledExchange).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * 🧬 变异点:把 `noteBilled()` 从 `if (!id) throw` 之后挪到 `request()` 里面,
+   * 这条必红 —— 失败的往返不动钱,报了就是每次重试都白查一次余额。
+   */
+  it('提交失败不报', async () => {
+    const onBilledExchange = vi.fn()
+    const fetchImpl = jsonFetch({ error: { code: 'model_not_found' } }, 404)
+    await expect(
+      createSeedanceGatewayClient({ fetchImpl, onBilledExchange, retryOptions: noWait }).createTask(
+        BODY,
+        'k',
+      ),
+    ).rejects.toThrow()
+
+    expect(onBilledExchange).not.toHaveBeenCalled()
+  })
+
+  it('轮询到终态时报一次', async () => {
+    const onBilledExchange = vi.fn()
+    const fetchImpl = jsonFetch({ task_id: 't-1', status: 'succeeded', video_url: 'https://x/o.mp4' })
+    await createSeedanceGatewayClient({ fetchImpl, onBilledExchange }).queryTask('t-1', 'k')
+
+    expect(onBilledExchange).toHaveBeenCalledTimes(1)
+  })
+
+  it('失败终态也报 —— 上游可能已经扣过再退', async () => {
+    const onBilledExchange = vi.fn()
+    const fetchImpl = jsonFetch({ task_id: 't-1', status: 'failed' })
+    await createSeedanceGatewayClient({ fetchImpl, onBilledExchange }).queryTask('t-1', 'k')
+
+    expect(onBilledExchange).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * 🧬 变异点:去掉 `TERMINAL_STATUSES` 判断、让 `queryTask` 无条件报,这条必红。
+   *
+   * 一条 60 秒的视频要轮询二十来次,每次都报就是二十次白查余额 —— 而中间那些
+   * running 一分钱不动。
+   */
+  it('轮询到中间态不报', async () => {
+    const onBilledExchange = vi.fn()
+    const fetchImpl = jsonFetch({ task_id: 't-1', status: 'running' })
+    await createSeedanceGatewayClient({ fetchImpl, onBilledExchange }).queryTask('t-1', 'k')
+
+    expect(onBilledExchange).not.toHaveBeenCalled()
+  })
+
+  it('不传这个回调时行为与上线前逐字节相同', async () => {
+    const fetchImpl = jsonFetch({ task_id: 't-1' })
+    await expect(
+      createSeedanceGatewayClient({ fetchImpl }).createTask(BODY, 'k'),
+    ).resolves.toEqual({ id: 't-1' })
+  })
+})
+
 describe('baseUrl', () => {
   it('默认 MIAU_BASE_URL（已含 /v1）', () => {
     expect(MIAU_BASE_URL.endsWith('/v1')).toBe(true)

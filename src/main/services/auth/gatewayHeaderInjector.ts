@@ -5,6 +5,7 @@ import type { Session } from 'electron'
 // 测试变红 —— 两边测试各自硬编码自己那份,只改一边照样双绿,线上却每个请求 401。
 import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../types/authApi'
 import { gatewayPlatformHeaders, getActivePoolToken } from './gatewayToken'
+import { notePlatformSpend } from './platformSpend'
 
 const BILLING_MARKER_HEADER_LC = BILLING_MARKER_HEADER.toLowerCase()
 const AUTHORIZATION_HEADER = 'Authorization'
@@ -78,13 +79,47 @@ export function resolveGatewayOrigin(): string {
 }
 
 /**
- * ⚠️ 同一个 session 上**只有最后挂的 `onBeforeSendHeaders` listener 生效**
- * (Electron 官方文档明写)。将来若有别处也要挂,必须合并成一个 listener,
- * 不能各挂各的 —— 那样先挂的会被静默顶掉。
- * 本仓当前只有 CSP 用了 `onHeadersReceived`(不同事件,不冲突)。
+ * ⚠️ **同一个 session 的同一个 webRequest 事件上,只有最后挂的 listener 生效。**
+ *
+ * 这是 Electron 官方文档对 WebRequest **整个类**写的,不只是 `onBeforeSendHeaders`。
+ * 本函数现在挂了三个事件 —— `onBeforeSendHeaders`(注入凭据)、`onCompleted` 与
+ * `onErrorOccurred`(报消费好让余额刷新)。将来别处若要挂其中任何一个,必须合并成
+ * 一个 listener,不能各挂各的:先挂的会被**静默**顶掉。
+ *
+ * 顶掉后两类事件的症状还不一样,而且都不响:凭据那个是每个请求 401(还算响亮),
+ * 消费上报那两个是「功能全好、只有余额数字不动」—— 与这次修的 bug 一模一样。
+ *
+ * 本仓当前别处只有 CSP 用了 `onHeadersReceived`(不同事件,不冲突)。
  */
 export function installGatewayHeaderInjector(session: Session): void {
   const filter = { urls: [`${resolveGatewayOrigin()}/*`] }
+
+  /**
+   * 这一轮里**真的贴了平台凭据**的请求 id。
+   *
+   * 只有它们花了平台的钱:没取到 token 的那些会裸奔去撞 401,一分不扣,报上去
+   * 只会让余额白查一次。所以判据是「注入成功」,不是「打了标记」。
+   *
+   * **不做上限。** 按 Chromium 的 WebRequest 模型(Electron 转发的就是它),每个请求
+   * 最终必然落到 `onCompleted` 或 `onErrorOccurred` 之一,两处都会把 id 摘掉。这条
+   * 契约 Electron 的文档页并没有逐字写下来,所以即便它在某个边角不成立,漏下的也
+   * 只是若干个整数 —— 而且只统计打到网关那一个 host 的请求。为这点内存加一套淘汰
+   * 逻辑,换来的复杂度比它省下的多。
+   *
+   * 重定向不会重复计数:`onBeforeSendHeaders` 在跳转后会用**同一个 id** 再触发一次,
+   * 而这是个 Set。
+   */
+  const billedRequestIds = new Set<number>()
+
+  /** 完成与失败都要报。失败也可能已经计费(上游把钱扣了才在传输层断掉)。 */
+  const settle = (id: number): void => {
+    if (!billedRequestIds.delete(id)) return
+    notePlatformSpend()
+  }
+
+  session.webRequest.onCompleted(filter, (details) => settle(details.id))
+  session.webRequest.onErrorOccurred(filter, (details) => settle(details.id))
+
   session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     const headers = details.requestHeaders
     const markerKey = findHeaderKey(headers, BILLING_MARKER_HEADER_LC)
@@ -113,6 +148,8 @@ export function installGatewayHeaderInjector(session: Session): void {
       // 刻意不提供只取其一的入口 —— 少了归属头,这笔消费会以空归属落库,
       // 钱扣对了却在用量明细里查不到,而且**一个错都不报**。
       Object.assign(headers, gatewayPlatformHeaders(token))
+      // 记下来,等它落地时报一次消费,好让余额跟着动。见 `billedRequestIds`。
+      billedRequestIds.add(details.id)
     }
     callback({ requestHeaders: headers })
   })

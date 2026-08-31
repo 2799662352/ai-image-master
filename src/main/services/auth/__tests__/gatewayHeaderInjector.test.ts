@@ -27,21 +27,42 @@ vi.mock('../gatewayToken', () => ({
 const electronApp = { isPackaged: false }
 vi.mock('electron', () => ({ app: electronApp }))
 
+/** 扣费上报。用 mock 而不是真模块,免得把防抖定时器牵进这个文件。 */
+const noteSpend = vi.fn()
+vi.mock('../platformSpend', () => ({
+  notePlatformSpend: () => noteSpend(),
+}))
+
 const GATEWAY_ORIGIN_ENV = 'CATIMATION_GATEWAY_ORIGIN'
 
 /** 把注册进去的 listener 抓出来直接调,不起真 session。 */
 function fakeSession() {
   let captured: ((d: any, cb: (r: any) => void) => void) | null = null
   let capturedFilter: { urls: string[] } | null = null
+  let onCompleted: ((d: any) => void) | null = null
+  let onErrorOccurred: ((d: any) => void) | null = null
   return {
     webRequest: {
       onBeforeSendHeaders(filter: any, listener: any) {
         capturedFilter = filter
         captured = listener
       },
+      onCompleted(_filter: any, listener: any) {
+        onCompleted = listener
+      },
+      onErrorOccurred(_filter: any, listener: any) {
+        onErrorOccurred = listener
+      },
     },
-    invoke(headers: Record<string, string>) {
-      return new Promise<any>((resolve) => captured!({ requestHeaders: headers }, resolve))
+    /** `id` 默认给一个固定值,只在需要区分并发请求的用例里才显式传。 */
+    invoke(headers: Record<string, string>, id = 1) {
+      return new Promise<any>((resolve) => captured!({ id, requestHeaders: headers }, resolve))
+    },
+    complete(id = 1) {
+      onCompleted!({ id })
+    },
+    fail(id = 1) {
+      onErrorOccurred!({ id })
     },
     get filter() {
       return capturedFilter
@@ -55,6 +76,7 @@ describe('gatewayHeaderInjector', () => {
     tokenRef.value = null
     attributionRef.value = {}
     electronApp.isPackaged = false
+    noteSpend.mockClear()
     delete process.env[GATEWAY_ORIGIN_ENV]
   })
 
@@ -250,6 +272,108 @@ describe('gatewayHeaderInjector', () => {
       m.installGatewayHeaderInjector(s as any)
 
       expect(s.filter!.urls).toEqual([`${m.DEFAULT_GATEWAY_ORIGIN}/*`])
+    })
+  })
+
+  /**
+   * 扣费上报。没有它,出图扣完钱余额还停在旧值,用户要把设置页关掉重开才看得到 ——
+   * 这正是 2026-08-31 报上来的症状。
+   */
+  describe('消费上报', () => {
+    async function install() {
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+      return s
+    }
+
+    it('注入了凭据的请求完成后报一次消费', async () => {
+      tokenRef.value = 'sk-real'
+      const s = await install()
+
+      await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
+      // 请求还在途时不该报 —— 上游是在转发这次请求的事务里落账的,
+      // 提前报会让渲染层读到扣费前的余额,刷了等于没刷。
+      expect(noteSpend).not.toHaveBeenCalled()
+
+      s.complete()
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    })
+
+    // 上游可能已经扣了钱才在传输层断掉,所以失败也要报。
+    it('注入了凭据的请求出错后同样报一次', async () => {
+      tokenRef.value = 'sk-real'
+      const s = await install()
+
+      await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
+      s.fail()
+
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    })
+
+    /**
+     * 🧬 变异点:把注入器里 `billedRequestIds.add` 的判据从「取到 token」放宽成
+     * 「打了标记」,这条必红。
+     *
+     * 没取到 token 的请求会裸奔去撞 401,一分钱不扣。报上去只是让余额白查一次,
+     * 而且**每一次**失败的出图都会白查 —— 恰恰是用户没选计费池、疯狂点重试的时候。
+     */
+    it('没取到凭据的请求不报 —— 它撞 401,一分钱没花', async () => {
+      tokenRef.value = null
+      const s = await install()
+
+      await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
+      s.complete()
+
+      expect(noteSpend).not.toHaveBeenCalled()
+    })
+
+    it('没打标记的请求不报 —— 那是用户自己的 Key', async () => {
+      tokenRef.value = 'sk-real'
+      const s = await install()
+
+      await s.invoke({ authorization: 'Bearer sk-user-own' })
+      s.complete()
+
+      expect(noteSpend).not.toHaveBeenCalled()
+    })
+
+    /**
+     * 🧬 变异点:把 `settle` 里的 `billedRequestIds.delete(id)` 换成 `has(id)`,
+     * 这条必红 —— Electron 对同一个请求可能既发 onCompleted 又发别的终态事件,
+     * 不摘掉 id 就会重复计数,而且那个 Set 会一直涨。
+     */
+    it('同一个请求的终态事件只报一次', async () => {
+      tokenRef.value = 'sk-real'
+      const s = await install()
+
+      await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE })
+      s.complete()
+      s.complete()
+      s.fail()
+
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    })
+
+    it('并发请求各报各的,不会互相顶掉', async () => {
+      tokenRef.value = 'sk-real'
+      const s = await install()
+
+      await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE }, 11)
+      await s.invoke({ [MARKER_LC]: BILLING_MARKER_VALUE }, 22)
+      s.complete(22)
+      s.complete(11)
+
+      expect(noteSpend).toHaveBeenCalledTimes(2)
+    })
+
+    it('没发过的请求 id 落地时不报 —— 那是别的功能打到同一个 host', async () => {
+      tokenRef.value = 'sk-real'
+      const s = await install()
+
+      s.complete(999)
+
+      expect(noteSpend).not.toHaveBeenCalled()
     })
   })
 })

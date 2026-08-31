@@ -383,7 +383,7 @@ const IPC_CHANNELS = {
     SET_BILLING_POOL: 'auth:set-billing-pool',
     CLEAR_BILLING_POOL: 'auth:clear-billing-pool',
   },
-  AUTH_EVENTS: ['auth:state-changed', 'auth:login-result'] as const,
+  AUTH_EVENTS: ['auth:state-changed', 'auth:login-result', 'auth:balance-stale'] as const,
   // Shell helpers (clipboard / save dialog)
   SHELL: {
     COPY_IMAGE: 'shell:copy-image',
@@ -568,6 +568,11 @@ export interface ElectronAPI {
     logout: () => Promise<void>
     onStateChanged: (handler: (state: AuthState) => void) => () => void
     onLoginResult: (handler: (result: AuthLoginResult) => void) => () => void
+    /**
+     * 「刚花过平台余额」。不带数值 —— 主进程手上没有权威余额,收到后自己走
+     * `getBalance` 重拉,口径才与页面上其它地方一致。
+     */
+    onBalanceStale: (handler: () => void) => () => void
     // 额度查询。一律回 { ok, data } | { ok: false, error } 信封 —— 主进程刻意不裸抛,
     // 裸抛经 IPC 会丢掉后端的 error code,而 UI 要按 code 分支。
     getOrganizations: () => Promise<QuotaRpc<AccountOrganization[]>>
@@ -1534,6 +1539,8 @@ const electronAPI: ElectronAPI = {
       safeOnWithCleanup<AuthState>(IPC_CHANNELS.AUTH_EVENTS[0], handler, IPC_CHANNELS.AUTH_EVENTS),
     onLoginResult: (handler: (result: AuthLoginResult) => void) =>
       safeOnWithCleanup<AuthLoginResult>(IPC_CHANNELS.AUTH_EVENTS[1], handler, IPC_CHANNELS.AUTH_EVENTS),
+    onBalanceStale: (handler: () => void) =>
+      safeOnWithCleanup<void>(IPC_CHANNELS.AUTH_EVENTS[2], () => handler(), IPC_CHANNELS.AUTH_EVENTS),
     getOrganizations: () =>
       safeInvoke<QuotaRpc<AccountOrganization[]>>(IPC_CHANNELS.AUTH.GET_ORGANIZATIONS),
     getBalance: (projectId: number, producerProjectId?: number) =>

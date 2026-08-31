@@ -44,6 +44,20 @@ const auth = {
   getPaymentConfig: vi.fn(),
   setBillingPool: vi.fn(),
   clearBillingPool: vi.fn(),
+  onBalanceStale: vi.fn(),
+}
+
+/**
+ * 主进程推来的「刚花过平台余额」的订阅者。
+ *
+ * 攒成数组而不是单个:store 的订阅是幂等的(装过就不再装),而「装了几次」正是
+ * 要断言的东西之一 —— 重复装的后果是一次消费刷 N 遍余额。
+ */
+let spendHandlers: Array<() => void> = []
+
+/** 模拟主进程广播一次消费。 */
+function emitSpend(): void {
+  for (const h of [...spendHandlers]) h()
 }
 
 const ORG_PERSONAL = {
@@ -87,6 +101,13 @@ beforeEach(() => {
   auth.getPaymentConfig.mockResolvedValue({ ok: true, data: { personalBillingProjectId: 342 } })
   auth.setBillingPool.mockResolvedValue({ ok: true, data: { ready: true } })
   auth.clearBillingPool.mockResolvedValue({ ok: true, data: null })
+  spendHandlers = []
+  auth.onBalanceStale.mockImplementation((handler: () => void) => {
+    spendHandlers.push(handler)
+    return () => {
+      spendHandlers = spendHandlers.filter((h) => h !== handler)
+    }
+  })
 
   localStorage.clear()
   __resetQuotaStoreForTesting()
@@ -808,6 +829,112 @@ describe('useQuotaStore', () => {
 
         expect(auth.setBillingPool).toHaveBeenCalled()
         expect(useQuotaStore.getState().billingSource).toBe('platform')
+      })
+    })
+
+    /**
+     * 扣费后自动刷余额。
+     *
+     * 在这之前余额只有两个刷新时机(设置页挂载、切池),出图 / 出视频 / 聊天扣完钱
+     * 没有任何东西触发它 —— 数字停在旧值,用户要把设置页关掉重开才看得到。
+     */
+    describe('扣费后刷新余额', () => {
+      async function armPlatform(): Promise<void> {
+        await pickPersonalPool()
+        await useQuotaStore.getState().setBillingSource('platform')
+        auth.getBalance.mockClear()
+      }
+
+      it('收到消费信号就重新拉一次余额', async () => {
+        await armPlatform()
+        auth.getBalance.mockResolvedValue({
+          ok: true,
+          data: { balanceYuan: 0.11, balanceQuota: 55_000 },
+        })
+
+        emitSpend()
+        await settleQueuedWork()
+
+        expect(auth.getBalance).toHaveBeenCalledTimes(1)
+        expect(useQuotaStore.getState().balanceYuan).toBe(0.11)
+      })
+
+      // 池键是一对。只带 projectId 的话,两个共用 id 的 producer 池会互相顶掉,
+      // 刷出来的是另一个池的余额。
+      it('拉的是当前选中的那个池,两半都带', async () => {
+        auth.getOrganizations.mockResolvedValue({ ok: true, data: [ORG_PRODUCER_A, ORG_PRODUCER_B] })
+        await useQuotaStore.getState().load()
+        await useQuotaStore.getState().selectPool({ projectId: 700, producerProjectId: 6 })
+        await useQuotaStore.getState().setBillingSource('platform')
+        auth.getBalance.mockClear()
+
+        emitSpend()
+        await settleQueuedWork()
+
+        expect(auth.getBalance).toHaveBeenCalledWith(700, 6)
+      })
+
+      /**
+       * 🧬 变异点:去掉订阅回调里的 `billingSource !== 'platform'` 早退,这条必红。
+       *
+       * 自有 Key 模式下花的是用户自己的钱,平台余额一分没动 —— 信号与模式切换之间
+       * 有窗口,那个窗口里刷一次是纯浪费。
+       */
+      it('切回自有 Key 后不再刷', async () => {
+        await armPlatform()
+        await useQuotaStore.getState().setBillingSource('own-key')
+        auth.getBalance.mockClear()
+
+        emitSpend()
+        await settleQueuedWork()
+
+        expect(auth.getBalance).not.toHaveBeenCalled()
+      })
+
+      /**
+       * 🧬 变异点:把 `ensureBalanceRefreshOnSpend` 里的 `if (unsubscribeSpend) return`
+       * 删掉,这条必红 —— 每次切平台都装一个,一次消费就刷 N 遍余额。
+       */
+      it('反复切换平台模式只装一份订阅', async () => {
+        await pickPersonalPool()
+        await useQuotaStore.getState().setBillingSource('platform')
+        await useQuotaStore.getState().setBillingSource('own-key')
+        await useQuotaStore.getState().setBillingSource('platform')
+        auth.getBalance.mockClear()
+
+        expect(spendHandlers).toHaveLength(1)
+
+        emitSpend()
+        await settleQueuedWork()
+
+        expect(auth.getBalance).toHaveBeenCalledTimes(1)
+      })
+
+      // 老 preload 没有这个方法。调用不存在的方法是同步 TypeError,会把整条
+      // `setBillingSource` 带崩 —— 而它此刻正要把用户切进平台模式。
+      it('主进程没有这个推送时,切换平台模式照样成功', async () => {
+        await pickPersonalPool()
+        Object.defineProperty(window, 'electronAPI', {
+          value: { auth: { ...auth, onBalanceStale: undefined } },
+          configurable: true,
+        })
+
+        await expect(
+          useQuotaStore.getState().setBillingSource('platform'),
+        ).resolves.toBeUndefined()
+        expect(useQuotaStore.getState().billingSource).toBe('platform')
+      })
+
+      // 余额查询自己失败时,信号处理不该把异常抛成 unhandled rejection
+      // (调用点是 `void state.refreshBalance()`,没有 catch)。
+      it('刷新失败只落 error,不产生未处理 rejection', async () => {
+        await armPlatform()
+        auth.getBalance.mockRejectedValue(new Error('网络故障'))
+
+        expect(() => emitSpend()).not.toThrow()
+        await settleQueuedWork()
+
+        expect(useQuotaStore.getState().error).toContain('网络故障')
       })
     })
   })
