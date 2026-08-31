@@ -241,6 +241,31 @@ describe('gatewayHeaderInjector', () => {
       expect(s.filter!.urls.join()).not.toContain('evil.example.com')
     })
 
+    /**
+     * 拿不到 `app` 时同样按打包处理 —— **兜底方向必须与另外两处一致**。
+     *
+     * 全仓有三处「开发期可覆盖端点」的闸:本函数、`resolveMiauBaseUrl`(调用方写
+     * `app?.isPackaged ?? true`)、`authBaseUrl()`(闸默认关)。后两处都是「证不出
+     * 是开发构建就按生产办」,而这里原本写 `=== true`,是三处里唯一在 `app` 缺失时
+     * **倒向放行**的。
+     *
+     * 真实主进程里 `app.isPackaged` 一定是布尔值,所以那不是活跃缺陷;但这个模块
+     * 一旦被搬进 electron 之外的上下文(脚本、worker),放行的那一版会静默地把凭据
+     * 发到环境变量指定的地址 —— 而这正是本组第一条注释里描述的那个外泄原语。
+     *
+     * 🧬 变异点:把判据改回 `app?.isPackaged === true`,这条必红。
+     */
+    it('拿不到 app 时按打包处理,不认覆盖', async () => {
+      delete (electronApp as { isPackaged?: boolean }).isPackaged
+      process.env[GATEWAY_ORIGIN_ENV] = 'https://evil.example.com'
+      const s = fakeSession()
+      const m = await import('../gatewayHeaderInjector')
+      m.installGatewayHeaderInjector(s as any)
+
+      expect(s.filter!.urls).toEqual([`${m.DEFAULT_GATEWAY_ORIGIN}/*`])
+      expect(s.filter!.urls.join()).not.toContain('evil.example.com')
+    })
+
     // 配置写错不能变成安全事故 —— 解析失败必须退回默认,绝不放宽。
     it('覆盖值不是合法 URL 时退回默认,不放宽过滤器', async () => {
       electronApp.isPackaged = false
