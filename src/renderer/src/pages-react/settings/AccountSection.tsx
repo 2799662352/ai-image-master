@@ -7,6 +7,9 @@
 // ……),不要混进全屏登录页的字面 hex。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+// 余额文案与头部账号胶囊共用一份 —— `null`(未知)和 `0`(花光了)必须显示成两句
+// 不同的话,理由见那个模块。两处各写一份的话,漂开时没有任何东西会变红。
+import { balanceText } from '../../features/account/balance'
 import { getApiService } from '../../services/api/ApiService'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useModelStore } from '../../stores/useModelStore'
@@ -25,17 +28,6 @@ function parsePoolValue(v: string): Pool | null {
   if (!Number.isFinite(projectId) || projectId <= 0) return null
   const ppid = Number(b)
   return { projectId, producerProjectId: Number.isFinite(ppid) && ppid > 0 ? ppid : null }
-}
-
-/**
- * 余额文案。
- *
- * **`null` 与 `0` 必须区分。** 余额未知（还没选池 / 查询失败）显示 `¥0.00` 会让用户
- * 以为钱花光了、跑去充值，而真实原因完全不同。所以未知给占位符。
- */
-function balanceText(yuan: number | null): string {
-  if (yuan === null) return '余额未知'
-  return `¥${yuan.toFixed(2)}`
 }
 
 export function AccountSection() {

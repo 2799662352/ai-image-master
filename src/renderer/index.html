@@ -830,6 +830,9 @@
                     <span class="relative z-10 hidden lg:inline" data-i18n="nav.activity">活动</span>
                     <div class="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
                 </button>
+                <!-- 账号胶囊(React 岛)。排在「设置」**之前**:身份先于配置,与设置页里
+                     账号是第 1 节同一个理由。空容器不占位,React 未挂载前这排按钮不变形。 -->
+                <div id="account-badge-mount"></div>
                 <button id="settingsBtn" data-action="open-settings" class="relative flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer"
                         title="API设置" data-i18n-attr="title:nav.settingsTitle">
                     <i class="fas fa-cog"></i>
