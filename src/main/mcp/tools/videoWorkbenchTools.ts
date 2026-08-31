@@ -78,7 +78,10 @@ const cardInputSchema = z.object({
     + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only). '
     + '"wan3" = 阿里万相 3.0 (All-in-One): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, '
     + 'accepts one document or web link as reference, billed per second (¥) instead of per token. '
-    + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive".',
+    + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive". '
+    + '"wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and input field; the only '
+    + 'differences are the upstream model name and the price (≈1.33× wan3). Same modes, materials, '
+    + 'durations, resolutions, document slot and restrictions — treat it exactly like "wan3".',
   ),
   resolution: zResolution().optional().describe('Default 720p. 1080p requires model "2.0" or "wan3" (NOT "2.5").'),
   ratio: zRatio().optional().describe(
