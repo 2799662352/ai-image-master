@@ -128,9 +128,42 @@ describe('两个提交入口都必须问过这个谓词', () => {
     // 「两个入口都调它」+「它自己两条分支都在」。
     const entryCalls = runtimeSource.match(/await materializeAssetRefs\(/g) ?? []
     expect(entryCalls.length).toBe(2)
-    expect(runtimeSource).toContain('importImagesToPortraitLibrary(content, enabled)')
-    expect(runtimeSource).toContain('importImagesToPlatformLibrary(content, enabled)')
-  })
+      // 第二个实参叫什么无所谓(它被改过一次名:enabled → visibleInLibrary),
+      // 这里要守的是「两个库分支都在 materializeAssetRefs 里接上了」。
+      expect(runtimeSource).toMatch(/importImagesToPortraitLibrary\(content, \w+\)/)
+      expect(runtimeSource).toMatch(/importImagesToPlatformLibrary\(content, \w+\)/)
+    })
+
+    /**
+     * 登记**不受**「默认上传人像库」开关管。
+     *
+     * 这条曾经反过来:开关关着就整个跳过。后来登记从「顺带的复用优化」变成了
+     * 「过审的前提」—— 上游对直传 https 图做真人检测,只有 `asset://` 引用能过。
+     * 于是「不登记」= 真人图必被拒,那不该由一个讲「要不要进库」的开关决定生成
+     * 能不能成。开关的语义收窄成字面意思:登记照做,只是关着时立刻软删隐藏。
+     *
+     * 回归长这样:有人把 `if (!visible) return rewrites` 加回两个 import 函数的
+     * 开头。症状是「关掉开关后真人参考图就发不出去」—— 两件看起来毫不相干的事,
+     * 用户不会把它们联系起来报给你。所以在这里钉死。
+     */
+    it('登记不被开关拦下 —— 开关只管可见性,不管入不入库', () => {
+      const importFns =
+        runtimeSource.match(
+          /async function importImagesTo(?:Portrait|Platform)Library\([\s\S]*?\n\}/g,
+        ) ?? []
+      expect(importFns.length).toBe(2)
+      for (const fn of importFns) {
+        // 从签名里取出第二个形参(即那个开关)的名字,而不是硬编码 `visible` ——
+        // 这样改名不会让守卫失效,也不会像 `if (!\w+)` 那样误伤 `!pool` / `!apiKey`
+        // 这类**合法**的早退(没登录、没凭据时本来就登记不了)。
+        const flag = /content: SeedanceContentItem\[\],\s*(\w+): boolean/.exec(fn)?.[1]
+        expect(flag).toBeDefined()
+        expect(fn).not.toMatch(new RegExp(`if \\(!${flag}\\) return`))
+      }
+      // 而隐藏这条路必须真的在:否则开关就成了纯装饰。
+      expect(runtimeSource).toMatch(/if \(!visible\) hideFromLibrary\(/)
+      expect(runtimeSource).toMatch(/!visible[\s\S]{0,120}hidePlatformAsset\(/)
+    })
 
   /**
    * 入库改写必须发生在 `taskManager.submit` **之前**。

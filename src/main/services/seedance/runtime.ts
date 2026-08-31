@@ -55,6 +55,9 @@ import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../au
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { notePlatformSpend } from '../auth/platformSpend'
 import { ensureAsset } from '../portraitLibrary/ensureAsset'
+// 软删:只在后台隐藏,不释放配额,已经引用它的 `asset://` 仍解析得到(见其注释)。
+// 正因为是软删,才能在「开关关着」时既登记又不让它出现在库里。
+import { hideAsset as hidePlatformAsset } from '../portraitLibrary/platformAssets'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
 import { createSeedanceGatewayClient } from '../seedanceGateway/client'
@@ -185,10 +188,9 @@ export function setAutoImportPortraitEnabled(enabled: boolean): void {
  */
 async function importImagesToPortraitLibrary(
   content: SeedanceContentItem[],
-  enabled: boolean,
+  visible: boolean,
 ): Promise<Map<string, string>> {
   const rewrites = new Map<string, string>()
-  if (!enabled) return rewrites
   const apiKey = getSeedanceApiKey()
   const apiSecret = getSeedanceApiSecret()
   if (!apiKey || !apiSecret) return rewrites
@@ -221,6 +223,7 @@ async function importImagesToPortraitLibrary(
         // 「素材不存在」,同样发不出去而且更难查。宁可这次直传原 URL。
         const ref = asset.assetUrl || (asset.assetId ? `asset://${asset.assetId}` : '')
         if (ref) rewrites.set(raw, ref)
+        if (!visible) hideFromLibrary(asset)
       } catch (e) {
         console.warn('[seedance] portrait-library import failed (generation unaffected):', e)
       }
@@ -252,10 +255,9 @@ async function importImagesToPortraitLibrary(
  */
 async function importImagesToPlatformLibrary(
   content: SeedanceContentItem[],
-  enabled: boolean,
+  visible: boolean,
 ): Promise<Map<string, string>> {
   const rewrites = new Map<string, string>()
-  if (!enabled) return rewrites
   const pool = getActivePool()
   if (!pool) return rewrites
   const scope = {
@@ -279,6 +281,12 @@ async function importImagesToPlatformLibrary(
           scope,
         )
         if (assetId) rewrites.set(raw, `asset://${assetId}`)
+        if (assetId && !visible) {
+          // 隐藏失败不该影响生成 —— 最坏是它出现在库列表里,而素材本身完全可用。
+          await hidePlatformAsset(assetId, scope).catch((e: unknown) => {
+            console.warn('[seedance] platform-library hide failed (asset still usable):', e)
+          })
+        }
       } catch (e) {
         console.warn('[seedance] platform-library import failed (generation unaffected):', e)
       }
@@ -313,16 +321,19 @@ async function materializeAssetRefs(
   content: SeedanceContentItem[],
   model: SeedanceModelAlias | undefined,
   billing: VideoBillingSource,
-  enabled: boolean,
+  visibleInLibrary: boolean,
 ): Promise<SeedanceContentItem[]> {
   // 只有 Seedance 系认 asset://;万相(provider miau)原样返回。
   const acceptsAssetRefs = capabilitiesFor(model ?? '2.0').provider === 'vvdance'
   if (!acceptsAssetRefs) return content
 
+  // 🚨 **登记不受「默认上传人像库」开关管。** 它是过审的前提(真人图只有走
+  // `asset://` 才不被上游的真人检测拦下),不该由一个讲「要不要进库」的开关决定
+  // 生成能不能成。开关只决定登记完之后**要不要在库里看得见**(软删,可恢复)。
   const rewrites = usesSeedanceAssetLibrary(model, billing)
-    ? await importImagesToPortraitLibrary(content, enabled)
+    ? await importImagesToPortraitLibrary(content, visibleInLibrary)
     : billing === 'platform'
-      ? await importImagesToPlatformLibrary(content, enabled)
+      ? await importImagesToPlatformLibrary(content, visibleInLibrary)
       : new Map<string, string>()
 
   if (rewrites.size === 0) return content
@@ -345,6 +356,30 @@ async function materializeAssetRefs(
  * 两者都在 —— 页面按哪个查都命中。data: 不入库(overlay 是明文 JSON,塞进去会
  * 把它撑成几 MB),那种情况上游本来就会给 previewUrl。
  */
+/**
+ * 「默认上传人像库」关着时,把刚登记的素材在库里隐藏起来(vvdance 侧)。
+ *
+ * ## 为什么是隐藏而不是不登记
+ *
+ * 登记现在是**过审的前提**,不再是顺带的复用优化:上游对直传的 https 图做真人
+ * 检测,只有 `asset://` 引用能绕开。所以「不登记」= 真人图必被拒 —— 那不该由一个
+ * 讲「要不要进库」的开关来决定生成能不能成。
+ *
+ * 于是开关收窄成它字面本来的意思:**要不要在人像库里看得见**。登记照做,只是关着
+ * 时立刻标隐藏(软删,用户可在库里恢复)。
+ *
+ * 隐藏失败只打日志:最坏是它出现在列表里,素材本身完全可用,不该因此影响生成。
+ */
+function hideFromLibrary(asset: SeedanceAssetItem): void {
+  const assetIds = [...new Set([asset.assetId, asset.id].filter((id): id is string => !!id))]
+  if (assetIds.length === 0) return
+  try {
+    mutatePortraitOverlay({ op: 'setHidden', assetIds, hidden: true })
+  } catch (e) {
+    console.warn('[seedance] 隐藏素材失败(素材仍可用):', e)
+  }
+}
+
 function rememberAssetThumb(asset: SeedanceAssetItem, thumbUrl: string): void {
   if (!/^https?:/i.test(thumbUrl)) return
   const assetIds = [...new Set([asset.assetId, asset.id].filter((id): id is string => !!id))]
