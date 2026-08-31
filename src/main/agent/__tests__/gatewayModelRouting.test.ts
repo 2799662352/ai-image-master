@@ -85,7 +85,10 @@ describe('gatewayModelRouting', () => {
     expect(channel.model).toBe('deepseek-v4-flash')
     expect(channel.allowedModels).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
     expect(channel.compatibilityPolicy).toBe('responses-namespace-bridge')
-    expect(channel.memoriesModel).toBeUndefined()
+    // 记忆钉在同 host 最便宜的那一档,而不是留空。留空会回落到「上次 spawn 那一刻
+    // 选中的模型」—— 用户选 flash 聊天、记忆却仍跑在 pro 上,且看不出这笔钱哪来的。
+    // (GPT slug 在这个 host 上仍然 400,那部分原判断没变。)
+    expect(channel.memoriesModel).toBe('deepseek-v4-flash')
     // API Yi has no DeepSeek pool. Routing there would put a picker row
     // that 404s every turn. Unlisted slugs on the Right.Codes pool are
     // refused the same way — they must not fall through to /codex.
@@ -176,6 +179,58 @@ describe('gatewayModelRouting', () => {
     expect(resolveProviderChannel('rightcode-grok').memoriesModel).toBeUndefined()
     expect(resolveProviderChannel('rightcode-grok').model).toBe('grok-4.5')
   })
+
+  /**
+   * 记忆任务的模型**不许留给回落**,除非该通道内没有价差。
+   *
+   * ## 为什么这条值一个专门的测试
+   *
+   * `memoriesModel` 不声明时回落到 `provider.model` —— 而那不是通道声明的默认值,
+   * 是 **codex 上次 spawn 那一刻用户选中的模型**。`memories.extract_model` 是启动时
+   * 用 `-c` 写死的,此后在选择器里换模型只改对话那一路(同通道、同上下文窗口不触发
+   * 重启),这两条纹丝不动。
+   *
+   * 2026-08-31 真机撞到:用户切到 qwen3.8-flash 聊天,流水里却是 21 次 qwen3.8-max
+   * 共 ¥2.14,Flash 只花了 ¥0.10。形状很好认 —— 对话请求输入 3~5 万 token,
+   * 记忆请求只有 7 千,一次接一次。而 UI 上他选的明明是 Flash,这笔钱**无从解释**。
+   *
+   * ## 判据
+   *
+   * 只要通道的 `allowedModels` 里不止一个模型,就必须显式声明 `memoriesModel`
+   * (或用 `supportsMemories: false` 整个关掉)。豁免要写明为什么没有价差。
+   */
+  it('多模型通道必须显式钉住记忆模型,不能留给回落', () => {
+    // 豁免:两个 slug 卖同一个价(见 rightcode-grok 的 allowedModels 注释),
+    // 所以跟着谁跑都一样,不构成「看不出来的花费」。
+    const NO_PRICE_SPREAD = new Set(['rightcode-grok'])
+
+    // 直接遍历 `BUILTIN_CHANNELS` 而不是绕网关:这条不变量是**通道级**的,
+    // 而同一条通道会挂在两个网关下(qwen 就是),绕网关会把它数两遍。
+    const offenders = BUILTIN_CHANNELS.filter(
+      (channel) =>
+        (channel.allowedModels?.length ?? 0) >= 2 &&
+        channel.supportsMemories !== false &&
+        !NO_PRICE_SPREAD.has(channel.id) &&
+        !channel.memoriesModel,
+    ).map((channel) => channel.id)
+
+    expect(
+      offenders,
+      offenders.length === 0
+        ? ''
+        : `这些通道可选多个模型却没钉住记忆模型:\n` +
+          `${offenders.map((c) => `  - ${c}`).join('\n')}\n` +
+          `不钉的话记忆会跑在「上次 spawn 时选中的模型」上,换模型也不会变 ——\n` +
+          `用户看到一笔他解释不了的消费。声明 memoriesModel,或在 NO_PRICE_SPREAD 里\n` +
+          `写明为什么这个通道内没有价差。`,
+    ).toEqual([])
+  })
+
+  // 曾经这里还有第二条守卫:「钉住的记忆模型必须在本通道的 allowedModels 里」。
+  // **那条前提是错的,已删。** `allowedModels` 约束的是**选择器能选什么**,不是
+  // **端点能服务什么** —— apiyi-grok 的 baseUrl 是 apiyi 全量端点,只是把对话模型
+  // 钉在了 grok,所以它钉 gpt-5.5 做记忆完全合法。真要守「钉的 slug 上游确实有」,
+  // 只能靠对着端点跑一次,静态断言做不到。
 
   it('keeps builtin gateway cards separate from internal channels', () => {
     expect(channelsForGateway('apiyi').map((channel) => channel.id)).toEqual([

@@ -67,11 +67,27 @@ interface QuotaStoreState {
   balanceYuan: number | null
   personalBillingProjectId: number | null
   /**
-   * ⚠️ **刻意不持久化,每次启动都回到 `'own-key'`。**
+   * 跟着**登录态**走:登录了就是平台余额,登出才回自填 Key。
    *
-   * 平台凭据活在主进程内存里,重启后要重新按池取。若这里记住了 `'platform'`,
-   * 下次启动渲染层会一上来就打标记头,而主进程还没 arm —— 注入器删掉 Authorization
-   * 又写不回 token,于是**每一个请求 401**,用户还以为是网关坏了。
+   * ## 这里曾经刻意不持久化,那个理由已经不成立
+   *
+   * 旧注释写的是:「平台凭据活在主进程内存里,重启后要重新按池取。若这里记住了
+   * `'platform'`,下次启动渲染层会一上来就打标记头,而主进程还没 arm —— 注入器
+   * 删掉 Authorization 又写不回 token,于是每一个请求 401。」
+   *
+   * 那个前提在 `auth/gatewayToken.ts` 把 `activePool` 一并落盘之后消失了:主进程
+   * **启动即 armed**。两处改动是一对,回退任何一半都会把 401 那个坑挖回来。
+   *
+   * ## 为什么必须改
+   *
+   * 不持久化的代价不是「多点一次」,而是**每次重启都静默地换一个钱包**:用户看到
+   * 余额、看到自己已登录,出图出视频却在扣他自填的 Key —— 而那把 Key 填错了的话,
+   * 收到的是上游一句 `401 Invalid token`,里面不会有任何一个字提到用的不是平台余额。
+   * 2026-08-31 真机就是这么撞的(自填位里存着测试时随手填的 `1`)。
+   *
+   * 用户的原话:「登录后直接走平台余额,不用管 miau key 对错与否,退出登录才是 key」。
+   *
+   * 显式关掉仍然算数 —— 那是 `AUTO_ARM_OPT_OUT_KEY` 记的事,与本字段正交。
    */
   billingSource: BillingSource
   loading: boolean
@@ -155,12 +171,30 @@ function writeAutoArmOptOut(optedOut: boolean): void {
   }
 }
 
+/**
+ * 启动时的计费意向。
+ *
+ * 上次选过池、且用户没显式关掉 → 平台余额。与主进程对称:它也在
+ * `gatewayToken.loadPersisted()` 里把上次的池读回来,所以启动即 armed。
+ *
+ * **未登录不用在这里判。** 认证态是异步 hydrate 的,这里读不到;而下面那条
+ * `useAuthStore.subscribe` 已经在「当前值为未认证」时把它压回 `own-key` ——
+ * 按值判断天然幂等,hydrate 落地后自动收敛。在这里再猜一次只会多一条会漂移的判据。
+ *
+ * 猜错的方向也是安全的:未登录却是 platform,提交时主进程取不到影子 token,
+ * `requireApiKey` 抛「平台余额未就绪:请先选择计费池」—— 响亮、可执行、一分钱不花。
+ * 反方向(该用平台却用了自填 Key)才是静默的,而那正是这次要修的。
+ */
+function initialBillingSource(): BillingSource {
+  return readStoredPool() && !readAutoArmOptOut() ? 'platform' : 'own-key'
+}
+
 const initialState: QuotaStoreState = {
   organizations: [],
   selectedPool: null,
   balanceYuan: null,
   personalBillingProjectId: null,
-  billingSource: 'own-key',
+  billingSource: initialBillingSource(),
   loading: false,
   error: null,
 }
@@ -356,7 +390,16 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     //  - 必须有已选池,否则 arm 一定失败,徒增一次注定报错的 IPC。
     //  - `setBillingSource` 自己会在失败时回落 `own-key` 并把人话原因摊到 `error` 上,
     //    所以这里不需要 try —— 失败的结果就是维持现状,与不做这一步等价。
-    if (get().billingSource === 'own-key' && get().selectedPool && !readAutoArmOptOut()) {
+    // 🚨 **不能加 `billingSource === 'own-key'` 这个前置条件。**
+    //
+    // 加了的话,启动时已经是 `'platform'`(`initialBillingSource()` 的常见分支)
+    // 就会整个跳过 arm,于是渲染层自称平台、主进程却从没被 `setBillingPool` 调过。
+    // 主进程能自愈的前提是它盘上**已经有** v2 信封;而刚从旧版本升上来的用户盘上
+    // 是 v1(只有 token、没有池),那一次启动就会每次提交都撞「平台余额未就绪」。
+    //
+    // arm 本身是幂等的(取凭据 → 置 active),多发一次的代价只是一次缓存命中的
+    // IPC;漏发一次的代价是整个会话都用不了平台余额。
+    if (get().selectedPool && !readAutoArmOptOut()) {
       await get().setBillingSource('platform')
     }
   },

@@ -61,6 +61,7 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-mini',
       '2.5',
       'wan3',
+      'wan3-prime',
     ])
   })
 

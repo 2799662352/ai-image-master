@@ -41,8 +41,21 @@ let activePool: Pool | null = null
  */
 let generation = 0
 
+/**
+ * 置当前计费池,并把它一起落盘。
+ *
+ * **落盘是这个函数存在的一半意义**:池不落盘的话,重启后主进程手上有 token 却
+ * 不知道该用哪个池,`getActivePoolToken()` 一律回 null,视频那条路就静默退回
+ * 用户自填的 Miau Key(见 `PersistedV2` 的注释里那次真机故障)。
+ *
+ * 同步返回、异步落盘:调用方(`auth:set-billing-pool`)已经在它自己的 await 链上
+ * 完成了「取得凭据」这件真正要紧的事,落盘只是让下次启动少走一趟。失败也不该让
+ * 切池动作报错 —— 最坏的后果是回到「重启后需要重新 arm」,也就是这个改动之前的
+ * 行为,而不是任何新的坏事。
+ */
 export function setActivePool(pool: Pool | null): void {
   activePool = pool
+  void persist(generation).catch(() => {})
 }
 
 /**
@@ -255,10 +268,58 @@ async function encryptionIsReal(): Promise<boolean> {
   }
 }
 
+/**
+ * 落盘信封。
+ *
+ * v1 是**裸的** `Record<poolKey, token>`;v2 把 `pool` 一起收进来。
+ *
+ * ## 为什么 pool 必须跟 token 一起落盘
+ *
+ * 只落 token 的那版,重启后主进程是「手上有钥匙,但不知道该开哪把锁」——
+ * `activePool` 是模块级内存,启动时为 null,于是 `getActivePoolToken()` 一律回
+ * null。视频那条路(万相 / 平台版 Seedance)在主进程里就是靠它判「此刻能不能走
+ * 平台余额」的,判不出来就落到用户自填的 Miau Key。
+ *
+ * 2026-08-31 真机撞到:用户已登录、余额显示正常、codex 聊天也在正常扣平台余额,
+ * 但工作台出万相时收到 `401 Invalid token` —— 因为那一刻主进程 activePool 还是
+ * null,而用户自填的 Key 位里存着一个测试时随手填的 `1`。错误来自上游,里面不会
+ * 有任何一个字提到「这次用的是自填 Key」。
+ *
+ * 这也是渲染层 `billingSource` 得以持久化的前提:它原先刻意不持久化,理由正是
+ * 「重启后主进程还没 arm,渲染层先打标记头会让每个请求 401」。池落了盘,主进程
+ * 启动即 armed,那条理由就不成立了。两处改动是一对,不能只做一半。
+ */
+interface PersistedV3 {
+  v: 3
+  /**
+   * 签发这批 token 的 IdP 基址。**v3 存在的唯一理由。**
+   *
+   * 缓存键只有 `(projectId, producerProjectId)`,不含环境 —— 于是一台在测试服登录过的
+   * 机器,换回生产之后 `loadPersisted()` 照样把那枚**测试服**的 token 读回内存并 arm
+   * 上去,第一笔请求就是 `401 无效的令牌`。而且 v2 起池也一并落盘,这条路比以前更顺畅。
+   *
+   * 打包产物本身有硬闸(`authBaseUrl()` / `resolveGatewayOrigin()` 都无视环境变量),
+   * 但那只保证「发给谁」,保证不了「用谁签的凭据」—— 盘上的东西是上一次运行留下的。
+   *
+   * 不匹配时整份丢弃而不是逐条筛:token 是**可丢弃的缓存**,重取一次网络往返而已;
+   * 而留下任何一条来路不明的凭据,换来的是一个没人能从错误里看出成因的 401。
+   */
+  authBaseUrl: string
+  /** 当前计费池。null = 登录了但没选池(或用户切回了自填 Key)。 */
+  pool: Pool | null
+  tokens: Record<string, string>
+}
+
 /** `gen` 是调用方出发时的代际,见下面写盘前那道守卫。 */
 async function persist(gen: number): Promise<void> {
   if (!(await encryptionIsReal())) return // 只留内存,重启后重取
-  const payload = JSON.stringify(Object.fromEntries(cache))
+  const envelope: PersistedV3 = {
+    v: 3,
+    authBaseUrl: authBaseUrl(),
+    pool: activePool,
+    tokens: Object.fromEntries(cache),
+  }
+  const payload = JSON.stringify(envelope)
   const buf = await safeStorage.encryptStringAsync(payload)
   // 上面两个 await 之间都可能有人登出。`payload` 是登出**之前**快照的,密文里带着
   // token,而 `fs.rm` 早已跑完 —— 写下去就是把一枚永不过期、无法单独吊销的 token
@@ -284,11 +345,62 @@ export async function loadPersisted(): Promise<void> {
     // 填回去的话,`getActivePoolToken()` 立刻就能把它交给 header 注入器,
     // 下一次 `persist()` 又会把它写回盘 —— 登出被整个撤销。
     if (gen !== generation) return
-    for (const [k, v] of Object.entries(JSON.parse(json) as Record<string, string>)) {
+    const parsed: unknown = JSON.parse(json)
+    const { tokens, pool } = readEnvelope(parsed)
+    for (const [k, v] of Object.entries(tokens)) {
       if (typeof v === 'string' && v) cache.set(k, v)
     }
+    // 池要在 token 之后才置:反过来的话,中间那一瞬 `getActivePoolToken()` 会
+    // 拿着新池去查一个还没填好的缓存,回 null —— 而调用方会把 null 读成
+    // 「没有平台凭据」,退回自填 Key。这里全同步,窗口极短,但语义上仍该是
+    // 「凭据先就位,再宣布可用」,与 `auth:set-billing-pool` 那条同一个顺序纪律。
+    //
+    // 只在这一版的池确实解析出来时才置:v1 老文件没有池,保持 null(与升级前
+    // 逐字节相同的行为),下一次 `setActivePool` 会把它补上并升级成 v2。
+    if (pool) activePool = pool
   } catch {
     // 文件不存在 / 换了机器解不开 / 格式变了。都不是错误,重取即可。
+  }
+}
+
+const EMPTY_ENVELOPE = { tokens: {} as Record<string, string>, pool: null }
+
+/**
+ * 解析落盘信封。认不出的形状、或**来自别的环境**的,一律当空 —— 不猜、不部分采用。
+ *
+ * v1(裸 map)与 v2(带池)都没有环境标记,**无法证明它们属于当前 IdP**,所以一并丢弃。
+ * 代价只是升级后第一次用平台余额时多一趟网络往返;而留着它们,换来的是「换过环境的
+ * 机器一启动就 401,且错误里看不出成因」——那正是 v3 要消灭的东西。
+ */
+function readEnvelope(parsed: unknown): { tokens: Record<string, string>; pool: Pool | null } {
+  if (!parsed || typeof parsed !== 'object') return EMPTY_ENVELOPE
+  const obj = parsed as Record<string, unknown>
+  if (obj.v !== 3) return EMPTY_ENVELOPE
+  // 环境不符 = 这批凭据是别处签的,一个都不能要。
+  if (obj.authBaseUrl !== authBaseUrl()) return EMPTY_ENVELOPE
+  const tokens =
+    obj.tokens && typeof obj.tokens === 'object'
+      ? (obj.tokens as Record<string, string>)
+      : {}
+  return { tokens, pool: readPool(obj.pool) }
+}
+
+/**
+ * 池的形状窄化。
+ *
+ * `projectId` 必须是正整数 —— 盘上的值可能来自更老的版本、被手改过、或解密出
+ * 半截。放一个 NaN 进去的后果不是崩,是 `poolKey()` 生成 `NaN:` 这样一个永远
+ * 命不中缓存的键:平台余额看着是开的,每次却都取不到 token 而静默退回自填 Key。
+ */
+function readPool(raw: unknown): Pool | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const projectId = Number(o.projectId)
+  if (!Number.isInteger(projectId) || projectId <= 0) return null
+  const ppid = Number(o.producerProjectId)
+  return {
+    projectId,
+    producerProjectId: Number.isInteger(ppid) && ppid > 0 ? ppid : null,
   }
 }
 

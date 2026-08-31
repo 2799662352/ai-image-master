@@ -121,7 +121,9 @@ describe('codexProviders', () => {
       requiresOpenaiAuth: true,
       compatibilityPolicy: 'responses-namespace-bridge',
     })
-    expect(deepseek).not.toHaveProperty('memoriesModel')
+    // 见 gatewayModelRouting 里那条注释:留空不等于「跟随对话模型」,而是跟随
+    // **上次 spawn 那一刻**选中的模型 —— 那笔钱用户在 UI 上看不出来。
+    expect(deepseek.memoriesModel).toBe('deepseek-v4-flash')
 
     const apiyiGrok = resolveProviderChannel('apiyi-grok')
     expect(apiyiGrok).toMatchObject({

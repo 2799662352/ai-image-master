@@ -9,6 +9,7 @@ import {
   buildUnknownTaskBanner,
   GENERATE_BLOCKING_BUDGET_MS,
 } from '../videoTools'
+import { ALL_VIDEO_MODEL_ALIASES } from '../../../../types/seedance'
 import type { SeedanceTaskState } from '../../../services/seedance/types'
 
 type Handler = (
@@ -69,6 +70,41 @@ describe('registerVideoTools / schemas', () => {
     registerVideoTools(server, router)
     const schema = tools[0].config.inputSchema
     expect(schema.safeParse({ prompt: '猫跳舞' }).success).toBe(true)
+  })
+
+  /**
+   * 每个可选模型都必须在 `model` 的 describe 里被提到。
+   *
+   * ## 为什么这条会漏,以及漏了会怎样
+   *
+   * 枚举是从能力表**自动派生**的(`ALL_VIDEO_MODEL_ALIASES`),所以加一个模型别名
+   * 立刻就能被传进来 —— 而那段人话描述是**手写**的。两者不同步时,schema 层一切
+   * 正常、类型检查一切正常、测试一切正常,唯一的症状是 **agent 不知道这个模型
+   * 存在**:它照着描述选型,永远选不到没写进去的那个;万一选了,也不知道它的约束。
+   *
+   * 2026-08-31 加 `wan3-prime` 时正是这么漏的 —— 派生的枚举自动带上了它,两个
+   * MCP 工具的描述里却一个字都没有。
+   *
+   * 只查「名字出现过」而不查措辞:描述该怎么写是人的判断,这里只保证**没有模型
+   * 被忘掉**。
+   */
+  it('每个可选模型都在 model 描述里被提到 —— 枚举自动派生,描述是手写的', () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const shape = (tools[0].config.inputSchema as unknown as {
+      shape: Record<string, { description?: string }>
+    }).shape
+    const desc = shape.model?.description ?? ''
+    expect(desc, 'model 字段没有 describe').not.toBe('')
+
+    const missing = ALL_VIDEO_MODEL_ALIASES.filter((alias) => !desc.includes(`"${alias}"`))
+    expect(
+      missing,
+      missing.length === 0
+        ? ''
+        : `这些模型能被传进来,但描述里没提到:\n${missing.map((m) => `  - ${m}`).join('\n')}\n` +
+          `agent 照着描述选型,选不到没写进去的那个。`,
+    ).toEqual([])
   })
 
   it('generate_video rejects empty prompt / bad duration / bad resolution', () => {

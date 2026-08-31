@@ -139,8 +139,37 @@ describe('两个提交入口都必须问过这个谓词', () => {
    *
    * 🧬 变异点:把 `baseUrl` 那一行删掉(退回默认的 `MIAU_BASE_URL`),这条必红。
    */
-  it('网关视频客户端与注入器共用同一个 origin 解析', () => {
-    expect(runtimeSource).toContain('baseUrl: `${resolveGatewayOrigin()}/v1`')
+  it('每一个打网关的视频客户端都各自接了 origin 解析', () => {
+    // ⚠️ 这条**曾经写成** `expect(runtimeSource).toContain('baseUrl: …')` ——
+    // 只证明「至少有一个客户端接了」。于是 2026-08-31 万相漏接 baseUrl 时它照样
+    // 是绿的:seedanceGateway 那一处让整个文件包含了这个字符串。
+    //
+    // 后果是真机故障:测试服模式下 codex / 出图 / 平台版 Seedance 都跟着 override
+    // 打测试网关并正常扣费,唯独万相把测试服签发的影子 token 发到生产网关,
+    // 回一句 `401 无效的令牌` —— 别的功能全对,只有它错,人必然先去查凭据,
+    // 而凭据是对的,错的是收件人。
+    //
+    // 所以现在**逐个客户端**查:新增第三个网关客户端而忘了接 origin,这里会点名。
+    const GATEWAY_CLIENTS = ['createWan3Client', 'createSeedanceGatewayClient'] as const
+
+    const missing: string[] = []
+    for (const fn of GATEWAY_CLIENTS) {
+      const start = runtimeSource.indexOf(`${fn}({`)
+      expect(start, `${fn} 没在 runtime.ts 里构造`).toBeGreaterThanOrEqual(0)
+      // 从构造点往后取一段足够覆盖整个选项对象的窗口。用窗口而不是配对花括号:
+      // 选项里有箭头函数和模板串,手写配对反而更容易出错,而这一段本来就不长。
+      const block = runtimeSource.slice(start, start + 2000)
+      if (!block.includes('baseUrl: `${resolveGatewayOrigin()}/v1`')) missing.push(fn)
+    }
+
+    expect(
+      missing,
+      missing.length === 0
+        ? ''
+        : `这些网关客户端没接 resolveGatewayOrigin():\n${missing.map((m) => `  - ${m}`).join('\n')}\n` +
+          `不接就会回落到写死的生产 MIAU_BASE_URL —— 测试服模式下它会把测试服的\n` +
+          `影子 token 发到生产网关,回一句 401,而错误里不会提到是地址分叉了。`,
+    ).toEqual([])
   })
 
   it('没有任何一处裸调用(守卫之外直接调)', () => {

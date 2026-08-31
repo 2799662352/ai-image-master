@@ -41,7 +41,7 @@ export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
  * 轮询与落盘那一整套。真正按 provider 分派的只有四处 —— 请求组包、响应解析、
  * 计费公式、base URL,见各自的 `provider` 分支。
  */
-export type VideoModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5' | 'wan3'
+export type VideoModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5' | 'wan3' | 'wan3-prime'
 
 /**
  * @deprecated 用 `VideoModelAlias`。保留这个名字只是为了让既有的十几处引用不必
@@ -235,6 +235,33 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     // 官方允许「只给参考音频」的组合。
     audioOnlyReference: true,
+  },
+  /**
+   * 万相 3.0 Prime（`wan3.0-video-prime`）—— 同一家、同一套协议、同一枚 Miau Key，
+   * 只是上游 slug 与单价不同。
+   *
+   * **能力逐项与 wan3 相同**（2026-08-31 与用户确认）。这里写成展开的一份而不是
+   * `{ ...wan3 }` 扩展：能力表是「这个档位的规格」的真源，两档将来完全可能分叉
+   * （官方给 prime 单独放宽时长或分辨率都不奇怪），而扩展写法会让分叉那天的 diff
+   * 看起来像是在“改 wan3”。多几行换一处清晰的归属。
+   *
+   * 价格不同 —— 见 `video-workbench/pricing.ts` 的 `CNY_PER_SECOND`：网关实测
+   * `model_price` 为 0.6（wan3）与 0.8（prime），按次计费。
+   */
+  'wan3-prime': {
+    provider: 'miau',
+    ratios: WAN3_RATIOS,
+    seedMax: 2_147_483_647,
+    modes: WAN3_MODES,
+    duration: { min: 2, max: 30 },
+    resolutions: ['480p', '720p', '1080p'],
+    maxImages: 10,
+    maxVideos: 5,
+    maxAudios: 5,
+    maxMaterialsTotal: 20,
+    subtitleErase: false,
+    audioOnlyReference: true,
+    taskModes: [],
   },
 }
 

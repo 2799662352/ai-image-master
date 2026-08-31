@@ -94,9 +94,23 @@ describe('auth session', () => {
 
   it('authBaseUrl 缺省指向官网,并归一化末尾斜杠', async () => {
     const m = await import('../session')
+    const { allowAuthBaseUrlOverride } = await import('../authBaseUrl')
+
     expect(m.authBaseUrl()).toBe('https://13797248455.xyz')
+
+    // 🚨 **闸默认是关的**,只设环境变量不生效 —— 这一条正是打包产物的行为:
+    // 生产构建无视 `CATIMATION_AUTH_BASE_URL`,免得被牵去测试服后端,而网关那侧
+    // 另有硬闸仍指生产 —— 两边劈叉的表现是一句没头没脑的 401(2026-08-31 撞过)。
     process.env.CATIMATION_AUTH_BASE_URL = 'https://staging.example.com/'
-    expect(m.authBaseUrl()).toBe('https://staging.example.com')
+    expect(m.authBaseUrl()).toBe('https://13797248455.xyz')
+
+    // 开发构建由组合根打开闸之后才认。
+    allowAuthBaseUrlOverride(true)
+    try {
+      expect(m.authBaseUrl()).toBe('https://staging.example.com')
+    } finally {
+      allowAuthBaseUrlOverride(false)
+    }
   })
 
   // 后端缺 codeChallenge / state 会 400,所以这里用 toEqual 逐字段钉死整个请求体。

@@ -487,8 +487,18 @@ describe('gatewayToken 落盘', () => {
     storage.available = true
     storage.asyncAvailable = true
     storage.backend = 'gnome_libsecret'
+    // v3 信封:`authBaseUrl` 必须与本文件顶部对 `../authBaseUrl` 的 mock 一致,
+    // 否则会被当成「别的环境签的」整份丢弃(那是另一条用例在测的行为)。
     fsMock.readFile.mockResolvedValueOnce(
-      Buffer.from(JSON.stringify({ '342:': 'sk-restored' }), 'utf8'),
+      Buffer.from(
+        JSON.stringify({
+          v: 3,
+          authBaseUrl: 'https://example.test',
+          pool: null,
+          tokens: { '342:': 'sk-restored' },
+        }),
+        'utf8',
+      ),
     )
     const m = await import('../gatewayToken')
 
@@ -576,5 +586,128 @@ describe('gatewayToken 落盘', () => {
     expect(String(target)).toContain('gateway-tokens.enc')
     // 少了 force,文件不存在时 rm 会抛 ENOENT,再被调用处的 .catch 吞掉。
     expect(options).toEqual({ force: true })
+  })
+})
+
+
+/**
+ * 计费池必须跟 token 一起落盘。
+ *
+ * ## 这一组守的是什么
+ *
+ * token 缓存本来就落盘,但 `activePool` 只活在模块级内存里 —— 于是重启后主进程
+ * 是「手上有钥匙,不知道开哪把锁」:`getActivePoolToken()` 一律回 null。视频那条路
+ * (万相 / 平台版 Seedance)在主进程里正是靠它判「此刻能不能走平台余额」,判不出来
+ * 就落到用户自填的 Miau Key。
+ *
+ * 2026-08-31 真机故障:用户已登录、余额正常显示、codex 聊天也在正常扣平台余额,
+ * 工作台出万相却收到 `401 Invalid token` —— 那一刻 activePool 是 null,而自填位里
+ * 存着测试时随手填的 `1`。**上游的 401 里不会有任何一个字提到用的不是平台余额**,
+ * 这正是它难查的原因。
+ *
+ * 渲染层 `billingSource` 的持久化以这一组为前提(见 useQuotaStore 的注释),
+ * 两处是一对 —— 回退任何一半都会把那个 401 挖回来。
+ */
+describe('计费池随 token 一起落盘', () => {
+  beforeEach(() => {
+    setPlatform('win32')
+    storage.available = true
+    storage.asyncAvailable = true
+  })
+
+  it('置池后落盘,重启后读回来 —— getActivePoolToken 立刻可用', async () => {
+    const mod = await import('../gatewayToken')
+    fetchMock.mockResolvedValueOnce(ok('sk-live'))
+    await mod.getGatewayToken(POOL)
+    mod.setActivePool(POOL)
+    // setActivePool 内部是 fire-and-forget 落盘,让它跑完。
+    //
+    // 等的是**池出现在密文里**,不是「写过盘」:取 token 那一步已经写过一次
+    // (那时 activePool 还是 null),只等 `"v":2` 会立刻被那一次满足,于是断言
+    // 拿到的是不带池的旧内容 —— 用例会红,但红的原因跟被测行为无关。
+    await vi.waitFor(() => {
+      expect(String(fsMock.writeFile.mock.calls.at(-1)?.[1])).toContain('"projectId":342')
+    })
+    const written = String(fsMock.writeFile.mock.calls.at(-1)?.[1])
+
+    // 重启:全新模块实例,内存里什么都没有。
+    vi.resetModules()
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(written))
+    const fresh = await import('../gatewayToken')
+    expect(fresh.getActivePoolToken()).toBeNull() // 读盘之前
+    await fresh.loadPersisted()
+
+    expect(fresh.getActivePool()).toEqual(POOL)
+    expect(fresh.getActivePoolToken()).toBe('sk-live')
+  })
+
+  /**
+   * 契约在 2026-08-31 被**刻意反转**:v1/v2 老信封整份丢弃,不再读回 token。
+   *
+   * 旧行为(v1 的 token 照读)看着更省一趟网络往返,但那批 token **没有环境标记** ——
+   * 无法证明它们是当前 IdP 签发的。一台在测试服登录过的机器换回生产后,会把测试服的
+   * token 读回内存并 arm 上去,第一笔请求就是 `401 无效的令牌`,而错误里看不出成因。
+   *
+   * 代价只是升级后第一次用平台余额多取一次(token 本就是可丢弃的缓存)。
+   */
+  it('没有环境标记的老信封(v1/v2)整份丢弃 —— 证不出是本环境签的就不要', async () => {
+    for (const stale of [
+      JSON.stringify({ '342:': 'sk-v1' }),
+      JSON.stringify({ v: 2, pool: POOL, tokens: { '342:': 'sk-v2' } }),
+    ]) {
+      vi.resetModules()
+      fsMock.readFile.mockResolvedValueOnce(Buffer.from(stale))
+      const mod = await import('../gatewayToken')
+      await mod.loadPersisted()
+
+      expect(mod.getActivePool()).toBeNull()
+      mod.setActivePool(POOL)
+      expect(mod.getActivePoolToken()).toBeNull()
+    }
+  })
+
+  it('签发环境不符的 v3 信封同样整份丢弃', async () => {
+    // 这条才是真正要防的场景:格式是新的、内容也完整,唯独来自另一个 IdP。
+    vi.resetModules()
+    const foreign = JSON.stringify({
+      v: 3,
+      authBaseUrl: 'https://some-other-idp.test',
+      pool: POOL,
+      tokens: { '342:': 'sk-from-elsewhere' },
+    })
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(foreign))
+    const mod = await import('../gatewayToken')
+    await mod.loadPersisted()
+
+    expect(mod.getActivePool()).toBeNull()
+    mod.setActivePool(POOL)
+    expect(mod.getActivePoolToken()).toBeNull()
+  })
+
+  it('盘上的池形状不合法就当没有 —— 不许把 NaN 放进池键', async () => {
+    // NaN 的后果不是崩,是 `poolKey()` 生成 `NaN:` 这样一个永远命不中缓存的键:
+    // 平台余额看着是开的,每次却都取不到 token 而静默退回自填 Key。
+    vi.resetModules()
+    const bad = JSON.stringify({ v: 2, pool: { projectId: 'abc' }, tokens: { '342:': 'sk-x' } })
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(bad))
+    const mod = await import('../gatewayToken')
+    await mod.loadPersisted()
+
+    expect(mod.getActivePool()).toBeNull()
+    expect(mod.getActivePoolToken()).toBeNull()
+  })
+
+  it('登出把池一并清掉,不只是清 token', async () => {
+    const mod = await import('../gatewayToken')
+    fetchMock.mockResolvedValueOnce(ok('sk-live'))
+    await mod.getGatewayToken(POOL)
+    mod.setActivePool(POOL)
+    expect(mod.getActivePool()).toEqual(POOL)
+
+    await mod.clearGatewayTokens()
+
+    expect(mod.getActivePool()).toBeNull()
+    expect(mod.getActivePoolToken()).toBeNull()
+    expect(fsMock.rm).toHaveBeenCalled()
   })
 })

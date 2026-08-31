@@ -119,6 +119,22 @@ function qwenChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
     envKey: 'MIAU_API_KEY',
     credentialId: 'qwen',
     model: 'qwen3.7-max-dashscope',
+    /**
+     * 后台记忆任务钉死在最便宜的那一档,**不跟随选中的对话模型**。
+     *
+     * 不声明的话它回落到 `provider.model` —— 也就是 **codex 上次 spawn 那一刻选中
+     * 的模型**,而 `memories.extract_model` 是启动时用 `-c` 写死的:此后在选择器里
+     * 换模型只改对话那一路(同通道、同上下文窗口,不触发重启),这两条纹丝不动。
+     *
+     * 2026-08-31 真机撞到:用户切到 Flash 聊天,流水里却是 21 次 qwen3.8-max
+     * 共 ¥2.14,而 Flash 只花了 ¥0.10。形状很好认 —— 对话请求输入 3~5 万 token
+     * (带完整上下文),记忆请求只有 7 千上下,一次接一次。用户完全看不出这笔钱
+     * 是哪来的,因为 UI 上他选的明明是 Flash。
+     *
+     * 钉 Flash 而不是「跟随选中模型」:后者要在每次换模型时重启 codex(几秒中断),
+     * 而记忆抽取本来就是总结活,用不着 max。同一个网关同一枚 Key,不存在端点问题。
+     */
+    memoriesModel: 'qwen3.8-flash',
     allowedModels: QWEN_MIAU_MODELS,
     // ⚠️ 曾经是 'none',那是**只验了对话没验工具**得出的结论。
     //
@@ -203,6 +219,13 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     baseUrl: 'https://rightapi.ai/codex/v1',
     envKey: 'OPENAI_API_KEY',
     model: 'gpt-5.5',
+    // 与 apiyi-standard 一致地钉死,而不是回落到「上次 spawn 那一刻选中的模型」。
+    //
+    // 这条通道不限 `allowedModels`,用户能选到 gpt-5.6-sol 那档 —— 价差是实打实的,
+    // 而记忆任务跟着一个**已经过期的**选择跑,用户在 UI 上完全看不出来
+    // (qwen 通道 2026-08-31 真机撞过同一个形状)。钉在本通道自己的默认模型上,
+    // 行为与不声明时的「首次 spawn」一致,只是不再随选择漂移。
+    memoriesModel: 'gpt-5.5',
     // Sold on /codex/v1 but absent from Codex's bundled model/list — without
     // this additive row the picker never offers it on a live catalog.
     extraCatalogModels: Object.freeze(['gpt-5.5-openai-compact']),
@@ -267,8 +290,15 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     requiresOpenaiAuth: true,
     compatibilityPolicy: 'responses-namespace-bridge',
     // This host lists only the two V4 slugs. A GPT memoriesModel would
-    // 400 the same way it does on rightcode-grok; leave unset so side
-    // requests ride the channel's own chat model.
+    // 400 the same way it does on rightcode-grok — that part of the original
+    // reasoning still holds.
+    //
+    // 但「不声明」并不等于「跟随对话模型」:不声明会回落到 **codex 上次 spawn 那一刻
+    // 选中的模型**,而这两条是启动时 `-c` 写死的,之后换模型不会改它。用户选 flash
+    // 聊天、记忆却仍跑在 pro 上,而且看不出这笔钱是哪来的(qwen 通道 2026-08-31
+    // 真机撞过这个形状)。所以钉同 host 最便宜的那一档 —— 记忆抽取是总结活,
+    // 用不着 pro,也不需要跨到别的端点去。
+    memoriesModel: 'deepseek-v4-flash',
   }),
   Object.freeze({
     id: 'rightcode-claude',

@@ -58,9 +58,17 @@ const GATEWAY_ORIGIN_ENV = 'CATIMATION_GATEWAY_ORIGIN'
  * 无法在任何非生产环境里被验证,而不可验证本身也是一种风险。
  */
 export function resolveGatewayOrigin(): string {
-  // `app` 在单测里被 mock,`isPackaged` 可能是 undefined —— 那按「非打包」处理,
-  // 否则测试就够不到覆盖分支。真实主进程里它一定是布尔值。
-  if (app?.isPackaged === true) return DEFAULT_GATEWAY_ORIGIN
+  // ⚠️ 判据是 `!== false` 而不是 `=== true`,兜底方向**与另外两处一致**:
+  // `resolveMiauBaseUrl` 的调用方写 `app?.isPackaged ?? true`,`authBaseUrl()` 的
+  // 闸默认关 —— 都是「证不出这是开发构建就按生产办」。
+  //
+  // 这里原本写 `=== true`,理由是「app 在单测里被 mock,isPackaged 可能 undefined,
+  // 否则测试够不到覆盖分支」。那个理由在真实主进程里成立(`app.isPackaged` 一定是
+  // 布尔值,所以分支不可达),但它让**三处里唯一一处**在拿不到 `app` 时倒向放行。
+  // 单测的 mock 本来就显式给 `{ isPackaged: false }`,够得到覆盖分支不依赖这个兜底,
+  // 所以改成 fail-closed 零代价 —— 而且这个模块一旦被搬到 electron 之外的上下文
+  // (脚本、worker),放行的那一版会静默地把凭据发到环境变量指定的地址。
+  if (app?.isPackaged !== false) return DEFAULT_GATEWAY_ORIGIN
 
   const raw = process.env[GATEWAY_ORIGIN_ENV]?.trim()
   if (!raw) return DEFAULT_GATEWAY_ORIGIN
