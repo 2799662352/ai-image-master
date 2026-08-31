@@ -5,6 +5,7 @@ import { useApi } from '../hooks/useService'
 import type { GenerateSnapshot } from '../stores/useGenerateStore'
 import type { BatchRefImage } from '../stores/useBatchStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
+import { BillingHintBar } from '../features/account/BillingHintBar'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
 import { TemplateInline } from '../react-app/components/TemplateInline'
 import BatchRefDrop from './batch/BatchRefDrop'
@@ -278,6 +279,11 @@ export default function GeneratePage() {
             ? `加入队列 (运行中 × ${inFlightCount})`
             : '开始生成'}
       </button>
+
+      {/* 按下去之前先说清这次花谁的钱。位置照 Cursor / Codex —— 两家都把用量放在
+          输入框正下方而不是顶栏,因为决策就发生在按钮前面那一刻。头部胶囊解决
+          「想看时看得到」,这一条解决「按下去之前知道会发生什么」。 */}
+      <BillingHintBar />
 
       {resultUrls.length > 0 && (
         <div className="flex items-center justify-between border-t-2 border-zinc-800 pt-3">
