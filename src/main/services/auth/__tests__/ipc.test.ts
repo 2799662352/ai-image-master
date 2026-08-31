@@ -2,7 +2,7 @@
 // 端口有没有在每条退出路径上释放、verifier 有没有跨进程泄漏、
 // 打开浏览器前有没有真的比对过 origin。
 
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
 const handlers = new Map<string, (...a: unknown[]) => unknown>()
 const sent: Array<{ channel: string; payload: unknown }> = []
@@ -1047,6 +1047,69 @@ describe('auth IPC 编排', () => {
     // 才能同时容纳同步与异步两种实现。真抛了的话这一行会带着原始错误让测试失败。
     await Promise.resolve(call('auth:logout'))
     expect(sent).toHaveLength(0)
+  })
+
+  /**
+   * 扣费后刷余额:主进程把消费信号转成一条广播。
+   *
+   * 用真的 `platformSpend`(只把定时器换成假的)而不是 mock 它 —— 这两条要测的
+   * 恰恰是**接线**本身,mock 掉汇合点就等于把被测对象换成了测试替身。
+   */
+  describe('消费信号 → 余额广播', () => {
+    async function noteSpendAndFlush(): Promise<void> {
+      const { notePlatformSpend } = await import('../platformSpend')
+      notePlatformSpend()
+      // 汇合点是尾部防抖的,不推进时间什么都不会发生。
+      vi.advanceTimersByTime(2000)
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    // 必须还原:假定时器会一直留到本文件后面的用例上,而那些用例里有靠真
+    // setTimeout 放干微任务的 `flush()` —— 它会永远等下去。
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('收到消费信号就广播一次 balance-stale', async () => {
+      await register()
+      await noteSpendAndFlush()
+
+      expect(sent).toEqual([{ channel: 'auth:balance-stale', payload: undefined }])
+    })
+
+    /**
+     * 🧬 变异点:去掉 `registerAuthIpc` 里那句 `activeSpendSubscription?.()`,这条必红。
+     *
+     * 生产上本函数的返回值是被丢掉的、没人调 dispose,而热重载会重复进来 ——
+     * 订阅只增不减,一次消费广播 N 遍,渲染层跟着拉 N 次余额。这种「越用越慢」
+     * 不会有任何东西变红,所以得在这儿钉住。
+     */
+    it('重复注册只留一份订阅,不会广播两遍', async () => {
+      await register()
+      await register()
+      await noteSpendAndFlush()
+
+      expect(sent.filter((s) => s.channel === 'auth:balance-stale')).toHaveLength(1)
+    })
+
+    it('dispose 之后不再广播', async () => {
+      const dispose = await register()
+      dispose()
+      await noteSpendAndFlush()
+
+      expect(sent).toHaveLength(0)
+    })
+
+    it('窗口已销毁时不广播,也不抛', async () => {
+      await register()
+      windowDestroyed = true
+
+      await expect(noteSpendAndFlush()).resolves.toBeUndefined()
+      expect(sent).toHaveLength(0)
+    })
   })
 
   // verifier 泄漏到渲染层等于 PKCE 白做了。

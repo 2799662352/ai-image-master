@@ -523,12 +523,12 @@ async function startCompatibilityBridgeServer(
     /**
      * 这次是否花了平台的钱 —— 两个条件都要成立,`finally` 里据此刷余额。
      *
-     * `billedUpstream` 单独记一笔而不是只看 `platform`:502 那一支是**连都没连上**
+     * `upstreamAnswered` 单独记一笔而不是只看头表:502 那一支是**连都没连上**
      * (undici 传输层失败),上游不可能计费,报上去只是白查一次余额。反过来,只要
      * 上游回过话就算,哪怕是 4xx/5xx —— 那时钱可能已经扣了。
      */
-    let platformBilled: Record<string, string> | null | undefined
-    let billedUpstream = false
+    let usedPlatformCredentials = false
+    let upstreamAnswered = false
     try {
       const method = request.method ?? 'GET'
       const rawBody = await readRequestBody(request)
@@ -562,7 +562,7 @@ async function startCompatibilityBridgeServer(
       // 这与出网注入器的 host 白名单是同一条纪律。
       const forwarded = requestHeaders(request.headers)
       const platform = transport.platformHeaders?.(target)
-      platformBilled = platform
+      usedPlatformCredentials = Boolean(platform)
       if (platform) {
         for (const [name, value] of Object.entries(platform)) forwarded.set(name, value)
       }
@@ -576,7 +576,7 @@ async function startCompatibilityBridgeServer(
           signal: abortController.signal,
         },
       )
-      billedUpstream = true
+      upstreamAnswered = true
       response.statusCode = upstreamResponse.status
       copyResponseHeaders(upstreamResponse.headers, response)
       if (!upstreamResponse.body) {
@@ -620,7 +620,7 @@ async function startCompatibilityBridgeServer(
       // 放在 `finally` 而不是某个成功分支里:出口有五个(无 body / SSE / JSON /
       // 裸转发 / 502),挑其中几个贴一定会漏,而漏掉的那条就是「这类聊天扣了钱
       // 余额不动」。流式那两支在这里已经 `await pipeline` 完,时机也对。
-      if (platformBilled && billedUpstream) notePlatformSpend()
+      if (usedPlatformCredentials && upstreamAnswered) notePlatformSpend()
       request.off('aborted', abortUpstream)
       response.off('close', abortOnEarlyClose)
     }

@@ -57,6 +57,12 @@ const AUTH_CHANNELS = [
 
 const CLIENT_NAME = 'CATIMATION Desktop'
 
+/**
+ * 当前挂着的消费订阅。模块级,好让重复 `registerAuthIpc` 能先退掉上一份 ——
+ * 与 `AUTH_CHANNELS` 那圈 `removeHandler` 是同一条纪律,见那里的注释。
+ */
+let activeSpendSubscription: (() => void) | null = null
+
 interface PendingLogin {
   pairingId: string
   codeVerifier: string
@@ -413,10 +419,17 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
     ipcMain.removeHandler(ch)
   }
 
-  // 消费信号 → 渲染层刷余额。订阅装在这里而不是模块顶层:模块加载期没有窗口,
-  // 而 dispose 时必须能退订 —— 热重载会重复调用本函数,不退订就会越叠越多,
-  // 一次消费广播 N 遍。
-  const unsubscribeSpend = onPlatformSpend(() => broadcastBalanceStale(getWindow))
+  // 消费信号 → 渲染层刷余额。
+  //
+  // 订阅装在这里而不是模块顶层:模块加载期还没有窗口可广播。
+  //
+  // 先退掉上一份,理由与上面那圈 `removeHandler` **完全相同** —— 生产上本函数的
+  // 返回值(disposer)是被丢掉的,没人调;而热重载 / 测试会重复进来。不退的话订阅
+  // 只增不减,一次消费就广播 N 遍,渲染层跟着拉 N 次余额。这种「越用越慢」的形状
+  // 不会有任何东西变红。
+  activeSpendSubscription?.()
+  activeSpendSubscription = onPlatformSpend(() => broadcastBalanceStale(getWindow))
+  const unsubscribeSpend = activeSpendSubscription
 
   ipcMain.handle('auth:get-state', () => getAuthState())
 
@@ -561,6 +574,9 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
   return () => {
     clearPending()
     unsubscribeSpend()
+    // 只在还是自己那份时清:后来者已经把上一份退掉并换成它的了,这里再置 null
+    // 会让**它**的引用丢失,于是再下一次注册退不掉它 —— 正是这段要防的事。
+    if (activeSpendSubscription === unsubscribeSpend) activeSpendSubscription = null
     for (const ch of AUTH_CHANNELS) {
       ipcMain.removeHandler(ch)
     }

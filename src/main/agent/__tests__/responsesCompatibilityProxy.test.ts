@@ -1,6 +1,16 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+/**
+ * 扣费上报。mock 掉汇合点而不是用真的:真模块带 1200ms 尾部防抖,这个文件里
+ * 都是真起服务器的用例,再叠一层定时器只会让它们变慢变脆。这里要测的是
+ * 「代理在什么条件下报」,汇合点自己的防抖有它自己的测试。
+ */
+const noteSpend = vi.fn()
+vi.mock('../../services/auth/platformSpend', () => ({
+  notePlatformSpend: () => noteSpend(),
+}))
 import { resolveProviderChannel } from '../gatewayModelRouting'
 import {
   flattenNamespaceTools,
@@ -655,6 +665,125 @@ describe('平台余额组头', () => {
         body: '{}',
       })
       expect(upstream.headers().authorization).toBe('Bearer sk-user-own')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+})
+
+/**
+ * 扣费上报。codex 聊天走平台余额时,这条决定了余额数字会不会跟着动。
+ */
+describe('平台消费上报', () => {
+  async function startUpstream(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+    const server = createServer((_request, response) => {
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  /** 先绑后关,拿一个保证无人监听的端口 —— 连过去必然 ECONNREFUSED。 */
+  async function deadBaseUrl(): Promise<string> {
+    const port = await new Promise<number>((resolve) => {
+      const probe = createServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const p = (probe.address() as AddressInfo).port
+        probe.close(() => resolve(p))
+      })
+    })
+    return `http://127.0.0.1:${port}/v1`
+  }
+
+  const PLATFORM = { Authorization: 'Bearer sk-platform', 'X-Platform-User-Id': 'u1' }
+
+  beforeEach(() => {
+    noteSpend.mockClear()
+  })
+
+  it('用了平台凭据且上游回过话,报一次', async () => {
+    const upstream = await startUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => PLATFORM,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  /**
+   * 🧬 变异点:把 `finally` 里的判据从 `usedPlatformCredentials && upstreamAnswered`
+   * 放宽成只看前者,这条必红。
+   *
+   * 502 是**连都没连上**(undici 传输层失败),上游不可能计费。报了就是白查一次余额,
+   * 而且恰好是在网关不可达、每次重试都失败的时候 —— 那正是最不该加压的时刻。
+   */
+  it('连不上上游(502)时不报 —— 没连上就不可能扣钱', async () => {
+    const proxy = await startResponsesCompatibilityProxy(await deadBaseUrl(), {
+      platformHeaders: () => PLATFORM,
+    })
+    try {
+      const r = await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(r.status).toBe(502)
+      expect(noteSpend).not.toHaveBeenCalled()
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  // 上游回了 4xx/5xx 也要报:钱可能已经扣了才失败。
+  it('上游回了错误状态码仍然报', async () => {
+    const server = createServer((_request, response) => {
+      response.statusCode = 500
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    const proxy = await startResponsesCompatibilityProxy(`http://127.0.0.1:${port}/v1`, {
+      platformHeaders: () => PLATFORM,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    } finally {
+      await proxy.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('没用平台凭据时不报 —— 那是用户自己的 Key', async () => {
+    const upstream = await startUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      expect(noteSpend).not.toHaveBeenCalled()
     } finally {
       await proxy.close()
       await upstream.close()
