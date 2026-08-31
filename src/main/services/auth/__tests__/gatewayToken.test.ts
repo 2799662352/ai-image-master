@@ -578,3 +578,96 @@ describe('gatewayToken 落盘', () => {
     expect(options).toEqual({ force: true })
   })
 })
+
+
+/**
+ * 计费池必须跟 token 一起落盘。
+ *
+ * ## 这一组守的是什么
+ *
+ * token 缓存本来就落盘,但 `activePool` 只活在模块级内存里 —— 于是重启后主进程
+ * 是「手上有钥匙,不知道开哪把锁」:`getActivePoolToken()` 一律回 null。视频那条路
+ * (万相 / 平台版 Seedance)在主进程里正是靠它判「此刻能不能走平台余额」,判不出来
+ * 就落到用户自填的 Miau Key。
+ *
+ * 2026-08-31 真机故障:用户已登录、余额正常显示、codex 聊天也在正常扣平台余额,
+ * 工作台出万相却收到 `401 Invalid token` —— 那一刻 activePool 是 null,而自填位里
+ * 存着测试时随手填的 `1`。**上游的 401 里不会有任何一个字提到用的不是平台余额**,
+ * 这正是它难查的原因。
+ *
+ * 渲染层 `billingSource` 的持久化以这一组为前提(见 useQuotaStore 的注释),
+ * 两处是一对 —— 回退任何一半都会把那个 401 挖回来。
+ */
+describe('计费池随 token 一起落盘', () => {
+  beforeEach(() => {
+    setPlatform('win32')
+    storage.available = true
+    storage.asyncAvailable = true
+  })
+
+  it('置池后落盘,重启后读回来 —— getActivePoolToken 立刻可用', async () => {
+    const mod = await import('../gatewayToken')
+    fetchMock.mockResolvedValueOnce(ok('sk-live'))
+    await mod.getGatewayToken(POOL)
+    mod.setActivePool(POOL)
+    // setActivePool 内部是 fire-and-forget 落盘,让它跑完。
+    //
+    // 等的是**池出现在密文里**,不是「写过盘」:取 token 那一步已经写过一次
+    // (那时 activePool 还是 null),只等 `"v":2` 会立刻被那一次满足,于是断言
+    // 拿到的是不带池的旧内容 —— 用例会红,但红的原因跟被测行为无关。
+    await vi.waitFor(() => {
+      expect(String(fsMock.writeFile.mock.calls.at(-1)?.[1])).toContain('"projectId":342')
+    })
+    const written = String(fsMock.writeFile.mock.calls.at(-1)?.[1])
+
+    // 重启:全新模块实例,内存里什么都没有。
+    vi.resetModules()
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(written))
+    const fresh = await import('../gatewayToken')
+    expect(fresh.getActivePoolToken()).toBeNull() // 读盘之前
+    await fresh.loadPersisted()
+
+    expect(fresh.getActivePool()).toEqual(POOL)
+    expect(fresh.getActivePoolToken()).toBe('sk-live')
+  })
+
+  it('v1 老信封(裸 map)仍能读回 token,池保持 null', async () => {
+    // 升级路径:盘上是旧格式。token 不能丢(丢了要重新取一趟),池没有就是没有 ——
+    // 不猜。渲染层的 `load()` 会补一次 arm,把它升级成 v2。
+    vi.resetModules()
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(JSON.stringify({ '342:': 'sk-v1' })))
+    const mod = await import('../gatewayToken')
+    await mod.loadPersisted()
+
+    expect(mod.getActivePool()).toBeNull()
+    mod.setActivePool(POOL)
+    expect(mod.getActivePoolToken()).toBe('sk-v1')
+  })
+
+  it('盘上的池形状不合法就当没有 —— 不许把 NaN 放进池键', async () => {
+    // NaN 的后果不是崩,是 `poolKey()` 生成 `NaN:` 这样一个永远命不中缓存的键:
+    // 平台余额看着是开的,每次却都取不到 token 而静默退回自填 Key。
+    vi.resetModules()
+    const bad = JSON.stringify({ v: 2, pool: { projectId: 'abc' }, tokens: { '342:': 'sk-x' } })
+    fsMock.readFile.mockResolvedValueOnce(Buffer.from(bad))
+    const mod = await import('../gatewayToken')
+    await mod.loadPersisted()
+
+    expect(mod.getActivePool()).toBeNull()
+    expect(mod.getActivePoolToken()).toBeNull()
+  })
+
+  it('登出把池一并清掉,不只是清 token', async () => {
+    const mod = await import('../gatewayToken')
+    fetchMock.mockResolvedValueOnce(ok('sk-live'))
+    await mod.getGatewayToken(POOL)
+    mod.setActivePool(POOL)
+    expect(mod.getActivePool()).toEqual(POOL)
+
+    await mod.clearGatewayTokens()
+
+    expect(mod.getActivePool()).toBeNull()
+    expect(mod.getActivePoolToken()).toBeNull()
+    expect(fsMock.rm).toHaveBeenCalled()
+  })
+})

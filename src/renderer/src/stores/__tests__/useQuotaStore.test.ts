@@ -742,14 +742,29 @@ describe('useQuotaStore', () => {
       expect(useQuotaStore.getState().error).toBeTruthy()
     })
 
-    it('已经是 platform 时不重复 arm', async () => {
+    /**
+     * 契约在 2026-08-31 被**刻意反转**:已经是 platform 时**照样要 arm**。
+     *
+     * 旧行为(已是 platform 就跳过)在 `billingSource` 还不持久化的年代是对的 ——
+     * 那时启动必然是 `own-key`,能走到这里就说明本会话已经 arm 过了。
+     *
+     * 现在 `initialBillingSource()` 会在「上次选过池 + 没显式关过」时直接以
+     * `'platform'` 起手。若这里仍然跳过,渲染层就会自称平台、而主进程从没被
+     * `setBillingPool` 调过。主进程能自愈的前提是它盘上已有 v2 信封(带池);
+     * 刚从旧版本升上来的用户盘上是 v1(只有 token、没有池),那一整个会话都会
+     * 每次提交撞「平台余额未就绪」。
+     *
+     * arm 幂等:多发一次只是一次缓存命中的 IPC,漏发一次是整个会话用不了平台余额。
+     */
+    it('已经是 platform 也要 arm 一次 —— 主进程可能还没被告知池', async () => {
       await pickPersonalPool()
       await useQuotaStore.getState().setBillingSource('platform')
       auth.setBillingPool.mockClear()
 
       await useQuotaStore.getState().load()
 
-      expect(auth.setBillingPool).not.toHaveBeenCalled()
+      expect(auth.setBillingPool).toHaveBeenCalledTimes(1)
+      expect(useQuotaStore.getState().billingSource).toBe('platform')
     })
 
     /**
