@@ -164,21 +164,34 @@ export function setAutoImportPortraitEnabled(enabled: boolean): void {
  * 关着时整个函数直接返回。调用方传入开关值(工作台从提交载荷取、agent 路从
  * 上面那份镜像取);默认开。
  *
- * **在任务提交之后后台跑,不进提交关键路径**。理由是上游导入是异步的:返回那刻
- * 只有内部行 id、`status: 'pending'`,真 assetId 要等处理完成(实测数秒)才有 ——
- * 而生成本来就吃 https/data: 直传。让用户的卡片停在「准备中」等这串往返,等到的
- * 只是同一次生成,纯亏。
+ * ## 为什么改成**提交之前**跑(2026-08-31)
  *
- * 全程吞异常:这条链路只决定人像库里能不能看到这张图,不该影响生成成败。
+ * 原先在提交之后后台跑,理由是「上游导入异步,真 assetId 要等数秒,而生成本来
+ * 就吃 https 直传,让卡片停在准备中等这串往返,等到的只是同一次生成,纯亏」。
+ *
+ * 那个权衡漏了一种图:**真人参考图**。上游对直传的 https 图做真人检测,撞上
+ * `InputImageSensitiveContentDetected.PrivacyInformation` 直接拒绝整次生成;而
+ * 已登记的 `asset://` 引用不走这道检测。对这类图,那几秒不是「纯亏」,而是**能不能
+ * 出片**的分水岭 —— 而原顺序下入库永远发生在失败之后,救不了当次。
+ *
+ * 所以现在返回「原 URL → asset:// 」的映射,由调用方在提交前改写 content。
+ *
+ * 🚨 **改写只能对 Seedance 系做。** 万相不认识素材库,`requireHttpUrl` 见到
+ * `asset://` 会直接抛「万相 3.0 不支持人像库素材」—— 按计费而不是按模型来判的话,
+ * 平台模式下每一次万相生成都会挂。分派见调用点的 `acceptsAssetRefs`。
+ *
+ * 全程吞异常:登记失败**照发原 URL**(用户选定的行为)。真人图仍会被上游拒,
+ * 但至少不比改动之前更差,也不会因为库出问题就发不出生成。
  */
 async function importImagesToPortraitLibrary(
   content: SeedanceContentItem[],
   enabled: boolean,
-): Promise<void> {
-  if (!enabled) return
+): Promise<Map<string, string>> {
+  const rewrites = new Map<string, string>()
+  if (!enabled) return rewrites
   const apiKey = getSeedanceApiKey()
   const apiSecret = getSeedanceApiSecret()
-  if (!apiKey || !apiSecret) return
+  if (!apiKey || !apiSecret) return rewrites
   const images = content.filter(
     (item): item is Extract<SeedanceContentItem, { type: 'image_url' }> =>
       item.type === 'image_url' && !item.image_url.url.startsWith('asset://'),
@@ -203,11 +216,17 @@ async function importImagesToPortraitLibrary(
           { apiKey, apiSecret },
         )
         rememberAssetThumb(asset, url)
+        // 只在拿到**真** assetId 时才改写。导入是异步的,pending 那一刻只有内部行 id ——
+        // 拿它拼 `asset://` 会得到一个上游解析不了的引用,把「图没过审」换成
+        // 「素材不存在」,同样发不出去而且更难查。宁可这次直传原 URL。
+        const ref = asset.assetUrl || (asset.assetId ? `asset://${asset.assetId}` : '')
+        if (ref) rewrites.set(raw, ref)
       } catch (e) {
         console.warn('[seedance] portrait-library import failed (generation unaffected):', e)
       }
     }),
   )
+  return rewrites
 }
 
 /**
@@ -234,10 +253,11 @@ async function importImagesToPortraitLibrary(
 async function importImagesToPlatformLibrary(
   content: SeedanceContentItem[],
   enabled: boolean,
-): Promise<void> {
-  if (!enabled) return
+): Promise<Map<string, string>> {
+  const rewrites = new Map<string, string>()
+  if (!enabled) return rewrites
   const pool = getActivePool()
-  if (!pool) return
+  if (!pool) return rewrites
   const scope = {
     projectId: pool.projectId,
     ...(pool.producerProjectId !== null ? { producerProjectId: pool.producerProjectId } : {}),
@@ -252,15 +272,67 @@ async function importImagesToPlatformLibrary(
         const raw = item.image_url.url
         // 平台库只收公网 URL(上游火山要能自己去拉),data: 一律先过 COS 换永久链。
         const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
-        await ensureAsset(
+        // `ensureAsset` 内部已经轮询到就绪才返回(不就绪抛 ASSET_NOT_READY),
+        // 所以拿到 assetId 就一定是可引用的 —— 不需要像 vvdance 那条那样再判 pending。
+        const assetId = await ensureAsset(
           { url, name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}` },
           scope,
         )
+        if (assetId) rewrites.set(raw, `asset://${assetId}`)
       } catch (e) {
         console.warn('[seedance] platform-library import failed (generation unaffected):', e)
       }
     }),
   )
+  return rewrites
+}
+
+/**
+ * 提交前把参考图登记进人像库,并把 content 里的原始 URL 换成 `asset://` 引用。
+ *
+ * ## 为什么值得挡在提交前面
+ *
+ * 上游对直传的 https 图做真人检测,`InputImageSensitiveContentDetected.PrivacyInformation`
+ * 会拒绝整次生成;已登记的 `asset://` 不走这道检测。登记发生在提交之后的话,
+ * 永远救不了当次 —— 用户看到的是一句关于「真人」的报错,而它与「入库」之间
+ * 在代码里没有任何一处关联,只能靠猜。
+ *
+ * ## 🚨 万相必须原样放行
+ *
+ * `acceptsAssetRefs` 按**模型**判而不是按计费判。万相不认识素材库,
+ * `wan3/request.ts` 的 `requireHttpUrl` 见到 `asset://` 直接抛「万相 3.0 不支持
+ * 人像库素材」。按计费判的话,平台模式下每一次万相生成都会挂 —— 而那与本函数
+ * 想解决的问题毫无关系。
+ *
+ * ## 失败照发
+ *
+ * 两条入库函数都吞异常、只回它们成功登记的那部分映射。没登记上的图保持原 URL
+ * 直传:真人图仍会被上游拒,但不比改动之前更差,也不会因为素材库抖动就发不出生成。
+ */
+async function materializeAssetRefs(
+  content: SeedanceContentItem[],
+  model: SeedanceModelAlias | undefined,
+  billing: VideoBillingSource,
+  enabled: boolean,
+): Promise<SeedanceContentItem[]> {
+  // 只有 Seedance 系认 asset://;万相(provider miau)原样返回。
+  const acceptsAssetRefs = capabilitiesFor(model ?? '2.0').provider === 'vvdance'
+  if (!acceptsAssetRefs) return content
+
+  const rewrites = usesSeedanceAssetLibrary(model, billing)
+    ? await importImagesToPortraitLibrary(content, enabled)
+    : billing === 'platform'
+      ? await importImagesToPlatformLibrary(content, enabled)
+      : new Map<string, string>()
+
+  if (rewrites.size === 0) return content
+  // 逐项换,**保持数组顺序**:上游按 content[] 的下标解析提示词里的「图片1」,
+  // 顺序一乱,生成的内容就跟用户想的不是一回事,而且不报任何错。
+  return content.map((item) => {
+    if (item.type !== 'image_url') return item
+    const ref = rewrites.get(item.image_url.url)
+    return ref ? { ...item, image_url: { ...item.image_url, url: ref } } : item
+  })
 }
 
 /**
@@ -680,14 +752,22 @@ export function initSeedanceRuntime(opts: {
           apiSecret: getSeedanceApiSecret(),
         })
       }
-      const state = await taskManager.submit({ input, content, threadId, clientId, billing })
-      // agent 这条路没有载荷可带,用渲染端推过来的那份开关镜像。
-      if (usesSeedanceAssetLibrary(input.model, billing)) {
-        void importImagesToPortraitLibrary(content, autoImportPortraitEnabled)
-      } else if (billing === 'platform') {
-        void importImagesToPlatformLibrary(content, autoImportPortraitEnabled)
-      }
-      return state
+      // 入库 + 改写引用必须在 submit **之前**:asset:// 不走上游的真人检测,而登记
+      // 发生在提交之后就永远救不了当次。agent 这条路没有载荷可带,用渲染端推过来
+      // 的那份开关镜像。详见 `materializeAssetRefs`。
+      const submitContent = await materializeAssetRefs(
+        content,
+        input.model,
+        billing,
+        autoImportPortraitEnabled,
+      )
+      return await taskManager.submit({
+        input,
+        content: submitContent,
+        threadId,
+        clientId,
+        billing,
+      })
     } catch (e) {
       // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
       // 把预备卡片落成 failed，避免气泡永远转圈；随后照旧把错误抛给工具层出横幅。
@@ -778,19 +858,21 @@ export function initSeedanceRuntime(opts: {
           apiSecret: getSeedanceApiSecret(),
         })
       }
+      // 入库 + 改写引用在 submit **之前**(理由见 `materializeAssetRefs`)。
+      // 开关缺省开(与 UI 默认一致);只有显式 false 才跳过。
+      const submitContent = await materializeAssetRefs(
+        content,
+        input.model,
+        billing ?? 'own-key',
+        payload?.autoImportPortrait !== false,
+      )
       const state = await taskManager.submit({
         input,
-        content,
+        content: submitContent,
         source: 'workbench',
         ...(billing ? { billing } : {}),
         ...(clientId ? { clientId } : {}),
       })
-      // 缺省开(与 UI 默认一致);只有显式 false 才跳过。
-      if (usesSeedanceAssetLibrary(input.model, billing)) {
-        void importImagesToPortraitLibrary(content, payload?.autoImportPortrait !== false)
-      } else if (billing === 'platform') {
-        void importImagesToPlatformLibrary(content, payload?.autoImportPortrait !== false)
-      }
       return { success: true, taskId: state.taskId }
     } catch (e) {
       // 上游裸错误(如 400 LOCAL_ASSET_NOT_FOUND)翻译成人话再回渲染端卡片。
