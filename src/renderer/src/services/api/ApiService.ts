@@ -668,8 +668,13 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 /**
  * 走腾讯私有约定的图像模型。
  *
- * ⚠️ **它们是两个不同的模型、两条不同的渠道,不是同一个东西的两个入口。**
- * 定价、上游实现都不同,谁也不能替代谁 —— 新增一条不等于旧的那条可以下掉。
+ * ⚠️ **这是两个不同的模型、两条不同的渠道,不是同一个东西的两个入口。**
+ * 上游实现与定价都不同(2026-09-01 网关价目表:`custom-model-og-v2` 倍率 5,
+ * `custom-imagemodel-gt` 倍率 29.05),谁也替代不了谁 —— 新增一条不等于旧的
+ * 那条可以下掉。
+ *
+ *  - `custom-imagemodel-gt` —— TokenHub gtimage,aiart 官方渠道;
+ *  - `custom-model-og-v2`   —— TokenHub OG 新渠道,便宜近 6 倍,且支持多张输出。
  *
  * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
  * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
@@ -677,14 +682,13 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
  * 逐处写 `model === '...'` 的话,加第二条时一定会漏掉其中一两处 ——
  * 而漏掉的表现是「水印没关掉」或「参考图没生效」,都不报错。
  *
- * 协议上唯一的差别在端点:`custom-imagemodel-gt` 有独立的 `/images/edits`,
- * 而 `hunyuan-gpt-image-2` 那条渠道只开了 generations(打 edits 会回
- * `does not support relay mode 6`),参考图得放在 generations 的请求体里。
- * 这个差别体现在各自的 `editURL` 上,不在这里。
+ * 🚫 **不要收 `hunyuan-gpt-image-2`。** 那是更早的一条渠道,网关侧已经不用了
+ * (而且它只开了 generations,打 edits 会回 `does not support relay mode 6`)。
+ * 它仍出现在 `/v1/models` 里,所以看起来像个可选项 —— 不是。
  */
 const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
   'custom-imagemodel-gt',
-  'hunyuan-gpt-image-2',
+  'custom-model-og-v2',
 ])
 
 // gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
@@ -824,28 +828,17 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       qualityControl: true
     }
   },
-  'hunyuan-gpt-image-2': {
-    name: '腾讯混元 Image 2',
-    displayName: '25s出图，腾讯混元新渠道（hunyuan-gpt-image-2），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数，单张输出（经 Miau API 代理）',
-    time: '25s',
+  'custom-model-og-v2': {
+    name: '腾讯 OG v2',
+    displayName: '20s出图，腾讯 OG 新渠道（custom-model-og-v2），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数，支持多张（经 Miau API 代理）',
+    time: '20s',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
-    // ⚠️ **和 generations 同一个地址,不是笔误。**
-    //
-    // 这条渠道在网关侧只开了 generations:打 `/v1/images/edits` 会回
-    // `tencent aiart channel does not support relay mode 6 (images generations only)`。
-    // 参考图改放在 generations 的请求体里,契约与 `custom-imagemodel-gt` 完全一致
-    // (`images: [{ image_url }]`,URL / data URI / 裸 base64 都吃)。
-    //
-    // 2026-09-01 实测:用一个下载不到的 URL 会拿到腾讯自己的
-    // `FailedOperation.ImageDownloadError` —— 那正是「参考图确实透传到了上游」的
-    // 证据。顺带一个坑:单数 `image` 字段会被**静默忽略**(返回 200,实际按纯文生图
-    // 跑),所以字段名只能是 `images`。
-    editURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
     requiredSiteKey: MIAU_SITE_KEY,
     apiType: 'openai',
     sizeStrategy: 'gpt-image-2',
-    // 30 档 size 实测全收(1024x1024 到 3840x2160 两端都验过),与 gpt-image-2 同规格。
+    // 30 档 size 实测全收(1024x1024 与 3840x2160 两端都验过),与 gpt-image-2 同规格。
     ratios: GPT_IMAGE_2_RATIOS,
     resolutions: GPT_IMAGE_2_RESOLUTIONS,
     defaultResolution: '2K',
@@ -856,14 +849,13 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       output_format: 'png'
     },
     capabilities: {
-      multipleImages: false,
+      multipleImages: true,
       customSize: true,
       aspectRatioControl: true,
       referenceImage: true,
       imageEdit: true,
-      // 上游接受 `n` 却始终只返回 1 张,而且**不报错**。声明成多张的话,
-      // UI 承诺 2 张、实际给 1 张,用户只会以为是自己看错了。
-      maxOutputs: 1,
+      // 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。
+      maxOutputs: 4,
       resolutionControl: true,
       qualityControl: true
     }
@@ -1405,7 +1397,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 const MODEL_DISPLAY_ORDER: readonly string[] = [
   'doubao-seedream-5-0-pro-260628',
   'custom-imagemodel-gt',
-  'hunyuan-gpt-image-2',
+  'custom-model-og-v2',
   'gemini-3.1-flash-image',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',

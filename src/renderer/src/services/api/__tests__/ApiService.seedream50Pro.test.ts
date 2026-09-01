@@ -38,7 +38,7 @@ describe('ApiService Seedream 5.0 Pro model config', () => {
       // 两个腾讯模型相邻摆放,便于对比选择。它们是**不同的模型、不同的渠道**
       // (定价也不同),旧那条不会因为新增而下掉 —— 这里同时钉住「两个都在」。
       'custom-imagemodel-gt',
-      'hunyuan-gpt-image-2',
+      'custom-model-og-v2',
       'gemini-3.1-flash-image',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',

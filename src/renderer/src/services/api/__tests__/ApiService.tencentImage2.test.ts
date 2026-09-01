@@ -282,12 +282,13 @@ describe('ApiService.generateImage siteKey autoroute (Miau-only channels)', () =
 })
 
 /**
- * 混元那条渠道(hunyuan-gpt-image-2)与 `custom-imagemodel-gt` 共用同一套私有约定,
- * 只有端点不同 —— 它在网关侧**只开了 generations**。
+ * TokenHub OG 新渠道(custom-model-og-v2)。
  *
- * 2026-09-01 对着网关逐条实测出来的,这里把结论钉住。
+ * 与 `custom-imagemodel-gt` 是**两个不同的模型、两条不同的渠道**,只是线上协议
+ * 恰好相同(logo_add 关水印、images:[{image_url}] 传参考图),所以共用同一套
+ * 请求路径。2026-09-01 对着网关逐条实测,这里把结论钉住。
  */
-describe('ApiService hunyuan-gpt-image-2', () => {
+describe('ApiService custom-model-og-v2', () => {
   beforeEach(() => {
     vi.resetModules()
   })
@@ -318,47 +319,17 @@ describe('ApiService hunyuan-gpt-image-2', () => {
   }
 
   /**
-   * 这条渠道打 `/v1/images/edits` 会被网关拒:
-   * `tencent aiart channel does not support relay mode 6 (images generations only)`。
-   *
-   * 所以带参考图时也必须打 generations。回归长这样:有人「顺手」把 editURL 改成
-   * 跟另一条腾讯渠道一致的 `/images/edits` —— 那句报错里没有一个字提到端点选错了。
-   */
-  it('带参考图也打 generations —— 这条渠道没有 edits 端点', async () => {
-    const service = await makeService()
-    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
-    expect(cfg.editURL).toBe(cfg.baseURL)
-    expect(cfg.editURL).toContain('/images/generations')
-
-    const captured = captureFetch()
-    await (service as any).makeApiRequest({
-      prompt: '换成蓝色',
-      model: 'hunyuan-gpt-image-2',
-      ratio: '3:2',
-      resolution: '2K',
-      referenceImages: ['https://cos.example.com/a.png'],
-      count: 1,
-      modelConfig: cfg,
-      site,
-      apiKey: 'test-key',
-    })
-
-    expect(captured.url).toContain('/images/generations')
-    expect(captured.url).not.toContain('/images/edits')
-  })
-
-  /**
    * 字段名必须是复数 `images`。单数 `image` 上游**静默忽略** —— 返回 200,
    * 但实际按纯文生图跑了,参考图完全没起作用而且没有任何报错。
    */
   it('参考图放在复数 images:[{image_url}] 里,不是单数 image', async () => {
     const service = await makeService()
-    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
+    const cfg = service.getModelConfig('custom-model-og-v2')!
     const captured = captureFetch()
 
     await (service as any).makeApiRequest({
       prompt: '换成蓝色',
-      model: 'hunyuan-gpt-image-2',
+      model: 'custom-model-og-v2',
       ratio: '1:1',
       resolution: '1K',
       referenceImages: ['https://cos.example.com/a.png'],
@@ -368,6 +339,7 @@ describe('ApiService hunyuan-gpt-image-2', () => {
       apiKey: 'test-key',
     })
 
+    expect(captured.url).toBe(cfg.editURL)
     const body = JSON.parse(captured.init!.body as string)
     expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
     expect(body).not.toHaveProperty('image')
@@ -376,12 +348,12 @@ describe('ApiService hunyuan-gpt-image-2', () => {
   /** 关水印的 `logo_add` 是腾讯私有参数,两条腾讯渠道都要发。 */
   it('关水印参数跟着走 —— 集合判定,不是逐个 slug 硬编码', async () => {
     const service = await makeService()
-    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
+    const cfg = service.getModelConfig('custom-model-og-v2')!
     const captured = captureFetch()
 
     await (service as any).makeApiRequest({
       prompt: '一只猫',
-      model: 'hunyuan-gpt-image-2',
+      model: 'custom-model-og-v2',
       ratio: '1:1',
       resolution: '1K',
       count: 1,
@@ -393,34 +365,37 @@ describe('ApiService hunyuan-gpt-image-2', () => {
     expect(JSON.parse(captured.init!.body as string).extra_body).toMatchObject({ logo_add: 0 })
   })
 
-  /**
-   * 上游接受 `n` 却始终只返回 1 张,而且不报错。声明成多张的话,UI 承诺 2 张、
-   * 实际给 1 张,用户只会以为自己看错了。
-   */
-  it('只能出 1 张 —— 上游收下 n 却只回 1 张且不报错', async () => {
+  /** 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。 */
+  it('支持多张输出', async () => {
     const service = await makeService()
-    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
-    expect(cfg.capabilities?.maxOutputs).toBe(1)
-    expect(cfg.capabilities?.multipleImages).toBe(false)
+    const cfg = service.getModelConfig('custom-model-og-v2')!
+    expect(cfg.capabilities?.multipleImages).toBe(true)
+    expect(cfg.capabilities?.maxOutputs).toBeGreaterThan(1)
   })
 
   /**
    * 两个腾讯模型必须**同时存在**。
    *
-   * 它们是不同的模型、不同的渠道,定价也不同 —— 新增混元不代表旧那条(走
-   * tokenhub 的 `custom-imagemodel-gt`)可以下掉。会这么错是因为两者名字像、
-   * 协议又几乎一样,重构时很容易被当成重复项合并掉一个。
-   *
-   * 而且旧那条有混元没有的能力:独立的 `/images/edits` 端点。下掉它等于
-   * 悄悄砍掉一条用户在用的出图路径。
+   * 它们是不同的模型、不同的渠道,定价也不同(网关价目表:OG v2 倍率 5,
+   * gtimage 倍率 29.05)—— 新增一条不代表另一条可以下掉。会这么错是因为两者
+   * 协议几乎一样,重构时很容易被当成重复项合并掉一个。
    */
   it('两条腾讯渠道并存 —— 新增不等于旧的可以下掉', async () => {
     const service = await makeService()
     const all = service.getAllModels()
     expect(Object.keys(all)).toContain('custom-imagemodel-gt')
-    expect(Object.keys(all)).toContain('hunyuan-gpt-image-2')
-    // 各自的端点不能被抹平成同一套。
-    expect(all['custom-imagemodel-gt']!.editURL).toContain('/images/edits')
-    expect(all['hunyuan-gpt-image-2']!.editURL).toContain('/images/generations')
+    expect(Object.keys(all)).toContain('custom-model-og-v2')
+  })
+
+  /**
+   * 🚫 `hunyuan-gpt-image-2` 是更早的一条渠道,网关侧已经不用了,**不该出现在
+   * 模型列表里**。
+   *
+   * 它仍然出现在网关的 `/v1/models` 返回里,所以看起来像个合法可选项 —— 照着
+   * 那份清单加模型的人很容易把它捡回来。2026-09-01 就这么错过一次。
+   */
+  it('废弃的 hunyuan-gpt-image-2 不在列表里', async () => {
+    const service = await makeService()
+    expect(Object.keys(service.getAllModels())).not.toContain('hunyuan-gpt-image-2')
   })
 })
