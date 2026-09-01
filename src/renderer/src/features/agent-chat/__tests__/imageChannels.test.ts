@@ -12,8 +12,8 @@ import {
 } from '../imageChannels'
 
 describe('imageChannels registry', () => {
-  it('defaults to the VIP channel', () => {
-    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('gpt-image-2-vip')
+  it('defaults to 腾讯 image2', () => {
+    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-imagemodel-gt')
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
@@ -51,10 +51,10 @@ describe('imageChannels registry', () => {
     expect(isSelectableImageChannel(42)).toBe(false)
   })
 
-  it('resolves valid ids as-is and falls back to VIP otherwise', () => {
+  it('resolves valid ids as-is and falls back to the default otherwise', () => {
     expect(resolveImageChannel('wan2.7-image-pro')).toBe('wan2.7-image-pro')
-    expect(resolveImageChannel('made-up')).toBe('gpt-image-2-vip')
-    expect(resolveImageChannel(null)).toBe('gpt-image-2-vip')
+    expect(resolveImageChannel('made-up')).toBe(DEFAULT_IMAGE_CHANNEL_ID)
+    expect(resolveImageChannel(null)).toBe(DEFAULT_IMAGE_CHANNEL_ID)
   })
 
   it('gives every channel a non-empty label / fullLabel / description', () => {
@@ -96,6 +96,11 @@ describe('imageChannels registry', () => {
     expect(IMAGE_CHANNEL_IDS.length).toBeGreaterThan(0)
   })
 
+  // 「字面量不被拓宽」那条不在这里守 —— 它是**编译期**断言,住在
+  // `shared/imageChannels.ts` 里(`AssertLiteralChannelIds`)。类型退化任何一次
+  // `tsc` 都该拦下,而不是等某个测试文件跑到才发现;在这里再写一条正则匹配源码
+  // 只会变成同一件事的第二个说法,而两个说法迟早会不一致。
+
   /**
    * 每个渠道 id 必须在 `ApiService` 的模型表里真实存在。
    *
@@ -114,6 +119,31 @@ describe('imageChannels registry', () => {
         models[channel.id],
         `渠道「${channel.fullLabel}」(${channel.id}) 在 ApiService.DEFAULT_MODELS 里没有配置 —— 用户选得到但发不出去`,
       ).toBeDefined()
+    }
+  })
+
+  /**
+   * agent 的技能文档必须提到每个渠道。
+   *
+   * `SKILL.md` 是 agent 判断「用户说什么就选哪个渠道」的依据。渠道不在里面 =
+   * **agent 根本不知道它存在**,用户说「用便宜那个」也点不到 —— 而工具调用本身
+   * 不会报错,只是用了别的渠道,谁也看不出漏了什么。
+   *
+   * 2026-09-01 接 og-image 时就这么漏了;而且那份文档当时已经陈旧一轮
+   * (千问 Image 3.0 Pro 加进选择器时也没登记进去,还留着一句「只有六个合法值」)。
+   * 两次都没人发现,正因为没有任何东西会因此变红。
+   */
+  it('agent 的技能文档提到了每个渠道', () => {
+    const skill = readFileSync(
+      resolve(
+        process.cwd(),
+        'resources/plugins/catimation-core/skills/catimation-image/SKILL.md',
+      ),
+      'utf8',
+    )
+    for (const channel of IMAGE_CHANNELS) {
+      expect(skill, `渠道「${channel.fullLabel}」(${channel.id}) 没写进 SKILL.md —— agent 不知道它存在`)
+        .toContain(channel.id)
     }
   })
 

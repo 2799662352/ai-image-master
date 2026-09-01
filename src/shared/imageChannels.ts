@@ -1,6 +1,19 @@
 /**
  * 出图**渠道**清单 —— 聊天选择器与 MCP 工具共用的唯一事实来源。
  *
+ * ## 选择器设的是「默认」,不是「锁死」
+ *
+ * 实际优先级见 `AgentToolExecutor.resolveEffectiveImageChannel`,三级:
+ *
+ *   1. agent 显式传的合法 `model` —— **agent 自主权**。它可以为具体任务挑更合适
+ *      的渠道(比如 `count>1` 的组图切到万相 2.7 pro);
+ *   2. 用户在输入框下面选的渠道;
+ *   3. `DEFAULT_IMAGE_CHANNEL_ID`。
+ *
+ * ⚠️ 这段注释以前写的是「agent 传的 model 在选渠道时被忽略」—— **与实际相反**,
+ * 是随文件搬迁一路抄下来的陈述。留个记号:改这里时对着那个解析函数核一遍,
+ * 别再让文档和代码各说各话。
+ *
  * ## 为什么在 shared 而不是 renderer
  *
  * 这份清单有两个消费方,分别住在两个进程里:
@@ -42,7 +55,7 @@ export interface ImageChannel {
  * 顺序按产品要求(2026-07-20):Seedream 5.0 Pro → 腾讯 → Nano2 → 万相 2.7 pro →
  * Image2 官方 → VIP。默认渠道仍是 VIP —— 顺序只影响显示,不改变回落目标。
  */
-export const IMAGE_CHANNELS: readonly ImageChannel[] = [
+export const IMAGE_CHANNELS = [
   {
     id: 'doubao-seedream-5-0-pro-260628',
     label: 'SD5',
@@ -109,17 +122,69 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     description: 'OpenAI 官逆，稳定。默认渠道。',
     miauOnly: false,
   },
-] as const
-
-/** 用户没选(或存的值已失效)时的默认渠道。 */
-export const DEFAULT_IMAGE_CHANNEL_ID = 'gpt-image-2-vip'
+  // ⚠️ `as const satisfies` 而不是 `: readonly ImageChannel[]`。
+  //
+  // 写成类型标注会把每个 `id` **拓宽成 `string`**,于是下面派生出来的
+  // `IMAGE_CHANNEL_IDS` 也是 `string[]`,`z.enum()` 拿到它之后
+  // `z.infer` 只能得出 `string` —— MCP 那个 `model` 参数就退化成「任意字符串」,
+  // 比它替换掉的手写联合还弱。`satisfies` 同样能校验结构,但保留字面量。
+] as const satisfies readonly ImageChannel[]
 
 /**
- * 供 MCP 的 `z.enum()` 使用 —— zod 要一个非空的字面量元组。
+ * 用户没选(或存的值已失效)时的默认渠道。
+ *
+ * 2026-09-01 由 `gpt-image-2-vip` 改为腾讯 image2(产品要求)。
+ *
+ * 这个常量的影响面比它看起来大:所有**从没手动选过渠道**的用户都落在这里,
+ * 而且 `resolveImageChannel` 把任何认不出的值(过期的本地存储、agent 传来的
+ * 野值)也回落到它。所以改它等于改绝大多数人的实际出图渠道与成本。
+ */
+export const DEFAULT_IMAGE_CHANNEL_ID = 'custom-imagemodel-gt'
+
+/**
+ * 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。
+ *
+ * ## 为什么是**封闭**枚举,不留 `| (string & {})` 的开口
+ *
+ * Vercel AI SDK 给自定义 provider 的 model id 是开放的
+ * (`'a' | 'b' | (string & {})`,见其 custom-providers 文档):上游模型目录变得比
+ * SDK 发版快,放行未知 id、只保留自动补全,是对它那个场景更合适的取舍。
+ *
+ * 这里反过来:出图渠道不只是个字符串,每条都要在 `ApiService` 里配端点、尺寸表、
+ * 能力位。放行一个没配过的 id,结果不是「用了个新模型」而是每轮 404,而错误里
+ * 不会有一个字提到是模型名的问题(网关的报错只说 model 不存在)。这种情况下
+ * 在边界上拒掉、让 agent 立刻拿到「不是合法值」,比放进去再失败有用得多。
+ */
+export type ImageChannelId = (typeof IMAGE_CHANNELS)[number]['id']
+
+/**
+ * 编译期自证:`ImageChannelId` 必须是**字面量联合**,不能退化成 `string`。
+ *
+ * Zod 官方文档写明了这个陷阱:传给 `z.enum()` 的数组若没保住字面量,
+ * `z.infer` 只能得出 `string`(https://zod.dev — "Pass string array variables
+ * to z.enum")。后果是 MCP 的 `model` 参数变成「任意字符串」,而**类型检查照样
+ * 通过**,没有任何信号 —— 2026-09-01 就这么丢过一次。
+ *
+ * 下面这行是纯类型层面的:`string extends ImageChannelId` 只有在它被拓宽成
+ * `string` 时才成立,那时右边求值成 `never`,把 `true` 赋给 `never` 立刻编译失败。
+ * 放在 `tsc` 里拦,而不是靠某个测试文件去正则匹配源码 —— 后者只在跑到那个文件
+ * 时才有效,而这条不变量任何一次编译都该守住。
+ */
+type AssertLiteralChannelIds = string extends ImageChannelId ? never : true
+const _assertChannelIdsAreLiterals: AssertLiteralChannelIds = true
+void _assertChannelIdsAreLiterals
+
+/**
+ * 供 MCP 的 `z.enum()` 使用 —— zod 的签名要 `readonly [string, ...string[]]`
+ * (非空元组),而 `.map()` 给的是普通数组,所以要窄化一次。
  *
  * 从上面的数组推导,所以加渠道时 MCP 那边**自动跟上**,不需要记得同步。
+ * 断言只改「非空」这一点,元素类型仍是 `ImageChannelId`(由上面那行保证是字面量)。
  */
-export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as [string, ...string[]]
+export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as [
+  ImageChannelId,
+  ...ImageChannelId[],
+]
 
 export function findImageChannel(id: string): ImageChannel | undefined {
   return IMAGE_CHANNELS.find((c) => c.id === id)

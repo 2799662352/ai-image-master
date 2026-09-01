@@ -179,16 +179,21 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
 2. If the user asks for exactly ONE image, call `generate_image` with:
    - `prompt` (required): the description from step 1.
    - `model` (optional): rendering channel **override**. **Omit it** to honor the
-     user's channel picker in the chat composer (default VIP). Only set it when you
+     user's channel picker in the chat composer (default 腾讯 image2). Only set it when you
      have a concrete reason — a consistent 组图 series (→ `wan2.7-image-pro`) or a
      channel the user explicitly names this turn (see "Choosing a model" below):
      - `gpt-image-2-vip` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
      - `gpt-image-2` — API易 OpenAI 官方旗舰 Image2（按 token 计费，慢但质量上限最高，4K+mask 重绘）.
      - `wan2.7-image-pro` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
      - `gemini-3.1-flash-image` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
-     - `doubao-seedream-5-0-pro-260628` — 火山豆包 Seedream 5.0 Pro（多图融合最强，
-       最多 10 张参考图；1K/2K、仅单图）.
-     站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
+    - `doubao-seedream-5-0-pro-260628` — 火山豆包 Seedream 5.0 Pro（多图融合最强，
+      最多 10 张参考图；1K/2K、仅单图）.
+    - `custom-imagemodel-gt` — 腾讯 image2（快 ~30s，网关去水印）.
+    - `custom-model-og-v2` — 腾讯 image2 fast（快 ~20s，价格约为腾讯 image2 的 1/6，
+      可一次出多张；能力与腾讯 image2 相同）.
+    - `qwen-image-3.0-pro` — 阿里通义千问 Image 3.0 Pro（一次可出 1–6 张，
+      参考图最多 3 张；上游可能改写尺寸，别向用户承诺确切像素）.
+    站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
    - `ratio` (optional): aspect ratio, e.g. `1:1`, `16:9`, `9:16`, `4:3`, `3:2`.
      Omit or `auto` lets the model decide.
    - `resolution` (optional): clarity tier — prefer `2K` by default. Use `1K`
@@ -262,7 +267,7 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
 
 The `model` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (VIP / Image2 官方 / 腾讯 /
-Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default VIP) — 各渠道共用同一套 ratio ×
+Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default 腾讯 image2) — 各渠道共用同一套 ratio ×
 resolution × quality 参数面(Seedream 5.0 Pro 只有 1K/2K、无 quality 轴,多传会被
 网关安全剔除)。
 Omitting `model` honors the user's pick — do this for ordinary requests. Set `model`
@@ -291,11 +296,21 @@ only when you have a concrete reason to override:
   见「图层分离」一节). 注意:普通出图仅单图(`count` 无效)、分辨率只有 1K/2K
   (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。图层分离是例外——那一次会
   返回 1 底图 + 最多 16 层。
-- All six accept `referenceImages` for image-to-image / editing.
+- **`custom-imagemodel-gt` (腾讯 image2)** — pick when the user says 腾讯 / tencent /
+  image2 腾讯. 快(~30s),网关已关水印。
+- **`custom-model-og-v2` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
+  image2 fast / og. 与腾讯 image2 **能力相同**,但更快(~20s)、价格约 1/6、且能一次
+  出多张。用户没有特别偏好而只是想省钱或求快时,这条优先于 `custom-imagemodel-gt`。
+- **`qwen-image-3.0-pro` (阿里通义千问 Image 3.0 Pro)** — pick when the user says
+  千问 / qwen / qwen image. 一次可出 1–6 张,参考图最多 3 张(传更多会被**拒绝**,
+  不是截断——需要最多 10 张时改用 Seedream 5.0 Pro)。上游可能改写请求尺寸,
+  所以别向用户承诺确切像素;负向提示词会被网关丢弃,要压画质问题写进正向提示词。
+- 以上渠道都接受 `referenceImages`(图生图 / 图像编辑)。
 
 ### 站点要求(已自动处理 — 无需手动切站点)
 
-`custom-imagemodel-gt`(腾讯 image2)、`wan2.7-image-pro`(阿里万相 2.7 pro)和
+`custom-imagemodel-gt`(腾讯 image2)、`custom-model-og-v2`(腾讯 image2 fast)、
+`wan2.7-image-pro`(阿里万相 2.7 pro)、`qwen-image-3.0-pro`(通义千问 Image 3.0 Pro)和
 `doubao-seedream-5-0-pro-260628`(Seedream 5.0 Pro)**都只经 Miau API 代理提供**。
 出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
 里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
@@ -307,7 +322,7 @@ only when you have a concrete reason to override:
   (Nano Banana 2)走当前选中站点(任意站点可用,无需 Miau)。
 
 When the user does not name a channel, **do not guess** — just omit `model` so the
-render honors the user's composer picker (default VIP). Set `model` only for a
+render honors the user's composer picker (default 腾讯 image2). Set `model` only for a
 concrete reason (组图 → `wan2.7-image-pro`, 多参考图融合 →
 `doubao-seedream-5-0-pro-260628`, or a channel the user named). Never invent a
 model name; only these six values are valid.
@@ -413,11 +428,13 @@ directory and give it a descriptive, ordered name — e.g.
 
 - 用户给了图却忘传 `referenceImages`,改成从零文生图。
 - 多张图却逐个调 `generate_image`,而不是一次 `generate_images`。
-- 凭空编造 `model` 名;只有六个合法值。用户没点名就省略 `model`(交给用户在 composer 选的渠道,默认 VIP)。
+- 凭空编造 `model` 名;合法值只有上面「Choosing a model」列出的那些。用户没点名就
+  省略 `model`(交给用户在 composer 选的渠道,默认腾讯 image2)。
 - 用户点名某渠道却不显式传 `model`(应显式传:vip/官逆 → `gpt-image-2-vip`、
   官方/旗舰/image2 官方 → `gpt-image-2`、nano/nano2 → `gemini-3.1-flash-image`、
   万相/组图 → `wan2.7-image-pro`、seedream/即梦/豆包/多参考图融合 →
-  `doubao-seedream-5-0-pro-260628`)。
+  `doubao-seedream-5-0-pro-260628`、腾讯 → `custom-imagemodel-gt`、
+  便宜/快/image2 fast → `custom-model-og-v2`、千问/qwen → `qwen-image-3.0-pro`)。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
 - 图层分离时**给 `layerDecomposition` 却忘了同时指定 `model`** —— 会落到用户选的渠道上被拒。
 - 图层分离时**为了「填满参数」编一句 prompt** —— 空 prompt 才是自动全拆,编一句就变成

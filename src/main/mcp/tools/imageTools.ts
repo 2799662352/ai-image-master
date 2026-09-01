@@ -325,7 +325,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     )
 
   // Optional channel OVERRIDE. Default = the channel the user picked in the chat
-  // composer (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro). Omit to honor the
+  // composer（默认腾讯 image2）. Omit to honor the
   // user's pick; set it only when you have a concrete reason to override (e.g. 万相
   // for a 组图 series, or the user asked for a specific channel this turn).
   // 从 `shared/imageChannels` 推导,**不手抄**。
@@ -338,8 +338,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (VIP / Image2 官方 / 腾讯 / OG / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default ' +
-      "VIP) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
+      'composer picker (腾讯 / image2 fast / VIP / Image2 官方 / Nano2 / 万相 2.7 pro / 千问; default ' +
+      "腾讯 image2) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
       'channel the user explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, ' +
       'gpt-image-2 = API易 OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ' +
@@ -364,7 +364,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'results). ' +
       `${IMAGE_PROMPT_BASE_DIRECTIVE} ` +
       'By default it renders on the channel the USER picked in the chat composer (default ' +
-      'VIP); you may override per-call via `model` when you have a reason (see below). It ' +
+      '腾讯 image2); you may override per-call via `model` when you have a reason (see below). It ' +
       'shows the result directly in the chat, AND — exactly like codex native image_gen — saves the ' +
       'image to a local file (returned to you) plus the in-app history page. The result is ' +
       '`{ ok, count, model, historyId, paths }` where `paths` are the saved local file paths, and ' +
@@ -372,7 +372,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'reference them. Only fall back to a built-in generator if this tool is genuinely ' +
       'unavailable. Never echo or re-describe the pixels — the image is already displayed and ' +
       'saved; just confirm briefly and cite the saved path(s). The render channel defaults to the ' +
-      "user's composer channel picker (default VIP); pass `model` to override when needed (the " +
+      "user's composer channel picker (default 腾讯 image2); pass `model` to override when needed (the " +
       'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
       'INDEPENDENT variations of one prompt, model="qwen-image-3.0-pro" with `count`>1 (1–6). ' +

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ImageChannelPicker } from '../ImageChannelPicker'
 import { useAgentChatStore } from '../store'
-import { DEFAULT_IMAGE_CHANNEL_ID } from '../imageChannels'
+import { DEFAULT_IMAGE_CHANNEL_ID, findImageChannel } from '../imageChannels'
 
 beforeEach(() => {
   localStorage.clear()
@@ -14,9 +14,12 @@ afterEach(() => {
 })
 
 describe('ImageChannelPicker', () => {
-  it('shows the current channel label (VIP by default)', () => {
+  it('shows the current channel label (默认渠道)', () => {
     render(<ImageChannelPicker />)
-    expect(screen.getByRole('button', { name: /出图渠道/ }).textContent).toContain('VIP')
+    // 取默认渠道自己的短标签，而不是写死某个字面量 —— 默认值改过一次
+    // （2026-09-01 VIP → 腾讯 image2），再改时这条不该又红。
+    const label = findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)!.label
+    expect(screen.getByRole('button', { name: /出图渠道/ }).textContent).toContain(label)
   })
 
   it('opens the dropdown and lists all channels', () => {
