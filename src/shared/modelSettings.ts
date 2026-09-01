@@ -167,6 +167,22 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
     isDefault: false,
   },
+  // Miau 上的同代模型,slug 带日期。与上面两行是**不同来源**,不是重复:
+  // 这两条走 Miau 网关,因此能用平台余额结算;上面两条走 Right.Codes,只能用自填 Key。
+  {
+    id: 'deepseek-v4-flash-0731',
+    displayName: 'DeepSeek V4 Flash（Miau）',
+    tier: 'High',
+    description: 'DeepSeek V4 Flash（Miau 网关）。快而便宜的一档，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-pro-0813',
+    displayName: 'DeepSeek V4 Pro（Miau）',
+    tier: 'Extra High',
+    description: 'DeepSeek V4 Pro（Miau 网关）。旗舰档，长任务与编码，可用平台余额结算。',
+    isDefault: false,
+  },
   {
     id: 'grok-4.6',
     displayName: 'Grok 4.6',
@@ -239,6 +255,15 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     allowExperimental1M: false,
   }],
   ['deepseek-v4-pro', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  // Miau 上的同代模型,窗口同为官方文档的 1M。
+  ['deepseek-v4-flash-0731', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  ['deepseek-v4-pro-0813', {
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
@@ -336,6 +361,12 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
   ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
   ['rightcode:rightcode-deepseek:deepseek-v4-flash', DEEPSEEK_REASONING],
   ['rightcode:rightcode-deepseek:deepseek-v4-pro', DEEPSEEK_REASONING],
+  // Miau 那条同样是 DeepSeek V4,思考档位与上面两行同源(同一份官方文档),
+  // 所以复用同一份策略。两个网关各注册一次 —— 键是 网关:通道:模型 三段。
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-flash-0731', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-pro-0813', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-flash-0731', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-pro-0813', DEEPSEEK_REASONING],
   ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
     (key) => [key, ANTHROPIC_ADAPTIVE_REASONING] as const,
   ),
