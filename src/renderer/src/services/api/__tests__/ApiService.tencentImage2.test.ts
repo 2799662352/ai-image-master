@@ -280,3 +280,122 @@ describe('ApiService.generateImage siteKey autoroute (Miau-only channels)', () =
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * TokenHub OG 新渠道(custom-model-og-v2)。
+ *
+ * 与 `custom-imagemodel-gt` 是**两个不同的模型、两条不同的渠道**,只是线上协议
+ * 恰好相同(logo_add 关水印、images:[{image_url}] 传参考图),所以共用同一套
+ * 请求路径。2026-09-01 对着网关逐条实测,这里把结论钉住。
+ */
+describe('ApiService custom-model-og-v2', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function makeService() {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    ;(service as any).apiKey = 'test-key'
+    return service
+  }
+
+  const site = { authType: 'bearer' } as any
+
+  function captureFetch() {
+    const captured: { url: string; init?: RequestInit } = { url: '' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      captured.url = url
+      captured.init = init
+      return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    return captured
+  }
+
+  /**
+   * 字段名必须是复数 `images`。单数 `image` 上游**静默忽略** —— 返回 200,
+   * 但实际按纯文生图跑了,参考图完全没起作用而且没有任何报错。
+   */
+  it('参考图放在复数 images:[{image_url}] 里,不是单数 image', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('custom-model-og-v2')!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '换成蓝色',
+      model: 'custom-model-og-v2',
+      ratio: '1:1',
+      resolution: '1K',
+      referenceImages: ['https://cos.example.com/a.png'],
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toBe(cfg.editURL)
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
+    expect(body).not.toHaveProperty('image')
+  })
+
+  /** 关水印的 `logo_add` 是腾讯私有参数,两条腾讯渠道都要发。 */
+  it('关水印参数跟着走 —— 集合判定,不是逐个 slug 硬编码', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('custom-model-og-v2')!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: 'custom-model-og-v2',
+      ratio: '1:1',
+      resolution: '1K',
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(JSON.parse(captured.init!.body as string).extra_body).toMatchObject({ logo_add: 0 })
+  })
+
+  /** 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。 */
+  it('支持多张输出', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('custom-model-og-v2')!
+    expect(cfg.capabilities?.multipleImages).toBe(true)
+    expect(cfg.capabilities?.maxOutputs).toBeGreaterThan(1)
+  })
+
+  /**
+   * 两个腾讯模型必须**同时存在**。
+   *
+   * 它们是不同的模型、不同的渠道,定价也不同(网关价目表:OG v2 倍率 5,
+   * gtimage 倍率 29.05)—— 新增一条不代表另一条可以下掉。会这么错是因为两者
+   * 协议几乎一样,重构时很容易被当成重复项合并掉一个。
+   */
+  it('两条腾讯渠道并存 —— 新增不等于旧的可以下掉', async () => {
+    const service = await makeService()
+    const all = service.getAllModels()
+    expect(Object.keys(all)).toContain('custom-imagemodel-gt')
+    expect(Object.keys(all)).toContain('custom-model-og-v2')
+  })
+
+  /**
+   * 🚫 `hunyuan-gpt-image-2` 是更早的一条渠道,网关侧已经不用了,**不该出现在
+   * 模型列表里**。
+   *
+   * 它仍然出现在网关的 `/v1/models` 返回里,所以看起来像个合法可选项 —— 照着
+   * 那份清单加模型的人很容易把它捡回来。2026-09-01 就这么错过一次。
+   */
+  it('废弃的 hunyuan-gpt-image-2 不在列表里', async () => {
+    const service = await makeService()
+    expect(Object.keys(service.getAllModels())).not.toContain('hunyuan-gpt-image-2')
+  })
+})

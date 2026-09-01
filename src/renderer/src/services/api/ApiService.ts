@@ -665,6 +665,33 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
   }
 }
 
+/**
+ * 走腾讯私有约定的图像模型。
+ *
+ * ⚠️ **这是两个不同的模型、两条不同的渠道,不是同一个东西的两个入口。**
+ * 上游实现与定价都不同(2026-09-01 网关价目表:`custom-model-og-v2` 倍率 5,
+ * `custom-imagemodel-gt` 倍率 29.05),谁也替代不了谁 —— 新增一条不等于旧的
+ * 那条可以下掉。
+ *
+ *  - `custom-imagemodel-gt` —— TokenHub gtimage,aiart 官方渠道;
+ *  - `custom-model-og-v2`   —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
+ *                              且支持多张输出。
+ *
+ * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
+ * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
+ * 参考图要包成 `images: [{ image_url }]` 的 JSON 而不是 multipart。
+ * 逐处写 `model === '...'` 的话,加第二条时一定会漏掉其中一两处 ——
+ * 而漏掉的表现是「水印没关掉」或「参考图没生效」,都不报错。
+ *
+ * 🚫 **不要收 `hunyuan-gpt-image-2`。** 那是更早的一条渠道,网关侧已经不用了
+ * (而且它只开了 generations,打 edits 会回 `does not support relay mode 6`)。
+ * 它仍出现在 `/v1/models` 里,所以看起来像个可选项 —— 不是。
+ */
+const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
+  'custom-imagemodel-gt',
+  'custom-model-og-v2',
+])
+
 // gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
 // 尺寸体系：30 档 size 满足 16 倍数边长 / 最大边 ≤3840 / 比例 ≤3:1 / 总像素 ∈ [655360, 8294400]。
 // 抽成共享常量，避免两处重复且保证规格一致。
@@ -798,6 +825,38 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       referenceImage: true,
       imageEdit: true,
       maxOutputs: 1,
+      resolutionControl: true,
+      qualityControl: true
+    }
+  },
+  'custom-model-og-v2': {
+    name: '腾讯 Image 2 Fast',
+    displayName: '20s出图，比腾讯 image2 便宜近 6 倍且可出多张，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（后台渠道 TokenHub og-image / custom-model-og-v2，经 Miau API 代理）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    // 30 档 size 实测全收(1024x1024 与 3840x2160 两端都验过),与 gpt-image-2 同规格。
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_2_QUALITIES,
+    defaultQuality: 'auto',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      // 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。
+      maxOutputs: 4,
       resolutionControl: true,
       qualityControl: true
     }
@@ -1339,6 +1398,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 const MODEL_DISPLAY_ORDER: readonly string[] = [
   'doubao-seedream-5-0-pro-260628',
   'custom-imagemodel-gt',
+  'custom-model-og-v2',
   'gemini-3.1-flash-image',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
@@ -2179,7 +2239,7 @@ export class ApiService {
 
     // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
     if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
-        || model === 'custom-imagemodel-gt') {
+        || TENCENT_IMAGE_MODELS.has(model)) {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
       // 支持 size + quality 三参数的模型：官转 / vip / 腾讯 image2（同规格，复用 resolutionMap）
@@ -2208,7 +2268,7 @@ export class ApiService {
         //   两者最终都包成 ImageRef 对象放进 images:[] —— image_url 字段官方明确"传图片的
         //   url 地址或 base64 编码数据"，所以腾讯也能像 gpt-image-2 一样吃 base64 参考图，
         //   而不是回落到网关根本不支持的 multipart 导致失败。
-        if (model === 'custom-imagemodel-gt') {
+        if (TENCENT_IMAGE_MODELS.has(model)) {
           const jsonSources = imageSources
             .map((s) => this.normalizeImageSource(s))
             .filter((s): s is string => !!s)
@@ -2484,7 +2544,7 @@ export class ApiService {
    * gpt-image-2-all（官逆）不在内 —— 它把尺寸写进 prompt，回 b64_json。
    */
   private isSizeQualityImageModel(model: string): boolean {
-    return model === 'gpt-image-2' || model === 'gpt-image-2-vip' || model === 'custom-imagemodel-gt'
+    return model === 'gpt-image-2' || model === 'gpt-image-2-vip' || this.isTencentImage2(model)
   }
 
   /**
@@ -2494,7 +2554,7 @@ export class ApiService {
    * (文生图 generations / JSON edit / FormData edit)共用，避免再漏。
    */
   private isTencentImage2(model: string): boolean {
-    return model === 'custom-imagemodel-gt'
+    return TENCENT_IMAGE_MODELS.has(model)
   }
 
   /**

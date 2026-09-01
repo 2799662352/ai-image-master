@@ -31,11 +31,14 @@ describe('ApiService Seedream 5.0 Pro model config', () => {
     expect(cfg.defaultParams?.stream).toBeUndefined()
   })
 
-  it('orders the model dropdown: SD5 → 腾讯 → Nano2 → 万相 → 千问 → Image2 → VIP, rest untouched after', () => {
+  it('orders the model dropdown: SD5 → 腾讯 ×2 → Nano2 → 万相 → 千问 → Image2 → VIP, rest untouched after', () => {
     const keys = Object.keys(service.getAllModels())
-    expect(keys.slice(0, 7)).toEqual([
+    expect(keys.slice(0, 8)).toEqual([
       'doubao-seedream-5-0-pro-260628',
+      // 两个腾讯模型相邻摆放,便于对比选择。它们是**不同的模型、不同的渠道**
+      // (定价也不同),旧那条不会因为新增而下掉 —— 这里同时钉住「两个都在」。
       'custom-imagemodel-gt',
+      'custom-model-og-v2',
       'gemini-3.1-flash-image',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',
