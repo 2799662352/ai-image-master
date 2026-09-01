@@ -54,6 +54,10 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.8-flash',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
+      // Miau 那条 DeepSeek 与上面两行同族不同源:同一个 deepseek family,
+      // 但走 Miau 网关(可用平台余额)。canonical 里紧跟其后,所以这里也紧跟。
+      'deepseek-v4-flash-0731',
+      'deepseek-v4-pro-0813',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -304,6 +308,10 @@ describe('buildGatewayModelCatalog', () => {
       'claude-fable-5',
       'claude-opus-5',
       'claude-sonnet-5',
+      // apiyi 现在也挂了 Miau 的 DeepSeek(与 qwen 同样的理由:同一枚 Miau token,
+      // 用户不必为了换模型去切网关)。
+      'deepseek-v4-flash-0731',
+      'deepseek-v4-pro-0813',
       'gpt-5.5',
       'grok-4.5',
       'qwen3.7-max-dashscope',

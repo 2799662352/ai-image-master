@@ -8,6 +8,7 @@ import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from '../gatewayModelRouting'
+import { MIAU_BASE_URL } from '../../../shared/miau'
 
 describe('gatewayModelRouting', () => {
   /**
@@ -238,6 +239,7 @@ describe('gatewayModelRouting', () => {
       'apiyi-grok',
       'apiyi-claude',
       'apiyi-qwen',
+      'apiyi-deepseek-miau',
     ])
   })
 
@@ -272,5 +274,75 @@ describe('gatewayModelRouting', () => {
       source: 'builtin',
       gatewayId: 'rightcodes',
     }, 'grok-4.5')).toThrow('Unknown Codex gateway "rightcodes"')
+  })
+
+  describe('Miau 上的 DeepSeek 与 Right.Codes 那条并存', () => {
+    it('带日期的 slug 落 Miau,不带日期的落 Right.Codes —— 同一个网关下', () => {
+      // 这是这次改动的**全部意义**:两条通道同属 deepseek family,靠 slug 分开。
+      // 若哪天有人把路由改回「family → 后缀」的单条映射,这四行里会有两行落错
+      // 通道 —— 而落错的表现是 404,错误里不会提到通道名。
+      expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-flash'))
+        .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
+      expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-pro'))
+        .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
+      expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-flash-0731'))
+        .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
+      expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-pro-0813'))
+        .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
+    })
+
+    it('apiyi 只有 Miau 那条 —— Right.Codes 的裸 slug 在这里无处可去', () => {
+      expect(resolveGatewayModelRoute('apiyi', 'deepseek-v4-flash-0731'))
+        .toMatchObject({ channelId: 'apiyi-deepseek-miau', family: 'deepseek' })
+      // 回落到 `apiyi-deepseek`,而那条通道不存在 → 这个网关跑不了这个模型。
+      // 不是崩溃,是可跳过的「本网关无此模型」—— 目录构建靠它筛掉不可路由的行。
+      expect(() => resolveGatewayModelRoute('apiyi', 'deepseek-v4-flash'))
+        .toThrow(ModelUnavailableInGatewayError)
+    })
+
+    it('两条 Miau DeepSeek 通道都打 Miau,因此自动吃平台余额', () => {
+      // 平台扣费的判定在 `CodexLocalBackend.gatewayPlatformHeadersFor` 里是**纯按
+      // origin** 的:打的是 Miau 就带计费头。所以这里只需守住 baseUrl —— 一旦有人
+      // 把它改成别家的地址,平台余额会静默失效(退回自填 Key),而 UI 上看不出来。
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        const channel = resolveProviderChannel(`${gatewayId}-deepseek-miau`)
+        expect(channel.baseUrl).toBe(MIAU_BASE_URL)
+        // 复用 Miau token 那个槽位:用户加 DeepSeek 不必重新配置凭据。
+        expect(channel.credentialId).toBe('qwen')
+      }
+    })
+
+    it('记忆任务钉在便宜档,不跟随选中的对话模型', () => {
+      // 不钉的话它回落到 `provider.model`,也就是**上次 spawn 那一刻**选中的模型。
+      // 2026-08-31 qwen 通道真机撞过:用户选 Flash 聊天,记忆却跑在 max 上,
+      // ¥2.14 vs ¥0.10,而 UI 上完全看不出这笔钱哪来的。
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        expect(resolveProviderChannel(`${gatewayId}-deepseek-miau`).memoriesModel)
+          .toBe('deepseek-v4-flash-0731')
+      }
+    })
+
+    /**
+     * 「slug 精确命中优先」这条规则要成立,前提是**一个 slug 在一个网关下只被一条
+     * 通道认领**。两条抢同一个 slug 的话,先命中谁取决于 `BUILTIN_CHANNELS` 的
+     * 数组顺序 —— 那是个没人会想到去查的静默故障:模型能用,只是钱走错了钱包、
+     * 明细挂在别的通道下。
+     *
+     * 所以在这里钉死,而不是靠「我刚才看过一遍,没有重复」。
+     */
+    it('同一网关下没有两条通道抢同一个 slug', () => {
+      const seen = new Map<string, string>()
+      for (const channel of BUILTIN_CHANNELS) {
+        for (const model of channel.allowedModels ?? []) {
+          const key = `${channel.gatewayId}:${model}`
+          const previous = seen.get(key)
+          expect(
+            previous,
+            `${key} 同时被 ${previous} 和 ${channel.id} 认领 —— 先命中谁取决于数组顺序`,
+          ).toBeUndefined()
+          seen.set(key, channel.id)
+        }
+      }
+    })
   })
 })

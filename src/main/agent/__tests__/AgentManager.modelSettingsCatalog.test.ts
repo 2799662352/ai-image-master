@@ -155,6 +155,10 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
+          // apiyi 也挂了 Miau 的 DeepSeek（与 qwen 同一枚 token、同一个端点），
+          // 所以这两行在两个网关的目录里都有。裸 slug 那两个只在 Right.Codes。
+          expect.objectContaining({ id: 'deepseek-v4-flash-0731' }),
+          expect.objectContaining({ id: 'deepseek-v4-pro-0813' }),
           // No 4.6 here on purpose: it is declared on the Right.Codes Grok
           // channel only, so the API Yi catalog stays one row shorter.
           expect.objectContaining({ id: 'grok-4.5' }),
@@ -220,6 +224,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           expect.objectContaining({ id: 'deepseek-v4-flash' }),
           expect.objectContaining({ id: 'deepseek-v4-pro' }),
+          expect.objectContaining({ id: 'deepseek-v4-flash-0731' }),
+          expect.objectContaining({ id: 'deepseek-v4-pro-0813' }),
           expect.objectContaining({ id: 'grok-4.6' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
@@ -335,6 +341,16 @@ describe('AgentManager model settings catalog and snapshot', () => {
             id: 'deepseek-v4-pro',
             route: expect.objectContaining({ channelId: 'rightcode-deepseek' }),
           }),
+          // 同族不同源：带日期的 slug 落 Miau 那条，因此能吃平台余额。
+          // 这两行与上面两行的 channelId 不同，正是「slug 精确命中」在起作用。
+          expect.objectContaining({
+            id: 'deepseek-v4-flash-0731',
+            route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
+          }),
+          expect.objectContaining({
+            id: 'deepseek-v4-pro-0813',
+            route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
+          }),
           expect.objectContaining({
             id: 'grok-4.6',
             route: expect.objectContaining({ channelId: 'rightcode-grok' }),
@@ -390,6 +406,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'qwen3.8-flash',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
+      'deepseek-v4-flash-0731',
+      'deepseek-v4-pro-0813',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -423,6 +441,10 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
+          // apiyi 也挂了 Miau 的 DeepSeek（与 qwen 同一枚 token、同一个端点），
+          // 所以这两行在两个网关的目录里都有。裸 slug 那两个只在 Right.Codes。
+          expect.objectContaining({ id: 'deepseek-v4-flash-0731' }),
+          expect.objectContaining({ id: 'deepseek-v4-pro-0813' }),
           // No 4.6 here on purpose: it is declared on the Right.Codes Grok
           // channel only, so the API Yi catalog stays one row shorter.
           expect.objectContaining({ id: 'grok-4.5' }),

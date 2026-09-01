@@ -163,6 +163,65 @@ const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
   qwenChannel('rightcode'),
 ])
 
+/**
+ * Miau 上的 DeepSeek —— 与 `rightcode-deepseek` **并存**,不是替换。
+ *
+ * 两边卖的是同一代模型,但 slug 不同:Miau 带日期(`-0731` / `-0813`),
+ * Right.Codes 不带。这个差别不是巧合能依赖的运气,而是这两条能共存的**前提**:
+ * 路由靠 slug 精确命中来区分通道(见 `channelForModel`),同名就分不开了。
+ *
+ * 2026-09-01 对着网关 `/v1/models` 实测确认存在。这一步不能省 —— 列进来的 slug
+ * 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字提到是模型名
+ * 写错了(同一条纪律见 grok-4.6 与 qwen3.8-flash 那两段注释)。
+ *
+ * ⚠️ 上游还有三个 `vanchin/` 前缀的同族 slug(`vanchin/deepseek-v4-pro` 等),
+ * 是另一路供应商,**刻意不列**:没有验过它们的计费与协议行为。
+ */
+const DEEPSEEK_MIAU_MODELS = Object.freeze([
+  'deepseek-v4-flash-0731',
+  'deepseek-v4-pro-0813',
+])
+
+/**
+ * 与 `qwenChannel` 同构:同一个 Miau 端点在两个网关下各注册一次。
+ *
+ * 复用 `credentialId: 'qwen'` 不是笔误 —— 那个槽位里存的是**Miau token**,
+ * 不是「通义千问专用 Key」。名字是历史包袱(它最早只服务 qwen),而 Miau 上所有
+ * 模型共用这一枚,所以用户加 DeepSeek 不必重新配置任何东西。
+ *
+ * baseUrl 走 Miau 还带来一件事:平台余额**自动生效**。扣费判定在
+ * `CodexLocalBackend.gatewayPlatformHeadersFor` 里是纯按 origin 的 —— 只要打的是
+ * Miau 且已 arm 平台池,就会带上 Authorization 与计费归属头,无需在这里声明什么。
+ */
+function deepseekMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
+  return Object.freeze({
+    id: `${gatewayId}-deepseek-miau`,
+    gatewayId,
+    name: 'DeepSeek (Miau)',
+    // ⚠️ 必须是生产常量,不能在这个文件里做环境覆盖 —— 本文件被渲染层直接
+    // import,顶层出现 `import { app } from 'electron'` 会让渲染进程加载即失败。
+    // 理由与开发期覆盖落在哪,见 `qwenChannel` 上那段。
+    baseUrl: MIAU_BASE_URL,
+    envKey: 'MIAU_API_KEY',
+    credentialId: 'qwen',
+    model: 'deepseek-v4-flash-0731',
+    // 记忆任务钉死在便宜的那一档,不跟随选中的对话模型。理由与代价见
+    // `qwenChannel` 里那段长注释(2026-08-31 真机撞过:选 Flash 聊天,
+    // 记忆却跑在 max 上,¥2.14 vs ¥0.10,而 UI 上完全看不出这笔钱哪来的)。
+    memoriesModel: 'deepseek-v4-flash-0731',
+    allowedModels: DEEPSEEK_MIAU_MODELS,
+    // 与 `rightcode-deepseek` 同样的理由:DeepSeek 原生说 Responses,但 codex 把
+    // MCP 工具包进 `{"type":"namespace"}`(openai/codex#23186),而 DeepSeek 文档
+    // 明说未知 tool 类型会被忽略 —— 静默丢弃,不报错。所以仍要垫桥。
+    compatibilityPolicy: 'responses-namespace-bridge',
+  })
+}
+
+const DEEPSEEK_MIAU_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
+  deepseekMiauChannel('apiyi'),
+  deepseekMiauChannel('rightcode'),
+])
+
 const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'apiyi',
@@ -170,7 +229,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'API易 Responses 网关',
     credentialId: 'apiyi',
     defaultChannelId: 'apiyi-standard',
-    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen'],
+    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen', 'apiyi-deepseek-miau'],
   }),
   Object.freeze({
     id: 'rightcode',
@@ -178,7 +237,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'Right.Codes Codex、Grok 与 DeepSeek 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek', 'rightcode-claude', 'rightcode-qwen'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen'],
   }),
 ])
 
@@ -389,6 +448,7 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     memoriesModel: 'gpt-5.5',
   }),
   ...QWEN_CHANNELS,
+  ...DEEPSEEK_MIAU_CHANNELS,
 ])
 
 /** Maps a model slug to its provider family for channel routing. */
@@ -420,6 +480,42 @@ const FAMILY_CHANNEL_SUFFIX: Readonly<Record<AgentModelFamily, string>> =
     qwen: 'qwen',
     deepseek: 'deepseek',
   })
+
+/**
+ * 选出该网关下能跑这个模型的通道。
+ *
+ * ## 为什么不能只靠 family → 后缀
+ *
+ * 那套映射是「一个 family 在一个网关下只有一条通道」。这个前提在 Miau 上架
+ * DeepSeek 之后不成立了:同一个 `deepseek` family 下有两条通道(Right.Codes 的
+ * `/deepseek` 和 Miau),卖的是同一代模型的不同 slug。
+ *
+ * 所以先按 slug **精确命中**:哪条通道明确列了这个 slug,就是哪条。命不中再回落到
+ * 原来的 family 后缀 —— 那条路给的是不限 `allowedModels` 的通道(standard),以及
+ * 「这个网关压根没这个 family」的判定。
+ *
+ * 对改动之前就存在的每个模型,两步得到的结果完全一致:当时没有任何 slug 同时
+ * 出现在同一网关的两条通道里(`gatewayModelRouting.test.ts` 里有条守卫钉住这点,
+ * 一旦有人让两条通道抢同一个 slug 就会红 —— 那时先命中谁将取决于数组顺序,
+ * 是个没人会想到去查的静默故障)。
+ *
+ * 让两种 DeepSeek 留在**同一个** family 是有意的:选择器按 family 分组,拆成两个
+ * family 会让用户看到「DEEPSEEK」和「DEEPSEEK-MIAU」两个割裂区块,而它们其实是
+ * 同一族模型的两个来源,并排列在一组里才对。
+ */
+function channelForModel(
+  gatewayId: string,
+  modelId: string,
+  family: AgentModelFamily,
+): ProviderChannelPreset | undefined {
+  const exact = BUILTIN_CHANNELS.find(
+    (entry) => entry.gatewayId === gatewayId && entry.allowedModels?.includes(modelId),
+  )
+  if (exact) return exact
+  return BUILTIN_CHANNELS.find(
+    (entry) => entry.id === `${gatewayId}-${FAMILY_CHANNEL_SUFFIX[family]}`,
+  )
+}
 
 function customGatewayModelRoute(
   gatewayId: string,
@@ -484,13 +580,12 @@ export function resolveGatewayModelRoute(
     return customGatewayModelRoute(gatewayId, normalizedModel)
   }
 
-  const channelId = `${gatewayId}-${FAMILY_CHANNEL_SUFFIX[family]}`
   // Not every gateway serves every family (only rightcode has a Claude pool),
   // and the family→channel mapping is ours, not the caller's. A missing
   // channel is therefore "this gateway can't run this model", the same
   // skippable condition as an `allowedModels` miss — not the malformed-input
   // error `resolveProviderChannel` would raise.
-  const channel = BUILTIN_CHANNELS.find((entry) => entry.id === channelId)
+  const channel = channelForModel(gatewayId, normalizedModel, family)
   if (
     !channel
     || (channel.allowedModels && !channel.allowedModels.includes(normalizedModel))
@@ -498,7 +593,7 @@ export function resolveGatewayModelRoute(
     throw new ModelUnavailableInGatewayError(normalizedModel, gatewayId)
   }
 
-  return { gatewayId, channelId, modelId: normalizedModel, family }
+  return { gatewayId, channelId: channel.id, modelId: normalizedModel, family }
 }
 
 /**

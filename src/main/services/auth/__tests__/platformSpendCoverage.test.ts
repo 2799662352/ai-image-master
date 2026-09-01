@@ -35,6 +35,20 @@ const SRC_ROOT = path.resolve(process.cwd(), 'src')
 const CREDENTIAL_SYMBOL = 'gatewayPlatformHeaders'
 
 /**
+ * 按**标识符**匹配,不是子串。
+ *
+ * 曾经是 `text.includes(CREDENTIAL_SYMBOL)`,于是 `gatewayPlatformHeadersFor`
+ * ——`CodexLocalBackend` 里那个**另一个**函数——也算命中。它出现在别处的注释里
+ * 就足以把那个文件拖进名单,而那个文件可能压根不发请求(2026-09-01 撞到:
+ * `gatewayModelRouting.ts` 只是在注释里解释扣费判定在哪,就被判定为「花了钱
+ * 没上报」)。
+ *
+ * 收紧不会漏掉真使用:调用和 import 后面跟的都是非词字符(`(`、`,`、`}`),
+ * `\b` 照样命中。漏掉的只有「以它为前缀的别的名字」,而那本来就不是它。
+ */
+const CREDENTIAL_PATTERN = new RegExp(`\\b${CREDENTIAL_SYMBOL}\\b`)
+
+/**
  * 报上报点的入口。`notePlatformSpend` 是直接报,`onBilledExchange` 是把报点
  * 交给下游模块(视频客户端那条就是这么接的)。两者有其一即可。
  */
@@ -109,7 +123,7 @@ async function filesUsingCredentials(): Promise<string[]> {
   const hits: string[] = []
   for (const rel of candidates) {
     const text = await readFile(path.join(SRC_ROOT, rel), 'utf8')
-    if (text.includes(CREDENTIAL_SYMBOL)) hits.push(rel)
+    if (CREDENTIAL_PATTERN.test(text)) hits.push(rel)
   }
   return hits.sort()
 }
@@ -146,7 +160,10 @@ describe('平台消费上报覆盖', () => {
     for (const [rel, exemption] of EXEMPT) {
       const text = await readFile(path.join(SRC_ROOT, rel), 'utf8').catch(() => null)
       expect(text, `豁免名单指向了不存在的文件:${rel}`).not.toBeNull()
-      expect(text, `${rel} 已经不再动用平台凭据,这条豁免该删了`).toContain(CREDENTIAL_SYMBOL)
+      expect(
+        text && CREDENTIAL_PATTERN.test(text),
+        `${rel} 已经不再动用平台凭据,这条豁免该删了`,
+      ).toBe(true)
 
       if (!exemption.delegatesTo) continue
       const delegate = await readFile(path.join(SRC_ROOT, exemption.delegatesTo), 'utf8').catch(

@@ -55,6 +55,10 @@ describe('codexProviders', () => {
       // 同一个 Miau 端点在两个网关下各注册一次（过渡态，见 QWEN_CHANNELS 注释）。
       'apiyi-qwen',
       'rightcode-qwen',
+      // Miau 上的 DeepSeek，同样两个网关各一次。与 `rightcode-deepseek` 并存
+      // 而非替换：slug 不同（带日期 vs 不带），路由靠这个差别把两条分开。
+      'apiyi-deepseek-miau',
+      'rightcode-deepseek-miau',
     ])
 
     const claude = resolveProviderChannel('rightcode-claude')
@@ -150,6 +154,7 @@ describe('codexProviders', () => {
       'rightcode-deepseek',
       'rightcode-claude',
       'rightcode-qwen',
+      'rightcode-deepseek-miau',
     ])
   })
 
