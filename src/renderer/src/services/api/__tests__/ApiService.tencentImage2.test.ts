@@ -403,4 +403,24 @@ describe('ApiService hunyuan-gpt-image-2', () => {
     expect(cfg.capabilities?.maxOutputs).toBe(1)
     expect(cfg.capabilities?.multipleImages).toBe(false)
   })
+
+  /**
+   * 两个腾讯模型必须**同时存在**。
+   *
+   * 它们是不同的模型、不同的渠道,定价也不同 —— 新增混元不代表旧那条(走
+   * tokenhub 的 `custom-imagemodel-gt`)可以下掉。会这么错是因为两者名字像、
+   * 协议又几乎一样,重构时很容易被当成重复项合并掉一个。
+   *
+   * 而且旧那条有混元没有的能力:独立的 `/images/edits` 端点。下掉它等于
+   * 悄悄砍掉一条用户在用的出图路径。
+   */
+  it('两条腾讯渠道并存 —— 新增不等于旧的可以下掉', async () => {
+    const service = await makeService()
+    const all = service.getAllModels()
+    expect(Object.keys(all)).toContain('custom-imagemodel-gt')
+    expect(Object.keys(all)).toContain('hunyuan-gpt-image-2')
+    // 各自的端点不能被抹平成同一套。
+    expect(all['custom-imagemodel-gt']!.editURL).toContain('/images/edits')
+    expect(all['hunyuan-gpt-image-2']!.editURL).toContain('/images/generations')
+  })
 })

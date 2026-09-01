@@ -666,18 +666,21 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 }
 
 /**
- * 腾讯 image2 的两条渠道。
+ * 走腾讯私有约定的图像模型。
  *
- * 它们共享同一套私有约定,所以判定必须收在一处:关水印要发腾讯私有的
+ * ⚠️ **它们是两个不同的模型、两条不同的渠道,不是同一个东西的两个入口。**
+ * 定价、上游实现都不同,谁也不能替代谁 —— 新增一条不等于旧的那条可以下掉。
+ *
+ * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
  * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
  * 参考图要包成 `images: [{ image_url }]` 的 JSON 而不是 multipart。
- * 逐处写 `model === '...'` 的话,加第二条渠道时一定会漏掉其中一两处 ——
+ * 逐处写 `model === '...'` 的话,加第二条时一定会漏掉其中一两处 ——
  * 而漏掉的表现是「水印没关掉」或「参考图没生效」,都不报错。
  *
- * 两条渠道**唯一**的差别在端点:`custom-imagemodel-gt` 有独立的
- * `/images/edits`,而 `hunyuan-gpt-image-2` 那条渠道只开了 generations
- * (打 edits 会回 `does not support relay mode 6`),参考图得放在
- * generations 的请求体里。这个差别体现在各自的 `editURL` 上,不在这里。
+ * 协议上唯一的差别在端点:`custom-imagemodel-gt` 有独立的 `/images/edits`,
+ * 而 `hunyuan-gpt-image-2` 那条渠道只开了 generations(打 edits 会回
+ * `does not support relay mode 6`),参考图得放在 generations 的请求体里。
+ * 这个差别体现在各自的 `editURL` 上,不在这里。
  */
 const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
   'custom-imagemodel-gt',
