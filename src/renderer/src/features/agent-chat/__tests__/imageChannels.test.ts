@@ -95,4 +95,38 @@ describe('imageChannels registry', () => {
     expect(IMAGE_CHANNEL_IDS).toEqual(IMAGE_CHANNELS.map((c) => c.id))
     expect(IMAGE_CHANNEL_IDS.length).toBeGreaterThan(0)
   })
+
+  /**
+   * 每个渠道 id 必须在 `ApiService` 的模型表里真实存在。
+   *
+   * 渠道清单管「给谁看」,`DEFAULT_MODELS` 管「怎么发请求」(端点、尺寸表、
+   * 能力位)。两份按 id 对应,但没有任何编译期联系 —— 在这边加一行、忘了在那边
+   * 加配置的话,用户在选择器里选得到,点下去却拿不到端点。
+   *
+   * 反过来不成立:`DEFAULT_MODELS` 里的模型多得多(经典生成页全都提供),
+   * 聊天渠道是精选子集,所以只单向检查。
+   */
+  it('每个渠道在 ApiService 的模型表里都有配置', async () => {
+    const { ApiService } = await import('../../../services/api/ApiService')
+    const models = new ApiService().getAllModels()
+    for (const channel of IMAGE_CHANNELS) {
+      expect(
+        models[channel.id],
+        `渠道「${channel.fullLabel}」(${channel.id}) 在 ApiService.DEFAULT_MODELS 里没有配置 —— 用户选得到但发不出去`,
+      ).toBeDefined()
+    }
+  })
+
+  /** miauOnly 必须与模型配置里的站点绑定一致,否则请求会被送到错误的站点。 */
+  it('miauOnly 与模型配置里的站点绑定一致', async () => {
+    const { ApiService } = await import('../../../services/api/ApiService')
+    const models = new ApiService().getAllModels()
+    for (const channel of IMAGE_CHANNELS) {
+      const pinned = models[channel.id]?.requiredSiteKey !== undefined
+      expect(
+        pinned,
+        `渠道「${channel.fullLabel}」标了 miauOnly=${channel.miauOnly},但模型配置里 requiredSiteKey ${pinned ? '存在' : '不存在'} —— 两者必须一致`,
+      ).toBe(channel.miauOnly)
+    }
+  })
 })
