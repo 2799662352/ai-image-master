@@ -124,13 +124,30 @@ export const DEFAULT_IMAGE_CHANNEL_ID = 'gpt-image-2-vip'
 export type ImageChannelId = (typeof IMAGE_CHANNELS)[number]['id']
 
 /**
- * 供 MCP 的 `z.enum()` 使用 —— zod 要一个非空的字面量元组。
+ * 编译期自证:`ImageChannelId` 必须是**字面量联合**,不能退化成 `string`。
  *
- * 从上面的数组推导,所以加渠道时 MCP 那边**自动跟上**,不需要记得同步;
- * 而 `ImageChannelId` 保证推导出来的仍是字面量联合,不是 `string`。
- * 断言只是把 `T[]` 讲成 zod 要的 `[T, ...T[]]`(非空),不改变元素类型。
+ * Zod 官方文档写明了这个陷阱:传给 `z.enum()` 的数组若没保住字面量,
+ * `z.infer` 只能得出 `string`(https://zod.dev — "Pass string array variables
+ * to z.enum")。后果是 MCP 的 `model` 参数变成「任意字符串」,而**类型检查照样
+ * 通过**,没有任何信号 —— 2026-09-01 就这么丢过一次。
+ *
+ * 下面这行是纯类型层面的:`string extends ImageChannelId` 只有在它被拓宽成
+ * `string` 时才成立,那时右边求值成 `never`,把 `true` 赋给 `never` 立刻编译失败。
+ * 放在 `tsc` 里拦,而不是靠某个测试文件去正则匹配源码 —— 后者只在跑到那个文件
+ * 时才有效,而这条不变量任何一次编译都该守住。
  */
-export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as unknown as [
+type AssertLiteralChannelIds = string extends ImageChannelId ? never : true
+const _assertChannelIdsAreLiterals: AssertLiteralChannelIds = true
+void _assertChannelIdsAreLiterals
+
+/**
+ * 供 MCP 的 `z.enum()` 使用 —— zod 的签名要 `readonly [string, ...string[]]`
+ * (非空元组),而 `.map()` 给的是普通数组,所以要窄化一次。
+ *
+ * 从上面的数组推导,所以加渠道时 MCP 那边**自动跟上**,不需要记得同步。
+ * 断言只改「非空」这一点,元素类型仍是 `ImageChannelId`(由上面那行保证是字面量)。
+ */
+export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as [
   ImageChannelId,
   ...ImageChannelId[],
 ]

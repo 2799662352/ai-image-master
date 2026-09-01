@@ -96,24 +96,10 @@ describe('imageChannels registry', () => {
     expect(IMAGE_CHANNEL_IDS.length).toBeGreaterThan(0)
   })
 
-  /**
-   * 渠道数组必须用 `as const satisfies`,**不能**写成 `: readonly ImageChannel[]`。
-   *
-   * 类型标注会把每个 `id` 拓宽成 `string`,于是 `IMAGE_CHANNEL_IDS` 也是
-   * `string[]`,MCP 那边 `z.infer<typeof modelSchema>` 只能得出 `string` ——
-   * `model` 参数退化成「任意字符串」,比手写联合还弱,而且**类型检查照样通过**,
-   * 没有任何信号。2026-09-01 重构时就这么丢过一次。
-   *
-   * 这条只能读源码文本来守:类型退化在运行时看不出来,而 vitest 断言的是运行时值。
-   */
-  it('渠道数组保留字面量类型 —— 否则 MCP 的参数类型退化成 string', () => {
-    const source = readFileSync(
-      resolve(process.cwd(), 'src/shared/imageChannels.ts'),
-      'utf8',
-    )
-    expect(source).toMatch(/\]\s*as const satisfies readonly ImageChannel\[\]/)
-    expect(source).not.toMatch(/export const IMAGE_CHANNELS\s*:\s*readonly ImageChannel\[\]/)
-  })
+  // 「字面量不被拓宽」那条不在这里守 —— 它是**编译期**断言,住在
+  // `shared/imageChannels.ts` 里(`AssertLiteralChannelIds`)。类型退化任何一次
+  // `tsc` 都该拦下,而不是等某个测试文件跑到才发现;在这里再写一条正则匹配源码
+  // 只会变成同一件事的第二个说法,而两个说法迟早会不一致。
 
   /**
    * 每个渠道 id 必须在 `ApiService` 的模型表里真实存在。
