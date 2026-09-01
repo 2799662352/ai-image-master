@@ -674,7 +674,8 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
  * 那条可以下掉。
  *
  *  - `custom-imagemodel-gt` —— TokenHub gtimage,aiart 官方渠道;
- *  - `custom-model-og-v2`   —— TokenHub OG 新渠道,便宜近 6 倍,且支持多张输出。
+ *  - `custom-model-og-v2`   —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
+ *                              且支持多张输出。
  *
  * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
  * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
@@ -829,8 +830,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     }
   },
   'custom-model-og-v2': {
-    name: '腾讯 OG v2',
-    displayName: '20s出图，腾讯 OG 新渠道（custom-model-og-v2），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数，支持多张（经 Miau API 代理）',
+    name: 'TokenHub og-image',
+    displayName: '20s出图，TokenHub og-image 新渠道（custom-model-og-v2），比 gtimage 便宜近 6 倍，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数，支持多张（经 Miau API 代理）',
     time: '20s',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
