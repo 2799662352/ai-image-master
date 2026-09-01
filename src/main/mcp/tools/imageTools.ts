@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './imageTaskRegistry'
+import { IMAGE_CHANNEL_IDS } from '../../../shared/imageChannels'
 import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
 
@@ -327,25 +328,24 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
   // composer (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro). Omit to honor the
   // user's pick; set it only when you have a concrete reason to override (e.g. 万相
   // for a 组图 series, or the user asked for a specific channel this turn).
+  // 从 `shared/imageChannels` 推导,**不手抄**。
+  //
+  // 这里以前是一份手写的 enum,与聊天选择器的清单各自维护。加渠道时漏掉这边
+  // 的后果是:用户在选择器里选得到,agent 却传不了这个值 —— 而且不报错,
+  // 只是 agent 用了别的渠道出图。2026-09-01 接 og-image 时正是这么漏的。
   const modelSchema = z
-    .enum([
-      'custom-imagemodel-gt',
-      'gpt-image-2-vip',
-      'gpt-image-2',
-      'wan2.7-image-pro',
-      'gemini-3.1-flash-image',
-      'doubao-seedream-5-0-pro-260628',
-      'qwen-image-3.0-pro',
-    ])
+    .enum(IMAGE_CHANNEL_IDS)
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default ' +
+      'composer picker (VIP / Image2 官方 / 腾讯 / OG / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default ' +
       "VIP) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
       'channel the user explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, ' +
       'gpt-image-2 = API易 OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ' +
-      'ceiling, custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2, ' +
+      'ceiling, custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
+      'custom-model-og-v2 = TokenHub og-image — 另一条腾讯渠道，更快(~20s)、便宜近 6 倍、可出多张, ' +
+      'gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
       'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; takes at most 3 reference ' +
@@ -600,7 +600,10 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
       prompts?: unknown
-      model?: 'gpt-image-2-vip' | 'gpt-image-2' | 'custom-imagemodel-gt' | 'wan2.7-image-pro' | 'gemini-3.1-flash-image'
+      // 从 schema 推导,不手写。原先这里是一份手抄的联合类型,已经漂移了 ——
+      // 漏掉 Seedream 5.0 Pro 和千问 Image 3.0 Pro 两个(它们在 enum 里、在这里没有)。
+      // 手抄一份就意味着每加一个渠道都要记得同步两处,而漏掉的那处不会报错。
+      model?: z.infer<typeof modelSchema>
       ratio?: string
       resolution?: '1K' | '2K' | '4K'
       quality?: 'auto' | 'low' | 'medium' | 'high'

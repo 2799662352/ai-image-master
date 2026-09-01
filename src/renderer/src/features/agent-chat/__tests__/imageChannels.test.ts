@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_IMAGE_CHANNEL_ID,
+  IMAGE_CHANNEL_IDS,
   IMAGE_CHANNELS,
   findImageChannel,
   isMiauOnlyChannel,
@@ -14,10 +17,11 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 → Nano2 → Wan2.7 → Qwen3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×2 → Nano2 → Wan2.7 → Qwen3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
+      'custom-model-og-v2',
       'gemini-3.1-flash-image',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',
@@ -59,5 +63,36 @@ describe('imageChannels registry', () => {
       expect(c.fullLabel.length).toBeGreaterThan(0)
       expect(c.description.length).toBeGreaterThan(0)
     }
+  })
+
+  /**
+   * MCP 的模型枚举必须是**推导**出来的,不能再手抄一份。
+   *
+   * 出图有三条路,以前各有一份清单:`ApiService.DEFAULT_MODELS`(生成页)、
+   * 本模块的 `IMAGE_CHANNELS`(聊天选择器)、`imageTools.ts` 的 `modelSchema`
+   * (MCP)。加渠道只改一两处的后果是「新模型在有的地方看不见」,而且**不报错**
+   * —— 2026-09-01 接 og-image 时就这么漏过。
+   *
+   * 现在 MCP 从 `shared/imageChannels` 推导。这条守卫钉住它**保持**推导:
+   * 有人把 `z.enum(IMAGE_CHANNEL_IDS)` 改回字面量数组的话立刻红。
+   *
+   * 读源码文本而不是 import:`imageTools.ts` 顶层拉 electron / MCP SDK,
+   * 在 vitest 里 import 不动(同 `platformSpendCoverage` 那条守卫的理由)。
+   */
+  it('MCP 的模型枚举从共享清单推导,不是手抄的字面量', () => {
+    const mcpSource = readFileSync(
+      resolve(process.cwd(), 'src/main/mcp/tools/imageTools.ts'),
+      'utf8',
+    )
+    // 只断言 `modelSchema` 这一处。文件里别的 `z.enum([...])`(比例、分辨率、
+    // 清晰度)用字面量是对的 —— 它们不跟随渠道清单变化。
+    expect(mcpSource).toMatch(/const modelSchema = z\s*\.enum\(IMAGE_CHANNEL_IDS\)/)
+    expect(mcpSource).toContain("from '../../../shared/imageChannels'")
+  })
+
+  /** 推导出来的 id 列表必须与渠道数组逐项一致,顺序也一样。 */
+  it('IMAGE_CHANNEL_IDS 与渠道数组同步', () => {
+    expect(IMAGE_CHANNEL_IDS).toEqual(IMAGE_CHANNELS.map((c) => c.id))
+    expect(IMAGE_CHANNEL_IDS.length).toBeGreaterThan(0)
   })
 })

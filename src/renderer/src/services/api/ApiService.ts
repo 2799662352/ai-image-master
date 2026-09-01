@@ -830,8 +830,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     }
   },
   'custom-model-og-v2': {
-    name: 'TokenHub og-image',
-    displayName: '20s出图，TokenHub og-image 新渠道（custom-model-og-v2），比 gtimage 便宜近 6 倍，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数，支持多张（经 Miau API 代理）',
+    name: '腾讯 Image 2 Fast',
+    displayName: '20s出图，比腾讯 image2 便宜近 6 倍且可出多张，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（后台渠道 TokenHub og-image / custom-model-og-v2，经 Miau API 代理）',
     time: '20s',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
