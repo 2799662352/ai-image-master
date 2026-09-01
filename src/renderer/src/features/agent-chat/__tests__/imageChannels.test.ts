@@ -12,8 +12,8 @@ import {
 } from '../imageChannels'
 
 describe('imageChannels registry', () => {
-  it('defaults to the VIP channel', () => {
-    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('gpt-image-2-vip')
+  it('defaults to 腾讯 image2', () => {
+    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-imagemodel-gt')
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
@@ -51,10 +51,10 @@ describe('imageChannels registry', () => {
     expect(isSelectableImageChannel(42)).toBe(false)
   })
 
-  it('resolves valid ids as-is and falls back to VIP otherwise', () => {
+  it('resolves valid ids as-is and falls back to the default otherwise', () => {
     expect(resolveImageChannel('wan2.7-image-pro')).toBe('wan2.7-image-pro')
-    expect(resolveImageChannel('made-up')).toBe('gpt-image-2-vip')
-    expect(resolveImageChannel(null)).toBe('gpt-image-2-vip')
+    expect(resolveImageChannel('made-up')).toBe(DEFAULT_IMAGE_CHANNEL_ID)
+    expect(resolveImageChannel(null)).toBe(DEFAULT_IMAGE_CHANNEL_ID)
   })
 
   it('gives every channel a non-empty label / fullLabel / description', () => {

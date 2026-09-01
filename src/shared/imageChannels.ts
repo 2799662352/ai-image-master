@@ -117,8 +117,16 @@ export const IMAGE_CHANNELS = [
   // 比它替换掉的手写联合还弱。`satisfies` 同样能校验结构,但保留字面量。
 ] as const satisfies readonly ImageChannel[]
 
-/** 用户没选(或存的值已失效)时的默认渠道。 */
-export const DEFAULT_IMAGE_CHANNEL_ID = 'gpt-image-2-vip'
+/**
+ * 用户没选(或存的值已失效)时的默认渠道。
+ *
+ * 2026-09-01 由 `gpt-image-2-vip` 改为腾讯 image2(产品要求)。
+ *
+ * 这个常量的影响面比它看起来大:所有**从没手动选过渠道**的用户都落在这里,
+ * 而且 `resolveImageChannel` 把任何认不出的值(过期的本地存储、agent 传来的
+ * 野值)也回落到它。所以改它等于改绝大多数人的实际出图渠道与成本。
+ */
+export const DEFAULT_IMAGE_CHANNEL_ID = 'custom-imagemodel-gt'
 
 /**
  * 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。

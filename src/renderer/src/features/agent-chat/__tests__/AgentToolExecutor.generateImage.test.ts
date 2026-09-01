@@ -48,7 +48,7 @@ beforeEach(() => {
 })
 
 describe('AgentToolExecutor.generateImage', () => {
-  it('defaults to VIP (no site pin) when the user has not picked a channel', async () => {
+  it('defaults to the default channel when the user has not picked one', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
 
@@ -56,8 +56,10 @@ describe('AgentToolExecutor.generateImage', () => {
 
     expect(api.generateImage).toHaveBeenCalledTimes(1)
     const sent = api.generateImage.mock.calls[0][0]
-    expect(sent.model).toBe('gpt-image-2-vip') // default channel = VIP
-    expect(sent.siteKey).toBeUndefined() // VIP is not Miau-only
+    expect(sent.model).toBe(DEFAULT_IMAGE_CHANNEL_ID)
+    // 默认渠道现在是腾讯 image2（Miau-only），所以会钉站点。改默认值之前是 VIP，
+    // 那时这里断言的是 undefined。
+    expect(sent.siteKey).toBe('antigravity')
     expect(sent.ratio).toBe('16:9')
     expect(sent.resolution).toBe('2K') // default applied
   })
@@ -176,7 +178,7 @@ describe('AgentToolExecutor.generateImage', () => {
   it('lets the agent OVERRIDE the user channel with an explicit valid model (agent autonomy)', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
-    setChannel('gpt-image-2-vip') // user default = VIP
+    setChannel('gpt-image-2-vip') // 用户显式选了 VIP（不是默认值，这里要的就是「非默认」）
 
     // Agent deliberately switches to 万相 for a 组图 series → agent choice wins.
     await callGenerate({ prompt: '同一只猫的四季', model: 'wan2.7-image-pro' })
@@ -196,7 +198,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
   })
 
-  it('falls back to the user channel (then VIP) for an unknown/hallucinated agent model', async () => {
+  it('falls back to the user channel (then the default) for an unknown/hallucinated agent model', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
     setChannel('gemini-3.1-flash-image') // user picked Nano2
@@ -208,15 +210,18 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
   })
 
-  it('falls back to VIP when the stored channel is stale/unknown', async () => {
+  it('falls back to the default channel when the stored channel is stale/unknown', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
     setChannel('totally-made-up-channel')
 
     await callGenerate({ prompt: 'a cat' })
 
-    expect(api.generateImage.mock.calls[0][0].model).toBe('gpt-image-2-vip')
-    expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
+    expect(api.generateImage.mock.calls[0][0].model).toBe(DEFAULT_IMAGE_CHANNEL_ID)
+    // 默认渠道 2026-09-01 从 VIP 改成腾讯 image2 —— 后者是 Miau-only,所以回落
+    // 之后**会**钉站点(以前不钉)。这不是顺带的细节:它意味着从没选过渠道的用户
+    // 现在都走 Miau,没配 Miau Key 就出不了图。
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
   })
 
   it('records the image to history under the "codex" type', async () => {
@@ -231,7 +236,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(type).toBe('codex')
     expect(prompt).toBe('a cat')
     expect(urls).toEqual(['data:image/png;base64,AAA'])
-    expect(model).toBe('gpt-image-2-vip')
+    expect(model).toBe(DEFAULT_IMAGE_CHANNEL_ID)
   })
 
   it('appends a new assistant artifact bubble with one ref per image (status done)', async () => {
@@ -283,7 +288,7 @@ describe('AgentToolExecutor.generateImage', () => {
 
     // No threadId / no attachments API in this test → nothing saved locally,
     // history fake returns null. Compact shape only; never any base64.
-    expect(result).toEqual({ ok: true, count: 1, model: 'gpt-image-2-vip', historyId: null, paths: [] })
+    expect(result).toEqual({ ok: true, count: 1, model: DEFAULT_IMAGE_CHANNEL_ID, historyId: null, paths: [] })
     expect(JSON.stringify(result)).not.toContain('base64')
   })
 
@@ -304,7 +309,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(result).toEqual({
       ok: true,
       count: 1,
-      model: 'gpt-image-2-vip',
+      model: DEFAULT_IMAGE_CHANNEL_ID,
       historyId: 42,
       paths: [savedPath],
     })
@@ -346,7 +351,7 @@ describe('AgentToolExecutor.generateImage', () => {
       expect(result).toEqual({
         ok: true,
         count: 1,
-        model: 'gpt-image-2-vip',
+        model: DEFAULT_IMAGE_CHANNEL_ID,
         historyId: null,
         paths: [],
         persistencePending: true,

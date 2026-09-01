@@ -198,7 +198,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
    - \`model\` (optional): rendering channel **override**. **Omit it** to honor the
-     user's channel picker in the chat composer (default VIP). Only set it when you
+     user's channel picker in the chat composer (default 腾讯 image2). Only set it when you
      have a concrete reason — a consistent 组图 series (→ \`wan2.7-image-pro\`) or a
      channel the user explicitly names this turn (see "Choosing a model" below):
      - \`gpt-image-2-vip\` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
@@ -286,7 +286,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 
 The \`model\` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (VIP / Image2 官方 / 腾讯 /
-Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default VIP) — 各渠道共用同一套 ratio ×
+Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default 腾讯 image2) — 各渠道共用同一套 ratio ×
 resolution × quality 参数面(Seedream 5.0 Pro 只有 1K/2K、无 quality 轴,多传会被
 网关安全剔除)。
 Omitting \`model\` honors the user's pick — do this for ordinary requests. Set \`model\`
@@ -341,7 +341,7 @@ only when you have a concrete reason to override:
   (Nano Banana 2)走当前选中站点(任意站点可用,无需 Miau)。
 
 When the user does not name a channel, **do not guess** — just omit \`model\` so the
-render honors the user's composer picker (default VIP). Set \`model\` only for a
+render honors the user's composer picker (default 腾讯 image2). Set \`model\` only for a
 concrete reason (组图 → \`wan2.7-image-pro\`, 多参考图融合 →
 \`doubao-seedream-5-0-pro-260628\`, or a channel the user named). Never invent a
 model name; only these six values are valid.
@@ -448,7 +448,7 @@ directory and give it a descriptive, ordered name — e.g.
 - 用户给了图却忘传 \`referenceImages\`,改成从零文生图。
 - 多张图却逐个调 \`generate_image\`,而不是一次 \`generate_images\`。
 - 凭空编造 \`model\` 名;合法值只有上面「Choosing a model」列出的那些。用户没点名就
-  省略 \`model\`(交给用户在 composer 选的渠道,默认 VIP)。
+  省略 \`model\`(交给用户在 composer 选的渠道,默认腾讯 image2)。
 - 用户点名某渠道却不显式传 \`model\`(应显式传:vip/官逆 → \`gpt-image-2-vip\`、
   官方/旗舰/image2 官方 → \`gpt-image-2\`、nano/nano2 → \`gemini-3.1-flash-image\`、
   万相/组图 → \`wan2.7-image-pro\`、seedream/即梦/豆包/多参考图融合 →
