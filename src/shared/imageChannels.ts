@@ -42,7 +42,7 @@ export interface ImageChannel {
  * 顺序按产品要求(2026-07-20):Seedream 5.0 Pro → 腾讯 → Nano2 → 万相 2.7 pro →
  * Image2 官方 → VIP。默认渠道仍是 VIP —— 顺序只影响显示,不改变回落目标。
  */
-export const IMAGE_CHANNELS: readonly ImageChannel[] = [
+export const IMAGE_CHANNELS = [
   {
     id: 'doubao-seedream-5-0-pro-260628',
     label: 'SD5',
@@ -109,17 +109,31 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     description: 'OpenAI 官逆，稳定。默认渠道。',
     miauOnly: false,
   },
-] as const
+  // ⚠️ `as const satisfies` 而不是 `: readonly ImageChannel[]`。
+  //
+  // 写成类型标注会把每个 `id` **拓宽成 `string`**,于是下面派生出来的
+  // `IMAGE_CHANNEL_IDS` 也是 `string[]`,`z.enum()` 拿到它之后
+  // `z.infer` 只能得出 `string` —— MCP 那个 `model` 参数就退化成「任意字符串」,
+  // 比它替换掉的手写联合还弱。`satisfies` 同样能校验结构,但保留字面量。
+] as const satisfies readonly ImageChannel[]
 
 /** 用户没选(或存的值已失效)时的默认渠道。 */
 export const DEFAULT_IMAGE_CHANNEL_ID = 'gpt-image-2-vip'
 
+/** 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。 */
+export type ImageChannelId = (typeof IMAGE_CHANNELS)[number]['id']
+
 /**
  * 供 MCP 的 `z.enum()` 使用 —— zod 要一个非空的字面量元组。
  *
- * 从上面的数组推导,所以加渠道时 MCP 那边**自动跟上**,不需要记得同步。
+ * 从上面的数组推导,所以加渠道时 MCP 那边**自动跟上**,不需要记得同步;
+ * 而 `ImageChannelId` 保证推导出来的仍是字面量联合,不是 `string`。
+ * 断言只是把 `T[]` 讲成 zod 要的 `[T, ...T[]]`(非空),不改变元素类型。
  */
-export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as [string, ...string[]]
+export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as unknown as [
+  ImageChannelId,
+  ...ImageChannelId[],
+]
 
 export function findImageChannel(id: string): ImageChannel | undefined {
   return IMAGE_CHANNELS.find((c) => c.id === id)

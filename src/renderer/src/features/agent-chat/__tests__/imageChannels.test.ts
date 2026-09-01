@@ -97,6 +97,25 @@ describe('imageChannels registry', () => {
   })
 
   /**
+   * 渠道数组必须用 `as const satisfies`,**不能**写成 `: readonly ImageChannel[]`。
+   *
+   * 类型标注会把每个 `id` 拓宽成 `string`,于是 `IMAGE_CHANNEL_IDS` 也是
+   * `string[]`,MCP 那边 `z.infer<typeof modelSchema>` 只能得出 `string` ——
+   * `model` 参数退化成「任意字符串」,比手写联合还弱,而且**类型检查照样通过**,
+   * 没有任何信号。2026-09-01 重构时就这么丢过一次。
+   *
+   * 这条只能读源码文本来守:类型退化在运行时看不出来,而 vitest 断言的是运行时值。
+   */
+  it('渠道数组保留字面量类型 —— 否则 MCP 的参数类型退化成 string', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/shared/imageChannels.ts'),
+      'utf8',
+    )
+    expect(source).toMatch(/\]\s*as const satisfies readonly ImageChannel\[\]/)
+    expect(source).not.toMatch(/export const IMAGE_CHANNELS\s*:\s*readonly ImageChannel\[\]/)
+  })
+
+  /**
    * 每个渠道 id 必须在 `ApiService` 的模型表里真实存在。
    *
    * 渠道清单管「给谁看」,`DEFAULT_MODELS` 管「怎么发请求」(端点、尺寸表、
@@ -114,6 +133,31 @@ describe('imageChannels registry', () => {
         models[channel.id],
         `渠道「${channel.fullLabel}」(${channel.id}) 在 ApiService.DEFAULT_MODELS 里没有配置 —— 用户选得到但发不出去`,
       ).toBeDefined()
+    }
+  })
+
+  /**
+   * agent 的技能文档必须提到每个渠道。
+   *
+   * `SKILL.md` 是 agent 判断「用户说什么就选哪个渠道」的依据。渠道不在里面 =
+   * **agent 根本不知道它存在**,用户说「用便宜那个」也点不到 —— 而工具调用本身
+   * 不会报错,只是用了别的渠道,谁也看不出漏了什么。
+   *
+   * 2026-09-01 接 og-image 时就这么漏了;而且那份文档当时已经陈旧一轮
+   * (千问 Image 3.0 Pro 加进选择器时也没登记进去,还留着一句「只有六个合法值」)。
+   * 两次都没人发现,正因为没有任何东西会因此变红。
+   */
+  it('agent 的技能文档提到了每个渠道', () => {
+    const skill = readFileSync(
+      resolve(
+        process.cwd(),
+        'resources/plugins/catimation-core/skills/catimation-image/SKILL.md',
+      ),
+      'utf8',
+    )
+    for (const channel of IMAGE_CHANNELS) {
+      expect(skill, `渠道「${channel.fullLabel}」(${channel.id}) 没写进 SKILL.md —— agent 不知道它存在`)
+        .toContain(channel.id)
     }
   })
 
