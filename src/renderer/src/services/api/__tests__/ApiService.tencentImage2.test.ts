@@ -280,3 +280,127 @@ describe('ApiService.generateImage siteKey autoroute (Miau-only channels)', () =
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * 混元那条渠道(hunyuan-gpt-image-2)与 `custom-imagemodel-gt` 共用同一套私有约定,
+ * 只有端点不同 —— 它在网关侧**只开了 generations**。
+ *
+ * 2026-09-01 对着网关逐条实测出来的,这里把结论钉住。
+ */
+describe('ApiService hunyuan-gpt-image-2', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function makeService() {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    ;(service as any).apiKey = 'test-key'
+    return service
+  }
+
+  const site = { authType: 'bearer' } as any
+
+  function captureFetch() {
+    const captured: { url: string; init?: RequestInit } = { url: '' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      captured.url = url
+      captured.init = init
+      return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    return captured
+  }
+
+  /**
+   * 这条渠道打 `/v1/images/edits` 会被网关拒:
+   * `tencent aiart channel does not support relay mode 6 (images generations only)`。
+   *
+   * 所以带参考图时也必须打 generations。回归长这样:有人「顺手」把 editURL 改成
+   * 跟另一条腾讯渠道一致的 `/images/edits` —— 那句报错里没有一个字提到端点选错了。
+   */
+  it('带参考图也打 generations —— 这条渠道没有 edits 端点', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
+    expect(cfg.editURL).toBe(cfg.baseURL)
+    expect(cfg.editURL).toContain('/images/generations')
+
+    const captured = captureFetch()
+    await (service as any).makeApiRequest({
+      prompt: '换成蓝色',
+      model: 'hunyuan-gpt-image-2',
+      ratio: '3:2',
+      resolution: '2K',
+      referenceImages: ['https://cos.example.com/a.png'],
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toContain('/images/generations')
+    expect(captured.url).not.toContain('/images/edits')
+  })
+
+  /**
+   * 字段名必须是复数 `images`。单数 `image` 上游**静默忽略** —— 返回 200,
+   * 但实际按纯文生图跑了,参考图完全没起作用而且没有任何报错。
+   */
+  it('参考图放在复数 images:[{image_url}] 里,不是单数 image', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '换成蓝色',
+      model: 'hunyuan-gpt-image-2',
+      ratio: '1:1',
+      resolution: '1K',
+      referenceImages: ['https://cos.example.com/a.png'],
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
+    expect(body).not.toHaveProperty('image')
+  })
+
+  /** 关水印的 `logo_add` 是腾讯私有参数,两条腾讯渠道都要发。 */
+  it('关水印参数跟着走 —— 集合判定,不是逐个 slug 硬编码', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: 'hunyuan-gpt-image-2',
+      ratio: '1:1',
+      resolution: '1K',
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(JSON.parse(captured.init!.body as string).extra_body).toMatchObject({ logo_add: 0 })
+  })
+
+  /**
+   * 上游接受 `n` 却始终只返回 1 张,而且不报错。声明成多张的话,UI 承诺 2 张、
+   * 实际给 1 张,用户只会以为自己看错了。
+   */
+  it('只能出 1 张 —— 上游收下 n 却只回 1 张且不报错', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('hunyuan-gpt-image-2')!
+    expect(cfg.capabilities?.maxOutputs).toBe(1)
+    expect(cfg.capabilities?.multipleImages).toBe(false)
+  })
+})
