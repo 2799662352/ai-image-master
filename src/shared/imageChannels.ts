@@ -120,7 +120,20 @@ export const IMAGE_CHANNELS = [
 /** 用户没选(或存的值已失效)时的默认渠道。 */
 export const DEFAULT_IMAGE_CHANNEL_ID = 'gpt-image-2-vip'
 
-/** 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。 */
+/**
+ * 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。
+ *
+ * ## 为什么是**封闭**枚举,不留 `| (string & {})` 的开口
+ *
+ * Vercel AI SDK 给自定义 provider 的 model id 是开放的
+ * (`'a' | 'b' | (string & {})`,见其 custom-providers 文档):上游模型目录变得比
+ * SDK 发版快,放行未知 id、只保留自动补全,是对它那个场景更合适的取舍。
+ *
+ * 这里反过来:出图渠道不只是个字符串,每条都要在 `ApiService` 里配端点、尺寸表、
+ * 能力位。放行一个没配过的 id,结果不是「用了个新模型」而是每轮 404,而错误里
+ * 不会有一个字提到是模型名的问题(网关的报错只说 model 不存在)。这种情况下
+ * 在边界上拒掉、让 agent 立刻拿到「不是合法值」,比放进去再失败有用得多。
+ */
 export type ImageChannelId = (typeof IMAGE_CHANNELS)[number]['id']
 
 /**
