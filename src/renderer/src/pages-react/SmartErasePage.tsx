@@ -24,6 +24,7 @@ export default function SmartErasePage() {
   useEraseEvents()
 
   const activeTasks = useEraseSessionStore((s) => s.activeTasks)
+  const tool = useEraseSessionStore((s) => s.tool)
   const history = useErasePersistStore((s) => s.history)
   const hydrated = useErasePersistStore((s) => s._hasHydrated)
 
@@ -37,8 +38,10 @@ export default function SmartErasePage() {
 
   const credentialsReady =
     credentialState !== null && credentialState.hasCredentials === true
+  // 腾讯云密钥只有去字幕(MPS 直连)要。高清走平台 STS 中转 + Miau 网关,与这把
+  // 密钥无关 —— 不能让它把默认工具也一起挡住。
   const credentialsBlocked =
-    credentialState !== null && credentialState.hasCredentials === false
+    tool === 'erase' && credentialState !== null && credentialState.hasCredentials === false
 
   return (
     <DonorShell>
@@ -61,14 +64,14 @@ export default function SmartErasePage() {
       <header className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div className="flex items-baseline gap-3">
           <h1 className="d-mono text-lg tracking-widest uppercase text-[color:var(--donor-cyan)]">
-            ✂ 智能去字幕
+            ✂ 智能去字幕 / 高清
           </h1>
           <span className="d-mono text-[10px] tracking-widest text-[color:var(--donor-ink-mute)]">
-            // SMART_ERASE_v1.0 · 模板 303
+            {tool === 'enhance' ? '// VIDEO_ENHANCE · 火山 MediaKit' : '// SMART_ERASE_v1.0 · 模板 303'}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {credentialsReady && (
+          {tool === 'erase' && credentialsReady && (
             <span className="d-mono text-[10px] tracking-widest text-[color:var(--donor-green)]">
               ◉ {credentialState?.bucket} @ {credentialState?.region}
             </span>

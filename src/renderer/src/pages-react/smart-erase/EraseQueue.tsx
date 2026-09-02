@@ -3,6 +3,7 @@ import { useEraseSessionStore, type EraseSessionTask } from '../../stores/useEra
 import type { EraseTask, EraseTaskDetailSnapshot } from '../../../../types/smartErase'
 import { computeProcessingProgress } from './eraseProgress'
 import { useTicker } from './useTicker'
+import { enhancePriceYuan, enhanceSpecLabel } from '../../../../shared/videoEnhance'
 
 const api = (window as any).electronAPI
 
@@ -78,6 +79,14 @@ function TaskRow({ task: t, now }: { task: EraseSessionTask; now: number }) {
         />
         <span className="truncate flex-1 text-[color:var(--donor-ink)]">
           {t.filename}
+        </span>
+        {/* 两个工具可以混在同一条队列里,不标出来用户分不清哪条是哪种;
+            高清还要标出渠道与档位 —— 一次 ¥0.1 和一次 ¥768 长得不能一样。 */}
+        <span
+          className="text-[10px] tracking-widest flex-shrink-0 px-1.5 border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink-dim)]"
+          title={t.tool === 'enhance' ? `${enhanceSpecLabel(t.enhanceSpec)} · ¥${enhancePriceYuan(t.enhanceSpec)} / 次` : undefined}
+        >
+          {t.tool === 'erase' ? '去字幕' : `高清 · ${enhanceSpecLabel(t.enhanceSpec)}`}
         </span>
         <span
           className="text-[10px] tracking-widest uppercase flex-shrink-0"
