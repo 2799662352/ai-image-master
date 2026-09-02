@@ -65,6 +65,8 @@ export function useEraseEvents(): void {
           createdAt: task.startedAt,
           mpsTaskId: task.mpsTaskId,
           finishedAt: Date.now(),
+          tool: task.tool,
+          enhanceSpec: task.enhanceSpec,
         })
         session.removeActiveTask(d.taskId)
         session.setRecentlyFinished(task.id)

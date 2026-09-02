@@ -1,9 +1,14 @@
 import { create } from 'zustand'
-import type { EraseTask, EraseProbeResult } from '../../../types/smartErase'
+import { DEFAULT_ERASE_TOOL, type EraseTool, type EraseTask, type EraseProbeResult } from '../../../types/smartErase'
+import { DEFAULT_ENHANCE_SPEC, type EnhanceSpec } from '../../../shared/videoEnhance'
 
 export interface EraseSessionTask extends EraseTask {
   filePath: string
   posterDataUrl: string
+  /** 这条任务走的是高清还是去字幕;列表与结果卡按它标注。 */
+  tool?: EraseTool
+  /** 高清用的规格,列表与结果卡据此显示渠道与档位(以及花了多少)。 */
+  enhanceSpec?: EnhanceSpec
 }
 
 interface EraseSessionState {
@@ -14,6 +19,17 @@ interface EraseSessionState {
 
   pendingProbes: EraseProbeResult[]
   showCostConfirm: boolean
+
+  /**
+   * 上传区当前选的工具。默认高清(产品要求 2026-09-01)。
+   * 刻意不持久化:两个工具的费用与耗时差别很大,每次进页面都从明确的默认值起手,
+   * 比「上次不知何时点过的那个」更不容易误提交。
+   */
+  tool: EraseTool
+  setTool: (tool: EraseTool) => void
+  /** 高清用哪家、哪一档。同样不持久化:DAMO 高档一次几百块,每次都从火山 ¥0.1 起手。 */
+  enhanceSpec: EnhanceSpec
+  setEnhanceSpec: (spec: EnhanceSpec) => void
 
   addTask: (task: EraseSessionTask) => void
   removeActiveTask: (taskId: string) => void
@@ -40,6 +56,11 @@ export const useEraseSessionStore = create<EraseSessionState>()((set) => ({
   modalItemId: null,
   pendingProbes: [],
   showCostConfirm: false,
+
+  tool: DEFAULT_ERASE_TOOL,
+  setTool: (tool) => set({ tool }),
+  enhanceSpec: DEFAULT_ENHANCE_SPEC,
+  setEnhanceSpec: (enhanceSpec) => set({ enhanceSpec }),
 
   addTask: (task) => set((s) => ({ activeTasks: [...s.activeTasks, task] })),
 
