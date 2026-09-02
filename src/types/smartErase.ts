@@ -1,3 +1,5 @@
+import type { EnhanceSpec } from '../shared/videoEnhance'
+
 export interface EraseConfig {
   mode: 'definition'              // ScheduleId deferred to Phase 2
   definitionId: number            // default 303 = 系统预设·去字幕-至尊版
@@ -34,6 +36,11 @@ export interface EraseSubmitPayload {
    * 去字幕走腾讯云密钥,与平台余额无关。缺省由主进程按手上有没有影子 token 判。
    */
   billing?: 'platform' | 'own-key'
+  /**
+   * 高清用哪家、哪一档(见 `shared/videoEnhance`)。缺省火山(最便宜)。
+   * 主进程用 `coerceEnhanceSpec` 收敛,认不出就当火山 —— 误判成 DAMO 某档可能扣几百。
+   */
+  enhance?: EnhanceSpec
 }
 
 export interface EraseProbeResult {
@@ -104,6 +111,8 @@ export interface EraseHistoryItem {
   finishedAt?: number
   /** 这条结果是高清还是去字幕。老记录没有这个字段 —— 那时只有去字幕。 */
   tool?: EraseTool
+  /** 高清用的规格,历史里回看时知道当时选的是哪家哪档。 */
+  enhanceSpec?: EnhanceSpec
 }
 
 export interface EraseProgressEvent {

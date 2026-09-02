@@ -34,6 +34,8 @@ import {
   type SeedanceGatewayTokenSources,
 } from '../seedanceGateway/credentials'
 import { coerceVideoBillingSource } from '../seedance/billing'
+import { coerceEnhanceSpec, enhanceModelFor } from '../../../shared/videoEnhance'
+import type { MediaKitModel } from '../mediaKit/client'
 
 const MAX_UPLOAD_CONCURRENT = 3
 const MAX_INFLIGHT = 40
@@ -240,10 +242,13 @@ async function runEnhanceProcess(
     err.stage = 'submit'
     throw err
   }
+  // 规格 → 网关模型名。DAMO 的档位全在模型名里(算法 × 分辨率 × 帧率),
+  // 火山是单一模型;两家共用同一个客户端与请求形状。
+  const model = enhanceModelFor(coerceEnhanceSpec(meta.payload.enhance)) as MediaKitModel
   const { videoUrl, taskId: gatewayTaskId } = await runMediaKitProcessAndPoll(
     mediaKitClient(),
     mediaKitAuthFor(coerceVideoBillingSource(meta.payload.billing)),
-    { model: 'volc-enhance-video', sourceUrl: meta.sourceUrl, options: {} },
+    { model, sourceUrl: meta.sourceUrl, options: {} },
     signal,
     {
       onProgress: (p) => {

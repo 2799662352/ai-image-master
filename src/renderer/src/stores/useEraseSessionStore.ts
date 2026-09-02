@@ -1,11 +1,14 @@
 import { create } from 'zustand'
 import { DEFAULT_ERASE_TOOL, type EraseTool, type EraseTask, type EraseProbeResult } from '../../../types/smartErase'
+import { DEFAULT_ENHANCE_SPEC, type EnhanceSpec } from '../../../shared/videoEnhance'
 
 export interface EraseSessionTask extends EraseTask {
   filePath: string
   posterDataUrl: string
   /** 这条任务走的是高清还是去字幕;列表与结果卡按它标注。 */
   tool?: EraseTool
+  /** 高清用的规格,列表与结果卡据此显示渠道与档位(以及花了多少)。 */
+  enhanceSpec?: EnhanceSpec
 }
 
 interface EraseSessionState {
@@ -24,6 +27,9 @@ interface EraseSessionState {
    */
   tool: EraseTool
   setTool: (tool: EraseTool) => void
+  /** 高清用哪家、哪一档。同样不持久化:DAMO 高档一次几百块,每次都从火山 ¥0.1 起手。 */
+  enhanceSpec: EnhanceSpec
+  setEnhanceSpec: (spec: EnhanceSpec) => void
 
   addTask: (task: EraseSessionTask) => void
   removeActiveTask: (taskId: string) => void
@@ -53,6 +59,8 @@ export const useEraseSessionStore = create<EraseSessionState>()((set) => ({
 
   tool: DEFAULT_ERASE_TOOL,
   setTool: (tool) => set({ tool }),
+  enhanceSpec: DEFAULT_ENHANCE_SPEC,
+  setEnhanceSpec: (enhanceSpec) => set({ enhanceSpec }),
 
   addTask: (task) => set((s) => ({ activeTasks: [...s.activeTasks, task] })),
 

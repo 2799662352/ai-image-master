@@ -1,6 +1,7 @@
 import type { EraseHistoryItem } from '../../../../types/smartErase'
 import { useEraseSessionStore } from '../../stores/useEraseSessionStore'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import { enhanceSpecLabel } from '../../../../shared/videoEnhance'
 
 export function EraseResultCard({
   item,
@@ -71,7 +72,7 @@ export function EraseResultCard({
         </div>
         <div className="d-mono text-[10px] text-[color:var(--donor-ink-mute)] text-left truncate">
           {/* 老记录没有 tool 字段 —— 那时只有去字幕,按它显示。 */}
-          {item.tool === 'enhance' ? '高清' : '去字幕'}
+          {item.tool === 'enhance' ? `高清 ${enhanceSpecLabel(item.enhanceSpec)}` : '去字幕'}
           ·{dateStr} {timeStr}
           ·{formatDuration(item.durationSeconds)}
           ·{formatBytes(item.fileSize)}

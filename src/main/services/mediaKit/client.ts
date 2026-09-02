@@ -32,7 +32,19 @@ import { retrySubmit, type RetrySubmitOptions } from '../seedance/submitRetry'
 
 export const MEDIAKIT_REQUEST_TIMEOUT_MS = 30_000
 
-export type MediaKitModel = 'volc-enhance-video' | 'volc-erase-subtitle-pro'
+/**
+ * 网关上走同一套任务协议的视频处理模型:
+ *  - 火山 MediaKit:`volc-enhance-video` / `volc-erase-subtitle-pro`;
+ *  - 阿里 DAMO 超分:`damo-aisr-{standard|pro}-{720p…8k}-{30|60|120}fps`,30 个 SKU。
+ *
+ * DAMO 的适配器(new-api `relay/channel/task/aisr`)接受**同一个** `metadata.content`
+ * 形状,算法档与目标分辨率从模型名推导、不读 metadata —— 所以一个客户端服务两家,
+ * 差别只在 `model` 字串。
+ */
+export type MediaKitModel =
+  | 'volc-enhance-video'
+  | 'volc-erase-subtitle-pro'
+  | `damo-aisr-${string}`
 
 export interface EnhanceOptions {
   toolVersion?: 'professional' | 'standard'
@@ -199,6 +211,8 @@ export function buildMediaKitSubmitBody(
   const metadata: Record<string, unknown> = {
     content: [{ type: 'video_url', video_url: { url: videoUrl } }],
   }
+  // DAMO 不进这个分支:它的档位全在模型名里,metadata 里塞 resolution 会被忽略
+  // (适配器只读 content),写了只会让人误以为有效。
   if (model === 'volc-enhance-video') {
     // 只写用户给了的键:适配器对缺省键有自己的默认(professional / aigc / 2k / 30),
     // 这里再写一遍默认值等于把网关的默认硬编码进客户端,两边一改就分叉。

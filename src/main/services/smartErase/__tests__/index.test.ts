@@ -344,6 +344,33 @@ describe('smartErase service composer — enhance (高清) tool', () => {
     expect(runMediaKitUploadMock).not.toHaveBeenCalled()
   })
 
+  it('DAMO 规格翻成对应 SKU 模型名;不带规格默认火山', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    await svc.submitErase({
+      filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance',
+      enhance: { provider: 'damo', algo: 'pro', resolution: '4k', fps: 60 },
+    })
+    await flush(); await flush(); await flush(); await flush()
+    expect(runMediaKitProcessAndPollMock.mock.calls[0][2].model).toBe('damo-aisr-pro-4k-60fps')
+
+    runMediaKitProcessAndPollMock.mockClear()
+    await svc.submitErase({ filePath: '/tmp/b.mp4', filename: 'b.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance' })
+    await flush(); await flush(); await flush(); await flush()
+    expect(runMediaKitProcessAndPollMock.mock.calls[0][2].model).toBe('volc-enhance-video')
+  })
+
+  it('非法的 DAMO 规格回落火山,不会误提交一个贵档', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    await svc.submitErase({
+      filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance',
+      enhance: { provider: 'damo', algo: 'pro', resolution: '16k', fps: 30 } as any,
+    })
+    await flush(); await flush(); await flush(); await flush()
+    expect(runMediaKitProcessAndPollMock.mock.calls[0][2].model).toBe('volc-enhance-video')
+  })
+
   it('完成后转存历史桶(video-enhance 子目录),erase:finished 带永久 URL', async () => {
     const svc = await import('../index')
     svc.setMainWindow(mockWin as any)
