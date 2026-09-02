@@ -623,6 +623,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // through CodexProtocolClient.setThreadMemoryMode / resetMemory
     // (smoke-verified on the 0.146.0 binary).
     '-c', `features.memories=${sessionConfig.memoriesEnabled}`,
+    // Codex 0.152.0 (openai/codex#41744) made `update_plan` OPT-IN: the
+    // default flipped to `tools.update_plan.enabled=false` AND the planning
+    // guidance was stripped from every prompt path (model, collaboration
+    // mode, multi-agent, compaction, goal continuation) when the tool is off.
+    // Our PlanCard is driven entirely by that tool — `update_plan` →
+    // `turn/plan/updated` → codexNotificationRouter → ActivityCard 'plan' —
+    // so without this pin the card silently never appears on 0.152+. Pinned
+    // explicitly (never omitted) so a future default flip in either direction
+    // can't change what users see.
+    '-c', 'tools.update_plan.enabled=true',
   ]
 
   // Assistant personality (session tuning). 'default' means "let codex

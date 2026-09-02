@@ -608,11 +608,33 @@ function validateApprovalResponse(payload: unknown): CodexApprovalResponse {
   if (input.message !== undefined && typeof input.message !== 'string') {
     throw new Error('Approval response message must be a string')
   }
+  const answers = input.answers === undefined ? undefined : validateUserInputAnswers(input.answers)
   return {
     id: input.id,
     approved: input.approved,
     ...(typeof input.message === 'string' && input.message.length > 0 ? { message: input.message } : {}),
+    ...(answers ? { answers } : {}),
   }
+}
+
+/**
+ * `item/tool/requestUserInput` 的答案表：`{ [questionId]: { answers: string[] } }`。
+ * 这是渲染层来的输入，逐字段校验；形状不对宁可整条拒掉，也不能让一个畸形对象
+ * 原样发给 app-server —— 它对不认识的形状是反序列化失败，不是宽容忽略。
+ */
+function validateUserInputAnswers(raw: unknown): Record<string, { answers: string[] }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Approval response answers must be an object')
+  }
+  const out: Record<string, { answers: string[] }> = {}
+  for (const [questionId, entry] of Object.entries(raw as Record<string, unknown>)) {
+    const list = (entry as { answers?: unknown } | null)?.answers
+    if (!Array.isArray(list) || !list.every((a) => typeof a === 'string')) {
+      throw new Error(`Approval response answers[${questionId}].answers must be a string array`)
+    }
+    out[questionId] = { answers: list as string[] }
+  }
+  return out
 }
 
 function validateAgentTurnPayload(

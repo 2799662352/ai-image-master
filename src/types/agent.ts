@@ -533,6 +533,35 @@ export interface CodexApprovalResponse {
   id: string
   approved: boolean
   message?: string
+  /**
+   * 仅 `item/tool/requestUserInput` 用：questionId → 用户给出的答案列表（选项的
+   * label 或自由输入的文本）。存在时主进程按 `{ answers }` 回包，忽略 approved /
+   * message；空对象 = 用户跳过。形状照 app-server-protocol v2
+   * `ToolRequestUserInputResponse`（`HashMap<String, { answers: Vec<String> }>`）。
+   */
+  answers?: Record<string, { answers: string[] }>
+}
+
+/** `item/tool/requestUserInput` 的服务端请求方法名。 */
+export const CODEX_REQUEST_USER_INPUT_METHOD = 'item/tool/requestUserInput'
+
+/** 一个 `request_user_input` 选项（协议里没有 id，只有 label + description）。 */
+export interface CodexUserInputOption {
+  label: string
+  description: string
+}
+
+/**
+ * 一条 `request_user_input` 问题（app-server-protocol v2 `ToolRequestUserInputQuestion`）。
+ * `isOther` = 允许自由输入；`isSecret` = 输入要遮掩；`options` 为 null 时纯文本作答。
+ */
+export interface CodexUserInputQuestion {
+  id: string
+  header: string
+  question: string
+  isOther: boolean
+  isSecret: boolean
+  options: CodexUserInputOption[] | null
 }
 
 /**

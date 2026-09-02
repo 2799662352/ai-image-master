@@ -53,6 +53,8 @@ describe('buildCodexLaunchArgs', () => {
       // Native cross-session memory (feature key `memories`, verified beta on
       // the 0.142.2 binary). See codexLaunch.ts for the full rationale.
       '-c', 'features.memories=true',
+      // Codex 0.152.0 made update_plan opt-in; PlanCard depends on it.
+      '-c', 'tools.update_plan.enabled=true',
       // No apiyi key configured (neither 设置/localStorage nor config.toml) →
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
@@ -85,6 +87,7 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'project_root_markers=[".git"]',
       '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
       '-c', 'features.memories=true',
+      '-c', 'tools.update_plan.enabled=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
     ])
@@ -170,6 +173,23 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs({ sessionConfig: { memoriesEnabled: true } })
     expect(args).toContain('features.memories=true')
     expect(args).not.toContain('features.memories=false')
+  })
+
+  it('re-enables update_plan, which Codex 0.152.0 (openai/codex#41744) made opt-in', () => {
+    // PlanCard is driven end-to-end by the `update_plan` tool
+    // (`turn/plan/updated` → codexNotificationRouter → ActivityCard 'plan').
+    // 0.152.0 flipped `tools.update_plan.enabled` to false by default and
+    // strips planning guidance from every prompt path when off — so without
+    // this pin the card silently stops appearing. No user-facing toggle yet,
+    // hence unconditional.
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('tools.update_plan.enabled=true')
+    // Unconditional — present even with a custom provider/MCP wired.
+    const withMcp = buildCodexLaunchArgs({
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+      catimationMcp: { port: 7842, token: 'deadbeef' },
+    })
+    expect(withMcp).toContain('tools.update_plan.enabled=true')
   })
 
   it('pins memories side-request models to the channel model (grok 400 fix)', () => {
