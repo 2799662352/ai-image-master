@@ -79,6 +79,10 @@ function TaskRow({ task: t, now }: { task: EraseSessionTask; now: number }) {
         <span className="truncate flex-1 text-[color:var(--donor-ink)]">
           {t.filename}
         </span>
+        {/* 两个工具可以混在同一条队列里,不标出来用户分不清哪条是哪种。 */}
+        <span className="text-[10px] tracking-widest flex-shrink-0 px-1.5 border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink-dim)]">
+          {t.tool === 'erase' ? '去字幕' : '高清'}
+        </span>
         <span
           className="text-[10px] tracking-widest uppercase flex-shrink-0"
           style={{ color: STATUS_COLOR[t.status] }}

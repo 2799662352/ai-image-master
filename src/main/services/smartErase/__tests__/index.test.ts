@@ -39,6 +39,36 @@ vi.mock('../../tencent/credentials', () => ({
   setCredentials: setCredentialsMock,
 }))
 
+// ── 高清那条路的替身 ──────────────────────────────────────────────────────
+const runMediaKitUploadMock = vi.fn()
+const runMediaKitProcessAndPollMock = vi.fn()
+vi.mock('../../mediaKit/runner', () => ({
+  runMediaKitUpload: runMediaKitUploadMock,
+  runMediaKitProcessAndPoll: runMediaKitProcessAndPollMock,
+}))
+// 主进程里 `import { net } from 'electron'`;测试环境没有 electron 运行时。
+vi.mock('electron', () => ({ net: { fetch: vi.fn() } }))
+// 平台池 token 与自填 Miau Key 的可控替身。只替换读值函数,其余保持真实现。
+const poolTokenForTest = vi.hoisted(() => ({ value: null as string | null }))
+const wan3KeyForTest = vi.hoisted(() => ({ value: '' }))
+vi.mock('../../auth/gatewayToken', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../auth/gatewayToken')>()
+  return {
+    ...actual,
+    getActivePoolToken: () => poolTokenForTest.value,
+    // 真实现从模块内部的 activePool / credential 推归属头,这里没法喂;替身只要
+    // 让「走了整份组头函数」与「手拼裸 Authorization」在断言上分得开就够了。
+    gatewayPlatformHeaders: (token: string) => ({
+      Authorization: `Bearer ${token}`,
+      'X-Platform-User-Id': 'u-test',
+      'X-Project-Id': '345',
+    }),
+  }
+})
+vi.mock('../../wan3/credentials', () => ({ getWan3ApiKey: () => wan3KeyForTest.value }))
+vi.mock('../../auth/gatewayHeaderInjector', () => ({ resolveGatewayOrigin: () => 'https://gw.test' }))
+vi.mock('../../auth/platformSpend', () => ({ notePlatformSpend: vi.fn() }))
+
 // Window stub
 const sendSpy = vi.fn()
 const mockWin = {
@@ -49,11 +79,14 @@ const mockWin = {
   },
 }
 
+// 这组用例测的是 MPS 去字幕那条路,所以显式点名 `tool: 'erase'`。
+// 页面默认已经改成高清(2026-09-01),不带 tool 会走另一条完全不同的链路。
 const SUBMIT_PAYLOAD = {
   filePath: '/tmp/test.mp4',
   filename: 'test.mp4',
   fileSize: 1024,
   durationSeconds: 30,
+  tool: 'erase' as const,
 }
 
 function flush(): Promise<void> {
@@ -219,4 +252,107 @@ describe('smartErase service composer', () => {
     expect(finished![1].videoExpiresAt).toBeGreaterThan(0)
   })
 
+})
+
+/**
+ * 高清那条路。与去字幕共用页面壳与两条队列,但上传、上游、凭据三样全换:
+ * 中转桶 URL → Miau 网关 MediaKit → 平台余额 / 自填 Miau Key。
+ */
+describe('smartErase service composer — enhance (高清) tool', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    vi.resetModules()
+    runUploadMock.mockReset()
+    runProcessAndPollMock.mockReset()
+    runMediaKitUploadMock.mockReset()
+    runMediaKitProcessAndPollMock.mockReset()
+    transferUrlToHistoryBucketMock.mockReset()
+    sendSpy.mockClear()
+    poolTokenForTest.value = 'sk-shadow'
+    wan3KeyForTest.value = ''
+
+    runMediaKitUploadMock.mockResolvedValue({ sourceUrl: 'https://relay.cos/v.mp4' })
+    runMediaKitProcessAndPollMock.mockResolvedValue({ videoUrl: 'https://volc.tmp/out.mp4', taskId: 'task_abc' })
+    transferUrlToHistoryBucketMock.mockResolvedValue('https://history.cos/image-history/video-enhance/x.mp4')
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+    poolTokenForTest.value = null
+    wan3KeyForTest.value = ''
+  })
+
+  it('不带 tool 时默认走高清 —— 页面默认就是它', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    const ret = await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5 })
+    expect(ret.success).toBe(true)
+    expect(ret.taskId).toMatch(/^enhance-/)
+    await flush(); await flush(); await flush(); await flush()
+    expect(runMediaKitUploadMock).toHaveBeenCalledTimes(1)
+    expect(runUploadMock).not.toHaveBeenCalled()
+    expect(runProcessAndPollMock).not.toHaveBeenCalled()
+  })
+
+  it('上传走公共中转拿 URL,处理阶段把这个 URL 交给网关 —— 从不经手 base64', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance' })
+    await flush(); await flush(); await flush(); await flush()
+
+    const [uploadJob] = runMediaKitUploadMock.mock.calls[0]
+    expect(uploadJob).toMatchObject({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10 })
+
+    expect(runMediaKitProcessAndPollMock).toHaveBeenCalledTimes(1)
+    const [, , job] = runMediaKitProcessAndPollMock.mock.calls[0]
+    expect(job).toMatchObject({ model: 'volc-enhance-video', sourceUrl: 'https://relay.cos/v.mp4' })
+    // 传下去的是 https URL,不是 data:
+    expect(String(job.sourceUrl).startsWith('https://')).toBe(true)
+  })
+
+  it('平台已登录:鉴权头是整份平台头(含归属),不是裸 Authorization', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance', billing: 'platform' })
+    await flush(); await flush(); await flush(); await flush()
+    const [, resolveAuth] = runMediaKitProcessAndPollMock.mock.calls[0]
+    const headers = resolveAuth()
+    expect(headers.Authorization).toBe('Bearer sk-shadow')
+    expect(headers).toHaveProperty('X-Platform-User-Id')
+  })
+
+  it('自填 Miau Key(未登录):裸 Authorization,不带归属头', async () => {
+    poolTokenForTest.value = null
+    wan3KeyForTest.value = 'miau-own'
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance' })
+    await flush(); await flush(); await flush(); await flush()
+    const [, resolveAuth] = runMediaKitProcessAndPollMock.mock.calls[0]
+    const headers = resolveAuth()
+    expect(headers).toEqual({ Authorization: 'Bearer miau-own' })
+  })
+
+  it('既没登录也没 Miau Key:入队前就拒,不先传几百 MB 再报', async () => {
+    poolTokenForTest.value = null
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    const ret = await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance' })
+    expect(ret.success).toBe(false)
+    expect(ret.error).toContain('Miau')
+    expect(runMediaKitUploadMock).not.toHaveBeenCalled()
+  })
+
+  it('完成后转存历史桶(video-enhance 子目录),erase:finished 带永久 URL', async () => {
+    const svc = await import('../index')
+    svc.setMainWindow(mockWin as any)
+    await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance' })
+    await flush(); await flush(); await flush(); await flush()
+    expect(transferUrlToHistoryBucketMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceUrl: 'https://volc.tmp/out.mp4', key: expect.stringMatching(/^image-history\/video-enhance\//) }),
+    )
+    const finished = sendSpy.mock.calls.find((c) => c[0] === 'erase:finished')
+    expect(finished![1]).toMatchObject({ videoUrl: 'https://history.cos/image-history/video-enhance/x.mp4', videoExpiresAt: 0 })
+  })
 })

@@ -10,12 +10,30 @@ export const DEFAULT_ERASE_CONFIG: EraseConfig = {
   autoCleanupRemoteAfterDays: 7,
 }
 
+/**
+ * 「智能去字幕」页上的两个工具。
+ *
+ *  - `enhance`:视频高清(火山 MediaKit,经 Miau 网关,可用平台余额)。**默认。**
+ *  - `erase`:去字幕(腾讯 MPS 模板 303,直连,用腾讯云密钥)。
+ *
+ * 两条路的上传、计费、上游都不同,只是共用同一个页面壳与队列。
+ */
+export type EraseTool = 'enhance' | 'erase'
+export const DEFAULT_ERASE_TOOL: EraseTool = 'enhance'
+
 export interface EraseSubmitPayload {
   filePath: string                // absolute local path from webUtils.getPathForFile
   filename: string
   fileSize: number
   durationSeconds: number         // from renderer <video> metadata
   posterDataUrl?: string          // renderer-generated thumbnail via <canvas>
+  /** 缺省按 `DEFAULT_ERASE_TOOL`(渲染层总会显式带,这里只是让类型与老调用方兼容)。 */
+  tool?: EraseTool
+  /**
+   * 高清那条路的计费意向(与视频工作台同一对字面量)。只对 `enhance` 有意义;
+   * 去字幕走腾讯云密钥,与平台余额无关。缺省由主进程按手上有没有影子 token 判。
+   */
+  billing?: 'platform' | 'own-key'
 }
 
 export interface EraseProbeResult {
@@ -84,6 +102,8 @@ export interface EraseHistoryItem {
   createdAt: number
   mpsTaskId?: string
   finishedAt?: number
+  /** 这条结果是高清还是去字幕。老记录没有这个字段 —— 那时只有去字幕。 */
+  tool?: EraseTool
 }
 
 export interface EraseProgressEvent {
