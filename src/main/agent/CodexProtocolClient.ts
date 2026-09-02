@@ -35,6 +35,7 @@ import type {
   CodexThreadDetail,
   CodexThreadSummary,
 } from '../../types/agent'
+import { CODEX_REQUEST_USER_INPUT_METHOD } from '../../types/agent'
 import type { AgentInput, ListThreadsParams } from './types'
 import type {
   AppsListParams,
@@ -122,6 +123,13 @@ const DEFAULT_CONNECT_INTERVAL_MS = 100
 const CANCEL_GRACE_MS = 2_000
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
 /**
+ * `item/tool/requestUserInput` 等的是**人**，不是审批一个已经摆在眼前的命令 ——
+ * 用户可能离开几小时再回来点。和自家 `ask_user` 的 `ASK_USER_TOOL_TIMEOUT_MS`
+ * （ToolRouter.ts，6h）对齐：同一个人同一种等待，不该因为问题来自 codex 内置工具
+ * 还是我们的 MCP 工具就差 70 倍。
+ */
+const DEFAULT_USER_INPUT_TIMEOUT_MS = 6 * 60 * 60_000
+/**
  * Stream-idle watchdog (upstream gap: openai/codex#30526 — app-server can go
  * permanently silent mid-turn with no turn/completed and no error). If NO
  * event arrives on an active turn for this long, we synthesize a terminal
@@ -181,6 +189,8 @@ export interface CodexProtocolClientOptions {
   connectIntervalMs?: number
   rpcTimeoutMs?: number
   approvalTimeoutMs?: number
+  /** 只作用于 `item/tool/requestUserInput`。默认 {@link DEFAULT_USER_INPUT_TIMEOUT_MS}。 */
+  userInputTimeoutMs?: number
   /**
    * Max silence (no events at all) tolerated on an active turn before the
    * stream-idle watchdog ends it with a terminal error. `0` disables the
@@ -272,6 +282,7 @@ export class CodexProtocolClient {
   private readonly awaitingTurnStart = new Set<string>()
   private readonly rpcTimeoutMs: number
   private readonly approvalTimeoutMs: number
+  private readonly userInputTimeoutMs: number
   private readonly connectTimeoutMs: number
   private readonly connectIntervalMs: number
   private readonly turnIdleTimeoutMs: number
@@ -282,6 +293,7 @@ export class CodexProtocolClient {
   constructor(private readonly options: CodexProtocolClientOptions) {
     this.rpcTimeoutMs = options.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
     this.approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS
+    this.userInputTimeoutMs = options.userInputTimeoutMs ?? DEFAULT_USER_INPUT_TIMEOUT_MS
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     this.connectIntervalMs = options.connectIntervalMs ?? DEFAULT_CONNECT_INTERVAL_MS
     this.turnIdleTimeoutMs = options.turnIdleTimeoutMs ?? DEFAULT_TURN_IDLE_TIMEOUT_MS
@@ -800,17 +812,7 @@ export class CodexProtocolClient {
     if (!pending) throw new Error(`No pending Codex server request for id ${response.id}`)
     this.pendingServerRequests.delete(response.id)
     clearTimeout(pending.timer)
-    const result = pending.method === 'mcpServer/elicitation/request'
-      ? {
-          action: response.approved ? 'accept' : 'decline',
-          content: null,
-          _meta: null,
-        }
-      : {
-          approved: response.approved,
-          ...(response.message ? { message: response.message } : {}),
-        }
-    this.sendServerRequestResponse(pending.wireId, result)
+    this.sendServerRequestResponse(pending.wireId, encodeServerRequestResult(pending.method, response))
   }
 
   private openOnce(url: string): Promise<WebSocket> {
@@ -954,6 +956,9 @@ export class CodexProtocolClient {
     }
 
     const params = toRecord(msg.params)
+    const timeoutMs = msg.method === CODEX_REQUEST_USER_INPUT_METHOD
+      ? this.userInputTimeoutMs
+      : this.approvalTimeoutMs
     const timer = setTimeout(() => {
       const pending = this.pendingServerRequests.get(id)
       if (!pending) return
@@ -962,7 +967,7 @@ export class CodexProtocolClient {
         pending.wireId,
         this.serverRequestRejection(pending.method, 'approval request timed out', 'cancel'),
       )
-    }, this.approvalTimeoutMs)
+    }, timeoutMs)
     timer.unref?.()
     this.pendingServerRequests.set(id, { wireId: msg.id, method: msg.method, timer })
 
@@ -988,6 +993,11 @@ export class CodexProtocolClient {
   ): unknown {
     if (method === 'mcpServer/elicitation/request') {
       return { action: elicitationAction, content: null, _meta: null }
+    }
+    // 空答案表 = 「用户没有作答」，是协议里合法的应答；回 `{approved:false}` 会让
+    // codex 反序列化失败，工具调用连一句「用户没答」都拿不到。
+    if (method === CODEX_REQUEST_USER_INPUT_METHOD) {
+      return { answers: {} }
     }
     return { approved: false, message }
   }
@@ -1275,6 +1285,31 @@ function queueKey(threadId: string, turnId: string): string {
 
 function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 把渲染层的统一应答翻成各类服务端请求各自的线上形状。三种形状互不兼容，
+ * 而 app-server 对不认识的形状是直接反序列化失败，不会宽容处理。
+ *
+ * - `mcpServer/elicitation/request` → `{ action, content, _meta }`（0.144 起）
+ * - `item/tool/requestUserInput`   → `{ answers: { [questionId]: { answers } } }`
+ * - 其余审批                        → `{ approved, message? }`
+ */
+export function encodeServerRequestResult(method: string, response: CodexApprovalResponse): unknown {
+  if (method === 'mcpServer/elicitation/request') {
+    return {
+      action: response.approved ? 'accept' : 'decline',
+      content: null,
+      _meta: null,
+    }
+  }
+  if (method === CODEX_REQUEST_USER_INPUT_METHOD) {
+    return { answers: response.answers ?? {} }
+  }
+  return {
+    approved: response.approved,
+    ...(response.message ? { message: response.message } : {}),
+  }
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
