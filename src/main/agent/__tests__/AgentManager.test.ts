@@ -2,6 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
+// 平台池 token 的可控替身:缺省 null(未登录),个别用例置成非空模拟「已 arm」。
+// 只替换 getActivePoolToken,其余保持真实现 —— AgentManager 与 CodexLocalBackend
+// 还依赖 gatewayPlatformHeaders 等,整模块 mock 掉会让别的用例失真。
+const poolTokenForTest = vi.hoisted(() => ({ value: null as string | null }))
+vi.mock('../../services/auth/gatewayToken', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/auth/gatewayToken')>()
+  return { ...actual, getActivePoolToken: () => poolTokenForTest.value }
+})
+
 import { AgentManager } from '../AgentManager'
 import type { CodexLocalBackendOptions } from '../CodexLocalBackend'
 import type { AgentInput, IAgentBackend } from '../types'
@@ -1245,6 +1255,85 @@ describe('AgentManager sendMessage empty-key gate', () => {
 
     expect(createCalls).toBe(0)
     expect(ingestCalls).toBe(0)
+  })
+})
+
+/**
+ * 闸按**本轮通道**判缺哪把 Key,而不是一律要网关那把。
+ *
+ * 2026-09-01 真机撞到:用户登录了、平台余额也开了,选千问聊天却被拦下
+ * 「请在设置页填写 Codex Agent API Key」—— 那是 Right.Codes 的 Key,跟这一轮
+ * 请求毫无关系(千问走 Miau,平台余额在代理层换成影子 token)。
+ */
+describe('AgentManager credential gate is channel-aware', () => {
+  async function writeState(input: { selectedModelId: string; apiKeys?: Record<string, string> }) {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: 'rightcode',
+        selectedModelId: input.selectedModelId,
+        apiKeys: input.apiKeys ?? {},
+        customProviders: [],
+      }),
+      'utf8',
+    )
+  }
+
+  afterEach(() => {
+    poolTokenForTest.value = null
+  })
+
+  it('Miau 通道 + 平台已登录:没有任何 Key 也放行', async () => {
+    await writeState({ selectedModelId: 'qwen3.8-flash' })
+    poolTokenForTest.value = 'sk-shadow'
+    const events: AgentStreamEvent[] = []
+    const mgr = new AgentManager({ userDataDir: tmpDir, eventSink: (e) => events.push(e) })
+
+    // 没给 store,所以过了闸之后会撞 store 缺失那句 —— 这正是「闸放行了」的证据。
+    await expect(
+      mgr.sendMessage({ threadId: 't1', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('called without store/attachments')
+    expect(events.filter((e) => e.type === 'error')).toHaveLength(0)
+  })
+
+  it('Miau 通道 + 自填 Miau Key(未登录):同样放行', async () => {
+    await writeState({ selectedModelId: 'qwen3.8-flash', apiKeys: { qwen: 'miau-key' } })
+    const mgr = new AgentManager({ userDataDir: tmpDir, eventSink: () => {} })
+    await expect(
+      mgr.sendMessage({ threadId: 't1', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('called without store/attachments')
+  })
+
+  it('Miau 通道、既没登录也没 Miau Key:提示的是 Miau / 登录,不是网关 Key', async () => {
+    await writeState({ selectedModelId: 'qwen3.8-flash', apiKeys: { rightcode: 'irrelevant' } })
+    const events: AgentStreamEvent[] = []
+    const mgr = new AgentManager({ userDataDir: tmpDir, eventSink: (e) => events.push(e) })
+    await expect(
+      mgr.sendMessage({ threadId: 't1', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('请登录使用平台余额，或在设置页填写 Miau API Key')
+    expect(events[0]).toMatchObject({ type: 'error', threadId: 't1' })
+    // 网关 Key 填了也没用 —— 这一轮根本不走它。别再让用户去填一枚用不上的。
+    expect(events[0]?.error).not.toContain('Codex Agent API Key')
+  })
+
+  it('非 Miau 通道:平台登录了也仍要网关 Key(平台余额覆盖不到 Right.Codes)', async () => {
+    await writeState({ selectedModelId: 'gpt-5.5' })
+    poolTokenForTest.value = 'sk-shadow'
+    const mgr = new AgentManager({ userDataDir: tmpDir, eventSink: () => {} })
+    await expect(
+      mgr.sendMessage({ threadId: 't1', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('请在设置页填写 Codex Agent API Key')
+  })
+
+  it('模型目录:平台已登录时 Miau 模型不再被标成「缺凭据」', async () => {
+    await writeState({ selectedModelId: 'gpt-5.5', apiKeys: { rightcode: 'k' } })
+    poolTokenForTest.value = 'sk-shadow'
+    const mgr = new AgentManager({ userDataDir: tmpDir, eventSink: () => {} })
+    const catalog = await mgr.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    const qwen = catalog.data.models.find((m) => m.id === 'qwen3.8-flash')
+    expect(qwen?.availability.status).toBe('available')
   })
 })
 

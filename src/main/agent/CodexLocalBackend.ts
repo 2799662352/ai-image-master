@@ -67,6 +67,42 @@ function gatewayPlatformHeadersFor(target: URL): Record<string, string> | null {
   if (!token) return null
   return gatewayPlatformHeaders(token)
 }
+
+/**
+ * 用户没填 Miau Key 时塞给 `MIAU_API_KEY` 的占位值。
+ *
+ * codex 对 `env_key` 指向的环境变量要求**存在**,否则请求发出前就报
+ * `Missing environment variable`。而平台余额一开,这个值根本到不了网关 ——
+ * 兼容代理在出网前按 origin 把 `Authorization` 整个换成影子 token
+ * (见 `gatewayPlatformHeadersFor` 与代理里那段「判据是 origin」)。
+ *
+ * 没登录又没填 Key 时它会原样送到网关,网关回 401 `Invalid token`,走既有错误
+ * 路径提示用户 —— 与用户填了一把错 Key 的表现完全一致,不是新的失败模式。
+ *
+ * 取一个一眼能认出的字面量,不用空串:空串会被 codex 当成「没设」。
+ */
+export const MIAU_PLACEHOLDER_TOKEN = 'catimation-platform-balance'
+
+/**
+ * 决定这次 spawn 要往环境里放哪把 Miau 凭据。
+ *
+ * 只要注册的任何一条 provider 认 `MIAU_API_KEY`,这个变量就必须有值 —— 用户填了
+ * 就用真的,没填就用占位。以前是「没填就不设」,于是登录了、平台余额也开了的用户,
+ * 选千问或 DeepSeek Miau 时被 codex 自己的缺变量检查拦下,而报错里完全看不出
+ * 这和「没填 Key」有什么关系(2026-09-01 真机撞到)。
+ *
+ * spawn 不依赖登录态是刻意的:登录 / 登出都不需要重启 codex,占位值送不送到网关
+ * 由代理在**每个请求**上按当时的 pool 状态决定。
+ */
+export function miauEnvForSpawn(
+  providers: readonly CodexProviderConfig[],
+  understand: { provider: CodexProviderConfig; token: string } | undefined,
+): Record<string, string> | undefined {
+  const envKey = understand?.provider.envKey ?? 'MIAU_API_KEY'
+  if (understand?.token) return { [envKey]: understand.token }
+  const anyMiau = providers.some((p) => p.envKey === envKey)
+  return anyMiau ? { [envKey]: MIAU_PLACEHOLDER_TOKEN } : undefined
+}
 import type {
   AgentStreamEvent,
   CodexApprovalRequest,
@@ -546,9 +582,7 @@ export class CodexLocalBackend implements IAgentBackend {
         ? compatibilityProxies?.providers[providerIndex++]
         : undefined
       const gatewayChannelProviders = compatibilityProxies?.providers.slice(providerIndex) ?? []
-      const extraEnv = understand?.token
-        ? { [understand.provider.envKey]: understand.token }
-        : undefined
+      const extraEnv = miauEnvForSpawn(providerConfigs, understand)
       const ffmpegDir = resolveBundledFfmpegDir(resourceRoot)
       const env = buildCodexSpawnEnv(
         process.env,
