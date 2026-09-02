@@ -6,7 +6,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
-import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification, resolveStableCodexHome } from '../CodexLocalBackend'
+import {
+  buildCodexSpawnEnv,
+  CodexLocalBackend,
+  mapServerNotification,
+  MIAU_PLACEHOLDER_TOKEN,
+  miauEnvForSpawn,
+  resolveStableCodexHome,
+} from '../CodexLocalBackend'
+import type { CodexProviderConfig } from '../codexLaunch'
 import { resolveWorkspacePaths } from '../codexConfigStore'
 import type { AgentStreamEvent, CodexApprovalRequest } from '../../../types/agent'
 import type { AgentInput } from '../types'
@@ -597,6 +605,33 @@ describe('buildCodexSpawnEnv', () => {
     expect(omitted.PATH).toBe('/usr/bin')
     const empty = buildCodexSpawnEnv({ PATH: '/usr/bin' } as NodeJS.ProcessEnv, undefined, undefined, undefined, [])
     expect(empty.PATH).toBe('/usr/bin')
+  })
+})
+
+/**
+ * codex 对 `env_key` 指向的变量要求**存在**,否则请求前就报缺变量。以前 Miau Key
+ * 没填就不设 `MIAU_API_KEY`,于是登录了、平台余额也开了的用户,选千问或 DeepSeek
+ * Miau 时被 codex 自己拦下 —— 而报错里看不出跟「没填 Key」有什么关系。
+ */
+describe('miauEnvForSpawn', () => {
+  const miau = (id: string): CodexProviderConfig =>
+    ({ id, name: id, baseUrl: 'https://miau.example/v1', envKey: 'MIAU_API_KEY' }) as CodexProviderConfig
+  const rightcode = { id: 'rightcode-standard', name: 'rc', baseUrl: 'https://rc.example/v1', envKey: 'OPENAI_API_KEY' } as CodexProviderConfig
+
+  it('用户填了 Miau Key:原样用真的', () => {
+    expect(miauEnvForSpawn([miau('rightcode-qwen')], { provider: miau('qwen'), token: 'real-miau' }))
+      .toEqual({ MIAU_API_KEY: 'real-miau' })
+  })
+
+  it('没填 Key、但注册了 Miau 通道:放占位值,让 codex 能把请求发出去(代理会换掉它)', () => {
+    const env = miauEnvForSpawn([rightcode, miau('rightcode-qwen')], undefined)
+    expect(env).toEqual({ MIAU_API_KEY: MIAU_PLACEHOLDER_TOKEN })
+    // 占位值不能是空串 —— 空串会被 codex 当成「没设」。
+    expect(MIAU_PLACEHOLDER_TOKEN.length).toBeGreaterThan(0)
+  })
+
+  it('没填 Key、也没有任何 Miau 通道:什么都不设', () => {
+    expect(miauEnvForSpawn([rightcode], undefined)).toBeUndefined()
   })
 })
 

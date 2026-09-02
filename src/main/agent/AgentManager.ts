@@ -34,6 +34,7 @@ import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from './gatewayModelRouting'
+import { getActivePoolToken } from '../services/auth/gatewayToken'
 import {
   ProviderChannelController,
   ProviderChannelRecoveryError,
@@ -161,6 +162,10 @@ import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 import { setWan3TokenSource } from '../services/wan3/credentials'
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
+const MIAU_CREDENTIAL_ERROR = '请登录使用平台余额，或在设置页填写 Miau API Key'
+
+/** Miau 系通道在 codex 里认的环境变量名。与 `gatewayModelRouting` 里各 Miau 通道的 `envKey` 一致。 */
+const MIAU_ENV_KEY = 'MIAU_API_KEY'
 /**
  * Default Codex agent model used by the ThreadTitleSummarizer (and as the
  * fallback model id when a provider preset doesn't pin its own). `gpt-5.5`
@@ -2191,6 +2196,11 @@ export class AgentManager {
    * 「请先配置网关 Key」——一枚它们根本不用的密钥。
    */
   private hasCredentialFor(credentialId: string): boolean {
+    // Miau 那个槽位有两种「配好了」:用户自填 Key,**或**登录后 arm 了平台池 ——
+    // 后者时代理会在出网前换成影子 token,自填 Key 用不上。不把平台余额算进来的
+    // 话,登录了的用户会看到千问 / DeepSeek Miau 被标灰、提示去填一枚根本不需要
+    // 的 Key(2026-09-01 真机撞到)。
+    if (credentialId === QWEN_UNDERSTAND_PROVIDER_ID && getActivePoolToken()) return true
     const persisted = this.providerStore.loadSync()
     const activeCredentialId = credentialIdForProvider(
       this.activeGatewayId,
@@ -3066,15 +3076,72 @@ export class AgentManager {
     }
   }
 
+  /**
+   * 这一轮 codex 请求缺哪把凭据;`null` 表示齐了。
+   *
+   * ## 为什么不能只看 `codexApiKey`
+   *
+   * `codexApiKey` 是**所选网关**(Right.Codes / API Yi)那把 Key,只喂给
+   * `OPENAI_API_KEY`。Miau 系通道(千问、DeepSeek Miau)走的是另一把
+   * (`MIAU_API_KEY`),而且平台余额一开,代理会在出网前把它整个换成影子 token
+   * —— 那时用户手里**哪把 Key 都不需要**。
+   *
+   * 以前这里是 `if (!codexApiKey) throw`,于是登录了、平台余额也开了的用户,
+   * 只因为没填 Right.Codes 的 Key,连千问都发不出去 —— 而那把 Key 跟这一轮
+   * 请求毫无关系(2026-09-01 真机撞到,见图 3 那条「请在设置页填写 Codex Agent
+   * API Key」)。所以改成按**本轮实际要走的通道**判:
+   *
+   *   - Miau 通道:有 Miau Key **或**平台已登录,二者其一即可;
+   *   - 其他通道:仍要网关那把 Key。
+   *
+   * 解析不出通道时退回旧闸(要 `codexApiKey`)—— 宁可多拦,不可漏拦。
+   */
+  private credentialGapForTurn(gatewayId: string, modelId: string): string | null {
+    let envKey: string
+    try {
+      const custom = this.providerStore.loadSync().customProviders
+      const route = resolveGatewayModelRoute(gatewayId, modelId, custom)
+      envKey = resolveProviderChannel(route.channelId, custom).envKey
+    } catch {
+      return this.codexApiKey ? null : EMPTY_KEY_ERROR
+    }
+    if (envKey === MIAU_ENV_KEY) {
+      return this.miauToken || getActivePoolToken() ? null : MIAU_CREDENTIAL_ERROR
+    }
+    return this.codexApiKey ? null : EMPTY_KEY_ERROR
+  }
+
+  /**
+   * 凭据闸:缺就发错误事件并抛出。
+   *
+   * 每轮调**两次**,模型选择之前一次、之后一次:
+   *  - 之前那次用意图里的模型(payload 给的,否则当前选中的)**预判**。它的价值是
+   *    在任何 store / 协调器动作之前就给出准确提示 —— 不然模型选择协调器会先抛
+   *    一句更含糊的「请先配置网关 Key」;
+   *  - 之后那次才是权威:线程绑定快照可能把模型换成别的,通道也随之变。
+   */
+  private assertTurnCredential(gatewayId: string, modelId: string, threadId: string): void {
+    const gap = this.credentialGapForTurn(gatewayId, modelId)
+    if (!gap) return
+    this.emitEvent({ type: 'error', threadId, error: gap })
+    throw new Error(gap)
+  }
+
+  /** 模型选择之前能拿到的最好猜测,只给快闸预判用。 */
+  private intendedModelId(payload: AgentSendMessagePayload): string {
+    return (
+      payload.modelSelection?.modelId?.trim()
+      || payload.model?.trim()
+      || this.providerStore.loadSync().selectedModelId
+    )
+  }
+
   private async sendMessageAfterProviderBarrier(
     payload: AgentSendMessagePayload,
     reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessageResult> {
-    if (!this.codexApiKey) {
-      const threadId = payload.threadId ?? 'pending'
-      this.emitEvent({ type: 'error', threadId, error: EMPTY_KEY_ERROR })
-      throw new Error(EMPTY_KEY_ERROR)
-    }
+    const pendingThreadId = payload.threadId ?? 'pending'
+    this.assertTurnCredential(this.activeGatewayId, this.intendedModelId(payload), pendingThreadId)
 
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.sendMessage called without store/attachments')
@@ -3083,6 +3150,11 @@ export class AgentManager {
     const confirmedPayload = await this.ensureTurnModelSelection(
       payload,
       reservation,
+    )
+    this.assertTurnCredential(
+      confirmedPayload.modelSelection?.gatewayId ?? this.activeGatewayId,
+      confirmedPayload.modelSelection?.modelId ?? confirmedPayload.model ?? '',
+      pendingThreadId,
     )
 
     // Lazily (re)start the backend if the bootstrap start() failed or never
@@ -3187,16 +3259,19 @@ export class AgentManager {
     steer: NonNullable<IAgentBackend['steer']>,
     reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessageResult> {
-    if (!this.codexApiKey) {
-      this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
-      throw new Error(EMPTY_KEY_ERROR)
-    }
+    // 与 sendMessage 同一道闸、同一个理由:按本轮通道判缺哪把 Key(见 assertTurnCredential)。
+    this.assertTurnCredential(this.activeGatewayId, this.intendedModelId(payload), threadIdIn)
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.steer called without store/attachments')
     }
     const confirmedPayload = await this.ensureTurnModelSelection(
       payload,
       reservation,
+    )
+    this.assertTurnCredential(
+      confirmedPayload.modelSelection?.gatewayId ?? this.activeGatewayId,
+      confirmedPayload.modelSelection?.modelId ?? confirmedPayload.model ?? '',
+      threadIdIn,
     )
     try {
       await this.ensureBackendStarted()
