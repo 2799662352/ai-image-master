@@ -14,6 +14,12 @@
 import { MIAU_BASE_URL } from '../../../shared/miau'
 import { SeedanceApiError } from '../seedance/apiError'
 import { retrySubmit, type RetrySubmitOptions } from '../seedance/submitRetry'
+import {
+  isAbortedByTimeout,
+  videoRequestTimeoutMessage,
+  videoRequestTimeoutMs,
+  type VideoRequestPhase,
+} from '../videoRequestTimeouts'
 import type { SeedanceGatewayCreateTaskBody } from './request'
 import { parseSeedanceGatewayTaskResult, type SeedanceGatewayTaskResult } from './response'
 
@@ -32,9 +38,6 @@ export const SEEDANCE_GATEWAY_CREATE_PATH = '/video/generations'
  * 待办登记在计划的 Task 6 第一条。
  */
 export const SEEDANCE_GATEWAY_QUERY_PATH = '/videos'
-
-/** 与 Seedance / wan3 同一个数：创建与查询都是轻量 JSON 接口,正常 <2s。 */
-export const SEEDANCE_GATEWAY_REQUEST_TIMEOUT_MS = 30_000
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
@@ -151,9 +154,11 @@ async function request(
   url: string,
   init: RequestInit,
   auth: Record<string, string>,
+  phase: VideoRequestPhase,
 ): Promise<Record<string, unknown>> {
+  const timeoutMs = videoRequestTimeoutMs(phase)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), SEEDANCE_GATEWAY_REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res: Response
   try {
     res = await fetchImpl(url, {
@@ -167,6 +172,13 @@ async function request(
         ...(init.headers as Record<string, string> | undefined),
       },
     })
+  } catch (e) {
+    // 我们自己掐断的:换成人话。抛普通 Error 而不是 SeedanceApiError,
+    // `isSafeToResubmit` 就不会重发它 —— 分不清上游是否已受理,重发会跑出两份。
+    if (isAbortedByTimeout(e, controller.signal)) {
+      throw new Error(videoRequestTimeoutMessage(phase, timeoutMs))
+    }
+    throw e
   } finally {
     clearTimeout(timer)
   }
@@ -207,6 +219,7 @@ export function createSeedanceGatewayClient(
           `${baseUrl}${SEEDANCE_GATEWAY_CREATE_PATH}`,
           { method: 'POST', body: JSON.stringify(body) },
           authHeaders(key),
+          'create',
         )
         const nested = asRecord(json.data)
         const id =
@@ -237,6 +250,7 @@ export function createSeedanceGatewayClient(
         `${baseUrl}${queryPath}/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
         authHeaders(key),
+        'query',
       )
       const result = parseSeedanceGatewayTaskResult(json)
       // 终态才结算。见 `TERMINAL_STATUSES` 与 `onBilledExchange` 的注释。

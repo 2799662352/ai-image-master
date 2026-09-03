@@ -13,15 +13,14 @@
 import { MIAU_BASE_URL } from '../../../shared/miau'
 import { SeedanceApiError } from '../seedance/apiError'
 import { retrySubmit, type RetrySubmitOptions } from '../seedance/submitRetry'
+import {
+  isAbortedByTimeout,
+  videoRequestTimeoutMessage,
+  videoRequestTimeoutMs,
+  type VideoRequestPhase,
+} from '../videoRequestTimeouts'
 import type { Wan3CreateTaskBody } from './request'
 import { parseWan3TaskResult, type Wan3TaskResult } from './response'
-
-/**
- * 单次请求的硬超时。与 Seedance 那条同一个数：创建/查询都是轻量 JSON 接口，
- * 正常 <2s；不设超时的话，代理或上游 TCP 半开会让 fetch 永远悬挂，用户视角就是
- * 卡片一直转圈。
- */
-export const WAN3_REQUEST_TIMEOUT_MS = 30_000
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
@@ -192,9 +191,11 @@ async function request(
   url: string,
   init: RequestInit,
   auth: Wan3AuthHeaders,
+  phase: VideoRequestPhase,
 ): Promise<Record<string, unknown>> {
+  const timeoutMs = videoRequestTimeoutMs(phase)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), WAN3_REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res: Response
   try {
     res = await fetchImpl(url, {
@@ -209,6 +210,13 @@ async function request(
         ...(init.headers as Record<string, string> | undefined),
       },
     })
+  } catch (e) {
+    // 我们自己掐断的:换成人话。抛普通 Error 而不是 SeedanceApiError,
+    // `isSafeToResubmit` 就不会重发它 —— 分不清上游是否已受理,重发会跑出两份。
+    if (isAbortedByTimeout(e, controller.signal)) {
+      throw new Error(videoRequestTimeoutMessage(phase, timeoutMs))
+    }
+    throw e
   } finally {
     clearTimeout(timer)
   }
@@ -263,6 +271,7 @@ export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
           submitUrl,
           { method: 'POST', body: JSON.stringify(body) },
           headers,
+          'create',
         )
         const output = (json.output ?? {}) as Record<string, unknown>
         const id = asString(output.task_id) ?? asString(json.task_id) ?? asString(json.id)
@@ -289,6 +298,7 @@ export function createWan3Client(options: Wan3ClientOptions): Wan3Client {
         `${baseUrl}/video/generations/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
         headers,
+        'query',
       )
       const result = parseWan3TaskResult(json)
       // 终态才结算。见 `TERMINAL_STATUSES` 与 `onBilledExchange` 的注释。

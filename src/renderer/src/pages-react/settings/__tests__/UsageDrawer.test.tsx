@@ -37,6 +37,9 @@ const ROW_CONSUME: UsageLogRow = {
   tokenName: 'desktop',
   projectId: 342,
   producerProjectId: null,
+  content: '图片 generate',
+  settleStatus: 0,
+  preConsumedQuota: null,
 }
 
 /** 退款:`quota` 为负,`modelName` 是空串(明细里它是 `string`,不是 `string | null`)。 */
@@ -52,6 +55,9 @@ const ROW_REFUND: UsageLogRow = {
   tokenName: null,
   projectId: 342,
   producerProjectId: null,
+  content: '视频任务失败退款 task_a1b2',
+  settleStatus: 0,
+  preConsumedQuota: null,
 }
 
 const SUMMARY: UsageModelSummary[] = [
@@ -202,6 +208,173 @@ describe('UsageDrawer', () => {
 
     const row = screen.getAllByTestId('usage-log-row')[0]
     expect(within(row).getByTestId('usage-log-amount').textContent).toBe('¥0.0500')
+  })
+
+  /**
+   * 退款行的 modelName 是空串,唯一能说清「退的是哪笔」的字段是 content。
+   * 主文案取它,而不是「未标注模型」—— 那句话对一笔退款是误导。
+   */
+  it('退款行主文案取 content,说清退的是哪笔', async () => {
+    await open()
+    await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(2))
+
+    const refundRow = screen.getAllByTestId('usage-log-row')[1]
+    expect(within(refundRow).getByTestId('usage-log-model').textContent).toBe('视频任务失败退款 task_a1b2')
+    expect(refundRow.textContent).not.toContain('未标注模型')
+  })
+
+  it('退款行连 content 都没有时落到「退款」,不显示「未标注模型」', async () => {
+    auth.getUsageLogs.mockResolvedValue(ok(logPage([{ ...ROW_REFUND, content: '' }], { total: 1 })))
+    await open()
+    await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(1))
+    expect(within(screen.getAllByTestId('usage-log-row')[0]).getByTestId('usage-log-model').textContent).toBe('退款')
+  })
+
+  /**
+   * 网关对异步任务(视频/高清)的退款不是另一行 type=6,而是把原消费行改成 cancelled、
+   * quota 归 0。只认 type=6 的话,一次失败的视频在明细里就是一行 ¥0 的「消费」——
+   * 用户看不出钱退回来了。
+   */
+  describe('settle_status(异步任务的原地结算)', () => {
+    const ROW_CANCELLED: UsageLogRow = {
+      ...ROW_CONSUME,
+      id: 9003,
+      modelName: 'doubao-seedance-2-5-260628',
+      quota: 0,
+      settleStatus: 2,
+      preConsumedQuota: 2_704_100,
+      content: '视频 textGenerate, 生成时长seconds: 5.00',
+    }
+    const ROW_PENDING: UsageLogRow = {
+      ...ROW_CONSUME,
+      id: 9004,
+      modelName: 'wan3.0-video',
+      quota: 2_000_000,
+      settleStatus: 1,
+    }
+
+    it('cancelled 的消费行按退款渲染:「已退款」标记 + 退回的预扣额,而不是 ¥0', async () => {
+      auth.getUsageLogs.mockResolvedValue(ok(logPage([ROW_CANCELLED], { total: 1 })))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(1))
+
+      const row = screen.getAllByTestId('usage-log-row')[0]
+      expect(within(row).getByTestId('usage-refund-badge').textContent).toBe('已退款')
+      expect(within(row).getByTestId('usage-log-amount').textContent).toBe('+¥5.4082')
+      // 模型名保留 —— 用户要知道退的是哪个模型那笔。
+      expect(within(row).getByTestId('usage-log-model').textContent).toBe('doubao-seedance-2-5-260628')
+      expect(row.textContent).not.toContain('¥0.0000')
+    })
+
+    it('cancelled 但没挖到预扣额时显示 ¥0,不编数字', async () => {
+      auth.getUsageLogs.mockResolvedValue(ok(logPage([{ ...ROW_CANCELLED, preConsumedQuota: null }], { total: 1 })))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(1))
+      const row = screen.getAllByTestId('usage-log-row')[0]
+      expect(within(row).getByTestId('usage-log-amount').textContent).toBe('¥0')
+      expect(within(row).getByTestId('usage-refund-badge')).toBeTruthy()
+    })
+
+    it('cancelled 行计入「本页 N 笔退款」', async () => {
+      auth.getUsageLogs.mockResolvedValue(ok(logPage([ROW_CONSUME, ROW_REFUND, ROW_CANCELLED], { total: 3 })))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(3))
+      // 0.0400(type=6) + 5.4082(cancelled 预扣) = 5.4482
+      expect(screen.getByTestId('usage-page-refunds').textContent).toBe('本页 2 笔退款 +¥5.4482')
+    })
+
+    it('pending 行标「结算中」,金额照常显示', async () => {
+      auth.getUsageLogs.mockResolvedValue(ok(logPage([ROW_PENDING], { total: 1 })))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(1))
+      const row = screen.getAllByTestId('usage-log-row')[0]
+      expect(within(row).getByTestId('usage-pending-badge').textContent).toBe('结算中')
+      expect(within(row).getByTestId('usage-log-amount').textContent).toBe('¥4.0000')
+      expect(within(row).queryByTestId('usage-refund-badge')).toBeNull()
+      expect(screen.queryByTestId('usage-page-refunds')).toBeNull()
+    })
+
+    it('settled 的普通消费行没有任何结算标记', async () => {
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(2))
+      const row = screen.getAllByTestId('usage-log-row')[0]
+      expect(within(row).queryByTestId('usage-pending-badge')).toBeNull()
+      expect(within(row).queryByTestId('usage-refund-badge')).toBeNull()
+    })
+  })
+
+  /**
+   * 记录区头部给本页退款一个绿色计数。标「本页」是刻意的:列表分页,这个数只对当前页
+   * 成立;后端汇总端点不给退款合计,写成「N 笔退款」会被读成时间范围内的总数。
+   */
+  it('本页有退款时头部显示「本页 N 笔退款 +¥x」;没有就不显示', async () => {
+    await open()
+    await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(2))
+    expect(screen.getByTestId('usage-page-refunds').textContent).toBe('本页 1 笔退款 +¥0.0400')
+
+    cleanup()
+    auth.getUsageLogs.mockResolvedValue(ok(logPage([ROW_CONSUME], { total: 1 })))
+    await open()
+    await waitFor(() => expect(screen.getAllByTestId('usage-log-row').length).toBe(1))
+    expect(screen.queryByTestId('usage-page-refunds')).toBeNull()
+  })
+
+  describe('按模型汇总的折叠', () => {
+    const many: UsageModelSummary[] = [
+      { modelName: 'cheap-a', totalQuota: 5_000, totalRequests: 1, totalTokens: 10 },
+      { modelName: 'big-1', totalQuota: 90_000, totalRequests: 9, totalTokens: 900 },
+      { modelName: 'mid-2', totalQuota: 40_000, totalRequests: 4, totalTokens: 400 },
+      { modelName: 'mid-3', totalQuota: 30_000, totalRequests: 3, totalTokens: 300 },
+      { modelName: 'cheap-b', totalQuota: 6_000, totalRequests: 1, totalTokens: 20 },
+      { modelName: 'mid-4', totalQuota: 20_000, totalRequests: 2, totalTokens: 200 },
+      { modelName: 'mid-5', totalQuota: 10_000, totalRequests: 1, totalTokens: 100 },
+    ]
+
+    it('超过 5 个模型时只露花费最高的 5 个,其余折进「展开」并注明藏了多少钱', async () => {
+      auth.getUsageSummary.mockResolvedValue(ok(many))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-summary-model').length).toBe(5))
+
+      const names = screen.getAllByTestId('usage-summary-model').map((el) => el.textContent ?? '')
+      // 按花费降序:大头在前,两个便宜的被折起来。
+      expect(names[0]).toContain('big-1')
+      expect(names.some((n) => n.includes('cheap-a'))).toBe(false)
+      expect(names.some((n) => n.includes('cheap-b'))).toBe(false)
+
+      const toggle = screen.getByTestId('usage-summary-toggle')
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(toggle.getAttribute('aria-controls')).toBe('usage-summary-models')
+      expect(toggle.textContent).toContain('展开其余 2 个模型')
+      // 折叠不能变成藏账:5_000 + 6_000 quota = ¥0.0220
+      expect(toggle.textContent).toContain('合计 ¥0.0220')
+    })
+
+    it('点「展开」后全部露出、按钮变「收起」;再点收回', async () => {
+      auth.getUsageSummary.mockResolvedValue(ok(many))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-summary-model').length).toBe(5))
+
+      await act(async () => {
+        screen.getByTestId('usage-summary-toggle').click()
+      })
+      expect(screen.getAllByTestId('usage-summary-model').length).toBe(7)
+      const toggle = screen.getByTestId('usage-summary-toggle')
+      expect(toggle.getAttribute('aria-expanded')).toBe('true')
+      expect(toggle.textContent).toContain('收起')
+      expect(toggle.textContent).not.toContain('合计')
+
+      await act(async () => {
+        toggle.click()
+      })
+      expect(screen.getAllByTestId('usage-summary-model').length).toBe(5)
+    })
+
+    it('5 个以内不出现折叠按钮', async () => {
+      auth.getUsageSummary.mockResolvedValue(ok(many.slice(0, 5)))
+      await open()
+      await waitFor(() => expect(screen.getAllByTestId('usage-summary-model').length).toBe(5))
+      expect(screen.queryByTestId('usage-summary-toggle')).toBeNull()
+    })
   })
 
   // `createdAt` 是 Unix **秒**。忘了乘 1000 的话所有记录都会显示成 1970-01-20。

@@ -163,6 +163,26 @@ export interface UsageLogRow {
   tokenName: string | null
   projectId: number | null
   producerProjectId: number | null
+  /**
+   * 后端 `content`:一句人读的说明。消费行是「视频 textGenerate, 生成时长seconds: 5.00」
+   * 这类;退款行的 `modelName` 是空串,**只有这里**能说清退的是哪笔,所以退款行
+   * 的主文案取它。缺失时空串。
+   */
+  content: string
+  /**
+   * 结算状态(`log.go` SettleStatus*):`0` settled、`1` pending、`2` cancelled。
+   *
+   * 网关对异步任务的账本模型是「一条消费日志原地改状态」:提交时 pending,成功后
+   * settled,失败退款后 cancelled 且 `quota` 归 0 —— **不会**另写一条退款行。所以
+   * 「已退款」要从这里读,不能只认 `type === 6`。缺失时按 settled 处理(同步接口没有
+   * 这个概念,历史行也是 0)。
+   */
+  settleStatus: number
+  /**
+   * cancelled 行退回的预扣额(`other.pre_consumed_quota`,500000 = ¥1)。`quota` 已被
+   * 归 0,只有它能告诉用户「退了多少」。非 cancelled 或缺失时 null。
+   */
+  preConsumedQuota: number | null
 }
 
 export interface UsageLogPage {
