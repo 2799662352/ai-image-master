@@ -314,6 +314,10 @@ export interface UsageLogRow {
   producerProjectId: number | null
   /** 后端 `content`,退款行靠它说清退的是哪笔;缺失时空串。与 `types/authApi.ts` 同步。 */
   content: string
+  /** `settle_status`:0 settled / 1 pending / 2 cancelled。缺失按 0。 */
+  settleStatus: number
+  /** cancelled 行的 `other.pre_consumed_quota`;其余 null。 */
+  preConsumedQuota: number | null
 }
 
 export interface UsageLogPage {
@@ -402,7 +406,26 @@ function usageParams(query: UsageQuery): URLSearchParams {
   return params
 }
 
+const SETTLE_STATUS_CANCELLED = 2
+
+/**
+ * `other` 是一段 JSON 字符串(网关把计费上下文塞在里面)。只在 cancelled 行上挖
+ * `pre_consumed_quota`:其余行的 `quota` 就是实付,不需要它;而且这段 JSON 里有
+ * `admin_info` 之类不该上渲染层的东西,所以不整段透传。
+ */
+function preConsumedQuotaOf(raw: Record<string, unknown>, settleStatus: number): number | null {
+  if (settleStatus !== SETTLE_STATUS_CANCELLED || typeof raw.other !== 'string') return null
+  try {
+    const other = JSON.parse(raw.other) as Record<string, unknown>
+    const v = num(other.pre_consumed_quota)
+    return v !== null && v > 0 ? v : null
+  } catch {
+    return null
+  }
+}
+
 function toUsageLogRow(raw: Record<string, unknown>): UsageLogRow {
+  const settleStatus = num(raw.settle_status) ?? 0
   return {
     id: num(raw.id) ?? 0,
     createdAt: num(raw.created_at) ?? 0,
@@ -418,6 +441,8 @@ function toUsageLogRow(raw: Record<string, unknown>): UsageLogRow {
     projectId: num(raw.project_id),
     producerProjectId: num(raw.producer_project_id),
     content: text(raw.content) ?? '',
+    settleStatus,
+    preConsumedQuota: preConsumedQuotaOf(raw, settleStatus),
   }
 }
 

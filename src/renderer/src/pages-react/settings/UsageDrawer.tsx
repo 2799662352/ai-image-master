@@ -14,6 +14,8 @@ import type { UsageLogRow, UsageModelSummary } from '../../../../types/authApi'
 import type { Pool } from '../../stores/useQuotaStore'
 import {
   LOG_TYPE_REFUND,
+  SETTLE_STATUS_CANCELLED,
+  SETTLE_STATUS_PENDING,
   USAGE_RANGES,
   formatQuotaCny,
   formatUsageTime,
@@ -35,11 +37,36 @@ const FEATURE_LABELS: Record<string, string> = {
   video_gen: '视频',
 }
 
+/**
+ * 「这一行代表一笔退回」有两种长相,必须一起认:
+ *  - `type === 6`:独立的退款行(Midjourney、无 ConsumeLogId 的旧任务),`quota` 为负;
+ *  - 消费行 `settleStatus === cancelled`:异步任务失败后,网关**原地**把那条消费日志
+ *    改成 cancelled、`quota` 归 0,退回的金额只在 `preConsumedQuota` 里。
+ * 只认第一种的话,视频任务的退款在明细里永远是一行 ¥0 的「消费」。
+ */
+function isRefundLike(row: UsageLogRow): boolean {
+  return row.type === LOG_TYPE_REFUND || row.settleStatus === SETTLE_STATUS_CANCELLED
+}
+
+/** 退回的量级(正数 quota)。 */
+function refundedQuota(row: UsageLogRow): number {
+  if (row.type === LOG_TYPE_REFUND) return Math.abs(row.quota)
+  if (row.settleStatus === SETTLE_STATUS_CANCELLED) return row.preConsumedQuota ?? 0
+  return 0
+}
+
 function amountText(row: UsageLogRow): string {
-  if (row.type !== LOG_TYPE_REFUND) return `¥${formatQuotaCny(row.quota)}`
-  // 退款的 `quota` 是负数。取量级再补 `+`,否则拼出来是 `+¥-0.0400` —— 网页端
-  // (`UsageDrawer.tsx:381`)就是这么渲染的,一个自相矛盾的字符串。量级两端一致。
-  return `+¥${formatQuotaCny(Math.abs(row.quota))}`
+  if (row.type === LOG_TYPE_REFUND) {
+    // 退款的 `quota` 是负数。取量级再补 `+`,否则拼出来是 `+¥-0.0400` —— 网页端
+    // (`UsageDrawer.tsx:381`)就是这么渲染的,一个自相矛盾的字符串。量级两端一致。
+    return `+¥${formatQuotaCny(Math.abs(row.quota))}`
+  }
+  if (row.settleStatus === SETTLE_STATUS_CANCELLED) {
+    // 实付已归 0;把退回的预扣额亮出来,不然这一行就是一个解释不了的 ¥0。
+    const back = row.preConsumedQuota
+    return back ? `+¥${formatQuotaCny(back)}` : '¥0'
+  }
+  return `¥${formatQuotaCny(row.quota)}`
 }
 
 /**
@@ -62,9 +89,9 @@ function pageRefunds(rows: readonly UsageLogRow[]): { count: number; quota: numb
   let count = 0
   let quota = 0
   for (const row of rows) {
-    if (row.type !== LOG_TYPE_REFUND) continue
+    if (!isRefundLike(row)) continue
     count += 1
-    quota += Math.abs(row.quota)
+    quota += refundedQuota(row)
   }
   return { count, quota }
 }
@@ -397,7 +424,8 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
           ) : (
             <div className="space-y-1">
               {usage.rows.map((row, i) => {
-                const isRefund = row.type === LOG_TYPE_REFUND
+                const isRefund = isRefundLike(row)
+                const isPending = !isRefund && row.settleStatus === SETTLE_STATUS_PENDING
                 return (
                   <div
                     key={`${row.id}-${i}`}
@@ -419,7 +447,15 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
                           data-testid="usage-refund-badge"
                           className="shrink-0 border-2 border-green-600 bg-green-900/40 px-1.5 text-[10px] font-bold uppercase tracking-tight text-green-300"
                         >
-                          退款
+                          {row.type === LOG_TYPE_REFUND ? '退款' : '已退款'}
+                        </span>
+                      ) : isPending ? (
+                        // 异步任务还没跑完:这笔是预扣,可能变(成功差额结算 / 失败整笔退回)。
+                        <span
+                          data-testid="usage-pending-badge"
+                          className="shrink-0 border-2 border-zinc-600 px-1.5 text-[10px] tracking-tight text-zinc-400"
+                        >
+                          结算中
                         </span>
                       ) : row.feature ? (
                         <span className="shrink-0 border-2 border-zinc-700 px-1.5 text-[10px] text-zinc-400">

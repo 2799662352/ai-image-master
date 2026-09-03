@@ -45,6 +45,14 @@ export const USAGE_POLL_MS = 10_000
 /** 退款的 log type。完整枚举见后端 `log.go:53-61`。 */
 export const LOG_TYPE_REFUND = 6
 
+/**
+ * 消费日志的结算状态(后端 `log.go` SettleStatus*)。异步任务的退款**不是**另一行
+ * type=6,而是原消费行被改成 cancelled、quota 归 0 —— 所以「已退款」要认这个字段。
+ */
+export const SETTLE_STATUS_SETTLED = 0
+export const SETTLE_STATUS_PENDING = 1
+export const SETTLE_STATUS_CANCELLED = 2
+
 export type UsageRange = 'today' | '7d' | '30d' | 'all'
 
 export const USAGE_RANGES: { value: UsageRange; label: string }[] = [

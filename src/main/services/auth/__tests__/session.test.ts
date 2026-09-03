@@ -632,9 +632,50 @@ describe('auth session', () => {
             projectId: 342,
             producerProjectId: 5,
             content: '视频 textGenerate, 生成时长seconds: 5.00',
+            settleStatus: 0,
+            preConsumedQuota: null,
           },
         ],
       })
+    })
+
+    // 网关对异步任务的账本模型:失败退款不是另一行,而是原消费行改成 cancelled、quota 归 0、
+    // 退回的金额只在 other.pre_consumed_quota 里。这里要把它挖出来,否则渲染层看到的是
+    // 一行解释不了的 ¥0「消费」。other 里还有 admin_info 之类的东西,所以不整段透传。
+    it('cancelled 行挖出 other.pre_consumed_quota;其余行 preConsumedQuota 为 null', async () => {
+      login()
+      const cancelled = {
+        ...CONSUME_ROW,
+        id: 90_211,
+        quota: 0,
+        settle_status: 2,
+        other: JSON.stringify({
+          is_task: true,
+          pre_consumed_quota: 12_500,
+          reason: 'video async task failed: InputImageSensitiveContentDetected',
+          admin_info: { use_channel: ['6'] },
+        }),
+      }
+      const settledWithOther = {
+        ...CONSUME_ROW,
+        id: 90_212,
+        settle_status: 0,
+        other: JSON.stringify({ pre_consumed_quota: 999 }),
+      }
+      const malformed = { ...CONSUME_ROW, id: 90_213, settle_status: 2, other: '{not json' }
+      fetchMock.mockResolvedValue(
+        ok({ logs: [cancelled, settledWithOther, malformed], total: 3, page: 0, page_size: 20 }),
+      )
+      const m = await import('../session')
+
+      const r = await m.fetchUsageLogs({ projectId: 342 })
+      expect(r.rows[0]).toMatchObject({ settleStatus: 2, quota: 0, preConsumedQuota: 12_500 })
+      // 不是 cancelled 的行,other 里就算有 pre_consumed_quota 也不取 —— 那不是退款。
+      expect(r.rows[1]).toMatchObject({ settleStatus: 0, preConsumedQuota: null })
+      // other 坏掉不影响整行。
+      expect(r.rows[2]).toMatchObject({ settleStatus: 2, preConsumedQuota: null })
+      // 不整段透传 other。
+      expect(r.rows[0]).not.toHaveProperty('other')
     })
 
     // 未脱敏的整体序列化意味着字段可能整个缺席(旧数据、非 New API 来源的流水)。
@@ -658,6 +699,8 @@ describe('auth session', () => {
         projectId: null,
         producerProjectId: null,
         content: '',
+        settleStatus: 0,
+        preConsumedQuota: null,
       })
 
       fetchMock.mockResolvedValue(ok({ total: 0 }))
