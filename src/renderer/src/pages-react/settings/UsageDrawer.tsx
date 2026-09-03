@@ -8,9 +8,9 @@
 // border-zinc-700 / 直角)。**不要**混进 Codex 侧那套 cyan + rounded-md,
 // 也没有 `.miau-*` 类可用 —— 那是网页端的。
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { UsageLogRow } from '../../../../types/authApi'
+import type { UsageLogRow, UsageModelSummary } from '../../../../types/authApi'
 import type { Pool } from '../../stores/useQuotaStore'
 import {
   LOG_TYPE_REFUND,
@@ -40,6 +40,33 @@ function amountText(row: UsageLogRow): string {
   // 退款的 `quota` 是负数。取量级再补 `+`,否则拼出来是 `+¥-0.0400` —— 网页端
   // (`UsageDrawer.tsx:381`)就是这么渲染的,一个自相矛盾的字符串。量级两端一致。
   return `+¥${formatQuotaCny(Math.abs(row.quota))}`
+}
+
+/**
+ * 按模型分组的汇总默认只露这么多条。
+ *
+ * 这块和下面的「调用记录」抢同一个抽屉高度,记录区是 `flex-1`,汇总每多一条模型它就
+ * 少一行。一天用过十来个模型的用户,打开抽屉看到的是一整屏进度条、记录只剩一条缝。
+ * 5 条覆盖绝大多数人的"大头"(按花费降序),其余折进「展开」—— 渐进披露,数据一条
+ * 不少,只是别一上来全摊开。
+ */
+export const MODEL_SUMMARY_VISIBLE = 5
+
+/** 花得多的排前面:折叠后露出来的必须是大头,否则折叠就是在藏重点。 */
+function sortedByCost(summary: readonly UsageModelSummary[]): UsageModelSummary[] {
+  return [...summary].sort((a, b) => b.totalQuota - a.totalQuota)
+}
+
+/** 本页退款汇总。**只对当前页成立** —— 列表是分页的,别把它当成时间范围内的总数。 */
+function pageRefunds(rows: readonly UsageLogRow[]): { count: number; quota: number } {
+  let count = 0
+  let quota = 0
+  for (const row of rows) {
+    if (row.type !== LOG_TYPE_REFUND) continue
+    count += 1
+    quota += Math.abs(row.quota)
+  }
+  return { count, quota }
 }
 
 function SummaryCard({
@@ -73,8 +100,15 @@ function SummaryCard({
 export function UsageDrawer({ open, pool, onClose }: Props) {
   // hook 必须无条件调用 —— 早退分支放在它后面。
   const usage = useUsageData({ open, pool })
+  const [modelsExpanded, setModelsExpanded] = useState(false)
 
   if (!open) return null
+
+  const models = sortedByCost(usage.summary)
+  const hiddenModels = models.slice(MODEL_SUMMARY_VISIBLE)
+  const visibleModels = modelsExpanded ? models : models.slice(0, MODEL_SUMMARY_VISIBLE)
+  const hiddenQuota = hiddenModels.reduce((sum, s) => sum + Math.max(0, s.totalQuota), 0)
+  const refunds = pageRefunds(usage.rows)
 
   /**
    * portal 到 `document.body`。两个独立理由,任一都足以让抽屉「点了没反应」:
@@ -238,9 +272,10 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
               />
             </div>
 
-            {usage.summary.length > 0 && (
+            {models.length > 0 && (
               <div className="mt-3 space-y-1">
-                {usage.summary.map((s) => {
+                <div id="usage-summary-models" className="space-y-1">
+                {visibleModels.map((s) => {
                   const share =
                     usage.totalQuota > 0 ? (Math.max(0, s.totalQuota) / usage.totalQuota) * 100 : 0
                   return (
@@ -269,6 +304,41 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
                     </div>
                   )
                 })}
+                </div>
+
+                {/*
+                  WAI-ARIA Disclosure:按钮带 aria-expanded / aria-controls,箭头靠
+                  Tailwind 的 `group-aria-expanded:` 变体转向,不另维护一份 open 样式。
+                  收起态把「藏了多少钱」写在按钮上 —— 折叠不能变成藏账。
+                */}
+                {hiddenModels.length > 0 && (
+                  <button
+                    type="button"
+                    data-testid="usage-summary-toggle"
+                    aria-expanded={modelsExpanded}
+                    aria-controls="usage-summary-models"
+                    onClick={() => setModelsExpanded((v) => !v)}
+                    className="group flex w-full items-center justify-between border-2 border-dashed border-zinc-700 bg-zinc-900 px-3 py-1.5 text-left text-xs text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-800"
+                  >
+                    <span>
+                      {modelsExpanded
+                        ? '收起'
+                        : `展开其余 ${hiddenModels.length} 个模型`}
+                      {!modelsExpanded && hiddenQuota > 0 && (
+                        <span className="ml-2 tabular-nums text-zinc-500">
+                          合计 ¥{formatQuotaCny(hiddenQuota)}
+                        </span>
+                      )}
+                    </span>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="h-3.5 w-3.5 shrink-0 fill-none stroke-current stroke-[1.75] transition-transform duration-150 group-aria-expanded:rotate-180"
+                    >
+                      <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                )}
               </div>
             )}
           </>
@@ -276,9 +346,23 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
       </div>
 
       <div className="mt-3 flex min-h-0 flex-1 flex-col border-t-2 border-zinc-800">
-        <div className="flex shrink-0 items-center justify-between px-5 py-2">
+        <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-2">
           <span className="text-xs font-bold uppercase tracking-tight text-zinc-400">调用记录</span>
-          <span className="text-xs tabular-nums text-zinc-500">共 {usage.total} 条</span>
+          <span className="flex items-center gap-2 text-xs tabular-nums text-zinc-500">
+            {/*
+              退款计数标「本页」:列表分页,这个数只对当前页成立。不写成「N 笔退款」——
+              那会被读成时间范围内的总数,而后端汇总端点不给退款合计,这里算不出来。
+            */}
+            {refunds.count > 0 && (
+              <span
+                data-testid="usage-page-refunds"
+                className="border-2 border-green-700/60 bg-green-900/30 px-1.5 py-px text-[10px] font-bold text-green-300"
+              >
+                本页 {refunds.count} 笔退款 +¥{formatQuotaCny(refunds.quota)}
+              </span>
+            )}
+            <span>共 {usage.total} 条</span>
+          </span>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
@@ -325,9 +409,10 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
                         data-testid="usage-log-model"
                         className="truncate text-xs font-medium text-white"
                       >
-                        {/* 明细里退款行的 modelName 是空串(类型是 string,不是 string|null),
-                            原样渲染会得到一行看起来空白的记录。 */}
-                        {row.modelName || '未标注模型'}
+                        {/* 退款行的 modelName 是空串(类型是 string,不是 string|null),原样渲染
+                            是一行空白。它唯一能说清「退的是哪笔」的字段是 content,主文案取它;
+                            连 content 都没有才落到「退款」二字。消费行照旧显示模型名。 */}
+                        {row.modelName || (isRefund ? row.content || '退款' : '未标注模型')}
                       </span>
                       {isRefund ? (
                         <span

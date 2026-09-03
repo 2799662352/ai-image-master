@@ -43,6 +43,7 @@ const ROW_CONSUME: UsageLogRow = {
   tokenName: 'desktop',
   projectId: 342,
   producerProjectId: null,
+  content: '图片 generate',
 }
 
 /**
@@ -63,6 +64,7 @@ const ROW_REFUND: UsageLogRow = {
   tokenName: null,
   projectId: 342,
   producerProjectId: null,
+  content: '视频任务失败退款 task_a1b2',
 }
 
 const SUMMARY: UsageModelSummary[] = [

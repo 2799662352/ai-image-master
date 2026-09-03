@@ -518,6 +518,7 @@ describe('auth session', () => {
       token_name: 'sk-desktop',
       project_id: 342,
       producer_project_id: 5,
+      content: '视频 textGenerate, 生成时长seconds: 5.00',
     }
 
     /** 退款流水:type=6,`quota` 是**负数**。 */
@@ -630,6 +631,7 @@ describe('auth session', () => {
             tokenName: 'sk-desktop',
             projectId: 342,
             producerProjectId: 5,
+            content: '视频 textGenerate, 生成时长seconds: 5.00',
           },
         ],
       })
@@ -655,6 +657,7 @@ describe('auth session', () => {
         tokenName: null,
         projectId: null,
         producerProjectId: null,
+        content: '',
       })
 
       fetchMock.mockResolvedValue(ok({ total: 0 }))

@@ -163,6 +163,12 @@ export interface UsageLogRow {
   tokenName: string | null
   projectId: number | null
   producerProjectId: number | null
+  /**
+   * 后端 `content`:一句人读的说明。消费行是「视频 textGenerate, 生成时长seconds: 5.00」
+   * 这类;退款行的 `modelName` 是空串,**只有这里**能说清退的是哪笔,所以退款行
+   * 的主文案取它。缺失时空串。
+   */
+  content: string
 }
 
 export interface UsageLogPage {

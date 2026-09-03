@@ -312,6 +312,8 @@ export interface UsageLogRow {
   tokenName: string | null
   projectId: number | null
   producerProjectId: number | null
+  /** 后端 `content`,退款行靠它说清退的是哪笔;缺失时空串。与 `types/authApi.ts` 同步。 */
+  content: string
 }
 
 export interface UsageLogPage {
@@ -415,6 +417,7 @@ function toUsageLogRow(raw: Record<string, unknown>): UsageLogRow {
     tokenName: text(raw.token_name),
     projectId: num(raw.project_id),
     producerProjectId: num(raw.producer_project_id),
+    content: text(raw.content) ?? '',
   }
 }
 

@@ -293,6 +293,7 @@ describe('auth IPC 编排', () => {
           tokenName: null,
           projectId: 342,
           producerProjectId: null,
+          content: '视频 textGenerate, 生成时长seconds: 5.00',
         },
       ],
       total: 1,
