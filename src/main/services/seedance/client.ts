@@ -10,6 +10,12 @@ import { retrySubmit } from './submitRetry'
 import { downloadVideoToDisk } from './videoDownload'
 import type { SeedanceCreateTaskBody, SeedanceTaskStatus } from './types'
 import { getSeedanceBaseUrl, SEEDANCE_REGION_BASE_URLS } from './region'
+import {
+  isAbortedByTimeout,
+  videoRequestTimeoutMessage,
+  videoRequestTimeoutMs,
+  type VideoRequestPhase,
+} from '../videoRequestTimeouts'
 
 /** @deprecated 使用 getSeedanceBaseUrl()；保留别名以免旧导入断裂。默认海外 GLOBAL。 */
 export const SEEDANCE_BASE_URL = SEEDANCE_REGION_BASE_URLS.global
@@ -58,14 +64,14 @@ interface ArkEnvelope<T> {
 }
 
 /**
- * 单次 Ark HTTP 请求的硬超时。createTask/queryTask 都是轻量 JSON 接口，正常 <2s；
- * 之前完全没超时——代理/上游 TCP 半开时 `net.fetch` 会永远悬挂，generate_video
- * 只能靠 codex 的 2000s 工具超时兜底(用户视角=turn 卡死半小时)。超时后:
- * queryTask 由 pollLoop 的 catch 容忍并在下一轮重试;createTask 的重试**不**覆盖
- * 这条超时(它分不清上游是否已受理,见 submitRetry),仍然直接抛给 submit →
- * announceFailed,用户立刻看到失败卡片而不是无限转圈。
+ * 单次 Ark HTTP 请求的硬超时，按阶段取自 `videoRequestTimeouts`(提交 120s / 查询
+ * 30s,理由见那边)。之前完全没超时——代理/上游 TCP 半开时 `net.fetch` 会永远悬挂，
+ * generate_video 只能靠 codex 的 2000s 工具超时兜底(用户视角=turn 卡死半小时)。
+ * 超时后:queryTask 由 pollLoop 的 catch 容忍并在下一轮重试;createTask 的重试
+ * **不**覆盖这条超时(它分不清上游是否已受理,见 submitRetry),仍然直接抛给
+ * submit → announceFailed,用户立刻看到失败卡片而不是无限转圈。
  */
-export const ARK_REQUEST_TIMEOUT_MS = 30_000
+export { VIDEO_CREATE_TIMEOUT_MS, VIDEO_QUERY_TIMEOUT_MS } from '../videoRequestTimeouts'
 
 export { SeedanceApiError } from './apiError'
 
@@ -79,9 +85,15 @@ function parseRetryAfterMs(raw: string | null | undefined): number | undefined {
   return undefined
 }
 
-async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): Promise<T> {
+async function arkRequest<T>(
+  url: string,
+  apiKey: string,
+  init: RequestInit | undefined,
+  phase: VideoRequestPhase,
+): Promise<T> {
+  const timeoutMs = videoRequestTimeoutMs(phase)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), ARK_REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   timer.unref?.()
   let res: Awaited<ReturnType<typeof net.fetch>>
   let text: string
@@ -97,8 +109,8 @@ async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): P
     })
     text = await res.text()
   } catch (e) {
-    if (controller.signal.aborted) {
-      throw new Error(`Seedance API request timed out after ${Math.round(ARK_REQUEST_TIMEOUT_MS / 1000)}s`)
+    if (isAbortedByTimeout(e, controller.signal)) {
+      throw new Error(videoRequestTimeoutMessage(phase, timeoutMs))
     }
     throw e
   } finally {
@@ -145,6 +157,7 @@ export const seedanceClient: SeedanceClient = {
         `${getSeedanceBaseUrl()}${CREATE_TASK_PATH}`,
         apiKey,
         { method: 'POST', body: JSON.stringify(body) },
+        'create',
       ),
     )
     const id = data.id ?? data.task_id
@@ -157,6 +170,7 @@ export const seedanceClient: SeedanceClient = {
       `${getSeedanceBaseUrl()}${QUERY_TASK_PATH}/${encodeURIComponent(taskId)}`,
       apiKey,
       { method: 'GET' },
+      'query',
     )
   },
 
@@ -165,6 +179,7 @@ export const seedanceClient: SeedanceClient = {
       `${getSeedanceBaseUrl()}${QUERY_TASK_PATH}/${encodeURIComponent(taskId)}`,
       apiKey,
       { method: 'DELETE' },
+      'query',
     )
   },
 

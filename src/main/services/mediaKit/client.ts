@@ -29,8 +29,12 @@
  */
 
 import { retrySubmit, type RetrySubmitOptions } from '../seedance/submitRetry'
-
-export const MEDIAKIT_REQUEST_TIMEOUT_MS = 30_000
+import {
+  isAbortedByTimeout,
+  videoRequestTimeoutMessage,
+  videoRequestTimeoutMs,
+  type VideoRequestPhase,
+} from '../videoRequestTimeouts'
 
 /**
  * 网关上走同一套任务协议的视频处理模型:
@@ -149,9 +153,11 @@ async function request(
   url: string,
   init: RequestInit,
   auth: MediaKitAuthHeaders,
+  phase: VideoRequestPhase,
 ): Promise<Record<string, unknown>> {
+  const timeoutMs = videoRequestTimeoutMs(phase)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), MEDIAKIT_REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res: Response
   try {
     res = await fetchImpl(url, {
@@ -159,6 +165,12 @@ async function request(
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', ...auth },
     })
+  } catch (e) {
+    // 我们自己掐断的:换成人话。抛普通 Error,`isSafeToResubmit` 不会重发它。
+    if (isAbortedByTimeout(e, controller.signal)) {
+      throw new Error(videoRequestTimeoutMessage(phase, timeoutMs))
+    }
+    throw e
   } finally {
     clearTimeout(timer)
   }
@@ -242,7 +254,13 @@ export function createMediaKitClient(options: MediaKitClientOptions): MediaKitCl
         sourceHost: safeHost(videoUrl),
       })
       return retrySubmit(async () => {
-        const json = await request(fetchImpl, submitUrl, { method: 'POST', body: JSON.stringify(body) }, headers)
+        const json = await request(
+          fetchImpl,
+          submitUrl,
+          { method: 'POST', body: JSON.stringify(body) },
+          headers,
+          'create',
+        )
         const id = asString(json.id) ?? asString(json.task_id)
         if (!id) throw new Error('MediaKit 返回里没有任务号,无法跟踪这次处理')
         // 提交成功 = 上游已按次预扣(这两个工具都是 per-call 定价)。
@@ -258,6 +276,7 @@ export function createMediaKitClient(options: MediaKitClientOptions): MediaKitCl
         `${baseUrl}/videos/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
         headers,
+        'query',
       )
       const result = parseMediaKitTaskResult(json)
       if (TERMINAL.has(result.status)) noteBilled()
