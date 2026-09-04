@@ -107,7 +107,7 @@ export interface VideoWorkbenchBoard {
 
 - 新增 object store `projects`(keyPath `id`)。
 - `boards` 加索引 `by-project`(`projectId`);`cards` 加索引 `by-board`(`boardId`)。索引现在建好,为将来按剧懒加载留路,本期不用。
-- `onupgradeneeded` 内:写入 `{ id: 'project-default', name: '默认项目', order: 0, legacy: true, createdAt: now, updatedAt: now }`;遍历 `boards`,缺 `projectId` 的全部置为 `project-default`。升级事务原子:中途失败整体回滚仍留 v2,不会出现半迁移。
+- `onupgradeneeded` 内:新建 `projects` 用 `db.createObjectStore`;给**已有**的 `boards` / `cards` 加索引必须通过升级事务取 store —— `request.transaction.objectStore('boards').createIndex('by-project', 'projectId')`(MDN:索引只能在 `versionchange` 事务里建);写入 `{ id: 'project-default', name: '默认项目', order: 0, legacy: true, createdAt: now, updatedAt: now }`;用同一事务的游标遍历 `boards`,缺 `projectId` 的全部置为 `project-default`。升级事务原子:中途抛错整体回滚仍留 v2,不会出现半迁移;`request.onblocked` 时提示用户重启应用。
 - `hydrate` 再兜一次底:任何缺 `projectId` 的 board(老代码路径写入)同样归默认项目;若 `projects` 为空则补默认项目。迁移幂等。
 - 单窗口应用无多 tab 抢 `versionchange` 锁;dev(`localhost:*`)与打包版(`file://`)origin 不同,各自独立升级。
 
@@ -116,6 +116,8 @@ export interface VideoWorkbenchBoard {
 启动仍**全量**读入 projects / boards / cards(现状几百张卡、3.5 MB)。隔离是**选择器层面**的:`selectBoardsOfActiveProject`、`selectCardsOfActiveProject`、统计、撤销可见范围、Agent 视图全部按 `activeProjectId` 过滤。不做按需读写,避免后台任务进度回写、撤销栈、跨剧移动各多一套 DB 逻辑。卡片到万级再评估懒加载。
 
 ### 5.4 store 新增(新文件 `features/video-workbench/projects.ts`,不再往 2353 行的 `store.ts` 堆)
+
+实现方式采用 zustand 官方 slices 模式:`projects.ts` 导出 `createProjectsSlice: StateCreator<WorkbenchState, [], [], ProjectsSlice>`,在现有 `create(...)` 里与原 store 体展开合并;slice 内通过 `get()` 访问 boards / cards 做过滤与统计,不复制数据。中间件(如有)只挂在合并后的 store 上,不在 slice 内挂。
 
 状态:`projects: VideoWorkbenchProject[]`、`activeProjectId: string`、`viewByProject: Record<string, { mode: 'overview' | 'board'; boardId?: string }>`、`railCollapsed: boolean`。
 
@@ -142,7 +144,7 @@ export interface VideoWorkbenchBoard {
 
 **素材一律以 https 地址保存**:图片、视频(参考素材与成片)、人像库素材都写成 COS 上的地址。文件里没有 base64、没有本地路径、没有 `asset://`。一部剧几十到几百 KB,跨机器、跨账号可直接导入。
 
-**前提(待用户确认)**:COS 桶没有自动过期的生命周期规则。成片 `remoteUrl` 已长期依赖该桶,按永久处理。若桶有过期策略,本节需回退到内嵌图片字节的方案。
+**前提(用户已确认 2026-09-04)**:COS 桶没有自动过期的生命周期规则,地址按永久处理。若将来加了过期策略,本节需回退到内嵌图片字节的方案。
 
 ### 6.2 文件格式 `*.catwb.json`
 
@@ -188,8 +190,8 @@ export interface VideoWorkbenchBoard {
    - 说明:「素材和成片以云端地址保存;文件包含全部提示词。」
    - 「取消」/「导出」
 2. 点「导出」:对每个尚无 https 地址的本地素材,走现有「主进程从磁盘上传 COS」通道上传并取回地址(进度「正在上传 j 个素材…」);人像库 `asset://` 素材取其图片地址;成片取 `remoteUrl`(仅有 `localPath` 的成片同样上传)。
-3. 组装 JSON → 主进程**原子写入**(先写临时文件再 rename)。
-4. toast「已导出 · 在文件夹中显示」。
+3. 组装 JSON → 主进程**原子写入**(先写同目录临时文件再 rename)。默认目录取 `app.getPath('documents')` 下的「CATIMATION 工程」,不存在则创建。
+4. toast「已导出 · 在文件夹中显示」,点击调 `shell.showItemInFolder(fullPath)`。
 5. 失败:离线/上传失败 → 明确文案,不写半个文件。
 
 ### 6.4 导入流程
@@ -254,6 +256,7 @@ export interface VideoWorkbenchBoard {
 5. MCP 三工具 + `status` / `apply` 改动 + skill 文案同步。
 6. 文档与发布说明。
 
-## 12. 待用户确认
+## 12. 确认记录
 
-- COS 桶是否无自动过期策略(§6.1 前提)。
+- 2026-09-04 用户确认:COS 桶无自动过期策略(§6.1 前提成立);spec 无需修改,进入实施计划。
+- 技术依据经 context7 核对:IndexedDB 升级事务内建索引与 `blocked` 事件(MDN)、`shell.showItemInFolder` / `app.getPath('documents')`(Electron 官方)、slices 模式(zustand 官方)。
