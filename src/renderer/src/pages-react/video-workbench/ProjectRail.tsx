@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { CoverImage } from './CoverImage'
 import { SEGMENT_DRAG_MIME } from './ProjectOverview'
 
 function carriesSegment(e: DragEvent): boolean {
@@ -164,7 +165,7 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
                 }}
               >
                 <div className="vw-rail-cover" aria-hidden="true">
-                  {stats.cover ? <img src={stats.cover} alt="" /> : null}
+                  <CoverImage src={stats.cover} />
                 </div>
                 {!collapsed && (
                   <div className="vw-rail-meta">

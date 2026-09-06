@@ -5,6 +5,7 @@ import type { DragEvent } from 'react'
 import type { VideoWorkbenchBoard } from '../../../../types/videoWorkbench'
 import { formatCostParts } from '../../features/video-workbench/pricing'
 import { formatDuration, type SegmentStats } from '../../features/video-workbench/projectStats'
+import { CoverImage } from './CoverImage'
 
 export interface SegmentCardProps {
   board: VideoWorkbenchBoard
@@ -27,7 +28,7 @@ export function SegmentCard({ board, stats, cover, index, onOpen, onDragStart }:
       onDragStart={onDragStart}
     >
       <div className="vw-seg-cover">
-        {cover ? <img src={cover} alt="" /> : <span className="vw-seg-play" aria-hidden="true">▷</span>}
+        <CoverImage src={cover} fallback={<span className="vw-seg-play" aria-hidden="true">▷</span>} />
         <span className="vw-seg-badge vw-seg-badge-tl">{String(index + 1).padStart(2, '0')}</span>
         {stats.doneSeconds > 0 && (
           <span className="vw-seg-badge vw-seg-badge-br">{formatDuration(stats.doneSeconds)}</span>

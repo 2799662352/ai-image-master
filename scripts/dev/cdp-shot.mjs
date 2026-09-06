@@ -2,16 +2,19 @@
 // renderer over CDP, without agent-browser. Used when agent-browser's daemon
 // wedges on Electron's devtools:// target.
 //
-//   node scripts/dev/cdp-shot.mjs <out.png> [js-expression]
+//   node scripts/dev/cdp-shot.mjs <out.png> [js-expression | @file.js]
 //
-// Picks the page target whose url contains "localhost:5173" (dev renderer).
-import { writeFileSync } from 'node:fs'
+// Prefix the expression with @ to read it from a file — PowerShell mangles
+// quotes inside inline JS. Picks the page target whose url contains
+// "localhost:5173" (dev renderer).
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const WebSocket = require('ws')
 
-const [out = 'shot.png', expr] = process.argv.slice(2)
+const [out = 'shot.png', exprArg] = process.argv.slice(2)
+const expr = exprArg?.startsWith('@') ? readFileSync(exprArg.slice(1), 'utf8') : exprArg
 const targets = await (await fetch('http://127.0.0.1:9222/json')).json()
 const page = targets.find((t) => t.type === 'page' && /localhost:5173/.test(t.url))
 if (!page) {
@@ -39,8 +42,12 @@ const send = (method, params = {}) =>
 
 await new Promise((r) => ws.once('open', r))
 if (expr) {
-  const { result } = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
-  console.log(JSON.stringify(result.value, null, 2))
+  const res = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
+  if (res.exceptionDetails) {
+    console.error('evaluate threw:', res.exceptionDetails.exception?.description ?? res.exceptionDetails.text)
+  } else {
+    console.log(JSON.stringify(res.result.value, null, 2))
+  }
 }
 const shot = await send('Page.captureScreenshot', { format: 'png' })
 writeFileSync(out, Buffer.from(shot.data, 'base64'))
