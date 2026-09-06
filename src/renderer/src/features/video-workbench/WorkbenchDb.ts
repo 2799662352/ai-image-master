@@ -11,13 +11,40 @@
  * userData 目录,远端在 COS,这里只背两个地址。
  */
 
-import type { VideoWorkbenchBoard, VideoWorkbenchCard } from '../../../../types/videoWorkbench'
+import {
+  DEFAULT_PROJECT_ID,
+  DEFAULT_PROJECT_NAME,
+  type VideoWorkbenchBoard,
+  type VideoWorkbenchCard,
+  type VideoWorkbenchProject,
+} from '../../../../types/videoWorkbench'
 
 const DB_NAME = 'catimation-video-workbench'
 // v2:新增 boards object store(多「页」工作区)。v1 老库 onupgradeneeded 原地补建,cards 数据不动。
-const DB_VERSION = 2
+// v3:新增 projects object store(「剧」)+ boards.by-project / cards.by-board 索引;
+//     升级时把没有 projectId 的老 board 全部归入默认项目,写在同一个升级事务里(原子)。
+const DB_VERSION = 3
 const STORE = 'cards'
 const BOARD_STORE = 'boards'
+const PROJECT_STORE = 'projects'
+
+/** 升级/水合共用:承接老数据的那部剧。 */
+export function defaultProject(now = Date.now()): VideoWorkbenchProject {
+  return { id: DEFAULT_PROJECT_ID, name: DEFAULT_PROJECT_NAME, order: 0, createdAt: now, updatedAt: now, legacy: true }
+}
+
+/** 缺 projectId 的 board 归入默认项目。纯函数,升级与水合两处共用。 */
+export function assignDefaultProject(
+  boards: readonly VideoWorkbenchBoard[],
+): { boards: VideoWorkbenchBoard[]; changed: boolean } {
+  let changed = false
+  const next = boards.map((b) => {
+    if (b.projectId) return b
+    changed = true
+    return { ...b, projectId: DEFAULT_PROJECT_ID }
+  })
+  return { boards: next, changed }
+}
 
 // 卡片总量刻意不设上限。曾有过 200 张的全局上限 + evict() 淘汰最旧终态卡,
 // 已于 2026-08-11 移除:那个数是跨全部「页」计的,用户在页面 6 加卡会删掉页面 1
@@ -55,6 +82,7 @@ export class WorkbenchDb {
   private dbPromise: Promise<IDBDatabase | null> | null = null
   private memory = new Map<string, VideoWorkbenchCard>()
   private memoryBoards = new Map<string, VideoWorkbenchBoard>()
+  private memoryProjects = new Map<string, VideoWorkbenchProject>()
   private useMemory = typeof indexedDB === 'undefined'
 
   private openDb(): Promise<IDBDatabase | null> {
@@ -63,8 +91,10 @@ export class WorkbenchDb {
     this.dbPromise = new Promise((resolve) => {
       try {
         const req = indexedDB.open(DB_NAME, DB_VERSION)
-        req.onupgradeneeded = () => {
+        req.onupgradeneeded = (ev) => {
           const db = req.result
+          // 给**已有** store 加索引只能通过升级事务取 store —— 索引只在 versionchange 里建。
+          const tx = req.transaction!
           if (!db.objectStoreNames.contains(STORE)) {
             const store = db.createObjectStore(STORE, { keyPath: 'id' })
             store.createIndex('order', 'order')
@@ -72,6 +102,30 @@ export class WorkbenchDb {
           if (!db.objectStoreNames.contains(BOARD_STORE)) {
             db.createObjectStore(BOARD_STORE, { keyPath: 'id' })
           }
+          if (!db.objectStoreNames.contains(PROJECT_STORE)) {
+            db.createObjectStore(PROJECT_STORE, { keyPath: 'id' })
+          }
+          const boards = tx.objectStore(BOARD_STORE)
+          if (!boards.indexNames.contains('by-project')) boards.createIndex('by-project', 'projectId')
+          const cards = tx.objectStore(STORE)
+          if (!cards.indexNames.contains('by-board')) cards.createIndex('by-board', 'boardId')
+
+          if (ev.oldVersion < 3) {
+            // 老 board 归入默认项目;默认项目一并建。都在同一个升级事务里 —— 中途抛错
+            // 整体回滚仍留 v2,不会出现半迁移。
+            tx.objectStore(PROJECT_STORE).put(defaultProject())
+            const cursorReq = boards.openCursor()
+            cursorReq.onsuccess = () => {
+              const cursor = cursorReq.result
+              if (!cursor) return
+              const b = cursor.value as VideoWorkbenchBoard
+              if (!b.projectId) cursor.update({ ...b, projectId: DEFAULT_PROJECT_ID })
+              cursor.continue()
+            }
+          }
+        }
+        req.onblocked = () => {
+          console.warn('[WorkbenchDb] 升级被其它连接阻塞,请重启应用')
         }
         req.onsuccess = () => resolve(req.result)
         req.onerror = () => {
@@ -147,12 +201,49 @@ export class WorkbenchDb {
     await this.request(this.tx(db, 'readwrite', BOARD_STORE).delete(id))
   }
 
-  /** 全部页,按 order 升序(页签从左到右)。 */
+  /**
+   * 全部分段,按 order 升序(页签从左到右)。读出的老数据若缺 projectId,在内存里
+   * 立刻归入默认项目(写回由 store 的水合负责)。
+   */
   async listBoards(): Promise<VideoWorkbenchBoard[]> {
     const db = await this.openDb()
     const items = db
       ? await this.request<VideoWorkbenchBoard[]>(this.tx(db, 'readonly', BOARD_STORE).getAll())
       : [...this.memoryBoards.values()]
+    return assignDefaultProject(items).boards.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+  }
+
+  // ==================== 「剧」(project) ====================
+
+  async putProject(project: VideoWorkbenchProject): Promise<void> {
+    const db = await this.openDb()
+    if (!db) {
+      this.memoryProjects.set(project.id, project)
+      return
+    }
+    await this.request(this.tx(db, 'readwrite', PROJECT_STORE).put(project))
+  }
+
+  async removeProject(id: string): Promise<void> {
+    const db = await this.openDb()
+    if (!db) {
+      this.memoryProjects.delete(id)
+      return
+    }
+    await this.request(this.tx(db, 'readwrite', PROJECT_STORE).delete(id))
+  }
+
+  /**
+   * 全部剧,按 order 升序。内存降级模式下若为空则补一个默认项目 —— 与 v3 库
+   * 「升级后必有默认项目」的不变量一致,store 水合不用为两种模式分别兜底。
+   */
+  async listProjects(): Promise<VideoWorkbenchProject[]> {
+    const db = await this.openDb()
+    if (!db) {
+      if (this.memoryProjects.size === 0) this.memoryProjects.set(DEFAULT_PROJECT_ID, defaultProject())
+      return [...this.memoryProjects.values()].sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+    }
+    const items = await this.request<VideoWorkbenchProject[]>(this.tx(db, 'readonly', PROJECT_STORE).getAll())
     return items.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
   }
 }

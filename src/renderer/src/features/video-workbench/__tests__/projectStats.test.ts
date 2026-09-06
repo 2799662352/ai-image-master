@@ -1,7 +1,7 @@
 // 剧 / 分段统计的纯函数:分桶、时长、完成率、封面选择、时长格式。
 // 这是剧栏、总览、MCP status 的唯一口径来源,所以在这里钉死。
 import { describe, expect, it } from 'vitest'
-import type { VideoWorkbenchBoard, VideoWorkbenchCard } from '../../../../types/videoWorkbench'
+import type { VideoWorkbenchBoard, VideoWorkbenchCard } from '../../../../../types/videoWorkbench'
 import { buildCard } from '../cardSpec'
 import { formatDuration, pickCover, summarizeBoard, summarizeProject } from '../projectStats'
 
