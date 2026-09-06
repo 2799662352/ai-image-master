@@ -64,8 +64,11 @@
 - 网格 / 列表视图切换(列表视图为同信息的紧凑行,后续迭代可做,首版只做网格)。
 
 **③ 分段页 = 现有工作台**,只改三处:
-- 标题上方加面包屑「‹ 剧名 › 分段名」,「‹」回总览。
-- 页签行(`BoardTabs`)只显示本剧的分段、**单行**、超出横向滚动配 ‹ ›,不再换行。
+- 标题行下方一行面包屑「‹ 总览 › 剧名 › 分段名」,「‹ 总览」是带边框的按钮。
+- 页签行(`BoardTabs`)只显示本剧的分段,**自动换行、不出滚动条**,与 superdesign 方案 A
+  定稿一致。(实施时的偏离,2026-09-06:初稿写的「单行横向滚动」实机被用户否掉 —— 分段按剧
+  隔开后一部剧只有几段,换一两行是正常的;滚动条反而把后面的分段藏起来。页签独占一行,不与
+  标题 / 工具条同行,否则窄窗口下被压成竖条。)
 - 统计行改为「本段 N 镜 · ¥x」。
 - 摘要行、工具条(撤销/重做、站点、默认上传人像库、允许 AI 自动生成、全部生成、添加卡片)、卡片卷轴、拖拽、撤销栈全部不动。
 
@@ -138,7 +141,7 @@ export interface VideoWorkbenchBoard {
 ### 5.5 渲染层文件
 
 新建:`pages-react/video-workbench/ProjectRail.tsx`、`ProjectOverview.tsx`、`SegmentCard.tsx`、`MigrationNotice.tsx`、`ProjectSearchPalette.tsx`(Ctrl+P)。
-修改:`VideoWorkbenchPage.tsx`(两栏布局 + 按 `viewByProject` 切总览/分段页)、`BoardTabs.tsx`(本剧分段、单行横向滚动、面包屑)、`workbench.css`(新类)。
+修改:`VideoWorkbenchPage.tsx`(两栏布局 + 按 `viewByProject` 切总览/分段页)、`BoardTabs.tsx`(本剧分段、自动换行、面包屑)、`workbench.css`(新类)。
 不动:`WorkbenchCard.tsx` 及其子组件。
 
 ## 6. 工程文件与导入/导出
@@ -247,7 +250,7 @@ export interface VideoWorkbenchBoard {
 - 统计纯函数:分桶、时长、花费口径用例。
 - 工程文件:导出 → 导入往返后分段 / 卡片 / 素材地址一致(id 除外);未上传素材导出时被上传并写地址;生成中状态被重置;同名加「(2)」;高版本拒绝;`__proto__` 键拒绝;原子写(模拟 rename 前崩溃不留半文件)。
 - `data:` 落盘:同字节只落一份;回填幂等;GC 保留被引用文件、扫描失败不删。
-- 渲染:剧栏行状态点、总览三色条、页签单行滚动、面包屑回总览、迁移提示条关闭后不再出现、Ctrl+P 搜索。
+- 渲染:剧栏行状态点、总览三色条、页签换行不出滚动条、面包屑回总览、总览「进入分段」、迁移提示条关闭后不再出现、Ctrl+P 搜索。
 - MCP:三个新工具 + `status` 头部 + `apply` 的 `projectId` 校验;`toolAnnotations.test.ts` 同步。
 
 ## 11. 实施拆分建议(供 writing-plans 细化)
