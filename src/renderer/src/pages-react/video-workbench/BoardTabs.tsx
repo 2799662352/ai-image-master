@@ -82,7 +82,7 @@ export function BoardTabs() {
   const editingActiveSummary = editing?.id === activeBoardId && editing.field === 'summary'
 
   return (
-    <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+    <div className="flex flex-col gap-1.5 min-w-0 w-full">
       {/* 面包屑:‹ 回总览。剧名点击也回总览 —— 分段页里「我在哪部剧」要一眼可见。 */}
       <div className="flex items-center gap-1.5 text-[11px] text-white/40">
         <button

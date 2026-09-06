@@ -173,12 +173,16 @@ export default function VideoWorkbenchPage() {
           <ProjectOverview />
         ) : (
         <>
-        {/* 顶部工具条(页签紧跟标题:每段一套独立卡片集合) */}
-        <div className="flex items-center gap-3 border-b-2 border-[#3F3F46] pb-3 flex-wrap">
+        {/*
+          顶部两行:第一行标题 + 统计 + 工具条,第二行面包屑 + 分段页签通栏。
+          页签必须独占一行 —— 它现在是单行横向滚动,若与右侧那一排工具按钮同行,
+          只能吃剩余宽度,窄窗口下会被压成一根竖条叠到标题上。
+        */}
+        <div className="border-b-2 border-[#3F3F46] pb-3 space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-white font-bold tracking-wider text-lg">
             <span className="text-[#FCE300]">▶</span> 生成视频工作台
           </h2>
-          <BoardTabs />
           <span className="text-white/40 text-xs">
             本段 {cards.length} 镜{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>
@@ -306,6 +310,8 @@ export default function VideoWorkbenchPage() {
               ＋ 添加卡片
             </button>
           </div>
+        </div>
+        <BoardTabs />
         </div>
 
         {/* 卷轴卡片流 */}
