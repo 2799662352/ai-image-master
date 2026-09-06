@@ -103,12 +103,34 @@ function isSettled(card: VideoWorkbenchCard | undefined): boolean {
   return !isActiveStatus(card.status) && card.status !== 'draft'
 }
 
+/**
+ * 这一批卡落在哪:「剧名 › 分段名」。多剧多段时用户与 agent 都得知道结果在哪儿 ——
+ * 剧栏与总览的下钻路径就是这条面包屑。跨段的批次列出全部位置,去重、按出现顺序。
+ */
+function describeLocation(cards: VideoWorkbenchCard[]): string {
+  const state = useVideoWorkbenchStore.getState()
+  const boardById = new Map(state.boards.map((b) => [b.id, b]))
+  const projectById = new Map(state.projects.map((p) => [p.id, p]))
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const card of cards) {
+    const board = card.boardId ? boardById.get(card.boardId) : undefined
+    if (!board || seen.has(board.id)) continue
+    seen.add(board.id)
+    const project = projectById.get(board.projectId)
+    parts.push(project ? `${project.name} › ${board.name}` : board.name)
+  }
+  return parts.join('、')
+}
+
 function summarize(cards: VideoWorkbenchCard[]): string {
   const succeeded = cards.filter((c) => c.status === 'succeeded')
   const failed = cards.filter((c) => c.status === 'failed')
   const cancelled = cards.filter((c) => c.status === 'cancelled')
 
+  const location = describeLocation(cards)
   const head = [
+    ...(location ? [location] : []),
     `${succeeded.length} 张成功`,
     ...(failed.length > 0 ? [`${failed.length} 张失败`] : []),
     ...(cancelled.length > 0 ? [`${cancelled.length} 张已取消`] : []),

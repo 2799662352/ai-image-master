@@ -17,6 +17,9 @@ import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/p
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
+import { ProjectOverview } from './video-workbench/ProjectOverview'
+import { ProjectRail } from './video-workbench/ProjectRail'
+import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
@@ -44,8 +47,13 @@ export default function VideoWorkbenchPage() {
   // 卡片汇报的拖拽态。以前这里传的是 noop —— 卡片说了页面不听;缝隙「＋」要在拖拽时
   // 隐身避让插入指示线,正好把这根预埋管线接上。
   const [dragging, setDragging] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const allCards = useVideoWorkbenchStore((s) => s.cards)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
+  const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
+  const boards = useVideoWorkbenchStore((s) => s.boards)
+  // 每部剧记住自己停在总览还是哪个分段;缺省(老数据首启)落在分段页,行为与升级前一致。
+  const viewMode = useVideoWorkbenchStore((s) => s.viewByProject[s.activeProjectId]?.mode ?? 'board')
   const hydrated = useVideoWorkbenchStore((s) => s.hydrated)
   const ensureHydrated = useVideoWorkbenchStore((s) => s.ensureHydrated)
   const addCards = useVideoWorkbenchStore((s) => s.addCards)
@@ -93,7 +101,14 @@ export default function VideoWorkbenchPage() {
   // 不能被劫走;②已经被别人处理掉的(弹层关闭会 preventDefault)不再插手。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (event.defaultPrevented) return
+      // Ctrl/Cmd+P:搜索剧与分段。在输入框里也接管 —— 浏览器默认的「打印」在桌面端毫无意义。
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        setPaletteOpen(true)
+        return
+      }
+      if (event.key !== 'Escape') return
       // 事件可能直接派发在 window 上(它没有 closest),先收窄再问
       const target = event.target
       if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return
@@ -133,25 +148,43 @@ export default function VideoWorkbenchPage() {
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
   // cardHasVideoInput 与单卡显示 / 提交拆分同源,但不为布尔分配三个数组。
+  // 「合计」只算当前剧:别的剧的花费在剧栏各自的行里,不混进这一屏。
   const boardCost = summarizeCostUsd(cards, cardHasVideoInput)
-  const totalCost = summarizeCostUsd(allCards, cardHasVideoInput)
+  const projectBoardIds = new Set(boards.filter((b) => b.projectId === activeProjectId).map((b) => b.id))
+  const totalCost = summarizeCostUsd(
+    allCards.filter((c) => c.boardId && projectBoardIds.has(c.boardId)),
+    cardHasVideoInput,
+  )
 
   return (
-    <div className="bg-[#09090B] border border-[#3F3F46] p-4 md:p-6 relative overflow-hidden min-h-[70vh]">
+    <div className="bg-[#09090B] border border-[#3F3F46] relative overflow-hidden min-h-[70vh]">
       {/* 装饰性背景数字(与其他面板一致的 Kinetic Typography) */}
       <div className="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">
         07
       </div>
 
-      <div className="relative z-10 max-w-4xl mx-auto space-y-4">
-        {/* 顶部工具条(页签紧跟标题:每页一套独立卡片集合) */}
-        <div className="flex items-center gap-3 border-b-2 border-[#3F3F46] pb-3 flex-wrap">
+      <ProjectSearchPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+
+      {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
+      <div className="relative z-10 flex min-h-[70vh]">
+        <ProjectRail />
+        <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
+        {viewMode === 'overview' ? (
+          <ProjectOverview />
+        ) : (
+        <>
+        {/*
+          顶部两行:第一行标题 + 统计 + 工具条,第二行面包屑 + 分段页签通栏。
+          页签必须独占一行:若与右侧那一排工具按钮同行,只能吃剩余宽度,窄窗口下
+          会被压成一根竖条叠到标题上。
+        */}
+        <div className="border-b-2 border-[#3F3F46] pb-3 space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-white font-bold tracking-wider text-lg">
             <span className="text-[#FCE300]">▶</span> 生成视频工作台
           </h2>
-          <BoardTabs />
           <span className="text-white/40 text-xs">
-            {cards.length} 张卡片{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
+            本段 {cards.length} 镜{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>
           {/* 已花费:只在真有可估算的卡时才出现,不给空看板挂一个 $0.000。
               带 ≈ 是因为它是按 completion_tokens × 官方价目估的,不是账单。 */}
@@ -159,12 +192,12 @@ export default function VideoWorkbenchPage() {
             <span
               className="text-white/40 text-xs"
               title={[
-                `本页 ${boardCost.counted} 张已计入`,
+                `本段 ${boardCost.counted} 张已计入`,
                 boardCost.unpriced > 0
                   ? `${boardCost.unpriced} 张已出片但估不出价(上游未回传 token 或价目表无此组合)——所以这是下限`
                   : null,
                 totalCost.counted !== boardCost.counted || totalCost.unpriced !== boardCost.unpriced
-                  ? `全部页合计 ≈ ${formatCostParts(totalCost.usd, totalCost.cny) ?? '—'}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
+                  ? `全剧合计 ≈ ${formatCostParts(totalCost.usd, totalCost.cny) ?? '—'}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
                   : null,
                 // 两种货币并列而不相加:换算要写死汇率,那等于把今天的汇率冻进代码。
                 boardCost.cny > 0 && boardCost.usd > 0
@@ -278,6 +311,8 @@ export default function VideoWorkbenchPage() {
             </button>
           </div>
         </div>
+        <BoardTabs />
+        </div>
 
         {/* 卷轴卡片流 */}
         {!hydrated ? (
@@ -321,6 +356,9 @@ export default function VideoWorkbenchPage() {
             </button>
           </div>
         )}
+        </>
+        )}
+        </div>
       </div>
     </div>
   )

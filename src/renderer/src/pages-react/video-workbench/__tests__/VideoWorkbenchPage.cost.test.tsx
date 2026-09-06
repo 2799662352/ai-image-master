@@ -45,14 +45,14 @@ afterEach(() => {
 describe('工具条已花费读数', () => {
   it('没有可估算的卡时整块不出现 —— 不给空看板挂 $0.000', async () => {
     render(<VideoWorkbenchPage />)
-    await screen.findByText(/张卡片/)
+    await screen.findByText(/本段 \d+ 镜/)
     expect(readout()).toBeNull()
   })
 
   it('draft / running 的卡不产生读数(还没花钱)', async () => {
     seed([{ status: 'draft' }, { status: 'running' }])
     render(<VideoWorkbenchPage />)
-    await screen.findByText(/张卡片/)
+    await screen.findByText(/本段 \d+ 镜/)
     expect(readout()).toBeNull()
   })
 

@@ -48,6 +48,8 @@ import { parseDocumentOrLink } from '../../../../shared/wan3Document'
 export interface WorkbenchIRSource {
   cards: VideoWorkbenchCard[]
   boards: VideoWorkbenchBoard[]
+  /** 当前剧;apply 新建的段归它。 */
+  activeProjectId: string
   activeBoardId: string
   /** 「有任何编排改动」计数器,驱动撤销栈入栈。 */
   revision: number
@@ -136,7 +138,10 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
  * order 字段,重排就是重排数组。
  */
 export function exportWorkbenchIR(source: WorkbenchIRSource): WorkbenchIR {
-  const boards = [...source.boards].sort((a, b) => a.order - b.order)
+  // 一份 IR 只描述当前剧:别的剧的分段既不导出,也不会被 replace 模式顺手删掉
+  const boards = source.boards
+    .filter((b) => b.projectId === source.activeProjectId)
+    .sort((a, b) => a.order - b.order)
   const irBoards: WorkbenchIRBoard[] = boards.map((board) => ({
     id: board.id,
     name: board.name,
@@ -148,6 +153,7 @@ export function exportWorkbenchIR(source: WorkbenchIRSource): WorkbenchIR {
   return {
     irVersion: WORKBENCH_IR_VERSION,
     structureRevision: source.structureRevision,
+    projectId: source.activeProjectId,
     activeBoardId: source.activeBoardId,
     boards: irBoards,
   }
@@ -226,7 +232,7 @@ function describeSpecDrift(cur: VideoWorkbenchSpec, next: VideoWorkbenchSpec): s
 function reject(
   source: WorkbenchIRSource,
   skipped: WorkbenchApplySkip[],
-  conflict?: { expected: number; actual: number },
+  conflict?: WorkbenchApplyResult['conflict'],
 ): ApplyPlan {
   return {
     result: {
@@ -367,6 +373,21 @@ export function planApplyIR(
   if (!Array.isArray(ir.boards) || ir.boards.length === 0) {
     return reject(source, [{ reason: 'boards 为空:工作台至少要有一页' }])
   }
+  // 剧对不上整份拒绝,且不受 force 影响:force 是「明知会盖掉用户改动」的逃生门,
+  // 而这里是「写到另一部剧里去了」—— 没有任何一种意图是它。
+  if (ir.projectId && ir.projectId !== source.activeProjectId) {
+    return reject(
+      source,
+      [
+        {
+          reason:
+            `这份 IR 属于剧 ${ir.projectId},当前剧是 ${source.activeProjectId}(用户切了剧)。`
+            + '请重新 export;若确要改那部剧,先 video_workbench_switch_project。',
+        },
+      ],
+      { reason: 'project-mismatch', expected: ir.projectId, actual: source.activeProjectId },
+    )
+  }
   if (!opts.force && ir.structureRevision !== source.structureRevision) {
     return reject(source, [
       {
@@ -400,6 +421,10 @@ export function planApplyIR(
         skipped.push({ boardId: irBoard.id, reason: `页不存在: ${irBoard.id}(想新建就别给 id)` })
         continue
       }
+      if (cur.projectId !== source.activeProjectId) {
+        skipped.push({ boardId: cur.id, reason: `页 ${cur.id} 属于另一部剧,当前 IR 只作用于当前剧` })
+        continue
+      }
       if (claimedBoardIds.has(cur.id)) {
         skipped.push({ boardId: cur.id, reason: `IR 里同一个页 id 出现多次: ${cur.id}` })
         continue
@@ -408,7 +433,8 @@ export function planApplyIR(
       renamed = cur.name !== name
       board = renamed ? { ...cur, name } : cur
     } else {
-      board = { id: createId(), name, order: 0, createdAt: now }
+      // 新建的段归当前剧 —— 一份 IR 永远只描述当前剧的看板(Task 8 再补 projectId 令牌校验)
+      board = { id: createId(), projectId: source.activeProjectId, name, order: 0, createdAt: now }
       created = true
     }
 
@@ -484,14 +510,17 @@ export function planApplyIR(
   // ---- 页的最终顺序 ----
   // merge:IR 列出的页按 IR 顺序在前,未列出的页保持相对顺序跟在后面。
   // replace:未列出的页连带删除。
+  // 只有当前剧的分段参与重排/删除;别的剧的分段(与它们的卡)原样带过,replace 也删不到。
   const slotByBoardId = new Map(slots.map((s) => [s.board.id, s]))
+  const foreignBoards = source.boards.filter((b) => b.projectId !== source.activeProjectId)
   const untouchedBoards = source.boards
-    .filter((b) => !claimedBoardIds.has(b.id))
+    .filter((b) => b.projectId === source.activeProjectId && !claimedBoardIds.has(b.id))
     .sort((a, b) => a.order - b.order)
-  const orderedBoards = mode === 'replace'
+  const orderedOwn = mode === 'replace'
     ? slots.map((s) => s.board)
     : [...slots.map((s) => s.board), ...untouchedBoards]
-  const finalBoards = orderedBoards.map((b, i) => (b.order === i ? b : { ...b, order: i }))
+  const ownBoards = orderedOwn.map((b, i) => (b.order === i ? b : { ...b, order: i }))
+  const finalBoards = [...ownBoards, ...foreignBoards]
   const removedBoardIds = mode === 'replace' ? untouchedBoards.map((b) => b.id) : []
 
   // ---- 第二遍:逐页装卡 ----
@@ -629,9 +658,9 @@ export function planApplyIR(
     // 两者都是删。
     removedCardIds.push(cur.id)
   }
-  // 在飞的孤儿卡归到第一页末尾(它原来的页可能已经被删掉了)。
+  // 在飞的孤儿卡归到当前剧第一段末尾(它原来的段可能已经被删掉了)。
   if (orphanInFlight.length > 0) {
-    const host = finalBoards[0].id
+    const host = ownBoards[0].id
     let index = nextCards.filter((c) => c.boardId === host).length
     for (const cur of orphanInFlight) {
       nextCards.push(placeExisting(cur, host, index))
@@ -639,14 +668,14 @@ export function planApplyIR(
     }
   }
 
-  // ---- activeBoardId ----
-  const finalBoardIds = new Set(finalBoards.map((b) => b.id))
+  // ---- activeBoardId(只在当前剧的分段里选) ----
+  const ownBoardIds = new Set(ownBoards.map((b) => b.id))
   const activeBoardId =
-    ir.activeBoardId && finalBoardIds.has(ir.activeBoardId)
+    ir.activeBoardId && ownBoardIds.has(ir.activeBoardId)
       ? ir.activeBoardId
-      : finalBoardIds.has(source.activeBoardId)
+      : ownBoardIds.has(source.activeBoardId)
         ? source.activeBoardId
-        : finalBoards[0].id
+        : ownBoards[0].id
 
   const createdBoards = slots.filter((s) => s.created).map((s) => s.board.id)
   const renamedBoards = slots.filter((s) => s.renamed).map((s) => s.board.id)

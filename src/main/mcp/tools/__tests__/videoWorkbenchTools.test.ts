@@ -4,6 +4,7 @@ import { ALL_VIDEO_MODEL_ALIASES, ALL_VIDEO_RATIOS } from '../../../../types/see
 import {
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
+  WORKBENCH_PROJECT_SUMMARY_MAX,
   WORKBENCH_IR_VERSION,
   WORKBENCH_MAX_TASKS_PER_CALL,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -58,8 +59,53 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_export',
       'video_workbench_apply',
       'video_workbench_set_board_summary',
+      'video_workbench_set_project_summary',
       'video_workbench_remove_tasks',
+      'video_workbench_list_projects',
+      'video_workbench_switch_project',
+      'video_workbench_create_project',
     ])
+  })
+
+  it('set_project_summary schema:projectId 可省(=当前剧),超长**拒绝**而不是截断', async () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const tool = toolByName(tools, 'video_workbench_set_project_summary')
+    const schema = tool.config.inputSchema
+    expect(schema.safeParse({ summary: '三集科幻短剧 · 赛博都市' }).success).toBe(true)
+    expect(schema.safeParse({ projectId: 'p1', summary: '' }).success).toBe(true)
+    expect(schema.safeParse({ summary: 'x'.repeat(WORKBENCH_PROJECT_SUMMARY_MAX + 1) }).success).toBe(false)
+    expect(schema.safeParse({ projectId: '', summary: 'x' }).success).toBe(false)
+    await tool.handler({ summary: 'x' }, undefined)
+    expect(router.call).toHaveBeenCalledWith('video_workbench_set_project_summary', { summary: 'x' }, undefined)
+  })
+
+  it('status schema:fields 只接受 concise/detailed,缺省允许', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_status').config.inputSchema
+    expect(schema.safeParse({}).success).toBe(true)
+    expect(schema.safeParse({ fields: 'concise' }).success).toBe(true)
+    expect(schema.safeParse({ fields: 'detailed' }).success).toBe(true)
+    expect(schema.safeParse({ fields: 'brief' }).success).toBe(false)
+  })
+
+  it('剧(project)三工具:直通 router,switch 缺 projectId 被 schema 拒绝', async () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const list = toolByName(tools, 'video_workbench_list_projects')
+    await list.handler({}, undefined)
+    expect(router.call).toHaveBeenCalledWith('video_workbench_list_projects', {}, undefined)
+
+    const sw = toolByName(tools, 'video_workbench_switch_project')
+    expect(sw.config.inputSchema.safeParse({}).success).toBe(false)
+    expect(sw.config.inputSchema.safeParse({ projectId: 'p1' }).success).toBe(true)
+    await sw.handler({ projectId: 'p1' }, undefined)
+    expect(router.call).toHaveBeenCalledWith('video_workbench_switch_project', { projectId: 'p1' }, undefined)
+
+    const create = toolByName(tools, 'video_workbench_create_project')
+    expect(create.config.inputSchema.safeParse({}).success).toBe(true)
+    expect(create.config.inputSchema.safeParse({ name: 'x'.repeat(81) }).success).toBe(false)
   })
 
   it('add_tasks schema:接受批量任务与 autoStart,拒绝空 tasks/超限时长', () => {
@@ -681,6 +727,7 @@ describe('handlers → router.call 透传与 banner', () => {
 
 describe('structured output(MCP 2025-11-25)', () => {
   const workbench = {
+    project: { id: 'project-default', name: '默认项目', segments: 1, cards: 2 },
     activeBoardId: 'b1',
     boards: [{ id: 'b1', name: '页面 1', cardCount: 2 }],
     statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },
@@ -708,6 +755,8 @@ describe('structured output(MCP 2025-11-25)', () => {
 
   it('status:成功结果带 structuredContent(text JSON 兜底保留)且通过 outputSchema', async () => {
     const routerResult = {
+      fields: 'detailed',
+      project: workbench.project,
       total: 1,
       // 默认只看当前页，所以回包必须说清这次看的是哪一页 —— 否则「12 张」在
       // 「这页有 12 张」和「整个工作台只有 12 张」之间是歧义的。
@@ -737,6 +786,8 @@ describe('structured output(MCP 2025-11-25)', () => {
     registerVideoWorkbenchTools(server, router)
     const schema = toolByName(tools, 'video_workbench_status').config.outputSchema!
     const base = {
+      fields: 'detailed',
+      project: workbench.project,
       total: 1,
       activeBoardId: 'b1',
       boards: workbench.boards,
@@ -750,6 +801,31 @@ describe('structured output(MCP 2025-11-25)', () => {
     }
     expect(schema.safeParse(base).success).toBe(false)
     expect(schema.safeParse({ ...base, scope: { allBoards: true } }).success).toBe(true)
+  })
+
+  it('status:concise 卡(无规格/素材字段)也通过 outputSchema —— 一个 schema 装两档,不用 anyOf', () => {
+    const { tools, server, router } = capture({})
+    registerVideoWorkbenchTools(server, router)
+    const schema = toolByName(tools, 'video_workbench_status').config.outputSchema!
+    const concise = {
+      fields: 'concise',
+      project: { ...workbench.project, summary: '三集科幻短剧 · 赛博都市' },
+      total: 1,
+      scope: { boardId: 'b1' },
+      activeBoardId: 'b1',
+      boards: workbench.boards,
+      selectedCardIds: [],
+      cards: [{ cardId: 'c1', boardId: 'b1', order: 0, prompt: '一只猫', status: 'failed', error: '余额不足' }],
+      pageIndex: [{ page: 1, cardIds: ['c1'], digest: '一只猫' }],
+      page: 1,
+      pageSize: 12,
+      totalPages: 1,
+      hasMore: false,
+    }
+    expect(schema.safeParse(concise).success).toBe(true)
+    // 但 update_task 那种永远 detailed 的回包仍是严格形状:少了规格字段过不去。
+    const updateSchema = toolByName(tools, 'video_workbench_update_task').config.outputSchema!
+    expect(updateSchema.safeParse({ ok: true, card: concise.cards[0], workbench }).success).toBe(false)
   })
 
   it('写操作:structuredContent 含 workbench 全局摘要且通过各自 outputSchema', async () => {

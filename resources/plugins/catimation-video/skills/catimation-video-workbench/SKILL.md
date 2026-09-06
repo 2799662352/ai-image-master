@@ -28,6 +28,30 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 >
 > **本文说「底座」时,指的就是当前这张卡的 model 对应的那一个。** 工作台的纪律
 > (素材绑定、多镜拆卡、资产门、摘要、跨卡锚点)与模型无关,三个底座上都成立。
+
+## 剧 → 分段 → 卡片:工作台的三层
+
+工作台按**剧(project)→ 分段(board,界面文案「分段」,老数据叫「页面」)→ 卡片**组织。
+一部剧是一部片子;分段是剧里的一段成片单元(一集 / 一幕 / 一条 140s 的分 P);卡片是一镜。
+
+- **所有 `video_workbench_*` 工具只作用于当前剧。** `status` 与写工具回带的 `workbench`
+  摘要都带 `project {id,name,segments,cards}`,`boards` 只列这部剧的分段;别的剧对你不可见,
+  这与用户在界面上看到的隔离一致。
+- 要看/换剧:`video_workbench_list_projects`(列全部剧与统计)→
+  `video_workbench_switch_project`(切过去,用户界面同步切换)。用户在界面切了剧,
+  你下一轮就在新剧里干活,不会往旧剧塞卡。
+- 用户开一部新片子:`video_workbench_create_project`(自带一个空分段,返回
+  `projectId` + `boardId`),然后照常 `video_workbench_add_tasks`。
+- **三层路标都要写。** 剧:`video_workbench_set_project_summary`(≤60 字电报体,
+  「三集科幻短剧 · 赛博都市 · 主角林夏」,省略 projectId = 当前剧);分段:
+  `set_board_summary`;卡片:`set_card_summary`。剧名常常是「未命名剧 3」,没有剧摘要,
+  下次面对八部剧只能逐个切进去看。接手或开新剧时就写,前提变了就刷新。
+- **巡视用 `status({ fields: "concise" })`。** 只回 id / 位置 / 状态 / 摘要 / 60 字提示词 /
+  error,体积约为缺省 detailed 的三分之一。「进展怎样」「哪几张失败」「哪张是天台戏」
+  「先挑几张再动手」都用它;要改规格、要报成片地址,再对点名的几张拿 detailed 或 export。
+- `video_workbench_export` 的 IR 带 `projectId`;`apply` 时若用户已切到别的剧,整份被拒
+  (`conflict.reason = "project-mismatch"`)—— 重新 export,别 force。
+- 批次完成推送里带「剧名 › 分段名」,汇报时照抄这个位置,用户按它去找成片。
 >
 > 几处**点名**了具体 skill(路径 A/B 与 cinematic-prompt-format、八大要素、
 > create-storyboard 制片包的 `scenedance_prompt`),那些名字带 seedance 只是历史

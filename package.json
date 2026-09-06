@@ -192,6 +192,7 @@
     "electron-builder": "^26.4.0",
     "electron-vite": "^5.0.0",
     "esbuild": "^0.28.0",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^27.4.0",
     "postcss": "^8.5.6",
     "rollup-plugin-visualizer": "^5.14.0",

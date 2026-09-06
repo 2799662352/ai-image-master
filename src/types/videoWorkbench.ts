@@ -109,6 +109,12 @@ export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
 export const WORKBENCH_BOARD_SUMMARY_MAX = 60
 
 /**
+ * 剧摘要上限。与页摘要同长:一部剧一条,随 list_projects 和每次工具回包的 project 头
+ * 一起回传,八部剧就是八条。够写「三集科幻短剧 · 赛博都市 · 主角林夏」,不够写简介。
+ */
+export const WORKBENCH_PROJECT_SUMMARY_MAX = 60
+
+/**
  * 卡片摘要上限。比页摘要更短 —— 页摘要一页一条,卡片摘要是**一页里每张卡一条**,
  * 二十张卡就是二十条,长度直接乘以卡数。40 字够写「主角跳车 · 夜外 · 追兵逼近」
  * 这种电报体,而这正是它该有的样子:它是索引,不是简介。
@@ -181,12 +187,46 @@ export type VideoWorkbenchCardStatus =
   | 'preparing'
   | SeedanceTaskStatus
 
+/** 升级时承接全部老页面的那部剧。id 固定,便于迁移幂等与测试。 */
+export const DEFAULT_PROJECT_ID = 'project-default'
+export const DEFAULT_PROJECT_NAME = '默认项目'
+
 /**
- * 工作台「页」(board / 工作区):每页一套独立的卡片集合,页签在顶部工具栏切换。
- * IndexedDB `boards` object store 持久化;老数据(无 boards)迁移进第一页。
+ * 「剧」(project):一部片子/一个项目,是分段(board)的容器。不同剧之间在界面上
+ * 完全隔离,工作台任意时刻只呈现一部剧。IndexedDB `projects` object store 持久化。
+ */
+export interface VideoWorkbenchProject {
+  id: string
+  name: string
+  /** 剧栏排序(小在上)。 */
+  order: number
+  createdAt: number
+  /** 只在改名时更新;「最近活动」由卡片的 updatedAt 派生,见 projectStats。 */
+  updatedAt: number
+  /**
+   * 一句话说明这部剧是什么(「三集科幻短剧 · 赛博都市 · 主角林夏」)。
+   *
+   * 分段和卡片各有一层 agent 写的路标,剧此前没有:list_projects 只回数字,agent 面对
+   * 八部剧只能靠剧名猜,而剧名常常是「未命名剧 3」。由 agent 写
+   * (video_workbench_set_project_summary),不参与生成、不进撤销栈、不动并发令牌。
+   */
+  summary?: string
+  /**
+   * 仅升级生成的「默认项目」带此标记:总览顶部显示迁移提示条。用户关闭提示或
+   * 改名后清除。不影响任何数据语义。
+   */
+  legacy?: true
+}
+
+/**
+ * 工作台「分段」(board;界面文案原为「页面」):每段一套独立的卡片集合,页签在
+ * 分段页顶部切换。IndexedDB `boards` object store 持久化;老数据(无 boards)迁移
+ * 进第一段,无 projectId 的老段在 v3 升级时归入 DEFAULT_PROJECT_ID。
  */
 export interface VideoWorkbenchBoard {
   id: string
+  /** 所属剧。v3 起必填;老数据在升级/水合时归入 DEFAULT_PROJECT_ID。 */
+  projectId: string
   name: string
   /**
    * 一句话说明这一页装的是什么（「追车戏 8 镜，全部夜景」）。
@@ -478,6 +518,11 @@ export interface WorkbenchIR {
    * 单张卡的规格冲突不看这个,看 `WorkbenchIRCard.rev`。
    */
   structureRevision: number
+  /**
+   * 导出时的当前剧。apply 时若给了且与当前剧不同 → 整份拒绝:用户中途切了剧,
+   * 这份 IR 描述的是另一部剧的看板。省略(老 IR)= 不校验。
+   */
+  projectId?: string
   /** 当前激活页(apply 时若能解析就切过去)。 */
   activeBoardId?: string
   boards: WorkbenchIRBoard[]
@@ -539,8 +584,12 @@ export interface WorkbenchApplyResult {
   /**
    * 结构冲突:卡片集合/位置在导出之后变过,整份被拒,什么都没写。agent 该重新
    * export 再改。单张卡的规格冲突不在这里 —— 那是逐项 `skipped`,其余改动已生效。
+   *
+   * `project-mismatch`:IR 是在另一部剧下导出的(用户中途切了剧),同样整份拒绝。
    */
-  conflict?: { expected: number; actual: number }
+  conflict?:
+    | { expected: number; actual: number }
+    | { reason: 'project-mismatch'; expected: string; actual: string }
   boards: { created: string[]; renamed: string[]; removed: string[] }
   cards: {
     created: string[]

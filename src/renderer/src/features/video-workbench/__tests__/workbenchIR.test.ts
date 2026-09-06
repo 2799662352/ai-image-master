@@ -28,8 +28,9 @@ function card(patch: Partial<VideoWorkbenchCard> & { id: string; boardId: string
 
 function source(patch: Partial<WorkbenchIRSource> = {}): WorkbenchIRSource {
   return {
-    boards: [{ id: 'b1', name: '页面 1', order: 0, createdAt: 1_000 }],
+    boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1_000 }],
     cards: [],
+    activeProjectId: 'p1',
     activeBoardId: 'b1',
     revision: 0,
     structureRevision: 0,
@@ -46,8 +47,8 @@ describe('exportWorkbenchIR', () => {
   it('页与卡按 order 排,数组顺序即最终顺序(IR 里没有 order 字段)', () => {
     const src = source({
       boards: [
-        { id: 'b2', name: '第二页', order: 1, createdAt: 1 },
-        { id: 'b1', name: '第一页', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '第二页', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '第一页', order: 0, createdAt: 1 },
       ],
       cards: [
         card({ id: 'c2', boardId: 'b1', order: 1, prompt: '第二镜' }),
@@ -266,7 +267,7 @@ describe('planApplyIR / 拒绝路径', () => {
     const added = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 5,
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: 'A' }, { prompt: '新卡' }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c1', prompt: 'A' }, { prompt: '新卡' }] }],
     })
     expect(added.result.structureRevision).toBe(6)
     expect(added.next!.cards.find((c) => c.prompt === '新卡')!.rev).toBe(0)
@@ -340,7 +341,7 @@ describe('planApplyIR / 拒绝路径', () => {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
       boards: [
-        { id: 'b1', name: '页面 1', cards: [{ id: 'ghost', prompt: '鬼' }] },
+        { id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'ghost', prompt: '鬼' }] },
         { id: 'bghost', name: '鬼页', cards: [] },
       ],
     })
@@ -402,7 +403,7 @@ describe('planApplyIR / 声明式改写', () => {
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: '猫' }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c1', prompt: '猫' }] }],
     })
     const next = plan.next!.cards[0]
     expect(next.resolution).toBe('720p')
@@ -431,7 +432,7 @@ describe('planApplyIR / 声明式改写', () => {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
       // 倒序，且两张都只给 id。
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2' }, { id: 'c1' }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c2' }, { id: 'c1' }] }],
     })
     expect(plan.result.ok).toBe(true)
     // 内容一个字没动 —— 这正是它与「省略字段=回默认」的分界。
@@ -451,7 +452,7 @@ describe('planApplyIR / 声明式改写', () => {
       structureRevision: 0,
       // 改了 duration，既然带了内容字段，其余照样回默认（既有契约不变）。
       // prompt 必须原样带回 —— 漏带会被硬闸当成「清空提示词」拦下，见下一条。
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: '猫', duration: 10 }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c1', prompt: '猫', duration: 10 }] }],
     })
     const next = plan.next!.cards[0]
     expect(next.duration).toBe(10)
@@ -469,7 +470,7 @@ describe('planApplyIR / 声明式改写', () => {
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', duration: 10 }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c1', duration: 10 }] }],
     })
     expect(plan.result.ok).toBe(false)
     expect(plan.next).toBeUndefined()
@@ -483,7 +484,7 @@ describe('planApplyIR / 声明式改写', () => {
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', rev: 3 }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c1', rev: 3 }] }],
     })
     expect(plan.result.ok).toBe(true)
     expect(plan.next!.cards[0].prompt).toBe('猫')
@@ -493,8 +494,8 @@ describe('planApplyIR / 声明式改写', () => {
     const src = source({
       structureRevision: 4,
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
       cards: [
         card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A', referenceImages: [{ name: 'x', src: 'data:image/png;base64,QQ' }] }),
@@ -545,7 +546,7 @@ describe('planApplyIR / 声明式改写', () => {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
       boards: [
-        { id: 'b1', name: '页面 1', cards: [] },
+        { id: 'b1', projectId: 'p1', name: '页面 1', cards: [] },
         { name: '第二幕', cards: [{ prompt: '镜 1' }, { prompt: '镜 2' }] },
       ],
     })
@@ -561,16 +562,16 @@ describe('planApplyIR / 声明式改写', () => {
   it('改页名记 renamed;IR 的页顺序决定页签顺序', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
     })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
       boards: [
-        { id: 'b2', name: '开场', cards: [] },
-        { id: 'b1', name: '页面 1', cards: [] },
+        { id: 'b2', projectId: 'p1', name: '开场', cards: [] },
+        { id: 'b1', projectId: 'p1', name: '页面 1', cards: [] },
       ],
     })
     expect(plan.result.boards.renamed).toEqual(['b2'])
@@ -584,8 +585,8 @@ describe('planApplyIR / 声明式改写', () => {
   it('跨页搬卡:boardId 与 order 一起改写,两页 order 都压实', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
       cards: [
         card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A' }),
@@ -609,8 +610,8 @@ describe('planApplyIR / merge vs replace', () => {
   it('merge:IR 没提到的页与卡原样保留,列出的卡排在前面', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
       cards: [
         card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A' }),
@@ -621,7 +622,7 @@ describe('planApplyIR / merge vs replace', () => {
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2', prompt: 'B' }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c2', prompt: 'B' }] }],
     })
     expect(plan.result.cards.removed).toEqual([])
     expect(plan.result.boards.removed).toEqual([])
@@ -633,8 +634,8 @@ describe('planApplyIR / merge vs replace', () => {
   it('replace:IR 未列出的页与卡都删掉', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
       cards: [
         card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A' }),
@@ -647,7 +648,7 @@ describe('planApplyIR / merge vs replace', () => {
       {
         irVersion: WORKBENCH_IR_VERSION,
         structureRevision: 0,
-        boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2', prompt: 'B' }] }],
+        boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c2', prompt: 'B' }] }],
       },
       { mode: 'replace' },
     )
@@ -661,8 +662,8 @@ describe('planApplyIR / merge vs replace', () => {
   it('activeBoardId 指向被删的页时回落到第一页', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
       activeBoardId: 'b2',
     })
@@ -672,7 +673,7 @@ describe('planApplyIR / merge vs replace', () => {
         irVersion: WORKBENCH_IR_VERSION,
         structureRevision: 0,
         activeBoardId: 'b2',
-        boards: [{ id: 'b1', name: '页面 1', cards: [] }],
+        boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [] }],
       },
       { mode: 'replace' },
     )
@@ -682,15 +683,15 @@ describe('planApplyIR / merge vs replace', () => {
   it('IR 显式指定 activeBoardId 时切过去', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
     })
     const plan = planApplyIR(src, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 0,
       activeBoardId: 'b2',
-      boards: [{ id: 'b1', name: '页面 1', cards: [] }, { id: 'b2', name: '页面 2', cards: [] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [] }, { id: 'b2', projectId: 'p1', name: '页面 2', cards: [] }],
     })
     expect(plan.next!.activeBoardId).toBe('b2')
     // 换页只是视图变化,不算结构变动 —— agent 手里的位置计划仍然有效
@@ -726,8 +727,8 @@ describe('planApplyIR / 渲染中的卡片', () => {
   it('渲染中的卡拒绝删除,并被挪到第一页末尾兜住', () => {
     const src = source({
       boards: [
-        { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
-        { id: 'b2', name: '页面 2', order: 1, createdAt: 1 },
+        { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '页面 2', order: 1, createdAt: 1 },
       ],
       cards: [
         card({ id: 'c1', boardId: 'b1', order: 0, prompt: 'A' }),
@@ -739,7 +740,7 @@ describe('planApplyIR / 渲染中的卡片', () => {
       {
         irVersion: WORKBENCH_IR_VERSION,
         structureRevision: 0,
-        boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c1', prompt: 'A' }] }],
+        boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c1', prompt: 'A' }] }],
       },
       { mode: 'replace' },
     )
@@ -822,7 +823,7 @@ describe('planApplyIR / 硬禁用 apply 改已有卡的提示词', () => {
     const plan = planApplyIR(s, {
       irVersion: WORKBENCH_IR_VERSION,
       structureRevision: 7,
-      boards: [{ id: 'b1', name: '页面 1', cards: [{ id: 'c2' }, { id: 'c1' }] }],
+      boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', cards: [{ id: 'c2' }, { id: 'c1' }] }],
     })
 
     expect(plan.result.ok).toBe(true)
@@ -868,5 +869,77 @@ describe('planApplyIR / 硬禁用 apply 改已有卡的提示词', () => {
 
     expect(plan.result.ok).toBe(false)
     expect(plan.next).toBeUndefined()
+  })
+})
+
+describe('IR · 剧(projectId)', () => {
+  it('export 带当前剧 id,且只导出当前剧的分段', () => {
+    const src = source({
+      boards: [
+        { id: 'b1', projectId: 'p1', name: '本剧', order: 0, createdAt: 1 },
+        { id: 'x1', projectId: 'p2', name: '别剧', order: 0, createdAt: 1 },
+      ],
+      cards: [card({ id: 'c1', boardId: 'b1' }), card({ id: 'cx', boardId: 'x1' })],
+    })
+    const ir = exportWorkbenchIR(src)
+    expect(ir.projectId).toBe('p1')
+    expect(ir.boards.map((b) => b.id)).toEqual(['b1'])
+  })
+
+  it('apply 时剧对不上整份拒绝(force 也拦不住)', () => {
+    const src = source()
+    const ir = roundTrip(src)
+    const plan = planApplyIR({ ...src, activeProjectId: 'p2' }, ir, { force: true })
+    expect(plan.result.ok).toBe(false)
+    expect(plan.result.conflict).toEqual({ reason: 'project-mismatch', expected: 'p1', actual: 'p2' })
+    expect(plan.next).toBeUndefined()
+  })
+
+  it('老 IR 没有 projectId 照常 apply', () => {
+    const src = source()
+    const { projectId: _drop, ...legacy } = roundTrip(src)
+    expect(planApplyIR(src, legacy as WorkbenchIR).result.ok).toBe(true)
+  })
+
+  it('replace 模式只删当前剧里未列出的分段,别的剧原样保留', () => {
+    const src = source({
+      boards: [
+        { id: 'b1', projectId: 'p1', name: '留下', order: 0, createdAt: 1 },
+        { id: 'b2', projectId: 'p1', name: '要删', order: 1, createdAt: 1 },
+        { id: 'x1', projectId: 'p2', name: '别剧', order: 0, createdAt: 1 },
+      ],
+      cards: [card({ id: 'c2', boardId: 'b2' }), card({ id: 'cx', boardId: 'x1' })],
+    })
+    const ir = roundTrip(src)
+    ir.boards = ir.boards.filter((b) => b.id !== 'b2')
+    const plan = planApplyIR(src, ir, { mode: 'replace' })
+    expect(plan.result.ok).toBe(true)
+    expect(plan.result.boards.removed).toEqual(['b2'])
+    expect(plan.next!.boards.map((b) => b.id).sort()).toEqual(['b1', 'x1'])
+    expect(plan.next!.cards.map((c) => c.id)).toEqual(['cx'])
+    expect(plan.result.cards.removed).toEqual(['c2'])
+  })
+
+  it('IR 里点名别的剧的分段 id → 跳过并说明', () => {
+    const src = source({
+      boards: [
+        { id: 'b1', projectId: 'p1', name: '本剧', order: 0, createdAt: 1 },
+        { id: 'x1', projectId: 'p2', name: '别剧', order: 0, createdAt: 1 },
+      ],
+    })
+    const ir = roundTrip(src)
+    ir.boards.push({ id: 'x1', name: '别剧', cards: [] })
+    const plan = planApplyIR(src, ir)
+    expect(plan.result.skipped.some((s) => s.boardId === 'x1' && /另一部剧/.test(s.reason))).toBe(true)
+  })
+
+  it('apply 新建的分段归当前剧', () => {
+    const src = source()
+    const ir = roundTrip(src)
+    ir.boards.push({ name: '新段', cards: [] })
+    const plan = planApplyIR(src, ir)
+    expect(plan.result.ok).toBe(true)
+    const created = plan.next!.boards.find((b) => b.name === '新段')!
+    expect(created.projectId).toBe('p1')
   })
 })

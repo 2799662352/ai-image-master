@@ -10,6 +10,7 @@ import {
   canStart,
   resetWorkbenchStoreForTest,
   snapshotCard,
+  snapshotCardConcise,
   snapshotWorkbench,
   toMaterial,
   useVideoWorkbenchStore,
@@ -303,13 +304,39 @@ describe('applyTaskUpdate 广播对齐', () => {
     expect(snap.references.images[1].name).toContain('asset-123456')
     expect(snap.references.images[1].name.match(/asset-123456/g)).toHaveLength(1)
   })
+
+  it('snapshotCardConcise:只留 id/位置/状态/摘要/60 字提示词/error,不带规格与素材', () => {
+    const card = {
+      ...buildCard(
+        { prompt: 'x'.repeat(300), referenceImages: ['a.png', 'b.png'] },
+        2,
+        'board-1',
+      ),
+      status: 'failed' as const,
+      error: '余额不足',
+      taskId: 't-9',
+      remoteUrl: 'https://cos/v.mp4',
+    }
+    const snap = snapshotCardConcise(card)
+    expect(snap).toEqual({
+      cardId: card.id,
+      boardId: 'board-1',
+      order: 2,
+      prompt: `${'x'.repeat(60)}…`,
+      status: 'failed',
+      error: '余额不足',
+    })
+    expect(JSON.stringify(snap).length).toBeLessThan(JSON.stringify(snapshotCard(card)).length / 2)
+  })
 })
 
 describe('snapshotWorkbench 全局摘要', () => {
-  it('聚合 boards 卡数与全局状态计数(boards 按 order 排)', () => {
+  const projects = [{ id: 'p1', name: '第一部', order: 0, createdAt: 1, updatedAt: 1 }]
+
+  it('聚合 boards 卡数与全局状态计数(boards 按 order 排),带当前剧头', () => {
     const boards = [
-      { id: 'b2', name: '分镜', order: 1, createdAt: 2 },
-      { id: 'b1', name: '页面 1', order: 0, createdAt: 1 },
+      { id: 'b2', projectId: 'p1', name: '分镜', order: 1, createdAt: 2 },
+      { id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 },
     ]
     const cards = [
       buildCard({ prompt: 'a' }, 0, 'b1'),
@@ -317,8 +344,11 @@ describe('snapshotWorkbench 全局摘要', () => {
       { ...buildCard({ prompt: 'c' }, 0, 'b2'), status: 'succeeded' as const },
       { ...buildCard({ prompt: 'd' }, 1, 'b2'), status: 'failed' as const },
     ]
-    const summary = snapshotWorkbench({ cards, boards, activeBoardId: 'b2', selectedCardIds: [] })
+    const summary = snapshotWorkbench({
+      cards, boards, projects, activeProjectId: 'p1', activeBoardId: 'b2', selectedCardIds: [],
+    })
     expect(summary).toEqual({
+      project: { id: 'p1', name: '第一部', segments: 2, cards: 4 },
       activeBoardId: 'b2',
       boards: [
         { id: 'b1', name: '页面 1', cardCount: 2 },
@@ -329,11 +359,39 @@ describe('snapshotWorkbench 全局摘要', () => {
     })
   })
 
+  it('只统计当前剧:别的剧的分段与卡不进 boards / statusCounts', () => {
+    const boards = [
+      { id: 'b1', projectId: 'p1', name: '本剧', order: 0, createdAt: 1 },
+      { id: 'x1', projectId: 'p2', name: '别剧', order: 0, createdAt: 1 },
+    ]
+    const cards = [
+      buildCard({ prompt: 'a' }, 0, 'b1'),
+      { ...buildCard({ prompt: 'z' }, 0, 'x1'), status: 'failed' as const },
+    ]
+    const summary = snapshotWorkbench({
+      cards, boards, projects, activeProjectId: 'p1', activeBoardId: 'b1', selectedCardIds: [],
+    })
+    expect(summary.project).toEqual({ id: 'p1', name: '第一部', segments: 1, cards: 1 })
+    expect(summary.boards.map((b) => b.id)).toEqual(['b1'])
+    expect(summary.statusCounts.failed).toBe(0)
+  })
+
+  it('剧头带上 agent 写的剧摘要;没写过就没有这个字段', () => {
+    const boards = [{ id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 }]
+    const withSummary = [{ ...projects[0], summary: '三集科幻短剧 · 赛博都市' }]
+    const summary = snapshotWorkbench({
+      cards: [], boards, projects: withSummary, activeProjectId: 'p1', activeBoardId: 'b1', selectedCardIds: [],
+    })
+    expect(summary.project.summary).toBe('三集科幻短剧 · 赛博都市')
+  })
+
   it('空页计数为 0;未知状态不计入但不抛错', () => {
-    const boards = [{ id: 'b1', name: '页面 1', order: 0, createdAt: 1 }]
+    const boards = [{ id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1 }]
     const summary = snapshotWorkbench({
       cards: [{ ...buildCard({ prompt: 'x' }, 0, 'b1'), status: 'weird' as never }],
       boards,
+      projects,
+      activeProjectId: 'p1',
       activeBoardId: 'b1',
       selectedCardIds: [],
     })

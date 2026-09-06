@@ -346,3 +346,21 @@ describe('撤销 / 重做', () => {
     expect(state().cards[0].rev!).toBeGreaterThan(revAfterEdit)
   })
 })
+
+describe('撤销删剧', () => {
+  it('removeProject 后 undo 复活剧、分段、卡片并回到那部剧;redo 再删', async () => {
+    const p2 = state().addProject('第二部')
+    state().addCards([{ prompt: 'in-p2' }])
+    expect(state().removeProject(p2).ok).toBe(true)
+    expect(state().projects.some((p) => p.id === p2)).toBe(false)
+    const r = await state().undo()
+    expect(r.ok).toBe(true)
+    expect(state().projects.some((p) => p.id === p2)).toBe(true)
+    expect(state().boards.some((b) => b.projectId === p2)).toBe(true)
+    expect(state().cards.some((c) => c.prompt === 'in-p2')).toBe(true)
+    expect(state().activeProjectId).toBe(p2)
+    await state().redo()
+    expect(state().projects.some((p) => p.id === p2)).toBe(false)
+    expect(state().boards.some((b) => b.projectId === p2)).toBe(false)
+  })
+})
