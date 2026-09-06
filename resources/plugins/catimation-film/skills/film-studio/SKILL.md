@@ -50,7 +50,10 @@ description: >-
 ### G1 · 剧本(Script)
 - **做:** 写出分场剧本/对白(好莱坞格式或双语)。
 - **调:** `screenwriter`(方法论:McKee/Campbell/Aristotle,按因果链审结构)。
-- **门 G1:** 用户批准剧本结构与对白。
+- **可选 G1.5 · 可视化改写:** 剧本批准后、拆镜头前,短剧 / 有武戏的项目调 `script-visual-optimizer`
+  把它改写成可配音的可视化文字脚本(补神态走位、光影·粒子·风态三要素、武戏攻防闭环与玄幻特效,
+  不改剧情台词、不含镜头术语)。G2 拆的是这份改写稿。纯文戏、剧本已够可拍的项目跳过。
+- **门 G1:** 用户批准剧本结构与对白(做了 G1.5 则连改写稿一并批准)。
 
 ### G2 · 分镜镜头表(Shot List / Storyboard)
 - **做:** 把剧本拆成场→镜,每镜定景别/运镜/时长/动作/转场;产出可机读的分镜
@@ -64,7 +67,7 @@ description: >-
     资产都可作为主锚。用户已指定就采用；多套候选拿不准时先询问，低风险未指定才
     默认大头照+全身照。
   - 把最终选定人物卡存进**人像库**得到 `asset://assetId`,作为引用句柄;关键场景同理落「场景卡」。缺图先在 G4 思路下补齐。
-- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>（参考 @图片N）` / 用户选定 identity-hard，工具边界自动去除 `@`);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
+- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>（参考 @图片N）` / 用户选定 identity-hard，原样发给上游、`@` 不删);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
 - **门 G3:** 用户批准角色/场景设定 **+ 每个角色的最终选定人物卡已建库**；
   生成了美术设定板时一并批准其氛围方向。
 
@@ -84,7 +87,7 @@ description: >-
 - **门 G4.5:** 每镜资产清单齐备、归入专属夹、`asset://` 句柄就绪——**这是开始生成视频的硬性前置条件**;逐镜边界/衔接是否按 `references/continuity-matrices.md` 填齐。
 
 ### G5 · 图生视频(Animate)— 分镜多参,用上全部可用资产
-- **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 写作用 `@图片N/@视频N/<主体N>` 在 prompt 里逐一绑定(工具边界自动归一)。**有素材却只发纯文字 = 错。** 引用故事板/多宫格/美术设定板时,mandatory 氛围板前缀必须位于正文之前。分配全能参考配额;生成前做爆款体检。
+- **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 写作用 `@图片N/@视频N/<主体N>` 在 prompt 里逐一绑定(原样发给上游,`@` 不删)。**有素材却只发纯文字 = 错。** 引用故事板/多宫格/美术设定板时,mandatory 氛围板前缀必须位于正文之前。分配全能参考配额;生成前做爆款体检。
 - **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准。整片/多镜属于路径 B,加载 `cinematic-prompt-format`,每镜覆盖八大要素、12 项内容与五大必备块;标题、分段与散文形式自由。动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
 - **门 G5:** 每镜先过 `ffmpeg-win` 视觉门——抽帧拼 3×3 九宫格 contact sheet,`view_image` 那张宫格图自检(首尾帧/连续性/穿帮);要看懂剧情/连续性用 `catimation-understand` 的 `understand_video`,但别拿 `view_image` 开 MP4、别把原始字节塞进聊天;通过后再用 animation-craft 的审查 rubric(先故事/连贯后打磨)交用户审。
 
