@@ -206,7 +206,17 @@ export class AttachmentService extends EventEmitter {
   async cleanup(cutoffMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
     const cutoff = new Date(Date.now() - cutoffMs)
     const uploadsDir = path.join(app.getPath('userData'), 'agent', 'uploads')
-    const staleByAge = await this.prisma.agentAttachment.findMany({ where: { uploadedAt: { lt: cutoff } } })
+    // Videos are never cache. Every video in uploads got here through a path this
+    // sweep cannot see the consumer of: seedance persistVideo archives every
+    // workbench/agent render here (the video-workbench card that owns it lives in
+    // renderer IndexedDB), and dragged-in reference videos are owned by cards the
+    // same way. Chat-dropped videos are protected by the message scan anyway, so
+    // excluding the mime loses nothing — while sweeping them destroyed the only
+    // non-expiring copy of a render whenever the COS relay had failed (upstream
+    // signed URLs die in 24h). Observed 2026-09-06: card says 已保存, file gone.
+    const staleByAge = (
+      await this.prisma.agentAttachment.findMany({ where: { uploadedAt: { lt: cutoff } } })
+    ).filter((item) => !item.mime.startsWith('video/'))
 
     // Age alone is NOT deletability: chat history (AgentMessage.items) persists
     // `local-file:///<uploads path>` attachment URIs and raw-path text mentions,
