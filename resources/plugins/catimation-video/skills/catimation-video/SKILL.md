@@ -36,10 +36,13 @@ to a local file, and lands in the app history page.
 用户说「快点」「简单弄一下」「先给我看看」时同理。
 **只有真要提交生成任务时**,才继续往下看分级表。
 
-默认进入**快速**模式;只有命中升级条件才升级。定级后在心里记住执行状态
+默认进入**快速**模式;只有命中升级条件才升级。定级后把执行状态记成一份 routing receipt
 (`task_level / direction_confirmed / spec_confirmed / prompt_engineered /
-qa_completed / generation_attempts`),已完成的步骤**不再重复执行**:
-规格确认过就不再问、提示词写好就不再重写、QA 做过就不再重抽。
+qa_completed / generation_attempts`):有专属素材夹(见「角色片 / 多镜」第 5 条)时写进
+该夹的 `receipt.json`,每完成一步就更新;没有素材夹的一次性任务至少在回复里用一行复述它。
+**每读完一份大 skill(提示词底座 / 结构叶子 / 镜头设计编排器)先回读 receipt 再动手** ——
+两万字进上下文最容易把它冲掉,读完只剩模板、忘了锚点和已确认的规格就是这么来的。
+已完成的步骤**不再重复执行**:规格确认过就不再问、提示词写好就不再重写、QA 做过就不再重抽。
 
 **提示词底座:要真写 Seedance 提示词时才载。** 出片、改写视频提示词、Seedance
 语法问答 —— 这些确实需要底座,不必等用户点名。但**纯文本任务不载**(见上面 STEP -1),
@@ -125,10 +128,11 @@ cinematic-prompt-format。路径 B 条件优先于生成/编辑/延长/组合等
 ## 模式与素材规则(所有等级通用)
 
 **Default mode = 全能参考 (omni-reference)** — use it unless told otherwise.
-Caps: `referenceImages` ≤9 张;`referenceVideos` ≤3 段、合计 ≤15s;
-`referenceAudios` ≤3 段、合计 ≤15s。Only switch to strict `firstFrame`/`lastFrame`
-when the user explicitly asks. **Always name the mode you used**(如「我用**全能
-参考**模式生成」)。
+Caps 按 model:**2.5** = 图 30 / 视频 10 / 音频 10(合计 50),视频、音频各自合计 ≤30s;
+**2.0 家族** = 图 9 / 视频 3 / 音频 3,视频、音频各自合计 ≤15s;**wan3** = 10 / 5 / 5。
+超了会在提交前被拦下并报出该模型的上限,不用自己数。Only switch to strict
+`firstFrame`/`lastFrame` when the user explicitly asks. **Always name the mode you used**
+(如「我用**全能参考**模式生成」)。
 
 All modes work on **both** surfaces(`generate_video` 与 `video_workbench_*`)
 — pick by inputs + prompt:
@@ -139,9 +143,9 @@ All modes work on **both** surfaces(`generate_video` 与 `video_workbench_*`)
   增加元素=「特征+时机+位置」;删除=点名要删的、强调保留的;修改=直接描述换后的样子。
 - **视频延长**: 1–3 段源片入 `referenceVideos`,描述连接/向前向后延长。
 
-**素材引用铁律**:Skill 写作与 prompt 示例用 `@图片1 / @视频1 / @音频1` 指代，
-严禁裸写 assetId；提交生成工具时自动归一为 `图片1 / 视频1 / 音频1`，`@` 不是
-上游 API 参数。运行时兼容 `@Image1/@图片1/【@图片1】/<图片1>` 等外部写法。
+**素材引用铁律**:提示词里用 `@图片1 / @视频1 / @音频1` 指代素材(火山 OpenAPI 的写法),
+严禁裸写 assetId。**提示词原样发给上游**:运行时不改写、不删 `@`,唯一例外是工作台 chip 的
+`【@图片1】` 外壳会解成 `@图片1`。`@Image1` / `<图片1>` / 裸 `图片1` 不会被替你改,别写。
 **音频参考只收 mp3 / wav**;视频容器(.mov/.mp4,哪怕黑屏占位)会被拒收——先用
 `ffmpeg-win` 抽音轨(`ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3`)。
 黑屏 MP4 只用于 understand_video,绝不能当音频参考上传。
@@ -217,7 +221,8 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
 4. **生成用上全部可用资产**:图/视频/音频逐一传入并在 prompt 里绑定,
    有素材却只发纯文字 = 错；有故事板/多宫格却漏掉 mandatory 氛围职责前缀 = 错。
 5. **一次生成一个专属素材夹**(如 `<workspace>/assets/jobs/S01_<slug>/`),
-   复用、检查、定位问题都只看一个夹。
+   复用、检查、定位问题都只看一个夹;STEP 0 的 routing receipt 也写在这里
+   (`receipt.json`),每完成一步就更新。
 
 > 轻量例外:单图「让它动起来」这类一次性请求(快速模式)不必强排人物卡/故事板。
 
@@ -240,6 +245,12 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
    形容词。
 2. **写运镜/景别前先调 `search_cinematography_kb` 工具**(本地运镜与结构化描述库)
    拿真实术语再落笔;工具不可用再退回联网检索。
+   **排版(三个底座通用):最终提示词连续成段,不空行分块。** 动作接动作、情节接情节、外貌 →
+   性格 → 心理 → 环境这些连着发生的描写不用换行或空行切开,用 `，` `；` `。` `——` `：` 衔接;
+   底座模板里的空行和「一句一行」是给人看的排版示意,不是提交格式,方括号标签后直接接正文;
+   只在镜头之间(`镜头1：` / `镜头2：`)和模板块之间换行。中文字、标点前后不留空格。
+   **提示词是什么,发过去就是什么**:运行时不改排版,空行、碎行、多余空格都会原样进上游,
+   填 `prompt` 字段前自己看一眼。
 3. **标准模式:按最主要症状挑 1 个技法 skill**(浏览 `~/.agents/skills/`,plain-text
    名称按需加载,不是全量)。多风险协同时升级专业模式,而不是突破标准级预算:
 
@@ -274,14 +285,17 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
 1. Turn the request into one clear video prompt(subject, action, camera 运镜/景别,
    scene, lighting, mood;dialogue 与 `--style` 可后置)。
 2. **规格确认(spec_confirmed)**:用户没说规格时,发一张 `ask_user` 卡确认
-   分辨率(`480p` 草稿 / **`720p` 默认** / `1080p`)、时长(4–15s,默认 5)、
-   比例(`16:9` / `9:16` / `4:3` / `3:4` / `1:1` / `21:9`),推荐默认项。
-   **不要静默升 1080p**;1080p 仅满血 `2.0`;用户已给规格或本会话已确认过就跳过。
-3. Call `generate_video`:`prompt`(必填)、`model`(`2.0` 默认,用户明确要
-   快/便宜才 `2.0-fast`)、`resolution` / `ratio` / `duration`、
+   分辨率(`480p` 草稿 / **`720p` 默认** / `1080p`)、时长(**2.5 为 4–30s,2.0 家族 4–15s**,
+   默认 5)、比例(`16:9` / `9:16` / `4:3` / `3:4` / `1:1` / `21:9`),推荐默认项。
+   **不要静默升 1080p**;1080p 仅 `2.0`(与 wan3),`2.5` 只到 720p —— 用户要 1080p 就意味着
+   model 改 `2.0`、底座改 `sd2-pe`;用户已给规格或本会话已确认过就跳过。
+3. Call `generate_video`:`prompt`(必填)、`model`(**显式传,且与你载的底座一致**:
+   STEP 0 默认 `2.5` → 传 `"2.5"`;要 1080p / 4k 或用户点名满血画质 → `"2.0"` 并改载 `sd2-pe`;
+   用户明确要快/便宜才 `"2.0-fast"`。**别省略** —— 工具不传 model 时落到 `2.0`,一条按 2.5
+   模板写的提示词就会被送去 2.0 渲染)、`resolution` / `ratio` / `duration`、
    `referenceImages`(**用户给过的图必须传**;支持 `asset://assetId`)、
-   `referenceVideos` / `referenceAudios`(每段 4–15s、合计 ≤15s)、或显式要求时的
-   `firstFrame` / `lastFrame`。
+   `referenceVideos` / `referenceAudios`(上限按 model,见「模式与素材规则」)、或显式要求时的
+   `firstFrame` / `lastFrame`;2.5 的编辑 / 延长走 `taskMode`(`edit` / `extend`),不靠提示词措辞。
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
 5. Read the result banner:
@@ -361,7 +375,8 @@ The `catimation` MCP server exposes portrait-library tools
 - One `generate_video` call = ONE video. 多条就多次调用、复用同一 asset://
   保持一致性;可并行,但**一次要发 20+ 个任务先向用户确认**(每条都花钱且渲染
   1–3 分钟)。
-- Local input files are handled for you(video/audio 4–15s);pass plain local paths
+- Local input files are handled for you(video/audio 每段 4–15s,合计上限按 model 见
+  「模式与素材规则」);pass plain local paths
   and do NOT pre-compress or reject anything for size — there is no client-side size
   cap, large files are streamed to a relay bucket automatically. If a file really is
   too big for upstream, upstream returns the exact limit.

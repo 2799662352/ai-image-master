@@ -77,9 +77,9 @@ export const SEEDANCE_GATEWAY_DEFAULTS = {
 /**
  * 顶层 `prompt` 从 `content[]` 里**取**而不是由调用方**另给**。
  *
- * 调用方手上那个 `input.prompt` 是归一化之前的原文（`normalizeSeedancePromptReferences`
- * 会改写 `@参考N` 这类标签）。两份各写各的就会漂移，而漂移的症状是顶层与 `content[0]`
- * 说着两句不同的话，上游按哪句走完全看它心情。
+ * 调用方手上那个 `input.prompt` 是解包之前的原文（`normalizeSeedancePromptReferences`
+ * 会把工作台 chip 的 `【@图片N】` 解成 `@图片N`，其余原样）。两份各写各的就会漂移，
+ * 而漂移的症状是顶层与 `content[0]` 说着两句不同的话，上游按哪句走完全看它心情。
  */
 function promptFrom(content: SeedanceContentItem[], fallback: string): string {
   for (const item of content) {

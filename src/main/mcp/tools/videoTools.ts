@@ -285,9 +285,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'stitching up to 3 clips): both are just omni-reference under the hood — pass the source clip(s) ' +
       'via referenceVideos and write an edit/extend-style prompt (see the catimation-video skill). ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE} In ` +
-      'the prompt, refer to materials by canonical ordinal ("视频1 / 图片1 / 音频1"), never by assetId. ' +
-      'The runtime also accepts and normalizes @Video1/@Image1/@Audio1, @视频1/@图片1/@音频1, ' +
-      '【@图片1】, and legacy <图片1> aliases before submission. Note: real ' +
+      'the prompt, refer to materials as "@图片1 / @视频1 / @音频1" exactly as the prompt base writes them, ' +
+      'never by assetId. The prompt is sent VERBATIM: the runtime does not rewrite, reflow, or strip the @ ' +
+      '(the only exception is the workbench chip wrapper 【@图片1】, unwrapped to @图片1), so Fal-style ' +
+      '@Image1 or legacy <图片1> would reach upstream unchanged — write @图片N. Note: real ' +
       'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
       'previously Seedance-generated clip.',
     annotations: WRITE_ADDITIVE_REMOTE,
