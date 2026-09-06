@@ -23,6 +23,10 @@
  *   COS_SKILLS_BUCKET     (default: image-master-1345773498)
  *   COS_SKILLS_REGION     (default: ap-guangzhou)
  *   COS_PLUGINS_PREFIX    (default: plugins/)
+ *   COS_PROXY             (optional; falls back to HTTPS_PROXY / https_proxy) — HTTP proxy
+ *                         for the COS SDK. Needed on machines whose DNS returns Clash
+ *                         fake-IPs (198.18.x.x): a direct TLS handshake gets reset there,
+ *                         while the same request through the local proxy port succeeds.
  *
  * Flags:
  *   --dry-run             Build everything and print the catalog but do not upload.
@@ -69,7 +73,10 @@ if (!dryRun && (!SecretId || !SecretKey)) {
   process.exit(1)
 }
 
-const cos = dryRun ? null : new COS({ SecretId, SecretKey })
+const Proxy = process.env.COS_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy || undefined
+if (!dryRun && Proxy) console.log(`🌐 COS via proxy ${Proxy}`)
+
+const cos = dryRun ? null : new COS({ SecretId, SecretKey, ...(Proxy ? { Proxy } : {}) })
 
 const ZIP_FIXED_DATE = new Date('1980-01-01T00:00:00Z')
 

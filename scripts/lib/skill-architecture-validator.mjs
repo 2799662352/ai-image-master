@@ -10,6 +10,8 @@
  *  - description 限长,禁止「MUST ... EVERY time / ANY image-video / 每次必用」
  *    式宽触发词与通用模型名单尾巴;
  *  - 四级预算:fast≤1、standard≤3、pro≤6 个下游引用,studio 仅 film-studio 持有;
+ *  - 正文限长(SKILL_BODY_TOO_LONG):单份 SKILL.md 正文 ≤ 20k 字符,超出的按任务拆进
+ *    references/*.md;历史超标者钉在 SKILL_BODY_DEBT 棘轮里只许缩不许涨;
  *  - 首方 Skill(resources/first-party-skills)与生成物
  *    (src/main/agent/generated/firstPartySkills.generated.ts)内容必须一致;
  *  - 同名 Skill 的插件源 / codex 镜像 / 顶层兼容副本 / 内联副本内容必须一致。
@@ -21,6 +23,25 @@ import path from 'node:path'
 export const DEFAULT_OPTIONS = Object.freeze({
   maxHookInjectionChars: 2000,
   maxDescriptionChars: 480,
+  maxSkillBodyChars: 20000,
+})
+
+/**
+ * 正文长度的还债棘轮。
+ *
+ * 加这道闸(2026-09)时这三份已经超过 20k 字符,逐一拆分是各自独立的工作,不该
+ * 阻塞别的 PR。每条钉的是「当时的体量向上取整」:只许缩、不许涨;拆到 20k 以下就
+ * 把它从这里删掉。**不要往这个表里加新条目** —— 新 skill 写不进 20k 就该拆。
+ *
+ * 为什么是字符数、为什么是 20k:字符是 token 的稳定代理(CJK 约 1–1.5 token/字),
+ * 20k 字符的一份 skill 在 200k 级上下文里约占 8–12%;而入口 + 底座 + 结构叶子 + 两个
+ * 技法叠加是常态,单份再大,加载后模型就只记得它 —— sd25-pe 的 28k 正文正是这么把
+ * 入口流程、人物锚点、运镜库原词全冲掉的。
+ */
+export const SKILL_BODY_DEBT = Object.freeze({
+  'wan3-emotion-shotlist': 62000,
+  'codex-research-grounded-prompting': 24500,
+  'catimation-image': 21500,
 })
 
 const BUDGET_LIMITS = Object.freeze({
@@ -332,6 +353,24 @@ export function validateArchitecture(snapshot, options = {}) {
       report(
         'DESCRIPTION_MODEL_LIST_TAIL',
         `${canonical.path}: description enumerates a generic model list (${mentionedModels.join(', ')})`,
+        canonical.path,
+      )
+    }
+  }
+
+  // 2b. 正文限长(只看权威副本;镜像的漂移由第 7 步单独报)
+  const bodyDebt = opts.skillBodyDebt ?? SKILL_BODY_DEBT
+  for (const name of [...knownNames].sort()) {
+    const canonical = canonicalOf(name)
+    const bodyLength = canonical.body.length
+    const pinned = bodyDebt[name]
+    const limit = pinned ?? opts.maxSkillBodyChars
+    if (bodyLength > limit) {
+      report(
+        'SKILL_BODY_TOO_LONG',
+        pinned !== undefined
+          ? `${canonical.path}: body is ${bodyLength} chars, above its debt pin ${pinned} (debt may only shrink; general max ${opts.maxSkillBodyChars})`
+          : `${canonical.path}: body is ${bodyLength} chars (max ${opts.maxSkillBodyChars}) — move task-specific sections into references/*.md loaded on demand`,
         canonical.path,
       )
     }

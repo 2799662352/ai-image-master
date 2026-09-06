@@ -10,6 +10,7 @@
 | screenwriter | 编剧 / 剧作 | 需要开发剧情、分场、写场景与对白、节拍表、改稿、估算/删减片长、塑造人物世界观(McKee/Campbell/Aristotle 方法论,好莱坞格式、可双语) |
 | trailer-plan-generator | 预告片策划 | 已有剧本/故事梗概,要产出 5 个 90 秒专业预告片方案 |
 | animation-craft | 日式动画作画 | 做动画短片/絵コンテ/アニマティック、AI 动画镜头、角色芝居、运镜与节奏(タメツメ/コマ打ち 等作画技法),或写图生视频(i2v)镜头 prompt |
+| script-visual-optimizer | 短剧剧本可视化优化 | 已有单集剧本(大纲/小传/剧情/场景/角色/道具),要在不改剧情、台词、胜负与实力设定的前提下补神态微表情、站位走位、光影·空气粒子·风态三要素,补全武戏攻防闭环与受创反馈,设计与环境融合的玄幻特效;输出按时间顺叙、不含镜头术语、可直接配音的文字脚本。位置在 screenwriter 之后、shotlist-builder / 出片之前;剧本含武戏或用户要对标爆款时才做参考拆解 |
 
 ## 典型流水线(跨插件协作,背景知识)
 
@@ -17,4 +18,5 @@
 2. **只缺剧本** → screenwriter 先把剧本/分场/对白写好,再回 film-studio 进入分镜与出片。
 3. **要做预告片** → 剧本就绪后用 trailer-plan-generator 出方案。
 4. **动画风格** → 涉及作画/动画质感时载入 animation-craft。
+4b. **剧本已有、要更可拍** → screenwriter 定稿(或用户自带剧本)之后、进 G2 拆镜头之前,载入 script-visual-optimizer 做一遍可视化改写;它只补画面与武戏,不动剧情台词,不写镜头语言。
 5. 逐镜出图/出视频阶段,镜头语言统一由 catimation-director 插件的 orchestrator(13 维框架)提供,图像交 catimation-image,视频交 catimation-video,拼接用 ffmpeg-win —— 这些落点 film-studio 的阶段门里都已写明,由它调度,不需要从本入口卡强制加载。

@@ -13,6 +13,7 @@ import {
   CATIMATION_UNDERSTAND_SKILL_CONTENT,
   CATIMATION_VIDEO_SKILL_CONTENT,
   FFMPEG_WIN_SKILL_CONTENT,
+  GRAPHIFY_SKILL_CONTENT,
 } from './generated/firstPartySkills.generated'
 
 /**
@@ -409,6 +410,17 @@ export const CATIMATION_DIRECTOR_STAGE_SKILL: FirstPartySkill = {
 }
 
 /**
+ * Code/folder → knowledge graph via the graphify CLI (tree-sitter AST, local).
+ * Shares its name with the official skill so a user-installed
+ * `~/.agents/skills/graphify` (from `graphify install --platform agents`) is
+ * preserved by the hash check rather than duplicated.
+ */
+export const GRAPHIFY_SKILL: FirstPartySkill = {
+  name: 'graphify',
+  content: GRAPHIFY_SKILL_CONTENT,
+}
+
+/**
  * First-party skills no longer shipped by default. If an older app version
  * installed an app-managed copy, remove it on startup so Codex stops discovering
  * it. User-edited copies are preserved.
@@ -427,4 +439,5 @@ export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_SUBAGENTS_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
   CATIMATION_DIRECTOR_STAGE_SKILL,
+  GRAPHIFY_SKILL,
 ]
