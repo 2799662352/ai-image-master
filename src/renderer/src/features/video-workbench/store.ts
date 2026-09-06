@@ -33,6 +33,7 @@ import type {
   VideoWorkbenchCardStatus,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
+  VideoWorkbenchProject,
   VideoWorkbenchReconcileItem,
   VideoWorkbenchReconcileResult,
   VideoWorkbenchSubmitPayload,
@@ -945,6 +946,9 @@ function readAgentAutoStart(): boolean {
  */
 interface WorkbenchWritePlan {
   next: {
+    /** 撤销/重做会带;看板 IR 的 apply 只描述当前剧,不带。 */
+    projects?: VideoWorkbenchProject[]
+    activeProjectId?: string
     boards: VideoWorkbenchBoard[]
     cards: VideoWorkbenchCard[]
     activeBoardId: string
@@ -956,6 +960,8 @@ interface WorkbenchWritePlan {
     removeCardIds: string[]
     boards: VideoWorkbenchBoard[]
     removeBoardIds: string[]
+    projects?: VideoWorkbenchProject[]
+    removeProjectIds?: string[]
   }
 }
 
@@ -974,14 +980,22 @@ function applyPlanToState(
 ): void {
   // 一条 500ms 前排好的旧内容写入会在整板写之后落地,把刚写好的卡片打回旧值。
   for (const id of [...plan.persist.cards.map((c) => c.id), ...plan.persist.removeCardIds]) {
-    const timer = persistTimers.get(id)
-    if (timer) {
-      clearTimeout(timer)
-      persistTimers.delete(id)
-    }
+    cancelPendingPersist(id)
   }
-  set({ ...plan.next, ...pruneSelection(prev, plan.next.cards) })
+  // 剧被撤销掉/复活时,把每部剧记住的视图裁到仍存在的剧;当前剧的视图跟着
+  // 快照的 activeBoardId 落到分段页 —— 撤销要看得见效果。
+  const projectPatch: Partial<VideoWorkbenchState> = {}
+  if (plan.next.projects && plan.next.activeProjectId) {
+    const alive = new Set(plan.next.projects.map((p) => p.id))
+    const viewByProject = Object.fromEntries(
+      Object.entries(prev.viewByProject).filter(([id]) => alive.has(id)),
+    )
+    viewByProject[plan.next.activeProjectId] = { mode: 'board', boardId: plan.next.activeBoardId }
+    projectPatch.viewByProject = viewByProject
+  }
+  set({ ...plan.next, ...projectPatch, ...pruneSelection(prev, plan.next.cards) })
   writeActiveBoard(plan.next.activeBoardId)
+  if (plan.next.activeProjectId) writeActiveProject(plan.next.activeProjectId)
 }
 
 /**
@@ -1021,6 +1035,8 @@ async function flushPlanToDb(plan: WorkbenchWritePlan): Promise<void> {
     ...plan.persist.removeCardIds.map((id) => db.remove(id).catch(() => {})),
     ...plan.persist.boards.map((board) => db.putBoard(board).catch(() => {})),
     ...plan.persist.removeBoardIds.map((id) => db.removeBoard(id).catch(() => {})),
+    ...(plan.persist.projects ?? []).map((project) => db.putProject(project).catch(() => {})),
+    ...(plan.persist.removeProjectIds ?? []).map((id) => db.removeProject(id).catch(() => {})),
   ])
 }
 

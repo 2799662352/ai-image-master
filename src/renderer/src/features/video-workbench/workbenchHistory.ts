@@ -23,6 +23,7 @@
 import type {
   VideoWorkbenchBoard,
   VideoWorkbenchCard,
+  VideoWorkbenchProject,
   WorkbenchApplySkip,
 } from '../../../../types/videoWorkbench'
 import { isActiveStatus, pickSpec, specEquals } from './cardSpec'
@@ -118,6 +119,9 @@ export function shouldCoalesce(
  * 而不是五十份几 MB 的 data: URL 素材。
  */
 export interface WorkbenchIntent {
+  /** 剧的集合与顺序;删剧/改名/排序都是编排意图,进撤销栈。 */
+  projects: VideoWorkbenchProject[]
+  activeProjectId: string
   boards: VideoWorkbenchBoard[]
   cards: VideoWorkbenchCard[]
   activeBoardId: string
@@ -155,6 +159,8 @@ export interface RestorePlan {
   result: WorkbenchRestoreResult
   /** 拒绝或 no-op 时缺省。 */
   next?: {
+    projects: VideoWorkbenchProject[]
+    activeProjectId: string
     boards: VideoWorkbenchBoard[]
     cards: VideoWorkbenchCard[]
     activeBoardId: string
@@ -167,12 +173,16 @@ export interface RestorePlan {
     removeCardIds: string[]
     boards: VideoWorkbenchBoard[]
     removeBoardIds: string[]
+    projects: VideoWorkbenchProject[]
+    removeProjectIds: string[]
   }
 }
 
 /** 抓一份当前意图的快照(浅拷贝数组,元素共享)。 */
 export function captureIntent(source: WorkbenchIntent): WorkbenchIntent {
   return {
+    projects: [...source.projects],
+    activeProjectId: source.activeProjectId,
     boards: [...source.boards],
     cards: [...source.cards],
     activeBoardId: source.activeBoardId,
@@ -225,15 +235,38 @@ export function planRestore(
   const curCardById = new Map(source.cards.map((c) => [c.id, c]))
   const curBoardById = new Map(source.boards.map((b) => [b.id, b]))
 
-  // ---- 页:快照说了算,order 重新压实 ----
+  // ---- 剧:快照说了算(缺则视为当前),order 重新压实 ----
+  const snapProjects =
+    Array.isArray(snapshot.projects) && snapshot.projects.length > 0 ? snapshot.projects : source.projects
+  const curProjectById = new Map(source.projects.map((p) => [p.id, p]))
+  const finalProjects = [...snapProjects].sort(byOrder).map((p, i) => (p.order === i ? p : { ...p, order: i }))
+  const finalProjectIds = new Set(finalProjects.map((p) => p.id))
+  const removeProjectIds = source.projects.filter((p) => !finalProjectIds.has(p.id)).map((p) => p.id)
+  const projectsToPersist = finalProjects.filter((p) => {
+    const cur = curProjectById.get(p.id)
+    return !cur || cur.name !== p.name || cur.order !== p.order || cur.legacy !== p.legacy
+  })
+  const activeProjectId = finalProjectIds.has(snapshot.activeProjectId)
+    ? snapshot.activeProjectId
+    : finalProjectIds.has(source.activeProjectId)
+      ? source.activeProjectId
+      : finalProjects[0].id
+
+  // ---- 页:快照说了算,order 按剧内重新压实(快照自洽时 projectId 必在 finalProjects 里,防御性过滤) ----
+  const orderInProject = new Map<string, number>()
   const finalBoards = [...snapshot.boards]
+    .filter((b) => finalProjectIds.has(b.projectId))
     .sort(byOrder)
-    .map((b, i) => (b.order === i ? b : { ...b, order: i }))
+    .map((b) => {
+      const i = orderInProject.get(b.projectId) ?? 0
+      orderInProject.set(b.projectId, i + 1)
+      return b.order === i ? b : { ...b, order: i }
+    })
   const snapshotBoardIds = new Set(finalBoards.map((b) => b.id))
   const removeBoardIds = source.boards.filter((b) => !snapshotBoardIds.has(b.id)).map((b) => b.id)
   const boardsToPersist = finalBoards.filter((b) => {
     const cur = curBoardById.get(b.id)
-    return !cur || cur.name !== b.name || cur.order !== b.order
+    return !cur || cur.name !== b.name || cur.order !== b.order || cur.projectId !== b.projectId
   })
   const restoredBoards = boardsToPersist.map((b) => b.id)
 
@@ -350,7 +383,10 @@ export function planRestore(
   // 还原几乎必然动到结构(位置/集合/页),规格回滚也一并算 —— 撤销之后 agent
   // 手里的整份 IR 本来就该作废,而不是「除了这张卡以外还能写」。
   const changed =
-    restoredBoards.length > 0
+    projectsToPersist.length > 0
+    || removeProjectIds.length > 0
+    || activeProjectId !== source.activeProjectId
+    || restoredBoards.length > 0
     || removeBoardIds.length > 0
     || restoredCards.length > 0
     || resurrectedCards.length > 0
@@ -374,12 +410,21 @@ export function planRestore(
   return {
     result,
     next: {
+      projects: finalProjects,
+      activeProjectId,
       boards: finalBoards,
       cards: nextCards,
       activeBoardId,
       revision: result.revision,
       structureRevision: source.structureRevision + 1,
     },
-    persist: { cards: persistCards, removeCardIds, boards: boardsToPersist, removeBoardIds },
+    persist: {
+      cards: persistCards,
+      removeCardIds,
+      boards: boardsToPersist,
+      removeBoardIds,
+      projects: projectsToPersist,
+      removeProjectIds,
+    },
   }
 }
