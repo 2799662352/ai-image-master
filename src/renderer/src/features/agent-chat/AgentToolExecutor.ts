@@ -25,7 +25,12 @@ import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioG
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { cardSummaryState } from '../video-workbench/cardSummary'
 import { summarizeProject } from '../video-workbench/projectStats'
-import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
+import {
+  snapshotCard,
+  snapshotCardConcise,
+  snapshotWorkbench,
+  useVideoWorkbenchStore,
+} from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import type { VideoWorkbenchCardInput, WorkbenchIR } from '../../../../types/videoWorkbench'
@@ -347,6 +352,7 @@ export class AgentToolExecutor {
       case 'video_workbench_list_projects':
       case 'video_workbench_switch_project':
       case 'video_workbench_create_project':
+      case 'video_workbench_set_project_summary':
         return this.callVideoWorkbench(toolName, params, threadId)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
@@ -678,7 +684,11 @@ export class AgentToolExecutor {
         const totalPages = Math.max(1, Math.ceil(cards.length / pageSize))
         const page = Math.min(Math.max(1, toPositiveInt(params.page) ?? 1), totalPages)
         const pageCards = cards.slice((page - 1) * pageSize, page * pageSize)
+        // concise:只回 id/位置/状态/摘要/60 字提示词/error。缺省 detailed 保持旧形状 ——
+        // 「改规格前先看一眼」是 status 最常见的用法,那时正需要规格字段。
+        const fields = params.fields === 'concise' ? 'concise' : 'detailed'
         return {
+          fields,
           // 每页一条的目录。**这才是分批读取能成立的前提** —— 只回 3 张卡而不告诉
           // 你剩下的是什么,agent 只能从第 1 页翻到最后一页,比一次性倒出去还费。
           // 有了目录它能直接跳到相关那一页。刻意做得很省:每张卡只留 id + 截断的
@@ -697,7 +707,7 @@ export class AgentToolExecutor {
           // status 是**读**工具,不带 workbench 包装,所以选中态得在这一层平铺 ——
           // 否则「按需回读」在唯一一个专门用来回读的工具上反而看不到它。
           selectedCardIds: summary.selectedCardIds,
-          cards: pageCards.map(snapshotCard),
+          cards: fields === 'concise' ? pageCards.map(snapshotCardConcise) : pageCards.map(snapshotCard),
           page,
           pageSize,
           totalPages,
@@ -819,10 +829,25 @@ export class AgentToolExecutor {
                 failed: st.totals.failed,
                 done: st.totals.done,
                 doneSeconds: st.totals.doneSeconds,
+                ...(p.summary ? { summary: p.summary } : {}),
                 ...(p.legacy ? { legacy: true } : {}),
               }
             }),
         }
+      }
+      case 'video_workbench_set_project_summary': {
+        const state = useVideoWorkbenchStore.getState()
+        // 省略 projectId = 当前剧:agent 九成时候是在给自己正在做的这部剧写路标。
+        const projectId = typeof params.projectId === 'string' && params.projectId
+          ? params.projectId
+          : state.activeProjectId
+        const summary = typeof params.summary === 'string' ? params.summary : ''
+        if (!state.setProjectSummary(projectId, summary)) {
+          throw new Error(
+            `video_workbench_set_project_summary: project not found: ${projectId} (existing: ${state.projects.map((p) => p.id).join(', ')})`,
+          )
+        }
+        return { ok: true, workbench: workbenchSummary() }
       }
       case 'video_workbench_switch_project': {
         const projectId = typeof params.projectId === 'string' ? params.projectId : ''

@@ -129,7 +129,11 @@ describe('MCP 工具注解', () => {
 
   it('切剧 / 建剧是写操作但不破坏:不该标 destructiveHint,也不该标只读', () => {
     const byName = new Map(captureAll().map((t) => [t.name, t.annotations]))
-    for (const name of ['video_workbench_switch_project', 'video_workbench_create_project']) {
+    for (const name of [
+      'video_workbench_switch_project',
+      'video_workbench_create_project',
+      'video_workbench_set_project_summary',
+    ]) {
       expect(byName.get(name)?.readOnlyHint, `${name} 不是只读`).toBe(false)
       expect(byName.get(name)?.destructiveHint, `${name} 不该标破坏性`).not.toBe(true)
     }

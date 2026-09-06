@@ -6,7 +6,11 @@
 // 纯 UI 状态(视图模式、折叠)两个都不动。
 
 import type { StateCreator } from 'zustand'
-import type { VideoWorkbenchBoard, VideoWorkbenchProject } from '../../../../types/videoWorkbench'
+import {
+  WORKBENCH_PROJECT_SUMMARY_MAX,
+  type VideoWorkbenchBoard,
+  type VideoWorkbenchProject,
+} from '../../../../types/videoWorkbench'
 import { createId, isActiveStatus } from './cardSpec'
 import { cancelPendingPersist } from './persistQueue'
 import type { VideoWorkbenchState } from './store'
@@ -40,6 +44,8 @@ export interface ProjectsSlice {
   duplicateProject: (id: string) => string | null
   /** 唯一一部剧、或有生成中卡片 → 拒绝。 */
   removeProject: (id: string) => { ok: boolean; reason?: string }
+  /** agent 写的一行剧摘要;空串清除。不动 revision / structureRevision(见 setBoardSummary)。 */
+  setProjectSummary: (id: string, summary: string) => boolean
   dismissLegacyNotice: (id: string) => void
   setRailCollapsed: (collapsed: boolean) => void
 }
@@ -318,6 +324,21 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
       void db.remove(c.id).catch(() => {})
     }
     return { ok: true }
+  },
+
+  setProjectSummary: (id, summary) => {
+    // 同 setBoardSummary:工具层 zod 硬拒超长,这里只是渲染端直调时的最后兜底。
+    const trimmed = summary.trim().slice(0, WORKBENCH_PROJECT_SUMMARY_MAX)
+    const cur = get().projects.find((p) => p.id === id)
+    if (!cur) return false
+    if ((cur.summary ?? '') === trimmed) return true
+    // 空串 = 清除,不留空字段占位。摘要是路标不是编排意图:两个令牌都不动,撤销栈不记。
+    const next: VideoWorkbenchProject = trimmed
+      ? { ...cur, summary: trimmed }
+      : (({ summary: _drop, ...rest }) => rest)(cur)
+    set((s) => ({ projects: s.projects.map((p) => (p.id === id ? next : p)) }))
+    void getWorkbenchDb().putProject(next).catch(() => {})
+    return true
   },
 
   dismissLegacyNotice: (id) => {

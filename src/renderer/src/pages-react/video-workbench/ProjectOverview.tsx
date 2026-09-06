@@ -70,6 +70,9 @@ export function ProjectOverview() {
               ✎
             </button>
           </div>
+          {project.summary && (
+            <p className="vw-project-summary" title="Agent 写的一行说明">{project.summary}</p>
+          )}
           <div className="flex items-center gap-1.5 mt-3 flex-wrap" role="group" aria-label="剧汇总">
             <span className="vw-chip">{stats.segments.length} 段</span>
             <span className="vw-chip">总时长 {formatDuration(t.doneSeconds)}</span>

@@ -232,3 +232,29 @@ describe('水合回填', () => {
     expect(boardsOf('empty').map((b) => b.name)).toEqual(['分段 1'])
   })
 })
+
+describe('setProjectSummary(agent 路标)', () => {
+  it('写入 / 落库 / 不动两个令牌 / 不进撤销栈', async () => {
+    const id = S().activeProjectId
+    const rev = S().revision
+    const srev = S().structureRevision
+    const depth = S().undoStack.length
+    expect(S().setProjectSummary(id, '  三集科幻短剧 · 赛博都市  ')).toBe(true)
+    expect(S().projects.find((p) => p.id === id)!.summary).toBe('三集科幻短剧 · 赛博都市')
+    expect(S().revision).toBe(rev)
+    expect(S().structureRevision).toBe(srev)
+    expect(S().undoStack).toHaveLength(depth)
+    const saved = (await getWorkbenchDb().listProjects()).find((p) => p.id === id)!
+    expect(saved.summary).toBe('三集科幻短剧 · 赛博都市')
+  })
+
+  it('空串清除且不留空字段;超长兜底截断;剧不存在 → false', () => {
+    const id = S().activeProjectId
+    S().setProjectSummary(id, 'x')
+    S().setProjectSummary(id, '   ')
+    expect('summary' in S().projects.find((p) => p.id === id)!).toBe(false)
+    S().setProjectSummary(id, '剧'.repeat(200))
+    expect(S().projects.find((p) => p.id === id)!.summary).toHaveLength(60)
+    expect(S().setProjectSummary('ghost', 'x')).toBe(false)
+  })
+})

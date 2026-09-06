@@ -57,8 +57,30 @@ export const MATERIAL_KINDS = [
   'referenceAudios',
 ] as const satisfies readonly MaterialKind[]
 
+const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz'
+const ID_LENGTH = 10
+
+/**
+ * 卡片 / 分段 / 剧的 id:10 位 base36(约 52 bit)。
+ *
+ * 之前是 randomUUID —— 36 字符,而这些 id 会随每次 status / export 成批进模型上下文,
+ * 一张卡的 id 比它截断后的提示词还长;Anthropic 实测长随机 id 还会拉低模型对 id 的
+ * 复述精度。id 只是不透明句柄,老数据里的 UUID 照旧可用,不迁移。
+ *
+ * 52 bit 对单机工作台绝对够(一万张卡的碰撞概率 ~1e-8),但不要在跨用户的全局
+ * 命名空间里复用这个函数。
+ */
 export function createId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `wb-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const bytes = new Uint8Array(ID_LENGTH)
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < ID_LENGTH; i += 1) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  // 36 不整除 256,取模会让 0–27 略多出现(概率偏 ~1/256),对唯一性无影响。
+  let out = ''
+  for (let i = 0; i < ID_LENGTH; i += 1) out += ID_ALPHABET[bytes[i] % 36]
+  return out
 }
 
 /** 字符串源 → Material(展示名从路径/URL 猜)。 */

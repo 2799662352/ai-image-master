@@ -1019,4 +1019,62 @@ describe('按当前剧隔离(project)', () => {
       /project not found/,
     )
   })
+
+  /**
+   * 剧摘要是三层里最后补上的路标:分段有 set_board_summary、卡片有 set_card_summary,
+   * 剧此前只有数字 —— 八部剧摆在 list_projects 里,agent 只能靠「未命名剧 3」猜。
+   */
+  it('剧摘要:写完出现在 list_projects 与每次回包的 project 头里;省略 projectId = 当前剧', async () => {
+    const p1 = S().activeProjectId
+    const p2 = S().addProject('第二部')
+    const r = await callTool('video_workbench_set_project_summary', { summary: '三集科幻短剧 · 赛博都市' })
+    expect(r.ok).toBe(true)
+    expect(r.workbench.project).toMatchObject({ id: p2, summary: '三集科幻短剧 · 赛博都市' })
+
+    await callTool('video_workbench_set_project_summary', { projectId: p1, summary: '旧片子 · 迁移进来的' })
+    const list = await callTool('video_workbench_list_projects', {})
+    expect(list.projects.map((p: { id: string; summary?: string }) => [p.id, p.summary])).toEqual([
+      [p1, '旧片子 · 迁移进来的'],
+      [p2, '三集科幻短剧 · 赛博都市'],
+    ])
+    // 写摘要不作废 IR 令牌、不进撤销栈
+    const before = S().structureRevision
+    const depth = S().undoStack.length
+    await callTool('video_workbench_set_project_summary', { summary: '' })
+    expect(S().structureRevision).toBe(before)
+    expect(S().undoStack).toHaveLength(depth)
+    expect(S().projects.find((p) => p.id === p2)!.summary).toBeUndefined()
+  })
+
+  it('剧摘要:剧不存在时抛可读错误并列出可用 id', async () => {
+    await expect(
+      callTool('video_workbench_set_project_summary', { projectId: 'ghost', summary: 'x' }),
+    ).rejects.toThrow(/project not found.*project-default/)
+  })
+
+  /**
+   * 「进展怎样了 / 挑几张下手」这类巡视不需要规格与素材清单。concise 只回
+   * id/位置/状态/摘要/60 字提示词/error,体积约为 detailed 的三分之一。
+   */
+  it('status fields:concise 不带规格与素材;缺省仍是 detailed', async () => {
+    S().addCards([{ prompt: 'p'.repeat(200), referenceImages: ['a.png'] }])
+    const concise = await callTool('video_workbench_status', { fields: 'concise' })
+    expect(concise.fields).toBe('concise')
+    expect(concise.cards).toHaveLength(1)
+    expect(concise.cards[0]).toEqual({
+      cardId: expect.any(String),
+      boardId: S().activeBoardId,
+      order: 0,
+      prompt: `${'p'.repeat(60)}…`,
+      status: 'draft',
+    })
+    expect(concise.cards[0].model).toBeUndefined()
+    expect(concise.cards[0].references).toBeUndefined()
+
+    const detailed = await callTool('video_workbench_status', {})
+    expect(detailed.fields).toBe('detailed')
+    expect(detailed.cards[0].model).toEqual(expect.any(String))
+    expect(detailed.cards[0].references.images).toHaveLength(1)
+    expect(JSON.stringify(concise.cards).length).toBeLessThan(JSON.stringify(detailed.cards).length / 2)
+  })
 })

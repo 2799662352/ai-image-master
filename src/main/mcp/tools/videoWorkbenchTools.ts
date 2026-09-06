@@ -30,6 +30,7 @@ import {
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_CARD_SUMMARY_MAX,
+  WORKBENCH_PROJECT_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -161,11 +162,17 @@ const SELECTED_CARD_IDS_DOC =
   + 'as "what the user just handed me".'
 
 /** 当前剧(project)的头:所有 video_workbench_* 都作用于它,boards / statusCounts 也只统计它。 */
+const PROJECT_SUMMARY_DOC =
+  'One-line note about what this project IS, written by you via video_workbench_set_project_summary '
+  + '("三集科幻短剧 · 赛博都市 · 主角林夏"). Absent until someone writes it. Project names are often '
+  + 'just "未命名剧 3", so this is how you tell eight projects apart without switching into each one.'
+
 const projectBriefSchema = z.object({
   id: z.string(),
   name: z.string(),
   segments: z.number().describe('Boards (pages / 分段) in this project.'),
   cards: z.number().describe('Cards in this project across all its boards.'),
+  summary: z.string().optional().describe(PROJECT_SUMMARY_DOC),
 })
 
 const workbenchSummarySchema = z.object({
@@ -188,6 +195,7 @@ const projectListItemSchema = z.looseObject({
   failed: z.number(),
   done: z.number(),
   doneSeconds: z.number().describe('Sum of spec durations of succeeded cards.'),
+  summary: z.string().optional().describe(PROJECT_SUMMARY_DOC),
   legacy: z.boolean().optional().describe('The project that absorbed pre-upgrade pages; user has not renamed/dismissed it yet.'),
 })
 
@@ -255,6 +263,28 @@ const cardSnapshotSchema = z.looseObject({
   ),
 })
 
+/**
+ * status 回包里的卡:`fields:'concise'` 时只有 id/位置/状态/摘要/截短提示词/error,
+ * 规格与素材字段整块缺席。用一个 object 把两档都装下(spec 字段 optional),而不是
+ * union —— anyOf 在客户端校验器里不可靠(见 toolAnnotations.test 的说明),对 output
+ * 同样成立。update_task 等永远 detailed 的回包仍用严格的 cardSnapshotSchema。
+ */
+const statusCardSchema = cardSnapshotSchema.partial({
+  model: true,
+  resolution: true,
+  ratio: true,
+  duration: true,
+  generateAudio: true,
+  mode: true,
+  webSearch: true,
+  referenceCounts: true,
+  references: true,
+}).describe(
+  'With fields:"detailed" (default) every field below is present. With fields:"concise" only cardId/'
+  + 'boardId/order/summary/summaryStale/prompt (60 chars)/status/error come back — no spec, no '
+  + 'materials, no taskId/paths/versions.',
+)
+
 const startResultShape = {
   started: z.array(z.string()),
   skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })),
@@ -310,6 +340,8 @@ const startOutputSchema = z.looseObject({
 })
 
 const statusOutputSchema = z.looseObject({
+  fields: z.enum(['concise', 'detailed']).describe('Echo of the requested detail level.'),
+  project: projectBriefSchema.describe('The ACTIVE project this snapshot is scoped to.'),
   total: z.number().describe('Total cards matching the current scope + cardIds filter, across ALL pages.'),
   scope: z.looseObject({
     boardId: z.string().optional(),
@@ -323,7 +355,7 @@ const statusOutputSchema = z.looseObject({
   boards: z.array(boardBriefSchema),
   // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
-  cards: z.array(cardSnapshotSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
+  cards: z.array(statusCardSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
   pageIndex: z.array(z.object({
     page: z.number(),
     cardIds: z.array(z.string()),
@@ -1024,8 +1056,19 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'Do NOT raise pageSize just to avoid paging: paging is already cheap thanks to pageIndex, while '
       + 'cards you pull sit in your context for the rest of the session, and oversized results get '
       + 'silently truncated by the client. `total` counts every match in scope; hasMore/page/totalPages '
-      + 'describe the slice you got.',
+      + 'describe the slice you got.\n'
+      + 'PICK THE DETAIL LEVEL. `fields:"concise"` returns each card as id/position/status/summary/'
+      + 'a 60-char prompt head/error only — about a third of the size — and is the right call for '
+      + '"how is it going", "which cards failed", "which card is the rooftop shot" and for choosing '
+      + 'cardIds before acting. Use the default `"detailed"` only when you are about to EDIT specs or '
+      + 'need materials/paths/versions. Concise first, detailed for the few cards you then care about.',
     inputSchema: z.object({
+      fields: z.enum(['concise', 'detailed']).optional().describe(
+        'Detail level per card. "concise" = cardId/boardId/order/summary/prompt(60 chars)/status/error — '
+        + 'use it for progress checks and for picking cards. "detailed" (default) adds model/resolution/'
+        + 'ratio/duration/generateAudio/mode/webSearch, material name lists, taskId, localPath/remoteUrl '
+        + 'and versions — use it right before editing specs or when you must report a video address.',
+      ),
       cardIds: z.array(z.string()).optional().describe(
         'Limit to specific cards, ACROSS pages (an explicit id list means "just these", so it is not '
         + 'narrowed to the active board). Omit to list the scoped board.',
@@ -1353,6 +1396,48 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_set_project_summary', {
+    description:
+      'Leave a one-line note on a project (剧) saying what it IS ("三集科幻短剧 · 赛博都市 · 主角林夏"). '
+      + 'This is the top layer of the three signposts (project → board → card summaries): '
+      + 'video_workbench_list_projects otherwise shows only names and counts, and names are often '
+      + '"未命名剧 3", so with several projects you would have to switch into each one to learn what it '
+      + 'holds. Write one when you start or take over a project, and refresh it when the premise changes. '
+      + 'Pass an empty string to clear it. Omit projectId to annotate the ACTIVE project.\n'
+      + `FORMAT — telegraphic, not prose. Hard limit ${WORKBENCH_PROJECT_SUMMARY_MAX} characters; over that `
+      + 'the call is REJECTED (not truncated). 2-4 facts joined by " · ", no verbs, no period: genre/format · '
+      + 'setting · lead characters. Say what the project IS; never counts or progress — those are in '
+      + 'list_projects and go stale.\n'
+      + 'It rides along in the `project` header of every workbench call, so keep it short. '
+      + 'This does NOT invalidate an IR you are holding.',
+    inputSchema: z.object({
+      projectId: z.string().min(1).optional().describe(
+        'Project to annotate. Omit = the ACTIVE project. Other ids come from video_workbench_list_projects.',
+      ),
+      summary: z.string().max(WORKBENCH_PROJECT_SUMMARY_MAX).describe(
+        `Telegraphic index entry, max ${WORKBENCH_PROJECT_SUMMARY_MAX} chars: 2-4 facts joined by " · ", `
+        + 'no verbs, no period ("三集科幻短剧 · 赛博都市 · 主角林夏"). Empty string clears it. Over the limit '
+        + 'is rejected, not trimmed.',
+      ),
+    }),
+    outputSchema: z.looseObject({
+      ok: z.boolean(),
+      workbench: workbenchSummarySchema,
+    }),
+    annotations: WRITE_IDEMPOTENT,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_project_summary',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { ok: boolean }
+      return okResult(['✅ video_workbench_set_project_summary — saved.'], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_project_summary', error)
+    }
+  })
+
   server.registerTool('video_workbench_remove_tasks', {
     description:
       'Remove cards from the 「生成视频」 workbench page. Only use when the user explicitly asks to ' +
@@ -1378,8 +1463,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_list_projects', {
     description:
-      'List every project (剧 — a series/film that groups the workbench pages/segments). Returns id, name ' +
-      'and counts (segments, cards, active, failed, done, doneSeconds). Every other video_workbench_* tool ' +
+      'List every project (剧 — a series/film that groups the workbench pages/segments). Returns id, name, ' +
+      'counts (segments, cards, active, failed, done, doneSeconds) and the one-line `summary` if someone ' +
+      'wrote one (video_workbench_set_project_summary) — that summary is how you tell projects apart ' +
+      'without switching into each. Every other video_workbench_* tool ' +
       'acts on the ACTIVE project only; call video_workbench_switch_project to change it.',
     inputSchema: z.object({}),
     annotations: READ_ONLY,

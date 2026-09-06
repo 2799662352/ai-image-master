@@ -109,6 +109,12 @@ export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
 export const WORKBENCH_BOARD_SUMMARY_MAX = 60
 
 /**
+ * 剧摘要上限。与页摘要同长:一部剧一条,随 list_projects 和每次工具回包的 project 头
+ * 一起回传,八部剧就是八条。够写「三集科幻短剧 · 赛博都市 · 主角林夏」,不够写简介。
+ */
+export const WORKBENCH_PROJECT_SUMMARY_MAX = 60
+
+/**
  * 卡片摘要上限。比页摘要更短 —— 页摘要一页一条,卡片摘要是**一页里每张卡一条**,
  * 二十张卡就是二十条,长度直接乘以卡数。40 字够写「主角跳车 · 夜外 · 追兵逼近」
  * 这种电报体,而这正是它该有的样子:它是索引,不是简介。
@@ -197,6 +203,14 @@ export interface VideoWorkbenchProject {
   createdAt: number
   /** 只在改名时更新;「最近活动」由卡片的 updatedAt 派生,见 projectStats。 */
   updatedAt: number
+  /**
+   * 一句话说明这部剧是什么(「三集科幻短剧 · 赛博都市 · 主角林夏」)。
+   *
+   * 分段和卡片各有一层 agent 写的路标,剧此前没有:list_projects 只回数字,agent 面对
+   * 八部剧只能靠剧名猜,而剧名常常是「未命名剧 3」。由 agent 写
+   * (video_workbench_set_project_summary),不参与生成、不进撤销栈、不动并发令牌。
+   */
+  summary?: string
   /**
    * 仅升级生成的「默认项目」带此标记:总览顶部显示迁移提示条。用户关闭提示或
    * 改名后清除。不影响任何数据语义。

@@ -213,6 +213,40 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
   }
 }
 
+/** status `fields:'concise'` 下的单卡:只回「这是哪一镜、什么状态」,规格与素材留给 detailed。 */
+export interface WorkbenchCardSnapshotConcise {
+  cardId: string
+  boardId?: string
+  order: number
+  summary?: string
+  summaryStale?: boolean
+  /** 截到 60 字(detailed 是 120)。 */
+  prompt: string
+  status: string
+  error?: string
+}
+
+const CONCISE_PROMPT_MAX = 60
+
+/**
+ * 精简快照:约为完整快照三分之一的体积。给「进展怎样了 / 挑几张下手」这类只需要
+ * 知道存在与状态的巡视用;要改规格、要报地址,再拿 detailed 或 export。
+ * error 保留 —— 它是 failed 状态下唯一有信息量的字段,截掉就得再来一趟。
+ */
+export function snapshotCardConcise(card: VideoWorkbenchCard): WorkbenchCardSnapshotConcise {
+  const summaryState = cardSummaryState(card)
+  return {
+    cardId: card.id,
+    ...(card.boardId ? { boardId: card.boardId } : {}),
+    order: card.order,
+    ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
+    ...(summaryState === 'stale' ? { summaryStale: true } : {}),
+    prompt: card.prompt.length > CONCISE_PROMPT_MAX ? `${card.prompt.slice(0, CONCISE_PROMPT_MAX)}…` : card.prompt,
+    status: card.status,
+    ...(card.error ? { error: card.error } : {}),
+  }
+}
+
 /** 版本摘要:只给 seq + 地址 + 当时的提示词,不把整份规格塞进回包。 */
 function versionBrief(v: VideoWorkbenchVersion): {
   seq: number
@@ -257,7 +291,14 @@ export interface WorkbenchSummary {
    * 当前剧(project)。所有 video_workbench_* 工具都作用于它;boards / statusCounts
    * 也只统计它 —— 别的剧对 agent 不可见,和用户在界面上看到的一致。
    */
-  project: { id: string; name: string; segments: number; cards: number }
+  project: {
+    id: string
+    name: string
+    segments: number
+    cards: number
+    /** agent 写的一行剧摘要(video_workbench_set_project_summary);没写过就没有这个字段。 */
+    summary?: string
+  }
   activeBoardId: string
   boards: WorkbenchBoardBrief[]
   statusCounts: WorkbenchStatusCounts
@@ -308,6 +349,7 @@ export function snapshotWorkbench(
       name: project?.name ?? '',
       segments: ownBoards.length,
       cards: ownCardCount,
+      ...(project?.summary ? { summary: project.summary } : {}),
     },
     activeBoardId: state.activeBoardId,
     boards: [...ownBoards]

@@ -42,6 +42,14 @@ describe('ProjectOverview', () => {
     expect(S().boards.find((b) => b.id === S().activeBoardId)!.name).toBe('隧道')
   })
 
+  it('agent 写的剧摘要显示在剧名下方;没写就不占位', () => {
+    const { rerender } = render(<ProjectOverview />)
+    expect(screen.queryByTitle('Agent 写的一行说明')).toBeNull()
+    S().setProjectSummary(S().activeProjectId, '三集科幻短剧 · 赛博都市')
+    rerender(<ProjectOverview />)
+    expect(screen.getByTitle('Agent 写的一行说明').textContent).toBe('三集科幻短剧 · 赛博都市')
+  })
+
   it('「新建分段」在当前剧下加一段并进入它', () => {
     render(<ProjectOverview />)
     fireEvent.click(screen.getByRole('button', { name: '新建分段' }))

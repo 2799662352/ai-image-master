@@ -42,6 +42,13 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
   你下一轮就在新剧里干活,不会往旧剧塞卡。
 - 用户开一部新片子:`video_workbench_create_project`(自带一个空分段,返回
   `projectId` + `boardId`),然后照常 `video_workbench_add_tasks`。
+- **三层路标都要写。** 剧:`video_workbench_set_project_summary`(≤60 字电报体,
+  「三集科幻短剧 · 赛博都市 · 主角林夏」,省略 projectId = 当前剧);分段:
+  `set_board_summary`;卡片:`set_card_summary`。剧名常常是「未命名剧 3」,没有剧摘要,
+  下次面对八部剧只能逐个切进去看。接手或开新剧时就写,前提变了就刷新。
+- **巡视用 `status({ fields: "concise" })`。** 只回 id / 位置 / 状态 / 摘要 / 60 字提示词 /
+  error,体积约为缺省 detailed 的三分之一。「进展怎样」「哪几张失败」「哪张是天台戏」
+  「先挑几张再动手」都用它;要改规格、要报成片地址,再对点名的几张拿 detailed 或 export。
 - `video_workbench_export` 的 IR 带 `projectId`;`apply` 时若用户已切到别的剧,整份被拒
   (`conflict.reason = "project-mismatch"`)—— 重新 export,别 force。
 - 批次完成推送里带「剧名 › 分段名」,汇报时照抄这个位置,用户按它去找成片。
