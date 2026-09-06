@@ -42,6 +42,20 @@ describe('ProjectOverview', () => {
     expect(S().boards.find((b) => b.id === S().activeBoardId)!.name).toBe('隧道')
   })
 
+  it('总览不是死胡同:头部「进入分段」回到上次停留的分段;分段卡带显式「打开 ›」', () => {
+    S().addProject('追车戏')
+    S().addBoard('隧道')
+    const tunnel = S().activeBoardId
+    S().openOverview()
+    render(<ProjectOverview />)
+    // 分段卡上有肉眼可见的入口字样
+    expect(screen.getAllByText('打开 ›')).toHaveLength(2)
+    // 头部按钮指向上次停留的「隧道」而不是第一段
+    fireEvent.click(screen.getByRole('button', { name: '进入分段 隧道' }))
+    expect(S().activeBoardId).toBe(tunnel)
+    expect(S().viewByProject[S().activeProjectId]).toEqual({ mode: 'board', boardId: tunnel })
+  })
+
   it('agent 写的剧摘要显示在剧名下方;没写就不占位', () => {
     const { rerender } = render(<ProjectOverview />)
     expect(screen.queryByTitle('Agent 写的一行说明')).toBeNull()

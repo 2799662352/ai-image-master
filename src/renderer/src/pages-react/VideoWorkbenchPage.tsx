@@ -175,8 +175,8 @@ export default function VideoWorkbenchPage() {
         <>
         {/*
           顶部两行:第一行标题 + 统计 + 工具条,第二行面包屑 + 分段页签通栏。
-          页签必须独占一行 —— 它现在是单行横向滚动,若与右侧那一排工具按钮同行,
-          只能吃剩余宽度,窄窗口下会被压成一根竖条叠到标题上。
+          页签必须独占一行:若与右侧那一排工具按钮同行,只能吃剩余宽度,窄窗口下
+          会被压成一根竖条叠到标题上。
         */}
         <div className="border-b-2 border-[#3F3F46] pb-3 space-y-2">
         <div className="flex items-center gap-3 flex-wrap">

@@ -42,7 +42,9 @@ export function SegmentCard({ board, stats, cover, index, onOpen, onDragStart }:
       <div className="vw-seg-body">
         <div className="vw-seg-name">{board.name}</div>
         <div className="vw-seg-sub">
-          {stats.total} 镜{cost ? ` · ${cost}` : ''}
+          <span>{stats.total} 镜{cost ? ` · ${cost}` : ''}</span>
+          {/* 显式的入口字样:整张卡可点,但没有这两个字用户看不出来它是门。 */}
+          <span className="vw-seg-open" aria-hidden="true">打开 ›</span>
         </div>
         <div className="vw-strip" style={{ height: 3, marginTop: 8 }} aria-hidden="true">
           {stats.done > 0 && <div style={{ flex: stats.done, background: '#22c55e' }} />}

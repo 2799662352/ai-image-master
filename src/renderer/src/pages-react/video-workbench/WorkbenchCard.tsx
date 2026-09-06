@@ -51,7 +51,7 @@ import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { AdvancedVideoEditModal, type AdvancedEditFrame } from './AdvancedVideoEditModal'
 import { PortraitPickerModal } from './PortraitPickerModal'
-import { ResultVideoPlayer, hasPlaybackSource } from './ResultVideoPlayer'
+import { ResultVideoPlayer, hasPlaybackSource, type PlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
@@ -748,7 +748,24 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
     setVersionIdx(versions.length > 0 ? versions.length - 1 : 0)
   }, [versions.length])
   // 渲染中显示历史版本;没有版本记录(老数据)时退回卡片自身的结果字段。
-  const playbackSource = versions[versionIdx] ?? card
+  //
+  // 最新那一版 = 卡片当前的结果,以卡片字段为准、版本记录兜底。不能只看版本记录:
+  // 早于「持久地址回填」那批老卡,版本条目里没有 localPath,只看它就会跳过本地副本
+  // 直接去播那条早已过期的上游地址,而卡片底部却拿 card.localPath 写着「已保存」。
+  const showingLatest = versions.length === 0 || versionIdx === versions.length - 1
+  const shownVersion = versions[versionIdx]
+  const playbackSource: PlaybackSource = showingLatest
+    ? {
+        localPath: card.localPath ?? shownVersion?.localPath,
+        remoteUrl: card.remoteUrl ?? shownVersion?.remoteUrl,
+        videoUrl: card.videoUrl ?? shownVersion?.videoUrl,
+      }
+    : shownVersion ?? card
+  // 播放器报「本地副本读不出」:persistence 仍是 done,但文件已不在(被清理/被挪)。
+  // 这时要把免费的「重新保存」亮出来,不然用户只看得见花钱的「重新生成」。
+  // 重新保存成功会换 localPath,key 变化让这个标记自然归零。
+  const [localGone, setLocalGone] = useState(false)
+  useEffect(() => { setLocalGone(false) }, [card.localPath])
 
   return (
     <div
@@ -1174,14 +1191,31 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           <div className="space-y-2">
             {/* 本地字节经 IPC 转 blob: 播放(local-file:// 直塞 <video> 会空白,
                 见 ResultVideoPlayer 注释);失败自动降级远程源/错误兜底 */}
-            <ResultVideoPlayer source={playbackSource} />
+            <ResultVideoPlayer
+              source={playbackSource}
+              onLocalUnavailable={showingLatest ? () => setLocalGone(true) : undefined}
+            />
             {isActiveStatus(card.status) && versions.length > 0 && (
               <p className="text-[10px] text-white/40">新版本生成中,当前显示历史版本</p>
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/40">
               <VersionSwitcher versions={versions} index={versionIdx} onChange={setVersionIdx} />
               {card.persistence === 'done' && card.localPath ? (
-                <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
+                <span className="flex items-center gap-1.5 min-w-0 max-w-[60%]">
+                  <span className={localGone ? 'truncate text-orange-400' : 'truncate'} title={card.localPath}>
+                    {localGone ? '本地副本已丢失: ' : '已保存: '}{card.localPath}
+                  </span>
+                  {localGone && (card.taskId || card.videoUrl) && (
+                    <button
+                      type="button"
+                      title="按任务号重新取一次视频并保存，不重新生成、不花钱"
+                      className="shrink-0 border border-orange-400/50 px-1.5 py-0.5 text-[10px] text-orange-400 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
+                      onClick={() => { void resaveCard(card.id) }}
+                    >
+                      ↻ 重新保存
+                    </button>
+                  )}
+                </span>
               ) : card.persistence === 'failed' ? (
                 <span className="flex items-center gap-1.5 text-orange-400">
                   {/* 不能写「视频仍可播放/下载」—— 本地和 COS 都没副本时只剩上游那条会

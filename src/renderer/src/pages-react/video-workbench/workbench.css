@@ -535,13 +535,14 @@
 .vw-ghost:hover:not(:disabled) { border-color: #fce300; color: #fff; }
 .vw-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* ---------- 分段页:面包屑 + 单行页签 ---------- */
-.vw-crumb { font-size: 11px; color: #71717a; background: transparent; padding: 0; }
-.vw-crumb:hover { color: #fce300; }
+/* ---------- 分段页:面包屑 + 页签(自动换行,不出滚动条) ---------- */
+.vw-crumb { font-size: 11px; color: #a1a1aa; background: transparent; border: 1px solid #3f3f46; padding: 1px 8px; cursor: pointer; transition: color .12s, border-color .12s; }
+.vw-crumb:hover { color: #fce300; border-color: #fce300; }
 .vw-crumb-sep { color: #3f3f46; font-size: 11px; }
+.vw-crumb-project { font-size: 11px; color: #71717a; }
 .vw-crumb-cur { font-size: 11px; color: #e4e4e7; }
-.vw-tabs-scroll { display: flex; align-items: center; gap: 4px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; padding-bottom: 2px; max-width: 100%; }
-.vw-tabs-scroll > * { flex: none; }
+.vw-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.vw-tabs > * { flex: none; }
 
 /* ---------- 剧总览(ProjectOverview / SegmentCard / MigrationNotice) ---------- */
 .vw-chip { border: 1px solid #3f3f46; color: #71717a; font-size: 11px; padding: 2px 8px; line-height: 16px; }
@@ -560,7 +561,11 @@
 .vw-seg-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 1100px) { .vw-seg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .vw-seg { display: block; text-align: left; background: #18181b; border: 1px solid #3f3f46; color: inherit; padding: 0; width: 100%; }
-.vw-seg:hover { border-color: #fce300; }
+.vw-seg { cursor: pointer; transition: border-color .12s, transform .12s; }
+.vw-seg:hover { border-color: #fce300; transform: translateY(-1px); }
+.vw-seg:hover .vw-seg-name { color: #fce300; }
+.vw-seg:hover .vw-seg-open { color: #fce300; }
+.vw-seg-open { color: #a1a1aa; font-size: 11px; letter-spacing: .04em; white-space: nowrap; }
 .vw-seg-new { display: flex; flex-direction: column; align-items: center; justify-content: center; border-style: dashed; color: #71717a; min-height: 200px; }
 .vw-seg-new:hover { color: #fce300; }
 .vw-seg-cover { position: relative; aspect-ratio: 16 / 9; border-bottom: 1px solid #3f3f46; background: #18181b repeating-linear-gradient(90deg, #27272a 0 1px, transparent 1px 33.33%); display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -584,4 +589,4 @@
 .vw-palette-empty { padding: 12px; font-size: 12px; color: #71717a; }
 .vw-seg-body { padding: 10px 12px 12px; }
 .vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; }
+.vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }

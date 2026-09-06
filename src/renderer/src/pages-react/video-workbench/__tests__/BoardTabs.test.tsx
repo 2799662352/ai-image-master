@@ -52,9 +52,21 @@ describe('BoardTabs', () => {
     render(<BoardTabs />)
     expect(screen.queryByText('别剧的段')).toBeNull()
     expect(screen.getByRole('tab', { name: /页面 1/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '返回总览' }).textContent).toContain('默认项目')
+    // 面包屑:「‹ 总览」是按钮,剧名与当前段名是路径文字
+    expect(screen.getByRole('button', { name: '返回总览' }).textContent).toContain('总览')
+    expect(screen.getByText('默认项目')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '返回总览' }))
     expect(S().viewByProject['project-default']).toEqual({ mode: 'overview' })
+  })
+
+  it('页签自动换行,不出横向滚动条(与 superdesign 定稿一致)', () => {
+    const S = () => useVideoWorkbenchStore.getState()
+    for (let i = 0; i < 12; i += 1) S().addBoard()
+    render(<BoardTabs />)
+    const list = screen.getByRole('tablist', { name: '本剧分段' })
+    expect(list.className).toContain('vw-tabs')
+    expect(list.className).not.toContain('scroll')
+    expect(screen.getAllByRole('tab')).toHaveLength(13)
   })
 
   /**

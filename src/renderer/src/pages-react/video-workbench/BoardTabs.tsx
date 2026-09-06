@@ -1,4 +1,4 @@
-// 「生成视频」工作台「分段」(board)页签条:只显示当前剧的分段,单行横向滚动;
+// 「生成视频」工作台「分段」(board)页签条:只显示当前剧的分段,自动换行不出滚动条;
 // 切换 / 新建(+) / 双击行内重命名(Enter 确认、Esc 取消)/ 两步确认删除(避开
 // window.confirm,jsdom 与桌面端一致)。上方一行面包屑「‹ 剧名 › 分段名」,‹ 回总览。
 // 视觉遵循赛博朋克 token:激活段 #FCE300 描边,未激活 #3F3F46。
@@ -85,6 +85,7 @@ export function BoardTabs() {
     <div className="flex flex-col gap-1.5 min-w-0 w-full">
       {/* 面包屑:‹ 回总览。剧名点击也回总览 —— 分段页里「我在哪部剧」要一眼可见。 */}
       <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+        {/* 「‹ 总览」要长得像一个可点的按钮:11px 灰字的剧名没人会想到去点。 */}
         <button
           type="button"
           aria-label="返回总览"
@@ -92,14 +93,20 @@ export function BoardTabs() {
           className="vw-crumb"
           onClick={openOverview}
         >
-          ‹ {projectName}
+          ‹ 总览
         </button>
+        <span className="vw-crumb-sep">›</span>
+        <span className="vw-crumb-project">{projectName}</span>
         <span className="vw-crumb-sep">›</span>
         <span className="vw-crumb-cur">{activeBoard?.name ?? ''}</span>
       </div>
     <div className="flex items-start gap-3 flex-wrap">
-    {/* 单行横向滚动而不是换行:十几个分段折成三排就是这次改版要解决的问题。 */}
-    <div role="tablist" aria-label="本剧分段" className="vw-tabs-scroll">
+    {/*
+      自动换行,不出滚动条 —— 与 superdesign 定稿(方案 A)一致。「十几个页签折成三排」
+      的病根是所有片子挤在一部剧里,现在分段按剧隔开,一部剧几段换一两行是正常的;
+      横向滚动条反而把后面的分段藏起来,用户看不见也想不到去滚。
+    */}
+    <div role="tablist" aria-label="本剧分段" className="vw-tabs">
       {boards.map((board) => {
         const active = board.id === activeBoardId
         const editingName = editing?.id === board.id && editing.field === 'name'

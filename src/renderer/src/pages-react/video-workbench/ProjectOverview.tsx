@@ -15,6 +15,7 @@ export function ProjectOverview() {
   const project = useVideoWorkbenchStore((s) => s.projects.find((p) => p.id === s.activeProjectId))
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
+  const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const openBoard = useVideoWorkbenchStore((s) => s.openBoard)
   const addBoard = useVideoWorkbenchStore((s) => s.addBoard)
   const renameProject = useVideoWorkbenchStore((s) => s.renameProject)
@@ -30,6 +31,10 @@ export function ProjectOverview() {
   const stats = summarizeProject(project.id, boards, cards)
   const t = stats.totals
   const cost = formatCostParts(t.cost.usd, t.cost.cny)
+  // 「进入分段」回到工作台:优先上次停留的那一段(openOverview 不动 activeBoardId),
+  // 否则第一段。总览不能是死胡同 —— 只靠分段卡这一个入口,用户会以为回不去了。
+  const resumeBoard =
+    stats.segments.find(({ board }) => board.id === activeBoardId)?.board ?? stats.segments[0]?.board
 
   const beginRename = () => {
     setDraft(project.name)
@@ -84,13 +89,24 @@ export function ProjectOverview() {
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-none pt-1">
+          {resumeBoard && (
+            <button
+              type="button"
+              className="vw-ghost"
+              aria-label={`进入分段 ${resumeBoard.name}`}
+              title="回到工作台,继续编辑这一段的镜头"
+              onClick={() => openBoard(resumeBoard.id)}
+            >
+              进入「{resumeBoard.name}」 ›
+            </button>
+          )}
           <button type="button" className="vw-primary" aria-label="新建分段" onClick={() => addBoard()}>
             + 新建分段
           </button>
         </div>
       </div>
       <div className="text-[11px] text-[#71717a]">
-        分段按剧中顺序排列;点进分段编辑镜头;把分段卡拖到左侧剧栏可移到别的剧。
+        点分段卡进入编辑镜头;拖分段卡到左侧剧栏可移到别的剧;换剧点左侧剧栏。
       </div>
       <div className="vw-seg-grid">
         {stats.segments.map(({ board, stats: s, cover }, i) => (

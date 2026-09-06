@@ -284,7 +284,11 @@ function PlaybackFallback({ localPath, reason, onRetry, externalUrl }: {
  * 不再有「加载中」这一档:协议是流式的,`<video>` 自己会边取边放,没有"先把整份读完"
  * 那个阶段可等。
  */
-function LocalResultVideo({ localPath, remotes }: { localPath: string; remotes: string[] }) {
+function LocalResultVideo({
+  localPath,
+  remotes,
+  onLocalUnavailable,
+}: { localPath: string; remotes: string[]; onLocalUnavailable?: () => void }) {
   // 文件不存在 / 编码不受支持都由 <video> 的 error 事件报出来,统一走降级。
   const [failed, setFailed] = useState(false)
 
@@ -300,7 +304,12 @@ function LocalResultVideo({ localPath, remotes }: { localPath: string; remotes: 
       preload="metadata"
       src={toStreamableUri(localPath)}
       className={VIDEO_CLASS}
-      onError={() => setFailed(true)}
+      onError={() => {
+        setFailed(true)
+        // 告诉卡片:本地那份读不出了。卡片据此把「重新保存」亮出来 —— 那是按任务号
+        // 免费重取的路,否则用户面前只剩花钱的「重新生成」。
+        onLocalUnavailable?.()
+      }}
     />
   )
 }
@@ -312,10 +321,19 @@ export type PlaybackSource = Pick<VideoWorkbenchCard, 'localPath' | 'remoteUrl' 
  * 结果视频播放器入口。localPath / remoteUrl / videoUrl 全缺时返回 null
  * (与旧 playbackSrc 返回 null 的分支等价,外层不渲染结果区)。
  */
-export function ResultVideoPlayer({ source }: { source: PlaybackSource }) {
+export function ResultVideoPlayer({
+  source,
+  onLocalUnavailable,
+}: { source: PlaybackSource; onLocalUnavailable?: () => void }) {
   const remotes = remoteVideoCandidates(source)
   if (source.localPath) {
-    return <LocalResultVideo localPath={source.localPath} remotes={remotes} />
+    return (
+      <LocalResultVideo
+        localPath={source.localPath}
+        remotes={remotes}
+        onLocalUnavailable={onLocalUnavailable}
+      />
+    )
   }
   if (remotes.length > 0) return <RemoteResultVideo candidates={remotes} />
   return null

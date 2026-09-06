@@ -120,6 +120,27 @@ describe('ResultVideoPlayer — 本地播放(流式协议)', () => {
     await waitFor(() => expect(queryVideo()?.getAttribute('src')).toBe('https://cos.example/v.mp4'))
   })
 
+  it('本地播放失败 → 上报 onLocalUnavailable,兜底文案点明是本地副本读不出', async () => {
+    vi.useFakeTimers()
+    try {
+      const onLocalUnavailable = vi.fn()
+      render(
+        <ResultVideoPlayer
+          source={makeCard({ localPath: 'D:\\swept.mp4', videoUrl: 'https://tmp.example/v.mp4' })}
+          onLocalUnavailable={onLocalUnavailable}
+        />,
+      )
+      fireEvent.error(queryVideo()!)
+      expect(onLocalUnavailable).toHaveBeenCalledTimes(1)
+      expect(queryVideo()?.getAttribute('src')).toBe('https://tmp.example/v.mp4')
+      // 远程也耗尽 → 兜底要先说本地那份没了,再说远程地址的事
+      await burnRetryWindow()
+      expect(screen.getByTestId('vw-playback-fallback').textContent).toContain('本地副本读不出')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('本地播放失败且只有上游临时地址 → 也降级', async () => {
     render(
       <ResultVideoPlayer
