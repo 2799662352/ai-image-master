@@ -253,6 +253,11 @@ export interface WorkbenchStatusCounts {
  * 最强的事实来源,大结果压缩成紧凑 schema)。体积 O(页数),极小。
  */
 export interface WorkbenchSummary {
+  /**
+   * 当前剧(project)。所有 video_workbench_* 工具都作用于它;boards / statusCounts
+   * 也只统计它 —— 别的剧对 agent 不可见,和用户在界面上看到的一致。
+   */
+  project: { id: string; name: string; segments: number; cards: number }
   activeBoardId: string
   boards: WorkbenchBoardBrief[]
   statusCounts: WorkbenchStatusCounts
@@ -270,7 +275,10 @@ export interface WorkbenchSummary {
 }
 
 export function snapshotWorkbench(
-  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId' | 'selectedCardIds'>,
+  state: Pick<
+    VideoWorkbenchState,
+    'cards' | 'boards' | 'activeBoardId' | 'selectedCardIds' | 'projects' | 'activeProjectId'
+  >,
 ): WorkbenchSummary {
   const statusCounts: WorkbenchStatusCounts = {
     draft: 0,
@@ -280,18 +288,29 @@ export function snapshotWorkbench(
     succeeded: 0,
     failed: 0,
   }
+  // 只看当前剧:别的剧的分段和卡片对 agent 不存在
+  const ownBoards = state.boards.filter((b) => b.projectId === state.activeProjectId)
+  const ownBoardIds = new Set(ownBoards.map((b) => b.id))
   const cardCountByBoard = new Map<string, number>()
+  let ownCardCount = 0
   for (const card of state.cards) {
+    if (!card.boardId || !ownBoardIds.has(card.boardId)) continue
+    ownCardCount += 1
     if (card.status in statusCounts) {
       statusCounts[card.status as keyof WorkbenchStatusCounts] += 1
     }
-    if (card.boardId) {
-      cardCountByBoard.set(card.boardId, (cardCountByBoard.get(card.boardId) ?? 0) + 1)
-    }
+    cardCountByBoard.set(card.boardId, (cardCountByBoard.get(card.boardId) ?? 0) + 1)
   }
+  const project = state.projects.find((p) => p.id === state.activeProjectId)
   return {
+    project: {
+      id: state.activeProjectId,
+      name: project?.name ?? '',
+      segments: ownBoards.length,
+      cards: ownCardCount,
+    },
     activeBoardId: state.activeBoardId,
-    boards: [...state.boards]
+    boards: [...ownBoards]
       .sort((a, b) => a.order - b.order)
       // 摘要一起带上：这是别页在「只读当前页」下唯一的判据 —— 光看「第 3 页 20 张卡」
       // 决定不了要不要翻过去，而页名常常只是「页面 3」。没写摘要的页不带这个字段。

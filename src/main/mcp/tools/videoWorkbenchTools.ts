@@ -160,11 +160,52 @@ const SELECTED_CARD_IDS_DOC =
   + 'Dragging cards into the chat also syncs the selection to the dragged cards, so this doubles '
   + 'as "what the user just handed me".'
 
+/** 当前剧(project)的头:所有 video_workbench_* 都作用于它,boards / statusCounts 也只统计它。 */
+const projectBriefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  segments: z.number().describe('Boards (pages / 分段) in this project.'),
+  cards: z.number().describe('Cards in this project across all its boards.'),
+})
+
 const workbenchSummarySchema = z.object({
+  project: projectBriefSchema.describe(
+    'The ACTIVE project (剧). Everything below is scoped to it; other projects are invisible here — '
+    + 'see video_workbench_list_projects / video_workbench_switch_project.',
+  ),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
-  statusCounts: statusCountsSchema.describe('Global card status tally across ALL boards.'),
+  statusCounts: statusCountsSchema.describe('Card status tally across ALL boards of the active project.'),
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
+})
+
+const projectListItemSchema = z.looseObject({
+  id: z.string(),
+  name: z.string(),
+  segments: z.number(),
+  cards: z.number(),
+  active: z.number().describe('Cards preparing/queued/running.'),
+  failed: z.number(),
+  done: z.number(),
+  doneSeconds: z.number().describe('Sum of spec durations of succeeded cards.'),
+  legacy: z.boolean().optional().describe('The project that absorbed pre-upgrade pages; user has not renamed/dismissed it yet.'),
+})
+
+const listProjectsOutputSchema = z.looseObject({
+  activeProjectId: z.string(),
+  projects: z.array(projectListItemSchema),
+})
+
+const switchProjectOutputSchema = z.looseObject({
+  activeProjectId: z.string(),
+  project: z.object({ id: z.string(), name: z.string() }),
+  boards: z.array(boardBriefSchema),
+})
+
+const createProjectOutputSchema = z.looseObject({
+  projectId: z.string(),
+  boardId: z.string().describe('The one segment the new project starts with — add cards into it.'),
+  name: z.string(),
 })
 
 /** 素材紧凑清单条目:只有截断后的展示名,无 URL 全文。 */
@@ -381,10 +422,14 @@ const irSchema = z.looseObject({
 
 const applyOutputSchema = z.looseObject({
   ok: z.boolean(),
-  conflict: z.object({ expected: z.number(), actual: z.number() }).optional().describe(
+  conflict: z.union([
+    z.object({ expected: z.number(), actual: z.number() }),
+    z.object({ reason: z.literal('project-mismatch'), expected: z.string(), actual: z.string() }),
+  ]).optional().describe(
     'Set when the STRUCTURE token was stale (cards added/deleted/reordered) — NOTHING was written. '
     + 'Re-export, redo your edits, apply again. Single-card conflicts never land here; they appear in '
-    + '`skipped` while everything else is applied.',
+    + '`skipped` while everything else is applied. reason="project-mismatch" means the IR was exported '
+    + 'under another project (the user switched) — also nothing written; re-export.',
   ),
   boards: z.object({
     created: z.array(z.string()),
@@ -946,8 +991,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_status', {
     description:
-      'Snapshot of the 「生成视频」 workbench. The workbench has multiple boards (pages): the result ' +
-      'carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
+      'Snapshot of the 「生成视频」 workbench, SCOPED TO THE ACTIVE PROJECT (剧). The result carries ' +
+      '`project` {id,name,segments,cards}; other projects are invisible here — use ' +
+      'video_workbench_list_projects / video_workbench_switch_project. A project has multiple boards ' +
+      '(pages = 分段/segments): the result carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
       '(look up board names in the boards list). Each card: prompt, spec, status (draft/preparing/' +
       'queued/running/succeeded/failed), compact reference-material name lists, taskId, error, and the ' +
       'saved localPath / permanent remoteUrl for finished videos. Use it to inspect what the user has ' +
@@ -1116,7 +1163,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       // 工具间的选择表在 server instructions 里(MCP 官方把「描述里重复 instructions
       // 已有的内容」列为反模式)。这里只留 apply 自己的硬边界。
-      'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
+      'Acts on the ACTIVE project (剧) only: the IR carries `projectId`, and if the user switched project '
+      + 'since your export the whole apply is rejected with conflict.reason="project-mismatch" — re-export. '
+      + 'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
       + 'rejected with zero writes, and so is omitting a prompt you were carrying (that reads as '
       + 'clearing it). It exists for rebuilding a board wholesale in one atomic shot — all cards '
       + 'change or none do, which no sequence of per-card calls can guarantee.\n'
@@ -1320,6 +1369,65 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_remove_tasks', error)
+    }
+  })
+
+  // ==================== 剧(project) ====================
+  // 工作台是「剧 → 分段(board / page)→ 卡片」三层。上面所有工具都隐式作用于
+  // **当前剧**;这里三个工具负责看/切/建剧。
+
+  server.registerTool('video_workbench_list_projects', {
+    description:
+      'List every project (剧 — a series/film that groups the workbench pages/segments). Returns id, name ' +
+      'and counts (segments, cards, active, failed, done, doneSeconds). Every other video_workbench_* tool ' +
+      'acts on the ACTIVE project only; call video_workbench_switch_project to change it.',
+    inputSchema: z.object({}),
+    annotations: READ_ONLY,
+    outputSchema: listProjectsOutputSchema,
+  }, async (_params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_list_projects', {}, extractCodexThreadId(ctx))
+      return okResult(['✓ video_workbench_list_projects'], result)
+    } catch (error) {
+      return errorResult('video_workbench_list_projects', error)
+    }
+  })
+
+  server.registerTool('video_workbench_switch_project', {
+    description:
+      'Make a project (剧) the ACTIVE one. Every subsequent video_workbench_* call (status / add_tasks / ' +
+      'apply / start …) operates inside it, and the user sees the switch immediately. Get ids from ' +
+      'video_workbench_list_projects. A stale IR exported under another project is rejected by apply ' +
+      'with conflict.reason="project-mismatch" — re-export after switching.',
+    inputSchema: z.object({
+      projectId: z.string().min(1).describe('Project id from video_workbench_list_projects.'),
+    }),
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: switchProjectOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_switch_project', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      return okResult(['✓ video_workbench_switch_project'], result)
+    } catch (error) {
+      return errorResult('video_workbench_switch_project', error)
+    }
+  })
+
+  server.registerTool('video_workbench_create_project', {
+    description:
+      'Create a new project (剧) with one empty segment, switch to it, and return { projectId, boardId, name }. ' +
+      'Use when the user starts a new film/series; then add cards with video_workbench_add_tasks.',
+    inputSchema: z.object({
+      name: z.string().max(80).optional().describe('Project name; omitted = 未命名剧 N.'),
+    }),
+    annotations: WRITE_ADDITIVE,
+    outputSchema: createProjectOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_create_project', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      return okResult(['✓ video_workbench_create_project'], result)
+    } catch (error) {
+      return errorResult('video_workbench_create_project', error)
     }
   })
 }

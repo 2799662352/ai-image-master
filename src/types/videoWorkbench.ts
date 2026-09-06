@@ -504,6 +504,11 @@ export interface WorkbenchIR {
    * 单张卡的规格冲突不看这个,看 `WorkbenchIRCard.rev`。
    */
   structureRevision: number
+  /**
+   * 导出时的当前剧。apply 时若给了且与当前剧不同 → 整份拒绝:用户中途切了剧,
+   * 这份 IR 描述的是另一部剧的看板。省略(老 IR)= 不校验。
+   */
+  projectId?: string
   /** 当前激活页(apply 时若能解析就切过去)。 */
   activeBoardId?: string
   boards: WorkbenchIRBoard[]
@@ -565,8 +570,12 @@ export interface WorkbenchApplyResult {
   /**
    * 结构冲突:卡片集合/位置在导出之后变过,整份被拒,什么都没写。agent 该重新
    * export 再改。单张卡的规格冲突不在这里 —— 那是逐项 `skipped`,其余改动已生效。
+   *
+   * `project-mismatch`:IR 是在另一部剧下导出的(用户中途切了剧),同样整份拒绝。
    */
-  conflict?: { expected: number; actual: number }
+  conflict?:
+    | { expected: number; actual: number }
+    | { reason: 'project-mismatch'; expected: string; actual: string }
   boards: { created: string[]; renamed: string[]; removed: string[] }
   cards: {
     created: string[]

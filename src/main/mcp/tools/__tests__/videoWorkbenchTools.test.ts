@@ -59,7 +59,28 @@ describe('registerVideoWorkbenchTools / schemas', () => {
       'video_workbench_apply',
       'video_workbench_set_board_summary',
       'video_workbench_remove_tasks',
+      'video_workbench_list_projects',
+      'video_workbench_switch_project',
+      'video_workbench_create_project',
     ])
+  })
+
+  it('剧(project)三工具:直通 router,switch 缺 projectId 被 schema 拒绝', async () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const list = toolByName(tools, 'video_workbench_list_projects')
+    await list.handler({}, undefined)
+    expect(router.call).toHaveBeenCalledWith('video_workbench_list_projects', {}, undefined)
+
+    const sw = toolByName(tools, 'video_workbench_switch_project')
+    expect(sw.config.inputSchema.safeParse({}).success).toBe(false)
+    expect(sw.config.inputSchema.safeParse({ projectId: 'p1' }).success).toBe(true)
+    await sw.handler({ projectId: 'p1' }, undefined)
+    expect(router.call).toHaveBeenCalledWith('video_workbench_switch_project', { projectId: 'p1' }, undefined)
+
+    const create = toolByName(tools, 'video_workbench_create_project')
+    expect(create.config.inputSchema.safeParse({}).success).toBe(true)
+    expect(create.config.inputSchema.safeParse({ name: 'x'.repeat(81) }).success).toBe(false)
   })
 
   it('add_tasks schema:接受批量任务与 autoStart,拒绝空 tasks/超限时长', () => {
@@ -681,6 +702,7 @@ describe('handlers → router.call 透传与 banner', () => {
 
 describe('structured output(MCP 2025-11-25)', () => {
   const workbench = {
+    project: { id: 'project-default', name: '默认项目', segments: 1, cards: 2 },
     activeBoardId: 'b1',
     boards: [{ id: 'b1', name: '页面 1', cardCount: 2 }],
     statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },

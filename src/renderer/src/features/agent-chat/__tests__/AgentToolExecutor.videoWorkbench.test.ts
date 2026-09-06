@@ -481,6 +481,8 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     })
     const activeBoardId = useVideoWorkbenchStore.getState().activeBoardId
     expect(added.workbench).toEqual({
+      // 摘要带当前剧:所有 video_workbench_* 都作用于它,统计也只算它
+      project: { id: 'project-default', name: '默认项目', segments: 1, cards: 2 },
       activeBoardId,
       boards: [{ id: activeBoardId, name: expect.any(String), cardCount: 2 }],
       statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },
@@ -958,5 +960,63 @@ describe('video_workbench_reorder', () => {
 
     expect(r.order).toEqual([a, b])
     expect(useVideoWorkbenchStore.getState().structureRevision).toBe(before)
+  })
+})
+
+describe('按当前剧隔离(project)', () => {
+  const S = () => useVideoWorkbenchStore.getState()
+
+  // 先水合再造数据:callTool 会顺手 ensureHydrated,而水合以库里的分段为准 ——
+  // 水合前在内存里建的分段/卡片会被归并,与生产时序(先水合再操作)不符。
+  beforeEach(async () => {
+    await S().ensureHydrated()
+  })
+
+  it('status 只回当前剧的分段与卡,并带 project 头', async () => {
+    S().addCards([{ prompt: 'in-default' }])
+    const p2 = S().addProject('第二部')
+    S().addCards([{ prompt: 'in-p2' }])
+    const r = await callTool('video_workbench_status', { allBoards: true })
+    expect(r.project).toMatchObject({ id: p2, name: '第二部', segments: 1, cards: 1 })
+    expect(r.boards.every((b: { id: string }) => S().boards.find((x) => x.id === b.id)!.projectId === p2)).toBe(true)
+    expect(r.cards.map((c: { prompt: string }) => c.prompt)).toEqual(['in-p2'])
+  })
+
+  it('写工具回带的 workbench 摘要也只看当前剧', async () => {
+    S().addCards([{ prompt: 'in-default' }])
+    S().addProject('第二部')
+    const r = await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'in-p2' }] })
+    expect(r.workbench.project.name).toBe('第二部')
+    expect(r.workbench.boards).toHaveLength(1)
+    expect(r.workbench.statusCounts.draft).toBe(1)
+  })
+
+  it('export 带 projectId;切了剧再 apply 被整份拒绝', async () => {
+    S().addCards([{ prompt: 'a' }])
+    const p1 = S().activeProjectId
+    const ir = await callTool('video_workbench_export', {})
+    expect(ir.projectId).toBe(p1)
+    S().addProject('别的剧')
+    const r = await callTool('video_workbench_apply', { ir })
+    expect(r.ok).toBe(false)
+    expect(r.conflict).toMatchObject({ reason: 'project-mismatch', expected: p1 })
+  })
+
+  it('list / switch / create 三个工具', async () => {
+    const created = await callTool('video_workbench_create_project', { name: '新剧' })
+    expect(S().activeProjectId).toBe(created.projectId)
+    expect(S().boards.find((b) => b.id === created.boardId)!.projectId).toBe(created.projectId)
+    expect(created.name).toBe('新剧')
+    const list = await callTool('video_workbench_list_projects', {})
+    expect(list.projects.map((p: { name: string }) => p.name)).toEqual(['默认项目', '新剧'])
+    expect(list.projects[0].legacy).toBe(true)
+    expect(list.activeProjectId).toBe(created.projectId)
+    const sw = await callTool('video_workbench_switch_project', { projectId: 'project-default' })
+    expect(sw.activeProjectId).toBe('project-default')
+    expect(sw.project.name).toBe('默认项目')
+    expect(S().activeProjectId).toBe('project-default')
+    await expect(callTool('video_workbench_switch_project', { projectId: 'ghost' })).rejects.toThrow(
+      /project not found/,
+    )
   })
 })
