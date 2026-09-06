@@ -9,6 +9,7 @@ import {
   CATIMATION_SUBAGENTS_SKILL,
   CATIMATION_UNDERSTAND_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
+  GRAPHIFY_SKILL,
   FIRST_PARTY_SKILLS,
   KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES,
   installFirstPartySkills,
@@ -433,6 +434,49 @@ describe('installFirstPartySkills', () => {
         'utf8',
       )
       expect(written).toBe(CATIMATION_FFMPEG_WIN_SKILL.content)
+    })
+  })
+
+  describe('GRAPHIFY_SKILL', () => {
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(GRAPHIFY_SKILL)
+      expect(GRAPHIFY_SKILL.name).toBe('graphify')
+      expect(GRAPHIFY_SKILL.name).toMatch(/^[a-z0-9-]+$/)
+      expect(GRAPHIFY_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(GRAPHIFY_SKILL.content).toMatch(/\nname:\s*graphify\n/)
+      expect(GRAPHIFY_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('is query-first and never builds when a graph already exists', () => {
+      const c = GRAPHIFY_SKILL.content
+      expect(c).toContain('graphify-out/graph.json')
+      expect(c).toMatch(/do NOT rebuild/i)
+      expect(c).toContain('graphify query')
+      expect(c).toContain('graphify path')
+      expect(c).toContain('graphify explain')
+    })
+
+    it('defaults to the local AST-only build and gates anything that costs tokens or installs software', () => {
+      const c = GRAPHIFY_SKILL.content
+      expect(c).toContain('graphify update <dir>')
+      expect(c).toMatch(/Do not use `graphify extract --code-only`/)
+      expect(c).toContain('graphify --version')
+      expect(c).toMatch(/Do not install\s+anything without an explicit yes/)
+      expect(c).toMatch(/never reuse the\s+app's image\/video gateway\s+token/)
+    })
+
+    it('is preserved when the user already installed the official skill under the same name', async () => {
+      const officialRoot = await makeTempRoot()
+      const official = '---\nname: graphify\ndescription: official\n---\n# official graphify skill\n'
+      const dir = path.join(officialRoot, 'graphify')
+      await mkdir(dir, { recursive: true })
+      await writeFile(path.join(dir, 'SKILL.md'), official, 'utf8')
+
+      const report = await installFirstPartySkills({ officialRoot })
+
+      expect(report.preserved).toContain('graphify')
+      expect(report.installed).not.toContain('graphify')
+      expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(official)
     })
   })
 

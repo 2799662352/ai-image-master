@@ -163,7 +163,7 @@ Peak hook 秒 / Sustain% / 最强最弱脑区 / Default Mode 分心)。在**生�
 - `references/virality-scorecard.md` — 爆款体检自评表(改编 Virality Predictor)
 - `references/ad-short-form-modes.md` — 广告/短视频模式分类(改编 Marketing Studio)
 - `references/time-allocation-and-multimodal.md` — 按内容密度切时长(字/秒)+
-  `@图片N/@视频N/@音频N` Skill 写作绑定(工具边界自动归一；上限以本 app
+  `@图片N/@视频N/@音频N` 写作绑定(原样发给上游,`@` 不删;上限以本 app
   工具 schema 为准)+
   换人/运镜复刻/产品广告案例
   (移植自 updream jimeng-prompt-pro)

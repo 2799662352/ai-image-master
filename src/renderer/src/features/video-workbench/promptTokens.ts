@@ -1,8 +1,9 @@
 // 提示词素材引用 token 工具 —— 移植自 soraui 旧工作台。
 //
 // token 形态:`【@图片1】/【@视频2】/【@音频1】`(序号 1 起,对应同类素材列表
-// 下标+1)。提交时主进程 normalizeSeedancePromptReferences 会把它归一成上游
-// 认识的 `图片1` 形态,渲染端只负责 token 的插入/删除/序号维护与 chip 展示。
+// 下标+1)。提交时主进程 normalizeSeedancePromptReferences 只把这层 chip 外壳解成
+// 上游认识的 `@图片1`(`@` 保留,其余提示词原样发送),渲染端只负责 token 的插入/
+// 删除/序号维护与 chip 展示。
 
 export type MediaTokenKind = 'image' | 'video' | 'audio'
 

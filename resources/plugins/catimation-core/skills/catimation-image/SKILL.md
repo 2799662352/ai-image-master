@@ -85,9 +85,9 @@ image_gen skill: they render inside the chat AND persist results to local files
   合并到同一个标签。
 - **裸 asset ID 严禁进正文。** `asset://…` 只出现在 `referenceImages` 参数里,
   提示词里一律用 `[charN]` 或 `reference image N` —— 模型关联不了无语义 ID。
-- **别照抄视频侧的 `@图片N`。** 视频那条路会在发送前把 `@图片1` 归一成 `图片1`
-  (`normalizeSeedancePromptReferences`),**图片链路不做这道归一**,提示词原样透传,
-  `@` 会连着进模型。图片提示词一律写英文原形 `reference image N`。
+- **别照抄视频侧的 `@图片N`。** 那是 Seedance 上游认识的提示词素材引用语法,视频链路
+  原样发过去正好;图片模型不认识它,同样原样透传就成了一段无意义文字。图片提示词一律写
+  英文原形 `reference image N`。
 
 **第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆编术语 —— 但也不必逐张查库。**
 查的单位是「这个机位/运动」,不是「这条提示词」。这条曾写成「每条至少查三次」,

@@ -68,7 +68,7 @@ export interface VideoTransport {
   deleteTask?: (taskId: string) => Promise<void>
 }
 
-/** content[] 里的 text 条目就是「最终会发出去的提示词」（已过引用归一化）。 */
+/** content[] 里的 text 条目就是「最终会发出去的提示词」（原文，只解包了工作台 chip 外壳）。 */
 function promptFrom(ctx: VideoSubmitContext): string {
   for (const item of ctx.content) {
     if (item.type === 'text') return item.text
