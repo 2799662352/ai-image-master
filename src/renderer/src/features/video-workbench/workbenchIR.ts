@@ -48,6 +48,8 @@ import { parseDocumentOrLink } from '../../../../shared/wan3Document'
 export interface WorkbenchIRSource {
   cards: VideoWorkbenchCard[]
   boards: VideoWorkbenchBoard[]
+  /** 当前剧;apply 新建的段归它。 */
+  activeProjectId: string
   activeBoardId: string
   /** 「有任何编排改动」计数器,驱动撤销栈入栈。 */
   revision: number
@@ -408,7 +410,8 @@ export function planApplyIR(
       renamed = cur.name !== name
       board = renamed ? { ...cur, name } : cur
     } else {
-      board = { id: createId(), name, order: 0, createdAt: now }
+      // 新建的段归当前剧 —— 一份 IR 永远只描述当前剧的看板(Task 8 再补 projectId 令牌校验)
+      board = { id: createId(), projectId: source.activeProjectId, name, order: 0, createdAt: now }
       created = true
     }
 

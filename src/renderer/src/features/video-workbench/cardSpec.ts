@@ -18,6 +18,7 @@ import type {
   VideoWorkbenchMode,
   VideoWorkbenchSpec,
 } from '../../../../types/videoWorkbench'
+import { DEFAULT_PROJECT_ID } from '../../../../types/videoWorkbench'
 import type { SeedanceModelAlias } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
@@ -264,6 +265,6 @@ export function reorderBoard(
   })
 }
 
-export function createDefaultBoard(order = 0, name?: string): VideoWorkbenchBoard {
-  return { id: createId(), name: name ?? `页面 ${order + 1}`, order, createdAt: Date.now() }
+export function createDefaultBoard(order = 0, name?: string, projectId = DEFAULT_PROJECT_ID): VideoWorkbenchBoard {
+  return { id: createId(), projectId, name: name ?? `页面 ${order + 1}`, order, createdAt: Date.now() }
 }

@@ -51,7 +51,7 @@ describe('默认页与新建页', () => {
     expect(boardCards(state.activeBoardId)).toHaveLength(1)
   })
 
-  it('addBoard 自动命名「页面 2」并切换过去;两页卡片互相隔离', () => {
+  it('addBoard 自动命名「分段 2」并切换过去;两段卡片互相隔离', () => {
     const store = useVideoWorkbenchStore.getState()
     const firstId = store.activeBoardId
     store.addCards([{ prompt: 'A1' }])
@@ -59,7 +59,8 @@ describe('默认页与新建页', () => {
     const secondId = store.addBoard()
     const state = useVideoWorkbenchStore.getState()
     expect(state.boards).toHaveLength(2)
-    expect(state.boards[1].name).toBe('页面 2')
+    // 新建的段叫「分段 N」(剧/分段两层后的新文案);老数据的「页面 N」名字不动
+    expect(state.boards[1].name).toBe('分段 2')
     expect(state.activeBoardId).toBe(secondId)
 
     useVideoWorkbenchStore.getState().addCards([{ prompt: 'B1' }, { prompt: 'B2' }])
@@ -69,12 +70,12 @@ describe('默认页与新建页', () => {
     expect(boardCards(secondId).map((c) => c.order)).toEqual([0, 1])
   })
 
-  it('addBoard 指定名称;自动命名跳过已占用的「页面 N」', () => {
+  it('addBoard 指定名称;自动命名跳过已占用的「分段 N」', () => {
     const store = useVideoWorkbenchStore.getState()
-    store.addBoard('页面 2')
+    store.addBoard('分段 2')
     const id3 = useVideoWorkbenchStore.getState().addBoard()
     const boards = useVideoWorkbenchStore.getState().boards
-    expect(boards.find((b) => b.id === id3)!.name).toBe('页面 3')
+    expect(boards.find((b) => b.id === id3)!.name).toBe('分段 3')
   })
 })
 
