@@ -35,13 +35,26 @@ describe('BoardTabs', () => {
     expect(first.getAttribute('aria-selected')).toBe('true')
   })
 
-  it('「+」新建页并切换过去', () => {
+  it('「+」新建分段并切换过去', () => {
     render(<BoardTabs />)
-    fireEvent.click(screen.getByRole('button', { name: '新建页' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建分段' }))
     const state = useVideoWorkbenchStore.getState()
     expect(state.boards).toHaveLength(2)
     expect(state.activeBoardId).toBe(state.boards[1].id)
-    expect(screen.getByRole('tab', { name: /页面 2/ })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /分段 2/ })).toBeTruthy()
+  })
+
+  it('只显示当前剧的分段;面包屑「返回总览」回总览', () => {
+    const S = () => useVideoWorkbenchStore.getState()
+    S().addProject('A 剧')
+    S().addBoard('别剧的段')
+    S().switchProject('project-default')
+    render(<BoardTabs />)
+    expect(screen.queryByText('别剧的段')).toBeNull()
+    expect(screen.getByRole('tab', { name: /页面 1/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '返回总览' }).textContent).toContain('默认项目')
+    fireEvent.click(screen.getByRole('button', { name: '返回总览' }))
+    expect(S().viewByProject['project-default']).toEqual({ mode: 'overview' })
   })
 
   /**
@@ -87,7 +100,7 @@ describe('BoardTabs', () => {
 
     // 展开是「此刻想细看」的临时意图，不是页的属性：切页后收回，
     // 否则切到长摘要的页会让整条栏高度突然跳一下。
-    fireEvent.click(screen.getByRole('button', { name: '新建页' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建分段' }))
     expect(screen.queryByRole('button', { name: /当前页摘要/ })).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: /页面 1/ }))
     expect(

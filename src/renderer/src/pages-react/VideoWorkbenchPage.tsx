@@ -17,6 +17,7 @@ import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/p
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
+import { ProjectRail } from './video-workbench/ProjectRail'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
@@ -46,6 +47,8 @@ export default function VideoWorkbenchPage() {
   const [dragging, setDragging] = useState(false)
   const allCards = useVideoWorkbenchStore((s) => s.cards)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
+  const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
+  const boards = useVideoWorkbenchStore((s) => s.boards)
   const hydrated = useVideoWorkbenchStore((s) => s.hydrated)
   const ensureHydrated = useVideoWorkbenchStore((s) => s.ensureHydrated)
   const addCards = useVideoWorkbenchStore((s) => s.addCards)
@@ -133,25 +136,33 @@ export default function VideoWorkbenchPage() {
 
   // 已花费(事后口径,算不了预算 —— 详见 pricing.summarizeCostUsd)。
   // cardHasVideoInput 与单卡显示 / 提交拆分同源,但不为布尔分配三个数组。
+  // 「合计」只算当前剧:别的剧的花费在剧栏各自的行里,不混进这一屏。
   const boardCost = summarizeCostUsd(cards, cardHasVideoInput)
-  const totalCost = summarizeCostUsd(allCards, cardHasVideoInput)
+  const projectBoardIds = new Set(boards.filter((b) => b.projectId === activeProjectId).map((b) => b.id))
+  const totalCost = summarizeCostUsd(
+    allCards.filter((c) => c.boardId && projectBoardIds.has(c.boardId)),
+    cardHasVideoInput,
+  )
 
   return (
-    <div className="bg-[#09090B] border border-[#3F3F46] p-4 md:p-6 relative overflow-hidden min-h-[70vh]">
+    <div className="bg-[#09090B] border border-[#3F3F46] relative overflow-hidden min-h-[70vh]">
       {/* 装饰性背景数字(与其他面板一致的 Kinetic Typography) */}
       <div className="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">
         07
       </div>
 
-      <div className="relative z-10 max-w-4xl mx-auto space-y-4">
-        {/* 顶部工具条(页签紧跟标题:每页一套独立卡片集合) */}
+      {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
+      <div className="relative z-10 flex min-h-[70vh]">
+        <ProjectRail />
+        <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
+        {/* 顶部工具条(页签紧跟标题:每段一套独立卡片集合) */}
         <div className="flex items-center gap-3 border-b-2 border-[#3F3F46] pb-3 flex-wrap">
           <h2 className="text-white font-bold tracking-wider text-lg">
             <span className="text-[#FCE300]">▶</span> 生成视频工作台
           </h2>
           <BoardTabs />
           <span className="text-white/40 text-xs">
-            {cards.length} 张卡片{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
+            本段 {cards.length} 镜{activeCount > 0 ? ` · ${activeCount} 个生成中` : ''}
           </span>
           {/* 已花费:只在真有可估算的卡时才出现,不给空看板挂一个 $0.000。
               带 ≈ 是因为它是按 completion_tokens × 官方价目估的,不是账单。 */}
@@ -159,12 +170,12 @@ export default function VideoWorkbenchPage() {
             <span
               className="text-white/40 text-xs"
               title={[
-                `本页 ${boardCost.counted} 张已计入`,
+                `本段 ${boardCost.counted} 张已计入`,
                 boardCost.unpriced > 0
                   ? `${boardCost.unpriced} 张已出片但估不出价(上游未回传 token 或价目表无此组合)——所以这是下限`
                   : null,
                 totalCost.counted !== boardCost.counted || totalCost.unpriced !== boardCost.unpriced
-                  ? `全部页合计 ≈ ${formatCostParts(totalCost.usd, totalCost.cny) ?? '—'}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
+                  ? `全剧合计 ≈ ${formatCostParts(totalCost.usd, totalCost.cny) ?? '—'}${totalCost.unpriced > 0 ? `(另有 ${totalCost.unpriced} 张估不出)` : ''}`
                   : null,
                 // 两种货币并列而不相加:换算要写死汇率,那等于把今天的汇率冻进代码。
                 boardCost.cny > 0 && boardCost.usd > 0
@@ -321,6 +332,7 @@ export default function VideoWorkbenchPage() {
             </button>
           </div>
         )}
+        </div>
       </div>
     </div>
   )

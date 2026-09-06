@@ -1,13 +1,21 @@
-// 「生成视频」工作台多「页」页签条:切换 / 新建(+) / 双击行内重命名(Enter
-// 确认、Esc 取消)/ 两步确认删除(避开 window.confirm,jsdom 与桌面端一致)。
-// 视觉遵循 DESIGN.md 赛博朋克 token:激活页 #FCE300 描边,未激活 #3F3F46。
+// 「生成视频」工作台「分段」(board)页签条:只显示当前剧的分段,单行横向滚动;
+// 切换 / 新建(+) / 双击行内重命名(Enter 确认、Esc 取消)/ 两步确认删除(避开
+// window.confirm,jsdom 与桌面端一致)。上方一行面包屑「‹ 剧名 › 分段名」,‹ 回总览。
+// 视觉遵循赛博朋克 token:激活段 #FCE300 描边,未激活 #3F3F46。
 
 import { useEffect, useRef, useState } from 'react'
 import { WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
 export function BoardTabs() {
-  const boards = useVideoWorkbenchStore((s) => s.boards)
+  const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
+  const projectName = useVideoWorkbenchStore(
+    (s) => s.projects.find((p) => p.id === s.activeProjectId)?.name ?? '',
+  )
+  const openOverview = useVideoWorkbenchStore((s) => s.openOverview)
+  const allBoards = useVideoWorkbenchStore((s) => s.boards)
+  // 页签只认本剧:别的剧的分段在剧栏里切剧才看得到 —— 这就是「隔离」在这一屏的样子。
+  const boards = allBoards.filter((b) => b.projectId === activeProjectId).sort((a, b) => a.order - b.order)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const addBoard = useVideoWorkbenchStore((s) => s.addBoard)
   const switchBoard = useVideoWorkbenchStore((s) => s.switchBoard)
@@ -67,8 +75,24 @@ export function BoardTabs() {
   const editingActiveSummary = editing?.id === activeBoardId && editing.field === 'summary'
 
   return (
+    <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+      {/* 面包屑:‹ 回总览。剧名点击也回总览 —— 分段页里「我在哪部剧」要一眼可见。 */}
+      <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+        <button
+          type="button"
+          aria-label="返回总览"
+          title="返回这部剧的总览"
+          className="vw-crumb"
+          onClick={openOverview}
+        >
+          ‹ {projectName}
+        </button>
+        <span className="vw-crumb-sep">›</span>
+        <span className="vw-crumb-cur">{activeBoard?.name ?? ''}</span>
+      </div>
     <div className="flex items-start gap-3 flex-wrap">
-    <div role="tablist" aria-label="工作台页" className="flex items-center gap-1 flex-wrap">
+    {/* 单行横向滚动而不是换行:十几个分段折成三排就是这次改版要解决的问题。 */}
+    <div role="tablist" aria-label="本剧分段" className="vw-tabs-scroll">
       {boards.map((board) => {
         const active = board.id === activeBoardId
         const editingName = editing?.id === board.id && editing.field === 'name'
@@ -167,13 +191,13 @@ export function BoardTabs() {
                 ＋摘要
               </button>
             )}
-            {/* 至少保留一页:仅剩一页时不出删除入口 */}
+            {/* 每部剧至少保留一段:本剧仅剩一段时不出删除入口(boards 已按剧过滤) */}
             {boards.length > 1 && !busy && (
               confirming ? (
                 <button
                   type="button"
                   aria-label={`确认删除「${board.name}」`}
-                  title="再点一次确认删除本页及其全部卡片"
+                  title="再点一次确认删除本段及其全部卡片"
                   className="text-[10px] px-1 border border-red-500 bg-red-500/20 text-red-400"
                   onClick={() => {
                     setConfirmingId(null)
@@ -199,8 +223,8 @@ export function BoardTabs() {
       })}
       <button
         type="button"
-        aria-label="新建页"
-        title="新建一个独立的工作页"
+        aria-label="新建分段"
+        title="在这部剧里新建一个分段"
         className="text-xs border border-dashed border-[#3F3F46] text-white/50 hover:border-[#FCE300] hover:text-[#FCE300] px-2.5 py-1.5 transition-colors"
         onClick={() => addBoard()}
       >
@@ -262,6 +286,7 @@ export function BoardTabs() {
           onBlur={commitEdit}
         />
       )}
+    </div>
     </div>
   )
 }

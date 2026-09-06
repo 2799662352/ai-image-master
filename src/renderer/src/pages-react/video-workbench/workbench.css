@@ -493,3 +493,52 @@
   .vw-card { animation: none; }
   .vw-chip-preview { animation: none; }
 }
+
+/* ---------- 剧栏(ProjectRail):剧 / 分段两层的左栏 ---------- */
+.vw-rail { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #3f3f46; background: #111113; }
+.vw-rail-collapsed { width: 48px; }
+.vw-rail-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px 8px; }
+.vw-rail-collapsed .vw-rail-head { justify-content: center; }
+.vw-rail-title { font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 10px; letter-spacing: 0.25em; color: #71717a; }
+.vw-rail-iconbtn { width: 22px; height: 22px; border: 1px solid #3f3f46; color: #a1a1aa; background: transparent; font-size: 12px; line-height: 1; }
+.vw-rail-iconbtn:hover { border-color: #fce300; color: #fff; }
+.vw-rail-tools { display: flex; gap: 6px; padding: 0 10px 10px; border-bottom: 1px solid #3f3f46; }
+.vw-rail-search { flex: 1; min-width: 0; height: 28px; background: #09090b; border: 1px solid #3f3f46; color: #fafafa; font-size: 11px; padding: 0 8px; }
+.vw-rail-search:focus { outline: none; border-color: #fce300; }
+.vw-rail-add { width: 28px; height: 28px; flex: none; background: #fce300; color: #000; font-weight: 700; font-size: 16px; line-height: 1; }
+.vw-rail-add:hover { background: #ffe500; box-shadow: 0 0 10px rgba(252, 227, 0, 0.3); }
+.vw-rail-list { flex: 1; overflow: auto; padding: 6px 0; }
+.vw-rail-row { border-left: 2px solid transparent; }
+.vw-rail-row:hover { background: #18181b; }
+.vw-rail-row-active { border-left-color: #fce300; background: #18181b; }
+.vw-rail-rowbtn { width: 100%; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; text-align: left; background: transparent; color: inherit; }
+.vw-rail-collapsed .vw-rail-rowbtn { justify-content: center; padding: 8px 0; }
+.vw-rail-cover { width: 56px; height: 32px; flex: none; border: 1px solid #3f3f46; background: #18181b repeating-linear-gradient(90deg, #27272a 0 1px, transparent 1px 33.33%); overflow: hidden; }
+.vw-rail-collapsed .vw-rail-cover { width: 26px; height: 26px; }
+.vw-rail-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vw-rail-meta { min-width: 0; flex: 1; }
+.vw-rail-name { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #e4e4e7; min-width: 0; }
+.vw-rail-name > span.truncate { min-width: 0; }
+.vw-rail-row-active .vw-rail-name { color: #fff; font-weight: 700; }
+.vw-rail-nameinput { width: 100%; background: #09090b; border: 1px solid #fce300; color: #fff; font-size: 12px; padding: 1px 4px; }
+.vw-rail-sub { font-size: 10px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-rail-time { font-size: 10px; color: #52525b; flex: none; padding-top: 2px; }
+.vw-strip { display: flex; gap: 1px; height: 2px; margin-top: 4px; }
+.vw-dot { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; flex: none; }
+.vw-dot::before { content: ''; width: 6px; height: 6px; display: inline-block; }
+.vw-dot-yellow { color: #fce300; }
+.vw-dot-yellow::before { background: #fce300; }
+.vw-dot-red { color: #f87171; }
+.vw-dot-red::before { background: #f87171; }
+.vw-rail-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; border-top: 1px solid #3f3f46; }
+.vw-ghost { height: 28px; border: 1px solid #3f3f46; color: #e4e4e7; font-size: 11px; background: transparent; }
+.vw-ghost:hover:not(:disabled) { border-color: #fce300; color: #fff; }
+.vw-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- 分段页:面包屑 + 单行页签 ---------- */
+.vw-crumb { font-size: 11px; color: #71717a; background: transparent; padding: 0; }
+.vw-crumb:hover { color: #fce300; }
+.vw-crumb-sep { color: #3f3f46; font-size: 11px; }
+.vw-crumb-cur { font-size: 11px; color: #e4e4e7; }
+.vw-tabs-scroll { display: flex; align-items: center; gap: 4px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; padding-bottom: 2px; max-width: 100%; }
+.vw-tabs-scroll > * { flex: none; }
