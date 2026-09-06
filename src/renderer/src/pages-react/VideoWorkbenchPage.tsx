@@ -17,6 +17,7 @@ import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/p
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
+import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
@@ -49,6 +50,8 @@ export default function VideoWorkbenchPage() {
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
   const boards = useVideoWorkbenchStore((s) => s.boards)
+  // 每部剧记住自己停在总览还是哪个分段;缺省(老数据首启)落在分段页,行为与升级前一致。
+  const viewMode = useVideoWorkbenchStore((s) => s.viewByProject[s.activeProjectId]?.mode ?? 'board')
   const hydrated = useVideoWorkbenchStore((s) => s.hydrated)
   const ensureHydrated = useVideoWorkbenchStore((s) => s.ensureHydrated)
   const addCards = useVideoWorkbenchStore((s) => s.addCards)
@@ -155,6 +158,10 @@ export default function VideoWorkbenchPage() {
       <div className="relative z-10 flex min-h-[70vh]">
         <ProjectRail />
         <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
+        {viewMode === 'overview' ? (
+          <ProjectOverview />
+        ) : (
+        <>
         {/* 顶部工具条(页签紧跟标题:每段一套独立卡片集合) */}
         <div className="flex items-center gap-3 border-b-2 border-[#3F3F46] pb-3 flex-wrap">
           <h2 className="text-white font-bold tracking-wider text-lg">
@@ -331,6 +338,8 @@ export default function VideoWorkbenchPage() {
               ＋ 追加任务卡片
             </button>
           </div>
+        )}
+        </>
         )}
         </div>
       </div>
