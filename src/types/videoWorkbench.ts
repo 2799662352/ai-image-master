@@ -181,12 +181,38 @@ export type VideoWorkbenchCardStatus =
   | 'preparing'
   | SeedanceTaskStatus
 
+/** 升级时承接全部老页面的那部剧。id 固定,便于迁移幂等与测试。 */
+export const DEFAULT_PROJECT_ID = 'project-default'
+export const DEFAULT_PROJECT_NAME = '默认项目'
+
 /**
- * 工作台「页」(board / 工作区):每页一套独立的卡片集合,页签在顶部工具栏切换。
- * IndexedDB `boards` object store 持久化;老数据(无 boards)迁移进第一页。
+ * 「剧」(project):一部片子/一个项目,是分段(board)的容器。不同剧之间在界面上
+ * 完全隔离,工作台任意时刻只呈现一部剧。IndexedDB `projects` object store 持久化。
+ */
+export interface VideoWorkbenchProject {
+  id: string
+  name: string
+  /** 剧栏排序(小在上)。 */
+  order: number
+  createdAt: number
+  /** 只在改名时更新;「最近活动」由卡片的 updatedAt 派生,见 projectStats。 */
+  updatedAt: number
+  /**
+   * 仅升级生成的「默认项目」带此标记:总览顶部显示迁移提示条。用户关闭提示或
+   * 改名后清除。不影响任何数据语义。
+   */
+  legacy?: true
+}
+
+/**
+ * 工作台「分段」(board;界面文案原为「页面」):每段一套独立的卡片集合,页签在
+ * 分段页顶部切换。IndexedDB `boards` object store 持久化;老数据(无 boards)迁移
+ * 进第一段,无 projectId 的老段在 v3 升级时归入 DEFAULT_PROJECT_ID。
  */
 export interface VideoWorkbenchBoard {
   id: string
+  /** 所属剧。v3 起必填;老数据在升级/水合时归入 DEFAULT_PROJECT_ID。 */
+  projectId: string
   name: string
   /**
    * 一句话说明这一页装的是什么（「追车戏 8 镜，全部夜景」）。
