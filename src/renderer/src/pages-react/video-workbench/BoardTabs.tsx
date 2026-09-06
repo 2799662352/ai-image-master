@@ -7,6 +7,12 @@ import { useEffect, useRef, useState } from 'react'
 import { WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
+/**
+ * 卡片拖动时写入的 dataTransfer 类型。与 WorkbenchCard.tsx 里的私有常量同值 ——
+ * 卡片文件不改,这里以字面量复述;WorkbenchCard.dragFix.test 也钉着这个字符串。
+ */
+const CARD_DRAG_MIME = 'application/x-vw-card'
+
 export function BoardTabs() {
   const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
   const projectName = useVideoWorkbenchStore(
@@ -22,6 +28,7 @@ export function BoardTabs() {
   const renameBoard = useVideoWorkbenchStore((s) => s.renameBoard)
   const removeBoard = useVideoWorkbenchStore((s) => s.removeBoard)
   const setBoardSummary = useVideoWorkbenchStore((s) => s.setBoardSummary)
+  const moveCardToBoard = useVideoWorkbenchStore((s) => s.moveCardToBoard)
 
   /**
    * 行内编辑中的页(同一时刻最多一个)。带 field 是因为页名和摘要共用同一套
@@ -109,6 +116,16 @@ export function BoardTabs() {
                 ? 'border-[#FCE300] bg-[#FCE300]/10 text-[#FCE300]'
                 : 'border-[#3F3F46] text-white/60 hover:border-[#FCE300]/60 hover:text-white',
             ].join(' ')}
+            // 把卡片拖到页签上 = 挪到那一段末尾(同段拖到自己的页签是无操作)
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer.types ?? []).includes(CARD_DRAG_MIME)) e.preventDefault()
+            }}
+            onDrop={(e) => {
+              const cardId = e.dataTransfer.getData(CARD_DRAG_MIME)
+              if (!cardId) return
+              e.preventDefault()
+              moveCardToBoard(cardId, board.id)
+            }}
           >
             {editingName ? (
               <input

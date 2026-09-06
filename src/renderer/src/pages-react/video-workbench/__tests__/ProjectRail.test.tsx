@@ -78,6 +78,33 @@ describe('ProjectRail', () => {
     expect(screen.queryByText('默认项目')).toBeNull()
   })
 
+  it('把分段拖到另一部剧的行上 → 移入该剧;拖到顶部投放框 → 新建剧并移入', () => {
+    const p1 = S().activeProjectId
+    const seg = S().addBoard('要搬的段')
+    const p2 = S().addProject('目标剧')
+    S().switchProject(p1)
+    render(<ProjectRail />)
+    const dt = (id: string) => ({
+      getData: (t: string) => (t === 'application/x-catimation-segment' ? id : ''),
+      types: ['application/x-catimation-segment'],
+      dropEffect: 'move',
+    })
+    fireEvent.drop(screen.getByRole('button', { name: '切换到剧 目标剧' }), { dataTransfer: dt(seg) })
+    expect(S().boards.find((b) => b.id === seg)!.projectId).toBe(p2)
+
+    const seg2 = S().addBoard('再搬一段')
+    fireEvent.dragEnter(screen.getByRole('list'), { dataTransfer: dt(seg2) })
+    fireEvent.drop(screen.getByRole('button', { name: '放到这里:新建一部剧并移入' }), { dataTransfer: dt(seg2) })
+    expect(S().projects).toHaveLength(3)
+    const newest = S().projects[S().projects.length - 1]
+    expect(
+      S()
+        .boards.filter((b) => b.projectId === newest.id)
+        .sort((a, b) => a.order - b.order)
+        .map((b) => b.name),
+    ).toEqual(['分段 1', '再搬一段'])
+  })
+
   it('导入/导出按钮没接回调时禁用并提示即将推出', () => {
     render(<ProjectRail />)
     expect(screen.getByRole('button', { name: '导入工程' }).hasAttribute('disabled')).toBe(true)

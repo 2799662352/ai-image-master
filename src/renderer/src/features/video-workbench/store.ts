@@ -424,6 +424,11 @@ export interface VideoWorkbenchState extends ProjectsSlice {
   /** 拖拽排序:把卡片移到目标下标。 */
   moveCard: (id: string, toIndex: number) => void
   /**
+   * 把卡片挪到另一分段末尾(拖到页签上)。目标不存在 / 已在该段 / 生成中 → false。
+   * 源段 order 压实。
+   */
+  moveCardToBoard: (cardId: string, boardId: string) => boolean
+  /**
    * 整页重排:一次给出该页**完整**的 id 顺序。返回是否生效。
    *
    * 要求完整而不是接受子集 —— IR apply 的老坑就是「只列 4 张,那 4 张跳到页首」,
@@ -1594,6 +1599,35 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     for (const card of get().cards) {
       if (card.boardId === boardId) schedulePersist(card)
     }
+  },
+
+  moveCardToBoard: (cardId, boardId) => {
+    const { cards, boards } = get()
+    const card = cards.find((c) => c.id === cardId)
+    if (!card || !boards.some((b) => b.id === boardId) || card.boardId === boardId) return false
+    // 生成中不挪段:任务回流按 clientId 对齐卡片,不看 boardId,挪了也不丢进度 ——
+    // 但用户会在另一段看到一张突然出现的进行中卡,与「生成不被导航打断」的直觉相悖。
+    if (isActiveStatus(card.status)) return false
+    const from = card.boardId
+    const targetCount = cards.filter((c) => c.boardId === boardId).length
+    set((state) => {
+      let next = state.cards.map((c) =>
+        c.id === cardId ? { ...c, boardId, order: targetCount, updatedAt: Date.now() } : c,
+      )
+      if (from) next = reorderBoard(next, from)
+      return {
+        cards: next,
+        selectedCardIds: [],
+        selectionAnchorId: undefined,
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
+    })
+    const db = getWorkbenchDb()
+    for (const c of get().cards) {
+      if (c.id === cardId || c.boardId === from) void db.put(c).catch(() => {})
+    }
+    return true
   },
 
   moveCard: (id, toIndex) => {

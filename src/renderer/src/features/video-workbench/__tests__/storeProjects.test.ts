@@ -184,6 +184,24 @@ describe('removeProject', () => {
   })
 })
 
+describe('moveCardToBoard', () => {
+  it('卡片挪到另一段末尾,两边 order 压实;目标不存在返回 false;生成中不挪', () => {
+    S().addCards([{ prompt: 'a' }, { prompt: 'b' }])
+    const [a, b] = S().cards.map((c) => c.id)
+    const b2 = S().addBoard('第二段')
+    expect(S().moveCardToBoard(a, 'ghost')).toBe(false)
+    const rev = S().revision
+    expect(S().moveCardToBoard(a, b2)).toBe(true)
+    expect(S().revision).toBe(rev + 1)
+    expect(S().cards.find((c) => c.id === a)!).toMatchObject({ boardId: b2, order: 0 })
+    expect(S().cards.find((c) => c.id === b)!.order).toBe(0)
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === b ? { ...c, status: 'running', taskId: 't' } : c)),
+    }))
+    expect(S().moveCardToBoard(b, b2)).toBe(false)
+  })
+})
+
 describe('水合回填', () => {
   it('库里的老 board 没有 projectId → 归默认项目并写回;activeProjectId 从 localStorage 恢复', async () => {
     const db = getWorkbenchDb()

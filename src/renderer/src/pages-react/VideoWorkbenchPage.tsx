@@ -19,6 +19,7 @@ import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
 import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
+import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
@@ -46,6 +47,7 @@ export default function VideoWorkbenchPage() {
   // 卡片汇报的拖拽态。以前这里传的是 noop —— 卡片说了页面不听;缝隙「＋」要在拖拽时
   // 隐身避让插入指示线,正好把这根预埋管线接上。
   const [dragging, setDragging] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const allCards = useVideoWorkbenchStore((s) => s.cards)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
@@ -99,7 +101,14 @@ export default function VideoWorkbenchPage() {
   // 不能被劫走;②已经被别人处理掉的(弹层关闭会 preventDefault)不再插手。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (event.defaultPrevented) return
+      // Ctrl/Cmd+P:搜索剧与分段。在输入框里也接管 —— 浏览器默认的「打印」在桌面端毫无意义。
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        setPaletteOpen(true)
+        return
+      }
+      if (event.key !== 'Escape') return
       // 事件可能直接派发在 window 上(它没有 closest),先收窄再问
       const target = event.target
       if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return
@@ -153,6 +162,8 @@ export default function VideoWorkbenchPage() {
       <div className="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">
         07
       </div>
+
+      <ProjectSearchPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">

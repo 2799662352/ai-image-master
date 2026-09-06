@@ -569,6 +569,18 @@
 .vw-seg-badge-tl { top: 8px; left: 8px; }
 .vw-seg-badge-br { bottom: 8px; right: 8px; }
 .vw-seg-badge-bl { bottom: 8px; left: 8px; font-family: 'Exo 2', 'Noto Sans SC', sans-serif; }
+.vw-rail-drop { display: block; width: calc(100% - 16px); margin: 6px 8px; padding: 10px 12px; border: 1px dashed #fce300; background: rgba(252, 227, 0, 0.06); color: #fce300; font-size: 11px; text-align: left; }
+
+/* ---------- Ctrl+P 搜索面板 ---------- */
+.vw-palette-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 60; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.vw-palette { width: 480px; max-width: calc(100vw - 32px); max-height: 60vh; background: #111113; border: 1px solid #3f3f46; box-shadow: 0 0 14px rgba(252, 227, 0, 0.18); display: flex; flex-direction: column; }
+.vw-palette-input { height: 40px; background: #09090b; border: 0; border-bottom: 1px solid #3f3f46; color: #fff; font-size: 13px; padding: 0 12px; }
+.vw-palette-input:focus { outline: none; border-bottom-color: #fce300; }
+.vw-palette-list { overflow: auto; padding: 4px 0; margin: 0; list-style: none; }
+.vw-palette-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; font-size: 12px; color: #e4e4e7; cursor: pointer; }
+.vw-palette-item-active { background: #18181b; color: #fff; box-shadow: inset 2px 0 0 #fce300; }
+.vw-palette-sub { color: #71717a; font-size: 11px; flex: none; }
+.vw-palette-empty { padding: 12px; font-size: 12px; color: #71717a; }
 .vw-seg-body { padding: 10px 12px 12px; }
 .vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; }

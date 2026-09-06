@@ -5,10 +5,15 @@
 // 导入/导出两颗按钮本期只占位(disabled + title「即将推出」),真正的流程在
 // 「工程文件导入/导出」那份计划里接进来 —— 不做假实现。
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { SEGMENT_DRAG_MIME } from './ProjectOverview'
+
+function carriesSegment(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer.types ?? []).includes(SEGMENT_DRAG_MIME)
+}
 
 export function relativeTime(ts: number | null, now = Date.now()): string {
   if (ts === null) return ''
@@ -37,8 +42,11 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
   const addProject = useVideoWorkbenchStore((s) => s.addProject)
   const switchProject = useVideoWorkbenchStore((s) => s.switchProject)
   const renameProject = useVideoWorkbenchStore((s) => s.renameProject)
+  const moveBoardToProject = useVideoWorkbenchStore((s) => s.moveBoardToProject)
 
   const [query, setQuery] = useState('')
+  /** 有分段卡正拖在剧栏上空:顶部露出「新建一部剧并移入」的投放框。 */
+  const [dragOver, setDragOver] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const nameInputRef = useRef<HTMLInputElement | null>(null)
@@ -95,7 +103,41 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
           </button>
         </div>
       )}
-      <div className="vw-rail-list" role="list">
+      <div
+        className="vw-rail-list"
+        role="list"
+        onDragEnter={(e) => {
+          if (carriesSegment(e)) {
+            e.preventDefault()
+            setDragOver(true)
+          }
+        }}
+        onDragOver={(e) => {
+          if (carriesSegment(e)) e.preventDefault()
+        }}
+        onDragLeave={(e) => {
+          // 只在真正离开列表时收起,子元素之间的 leave 不算
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false)
+        }}
+      >
+        {dragOver && (
+          <button
+            type="button"
+            className="vw-rail-drop"
+            aria-label="放到这里:新建一部剧并移入"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              const boardId = e.dataTransfer.getData(SEGMENT_DRAG_MIME)
+              setDragOver(false)
+              if (!boardId) return
+              const id = addProject()
+              moveBoardToProject(boardId, id)
+            }}
+          >
+            ⊞ 放到这里:新建一部剧并移入
+          </button>
+        )}
         {rows.map(({ project, stats }) => {
           const isActive = project.id === activeProjectId
           const t = stats.totals
@@ -110,6 +152,16 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
                 title={collapsed ? project.name : undefined}
                 onClick={() => switchProject(project.id)}
                 onDoubleClick={() => !collapsed && beginRename(project.id, project.name)}
+                onDragOver={(e) => {
+                  if (carriesSegment(e)) e.preventDefault()
+                }}
+                onDrop={(e) => {
+                  const boardId = e.dataTransfer.getData(SEGMENT_DRAG_MIME)
+                  if (!boardId) return
+                  e.preventDefault()
+                  setDragOver(false)
+                  moveBoardToProject(boardId, project.id)
+                }}
               >
                 <div className="vw-rail-cover" aria-hidden="true">
                   {stats.cover ? <img src={stats.cover} alt="" /> : null}
