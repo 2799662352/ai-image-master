@@ -102,3 +102,12 @@ scripts/sakuga/upload_batches_done.txt
 # local diagnostics
 scripts/.diag-grok/
 .superpowers/
+
+# graphify knowledge graph — regenerated locally with `pnpm graph:build` (AST-only,
+# no API key, ~2 min). graph.json is ~17 MB and churns on every code change, so it
+# is NOT committed. The skill/rule files (.agents/skills/graphify, .cursor/rules/
+# graphify.mdc, .graphifyignore) ARE tracked.
+graphify-out/
+
+# superdesign 本地设计工具状态(init 上下文、画布 resume、临时 HTML),不入库
+.superdesign/

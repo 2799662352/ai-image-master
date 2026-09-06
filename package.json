@@ -98,7 +98,13 @@
     "publish:skills": "node scripts/upload-skills-to-cos.mjs",
     "publish:skills:dry": "node scripts/upload-skills-to-cos.mjs --dry-run",
     "publish:plugins": "node scripts/upload-plugins-to-cos.mjs",
-    "publish:plugins:dry": "node scripts/upload-plugins-to-cos.mjs --dry-run"
+    "publish:plugins:dry": "node scripts/upload-plugins-to-cos.mjs --dry-run",
+    "graph:build": "graphify update . --force",
+    "graph:update": "graphify update .",
+    "graph:query": "graphify query",
+    "graph:explain": "graphify explain",
+    "graph:path": "graphify path",
+    "graph:hooks": "node scripts/graphify-hooks.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
