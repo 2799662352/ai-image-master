@@ -725,6 +725,20 @@ export interface ElectronAPI {
      */
     repersist: (payload: { videoUrl: string; model?: string; taskId?: string; threadId?: string })
       => Promise<{ ok: boolean; localPath?: string; remoteUrl?: string; error?: string }>
+    /**
+     * 工程文件 `*.catwb.json` 的文件 IO。解析/校验在渲染端(projectFile.ts),这里只管
+     * 默认路径、系统对话框、原子写、带 50 MB 闸的读。
+     */
+    projectFile: {
+      defaultPath: (name: string) => Promise<{ path: string }>
+      pickSavePath: (defaultPath: string) => Promise<{ path: string | null }>
+      write: (path: string, json: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+      pickOpen: () => Promise<{ path: string | null }>
+      read: (path: string) => Promise<
+        | { ok: true; path: string; text: string }
+        | { ok: false; code: 'not-found' | 'not-project-file' | 'too-large' | 'io'; reason: string }
+      >
+    }
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1731,6 +1745,22 @@ const electronAPI: ElectronAPI = {
       safeInvoke<{ ok: boolean; localPath?: string; remoteUrl?: string; error?: string }>(
         'video-workbench:repersist', payload,
       ),
+    projectFile: {
+      defaultPath: (name: string) =>
+        safeInvoke<{ path: string }>('video-workbench:project-default-path', { name }),
+      pickSavePath: (defaultPath: string) =>
+        safeInvoke<{ path: string | null }>('video-workbench:project-pick-save-path', { defaultPath }),
+      write: (path: string, json: string) =>
+        safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+          'video-workbench:project-write', { path, json },
+        ),
+      pickOpen: () => safeInvoke<{ path: string | null }>('video-workbench:project-pick-open'),
+      read: (path: string) =>
+        safeInvoke<
+          | { ok: true; path: string; text: string }
+          | { ok: false; code: 'not-found' | 'not-project-file' | 'too-large' | 'io'; reason: string }
+        >('video-workbench:project-read', { path }),
+    },
   },
 
   fs: {
