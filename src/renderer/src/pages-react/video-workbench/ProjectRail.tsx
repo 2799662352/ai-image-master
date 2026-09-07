@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { isProjectFileName } from '../../features/video-workbench/importProject'
 import { CoverImage } from './CoverImage'
 import { SEGMENT_DRAG_MIME } from './ProjectOverview'
 
@@ -31,9 +32,26 @@ export function relativeTime(ts: number | null, now = Date.now()): string {
 export interface ProjectRailProps {
   onRequestImport?: () => void
   onRequestExport?: () => void
+  /** 用户把一个 `*.catwb.json` 拖到了剧栏上:交回路径,由页面打开导入确认页。 */
+  onDropProjectFile?: (path: string) => void
 }
 
-export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailProps) {
+function carriesFiles(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer.types ?? []).includes('Files')
+}
+
+/** 拖进来的文件里第一个工程文件的真实路径(Electron 的 File 带 path;浏览器没有)。 */
+function droppedProjectFilePath(e: DragEvent): string | null {
+  for (const file of Array.from(e.dataTransfer.files ?? [])) {
+    if (!isProjectFileName(file.name)) continue
+    const api = (window as Window & { electronAPI?: { getFilePath?: (f: File) => string } }).electronAPI
+    const p = api?.getFilePath?.(file) || (file as File & { path?: string }).path
+    if (p) return p
+  }
+  return null
+}
+
+export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFile }: ProjectRailProps) {
   const projects = useVideoWorkbenchStore((s) => s.projects)
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
@@ -48,6 +66,8 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
   const [query, setQuery] = useState('')
   /** 有分段卡正拖在剧栏上空:顶部露出「新建一部剧并移入」的投放框。 */
   const [dragOver, setDragOver] = useState(false)
+  /** 有系统文件正拖在剧栏上空(工程文件导入)。 */
+  const [fileOver, setFileOver] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const nameInputRef = useRef<HTMLInputElement | null>(null)
@@ -77,7 +97,29 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
   }
 
   return (
-    <aside className={`vw-rail ${collapsed ? 'vw-rail-collapsed' : ''}`} aria-label="剧栏">
+    <aside
+      className={`vw-rail ${collapsed ? 'vw-rail-collapsed' : ''} ${fileOver ? 'vw-rail-fileover' : ''}`}
+      aria-label="剧栏"
+      onDragEnter={(e) => {
+        if (onDropProjectFile && carriesFiles(e)) {
+          e.preventDefault()
+          setFileOver(true)
+        }
+      }}
+      onDragOver={(e) => {
+        if (onDropProjectFile && carriesFiles(e)) e.preventDefault()
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFileOver(false)
+      }}
+      onDrop={(e) => {
+        if (!onDropProjectFile || !carriesFiles(e)) return
+        e.preventDefault()
+        setFileOver(false)
+        const p = droppedProjectFilePath(e)
+        if (p) onDropProjectFile(p)
+      }}
+    >
       <div className="vw-rail-head">
         {!collapsed && <div className="vw-rail-title">SERIES · 剧</div>}
         <button
@@ -222,7 +264,7 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
             type="button"
             className="vw-ghost"
             disabled={!onRequestImport}
-            title={onRequestImport ? '导入工程' : '导入工程(即将推出)'}
+            title={onRequestImport ? '导入 .catwb.json 工程文件(也可以直接拖到这里)' : '导入工程(当前环境不可用)'}
             onClick={onRequestImport}
           >
             导入工程
@@ -231,7 +273,7 @@ export function ProjectRail({ onRequestImport, onRequestExport }: ProjectRailPro
             type="button"
             className="vw-ghost"
             disabled={!onRequestExport}
-            title={onRequestExport ? '导出当前剧' : '导出工程(即将推出)'}
+            title={onRequestExport ? '把当前剧导出为 .catwb.json 工程文件' : '导出工程(当前环境不可用)'}
             onClick={onRequestExport}
           >
             导出当前剧

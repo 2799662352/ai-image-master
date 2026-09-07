@@ -1,6 +1,6 @@
 // 剧栏:列出全部剧、当前剧标记、统计文案、切剧、新建即改名、状态点、折叠。
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACTIVE_PROJECT_KEY, RAIL_COLLAPSED_KEY } from '../../../features/video-workbench/projects'
 import {
   ACTIVE_BOARD_KEY,
@@ -105,10 +105,44 @@ describe('ProjectRail', () => {
     ).toEqual(['分段 1', '再搬一段'])
   })
 
-  it('导入/导出按钮没接回调时禁用并提示即将推出', () => {
-    render(<ProjectRail />)
+  it('导入/导出按钮没接回调时禁用;接了回调可点', () => {
+    const { unmount } = render(<ProjectRail />)
     expect(screen.getByRole('button', { name: '导入工程' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByRole('button', { name: '导出当前剧' }).hasAttribute('disabled')).toBe(true)
+    unmount()
+    const onRequestImport = vi.fn()
+    const onRequestExport = vi.fn()
+    render(<ProjectRail onRequestImport={onRequestImport} onRequestExport={onRequestExport} />)
+    fireEvent.click(screen.getByRole('button', { name: '导入工程' }))
+    fireEvent.click(screen.getByRole('button', { name: '导出当前剧' }))
+    expect(onRequestImport).toHaveBeenCalledTimes(1)
+    expect(onRequestExport).toHaveBeenCalledTimes(1)
+  })
+
+  it('把 .catwb.json 拖到剧栏 → 回传真实路径;非工程文件不回传', () => {
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = {
+      getFilePath: (f: File) => `D:\\Docs\\${f.name}`,
+    }
+    try {
+      const onDropProjectFile = vi.fn()
+      render(<ProjectRail onDropProjectFile={onDropProjectFile} />)
+      const aside = screen.getByRole('complementary', { name: '剧栏' })
+      const dt = (name: string) => ({
+        types: ['Files'],
+        files: [new File(['{}'], name, { type: 'application/json' })],
+        getData: () => '',
+      })
+      fireEvent.dragEnter(aside, { dataTransfer: dt('追车戏.catwb.json') })
+      expect(aside.className).toContain('vw-rail-fileover')
+      fireEvent.drop(aside, { dataTransfer: dt('追车戏.catwb.json') })
+      expect(onDropProjectFile).toHaveBeenCalledWith('D:\\Docs\\追车戏.catwb.json')
+      expect(aside.className).not.toContain('vw-rail-fileover')
+
+      fireEvent.drop(aside, { dataTransfer: dt('photo.png') })
+      expect(onDropProjectFile).toHaveBeenCalledTimes(1)
+    } finally {
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI
+    }
   })
 })
 

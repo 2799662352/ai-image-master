@@ -18,6 +18,7 @@ import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
 import { ExportProjectDialog } from './video-workbench/ExportProjectDialog'
+import { ImportProjectDialog } from './video-workbench/ImportProjectDialog'
 import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
 import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
@@ -50,6 +51,15 @@ export default function VideoWorkbenchPage() {
   const [dragging, setDragging] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  /** 待导入的工程文件路径;null = 导入对话框关闭。 */
+  const [importPath, setImportPath] = useState<string | null>(null)
+  const requestImport = async () => {
+    const pf = (window as Window & { electronAPI?: { videoWorkbench?: { projectFile?: { pickOpen: () => Promise<{ path: string | null }> } } } })
+      .electronAPI?.videoWorkbench?.projectFile
+    if (!pf) return
+    const r = await pf.pickOpen()
+    if (r.path) setImportPath(r.path)
+  }
   const allCards = useVideoWorkbenchStore((s) => s.cards)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
@@ -167,13 +177,21 @@ export default function VideoWorkbenchPage() {
 
       <ProjectSearchPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <ExportProjectDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <ImportProjectDialog path={importPath} onClose={() => setImportPath(null)} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">
-        <ProjectRail onRequestExport={() => setExportOpen(true)} />
+        <ProjectRail
+          onRequestExport={() => setExportOpen(true)}
+          onRequestImport={() => void requestImport()}
+          onDropProjectFile={(p) => setImportPath(p)}
+        />
         <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
         {viewMode === 'overview' ? (
-          <ProjectOverview onRequestExport={() => setExportOpen(true)} />
+          <ProjectOverview
+            onRequestExport={() => setExportOpen(true)}
+            onRequestImport={() => void requestImport()}
+          />
         ) : (
         <>
         {/*

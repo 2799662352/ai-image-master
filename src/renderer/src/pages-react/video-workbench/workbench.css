@@ -496,6 +496,7 @@
 
 /* ---------- 剧栏(ProjectRail):剧 / 分段两层的左栏 ---------- */
 .vw-rail { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #3f3f46; background: #111113; }
+.vw-rail-fileover { outline: 1px dashed #fce300; outline-offset: -1px; background: #141410; }
 .vw-rail-collapsed { width: 48px; }
 .vw-rail-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px 8px; }
 .vw-rail-collapsed .vw-rail-head { justify-content: center; }
