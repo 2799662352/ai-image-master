@@ -587,6 +587,20 @@
 .vw-palette-item-active { background: #18181b; color: #fff; box-shadow: inset 2px 0 0 #fce300; }
 .vw-palette-sub { color: #71717a; font-size: 11px; flex: none; }
 .vw-palette-empty { padding: 12px; font-size: 12px; color: #71717a; }
+/* 确认页(导入/导出工程):复用 palette 的遮罩与面板 */
+.vw-dialog { width: 520px; max-height: none; }
+.vw-dialog-title { font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 14px; font-weight: 700; color: #fce300; letter-spacing: .08em; padding: 12px 16px; border-bottom: 1px solid #3f3f46; }
+.vw-dialog-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; font-size: 12px; color: #e4e4e7; }
+.vw-dialog-line { line-height: 1.6; }
+.vw-dialog-field { display: flex; flex-direction: column; gap: 6px; }
+.vw-dialog-label { font-size: 11px; color: #71717a; letter-spacing: .04em; }
+.vw-dialog-path { font-size: 11px; color: #a1a1aa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.vw-dialog-input { height: 32px; background: #09090b; border: 1px solid #3f3f46; color: #fff; font-size: 13px; padding: 0 10px; }
+.vw-dialog-input:focus { outline: none; border-color: #fce300; }
+.vw-dialog-note { font-size: 11px; color: #71717a; line-height: 1.6; margin: 0; }
+.vw-dialog-error { font-size: 12px; color: #f87171; line-height: 1.6; margin: 0; }
+.vw-dialog-ok { font-size: 12px; color: #22c55e; line-height: 1.6; margin: 0; display: flex; gap: 6px; min-width: 0; }
+.vw-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #3f3f46; }
 .vw-seg-body { padding: 10px 12px 12px; }
 .vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }

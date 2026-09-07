@@ -11,7 +11,12 @@ import { SegmentCard } from './SegmentCard'
 /** 分段卡拖拽的 dataTransfer 类型;剧栏按它认「这是一个分段」。 */
 export const SEGMENT_DRAG_MIME = 'application/x-catimation-segment'
 
-export function ProjectOverview() {
+export interface ProjectOverviewProps {
+  onRequestImport?: () => void
+  onRequestExport?: () => void
+}
+
+export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOverviewProps = {}) {
   const project = useVideoWorkbenchStore((s) => s.projects.find((p) => p.id === s.activeProjectId))
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
@@ -89,6 +94,16 @@ export function ProjectOverview() {
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-none pt-1">
+          {onRequestImport && (
+            <button type="button" className="vw-ghost" aria-label="导入工程" onClick={onRequestImport}>
+              导入工程
+            </button>
+          )}
+          {onRequestExport && (
+            <button type="button" className="vw-ghost" aria-label="导出工程" onClick={onRequestExport}>
+              导出工程
+            </button>
+          )}
           {resumeBoard && (
             <button
               type="button"

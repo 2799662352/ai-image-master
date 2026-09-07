@@ -17,6 +17,7 @@ import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/p
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
+import { ExportProjectDialog } from './video-workbench/ExportProjectDialog'
 import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
 import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
@@ -48,6 +49,7 @@ export default function VideoWorkbenchPage() {
   // 隐身避让插入指示线,正好把这根预埋管线接上。
   const [dragging, setDragging] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const allCards = useVideoWorkbenchStore((s) => s.cards)
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
@@ -164,13 +166,14 @@ export default function VideoWorkbenchPage() {
       </div>
 
       <ProjectSearchPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ExportProjectDialog open={exportOpen} onClose={() => setExportOpen(false)} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">
-        <ProjectRail />
+        <ProjectRail onRequestExport={() => setExportOpen(true)} />
         <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
         {viewMode === 'overview' ? (
-          <ProjectOverview />
+          <ProjectOverview onRequestExport={() => setExportOpen(true)} />
         ) : (
         <>
         {/*
