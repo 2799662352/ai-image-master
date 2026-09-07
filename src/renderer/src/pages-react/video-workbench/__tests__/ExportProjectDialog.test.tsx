@@ -14,7 +14,10 @@ const S = () => useVideoWorkbenchStore.getState()
 
 const write = vi.fn(async (path: string, _json: string) => ({ ok: true as const, path }))
 const pickSavePath = vi.fn(async () => ({ path: 'E:\\else\\追车戏.catwb.json' }))
-const resolveRefMedia = vi.fn(async (p: string) => ({ ok: true as const, url: `https://cos/${p.split(/[\\/]/).pop()}` }))
+type ResolveResult = { ok: true; url: string } | { ok: false; reason: string }
+const resolveRefMedia = vi.fn(
+  async (p: string): Promise<ResolveResult> => ({ ok: true, url: `https://cos/${p.split(/[\\/]/).pop()}` }),
+)
 const showItemInFolder = vi.fn()
 
 beforeEach(() => {
@@ -79,13 +82,33 @@ describe('ExportProjectDialog', () => {
   it('上传失败 → 留在页上给原因,按钮变「重试导出」,不写文件', async () => {
     S().addProject('追车戏')
     S().addCards([{ prompt: 'a', referenceImages: ['D:\\pics\\local.png'] }])
-    resolveRefMedia.mockResolvedValueOnce({ ok: false, reason: 'offline' } as never)
+    resolveRefMedia.mockResolvedValueOnce({ ok: false, reason: 'offline' })
     render(<ExportProjectDialog open onClose={() => {}} />)
     await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain('CATIMATION 工程'))
     fireEvent.click(screen.getByRole('button', { name: '导出' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('local.png'))
     expect(screen.getByRole('button', { name: '重试导出' })).toBeTruthy()
     expect(write).not.toHaveBeenCalled()
+  })
+
+  it('本地文件找不到 → 列出缺失、给「跳过缺失素材并导出」;跳过后成功并注明跳过数', async () => {
+    S().addProject('追车戏')
+    S().addCards([{ prompt: 'a', referenceImages: ['Q:\\old\\gone.png', 'D:\\pics\\ok.png'] }])
+    resolveRefMedia.mockImplementation(async (p: string): Promise<ResolveResult> =>
+      p.endsWith('gone.png')
+        ? { ok: false, reason: `referenceMedia: cannot read local file "${p}" — pass an existing path, data: URL, or https URL.` }
+        : { ok: true, url: 'https://cos/ok.png' })
+    render(<ExportProjectDialog open onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain('CATIMATION 工程'))
+    fireEvent.click(screen.getByRole('button', { name: '导出' }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('gone.png'))
+    expect(write).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '跳过缺失素材并导出' }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('已跳过 1 个找不到的素材'))
+    expect(write).toHaveBeenCalledTimes(1)
+    const json = JSON.parse(write.mock.calls[0][1])
+    expect(json.boards[0].cards[0].referenceImages).toEqual([{ name: 'ok.png', src: 'https://cos/ok.png' }])
   })
 
   it('取消关闭;open=false 不渲染', () => {

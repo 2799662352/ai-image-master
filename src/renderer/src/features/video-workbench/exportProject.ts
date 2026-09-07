@@ -27,11 +27,21 @@ export interface RunProjectExportOptions {
   onProgress?: (done: number, total: number) => void
   now?: number
   concurrency?: number
+  /**
+   * 本地文件已不存在的素材(盘没挂 / 被删)直接从卡上去掉,不算失败。
+   * 缺省 false:先整体失败并列出缺失项,由用户在确认页决定要不要跳过。
+   */
+  skipMissing?: boolean
 }
 
 export type RunProjectExportResult =
-  | { ok: true; path: string; uploaded: number }
-  | { ok: false; reason: string }
+  | { ok: true; path: string; uploaded: number; skipped: string[] }
+  | { ok: false; reason: string; missing: string[] }
+
+/** 主进程 resolveMediaUrl 对读不到的本地文件给的固定句式。 */
+const MISSING_FILE_RE = /cannot read local file/i
+
+class MissingLocalFile extends Error {}
 
 async function uploadOne(src: string, api: ExportApi): Promise<string> {
   if (src.startsWith('data:')) {
@@ -43,7 +53,7 @@ async function uploadOne(src: string, api: ExportApi): Promise<string> {
   }
   if (!api.resolveRefMedia) throw new Error('当前环境没有上传通道')
   const r = await api.resolveRefMedia(src)
-  if (!r.ok) throw new Error(r.reason)
+  if (!r.ok) throw MISSING_FILE_RE.test(r.reason) ? new MissingLocalFile(r.reason) : new Error(r.reason)
   // COS 不可达时主进程会把小文件降级成内联 data URL —— 对导出是净亏,当失败。
   if (!isHttpsUrl(r.url)) throw new Error('COS 不可达,拿不到云端地址')
   return r.url
@@ -87,6 +97,9 @@ export async function runProjectExport(opts: RunProjectExportOptions): Promise<R
     }
   }
   const resolved = new Map<string, string>()
+  // 本地文件已不存在的源:不中断,先收起来 —— 用户可能有 5 个盘没挂的旧图,
+  // 逐个报错逐个重试是折磨;一次列全,让他决定跳过还是去挂盘。
+  const missing: string[] = []
   let done = 0
   opts.onProgress?.(0, srcs.length)
   try {
@@ -94,25 +107,38 @@ export async function runProjectExport(opts: RunProjectExportOptions): Promise<R
       try {
         resolved.set(src, await uploadOne(src, opts.api))
       } catch (e) {
-        const why = e instanceof Error ? e.message : String(e)
-        throw new Error(`「${nameOf.get(src) ?? src}」上传失败:${why}`)
+        if (e instanceof MissingLocalFile) {
+          missing.push(src)
+        } else {
+          const why = e instanceof Error ? e.message : String(e)
+          throw new Error(`「${nameOf.get(src) ?? src}」上传失败:${why}`)
+        }
       }
       done += 1
       opts.onProgress?.(done, srcs.length)
     })
   } catch (e) {
-    return { ok: false, reason: e instanceof Error ? e.message : String(e) }
+    return { ok: false, reason: e instanceof Error ? e.message : String(e), missing: missing.map((s) => nameOf.get(s) ?? s) }
   }
+  const missingNames = missing.map((s) => nameOf.get(s) ?? s)
+  if (missing.length > 0 && !opts.skipMissing) {
+    return {
+      ok: false,
+      reason: `${missing.length} 个素材的本地文件已不存在(盘没挂或已删除):${missingNames.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}`,
+      missing: missingNames,
+    }
+  }
+  const missingSet = new Set(missing)
   const built = buildProjectFile({
     project: opts.project,
     boards: opts.boards,
     cards: opts.cards,
     app: opts.app,
     now: opts.now ?? Date.now(),
-    resolve: (src) => resolved.get(src) ?? null,
+    resolve: (src) => (missingSet.has(src) ? 'skip' : resolved.get(src) ?? null),
   })
-  if (!built.ok) return { ok: false, reason: built.reason }
+  if (!built.ok) return { ok: false, reason: built.reason, missing: missingNames }
   const written = await opts.api.write(opts.path, JSON.stringify(built.file, null, 2))
-  if (!written.ok) return { ok: false, reason: written.reason }
-  return { ok: true, path: written.path, uploaded: srcs.length }
+  if (!written.ok) return { ok: false, reason: written.reason, missing: missingNames }
+  return { ok: true, path: written.path, uploaded: resolved.size, skipped: missingNames }
 }

@@ -155,20 +155,31 @@ export interface BuildProjectFileInput {
   cards: readonly VideoWorkbenchCard[]
   app: { name: string; version: string }
   now: number
-  /** 非 https 的源(本地路径 / data:)→ 已上传得到的 https;拿不到返回 null。 */
-  resolve: (src: string) => string | null
+  /**
+   * 非 https 的源(本地路径 / data:)→ 已上传得到的 https;拿不到返回 null(整份拒绝);
+   * 返回 `'skip'` 表示这条素材从卡上去掉(调用方已确认要跳过缺失文件)。
+   */
+  resolve: (src: string) => string | null | 'skip'
 }
 
 export type BuildProjectFileResult =
   | { ok: true; file: WorkbenchProjectFile }
   | { ok: false; reason: string }
 
+/** 'skip' = 调用方决定丢掉这条;null = 拿不到地址(整份拒绝);string = 用它。 */
 function resolveMaterial(
   m: VideoWorkbenchMaterial,
   resolve: BuildProjectFileInput['resolve'],
-): ProjectFileMaterial | null {
-  const src = exportableSrc(m) ?? resolve(m.src)
-  return src && isHttpsUrl(src) ? { name: m.name, src } : null
+): ProjectFileMaterial | null | 'skip' {
+  const direct = exportableSrc(m)
+  if (direct) return { name: m.name, src: direct }
+  const r = resolve(m.src)
+  if (r === 'skip') return 'skip'
+  return r && isHttpsUrl(r) ? { name: m.name, src: r } : null
+}
+
+function httpsOrUndefined(r: string | null | 'skip' | undefined): string | undefined {
+  return typeof r === 'string' && isHttpsUrl(r) ? r : undefined
 }
 
 function exportResult(card: VideoWorkbenchCard, resolve: BuildProjectFileInput['resolve']): ProjectFileResult {
@@ -176,12 +187,12 @@ function exportResult(card: VideoWorkbenchCard, resolve: BuildProjectFileInput['
     return { status: 'failed', ...(card.error ? { error: card.error } : {}) }
   }
   if (card.status !== 'succeeded') return { status: 'draft' }
-  const remoteUrl = card.remoteUrl ?? (card.localPath ? resolve(card.localPath) ?? undefined : undefined)
+  const remoteUrl = card.remoteUrl ?? (card.localPath ? httpsOrUndefined(resolve(card.localPath)) : undefined)
   // 一张「已完成」却没有任何云端地址的卡,导出去就是一张空卡:老实标草稿。
   if (!remoteUrl || !isHttpsUrl(remoteUrl)) return { status: 'draft' }
   const versions = (card.versions ?? []).map((v) => {
-    const url = v.remoteUrl ?? (v.localPath ? resolve(v.localPath) ?? undefined : undefined)
-    return { seq: v.seq, ...(url && isHttpsUrl(url) ? { remoteUrl: url } : {}), prompt: v.spec.prompt }
+    const url = v.remoteUrl ?? (v.localPath ? httpsOrUndefined(resolve(v.localPath)) : undefined)
+    return { seq: v.seq, ...(url ? { remoteUrl: url } : {}), prompt: v.spec.prompt }
   })
   return { status: 'succeeded', remoteUrl, ...(versions.length > 0 ? { versions } : {}) }
 }
@@ -199,6 +210,7 @@ export function buildProjectFile(input: BuildProjectFileInput): BuildProjectFile
         const materials = (field: MaterialKind): ProjectFileMaterial[] =>
           card[field].flatMap((m) => {
             const out = resolveMaterial(m, input.resolve)
+            if (out === 'skip') return []
             if (!out) missing.push(m.name || m.src)
             return out ? [out] : []
           })

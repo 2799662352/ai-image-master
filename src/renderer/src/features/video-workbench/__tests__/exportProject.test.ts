@@ -46,7 +46,7 @@ describe('runProjectExport', () => {
       project, boards, cards: cards(), app, path: 'D:\\Docs\\追车戏.catwb.json', api: a, now: 0,
       onProgress: (done, total) => progress.push([done, total]),
     })
-    expect(r).toEqual({ ok: true, path: 'D:\\Docs\\追车戏.catwb.json', uploaded: 3 })
+    expect(r).toEqual({ ok: true, path: 'D:\\Docs\\追车戏.catwb.json', uploaded: 3, skipped: [] })
     expect(a.calls.sort()).toEqual(['data:data:image/png;base6', 'path:C:\\out\\b.mp4', 'path:D:\\pics\\local.png'])
     expect(progress.at(-1)).toEqual([3, 3])
     const json = JSON.parse((a.write as ReturnType<typeof vi.fn>).mock.calls[0][1])
@@ -77,7 +77,53 @@ describe('runProjectExport', () => {
 
     const bad = api({ write: vi.fn(async () => ({ ok: false as const, reason: 'EACCES' })) })
     const r2 = await runProjectExport({ project, boards, cards: cards(), app, path: 'D:\\x.catwb.json', api: bad, now: 0 })
-    expect(r2).toEqual({ ok: false, reason: 'EACCES' })
+    expect(r2).toEqual({ ok: false, reason: 'EACCES', missing: [] })
+  })
+
+  it('本地文件已不存在(盘没挂 / 被删)→ 默认整体失败并列出缺失项;skipMissing 时把它们从卡上去掉后照常导出', async () => {
+    const missing = (p: string) => p.endsWith('gone.png') || p.endsWith('gone2.png')
+    const a = api({
+      resolveRefMedia: vi.fn(async (p: string) =>
+        missing(p)
+          ? { ok: false as const, reason: `referenceMedia: cannot read local file "${p}" — pass an existing path, data: URL, or https URL.` }
+          : { ok: true as const, url: `https://cos/uploaded/${p.split(/[\\/]/).pop()}` }),
+    })
+    const cardsWithMissing = [
+      buildCard({
+        prompt: 'A',
+        referenceImages: [
+          { name: 'ok.png', src: 'D:\\pics\\ok.png' },
+          { name: 'gone.png', src: 'Q:\\old\\gone.png' },
+          { name: 'gone2.png', src: 'Q:\\old\\gone2.png' },
+        ],
+      }, 0, 'b1'),
+    ]
+    const strict = await runProjectExport({ project, boards, cards: cardsWithMissing, app, path: 'D:\\x.catwb.json', api: a, now: 0 })
+    expect(strict.ok).toBe(false)
+    if (strict.ok) return
+    expect(strict.missing).toEqual(['gone.png', 'gone2.png'])
+    expect(strict.reason).toContain('2 个素材的本地文件已不存在')
+    expect(a.write).not.toHaveBeenCalled()
+
+    const lenient = await runProjectExport({ project, boards, cards: cardsWithMissing, app, path: 'D:\\x.catwb.json', api: a, now: 0, skipMissing: true })
+    expect(lenient).toMatchObject({ ok: true, uploaded: 1, skipped: ['gone.png', 'gone2.png'] })
+    const json = JSON.parse((a.write as ReturnType<typeof vi.fn>).mock.calls[0][1])
+    expect(json.boards[0].cards[0].referenceImages).toEqual([{ name: 'ok.png', src: 'https://cos/uploaded/ok.png' }])
+  })
+
+  it('缺失文件之外还有别的失败(如 COS 不通)→ 即使 skipMissing 也失败,并说真实原因', async () => {
+    const a = api({
+      resolveRefMedia: vi.fn(async (p: string) =>
+        p.endsWith('gone.png')
+          ? { ok: false as const, reason: 'referenceMedia: cannot read local file "Q:\\gone.png" — pass an existing path, data: URL, or https URL.' }
+          : { ok: false as const, reason: '上传到中转服务器失败(STS endpoint unreachable)' }),
+    })
+    const c = [buildCard({ prompt: 'A', referenceImages: ['Q:\\gone.png', 'D:\\pics\\ok.png'] }, 0, 'b1')]
+    const r = await runProjectExport({ project, boards, cards: c, app, path: 'D:\\x.catwb.json', api: a, now: 0, skipMissing: true })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toContain('STS endpoint unreachable')
+    expect(a.write).not.toHaveBeenCalled()
   })
 
   it('没有待上传项时不调上传,直接写', async () => {
