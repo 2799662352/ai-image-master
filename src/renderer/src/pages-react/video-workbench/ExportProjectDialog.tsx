@@ -137,7 +137,14 @@ export function ExportProjectDialog({ open, onClose }: { open: boolean; onClose:
             </p>
           )}
           {phase.kind === 'failed' && (
-            <p className="vw-dialog-error" role="alert">导出失败:{phase.reason}</p>
+            <p className="vw-dialog-error" role="alert">
+              导出失败:{phase.reason}
+              {/\bSTS\b|中转服务器|fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT/i.test(phase.reason) && (
+                <span className="block mt-1 text-[#a1a1aa]">
+                  这是上传服务器连不上,不是文件的问题:检查网络 / 代理后「重试导出」;没写出任何文件。
+                </span>
+              )}
+            </p>
           )}
           {phase.kind === 'done' && (
             <p className="vw-dialog-ok" role="status">已导出到 <span className="vw-dialog-path" title={phase.path}>{phase.path}</span></p>

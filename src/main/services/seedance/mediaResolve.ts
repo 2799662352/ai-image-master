@@ -82,10 +82,15 @@ function relayFailureHint(e: unknown): string {
  * 这时内联是唯一能把活干成的路。但超过上游 url 长度限制就必须报错 —— 硬塞进去
  * 只会换来一句莫名其妙的 `url is too long`,把一个可解释的网络问题变成谜题。
  */
-async function relayOrInline(src: MediaSource, label: string): Promise<string> {
+async function relayOrInline(src: MediaSource, label: string, noInline = false): Promise<string> {
   try {
     return await src.relay()
   } catch (e) {
+    // 调用方只要 https(预传 / 工程导出)时不降级:内联对它们是净亏,而且会把真实原因
+    // (STS 不通 / 票据过期)吞成一句「不是 https」。
+    if (noInline) {
+      throw new Error(`${label}: ${relayFailureHint(e)}`)
+    }
     if (src.bytes <= MAX_UPSTREAM_INLINE_BYTES) {
       console.warn(`[seedance] ${label}: COS 中转失败,降级为内联提交:`, e)
       return src.inline()
@@ -115,6 +120,14 @@ export interface ResolveMediaOptions {
    * 只影响「要不要中转」,不影响「中转挂了怎么办」:失败后仍按原策略降级内联。
    */
   alwaysRelay?: boolean
+  /**
+   * 中转失败时**不要**降级成内联 data URL,直接抛带真实原因的错。
+   *
+   * 给只接受 https 的调用方用(视频工作台预传、工程文件导出):它们拿到 data URL
+   * 也只会丢掉,而丢掉之前那句「COS 中转失败 + 原因」已经被吞进 console.warn 了 ——
+   * 用户看到的就只剩「不是云端地址」。
+   */
+  noInline?: boolean
 }
 
 /**
@@ -144,6 +157,7 @@ export async function resolveMediaUrl(
   options?: ResolveMediaOptions,
 ): Promise<string> {
   const alwaysRelay = options?.alwaysRelay === true
+  const noInline = options?.noInline === true
   const trimmed = src.trim()
   if (/^(https?:|asset:)/i.test(trimmed)) return trimmed
 
@@ -153,6 +167,7 @@ export async function resolveMediaUrl(
     return relayOrInline(
       { bytes, relay: () => relayDataUrlToCos(trimmed), inline: async () => trimmed },
       label,
+      noInline,
     )
   }
 
@@ -178,5 +193,6 @@ export async function resolveMediaUrl(
   return relayOrInline(
     { bytes, relay: () => relayFileToCos(trimmed, mime, { fileSize: bytes }), inline },
     label,
+    noInline,
   )
 }

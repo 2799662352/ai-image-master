@@ -148,6 +148,22 @@ describe('resolveMediaUrl — 中转失败后的降级,两个入口必须同命'
     expect(await resolveMediaUrl(inline, 'referenceImages[0]')).toBe(inline)
   })
 
+  it('noInline:只收 https 的调用方(预传 / 工程导出)—— 小文件也不降级,直接抛真实原因', async () => {
+    const { resolveMediaUrl } = await import('../mediaResolve')
+    fileOfBytes(200 * 1024)
+    relayFileToCos.mockRejectedValue(new Error('STS endpoint unreachable: fetch failed'))
+
+    const error = await resolveMediaUrl('D:\\shots\\small.png', 'referenceMedia', undefined, {
+      alwaysRelay: true,
+      noInline: true,
+    }).catch((e: unknown) => e as Error)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain('referenceMedia')
+    expect(error.message).toContain('STS endpoint unreachable')
+    expect(readFile).not.toHaveBeenCalled()
+  })
+
   it('本地路径:超过上游内联限 → 报错,且带上真实原因', async () => {
     const { resolveMediaUrl } = await import('../mediaResolve')
     fileOfBytes(6 * 1024 * 1024)
