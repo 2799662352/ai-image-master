@@ -9,10 +9,13 @@ import type { StateCreator } from 'zustand'
 import {
   WORKBENCH_PROJECT_SUMMARY_MAX,
   type VideoWorkbenchBoard,
+  type VideoWorkbenchCard,
   type VideoWorkbenchProject,
+  type VideoWorkbenchVersion,
 } from '../../../../types/videoWorkbench'
-import { createId, isActiveStatus } from './cardSpec'
+import { buildCard, createId, isActiveStatus } from './cardSpec'
 import { cancelPendingPersist } from './persistQueue'
+import type { ImportPlan } from './projectFile'
 import type { VideoWorkbenchState } from './store'
 import { getWorkbenchDb } from './WorkbenchDb'
 
@@ -44,6 +47,11 @@ export interface ProjectsSlice {
   duplicateProject: (id: string) => string | null
   /** 唯一一部剧、或有生成中卡片 → 拒绝。 */
   removeProject: (id: string) => { ok: boolean; reason?: string }
+  /**
+   * 工程文件 → 一部**新**剧(全新 id;已完成/失败保留状态与云端地址,其余草稿),
+   * 切过去停在总览。返回新剧 id。零分段的文件补一段「分段 1」。
+   */
+  importProject: (plan: ImportPlan, name: string, summary?: string) => string
   /** agent 写的一行剧摘要;空串清除。不动 revision / structureRevision(见 setBoardSummary)。 */
   setProjectSummary: (id: string, summary: string) => boolean
   dismissLegacyNotice: (id: string) => void
@@ -95,6 +103,50 @@ export function firstBoardOf(
 
 function compactOrders<T extends { order: number }>(items: T[]): T[] {
   return items.map((it, i) => (it.order === i ? it : { ...it, order: i }))
+}
+
+/**
+ * 工程文件里的一张卡 → store 卡片。规格经 buildCard/normalizeSpec 补默认;结果只认
+ * 已完成(带云端地址)/失败,其余一律草稿 —— 文件里本来就没有任务号可接。
+ */
+function importedCard(plan: ImportPlan['boards'][number]['cards'][number], order: number, boardId: string): VideoWorkbenchCard {
+  const card = buildCard(plan.input, order, boardId)
+  const withSummary: VideoWorkbenchCard = plan.summary ? { ...card, summary: plan.summary } : card
+  const r = plan.result
+  if (!r) return withSummary
+  if (r.status === 'failed') {
+    return { ...withSummary, status: 'failed', ...(r.error ? { error: r.error } : {}) }
+  }
+  if (r.status !== 'succeeded' || !r.remoteUrl) return withSummary
+  const versions: VideoWorkbenchVersion[] = (r.versions ?? []).map((v) => ({
+    id: createId(),
+    seq: v.seq,
+    createdAt: card.createdAt,
+    ...(v.remoteUrl ? { remoteUrl: v.remoteUrl } : {}),
+    spec: {
+      prompt: v.prompt,
+      model: card.model,
+      resolution: card.resolution,
+      ratio: card.ratio,
+      duration: card.duration,
+      generateAudio: card.generateAudio,
+      mode: card.mode,
+      ...(card.seed !== undefined ? { seed: card.seed } : {}),
+      webSearch: card.webSearch,
+      referenceBrief: {
+        images: card.referenceImages.map((m) => m.name),
+        videos: card.referenceVideos.map((m) => m.name),
+        audios: card.referenceAudios.map((m) => m.name),
+      },
+    },
+  }))
+  return {
+    ...withSummary,
+    status: 'succeeded',
+    remoteUrl: r.remoteUrl,
+    persistence: 'done',
+    ...(versions.length > 0 ? { versions } : {}),
+  }
 }
 
 export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], ProjectsSlice> = (set, get) => ({
@@ -281,6 +333,58 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
       revision: s.revision + 1,
       structureRevision: s.structureRevision + 1,
     }))
+    const db = getWorkbenchDb()
+    void db.putProject(project).catch(() => {})
+    for (const b of newBoards) void db.putBoard(b).catch(() => {})
+    for (const c of newCards) void db.put(c).catch(() => {})
+    return project.id
+  },
+
+  importProject: (plan, name, summary) => {
+    const now = Date.now()
+    const { projects } = get()
+    const trimmedSummary = summary?.trim().slice(0, WORKBENCH_PROJECT_SUMMARY_MAX)
+    const project: VideoWorkbenchProject = {
+      id: createId(),
+      name: name.trim() || '导入的剧',
+      order: projects.length,
+      createdAt: now,
+      updatedAt: now,
+      ...(trimmedSummary ? { summary: trimmedSummary } : {}),
+    }
+    const newBoards: VideoWorkbenchBoard[] = []
+    const newCards: VideoWorkbenchCard[] = []
+    plan.boards.forEach((b, order) => {
+      const board: VideoWorkbenchBoard = {
+        id: createId(),
+        projectId: project.id,
+        name: b.name.trim() || `分段 ${order + 1}`,
+        ...(b.summary ? { summary: b.summary } : {}),
+        order,
+        createdAt: now,
+      }
+      newBoards.push(board)
+      b.cards.forEach((c, cardOrder) => {
+        newCards.push(importedCard(c, cardOrder, board.id))
+      })
+    })
+    // 每部剧至少一段:文件里没分段也得有个落点,activeBoardId 是硬不变量。
+    if (newBoards.length === 0) {
+      newBoards.push({ id: createId(), projectId: project.id, name: '分段 1', order: 0, createdAt: now })
+    }
+    set((s) => ({
+      projects: [...s.projects, project],
+      boards: [...s.boards, ...newBoards],
+      cards: [...s.cards, ...newCards],
+      activeProjectId: project.id,
+      activeBoardId: newBoards[0].id,
+      viewByProject: { ...s.viewByProject, [project.id]: { mode: 'overview' } },
+      selectedCardIds: [],
+      selectionAnchorId: undefined,
+      revision: s.revision + 1,
+      structureRevision: s.structureRevision + 1,
+    }))
+    writeActiveProject(project.id)
     const db = getWorkbenchDb()
     void db.putProject(project).catch(() => {})
     for (const b of newBoards) void db.putBoard(b).catch(() => {})

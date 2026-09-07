@@ -233,6 +233,82 @@ describe('水合回填', () => {
   })
 })
 
+describe('importProject(工程文件 → 新剧)', () => {
+  const plan = () => ({
+    boards: [
+      {
+        name: '建立镜头',
+        summary: '城市夜景',
+        cards: [
+          {
+            input: { prompt: '主角跳车', referenceImages: [{ name: 'ref.png', src: 'https://cos/ref.png' }] },
+            summary: '跳车 · 夜外',
+          },
+          {
+            input: { prompt: '追兵逼近', duration: 10 },
+            result: {
+              status: 'succeeded' as const,
+              remoteUrl: 'https://cos/v2.mp4',
+              versions: [
+                { seq: 1, remoteUrl: 'https://cos/v1.mp4', prompt: '旧提示词' },
+                { seq: 2, remoteUrl: 'https://cos/v2.mp4', prompt: '追兵逼近' },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        name: '隧道',
+        cards: [
+          { input: { prompt: '失败过的' }, result: { status: 'failed' as const, error: '余额不足' } },
+        ],
+      },
+    ],
+  })
+
+  it('新建一部剧:分段/卡片顺序与内容一致、id 全新、结果保留、切到新剧总览、可撤销', async () => {
+    await S().ensureHydrated()
+    const before = S().undoStack.length
+    const id = S().importProject(plan(), '追车戏 (2)', '三集 · 夜外')
+    const p = S().projects.find((x) => x.id === id)!
+    expect(p.name).toBe('追车戏 (2)')
+    expect(p.summary).toBe('三集 · 夜外')
+    expect(p.order).toBe(1)
+    expect(S().activeProjectId).toBe(id)
+    expect(S().viewByProject[id]).toEqual({ mode: 'overview' })
+
+    const segs = boardsOf(id)
+    expect(segs.map((b) => [b.name, b.summary])).toEqual([['建立镜头', '城市夜景'], ['隧道', undefined]])
+    const cardsOf = (bid: string) => S().cards.filter((c) => c.boardId === bid).sort((a, b) => a.order - b.order)
+    const [a, b] = cardsOf(segs[0].id)
+    expect(a.prompt).toBe('主角跳车')
+    expect(a.referenceImages).toEqual([{ name: 'ref.png', src: 'https://cos/ref.png' }])
+    expect(a.summary).toBe('跳车 · 夜外')
+    expect(a.status).toBe('draft')
+    expect(b.status).toBe('succeeded')
+    expect(b.remoteUrl).toBe('https://cos/v2.mp4')
+    expect(b.duration).toBe(10)
+    expect(b.versions?.map((v) => [v.seq, v.remoteUrl, v.spec.prompt])).toEqual([
+      [1, 'https://cos/v1.mp4', '旧提示词'],
+      [2, 'https://cos/v2.mp4', '追兵逼近'],
+    ])
+    const [c] = cardsOf(segs[1].id)
+    expect(c.status).toBe('failed')
+    expect(c.error).toBe('余额不足')
+    // 全新 id,且落库
+    expect(new Set(S().cards.map((x) => x.id)).size).toBe(S().cards.length)
+    expect((await getWorkbenchDb().listProjects()).some((x) => x.id === id)).toBe(true)
+    expect(S().undoStack.length).toBe(before + 1)
+  })
+
+  it('零分段的文件也补一段「分段 1」(每部剧至少一段)', async () => {
+    await S().ensureHydrated()
+    const id = S().importProject({ boards: [] }, '空剧')
+    expect(boardsOf(id).map((b) => b.name)).toEqual(['分段 1'])
+    expect(S().boards.find((b) => b.id === S().activeBoardId)!.projectId).toBe(id)
+  })
+})
+
 describe('setProjectSummary(agent 路标)', () => {
   it('写入 / 落库 / 不动两个令牌 / 不进撤销栈', async () => {
     const id = S().activeProjectId
