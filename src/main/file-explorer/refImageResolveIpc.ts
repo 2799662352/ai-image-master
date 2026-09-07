@@ -84,7 +84,10 @@ async function resolveRef(
   }
 
   try {
-    const url = await resolveMediaUrl(src, label, mime, { alwaysRelay: true })
+    // 两个入口的调用方都只收 https(预传丢弃 data URL,工程导出拒绝 data URL),
+    // 所以中转失败就直接报真实原因,不降级 —— 降级出的 data URL 只会被丢掉,
+    // 而原因(STS 不通 / 票据过期 / 网络)就此消失在 console.warn 里。
+    const url = await resolveMediaUrl(src, label, mime, { alwaysRelay: true, noInline: true })
     return { ok: true, url }
   } catch (err) {
     // 绝不让异常穿过 IPC 边界:渲染层拿到 ok:false 会按策略降级回内联 data URL,
@@ -103,9 +106,9 @@ export function resolveRefImage(rawPath: string): Promise<ResolveRefImageResult>
  * 与 `resolveRefImage` 的唯一区别是白名单放宽。视频素材恰恰是体积最大的那批,
  * 把它的上传从「点了生成之后」挪到用户还在写提示词的时候,省下的等待也最多。
  *
- * 注意返回值**可能不是 https**:COS 挂掉时 `resolveMediaUrl` 会对小文件降级成
- * 内联 data URL(见 mediaResolve 的 relayOrInline)。预传的调用方只接受 http(s),
- * 拿到 data URL 要当作「没传成」丢掉 —— 那玩意儿留在卡片上就是一坨 base64。
+ * 中转失败时**直接 ok:false 带真实原因**(`noInline`),不再降级成内联 data URL:
+ * 调用方本来就只收 http(s),降级出的 base64 只会被丢掉,原因却丢在了主进程日志里。
+ * 渲染端仍保留「非 https 当失败」的防御,以防别的路径把 data URL 送进来。
  */
 export function resolveRefMedia(rawPath: string): Promise<ResolveRefImageResult> {
   return resolveRef(rawPath, 'av', 'referenceMedia')

@@ -880,6 +880,31 @@ function startTransfersForCard(card: VideoWorkbenchCard): void {
 }
 
 /**
+ * 水合后补转存:把库里残留的 `data:image/*` 素材重新发起一次 COS 转存。
+ *
+ * 转存本来在素材挂上时就发,但离线粘贴、转存失败、老版本存下的卡,都会让 base64
+ * 一直躺在 IndexedDB 里(每次写卡都整段重写,导出工程时还得先上传)。这里只补图片
+ * —— 字节通道只认 image/*,内联视频/音频没有诚实 mime 的入口。幂等:换成 https 后
+ * 下次水合自然扫不到;失败保持原样,下次再试。空闲时跑,不抢首屏。
+ */
+export function sweepInlineMaterials(cards: readonly VideoWorkbenchCard[]): number {
+  let count = 0
+  for (const card of cards) {
+    const inline = card.referenceImages.filter((m) => /^data:image\//i.test(m.src))
+    if (inline.length === 0) continue
+    count += inline.length
+    startTransfersFor(card.id, 'referenceImages', inline)
+  }
+  return count
+}
+
+function scheduleIdle(fn: () => void): void {
+  const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
+  if (typeof ric === 'function') ric(fn, { timeout: 5_000 })
+  else setTimeout(fn, 0)
+}
+
+/**
  * 本地素材预传(materialPreupload):把上传从「点了生成之后」挪到用户还在写提示词
  * 的那段时间。与转存互斥 —— 一个源不可能既是第三方外链又是本地路径。
  *
@@ -1287,6 +1312,10 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           }
         })
         writeActiveProject(activeProjectId)
+        scheduleIdle(() => {
+          const n = sweepInlineMaterials(get().cards)
+          if (n > 0) console.info(`[VideoWorkbench] 补转存 ${n} 个内联图片素材`)
+        })
       } catch (e) {
         console.warn('[VideoWorkbench] 历史卡片恢复失败(忽略):', e)
         set({ hydrated: true })

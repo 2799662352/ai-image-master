@@ -43,6 +43,7 @@ import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } fr
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
+import { registerProjectFileIpc } from './services/videoWorkbench/projectFileIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
@@ -1298,6 +1299,7 @@ app.whenReady().then(async () => {
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
   installLocalFileHandler()
   registerFsIpc()
+  registerProjectFileIpc(() => mainWindow)
   registerAttachmentsTreeIpc(getPrisma)
   registerAttachmentsThumbIpc()
   // media:thumb — resized-JPEG hot-path IPC for chat/thumbnail render surfaces
