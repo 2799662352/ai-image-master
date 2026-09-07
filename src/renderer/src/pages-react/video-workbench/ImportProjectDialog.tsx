@@ -3,6 +3,7 @@
 // 文件由调用方选好(系统对话框或拖到剧栏),这里只负责读、校验、确认、写 store。
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useToastStore } from '../../stores/useToastStore'
 import { loadProjectFile, type ImportApi, type LoadProjectFileResult } from '../../features/video-workbench/importProject'
 import { planImport, uniqueProjectName } from '../../features/video-workbench/projectFile'
@@ -69,7 +70,8 @@ export function ImportProjectDialog({ path, onClose }: ImportProjectDialogProps)
     onClose()
   }
 
-  return (
+  // 挂到 body:工作台页根节点是 `relative z-10`,fixed 遮罩留在它里面会被顶部导航盖住。
+  return createPortal(
     <div className="vw-palette-backdrop" onMouseDown={onClose}>
       <div className="vw-palette vw-dialog" role="dialog" aria-label="导入工程" onMouseDown={(e) => e.stopPropagation()}>
         <div className="vw-dialog-title">导入工程</div>
@@ -113,6 +115,7 @@ export function ImportProjectDialog({ path, onClose }: ImportProjectDialogProps)
           <button type="button" className="vw-primary" onClick={run} disabled={!canImport}>导入为新剧</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

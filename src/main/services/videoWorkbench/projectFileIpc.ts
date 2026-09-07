@@ -101,7 +101,9 @@ export function registerProjectFileIpc(getWindow: () => BrowserWindow | null): v
   ipcMain.removeHandler('video-workbench:project-default-path')
   ipcMain.handle('video-workbench:project-default-path', async (_e, args: { name?: unknown }) => {
     const name = typeof args?.name === 'string' ? args.name : ''
-    return { path: defaultProjectFilePath(app.getPath('documents'), name) }
+    // 顺带把版本号给出去:`get-app-version` 挂在自动更新器上,dev 下更新器不启动,
+    // 渲染端拿不到;工程文件的 app.version 不该依赖更新器在不在。
+    return { path: defaultProjectFilePath(app.getPath('documents'), name), appVersion: app.getVersion() }
   })
 
   ipcMain.removeHandler('video-workbench:project-pick-save-path')

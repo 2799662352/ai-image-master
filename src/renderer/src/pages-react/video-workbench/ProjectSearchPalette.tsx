@@ -2,6 +2,7 @@
 // 命中剧 → 切到该剧(落在它记住的视图);命中分段 → 直接打开那一段(连剧一起切)。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
 interface Hit {
@@ -60,7 +61,8 @@ export function ProjectSearchPalette({ open, onClose }: ProjectSearchPaletteProp
     onClose()
   }
 
-  return (
+  // 挂到 body:工作台页根节点是 `relative z-10`,fixed 遮罩留在它里面会被顶部导航盖住。
+  return createPortal(
     <div className="vw-palette-backdrop" onMouseDown={onClose}>
       <div
         className="vw-palette"
@@ -113,6 +115,7 @@ export function ProjectSearchPalette({ open, onClose }: ProjectSearchPaletteProp
           {hits.length === 0 && <li className="vw-palette-empty">没有匹配的剧或分段</li>}
         </ul>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

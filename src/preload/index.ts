@@ -730,7 +730,7 @@ export interface ElectronAPI {
      * 默认路径、系统对话框、原子写、带 50 MB 闸的读。
      */
     projectFile: {
-      defaultPath: (name: string) => Promise<{ path: string }>
+      defaultPath: (name: string) => Promise<{ path: string; appVersion: string }>
       pickSavePath: (defaultPath: string) => Promise<{ path: string | null }>
       write: (path: string, json: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
       pickOpen: () => Promise<{ path: string | null }>
@@ -1747,7 +1747,7 @@ const electronAPI: ElectronAPI = {
       ),
     projectFile: {
       defaultPath: (name: string) =>
-        safeInvoke<{ path: string }>('video-workbench:project-default-path', { name }),
+        safeInvoke<{ path: string; appVersion: string }>('video-workbench:project-default-path', { name }),
       pickSavePath: (defaultPath: string) =>
         safeInvoke<{ path: string | null }>('video-workbench:project-pick-save-path', { defaultPath }),
       write: (path: string, json: string) =>

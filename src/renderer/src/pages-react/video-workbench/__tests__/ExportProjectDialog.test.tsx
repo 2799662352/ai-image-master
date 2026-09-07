@@ -29,14 +29,13 @@ beforeEach(() => {
   ;(window as unknown as { electronAPI: unknown }).electronAPI = {
     videoWorkbench: {
       projectFile: {
-        defaultPath: async (name: string) => ({ path: `D:\\Docs\\CATIMATION 工程\\${name}.catwb.json` }),
+        defaultPath: async (name: string) => ({ path: `D:\\Docs\\CATIMATION 工程\\${name}.catwb.json`, appVersion: '4.8.1' }),
         pickSavePath,
         write,
       },
     },
     attachments: { resolveRefMedia },
     shell: { showItemInFolder },
-    getAppVersion: async () => '4.8.1',
   }
 })
 

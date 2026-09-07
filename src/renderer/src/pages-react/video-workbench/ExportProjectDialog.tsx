@@ -3,12 +3,13 @@
 // 「在文件夹中显示」—— 用户得知道文件去了哪。
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { collectExportTargets } from '../../features/video-workbench/projectFile'
 import { runProjectExport, type ExportApi } from '../../features/video-workbench/exportProject'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 
 interface ProjectFileBridge {
-  defaultPath: (name: string) => Promise<{ path: string }>
+  defaultPath: (name: string) => Promise<{ path: string; appVersion?: string }>
   pickSavePath: (defaultPath: string) => Promise<{ path: string | null }>
   write: ExportApi['write']
 }
@@ -23,7 +24,6 @@ interface ExportBridge {
     ) => Promise<{ success: true; url: string } | { success: false; error: string }>
   }
   shell?: { showItemInFolder?: (p: string) => void }
-  getAppVersion?: () => Promise<string>
 }
 
 function bridge(): ExportBridge | undefined {
@@ -50,6 +50,7 @@ export function ExportProjectDialog({ open, onClose }: { open: boolean; onClose:
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
   const [path, setPath] = useState<string>('')
+  const [appVersion, setAppVersion] = useState<string>('')
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
 
   const api = bridge()
@@ -66,7 +67,9 @@ export function ExportProjectDialog({ open, onClose }: { open: boolean; onClose:
       return
     }
     void pf.defaultPath(project.name).then((r) => {
-      if (!cancelled) setPath(r.path)
+      if (cancelled) return
+      setPath(r.path)
+      setAppVersion(r.appVersion ?? '')
     })
     return () => {
       cancelled = true
@@ -87,12 +90,11 @@ export function ExportProjectDialog({ open, onClose }: { open: boolean; onClose:
   const run = async () => {
     if (!pf || !path) return
     setPhase({ kind: 'running', done: 0, total: targets.pending.length })
-    const version = (await api?.getAppVersion?.().catch(() => '')) || ''
     const r = await runProjectExport({
       project,
       boards,
       cards,
-      app: { name: 'CATIMATION-Cyberpunk Master', version },
+      app: { name: 'CATIMATION-Cyberpunk Master', version: appVersion },
       path,
       api: {
         resolveRefMedia: api?.attachments?.resolveRefMedia,
@@ -104,7 +106,8 @@ export function ExportProjectDialog({ open, onClose }: { open: boolean; onClose:
     setPhase(r.ok ? { kind: 'done', path: r.path } : { kind: 'failed', reason: r.reason })
   }
 
-  return (
+  // 挂到 body:工作台页根节点是 `relative z-10`,fixed 遮罩留在它里面会被顶部导航盖住。
+  return createPortal(
     <div className="vw-palette-backdrop" onMouseDown={busy ? undefined : onClose}>
       <div className="vw-palette vw-dialog" role="dialog" aria-label="导出工程" onMouseDown={(e) => e.stopPropagation()}>
         <div className="vw-dialog-title">导出工程</div>
@@ -162,6 +165,7 @@ export function ExportProjectDialog({ open, onClose }: { open: boolean; onClose:
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
