@@ -12,7 +12,7 @@ import { ExportProjectDialog } from '../ExportProjectDialog'
 
 const S = () => useVideoWorkbenchStore.getState()
 
-const write = vi.fn(async (path: string) => ({ ok: true as const, path }))
+const write = vi.fn(async (path: string, _json: string) => ({ ok: true as const, path }))
 const pickSavePath = vi.fn(async () => ({ path: 'E:\\else\\追车戏.catwb.json' }))
 const resolveRefMedia = vi.fn(async (p: string) => ({ ok: true as const, url: `https://cos/${p.split(/[\\/]/).pop()}` }))
 const showItemInFolder = vi.fn()
@@ -65,7 +65,7 @@ describe('ExportProjectDialog', () => {
     expect(resolveRefMedia).toHaveBeenCalledWith('D:\\pics\\local.png')
     expect(write).toHaveBeenCalledTimes(1)
     expect(write.mock.calls[0][0]).toBe('E:\\else\\追车戏.catwb.json')
-    const json = JSON.parse(write.mock.calls[0][1] as string)
+    const json = JSON.parse(write.mock.calls[0][1])
     expect(json.app.version).toBe('4.8.1')
     expect(json.boards[0].cards[0].referenceImages.map((m: { src: string }) => m.src)).toEqual([
       'https://cos/local.png', 'https://cos/cloud.png',
