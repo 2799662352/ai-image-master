@@ -1,4 +1,4 @@
-import { protocol, net, app } from 'electron'
+import { protocol, net, app, session, type Session } from 'electron'
 import path from 'node:path'
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
@@ -155,6 +155,22 @@ export function registerLocalFileScheme(): void {
         secure: true,
         supportFetchAPI: true,
         bypassCSP: true,
+        // CORS-mode loads. tldraw's image shape loads every png/webp/gif/avif a
+        // SECOND time with `crossOrigin="anonymous"` (ImageAlphaCache.preloadAlphaData,
+        // for click-through on transparent pixels) and puts `crossOrigin` on the
+        // visible <img> of animated images; without this flag Chromium refuses
+        // those requests outright ("Cross origin requests are only supported for
+        // protocol schemes: chrome, …, http, https") — the plain <img> still shows,
+        // but transparent hit-testing is dead and animated local gifs are broken.
+        //
+        // Measured on Electron 43 (file:// and http://127.0.0.1 page origins):
+        // with this flag Chromium does NOT check Access-Control-Allow-Origin for
+        // this scheme at all — every frame in the renderer, including a sandboxed
+        // opaque-origin iframe, could `fetch()` and READ any local file. That is
+        // why `installLocalFileHandler` also installs the frame guard below: only
+        // a top-level frame of one of our windows may issue local-file requests.
+        // Never enable this flag without that guard.
+        corsEnabled: true,
         // `<video>` / `<audio>` **必须**要这一条。官方文档(docs/api/protocol.md)原话:
         // 媒体元素默认期待协议把整个响应**缓冲**下来,`stream` 才让它们按流式响应处理。
         // 不开它,net.fetch 那头明明是 createReadStream 流式吐字节,到了媒体元素这边
@@ -195,7 +211,74 @@ export function isAllowedLocalFileFetchSite(
   return site == null || site === 'same-origin' || site === 'none'
 }
 
+/** What `session.webRequest` tells us about who issued a `local-file://` request. */
+export interface LocalFileRequestInitiator {
+  /** `details.frame === details.frame.top`; `null` when the request has no frame. */
+  frameIsTop: boolean | null
+  /** `details.resourceType` (`image`, `xhr`, `media`, `mainFrame`, `subFrame`, …). */
+  resourceType: string
+  /** `details.webContents?.getType()` — `'window'` for a BrowserWindow, `'webview'` for a guest. */
+  webContentsType: string | null
+}
+
+/**
+ * The trust boundary that makes `corsEnabled` safe. Because Chromium skips the
+ * CORS header check for this privileged scheme (see `registerLocalFileScheme`),
+ * the *initiator* is the only thing we can gate on: a `local-file://` request
+ * is allowed only when it comes from the top-level frame of one of our own
+ * BrowserWindows, as a sub-resource. Everything else is cancelled:
+ *   - any iframe (sandboxed `srcdoc`, tldraw embeds, `UrlPreview`, `frame-src https:`
+ *     content) — that is where untrusted JS runs in this renderer;
+ *   - `<webview>` guests, workers, requests with no frame;
+ *   - navigations (`mainFrame` / `subFrame`) — nothing may ever *navigate* to a
+ *     local file through this scheme.
+ * Keep this a pure function so the decision table stays unit-tested.
+ */
+export function isTrustedLocalFileInitiator(initiator: LocalFileRequestInitiator): boolean {
+  if (initiator.resourceType === 'mainFrame' || initiator.resourceType === 'subFrame') return false
+  if (initiator.frameIsTop !== true) return false
+  if (initiator.webContentsType !== 'window') return false
+  return true
+}
+
+/**
+ * Cancel `local-file://` requests from anything but our own top-level frame.
+ * Verified on Electron 43: `webRequest` sees `protocol.handle` requests
+ * (the `local-file://` wildcard URL filter below works), `details.frame` distinguishes a sandboxed
+ * `about:srcdoc` iframe from the top frame, and cancelling here stops both its
+ * `fetch()` and its `<img>` while the top frame keeps working.
+ *
+ * Electron allows ONE `onBeforeRequest` listener per session — registering
+ * another one anywhere else silently replaces this guard and reopens the
+ * read-any-local-file hole. `protocolHandler.test.ts` pins that.
+ */
+export function installLocalFileFrameGuard(ses: Session): void {
+  const dev = !app.isPackaged
+  ses.webRequest.onBeforeRequest({ urls: ['local-file://*/*'] }, (details, callback) => {
+    const frame = details.frame ?? null
+    const allow = isTrustedLocalFileInitiator({
+      frameIsTop: frame ? frame === frame.top : null,
+      resourceType: details.resourceType,
+      webContentsType: details.webContents?.getType() ?? null,
+    })
+    if (!allow && dev) {
+      // eslint-disable-next-line no-console
+      console.warn('[local-file] GUARD_CANCEL', {
+        url: details.url,
+        resourceType: details.resourceType,
+        frameUrl: frame?.url ?? null,
+        frameIsTop: frame ? frame === frame.top : null,
+      })
+    }
+    callback({ cancel: !allow })
+  })
+}
+
 export function installLocalFileHandler(): void {
+  // `protocol.handle` below registers on the default session; the frame guard
+  // must live on that same session or `corsEnabled` becomes a local-file leak.
+  installLocalFileFrameGuard(session.defaultSession)
+
   // DEV-only multi-layer diagnostic so when a local-file load fails the
   // main-process stdout shows the exact request shape Chromium delivered
   // (Sec-Fetch-Site / Sec-Fetch-Dest), the resolved OS path, and the final
