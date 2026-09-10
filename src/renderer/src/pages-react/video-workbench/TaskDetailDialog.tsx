@@ -3,6 +3,11 @@
 // 数据全部来自 `buildTaskDetail`(纯函数,见那边文件头的三条纪律),这里只负责摆:
 // 上游任务号那一行加粗高亮 —— 用户来这一页十有八九就是为了拿它去找供应商;
 // 每个 ID / 地址旁一个「复制」,底部一个「复制全部(JSON)」给工单 / 聊天用。
+//
+// 展示哪一版由卡片决定(`versionIdx` / `onSelectVersion` 受控):卡片上切到 v1,
+// 面板打开就是 v1 那一轮的任务号与参数;面板里「历史版本」每行的「查看」也切的是
+// 卡片那份状态,关掉面板后卡片播放的仍是刚看的那一版。这里刻意不另存一份
+// 「面板自己选的版本」再去同步 —— 两份状态迟早对不上。
 
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
@@ -26,23 +31,33 @@ function isTerminal(status: VideoWorkbenchCard['status']): boolean {
 export function TaskDetailDialog({
   card,
   index,
+  versionIdx,
+  onSelectVersion,
   onClose,
 }: {
   card: VideoWorkbenchCard
   index: number
+  /** 卡片当前展示的版本下标(`card.versions`);省略 = 最新一版。 */
+  versionIdx?: number
+  /** 「历史版本」行的「查看」:把卡片切到那一版。省略则不给按钮。 */
+  onSelectVersion?: (versionIdx: number) => void
   onClose: () => void
 }) {
-  // 「已耗时」要走秒表:非终态每秒重算一次 now;终态用 updatedAt,不需要 tick。
   const [now, setNow] = useState(() => Date.now())
-  const live = !isTerminal(card.status)
+  const detail = useMemo(
+    () => buildTaskDetail(card, { index, now, versionIdx }),
+    [card, index, now, versionIdx],
+  )
+  const requestJson = useMemo(() => JSON.stringify(detail.request, null, 2), [detail.request])
+
+  // 「已耗时」要走秒表:非终态每秒重算一次 now;终态用 updatedAt,不需要 tick。
+  // 看的是历史版本时没有耗时行,也不 tick。
+  const live = !detail.view.historical && !isTerminal(card.status)
   useEffect(() => {
     if (!live) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [live])
-
-  const detail = useMemo(() => buildTaskDetail(card, { index, now }), [card, index, now])
-  const requestJson = useMemo(() => JSON.stringify(detail.request, null, 2), [detail.request])
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   useEffect(() => {
@@ -91,6 +106,17 @@ export function TaskDetailDialog({
           {field.path && (
             <button type="button" className="vw-detail-copy" onClick={() => void shell()?.showItemInFolder?.(field.path!)}>
               在文件夹中显示
+            </button>
+          )}
+          {field.versionIdx !== undefined && field.current && <span className="vw-detail-current">当前显示</span>}
+          {field.versionIdx !== undefined && !field.current && onSelectVersion && (
+            <button
+              type="button"
+              className="vw-detail-copy"
+              aria-label={`查看 ${field.label}`}
+              onClick={() => onSelectVersion(field.versionIdx!)}
+            >
+              查看
             </button>
           )}
         </div>

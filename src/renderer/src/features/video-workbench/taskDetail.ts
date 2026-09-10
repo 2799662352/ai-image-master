@@ -41,6 +41,10 @@ export interface TaskDetailField {
   path?: string
   /** 值缺失,`value` 是占位说明而不是数据。 */
   missing?: boolean
+  /** 历史版本行:对应 `card.versions` 的下标,面板据此给「查看」。 */
+  versionIdx?: number
+  /** 历史版本行:面板此刻展示的就是这一版。 */
+  current?: boolean
 }
 
 export interface TaskDetailSection {
@@ -56,6 +60,11 @@ export interface TaskDetail {
   request: Record<string, unknown>
   /** 整份详情的 JSON 文本,给「复制全部」。 */
   json: string
+  /**
+   * 展示的是哪一版。`historical` 为 true 时,标识 / 时间 / 结果 / 请求参数写的都是
+   * `versions` 里那条存档,不是卡片当前结果。
+   */
+  view: { historical: boolean; seq: number | null; total: number }
 }
 
 export interface TaskDetailOptions {
@@ -63,6 +72,14 @@ export interface TaskDetailOptions {
   index: number
   /** 「耗时」的现在时刻;省略取 Date.now()。测试注入用。 */
   now?: number
+  /**
+   * 展示哪一版(`card.versions` 下标)。省略、越界或指向最后一版 = 卡片当前结果,
+   * 以卡片字段为准(最新一版就是卡片当前结果,而卡片字段比存档多 persistence 等
+   * 活信息,见 WorkbenchCard 里 showingLatest 的说明);指向更早的版本时,标识 /
+   * 时间 / 结果 / 请求参数全部改从那条存档取,卡片当前字段一律不混进来 ——
+   * 用户切到 v1 看的就得是 v1 的任务号,而不是 v2 的号配 v1 的画面。
+   */
+  versionIdx?: number
 }
 
 const INLINE_PLACEHOLDER = '(内嵌 data: 图,已省略)'
@@ -240,15 +257,16 @@ function timingFields(card: VideoWorkbenchCard, now: number): TaskDetailField[] 
   return fields
 }
 
-function billedField(card: VideoWorkbenchCard): TaskDetailField | undefined {
-  if (typeof card.billedSeconds === 'number') {
-    return { key: 'billed', label: '计费口径(秒)', value: `${card.billedSeconds} 秒`, hint: '上游实际出片秒数,按秒计费的模型用它。' }
+/** 卡片与版本存档都带这两个计费字段,口径一致。 */
+function billedField(source: Pick<VideoWorkbenchVersion, 'billedSeconds' | 'completionTokens'>): TaskDetailField | undefined {
+  if (typeof source.billedSeconds === 'number') {
+    return { key: 'billed', label: '计费口径(秒)', value: `${source.billedSeconds} 秒`, hint: '上游实际出片秒数,按秒计费的模型用它。' }
   }
-  if (typeof card.completionTokens === 'number') {
+  if (typeof source.completionTokens === 'number') {
     return {
       key: 'billed',
       label: '计费口径(completion tokens)',
-      value: card.completionTokens.toLocaleString('en-US'),
+      value: source.completionTokens.toLocaleString('en-US'),
       hint: '上游回传的 usage.completion_tokens。',
     }
   }
@@ -278,6 +296,98 @@ function resultFields(card: VideoWorkbenchCard): TaskDetailField[] {
   return fields
 }
 
+// ---------------------------------------------------------------------------
+// 按历史版本取数。存档(VideoWorkbenchVersion)比卡片字段少:没有 clientId / 计费来源 /
+// 提交时间 / 落盘状态,素材只有名字。这些一律标 missing 或不列,不拿卡片当前值充数 ——
+// 用户切到 v1 就是要看 v1 那一轮的事实。
+
+function versionIdFields(card: VideoWorkbenchCard, v: VideoWorkbenchVersion): TaskDetailField[] {
+  const vendor = upstreamVendor(v.spec.model)
+  const taskId: TaskDetailField = v.taskId
+    ? { key: 'taskId', label: '任务 ID', value: v.taskId, copy: true, hint: '产出这一版的任务;经网关时是网关签发的号,找供应商请用下一行。' }
+    : { key: 'taskId', label: '任务 ID', value: '这一版未记录任务号', missing: true }
+  const upstream: TaskDetailField = v.upstreamTaskId
+    ? { key: 'upstreamTaskId', label: '上游任务 ID', value: v.upstreamTaskId, copy: true, hint: `${vendor} —— 找供应商对账用这个号。` }
+    : {
+        key: 'upstreamTaskId',
+        label: '上游任务 ID',
+        value: '这一版未记录上游任务号',
+        missing: true,
+        hint: `${vendor}。只有存档时网关已回传的版本才有;直连(自填 Key)时任务 ID 本身就是供应商那边的号。`,
+      }
+  return [
+    taskId,
+    upstream,
+    { key: 'clientId', label: '客户端请求 ID', value: '历史版本未记录', missing: true },
+    { key: 'cardId', label: '卡片 ID', value: card.id, copy: true },
+    { key: 'billing', label: '计费来源', value: '历史版本未记录', missing: true },
+  ]
+}
+
+function versionTimingFields(v: VideoWorkbenchVersion): TaskDetailField[] {
+  return [
+    {
+      key: 'createdAt',
+      label: '存档时间',
+      value: formatTime(v.createdAt),
+      hint: '这一版生成成功、写入版本记录的时刻;提交时间与耗时没有按版本保存。',
+    },
+  ]
+}
+
+function versionResultFields(v: VideoWorkbenchVersion): TaskDetailField[] {
+  const fields: TaskDetailField[] = [
+    { key: 'status', label: '状态', value: statusLabel('succeeded'), hint: '版本只在生成成功那一刻存档。' },
+    v.localPath
+      ? { key: 'localPath', label: '成片(本地)', value: v.localPath, copy: true, path: v.localPath }
+      : { key: 'localPath', label: '成片(本地)', value: '—', missing: true },
+    v.remoteUrl
+      ? { key: 'remoteUrl', label: '成片(云端)', value: v.remoteUrl, copy: true, hint: 'COS 永久地址,跨设备可播。' }
+      : { key: 'remoteUrl', label: '成片(云端)', value: '—', missing: true },
+  ]
+  if (v.videoUrl) {
+    fields.push({ key: 'videoUrl', label: '上游临时地址', value: v.videoUrl, copy: true, hint: '有效期未知,仅作兜底。' })
+  }
+  if (typeof v.actualSeed === 'number') {
+    fields.push({ key: 'actualSeed', label: '实际 seed', value: String(v.actualSeed), copy: true, hint: '上游实际使用的种子,填回可复现。' })
+  }
+  const billed = billedField(v)
+  if (billed) fields.push(billed)
+  return fields
+}
+
+/**
+ * 存档里素材只有名字(见 VideoWorkbenchVersionSpec 的防膨胀纪律)。递上去的地址按
+ * 下标能对上就写,对不上只写名字 —— 不拿卡片当前素材充数,那可能已经被换过了。
+ */
+function namedBriefs(names: string[], submitted: string[] | undefined): Array<Record<string, string>> {
+  return names.map((name, i) => {
+    const brief: Record<string, string> = { name }
+    const src = submitted?.[i]
+    if (src) brief.src = src
+    return brief
+  })
+}
+
+function versionRequestOf(v: VideoWorkbenchVersion): Record<string, unknown> {
+  const s = v.spec
+  return {
+    prompt: s.prompt,
+    model: s.model,
+    mode: s.mode,
+    modeLabel: getModeSpec(s.mode).label,
+    resolution: s.resolution,
+    ratio: s.ratio,
+    duration: s.duration,
+    generateAudio: s.generateAudio,
+    webSearch: s.webSearch === true,
+    ...(s.seed !== undefined ? { seed: s.seed } : {}),
+    referenceImages: namedBriefs(s.referenceBrief.images, v.submittedReferences?.images),
+    referenceVideos: namedBriefs(s.referenceBrief.videos, v.submittedReferences?.videos),
+    referenceAudios: namedBriefs(s.referenceBrief.audios, v.submittedReferences?.audios),
+  }
+}
+
 function versionLine(v: VideoWorkbenchVersion): string {
   const parts = [formatTime(v.createdAt), `task ${v.taskId ?? '—'}`, `上游 ${v.upstreamTaskId ?? '—'}`]
   if (v.localPath) parts.push(v.localPath)
@@ -285,8 +395,26 @@ function versionLine(v: VideoWorkbenchVersion): string {
   return parts.join(' · ')
 }
 
-function versionFields(versions: VideoWorkbenchVersion[]): TaskDetailField[] {
-  return versions.map((v) => ({ key: `version-${v.seq}`, label: `v${v.seq}`, value: versionLine(v) }))
+function versionFields(versions: VideoWorkbenchVersion[], shownIdx: number): TaskDetailField[] {
+  return versions.map((v, i) => ({
+    key: `version-${v.seq}`,
+    label: `v${v.seq}`,
+    value: versionLine(v),
+    versionIdx: i,
+    current: i === shownIdx,
+  }))
+}
+
+/**
+ * 面板要展示的版本下标。没有版本记录 → -1;省略 / 越界 / 指向最后一版 → 最后一版
+ * (= 卡片当前结果);否则就是指定的那一版。
+ */
+function resolveShownIdx(versions: VideoWorkbenchVersion[], requested: number | undefined): number {
+  if (versions.length === 0) return -1
+  if (requested === undefined || !Number.isInteger(requested) || requested < 0 || requested >= versions.length) {
+    return versions.length - 1
+  }
+  return requested
 }
 
 function versionJson(v: VideoWorkbenchVersion): Record<string, unknown> {
@@ -308,49 +436,72 @@ function versionJson(v: VideoWorkbenchVersion): Record<string, unknown> {
 
 export function buildTaskDetail(card: VideoWorkbenchCard, opts: TaskDetailOptions): TaskDetail {
   const now = opts.now ?? Date.now()
-  const request = requestOf(card)
   const versions = card.versions ?? []
+  const shownIdx = resolveShownIdx(versions, opts.versionIdx)
+  const shown = shownIdx >= 0 ? versions[shownIdx] : undefined
+  // 最后一版就是卡片当前结果,以卡片字段为准;只有更早的版本才改从存档取。
+  const historical = shown && shownIdx < versions.length - 1 ? shown : undefined
 
-  const sections: TaskDetailSection[] = [
-    { key: 'ids', title: '标识', fields: idFields(card) },
-    { key: 'timing', title: '时间', fields: timingFields(card, now) },
-    { key: 'result', title: '结果', fields: resultFields(card) },
-  ]
-  if (versions.length > 0) sections.push({ key: 'versions', title: '历史版本', fields: versionFields(versions) })
+  const request = historical ? versionRequestOf(historical) : requestOf(card)
+  const sections: TaskDetailSection[] = historical
+    ? [
+        { key: 'ids', title: '标识', fields: versionIdFields(card, historical) },
+        { key: 'timing', title: '时间', fields: versionTimingFields(historical) },
+        { key: 'result', title: '结果', fields: versionResultFields(historical) },
+      ]
+    : [
+        { key: 'ids', title: '标识', fields: idFields(card) },
+        { key: 'timing', title: '时间', fields: timingFields(card, now) },
+        { key: 'result', title: '结果', fields: resultFields(card) },
+      ]
+  if (versions.length > 0) {
+    sections.push({ key: 'versions', title: '历史版本', fields: versionFields(versions, shownIdx) })
+  }
 
+  const view = { historical: Boolean(historical), seq: shown?.seq ?? null, total: versions.length }
   const doc = {
     cardId: card.id,
     position: opts.index + 1,
-    status: card.status,
-    ids: {
-      taskId: card.taskId ?? null,
-      upstreamTaskId: card.upstreamTaskId ?? null,
-      clientId: card.clientId ?? null,
-    },
-    billing: card.billing ?? null,
-    upstreamVendor: upstreamVendor(card.model),
+    view,
+    status: historical ? 'succeeded' : card.status,
+    ids: historical
+      ? { taskId: historical.taskId ?? null, upstreamTaskId: historical.upstreamTaskId ?? null, clientId: null }
+      : { taskId: card.taskId ?? null, upstreamTaskId: card.upstreamTaskId ?? null, clientId: card.clientId ?? null },
+    billing: historical ? null : card.billing ?? null,
+    upstreamVendor: upstreamVendor(historical ? historical.spec.model : card.model),
     request,
-    timing: {
-      startedAt: card.startedAt ?? null,
-      updatedAt: card.updatedAt,
-    },
-    result: {
-      error: card.error ?? null,
-      localPath: card.localPath ?? null,
-      remoteUrl: card.remoteUrl ?? null,
-      videoUrl: card.videoUrl ?? null,
-      persistence: card.persistence ?? null,
-      actualSeed: card.actualSeed ?? null,
-      completionTokens: card.completionTokens ?? null,
-      billedSeconds: card.billedSeconds ?? null,
-    },
+    timing: historical
+      ? { createdAt: historical.createdAt }
+      : { startedAt: card.startedAt ?? null, updatedAt: card.updatedAt },
+    result: historical
+      ? {
+          localPath: historical.localPath ?? null,
+          remoteUrl: historical.remoteUrl ?? null,
+          videoUrl: historical.videoUrl ?? null,
+          actualSeed: historical.actualSeed ?? null,
+          completionTokens: historical.completionTokens ?? null,
+          billedSeconds: historical.billedSeconds ?? null,
+        }
+      : {
+          error: card.error ?? null,
+          localPath: card.localPath ?? null,
+          remoteUrl: card.remoteUrl ?? null,
+          videoUrl: card.videoUrl ?? null,
+          persistence: card.persistence ?? null,
+          actualSeed: card.actualSeed ?? null,
+          completionTokens: card.completionTokens ?? null,
+          billedSeconds: card.billedSeconds ?? null,
+        },
     versions: versions.map(versionJson),
   }
 
+  // 标题跟卡片上的版本切换器同一口径:有两版以上才标 vN/N(单版没有可切的)。
+  const versionTag = versions.length >= 2 && shown ? ` · v${shown.seq}/${versions.length}` : ''
   return {
-    title: `#${String(opts.index + 1).padStart(2, '0')} · 任务详情`,
+    title: `#${String(opts.index + 1).padStart(2, '0')} · 任务详情${versionTag}`,
     sections,
     request,
     json: JSON.stringify(doc, null, 2),
+    view,
   }
 }
