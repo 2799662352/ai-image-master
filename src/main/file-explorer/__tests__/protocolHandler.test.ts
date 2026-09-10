@@ -1,5 +1,7 @@
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import path from 'node:path'
 import { describe, it, expect } from 'vitest'
-import { isAllowedLocalFileFetchSite, resolveOsPathFromRequest } from '../protocolHandler'
+import { isAllowedLocalFileFetchSite, isTrustedLocalFileInitiator, resolveOsPathFromRequest } from '../protocolHandler'
 
 describe('protocolHandler.resolveOsPathFromRequest', () => {
   it('extracts Windows drive path from local-file:///D:/x/y.png', () => {
@@ -99,4 +101,66 @@ describe('protocolHandler.isAllowedLocalFileFetchSite', () => {
       expect(isAllowedLocalFileFetchSite('cross-site', dest)).toBe(false)
     },
   )
+})
+
+/**
+ * `corsEnabled: true` on the scheme makes Chromium skip the CORS header check
+ * entirely (measured on Electron 43, file:// and http origins): without this
+ * guard a sandboxed `srcdoc` iframe could `fetch()` and read any local file.
+ * The initiator is the only thing left to gate on.
+ */
+describe('protocolHandler.isTrustedLocalFileInitiator (frame guard behind corsEnabled)', () => {
+  const topFrameOfWindow = { frameIsTop: true, webContentsType: 'window' } as const
+
+  it.each(['image', 'xhr', 'media', 'other'])(
+    'allows a %s sub-resource requested by the top frame of one of our windows',
+    (resourceType) => {
+      expect(isTrustedLocalFileInitiator({ ...topFrameOfWindow, resourceType })).toBe(true)
+    },
+  )
+
+  it('cancels requests from any iframe (sandboxed srcdoc, tldraw embeds, UrlPreview)', () => {
+    expect(isTrustedLocalFileInitiator({ frameIsTop: false, resourceType: 'xhr', webContentsType: 'window' })).toBe(false)
+    expect(isTrustedLocalFileInitiator({ frameIsTop: false, resourceType: 'image', webContentsType: 'window' })).toBe(false)
+  })
+
+  it('cancels requests with no frame (workers, service workers, detached)', () => {
+    expect(isTrustedLocalFileInitiator({ frameIsTop: null, resourceType: 'xhr', webContentsType: 'window' })).toBe(false)
+    expect(isTrustedLocalFileInitiator({ frameIsTop: null, resourceType: 'image', webContentsType: null })).toBe(false)
+  })
+
+  it('cancels requests from <webview> guests and other non-window contents', () => {
+    expect(isTrustedLocalFileInitiator({ frameIsTop: true, resourceType: 'image', webContentsType: 'webview' })).toBe(false)
+    expect(isTrustedLocalFileInitiator({ frameIsTop: true, resourceType: 'image', webContentsType: null })).toBe(false)
+  })
+
+  it.each(['mainFrame', 'subFrame'])('never lets a %s navigate to a local file', (resourceType) => {
+    expect(isTrustedLocalFileInitiator({ ...topFrameOfWindow, resourceType })).toBe(false)
+  })
+
+  // Electron keeps ONE `onBeforeRequest` listener per session: a second
+  // registration anywhere in main silently replaces the guard and reopens
+  // the hole. Pin it at the source level, like viewersUseIpc does.
+  it('is the only onBeforeRequest registration in src/main', () => {
+    const mainRoot = path.join(__dirname, '..', '..')
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const full = path.join(dir, entry)
+        if (statSync(full).isDirectory()) {
+          if (entry !== '__tests__' && entry !== 'node_modules') walk(full)
+          continue
+        }
+        if (!/\.(ts|mts|cts)$/.test(entry) || /\.test\./.test(entry)) continue
+        const source = readFileSync(full, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .split('\n')
+          .filter((line) => !line.trim().startsWith('//'))
+          .join('\n')
+        if (/\.onBeforeRequest\(/.test(source)) offenders.push(path.relative(mainRoot, full).replace(/\\/g, '/'))
+      }
+    }
+    walk(mainRoot)
+    expect(offenders).toEqual(['file-explorer/protocolHandler.ts'])
+  })
 })
