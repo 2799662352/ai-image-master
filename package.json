@@ -167,7 +167,7 @@
     "sharp": "^0.34.5",
     "tencentcloud-sdk-nodejs-mps": "^4.1.218",
     "three": "^0.184.0",
-    "tldraw": "^5.2.3",
+    "tldraw": "^5.4.1",
     "toml": "^4.1.1",
     "ws": "^8.20.0",
     "yaml": "^2.8.4",
