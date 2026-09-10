@@ -19,6 +19,7 @@ import type {
   SeedanceCreateTaskBody,
   SeedanceContentItem,
   SeedanceModelAlias,
+  SeedanceReferenceUrls,
   SeedanceTaskState,
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
@@ -37,6 +38,34 @@ function countContent(
   type: 'image_url' | 'video_url' | 'audio_url',
 ): number {
   return content.filter((item) => item.type === type).length
+}
+
+/**
+ * 实际递给上游的素材地址,按类分列、保持 content[] 顺序。一条素材都没有返回
+ * undefined —— 纯文生视频的状态里不摆三个空数组。
+ */
+function referenceUrlsOf(content: SeedanceContentItem[]): SeedanceReferenceUrls | undefined {
+  const refs: SeedanceReferenceUrls = { images: [], videos: [], audios: [] }
+  for (const item of content) {
+    switch (item.type) {
+      case 'image_url':
+        refs.images.push(item.image_url.url)
+        break
+      case 'video_url':
+        refs.videos.push(item.video_url.url)
+        break
+      case 'audio_url':
+        refs.audios.push(item.audio_url.url)
+        break
+      case 'text':
+        break
+      default: {
+        const exhaustive: never = item
+        throw new Error(`unknown content item: ${JSON.stringify(exhaustive)}`)
+      }
+    }
+  }
+  return refs.images.length + refs.videos.length + refs.audios.length > 0 ? refs : undefined
 }
 
 /** 上游轮询间隔。文档建议 5~10s。 */
@@ -256,6 +285,7 @@ export class SeedanceTaskManager {
       duration,
       ...(taskMode ? { taskMode } : {}),
     })
+    const referenceUrls = referenceUrlsOf(content)
     const state: SeedanceTaskState = {
       taskId: id,
       clientId: params.clientId,
@@ -267,6 +297,7 @@ export class SeedanceTaskManager {
       resolution,
       ratio,
       duration,
+      ...(referenceUrls ? { referenceUrls } : {}),
       status: 'queued',
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -557,6 +588,14 @@ export class SeedanceTaskManager {
       // 上一句 await 期间用户可能点了取消 —— 结果一律作废，不落盘不写历史。
       if (this.tasks.get(taskId)?.status === 'cancelled') return
 
+      // 网关之后那一跳的任务号(火山 `cgt-…`):第一轮轮询就有。学到就随这一条
+      // 广播带出去,不等成片 —— 用户找供应商对账多半正是在任务卡住的时候。
+      // 挂到状态对象上之后每条广播自然都带着,所以只在「新学到」时才当成变化。
+      const learnedUpstream =
+        result.upstreamTaskId && result.upstreamTaskId !== task.upstreamTaskId
+          ? { upstreamTaskId: result.upstreamTaskId }
+          : {}
+
       if (result.status === 'failed') {
         const err = result.error
         this.update(taskId, {
@@ -564,6 +603,7 @@ export class SeedanceTaskManager {
           error: err
             ? this.humanError(`${err.code ?? 'error'}: ${err.message ?? 'unknown'}`)
             : '生成失败（上游未给出原因）',
+          ...learnedUpstream,
         })
         this.scheduleCleanup(taskId)
         return
@@ -572,7 +612,7 @@ export class SeedanceTaskManager {
       if (result.status === 'succeeded') {
         const videoUrl = result.content?.video_url
         if (!videoUrl) {
-          this.update(taskId, { status: 'failed', error: 'succeeded 但缺少 video_url' })
+          this.update(taskId, { status: 'failed', error: 'succeeded 但缺少 video_url', ...learnedUpstream })
           this.scheduleCleanup(taskId)
           return
         }
@@ -582,6 +622,7 @@ export class SeedanceTaskManager {
           status: 'succeeded',
           videoUrl,
           persistence: 'running',
+          ...learnedUpstream,
           ...(typeof result.seed === 'number' ? { actualSeed: result.seed } : {}),
           ...(typeof result.usage?.completion_tokens === 'number'
             ? { completionTokens: result.usage.completion_tokens }
@@ -594,9 +635,9 @@ export class SeedanceTaskManager {
         return
       }
 
-      // queued / running：仅在状态切换时广播，避免每 6s 刷一次噪音。
-      if (result.status !== task.status) {
-        this.update(taskId, { status: result.status })
+      // queued / running：仅在状态切换（或刚学到上游任务号）时广播，避免每 6s 刷一次噪音。
+      if (result.status !== task.status || learnedUpstream.upstreamTaskId) {
+        this.update(taskId, { status: result.status, ...learnedUpstream })
       }
     }
   }
