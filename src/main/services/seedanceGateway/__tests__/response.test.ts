@@ -208,6 +208,44 @@ describe('错误信息', () => {
   })
 })
 
+describe('upstream_task_id(网关之后那一跳的任务号)', () => {
+  it('真机响应:从 metadata.upstream_task_id 抽出火山 cgt- 任务号,进行中就有', () => {
+    expect(parseSeedanceGatewayTaskResult(REAL_RUNNING).upstreamTaskId).toBe('cgt-20260829051406-bdkrp')
+    expect(parseSeedanceGatewayTaskResult(REAL_COMPLETED).upstreamTaskId).toBe('cgt-20260829051406-bdkrp')
+  })
+
+  it('包在 data 里 / 顶层直给 / 驼峰 都认', () => {
+    expect(
+      parseSeedanceGatewayTaskResult({
+        data: { task_id: 'task_x', status: 'running', metadata: { upstream_task_id: 'cgt-a' } },
+      }).upstreamTaskId,
+    ).toBe('cgt-a')
+    expect(
+      parseSeedanceGatewayTaskResult({ task_id: 'task_x', status: 'running', upstream_task_id: 'cgt-b' }).upstreamTaskId,
+    ).toBe('cgt-b')
+    expect(
+      parseSeedanceGatewayTaskResult({ task_id: 'task_x', status: 'running', metadata: { upstreamTaskId: 'cgt-c' } })
+        .upstreamTaskId,
+    ).toBe('cgt-c')
+  })
+
+  it('没有 / 空串 / 非字符串:键完全不出现,而不是 undefined 占位', () => {
+    for (const metadata of [undefined, {}, { upstream_task_id: '' }, { upstream_task_id: 42 }]) {
+      const r = parseSeedanceGatewayTaskResult({ task_id: 'task_x', status: 'running', metadata })
+      expect(Object.hasOwn(r, 'upstreamTaskId')).toBe(false)
+    }
+  })
+
+  it('与网关自己的 task_id 相同就不重复给(直连回形没有「另一跳」)', () => {
+    const r = parseSeedanceGatewayTaskResult({
+      task_id: 'cgt-same',
+      status: 'running',
+      metadata: { upstream_task_id: 'cgt-same' },
+    })
+    expect(Object.hasOwn(r, 'upstreamTaskId')).toBe(false)
+  })
+})
+
 describe('畸形输入不炸', () => {
   it('null / 字符串 / 数组都退化成一个 running 的空结果', () => {
     for (const raw of [null, undefined, 'oops', 42, []]) {

@@ -53,6 +53,7 @@ import { AdvancedVideoEditModal, type AdvancedEditFrame } from './AdvancedVideoE
 import { PortraitPickerModal } from './PortraitPickerModal'
 import { ResultVideoPlayer, hasPlaybackSource, type PlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
+import { TaskDetailDialog } from './TaskDetailDialog'
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { cardHasVideoInput, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
@@ -655,6 +656,8 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
 
   // 人像库选择器
   const [pickerOpen, setPickerOpen] = useState(false)
+  // 「任务详情」面板(任务号 / 上游任务号 / 请求参数 / 结果地址,可整份复制)
+  const [detailOpen, setDetailOpen] = useState(false)
   // 「图片链接」输入行(拖放/粘贴之外的显式入口)
   const [urlInputOpen, setUrlInputOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState('')
@@ -930,6 +933,23 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           {card.seed !== undefined ? ` · seed ${card.seed}` : ''}
           {card.webSearch ? ' · 联网' : ''}
         </span>
+        {/* 任务详情:只有提交过的卡才有东西可看 —— 草稿上这个入口只会打开一页空白。
+            脚注那行 `task: …` 露的是网关号,用户找供应商对账要的「上游任务号」在这里。 */}
+        {card.status !== 'draft' && (
+          <button
+            type="button"
+            aria-label="任务详情"
+            title="任务详情:任务号 / 上游任务号 / 请求参数 / 结果地址"
+            className="text-white/40 hover:text-[#FCE300] px-1 leading-none"
+            onClick={() => setDetailOpen(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4" />
+              <path d="M12 8h.01" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           aria-label="删除卡片"
@@ -1347,6 +1367,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
 
       {/* 人像库选择器(asset:// 回填) */}
       <PortraitPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} onConfirm={handlePortraitConfirm} />
+      {detailOpen && <TaskDetailDialog card={card} index={index} onClose={() => setDetailOpen(false)} />}
       {/* 地址解析完才挂:<video src=""> 会立刻报一个没有意义的加载错误 */}
       {aveOpen && aveVideoSrc && (
         <AdvancedVideoEditModal

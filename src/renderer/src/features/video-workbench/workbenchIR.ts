@@ -114,6 +114,7 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
     result: {
       status: card.status,
       ...(card.taskId ? { taskId: card.taskId } : {}),
+      ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
       ...(card.error ? { error: card.error } : {}),
       ...(card.localPath ? { localPath: card.localPath } : {}),
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
