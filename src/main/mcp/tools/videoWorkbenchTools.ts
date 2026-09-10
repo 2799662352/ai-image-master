@@ -246,7 +246,14 @@ const cardSnapshotSchema = z.looseObject({
     audios: z.array(materialBriefSchema),
   }).describe('Compact material lists: display names only (≤40 chars, asset:// gets @assetId suffix).'),
   status: z.string().describe('draft/preparing/queued/running/succeeded/failed'),
-  taskId: z.string().optional(),
+  taskId: z.string().optional().describe(
+    'Task id issued by the gateway; only meaningful between this app and the gateway.',
+  ),
+  upstreamTaskId: z.string().optional().describe(
+    "The provider's own task id one hop behind the gateway (Volcengine Ark `cgt-…` / DashScope uuid). "
+    + 'This is the id the provider recognises when the user asks them to look into a task — quote THIS '
+    + 'one, not taskId. Absent for direct (own-key) submissions, where taskId already is the provider id.',
+  ),
   error: z.string().optional(),
   localPath: z.string().optional(),
   remoteUrl: z.string().optional(),
@@ -429,6 +436,7 @@ const irCardSchema = z.looseObject({
   result: z.looseObject({
     status: z.string(),
     taskId: z.string().optional(),
+    upstreamTaskId: z.string().optional(),
     error: z.string().optional(),
     localPath: z.string().optional(),
     remoteUrl: z.string().optional(),
@@ -1066,8 +1074,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       fields: z.enum(['concise', 'detailed']).optional().describe(
         'Detail level per card. "concise" = cardId/boardId/order/summary/prompt(60 chars)/status/error — '
         + 'use it for progress checks and for picking cards. "detailed" (default) adds model/resolution/'
-        + 'ratio/duration/generateAudio/mode/webSearch, material name lists, taskId, localPath/remoteUrl '
-        + 'and versions — use it right before editing specs or when you must report a video address.',
+        + 'ratio/duration/generateAudio/mode/webSearch, material name lists, taskId, upstreamTaskId '
+        + '(the provider-side id to quote when the user asks the provider about a task), localPath/'
+        + 'remoteUrl and versions — use it right before editing specs or when you must report a video '
+        + 'address or a task id.',
       ),
       cardIds: z.array(z.string()).optional().describe(
         'Limit to specific cards, ACROSS pages (an explicit id list means "just these", so it is not '

@@ -12,6 +12,7 @@
 import type {
   SeedanceModelAlias,
   SeedancePersistence,
+  SeedanceReferenceUrls,
   SeedanceTaskMode,
   SeedanceTaskStatus,
   VideoBillingSource,
@@ -282,6 +283,19 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   /** createTask 成功后的上游任务 id（可用 check_video_task 续轮询）。 */
   taskId?: string
   /**
+   * 网关**之后那一跳**的任务号（火山 Ark `cgt-…` / DashScope uuid）,只在走网关时有。
+   * `taskId` 是网关签发的,找供应商对账他们不认它,认的是这个 —— 「任务详情」面板
+   * 把它摆在最显眼的一行。**是结果不是意图**:与 actualSeed 同一待遇,不进 spec、
+   * 不参与 specEquals、重新生成随上一轮结果一起清掉(版本存档里的保留)。
+   */
+  upstreamTaskId?: string
+  /**
+   * 这一轮**实际递给上游**的素材地址(已解析成 https,与 referenceImages /
+   * referenceVideos / referenceAudios 同序),来自提交时的广播。「任务详情」把素材
+   * 写成这些地址而不是本机路径 —— 路径贴给别人没有意义。同样是结果不是意图。
+   */
+  submittedReferences?: SeedanceReferenceUrls
+  /**
    * 这一轮提交时的计费来源（取自 `useQuotaStore.billingSource`）。
    *
    * **是结果不是意图** —— 挂在 Card 上而不是 Spec 上：它不参与 specEquals、
@@ -391,6 +405,10 @@ export interface VideoWorkbenchVersion {
   seq: number
   createdAt: number
   taskId?: string
+  /** 产出这一版的上游任务号(见 `VideoWorkbenchCard.upstreamTaskId`)。 */
+  upstreamTaskId?: string
+  /** 产出这一版时实际递给上游的素材地址(见 `VideoWorkbenchCard.submittedReferences`)。 */
+  submittedReferences?: SeedanceReferenceUrls
   localPath?: string
   remoteUrl?: string
   videoUrl?: string
@@ -455,6 +473,8 @@ export interface WorkbenchIRMaterial {
 export interface WorkbenchIRCardResult {
   status: VideoWorkbenchCardStatus
   taskId?: string
+  /** 网关之后那一跳的任务号(火山 `cgt-…`),找供应商对账用;直连时没有。 */
+  upstreamTaskId?: string
   error?: string
   localPath?: string
   remoteUrl?: string

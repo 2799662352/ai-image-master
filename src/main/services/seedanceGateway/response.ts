@@ -33,6 +33,8 @@ export interface SeedanceGatewayTaskResult {
   status: SeedanceTaskStatus
   content?: { video_url?: string }
   error?: { code?: string; message?: string }
+  /** 见 `SeedanceQueryResult.upstreamTaskId`:网关之后那一跳(火山 `cgt-…`)的任务号。 */
+  upstreamTaskId?: string
 }
 
 const STATUS_BY_UPSTREAM: Record<string, SeedanceTaskStatus> = {
@@ -158,6 +160,25 @@ function resolveStatus(raw: unknown): SeedanceTaskStatus | undefined {
   return STATUS_BY_UPSTREAM[text.toUpperCase()]
 }
 
+const UPSTREAM_TASK_ID_KEYS = ['upstream_task_id', 'upstreamTaskId'] as const
+
+/**
+ * 上游任务号。真机回形放在 `metadata.upstream_task_id`(与成片地址同一格,见
+ * `findVideoUrl` 那段注释);也接受摊在记录顶层的写法。与网关自己的 `id` 相同
+ * 时不给 —— 那是直连回形,没有「另一跳」可言,给了只会在界面上重复一行。
+ */
+function findUpstreamTaskId(body: Record<string, unknown>, record: Record<string, unknown>, id: string): string | undefined {
+  const inner = asRecord(record.data)
+  const containers = [asRecord(record.metadata), asRecord(inner.metadata), record, inner, body]
+  for (const container of containers) {
+    for (const key of UPSTREAM_TASK_ID_KEYS) {
+      const value = asString(container[key])
+      if (value) return value === id ? undefined : value
+    }
+  }
+  return undefined
+}
+
 /**
  * 查询接口把任务记录包在 `data` 里；有的回形直接摊在顶层。用「只有任务记录才有」
  * 的字段识别,免得把某个上游的 `output` 误当成网关信封。
@@ -210,10 +231,13 @@ export function parseSeedanceGatewayTaskResult(raw: unknown): SeedanceGatewayTas
     asString(output.message) ??
     asString(body.message)
 
+  const upstreamTaskId = findUpstreamTaskId(body, record, id)
+
   return {
     id,
     status,
     ...(videoUrl ? { content: { video_url: videoUrl } } : {}),
     ...(code || message ? { error: { ...(code ? { code } : {}), ...(message ? { message } : {}) } } : {}),
+    ...(upstreamTaskId ? { upstreamTaskId } : {}),
   }
 }
