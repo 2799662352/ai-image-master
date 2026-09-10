@@ -27,3 +27,59 @@ export function resolveTldrawLicenseKey(
   const key = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\r?\n|\r/g, '').trim()
   return key.length > 0 ? key : undefined
 }
+
+/** Bit flags tldraw encodes in a key (mirrors `LicenseManager` FLAGS). */
+export const TLDRAW_LICENSE_FLAGS = {
+  ANNUAL_LICENSE: 1,
+  PERPETUAL_LICENSE: 1 << 1,
+  INTERNAL_LICENSE: 1 << 2,
+  WITH_WATERMARK: 1 << 3,
+  EVALUATION_LICENSE: 1 << 4,
+  NATIVE_LICENSE: 1 << 5,
+  FEAT_COLLABORATION: 1 << 6,
+  FEAT_COMMENTING: 1 << 7,
+} as const
+
+export interface TldrawLicenseInfo {
+  id: string
+  hosts: string[]
+  flags: number
+  /** ISO date (`YYYY-MM-DD`) tldraw stops honouring the key. */
+  expiryDate: string
+  isEvaluation: boolean
+  hasWatermark: boolean
+}
+
+/**
+ * Decode the public payload of a tldraw key without verifying its signature.
+ * Shape: `tldraw-<date>/<base64url JSON [id, hosts, flags, expiryDate]>.<sig>`.
+ * Only the info tldraw itself prints to the console is read; this exists so a
+ * CI test can turn red *before* the key expires (an evaluation key has no
+ * grace period — the packaged canvas would vanish the same day).
+ */
+export function decodeTldrawLicenseKey(key: string): TldrawLicenseInfo | null {
+  const slash = key.indexOf('/')
+  if (slash < 0) return null
+  const payload = key.slice(slash + 1).split('.')[0]
+  if (!payload) return null
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const json = atob(base64)
+    const parsed: unknown = JSON.parse(json)
+    if (!Array.isArray(parsed) || parsed.length < 4) return null
+    const [id, hosts, flags, expiryDate] = parsed
+    if (typeof id !== 'string' || !Array.isArray(hosts) || typeof flags !== 'number' || typeof expiryDate !== 'string') {
+      return null
+    }
+    return {
+      id,
+      hosts: hosts.map(String),
+      flags,
+      expiryDate,
+      isEvaluation: (flags & TLDRAW_LICENSE_FLAGS.EVALUATION_LICENSE) !== 0,
+      hasWatermark: (flags & TLDRAW_LICENSE_FLAGS.WITH_WATERMARK) !== 0,
+    }
+  } catch {
+    return null
+  }
+}
