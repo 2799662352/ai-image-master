@@ -165,6 +165,8 @@ export interface WorkbenchCardSnapshot {
   }
   status: string
   taskId?: string
+  /** 网关之后那一跳的任务号(火山 `cgt-…`),用户找供应商对账要的是它;直连时没有。 */
+  upstreamTaskId?: string
   error?: string
   localPath?: string
   remoteUrl?: string
@@ -204,6 +206,7 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     },
     status: card.status,
     ...(card.taskId ? { taskId: card.taskId } : {}),
+    ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
     ...(card.error ? { error: card.error } : {}),
     ...(card.localPath ? { localPath: card.localPath } : {}),
     ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
@@ -770,6 +773,7 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       seq: (prev.at(-1)?.seq ?? 0) + 1,
       createdAt: Date.now(),
       ...(card.taskId ? { taskId: card.taskId } : {}),
+      ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
       ...(card.localPath ? { localPath: card.localPath } : {}),
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
@@ -2057,6 +2061,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             // 「重新保存」都靠它决定去问谁。
             billing,
             taskId: undefined,
+            upstreamTaskId: undefined,
             videoUrl: undefined,
             error: undefined,
             persistence: undefined,
@@ -2268,6 +2273,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           ...card,
           status: update.status,
           taskId: update.taskId,
+          // 主进程一学到就每条广播都带;这里仍按「有才写」,一条不带它的迟到广播
+          // 不该把已经记下的号抹掉。
+          ...(update.upstreamTaskId ? { upstreamTaskId: update.upstreamTaskId } : {}),
           ...(update.videoUrl ? { videoUrl: update.videoUrl } : {}),
           ...(update.localPath ? { localPath: update.localPath } : {}),
           ...(update.remoteUrl ? { remoteUrl: update.remoteUrl } : {}),

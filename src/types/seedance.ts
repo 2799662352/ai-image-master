@@ -396,6 +396,12 @@ export interface SeedanceTaskState {
   error?: string
   /** succeeded 时上游回传的**实际使用**种子（含随机 seed 的最终值,可复现）。 */
   actualSeed?: number
+  /**
+   * 网关**之后那一跳**的任务号（火山 Ark `cgt-…` / DashScope uuid）。只在走网关时
+   * 出现:`taskId` 是网关签发的,找供应商对账他们不认它,认的是这个。第一轮轮询
+   * 学到就随广播带出,此后每条广播都带着(状态对象上一直挂着)。
+   */
+  upstreamTaskId?: string
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
   completionTokens?: number
   /**

@@ -602,6 +602,49 @@
 .vw-dialog-error { font-size: 12px; color: #f87171; line-height: 1.6; margin: 0; }
 .vw-dialog-ok { font-size: 12px; color: #22c55e; line-height: 1.6; margin: 0; display: flex; gap: 6px; min-width: 0; }
 .vw-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #3f3f46; }
+
+/* ---------- 任务详情面板(TaskDetailDialog) ---------- */
+/* 比普通对话框宽:里面是整行 ID 与地址,520px 会把 cgt-…/https://… 折成三行。
+   主体自己滚,标题与底部按钮钉住 —— 面板高度上限跟 .vw-palette 的 60vh 分开算。 */
+.vw-detail { width: 680px; }
+.vw-detail-body { max-height: 68vh; overflow: auto; gap: 14px; }
+.vw-detail-section { display: flex; flex-direction: column; gap: 4px; }
+.vw-detail-section-title { font-size: 11px; color: #71717a; letter-spacing: .08em; text-transform: uppercase; padding-bottom: 4px; border-bottom: 1px solid #27272a; margin-bottom: 4px; }
+.vw-detail-row { display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 5px 6px; }
+.vw-detail-row:hover { background: #18181b; }
+.vw-detail-label { font-size: 11px; color: #a1a1aa; padding-top: 1px; }
+.vw-detail-value { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 12px; color: #e4e4e7; word-break: break-all; line-height: 1.5; }
+.vw-detail-value-missing { color: #71717a; font-style: italic; font-family: inherit; }
+.vw-detail-hint { font-size: 11px; color: #71717a; line-height: 1.5; margin-top: 2px; }
+.vw-detail-actions { display: flex; gap: 6px; flex: none; }
+.vw-detail-copy { height: 22px; padding: 0 8px; border: 1px solid #3f3f46; background: transparent; color: #a1a1aa; font-size: 11px; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s; }
+.vw-detail-copy:hover { border-color: #fce300; color: #fce300; }
+/* 上游任务号:用户来这一页多半就是为了它 —— 黄边 + 白字加粗,和其余行拉开。 */
+.vw-detail-hero { border-left: 2px solid #fce300; background: rgba(252, 227, 0, 0.05); }
+.vw-detail-hero .vw-detail-label { color: #fce300; }
+.vw-detail-hero .vw-detail-value { color: #fff; font-weight: 700; }
+.vw-detail-hero .vw-detail-value-missing { color: #a1a1aa; font-weight: 400; }
+.vw-detail-json { margin: 0; padding: 10px 12px; background: #09090b; border: 1px solid #27272a; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.55; color: #d4d4d8; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+
+/* ---------- 任务详情面板 ---------- */
+/* 比普通确认页宽:一行要摆 标签 / 长 ID 或地址 / 复制按钮;正文可滚,标题与底栏钉住 */
+.vw-detail { width: 680px; max-height: 82vh; margin-top: 7vh; }
+.vw-detail-body { overflow: auto; gap: 14px; }
+.vw-detail-section { display: flex; flex-direction: column; gap: 6px; }
+.vw-detail-section-title { font-size: 11px; color: #71717a; letter-spacing: .08em; text-transform: uppercase; padding-bottom: 4px; border-bottom: 1px solid #27272a; }
+.vw-detail-row { display: grid; grid-template-columns: 132px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 4px 6px; }
+.vw-detail-label { font-size: 11px; color: #a1a1aa; line-height: 1.6; }
+.vw-detail-value { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 12px; color: #e4e4e7; line-height: 1.6; word-break: break-all; user-select: text; }
+.vw-detail-value-missing { color: #71717a; font-style: italic; font-family: inherit; }
+.vw-detail-hint { font-size: 11px; color: #71717a; line-height: 1.5; margin-top: 1px; }
+.vw-detail-actions { display: flex; gap: 6px; flex: none; }
+.vw-detail-copy { height: 22px; padding: 0 8px; border: 1px solid #3f3f46; background: transparent; color: #a1a1aa; font-size: 11px; white-space: nowrap; }
+.vw-detail-copy:hover { border-color: #fce300; color: #fce300; }
+/* 上游任务号:用户来这一页多半就是为了它 —— 黄边 + 亮字,一眼锁定 */
+.vw-detail-hero { border-left: 2px solid #fce300; background: rgba(252, 227, 0, 0.05); }
+.vw-detail-hero .vw-detail-label { color: #fce300; font-weight: 700; }
+.vw-detail-hero .vw-detail-value { color: #fff; font-size: 13px; }
+.vw-detail-json { margin: 0; padding: 10px 12px; background: #09090b; border: 1px solid #27272a; color: #d4d4d8; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.55; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; user-select: text; }
 .vw-seg-body { padding: 10px 12px 12px; }
 .vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }

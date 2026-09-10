@@ -557,6 +557,14 @@ export class SeedanceTaskManager {
       // 上一句 await 期间用户可能点了取消 —— 结果一律作废，不落盘不写历史。
       if (this.tasks.get(taskId)?.status === 'cancelled') return
 
+      // 网关之后那一跳的任务号(火山 `cgt-…`):第一轮轮询就有。学到就随这一条
+      // 广播带出去,不等成片 —— 用户找供应商对账多半正是在任务卡住的时候。
+      // 挂到状态对象上之后每条广播自然都带着,所以只在「新学到」时才当成变化。
+      const learnedUpstream =
+        result.upstreamTaskId && result.upstreamTaskId !== task.upstreamTaskId
+          ? { upstreamTaskId: result.upstreamTaskId }
+          : {}
+
       if (result.status === 'failed') {
         const err = result.error
         this.update(taskId, {
@@ -564,6 +572,7 @@ export class SeedanceTaskManager {
           error: err
             ? this.humanError(`${err.code ?? 'error'}: ${err.message ?? 'unknown'}`)
             : '生成失败（上游未给出原因）',
+          ...learnedUpstream,
         })
         this.scheduleCleanup(taskId)
         return
@@ -572,7 +581,7 @@ export class SeedanceTaskManager {
       if (result.status === 'succeeded') {
         const videoUrl = result.content?.video_url
         if (!videoUrl) {
-          this.update(taskId, { status: 'failed', error: 'succeeded 但缺少 video_url' })
+          this.update(taskId, { status: 'failed', error: 'succeeded 但缺少 video_url', ...learnedUpstream })
           this.scheduleCleanup(taskId)
           return
         }
@@ -582,6 +591,7 @@ export class SeedanceTaskManager {
           status: 'succeeded',
           videoUrl,
           persistence: 'running',
+          ...learnedUpstream,
           ...(typeof result.seed === 'number' ? { actualSeed: result.seed } : {}),
           ...(typeof result.usage?.completion_tokens === 'number'
             ? { completionTokens: result.usage.completion_tokens }
@@ -594,9 +604,9 @@ export class SeedanceTaskManager {
         return
       }
 
-      // queued / running：仅在状态切换时广播，避免每 6s 刷一次噪音。
-      if (result.status !== task.status) {
-        this.update(taskId, { status: result.status })
+      // queued / running：仅在状态切换（或刚学到上游任务号）时广播，避免每 6s 刷一次噪音。
+      if (result.status !== task.status || learnedUpstream.upstreamTaskId) {
+        this.update(taskId, { status: result.status, ...learnedUpstream })
       }
     }
   }
