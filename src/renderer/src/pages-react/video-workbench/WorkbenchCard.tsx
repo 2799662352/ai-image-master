@@ -757,6 +757,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   // 直接去播那条早已过期的上游地址,而卡片底部却拿 card.localPath 写着「已保存」。
   const showingLatest = versions.length === 0 || versionIdx === versions.length - 1
   const shownVersion = versions[versionIdx]
+  const footerTaskId = showingLatest ? card.taskId : shownVersion?.taskId
   const playbackSource: PlaybackSource = showingLatest
     ? {
         localPath: card.localPath ?? shownVersion?.localPath,
@@ -1359,15 +1360,25 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
               </button>
             )
           })()}
-          {card.taskId && (
-            <span className="text-white/25 text-[10px] truncate" title={card.taskId}>task: {card.taskId}</span>
+          {/* 脚注任务号跟着上面正在播的那一版走:切到 v1 就写 v1 的号,老存档没记号就不写。 */}
+          {footerTaskId && (
+            <span className="text-white/25 text-[10px] truncate" title={footerTaskId}>task: {footerTaskId}</span>
           )}
         </div>
       </div>
 
       {/* 人像库选择器(asset:// 回填) */}
       <PortraitPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} onConfirm={handlePortraitConfirm} />
-      {detailOpen && <TaskDetailDialog card={card} index={index} onClose={() => setDetailOpen(false)} />}
+      {/* 面板展示的版本 = 卡片上切到的版本(单一真源在这里);面板里「查看」某版也切的是同一份状态 */}
+      {detailOpen && (
+        <TaskDetailDialog
+          card={card}
+          index={index}
+          versionIdx={versionIdx}
+          onSelectVersion={setVersionIdx}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
       {/* 地址解析完才挂:<video src=""> 会立刻报一个没有意义的加载错误 */}
       {aveOpen && aveVideoSrc && (
         <AdvancedVideoEditModal

@@ -2,7 +2,7 @@
 // 复制,整份可复制成 JSON;本地成片可在文件夹中显示;Esc / 遮罩 / 关闭都能关。
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { VideoWorkbenchCard } from '../../../../../types/videoWorkbench'
+import type { VideoWorkbenchCard, VideoWorkbenchVersion } from '../../../../../types/videoWorkbench'
 import { buildCard } from '../../../features/video-workbench/cardSpec'
 import { TaskDetailDialog } from '../TaskDetailDialog'
 
@@ -90,6 +90,39 @@ describe('TaskDetailDialog', () => {
     expect(hero.textContent).toContain('网关尚未回传')
     expect(hero.querySelector('button')).toBeNull()
     expect(screen.queryByRole('button', { name: '在文件夹中显示' })).toBeNull()
+  })
+
+  it('按卡片当前展示的版本取数;「历史版本」里可切到别的版本,当前那版标「当前显示」', () => {
+    const spec = {
+      prompt: 'p',
+      model: '2.5' as const,
+      resolution: '480p' as const,
+      ratio: '16:9' as const,
+      duration: 6,
+      generateAudio: true,
+      mode: 'multimodal_ref' as const,
+      webSearch: false,
+      referenceBrief: { images: [], videos: [], audios: [] },
+    }
+    const versions: VideoWorkbenchVersion[] = [
+      { id: 'v1', seq: 1, createdAt: Date.now() - 120_000, taskId: 't1', upstreamTaskId: 'cgt-1', localPath: 'D:\\v1.mp4', spec: { ...spec, prompt: '第一版' } },
+      { id: 'v2', seq: 2, createdAt: Date.now() - 60_000, taskId: 'task_aSOAy1wEN8qCafX5dvfoVoWal9PENatI', upstreamTaskId: UPSTREAM, localPath: 'D:\\out\\v.mp4', spec },
+    ]
+    const onSelectVersion = vi.fn()
+    render(
+      <TaskDetailDialog card={card({ versions })} index={0} versionIdx={0} onSelectVersion={onSelectVersion} onClose={() => {}} />,
+    )
+    screen.getByRole('dialog', { name: '#01 · 任务详情 · v1/2' })
+    const hero = screen.getByTestId('vw-detail-upstreamTaskId')
+    expect(hero.textContent).toContain('cgt-1')
+    expect(hero.textContent).not.toContain(UPSTREAM)
+    expect(screen.getByTestId('vw-detail-request').textContent).toContain('"prompt": "第一版"')
+
+    const v1Row = screen.getByTestId('vw-detail-version-1')
+    expect(v1Row.textContent).toContain('当前显示')
+    expect(v1Row.querySelector('button')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '查看 v2' }))
+    expect(onSelectVersion).toHaveBeenCalledWith(1)
   })
 
   it('Esc / 点遮罩 / 关闭按钮都能关', () => {

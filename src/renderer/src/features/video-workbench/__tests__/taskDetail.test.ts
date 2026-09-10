@@ -3,7 +3,7 @@
 // 对账要的就是它;其余是让排障不必再翻 IndexedDB。
 
 import { describe, expect, it } from 'vitest'
-import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
+import type { VideoWorkbenchCard, VideoWorkbenchVersion } from '../../../../../types/videoWorkbench'
 import { buildCard } from '../cardSpec'
 import { buildTaskDetail, type TaskDetail, type TaskDetailField } from '../taskDetail'
 
@@ -233,6 +233,110 @@ describe('历史版本', () => {
   it('没有版本就没有这一区', () => {
     const d = buildTaskDetail(card({ status: 'running', taskId: 't' }), { index: 0 })
     expect(d.sections.find((s) => s.key === 'versions')).toBeUndefined()
+  })
+})
+
+describe('按版本查看(卡片切到 v1,面板就得是 v1 那一轮的事实)', () => {
+  const v1: VideoWorkbenchVersion = {
+    id: 'v1',
+    seq: 1,
+    createdAt: T0,
+    taskId: 't1',
+    upstreamTaskId: 'cgt-1',
+    localPath: 'D:\\v1.mp4',
+    actualSeed: 11,
+    submittedReferences: { images: ['https://cos.example/relay/a.png'], videos: [], audios: [] },
+    spec: { ...specOf(), prompt: '第一版', seed: 3, referenceBrief: { images: ['a.png', 'b.png'], videos: [], audios: [] } },
+  }
+  const v2: VideoWorkbenchVersion = { id: 'v2', seq: 2, createdAt: T0 + 60_000, taskId: 't2', upstreamTaskId: 'cgt-2', localPath: 'D:\\v2.mp4', spec: specOf() }
+  const two = () =>
+    card({
+      prompt: '第二版',
+      status: 'succeeded',
+      taskId: 't2',
+      upstreamTaskId: 'cgt-2',
+      clientId: 'wb-2',
+      billing: 'platform',
+      startedAt: T0 + 30_000,
+      localPath: 'D:\\v2.mp4',
+      referenceImages: [{ name: 'c.png', src: 'C:\\c.png' }],
+      versions: [v1, v2],
+    })
+
+  it('指向更早的版本:标识 / 结果 / 请求参数全部来自那条存档,卡片当前字段不混进来', () => {
+    const d = buildTaskDetail(two(), { index: 1, now: T0, versionIdx: 0 })
+    expect(d.title).toBe('#02 · 任务详情 · v1/2')
+    expect(d.view).toEqual({ historical: true, seq: 1, total: 2 })
+    expect(field(d, 'taskId')).toMatchObject({ value: 't1', copy: true })
+    expect(field(d, 'upstreamTaskId')).toMatchObject({ value: 'cgt-1', copy: true })
+    expect(field(d, 'cardId').value).toBe('card0000aa')
+    // 存档里没有的东西说缺,不拿卡片当前值充数
+    expect(field(d, 'clientId')).toMatchObject({ missing: true })
+    expect(field(d, 'billing')).toMatchObject({ missing: true })
+    expect(field(d, 'createdAt').value).toBeTruthy()
+    expect(d.sections.find((s) => s.key === 'timing')!.fields.map((f) => f.key)).not.toContain('elapsed')
+    expect(field(d, 'status').value).toBe('已完成')
+    expect(field(d, 'localPath')).toMatchObject({ value: 'D:\\v1.mp4', path: 'D:\\v1.mp4' })
+    expect(field(d, 'actualSeed').value).toBe('11')
+    expect(d.request).toMatchObject({ prompt: '第一版', seed: 3 })
+    // 素材只有名字;递上去的地址按下标能对上就写,对不上只写名字
+    expect((d.request as { referenceImages: unknown }).referenceImages).toEqual([
+      { name: 'a.png', src: 'https://cos.example/relay/a.png' },
+      { name: 'b.png' },
+    ])
+    const parsed = JSON.parse(d.json) as Record<string, unknown>
+    expect(parsed).toMatchObject({
+      view: { historical: true, seq: 1, total: 2 },
+      status: 'succeeded',
+      ids: { taskId: 't1', upstreamTaskId: 'cgt-1', clientId: null },
+      request: { prompt: '第一版' },
+      result: { localPath: 'D:\\v1.mp4' },
+    })
+    expect(d.json).not.toContain('c.png')
+  })
+
+  it('历史版本区标出当前展示的那一版,并带下标给面板做「查看」', () => {
+    const d = buildTaskDetail(two(), { index: 0, now: T0, versionIdx: 0 })
+    const rows = d.sections.find((s) => s.key === 'versions')!.fields
+    expect(rows.map((f) => [f.versionIdx, f.current])).toEqual([
+      [0, true],
+      [1, false],
+    ])
+  })
+
+  it('指向最后一版 = 卡片当前结果:与不传 versionIdx 完全一致,标题仍标 vN/N', () => {
+    const same = two() // 同一个卡片对象:buildCard 每次都会盖新的 updatedAt
+    const latest = buildTaskDetail(same, { index: 0, now: T0, versionIdx: 1 })
+    const plain = buildTaskDetail(same, { index: 0, now: T0 })
+    expect(latest).toEqual(plain)
+    expect(latest.title).toBe('#01 · 任务详情 · v2/2')
+    expect(latest.view).toEqual({ historical: false, seq: 2, total: 2 })
+    expect(field(latest, 'taskId').value).toBe('t2')
+    expect(field(latest, 'clientId').value).toBe('wb-2')
+    expect(latest.request).toMatchObject({ prompt: '第二版' })
+    expect(latest.sections.find((s) => s.key === 'versions')!.fields.map((f) => f.current)).toEqual([false, true])
+  })
+
+  it('越界 / 负数 / 非整数下标按最新一版处理,不抛', () => {
+    for (const idx of [5, -1, 0.5]) {
+      const d = buildTaskDetail(two(), { index: 0, now: T0, versionIdx: idx })
+      expect(d.view.historical).toBe(false)
+      expect(field(d, 'taskId').value).toBe('t2')
+    }
+  })
+
+  it('那一版没记下上游号:该行标 missing,不拿卡片现在的号冒充', () => {
+    const noUpstream: VideoWorkbenchVersion = { ...v1, upstreamTaskId: undefined }
+    const d = buildTaskDetail(card({ ...two(), versions: [noUpstream, v2] }), { index: 0, now: T0, versionIdx: 0 })
+    expect(field(d, 'upstreamTaskId')).toMatchObject({ missing: true })
+    expect(field(d, 'upstreamTaskId').value).toMatch(/未记录/)
+    expect(field(d, 'upstreamTaskId').copy).toBeFalsy()
+  })
+
+  it('只有一版时不标 vN/N(没有可切的)', () => {
+    const d = buildTaskDetail(card({ status: 'succeeded', taskId: 't1', versions: [v1] }), { index: 0, now: T0, versionIdx: 0 })
+    expect(d.title).toBe('#01 · 任务详情')
+    expect(d.view).toEqual({ historical: false, seq: 1, total: 1 })
   })
 })
 

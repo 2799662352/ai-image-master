@@ -644,6 +644,8 @@
 .vw-detail-hero { border-left: 2px solid #fce300; background: rgba(252, 227, 0, 0.05); }
 .vw-detail-hero .vw-detail-label { color: #fce300; font-weight: 700; }
 .vw-detail-hero .vw-detail-value { color: #fff; font-size: 13px; }
+/* 历史版本区:面板此刻展示的那一版,和其余行的「查看」按钮同尺寸,不跳版 */
+.vw-detail-current { height: 22px; padding: 0 8px; border: 1px solid rgba(252, 227, 0, 0.5); color: #fce300; font-size: 11px; line-height: 20px; white-space: nowrap; }
 .vw-detail-json { margin: 0; padding: 10px 12px; background: #09090b; border: 1px solid #27272a; color: #d4d4d8; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.55; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; user-select: text; }
 .vw-seg-body { padding: 10px 12px 12px; }
 .vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
