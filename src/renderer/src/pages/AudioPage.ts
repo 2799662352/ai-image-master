@@ -597,9 +597,10 @@ export class AudioPage extends BasePage {
    * 播放源候选列表(按优先级):本地文件(local-file://,免网络、秒开) >
    * COS 远程 URL(跨设备/清缓存后仍可播) > base64 降级。
    *
-   * 本地路径必须过 toRenderableUri:local-file 是 standard scheme,Windows
-   * 盘符冒号不编码(C: → 应为 C%3A)会被 URL 解析吞成 host,协议处理器拿不到
-   * 盘符,直接 NotSupportedError(与聊天卡片 ArtifactCard 同一条已修路径)。
+   * 本地路径必须过 toRenderableUri(→ `local-file:///C:/…`,盘符冒号**原样**):
+   * local-file 是 standard scheme,`C%3A` 形式反而是非法 URL —— <audio> 在渲染端
+   * 就报 "Media load rejected by URL safety check",请求根本不发。原样冒号被解析成
+   * host=c,主进程 handler 从单字母 host 还原盘符(与聊天卡片 ArtifactCard 同一条路)。
    */
   private playSourcesFor(item: AudioLibraryItem): string[] {
     const sources: string[] = []

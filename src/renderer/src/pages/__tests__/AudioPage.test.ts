@@ -342,8 +342,10 @@ describe('AudioPage playback (盘符编码 + 逐级回落)', () => {
     document.body.innerHTML = ''
   })
 
-  it('encodes the Windows drive colon in local-file:// playback src (C: → C%3A)', async () => {
-    // 回归:未编码盘符冒号会被 standard scheme 解析吞成 host → NotSupportedError
+  it('keeps the Windows drive colon raw in the local-file:// playback src (C%3A is an invalid URL)', async () => {
+    // 回归:`local-file:///C%3A/…` 在 standard scheme 下是非法 URL,<audio> 在渲染端就报
+    // "Media load rejected by URL safety check",请求根本不发;原样冒号 `local-file:///C:/…`
+    // 被解析成 host=c,主进程 handler 从单字母 host 还原盘符后正常播放(真机 Electron 实测)。
     mockPlay()
     await store.add({
       id: 'p1', prompt: '本地播放', format: 'mp3', duration: 3, billedSeconds: 3,
@@ -357,7 +359,7 @@ describe('AudioPage playback (盘符编码 + 逐级回落)', () => {
 
     document.querySelector<HTMLButtonElement>('[data-action="play"]')!.click()
     await vi.waitFor(() => {
-      expect(playedSrcs).toEqual(['local-file:///C%3A/ud/audio-history/x.mp3'])
+      expect(playedSrcs).toEqual(['local-file:///C:/ud/audio-history/x.mp3'])
     })
   })
 
@@ -378,7 +380,7 @@ describe('AudioPage playback (盘符编码 + 逐级回落)', () => {
     document.querySelector<HTMLButtonElement>('[data-action="play"]')!.click()
     await vi.waitFor(() => {
       expect(playedSrcs).toEqual([
-        'local-file:///C%3A/ud/audio-history/gone.mp3',
+        'local-file:///C:/ud/audio-history/gone.mp3',
         'https://cos.example.com/audio/a.mp3',
       ])
     })

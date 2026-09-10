@@ -1,35 +1,66 @@
 const WIN_ABS = /^[A-Za-z]:[\\/]/
 const POSIX_ABS = /^\//
 
-// Drive colons in a `local-file://` URL must be percent-encoded. `local-file`
-// is registered as a standard scheme, so an unencoded `local-file:///C:/x`
-// is parsed as host=`c`, dropping the drive letter entirely (the renderer
-// then issues `local-file://c/x`, which the protocol handler cannot resolve
-// and returns 500). Encoding the colon as `%3A` keeps host empty and lets
-// `resolveOsPathFromRequest` reconstruct the Windows path normally.
-function encodeDriveColon(path: string): string {
-  return path.replace(/^([A-Za-z]):/, '$1%3A')
+/**
+ * Windows path → `local-file:///C:/…` with the drive colon kept RAW.
+ *
+ * `local-file` is registered as a *standard* scheme (protocolHandler.ts), so
+ * Chromium parses `local-file:///X…` the way it parses `http:///X…`: the run
+ * of slashes collapses and `X` becomes the authority. Measured in a real
+ * Electron 43 BrowserWindow (file:// page origin, packaged-app webPreferences,
+ * the real protocol handler):
+ *
+ *   `local-file:///C%3A/…` → the host "C:" (after percent-decoding) contains a
+ *     forbidden host code point, so the URL is INVALID: `new URL()` throws,
+ *     `<img>` shows the broken-image icon, `<audio>` fails with
+ *     "Media load rejected by URL safety check", and the protocol handler is
+ *     never called. This was the canvas 裂图 / AudioPage local-playback bug.
+ *   `local-file:///C:/…`   → host "c", path "/…"; `<img>` decodes and `<audio>`
+ *     plays. The request reaches the main process as `local-file://c/…` and
+ *     `resolveOsPathFromRequest` restores the drive from the 1-letter host.
+ *
+ * (The old `%3A` trick assumed the handler could not cope with the host-letter
+ * form; it has handled `local-file://c/…` for a long time.)
+ */
+function windowsPathToLocalFileUri(path: string): string {
+  return 'local-file:///' + path.replace(/\\/g, '/')
+}
+
+/** Legacy `local-file:///C%3A/…` (written by older builds; an invalid URL). */
+const LEGACY_ENCODED_DRIVE = /^local-file:\/\/\/([A-Za-z])%3[Aa](?=\/)/
+/** Chromium-normalized `local-file://c/…` (what `img.src` / request URLs read back as). */
+const HOST_LETTER_DRIVE = /^local-file:\/\/([A-Za-z])(?=\/)/
+
+/**
+ * Fold every shape of an existing `local-file://` URL onto the canonical
+ * `local-file:///C:/…` form. Streamable media URLs (`local-file://media/?p=`)
+ * and POSIX paths (`local-file:////home/…`) match neither pattern and pass
+ * through untouched.
+ */
+function normalizeLocalFileUri(uri: string): string {
+  const legacy = LEGACY_ENCODED_DRIVE.exec(uri)
+  if (legacy) return `local-file:///${legacy[1]}:${uri.slice(legacy[0].length)}`
+  const hostLetter = HOST_LETTER_DRIVE.exec(uri)
+  if (hostLetter) return `local-file:///${hostLetter[1].toUpperCase()}:${uri.slice(hostLetter[0].length)}`
+  return uri
 }
 
 /**
  * 媒体元素专用地址:`local-file://media/?p=<百分号编码的绝对路径>`。
  *
- * 为什么不能沿用 `toRenderableUri` 那种 `local-file:///D%3A/...`:
+ * 为什么视频/音频不沿用 `toRenderableUri` 那种 `local-file:///D:/...`:
  *
- * `<video>`/`<audio>` 走的是 Blink 的 `HTMLMediaElement::IsSafeToLoadURL`,比图片
- * 严得多,不过就直接抛 `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`
- * ——**在渲染端就拒了,请求根本不发出去**,所以主进程的协议处理器一条日志都没有
- * (这个"没有日志"的症状此前被反复误判成协议没注册或 CSP 拦截)。
+ * 历史上 `<video>`/`<audio>` 拿到旧的 `local-file:///D%3A/...` 会直接抛
+ * `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check` ——**在渲染端就拒了,
+ * 请求根本不发出去**,主进程协议处理器一条日志都没有(这个"没有日志"的症状此前被反复
+ * 误判成协议没注册或 CSP 拦截)。真机实测后的病根是 `%3A`:standard scheme 下它让
+ * 整条 URL 非法(见 `windowsPathToLocalFileUri`);盘符冒号原样的形式媒体元素也能加载。
  *
- * 差别在 host:`local-file:///…` 的 host 是**空的**,而 `standard: true` 表示这个
- * scheme 按 RFC 3986 通用语法解析,标准 scheme 的空 host 在 Chromium 里是可疑形态
- * (只有 `file` 例外)。查到的所有能正常播放的实例——Electron 官方文档的
- * `app://bundle/...`、生产项目 CoWork-OS 的 `media://<token>`——host 都非空。
+ * 媒体仍然走这个 host 非空、路径塞进**查询串**的形态,是因为主进程只对 `media` 主机
+ * 实现了 206 Range 分段(见 protocolHandler.ts serveMedia)—— 大文件才能拖进度条;
+ * 查询串也不参与路径规范化,Windows 盘符不会被折叠。
  *
- * 顺带把整条路径塞进**查询串**:那里不参与路径规范化,Windows 盘符不会被折叠,
- * 也就不必再依赖 `D%3A` 那种精巧的编码技巧。
- *
- * 图片继续用 `toRenderableUri` —— 它那条路一直是好的,没有理由跟着动。
+ * 图片继续用 `toRenderableUri`(`local-file:///C:/…`,盘符冒号原样,见上方注释)。
  */
 export function toStreamableUri(osPath: string): string {
   if (!osPath) return ''
@@ -38,9 +69,7 @@ export function toStreamableUri(osPath: string): string {
 
 export function toRenderableUri(uri: string): string {
   if (!uri) return uri
-  if (uri.startsWith('local-file://')) {
-    return uri.replace(/^(local-file:\/\/\/)([A-Za-z]):/, '$1$2%3A')
-  }
+  if (uri.startsWith('local-file://')) return normalizeLocalFileUri(uri)
   if (uri.startsWith('blob:') || uri.startsWith('data:') || /^https?:\/\//.test(uri)) return uri
   // `file://…` is NOT natively loadable from this sandboxed renderer — `<img
   // src="file://…">` triggers "Not allowed to load local resource". Multiple
@@ -66,11 +95,11 @@ export function toRenderableUri(uri: string): string {
     }
     // Windows drive path lost as `/C:/Users/…` → strip the spurious leading slash.
     const win = /^\/([A-Za-z]:[\\/].*)$/.exec(decoded)
-    if (win) return 'local-file:///' + encodeDriveColon(win[1].replace(/\\/g, '/'))
+    if (win) return windowsPathToLocalFileUri(win[1])
     // POSIX absolute path keeps its leading slash (→ `local-file:////home/…`).
     return 'local-file:///' + decoded
   }
-  if (WIN_ABS.test(uri)) return 'local-file:///' + encodeDriveColon(uri.replace(/\\/g, '/'))
+  if (WIN_ABS.test(uri)) return windowsPathToLocalFileUri(uri)
   if (POSIX_ABS.test(uri)) return 'local-file:///' + uri
   return uri
 }

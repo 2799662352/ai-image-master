@@ -6,9 +6,17 @@ import { toRenderableUri, toStreamableUri } from '../../file-explorer/uri'
  * and makes Electron relaunch the app in a loop when the canvas tab opens.
  *
  * Same contract as the file-explorer / video-workbench viewers:
- *   - images → `local-file:///D%3A/...` (`toRenderableUri`)
+ *   - images → `local-file:///D:/...` (`toRenderableUri`, drive colon RAW)
  *   - video/audio → `local-file://media/?p=...` (`toStreamableUri`, Range + stream)
  * Bytes stay on disk; Chromium streams them. See protocolHandler.ts.
+ *
+ * The drive colon must never be percent-encoded: `local-file:///D%3A/...` is
+ * an INVALID URL for a standard scheme, so tldraw's `<img>` never issued the
+ * request (broken-image icon = the canvas 裂图 bug) and `toImageDataUrl`'s
+ * `fetch(src)` threw "Failed to parse URL". Rationale + measurements live on
+ * `toRenderableUri`; legacy `%3A` records persisted by older builds are folded
+ * back to the canonical form here (see `toCanvasAssetUrl`) so they heal on
+ * resolve without a store migration.
  */
 
 const VIDEO_OR_AUDIO_EXT = /\.(mp4|webm|mov|m4v|mkv|ogg|ogv|mp3|wav|m4a|aac|flac|opus|oga|weba)$/i
@@ -22,11 +30,13 @@ export function toCanvasAssetUrl(pathOrUrl: string): string {
     pathOrUrl.startsWith('data:') ||
     pathOrUrl.startsWith('blob:') ||
     pathOrUrl.startsWith('http://') ||
-    pathOrUrl.startsWith('https://') ||
-    pathOrUrl.startsWith('local-file://')
+    pathOrUrl.startsWith('https://')
   ) {
     return pathOrUrl
   }
+  // Already one of ours: fold legacy `%3A` / Chromium host-letter shapes onto
+  // the canonical form; the media host form passes through unchanged.
+  if (pathOrUrl.startsWith('local-file://')) return toRenderableUri(pathOrUrl)
   if (VIDEO_OR_AUDIO_EXT.test(pathOrUrl)) return toStreamableUri(pathOrUrl)
   return toRenderableUri(pathOrUrl)
 }
@@ -40,6 +50,9 @@ export function toCanvasAssetUrl(pathOrUrl: string): string {
  */
 export function osPathFromCanvasAssetUrl(url: string): string | null {
   if (typeof url !== 'string' || !url.startsWith('local-file://')) return null
+  // Accept legacy `%3A` records and Chromium-normalized `local-file://c/…`
+  // read-backs too — both fold onto the canonical `local-file:///C:/…`.
+  url = toRenderableUri(url)
   let decoded: string
   const mediaPrefix = 'local-file://media/?p='
   if (url.startsWith(mediaPrefix)) {
