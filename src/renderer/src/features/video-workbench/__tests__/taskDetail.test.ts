@@ -107,6 +107,58 @@ describe('请求参数', () => {
     expect(d.json).not.toContain('AAAABBBB')
     expect(JSON.parse(d.json)).toMatchObject({ ids: { upstreamTaskId: null }, request: { seed: 42 } })
   })
+
+  it('提交过的卡:素材 src 用实际递给上游的 https 地址,本地路径退到 local;data: 图有了地址就不再是占位', () => {
+    const d = buildTaskDetail(
+      card({
+        status: 'succeeded',
+        taskId: 't',
+        referenceImages: [
+          { name: '下载 (2).png', src: 'C:\\Users\\me\\Downloads\\下载 (2).png' },
+          { name: '贴图.png', src: 'data:image/png;base64,AAAABBBBCCCCDDDD' },
+          { name: '立绘', src: 'https://cos.example/a.png' },
+        ],
+        referenceVideos: [{ name: 'ref.mp4', src: 'D:\\clips\\ref.mp4' }],
+        submittedReferences: {
+          images: ['https://cos.example/relay/1.png', 'https://cos.example/relay/2.png', 'https://cos.example/a.png'],
+          videos: ['https://cos.example/relay/ref.mp4'],
+          audios: [],
+        },
+      }),
+      { index: 0 },
+    )
+    const req = d.request as {
+      referenceImages: Array<Record<string, unknown>>
+      referenceVideos: Array<Record<string, unknown>>
+    }
+    expect(req.referenceImages).toEqual([
+      { name: '下载 (2).png', src: 'https://cos.example/relay/1.png', local: 'C:\\Users\\me\\Downloads\\下载 (2).png' },
+      { name: '贴图.png', src: 'https://cos.example/relay/2.png' },
+      { name: '立绘', src: 'https://cos.example/a.png' },
+    ])
+    expect(req.referenceVideos).toEqual([{ name: 'ref.mp4', src: 'https://cos.example/relay/ref.mp4', local: 'D:\\clips\\ref.mp4' }])
+    expect(d.json).not.toContain('AAAABBBB')
+  })
+
+  it('递上去的地址条数与卡上素材对不上(老数据 / 被上游折叠):按下标能对上的用地址,其余退回原样', () => {
+    const d = buildTaskDetail(
+      card({
+        status: 'succeeded',
+        taskId: 't',
+        referenceImages: [
+          { name: 'a.png', src: 'C:\\a.png' },
+          { name: 'b.png', src: 'C:\\b.png' },
+        ],
+        submittedReferences: { images: ['https://cos.example/relay/a.png'], videos: [], audios: [] },
+      }),
+      { index: 0 },
+    )
+    const images = (d.request as { referenceImages: Array<Record<string, unknown>> }).referenceImages
+    expect(images).toEqual([
+      { name: 'a.png', src: 'https://cos.example/relay/a.png', local: 'C:\\a.png' },
+      { name: 'b.png', src: 'C:\\b.png' },
+    ])
+  })
 })
 
 describe('时间与结果', () => {

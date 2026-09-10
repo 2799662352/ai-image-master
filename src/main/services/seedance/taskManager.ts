@@ -19,6 +19,7 @@ import type {
   SeedanceCreateTaskBody,
   SeedanceContentItem,
   SeedanceModelAlias,
+  SeedanceReferenceUrls,
   SeedanceTaskState,
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
@@ -37,6 +38,34 @@ function countContent(
   type: 'image_url' | 'video_url' | 'audio_url',
 ): number {
   return content.filter((item) => item.type === type).length
+}
+
+/**
+ * 实际递给上游的素材地址,按类分列、保持 content[] 顺序。一条素材都没有返回
+ * undefined —— 纯文生视频的状态里不摆三个空数组。
+ */
+function referenceUrlsOf(content: SeedanceContentItem[]): SeedanceReferenceUrls | undefined {
+  const refs: SeedanceReferenceUrls = { images: [], videos: [], audios: [] }
+  for (const item of content) {
+    switch (item.type) {
+      case 'image_url':
+        refs.images.push(item.image_url.url)
+        break
+      case 'video_url':
+        refs.videos.push(item.video_url.url)
+        break
+      case 'audio_url':
+        refs.audios.push(item.audio_url.url)
+        break
+      case 'text':
+        break
+      default: {
+        const exhaustive: never = item
+        throw new Error(`unknown content item: ${JSON.stringify(exhaustive)}`)
+      }
+    }
+  }
+  return refs.images.length + refs.videos.length + refs.audios.length > 0 ? refs : undefined
 }
 
 /** 上游轮询间隔。文档建议 5~10s。 */
@@ -256,6 +285,7 @@ export class SeedanceTaskManager {
       duration,
       ...(taskMode ? { taskMode } : {}),
     })
+    const referenceUrls = referenceUrlsOf(content)
     const state: SeedanceTaskState = {
       taskId: id,
       clientId: params.clientId,
@@ -267,6 +297,7 @@ export class SeedanceTaskManager {
       resolution,
       ratio,
       duration,
+      ...(referenceUrls ? { referenceUrls } : {}),
       status: 'queued',
       createdAt: this.now(),
       updatedAt: this.now(),

@@ -83,6 +83,32 @@ describe('upstreamTaskId 落到卡片', () => {
   })
 })
 
+describe('submittedReferences(这一轮实际递给上游的素材地址)', () => {
+  const REFS = { images: ['https://cos/a.png', 'https://cos/b.png'], videos: [], audios: [] }
+
+  it('广播带来的 referenceUrls 落到卡片;成功后归档进版本;重新生成清掉卡上的', async () => {
+    const clientId = await submitOneCard()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'queued', referenceUrls: REFS }))
+    expect(card().submittedReferences).toEqual(REFS)
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(
+      makeUpdate({ clientId, status: 'succeeded', localPath: 'C:/v1.mp4', persistence: 'done', referenceUrls: REFS }),
+    )
+    expect(card().versions?.[0].submittedReferences).toEqual(REFS)
+
+    await useVideoWorkbenchStore.getState().startCards([card().id])
+    expect(card().submittedReferences).toBeUndefined()
+    expect(card().versions?.[0].submittedReferences).toEqual(REFS)
+  })
+
+  it('不带 referenceUrls 的广播不抹掉已记下的', async () => {
+    const clientId = await submitOneCard()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'queued', referenceUrls: REFS }))
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'running' }))
+    expect(card().submittedReferences).toEqual(REFS)
+  })
+})
+
 describe('upstreamTaskId 对 agent 可见', () => {
   it('detailed 快照带 upstreamTaskId;没有就不出现这个键', async () => {
     const clientId = await submitOneCard()

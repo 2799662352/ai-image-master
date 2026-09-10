@@ -774,6 +774,7 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       createdAt: Date.now(),
       ...(card.taskId ? { taskId: card.taskId } : {}),
       ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
+      ...(card.submittedReferences ? { submittedReferences: card.submittedReferences } : {}),
       ...(card.localPath ? { localPath: card.localPath } : {}),
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
@@ -2062,6 +2063,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             billing,
             taskId: undefined,
             upstreamTaskId: undefined,
+            submittedReferences: undefined,
             videoUrl: undefined,
             error: undefined,
             persistence: undefined,
@@ -2276,6 +2278,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           // 主进程一学到就每条广播都带;这里仍按「有才写」,一条不带它的迟到广播
           // 不该把已经记下的号抹掉。
           ...(update.upstreamTaskId ? { upstreamTaskId: update.upstreamTaskId } : {}),
+          ...(update.referenceUrls ? { submittedReferences: update.referenceUrls } : {}),
           ...(update.videoUrl ? { videoUrl: update.videoUrl } : {}),
           ...(update.localPath ? { localPath: update.localPath } : {}),
           ...(update.remoteUrl ? { remoteUrl: update.remoteUrl } : {}),

@@ -142,8 +142,24 @@ function formatElapsed(ms: number): string {
   return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
 }
 
-function materialBrief(m: VideoWorkbenchMaterial): { name: string; src: string } {
+/** 本机文件路径(盘符 / UNC / POSIX 绝对路径),区别于 https / data: / asset:// 源。 */
+function isLocalPath(src: string): boolean {
+  return /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(src)
+}
+
+/**
+ * 素材一条。递上去过就写实际递上去的 https 地址(`submitted`),本机路径退到 `local`
+ * 留个对照;没递过(草稿 / 老卡片)照卡上的写,data: 字节一律换成占位。
+ */
+function materialBrief(m: VideoWorkbenchMaterial, submitted: string | undefined): Record<string, string> {
+  if (submitted) {
+    return { name: m.name, src: submitted, ...(isLocalPath(m.src) ? { local: m.src } : {}) }
+  }
   return { name: m.name, src: m.src.startsWith('data:') ? INLINE_PLACEHOLDER : m.src }
+}
+
+function materialBriefs(list: VideoWorkbenchMaterial[], submitted: string[] | undefined): Array<Record<string, string>> {
+  return list.map((m, i) => materialBrief(m, submitted?.[i]))
 }
 
 function isTerminal(status: VideoWorkbenchCard['status']): boolean {
@@ -163,9 +179,9 @@ function requestOf(card: VideoWorkbenchCard): Record<string, unknown> {
     webSearch: card.webSearch === true,
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
-    referenceImages: card.referenceImages.map(materialBrief),
-    referenceVideos: card.referenceVideos.map(materialBrief),
-    referenceAudios: card.referenceAudios.map(materialBrief),
+    referenceImages: materialBriefs(card.referenceImages, card.submittedReferences?.images),
+    referenceVideos: materialBriefs(card.referenceVideos, card.submittedReferences?.videos),
+    referenceAudios: materialBriefs(card.referenceAudios, card.submittedReferences?.audios),
   }
 }
 
@@ -279,6 +295,7 @@ function versionJson(v: VideoWorkbenchVersion): Record<string, unknown> {
     createdAt: v.createdAt,
     taskId: v.taskId ?? null,
     upstreamTaskId: v.upstreamTaskId ?? null,
+    ...(v.submittedReferences ? { references: v.submittedReferences } : {}),
     ...(v.localPath ? { localPath: v.localPath } : {}),
     ...(v.remoteUrl ? { remoteUrl: v.remoteUrl } : {}),
     ...(v.videoUrl ? { videoUrl: v.videoUrl } : {}),

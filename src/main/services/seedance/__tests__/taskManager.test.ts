@@ -176,6 +176,33 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  it('submit 把实际递给上游的素材地址(已解析成 https)按类记进状态与每条广播', async () => {
+    const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
+    const state = await mgr.submit({
+      input: INPUT,
+      content: [
+        { type: 'text', text: INPUT.prompt },
+        { type: 'image_url', role: 'reference_image', image_url: { url: 'https://cos/a.png' } },
+        { type: 'image_url', role: 'reference_image', image_url: { url: 'https://cos/b.png' }, assetId: 'as-1' },
+        { type: 'video_url', video_url: { url: 'https://cos/v.mp4' } },
+      ],
+    })
+    const expected = { images: ['https://cos/a.png', 'https://cos/b.png'], videos: ['https://cos/v.mp4'], audios: [] }
+    expect(state.referenceUrls).toEqual(expected)
+    expect(broadcasts[0].referenceUrls).toEqual(expected)
+    await vi.advanceTimersByTimeAsync(6_000)
+    // 状态对象上一直挂着,后续广播(running)自然也带
+    expect(broadcasts.at(-1)?.referenceUrls).toEqual(expected)
+    mgr.dispose()
+  })
+
+  it('纯文本提交:状态里没有 referenceUrls 这个键(不给三个空数组占位)', async () => {
+    const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
+    const state = await mgr.submit({ input: INPUT, content: [{ type: 'text', text: INPUT.prompt }] })
+    expect(Object.hasOwn(state, 'referenceUrls')).toBe(false)
+    mgr.dispose()
+  })
+
   it('直连回形(查询结果不带 upstreamTaskId)一切照旧,状态里也没有这个键', async () => {
     const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
     await mgr.submit({ input: INPUT, content: [] })

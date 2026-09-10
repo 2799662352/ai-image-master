@@ -12,6 +12,7 @@
 import type {
   SeedanceModelAlias,
   SeedancePersistence,
+  SeedanceReferenceUrls,
   SeedanceTaskMode,
   SeedanceTaskStatus,
   VideoBillingSource,
@@ -289,6 +290,12 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
    */
   upstreamTaskId?: string
   /**
+   * 这一轮**实际递给上游**的素材地址(已解析成 https,与 referenceImages /
+   * referenceVideos / referenceAudios 同序),来自提交时的广播。「任务详情」把素材
+   * 写成这些地址而不是本机路径 —— 路径贴给别人没有意义。同样是结果不是意图。
+   */
+  submittedReferences?: SeedanceReferenceUrls
+  /**
    * 这一轮提交时的计费来源（取自 `useQuotaStore.billingSource`）。
    *
    * **是结果不是意图** —— 挂在 Card 上而不是 Spec 上：它不参与 specEquals、
@@ -400,6 +407,8 @@ export interface VideoWorkbenchVersion {
   taskId?: string
   /** 产出这一版的上游任务号(见 `VideoWorkbenchCard.upstreamTaskId`)。 */
   upstreamTaskId?: string
+  /** 产出这一版时实际递给上游的素材地址(见 `VideoWorkbenchCard.submittedReferences`)。 */
+  submittedReferences?: SeedanceReferenceUrls
   localPath?: string
   remoteUrl?: string
   videoUrl?: string
