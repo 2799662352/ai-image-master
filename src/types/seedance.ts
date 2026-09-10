@@ -369,6 +369,18 @@ export type SeedanceRegion = 'global' | 'cn'
  */
 export type VideoBillingSource = 'platform' | 'own-key'
 
+/**
+ * 一次提交**实际递给上游**的素材地址,按类分列、与提交顺序一致。到这里的都已经是
+ * 上游能拉到的 https(本地文件 / data: 图在主进程转存 COS 之后的地址;人像库
+ * asset:// 解析后的地址)。给「任务详情」把素材写成地址而不是本机路径 ——
+ * 本机路径贴给别人毫无意义,地址才对得上供应商那边的记录。
+ */
+export interface SeedanceReferenceUrls {
+  images: string[]
+  videos: string[]
+  audios: string[]
+}
+
 /** 任务快照（也是 `seedance:task-update` IPC 的载荷）。 */
 export interface SeedanceTaskState {
   taskId: string
@@ -396,6 +408,17 @@ export interface SeedanceTaskState {
   error?: string
   /** succeeded 时上游回传的**实际使用**种子（含随机 seed 的最终值,可复现）。 */
   actualSeed?: number
+  /**
+   * 网关**之后那一跳**的任务号（火山 Ark `cgt-…` / DashScope uuid）。只在走网关时
+   * 出现:`taskId` 是网关签发的,找供应商对账他们不认它,认的是这个。第一轮轮询
+   * 学到就随广播带出,此后每条广播都带着(状态对象上一直挂着)。
+   */
+  upstreamTaskId?: string
+  /**
+   * 见 `SeedanceReferenceUrls`。提交时从最终 content[] 抽出,一条素材都没有就不给
+   * (纯文生视频不摆三个空数组)。合成的预备 / 失败卡片不带。
+   */
+  referenceUrls?: SeedanceReferenceUrls
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
   completionTokens?: number
   /**

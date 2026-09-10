@@ -15,6 +15,7 @@ export type {
   SeedanceModelCapabilities,
   SeedanceRegion,
   SeedanceTaskMode,
+  SeedanceReferenceUrls,
   SeedanceTaskState,
   SeedanceTaskUpdate,
   SeedanceKeyState,

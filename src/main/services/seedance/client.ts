@@ -40,6 +40,14 @@ export interface SeedanceQueryResult {
   billedSeconds?: number
   /** 上游实际使用的随机种子（文档 3.1;含随机 seed 的最终值,可复现）。 */
   seed?: number
+  /**
+   * 网关**之后那一跳**的任务号（火山 Ark `cgt-…` / DashScope uuid）。
+   *
+   * 只在走网关时出现:`id` 是网关签发的、只对我们这一侧有意义,找供应商对账
+   * 他们不认它,认的是这个。直连时 `id` 本身就是上游号,不重复给(解析器保证
+   * 两者相同时不填)。第一轮轮询就有,不必等成片。
+   */
+  upstreamTaskId?: string
   error?: { code?: string; message?: string }
 }
 
