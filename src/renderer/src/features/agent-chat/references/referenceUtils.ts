@@ -59,8 +59,9 @@ function openBehaviorForFile(name: string, mime?: string): AgentReferenceOpenBeh
  * Accepts three shapes — must keep this in sync with
  * `components/shared/media/useResolvedMediaSrc.ts::toOsPathIfLocal`:
  *
- *   1. `local-file:///D%3A/foo/bar.png` — canonical form produced by
- *      `toRenderableUri`. Strip prefix, percent-decode, drop traversal.
+ *   1. `local-file:///D:/foo/bar.png` — canonical form produced by
+ *      `toRenderableUri` (drive colon raw; older builds wrote `D%3A`, which
+ *      decodes to the same thing). Strip prefix, percent-decode, drop traversal.
  *
  *   2. `D:\foo\bar.png` or `D:/foo/bar.png` — raw Windows path. This is
  *      what `buildAttachmentUri` returns in the **optimistic** send path
@@ -94,7 +95,7 @@ function localPathFromUri(uri: string): string {
       return ''
     }
     if (decoded.split(/[\\/]/).some((segment) => segment === '..')) return ''
-    // Windows path emerges as `C:/Users/...` after decoding `C%3A`.
+    // Windows path emerges as `C:/Users/...` (legacy `C%3A` decodes to it too).
     if (/^[A-Za-z]:[\\/]/.test(decoded)) return decoded
     // POSIX path lost its leading slash when toRenderableUri prefixed with
     // `local-file:///`; add it back.

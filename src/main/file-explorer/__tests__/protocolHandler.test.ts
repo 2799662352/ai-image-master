@@ -14,6 +14,19 @@ describe('protocolHandler.resolveOsPathFromRequest', () => {
     if (r.ok) expect(r.path).toBe('D:\\x\\y.png')
   })
 
+  // Exact request shape a real Electron 43 renderer delivered for
+  // `<img src="local-file:///C:/…/测试 dir/下载 (2).png">`: the standard-scheme
+  // parser turned the drive into a 1-letter lower-case host and percent-encoded
+  // the CJK / space segments. This is the canonical form toRenderableUri emits.
+  it('restores drive + decodes CJK/space segments from the host-letter request form', () => {
+    const r = resolveOsPathFromRequest(
+      'local-file://c/Users/27996/Temp/%E6%B5%8B%E8%AF%95%20dir/%E4%B8%8B%E8%BD%BD%20(2).png',
+      'win32',
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.path).toBe('C:\\Users\\27996\\Temp\\测试 dir\\下载 (2).png')
+  })
+
   it('extracts Windows drive path from encoded local-file:///D%3A/x/y.png', () => {
     const r = resolveOsPathFromRequest('local-file:///D%3A/x/y.png', 'win32')
     expect(r.ok).toBe(true)

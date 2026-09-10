@@ -15,7 +15,7 @@ describe('makeCanvasAssetStore.upload', () => {
     const resolveDiskPath = vi.fn(async () => 'D:/work/shot.png')
     const store = makeCanvasAssetStore({ resolveDiskPath, getThreadId: () => 't1' })
     const res = await store.upload({}, makeFile('shot.png', 'image/png'))
-    expect(res.src).toBe('local-file:///D%3A/work/shot.png')
+    expect(res.src).toBe('local-file:///D:/work/shot.png')
     expect(resolveDiskPath).toHaveBeenCalledWith(expect.any(File), 't1')
   })
 
@@ -62,12 +62,29 @@ describe('makeCanvasAssetStore.resolve', () => {
   it('prefers meta.assetPath over props.src', () => {
     expect(
       store.resolve({ meta: { assetPath: 'D:/a/b.png' }, props: { src: 'blob:stale' } }),
-    ).toBe('local-file:///D%3A/a/b.png')
+    ).toBe('local-file:///D:/a/b.png')
   })
 
-  it('passes a local-file src straight through', () => {
+  it('passes a canonical local-file src straight through', () => {
+    expect(store.resolve({ meta: {}, props: { src: 'local-file:///D:/a.png' } })).toBe(
+      'local-file:///D:/a.png',
+    )
+  })
+
+  // Canvases persisted by older builds hold `local-file:///D%3A/…` srcs — an
+  // invalid URL for a standard scheme, so tldraw rendered them as broken
+  // images. Records with `meta.assetPath` heal via the branch above; records
+  // without it must heal here, at resolve time, without a store migration.
+  it('heals a legacy %3A local-file src at resolve time', () => {
     expect(store.resolve({ meta: {}, props: { src: 'local-file:///D%3A/a.png' } })).toBe(
-      'local-file:///D%3A/a.png',
+      'local-file:///D:/a.png',
+    )
+  })
+
+  it('leaves a blob: src and a short data: src alone', () => {
+    expect(store.resolve({ meta: {}, props: { src: 'blob:abc' } })).toBe('blob:abc')
+    expect(store.resolve({ meta: {}, props: { src: 'data:image/png;base64,QUJD' } })).toBe(
+      'data:image/png;base64,QUJD',
     )
   })
 

@@ -86,8 +86,9 @@ async function base64ToBlob(b64: string, mime: string): Promise<Blob> {
  * Resolve any "local file-ish" src to an OS path that the main process can
  * read. Accepts three shapes the renderer might receive:
  *
- *   1. `local-file:///D%3A/foo/bar.png` — the canonical form produced by
- *      `toRenderableUri`. We strip the prefix and percent-decode.
+ *   1. `local-file:///D:/foo/bar.png` — the canonical form produced by
+ *      `toRenderableUri` (drive colon raw; older builds wrote `D%3A`, which
+ *      decodes to the same thing). We strip the prefix and percent-decode.
  *
  *   2. `D:\foo\bar.png` or `D:/foo/bar.png` — raw Windows path. This is
  *      what `buildAttachmentUri` returns when the renderer only has a

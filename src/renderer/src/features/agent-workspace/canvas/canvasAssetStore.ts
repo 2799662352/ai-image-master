@@ -51,7 +51,11 @@ export function makeCanvasAssetStore(deps: CanvasAssetStoreDeps): CanvasAssetSto
       // A record written by the v1 store can still carry inline bytes. Refuse
       // them rather than paying the memory to display one.
       if (src.startsWith('data:') && src.length > CANVAS_INLINE_ASSET_MAX_CHARS) return null
-      return src
+      // Older builds persisted `local-file:///D%3A/…` — an invalid URL that
+      // rendered as a broken image. Fold it onto the canonical form at resolve
+      // time so persisted canvases heal without a store migration; every other
+      // scheme passes through untouched.
+      return toCanvasAssetUrl(src)
     },
   }
 }

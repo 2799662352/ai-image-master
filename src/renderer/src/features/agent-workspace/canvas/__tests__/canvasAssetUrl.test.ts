@@ -8,8 +8,20 @@ import {
 
 describe('toCanvasAssetUrl', () => {
   it('turns a Windows image path into local-file:// (no IPC / no data: URL)', () => {
-    expect(toCanvasAssetUrl('D:\\work\\shot.png')).toBe('local-file:///D%3A/work/shot.png')
-    expect(toCanvasAssetUrl('D:/work/shot.png')).toBe('local-file:///D%3A/work/shot.png')
+    expect(toCanvasAssetUrl('D:\\work\\shot.png')).toBe('local-file:///D:/work/shot.png')
+    expect(toCanvasAssetUrl('D:/work/shot.png')).toBe('local-file:///D:/work/shot.png')
+  })
+
+  // The `%3A` drive-colon form is an INVALID URL for a standard scheme: tldraw's
+  // <img> never issues the request (broken-image icon), `fetch()` for export
+  // throws "Failed to parse URL". Verified in a real Electron BrowserWindow.
+  it('never emits the %3A drive-colon form (that is the broken-image bug)', () => {
+    expect(toCanvasAssetUrl('C:\\Users\\me\\nai_output_1.png')).toBe('local-file:///C:/Users/me/nai_output_1.png')
+    expect(toCanvasAssetUrl('C:/Users/me/nai_output_1.png')).not.toContain('%3A')
+  })
+
+  it('heals a legacy %3A local-file src persisted by an older build', () => {
+    expect(toCanvasAssetUrl('local-file:///D%3A/a.png')).toBe('local-file:///D:/a.png')
   })
 
   it('turns a video/audio path into the streamable media host (Range-capable)', () => {
@@ -24,7 +36,9 @@ describe('toCanvasAssetUrl', () => {
   it('passes through already-loadable URLs without wrapping', () => {
     expect(toCanvasAssetUrl('https://cdn.example/a.png')).toBe('https://cdn.example/a.png')
     expect(toCanvasAssetUrl('blob:http://localhost/abc')).toBe('blob:http://localhost/abc')
-    expect(toCanvasAssetUrl('local-file:///D%3A/a.png')).toBe('local-file:///D%3A/a.png')
+    expect(toCanvasAssetUrl('local-file:///D:/a.png')).toBe('local-file:///D:/a.png')
+    const media = `local-file://media/?p=${encodeURIComponent('D:/clips/out.mp4')}`
+    expect(toCanvasAssetUrl(media)).toBe(media)
   })
 
   it('never emits a data: URL for a disk path', () => {
@@ -44,6 +58,11 @@ describe('osPathFromCanvasAssetUrl', () => {
 
   it('round-trips an image URL back to its OS path', () => {
     expect(osPathFromCanvasAssetUrl(toCanvasAssetUrl('D:/work/shot.png'))).toBe('D:/work/shot.png')
+  })
+
+  it('still recovers the OS path from legacy %3A and Chromium host-letter forms', () => {
+    expect(osPathFromCanvasAssetUrl('local-file:///D%3A/work/shot.png')).toBe('D:/work/shot.png')
+    expect(osPathFromCanvasAssetUrl('local-file://d/work/shot.png')).toBe('D:/work/shot.png')
   })
 
   it('returns null for non-local schemes and for traversal attempts', () => {
@@ -70,7 +89,7 @@ describe('stripSnapshotAssetBytes', () => {
       },
     }
     const out = stripSnapshotAssetBytes(snapshot) as typeof snapshot
-    expect(out.document.store['asset:1'].props.src).toBe('local-file:///D%3A/work/shot.png')
+    expect(out.document.store['asset:1'].props.src).toBe('local-file:///D:/work/shot.png')
     expect(out.document.store['asset:1'].props.src.startsWith('data:')).toBe(false)
     // Input must not be mutated — checkpoint IPC must send the stripped copy.
     expect(snapshot.document.store['asset:1'].props.src.startsWith('data:')).toBe(true)
