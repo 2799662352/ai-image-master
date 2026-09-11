@@ -38,7 +38,7 @@ jobs:
           CI: 'true'
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: e2e-extended-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -72,7 +72,7 @@ jobs:
           CI: 'true'
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: e2e-quarantine-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -106,7 +106,7 @@ jobs:
           CI: 'true'
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: visual-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -136,7 +136,7 @@ jobs:
         run: pnpm run test:bench:ci
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
           path: benchmark-results.json
