@@ -728,9 +728,11 @@
     <link rel="stylesheet" href="lib/choices.js/choices.min.css">
     <script src="lib/choices.js/choices.min.js"></script>
 
-    <!-- 自定义CSS模块 - 使用 preload 优化加载 -->
-    <link rel="preload" href="css/main.css?v=1.0.2" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="css/main.css?v=1.0.2"></noscript>
+    <!-- 自定义CSS模块(base / components / animations / responsive / changelog 由 main.css 的 @import 串起来)。
+         必须是根绝对路径的普通 stylesheet:相对路径 + preload/onload 的旧写法在 Vite 生产构建里整个 <link>
+         会被丢掉、也不打进 bundle,结果安装包从来没加载过 public/css/*.css(4.9.0 顶栏 / 模型选择器裸奔的根因),
+         只有 pnpm dev 看得到。/css/main.css 走 publicDir,构建时按 base 重写成 ./css/main.css。 -->
+    <link rel="stylesheet" href="/css/main.css">
     <!-- 非关键样式已移至外部CSS文件 -->
 
     <!-- Microsoft Clarity 流量监控 - Electron 环境中禁用 -->
