@@ -21,7 +21,7 @@
 一次出一张「正视图 + 左视图 + 后视图 + 面部特写」水平排列的设计稿。单张合图各视图同源,
 风格 / 比例 / 外观天然一致,优于分别出图再拼。
 
-- 工具:`generate_image`(默认渠道 `gpt-image-2-vip`;若要超清可让用户指定 `wan2.7-image-pro` 走 Miau 站点)。
+- 工具:`generate_image`(改图默认渠道 `gpt-image-2.5-sunburst`;省略 `model` 则跟用户 composer 选择。若要超清可让用户指定 `wan2.7-image-pro` 走 Miau 站点)。
 - `ratio`: `21:9`(超宽,四图横排);`resolution`: `2K`;有参考图时带上 `referenceImages`。
 
 **英文提示词模板:**

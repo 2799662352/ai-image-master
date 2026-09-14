@@ -25,6 +25,9 @@ describe('ImageChannelPicker', () => {
   it('opens the dropdown and lists all channels', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(screen.getByRole('button', { name: /出图渠道/ }))
+    expect(screen.getByRole('option', { name: /GPT Image 2\.5 Flare/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /GPT Image 2\.5 Sunburst/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /GPT Image 2\.5 All/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /VIP image2/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /GPT Image 2 官方/ })).toBeTruthy()
     // 两条腾讯渠道的名字互为前缀（「腾讯 image2」/「腾讯 image2 fast」），

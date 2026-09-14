@@ -28,7 +28,12 @@ interface ImageParamControlsProps {
   /** 仅 gpt-image-2 等支持 quality 的模型需要;不传则不渲染清晰度轴 */
   quality?: string
   onQualityChange?: (v: string) => void
-  /** 组图张数;仅 multipleImages 模型且传了 onCountChange 时渲染数量轴 */
+  /**
+   * 出图张数;仅 multipleImages / nativeBatch 模型且传了 onCountChange 时渲染数量轴。
+   * nativeBatch(官转 gpt-image-2 / 2.5、腾讯 image2 fast)的标题是「数量(原生支持)」,
+   * 下面挂一行「按张数倍数计费」提示 —— 官转按 token 计费,选 4 张就是 4 份钱,不提醒
+   * 的话用户只看见一个「4」。
+   */
   count?: number
   onCountChange?: (v: number) => void
   /**
@@ -37,6 +42,14 @@ interface ImageParamControlsProps {
    */
   negativePrompt?: string
   onNegativePromptChange?: (v: string) => void
+  /**
+   * 透明背景(`background=transparent`,直接出带 alpha 的 PNG);仅
+   * `capabilities.transparentBackgroundControl` 的模型(2.5 flare / sunburst)且传了
+   * onTransparentBackgroundChange 时渲染。切到不支持的模型会自动回 false ——
+   * 透明底是特殊出图模式,忘了关会让后面每张图都带透明底。
+   */
+  transparentBackground?: boolean
+  onTransparentBackgroundChange?: (v: boolean) => void
   /** 比例自动归位时优先选中的 key(默认 auto) */
   preferRatio?: string
   className?: string
@@ -49,6 +62,8 @@ interface VariantTheme {
   select: string
   placeholder: string
   notice: string
+  /** 控件下方的一行小字提示(如原生多图的倍数计费) */
+  hint: string
   renderLabel: (title: string, icon: string) => ReactNode
 }
 
@@ -62,6 +77,7 @@ const THEMES: Record<ImageParamVariant, VariantTheme> = {
     placeholder: 'w-full px-3 py-2 bg-white/10 border border-white/20 text-white/70 text-sm',
     notice:
       'bg-[#27272A] rounded-none p-4 text-white/70 text-sm border border-white/10',
+    hint: 'mt-2 text-xs text-yellow-300/80 leading-snug',
     renderLabel: (title, icon) => (
       <h3 className="text-white font-semibold flex items-center mb-3">
         <i className={`fas ${icon} text-yellow-400 mr-2`} />
@@ -79,6 +95,7 @@ const THEMES: Record<ImageParamVariant, VariantTheme> = {
       'px-2.5 py-1.5 bg-zinc-800 border-2 border-zinc-700 text-zinc-500 text-xs font-mono uppercase tracking-wider',
     notice:
       'border-2 border-zinc-700 bg-zinc-900/60 p-3 font-mono text-[11px] text-zinc-400',
+    hint: 'mt-1.5 font-mono text-[10px] leading-snug text-yellow-300/80',
     renderLabel: (title) => (
       <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-cyberpunk-yellow/80 mb-1.5">
         {`// ${title}`}
@@ -105,6 +122,8 @@ export function ImageParamControls({
   onCountChange,
   negativePrompt,
   onNegativePromptChange,
+  transparentBackground,
+  onTransparentBackgroundChange,
   preferRatio = 'auto',
   className,
 }: ImageParamControlsProps) {
@@ -120,13 +139,19 @@ export function ImageParamControls({
     defaultQuality,
     supportsCount,
     maxCount,
+    nativeBatch,
     supportsNegativePrompt,
+    supportsTransparentBackground,
   } = deriveImageParamControls(modelConfig)
 
   const showQuality = supportsQuality && typeof quality === 'string' && Boolean(onQualityChange)
   const showCount = supportsCount && typeof count === 'number' && Boolean(onCountChange)
   const showNegativePrompt =
     supportsNegativePrompt && typeof negativePrompt === 'string' && Boolean(onNegativePromptChange)
+  const showTransparentBackground =
+    supportsTransparentBackground &&
+    typeof transparentBackground === 'boolean' &&
+    Boolean(onTransparentBackgroundChange)
 
   // 模型切换后自动归位(当前值不在新选项内时)
   useEffect(() => {
@@ -160,6 +185,14 @@ export function ImageParamControls({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supportsCount, maxCount])
 
+  // 切到不支持透明底的模型时复位:开关消失了但状态还挂着 true,再切回来会「带着上次的
+  // 透明底」出图;apiyi 生图页对这个开关的处理也是不持久化 + 切模型复位。
+  useEffect(() => {
+    if (typeof transparentBackground !== 'boolean' || !onTransparentBackgroundChange) return
+    if (!supportsTransparentBackground && transparentBackground) onTransparentBackgroundChange(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supportsTransparentBackground])
+
   if (sizeHidden) {
     return (
       <div className={className ?? ''}>
@@ -170,13 +203,16 @@ export function ImageParamControls({
     )
   }
 
-  const colCount = 2 + (showQuality ? 1 : 0) + (showCount ? 1 : 0)
+  const colCount =
+    2 + (showQuality ? 1 : 0) + (showCount ? 1 : 0) + (showTransparentBackground ? 1 : 0)
   const colClass =
-    colCount >= 4
-      ? 'grid-cols-2 sm:grid-cols-4'
-      : colCount === 3
-        ? 'grid-cols-2 sm:grid-cols-3'
-        : 'grid-cols-2'
+    colCount >= 5
+      ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'
+      : colCount === 4
+        ? 'grid-cols-2 sm:grid-cols-4'
+        : colCount === 3
+          ? 'grid-cols-2 sm:grid-cols-3'
+          : 'grid-cols-2'
 
   return (
     <div className={className ?? `${theme.grid} ${colClass}`}>
@@ -220,7 +256,7 @@ export function ImageParamControls({
         )}
       </div>
 
-      {/* 清晰度 quality(auto/low/medium/high) —— 仅 gpt-image-2 等 */}
+      {/* 清晰度 quality(auto/low/medium/high, 2.5 为 low…max 五档) */}
       {showQuality && (
         <div className={theme.card}>
           {theme.renderLabel('清晰度', 'fa-gem')}
@@ -239,10 +275,11 @@ export function ImageParamControls({
         </div>
       )}
 
-      {/* 数量(组图) —— 仅 multipleImages 模型(如万相 wan2.7) */}
+      {/* 数量 —— multipleImages 模型(万相组图 / 千问变体);nativeBatch(官转 gpt-image-2 / 2.5、
+          腾讯 image2 fast)标「原生支持」:一次请求按 OpenAI n 回 N 张独立变体,按张数倍数计费 */}
       {showCount && (
         <div className={theme.card}>
-          {theme.renderLabel('数量', 'fa-images')}
+          {theme.renderLabel(nativeBatch ? '数量（原生支持）' : '数量', 'fa-images')}
           <select
             value={count}
             onChange={(e) => onCountChange?.(Number(e.target.value))}
@@ -254,6 +291,29 @@ export function ImageParamControls({
                 {`${n} 张`}
               </option>
             ))}
+          </select>
+          {nativeBatch && (
+            <p className={theme.hint} data-testid="native-batch-billing-note">
+              {(count as number) > 1
+                ? `⚠️ 原生多图：本次约按 ${count} 张倍数计费（${count} 个独立变体）`
+                : `一次请求可出 1-${maxCount} 张，按张数倍数计费`}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 透明背景 background=transparent —— 仅 2.5 flare / sunburst;模型原生出 alpha PNG,不是事后抠图 */}
+      {showTransparentBackground && (
+        <div className={theme.card}>
+          {theme.renderLabel('透明背景', 'fa-chess-board')}
+          <select
+            value={transparentBackground ? 'on' : 'off'}
+            onChange={(e) => onTransparentBackgroundChange?.(e.target.value === 'on')}
+            className={theme.select}
+            aria-label="透明背景"
+          >
+            <option value="off">否 默认</option>
+            <option value="on">是 带 alpha 通道</option>
           </select>
         </div>
       )}

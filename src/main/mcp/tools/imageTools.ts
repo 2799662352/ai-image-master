@@ -338,12 +338,16 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (腾讯 / image2 fast / VIP / Image2 官方 / Nano2 / 万相 2.7 pro / 千问; default ' +
+      'composer picker (腾讯 / image2 fast / Flare / Sunburst / All 2.5 / Image2 / VIP / Nano2 / 万相 / 千问; default ' +
       "腾讯 image2) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
-      'channel the user explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, ' +
-      'gpt-image-2 = API易 OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ' +
-      'ceiling, custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
+      'channel the user explicitly asked for this turn (' +
+      'gpt-image-2.5-flare = OpenAI 官转·速度优先 / 文生图首选, ' +
+      'gpt-image-2.5-sunburst = OpenAI 官转·画质优先 / 改图首选, ' +
+      'gpt-image-2.5-all = ChatGPT 网页逆向 $0.03/张 (size in prompt), ' +
+      'gpt-image-2 = 上一代 Image2 官方 (superseded by 2.5, same price), ' +
+      'gpt-image-2-vip = OpenAI 官逆/vip — ONLY when the user names vip/官逆, do not pick it by default, ' +
+      'custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
       'custom-model-og-v2 = TokenHub og-image — 另一条腾讯渠道，更快(~20s)、便宜近 6 倍、可出多张, ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
@@ -375,8 +379,10 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       "user's composer channel picker (default 腾讯 image2); pass `model` to override when needed (the " +
       'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
-      'INDEPENDENT variations of one prompt, model="qwen-image-3.0-pro" with `count`>1 (1–6). ' +
-      '`count` takes effect on those two channels only; for unrelated images use generate_images. ' +
+      'INDEPENDENT variations of one prompt, use `count`>1 on model="qwen-image-3.0-pro" (1–6) or on ' +
+      'the OpenAI 官转 channels gpt-image-2.5-flare / gpt-image-2.5-sunburst / gpt-image-2 and 腾讯 ' +
+      'custom-model-og-v2 (native `n`, 1–4, billed per image). Other channels ignore `count`; for ' +
+      'unrelated images use generate_images. ' +
       'This tool ALSO does 图层分离 / layer splitting (turn one image into a base + transparent PNG ' +
       'layers) — set `layerDecomposition: true` with model="doubao-seedream-5-0-pro-260628"; see that ' +
       'parameter for the rules. ' +
@@ -409,9 +415,21 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           '`auto` / `1.5K` are split-only — on ordinary generation they fall back to the model default.',
         ),
       quality: z
-        .enum(['auto', 'low', 'medium', 'high'])
+        .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
         .optional()
-        .describe('Rendering quality. "high" for text/print; "auto" lets the model decide (default).'),
+        .describe(
+          'Rendering quality. Prefer "high" for GPT Image 2.5 (≈ old medium token cost). ' +
+          '"xhigh"/"max" are 2.5-only (text/print). "auto" lets the model decide but drifts cost on 2.5.',
+        ),
+      transparentBackground: z
+        .boolean()
+        .optional()
+        .describe(
+          'Render on a TRANSPARENT background (alpha PNG) — for 透明底 / 抠图 / 贴纸 / logo / 素材 / ' +
+          '"no background" requests. Only honored by model="gpt-image-2.5-flare" or ' +
+          '"gpt-image-2.5-sunburst" (pass one of them explicitly); every other channel ignores it ' +
+          'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
+        ),
       count: z
         .number()
         .int()
@@ -419,15 +437,19 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .max(12)
         .optional()
         .describe(
-          'Number of images from THIS single prompt (default 1). Supported on two channels, with ' +
+          'Number of images from THIS single prompt (default 1). Supported on these channels, with ' +
           'DIFFERENT semantics — pick by what you want:\n' +
           '- model="wan2.7-image-pro" (up to 12): count>1 turns on 万相 组图 / enable_sequential, a ' +
           'front-to-back CONSISTENT series (同一只猫的四季, same character across shots).\n' +
           '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
           'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
-          'Every other channel ignores it and always returns 1. Out-of-range values are clamped to the ' +
-          "channel's ceiling, never rejected. For several UNRELATED images (distinct subjects), use " +
-          'generate_images with one prompt each instead of count.',
+          '- model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" / "gpt-image-2" / ' +
+          '"custom-model-og-v2" (up to 4): native OpenAI `n` — ONE request returns count INDEPENDENT ' +
+          'variations (text-to-image and edits alike). The 官转 channels are token-billed PER IMAGE, so ' +
+          'count=4 costs ~4× a single render — only go above 1 when the user wants options/variations.\n' +
+          'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1. ' +
+          "Out-of-range values are clamped to the channel's ceiling, never rejected. For several " +
+          'UNRELATED images (distinct subjects), use generate_images with one prompt each instead of count.',
         ),
       referenceImages: z
         .array(z.string())
@@ -449,6 +471,22 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           '"按这张图/参考这张/基于这张/edit this", you MUST pass those image path(s) here so the result ' +
           'follows the user-provided material — do NOT silently fall back to text-to-image when a ' +
           'reference image was given.',
+        ),
+      maskImage: z
+        .string()
+        .optional()
+        .describe(
+          'Inpainting mask for a LOCAL edit (擦除 / 局部重绘 / 只改这一块), as a local file path or ' +
+          'data/http URL. Must be a PNG WITH an alpha channel: fully transparent pixels (alpha = 0) mark ' +
+          'the region the model may repaint, opaque pixels are preserved as much as possible. It must ' +
+          'have EXACTLY the same pixel dimensions as the first `referenceImages` entry (the mask applies ' +
+          'to image[0] only), under 4MB. REQUIRES `referenceImages` with the original image first. Only ' +
+          'honored by model="gpt-image-2", "gpt-image-2.5-flare" or "gpt-image-2.5-sunburst" (pass one ' +
+          'explicitly); -all / 腾讯 / 万相 / nano reject it up front rather than repainting the whole ' +
+          'image. Masking is prompt-guided, not pixel-exact: the prompt must name the ONE change inside ' +
+          'the transparent region first, then list everything that must stay unchanged (composition, ' +
+          'lighting, subjects outside the mask). When the user attached a `*.mask.png` next to an image, ' +
+          'that file is this parameter.',
         ),
       layerDecomposition: z
         .boolean()
@@ -582,9 +620,16 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe('Resolution tier shared by all images. Prefer 2K by default. Use 1K only for fast/cheap/draft, and 4K only for explicit print/ultra-detail requests.'),
       quality: z
-        .enum(['auto', 'low', 'medium', 'high'])
+        .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
         .optional()
-        .describe('Rendering quality shared by all images.'),
+        .describe('Rendering quality shared by all images. Prefer "high" for GPT Image 2.5; xhigh/max are 2.5-only.'),
+      transparentBackground: z
+        .boolean()
+        .optional()
+        .describe(
+          'Transparent (alpha PNG) background shared by all images — 透明底 / 贴纸 / 素材 sets. Only ' +
+          'honored on model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst"; other channels ignore it.',
+        ),
       referenceImages: z
         .array(z.string())
         .optional()
@@ -606,7 +651,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       model?: z.infer<typeof modelSchema>
       ratio?: string
       resolution?: '1K' | '2K' | '4K'
-      quality?: 'auto' | 'low' | 'medium' | 'high'
+      quality?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+      transparentBackground?: boolean
       referenceImages?: string[]
     }
     const prompts = Array.isArray(parsed.prompts) ? parsed.prompts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0) : []

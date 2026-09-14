@@ -24,5 +24,17 @@ export function darkSelectStyles<T>(): StylesConfig<T> {
     singleValue: (base) => ({ ...base, color: '#fafafa' }),
     input: (base) => ({ ...base, color: '#fafafa' }),
     placeholder: (base) => ({ ...base, color: '#71717a' }),
+    // 分组标题(模型选择器按厂商聚合):赛博黄小号等宽字,和参数卡片的 `// 标题` 一个调子
+    groupHeading: (base) => ({
+      ...base,
+      color: 'rgba(250, 204, 21, 0.8)',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontSize: '11px',
+      letterSpacing: '0.2em',
+      textTransform: 'uppercase',
+      padding: '8px 12px 4px',
+      borderTop: '1px solid #27272a',
+    }),
+    group: (base) => ({ ...base, paddingTop: 0, paddingBottom: 4 }),
   }
 }

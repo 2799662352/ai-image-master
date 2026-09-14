@@ -10,6 +10,7 @@ import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
+import type { ModelVendor } from './modelVendors'
 
 export interface ApiSite {
   name: string
@@ -205,6 +206,11 @@ export interface QualityOption {
 
 export interface ModelConfig {
   name: string
+  /**
+   * 厂商归属,驱动模型选择器的「按厂商聚合」分组(腾讯 / 阿里 / OpenAI …各自一组)。
+   * 缺省落到「其他」组;见 {@link groupModelsByVendor}。
+   */
+  vendor?: ModelVendor
   displayName: string
   time?: string
   isNew?: boolean
@@ -266,7 +272,28 @@ export interface ModelCapabilities {
   resolutionControl?: boolean
   /** 是否暴露独立的「清晰度 quality」下拉（官转 gpt-image-2 与 gpt-image-2-vip） */
   qualityControl?: boolean
+  /**
+   * 支持 `background=transparent`：上游直接出带 alpha 通道的 PNG（模型原生生成，
+   * 不是事后抠图），要求 output_format 为 png/webp。
+   *
+   * 只在 OpenAI 文档明确列出该参数的渠道上打开（gpt-image-2.5 flare / sunburst）。
+   * gpt-image-2 官方文档写的是不支持（apiyi 自家前端虽也给它开了，本站未验证，暂不声明）；
+   * gpt-image-2.5-all 走 ChatGPT 网页线路，根本没有这个参数。
+   * 没打开的渠道即使调用方传了 transparentBackground 也不会外发，避免上游 400。
+   */
+  transparentBackgroundControl?: boolean
   maxOutputs?: number
+  /**
+   * 原生多图：上游一次请求按 OpenAI Images API 的 `n` 回 N 张**独立变体**（不是客户端
+   * 并发多打几次，也不是万相那种前后一致的组图）。官转 gpt-image-2 / 2.5 flare / sunburst
+   * 与腾讯 image2 fast 都是这条路径（apiyi 生图页同样给官转开了 n=1–4）。
+   *
+   * 这个位只管**文案与提示**：数量轴标题写「数量（原生支持）」，并提示「按张数倍数计费」——
+   * 官转按 token 计费，n 张就是 n 份 token，不像 -all 那种按张固定价能一眼看出总价。
+   * 请求侧 `n` 的外发只看 maxOutputs（>1 才发，见 resolveImagesApiCount），与此位无关：
+   * 否则谁把 maxOutputs 调大却忘了这个位，数量轴会出现、n 却发不出去，用户选 4 只回 1。
+   */
+  nativeBatch?: boolean
   useExtraBody?: boolean
   /** 出多张时需显式开启组图模式（如万相 wan2.7 的 enable_sequential），且一次返回的系列图前后一致 */
   sequentialGroup?: boolean
@@ -320,10 +347,25 @@ export interface GenerateImageParams {
   model?: string
   ratio?: string
   resolution?: string
-  /** 清晰度档位（官转 gpt-image-2 专属，auto/low/medium/high）；其它模型忽略 */
+  /** 清晰度档位（gpt-image-2: auto/low/medium/high; 2.5 flare/sunburst 另有 xhigh/max）；其它模型忽略 */
   quality?: string
+  /**
+   * 透明背景：发 `background=transparent`，上游直接回带 alpha 通道的 PNG。
+   * 只对 `capabilities.transparentBackgroundControl` 的渠道（2.5 flare / sunburst）生效，
+   * 其它渠道静默忽略——不外发这个参数，避免被上游当未知字段拒掉。
+   */
+  transparentBackground?: boolean
   referenceImages?: string[]
   imageBase64?: string  // 编辑模式的图片
+  /**
+   * 局部重绘遮罩（`/v1/images/edits` 的 `mask`）。PNG，**必须带 alpha 通道**：alpha=0 的
+   * 区域 = 允许重绘，255 = 尽量保留；尺寸必须与第一张参考图**完全一致**，只作用于
+   * `image[0]`，<4MB。官方口径是「prompt-guided」而非像素级硬约束——提示词里要把
+   * 不能动的东西写清楚。只有走 OpenAI Images 多部分 edit 契约的渠道（gpt-image-2 /
+   * 2.5 flare / sunburst / vip）支持；网页逆向(-all)与腾讯 JSON 契约没有这个字段，
+   * 传了会明确报错而不是静默重画整张图。
+   */
+  maskImage?: string
   /**
    * 反向提示词。仅 DashScope 原生渠道（千问 / 万相）会把它放进 `parameters`。
    *
@@ -692,6 +734,34 @@ const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
   'custom-model-og-v2',
 ])
 
+/**
+ * OpenAI Images API 家族(generations / edits)。含 2.5 官转、按张计费的 -all,
+ * 以及旧 id `gpt-image-2-all`(generateImage 会先走 alias,这里再兜一层)。
+ * 不收 `gpt-image-2.5-vip` —— 用户明确不接不稳定的 vip 模式。
+ */
+const GPT_IMAGES_API_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+  'gpt-image-2-vip',
+  'gpt-image-2-all',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-all',
+])
+
+/** 2.5 官转:quality 多 xhigh / max 两档。 */
+const GPT_IMAGE_25_OFFICIAL: ReadonlySet<string> = new Set([
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+])
+
+/** 发 size + quality 的 Images 模型。*-all 不在内(尺寸写进 prompt,回 b64_json)。 */
+const GPT_IMAGE_SIZE_QUALITY_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+  'gpt-image-2-vip',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+])
+
 // gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
 // 尺寸体系：30 档 size 满足 16 倍数边长 / 最大边 ≤3840 / 比例 ≤3:1 / 总像素 ∈ [655360, 8294400]。
 // 抽成共享常量，避免两处重复且保证规格一致。
@@ -722,6 +792,28 @@ const GPT_IMAGE_2_QUALITIES: QualityOption[] = [
   { key: 'high', label: '高', description: '文字/印刷 $0.211' }
 ]
 
+/**
+ * gpt-image-2.5 flare / sunburst 的清晰度档位(apiyi 文档 2026-09-14)。
+ *
+ * 五档 low→max,且**画质梯子重新分级**:`low` 不变,2.5 的 `high` 只等于
+ * gpt-image-2 的 `medium`(1,756 tokens),2.5 的 `max` 才等于老 `high`(7,024 tokens);
+ * `medium`(439)/`xhigh`(3,122)是两个新的中间档。所以默认档从老模型的 `auto` 换成
+ * `high` —— 花老 `medium` 的钱拿到比老 `medium` 更好的画质。
+ *
+ * **不给 `auto` 档**:2.5 的 auto 是动态推理档,费用和耗时都会漂移,apiyi 自家生图页
+ * (imagen.apiyi.com)也只放 5 个实测档、不放 auto。老会话里残留的 `auto` 由
+ * `normalizeOption` 归位到默认 `high`。文案对齐 apiyi 生图页的「高 =2代中 / 最高 =2代高」
+ * 写法,让用户一眼看出与老模型的对应关系;价格为 1024×1024 一张、$30/1M 输出 token
+ * 折算(2026-09-09 实测,flare 与 sunburst 逐档 token 相同、只差耗时)。
+ */
+const GPT_IMAGE_25_QUALITIES: QualityOption[] = [
+  { key: 'low', label: '低', description: '草图 $0.006' },
+  { key: 'medium', label: '中', description: '均衡 $0.013' },
+  { key: 'high', label: '高', description: '=2代中 · 推荐 $0.053' },
+  { key: 'xhigh', label: '超高', description: '精细 · 文字/印刷 $0.094' },
+  { key: 'max', label: '最高', description: '=2代高 $0.211' }
+]
+
 const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
   '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
   '2:3':  { '1K': '848x1280',  '2K': '1360x2048', '4K': '2336x3520' },
@@ -740,6 +832,7 @@ const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'wan2.7-image-pro': {
     name: '万相 2.7 Pro',
+    vendor: 'alibaba',
     displayName: '20s出图，阿里万相 wan2.7-image-pro，超清文生图/图像编辑/组图，文生图支持4K、编辑/组图最高2K（经 Miau API 代理，OpenAI 兼容端点）',
     time: '20s',
     isNew: true,
@@ -800,6 +893,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'custom-imagemodel-gt': {
     name: '腾讯 Image 2',
+    vendor: 'tencent',
     displayName: '30s出图，tokenhub 新渠道·更快更好，腾讯 image2（custom-imagemodel-gt），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（经 Miau API 代理，OpenAI 兼容端点）',
     time: '30s',
     isNew: true,
@@ -831,6 +925,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'custom-model-og-v2': {
     name: '腾讯 Image 2 Fast',
+    vendor: 'tencent',
     displayName: '20s出图，比腾讯 image2 便宜近 6 倍且可出多张，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（后台渠道 TokenHub og-image / custom-model-og-v2，经 Miau API 代理）',
     time: '20s',
     isNew: true,
@@ -857,16 +952,93 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       imageEdit: true,
       // 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。
       maxOutputs: 4,
+      nativeBatch: true,
       resolutionControl: true,
       qualityControl: true
     }
   },
+  // ── GPT Image 2.5 家族(2026-09-08 发布,apiyi 2026-09-14 上架)────────────────
+  // flare / sunburst 是 OpenAI 官转,与 gpt-image-2 同端点、同价、同 size 体系,
+  // 差别只在速度 / 画质取向与 quality 多出 xhigh / max 两档;-all 是 ChatGPT 网页逆向
+  // 的按张计费通道。三者在 ApiService 内的请求分支与 gpt-image-2 家族完全共用
+  // (见 isSizeQualityImageModel / GPT_IMAGES_API_MODELS),这里只声明能力与文案。
+  // 不钉 requiredSiteKey:跟随当前站点。Miau 上可走平台额度,apiyi / Miau Key 都能打。
+  'gpt-image-2.5-flare': {
+    name: 'GPT Image 2.5 Flare',
+    vendor: 'openai',
+    displayName: '20s，OpenAI 官转·速度优先，画质≈gpt-image-2 但快一半，按token计费 high$0.053/xhigh$0.094/max$0.211，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，原生多图 1-4 张，文生图首选🔥',
+    price: 0.053,
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_25_QUALITIES,
+    // 2.5 的 high ≈ 老 medium 的 token 量,是「花中档钱拿高档画质」的甜点;不用 auto(费用漂移)
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      // 官转直连 OpenAI Images API,`n` 原生支持一次回多张(官方上限 10);UI 与 apiyi 生图页
+      // 一样只开到 4 —— 按 token 计费,4 张 max 档就是 $0.84,再往上没人会一次点。
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      // OpenAI 2.5 文档列出 background: auto/opaque/transparent;apiyi 生图页同样给 2.5 开了透明底
+      transparentBackgroundControl: true
+    }
+  },
+  'gpt-image-2.5-sunburst': {
+    name: 'GPT Image 2.5 Sunburst',
+    vendor: 'openai',
+    displayName: '40s，OpenAI 官转·画质与编辑精度优先，比 gpt-image-2 更锐、多轮改图主体更稳但慢 2-3 倍，按token计费与 flare 同价，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，原生多图 1-4 张，改图/多图融合首选🔥',
+    price: 0.053,
+    time: '40s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
   'gpt-image-2': {
     name: 'GPT Image 2',
-    displayName: '60-360s，OpenAI官方旗舰，按token计费 low$0.006/med$0.053/high$0.211，比例×分辨率(1K/2K/4K)×清晰度三参数，4K+mask重绘🔥',
+    vendor: 'openai',
+    displayName: '60-360s，OpenAI官方上一代旗舰(已被 2.5 flare/sunburst 同价取代)，按token计费 low$0.006/med$0.053/high$0.211，比例×分辨率(1K/2K/4K)×清晰度三参数，原生多图 1-4 张，4K+mask重绘',
     price: 0.006,
     time: '60-360s',
-    isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
     apiType: 'openai',
@@ -882,21 +1054,24 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       output_format: 'png'
     },
     capabilities: {
-      multipleImages: false,
+      multipleImages: true,
       customSize: true,
       aspectRatioControl: true,
       referenceImage: true,
       imageEdit: true,
-      maxOutputs: 1,
+      maxOutputs: 4,
+      nativeBatch: true,
       resolutionControl: true,
       qualityControl: true
     }
   },
-  'gpt-image-2-all': {
-    name: 'GPT Image 2 All',
-    displayName: '30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥',
+  // 旧 key `gpt-image-2-all` 由 modelKeyAliases 归一到这里(历史记录 / 已保存设置不丢)。
+  'gpt-image-2.5-all': {
+    name: 'GPT Image 2.5 All',
+    vendor: 'openai',
+    displayName: '60s，ChatGPT 网页逆向(已升 Images 2.5)，文生图/多图编辑/自然语言改图，文字还原度高，中文友好，尺寸写进提示词，$0.03/张🔥',
     price: 0.03,
-    time: '30s',
+    time: '60s',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
@@ -913,6 +1088,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gpt-image-2-vip': {
     name: 'GPT Image 2 VIP',
+    vendor: 'openai',
     displayName: '90s，gpt-image-2-vip Codex 官逆，支持 size 参数，10 比例 × 1K/2K/4K，$0.03/张🔥 限时特价',
     price: 0.03,
     time: '90s',
@@ -983,6 +1159,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-3.1-flash-image': {
     name: '🍌 Nano Banana 2',
+    vendor: 'google',
     displayName: '15s，gemini-3.1-flash-image 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
     price: 0.06,
     time: '15s',
@@ -1044,6 +1221,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-3-pro-image': {
     name: '🍌 Nano Banana Pro',
+    vendor: 'google',
     displayName: '60s，gemini-3-pro-image 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
     price: 0.09,
     time: '60s',
@@ -1096,6 +1274,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-2.5-flash-image': {
     name: '🍌 Nano Banana',
+    vendor: 'google',
     displayName: '15s，gemini-2.5-flash-image 谷歌原生端点请求，支持多宽高比，固定1K分辨率，$0.025/张',
     time: '15s',
     isNew: false,
@@ -1125,6 +1304,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'seedream-4-5-251128': {
     name: 'SeeDream 4.5',
+    vendor: 'bytedance',
     displayName: '15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，支持URL与Base64输出, $0.045/张',
     time: '15s',
     isNew: true,
@@ -1175,6 +1355,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'doubao-seedream-5-0-pro-260628': {
     name: 'Seedream 5.0 Pro',
+    vendor: 'bytedance',
     displayName: '20s出图，火山豆包 Seedream 5.0 Pro，文生图/图生图/多图融合(最多10张参考图)，1K/2K分辨率，仅单图（经 Miau API 代理，OpenAI 兼容端点）',
     time: '20s',
     isNew: true,
@@ -1233,6 +1414,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'qwen-image-3.0-pro': {
     name: '通义千问 Image 3.0 Pro',
+    vendor: 'alibaba',
     displayName: '通义千问 Image 3.0 Pro，DashScope 同步多模态出图（经 Miau API 代理，OpenAI 兼容端点）；尺寸以实际返回为准',
     time: '30s',
     isNew: true,
@@ -1315,6 +1497,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'sora_image': {
     name: 'Sora Image',
+    vendor: 'openai',
     displayName: '90s出图，Sora网页版出图，同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】',
     time: '90s',
     isNew: false,
@@ -1327,6 +1510,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'flux-kontext-pro': {
     name: 'Flux Kontext Pro',
+    vendor: 'bfl',
     displayName: '15s出图，flux-kontext-pro，只支持英文提示词，高质量图片生成，$0.035/张',
     time: '15s',
     isNew: false,
@@ -1358,6 +1542,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'flux-kontext-max': {
     name: 'Flux Kontext Max',
+    vendor: 'bfl',
     displayName: '15s出图，flux-kontext-max，提示词支持中文，超高质量图片编辑。$0.07/张',
     time: '15s',
     isNew: false,
@@ -1402,6 +1587,9 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'gemini-3.1-flash-image',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-all',
   'gpt-image-2',
   'gpt-image-2-vip',
 ]
@@ -1454,7 +1642,7 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition } = params
+    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition } = params
 
     const modelKey = this.resolveModelKey(model || this.currentModel)
     const modelConfig = this.models[modelKey]
@@ -1538,9 +1726,11 @@ export class ApiService {
           ratio,
           resolution,
           quality,
+          transparentBackground,
           // 拆分模式下输入图已归一化为 png/jpeg,用它顶掉原始来源(payload 只取一张)。
           referenceImages: splitInput ? [splitInput] : referenceImages,
           imageBase64: splitInput ?? imageBase64,
+          maskImage,
           negativePrompt,
           seed,
           count,
@@ -2223,8 +2413,10 @@ export class ApiService {
     ratio?: string
     resolution?: string
     quality?: string
+    transparentBackground?: boolean
     referenceImages?: string[]
     imageBase64?: string
+    maskImage?: string
     negativePrompt?: string
     seed?: number
     count: number
@@ -2235,15 +2427,33 @@ export class ApiService {
     signal?: AbortSignal
     layerDecomposition?: boolean
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition } = options
+    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition } = options
 
-    // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
-    if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
-        || TENCENT_IMAGE_MODELS.has(model)) {
+    // 遮罩只在 OpenAI Images 多部分 edit 契约里有位置;别的路径拿到它就是调用方搞错了渠道,
+    // 静默丢掉会把「只擦一角」变成「整张重画」,所以一律早失败。
+    if (maskImage) {
+      const isGptImagesEdit = GPT_IMAGES_API_MODELS.has(model) && this.isSizeQualityImageModel(model)
+      if (!isGptImagesEdit) {
+        throw new Error(`${modelConfig.name || model} 不支持 mask 遮罩局部重绘，请改用 gpt-image-2 / 2.5 flare / 2.5 sunburst`)
+      }
+      const hasReference = !!imageBase64 || (referenceImages?.length ?? 0) > 0
+      if (!hasReference) {
+        throw new Error('mask 遮罩需要配合原图：请把要重绘的那张图放进 referenceImages（遮罩只作用于第一张）')
+      }
+    }
+
+    // gpt-image-2 家族(含 2.5 flare/sunburst/all) / vip / 腾讯 image2: 专用 Images API 路径
+    if (GPT_IMAGES_API_MODELS.has(model) || TENCENT_IMAGE_MODELS.has(model)) {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
       // 支持 size + quality 三参数的模型：官转 / vip / 腾讯 image2（同规格，复用 resolutionMap）
       const acceptsSizeQuality = this.isSizeQualityImageModel(model)
+      // 透明背景只在能力位打开的渠道外发（2.5 flare / sunburst）；其它渠道传了也不发,
+      // 免得 -all / 腾讯 这类没有该参数的上游把整单拒掉。
+      const background = this.resolveTransparentBackground(transparentBackground, modelConfig)
+      // 原生多图：数量轴 → OpenAI Images API `n`，按模型 maxOutputs 收敛到 [1, maxOutputs]。
+      // maxOutputs=1 的渠道(-all / vip / 腾讯 image2)恒为 1，请求体里不出现 n。
+      const n = this.resolveImagesApiCount(count, modelConfig)
       // 用户反馈：宁可等后台真正返回结果或明确报错，也不要"快失败"。
       // 三档统一拉到约 2000s（~33 分钟）当作"基本不设超时"的天花板——完成耗时主要
       // 受上游排队 / 审核触发影响，之前 1200s 偶尔仍在 2K/4K high 下被截断，导致
@@ -2256,7 +2466,7 @@ export class ApiService {
         ? this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
         : undefined
       // quality：官转 / vip / 腾讯 均支持独立的 quality 参数（不借用 resolution）
-      const resolvedQuality = acceptsSizeQuality ? this.resolveGptImage2Quality(quality) : undefined
+      const resolvedQuality = acceptsSizeQuality ? this.resolveGptImage2Quality(quality, model) : undefined
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
@@ -2279,10 +2489,10 @@ export class ApiService {
             editUrl, model, prompt, jsonSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality,
           )
         }
-        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality)
+        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality, background, n, maskImage)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
-        const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
+        const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality, background, n)
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         this.applyAuthHeaders(headers, site, apiKey, genUrl)
@@ -2475,19 +2685,34 @@ export class ApiService {
 
   /**
    * gpt-image-2 系列：文生图 JSON payload（无参考图）
-   * - gpt-image-2 (官转)：支持 size/quality 参数
-   * - gpt-image-2-vip (Codex 官逆)：支持 size/quality 参数（2026-06-05 实测 quality 被校验且生效）
-   * - gpt-image-2-all (官逆)：均不支持，回 b64_json
+   * - 官转(gpt-image-2 / 2.5 flare / 2.5 sunburst)：支持 size/quality
+   * - gpt-image-2-vip：支持 size/quality（2026-06-05 实测 quality 被校验且生效）
+   * - *-all (ChatGPT 网页逆向)：均不支持，回 b64_json
    */
-  private buildGptImage2JsonPayload(model: string, prompt: string, size?: string, quality?: string): object {
+  private buildGptImage2JsonPayload(
+    model: string,
+    prompt: string,
+    size?: string,
+    quality?: string,
+    background?: 'transparent',
+    n = 1,
+  ): object {
     const acceptsSizeQuality = this.isSizeQualityImageModel(model)
     const payload: Record<string, unknown> = { model, prompt }
+    // 原生多图:一次请求回 n 张独立变体(OpenAI Images API `n`)。只在 >1 时带字段 ——
+    // 单张请求体保持原样,老测试按精确对象断言;上游对缺省 n 的语义就是 1。
+    if (n > 1) payload.n = n
     if (acceptsSizeQuality) {
       if (size && size !== 'auto') payload.size = size
       if (quality) payload.quality = quality
       const cfg = this.getModelConfig(model)
       if (cfg?.defaultParams?.output_format) {
         payload.output_format = cfg.defaultParams.output_format
+      }
+      // 透明底要 alpha 通道:jpeg 没有,与 background=transparent 冲突时以不发为兜底
+      // (我们的 output_format 固定 png,这条是防将来有人把默认格式改成 jpeg)。
+      if (background === 'transparent' && payload.output_format !== 'jpeg') {
+        payload.background = 'transparent'
       }
       // 注意: vip 默认走 b64_json (apiyi 文档虽支持 "url", 但实测国内访问不了
       // CDN 返回的 URL —— 用户已验证过), 单张几 MB base64 的主线程开销留待
@@ -2540,11 +2765,11 @@ export class ApiService {
 
   /**
    * 是否为「支持 size + quality 三参数」的 Images 模型：
-   * gpt-image-2（官转）、gpt-image-2-vip（官逆）、custom-imagemodel-gt（腾讯 image2，同规格复用）。
-   * gpt-image-2-all（官逆）不在内 —— 它把尺寸写进 prompt，回 b64_json。
+   * 官转(gpt-image-2 / 2.5 flare / 2.5 sunburst)、vip、腾讯 image2。
+   * *-all（网页逆向）不在内 —— 它把尺寸写进 prompt，回 b64_json。
    */
   private isSizeQualityImageModel(model: string): boolean {
-    return model === 'gpt-image-2' || model === 'gpt-image-2-vip' || this.isTencentImage2(model)
+    return GPT_IMAGE_SIZE_QUALITY_MODELS.has(model) || this.isTencentImage2(model)
   }
 
   /**
@@ -2558,13 +2783,42 @@ export class ApiService {
   }
 
   /**
-   * gpt-image-2 官转：独立的「清晰度 quality」参数（auto/low/medium/high）。
+   * Images 官转 / vip / 腾讯：独立的「清晰度 quality」参数。
    * auto / 空 / 非法值都返回 undefined（不发 quality，由模型按默认处理）。
+   * 2.5 flare/sunburst 额外接受 xhigh / max;其它渠道丢掉这两档,避免上游拒未知枚举。
    */
-  private resolveGptImage2Quality(quality?: string): string | undefined {
+  private resolveGptImage2Quality(quality?: string, model?: string): string | undefined {
     if (!quality || quality === 'auto') return undefined
     if (['low', 'medium', 'high'].includes(quality)) return quality
+    if (model && GPT_IMAGE_25_OFFICIAL.has(model) && (quality === 'xhigh' || quality === 'max')) {
+      return quality
+    }
     return undefined
+  }
+
+  /**
+   * 透明背景:调用方要了 **且** 该渠道声明了 `transparentBackgroundControl` 才外发
+   * `background=transparent`。能力位是唯一裁决者 —— 没声明的渠道(-all / 腾讯 / gpt-image-2)
+   * 传了也当没传,不让一个 UI 开关变成上游 400。
+   */
+  private resolveTransparentBackground(
+    transparentBackground: boolean | undefined,
+    modelConfig: ModelConfig | undefined,
+  ): 'transparent' | undefined {
+    if (!transparentBackground) return undefined
+    return modelConfig?.capabilities?.transparentBackgroundControl ? 'transparent' : undefined
+  }
+
+  /**
+   * Images API 路径(官转 / vip / -all / 腾讯)的出图张数：数量轴的 count 按模型 maxOutputs
+   * 收敛到 [1, maxOutputs]。裁决只看 maxOutputs —— 它是数量轴上限的同一真源，UI 给得出的
+   * 数字这里一定放得过，UI 给不出的(MCP 直接传 count=9)收敛到上限而不是拒掉。
+   * 非法 / 缺省 → 1。
+   */
+  private resolveImagesApiCount(count: number | undefined, modelConfig: ModelConfig | undefined): number {
+    const maxOutputs = Math.max(1, Math.floor(modelConfig?.capabilities?.maxOutputs ?? 1))
+    const requested = Number.isFinite(count) ? Math.max(1, Math.floor(count as number)) : 1
+    return Math.min(requested, maxOutputs)
   }
 
   /**
@@ -2593,6 +2847,8 @@ export class ApiService {
       model,
       prompt,
       images: imageSources.map((image_url) => ({ image_url })),
+      // 腾讯 JSON 改图固定 1 张：这条网关只实测过 generations 的 n=2 回 2 张，edit 端点的
+      // n>1 没验过，不盲放(数量轴选了 >1 时改图仍回 1 张,文生图按 n 回)。
       n: 1,
     }
     if (size && size !== 'auto') body.size = size
@@ -2628,9 +2884,9 @@ export class ApiService {
 
   /**
    * gpt-image-2 系列：图片编辑 FormData 请求（有参考图）
-   * - gpt-image-2 (官转)：额外支持 size/quality
-   * - gpt-image-2-vip (Codex 官逆)：支持 size/quality（2026-06-05 实测 quality 生效）
-   * - gpt-image-2-all (官逆)：均不支持，回 b64_json
+   * - 官转(gpt-image-2 / 2.5 flare / 2.5 sunburst)：额外支持 size/quality
+   * - gpt-image-2-vip：支持 size/quality（2026-06-05 实测 quality 生效）
+   * - *-all (ChatGPT 网页逆向)：均不支持，回 b64_json
    * 三档统一超时约 2000s（~33 分钟，基本不设超时），见上游调用点。
    */
   private async makeGptImage2FormDataRequest(
@@ -2644,16 +2900,24 @@ export class ApiService {
     timeoutMs = 2_000_000,
     size?: string,
     quality?: string,
+    background?: 'transparent',
+    n = 1,
+    maskImage?: string,
   ): Promise<Response> {
     const acceptsSize = this.isSizeQualityImageModel(model)
     const formData = new FormData()
     formData.append('model', model)
     formData.append('prompt', prompt)
+    // /v1/images/edits 同样吃 `n`(官方 1–10):改图一次出 n 个独立变体。缺省不发 = 1。
+    if (n > 1) formData.append('n', String(n))
     if (!acceptsSize) formData.append('response_format', 'b64_json')
     // 不给 vip 显式设 response_format —— 走 apiyi 默认的 b64_json。
     // 文档虽支持 url, 但实测返回的 URL 在国内访问不了, 留 b64_json 才能保证图片能展示。
     if (acceptsSize && size && size !== 'auto') formData.append('size', size)
     if (acceptsSize && quality) formData.append('quality', quality)
+    // /v1/images/edits 同样吃 background=transparent(改图也能直接出透明底);
+    // multipart 路径没发 output_format,上游默认 png,天然带 alpha。
+    if (acceptsSize && background === 'transparent') formData.append('background', 'transparent')
     // 腾讯 image2 去水印：multipart edit(data: 参考图回落路径)同样要带 extra_body，
     // 否则这条回落路径产出的编辑图右下角仍有 logo。以 JSON 字符串字段下发，与 JSON
     // 路径的嵌套 extra_body 结构对齐。
@@ -2674,6 +2938,16 @@ export class ApiService {
       throw new Error(`参考图转换失败：${imageSources.length} 张图片均无法转为 Blob，请检查图片格式（支持 png/jpg/webp）`)
     }
 
+    // 局部重绘遮罩:OpenAI 契约是单个 `mask` 字段(不是 mask[]),PNG 带 alpha,只作用于 image[0]。
+    // 文件名固定 mask.png —— 部分网关按扩展名校验「Mask must be a PNG」。
+    let maskAppended = false
+    if (maskImage) {
+      const maskBlob = await this.convertToBlob(maskImage, imageSources.length)
+      if (!maskBlob) throw new Error('mask 遮罩无法转为 PNG，请检查遮罩图片（需要带 alpha 通道的 PNG）')
+      formData.append('mask', maskBlob, 'mask.png')
+      maskAppended = true
+    }
+
     const headers: Record<string, string> = {}
     this.applyAuthHeaders(headers, site, apiKey, url)
 
@@ -2683,8 +2957,11 @@ export class ApiService {
       prompt,
       size: size ?? 'auto',
       quality,
+      ...(n > 1 ? { n } : {}),
+      ...(acceptsSize && background === 'transparent' ? { background } : {}),
       ...(this.isTencentImage2(model) ? { extra_body: { logo_add: 0 } } : {}),
       'image[]': `${appendedCount} blob (multipart/form-data)`,
+      ...(maskAppended ? { mask: '1 blob (alpha PNG, applies to image[0])' } : {}),
       sources: imageSources,
     })
 

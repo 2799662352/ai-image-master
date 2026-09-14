@@ -1111,9 +1111,21 @@
       "name": "SeeDream 4.5",
       "displayName": "15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，支持URL与Base64输出, $0.045/张"
     },
+    "gpt-image-2.5-flare": {
+      "name": "GPT Image 2.5 Flare",
+      "displayName": "20s，OpenAI 官转·速度优先，画质≈gpt-image-2 但快一半，按token计费，文生图首选"
+    },
+    "gpt-image-2.5-sunburst": {
+      "name": "GPT Image 2.5 Sunburst",
+      "displayName": "40s，OpenAI 官转·画质与编辑精度优先，比 gpt-image-2 更锐、改图更稳，改图/多图融合首选"
+    },
+    "gpt-image-2.5-all": {
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s，ChatGPT 网页逆向(已升 Images 2.5)，尺寸写进提示词，$0.03/张"
+    },
     "gpt-image-2-all": {
-      "name": "GPT Image 2 All",
-      "displayName": "30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥"
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s，ChatGPT 网页逆向(已升 Images 2.5)，尺寸写进提示词，$0.03/张"
     },
     "sora_image": {
       "name": "Sora_image",
