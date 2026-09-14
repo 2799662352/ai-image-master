@@ -807,6 +807,18 @@ export class CodexProtocolClient {
     await this.rpc('thread/delete', { threadId })
   }
 
+  /**
+   * `thread/metadata/update` — patch stored thread metadata without resuming
+   * the thread. Only the provided keys are sent (omitted fields stay
+   * unchanged server-side), so an `isPinned`-only patch never clobbers gitInfo.
+   */
+  async updateThreadMetadata(threadId: string, patch: { isPinned?: boolean }): Promise<void> {
+    await this.rpc('thread/metadata/update', {
+      threadId,
+      ...(patch.isPinned === undefined ? {} : { isPinned: patch.isPinned }),
+    })
+  }
+
   respondToServerRequest(response: CodexApprovalResponse): void {
     const pending = this.pendingServerRequests.get(response.id)
     if (!pending) throw new Error(`No pending Codex server request for id ${response.id}`)

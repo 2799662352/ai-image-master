@@ -983,6 +983,13 @@ interface AgentChatState extends ModelRoutingSlice {
   toggleSidebar: () => void
   setSidebarWidth: (width: number) => void
   renameThread: (threadId: string, title: string) => Promise<void>
+  /**
+   * Pin / unpin a conversation in the sidebar. Patches `threadList`
+   * optimistically (the row jumps into the Pinned group at once), then asks
+   * main to persist and refreshes from the authoritative list. On failure the
+   * refresh restores the server truth.
+   */
+  setThreadPinned: (threadId: string, pinned: boolean) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
   /**
    * Choose whether ONE conversation feeds the cross-session memory store.
@@ -3842,6 +3849,23 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (!agent?.renameThread) return
     await agent.renameThread(threadId, trimmed)
     await get().refreshThreadList()
+  },
+
+  setThreadPinned: async (threadId, pinned) => {
+    if (!threadId) return
+    const agent = getAgentApi()
+    if (!agent?.setThreadPinned) return
+    const pinnedAt = pinned ? new Date().toISOString() : null
+    set((s) => ({
+      threadList: s.threadList.map((t) => (t.id === threadId ? { ...t, pinnedAt } : t)),
+    }))
+    try {
+      await agent.setThreadPinned(threadId, pinned)
+    } finally {
+      // Success or failure, the row is the truth — this either confirms the
+      // optimistic patch or rolls it back.
+      await get().refreshThreadList()
+    }
   },
 
   setMemoriesGloballyEnabled: (enabled) => set({ memoriesGloballyEnabled: enabled }),

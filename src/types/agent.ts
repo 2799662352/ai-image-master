@@ -681,6 +681,20 @@ export interface AgentThreadSummary {
    * menu can render its current state without a second round trip.
    */
   memoryMode?: 'enabled' | 'disabled' | null
+  /**
+   * ISO timestamp of when the user pinned the thread; null/absent = not
+   * pinned. The DB row is authoritative (works offline and before the first
+   * message); codex's own `thread/metadata/update { isPinned }` is mirrored
+   * best-effort when a codex thread id exists. Sidebar puts pinned threads in
+   * a leading "Pinned" group ordered by this value.
+   *
+   * Typed as the ISO string the renderer writes optimistically, but rows that
+   * come straight from `listThreads` carry a `Date` (structured clone keeps
+   * Prisma DateTimes) — read it through `pinnedAtMs()`, never `typeof`.
+   */
+  pinnedAt?: string | Date | null
+  /** Persisted messages in the thread (user + assistant rows). Sidebar subline「N 条消息」. */
+  messageCount?: number
 }
 
 export interface AgentArtifact {

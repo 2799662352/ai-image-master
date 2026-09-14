@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
-import type { CodexSkillSummary } from '../../../../types/agent'
+import type { AgentAttachmentInput, CodexSkillSummary } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
 import { CollabModeControl } from './CollabModeControl'
 import { ModelPicker } from './ModelPicker'
@@ -24,6 +24,38 @@ import { INIT_AGENTS_MD_PROMPT } from './initPrompt'
 import { parseGoalCommand } from './goalCommand'
 import { usePetStore } from './pets/petStore'
 import { PetPickerButton } from './pets/PetPickerButton'
+import { ComposerAttachBar } from './ComposerAttachBar'
+import {
+  ComposerAttachmentTile,
+  MAX_COMPOSER_THUMBNAILS,
+  attachmentKey,
+  isImageAttachment,
+  useAttachmentPreviewUris,
+} from './ComposerAttachmentTile'
+import { SketchPad } from './sketch/SketchPad'
+import { blobToArrayBuffer, sketchFileName } from './sketch/sketchExport'
+
+/**
+ * Does this pending reference describe this staged attachment? Path match first
+ * (slash / case tolerant, mirroring the store's removeAttachmentForReference);
+ * restored drafts and edit-resend can carry the reference with a different path
+ * form (or none), so a same-name image reference counts too — the tile already
+ * shows it, and a duplicate name chip is worse than a rare same-name collision.
+ */
+function referenceMatchesAttachment(reference: AgentReference, attachment: AgentAttachmentInput): boolean {
+  if (reference.source.kind === 'localPath' && attachment.path) {
+    const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase()
+    if (norm(reference.source.path) === norm(attachment.path)) return true
+  }
+  return (reference.type === 'image' || reference.type === 'file') && reference.label === attachment.name
+}
+
+function referenceForAttachment(
+  references: ReadonlyArray<AgentReference>,
+  attachment: AgentAttachmentInput,
+): AgentReference | undefined {
+  return references.find((reference) => referenceMatchesAttachment(reference, attachment))
+}
 
 /**
  * Find the active `$skill-name` token at `caret`, if any. Mirrors the
@@ -446,6 +478,7 @@ export function MentionInput() {
   const setError = useAgentChatStore((state) => state.setError)
   const addAttachment = useAgentChatStore((state) => state.addAttachment)
   const removeAttachmentForReference = useAgentChatStore((state) => state.removeAttachmentForReference)
+  const removeAttachment = useAgentChatStore((state) => state.removeAttachment)
   const pendingReferences = useAgentChatStore((state) => state.pendingReferences)
   const addPendingReference = useAgentChatStore((state) => state.addPendingReference)
   const removePendingReference = useAgentChatStore((state) => state.removePendingReference)
@@ -473,6 +506,25 @@ export function MentionInput() {
   const [slashHighlight, setSlashHighlight] = useState(0)
   /** 拖着可投放的东西悬在组合器上。此前完全没有反馈,用户不知道能往哪儿放。 */
   const [dropActive, setDropActive] = useState(false)
+  /** 设计稿 D3:草图板(tldraw)打开中。确认后草图作为 PNG 附件进待发送区。 */
+  const [sketchOpen, setSketchOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const openPreview = useAgentChatStore((state) => state.openPreview)
+  // 待发送区的图片缩略图:一份 blob:/local-file uri 同时喂 tile 与灯箱序列(点 tile 看大图,‹ › 可翻)。
+  const imageAttachments = useMemo(() => attachments.filter(isImageAttachment), [attachments])
+  const previewUris = useAttachmentPreviewUris(attachments)
+  const openStagedImagePreview = (index: number): void => {
+    const refs = imageAttachments.map((att, i) => ({
+      id: attachmentKey(att, i),
+      kind: 'image' as const,
+      name: att.name,
+      mime: att.mime,
+      size: att.size,
+      uri: previewUris.get(attachmentKey(att, i)) ?? '',
+    })).filter((ref) => ref.uri.length > 0)
+    const start = refs.findIndex((ref) => ref.id === attachmentKey(imageAttachments[index], index))
+    if (refs.length > 0) openPreview(refs, Math.max(0, start))
+  }
   const newThread = useAgentChatStore((state) => state.newThread)
   const pushNotice = useAgentChatStore((state) => state.pushNotice)
   const setGoal = useAgentChatStore((state) => state.setGoal)
@@ -1303,25 +1355,48 @@ export function MentionInput() {
         runSubmit()
       }}
     >
-      {pendingReferences.length > 0 ? (
+      {attachments.some(isImageAttachment) || pendingReferences.length > 0 ? (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          {pendingReferences.map((reference) => (
-            // No inline thumbnail in the composer — dropping N×10MB images used
-            // to mount N×MediaThumbnail, each firing a media:thumb IPC + base64
-            // round-trip that froze the renderer. The chip label + click handler
-            // gives the user enough feedback ("file is attached, click to preview")
-            // without any image decoding on the composer path. Click still opens
-            // the file (Lightbox for images/videos) via openReference.
-            <ReferenceChip
-              key={reference.id}
-              reference={reference}
-              onOpen={(ref) => void openReference(ref)}
-              onRemove={() => {
-                removePendingReference(reference.id)
-                removeAttachmentForReference(reference)
-              }}
-            />
-          ))}
+          {/* Staged IMAGES are 56px thumbnail tiles (design D2/D5) — buffer-backed ones
+              (paste / 草图 / 遮罩) included, which the reference-chip-only strip used to
+              hide entirely. Buffer → object URL (no IPC); path → the chat's small-thumb
+              resolver (PR-A `attachments:read-thumb`), never the old media:thumb + base64
+              round-trip that froze the renderer. Past MAX_COMPOSER_THUMBNAILS the tiles
+              degrade to name chips so a 40-screenshot drop never decodes 40 bitmaps.
+              Non-image files / videos keep the labelled reference chip below. */}
+          {imageAttachments.map((attachment, index) => {
+            const reference = referenceForAttachment(pendingReferences, attachment)
+            return (
+              <ComposerAttachmentTile
+                key={attachmentKey(attachment, index)}
+                attachment={attachment}
+                previewUri={previewUris.get(attachmentKey(attachment, index))}
+                thumbnail={index < MAX_COMPOSER_THUMBNAILS}
+                onOpen={() => openStagedImagePreview(index)}
+                onRemove={() => {
+                  removeAttachment(attachment)
+                  if (reference) removePendingReference(reference.id)
+                }}
+              />
+            )
+          })}
+          {pendingReferences
+            // Image references already shown as a tile above are not repeated as a chip;
+            // non-image files / videos / urls keep the labelled reference chip as before.
+            .filter(
+              (reference) => !attachments.some((a) => isImageAttachment(a) && referenceMatchesAttachment(reference, a)),
+            )
+            .map((reference) => (
+              <ReferenceChip
+                key={reference.id}
+                reference={reference}
+                onOpen={(ref) => void openReference(ref)}
+                onRemove={() => {
+                  removePendingReference(reference.id)
+                  removeAttachmentForReference(reference)
+                }}
+              />
+            ))}
         </div>
       ) : null}
       <div className="relative">
@@ -1680,31 +1755,52 @@ export function MentionInput() {
           </ul>
         ) : null}
       </div>
-      <label
-        className={
-          'mt-1.5 flex cursor-pointer items-center justify-between rounded-lg border border-dashed px-2.5 py-1.5 text-[11px] transition-colors duration-200 ' +
-          (attachments.length > 0
-            ? 'border-cyan-400/40 bg-cyan-400/5 text-cyan-100 hover:bg-cyan-400/10'
-            : 'border-cyan-400/20 text-cyan-100/75 hover:border-cyan-400/40 hover:bg-cyan-400/10 hover:text-cyan-100')
-        }
-      >
-        <span className="flex items-center gap-1.5">
-          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-            <path d="M9.5 4.5v5a2.5 2.5 0 1 1-5 0V4a1.5 1.5 0 0 1 3 0v5a.5.5 0 0 1-1 0V4.5" />
-          </svg>
-          Add references or files
-        </span>
-        <span className="font-mono text-[10px] tabular-nums text-zinc-500">
-          {attachments.length}/{MAX_ATTACHMENTS}
-        </span>
-        <input
-          className="hidden"
-          disabled={attachments.length >= MAX_ATTACHMENTS}
-          multiple
-          onChange={(event) => void onFileChange(event)}
-          type="file"
+      {/* 文件选择器是隐藏 input,由下方 attach bar 的「添加照片和文件」/「+」菜单项触发。 */}
+      <input
+        ref={fileInputRef}
+        className="hidden"
+        aria-hidden="true"
+        tabIndex={-1}
+        disabled={attachments.length >= MAX_ATTACHMENTS}
+        multiple
+        onChange={(event) => void onFileChange(event)}
+        type="file"
+      />
+      {sketchOpen ? (
+        <SketchPad
+          onCancel={() => setSketchOpen(false)}
+          onConfirm={(png) => {
+            setSketchOpen(false)
+            void (async () => {
+              const current = useAgentChatStore.getState().attachments
+              if (current.length >= MAX_ATTACHMENTS) {
+                setError(`已达 ${MAX_ATTACHMENTS} 个附件上限,草图未附加`)
+                return
+              }
+              addAttachment({
+                name: sketchFileName(),
+                mime: 'image/png',
+                size: png.size,
+                buffer: await blobToArrayBuffer(png),
+              })
+            })()
+          }}
         />
-      </label>
+      ) : null}
+      {/* 设计稿 D2(按用户反馈改回「一横」):整宽虚线条回到输入框与 pill 排之间,
+          三个动作直接排在条里,最左「+」仍弹同一份菜单 —— 加号功能不丢。 */}
+      <ComposerAttachBar
+        attachmentCount={attachments.length}
+        attachmentMax={MAX_ATTACHMENTS}
+        disabled={isRunning}
+        onPickFiles={() => fileInputRef.current?.click()}
+        onSketch={() => setSketchOpen(true)}
+        onGenerateImage={() => {
+          const trigger = '$catimation-image '
+          setInput(input ? `${input}${input.endsWith(' ') || input.endsWith('\n') ? '' : ' '}${trigger}` : trigger)
+          textareaRef.current?.focus()
+        }}
+      />
       <div className="mt-1.5 flex items-center gap-1.5">
         <span
           className={

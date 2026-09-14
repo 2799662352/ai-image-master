@@ -27,6 +27,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:load-thread',
   'agent:open-thread',
   'agent:rename-thread',
+  'agent:set-thread-pinned',
   'agent:delete-thread',
   'agent:set-api-key',
   'agent:test-connection',
@@ -188,6 +189,15 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) =>
     (await getManager()).renameThread(threadId, title),
   )
+  ipcMain.handle('agent:set-thread-pinned', async (_event, threadId: unknown, pinned: unknown) => {
+    if (typeof threadId !== 'string' || threadId.length === 0) {
+      throw new Error('agent:set-thread-pinned: threadId must be a non-empty string')
+    }
+    if (typeof pinned !== 'boolean') {
+      throw new Error('agent:set-thread-pinned: pinned must be a boolean')
+    }
+    return (await getManager()).setThreadPinned(threadId, pinned)
+  })
   ipcMain.handle('agent:delete-thread', async (_event, threadId: string) =>
     (await getManager()).deleteThread(threadId),
   )

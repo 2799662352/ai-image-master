@@ -2,7 +2,7 @@ import type { AttachmentItem, AttachmentRef } from '../../../../../types/agent-t
 import type { AgentReference } from '../../../../../types/agent-reference'
 import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
-import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
+import { MediaTile } from './MediaTile'
 import { useFileExplorerStore } from '../../file-explorer/store'
 import { FileIcon, OpenInPanelIcon } from '../icons'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
@@ -57,14 +57,16 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
           const kind = mediaKindOf(ref)
           if (kind != null && isRenderableMedia(ref)) {
             return (
-              <MediaThumbWithPoster
+              <MediaTile
                 key={ref.id}
+                id={ref.id}
                 src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
-                videoUri={ref.uri}
+                uri={ref.uri}
                 thumbnailUri={ref.thumbnailUri}
                 kind={kind}
                 name={ref.name}
-                onClick={() => handleClick(ref)}
+                mime={ref.mime}
+                onOpen={() => handleClick(ref)}
               />
             )
           }
