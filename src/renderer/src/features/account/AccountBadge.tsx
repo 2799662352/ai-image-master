@@ -18,11 +18,13 @@
 //
 // 详细账目、切池那些低频操作仍留在设置页 —— 与两家「详情去 dashboard」一致。
 //
-// ## 配色
+// ## 配色 / 外形
 //
-// 挂在 index.html 那套旧壳的头部里,所以用**字面 hex**(#FCE300 / #27272A /
-// #3F3F46),与相邻的「设置」「更新」按钮逐字一致。这里**不能**用设置页那套
-// tailwind 主题 token —— 那是另一套上下文,混进来会在同一排按钮里显出色差。
+// 挂在 index.html 那套旧壳的头部里,所以外形直接用旧壳的 `.nav-ctl` 类族
+// (components.css,设计稿 D6:36px 同高、1px 边、直角),与相邻的「设置」「更新」
+// 按钮共用同一份规则;弹层里仍用**字面 hex**(#FCE300 / #27272A / #3F3F46)。
+// 这里**不能**用设置页那套 tailwind 主题 token —— 那是另一套上下文,混进来会在
+// 同一排按钮里显出色差。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../../stores/useAuthStore'
@@ -40,9 +42,8 @@ const BALANCE_TONE: Record<ReturnType<typeof balanceLevel>, string> = {
   ok: 'text-[#FAFAFA]',
 }
 
-/** 头部那排按钮的共同外形。抄自相邻的「设置」按钮,保持一排里不出戏。 */
-const CHROME_BUTTON =
-  'flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] px-3 lg:px-4 py-2 rounded-none transition-all cursor-pointer'
+/** 头部那排按钮的共同外形(`.nav-ctl`,见 components.css),保持一排里不出戏。 */
+const CHROME_BUTTON = 'nav-ctl'
 
 export function AccountBadge() {
   const authenticated = useAuthStore((s) => s.authenticated)
@@ -114,12 +115,10 @@ export function AccountBadge() {
         onClick={() => void startLogin()}
         disabled={pending}
         title="登录后可用账号余额出图"
-        className={`${CHROME_BUTTON} text-[#FAFAFA] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] disabled:opacity-50 disabled:cursor-wait`}
+        className={`${CHROME_BUTTON} disabled:cursor-wait`}
       >
         <i className="fas fa-user" />
-        <span className="hidden lg:inline font-bold uppercase tracking-tighter">
-          {pending ? '授权中…' : '登录'}
-        </span>
+        <span>{pending ? '授权中…' : '登录'}</span>
       </button>
     )
   }
@@ -142,27 +141,27 @@ export function AccountBadge() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         title={usingPlatform ? `账号余额 · ${name}` : `自有 Key 计费 · ${name}`}
-        className={`${CHROME_BUTTON} text-[#FAFAFA] hover:border-[#FCE300]`}
+        className={CHROME_BUTTON}
       >
-        <i className="fas fa-user text-[#FCE300]" />
+        <i className="fas fa-wallet text-[#FCE300]" />
         {/* 平台计费才显示数字。自有 Key 时余额不是这次要花的钱,摆一个大额数字
             在那儿反而会让人以为出图走的是它 —— 那正是这次要消灭的歧义。 */}
         {usingPlatform ? (
           <span
             data-testid="account-badge-balance"
-            className={`font-bold tabular-nums ${BALANCE_TONE[level]}`}
+            className={`nav-ctl__num ${BALANCE_TONE[level]}`}
           >
             {balanceText(balanceYuan)}
           </span>
         ) : (
           <span
             data-testid="account-badge-ownkey"
-            className="hidden lg:inline font-bold uppercase tracking-tighter text-[#A1A1AA]"
+            className="nav-ctl__label text-[#A1A1AA]"
           >
             自有 Key
           </span>
         )}
-        <i className="fas fa-chevron-down text-xs text-[#A1A1AA]" />
+        <i className="fas fa-chevron-down text-[11px] text-[#71717a]" />
       </button>
 
       {open && (

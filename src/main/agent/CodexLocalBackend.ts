@@ -1027,6 +1027,11 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.deleteThread(threadId)
   }
 
+  async updateThreadMetadata(threadId: string, patch: { isPinned?: boolean }): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.updateThreadMetadata called before start')
+    return this.client.updateThreadMetadata(threadId, patch)
+  }
+
   async listPlugins(params?: PluginListParams): Promise<PluginListResponse> {
     if (!this.client) throw new Error('CodexLocalBackend.listPlugins called before start')
     return this.client.listPlugins(params)

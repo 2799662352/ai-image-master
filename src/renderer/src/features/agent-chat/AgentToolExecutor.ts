@@ -56,6 +56,7 @@ type GenerateImagesToolParams = {
   ratio?: unknown
   resolution?: unknown
   quality?: unknown
+  transparentBackground?: unknown
   referenceImages?: unknown
 }
 
@@ -1147,9 +1148,17 @@ export class AgentToolExecutor {
         ? await this.resolveReferenceImages(params.referenceImages, model)
         : undefined)
 
+    // 局部重绘遮罩走与参考图同一条解析路(uploads 路径 → COS URL / 内联 data URL),
+    // ApiService 再转成 `mask` multipart 字段。遮罩的渠道 / 原图约束由 ApiService 早失败。
+    const maskImage =
+      typeof params.maskImage === 'string' && params.maskImage.length > 0
+        ? (await this.resolveReferenceImages([params.maskImage], model))?.[0]
+        : undefined
+
     const request: GenerateImageParams = {
       ...params,
       referenceImages,
+      maskImage,
       model,
       // 拆分的默认档位不是 2K:输出该跟随被拆那张图的尺寸与宽高比,发 2K 会让
       // 底图按 2K 档重出、与原图对不上。agent 显式给了就听它的。
@@ -1301,6 +1310,7 @@ export class AgentToolExecutor {
             ratio: params.ratio,
             resolution: params.resolution,
             quality: params.quality,
+            transparentBackground: params.transparentBackground,
             referenceImages: sharedReferenceImages,
           } as unknown as GenerateImageToolParams,
           requestThreadId,

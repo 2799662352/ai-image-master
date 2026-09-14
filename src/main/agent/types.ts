@@ -177,6 +177,13 @@ export interface IAgentBackend {
    * Best-effort at the call site: the local delete is authoritative.
    */
   deleteThread?(threadId: string): Promise<void>
+  /**
+   * Patch codex's SQLite-backed thread metadata (`thread/metadata/update`,
+   * codex ≥ 0.146 / PR #34840) — today only `isPinned`. Mirror of the local
+   * `pinnedAt` column so codex's own `thread/list { isPinned }` agrees with our
+   * sidebar; the local row stays authoritative and the call is best-effort.
+   */
+  updateThreadMetadata?(threadId: string, patch: { isPinned?: boolean }): Promise<void>
   setSessionConfig?(patch: Partial<CodexSessionConfig>): void
   /**
    * Swap the active model provider. The new value is consumed on the next

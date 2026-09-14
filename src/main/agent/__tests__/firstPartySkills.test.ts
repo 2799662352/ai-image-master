@@ -263,6 +263,10 @@ describe('installFirstPartySkills', () => {
       expect(c).toContain('resolution')
       expect(c).toContain('quality')
       expect(c).toContain('gpt-image-2-vip')
+      expect(c).toContain('gpt-image-2.5-flare')
+      expect(c).toContain('gpt-image-2.5-sunburst')
+      expect(c).toContain('gpt-image-2.5-all')
+      expect(c).not.toContain('gpt-image-2.5-vip')
     })
 
     it('installs cleanly into a fresh root', async () => {

@@ -181,31 +181,37 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
    - `model` (optional): rendering channel **override**. **Omit it** to honor the
      user's channel picker in the chat composer (default 腾讯 image2). Only set it when you
      have a concrete reason — a consistent 组图 series (→ `wan2.7-image-pro`) or a
-     channel the user explicitly names this turn (see "Choosing a model" below):
-     - `gpt-image-2-vip` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
-     - `gpt-image-2` — API易 OpenAI 官方旗舰 Image2（按 token 计费，慢但质量上限最高，4K+mask 重绘）.
-     - `wan2.7-image-pro` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
-     - `gemini-3.1-flash-image` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
-    - `doubao-seedream-5-0-pro-260628` — 火山豆包 Seedream 5.0 Pro（多图融合最强，
-      最多 10 张参考图；1K/2K、仅单图）.
-    - `custom-imagemodel-gt` — 腾讯 image2（快 ~30s，网关去水印）.
-    - `custom-model-og-v2` — 腾讯 image2 fast（快 ~20s，价格约为腾讯 image2 的 1/6，
-      可一次出多张；能力与腾讯 image2 相同）.
-    - `qwen-image-3.0-pro` — 阿里通义千问 Image 3.0 Pro（一次可出 1–6 张，
-      参考图最多 3 张；上游可能改写尺寸，别向用户承诺确切像素）.
-    站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
+     channel the user explicitly names this turn (see "Choosing a model" below).
    - `ratio` (optional): aspect ratio, e.g. `1:1`, `16:9`, `9:16`, `4:3`, `3:2`.
      Omit or `auto` lets the model decide.
    - `resolution` (optional): clarity tier — prefer `2K` by default. Use `1K`
      only when the user asks for fast/cheap/draft; use `4K` only when the user
      explicitly asks for print/ultra-detail/4K.
-   - `quality` (optional): `auto` (default), `low`, `medium`, or `high`. Use
-     `high` for images with text or fine detail.
-   - `count` (optional, **wan2.7 only**): number of images from THIS one prompt
-     (1–12, default 1). Set `model: 'wan2.7-image-pro'` + `count > 1` to get a
-     front-to-back **consistent 组图 series** (same character/subject across
-     frames, e.g. 同一只猫的四季). Other channels ignore `count` (always 1). For
-     several *unrelated* images, use `generate_images` (one prompt each) instead.
+   - `quality` (optional): `auto`/`low`/`medium`/`high`; 2.5 flare/sunburst also
+     `xhigh`/`max`. Prefer `high` on 2.5 (`auto` drifts cost).
+   - `transparentBackground` (optional, **2.5 flare/sunburst only**): `true` 出带 alpha
+     的透明底 PNG——用户要 透明底 / 贴纸 / logo / 素材 / 「不要背景」时用,并显式传
+     `model: 'gpt-image-2.5-flare'`(或 sunburst)。其它渠道忽略此参数照常出不透明底;
+     这不是图层分离(那是 `layerDecomposition`)。
+   - `maskImage` (optional, **gpt-image-2 / 2.5 flare / sunburst only**): 局部重绘(inpainting /
+     擦除)遮罩,本地路径或 URL。**带 alpha 的 PNG**,alpha=0 处 = 允许重绘;**尺寸须与
+     `referenceImages[0]` 一致**(只作用于第一张),<4MB。用法:`referenceImages: [原图]` +
+     `maskImage` + 显式 `model`;prompt 先写透明区域里的那一个改动,再列必须保留的部分——
+     mask 是 prompt-guided,不是像素级硬约束。灯箱「擦除」会附 `<原图名>.mask.png`,即此参数;
+     其它渠道没有 mask 字段,传了会被拒(不会静默重画整张)。
+   - `count` (optional): number of images from THIS one prompt (default 1). Two
+     different meanings, pick by what the user wants:
+     - **consistent 组图 series** — `model: 'wan2.7-image-pro'` + `count` 2–12
+       (same character/subject across frames, e.g. 同一只猫的四季).
+     - **independent variations (原生多图)** — `count` 2–4 on the OpenAI 官转
+       channels `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` / `gpt-image-2`
+       (and 腾讯 `custom-model-og-v2`), or 2–6 on `qwen-image-3.0-pro`. ONE
+       request returns `count` variants of the same prompt (文生图与改图都行).
+       官转按 token **每张**计费,`count: 4` ≈ 单张 4 倍 —— 用户要「几个方案挑一挑」
+       时才加,别默认给多张。
+     Other channels (2.5 -all / vip / 腾讯 image2 / nano / seedream) ignore `count`
+     (always 1). For several *unrelated* images, use `generate_images` (one prompt
+     each) instead.
    - `referenceImages` (optional but **important**): array of local file paths
      or data/http URLs for image-to-image / editing. **If the user gave you any
      image material, you MUST reuse it here** (see "Reference images" below).
@@ -266,18 +272,17 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
 ## Choosing a model (user's composer picker is the default; you may override)
 
 The `model` param is an **optional override**. By default (omit it) generation runs
-on the channel the **user picked in the chat composer** (VIP / Image2 官方 / 腾讯 /
-Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default 腾讯 image2) — 各渠道共用同一套 ratio ×
-resolution × quality 参数面(Seedream 5.0 Pro 只有 1K/2K、无 quality 轴,多传会被
-网关安全剔除)。
-Omitting `model` honors the user's pick — do this for ordinary requests. Set `model`
-only when you have a concrete reason to override:
+on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
+VIP / Image2 / 腾讯 / Nano2 / 万相 / Seedream; default 腾讯 image2) — 各渠道共用
+ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-all` 把尺寸
+写进 prompt). Omit `model` for ordinary requests. Set it only with a concrete reason:
 
-- **`gpt-image-2-vip` (OpenAI 官逆)** — pick when the user says 官逆 / vip /
-  稳定渠道. Stable alternate; same param surface as the default.
-- **`gpt-image-2` (API易 OpenAI 官方旗舰 / Image2 官方)** — pick when the user says
-  官方 / 旗舰 / image2 官方 / gpt-image-2. 按 token 计费(low/med/high 价差大),
-  60–360s 慢渠道,但质量上限最高,支持 4K+mask 重绘;日常出图别默认选它。
+- **`gpt-image-2.5-flare`** — flare / 速度优先 / 2.5 文生图 / 透明底. ~20s,同价取代 gpt-image-2; quality 默认 high,另有 xhigh/max; 唯二支持 `transparentBackground`.
+- **`gpt-image-2.5-sunburst`** — sunburst / 画质优先 / 2.5 改图 / 透明底. ~40s,同价更锐; 也支持 `transparentBackground`.
+- **`gpt-image-2.5-all`** — all / 网页逆向 / $0.03. 尺寸写进 prompt,不发 size/quality.
+- **`gpt-image-2-vip`** — 仅用户说 官逆/vip 时. 不要当默认,也不要编 2.5 vip 渠道.
+- **`gpt-image-2`** — 仅用户点名旧官转/gpt-image-2. 日常改用 flare/sunburst.
+  三条官转(flare / sunburst / gpt-image-2)都支持原生多图 `count` 1–4(独立变体,按张计费)。
 - **`wan2.7-image-pro` (阿里万相 2.7 pro)** — pick when the user says 万相 /
   wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
   series** (e.g. "同一只猫的四季组图，前后一致"). For a 组图 series, call
@@ -318,14 +323,15 @@ only when you have a concrete reason to override:
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可,无需切换当前站点。
-- `gpt-image-2-vip`、`gpt-image-2`(Image2 官方)和 `gemini-3.1-flash-image`
-  (Nano Banana 2)走当前选中站点(任意站点可用,无需 Miau)。
+- `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` / `gpt-image-2.5-all` /
+  `gpt-image-2-vip` / `gpt-image-2` / `gemini-3.1-flash-image` 跟随当前站点(不钉 Miau):
+  选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
 
 When the user does not name a channel, **do not guess** — just omit `model` so the
 render honors the user's composer picker (default 腾讯 image2). Set `model` only for a
 concrete reason (组图 → `wan2.7-image-pro`, 多参考图融合 →
-`doubao-seedream-5-0-pro-260628`, or a channel the user named). Never invent a
-model name; only these six values are valid.
+`doubao-seedream-5-0-pro-260628`, 2.5 文生图 → `gpt-image-2.5-flare`, 2.5 改图 →
+`gpt-image-2.5-sunburst`, or a channel the user named). Never invent a model name.
 
 ## Reference images — reuse the user's material (important)
 
@@ -430,11 +436,7 @@ directory and give it a descriptive, ordered name — e.g.
 - 多张图却逐个调 `generate_image`,而不是一次 `generate_images`。
 - 凭空编造 `model` 名;合法值只有上面「Choosing a model」列出的那些。用户没点名就
   省略 `model`(交给用户在 composer 选的渠道,默认腾讯 image2)。
-- 用户点名某渠道却不显式传 `model`(应显式传:vip/官逆 → `gpt-image-2-vip`、
-  官方/旗舰/image2 官方 → `gpt-image-2`、nano/nano2 → `gemini-3.1-flash-image`、
-  万相/组图 → `wan2.7-image-pro`、seedream/即梦/豆包/多参考图融合 →
-  `doubao-seedream-5-0-pro-260628`、腾讯 → `custom-imagemodel-gt`、
-  便宜/快/image2 fast → `custom-model-og-v2`、千问/qwen → `qwen-image-3.0-pro`)。
+- 用户点名某渠道却不显式传 `model`(按「Choosing a model」里的别名对照表显式传对应渠道)。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
 - 图层分离时**给 `layerDecomposition` 却忘了同时指定 `model`** —— 会落到用户选的渠道上被拒。
 - 图层分离时**为了「填满参数」编一句 prompt** —— 空 prompt 才是自动全拆,编一句就变成

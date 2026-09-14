@@ -36,6 +36,14 @@ describe('useModelStore', () => {
     expect(useModelStore.getState().currentModelKey).toBe('gemini-3-pro-image')
   })
 
+  it('normalizes legacy gpt-image-2-all onto gpt-image-2.5-all', () => {
+    useModelStore.getState().setModels({
+      'gpt-image-2.5-all': { name: 'GPT Image 2.5 All', capabilities: {} },
+    })
+    useModelStore.getState().switchModel('gpt-image-2-all')
+    expect(useModelStore.getState().currentModelKey).toBe('gpt-image-2.5-all')
+  })
+
   it('rejects invalid model key', () => {
     useModelStore.getState().setModels({
       'gpt-4': { name: 'GPT-4', capabilities: {} },

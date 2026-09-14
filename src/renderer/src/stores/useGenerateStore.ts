@@ -100,9 +100,19 @@ export interface GenerateState {
   ratio: string
   /** 分辨率档位(1K/2K/4K); 仅支持 resolutionControl 的模型有效 */
   resolution: string
-  /** 清晰度 quality(auto/low/medium/high); 仅 gpt-image-2 等有效 */
+  /** 清晰度 quality(auto/low/medium/high, 2.5 为 low…max 五档); 仅支持 quality 轴的模型有效 */
   quality: string
-  /** 出图张数(组图); 仅 multipleImages 模型有效, 万相 wan2.7 多张走 enable_sequential 系列一致 */
+  /**
+   * 透明背景(`background=transparent`, 上游直接出带 alpha 的 PNG); 仅
+   * `transparentBackgroundControl` 的模型(2.5 flare / sunburst)有效, 其它渠道 ApiService 不外发。
+   * 刻意**不持久化**: 这是特殊出图模式, 忘了关会让之后每张图都带透明底, 所以每次启动回到 false。
+   */
+  transparentBackground: boolean
+  /**
+   * 出图张数; 仅 multipleImages / nativeBatch 模型有效。万相 wan2.7 多张走 enable_sequential
+   * 系列一致; 官转 gpt-image-2 / 2.5 flare / sunburst 与腾讯 image2 fast 走 OpenAI `n`(1-4 个
+   * 独立变体, 按张数倍数计费)。ApiService 按模型 maxOutputs 收敛。
+   */
   count: number
   /**
    * True when at least one in-flight generate call exists.
@@ -145,6 +155,7 @@ export interface GenerateState {
   setRatio: (v: string) => void
   setResolution: (v: string) => void
   setQuality: (v: string) => void
+  setTransparentBackground: (v: boolean) => void
   setCount: (v: number) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
@@ -220,6 +231,7 @@ export const initialState = {
   ratio: '1:1',
   resolution: '2K',
   quality: 'auto',
+  transparentBackground: false,
   count: 1,
   generating: false,
   inFlightCount: 0,
@@ -264,6 +276,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   setRatio: (v) => set({ ratio: v }),
   setResolution: (v) => set({ resolution: v }),
   setQuality: (v) => set({ quality: v }),
+  setTransparentBackground: (v) => set({ transparentBackground: v }),
   setCount: (v) => set({ count: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
@@ -333,7 +346,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
     const form = get()
-    const { ratio, quality, count } = form
+    const { ratio, quality, count, transparentBackground } = form
     const resolution = overrides?.resolution ?? form.resolution
     const prompt = overrides?.prompt ?? form.prompt
     const referenceImages = overrides?.referenceImages ?? form.referenceImages
@@ -368,6 +381,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         count,
         model: modelKey,
         referenceImages: refsSnapshot,
+        // 只在开了的时候带字段:老测试按精确对象断言 generateImage 入参,关着时不该多一个 key
+        ...(transparentBackground ? { transparentBackground: true } : {}),
         ...(layerDecomposition ? { layerDecomposition: true } : {}),
       })
       const rawUrls = result.urls ?? result.images ?? []

@@ -17,7 +17,7 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×2 → Nano2 → Wan2.7 → Qwen3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×2 → Nano2 → Wan2.7 → Qwen3 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
@@ -25,6 +25,9 @@ describe('imageChannels registry', () => {
       'gemini-3.1-flash-image',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2.5-all',
       'gpt-image-2',
       'gpt-image-2-vip',
     ])
@@ -34,8 +37,9 @@ describe('imageChannels registry', () => {
     expect(isMiauOnlyChannel('custom-imagemodel-gt')).toBe(true)
     expect(isMiauOnlyChannel('wan2.7-image-pro')).toBe(true)
     expect(isMiauOnlyChannel('doubao-seedream-5-0-pro-260628')).toBe(true)
-    expect(isMiauOnlyChannel('gpt-image-2-vip')).toBe(false)
-    expect(isMiauOnlyChannel('gpt-image-2')).toBe(false)
+    expect(isMiauOnlyChannel('gpt-image-2.5-flare')).toBe(false)
+    expect(isMiauOnlyChannel('gpt-image-2.5-sunburst')).toBe(false)
+    expect(isMiauOnlyChannel('gpt-image-2.5-all')).toBe(false)
     expect(isMiauOnlyChannel('gemini-3.1-flash-image')).toBe(false)
   })
 

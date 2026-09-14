@@ -37,6 +37,16 @@ const DEFAULT_CONFIG: UpdateNotificationConfig = {
   containerSelector: 'body'
 }
 
+/**
+ * 顶栏「更新」是 36px 纯图标钮(设计稿 D6),有可用 / 已下载的更新时点亮它右上角的
+ * 绿点(`#updateAvailableDot`,index.html),取代原来常驻的「更新」两个字。找不到
+ * 元素(测试 / 旧壳)就静默跳过 —— 这只是提示,不是通知本体。
+ */
+function setNavUpdateDot(visible: boolean): void {
+  if (typeof document === 'undefined') return
+  document.getElementById('updateAvailableDot')?.classList.toggle('hidden', !visible)
+}
+
 export class UpdateNotification {
   private static instance: UpdateNotification | null = null
   private config: UpdateNotificationConfig
@@ -108,6 +118,7 @@ export class UpdateNotification {
     reg('updater:update-available', (...args: any[]) => {
       const info = this.extractPayload<UpdateInfo & { autoDownload?: boolean }>(args)
       if (!info?.version) return
+      setNavUpdateDot(true)
       this.updateInfo = info
       if (info.autoDownload) {
         this.status = 'downloading'
@@ -119,6 +130,7 @@ export class UpdateNotification {
     })
 
     reg('updater:update-not-available', (...args: any[]) => {
+      setNavUpdateDot(false)
       this.status = 'idle'
       const data = this.extractPayload<{ currentVersion?: string; latestVersion?: string }>(args)
       this.showNoUpdate(data?.currentVersion || data?.latestVersion)

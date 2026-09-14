@@ -27,6 +27,7 @@ export default function GeneratePage() {
   const ratio = useGenerateStore((s) => s.ratio)
   const resolution = useGenerateStore((s) => s.resolution)
   const quality = useGenerateStore((s) => s.quality)
+  const transparentBackground = useGenerateStore((s) => s.transparentBackground)
   const count = useGenerateStore((s) => s.count)
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
@@ -40,6 +41,7 @@ export default function GeneratePage() {
     setRatio,
     setResolution,
     setQuality,
+    setTransparentBackground,
     setCount,
     addReferenceImage,
     removeReferenceImage,
@@ -251,6 +253,8 @@ export default function GeneratePage() {
         onQualityChange={setQuality}
         count={count}
         onCountChange={setCount}
+        transparentBackground={transparentBackground}
+        onTransparentBackgroundChange={setTransparentBackground}
       />
 
       {/* 参考图:复用 Batch 的拖拽上传 + 自动压缩 + 点击预览 */}

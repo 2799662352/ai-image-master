@@ -1,8 +1,9 @@
 /**
  * 图像参数控制 —— 单一事实来源。
  *
- * 比例(ratio) / 清晰度档位(resolution: 1K/2K/4K) / 质量(quality: auto/low/medium/high)
- * 三个独立轴的「可选项 + 能力位 + 兜底列表」全部在这里派生。
+ * 比例(ratio) / 清晰度档位(resolution: 1K/2K/4K) / 质量(quality: auto/low/medium/high, 2.5 为 low…max 五档)
+ * 三个独立轴的「可选项 + 能力位 + 兜底列表」全部在这里派生;数量(含「原生支持」文案位) /
+ * 反向提示词 / 透明背景 这几个按能力位出现的附加轴也在这里裁决「显示与否」。
  *
  * 所有页面(Director / Batch / Generate)通过 <ImageParamControls> 共享这套逻辑,
  * 改一处即可影响全部页面。详见 ImageParamControls.tsx。
@@ -29,8 +30,15 @@ export interface ImageParamModelConfig {
     multipleImages?: boolean
     /** 单次最大出图张数(组图上限) */
     maxOutputs?: number
+    /**
+     * 原生多图:上游一次请求按 OpenAI `n` 回 N 张独立变体、按张数倍数计费(官转 gpt-image-2 /
+     * 2.5 flare / sunburst、腾讯 image2 fast)。数量轴标题写「数量(原生支持)」并带倍数计费提示。
+     */
+    nativeBatch?: boolean
     /** 上游接受独立的反向提示词字段(DashScope 原生 `parameters.negative_prompt`) */
     negativePrompt?: boolean
+    /** 支持 `background=transparent` 直接出带 alpha 通道的 PNG(gpt-image-2.5 flare / sunburst) */
+    transparentBackgroundControl?: boolean
   }
 }
 
@@ -48,8 +56,15 @@ export interface ImageParamControlsState {
   supportsCount: boolean
   /** 组图上限(>=2 才有意义); 不支持时为 1 */
   maxCount: number
+  /**
+   * 数量轴是「原生多图」(一次请求回 N 张独立变体,按张数倍数计费):标题写「数量(原生支持)」
+   * + 倍数计费提示。万相组图 / 千问变体不打这个位,标题就是「数量」。
+   */
+  nativeBatch: boolean
   /** 是否渲染反向提示词输入框 */
   supportsNegativePrompt: boolean
+  /** 是否渲染「透明背景」开关(只有能力位打开的渠道才有,别给没有的能力加个选择器) */
+  supportsTransparentBackground: boolean
 }
 
 export const FALLBACK_RATIO_OPTIONS: ParamOption[] = [
@@ -109,7 +124,10 @@ export function deriveImageParamControls(
   const sizeHidden = cfg.sizeStrategy === 'prompt'
 
   const maxCount = Math.max(1, cfg.capabilities?.maxOutputs ?? 1)
-  const supportsCount = Boolean(cfg.capabilities?.multipleImages) && maxCount > 1
+  const nativeBatch = Boolean(cfg.capabilities?.nativeBatch)
+  // nativeBatch 与 multipleImages 同等放行(apiyi 同款裁决):原生多图本身就是「一次出多张」,
+  // 谁只打了 nativeBatch 忘了 multipleImages,数量轴也不该消失。
+  const supportsCount = (Boolean(cfg.capabilities?.multipleImages) || nativeBatch) && maxCount > 1
 
   return {
     ratioOptions,
@@ -122,7 +140,9 @@ export function deriveImageParamControls(
     defaultQuality: cfg.defaultQuality || 'auto',
     supportsCount,
     maxCount,
+    nativeBatch: supportsCount && nativeBatch,
     supportsNegativePrompt: Boolean(cfg.capabilities?.negativePrompt),
+    supportsTransparentBackground: Boolean(cfg.capabilities?.transparentBackgroundControl),
   }
 }
 

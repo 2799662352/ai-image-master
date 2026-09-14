@@ -6,13 +6,27 @@ function startOfDay(ts: number): number {
   return d.getTime()
 }
 
+/**
+ * Timestamp in any shape we meet → epoch ms (NaN when unparseable). Rows from
+ * `listThreads` arrive with real `Date`s (structured clone keeps Prisma
+ * DateTimes); optimistic store patches write ISO strings; tests pass numbers.
+ * `Number.isFinite(new Date())` is false, so a Date must be unwrapped first —
+ * that is why every sidebar row used to read "—".
+ */
+function toEpochMs(ts: unknown): number {
+  if (ts instanceof Date) return ts.getTime()
+  if (typeof ts === 'number') return ts
+  if (typeof ts === 'string') return Date.parse(ts)
+  return Number.NaN
+}
+
 /** Render a short relative time like Cursor's sidebar — "just now", "12m ago", "5h ago", "3d ago", or ISO date. */
 export function formatRelativeTime(
-  ts: number | string | null | undefined,
+  ts: number | string | Date | null | undefined,
   now: number = Date.now(),
 ): string {
   if (ts == null) return '—'
-  const ms = typeof ts === 'string' ? Date.parse(ts) : ts
+  const ms = toEpochMs(ts)
   if (!Number.isFinite(ms)) return '—'
 
   const diff = now - ms
@@ -27,15 +41,32 @@ export function formatRelativeTime(
 }
 
 export interface ThreadGroup {
-  label: 'Today' | 'Yesterday' | 'Last 7 days' | 'Older'
+  label: 'Pinned' | 'Today' | 'Yesterday' | 'Last 7 days' | 'Older'
   threads: AgentThreadSummary[]
 }
 
 /**
- * Bucket threads into Cursor-style sidebar groups by `lastMessageAt`. Threads
- * without `lastMessageAt` always land in `Older` so the active groups stay
- * meaningful. Each bucket preserves the input order (caller is expected to
- * have already sorted by recency).
+ * `pinnedAt` as epoch ms, or NaN when not pinned. Prisma `DateTime` columns
+ * cross the main→renderer IPC boundary via structured clone, so they arrive as
+ * real `Date` objects — while the optimistic store patch writes an ISO string.
+ * Both must count, or a pin "works" until the very next list refresh.
+ */
+export function pinnedAtMs(thread: Pick<AgentThreadSummary, 'pinnedAt'>): number {
+  return toEpochMs(thread.pinnedAt)
+}
+
+/** `pinnedAt` parses to a real timestamp → pinned. Null/absent/garbage → not. */
+export function isThreadPinned(thread: Pick<AgentThreadSummary, 'pinnedAt'>): boolean {
+  return Number.isFinite(pinnedAtMs(thread))
+}
+
+/**
+ * Bucket threads into Cursor-style sidebar groups. Pinned threads (`pinnedAt`)
+ * come first as their own group, most recently pinned first, and are removed
+ * from the recency buckets so a pin never shows twice. The rest bucket by
+ * `lastMessageAt`; threads without it always land in `Older` so the active
+ * groups stay meaningful. Each recency bucket preserves the input order
+ * (caller is expected to have already sorted by recency).
  */
 export function groupThreadsByRecency(
   threads: ReadonlyArray<AgentThreadSummary>,
@@ -45,14 +76,19 @@ export function groupThreadsByRecency(
   const yesterdayStart = todayStart - 24 * 60 * 60_000
   const weekStart = todayStart - 7 * 24 * 60 * 60_000
 
+  const pinned: AgentThreadSummary[] = []
   const today: AgentThreadSummary[] = []
   const yesterday: AgentThreadSummary[] = []
   const week: AgentThreadSummary[] = []
   const older: AgentThreadSummary[] = []
 
   for (const t of threads) {
+    if (isThreadPinned(t)) {
+      pinned.push(t)
+      continue
+    }
     const raw = t.lastMessageAt
-    const ts = raw == null ? null : Date.parse(raw)
+    const ts = raw == null ? null : toEpochMs(raw)
     if (ts == null || !Number.isFinite(ts)) {
       older.push(t)
       continue
@@ -64,6 +100,10 @@ export function groupThreadsByRecency(
   }
 
   const out: ThreadGroup[] = []
+  if (pinned.length) {
+    pinned.sort((a, b) => pinnedAtMs(b) - pinnedAtMs(a))
+    out.push({ label: 'Pinned', threads: pinned })
+  }
   if (today.length) out.push({ label: 'Today', threads: today })
   if (yesterday.length) out.push({ label: 'Yesterday', threads: yesterday })
   if (week.length) out.push({ label: 'Last 7 days', threads: week })

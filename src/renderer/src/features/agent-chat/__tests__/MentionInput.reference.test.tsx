@@ -5,6 +5,18 @@ import { MentionInput } from '../MentionInput'
 import { useAgentChatStore } from '../store'
 import type { AgentSendMessagePayload } from '../../../../../types/agent'
 
+// jsdom has no electronAPI.attachments, so the real small-thumb resolver stays
+// null forever and an image tile would fall back to its name chip. Pass the src
+// through — the tile tests below assert structure, not the IPC byte plumbing.
+vi.mock('../../../components/shared/media/useResolvedMediaSrc', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../components/shared/media/useResolvedMediaSrc')>()
+  return {
+    ...actual,
+    useResolvedMediaSrc: (src: string) => (typeof src === 'string' && src.length > 0 ? src : null),
+  }
+})
+
 afterEach(cleanup)
 
 type TestElectronAPI = {
@@ -215,18 +227,14 @@ describe('MentionInput reference chips', () => {
     expect(useAgentChatStore.getState().pendingReferences.length).toBe(1)
   })
 
-  // Regression: dropping an image into the composer used to also mount a
-  // <MediaThumbnail> next to the chip. The thumbnail's useResolvedMediaSrc
-  // hook fires `media:thumb` IPC + base64 round-trip per file, which freezes
-  // the renderer when several large images are dropped at once. Hiding the
-  // inline thumbnail removes the hot path entirely while keeping the chip's
-  // click-to-open behavior — the user still sees a labeled chip and can open
-  // a full-size preview via Lightbox.
-  //
-  // The chip alone is enough UX feedback for "this file is attached"; the
-  // timeline (post-send) still renders thumbnails for sent images via PR-A's
-  // optimized media:thumb path.
-  it('does NOT render an inline <img> thumbnail when an image reference is queued', async () => {
+  // History: dropping an image used to mount a full <MediaThumbnail> per file,
+  // whose media:thumb IPC + base64 round-trip froze the renderer on multi-file
+  // drops — so composer thumbnails were removed entirely. Design D2/D5 brings a
+  // LIGHTWEIGHT tile back: one 56px <img> via the chat's small-thumb resolver
+  // (PR-A `attachments:read-thumb`), never the MediaThumbnail wrapper, and the
+  // tile count is capped (MAX_COMPOSER_THUMBNAILS) so a mass drop degrades to
+  // name chips instead of decoding every bitmap at once.
+  it('renders ONE lightweight <img> tile for a queued image — no MediaThumbnail wrapper', async () => {
     render(<MentionInput />)
 
     const textarea = screen.getByRole('textbox')
@@ -241,21 +249,30 @@ describe('MentionInput reference chips', () => {
     fireEvent.drop(textarea, { dataTransfer: dt })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // Chip is still there with the file label (makeFileReference always sets
-    // reference.type='file'; the chip text comes from TYPE_LABELS.file).
-    expect(screen.getByText('cat.png')).toBeTruthy()
-
-    // No MediaThumbnail wrapper rendered in the composer. The wrapper carries
-    // a stable `data-media-kind` attribute regardless of whether the inner
-    // useResolvedMediaSrc hook has resolved yet, which makes this contract
-    // robust in jsdom (no IPC roundtrip available) and in production (full
-    // resolution latency).
     const form = textarea.closest('form')
     if (!form) throw new Error('MentionInput form not found')
+    // The tile represents the file; the labelled reference chip is not repeated.
+    expect(screen.getByRole('img', { name: 'cat.png' })).toBeTruthy()
+    expect(screen.queryByText('cat.png')).toBeNull()
     expect(form.querySelectorAll('[data-media-kind]').length).toBe(0)
-    // Belt-and-braces: also catch any raw <img> that a future regression might
-    // add directly (e.g. CDN thumbnail attempts).
-    expect(form.querySelectorAll('img').length).toBe(0)
+    expect(form.querySelectorAll('img').length).toBe(1)
+  })
+
+  it('caps composer thumbnails: past MAX_COMPOSER_THUMBNAILS images degrade to name chips', async () => {
+    const { MAX_COMPOSER_THUMBNAILS } = await import('../ComposerAttachmentTile')
+    const many = Array.from({ length: MAX_COMPOSER_THUMBNAILS + 2 }, (_, i) => ({
+      name: `shot-${i}.png`,
+      mime: 'image/png',
+      size: 4,
+      buffer: new Uint8Array([137, 80, 78, 71]).buffer,
+    }))
+    ;(URL as unknown as { createObjectURL: unknown }).createObjectURL = vi.fn(() => 'blob:mock')
+    ;(URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn()
+    useAgentChatStore.setState({ attachments: many } as never)
+    render(<MentionInput />)
+    const form = screen.getByRole('textbox').closest('form') as HTMLFormElement
+    expect(form.querySelectorAll('img').length).toBe(MAX_COMPOSER_THUMBNAILS)
+    expect(screen.getByText(`shot-${MAX_COMPOSER_THUMBNAILS}.png`)).toBeTruthy()
   })
 
   it('does NOT render an inline thumbnail when a video reference is queued', async () => {

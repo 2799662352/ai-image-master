@@ -1118,9 +1118,21 @@
       "name": "SeeDream 4.5",
       "displayName": "15s generation, SeeDream overseas version seedream-4-5-251128, ultra-clear generation and editing, supports 2K/4K resolution, URL and Base64 output, $0.045/image"
     },
+    "gpt-image-2.5-flare": {
+      "name": "GPT Image 2.5 Flare",
+      "displayName": "20s, official OpenAI transfer — speed-first, ~half the latency of gpt-image-2 at the same price, text-to-image default"
+    },
+    "gpt-image-2.5-sunburst": {
+      "name": "GPT Image 2.5 Sunburst",
+      "displayName": "40s, official OpenAI transfer — quality/edit-first, sharper multi-turn edits, same price as Flare"
+    },
+    "gpt-image-2.5-all": {
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s, ChatGPT web reverse (Images 2.5), put size in the prompt, $0.03/image"
+    },
     "gpt-image-2-all": {
-      "name": "GPT Image 2 All",
-      "displayName": "30s, GPT image generation, text-to-image/editing/multi-image fusion, high text accuracy, Chinese-friendly, $0.03/image🔥"
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s, ChatGPT web reverse (Images 2.5), put size in the prompt, $0.03/image"
     },
     "sora_image": {
       "name": "Sora_image",

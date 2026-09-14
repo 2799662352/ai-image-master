@@ -4161,6 +4161,26 @@ export class AgentManager {
   }
 
   /**
+   * Pin / unpin a conversation. The DB column is authoritative (works offline
+   * and for threads that never talked to codex); codex's own persisted pin
+   * (`thread/metadata/update { isPinned }`) is mirrored best-effort so its
+   * `thread/list { isPinned }` agrees with our sidebar. Mirror failures (old
+   * binary without the method, backend down, thread never started) only warn.
+   */
+  async setThreadPinned(threadId: string, pinned: boolean): Promise<void> {
+    if (!this.store) throw new Error('AgentManager.setThreadPinned called without store')
+    await this.store.setThreadPinned(threadId, pinned)
+    if (!this.backend.updateThreadMetadata || !this.backend.isHealthy()) return
+    try {
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(threadId)
+      if (!codexThreadId) return
+      await this.backend.updateThreadMetadata(codexThreadId, { isPinned: pinned })
+    } catch (err) {
+      console.warn('[AgentManager] thread/metadata/update (isPinned) failed; local pin kept:', err)
+    }
+  }
+
+  /**
    * Delete a conversation. The local row is authoritative; codex's on-disk
    * rollout is cleaned up first (while the codex id is still resolvable — the
    * persisted mapping lives on the row we're about to drop) and best-effort:

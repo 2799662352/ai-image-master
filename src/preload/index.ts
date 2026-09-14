@@ -344,6 +344,7 @@ const IPC_CHANNELS = {
     DOCKER_GW_STOP: 'agent:docker-gw-stop',
     OPEN_THREAD: 'agent:open-thread',
     RENAME_THREAD: 'agent:rename-thread',
+    SET_THREAD_PINNED: 'agent:set-thread-pinned',
     DELETE_THREAD: 'agent:delete-thread',
     GET_PROVIDERS: 'agent:get-providers',
     SET_ACTIVE_PROVIDER: 'agent:set-active-provider',
@@ -1183,6 +1184,9 @@ const electronAPI: ElectronAPI = {
 
     renameThread: (threadId: string, title: string) =>
       safeInvoke<void>(IPC_CHANNELS.AGENT.RENAME_THREAD, threadId, title),
+
+    setThreadPinned: (threadId: string, pinned: boolean) =>
+      safeInvoke<void>(IPC_CHANNELS.AGENT.SET_THREAD_PINNED, threadId, pinned),
 
     deleteThread: (threadId: string) =>
       safeInvoke<void>(IPC_CHANNELS.AGENT.DELETE_THREAD, threadId),
