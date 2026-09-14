@@ -148,3 +148,64 @@ export function OpenInPanelIcon(props: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+/** Push-pin (lucide `pin` shape) — sidebar pin / unpin. */
+export function PinIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </Svg>
+  )
+}
+
+/** Magnifier — sidebar thread search. */
+export function SearchIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </Svg>
+  )
+}
+
+/** Four-pane grid — "Agent 工作台" entry. */
+export function LayoutDashboardIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="7" height="9" rx="1" />
+      <rect x="14" y="3" width="7" height="5" rx="1" />
+      <rect x="14" y="12" width="7" height="9" rx="1" />
+      <rect x="3" y="16" width="7" height="5" rx="1" />
+    </Svg>
+  )
+}
+
+/** Small ↗ — "opens elsewhere" hint on a row. */
+export function ArrowUpRightIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M7 17L17 7" />
+      <path d="M8 7h9v9" />
+    </Svg>
+  )
+}
+
+/** Circle + check — finished thread status. */
+export function CircleCheckIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12 2.5 2.5 4.5-5" />
+    </Svg>
+  )
+}
+
+/** Open ring — running thread status; wrap in `animate-spin`. */
+export function LoaderIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+    </Svg>
+  )
+}

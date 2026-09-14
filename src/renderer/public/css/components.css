@@ -1,6 +1,191 @@
 /* 组件样式 - Kinetic Typography Design System */
 
 /* ========================================
+   顶栏按钮系统（设计稿 D6）
+   所有顶栏控件同高 36px、单行标签、直角、1px 边；宽度不足时先隐藏标签只留图标
+   （<1200px），而不是折字。右侧按职责分三组，组间用 .nav-divider。
+   ======================================== */
+.nav-ctl {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: var(--nav-ctl-h, 44px);
+    padding: 0 0.875rem;
+    border: 1px solid var(--border, #3F3F46);
+    border-radius: 0;
+    background: var(--muted, #27272A);
+    color: #e4e4e7;
+    font-family: 'Exo 2', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.nav-ctl:hover {
+    border-color: var(--accent, #FCE300);
+    color: #ffffff;
+}
+
+.nav-ctl:active {
+    transform: scale(0.97);
+}
+
+.nav-ctl:focus-visible {
+    outline: 2px solid var(--accent, #FCE300);
+    outline-offset: 2px;
+}
+
+.nav-ctl:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.nav-ctl > i,
+.nav-ctl > svg {
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+/* 唯一主行动（活动） */
+.nav-ctl--primary {
+    background: var(--accent, #FCE300);
+    border-color: var(--accent, #FCE300);
+    color: #000000;
+}
+
+.nav-ctl--primary:hover {
+    background: #FFE500;
+    border-color: #FFE500;
+    color: #000000;
+    box-shadow: 0 0 10px rgba(252, 227, 0, 0.3);
+}
+
+/* 青色只给 AGENT（打开 Codex 聊天抽屉） */
+.nav-ctl--cyan {
+    background: rgba(34, 211, 238, 0.15);
+    border-color: rgba(34, 211, 238, 0.6);
+    color: #a5f3fc;
+}
+
+.nav-ctl--cyan:hover {
+    background: rgba(34, 211, 238, 0.25);
+    border-color: #22d3ee;
+    color: #ecfeff;
+}
+
+/* 品红只给导演台 3D */
+.nav-ctl--magenta {
+    background: rgba(233, 30, 140, 0.15);
+    border-color: rgba(233, 30, 140, 0.6);
+    color: #f9a8d4;
+}
+
+.nav-ctl--magenta:hover {
+    background: rgba(233, 30, 140, 0.25);
+    border-color: #e91e8c;
+    color: #ffffff;
+}
+
+/* 纯图标 36×36（设置 / 更新）—— 必须带 title */
+.nav-ctl--icon {
+    width: var(--nav-ctl-h, 44px);
+    padding: 0;
+    justify-content: center;
+}
+
+/* 标签 <1200px 隐藏，只留图标 */
+.nav-ctl__label {
+    display: none;
+}
+
+@media (min-width: 1200px) {
+    .nav-ctl__label {
+        display: inline;
+    }
+}
+
+/* 数字（余额）用等宽、不大写 */
+.nav-ctl__num {
+    font-family: 'JetBrains Mono', 'Share Tech Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+/* 徽章点：红 = 有新活动（脉动），绿 = 有可用更新；外圈 2px 页面底色描边保证黄底上可见 */
+.nav-ctl__dot {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    box-shadow: 0 0 0 2px var(--background, #09090B);
+}
+
+.nav-ctl__dot--red {
+    background: #ef4444;
+    animation: nav-dot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.nav-ctl__dot--green {
+    background: #22c55e;
+}
+
+@keyframes nav-dot-pulse {
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.nav-divider {
+    width: 1px;
+    height: 28px;
+    margin: 0 4px;
+    background: var(--border, #3F3F46);
+    flex-shrink: 0;
+}
+
+/* 字标两行小号，任何宽度不折行 */
+.nav-wordmark {
+    display: flex;
+    flex-direction: column;
+    line-height: 1;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.nav-wordmark:hover {
+    opacity: 0.8;
+}
+
+.nav-wordmark__name {
+    font-family: 'Orbitron', 'Exo 2', sans-serif;
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+
+.nav-wordmark__sub {
+    margin-top: 6px;
+    font-family: 'Orbitron', 'Exo 2', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.36em;
+    text-transform: uppercase;
+    color: var(--accent, #FCE300);
+    white-space: nowrap;
+}
+
+/* ========================================
    Choices.js 模型选择器自定义主题
    ======================================== */
 
@@ -207,6 +392,47 @@
     pointer-events: none;
 }
 
+/* 厂商分组抬头(Seedream / 腾讯 / Google / OpenAI …)—— 与 apiyi 生图页一致按厂商聚合。
+   Choices.js 把抬头渲染成 choices 的兄弟节点,所以 sticky 直接钉在滚动列表顶部。 */
+.model-selector-wrapper .choices__list--dropdown .choices__group,
+.model-selector-wrapper-mobile .choices__list--dropdown .choices__group {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 0;
+    border-bottom: none;
+    background: var(--background, #09090B) !important;
+}
+
+.model-selector-wrapper .choices__list--dropdown .choices__heading,
+.model-selector-wrapper-mobile .choices__list--dropdown .choices__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px 6px 13px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent, #FCE300);
+    background: var(--muted, #27272A);
+    border-top: 1px solid var(--border, #3F3F46);
+    border-bottom: 1px solid var(--border, #3F3F46);
+    border-left: 3px solid var(--accent, #FCE300);
+}
+
+.model-selector-wrapper .model-group-count,
+.model-selector-wrapper-mobile .model-group-count {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1;
+    padding: 2px 6px;
+    color: var(--foreground, #FAFAFA);
+    background: var(--background, #09090B);
+    border: 1px solid var(--border, #3F3F46);
+}
+
 /* 搜索输入框 */
 .model-selector-wrapper .choices__input {
     background-color: var(--muted, #27272A);
@@ -221,6 +447,276 @@
 .model-selector-wrapper .choices__input:focus {
     outline: none;
     border-color: var(--accent, #FCE300);
+}
+
+/* ========================================
+   顶栏模型选择器 · 「厂商 → 模型」两级面板(VendorModelPanel.ts,设计稿 D6)
+   触发器 = 顶栏按钮系统同高的黄描边控件「厂商小标签 + 模型名 + ▾」;面板 = 左厂商轨 + 右模型卡,
+   照 apiyi 生图页的聚类。桌面端不再走 Choices.js(上面那套 .choices__* 规则只剩移动端在用)。
+   ======================================== */
+.model-picker {
+    position: relative;
+    display: inline-block;
+}
+
+.model-trigger {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: var(--nav-ctl-h, 44px);
+    width: 240px;
+    padding: 0 0.75rem;
+    border: 1px solid var(--accent, #FCE300);
+    border-radius: 0;
+    background: rgba(252, 227, 0, 0.1);
+    color: var(--foreground, #FAFAFA);
+    font-family: 'Exo 2', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.model-trigger:hover,
+.model-trigger[aria-expanded="true"] {
+    background: rgba(252, 227, 0, 0.2);
+}
+
+.model-trigger:focus-visible {
+    outline: 2px solid var(--accent, #FCE300);
+    outline-offset: 2px;
+}
+
+.model-trigger .model-vendor-chip {
+    flex-shrink: 0;
+    padding: 3px 6px;
+    font-family: 'Orbitron', 'Exo 2', sans-serif;
+    font-size: 11px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    color: #000000;
+    background: var(--accent, #FCE300);
+}
+
+.model-trigger .model-selected-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left;
+}
+
+.model-trigger .model-selected-caret {
+    flex-shrink: 0;
+    color: var(--accent, #FCE300);
+}
+
+@media (max-width: 1199px) {
+    .model-trigger {
+        width: 184px;
+    }
+}
+
+.model-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 999999;
+    display: flex;
+    width: 680px;
+    max-height: min(560px, calc(100vh - 120px));
+    background: var(--background, #09090B);
+    border: 1px solid var(--border, #3F3F46);
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.65);
+}
+
+.model-panel[hidden] {
+    display: none;
+}
+
+/* 左:厂商轨 */
+.model-panel__rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 176px;
+    flex-shrink: 0;
+    padding: 6px;
+    border-right: 1px solid var(--border, #3F3F46);
+    background: #111113;
+    overflow-y: auto;
+}
+
+.model-panel__vendor {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 10px 10px 11px;
+    border: 0;
+    border-left: 3px solid transparent;
+    background: transparent;
+    color: #e4e4e7;
+    font-family: 'Exo 2', 'Noto Sans SC', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.model-panel__vendor:hover,
+.model-panel__vendor.is-active {
+    background: #18181b;
+    color: #ffffff;
+}
+
+.model-panel__vendor.is-active {
+    border-left-color: var(--accent, #FCE300);
+}
+
+.model-panel__vendor-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 当前模型所在厂商的小黄点 */
+.model-panel__vendor-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: var(--accent, #FCE300);
+    flex-shrink: 0;
+}
+
+.model-panel__vendor-count {
+    flex-shrink: 0;
+    padding: 2px 6px;
+    border: 1px solid var(--border, #3F3F46);
+    font-family: 'JetBrains Mono', 'Share Tech Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    color: #a1a1aa;
+}
+
+.model-panel__vendor.is-active .model-panel__vendor-count {
+    border-color: var(--accent, #FCE300);
+    color: var(--accent, #FCE300);
+}
+
+/* 右:模型卡 */
+.model-panel__list {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px;
+    overflow-y: auto;
+}
+
+.model-panel__card {
+    display: block;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--foreground, #FAFAFA);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.model-panel__card:hover,
+.model-panel__card:focus-visible {
+    background: #18181b;
+    border-color: var(--border, #3F3F46);
+    outline: none;
+}
+
+.model-panel__card.is-selected {
+    border-color: var(--accent, #FCE300);
+    background: rgba(252, 227, 0, 0.06);
+}
+
+.model-panel__card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.model-panel__card-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'Exo 2', 'Noto Sans SC', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.model-panel__card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.model-panel__tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    border: 1px solid var(--border, #3F3F46);
+    color: #a1a1aa;
+}
+
+.model-panel__tag--current {
+    border-color: var(--accent, #FCE300);
+    color: var(--accent, #FCE300);
+}
+
+.model-panel__card-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #a1a1aa;
+}
+
+/* ---- 顶栏 / 跑马灯到头(设计稿 D6):nav 内层不再用 container 居中,跑马灯从 <main> 的
+   container 里「破框」到视口两边。用 overflow-x: clip 而不是 hidden —— clip 不会把 html/body
+   变成滚动容器,也就不会因为 100vw 含滚动条宽度而多出一根横向滚动条。 ---- */
+html,
+body {
+    overflow-x: clip;
+}
+
+/* 写成 .marquee-container.full-bleed:animations.css(在本文件之后加载)有 .marquee-container
+   { width: 100% },单类的 .full-bleed 会被它压掉 —— 那就是「横幅只到七成宽」的 bug。 */
+.full-bleed,
+.marquee-container.full-bleed {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
 }
 
 /* ========================================

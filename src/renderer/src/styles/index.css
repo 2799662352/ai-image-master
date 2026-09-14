@@ -115,3 +115,26 @@
   scrollbar-width: thin;
   scrollbar-color: rgba(34, 211, 238, 0.4) rgba(22, 78, 99, 0.08);
 }
+
+/* Codex 抽屉结果图卡 / 灯箱(设计稿 D4 · D5):hover 毛玻璃「编辑 / 下载」按钮,
+   以及透明 PNG 的可选核对棋盘格(默认深底 + ALPHA 徽章,不铺格)。 */
+.glassbtn {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+.glassbtn:hover {
+  background: rgba(0, 0, 0, 0.6);
+}
+.checker {
+  background-color: #3f3f46;
+  background-image:
+    linear-gradient(45deg, #71717a 25%, transparent 25%),
+    linear-gradient(-45deg, #71717a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #71717a 75%),
+    linear-gradient(-45deg, transparent 75%, #71717a 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}

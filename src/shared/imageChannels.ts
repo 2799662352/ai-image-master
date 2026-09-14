@@ -52,8 +52,9 @@ export interface ImageChannel {
 }
 
 /**
- * 顺序按产品要求(2026-07-20):Seedream 5.0 Pro → 腾讯 → Nano2 → 万相 2.7 pro →
- * Image2 官方 → VIP。默认渠道仍是 VIP —— 顺序只影响显示,不改变回落目标。
+ * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×2 → Nano2 → 万相 → 千问 →
+ * Image 2.5(flare / sunburst / all) → Image2 官方 → VIP。默认渠道是腾讯 image2
+ * —— 顺序只影响显示,不改变回落目标。不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
  */
 export const IMAGE_CHANNELS = [
   {
@@ -109,17 +110,38 @@ export const IMAGE_CHANNELS = [
     miauOnly: true,
   },
   {
+    id: 'gpt-image-2.5-flare',
+    label: 'Flare',
+    fullLabel: 'GPT Image 2.5 Flare',
+    description: '⏱20s · OpenAI 官转·速度优先 — 画质≈Image2、延迟约一半，按 token 计费，可出透明底、一次 1–4 张，文生图首选。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2.5-sunburst',
+    label: 'Sunburst',
+    fullLabel: 'GPT Image 2.5 Sunburst',
+    description: '⏱40s · OpenAI 官转·画质优先 — 更锐、改图更稳，约 2–3× 更慢，与 Flare 同价，可出透明底、一次 1–4 张。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2.5-all',
+    label: 'All 2.5',
+    fullLabel: 'GPT Image 2.5 All',
+    description: '⏱60s · ChatGPT 网页逆向 — 已升 Images 2.5，$0.03/张，尺寸写进提示词。',
+    miauOnly: false,
+  },
+  {
     id: 'gpt-image-2',
     label: 'Image2',
     fullLabel: 'GPT Image 2 官方',
-    description: 'API易 OpenAI 官方旗舰 — 按 token 计费，慢但质量上限最高，4K+mask 重绘。',
+    description: '上一代 OpenAI 官转 — 按 token 计费，已被 2.5 flare/sunburst 同价取代。',
     miauOnly: false,
   },
   {
     id: 'gpt-image-2-vip',
     label: 'VIP',
     fullLabel: 'VIP image2',
-    description: 'OpenAI 官逆，稳定。默认渠道。',
+    description: 'OpenAI 官逆，稳定。仅用户点名 vip/官逆时用，不要当默认推荐。',
     miauOnly: false,
   },
   // ⚠️ `as const satisfies` 而不是 `: readonly ImageChannel[]`。

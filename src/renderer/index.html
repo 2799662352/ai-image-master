@@ -789,14 +789,17 @@
         <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-0 focus:left-0 bg-blue-600 text-white p-2 z-50" data-i18n="nav.skipToContent">跳转到主内容</a>
         
         <!-- 顶部导航 -->
-        <nav class="glass-effect text-white p-4" role="navigation" aria-label="主导航" data-i18n-attr="aria-label:nav.mainNavigation">
-        <div class="container mx-auto flex justify-between items-center">
-            <div class="flex items-center space-x-2 lg:space-x-4">
+        <nav class="glass-effect text-white px-6 py-4" role="navigation" aria-label="主导航" data-i18n-attr="aria-label:nav.mainNavigation">
+        <!-- 顶栏到头(设计稿 D6):不再 container 居中,左右各留 24px -->
+        <div class="w-full flex justify-between items-center">
+            <div class="flex items-center gap-3 lg:gap-4">
                 <img src="images/logo.png" alt="CATIMATION-Cyberpunk MasterLogo" class="w-8 h-8 cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" title="返回图片编辑" data-i18n-attr="title:nav.backToGenerate">
-                <!-- 桌面端标题 -->
-                <h1 class="text-2xl font-bold hidden lg:block cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" data-i18n="common.appName">CATIMATION-Cyberpunk Master</h1>
-                <!-- 平板端标题 -->
-                <h1 class="text-xl font-bold hidden md:block lg:hidden cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" data-i18n="common.appNameShort">CATIMATION</h1>
+                <!-- 桌面 / 平板字标：两行小号，任何宽度不折行（设计稿 D6）。字标是品牌名，不走 i18n
+                     （en/ru 的 appNameShort 是历史遗留的「LazyCat」，不能拿来当字标）。 -->
+                <h1 class="nav-wordmark hidden md:flex" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" title="返回图片编辑">
+                    <span class="nav-wordmark__name">CATIMATION</span>
+                    <span class="nav-wordmark__sub">Cyberpunk Master</span>
+                </h1>
                 <!-- 移动端标题 -->
                 <h1 class="text-lg font-bold md:hidden cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" data-i18n="common.appNameMobile">AI出图</h1>
 
@@ -809,48 +812,50 @@
                 </div>
             </div>
 
-            <!-- 桌面端导航菜单 -->
-            <div class="hidden md:flex items-center space-x-2 lg:space-x-4">
-                <button id="agentEntryBtn" data-action="toggle-agent" class="flex items-center space-x-1 lg:space-x-2 bg-[#22d3ee] text-black hover:scale-105 active:scale-95 px-3 lg:px-4 py-2 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter z-50 cursor-pointer"
-                        title="进入 AGENT (Codex) · Ctrl+Shift+A">
-                    <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>
-                    <i class="fas fa-robot relative z-10"></i>
-                    <span class="relative z-10 hidden lg:inline">AGENT</span>
+            <!-- 桌面端导航菜单（设计稿 D6）：全部 .nav-ctl 同高 36px、单行；三组用 .nav-divider 分隔
+                 —— 工作区（AGENT 聊天抽屉 · 导演台 3D）｜账户（活动 · 余额）｜系统（设置 · 更新 · 语言）。
+                 标签 <1200px 由 .nav-ctl__label 隐藏，只留图标，不再折字。 -->
+            <div class="hidden md:flex items-center gap-2 z-50">
+                <button id="agentEntryBtn" data-action="toggle-agent" class="nav-ctl nav-ctl--cyan"
+                        title="打开 AGENT 聊天（Codex）· Ctrl+Shift+A">
+                    <i class="fas fa-robot"></i>
+                    <span class="nav-ctl__label">Agent</span>
                 </button>
-                <button id="directorEntryBtn" data-action="open-director" class="flex items-center space-x-1 lg:space-x-2 bg-[#ff2d7a] text-black hover:scale-105 active:scale-95 px-3 lg:px-4 py-2 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter z-50 cursor-pointer"
+                <button id="directorEntryBtn" data-action="open-director" class="nav-ctl nav-ctl--magenta"
                         title="打开 3D 导演台(摆模型 / 打光 / 运镜 / 录制)">
-                    <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>
-                    <i class="fas fa-cube relative z-10"></i>
-                    <span class="relative z-10 hidden lg:inline">导演台 3D</span>
+                    <i class="fas fa-cube"></i>
+                    <span class="nav-ctl__label">导演台 3D</span>
                 </button>
-                <button id="activityBtn" data-action="open-activity" class="flex items-center space-x-1 lg:space-x-2 bg-[#FCE300] text-black hover:scale-105 active:scale-95 px-3 lg:px-4 py-2 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter"
+                <span class="nav-divider" aria-hidden="true"></span>
+                <button id="activityBtn" data-action="open-activity" class="nav-ctl nav-ctl--primary"
                         title="活动优惠" data-i18n-attr="title:nav.activityTitle">
-                    <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>
-                    <i class="fas fa-gift relative z-10"></i>
-                    <span class="relative z-10 hidden lg:inline" data-i18n="nav.activity">活动</span>
-                    <div class="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                    <i class="fas fa-gift"></i>
+                    <span data-i18n="nav.activity">活动</span>
+                    <span class="nav-ctl__dot nav-ctl__dot--red" aria-hidden="true"></span>
                 </button>
                 <!-- 账号胶囊(React 岛)。排在「设置」**之前**:身份先于配置,与设置页里
                      账号是第 1 节同一个理由。空容器不占位,React 未挂载前这排按钮不变形。 -->
                 <div id="account-badge-mount"></div>
-                <button id="settingsBtn" data-action="open-settings" class="relative flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer"
-                        title="API设置" data-i18n-attr="title:nav.settingsTitle">
+                <span class="nav-divider" aria-hidden="true"></span>
+                <button id="settingsBtn" data-action="open-settings" class="nav-ctl nav-ctl--icon"
+                        title="API设置" data-i18n-attr="title:nav.settingsTitle" aria-label="设置">
                     <i class="fas fa-cog"></i>
-                    <span class="hidden lg:inline" data-i18n="common.settings">设置</span>
                 </button>
-                <button id="checkUpdateBtnNav" class="relative flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#ff2d7a] hover:text-black hover:border-[#ff2d7a] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer" title="检查更新">
+                <button id="checkUpdateBtnNav" class="nav-ctl" title="检查更新" aria-label="检查更新">
                     <i class="fas fa-sync-alt"></i>
-                    <span class="hidden lg:inline">更新</span>
+                    <span class="nav-ctl__label">Update</span>
+                    <!-- 有可用更新时由 UpdateNotification 点亮（去掉 hidden） -->
+                    <span id="updateAvailableDot" class="nav-ctl__dot nav-ctl__dot--green hidden" aria-hidden="true"></span>
                 </button>
                 <!-- 语言切换器 -->
                 <div class="relative">
                     <button id="languageSwitcher" 
                             onclick="document.getElementById('languageDropdown')?.classList.toggle('hidden')"
-                            class="flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer"
+                            class="nav-ctl"
                             title="切换语言" data-i18n-attr="title:nav.switchLanguage">
                         <i class="fas fa-globe"></i>
                         <span id="currentLangName" class="font-semibold">中</span>
-                        <i class="fas fa-chevron-down text-sm"></i>
+                        <i class="fas fa-chevron-down" style="font-size: 11px; color: #71717a;"></i>
                     </button>
                     <div id="languageDropdown" class="absolute right-0 top-full mt-2 bg-[#09090B] border-2 border-[#3F3F46] rounded-none z-[999999] min-w-40 hidden">
                         <div class="py-2" id="languageList">
@@ -1346,7 +1351,7 @@
         </div>
 
         <!-- Kinetic Typography - 统计 Marquee -->
-        <div class="marquee-container bg-[#FCE300] py-4 mb-6 border-y-4 border-black" aria-label="CYBERPUNK STATS">
+        <div class="marquee-container full-bleed bg-[#FCE300] py-4 mb-6 border-y-4 border-black" aria-label="CYBERPUNK STATS">
             <div class="marquee-content marquee-medium">
                 <!-- 第一组内容 - CYBERPUNK 2077 STYLE -->
                 <span class="marquee-item text-black font-black text-2xl md:text-4xl uppercase tracking-widest">

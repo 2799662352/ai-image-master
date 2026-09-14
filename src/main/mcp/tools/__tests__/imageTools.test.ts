@@ -110,16 +110,58 @@ describe('registerImageTools / generate_image schema', () => {
     const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
     expect(schema.safeParse({ prompt: 'x', resolution: '8K' }).success).toBe(false)
     expect(schema.safeParse({ prompt: 'x', quality: 'ultra' }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', quality: 'xhigh' }).success).toBe(true)
+    expect(schema.safeParse({ prompt: 'x', quality: 'max' }).success).toBe(true)
+  })
+
+  it('accepts a boolean transparentBackground on both generate_image and generate_images', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(single.safeParse({ prompt: 'sticker', model: 'gpt-image-2.5-flare', transparentBackground: true }).success).toBe(true)
+    expect(single.safeParse({ prompt: 'sticker', transparentBackground: 'yes' }).success).toBe(false)
+    expect(Object.keys(single.shape)).toContain('transparentBackground')
+
+    const batch = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
+    expect(batch.safeParse({ prompts: ['a', 'b'], transparentBackground: true }).success).toBe(true)
+    expect(batch.safeParse({ prompts: ['a', 'b'], transparentBackground: 1 }).success).toBe(false)
+  })
+
+  // 局部重绘遮罩(P3c)。语义按 OpenAI /v1/images/edits 的 `mask`:带 alpha 的 PNG,alpha=0 =
+  // 可重绘,尺寸必须与第一张参考图一致。工具层只校验形状,渠道/参考图约束由 ApiService 早失败。
+  it('accepts a string maskImage on generate_image and documents the alpha semantics', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(Object.keys(single.shape)).toContain('maskImage')
+    expect(
+      single.safeParse({ prompt: 'remove the cup', model: 'gpt-image-2.5-sunburst', referenceImages: ['C:/x/a.png'], maskImage: 'C:/x/a.mask.png' }).success,
+    ).toBe(true)
+    expect(single.safeParse({ prompt: 'x', maskImage: 42 }).success).toBe(false)
+    const desc = (single.shape.maskImage as { description?: string }).description ?? ''
+    expect(desc).toMatch(/alpha/i)
+    expect(desc).toMatch(/referenceImages/)
   })
 
   it('accepts the selectable model channels (vip / image2 官方 / 腾讯 / 万相 / nano2 / seedream 5.0 pro) and rejects others', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
     const genSchema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
-    for (const model of ['gpt-image-2-vip', 'gpt-image-2', 'custom-imagemodel-gt', 'wan2.7-image-pro', 'gemini-3.1-flash-image', 'doubao-seedream-5-0-pro-260628']) {
+    for (const model of [
+      'gpt-image-2-vip',
+      'gpt-image-2',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2.5-all',
+      'custom-imagemodel-gt',
+      'wan2.7-image-pro',
+      'gemini-3.1-flash-image',
+      'doubao-seedream-5-0-pro-260628',
+    ]) {
       expect(genSchema.safeParse({ prompt: 'x', model }).success, model).toBe(true)
     }
     expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2-all' }).success).toBe(false)
+    expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2.5-vip' }).success).toBe(false)
 
     const batchSchema = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
     expect(batchSchema.safeParse({ prompts: ['a', 'b'], model: 'wan2.7-image-pro' }).success).toBe(true)

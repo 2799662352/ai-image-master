@@ -365,12 +365,49 @@ describe('ApiService custom-model-og-v2', () => {
     expect(JSON.parse(captured.init!.body as string).extra_body).toMatchObject({ logo_add: 0 })
   })
 
-  /** 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。 */
-  it('支持多张输出', async () => {
+  /**
+   * 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。
+   *
+   * 光有能力位不够 —— 2026-09-14 之前这里只断言了 capabilities,而请求体从来没带过 n,
+   * 数量轴选 2 只回 1 张。现在连请求体一起锁住。
+   */
+  it('支持多张输出 —— 能力位 + 文生图请求体真的带 n', async () => {
     const service = await makeService()
     const cfg = service.getModelConfig('custom-model-og-v2')!
     expect(cfg.capabilities?.multipleImages).toBe(true)
+    expect(cfg.capabilities?.nativeBatch).toBe(true)
     expect(cfg.capabilities?.maxOutputs).toBeGreaterThan(1)
+
+    const captured = captureFetch()
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: 'custom-model-og-v2',
+      ratio: '1:1',
+      resolution: '1K',
+      count: 2,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+    expect(JSON.parse(captured.init!.body as string).n).toBe(2)
+  })
+
+  /** 腾讯 image2(gt)只出单张:maxOutputs 1,数量轴给多少都不发 n。 */
+  it('腾讯 image2(gt) 不发 n', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('custom-imagemodel-gt')!
+    const captured = captureFetch()
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: 'custom-imagemodel-gt',
+      ratio: '1:1',
+      resolution: '1K',
+      count: 3,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+    expect(JSON.parse(captured.init!.body as string)).not.toHaveProperty('n')
   })
 
   /**
