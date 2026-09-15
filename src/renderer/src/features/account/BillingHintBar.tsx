@@ -18,6 +18,7 @@
 // 大概率正在用自有 Key 正常工作,不该被打扰。
 
 import { useState } from 'react'
+import { Wallet } from 'lucide-react'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { RechargeModal } from '../../pages-react/settings/RechargeModal'
@@ -38,9 +39,11 @@ export function BillingHintBar() {
 
   // 自有 Key:一句陈述就够。这条**必须有** —— 用户可能刚在设置页切过来,而出图页
   // 上没有任何东西会告诉他这次不走账号余额。
+  // 设计稿 M4 · 8:计费行加钱包图标、改 mono。文案一个字不动(测试按 textContent 断言)。
   if (billingSource !== 'platform') {
     return (
-      <p data-testid="billing-hint-bar" className="text-xs text-zinc-500 mt-2">
+      <p data-testid="billing-hint-bar" className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-zinc-500">
+        <Wallet size={12} className="shrink-0 text-zinc-500" aria-hidden />
         本次使用「API 站点」里配置的自有 Key 计费。
       </p>
     )
@@ -56,7 +59,8 @@ export function BillingHintBar() {
 
   if (level === 'ok' || level === 'unknown') {
     return (
-      <p data-testid="billing-hint-bar" className="text-xs text-zinc-500 mt-2">
+      <p data-testid="billing-hint-bar" className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-zinc-500">
+        <Wallet size={12} className="shrink-0 text-zinc-500" aria-hidden />
         本次从{wallet}扣费
         {/* 余额未知时**不**把「余额未知」拼进这句 —— 那会让一句本来只是交代
             钱包的话看起来像报错。头部胶囊那边已经说清楚了。 */}

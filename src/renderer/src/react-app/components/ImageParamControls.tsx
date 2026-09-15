@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { Grid2x2, Images, Scaling, Sparkles, SquareDashed, type LucideIcon } from 'lucide-react'
 import {
   deriveImageParamControls,
   normalizeOption,
@@ -96,12 +97,26 @@ const THEMES: Record<ImageParamVariant, VariantTheme> = {
     notice:
       'border-2 border-zinc-700 bg-zinc-900/60 p-3 font-mono text-[11px] text-zinc-400',
     hint: 'mt-1.5 font-mono text-[10px] leading-snug text-yellow-300/80',
-    renderLabel: (title) => (
-      <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-cyberpunk-yellow/80 mb-1.5">
-        {`// ${title}`}
-      </div>
-    ),
+    // 设计稿 M4 · 5:标签前加 12px 线性图标。调用点仍传 Font Awesome 名(导演台主题
+    // 还在用它),这里映射到 lucide,不改任何调用点。
+    renderLabel: (title, icon) => {
+      const Icon = CYBERPUNK_LABEL_ICONS[icon]
+      return (
+        <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.2em] text-cyberpunk-yellow/80">
+          {Icon && <Icon size={12} className="text-cyberpunk-yellow/70" aria-hidden />}
+          {`// ${title}`}
+        </div>
+      )
+    },
   },
+}
+
+const CYBERPUNK_LABEL_ICONS: Record<string, LucideIcon> = {
+  'fa-crop-alt': Scaling,
+  'fa-expand-arrows-alt': Grid2x2,
+  'fa-gem': Sparkles,
+  'fa-images': Images,
+  'fa-chess-board': SquareDashed,
 }
 
 function formatOption(opt: ParamOption): string {

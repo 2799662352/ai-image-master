@@ -15,7 +15,7 @@
  *  - 在 `onClick` 里串接 Lightbox / 文件预览 / 下载等具体行为
  */
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { buildMediaCandidates } from './mediaFallback'
 import { useMediaCandidates } from './useMediaCandidates'
 
@@ -122,6 +122,9 @@ export function MediaThumbnail({
   // the resolver can disambiguate ambiguous extensions when the main-process
   // mime probe returns application/octet-stream.
   const { src: resolvedSrc, reloadKey, onError, exhausted, retry } = useMediaCandidates(candidates, kind)
+  // 退避重试期间别让浏览器画裂图 + alt:onLoad 之前 <img> 透明,底下是容器自己的底色。
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  const imgLoaded = loadedKey === `${reloadKey}|${resolvedSrc ?? ''}`
 
   if (typeof src !== 'string' || src.length === 0) return null
 
@@ -211,7 +214,8 @@ export function MediaThumbnail({
           loading="lazy"
           decoding="async"
           onError={onError}
-          className="block h-full w-full object-cover"
+          onLoad={() => setLoadedKey(`${reloadKey}|${resolvedSrc}`)}
+          className={`block h-full w-full object-cover ${imgLoaded ? '' : 'opacity-0'}`}
         />
       ) : null}
     </div>

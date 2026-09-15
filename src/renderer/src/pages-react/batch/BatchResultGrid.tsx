@@ -1,8 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Grid, type CellComponentProps } from 'react-window'
 import type { BatchItem } from '../../stores/useBatchStore'
-import { useDisplaySrc } from '../../hooks/useDisplaySrc'
-import { appendCosThumb } from '../../utils/cosThumb'
+import { StatusCard, type StatusCardStatus } from '../../components/shared/result-cards/StatusCard'
+import { CosResultThumb, DoneMarks, UploadBadge } from '../../components/shared/result-cards/CosResultThumb'
+import { buildDownloadFilename, downloadImage } from '../../components/shared/result-cards/download'
 
 /**
  * (v) 虚拟化布局常量
@@ -78,51 +79,12 @@ interface Props {
   onEditItem?: (item: BatchItem) => void
 }
 
-async function downloadImage(url: string, filename: string): Promise<void> {
-  try {
-    const res = await fetch(url, { mode: 'cors' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const blob = await res.blob()
-    const objUrl = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = objUrl
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
-  } catch {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.target = '_blank'
-    a.rel = 'noreferrer'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-  }
-}
-
-function buildFilename(index: number, prompt: string): string {
-  const slug =
-    prompt
-      .replace(/[\\/:*?"<>|\r\n]+/g, ' ')
-      .trim()
-      .slice(0, 24)
-      .replace(/\s+/g, '_') || 'untitled'
-  const ts = Date.now()
-  const seq = String(index + 1).padStart(3, '0')
-  return `batch-${seq}-${slug}-${ts}.png`
-}
-
-const STATUS_BADGE: Record<
-  BatchItem['status'],
-  { cls: string; label: string }
-> = {
-  pending:    { cls: 'border-zinc-700 text-zinc-400 bg-zinc-900',                          label: 'WAIT' },
-  generating: { cls: 'border-cyberpunk-yellow/50 text-cyberpunk-yellow bg-cyberpunk-yellow/10', label: 'RUN' },
-  done:       { cls: 'border-green-700/60 text-green-300 bg-green-950/30',                 label: 'OK' },
-  error:      { cls: 'border-red-700/60 text-red-300 bg-red-950/30',                       label: 'ERR' },
+/** BatchItem 的四态 → 共享卡族的四态(名字不同,含义一样)。 */
+const CARD_STATUS: Record<BatchItem['status'], StatusCardStatus> = {
+  pending: 'pending',
+  generating: 'running',
+  done: 'done',
+  error: 'error',
 }
 
 /**
@@ -167,185 +129,38 @@ const ResultCard = memo(function ResultCard({
   onPreview?: (url: string) => void
   onEditItem?: (item: BatchItem) => void
 }) {
-  const badge = STATUS_BADGE[item.status]
-  const isFail = item.status === 'error'
-  const isRun = item.status === 'generating'
   const displayUrl = pickDisplayUrl(item)
-  // 卡片缩略图: COS 源经数据万象 imageMogr2 实时缩成 512px WebP(几十 KB),
-  // 渲染进程不再拉取/解码 4K 原图(一张 4000×3000 PNG 解码 ≈ 48MB RGBA)。
-  // 非 COS 源(blob:/临时签名 http)原样透传。onPreview / download 仍用
-  // displayUrl 原图 —— lightbox 与保存永远是无损原件。
-  const imgSrc = useDisplaySrc(appendCosThumb(displayUrl))
+  // done 且拿得到 URL 才算真完成;店家给了 done 但没有图的脏数据按等待画(不会有裂图)。
   const isDone = item.status === 'done' && !!displayUrl
-  // 同步切到 COS 之后, UI 用一个小角标提示当前展示的是哪种 URL。
-  const upload = item.uploadStatus
+  const status: StatusCardStatus = item.status === 'done' && !displayUrl ? 'pending' : CARD_STATUS[item.status]
 
   return (
-    <div
-      className={`flex flex-col gap-1.5 p-2 border-2 ${
-        isFail ? 'border-red-700/60 bg-red-950/20' : 'border-zinc-700 bg-zinc-900/60'
-      }`}
-    >
-      {/* 顶部 row: 序号 + 状态 + 操作 */}
-      <div className="flex items-center justify-between gap-1.5">
-        <span className="px-1.5 py-0.5 bg-zinc-950 text-cyberpunk-yellow font-mono text-[10px] font-bold tabular-nums">
-          #{String(index + 1).padStart(3, '0')}
-        </span>
-        <span
-          className={`px-1.5 py-0.5 border font-mono text-[10px] font-bold uppercase tracking-wider ${badge.cls}`}
-        >
-          {badge.label}
-        </span>
-        <div className="ml-auto flex gap-1">
-          {onEditItem && item.prompt && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onEditItem(item)
-              }}
-              aria-label="重编辑此项 (prompt + 比例 + 参考图)"
-              title={
-                item.snapshot
-                  ? '把此项的 prompt / 比例 / 参考图全部灌回输入框'
-                  : '把此 prompt 灌回输入框 (此项无快照, 仅恢复 prompt)'
-              }
-              className="px-1 h-5 flex items-center justify-center border border-zinc-700 bg-zinc-900 text-cyberpunk-yellow hover:bg-cyberpunk-yellow hover:text-cyberpunk-black text-[10px] font-mono font-bold uppercase tracking-wider leading-none transition-colors"
-            >
-              ↺ EDIT
-            </button>
-          )}
-          {isDone && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                downloadImage(displayUrl!, buildFilename(index, item.prompt))
-              }}
-              aria-label="下载图片"
-              title="下载"
-              className="w-5 h-5 flex items-center justify-center border border-zinc-700 bg-zinc-900 text-cyberpunk-yellow hover:bg-cyberpunk-yellow hover:text-cyberpunk-black text-sm font-bold leading-none transition-colors"
-            >
-              ↓
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onRemove(item.id)}
-            aria-label="移除"
-            title="移除"
-            className="w-5 h-5 flex items-center justify-center border border-zinc-700 bg-zinc-900 text-zinc-400 hover:bg-red-900/50 hover:text-red-200 hover:border-red-700/60 text-sm font-bold leading-none transition-colors"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-
-      {/*
-        缩略图 / 占位。
-        编辑动作(多角度/打光/全景/导演台/加为参考图)不再做悬停浮层 ——
-        点击放大后的 ImageLightbox 左下角统一提供(见 BatchPage renderActions),
-        卡片本身只负责「点击 → 预览」。
-      */}
-      <div
-        className={`group relative aspect-square bg-zinc-950 border-2 border-zinc-800 overflow-hidden ${
-          isDone ? 'cursor-zoom-in' : ''
-        }`}
-        onClick={() => isDone && onPreview?.(displayUrl!)}
-      >
-        {isDone && (
-          <img
-            src={imgSrc}
-            alt={item.prompt}
-            loading="lazy"
-            // (p5) decoding=async 让浏览器在后台线程解码大图,
-            // 避免大批量结果一次性进入视口时主线程被解码阻塞掉好几帧。
-            // 配合 useDisplaySrc 把 dataURL 换成 blob: URL 后, 主线程完全不参与
-            // base64 → bitmap 的解析, 200 张卡 进入视口才真正不卡。
-            decoding="async"
-            className="w-full h-full object-cover block"
-          />
-        )}
-        {isRun && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-cyberpunk-yellow text-xs font-mono uppercase tracking-wider">
-            <div
-              className="w-8 h-8 border-2 border-cyberpunk-yellow border-t-transparent rounded-full"
-              style={{ animation: 'batch-spin 1s linear infinite' }}
-            />
-            <span>生成中</span>
-          </div>
-        )}
-        {item.status === 'pending' && (
-          <div className="absolute inset-0 flex items-center justify-center text-zinc-600 font-mono text-xs uppercase tracking-wider">
-            等待
-          </div>
-        )}
-        {isFail && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-red-300 text-center">
-            <span className="text-3xl font-bold leading-none">✗</span>
-            <span
-              className="font-mono text-[10px] leading-tight line-clamp-3 break-words"
-              title={item.error || 'FAILED'}
-              style={{ cursor: item.error ? 'help' : 'default' }}
-            >
-              {item.error || 'FAILED'}
-            </span>
-          </div>
-        )}
-        {isDone && (
-          <span
-            aria-hidden="true"
-            className="absolute bottom-1 right-1 px-1 py-px bg-green-900/80 text-green-200 font-mono text-[9px] font-bold uppercase tracking-wider"
-          >
-            done
-          </span>
-        )}
-        {/*
-          异步存储状态角标:
-          - uploading: 拉黄边框, 表示模型直出 URL 还没转存
-          - uploaded:  绿框 cos, 表示当前显示的是 COS 持久化 URL
-          - failed:    红框, 提示转存失败 (UI 退回模型直出, 链接到期可能 404)
-        */}
-        {isDone && upload === 'uploading' && (
-          <span
-            aria-label="正在转存到 COS"
-            title="正在异步上传到腾讯云 COS…"
-            className="absolute bottom-1 left-1 px-1 py-px bg-zinc-950/85 border border-cyberpunk-yellow/70 text-cyberpunk-yellow font-mono text-[9px] font-bold uppercase tracking-wider"
-          >
-            up…
-          </span>
-        )}
-        {isDone && upload === 'uploaded' && (
-          <span
-            aria-label="已转存到 COS"
-            title="当前显示的是 COS 持久化 URL"
-            className="absolute bottom-1 left-1 px-1 py-px bg-emerald-950/85 border border-emerald-600/70 text-emerald-300 font-mono text-[9px] font-bold uppercase tracking-wider"
-          >
-            cos
-          </span>
-        )}
-        {isDone && upload === 'failed' && (
-          <span
-            aria-label="转存失败,使用模型直出 URL"
-            title={`COS 转存失败: ${item.uploadError || '未知原因'}\n当前展示的是模型直出 URL,可能会过期`}
-            className="absolute bottom-1 left-1 px-1 py-px bg-red-950/85 border border-red-600/70 text-red-300 font-mono text-[9px] font-bold uppercase tracking-wider"
-          >
-            !cos
-          </span>
-        )}
-      </div>
-
-      {/* prompt 文字 */}
-      <p className="font-mono text-[11px] text-zinc-300 leading-snug line-clamp-2 min-h-[2.6em] break-words m-0">
-        {item.prompt}
-      </p>
-
-      {item.error && !isFail && (
-        <p className="font-mono text-[10px] text-red-400 break-words m-0">
-          ERR: {item.error}
-        </p>
-      )}
-    </div>
+    <StatusCard
+      index={index}
+      status={status}
+      prompt={item.prompt}
+      // 批量页的 RUN 卡没有 startedAt(BatchItem 不记),只转圈不计时。
+      error={item.error}
+      // 卡片缩略图: COS 源先看桶里已存的 512 持久化对象,再退实时数据万象 imageMogr2
+      // (几十 KB),渲染进程不再拉取/解码 4K 原图(一张 4000×3000 PNG 解码 ≈ 48MB RGBA)。
+      // onPreview / download 仍用 displayUrl 原图 —— lightbox 与保存永远是无损原件。
+      media={isDone ? <CosResultThumb url={displayUrl!} alt={item.prompt} size={512} /> : undefined}
+      overlay={
+        isDone ? (
+          <>
+            <UploadBadge status={item.uploadStatus} error={item.uploadError} />
+            <DoneMarks />
+          </>
+        ) : undefined
+      }
+      // 编辑动作(多角度/打光/全景/导演台/加为参考图)不做悬停浮层 —— 点击放大后的
+      // ImageLightbox 左下角统一提供(见 BatchPage renderActions),卡片只负责「点击 → 预览」。
+      onOpen={isDone && onPreview ? () => onPreview(displayUrl!) : undefined}
+      onEdit={onEditItem && item.prompt ? () => onEditItem(item) : undefined}
+      editTitle={item.snapshot ? '把此项的 prompt / 比例 / 参考图全部灌回输入框' : '把此 prompt 灌回输入框 (此项无快照, 仅恢复 prompt)'}
+      onDownload={isDone ? () => void downloadImage(displayUrl!, buildDownloadFilename('batch', index, item.prompt)) : undefined}
+      onRemove={() => onRemove(item.id)}
+    />
   )
 })
 
@@ -502,11 +317,6 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
 
   return (
     <>
-      <style>{`
-        @keyframes batch-spin {
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-400">

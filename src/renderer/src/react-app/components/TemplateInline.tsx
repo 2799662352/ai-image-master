@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { Layers, Pencil, X } from 'lucide-react'
 import { useTemplateStore } from '../stores/useTemplateStore'
 import { TEMPLATE_MAP } from '../constants/templates'
 import { TemplatePickerModal } from './TemplatePickerModal'
@@ -33,31 +34,33 @@ export function TemplateInline({ context }: TemplateInlineProps) {
 
   return (
     <>
+      {/* 设计稿 M4 · 2:粉色 FA 调色板 → 线性图标;「选择」由粉色实心改黄描边 mono(粉只留给导演台) */}
       <div className="bg-[#27272A] rounded-none px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 min-w-0">
-            <i className="fas fa-palette text-pink-400 text-sm flex-shrink-0" />
+            <Layers size={14} className="flex-shrink-0 text-zinc-300" aria-hidden />
             <span className="text-white text-sm font-medium flex-shrink-0">风格</span>
             <div className="flex items-center space-x-1.5 min-w-0">
               {active && <span className="text-base">{active.icon}</span>}
-              <span className="text-white text-sm truncate">
+              <span className={`text-sm truncate ${active ? 'text-white' : 'text-zinc-400'}`}>
                 {active ? active.displayName : '无模板'}
               </span>
             </div>
             {selection && (
               <button
                 onClick={handleClear}
-                className="text-red-400 hover:text-red-300 text-xs transition-colors flex-shrink-0 cursor-pointer"
+                aria-label="清除风格模板"
+                className="flex-shrink-0 cursor-pointer text-red-400 transition-colors hover:text-red-300"
               >
-                <i className="fas fa-times" />
+                <X size={12} aria-hidden />
               </button>
             )}
           </div>
           <button
             onClick={() => setShowModal(true)}
-            className="bg-pink-500 hover:bg-pink-600 text-white px-2.5 py-1 rounded-none text-xs transition-all flex items-center space-x-1 flex-shrink-0 cursor-pointer"
+            className="flex h-7 flex-shrink-0 cursor-pointer items-center gap-1.5 border border-cyberpunk-yellow/70 bg-cyberpunk-yellow/10 px-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-cyberpunk-yellow transition-colors hover:bg-cyberpunk-yellow hover:text-cyberpunk-black"
           >
-            <i className="fas fa-magic" />
+            <Pencil size={12} aria-hidden />
             <span>选择</span>
           </button>
         </div>

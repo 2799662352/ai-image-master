@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react'
-import type { ResultUploadMeta } from '../../stores/useGenerateStore'
+import type { GenerateRun, ResultUploadMeta } from '../../stores/useGenerateStore'
 import { useGenerateStore } from '../../stores/useGenerateStore'
-import { useDisplaySrc } from '../../hooks/useDisplaySrc'
-import { buildMediaCandidates } from '../../components/shared/media/mediaFallback'
-import { useMediaCandidates } from '../../components/shared/media/useMediaCandidates'
-import { toRenderableUri } from '../../features/file-explorer/uri'
-import { appendCosThumb, persistedCosThumbUrl } from '../../utils/cosThumb'
+import { StatusCard } from '../../components/shared/result-cards/StatusCard'
+import { CosResultThumb, DoneMarks, UploadBadge } from '../../components/shared/result-cards/CosResultThumb'
+import { buildDownloadFilename, downloadImage } from '../../components/shared/result-cards/download'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
 import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
@@ -56,70 +54,6 @@ export function groupResultItems(urls: string[], meta?: ResultUploadMeta[]): Gri
   return items
 }
 
-/**
- * 单格图片 —— 把 `<img>` 抽成独立组件,只为了能在循环里安全调 hook:
- * 钩子不能在 .map() 回调里直接调。每个 cell 自己持有它那一张的 blob URL 生命周期,
- * 切换/卸载时自动 revoke,互不干扰。
- *
- * 候选链(见 `components/shared/media/mediaFallback.ts`):
- *   ① 桶里已存的 1024 持久化缩略图(上传时万象顺手落的普通对象;老图没有 → 404 秒让位)
- *   ② COS 源经数据万象实时缩成 1024px WebP(2 列布局卡片较宽,1024 保证 retina 清晰)
- *   ③ 裸 URL —— 数据万象处理失败 / 代理下 CI 不可达时,原对象 GET 往往还通
- *   ④ 本地副本 `localPath` —— 主进程上传前已落盘,不经网络、永不过期
- * 过期的预签名直出链接在整理候选时直接丢掉(必 403)。blob:/data: 原样透传;
- * data: 再经 useDisplaySrc 换成 blob: 以免主线程解码大 base64。
- * 点击放大的 lightbox 由父组件用原始 resultUrls 打开, 永远是无损原图。
- */
-function ResultCell({ url, alt, localPath }: { url: string; alt: string; localPath?: string }) {
-  const candidates = useMemo(
-    () =>
-      buildMediaCandidates(persistedCosThumbUrl(url, 1024) ?? appendCosThumb(url, 1024), [
-        appendCosThumb(url, 1024),
-        url,
-        localPath ? toRenderableUri(localPath) : undefined,
-      ]),
-    [url, localPath],
-  )
-  const { src, reloadKey, onError, exhausted, retry } = useMediaCandidates(candidates, 'image', { thumbSize: 1024 })
-  const imgSrc = useDisplaySrc(src ?? undefined)
-
-  if (exhausted) {
-    return (
-      <div
-        role="img"
-        aria-label={`${alt}（加载失败）`}
-        title="链接已过期或网络不可达(开着代理时 COS 可能连不上);本地副本也没读到。"
-        className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-zinc-900 text-[11px] text-zinc-500"
-      >
-        <span>图片加载失败</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            retry()
-          }}
-          className="border border-zinc-700 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300 hover:border-cyberpunk-yellow hover:text-cyberpunk-yellow"
-        >
-          重载
-        </button>
-      </div>
-    )
-  }
-
-  if (!imgSrc) return <div aria-hidden className="aspect-square w-full animate-pulse bg-zinc-900" />
-
-  return (
-    <img
-      key={reloadKey}
-      src={imgSrc}
-      alt={alt}
-      onError={onError}
-      decoding="async"
-      className="w-full object-contain"
-    />
-  )
-}
-
 interface ResultGridProps {
   /**
    * 展示用 URL 列表。已经经过 store 层的热切:
@@ -134,6 +68,8 @@ interface ResultGridProps {
    * 不传也能用 —— 兼容老调用方。
    */
   meta?: ResultUploadMeta[]
+  /** 在飞 / 失败的 generate() —— RUN / ERR 卡(设计稿 M5)。不传 = 只画结果卡。 */
+  runs?: GenerateRun[]
   /**
    * 点击 [重编辑] 按钮时被调用, 接收该结果对应的 snapshot。
    * 父组件负责把 snapshot 灌回 useGenerateStore + 把 tab 切到 generate。
@@ -150,32 +86,70 @@ interface ResultGridProps {
    * (它已经是拆分产物了,再拆一次没有意义)。
    */
   onLayerSplit?: (imageUrl: string) => void
-}
-
-const UPLOAD_BADGE: Record<ResultUploadMeta['uploadStatus'], { cls: string; label: string; title: string }> = {
-  uploading: {
-    cls: 'bg-zinc-950/85 border border-cyberpunk-yellow/70 text-cyberpunk-yellow',
-    label: 'up…',
-    title: '正在异步上传到腾讯云 COS…',
-  },
-  uploaded: {
-    cls: 'bg-emerald-950/85 border border-emerald-600/70 text-emerald-300',
-    label: 'cos',
-    title: '当前显示的是 COS 持久化 URL',
-  },
-  failed: {
-    cls: 'bg-red-950/85 border border-red-600/70 text-red-300',
-    label: '!cos',
-    title: 'COS 转存失败,当前展示的是模型直出 URL(可能短期内会过期)',
-  },
+  /** × 移除一张结果(图层组整组移除)。不传时按钮隐藏。 */
+  onRemoveResult?: (id: string) => void
+  /** 失败卡「重试」。 */
+  onRetryRun?: (runId: string) => void
+  /** 失败卡 ×。 */
+  onDismissRun?: (runId: string) => void
+  /** RUN 卡「已用 / 预计」的预计值(秒),按模型给;不给就只显示已用。 */
+  expectedSecondsFor?: (modelKey: string) => number | undefined
+  /** 元数据行里模型的短名;不给就显示 modelKey。 */
+  modelLabelFor?: (modelKey: string) => string
 }
 
 type EditorType = 'angle' | 'light' | 'panorama' | 'director'
 
-export function ResultGrid({ urls, meta, onEditFromResult, onPreview, onLayerSplit }: ResultGridProps) {
+function formatElapsed(ms: number | undefined): string | undefined {
+  if (ms === undefined || !Number.isFinite(ms)) return undefined
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function joinMeta(parts: Array<string | undefined>): string | undefined {
+  const kept = parts.filter((p): p is string => !!p && p.length > 0)
+  return kept.length ? kept.join(' · ') : undefined
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard?.writeText(text)
+  } catch {
+    // 剪贴板不可用(测试环境 / 权限)时静默 —— 文案本身仍在卡上,hover 可见全文。
+  }
+}
+
+export function ResultGrid({
+  urls,
+  meta,
+  runs = [],
+  onEditFromResult,
+  onPreview,
+  onLayerSplit,
+  onRemoveResult,
+  onRetryRun,
+  onDismissRun,
+  expectedSecondsFor,
+  modelLabelFor,
+}: ResultGridProps) {
   const [editorState, setEditorState] = useState<{ url: string; type: EditorType } | null>(null)
   const [layerGroup, setLayerGroup] = useState<GridItem['group'] | null>(null)
-  const items = groupResultItems(urls, meta)
+  const items = useMemo(() => groupResultItems(urls, meta), [urls, meta])
+
+  // 结果卡新在前:按入库时刻,没有(老数据)就按下标。运行中 / 失败卡由 runs 的顺序
+  // (store 里已是新在前)决定,统一排在结果卡前面 —— 点「开始生成」的一瞬间 RUN 卡
+  // 就出现在结果区第一格。
+  const orderedItems = useMemo(
+    () =>
+      [...items].sort((a, b) => {
+        const ta = meta?.[a.index]?.createdAt ?? a.index
+        const tb = meta?.[b.index]?.createdAt ?? b.index
+        return tb - ta || b.index - a.index
+      }),
+    [items, meta],
+  )
+  const runningRuns = runs.filter((r) => r.status === 'running')
+  const failedRuns = runs.filter((r) => r.status === 'error')
+  const orderedRuns = [...runningRuns, ...failedRuns]
 
   // 注入 360 提示词 / 全景反推:追加到生成框 prompt 尾部。
   const injectPrompt = (p: string) => {
@@ -183,90 +157,112 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview, onLayerSpl
     setPrompt(prompt ? `${prompt}\n${p}` : p)
   }
 
-  if (urls.length === 0) {
+  if (urls.length === 0 && runs.length === 0) {
     return (
-      <div className="border-2 border-dashed border-zinc-800 bg-zinc-950/40 py-16 px-4 text-center">
+      <div className="st-hatch relative border-2 border-dashed border-zinc-800 px-4 py-12 text-center" data-testid="result-grid-empty">
+        <span aria-hidden className="st-tick st-tick-tl">+</span>
+        <span aria-hidden className="st-tick st-tick-tr">+</span>
+        <span aria-hidden className="st-tick st-tick-bl">+</span>
+        <span aria-hidden className="st-tick st-tick-br">+</span>
+        <span aria-hidden className="st-cross mx-auto mb-3.5 block text-zinc-500" />
         <div className="font-orbitron text-base uppercase tracking-wider text-zinc-400">
           生成的图片将在这里显示
         </div>
         <div className="mt-1 font-mono text-[11px] text-zinc-500">
           // 输入提示词,点"开始生成"后结果会在此处展示,点缩略图可放大预览
         </div>
+        <span className="absolute bottom-2 left-3 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">OUTPUT_SLOT · EMPTY</span>
       </div>
     )
   }
+
   return (
-    <div className="grid grid-cols-2 gap-4">
-      {items.map(({ index: i, group }) => {
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+      {orderedRuns.map((run, i) => {
+        const label = modelLabelFor?.(run.modelKey) ?? run.modelKey
+        const seq = urls.length + (orderedRuns.length - i) - 1
+        return (
+          <StatusCard
+            key={run.id}
+            data-testid={`run-card-${run.id}`}
+            index={seq}
+            status={run.status}
+            prompt={run.prompt || (run.overrides.layerDecomposition ? '图层分离' : '')}
+            startedAt={run.startedAt}
+            expectedSeconds={run.status === 'running' ? expectedSecondsFor?.(run.modelKey) : undefined}
+            error={run.error}
+            meta={joinMeta([label, run.ratio, run.resolution, run.status === 'running' ? '进行中' : undefined])}
+            onEdit={onEditFromResult ? () => onEditFromResult(run.snapshot) : undefined}
+            onRetry={run.status === 'error' && onRetryRun ? () => onRetryRun(run.id) : undefined}
+            onCopyError={run.status === 'error' && run.error ? () => void copyText(run.error!) : undefined}
+            onRemove={run.status === 'error' && onDismissRun ? () => onDismissRun(run.id) : undefined}
+          />
+        )
+      })}
+
+      {orderedItems.map(({ index: i, group }) => {
         const url = urls[i]
         const m = meta?.[i]
-        const badge = m ? UPLOAD_BADGE[m.uploadStatus] : null
         const snapshot = m?.snapshot
         const canEdit = !!(onEditFromResult && snapshot)
         // 图层组:整张卡片改成「进图层查看器」,而不是放大单张。放大一张透明图层
         // 对用户毫无意义,他要的是图层栈。
         const openGroup = group ? () => setLayerGroup(group) : undefined
         const activate = openGroup ?? (onPreview ? () => onPreview(i) : undefined)
+        const label = m?.modelKey ? (modelLabelFor?.(m.modelKey) ?? m.modelKey) : (snapshot?.modelKey ? (modelLabelFor?.(snapshot.modelKey) ?? snapshot.modelKey) : undefined)
+        const metaLine = group
+          ? joinMeta([label, '图层分离', `${group.length} 层`])
+          : joinMeta([label, snapshot?.ratio, m?.resolution, formatElapsed(m?.elapsedMs)])
+        const alt = group ? '图层分离底图' : `Result ${i + 1}`
+
         return (
-          <div
+          <StatusCard
             key={m?.id ?? `${i}-${url}`}
-            onClick={activate}
-            role={activate ? 'button' : undefined}
-            tabIndex={activate ? 0 : undefined}
-            onKeyDown={(e) => {
-              if (activate && (e.key === 'Enter' || e.key === ' ')) {
-                e.preventDefault()
-                activate()
-              }
-            }}
-            title={openGroup ? '点击查看图层' : activate ? '点击放大预览' : undefined}
-            className={`group relative bg-zinc-900 border-2 border-zinc-700 overflow-hidden ${
-              activate ? 'cursor-zoom-in hover:border-cyberpunk-yellow transition-colors' : ''
-            }`}
-          >
-            <ResultCell url={url} alt={group ? '图层分离底图' : `Result ${i + 1}`} localPath={m?.localPath} />
-            {group ? (
-              <span
-                className="absolute top-1 left-1 border border-cyberpunk-yellow/70 bg-zinc-950/85 px-1.5 py-px font-mono text-[10px] font-bold uppercase tracking-wider text-cyberpunk-yellow"
-                data-testid="layer-group-badge"
-              >
-                {`▤ ${group.length} 层`}
-              </span>
-            ) : (
-              <ImageEditToolbar
-                theme="default"
-                imageUrl={url}
-                onOpenEditor={(type) => setEditorState({ url, type })}
-                onInjectPrompt={injectPrompt}
-                onAddReference={(u) => addImageUrlToReferences('generate', u)}
-                onLayerSplit={onLayerSplit}
-              />
-            )}
-            {badge && (
-              <span
-                aria-label={badge.title}
-                title={m?.uploadError ? `${badge.title}: ${m.uploadError}` : badge.title}
-                className={`absolute bottom-1 left-1 px-1 py-px font-mono text-[9px] font-bold uppercase tracking-wider ${badge.cls}`}
-              >
-                {badge.label}
-              </span>
-            )}
-            {canEdit && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onEditFromResult!(snapshot!)
-                }}
-                title="把这张图的 prompt / 参考图 / 比例回灌到表单"
-                className="absolute top-1 right-1 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider bg-zinc-950/85 text-cyberpunk-yellow border border-cyberpunk-yellow/70 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cyberpunk-yellow hover:text-cyberpunk-black"
-              >
-                ↺ 重编辑
-              </button>
-            )}
-          </div>
+            data-testid={m ? `result-card-${m.id}` : undefined}
+            index={i}
+            status="done"
+            prompt={snapshot?.prompt ?? ''}
+            meta={metaLine}
+            media={<CosResultThumb url={url} alt={alt} localPath={m?.localPath} size={1024} />}
+            overlay={
+              <>
+                {group ? (
+                  <span
+                    className="absolute left-1 top-1 border border-cyberpunk-yellow/70 bg-zinc-950/85 px-1.5 py-px font-mono text-[10px] font-bold uppercase tracking-wider text-cyberpunk-yellow"
+                    data-testid="layer-group-badge"
+                  >
+                    {`▤ ${group.length} 层`}
+                  </span>
+                ) : (
+                  <ImageEditToolbar
+                    theme="default"
+                    imageUrl={url}
+                    onOpenEditor={(type) => setEditorState({ url, type })}
+                    onInjectPrompt={injectPrompt}
+                    onAddReference={(u) => addImageUrlToReferences('generate', u)}
+                    onLayerSplit={onLayerSplit}
+                  />
+                )}
+                <UploadBadge status={m?.uploadStatus} error={m?.uploadError} />
+                <DoneMarks />
+              </>
+            }
+            onOpen={activate}
+            onEdit={canEdit ? () => onEditFromResult!(snapshot!) : undefined}
+            editTitle={group ? '把这次拆分用的 prompt / 比例 / 参考图灌回输入框' : undefined}
+            onDownload={() => void downloadImage(url, buildDownloadFilename('generate', i, snapshot?.prompt ?? ''))}
+            onRemove={
+              onRemoveResult && m
+                ? () => {
+                    if (group) for (const member of group) onRemoveResult(member.meta.id)
+                    else onRemoveResult(m.id)
+                  }
+                : undefined
+            }
+          />
         )
       })}
+
       {editorState && (
         <ImageEditorModal
           key={editorState.type}
@@ -283,7 +279,7 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview, onLayerSpl
           layers={layerGroup.map((g) => ({
             id: g.meta.id,
             // 用 urls[i] 而不是 meta 里存的地址:上传完成后 store 会把它热切成
-            // cosUrl,拿 meta 自带的那份等于用一条会过期的临时链接。
+            // cosUrl,用 meta 自带的那份等于用一条会过期的临时链接。
             url: g.url,
             zIndex: g.meta.layer?.zIndex ?? 0,
             ...(g.meta.layer?.name ? { name: g.meta.layer.name } : {}),
