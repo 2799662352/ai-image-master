@@ -61,6 +61,8 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
                 key={ref.id}
                 id={ref.id}
                 src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
+                // thumbnailUri 打不开就退到原图,再退到本地副本(如有)。
+                fallbackSrcs={[ref.thumbnailUri ? toRenderableUri(ref.uri) : undefined, ...(ref.fallbackUris ?? []).map(toRenderableUri)]}
                 uri={ref.uri}
                 thumbnailUri={ref.thumbnailUri}
                 kind={kind}

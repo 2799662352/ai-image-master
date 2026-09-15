@@ -73,6 +73,20 @@ function bubbleThumbSrc(ref: AttachmentRef, kind: MediaKind): string {
 }
 
 /**
+ * Ordered fallbacks for the bubble when `bubbleThumbSrc` fails to load:
+ *  1. the bare `ref.uri` — 数据万象 may reject an object (or be unreachable
+ *     through a proxy) while the plain COS GET still works;
+ *  2. `ref.fallbackUris` — local copies saved by the generate tool, which
+ *     never expire and need no network. Duplicates of the primary are dropped
+ *     by `buildMediaCandidates` downstream.
+ */
+function bubbleFallbackSrcs(ref: AttachmentRef, kind: MediaKind): string[] {
+  const out = kind === 'image' ? [toRenderableUri(ref.uri)] : []
+  for (const uri of ref.fallbackUris ?? []) out.push(toRenderableUri(uri))
+  return out
+}
+
+/**
  * Standalone save-status banner rendered under the generated thumbnails as its
  * own eye-catching bubble (NOT plain text inside the grid). Three states:
  * pending (amber, pulsing), saved (emerald, shows the folder), failed (red,
@@ -227,6 +241,7 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
             <MediaThumbWithPoster
               key={ref.id}
               src={bubbleThumbSrc(ref, kind)}
+              fallbackSrcs={bubbleFallbackSrcs(ref, kind)}
               videoUri={ref.uri}
               thumbnailUri={ref.thumbnailUri}
               kind={kind}

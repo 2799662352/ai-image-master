@@ -15,7 +15,9 @@
  *  - 在 `onClick` 里串接 Lightbox / 文件预览 / 下载等具体行为
  */
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useResolvedMediaSrc } from './useResolvedMediaSrc'
+import { useMemo } from 'react'
+import { buildMediaCandidates } from './mediaFallback'
+import { useMediaCandidates } from './useMediaCandidates'
 
 export type MediaThumbnailKind = 'image' | 'video'
 
@@ -25,6 +27,12 @@ export interface MediaThumbnailProps {
    * 视频时若有更轻量的封面图,优先用 `posterSrc`;否则浏览器会自行抓首帧。
    */
   src: string
+  /**
+   * 主源失败后依次尝试的兜底源(如:去掉数据万象参数的裸 URL、本地副本
+   * `local-file:///…`)。见 `mediaFallback.ts` 顶部注释 —— 预签名 COS 链接会过期,
+   * 翻墙时 COS 可能不可达,本地副本是最稳的一层。全部失败才画占位卡。
+   */
+  fallbackSrcs?: ReadonlyArray<string | undefined>
   kind: MediaThumbnailKind
   /** 浏览器悬浮 tooltip + alt 文本 */
   name?: string
@@ -65,18 +73,55 @@ function PlayBadge() {
   )
 }
 
+/**
+ * 全链失败后的占位:不让浏览器画那个「裂图 + alt 文字」。同一尺寸、同一边框,
+ * 中间一枚断图图标 + 「重载」。`title` 说清两种最常见的原因,用户知道该等一等
+ * 还是该关代理。
+ */
+function BrokenPlaceholder({ name, onRetry }: { name?: string; onRetry: () => void }) {
+  return (
+    <span
+      data-testid="media-thumbnail-broken"
+      title={`${name ?? '缩略图'} 加载失败:链接已过期或网络不可达(开着代理时 COS 可能连不上)。点「重载」再试。`}
+      className="flex h-full w-full flex-col items-center justify-center gap-1 bg-zinc-900/70 text-zinc-500"
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M21 15V6a2 2 0 0 0-2-2H8M3 9v10a2 2 0 0 0 2 2h14a2 2 0 0 0 1.4-.6M3 3l18 18M9 9a2 2 0 1 0 0 .01M21 15l-5-5L5 21" />
+      </svg>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onRetry()
+        }}
+        className="rounded border border-zinc-700/70 px-1 font-mono text-[9px] uppercase leading-4 tracking-wider text-zinc-400 hover:border-cyan-400/50 hover:text-cyan-200"
+      >
+        重载
+      </button>
+    </span>
+  )
+}
+
 export function MediaThumbnail({
   src,
+  fallbackSrcs,
   kind,
   name,
   posterSrc,
   onClick,
   className,
 }: MediaThumbnailProps) {
-  const resolvedSrc = useResolvedMediaSrc(src, kind)
+  // 候选链按内容记忆:调用方通常每次 render 都传一个新数组。
+  const fallbackKey = (fallbackSrcs ?? []).join('\n')
+  const candidates = useMemo(
+    () => buildMediaCandidates(src, fallbackSrcs),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [src, fallbackKey],
+  )
   // `kind` is already 'image' | 'video' — pass through as the mime hint so
-  // the hook can disambiguate ambiguous extensions when the main-process
+  // the resolver can disambiguate ambiguous extensions when the main-process
   // mime probe returns application/octet-stream.
+  const { src: resolvedSrc, reloadKey, onError, exhausted, retry } = useMediaCandidates(candidates, kind)
 
   if (typeof src !== 'string' || src.length === 0) return null
 
@@ -115,14 +160,17 @@ export function MediaThumbnail({
         onKeyDown={keyHandler}
         className={containerClass}
       >
+        {exhausted ? <BrokenPlaceholder name={name} onRetry={retry} /> : null}
         {resolvedSrc ? (
           <video
+            key={reloadKey}
             src={resolvedSrc}
             poster={posterSrc}
             preload="metadata"
             muted
             playsInline
             controls={false}
+            onError={onError}
             onLoadedMetadata={(e) => {
               const v = e.currentTarget
               try {
@@ -137,7 +185,7 @@ export function MediaThumbnail({
             className="block h-full w-full object-cover"
           />
         ) : null}
-        <PlayBadge />
+        {exhausted ? null : <PlayBadge />}
       </div>
     )
   }
@@ -146,17 +194,23 @@ export function MediaThumbnail({
     <div
       {...ariaProps}
       title={name}
+      // 占位卡里有「重载」按钮文字;不显式给名字的话,role=button 的可访问名会
+      // 从内容算成「重载」。
+      aria-label={name}
       data-media-kind="image"
       onClick={activate}
       onKeyDown={keyHandler}
       className={containerClass}
     >
+      {exhausted ? <BrokenPlaceholder name={name} onRetry={retry} /> : null}
       {resolvedSrc ? (
         <img
+          key={reloadKey}
           src={resolvedSrc}
           alt={name ?? ''}
           loading="lazy"
           decoding="async"
+          onError={onError}
           className="block h-full w-full object-cover"
         />
       ) : null}

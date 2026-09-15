@@ -8,6 +8,8 @@ interface MediaTileProps {
   id: string
   /** Element src (thumbnail for images, full url for videos). */
   src: string
+  /** Ordered fallbacks when `src` fails (raw uri without CI params, local copies). */
+  fallbackSrcs?: ReadonlyArray<string | undefined>
   /** Original media uri — what 下载 saves and what the alpha probe reads. */
   uri: string
   thumbnailUri?: string
@@ -58,6 +60,7 @@ export function MediaTile(props: MediaTileProps): JSX.Element {
     >
       <MediaThumbWithPoster
         src={props.src}
+        fallbackSrcs={props.fallbackSrcs}
         videoUri={props.uri}
         thumbnailUri={props.thumbnailUri}
         kind={props.kind}

@@ -84,6 +84,8 @@ export function useResolvedVideoPoster(
 export interface MediaThumbWithPosterProps {
   /** Element src (caller-decided): full video URL for videos, thumbnail for images. */
   src: string
+  /** Ordered fallbacks tried when `src` fails to load (see MediaThumbnail). */
+  fallbackSrcs?: ReadonlyArray<string | undefined>
   /** The artifact's underlying video URL — drives poster generation/caching. */
   videoUri: string
   /** An already-persisted still, if the artifact carries one. */
@@ -101,6 +103,7 @@ export interface MediaThumbWithPosterProps {
  */
 export function MediaThumbWithPoster({
   src,
+  fallbackSrcs,
   videoUri,
   thumbnailUri,
   kind,
@@ -112,6 +115,7 @@ export function MediaThumbWithPoster({
   return (
     <MediaThumbnail
       src={src}
+      fallbackSrcs={fallbackSrcs}
       kind={kind}
       name={name}
       posterSrc={posterSrc}

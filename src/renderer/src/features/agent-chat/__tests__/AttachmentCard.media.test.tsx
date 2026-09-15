@@ -16,10 +16,12 @@ import { useFileExplorerStore } from '../../file-explorer/store'
 import { useAgentChatStore } from '../store'
 import { AttachmentCard } from '../cards/AttachmentCard'
 
-// jsdom has no electronAPI, so the real useResolvedMediaSrc (which reads file
-// bytes over IPC and returns a blob: URL) resolves to null and MediaThumbnail
-// never renders its inner <img>/<video>. Pass the src through — these tests
-// assert kind classification and click behaviour, not the IPC byte plumbing.
+// jsdom has no electronAPI, so the real resolver (which reads file bytes over
+// IPC and returns a blob: URL) resolves to null and MediaThumbnail never renders
+// its inner <img>/<video>. Pass the src through — these tests assert kind
+// classification and click behaviour, not the IPC byte plumbing.
+// `toOsPathIfLocal → null` makes the candidate chain treat `local-file://` as a
+// passthrough source (painted synchronously) instead of an IPC read.
 vi.mock('../../../components/shared/media/useResolvedMediaSrc', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../../components/shared/media/useResolvedMediaSrc')>()
@@ -27,6 +29,7 @@ vi.mock('../../../components/shared/media/useResolvedMediaSrc', async (importOri
     ...actual,
     useResolvedMediaSrc: (src: string) =>
       typeof src === 'string' && src.length > 0 ? src : null,
+    toOsPathIfLocal: () => null,
   }
 })
 

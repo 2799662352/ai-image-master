@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ResultUploadMeta } from '../../stores/useGenerateStore'
 import { useGenerateStore } from '../../stores/useGenerateStore'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
-import { useImageLoadRetry } from '../../hooks/useImageLoadRetry'
+import { buildMediaCandidates } from '../../components/shared/media/mediaFallback'
+import { useMediaCandidates } from '../../components/shared/media/useMediaCandidates'
+import { toRenderableUri } from '../../features/file-explorer/uri'
 import { appendCosThumb } from '../../utils/cosThumb'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
@@ -55,28 +57,50 @@ export function groupResultItems(urls: string[], meta?: ResultUploadMeta[]): Gri
 }
 
 /**
- * 单格图片 —— 把 `<img>` 抽成独立组件,只为了能在循环里安全调 useDisplaySrc:
+ * 单格图片 —— 把 `<img>` 抽成独立组件,只为了能在循环里安全调 hook:
  * 钩子不能在 .map() 回调里直接调。每个 cell 自己持有它那一张的 blob URL 生命周期,
  * 切换/卸载时自动 revoke,互不干扰。
+ *
+ * 候选链(见 `components/shared/media/mediaFallback.ts`):
+ *   ① COS 源经数据万象实时缩成 1024px WebP(2 列布局卡片较宽,1024 保证 retina 清晰)
+ *   ② 裸 URL —— 数据万象处理失败 / 代理下 CI 不可达时,原对象 GET 往往还通
+ *   ③ 本地副本 `localPath` —— 主进程上传前已落盘,不经网络、永不过期
+ * 过期的预签名直出链接在整理候选时直接丢掉(必 403)。blob:/data: 原样透传;
+ * data: 再经 useDisplaySrc 换成 blob: 以免主线程解码大 base64。
+ * 点击放大的 lightbox 由父组件用原始 resultUrls 打开, 永远是无损原图。
  */
-function ResultCell({ url, alt }: { url: string; alt: string }) {
-  // 网格缩略图: COS 源经数据万象实时缩成 1024px WebP(2 列布局卡片较宽,
-  // 1024 保证 retina 清晰)。blob:/临时 http 原样透传。点击放大的 lightbox
-  // 由父组件用原始 resultUrls 打开, 永远是无损原图。
-  const imgSrc = useDisplaySrc(appendCosThumb(url, 1024))
-  const { reloadKey, onError, failed } = useImageLoadRetry(imgSrc)
+function ResultCell({ url, alt, localPath }: { url: string; alt: string; localPath?: string }) {
+  const candidates = useMemo(
+    () => buildMediaCandidates(appendCosThumb(url, 1024), [url, localPath ? toRenderableUri(localPath) : undefined]),
+    [url, localPath],
+  )
+  const { src, reloadKey, onError, exhausted, retry } = useMediaCandidates(candidates, 'image', { thumbSize: 1024 })
+  const imgSrc = useDisplaySrc(src ?? undefined)
 
-  if (failed) {
+  if (exhausted) {
     return (
       <div
         role="img"
         aria-label={`${alt}（加载失败）`}
-        className="flex aspect-square w-full items-center justify-center bg-zinc-900 text-[11px] text-zinc-500"
+        title="链接已过期或网络不可达(开着代理时 COS 可能连不上);本地副本也没读到。"
+        className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-zinc-900 text-[11px] text-zinc-500"
       >
-        图片加载失败
+        <span>图片加载失败</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            retry()
+          }}
+          className="border border-zinc-700 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300 hover:border-cyberpunk-yellow hover:text-cyberpunk-yellow"
+        >
+          重载
+        </button>
       </div>
     )
   }
+
+  if (!imgSrc) return <div aria-hidden className="aspect-square w-full animate-pulse bg-zinc-900" />
 
   return (
     <img
@@ -194,7 +218,7 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview, onLayerSpl
               activate ? 'cursor-zoom-in hover:border-cyberpunk-yellow transition-colors' : ''
             }`}
           >
-            <ResultCell url={url} alt={group ? '图层分离底图' : `Result ${i + 1}`} />
+            <ResultCell url={url} alt={group ? '图层分离底图' : `Result ${i + 1}`} localPath={m?.localPath} />
             {group ? (
               <span
                 className="absolute top-1 left-1 border border-cyberpunk-yellow/70 bg-zinc-950/85 px-1.5 py-px font-mono text-[10px] font-bold uppercase tracking-wider text-cyberpunk-yellow"
