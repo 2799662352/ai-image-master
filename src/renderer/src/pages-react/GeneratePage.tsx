@@ -1,5 +1,7 @@
 import { useRef, useMemo, useCallback, useState } from 'react'
+import { ImagePlus, Sparkles } from 'lucide-react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
+import { parseExpectedSeconds } from '../components/shared/result-cards/useElapsedSeconds'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import { useApi } from '../hooks/useService'
 import type { GenerateSnapshot } from '../stores/useGenerateStore'
@@ -33,6 +35,7 @@ export default function GeneratePage() {
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
   const resultMeta = useGenerateStore((s) => s.resultMeta)
+  const runs = useGenerateStore((s) => s.runs)
   const referenceImages = useGenerateStore((s) => s.referenceImages)
   const splitDraft = useGenerateStore((s) => s.splitDraft)
 
@@ -48,6 +51,9 @@ export default function GeneratePage() {
     clearReferenceImages,
     syncReferenceImagesForModel,
     clearResults,
+    removeResult,
+    dismissRun,
+    retryRun,
     generate,
     restoreForEdit,
     enterSplitMode,
@@ -57,6 +63,14 @@ export default function GeneratePage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
+  // 主按钮右侧「~20S」与 RUN 卡「/ ~20s」共用:模型目录里的 time 字段('20s')。
+  const expectedSecondsFor = useCallback(
+    (modelKey: string) => parseExpectedSeconds(models[modelKey]?.time as string | number | undefined),
+    [models],
+  )
+  const modelLabelFor = useCallback((modelKey: string) => models[modelKey]?.name ?? modelKey, [models])
+  const expectedLabel = currentModel?.time ? `~${String(currentModel.time).replace(/^~/, '').toUpperCase()}` : null
+  const failedRunCount = runs.filter((r) => r.status === 'error').length
   // gemini 原生端点(nano / 大香蕉全系)= base64 内联组:参考图以 inline_data 发送。
   const wantsInlineBase64 = currentModel?.apiType === 'gemini-native'
 
@@ -198,14 +212,39 @@ export default function GeneratePage() {
     cur.setPrompt(cur.prompt + sep + text)
   }, [])
 
+  /** 失败卡「重试」:同参重发,结果走 toast 与主按钮一致。 */
+  const handleRetryRun = useCallback(
+    async (runId: string) => {
+      const { added, error: failure } = await retryRun(api, runId)
+      if (failure) addToast({ message: failure, type: 'error' })
+      else if (added > 0) addToast({ message: `重试成功 (+${added} 张)`, type: 'success' })
+    },
+    [api, retryRun, addToast],
+  )
+
+  const canSubmit = splitDraft ? true : !!prompt.trim() && !!currentModelKey
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
+      {/* 设计稿 M4 · 1:emoji → 黄方块线性图标;标题上加 mono 小标;模型名改描边 chip */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">🎨 AI 图片生成</h1>
-        {currentModel && (
-          <span className="text-sm text-zinc-500">
-            当前模型: <span className="text-cyberpunk-yellow">{currentModel.name}</span>
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 items-center justify-center bg-cyberpunk-yellow text-cyberpunk-black" aria-hidden>
+            <ImagePlus size={17} strokeWidth={2.25} />
           </span>
+          <div className="leading-none">
+            <div className="font-mono text-[9px] uppercase tracking-[0.24em] text-zinc-500">// IMG_GEN</div>
+            <h1 className="mt-1 font-orbitron text-[22px] font-bold leading-none text-cyberpunk-yellow">AI 图片生成</h1>
+          </div>
+        </div>
+        {currentModel && (
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">当前模型</span>
+            <span className="flex h-7 items-center gap-1.5 border border-cyberpunk-yellow/60 bg-cyberpunk-yellow/10 px-2.5 font-mono text-[12px] font-semibold text-cyberpunk-yellow">
+              <Sparkles size={12} aria-hidden />
+              {currentModel.name}
+            </span>
+          </div>
         )}
       </div>
 
@@ -219,16 +258,32 @@ export default function GeneratePage() {
         splitArmed={!!splitDraft}
       />
 
+      {/* M4 · 4:输入框同尺寸同色,只加四角角标 + 右下 mono 计数 / 快捷键提示 */}
       <div className="relative">
+        <span aria-hidden className="st-tick st-tick-tl">+</span>
+        <span aria-hidden className="st-tick st-tick-tr">+</span>
+        <span aria-hidden className="st-tick st-tick-bl">+</span>
+        <span aria-hidden className="st-tick st-tick-br">+</span>
         <textarea
           ref={textareaRef}
           value={prompt}
           onChange={ac.handleChange}
-          onKeyDown={ac.handleKeyDown}
+          onKeyDown={(e) => {
+            // 提示里写了 CTRL+ENTER,就得真能发。补全弹窗打开时让它先处理(它会 preventDefault)。
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !ac.visible) {
+              e.preventDefault()
+              if (canSubmit) void handleGenerate()
+              return
+            }
+            ac.handleKeyDown(e)
+          }}
           placeholder="描述你想要生成的图片... 输入 @ 引用参考图"
           rows={4}
           className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none transition-[height] duration-100"
         />
+        <span className="pointer-events-none absolute bottom-3 right-4 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600" data-testid="prompt-counter">
+          {prompt.length} 字 · CTRL+ENTER
+        </span>
         <TokenAutocomplete
           visible={ac.visible}
           suggestions={ac.suggestions}
@@ -267,21 +322,31 @@ export default function GeneratePage() {
         preferBase64={wantsInlineBase64}
       />
 
+      {/* M4 · 7:主按钮同尺寸同色,加角标 + 右侧 mono 快捷键 / 预计耗时 */}
       <button
         onClick={handleGenerate}
         // 拆图状态不看 prompt(空 prompt = 自动全拆),也不看当前模型(渠道钉死 SD5 Pro)。
-        disabled={splitDraft ? false : !prompt.trim() || !currentModelKey}
-        className={`w-full py-3 font-bold text-lg uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50 ${
+        disabled={!canSubmit}
+        className={`relative w-full py-3 font-bold text-lg uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50 ${
           splitDraft
             ? 'bg-amber-400 text-cyberpunk-black'
             : 'bg-cyberpunk-yellow text-cyberpunk-black'
         }`}
       >
+        <span aria-hidden className="st-tick st-tick-tl text-black/45">+</span>
+        <span aria-hidden className="st-tick st-tick-tr text-black/45">+</span>
+        <span aria-hidden className="st-tick st-tick-bl text-black/45">+</span>
+        <span aria-hidden className="st-tick st-tick-br text-black/45">+</span>
         {splitDraft
           ? '拆图 // 图层分离'
           : generating
             ? `加入队列 (运行中 × ${inFlightCount})`
             : '开始生成'}
+        {!splitDraft && (
+          <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-black/60">
+            CTRL+ENTER{expectedLabel ? ` · ${expectedLabel}` : ''}
+          </span>
+        )}
       </button>
 
       {/* 按下去之前先说清这次花谁的钱。位置照 Cursor / Codex —— 两家都把用量放在
@@ -289,10 +354,12 @@ export default function GeneratePage() {
           「想看时看得到」,这一条解决「按下去之前知道会发生什么」。 */}
       <BillingHintBar />
 
-      {resultUrls.length > 0 && (
+      {(resultUrls.length > 0 || runs.length > 0) && (
         <div className="flex items-center justify-between border-t-2 border-zinc-800 pt-3">
-          <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider">
-            结果 · {resultUrls.length} 张{generating ? ` · 还有 ${inFlightCount} 个在生成` : ''}
+          <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider" data-testid="result-summary">
+            结果 · {resultUrls.length} 张
+            {generating ? ` · 还有 ${inFlightCount} 个在生成` : ''}
+            {failedRunCount > 0 ? ` · ${failedRunCount} 个失败` : ''}
           </span>
           <button
             type="button"
@@ -304,12 +371,19 @@ export default function GeneratePage() {
         </div>
       )}
 
+      {/* M5 · 状态卡族:RUN / ERR / OK 同一张卡,运行中 → 失败 → 完成(新在前) */}
       <ResultGrid
         urls={resultUrls}
         meta={resultMeta}
+        runs={runs}
         onEditFromResult={handleEditFromResult}
         onPreview={(index) => setLightbox({ urls: resultUrls, index })}
         onLayerSplit={handleLayerSplit}
+        onRemoveResult={removeResult}
+        onRetryRun={(id) => void handleRetryRun(id)}
+        onDismissRun={dismissRun}
+        expectedSecondsFor={expectedSecondsFor}
+        modelLabelFor={modelLabelFor}
       />
 
       {/* ===== 共享预览 lightbox(←/→ 左右切换,结果区/参考图共用) ===== */}
