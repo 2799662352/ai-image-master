@@ -148,6 +148,32 @@ export function renumberComments(comments: ReadonlyArray<ImageComment>): ImageCo
  * 附加指令文本。只写用户真正做过的事:没画就没有「标注」行,没评论就没有编号列表,
  * 全空返回 '' 让调用方知道没东西可发。
  */
+/**
+ * 擦除(mask 局部重绘)绑定 GPT Image 2.5:目前只有 2.5 家族有这个能力,分两条线 ——
+ * apiyi 官转(flare / sunburst)与腾讯 og-image(og-v2.5-f / -s,走平台额度)。
+ * 与 `ApiService.MASK_INPAINT_MODELS` 的交集就是这四个;gpt-image-2 / vip 虽也吃 mask,
+ * 但灯箱刻意不派给它们(用户拍板「擦除绑 2.5」)。
+ */
+export const ERASE_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-flare',
+  'custom-model-og-v2.5-s',
+  'custom-model-og-v2.5-f',
+])
+
+export const DEFAULT_ERASE_MODEL = 'gpt-image-2.5-sunburst'
+
+/**
+ * 擦除用哪条 2.5:用户在 composer 选的渠道若本身就是 2.5(官转或腾讯线),就用它 ——
+ * 选了腾讯 2.5 的人是为了走平台额度 / 便宜,擦除不该悄悄跳回 apiyi 官转;其它渠道
+ * (腾讯 image2 / 万相 / nano…)没有 mask,回落到画质优先的官转 sunburst。
+ */
+export function resolveEraseModel(selectedChannel: unknown): string {
+  return typeof selectedChannel === 'string' && ERASE_MODELS.has(selectedChannel)
+    ? selectedChannel
+    : DEFAULT_ERASE_MODEL
+}
+
 export function buildImageFeedbackInstruction(input: {
   imageName: string
   comments: ReadonlyArray<ImageComment>
@@ -158,6 +184,8 @@ export function buildImageFeedbackInstruction(input: {
    * 升级为 generate_image 的 maskImage / referenceImages 调用说明;没给(画布不可用)则回落。
    */
   maskName?: string
+  /** 擦除指令里点名的渠道,由 resolveEraseModel 按用户当前渠道算出;缺省 = 官转 sunburst。 */
+  eraseModel?: string
 }): string {
   const byColor = annotationCountsByColor(input.strokes)
   const annotateCount = byColor.reduce((sum, [, n]) => sum + n, 0)
@@ -183,11 +211,17 @@ export function buildImageFeedbackInstruction(input: {
   if (eraseCount && input.maskName) {
     // 与 OpenAI /v1/images/edits `mask` 契约一致:带 alpha 的 PNG,alpha=0 = 可重绘;尺寸同原图;
     // 只作用于 image[0];官方口径 prompt-guided —— 提示词先写唯一改动,再列保留项。
-    // 擦除绑定 GPT Image 2.5(改图用 sunburst,要快用 flare):目前只有这两档有 mask 局部重绘能力。
+    // 擦除绑定 GPT Image 2.5:官转 flare / sunburst 或腾讯 og-v2.5(见 ERASE_MODELS),
+    // 用户当前选的是哪条 2.5 就点名哪条,别的渠道回落官转 sunburst。
+    const eraseModel = input.eraseModel ?? DEFAULT_ERASE_MODEL
+    const modelHint =
+      eraseModel === DEFAULT_ERASE_MODEL
+        ? '画质优先;赶时间可用 gpt-image-2.5-flare'
+        : '用户当前选中的 2.5 渠道,同样支持 mask;别换成别的渠道'
     lines.push(
       `擦除(局部重绘):附件 ${input.maskName} 是 alpha 遮罩(透明区域 = 要重绘,尺寸与原图一致)。` +
         `请调用 generate_image:referenceImages=[原图 ${input.imageName}],maskImage=${input.maskName},` +
-        `model=gpt-image-2.5-sunburst(画质优先;赶时间可用 gpt-image-2.5-flare);` +
+        `model=${eraseModel}(${modelHint});` +
         `prompt 先写「只改透明区域:把这 ${eraseCount} 处的内容抹掉并按周围画面自然补全」,再列出必须保留不变的部分(构图、光线、遮罩外的所有主体)。`,
     )
   } else if (eraseCount) {

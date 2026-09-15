@@ -351,8 +351,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
       'custom-model-og-v2 = TokenHub og-image — 另一条腾讯渠道，更快(~20s)、便宜近 6 倍、可出多张, ' +
       'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度可用; ' +
-      'no transparentBackground / no maskImage), ' +
-      'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same limits), ' +
+      'same 2.5 abilities — transparentBackground / maskImage / xhigh,max — over the 腾讯 line), ' +
+      'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
@@ -433,8 +433,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe(
           'Render on a TRANSPARENT background (alpha PNG) — for 透明底 / 抠图 / 贴纸 / logo / 素材 / ' +
-          '"no background" requests. Only honored by model="gpt-image-2.5-flare" or ' +
-          '"gpt-image-2.5-sunburst" (pass one of them explicitly); every other channel ignores it ' +
+          '"no background" requests. Only honored by the GPT Image 2.5 channels: model="gpt-image-2.5-flare" / ' +
+          '"gpt-image-2.5-sunburst" (OpenAI 官转) or "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 line, ' +
+          '平台额度) — pass one explicitly; every other channel ignores it ' +
           'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
         ),
       count: z
@@ -489,9 +490,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'the region the model may repaint, opaque pixels are preserved as much as possible. It must ' +
           'have EXACTLY the same pixel dimensions as the first `referenceImages` entry (the mask applies ' +
           'to image[0] only), under 4MB. REQUIRES `referenceImages` with the original image first. Only ' +
-          'honored by model="gpt-image-2", "gpt-image-2.5-flare" or "gpt-image-2.5-sunburst" (pass one ' +
-          'explicitly); -all / 腾讯 (including custom-model-og-v2.5-f / -s) / 万相 / nano reject it up front ' +
-          'rather than repainting the whole ' +
+          'honored by model="gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst" (OpenAI 官转) or ' +
+          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 2.5 line, 平台额度) — pass one explicitly; ' +
+          '-all / 腾讯 image2 & image2 fast / 万相 / nano reject it up front rather than repainting the whole ' +
           'image. Masking is prompt-guided, not pixel-exact: the prompt must name the ONE change inside ' +
           'the transparent region first, then list everything that must stay unchanged (composition, ' +
           'lighting, subjects outside the mask). When the user attached a `*.mask.png` next to an image, ' +
@@ -637,7 +638,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe(
           'Transparent (alpha PNG) background shared by all images — 透明底 / 贴纸 / 素材 sets. Only ' +
-          'honored on model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst"; other channels ignore it.',
+          'honored on the GPT Image 2.5 channels (model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" or 腾讯 ' +
+          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s"); other channels ignore it.',
         ),
       referenceImages: z
         .array(z.string())

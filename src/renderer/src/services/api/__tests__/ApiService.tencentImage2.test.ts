@@ -439,12 +439,13 @@ describe('ApiService custom-model-og-v2', () => {
 
 /**
  * 同一条 og-image 渠道上的 GPT Image 2.5 Flare / Sunburst(`custom-model-og-v2.5-f` / `-s`,
- * 2026-09-15 测试网关上架,价目表倍率 5 / 补全 1,与 og-v2 同价)。
+ * 2026-09-15 上架,价目表倍率 5 / 补全 1,与 og-v2 同价)。
  *
  * 线上协议照抄 og-v2(腾讯 JSON 改图、logo_add、原生 n),清晰度换成 2.5 的五档梯子。
- * **不**声明透明底与 mask:那两样只在 apiyi 官转的 multipart 契约上验过,腾讯中转
- * 有没有透传不知道 —— 这里把「不外发 / 早失败」钉住,免得 UI 承诺一个上游可能
- * 静默丢掉的参数。
+ * 透明底与 mask 都开:网关 `tokenhubog` 适配器(new-api relay/channel/tokenhubog/image.go)
+ * 在 JSON `/edits` 上收 `mask:{image_url}`(URL 或 base64)并原样透传 `background`,
+ * 用户 2026-09-15 实测两者可用。所以这里钉的是**JSON 字段**形态 —— 不是官转那种
+ * multipart 文件;走错形态上游会静默按整图重绘。
  */
 describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService %s(腾讯 2.5)', (id) => {
   beforeEach(() => {
@@ -487,11 +488,15 @@ describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService 
     for (const q of cfg.qualities ?? []) expect(q.description).not.toMatch(/\$/)
     // 档位对照文案保留,用户仍能看出「高 = 2 代中」
     expect(cfg.qualities?.find((q) => q.key === 'high')?.description).toContain('2代中')
-    expect(cfg.capabilities).toMatchObject({ maxOutputs: 4, nativeBatch: true, qualityControl: true })
-    expect(cfg.capabilities?.transparentBackgroundControl).toBeUndefined()
+    expect(cfg.capabilities).toMatchObject({
+      maxOutputs: 4,
+      nativeBatch: true,
+      qualityControl: true,
+      transparentBackgroundControl: true,
+    })
   })
 
-  it('文生图:size + xhigh/max 透传、原生 n、关水印;透明底开关不外发 background', async () => {
+  it('文生图:size + xhigh/max 透传、原生 n、关水印;透明底开关外发 background=transparent', async () => {
     const service = await makeService()
     const cfg = service.getModelConfig(id)!
     const captured = captureFetch()
@@ -511,11 +516,35 @@ describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService 
 
     expect(captured.url).toBe(cfg.baseURL)
     const body = JSON.parse(captured.init!.body as string)
-    expect(body).toMatchObject({ model: id, size: '2048x1152', quality: 'xhigh', n: 3, extra_body: { logo_add: 0 } })
-    expect(body).not.toHaveProperty('background')
+    expect(body).toMatchObject({
+      model: id,
+      size: '2048x1152',
+      quality: 'xhigh',
+      n: 3,
+      background: 'transparent',
+      output_format: 'png',
+      extra_body: { logo_add: 0 },
+    })
   })
 
-  it('改图:走腾讯 JSON images:[{image_url}],quality=max 透传,n 固定 1', async () => {
+  it('透明底开关没开就不发 background(与官转同一裁决:能力位 + 调用方都要)', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: id,
+      ratio: '1:1',
+      resolution: '1K',
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+    expect(JSON.parse(captured.init!.body as string)).not.toHaveProperty('background')
+  })
+
+  it('改图:走腾讯 JSON images:[{image_url}],quality=max 透传,n 固定 1,不带 mask 就没有 mask 字段', async () => {
     const service = await makeService()
     const cfg = service.getModelConfig(id)!
     const captured = captureFetch()
@@ -538,14 +567,106 @@ describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService 
     const body = JSON.parse(captured.init!.body as string)
     expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
     expect(body).toMatchObject({ quality: 'max', n: 1, extra_body: { logo_add: 0 } })
+    expect(body).not.toHaveProperty('mask')
+    expect(body).not.toHaveProperty('background')
   })
 
-  it('mask 局部重绘早失败:腾讯中转没有 mask 字段,不能静默重画整张', async () => {
+  /**
+   * 擦除(灯箱 mask)在腾讯线上的形态:JSON `mask: { image_url }`,与 images[] 同形,
+   * 不是 multipart 文件 —— 网关 normalizeMask 只认对象或裸字符串,文件形态在 JSON 链路
+   * 上无从表达。同一请求里的透明底也一起进 JSON。
+   */
+  it('改图带 mask:JSON mask:{image_url} 对象(URL 原样),background 同行外发,仍是 JSON 不是 multipart', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '只改透明区域:抹掉水杯',
+      model: id,
+      ratio: '1:1',
+      resolution: '1K',
+      quality: 'high',
+      transparentBackground: true,
+      referenceImages: ['https://cos.example.com/a.png'],
+      maskImage: 'https://cos.example.com/a.mask.png',
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toBe(cfg.editURL)
+    expect(captured.init!.headers).toMatchObject({ 'Content-Type': 'application/json' })
+    expect(captured.init!.body).toEqual(expect.any(String))
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
+    expect(body.mask).toEqual({ image_url: 'https://cos.example.com/a.mask.png' })
+    expect(body).toMatchObject({ quality: 'high', n: 1, background: 'transparent', extra_body: { logo_add: 0 } })
+  })
+
+  it('mask 是 base64 时归一成 data URI 放进 mask.image_url(与参考图同规则)', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+    const rawBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+    await (service as any).makeApiRequest({
+      prompt: '抹掉这块',
+      model: id,
+      referenceImages: ['https://cos.example.com/a.png'],
+      maskImage: rawBase64,
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body.mask).toEqual({ image_url: `data:image/png;base64,${rawBase64}` })
+  })
+
+  it('mask 没配原图仍然早失败(遮罩只作用于 image[0])', async () => {
     const service = await makeService()
     const cfg = service.getModelConfig(id)!
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      (service as any).makeApiRequest({
+        prompt: '抹掉这块',
+        model: id,
+        maskImage: 'https://cos.example.com/a.mask.png',
+        count: 1,
+        modelConfig: cfg,
+        site,
+        apiKey: 'test-key',
+      }),
+    ).rejects.toThrow(/mask 遮罩需要配合原图/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
 
+/**
+ * mask 只放行 MASK_INPAINT_MODELS:同一条腾讯 JSON 协议上的 og-v2(gpt-image-2 上游)
+ * 与 gt(image2)**不**收 mask —— 没实测过、灯箱擦除也只绑 2.5。传了要在发请求前失败,
+ * 而不是让上游按整图重绘。
+ */
+describe('ApiService mask 门:腾讯 og-v2 / image2 仍早失败', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each(['custom-model-og-v2', 'custom-imagemodel-gt'])('%s 带 maskImage 直接拒,不发请求', async (id) => {
+    const { ApiService, MASK_INPAINT_MODELS } = await import('../ApiService')
+    expect(MASK_INPAINT_MODELS.has(id)).toBe(false)
+    const service = new ApiService()
+    ;(service as any).apiKey = 'test-key'
+    const cfg = service.getModelConfig(id)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
     await expect(
       (service as any).makeApiRequest({
         prompt: '抹掉这块',
@@ -554,10 +675,24 @@ describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService 
         maskImage: 'https://cos.example.com/a.mask.png',
         count: 1,
         modelConfig: cfg,
-        site,
+        site: { authType: 'bearer' } as any,
         apiKey: 'test-key',
       }),
-    ).rejects.toThrow(/mask.*2\.5 flare/)
+    ).rejects.toThrow(/mask.*腾讯 2\.5/)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('MASK_INPAINT_MODELS 正好是官转 / vip / 2.5 四条 + 腾讯 2.5 两条', async () => {
+    const { MASK_INPAINT_MODELS } = await import('../ApiService')
+    expect([...MASK_INPAINT_MODELS].sort()).toEqual(
+      [
+        'gpt-image-2',
+        'gpt-image-2-vip',
+        'gpt-image-2.5-flare',
+        'gpt-image-2.5-sunburst',
+        'custom-model-og-v2.5-f',
+        'custom-model-og-v2.5-s',
+      ].sort(),
+    )
   })
 })
