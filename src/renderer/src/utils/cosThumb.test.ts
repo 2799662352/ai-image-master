@@ -43,6 +43,16 @@ describe('appendCosThumb', () => {
     expect(appendCosThumb('local-file:///D%3A/imgs/a.png')).toBe('local-file:///D%3A/imgs/a.png')
   })
 
+  it('never appends imageMogr2 to a non-image object key — 数据万象 would return the whole file', () => {
+    const video = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/2026/x.mp4'
+    expect(appendCosThumb(video)).toBe(video)
+    const yml = 'https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml'
+    expect(appendCosThumb(yml)).toBe(yml)
+    // Extension-less keys stay eligible (ignore-error covers the odd non-image).
+    const bare = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/2026/abc'
+    expect(appendCosThumb(bare)).toContain('?imageMogr2/')
+  })
+
   it('does not double-process a URL that already carries a query', () => {
     const already = `${COS}?imageMogr2/thumbnail/100x100`
     expect(appendCosThumb(already)).toBe(already)
