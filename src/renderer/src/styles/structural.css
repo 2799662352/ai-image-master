@@ -1,0 +1,88 @@
+/**
+ * structural.css — 主界面「结构语言 v1」的几个原子(见 .superdesign/design-system.md §9)。
+ *
+ * 借自 Marathon UI 的三样东西:斜纹面(空槽 / 状态底)、角标(一级容器四角的 +)、
+ * 十字(空槽中心的靶心)。全部是纯装饰,不参与布局:角标 pointer-events:none,
+ * 斜纹只是 background。颜色跟随 currentColor 或写死的黄 / 红两档,别再加第三档。
+ *
+ * 命名前缀 `st-`,避免与 Tailwind / donor 主题撞名。
+ */
+
+/* 斜纹面 —— 灰(空态 / 等待)、黄(运行中)、红(失败) */
+.st-hatch {
+  background-color: #141416;
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.055) 0 1px, transparent 1px 8px);
+}
+.st-hatch-y {
+  background-color: #1a1908;
+  background-image: repeating-linear-gradient(135deg, rgba(252, 227, 0, 0.16) 0 1px, transparent 1px 8px);
+}
+.st-hatch-r {
+  background-color: #1b0c0c;
+  background-image: repeating-linear-gradient(135deg, rgba(220, 38, 38, 0.22) 0 1px, transparent 1px 8px);
+}
+
+/* 扫描线 —— 叠在完成图上方的一层极淡横纹,让图看起来像屏幕而不是贴图 */
+.st-scan {
+  background-image: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+}
+
+/* 角标 —— 容器四角的等宽 "+";容器需要 position:relative */
+.st-tick {
+  position: absolute;
+  font-family: ui-monospace, 'JetBrains Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1;
+  color: #52525b;
+  pointer-events: none;
+  user-select: none;
+}
+.st-tick-tl { top: 4px; left: 5px; }
+.st-tick-tr { top: 4px; right: 5px; }
+.st-tick-bl { bottom: 4px; left: 5px; }
+.st-tick-br { bottom: 4px; right: 5px; }
+
+/* 十字 —— 空槽中心的靶心,尺寸由 width/height 决定,颜色随 currentColor */
+.st-cross {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 34px;
+}
+.st-cross::before,
+.st-cross::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+.st-cross::before {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+.st-cross::after {
+  top: 50%;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+
+/* 转圈 —— 运行中卡片的 spinner */
+@keyframes st-spin {
+  to { transform: rotate(360deg); }
+}
+.st-spin {
+  animation: st-spin 1s linear infinite;
+}
+
+/* 运行中进度条不知道总时长时的来回扫 */
+@keyframes st-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.st-sweep {
+  animation: st-sweep 1.6s ease-in-out infinite;
+}

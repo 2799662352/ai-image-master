@@ -8,6 +8,9 @@
 /* Page-scoped theme: 「ドーナドーナ × Persona 5」朋克拼贴,仅作用于 .donor-punk 容器 */
 @import "./donor-punk.css";
 
+/* 主界面结构语言 v1:斜纹面 / 角标 / 十字 / 扫描线(design-system.md §9) */
+@import "./structural.css";
+
 /* Tailwind v4 CSS-first theme (replaces tailwind.config.js) */
 @theme {
   --color-cyberpunk-yellow: #FCE300;
