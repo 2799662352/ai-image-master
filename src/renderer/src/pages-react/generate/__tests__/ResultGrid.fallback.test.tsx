@@ -136,6 +136,18 @@ describe('ResultGrid thumbnail fallback', () => {
     expect(document.querySelector('img')?.getAttribute('src')).toContain('imageMogr2')
   })
 
+  it('puts the persisted 1024 sibling object first for a dated image-history url, and one 404 hands over to imageMogr2 without retrying', async () => {
+    installReadThumb(true)
+    const dated = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/2026/09/15/004f299ed8d3400a.png'
+    render(<ResultGrid urls={[dated]} meta={[meta({ modelUrl: dated, cosUrl: dated, localPath: 'D:\\gen\\a.png' })]} />)
+    const src = () => document.querySelector('img')?.getAttribute('src')
+    expect(src()).toBe(dated.replace(/\.png$/, '.thumb1024.webp'))
+
+    vi.useFakeTimers()
+    fireEvent.error(document.querySelector('img')!)
+    expect(src()).toBe(`${dated}?imageMogr2/thumbnail/1024x1024%3E/format/webp/quality/85/ignore-error/1`)
+  })
+
   it('never requests an expired presigned model url — goes straight to the local copy', async () => {
     installReadThumb(true)
     const expired = 'https://aigc-output-image-1326893053.cos.ap-guangzhou.myqcloud.com/x.png?q-sign-time=1700000000;1700003600&q-signature=abc'

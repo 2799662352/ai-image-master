@@ -229,6 +229,14 @@ describe('useMediaCandidates', () => {
     expect(screen.getByTestId('src').textContent).toBe('')
   })
 
+  it('gives a persisted 数据万象 object zero in-place retries by default (a 404 there means "legacy image")', () => {
+    const persisted = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/2026/09/15/abc.thumb512.webp'
+    render(<Probe candidates={[persisted, 'https://a.test/ci.png']} maxRetries={4} />)
+    fireEvent.click(screen.getByRole('button', { name: 'err' }))
+    expect(screen.getByTestId('src').textContent).toBe('https://a.test/ci.png')
+    expect(screen.getByTestId('key').textContent).toBe('0')
+  })
+
   it('resets to the head of the chain when the candidates change (hot-swap to the permanent COS url)', () => {
     const { rerender } = render(<Probe candidates={['https://a.test/tmp.png', 'file:///D:/1.png']} maxRetries={0} />)
     fireEvent.click(screen.getByRole('button', { name: 'err' }))

@@ -70,3 +70,54 @@ export function appendCosThumb<T extends string | undefined>(
   const edge = Math.max(1, Math.round(size))
   return `${url}?imageMogr2/thumbnail/${edge}x${edge}%3E/format/webp/quality/85/ignore-error/1` as T
 }
+
+// ---------------------------------------------------------------------------
+// 持久化缩略图(2026-09-15 起)
+//
+// 主进程上传 image-history 原图时带 `Pic-Operations`,万象把 512 / 1024 两档 WebP
+// **存成桶里的独立对象**(见 main/services/tencent/cosThumbRules.ts,命名约定两边
+// 必须一致)。读侧按约定反推出那个对象的 URL,放在候选链最前面:它是普通 COS GET,
+// 不经万象在线处理;对象不存在(改动前上传的老图 / 老版本客户端上传的)就是一个
+// 干脆的 404,候选链立刻换到实时 imageMogr2,不做原地重试。
+// ---------------------------------------------------------------------------
+
+/** 与主进程 `PERSISTED_THUMB_SIZES` 一致。 */
+export const PERSISTED_THUMB_SIZES = [512, 1024] as const
+export type PersistedThumbSize = (typeof PERSISTED_THUMB_SIZES)[number]
+
+/**
+ * 日期闸:只有这一天(含)之后上传的原图才去找持久化对象。桶里 2026-09-15 之前的
+ * 18.9 万张原图都没有它,每张先吃一个 404 再回落实时 imageMogr2 是白花 200 ms。
+ * 跑完 `scripts/backfill-image-thumbs.mjs` 回填历史后把这里往前挪(或设为 '' 全放开)。
+ * 老版本客户端在此之后上传的图仍会 404 一次 —— 少数且逐日减少,可接受。
+ */
+export const PERSISTED_THUMBS_SINCE = '2026/09/15'
+
+/** 只对我们自己按日期分目录的 image-history 原图键反推(`generateImageHistoryKey` 的形状)。 */
+const IMAGE_HISTORY_ORIGINAL = /\/image-history\/(\d{4}\/\d{2}\/\d{2})\/[^/?#]+\.[a-z0-9]{2,5}$/i
+const PERSISTED_THUMB_SUFFIX = /\.thumb(512|1024)\.webp$/i
+
+/** 挑一档够用的持久化尺寸:要 ≤512 就拿 512,再大拿 1024(别把 1024 的图缩给 80px 气泡)。 */
+export function pickPersistedThumbSize(size: number): PersistedThumbSize {
+  return size <= 512 ? 512 : 1024
+}
+
+/**
+ * `https://…/image-history/2026/09/15/abc.png` → `https://…/image-history/2026/09/15/abc.thumb512.webp`。
+ * 不是我们桶里的 image-history 原图(签名直出链接、本地路径、别的目录、已经是缩略图)
+ * 返回 undefined,调用方就不把它放进候选链。
+ */
+export function persistedCosThumbUrl(url: string | undefined, size: number = DEFAULT_THUMB_SIZE): string | undefined {
+  if (!url || !isCosUrl(url) || url.includes('?') || url.includes('#')) return undefined
+  const m = IMAGE_HISTORY_ORIGINAL.exec(url)
+  if (!m || PERSISTED_THUMB_SUFFIX.test(url) || !isImageObjectKey(url)) return undefined
+  // `YYYY/MM/DD` 零填充,字符串比较就是日期比较。
+  if (PERSISTED_THUMBS_SINCE && m[1] < PERSISTED_THUMBS_SINCE) return undefined
+  const dot = url.lastIndexOf('.')
+  return `${url.slice(0, dot)}.thumb${pickPersistedThumbSize(size)}.webp`
+}
+
+/** 候选链里的持久化缩略图 URL —— 失败不原地重试,直接让位给实时 imageMogr2。 */
+export function isPersistedCosThumbUrl(url: string): boolean {
+  return isCosUrl(url) && !url.includes('?') && PERSISTED_THUMB_SUFFIX.test(url)
+}

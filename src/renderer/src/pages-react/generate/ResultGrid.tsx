@@ -5,7 +5,7 @@ import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import { buildMediaCandidates } from '../../components/shared/media/mediaFallback'
 import { useMediaCandidates } from '../../components/shared/media/useMediaCandidates'
 import { toRenderableUri } from '../../features/file-explorer/uri'
-import { appendCosThumb } from '../../utils/cosThumb'
+import { appendCosThumb, persistedCosThumbUrl } from '../../utils/cosThumb'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
 import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
@@ -62,16 +62,22 @@ export function groupResultItems(urls: string[], meta?: ResultUploadMeta[]): Gri
  * 切换/卸载时自动 revoke,互不干扰。
  *
  * 候选链(见 `components/shared/media/mediaFallback.ts`):
- *   ① COS 源经数据万象实时缩成 1024px WebP(2 列布局卡片较宽,1024 保证 retina 清晰)
- *   ② 裸 URL —— 数据万象处理失败 / 代理下 CI 不可达时,原对象 GET 往往还通
- *   ③ 本地副本 `localPath` —— 主进程上传前已落盘,不经网络、永不过期
+ *   ① 桶里已存的 1024 持久化缩略图(上传时万象顺手落的普通对象;老图没有 → 404 秒让位)
+ *   ② COS 源经数据万象实时缩成 1024px WebP(2 列布局卡片较宽,1024 保证 retina 清晰)
+ *   ③ 裸 URL —— 数据万象处理失败 / 代理下 CI 不可达时,原对象 GET 往往还通
+ *   ④ 本地副本 `localPath` —— 主进程上传前已落盘,不经网络、永不过期
  * 过期的预签名直出链接在整理候选时直接丢掉(必 403)。blob:/data: 原样透传;
  * data: 再经 useDisplaySrc 换成 blob: 以免主线程解码大 base64。
  * 点击放大的 lightbox 由父组件用原始 resultUrls 打开, 永远是无损原图。
  */
 function ResultCell({ url, alt, localPath }: { url: string; alt: string; localPath?: string }) {
   const candidates = useMemo(
-    () => buildMediaCandidates(appendCosThumb(url, 1024), [url, localPath ? toRenderableUri(localPath) : undefined]),
+    () =>
+      buildMediaCandidates(persistedCosThumbUrl(url, 1024) ?? appendCosThumb(url, 1024), [
+        appendCosThumb(url, 1024),
+        url,
+        localPath ? toRenderableUri(localPath) : undefined,
+      ]),
     [url, localPath],
   )
   const { src, reloadKey, onError, exhausted, retry } = useMediaCandidates(candidates, 'image', { thumbSize: 1024 })

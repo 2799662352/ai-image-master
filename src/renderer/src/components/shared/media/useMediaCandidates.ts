@@ -19,6 +19,7 @@
  * 这里不再做判断。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isPersistedCosThumbUrl } from '../../../utils/cosThumb'
 import { isRemoteHttpUrl } from './mediaFallback'
 import {
   acquireMediaSrc,
@@ -44,6 +45,12 @@ export interface UseMediaCandidatesOptions extends UseResolvedMediaSrcOptions {
   rearmIntervalMs?: number
   /** 自动重来的最多轮数(默认 {@link DEFAULT_MAX_REARMS}),用完只剩手动「重载」。 */
   maxRearms?: number
+  /**
+   * 某一条候选允许的原地重试次数;缺省 = 远端用 `maxRetries`,但**桶里已存的持久化
+   * 缩略图**(`isPersistedCosThumbUrl`)为 0 —— 它失败几乎总是「这张老图没有持久化
+   * 缩略图」的 404,立刻让位给实时 imageMogr2 才对,后者自己会带退避重试。
+   */
+  retriesFor?: (src: string) => number
 }
 
 export interface MediaCandidatesState {
@@ -77,6 +84,7 @@ export function useMediaCandidates(
     baseDelayMs = DEFAULT_RETRY_BASE_DELAY_MS,
     rearmIntervalMs = DEFAULT_REARM_INTERVAL_MS,
     maxRearms = DEFAULT_MAX_REARMS,
+    retriesFor,
     fullFidelity,
     thumbSize,
   } = opts
@@ -151,7 +159,8 @@ export function useMediaCandidates(
 
   const onError = useCallback(() => {
     if (!current) return
-    if (isRemoteHttpUrl(current) && attemptsRef.current < maxRetries) {
+    const budget = retriesFor ? retriesFor(current) : isPersistedCosThumbUrl(current) ? 0 : maxRetries
+    if (isRemoteHttpUrl(current) && attemptsRef.current < budget) {
       const delay = baseDelayMs * 2 ** attemptsRef.current
       attemptsRef.current += 1
       clearTimer()
@@ -162,7 +171,7 @@ export function useMediaCandidates(
       return
     }
     advance()
-  }, [current, maxRetries, baseDelayMs, clearTimer, advance])
+  }, [current, maxRetries, retriesFor, baseDelayMs, clearTimer, advance])
 
   const restart = useCallback(() => {
     clearTimer()
