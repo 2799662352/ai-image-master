@@ -98,6 +98,12 @@ export interface AttachmentRef {
   size: number
   uri: string
   thumbnailUri?: string
+  /**
+   * `uri` 打不开时依次尝试的兜底源,按优先级排列(典型:主进程落盘的本地副本
+   * `file:///…`)。给缩略图用 —— 预签名 COS 直出链接几小时就过期,翻墙时 COS 也可能
+   * 不可达,本地副本不经网络、永不过期。缺省 = 没有兜底,失败就画占位卡。
+   */
+  fallbackUris?: string[]
 }
 
 export interface AttachmentItem extends BaseItem {

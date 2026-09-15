@@ -107,7 +107,7 @@ async function base64ToBlob(b64: string, mime: string): Promise<Blob> {
  * Pure string ops — does **not** call `new URL()` because in the renderer
  * `local-file` is not parseable as a standard scheme (see module docstring).
  */
-function toOsPathIfLocal(src: string): string | null {
+export function toOsPathIfLocal(src: string): string | null {
   if (src.startsWith('local-file://')) {
     const prefix = 'local-file:///'
     if (!src.startsWith(prefix)) return null

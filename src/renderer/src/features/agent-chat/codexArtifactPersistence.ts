@@ -15,6 +15,7 @@
  */
 
 import type { AttachmentRef, Message, TimelineItem } from '../../../../types/agent-timeline'
+import { isExpiredSignedUrl } from '../../components/shared/media/mediaFallback'
 
 export interface CodexArtifactAnchor {
   /** Stable id for the rebuilt assistant message (dedupes re-merges). */
@@ -129,27 +130,45 @@ function toFileUrl(filePath: string): string {
   return `file:///${filePath.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1:')}`
 }
 
-function resolveAnchorUrls(anchor: CodexArtifactAnchor, resolveUrls: ResolveHistoryUrls): string[] {
-  const urls = (resolveUrls(anchor.historyId) ?? []).filter(
-    (u) => typeof u === 'string' && u.length > 0 && !u.startsWith('pending:'),
-  )
-  if (urls.length > 0) return urls
-
+function anchorLocalFileUrls(anchor: CodexArtifactAnchor): string[] {
   return (anchor.paths ?? [])
     .filter((p): p is string => typeof p === 'string' && p.length > 0)
     .map(toFileUrl)
 }
 
+/**
+ * Durable URLs for the bubble, best first. The history record normally holds
+ * our own COS URL (permanent). When the async COS relay failed it still holds
+ * the model's presigned URL, which dies after a few hours — those are dropped
+ * here (they would 403 for certain) so the local copies saved by the tool are
+ * what gets rendered instead.
+ */
+function resolveAnchorUrls(anchor: CodexArtifactAnchor, resolveUrls: ResolveHistoryUrls): string[] {
+  const urls = (resolveUrls(anchor.historyId) ?? []).filter(
+    (u) => typeof u === 'string' && u.length > 0 && !u.startsWith('pending:') && !isExpiredSignedUrl(u),
+  )
+  if (urls.length > 0) return urls
+  return anchorLocalFileUrls(anchor)
+}
+
 function toArtifactRefs(anchor: CodexArtifactAnchor, urls: string[]): AttachmentRef[] {
   const isVideo = anchor.kind === 'video'
-  return urls.map((uri, i) => ({
-    id: `${anchor.id}-${i}`,
-    kind: isVideo ? ('video' as const) : ('image' as const),
-    name: isVideo ? `codex-video-${i + 1}.mp4` : `codex-image-${i + 1}.png`,
-    mime: isVideo ? 'video/mp4' : 'image/png',
-    size: uri.startsWith('data:') ? uri.length : 0,
-    uri,
-  }))
+  const locals = anchorLocalFileUrls(anchor)
+  return urls.map((uri, i) => {
+    // Local copy #i backs remote url #i (same order as the tool saved them);
+    // any remaining copies are appended so a missing index still has a shot.
+    const ordered = locals[i] ? [locals[i], ...locals.filter((_, j) => j !== i)] : locals
+    const fallbackUris = ordered.filter((u) => u !== uri)
+    return {
+      id: `${anchor.id}-${i}`,
+      kind: isVideo ? ('video' as const) : ('image' as const),
+      name: isVideo ? `codex-video-${i + 1}.mp4` : `codex-image-${i + 1}.png`,
+      mime: isVideo ? 'video/mp4' : 'image/png',
+      size: uri.startsWith('data:') ? uri.length : 0,
+      uri,
+      ...(fallbackUris.length > 0 ? { fallbackUris } : {}),
+    }
+  })
 }
 
 /**

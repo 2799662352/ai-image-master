@@ -37,6 +37,7 @@ import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/cosClient'
+import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
 import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
 import { renameWithRetry } from './utils/atomicFile'
 import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } from './services/audioHistoryFiles'
@@ -1910,6 +1911,7 @@ ipcMain.handle(
         key,
         body,
         contentType: mimeType,
+        picOperations: imageHistoryPicOperations(key, mimeType),
       })
 
       void metadata
@@ -2048,6 +2050,7 @@ ipcMain.handle(
             key,
             body,
             contentType: mimeType,
+            picOperations: imageHistoryPicOperations(key, mimeType),
           })
         } else {
           // 流式必须先有目标路径,但真实 content-type 要等响应头到了才知道。
@@ -2079,6 +2082,7 @@ ipcMain.handle(
               key: fallbackKey,
               body: buffered.body,
               contentType: fallbackMime,
+              picOperations: imageHistoryPicOperations(fallbackKey, fallbackMime),
             })
             void metadata
             broadcastUploadResult({ requestId, success: true, url: fallbackUrl, key: fallbackKey })
@@ -2106,6 +2110,7 @@ ipcMain.handle(
             key,
             filePath: localPath,
             contentType: mimeType,
+            picOperations: imageHistoryPicOperations(key, mimeType),
           })
         }
 
@@ -2188,6 +2193,7 @@ ipcMain.handle(
           key,
           body,
           contentType: mimeType,
+          picOperations: imageHistoryPicOperations(key, mimeType),
         })
         void metadata
         broadcastUploadResult({ requestId, success: true, url, key, localPath })
@@ -2265,6 +2271,7 @@ ipcMain.handle(
         key,
         body,
         contentType: mimeType,
+        picOperations: imageHistoryPicOperations(key, mimeType),
       })
 
       void metadata
