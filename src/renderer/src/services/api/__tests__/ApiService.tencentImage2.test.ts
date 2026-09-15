@@ -436,3 +436,128 @@ describe('ApiService custom-model-og-v2', () => {
     expect(Object.keys(service.getAllModels())).not.toContain('hunyuan-gpt-image-2')
   })
 })
+
+/**
+ * 同一条 og-image 渠道上的 GPT Image 2.5 Flare / Sunburst(`custom-model-og-v2.5-f` / `-s`,
+ * 2026-09-15 测试网关上架,价目表倍率 5 / 补全 1,与 og-v2 同价)。
+ *
+ * 线上协议照抄 og-v2(腾讯 JSON 改图、logo_add、原生 n),清晰度换成 2.5 的五档梯子。
+ * **不**声明透明底与 mask:那两样只在 apiyi 官转的 multipart 契约上验过,腾讯中转
+ * 有没有透传不知道 —— 这里把「不外发 / 早失败」钉住,免得 UI 承诺一个上游可能
+ * 静默丢掉的参数。
+ */
+describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService %s(腾讯 2.5)', (id) => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function makeService() {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    ;(service as any).apiKey = 'test-key'
+    return service
+  }
+
+  const site = { authType: 'bearer' } as any
+
+  function captureFetch() {
+    const captured: { url: string; init?: RequestInit } = { url: '' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      captured.url = url
+      captured.init = init
+      return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    return captured
+  }
+
+  it('注册为腾讯厂商、钉 Miau 站点、2.5 五档清晰度默认 high(描述不带官转美元价)', async () => {
+    const service = await makeService()
+    const { MIAU_SITE_KEY } = await import('../ApiService')
+    const cfg = service.getModelConfig(id)!
+    expect(cfg.vendor).toBe('tencent')
+    expect(cfg.requiredSiteKey).toBe(MIAU_SITE_KEY)
+    expect(cfg.qualities?.map((q) => q.key)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(cfg.defaultQuality).toBe('high')
+    for (const q of cfg.qualities ?? []) expect(q.description).not.toMatch(/\$/)
+    // 档位对照文案保留,用户仍能看出「高 = 2 代中」
+    expect(cfg.qualities?.find((q) => q.key === 'high')?.description).toContain('2代中')
+    expect(cfg.capabilities).toMatchObject({ maxOutputs: 4, nativeBatch: true, qualityControl: true })
+    expect(cfg.capabilities?.transparentBackgroundControl).toBeUndefined()
+  })
+
+  it('文生图:size + xhigh/max 透传、原生 n、关水印;透明底开关不外发 background', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: id,
+      ratio: '16:9',
+      resolution: '2K',
+      quality: 'xhigh',
+      transparentBackground: true,
+      count: 3,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toBe(cfg.baseURL)
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body).toMatchObject({ model: id, size: '2048x1152', quality: 'xhigh', n: 3, extra_body: { logo_add: 0 } })
+    expect(body).not.toHaveProperty('background')
+  })
+
+  it('改图:走腾讯 JSON images:[{image_url}],quality=max 透传,n 固定 1', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '换成蓝色',
+      model: id,
+      ratio: '1:1',
+      resolution: '1K',
+      quality: 'max',
+      referenceImages: ['https://cos.example.com/a.png'],
+      count: 2,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toBe(cfg.editURL)
+    expect(captured.init!.headers).toMatchObject({ 'Content-Type': 'application/json' })
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
+    expect(body).toMatchObject({ quality: 'max', n: 1, extra_body: { logo_add: 0 } })
+  })
+
+  it('mask 局部重绘早失败:腾讯中转没有 mask 字段,不能静默重画整张', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      (service as any).makeApiRequest({
+        prompt: '抹掉这块',
+        model: id,
+        referenceImages: ['https://cos.example.com/a.png'],
+        maskImage: 'https://cos.example.com/a.mask.png',
+        count: 1,
+        modelConfig: cfg,
+        site,
+        apiKey: 'test-key',
+      }),
+    ).rejects.toThrow(/mask.*2\.5 flare/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

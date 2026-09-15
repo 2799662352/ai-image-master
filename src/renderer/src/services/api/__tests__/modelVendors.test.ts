@@ -41,7 +41,14 @@ describe('groupModelsByVendor', () => {
     const byKey = Object.fromEntries(groups.map((g) => [g.vendorKey, g.models.map((m) => m.key)]))
 
     expect(byKey.other).toBeUndefined()
-    expect(byKey.tencent).toContain('custom-imagemodel-gt')
+    // 腾讯簇是四条:image2 / fast / 2.5 Flare / 2.5 Sunburst。og 上的 2.5 归腾讯,
+    // 不归 OpenAI —— 用户按「走哪条线、花谁的钱」选,不是按上游模型是谁家的。
+    expect(byKey.tencent).toEqual([
+      'custom-imagemodel-gt',
+      'custom-model-og-v2',
+      'custom-model-og-v2.5-f',
+      'custom-model-og-v2.5-s',
+    ])
     for (const id of ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-all']) {
       expect(byKey.openai).toContain(id)
     }

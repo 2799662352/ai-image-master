@@ -715,9 +715,15 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
  * `custom-imagemodel-gt` 倍率 29.05),谁也替代不了谁 —— 新增一条不等于旧的
  * 那条可以下掉。
  *
- *  - `custom-imagemodel-gt` —— TokenHub gtimage,aiart 官方渠道;
- *  - `custom-model-og-v2`   —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
- *                              且支持多张输出。
+ *  - `custom-imagemodel-gt`     —— TokenHub gtimage,aiart 官方渠道;
+ *  - `custom-model-og-v2`       —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
+ *                                  且支持多张输出;
+ *  - `custom-model-og-v2.5-f` / `custom-model-og-v2.5-s` —— 同一条 og-image 渠道上的
+ *                                  GPT Image 2.5 Flare / Sunburst(2026-09-15 网关价目表:
+ *                                  倍率 5 / 补全 1,与 og-v2 同价)。走的仍是 og 那套线上
+ *                                  协议,不是 apiyi 官转的 multipart —— 所以 mask 局部重绘、
+ *                                  `background=transparent` 在这两条上**没有实测依据**,
+ *                                  能力位没打开;要开先对着网关验。
  *
  * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
  * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
@@ -732,6 +738,8 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
   'custom-imagemodel-gt',
   'custom-model-og-v2',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
 ])
 
 /**
@@ -748,10 +756,16 @@ const GPT_IMAGES_API_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-all',
 ])
 
-/** 2.5 官转:quality 多 xhigh / max 两档。 */
-const GPT_IMAGE_25_OFFICIAL: ReadonlySet<string> = new Set([
+/**
+ * 上游是 GPT Image 2.5 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
+ * 含 apiyi 官转两条与腾讯 og-image 上的两条 —— 后者只是换了条线到同一个模型,
+ * 清晰度梯子是模型的,不是渠道的。
+ */
+const GPT_IMAGE_25_QUALITY_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
 ])
 
 /** 发 size + quality 的 Images 模型。*-all 不在内(尺寸写进 prompt,回 b64_json)。 */
@@ -813,6 +827,16 @@ const GPT_IMAGE_25_QUALITIES: QualityOption[] = [
   { key: 'xhigh', label: '超高', description: '精细 · 文字/印刷 $0.094' },
   { key: 'max', label: '最高', description: '=2代高 $0.211' }
 ]
+
+/**
+ * 腾讯 og-image 上的 2.5 用同一把清晰度梯子,但价格不同(网关按倍率 5 的 token 计费,
+ * 比 apiyi 官转便宜),上面那些按 $30/1M 折算的美元数在这里是错的 —— 去掉数字、
+ * 保留「=2代中 / 推荐」这类档位对照,别让用户按官转价估腾讯的账。
+ */
+const TENCENT_IMAGE_25_QUALITIES: QualityOption[] = GPT_IMAGE_25_QUALITIES.map((q) => ({
+  ...q,
+  description: q.description?.replace(/\s*\$[\d.]+$/, ''),
+}))
 
 const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
   '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
@@ -951,6 +975,77 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       referenceImage: true,
       imageEdit: true,
       // 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true
+    }
+  },
+  // ── 腾讯 og-image 上的 GPT Image 2.5(2026-09-15 测试网关上架)───────────────────
+  // 与 `custom-model-og-v2` 同一条 TokenHub og-image 渠道、同一套线上协议(腾讯 JSON
+  // 改图 + logo_add + 原生 n)、同一档价(倍率 5),只是上游模型换成 2.5 Flare / Sunburst,
+  // 所以清晰度是 2.5 的五档梯子、默认 high。**不声明**透明底与 mask:那两样只在 apiyi
+  // 官转的 OpenAI multipart 契约上验过,腾讯中转有没有透传不知道 —— 宁可少个开关,
+  // 也别让 UI 承诺一个上游可能静默丢掉的参数。钉 Miau 站点:只经这一家网关提供,
+  // 可走平台额度。
+  'custom-model-og-v2.5-f': {
+    name: '腾讯 Image 2.5 Flare',
+    vendor: 'tencent',
+    displayName: '20s出图，GPT Image 2.5 Flare 走腾讯渠道·速度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-f，经 Miau API 代理）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true
+    }
+  },
+  'custom-model-og-v2.5-s': {
+    name: '腾讯 Image 2.5 Sunburst',
+    vendor: 'tencent',
+    displayName: '40s出图，GPT Image 2.5 Sunburst 走腾讯渠道·画质与改图精度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-s，经 Miau API 代理）',
+    time: '40s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
       maxOutputs: 4,
       nativeBatch: true,
       resolutionControl: true,
@@ -1576,7 +1671,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
- * 其次 腾讯 → Nano2 → 万相 2.7 pro → Image2 官方 → VIP;未列出的模型保持
+ * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → 万相 2.7 pro →
+ * 千问 → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
  */
@@ -1584,6 +1680,8 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'doubao-seedream-5-0-pro-260628',
   'custom-imagemodel-gt',
   'custom-model-og-v2',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
   'gemini-3.1-flash-image',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
@@ -2790,7 +2888,7 @@ export class ApiService {
   private resolveGptImage2Quality(quality?: string, model?: string): string | undefined {
     if (!quality || quality === 'auto') return undefined
     if (['low', 'medium', 'high'].includes(quality)) return quality
-    if (model && GPT_IMAGE_25_OFFICIAL.has(model) && (quality === 'xhigh' || quality === 'max')) {
+    if (model && GPT_IMAGE_25_QUALITY_MODELS.has(model) && (quality === 'xhigh' || quality === 'max')) {
       return quality
     }
     return undefined

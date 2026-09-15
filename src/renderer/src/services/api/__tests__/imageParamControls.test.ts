@@ -56,8 +56,11 @@ describe('deriveImageParamControls', () => {
     expect(c.supportsTransparentBackground).toBe(false)
   })
 
-  it('透明底轴只跟 transparentBackgroundControl 能力位走 —— 腾讯 / gpt-image-2 都没有', () => {
+  it('透明底轴只跟 transparentBackgroundControl 能力位走 —— 腾讯(含 og-v2.5)/ gpt-image-2 都没有', () => {
     expect(deriveImageParamControls(configOf('custom-imagemodel-gt')).supportsTransparentBackground).toBe(false)
+    // 腾讯中转上的 2.5 没验过 background 是否透传,能力位不开 —— UI 上不该冒出透明底开关
+    expect(deriveImageParamControls(configOf('custom-model-og-v2.5-f')).supportsTransparentBackground).toBe(false)
+    expect(deriveImageParamControls(configOf('custom-model-og-v2.5-s')).supportsTransparentBackground).toBe(false)
     expect(deriveImageParamControls(configOf('gpt-image-2')).supportsTransparentBackground).toBe(false)
     expect(deriveImageParamControls(null).supportsTransparentBackground).toBe(false)
   })
@@ -81,9 +84,16 @@ describe('deriveImageParamControls', () => {
 
   /**
    * 官转原生多图:apiyi 生图页给 gpt-image-2 / 2.5 开了 n=1–4,数量轴标「原生支持」并提示
-   * 按张数倍数计费。这里从真实模型表取,证明那三条 + 腾讯 image2 fast 的表填对了。
+   * 按张数倍数计费。这里从真实模型表取,证明那三条 + 腾讯 og 三条的表填对了。
    */
-  it.each(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2', 'custom-model-og-v2'])(
+  it.each([
+    'gpt-image-2.5-flare',
+    'gpt-image-2.5-sunburst',
+    'gpt-image-2',
+    'custom-model-og-v2',
+    'custom-model-og-v2.5-f',
+    'custom-model-og-v2.5-s',
+  ])(
     '%s 的数量轴是 1-4 原生多图(nativeBatch)',
     (id) => {
       const c = deriveImageParamControls(configOf(id))

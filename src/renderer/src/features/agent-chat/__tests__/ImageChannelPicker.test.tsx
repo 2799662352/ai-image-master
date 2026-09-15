@@ -25,8 +25,12 @@ describe('ImageChannelPicker', () => {
   it('opens the dropdown and lists all channels', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(screen.getByRole('button', { name: /出图渠道/ }))
-    expect(screen.getByRole('option', { name: /GPT Image 2\.5 Flare/ })).toBeTruthy()
-    expect(screen.getByRole('option', { name: /GPT Image 2\.5 Sunburst/ })).toBeTruthy()
+    // 官转 2.5 与腾讯线上的 2.5 同名异前缀(「GPT Image 2.5 Flare」/「腾讯 GPT Image 2.5 Flare」),
+    // 裸子串会同时命中两条 —— 官转的锚到行首,腾讯的带前缀各指各的。
+    expect(screen.getByRole('option', { name: /^GPT Image 2\.5 Flare/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /^GPT Image 2\.5 Sunburst/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /腾讯 GPT Image 2\.5 Flare/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /腾讯 GPT Image 2\.5 Sunburst/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /GPT Image 2\.5 All/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /VIP image2/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /GPT Image 2 官方/ })).toBeTruthy()

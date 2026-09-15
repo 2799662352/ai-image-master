@@ -207,8 +207,8 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
    - \`resolution\` (optional): clarity tier — prefer \`2K\` by default. Use \`1K\`
      only when the user asks for fast/cheap/draft; use \`4K\` only when the user
      explicitly asks for print/ultra-detail/4K.
-   - \`quality\` (optional): \`auto\`/\`low\`/\`medium\`/\`high\`; 2.5 flare/sunburst also
-     \`xhigh\`/\`max\`. Prefer \`high\` on 2.5 (\`auto\` drifts cost).
+   - \`quality\` (optional): \`auto\`/\`low\`/\`medium\`/\`high\`; 2.5(官转 flare/sunburst 与
+     腾讯 og-v2.5)另有 \`xhigh\`/\`max\`. Prefer \`high\` on 2.5 (\`auto\` drifts cost).
    - \`transparentBackground\` (optional, **2.5 flare/sunburst only**): \`true\` 出带 alpha
      的透明底 PNG——用户要 透明底 / 贴纸 / logo / 素材 / 「不要背景」时用,并显式传
      \`model: 'gpt-image-2.5-flare'\`(或 sunburst)。其它渠道忽略此参数照常出不透明底;
@@ -218,14 +218,14 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      \`referenceImages[0]\` 一致**(只作用于第一张),<4MB。用法:\`referenceImages: [原图]\` +
      \`maskImage\` + 显式 \`model\`;prompt 先写透明区域里的那一个改动,再列必须保留的部分——
      mask 是 prompt-guided,不是像素级硬约束。灯箱「擦除」会附 \`<原图名>.mask.png\`,即此参数;
-     其它渠道没有 mask 字段,传了会被拒(不会静默重画整张)。
+     其它渠道(含腾讯 og-v2.5)没有 mask 字段,传了会被拒(不会静默重画整张)。
    - \`count\` (optional): number of images from THIS one prompt (default 1). Two
      different meanings, pick by what the user wants:
      - **consistent 组图 series** — \`model: 'wan2.7-image-pro'\` + \`count\` 2–12
        (same character/subject across frames, e.g. 同一只猫的四季).
      - **independent variations (原生多图)** — \`count\` 2–4 on the OpenAI 官转
        channels \`gpt-image-2.5-flare\` / \`gpt-image-2.5-sunburst\` / \`gpt-image-2\`
-       (and 腾讯 \`custom-model-og-v2\`), or 2–6 on \`qwen-image-3.0-pro\`. ONE
+       (and 腾讯 og-v2 / og-v2.5, 文生图), or 2–6 on \`qwen-image-3.0-pro\`. ONE
        request returns \`count\` variants of the same prompt (文生图与改图都行).
        官转按 token **每张**计费,\`count: 4\` ≈ 单张 4 倍 —— 用户要「几个方案挑一挑」
        时才加,别默认给多张。
@@ -326,6 +326,11 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - **\`custom-model-og-v2\` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
   image2 fast / og. 与腾讯 image2 **能力相同**,但更快(~20s)、价格约 1/6、且能一次
   出多张。用户没有特别偏好而只是想省钱或求快时,这条优先于 \`custom-imagemodel-gt\`。
+- **\`custom-model-og-v2.5-f\` / \`custom-model-og-v2.5-s\` (腾讯 2.5 Flare / Sunburst)**
+  — pick when the user says 腾讯 2.5 / 腾讯 flare / 腾讯 sunburst, or wants 2.5 但走
+  平台额度. 与官转同模型、不同线:og 协议、与 image2 fast 同价、五档 quality 默认
+  high、\`count\` 1–4(文生图);**不支持** \`transparentBackground\` / \`maskImage\` ——
+  要透明底或擦除仍走官转 2.5。
 - **\`qwen-image-3.0-pro\` (阿里通义千问 Image 3.0 Pro)** — pick when the user says
   千问 / qwen / qwen image. 一次可出 1–6 张,参考图最多 3 张(传更多会被**拒绝**,
   不是截断——需要最多 10 张时改用 Seedream 5.0 Pro)。上游可能改写请求尺寸,
@@ -334,24 +339,22 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 
 ### 站点要求(已自动处理 — 无需手动切站点)
 
-\`custom-imagemodel-gt\`(腾讯 image2)、\`custom-model-og-v2\`(腾讯 image2 fast)、
-\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`(通义千问 Image 3.0 Pro)和
-\`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)**都只经 Miau API 代理提供**。
+四条腾讯渠道(\`custom-imagemodel-gt\` / \`custom-model-og-v2\` / \`custom-model-og-v2.5-f\` /
+\`custom-model-og-v2.5-s\`)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`
+(通义千问 Image 3.0 Pro)和 \`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)
+**都只经 Miau API 代理提供**。
 出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
 里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
 
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可,无需切换当前站点。
-- \`gpt-image-2.5-flare\` / \`gpt-image-2.5-sunburst\` / \`gpt-image-2.5-all\` /
-  \`gpt-image-2-vip\` / \`gpt-image-2\` / \`gemini-3.1-flash-image\` 跟随当前站点(不钉 Miau):
+- 其余渠道(官转 2.5 / -all / vip / gpt-image-2 / Nano2)跟随当前站点(不钉 Miau):
   选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
 
-When the user does not name a channel, **do not guess** — just omit \`model\` so the
-render honors the user's composer picker (default 腾讯 image2). Set \`model\` only for a
-concrete reason (组图 → \`wan2.7-image-pro\`, 多参考图融合 →
-\`doubao-seedream-5-0-pro-260628\`, 2.5 文生图 → \`gpt-image-2.5-flare\`, 2.5 改图 →
-\`gpt-image-2.5-sunburst\`, or a channel the user named). Never invent a model name.
+用户没点名渠道就**省略 \`model\`**(交给 composer 选的渠道,默认腾讯 image2);只为具体
+理由设它(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、2.5 改图 →
+sunburst、或用户点名的渠道)。Never invent a model name.
 
 ## Reference images — reuse the user's material (important)
 
@@ -469,9 +472,6 @@ directory and give it a descriptive, ordered name — e.g.
   the history page, and in the ATTACHMENTS panel — no extra save step is needed.
   Only move/copy a file if the user wants it somewhere specific (see the organize
   section above when working in a project).
-- For edits, image-to-image, or multi-image prompts, use \`generate_image\` for one
-  output or \`generate_images\` for multiple outputs, always with \`referenceImages\`
-  when references are present.
 - If \`generate_image\` is genuinely unavailable in this session, you may fall back
   to whatever image tool you do have — but \`generate_image\` is the preferred,
   in-app path that actually displays and saves the result.
