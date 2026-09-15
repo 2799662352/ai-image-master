@@ -338,8 +338,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (腾讯 / image2 fast / Flare / Sunburst / All 2.5 / Image2 / VIP / Nano2 / 万相 / 千问; default ' +
-      "腾讯 image2) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
+      'composer picker (腾讯 / image2 fast / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Flare / Sunburst / All 2.5 / ' +
+      "Image2 / VIP / Nano2 / 万相 / 千问; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
+      'ONLY when you have a concrete reason to ' +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
       'channel the user explicitly asked for this turn (' +
       'gpt-image-2.5-flare = OpenAI 官转·速度优先 / 文生图首选, ' +
@@ -349,6 +350,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'gpt-image-2-vip = OpenAI 官逆/vip — ONLY when the user names vip/官逆, do not pick it by default, ' +
       'custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
       'custom-model-og-v2 = TokenHub og-image — 另一条腾讯渠道，更快(~20s)、便宜近 6 倍、可出多张, ' +
+      'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度可用; ' +
+      'same 2.5 abilities — transparentBackground / maskImage / xhigh,max — over the 腾讯 line), ' +
+      'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
@@ -381,7 +385,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
       'INDEPENDENT variations of one prompt, use `count`>1 on model="qwen-image-3.0-pro" (1–6) or on ' +
       'the OpenAI 官转 channels gpt-image-2.5-flare / gpt-image-2.5-sunburst / gpt-image-2 and 腾讯 ' +
-      'custom-model-og-v2 (native `n`, 1–4, billed per image). Other channels ignore `count`; for ' +
+      'custom-model-og-v2 / custom-model-og-v2.5-f / custom-model-og-v2.5-s (native `n`, 1–4, billed ' +
+      'per image). Other channels ignore `count`; for ' +
       'unrelated images use generate_images. ' +
       'This tool ALSO does 图层分离 / layer splitting (turn one image into a base + transparent PNG ' +
       'layers) — set `layerDecomposition: true` with model="doubao-seedream-5-0-pro-260628"; see that ' +
@@ -419,15 +424,18 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe(
           'Rendering quality. Prefer "high" for GPT Image 2.5 (≈ old medium token cost). ' +
-          '"xhigh"/"max" are 2.5-only (text/print). "auto" lets the model decide but drifts cost on 2.5.',
+          '"xhigh"/"max" are 2.5-only (text/print) — accepted on gpt-image-2.5-flare / -sunburst and the ' +
+          '腾讯 custom-model-og-v2.5-f / -s; other channels drop them. "auto" lets the model decide but ' +
+          'drifts cost on 2.5.',
         ),
       transparentBackground: z
         .boolean()
         .optional()
         .describe(
           'Render on a TRANSPARENT background (alpha PNG) — for 透明底 / 抠图 / 贴纸 / logo / 素材 / ' +
-          '"no background" requests. Only honored by model="gpt-image-2.5-flare" or ' +
-          '"gpt-image-2.5-sunburst" (pass one of them explicitly); every other channel ignores it ' +
+          '"no background" requests. Only honored by the GPT Image 2.5 channels: model="gpt-image-2.5-flare" / ' +
+          '"gpt-image-2.5-sunburst" (OpenAI 官转) or "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 line, ' +
+          '平台额度) — pass one explicitly; every other channel ignores it ' +
           'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
         ),
       count: z
@@ -444,8 +452,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
           'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
           '- model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" / "gpt-image-2" / ' +
-          '"custom-model-og-v2" (up to 4): native OpenAI `n` — ONE request returns count INDEPENDENT ' +
-          'variations (text-to-image and edits alike). The 官转 channels are token-billed PER IMAGE, so ' +
+          '"custom-model-og-v2" / "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (up to 4): native ' +
+          'OpenAI `n` — ONE request returns count INDEPENDENT variations (text-to-image; the 腾讯 og ' +
+          'channels return 1 on edits). These channels are token-billed PER IMAGE, so ' +
           'count=4 costs ~4× a single render — only go above 1 when the user wants options/variations.\n' +
           'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1. ' +
           "Out-of-range values are clamped to the channel's ceiling, never rejected. For several " +
@@ -481,8 +490,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'the region the model may repaint, opaque pixels are preserved as much as possible. It must ' +
           'have EXACTLY the same pixel dimensions as the first `referenceImages` entry (the mask applies ' +
           'to image[0] only), under 4MB. REQUIRES `referenceImages` with the original image first. Only ' +
-          'honored by model="gpt-image-2", "gpt-image-2.5-flare" or "gpt-image-2.5-sunburst" (pass one ' +
-          'explicitly); -all / 腾讯 / 万相 / nano reject it up front rather than repainting the whole ' +
+          'honored by model="gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst" (OpenAI 官转) or ' +
+          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 2.5 line, 平台额度) — pass one explicitly; ' +
+          '-all / 腾讯 image2 & image2 fast / 万相 / nano reject it up front rather than repainting the whole ' +
           'image. Masking is prompt-guided, not pixel-exact: the prompt must name the ONE change inside ' +
           'the transparent region first, then list everything that must stay unchanged (composition, ' +
           'lighting, subjects outside the mask). When the user attached a `*.mask.png` next to an image, ' +
@@ -622,13 +632,14 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       quality: z
         .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
         .optional()
-        .describe('Rendering quality shared by all images. Prefer "high" for GPT Image 2.5; xhigh/max are 2.5-only.'),
+        .describe('Rendering quality shared by all images. Prefer "high" for GPT Image 2.5; xhigh/max are 2.5-only (official flare/sunburst and 腾讯 og-v2.5-f/-s).'),
       transparentBackground: z
         .boolean()
         .optional()
         .describe(
           'Transparent (alpha PNG) background shared by all images — 透明底 / 贴纸 / 素材 sets. Only ' +
-          'honored on model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst"; other channels ignore it.',
+          'honored on the GPT Image 2.5 channels (model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" or 腾讯 ' +
+          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s"); other channels ignore it.',
         ),
       referenceImages: z
         .array(z.string())

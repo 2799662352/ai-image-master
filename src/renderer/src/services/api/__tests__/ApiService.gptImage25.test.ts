@@ -108,14 +108,18 @@ describe('ApiService.gpt-image-2.5 quality 解析', () => {
     vi.resetModules()
   })
 
-  it('lets 2.5 official send xhigh/max; drops them on gpt-image-2', async () => {
+  it('lets 2.5 (official + 腾讯 og-v2.5) send xhigh/max; drops them on gpt-image-2 / og-v2', async () => {
     const { ApiService } = await import('../ApiService')
     const service = new ApiService()
     const resolve = (service as any).resolveGptImage2Quality.bind(service)
     expect(resolve('xhigh', 'gpt-image-2.5-flare')).toBe('xhigh')
     expect(resolve('max', 'gpt-image-2.5-sunburst')).toBe('max')
     expect(resolve('high', 'gpt-image-2.5-flare')).toBe('high')
+    // 清晰度梯子跟着上游模型走,不跟渠道:腾讯线上的 2.5 也吃 xhigh / max。
+    expect(resolve('xhigh', 'custom-model-og-v2.5-f')).toBe('xhigh')
+    expect(resolve('max', 'custom-model-og-v2.5-s')).toBe('max')
     expect(resolve('xhigh', 'gpt-image-2')).toBeUndefined()
+    expect(resolve('max', 'custom-model-og-v2')).toBeUndefined()
     expect(resolve('max', 'gpt-image-2-vip')).toBeUndefined()
     expect(resolve('auto', 'gpt-image-2.5-flare')).toBeUndefined()
   })

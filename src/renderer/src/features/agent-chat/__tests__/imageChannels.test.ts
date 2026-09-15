@@ -17,11 +17,14 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×2 → Nano2 → Wan2.7 → Qwen3 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×4 → Nano2 → Wan2.7 → Qwen3 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
       'custom-model-og-v2',
+      // 同一条 og-image 渠道上的 2.5 Flare / Sunburst,紧挨着 image2 fast 摆
+      'custom-model-og-v2.5-f',
+      'custom-model-og-v2.5-s',
       'gemini-3.1-flash-image',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',
@@ -35,6 +38,8 @@ describe('imageChannels registry', () => {
 
   it('marks only the gateway-proxied channels as Miau-only', () => {
     expect(isMiauOnlyChannel('custom-imagemodel-gt')).toBe(true)
+    expect(isMiauOnlyChannel('custom-model-og-v2.5-f')).toBe(true)
+    expect(isMiauOnlyChannel('custom-model-og-v2.5-s')).toBe(true)
     expect(isMiauOnlyChannel('wan2.7-image-pro')).toBe(true)
     expect(isMiauOnlyChannel('doubao-seedream-5-0-pro-260628')).toBe(true)
     expect(isMiauOnlyChannel('gpt-image-2.5-flare')).toBe(false)

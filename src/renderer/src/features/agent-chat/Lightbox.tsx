@@ -14,6 +14,7 @@ import {
   maskFileName,
   normalizePoint,
   renumberComments,
+  resolveEraseModel,
   strokeColor,
   summarizeStrokes,
   type AnnotationStroke,
@@ -45,6 +46,8 @@ export function Lightbox(): JSX.Element | null {
   const closePreview = useAgentChatStore((s) => s.closePreview)
   const nextPreview = useAgentChatStore((s) => s.nextPreview)
   const prevPreview = useAgentChatStore((s) => s.prevPreview)
+  // 擦除指令点名的 2.5 渠道跟随用户 composer 里选的渠道(选了腾讯 2.5 就走腾讯线)。
+  const eraseModel = useAgentChatStore((s) => resolveEraseModel(s.selectedImageChannel))
 
   // ---- tool state (reset whenever the shown image changes) ----
   const [mode, setMode] = useState<ImageToolMode | null>(null)
@@ -188,13 +191,13 @@ export function Lightbox(): JSX.Element | null {
           }
         }
       }
-      const instruction = buildImageFeedbackInstruction({ imageName: currentMaybe.name, comments, strokes, action, maskName })
+      const instruction = buildImageFeedbackInstruction({ imageName: currentMaybe.name, comments, strokes, action, maskName, eraseModel })
       store.appendInputText(instruction)
       useAgentChatStore.setState({ isOpen: true })
       setSending(false)
       closePreview()
     },
-    [currentMaybe, comments, strokes, closePreview],
+    [currentMaybe, comments, strokes, closePreview, eraseModel],
   )
 
   if (!preview.open || preview.images.length === 0) return null

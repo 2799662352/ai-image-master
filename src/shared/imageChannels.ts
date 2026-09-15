@@ -52,9 +52,10 @@ export interface ImageChannel {
 }
 
 /**
- * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×2 → Nano2 → 万相 → 千问 →
- * Image 2.5(flare / sunburst / all) → Image2 官方 → VIP。默认渠道是腾讯 image2
- * —— 顺序只影响显示,不改变回落目标。不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
+ * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×4(image2 / fast / 2.5 Flare / 2.5 Sunburst)
+ * → Nano2 → 万相 → 千问 → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
+ * 默认渠道是腾讯 image2 —— 顺序只影响显示,不改变回落目标。
+ * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
  */
 export const IMAGE_CHANNELS = [
   {
@@ -81,6 +82,23 @@ export const IMAGE_CHANNELS = [
     // 后台渠道名(TokenHub og-image)写进描述而不是标题:用户看标题选模型,
     // 而对账时要能和 New API 后台的渠道名对上号。
     description: '经 Miau 代理 — 快 ~20s，比 image2 便宜近 6 倍，可出多张。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    // 同一条 og-image 渠道上的 GPT Image 2.5 Flare / Sunburst(2026-09-15 上架)。
+    // 与 apiyi 官转是同一个模型、不同的线:这两条走腾讯 JSON 协议、与 image2 fast
+    // 同价、可走平台额度;但透明底 / mask 局部重绘在腾讯中转上没验过,不承诺。
+    id: 'custom-model-og-v2.5-f',
+    label: '腾讯Flare',
+    fullLabel: '腾讯 GPT Image 2.5 Flare',
+    description: '经 Miau 代理 — 2.5 Flare 走腾讯渠道，速度优先 ~20s，与 image2 fast 同价、可走平台额度，五档清晰度、一次 1–4 张。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    id: 'custom-model-og-v2.5-s',
+    label: '腾讯Sunburst',
+    fullLabel: '腾讯 GPT Image 2.5 Sunburst',
+    description: '经 Miau 代理 — 2.5 Sunburst 走腾讯渠道，画质 / 改图精度优先 ~40s，与 image2 fast 同价、可走平台额度，五档清晰度、一次 1–4 张。后台渠道 TokenHub og-image。',
     miauOnly: true,
   },
   {

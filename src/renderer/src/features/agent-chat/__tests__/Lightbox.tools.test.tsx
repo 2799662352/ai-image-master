@@ -148,6 +148,29 @@ describe('Lightbox — image tools (D4)', () => {
     expect(s.input).toContain('maskImage')
   })
 
+  // 擦除点名的 2.5 渠道跟随 composer 选择器:选了腾讯 2.5(走平台额度)就点名腾讯线,
+  // 选了没有 mask 的渠道(腾讯 image2)回落官转 sunburst。
+  it('擦除 instruction names the picked 腾讯 2.5 channel, else falls back to 官转 sunburst', async () => {
+    const eraseOnce = async (channel: string): Promise<string> => {
+      openWith([IMAGE])
+      useAgentChatStore.setState({ selectedImageChannel: channel } as never)
+      const view = render(<Lightbox />)
+      fireEvent.click(screen.getByRole('button', { name: '擦除' }))
+      const img = document.querySelector('img') as HTMLImageElement
+      fireEvent.pointerDown(img, { clientX: 10, clientY: 10, pointerId: 1 })
+      fireEvent.pointerMove(img, { clientX: 30, clientY: 30, pointerId: 1 })
+      fireEvent.pointerUp(img, { pointerId: 1 })
+      fireEvent.click(screen.getByRole('button', { name: /发送给 Codex/ }))
+      await flush()
+      const text = useAgentChatStore.getState().input
+      view.unmount()
+      return text
+    }
+
+    expect(await eraseOnce('custom-model-og-v2.5-s')).toContain('model=custom-model-og-v2.5-s')
+    expect(await eraseOnce('custom-imagemodel-gt')).toContain('model=gpt-image-2.5-sunburst')
+  })
+
   // 用户反馈:标注要能选颜色。调色板只在标注模式出现;选色只影响之后的笔迹,
   // 已画的保持原色;颜色跟着笔迹进 SVG 预览与指令文字。
   it('标注 mode shows a colour palette; the picked colour applies to the next stroke only', () => {

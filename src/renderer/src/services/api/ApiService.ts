@@ -715,9 +715,17 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
  * `custom-imagemodel-gt` 倍率 29.05),谁也替代不了谁 —— 新增一条不等于旧的
  * 那条可以下掉。
  *
- *  - `custom-imagemodel-gt` —— TokenHub gtimage,aiart 官方渠道;
- *  - `custom-model-og-v2`   —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
- *                              且支持多张输出。
+ *  - `custom-imagemodel-gt`     —— TokenHub gtimage,aiart 官方渠道;
+ *  - `custom-model-og-v2`       —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
+ *                                  且支持多张输出;
+ *  - `custom-model-og-v2.5-f` / `custom-model-og-v2.5-s` —— 同一条 og-image 渠道上的
+ *                                  GPT Image 2.5 Flare / Sunburst(2026-09-15 网关价目表:
+ *                                  倍率 5 / 补全 1,与 og-v2 同价)。走的仍是 og 那套线上
+ *                                  协议,不是 apiyi 官转的 multipart:网关 `tokenhubog`
+ *                                  适配器的 JSON `/edits` 收 `images:[{image_url}]` +
+ *                                  `mask:{image_url}`(URL 或 base64),`background` 两个
+ *                                  端点都原样透传(用户 2026-09-15 实测透明底 / 擦除均可)。
+ *                                  所以 mask 在这两条上是 **JSON 字段**,不是 multipart 文件。
  *
  * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
  * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
@@ -732,6 +740,8 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
   'custom-imagemodel-gt',
   'custom-model-og-v2',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
 ])
 
 /**
@@ -748,10 +758,16 @@ const GPT_IMAGES_API_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-all',
 ])
 
-/** 2.5 官转:quality 多 xhigh / max 两档。 */
-const GPT_IMAGE_25_OFFICIAL: ReadonlySet<string> = new Set([
+/**
+ * 上游是 GPT Image 2.5 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
+ * 含 apiyi 官转两条与腾讯 og-image 上的两条 —— 后者只是换了条线到同一个模型,
+ * 清晰度梯子是模型的,不是渠道的。
+ */
+const GPT_IMAGE_25_QUALITY_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
 ])
 
 /** 发 size + quality 的 Images 模型。*-all 不在内(尺寸写进 prompt,回 b64_json)。 */
@@ -760,6 +776,23 @@ const GPT_IMAGE_SIZE_QUALITY_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2-vip',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
+])
+
+/**
+ * 支持 mask 局部重绘(inpainting)的渠道。两种线格式:
+ *  - OpenAI Images multipart(官转 / vip):`mask` 是一个带 alpha 的 PNG 文件;
+ *  - 腾讯 og-image JSON(og-v2.5-f / -s):`mask: { image_url }`,URL 或 base64。
+ * 不在这里的渠道(-all / 腾讯 image2 / og-v2 / 万相 / nano)没有 mask 位,传了要早失败,
+ * 静默丢掉会把「只擦一角」变成「整张重画」。og-v2 上游是 gpt-image-2、网关同样透传 mask,
+ * 但没实测过,不收 —— 灯箱擦除也只绑 2.5。
+ */
+export const MASK_INPAINT_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+  'gpt-image-2-vip',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
 ])
 
 // gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
@@ -813,6 +846,16 @@ const GPT_IMAGE_25_QUALITIES: QualityOption[] = [
   { key: 'xhigh', label: '超高', description: '精细 · 文字/印刷 $0.094' },
   { key: 'max', label: '最高', description: '=2代高 $0.211' }
 ]
+
+/**
+ * 腾讯 og-image 上的 2.5 用同一把清晰度梯子,但价格不同(网关按倍率 5 的 token 计费,
+ * 比 apiyi 官转便宜),上面那些按 $30/1M 折算的美元数在这里是错的 —— 去掉数字、
+ * 保留「=2代中 / 推荐」这类档位对照,别让用户按官转价估腾讯的账。
+ */
+const TENCENT_IMAGE_25_QUALITIES: QualityOption[] = GPT_IMAGE_25_QUALITIES.map((q) => ({
+  ...q,
+  description: q.description?.replace(/\s*\$[\d.]+$/, ''),
+}))
 
 const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
   '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
@@ -955,6 +998,79 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       nativeBatch: true,
       resolutionControl: true,
       qualityControl: true
+    }
+  },
+  // ── 腾讯 og-image 上的 GPT Image 2.5(2026-09-15 上架,生产 / 测试网关都有)──────────
+  // 与 `custom-model-og-v2` 同一条 TokenHub og-image 渠道、同一套线上协议(腾讯 JSON
+  // 改图 + logo_add + 原生 n)、同一档价(倍率 5),只是上游模型换成 2.5 Flare / Sunburst,
+  // 所以清晰度是 2.5 的五档梯子、默认 high。透明底与 mask 都开:网关 `tokenhubog` 适配器
+  // 把 `background` 与 `mask:{image_url}` 原样透传到 og-image,用户实测两者可用 ——
+  // mask 走 JSON 字段(见 makeTencentImage2JsonEdit),不是官转那种 multipart 文件。
+  // 钉 Miau 站点:只经这一家网关提供,可走平台额度。
+  'custom-model-og-v2.5-f': {
+    name: '腾讯 Image 2.5 Flare',
+    vendor: 'tencent',
+    displayName: '20s出图，GPT Image 2.5 Flare 走腾讯渠道·速度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-f，经 Miau API 代理）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  'custom-model-og-v2.5-s': {
+    name: '腾讯 Image 2.5 Sunburst',
+    vendor: 'tencent',
+    displayName: '40s出图，GPT Image 2.5 Sunburst 走腾讯渠道·画质与改图精度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-s，经 Miau API 代理）',
+    time: '40s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
     }
   },
   // ── GPT Image 2.5 家族(2026-09-08 发布,apiyi 2026-09-14 上架)────────────────
@@ -1576,7 +1692,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
- * 其次 腾讯 → Nano2 → 万相 2.7 pro → Image2 官方 → VIP;未列出的模型保持
+ * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → 万相 2.7 pro →
+ * 千问 → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
  */
@@ -1584,6 +1701,8 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'doubao-seedream-5-0-pro-260628',
   'custom-imagemodel-gt',
   'custom-model-og-v2',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
   'gemini-3.1-flash-image',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
@@ -2429,12 +2548,11 @@ export class ApiService {
   }): Promise<Response> {
     const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition } = options
 
-    // 遮罩只在 OpenAI Images 多部分 edit 契约里有位置;别的路径拿到它就是调用方搞错了渠道,
-    // 静默丢掉会把「只擦一角」变成「整张重画」,所以一律早失败。
+    // 遮罩只在 MASK_INPAINT_MODELS 里有位置(官转 multipart 文件 / 腾讯 og-v2.5 JSON 字段);
+    // 别的路径拿到它就是调用方搞错了渠道,静默丢掉会把「只擦一角」变成「整张重画」,所以一律早失败。
     if (maskImage) {
-      const isGptImagesEdit = GPT_IMAGES_API_MODELS.has(model) && this.isSizeQualityImageModel(model)
-      if (!isGptImagesEdit) {
-        throw new Error(`${modelConfig.name || model} 不支持 mask 遮罩局部重绘，请改用 gpt-image-2 / 2.5 flare / 2.5 sunburst`)
+      if (!MASK_INPAINT_MODELS.has(model)) {
+        throw new Error(`${modelConfig.name || model} 不支持 mask 遮罩局部重绘，请改用 gpt-image-2 / 2.5 flare / 2.5 sunburst / 腾讯 2.5(custom-model-og-v2.5-f / -s)`)
       }
       const hasReference = !!imageBase64 || (referenceImages?.length ?? 0) > 0
       if (!hasReference) {
@@ -2485,8 +2603,15 @@ export class ApiService {
           if (jsonSources.length === 0) {
             throw new Error('腾讯 image2 参考图无法解析为 URL 或 base64，请检查输入参考图')
           }
+          // 遮罩在腾讯 JSON 契约里是 `mask: { image_url }`(URL 或 base64,与参考图同形态);
+          // 能走到这里的 maskImage 已过上面 MASK_INPAINT_MODELS 的门。
+          const jsonMask = maskImage ? this.normalizeImageSource(maskImage, 'image/png') : null
+          if (maskImage && !jsonMask) {
+            throw new Error('mask 遮罩无法解析为 URL 或 base64，请检查遮罩图片（需要带 alpha 通道的 PNG）')
+          }
           return this.makeTencentImage2JsonEdit(
             editUrl, model, prompt, jsonSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality,
+            background, jsonMask ?? undefined,
           )
         }
         return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality, background, n, maskImage)
@@ -2790,7 +2915,7 @@ export class ApiService {
   private resolveGptImage2Quality(quality?: string, model?: string): string | undefined {
     if (!quality || quality === 'auto') return undefined
     if (['low', 'medium', 'high'].includes(quality)) return quality
-    if (model && GPT_IMAGE_25_OFFICIAL.has(model) && (quality === 'xhigh' || quality === 'max')) {
+    if (model && GPT_IMAGE_25_QUALITY_MODELS.has(model) && (quality === 'xhigh' || quality === 'max')) {
       return quality
     }
     return undefined
@@ -2822,9 +2947,11 @@ export class ApiService {
   }
 
   /**
-   * 腾讯 image2(custom-imagemodel-gt) 图片编辑：JSON `images:[url]` 请求。
+   * 腾讯 image2 家族(gt / og-v2 / og-v2.5) 图片编辑：JSON `images:[{image_url}]` 请求。
    * - 该网关 edit 端点接受公网 URL 数组（无需 base64 multipart）；
    * - logo_add:0 关闭水印，与全局 watermark:false 对齐；
+   * - og-v2.5:`background` 与 `mask:{image_url}` 是网关 `tokenhubog` 适配器认的 JSON 字段
+   *   (mask 只在 MASK_INPAINT_MODELS 放行后才会传进来;background 由能力位裁决);
    * - 响应解析复用 extractImagesFromApiResponse（url / b64_json 都吃）。
    */
   private async makeTencentImage2JsonEdit(
@@ -2838,6 +2965,8 @@ export class ApiService {
     timeoutMs = 2_000_000,
     size?: string,
     quality?: string,
+    background?: 'transparent',
+    mask?: string,
   ): Promise<Response> {
     // 官方文档(GPT-Maas)：images 类型是 `Array of ImageRef`，线格式为对象数组
     // `[{ image_url: "<url 或 base64 编码数据>" }]`（见官方 curl 示例）。image_url 字段
@@ -2853,6 +2982,10 @@ export class ApiService {
     }
     if (size && size !== 'auto') body.size = size
     if (quality) body.quality = quality
+    // 透明底:调用方要了且能力位放行时才到这里(resolveTransparentBackground 已裁决)。
+    if (background === 'transparent') body.background = 'transparent'
+    // 遮罩:网关 normalizeMask 收 `{image_url}` 对象或裸字符串,这里用对象形态,与 images[] 同形。
+    if (mask) body.mask = { image_url: mask }
     if (this.isTencentImage2(model)) body.extra_body = { logo_add: 0 }
 
     this.logImageRequest(model, url, body)

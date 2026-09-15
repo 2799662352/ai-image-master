@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import {
   ANNOTATION_COLORS,
+  DEFAULT_ERASE_MODEL,
+  ERASE_MODELS,
   RESIZE_PRESETS,
   STROKE_COLOR,
   buildImageFeedbackInstruction,
   maskFileName,
   normalizePoint,
   renumberComments,
+  resolveEraseModel,
   strokeColor,
   summarizeStrokes,
   type AnnotationStroke,
   type ImageComment,
 } from '../lightbox/imageTools'
+import { MASK_INPAINT_MODELS } from '../../../services/api/ApiService'
 
 /**
  * 灯箱图片工具条(设计稿 D4)的纯逻辑:标注 / 评论 / 擦除 / 移除背景 / 调整尺寸
@@ -102,6 +106,33 @@ describe('annotation colours', () => {
   })
 })
 
+/**
+ * 擦除绑定 2.5,但「哪条 2.5」跟随用户 composer 里选的渠道:官转 flare / sunburst 或
+ * 腾讯 og-v2.5-f / -s 都直接用;其它渠道(没有 mask)回落官转 sunburst。
+ */
+describe('resolveEraseModel', () => {
+  it('keeps the picked channel when it is one of the four 2.5 lines', () => {
+    for (const id of ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'custom-model-og-v2.5-s', 'custom-model-og-v2.5-f']) {
+      expect(resolveEraseModel(id)).toBe(id)
+    }
+  })
+
+  it('falls back to 官转 sunburst for channels without mask, junk, or nothing picked', () => {
+    for (const id of ['custom-imagemodel-gt', 'custom-model-og-v2', 'wan2.7-image-pro', 'gpt-image-2', 'gpt-image-2-vip', '', undefined, 42]) {
+      expect(resolveEraseModel(id)).toBe(DEFAULT_ERASE_MODEL)
+    }
+    expect(DEFAULT_ERASE_MODEL).toBe('gpt-image-2.5-sunburst')
+  })
+
+  // 灯箱点名的渠道必须真能吃 mask —— 否则 ApiService 会在发请求前把它拒掉,
+  // 用户看到的是「擦除失败」而不是一张图。两份集合分住两层,用这条钉住不漂。
+  it('every erase model is accepted by the ApiService mask gate', () => {
+    for (const id of ERASE_MODELS) expect(MASK_INPAINT_MODELS.has(id), id).toBe(true)
+    // 反向不成立是刻意的:gpt-image-2 / vip 吃 mask,但擦除只绑 2.5。
+    expect(ERASE_MODELS.has('gpt-image-2')).toBe(false)
+  })
+})
+
 describe('buildImageFeedbackInstruction', () => {
   it('returns an empty string when nothing was marked', () => {
     expect(buildImageFeedbackInstruction({ imageName: 'a.png', comments: [], strokes: [] })).toBe('')
@@ -145,6 +176,21 @@ describe('buildImageFeedbackInstruction', () => {
     // 擦除绑定 2.5(用户拍板:目前只有 2.5 有这个能力);sunburst 是改图优先的那一档,排第一。
     expect(text).toContain('gpt-image-2.5-sunburst')
     expect(text).not.toMatch(/gpt-image-2(?![.\-])/)
+  })
+
+  // 腾讯 og-image 上的 2.5 也吃 mask(网关 JSON `mask:{image_url}`,用户实测)。选了腾讯线的
+  // 用户是为了走平台额度,擦除不该悄悄跳回 apiyi 官转 —— 指令按传进来的 eraseModel 点名。
+  it('names the user-picked 腾讯 2.5 channel when eraseModel says so, and tells the agent not to switch', () => {
+    const text = buildImageFeedbackInstruction({
+      imageName: 'a.png',
+      comments: [],
+      strokes: strokes(['erase']),
+      maskName: 'a.mask.png',
+      eraseModel: 'custom-model-og-v2.5-s',
+    })
+    expect(text).toContain('model=custom-model-og-v2.5-s')
+    expect(text).not.toContain('gpt-image-2.5-sunburst')
+    expect(text).toMatch(/别换成别的渠道/)
   })
 
   it('falls back to the red-stroke description when no mask file could be produced', () => {
