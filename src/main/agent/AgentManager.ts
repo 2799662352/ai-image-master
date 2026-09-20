@@ -57,6 +57,8 @@ import {
 } from './codexConfigStore'
 import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
 import { AUDIO_EXTENSIONS, mapReferencesToInputItems } from './codexUserInput'
+import { modelAcceptsNativeMedia, planOmniNativeMedia } from './omniMediaInput'
+import { relayFileToCos } from '../services/tencent/mediaRelay'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import { SessionConfigStore } from './SessionConfigStore'
 import { TurnNotifier, type TurnNotification } from './TurnNotifier'
@@ -297,6 +299,12 @@ export interface AgentManagerOptions {
   /** Runtime context-settings persistence seam. Production uses userDataDir. */
   runtimeSettingsStore?: CodexRuntimeSettingsStore
   /**
+   * Uploads a local audio / video file to the public COS relay prefix and returns
+   * its https URL — the omni main-agent media path (see omniMediaInput). Test seam;
+   * production uses `relayFileToCos`.
+   */
+  relayMediaToCos?: (filePath: string, mime: string, size?: number) => Promise<string>
+  /**
    * Local catimation MCP server coordinates produced by
    * `startCatimationMcpServer` (+ stdio bridge launch info when available).
    * Forwarded to the default `CodexLocalBackend` so the spawned Codex
@@ -365,6 +373,7 @@ export class AgentManager {
   private readonly userDataDir: string
   private readonly providerStore: CodexProviderStore
   private readonly runtimeSettingsStore: CodexRuntimeSettingsStore
+  private readonly relayMediaToCos: (filePath: string, mime: string, size?: number) => Promise<string>
   private runtimeSettings: PersistedCodexRuntimeSettingsV1
   /**
    * In-flight launch pin for a context restart. `undefined` = no transition in
@@ -618,6 +627,8 @@ export class AgentManager {
     this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
     this.runtimeSettingsStore = opts.runtimeSettingsStore
       ?? new CodexRuntimeSettingsStore(opts.userDataDir)
+    this.relayMediaToCos = opts.relayMediaToCos
+      ?? ((filePath, mime, size) => relayFileToCos(filePath, mime, size ? { fileSize: size } : undefined))
     this.runtimeSettings = this.runtimeSettingsStore.loadSync()
     const persisted = this.providerStore.loadSync()
     // v4.4.2 persistence migration: the store now separates the Gateway
@@ -3405,10 +3416,14 @@ export class AgentManager {
     // it so chips are clickable. Mirror that here, otherwise referencing an
     // uploaded file (drag from the ATTACHMENTS tree, edit-and-resend) previews
     // fine and then dies at send with "Reference path is outside allowed roots".
+    // Omni main-agent models take audio / video natively (see omniMediaInput):
+    // videos are set aside here instead of being flattened into path mentions,
+    // and further down both they and audio attachments become media sentinels.
+    const nativeMedia = modelAcceptsNativeMedia(model)
     const referenceMapping = await mapReferencesToInputItems(payload.references, [
       ...this.allowedRoots,
       path.join(this.userDataDir, 'agent', 'uploads'),
-    ])
+    ], { collectVideo: nativeMedia })
     // Plan B routing for the upcoming `thread/start`: when the confirmed
     // selection routes to a Channel other than the process-active one (a
     // same-gateway sibling registered as an extra provider table), the new
@@ -3483,14 +3498,28 @@ export class AgentManager {
     // `localImage` for vision models, but listing the path here is what
     // lets the agent's filesystem tools touch the same file. See
     // AgentManager.test.ts > "injects the localPath of every attachment".
-    const promptText = buildPromptWithReferenceMentions(
-      buildPromptWithAttachments(payload.content, savedAttachments),
-      referenceMapping.textMentions,
-    )
-    const referenceItems = mapDuplicateAttachmentReferencesToUploadedPaths(
+    const mappedReferenceItems = mapDuplicateAttachmentReferencesToUploadedPaths(
       referenceMapping.items,
       attachmentInputs,
       savedAttachments,
+    )
+    // Omni turn: relay audio / video (attachments + references) to the public COS
+    // prefix and carry each one as a sentinel text item the Responses bridge turns
+    // into `input_audio` / `input_video`. Files upstream cannot decode (m4a / ogg /
+    // opus…) or that fail to relay degrade to a `name: path` mention below — the
+    // agent can still reach them through ffmpeg-win / understand_*.
+    const nativePlan = nativeMedia
+      ? await planOmniNativeMedia({
+          referenceItems: mappedReferenceItems,
+          videoReferences: referenceMapping.videoReferences,
+          attachments: savedAttachments,
+          relay: this.relayMediaToCos,
+        })
+      : undefined
+    const referenceItems = nativePlan ? nativePlan.referenceItems : mappedReferenceItems
+    const promptText = buildPromptWithReferenceMentions(
+      buildPromptWithAttachments(payload.content, savedAttachments),
+      [...referenceMapping.textMentions, ...(nativePlan?.fallbackMentions ?? [])],
     )
     const localImagePaths = new Set(
       referenceItems
@@ -3533,17 +3562,21 @@ export class AgentManager {
       // serialization time) instead of degrading to a path-text mention.
       // Extension fallback covers sources that stat audio files as
       // application/octet-stream; .webm/.mp4 need an explicit audio/* mime.
+      // On an omni turn the media plan already consumed these (codex would
+      // strip `localAudio` for a slug it does not know), so they are skipped.
       ...savedAttachments
         .filter((item) =>
           item.mime.startsWith('audio/') ||
           AUDIO_EXTENSIONS.has(path.extname(item.localPath).toLowerCase()))
         .filter((item) => {
           const resolved = path.resolve(item.localPath)
+          if (nativePlan?.consumedAttachmentPaths.has(resolved)) return false
           if (localAudioPaths.has(resolved)) return false
           localAudioPaths.add(resolved)
           return true
         })
         .map((item) => ({ type: 'localAudio' as const, path: item.localPath })),
+      ...(nativePlan?.mediaItems ?? []),
     ]
 
     // Persist the user turn before kicking off the backend so that:

@@ -25,6 +25,18 @@ renderer automatically retries once on 3.7 max as a fallback (audio excepted). O
 pick a bigger tier on a hard document / cross-modal reasoning job or when the user
 explicitly asks for it.
 
+## If YOU are qwen3.8-omni-flash (main agent): attachments arrive natively
+
+When the user picked Qwen 3.8 Omni Flash as the chat model, audio / video files
+attached to the message are delivered **inside the message itself** (the app relays
+them and sends real `input_audio` / `input_video` parts) — you already see the frames
+and hear the soundtrack. Answer from what you perceive; do not call `understand_video`
+/ `understand_audio` on the same file unless the user asks for a second opinion or a
+different tier. Two exceptions still need the tools: files upstream cannot decode
+natively (audio in m4a / ogg / opus / flac — convert with ffmpeg-win to mp3 / wav
+first, or hand the path to `understand_audio`), and anything that arrived only as a
+`name: path` mention because the relay failed.
+
 ## When to use
 
 - "理解 / 分析这个视频"、"这段视频在干什么" → `understand_video`

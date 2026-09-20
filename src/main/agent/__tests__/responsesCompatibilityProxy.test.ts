@@ -997,3 +997,81 @@ describe('Anthropic Messages bridge', () => {
     }
   })
 })
+
+/**
+ * omni 主 agent 的音视频:主进程发的是文本哨兵,桥在这里把它改写成网关文档里的
+ * `input_audio` / `input_video`(见 omniMediaInput)。守两件事:改写发生在 HTTP 边界上
+ * (不是只在纯函数里),以及非 omni 模型原样透传。
+ */
+describe('omni media sentinels across the HTTP boundary', () => {
+  async function startCapturingUpstream(): Promise<{
+    baseUrl: string
+    body: () => unknown
+    close: () => Promise<void>
+  }> {
+    let seen: unknown
+    const server = createServer(async (request, response) => {
+      let raw = ''
+      for await (const chunk of request) raw += chunk
+      seen = JSON.parse(raw)
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      body: () => seen,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  const VIDEO = 'https://cos.example.com/image-history/media-relay/2026/09/20/clip.mp4'
+  const AUDIO = 'https://cos.example.com/image-history/media-relay/2026/09/20/talk.wav'
+  const userMessage = {
+    type: 'message',
+    role: 'user',
+    content: [
+      { type: 'input_text', text: '这段视频和录音讲了什么' },
+      { type: 'input_text', text: `<catimation_media kind="video" name="clip.mp4" url="${VIDEO}" />` },
+      { type: 'input_text', text: `<catimation_media kind="audio" name="talk.wav" format="wav" url="${AUDIO}" />` },
+    ],
+  }
+
+  it('rewrites the sentinels for qwen3.8-omni-flash before forwarding', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'qwen3.8-omni-flash', stream: true, input: [userMessage] }),
+      })
+      expect((upstream.body() as { input: Array<{ content: unknown[] }> }).input[0].content).toEqual([
+        { type: 'input_text', text: '这段视频和录音讲了什么' },
+        { type: 'input_video', video_url: VIDEO },
+        { type: 'input_audio', audio_url: AUDIO, format: 'wav' },
+      ])
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  it('forwards the sentinels as plain text for any other model on the same bridge', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'qwen3.8-max', stream: true, input: [userMessage] }),
+      })
+      expect((upstream.body() as { input: Array<{ content: unknown[] }> }).input[0].content).toEqual(userMessage.content)
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+})
