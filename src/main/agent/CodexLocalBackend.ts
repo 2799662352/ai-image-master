@@ -238,7 +238,7 @@ export interface CodexLocalBackendOptions {
    */
   cinematographyKbStdio?: CodexLaunchOptions['cinematographyKbStdio']
   /**
-   * Resolves the qwen3.7-max-dashscope understanding provider (Path B) at spawn
+   * Resolves the qwen understanding provider (Path B, default qwen3.8-omni-flash) at spawn
    * time. When it returns a config + token, the spawned codex registers an
    * EXTRA `[model_providers.qwen]` table (so a subagent can select
    * `modelProvider="qwen"`) and the token is injected as the provider's env var

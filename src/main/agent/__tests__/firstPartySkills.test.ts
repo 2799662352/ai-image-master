@@ -376,15 +376,18 @@ describe('installFirstPartySkills', () => {
       expect(desc.length).toBeLessThanOrEqual(500)
     })
 
-    it('documents the three understand tools, the audio→MP4 fallback, and the qwen subagent', () => {
+    it('documents the four understand tools, the native audio path, and the qwen subagent', () => {
       const c = CATIMATION_UNDERSTAND_SKILL.content
       expect(c).toContain('understand_video')
+      expect(c).toContain('understand_audio')
       expect(c).toContain('understand_document')
       expect(c).toContain('web_research')
-      // audio is not native → ffmpeg → MP4 → understand_video
+      // audio is native on omni: extract the track with ffmpeg, never wrap it into a placeholder MP4
       expect(c).toContain('ffmpeg')
-      expect(c).toContain('MP4')
-      // Path B: spawn a subagent pinned to the qwen provider/model
+      expect(c).toMatch(/Do NOT wrap audio into a\s+placeholder MP4/)
+      // Path B: spawn a subagent pinned to the qwen provider; omni is the default model,
+      // and the 3.7 aliases stay documented while both generations run in parallel.
+      expect(c).toContain('qwen3.8-omni-flash')
       expect(c).toContain('qwen3.7-max-dashscope')
       expect(c).toContain('modelProvider')
     })

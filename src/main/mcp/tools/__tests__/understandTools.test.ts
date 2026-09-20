@@ -38,12 +38,50 @@ function firstText(res: any): string {
 }
 
 describe('registerUnderstandTools', () => {
-  it('registers understand_video / understand_document / web_research / understand_canvas_video', () => {
+  it('registers understand_video / understand_audio / understand_document / web_research / understand_canvas_video', () => {
     const { tools, server, router } = fakeServerAndRouter()
     registerUnderstandTools(server, router)
-    for (const name of ['understand_video', 'understand_document', 'web_research', 'understand_canvas_video']) {
+    for (const name of ['understand_video', 'understand_audio', 'understand_document', 'web_research', 'understand_canvas_video']) {
       expect(tools.has(name)).toBe(true)
     }
+  })
+
+  it('understand_audio: auto-streams a local audio_path to COS with an audio mime and routes the public audio_url', async () => {
+    relayFileToCos.mockClear()
+    relayBufferToCos.mockClear()
+    fsReadFile.mockClear()
+    relayFileToCos.mockResolvedValueOnce('https://cos.example.com/image-history/media-relay/talk.mp3')
+    const { tools, server, router } = fakeServerAndRouter(async () => ({ success: true, text: '他说明天见' }))
+    registerUnderstandTools(server, router)
+
+    const res = await tools.get('understand_audio')!({ audio_path: 'C:/rec/talk.mp3', question: '说了什么', format: 'mp3' })
+
+    expect(fsReadFile).not.toHaveBeenCalled()
+    expect(relayBufferToCos).not.toHaveBeenCalled()
+    expect(relayFileToCos).toHaveBeenCalledTimes(1)
+    expect(relayFileToCos.mock.calls[0][0]).toBe('C:/rec/talk.mp3')
+    expect(relayFileToCos.mock.calls[0][1]).toBe('audio/mpeg')
+    const [name, sentParams] = router.call.mock.calls[0]
+    expect(name).toBe('understand_audio')
+    expect(sentParams.audio_url).toBe('https://cos.example.com/image-history/media-relay/talk.mp3')
+    expect(sentParams.audio_path).toBeUndefined()
+    expect(sentParams.format).toBe('mp3')
+    expect(firstText(res)).toContain('他说明天见')
+  })
+
+  it('understand_audio: passes a public audio_url through and reports a missing-input error', async () => {
+    relayFileToCos.mockClear()
+    const { tools, server, router } = fakeServerAndRouter()
+    registerUnderstandTools(server, router)
+
+    await tools.get('understand_audio')!({ audio_url: 'https://x/a.wav', question: 'q' })
+    expect(relayFileToCos).not.toHaveBeenCalled()
+    expect(router.call.mock.calls[0][1].audio_url).toBe('https://x/a.wav')
+
+    router.call.mockClear()
+    const res = await tools.get('understand_audio')!({ question: 'q' })
+    expect(router.call).not.toHaveBeenCalled()
+    expect(firstText(res)).toContain('缺少 audio_url 或 audio_path')
   })
 
   it('routes web_research to the renderer via router.call', async () => {
