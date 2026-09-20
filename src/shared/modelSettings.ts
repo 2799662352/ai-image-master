@@ -147,7 +147,7 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     id: 'qwen3.8-omni-flash',
     displayName: 'Qwen 3.8 Omni Flash',
     tier: 'Fast',
-    description: '通义千问 3.8 Omni Flash（Miau 网关）。全模态:文本 / 图片 / 视频 / 音频都能看和听,理解类工具的默认档,也能当主对话模型。',
+    description: '通义千问 3.8 Omni Flash（Miau 网关）。全模态:文本 / 图片 / 视频 / 音频都能看和听,理解类工具的默认档;选它当主模型时,聊天附件里的音频 / 视频会直接送进模型。',
     isDefault: false,
   },
   {

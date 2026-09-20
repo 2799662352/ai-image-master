@@ -18,6 +18,7 @@ import {
 import type { CodexProviderConfig } from './codexLaunch'
 import { notePlatformSpend } from '../services/auth/platformSpend'
 import { inferModelFamily } from './gatewayModelRouting'
+import { rewriteOmniMediaInput } from './omniMediaInput'
 
 type JsonObject = Record<string, unknown>
 
@@ -664,6 +665,11 @@ function parseUpstreamBase(upstreamBaseUrl: string, label: string): URL {
 
 /**
  * Starts a loopback proxy that adapts Codex namespace tools to standard Responses calls.
+ *
+ * Besides the namespace flattening, the Responses bridge is where omni media
+ * sentinels (see omniMediaInput) become real `input_audio` / `input_video` parts.
+ * The rewrite gates itself on `body.model`, so non-omni channels behind the same
+ * bridge (grok, qwen 3.7 / 3.8-max) forward the sentinel as the plain text it is.
  */
 export async function startResponsesCompatibilityProxy(
   upstreamBaseUrl: string,
@@ -674,6 +680,9 @@ export async function startResponsesCompatibilityProxy(
     basePath: upstreamBase.pathname.replace(/\/+$/, ''),
     resolveTarget: (requestUrl) => upstreamUrl(upstreamBase, requestUrl),
     fetch,
+    transformBody: (body) => {
+      rewriteOmniMediaInput(body)
+    },
     ...(options.platformHeaders ? { platformHeaders: options.platformHeaders } : {}),
   })
 }
