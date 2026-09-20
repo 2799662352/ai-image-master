@@ -46,6 +46,13 @@ export interface ResolutionOption {
 export type UnderstandInput =
   | { kind: 'video'; mediaUrl: string; question: string; fps?: number }
   /**
+   * 音频(语音 / 音乐 / 环境声)。只有全模态的 omni 模型收得下 —— `understand()` 对
+   * 这一类**强制**走 `QWEN_UNDERSTAND_OMNI_MODEL`,忽略调用方选的 max/flagship(3.8-max
+   * 没有音频模态,发过去只会换回 `incorrect modal 'audio'`)。`format` 缺省按 URL 扩展名
+   * 推断(mp3 / wav / m4a…),推不出来按 mp3 发。
+   */
+  | { kind: 'audio'; mediaUrl: string; question: string; format?: string }
+  /**
    * 图片 / 文档。`mediaUrl` 是单张;要一次看多张(商品对比、多页文档、
    * 分镜连续性)就再给 `mediaUrls` —— 上游把同一条 user message 里并列的多个
    * `image_url` 当成一组来看,这正是「跨图比较」能成立的原因;拆成多次调用
@@ -113,33 +120,40 @@ function dedupePreservingOrder(urls: readonly unknown[]): string[] {
 }
 
 /**
- * 理解能力上游模型(走 antigravity new-api 网关的 DashScope 原生通道)。
+ * 理解能力上游模型(走 Miau new-api 网关,平台余额 / Miau Key 计费,与对话栏同一枚)。
  *
- * 默认 `qwen3.7-plus-dashscope`(更便宜,日常足够);`qwen3.7-max-dashscope`
- * 作为「更强 + 兜底」备选。两者能力一致(文本/图像/视频/联网/工具,均不支持
- * 音频),差别是 plus 更便宜、max 更强更贵。
+ * 默认 `qwen3.8-omni-flash`(2026-09-20 生产网关上线):**全模态** —— 文本 / 图片 /
+ * 视频 / **音频**输入都收,价目表 ratio 0.5,比 3.7 Plus(ratio 1)还便宜。
  *
- * 历史:plus 是「多模态专用」模型,其纯文本(如 web_research)必须被网关强制路由到
- * multimodal 端点(`aliMultimodalOnlyModels`),否则上游回 `url error`。该端点强制
- * 一度只在测试网关、prod 未上。2026-06-23 实测 prod(175.178.198.17)上 plus 的
- * web_research + understand_video 均已通过(见 docs 24/25),故 plus 现已稳定可作默认。
+ * 历史:2026-06 起默认 `qwen3.7-plus-dashscope`、兜底 `qwen3.7-max-dashscope`(两个
+ * DashScope 原生别名,均不收音频,音频只能绕 apiyi 的 Gemini 或 ffmpeg 套 MP4)。
+ * 2026-09-20 用户拍板:omni 上了生产,理解默认档改走它;**3.7 Plus / Max 暂不撤下**,
+ * 与 3.8 一代并行一段时间 —— 'plus' / 'max' 别名仍按字面指向 3.7,兜底也仍是 3.7 Max。
  *
- * 切换/兜底:`understand(input, { model })` 可显式指定('max' / 'plus' / 全名);
- * 非法值回落默认 plus。primary 失败(同模型重试耗尽后)且 primary≠max 时,自动用
- * max 兜底重试一次(见 understand)。
+ * 切换/兜底:`understand(input, { model })` 可显式指定('omni' / 'plus' / 'max' /
+ * 'flagship' / 全名);非法值回落默认 omni。primary 失败(同模型重试耗尽后)且
+ * primary≠max 时,自动用 max 兜底重试一次(见 understand);**音频除外** —— 只有 omni
+ * 听得见,兜底没有意义。
  */
-export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-plus-dashscope'
+export const QWEN_UNDERSTAND_MODEL = 'qwen3.8-omni-flash'
 
-/** 更强 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
+/** 全模态模型:唯一收音频的一档。`kind:'audio'` 一律钉在它上。 */
+export const QWEN_UNDERSTAND_OMNI_MODEL = QWEN_UNDERSTAND_MODEL
+
+/** 3.7 Plus:上一代的理解默认档,与 3.8 并行保留;经 `{ model: 'plus' }` 显式选用。 */
+export const QWEN_UNDERSTAND_PLUS_MODEL = 'qwen3.7-plus-dashscope'
+
+/** 更强 + 兜底模型(3.7 Max):primary 失败时自动重试一次。也可经 `{ model: 'max' }` 显式选用。 */
 export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
 
 /**
  * 旗舰理解模型 `qwen3.8-max`(2026-08-03 GA)。
  *
- * **不设为默认。** 它与 3.7-plus 的视频规格完全相同(2 小时 / 2GB / 单次 64 段
+ * **不设为默认。** 它与 omni / 3.7 的视频规格完全相同(2 小时 / 2GB / 单次 64 段
  * 视频 / 2048 张 URL 图),差别在推理强度、1M 上下文和内置工具 —— 而理解工具的
- * 绝大多数调用是「看一段片子讲了什么」,这些规格上 plus 已经吃满,换旗舰只是更贵。
- * 需要长文档深读或复杂跨模态推理时由调用方显式指定 `model="flagship"`。
+ * 绝大多数调用是「看一段片子讲了什么」,这些规格上默认档已经吃满,换旗舰只是更贵;
+ * 它也**没有音频模态**。需要长文档深读或复杂跨模态推理时由调用方显式指定
+ * `model="flagship"`。
  *
  * 注意模型 id **没有** `-dashscope` 后缀 —— 它走的是网关里 `QWEN_MIAU_MODELS`
  * 那条(与对话栏同一枚 Miau key),不是 3.7 那两个 DashScope 原生别名。
@@ -174,28 +188,61 @@ export const DASHSCOPE_API_KEY_STORAGE = 'dashscope_api_key'
 export const DASHVECTOR_MCP_PROVIDER_ID = 'dashvector'
 export const DASHVECTOR_API_KEY_STORAGE = 'dashvector_api_key'
 
-/** 允许显式选用的理解模型白名单(其余值回落到默认 plus)。 */
+/** 允许显式选用的理解模型白名单(其余值回落到默认 omni)。 */
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
+  QWEN_UNDERSTAND_PLUS_MODEL,
   QWEN_UNDERSTAND_FALLBACK_MODEL,
   QWEN_UNDERSTAND_FLAGSHIP_MODEL,
 ]
 
 /**
  * 把调用方请求的模型归一成白名单内的真实模型名。
- * - `'max'` / `'plus'` 简称 → 对应 -dashscope 全名(与默认无关,按字面映射);
- * - 已是白名单全名 → 原样;
- * - 其余(含幻觉名 / undefined)→ 默认 plus。
+ * - `'omni'` → 默认全模态档 qwen3.8-omni-flash;
+ * - `'plus'` / `'max'` 简称 → 对应 3.7 `-dashscope` 全名(与默认无关,按字面映射 ——
+ *   老 skill / 老会话里写的 max 就是 3.7 Max,并行期间不改它的意思);
+ * - `'flagship'` / `'3.8'` → 3.8 旗舰。'flagship' 而不是版本号:别名要表达「选最强的
+ *   那档」,写死版本号会在下次换代时变成需要同步改动的死值;
+ * - 已是白名单全名 → 原样;其余(含幻觉名 / undefined)→ 默认 omni。
  */
 export function resolveUnderstandModel(requested?: string): string {
   if (typeof requested !== 'string') return QWEN_UNDERSTAND_MODEL
   const r = requested.trim().toLowerCase()
-  if (r === 'max') return 'qwen3.7-max-dashscope'
-  if (r === 'plus') return 'qwen3.7-plus-dashscope'
-  // 'flagship' 而不是 '3.8':别名要表达「选最强的那档」,写死版本号会在下次换代时
-  // 变成需要同步改动的死值(plus/max 就是这么活过好几代的)。
+  if (r === 'omni') return QWEN_UNDERSTAND_MODEL
+  if (r === 'plus') return QWEN_UNDERSTAND_PLUS_MODEL
+  if (r === 'max') return QWEN_UNDERSTAND_FALLBACK_MODEL
   if (r === 'flagship' || r === '3.8') return QWEN_UNDERSTAND_FLAGSHIP_MODEL
   return QWEN_UNDERSTAND_MODELS.includes(requested) ? requested : QWEN_UNDERSTAND_MODEL
+}
+
+/** `foo.MP3?x=1` → `mp3`;认不出返回 undefined。上游按这个字段解码音频字节。 */
+export function audioFormatFromUrl(url: string): string | undefined {
+  const m = /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus|webm|amr|wma)(?:[?#]|$)/i.exec(url)
+  return m ? m[1].toLowerCase() : undefined
+}
+
+/**
+ * 把一段 Chat Completions SSE 拼成整段回答。返回 `null` 表示这不是 SSE(一行
+ * `data:` 都没有)—— 调用方据此改按普通 JSON 解析。只收 `delta.content`;`reasoning_content`
+ * 与 `[DONE]` 跳过,坏掉的半行 JSON 也跳过而不是整段作废(流被网关掐断时尾巴常是半行)。
+ */
+export function collectSseContent(raw: string): string | null {
+  let sawData = false
+  let text = ''
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    sawData = true
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      const chunk = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }> }
+      const delta = chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content
+      if (typeof delta === 'string') text += delta
+    } catch {
+      // 半行 / 心跳注释,跳过。
+    }
+  }
+  return sawData ? text : null
 }
 
 export interface QualityOption {
@@ -3935,21 +3982,21 @@ export class ApiService {
   }
 
   /**
-   * qwen 多模态理解（视频/文档/联网扒资料）。默认 `qwen3.7-plus-dashscope`(更便宜),
-   * `qwen3.7-max-dashscope` 作为更强 + 兜底备选。
+   * qwen 多模态理解(视频 / 图片文档 / 音频 / 联网扒资料)。默认全模态
+   * `qwen3.8-omni-flash`,`qwen3.7-max-dashscope` 作为更强 + 兜底备选;3.7 Plus 与
+   * 3.8 旗舰可显式点名。
    *
-   * 复用出图同一条链路:经 new-api(antigravity 站点)网关
-   * /v1/chat/completions,Bearer = Miau 令牌。网关已做 OpenAI→DashScope 转换,
-   * 客户端只发标准 OpenAI content parts;多模态请求不带 result_format(手册 §2)。
-   * 联网用顶层 enable_search:true。
+   * 复用出图同一条链路:经 new-api(antigravity 站点 = Miau)网关
+   * /v1/chat/completions,Bearer = Miau 令牌(或平台余额:打计费标记头,主进程换成
+   * 平台 token)。网关已做 OpenAI→DashScope 转换,客户端只发标准 OpenAI content parts;
+   * 多模态请求不带 result_format(手册 §2)。联网用顶层 enable_search:true。
    *
-   * 模型选择:`opts.model`('max' / 'plus' / 全名)显式指定,非法值回落默认 plus。
-   * 兜底:primary(默认 plus)在同模型重试耗尽后仍失败,且 primary≠max 且未禁用
-   * 兜底时,自动用 max 再跑一轮(plus 偶发对个别请求不稳时由更强的 max 救场)。
+   * 模型选择:`opts.model`('omni' / 'plus' / 'max' / 'flagship' / 全名)显式指定,非法值
+   * 回落默认。兜底:primary 在同模型重试耗尽后仍失败,且 primary≠max 且未禁用兜底时,
+   * 自动用 max(3.7)再跑一轮。音频例外:一律钉在 omni 上且不兜底(其余各档都没有音频模态)。
    *
    * 健壮解析:先 text() 再 try-parse,502/503/504 与非 JSON 返回都映射成
    * 结构化中文错误而非抛异常,避免重蹈 parseResponse「先 json 后判 ok」的坑。
-   * 音频:qwen 上游不收 audio,音频走 skill 指导的 ffmpeg→MP4→understand_video。
    */
   async understand(
     input: UnderstandInput,
@@ -3983,24 +4030,37 @@ export class ApiService {
                   video_url: { url: input.mediaUrl },
                   ...(typeof input.fps === 'number' ? { fps: input.fps } : {}),
                 }]
-              // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
-              // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
-              // 拆成多次调用模型就看不到彼此了。
-              : buildDocumentParts(
-                  dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])]),
-                )),
+              : input.kind === 'audio'
+                // OpenAI 兼容形态的音频 part:`data` 放公网 URL(上游也接 base64),
+                // `format` 告诉解码器字节是什么。omni 专属 —— 见下面的模型钉死。
+                ? [{
+                    type: 'input_audio',
+                    input_audio: {
+                      data: input.mediaUrl,
+                      format: input.format ?? audioFormatFromUrl(input.mediaUrl) ?? 'mp3',
+                    },
+                  }]
+                // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
+                // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
+                // 拆成多次调用模型就看不到彼此了。
+                : buildDocumentParts(
+                    dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])]),
+                  )),
           ]
 
     const baseBody: Record<string, unknown> = { messages: [{ role: 'user', content }] }
     if (input.kind === 'web') baseBody.enable_search = true
 
-    const primary = resolveUnderstandModel(opts.model)
+    // 音频只有 omni 听得见:不管调用方点了哪档,都钉到它上,兜底也关掉(换 3.7-max 重试
+    // 只会再换回一句 `incorrect modal 'audio'`,白花一次上游往返)。
+    const isAudio = input.kind === 'audio'
+    const primary = isAudio ? QWEN_UNDERSTAND_OMNI_MODEL : resolveUnderstandModel(opts.model)
     const primaryRes = await this.understandWithModel(site, resolvedKey, baseBody, primary, opts)
     if (primaryRes.success) return primaryRes
 
-    // 兜底:primary 不是 max 时(默认 plus / 显式 plus)用更强的 max 再跑一轮。可经
+    // 兜底:primary 不是 max 时(默认 omni / 显式 omni)用更强的 max 再跑一轮。可经
     // `fallback:false` 关闭(如调用方明确只想要 primary 的结果)。
-    const allowFallback = opts.fallback !== false
+    const allowFallback = opts.fallback !== false && !isAudio
     if (allowFallback && primary !== QWEN_UNDERSTAND_FALLBACK_MODEL) {
       const fb = await this.understandWithModel(
         site,
@@ -4027,6 +4087,9 @@ export class ApiService {
     opts: { retries?: number; retryDelayMs?: number },
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
     const body: Record<string, unknown> = { ...baseBody, model }
+    // omni 模型只要文本回来。它还能出语音,但那是另一种产品(以及另一种计费);
+    // `modalities` 是 OpenAI 标准字段,网关原样透传给 DashScope 兼容模式。
+    if (model === QWEN_UNDERSTAND_OMNI_MODEL) body.modalities = ['text']
     const maxAttempts = Math.max(1, (opts.retries ?? 2) + 1)
     const retryDelayMs = opts.retryDelayMs ?? 600
     let lastError = 'qwen 理解请求失败。'
@@ -4043,12 +4106,44 @@ export class ApiService {
     return { success: false, error: lastError }
   }
 
-  /** 单次 understand 请求。瞬时错误(网络异常 / 502·503·504)标 retryable。 */
+  /**
+   * 单次 understand 请求。瞬时错误(网络异常 / 502·503·504)标 retryable。
+   *
+   * 流式自适应:DashScope 兼容模式下 Qwen-Omni 一族**只支持流式输出**(非流式回 400,
+   * 错误文本里带 "stream")。新网关是否替我们做了这层转换没有验过,所以这里不猜:
+   * 先按非流式发;若上游明确因为流式拒绝,同一请求改 `stream:true` 再发一次并把 SSE
+   * 拼成整段文本,同时把这个模型记进 {@link understandStreamOnlyModels},之后直接走
+   * 流式,不再白花一次往返。
+   */
   private async understandAttempt(
     site: ApiSite,
     key: string,
     body: Record<string, unknown>,
   ): Promise<{ kind: 'ok'; text: string } | { kind: 'fail'; retryable: boolean; error: string }> {
+    const model = typeof body.model === 'string' ? body.model : ''
+    if (this.understandStreamOnlyModels.has(model)) {
+      return this.understandRequest(site, key, { ...body, stream: true }, true)
+    }
+    const first = await this.understandRequest(site, key, body, false)
+    if (first.kind === 'fail' && first.streamRequired) {
+      this.understandStreamOnlyModels.add(model)
+      return this.understandRequest(site, key, { ...body, stream: true }, true)
+    }
+    return first
+  }
+
+  /** 会话级记忆:哪些模型经网关只接受流式(见 understandAttempt)。 */
+  private readonly understandStreamOnlyModels = new Set<string>()
+
+  private async understandRequest(
+    site: ApiSite,
+    key: string,
+    body: Record<string, unknown>,
+    stream: boolean,
+  ): Promise<
+    | { kind: 'ok'; text: string }
+    | { kind: 'fail'; retryable: boolean; error: string; streamRequired?: boolean }
+  > {
     const url = `${site.baseURL}/v1/chat/completions`
     // 收 `site` 而不是裸 baseURL,就是为了能走这一步:平台模式打标记头(主进程换成
     // 影子 token + 计费归属),否则照旧发自填 Key。手写 Authorization 的后果是
@@ -4076,11 +4171,25 @@ export class ApiService {
           error: '上游服务器繁忙或无响应(502/503/504),请稍后重试。',
         }
       }
+      // 非流式被拒且原因是流式:交给 understandAttempt 换流式重发。只认 4xx —— 5xx 是
+      // 上游自己的问题,换个形状再发只是多扣一次。
+      const streamRequired = !stream && resp.status >= 400 && resp.status < 500 && /stream/i.test(raw)
       return {
         kind: 'fail',
         retryable: false,
-        error: `qwen 理解请求失败:${resp.status} ${resp.statusText}`,
+        error: `qwen 理解请求失败:${resp.status} ${resp.statusText}${streamRequired ? '' : ` ${raw.slice(0, 200)}`}`,
+        ...(streamRequired ? { streamRequired: true } : {}),
       }
+    }
+
+    if (stream) {
+      const text = collectSseContent(raw)
+      if (text !== null) {
+        return text.length > 0
+          ? { kind: 'ok', text }
+          : { kind: 'fail', retryable: false, error: 'qwen 未返回可用文本。' }
+      }
+      // 不是 SSE:网关可能忽略了 stream 直接回了 JSON,按非流式解析即可。
     }
 
     let json: any

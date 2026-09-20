@@ -229,7 +229,7 @@ export interface CodexLaunchOptions {
   /**
    * Additional provider tables to REGISTER (but not activate). Each becomes a
    * `[model_providers.<id>]` entry so a subagent can select it via
-   * `modelProvider="<id>"` (Path B: a qwen3.7-max-dashscope understanding
+   * `modelProvider="<id>"` (Path B: a qwen3.8-omni-flash understanding
    * subagent alongside the main agent's active provider). Unlike
    * {@link provider}, these never set the top-level `model_provider`/`model`,
    * so the main agent's provider is untouched.

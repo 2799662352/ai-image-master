@@ -1,10 +1,12 @@
-// qwen 理解工具（视频 / 文档 / 联网扒资料）。默认 qwen3.7-plus(更便宜)、
-// 可经 model="max" 切到更强的 qwen3.7-max;渲染层 understand() 还会在 plus 失败时
-// 自动用 max 兜底。
+// qwen 理解工具(视频 / 音频 / 文档 / 联网扒资料)。默认全模态 qwen3.8-omni-flash
+// (2026-09-20 生产网关上线,文本 / 图片 / 视频 / 音频输入都收,比 3.7-plus 还便宜);
+// 可经 model="plus" / "max" 选 3.7 Plus / Max(与 3.8 并行保留,用户拍板暂不撤),
+// model="flagship" 选 qwen3.8-max;渲染层 understand() 还会在 primary 失败时自动用
+// 3.7 Max 兜底(音频除外 —— 只有 omni 听得见)。
 //
 // 与 imageTools/videoTools 同款薄层模式:main 端只做参数透传 + banner 包装,
 // 实际模型调用在渲染层 AgentToolExecutor.callUnderstand → ApiService.understand()
-// （复用出图同一条 new-api 链路 + 同一 Miau 令牌）。
+// (复用出图同一条 Miau 链路:平台余额或 Miau 令牌计费)。
 //
 // 设计要点:
 // - 媒体最终只接受公网可达 URL(qwen 上游限制),但 main 端会自动兜底:
@@ -13,8 +15,7 @@
 //   * 本机 *_path  → 流式分片上传到历史 COS 桶(image-history/media-relay/*,
 //     不把整文件读进内存)换公网 URL,再交给渲染层。复用 COS STS 上传链路
 //     (mediaRelay.relayFileToCos)。支持到 qwen 上游客观上限 2GB / 2 小时。
-// - 音频不原生支持:skill「catimation-understand」指导先 ffmpeg 转 MP4 再走
-//   understand_video。
+// - 音频走 understand_audio(omni 原生 `input_audio`),不再需要 ffmpeg 套 MP4。
 // - 联网用 web_research(渲染层置 enable_search:true)。
 // - 健壮性:渲染层 understand() 已把 502/非 JSON 映射成 {success:false,error};
 //   这里再兜一层 try/catch,任何异常都回成 textResult 而非抛出。
@@ -61,10 +62,19 @@ function formatResult(tool: string, r: UnderstandResult): string {
 // qwen 上游只接受公网可达 URL。我们不再让用户手动改传 URL,而是在 main 端
 // (有文件系统访问)读取本机 *_path → 中转到历史 COS 桶 → 拿 https URL。
 
-// 客观上限 = qwen3.7 系列视频理解的上游限制(2GB / 2 小时)。
+// 客观上限 = qwen 视觉理解的上游限制(2GB / 2 小时,3.8 omni / max 同档)。
 // 不再是「整文件读进内存」逼出来的 200MB 自设闸门 —— 本机文件改走 relayFileToCos
 // 流式分片上传(STS 鉴权,不占内存),所以这里可以放到真正的 2GB。
-const MAX_RELAY_BYTES = 2 * 1024 * 1024 * 1024 // 2GB:qwen3.7-plus / max 的视频上限
+const MAX_RELAY_BYTES = 2 * 1024 * 1024 * 1024 // 2GB:qwen 视频理解上限
+
+type RelayKind = 'video' | 'audio' | 'document'
+
+/** 每类媒体的参数名(`*_url` / `*_path`),三处(校验 / 归一 / 透传)共用一份。 */
+const MEDIA_KEYS: Record<RelayKind, { url: string; path: string }> = {
+  video: { url: 'video_url', path: 'video_path' },
+  audio: { url: 'audio_url', path: 'audio_path' },
+  document: { url: 'file_url', path: 'file_path' },
+}
 
 const EXT_MIME: Record<string, string> = {
   // video
@@ -73,6 +83,17 @@ const EXT_MIME: Record<string, string> = {
   mov: 'video/quicktime',
   webm: 'video/webm',
   mkv: 'video/x-matroska',
+  // audio
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/opus',
+  flac: 'audio/flac',
+  amr: 'audio/amr',
+  wma: 'audio/x-ms-wma',
   // document / image
   pdf: 'application/pdf',
   png: 'image/png',
@@ -83,9 +104,9 @@ const EXT_MIME: Record<string, string> = {
   avif: 'image/avif',
 }
 
-function mimeFromPath(p: string, kind: 'video' | 'document'): string {
+function mimeFromPath(p: string, kind: RelayKind): string {
   const ext = (p.split('?')[0]?.split('.').pop() ?? '').toLowerCase()
-  return EXT_MIME[ext] ?? (kind === 'video' ? 'video/mp4' : 'application/octet-stream')
+  return EXT_MIME[ext] ?? (kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mpeg' : 'application/octet-stream')
 }
 
 /**
@@ -106,10 +127,9 @@ function isRelayableUrl(u: unknown): u is string {
  */
 async function resolveMediaUrl(
   params: Record<string, unknown>,
-  kind: 'video' | 'document',
+  kind: RelayKind,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  const urlKey = kind === 'video' ? 'video_url' : 'file_url'
-  const pathKey = kind === 'video' ? 'video_path' : 'file_path'
+  const { url: urlKey, path: pathKey } = MEDIA_KEYS[kind]
 
   const url = params[urlKey]
   if (typeof url === 'string' && /^https?:/i.test(url)) {
@@ -175,14 +195,14 @@ async function runUnderstand(
   ctx: unknown,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   let outParams = params
-  if (tool === 'understand_video' || tool === 'understand_document') {
-    const kind = tool === 'understand_video' ? 'video' : 'document'
+  const kind: RelayKind | null =
+    tool === 'understand_video' ? 'video' : tool === 'understand_audio' ? 'audio' : tool === 'understand_document' ? 'document' : null
+  if (kind) {
     const media = await resolveMediaUrl(params, kind)
     if (!media.ok) {
       return textResult(formatResult(tool, { success: false, error: media.error }))
     }
-    const urlKey = kind === 'video' ? 'video_url' : 'file_url'
-    const pathKey = kind === 'video' ? 'video_path' : 'file_path'
+    const { url: urlKey, path: pathKey } = MEDIA_KEYS[kind]
     outParams = { ...params, [urlKey]: media.url }
     delete outParams[pathKey]
 
@@ -311,6 +331,19 @@ async function runUnderstandCanvasVideo(
   return textResult(noteShapeId ? `${banner}\n(已写入画布文字卡片 ${noteShapeId})` : banner)
 }
 
+/**
+ * 模型档位参数,四个工具共用一份。'plus' / 'max' 按字面指 3.7 Plus / Max(两代并行期间
+ * 不改老 skill / 老会话里这两个词的意思),'flagship' 指 3.8 旗舰,'omni'(默认)指全模态档。
+ */
+const MODEL_PARAM = z.enum(['omni', 'plus', 'max', 'flagship']).optional().describe(
+  'Model: "omni" (default — qwen3.8-omni-flash, cheapest, the ONLY tier that can HEAR audio) | '
+  + '"plus" (qwen3.7-plus-dashscope, the previous default; text + image + video) | '
+  + '"max" (qwen3.7-max-dashscope — stronger 3.7, also the automatic fallback) | '
+  + '"flagship" (qwen3.8-max — strongest reasoning, 1M context, built-in tools). '
+  + 'None of plus / max / flagship hear audio. Same video limits on every tier (2h / 2GB), so a bigger '
+  + 'tier is NOT needed just because the input is a video. Omit for omni.',
+)
+
 export function registerUnderstandTools(server: McpServer, router: ToolRouter): void {
   server.registerTool(
     'understand_video',
@@ -319,18 +352,15 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'Understand / analyze a VIDEO with qwen (画面/动作/字幕/剧情). Use for ANY ' +
         '"理解/分析这个视频" request. Pass either a public video_url OR a local video_path — a local ' +
         'path is auto-uploaded (streamed) to the history COS bucket to obtain a public URL (≤2GB / 2h, ' +
-        'the qwen3.7 upstream limit). ' +
-        '⚠️ THIS IS FRAME-BASED, THE AUDIO TRACK IS NEVER HEARD. The model samples frames (see `fps`) '
-        + 'and reads what is VISIBLE. It can read burned-in subtitles; it cannot hear speech, music, '
-        + 'sound effects or tone of voice. So: "这段台词说了什么" only works if the words are on screen. '
-        + 'Never claim you heard something — if the answer would require audio, say the video has no '
-        + 'readable subtitles and that this tool cannot listen.\n'
-        + 'THERE IS NO AUDIO PATH AT ALL on this model family (qwen3.7 / qwen3.8 take text + image + '
-        + 'video only; audio input exists solely on the qwen3.5-omni line, which we do not route here). '
-        + 'Do NOT wrap an audio file into an MP4 with a waveform/placeholder video and send it here — '
-        + 'the model would just describe a picture of a waveform and then invent content. For speech you '
-        + 'need transcription, which this tool does not do.\n'
-        + 'Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger qwen3.7-max. ' +
+        'the qwen upstream limit). ' +
+        'The model samples frames (see `fps`) and reads what is VISIBLE — burned-in subtitles, action, '
+        + 'composition, continuity. The default omni model ALSO hears the soundtrack (verified on the '
+        + 'production gateway 2026-09-20: a black-screen clip came back with its dialogue), so it can tell '
+        + 'you roughly what was said or played; for a verbatim transcript or a music analysis use '
+        + 'understand_audio on the audio track (extract it with the ffmpeg-win skill: '
+        + '`ffmpeg -i in.mp4 -vn -c:a libmp3lame out.mp3`). Every other tier (plus / max / flagship) is '
+        + 'frame-only and never hears. Never claim you heard something this tool did not return.\n'
+        + 'Model defaults to qwen3.8-omni-flash (cheapest); see `model` for the 3.7 tiers and the 3.8 flagship. ' +
         'Returns a Chinese description. Do NOT retry on a clean result.',
       annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
@@ -340,13 +370,37 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         fps: z.number().positive().max(10).optional().describe(
           'Frame sampling rate: one frame every 1/fps seconds. Range 0.1–10, upstream default 2. '
           + 'Raise it for fast action you would otherwise miss between frames; lower it for long static '
-          + 'footage to save tokens. This is the only lever you have over what the model actually sees — '
-          + 'it never hears the audio.',
+          + 'footage to save tokens. This is the main lever over what the model actually sees.',
         ),
-        model: z.enum(['max', 'plus', 'flagship']).optional().describe('Model: "plus" (default, cheaper) | "max" (stronger 3.7) | "flagship" (qwen3.8-max — 1M context + built-in tools, for long documents or hard cross-modal reasoning). Same video limits on all three (2h / 2GB), so flagship is NOT needed just because the input is a video. Omit for plus.'),
+        model: MODEL_PARAM,
       }),
     },
     async (params, ctx?: unknown) => runUnderstand(router, 'understand_video', params as Record<string, unknown>, ctx),
+  )
+
+  server.registerTool(
+    'understand_audio',
+    {
+      description:
+        'Understand / listen to an AUDIO file with the omni-modal qwen3.8-omni-flash (语音转写 / 对白 / ' +
+        '音乐风格 / 音效 / 语气情绪). Use for ANY "听一下/转写/这段录音说了什么/这首歌是什么风格" request, and ' +
+        'for the soundtrack of a video (extract it first with the ffmpeg-win skill: ' +
+        '`ffmpeg -i in.mp4 -vn -c:a libmp3lame out.mp3`). Pass either a public audio_url OR a local ' +
+        'audio_path — a local path is auto-uploaded (streamed) to the history COS bucket to obtain a public ' +
+        'URL. Formats: mp3 / wav / m4a / aac / ogg / flac / opus. Long recordings: split into ≤20-minute ' +
+        'chunks with ffmpeg and ask per chunk (long inputs may be rejected upstream). The model is FIXED to ' +
+        'omni — `model` is accepted for symmetry but no other tier can hear. Bills the platform balance / ' +
+        'Miau key like every other qwen tool. Returns a Chinese answer. Do NOT retry on a clean result.',
+      annotations: READ_ONLY_REMOTE,
+      inputSchema: z.object({
+        audio_url: z.string().optional().describe('Public http(s) URL of the audio file (preferred when you already have one).'),
+        audio_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
+        question: z.string().min(1).describe('What you want to know: transcribe verbatim, summarize, identify the genre / mood / instruments, etc.'),
+        format: z.string().optional().describe('Audio container/codec hint (mp3 | wav | m4a | aac | ogg | flac | opus). Inferred from the URL extension when omitted.'),
+        model: MODEL_PARAM,
+      }),
+    },
+    async (params, ctx?: unknown) => runUnderstand(router, 'understand_audio', params as Record<string, unknown>, ctx),
   )
 
   server.registerTool(
@@ -376,7 +430,7 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
           + 'out rather than silently dropping it, because a missing image would shift every later index.',
         ),
         question: z.string().min(1).describe('What you want to know from the document / across the images.'),
-        model: z.enum(['max', 'plus', 'flagship']).optional().describe('Model: "plus" (default, cheaper) | "max" (stronger 3.7) | "flagship" (qwen3.8-max — 1M context + built-in tools, for long documents or hard cross-modal reasoning). Same video limits on all three (2h / 2GB), so flagship is NOT needed just because the input is a video. Omit for plus.'),
+        model: MODEL_PARAM,
       }),
     },
     async (params, ctx?: unknown) => runUnderstand(router, 'understand_document', params as Record<string, unknown>, ctx),
@@ -388,12 +442,13 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
       description:
         'Search the web / 上网扒资料 with qwen (enable_search). Use for "上网查/查一下/' +
         '搜一下/最新消息" requests. Pass a natural-language query; returns a synthesized answer that ' +
-        'incorporates live web results. Model defaults to qwen3.7-plus (cheaper); pass model="max" ' +
-        'for the stronger model. Prefer this over guessing from stale memory.',
+        'incorporates live web results. Model defaults to omni (qwen3.8-omni-flash, cheapest); pass ' +
+        'model="max" for the stronger qwen3.7-max or model="flagship" for qwen3.8-max. Prefer this over ' +
+        'guessing from stale memory.',
       annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         query: z.string().min(1).describe('Natural-language research query.'),
-        model: z.enum(['max', 'plus', 'flagship']).optional().describe('Model: "plus" (default, cheaper) | "max" (stronger 3.7) | "flagship" (qwen3.8-max — 1M context + built-in tools, for long documents or hard cross-modal reasoning). Same video limits on all three (2h / 2GB), so flagship is NOT needed just because the input is a video. Omit for plus.'),
+        model: MODEL_PARAM,
       }),
     },
     async (params, ctx?: unknown) => runUnderstand(router, 'web_research', params as Record<string, unknown>, ctx),
@@ -407,13 +462,14 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'nothing is selected) with qwen, and by default write the result back ONTO the canvas as a text note ' +
         'next to that video. Use for "理解/分析画布上(选中)的这段视频". NO url/path needed — it reads the ' +
         'selected canvas video itself (local files AND clips dragged in from the desktop are auto-uploaded to ' +
-        'COS — a dragged-in clip is first materialized to a real file). Model defaults to qwen3.7-plus ' +
-        '(cheaper); pass model="max" for the stronger qwen3.7-max. Set annotate=false to only return the text ' +
-        'without drawing the note. Requires the Canvas tab open. Returns a Chinese description.',
+        'COS — a dragged-in clip is first materialized to a real file). Model defaults to omni ' +
+        '(qwen3.8-omni-flash, cheapest); pass model="max" for the stronger qwen3.7-max or model="flagship" for ' +
+        'qwen3.8-max. Set annotate=false to only return the text without drawing the note. Requires the Canvas ' +
+        'tab open. Returns a Chinese description.',
       annotations: WRITE_ADDITIVE_REMOTE,
       inputSchema: z.object({
         question: z.string().min(1).describe('What you want to know about the selected canvas video.'),
-        model: z.enum(['max', 'plus', 'flagship']).optional().describe('Model: "plus" (default, cheaper) | "max" (stronger 3.7) | "flagship" (qwen3.8-max — 1M context + built-in tools, for long documents or hard cross-modal reasoning). Same video limits on all three (2h / 2GB), so flagship is NOT needed just because the input is a video. Omit for plus.'),
+        model: MODEL_PARAM,
         annotate: z.boolean().optional().describe('Write the result onto the canvas as a text note next to the video (default true).'),
       }),
     },

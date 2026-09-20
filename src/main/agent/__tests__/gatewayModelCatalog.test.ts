@@ -50,6 +50,8 @@ describe('buildGatewayModelCatalog', () => {
       'gpt-5.5-openai-compact',
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
+      // 3.8 全模态档(2026-09-20 加入),与 3.7 两档并行,canonical 里排在 3.7 之后。
+      'qwen3.8-omni-flash',
       'qwen3.8-max',
       'qwen3.8-flash',
       'deepseek-v4-flash',
@@ -318,6 +320,7 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.7-plus-dashscope',
       'qwen3.8-flash',
       'qwen3.8-max',
+      'qwen3.8-omni-flash',
     ])
   })
 })

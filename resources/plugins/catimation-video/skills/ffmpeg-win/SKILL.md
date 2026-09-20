@@ -162,14 +162,11 @@ To AAC: `-vn -acodec aac -b:a 192k "D:/out.m4a"`. To WAV: `-vn "D:/out.wav"`. Vo
 > Allowed formats: mp3, wav.`。**先用上面的命令抽音轨** `-vn -acodec libmp3lame`(mp3)
 > 或 `-vn`(wav),再导入。
 >
-> ⛔ **反方向的那个「技巧」是错的,已废弃:把音频包成「黑屏/波形 MP4」喂
-> `understand_video` 不会让它听见声音。** 那个接口是**抽帧看画面**,音轨从头到尾
-> 没被读过 —— 送进去它只会认真描述那张波形图,然后开始编内容,给你一个看起来
-> 有答案、实则全是杜撰的回复。这比报错糟得多。
->
-> 千问这条线(qwen3.7 / qwen3.8)的输入模态就是**文本 + 图片 + 视频**,没有音频;
-> 音频输入只存在于 qwen3.5-omni 那条线,理解工具没有路由到它。**要处理语音得走转写,
-> 本 app 目前没有这个能力** —— 遇到「听一下这段说了什么」,如实说做不到。
+> ⛔ **别把音频包成「黑屏/波形 MP4」喂 `understand_video`。** 要听声音就用
+> **`understand_audio`**(catimation-understand 技能):先按上面的命令抽出真实音轨,
+> 再把 `audio_path` 传给它 —— 全模态 `qwen3.8-omni-flash` 原生收音频(转写 / 对白 /
+> 音乐风格 / 音效),走平台余额或 Miau Key 计费;长录音切成 ≤20 分钟一段逐段问。其余
+> 各档(3.7 `plus`/`max`、3.8-max `flagship`)纯抽帧,听不见。
 
 ## Mix / Mux Audio
 

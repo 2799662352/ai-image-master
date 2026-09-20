@@ -153,6 +153,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
           // 排（sonnet 在 opus 前），而不是渠道 allowedModels 的书写次序。
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.8-omni-flash' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           // apiyi 也挂了 Miau 的 DeepSeek（与 qwen 同一枚 token、同一个端点），
@@ -220,6 +221,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'gpt-5.5-openai-compact' }),
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.8-omni-flash' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           expect.objectContaining({ id: 'deepseek-v4-flash' }),
@@ -326,6 +328,10 @@ describe('AgentManager model settings catalog and snapshot', () => {
             route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
           }),
           expect.objectContaining({
+            id: 'qwen3.8-omni-flash',
+            route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
+          }),
+          expect.objectContaining({
             id: 'qwen3.8-max',
             route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
           }),
@@ -402,6 +408,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'gpt-5.6-sol',
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
+      'qwen3.8-omni-flash',
       'qwen3.8-max',
       'qwen3.8-flash',
       'deepseek-v4-flash',
@@ -439,6 +446,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
           // 排（sonnet 在 opus 前），而不是渠道 allowedModels 的书写次序。
           expect.objectContaining({ id: 'qwen3.7-plus-dashscope' }),
           expect.objectContaining({ id: 'qwen3.7-max-dashscope' }),
+          expect.objectContaining({ id: 'qwen3.8-omni-flash' }),
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           // apiyi 也挂了 Miau 的 DeepSeek（与 qwen 同一枚 token、同一个端点），

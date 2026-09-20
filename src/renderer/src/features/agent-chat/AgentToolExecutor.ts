@@ -332,6 +332,7 @@ export class AgentToolExecutor {
       case 'director_exec':
         return this.callDirector(toolName, params)
       case 'understand_video':
+      case 'understand_audio':
       case 'understand_document':
       case 'web_research':
         return this.callUnderstand(toolName, params)
@@ -968,8 +969,8 @@ export class AgentToolExecutor {
       ) => Promise<{ success: true; text: string } | { success: false; error: string }>
     }>(SERVICE_KEYS.API)
 
-    // Optional model switch ('plus' | 'max' | full -dashscope name). Non-allow-listed
-    // values fall back to the default (plus) inside ApiService.resolveUnderstandModel.
+    // Optional model switch ('omni' | 'plus' | 'max' | 'flagship' | full slug). Non-allow-listed
+    // values fall back to the default (omni) inside ApiService.resolveUnderstandModel.
     const model = typeof params.model === 'string' ? params.model : undefined
 
     if (toolName === 'web_research') {
@@ -981,12 +982,18 @@ export class AgentToolExecutor {
     const question = typeof params.question === 'string' ? params.question : ''
     if (!question) return { success: false, error: `${toolName} 缺少 question。` }
 
-    const media = this.resolveMediaUrl(params, toolName === 'understand_video' ? 'video' : 'document')
+    const mediaKind = toolName === 'understand_video' ? 'video' : toolName === 'understand_audio' ? 'audio' : 'document'
+    const media = this.resolveMediaUrl(params, mediaKind)
     if (!media.ok) return { success: false, error: media.error }
 
     if (toolName === 'understand_video') {
       const fps = typeof params.fps === 'number' ? params.fps : undefined
       return api.understand({ kind: 'video', mediaUrl: media.url, question, fps }, { model })
+    }
+    if (toolName === 'understand_audio') {
+      // 音频在 ApiService.understand 里被钉到 omni 模型上,这里的 model 只是透传给它决定。
+      const format = typeof params.format === 'string' ? params.format : undefined
+      return api.understand({ kind: 'audio', mediaUrl: media.url, question, format }, { model })
     }
     // 追加图由主进程先逐张中转成公网 URL 再放进 file_urls,这里只透传 —— 顺序
     // 已在那一侧按输入序固定好,不要在这里重排或去重(去重在 understand() 里做,
@@ -1011,10 +1018,10 @@ export class AgentToolExecutor {
    */
   private resolveMediaUrl(
     params: Record<string, unknown>,
-    kind: 'video' | 'document',
+    kind: 'video' | 'audio' | 'document',
   ): { ok: true; url: string } | { ok: false; error: string } {
-    const urlKey = kind === 'video' ? 'video_url' : 'file_url'
-    const pathKey = kind === 'video' ? 'video_path' : 'file_path'
+    const urlKey = kind === 'video' ? 'video_url' : kind === 'audio' ? 'audio_url' : 'file_url'
+    const pathKey = kind === 'video' ? 'video_path' : kind === 'audio' ? 'audio_path' : 'file_path'
     const url = params[urlKey]
     if (typeof url === 'string' && /^(https?:|data:)/.test(url)) {
       return { ok: true, url }

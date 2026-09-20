@@ -117,8 +117,12 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
     isDefault: false,
   },
-  // 通义千问三档（Miau / new-api 网关，完整 OpenAI 兼容 Responses）。这些 slug
+  // 通义千问五档（Miau / new-api 网关，完整 OpenAI 兼容 Responses）。这些 slug
   // 之前只在后台跑（qwen 子代理 + MCP 理解工具），现在也能当主对话模型选。
+  //
+  // 2026-09-20 加入全模态 Omni Flash(文本 + 图片 + 视频 + **音频**输入都收,网关价目表
+  // ratio 0.5,比 3.7 Plus 的 1 还便宜),接任理解工具的默认档。3.7 Plus / Max(`-dashscope`
+  // 别名)**暂不撤下** —— 用户拍板与 3.8 一代并行一段时间,届时再做持久化选择的迁移。
   //
   // ⚠️ 本数组的顺序**不等于**选择器里的顺序。`buildGatewayModelCatalog` 先铺网关
   // `model/list` 回来的动态行、再补静态行，而 qwen 不在 apiyi/rightcode 的
@@ -129,7 +133,7 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     id: 'qwen3.7-plus-dashscope',
     displayName: 'Qwen 3.7 Plus',
     tier: 'Medium',
-    description: '通义千问 3.7 Plus（Miau 网关）。日常够用且更便宜，理解类任务的默认档。',
+    description: '通义千问 3.7 Plus（Miau 网关）。日常够用且便宜;理解类默认档已交给 3.8 Omni Flash,本档并行保留。',
     isDefault: false,
   },
   {
@@ -140,17 +144,24 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
+    id: 'qwen3.8-omni-flash',
+    displayName: 'Qwen 3.8 Omni Flash',
+    tier: 'Fast',
+    description: '通义千问 3.8 Omni Flash（Miau 网关）。全模态:文本 / 图片 / 视频 / 音频都能看和听,理解类工具的默认档,也能当主对话模型。',
+    isDefault: false,
+  },
+  {
     id: 'qwen3.8-max',
     displayName: 'Qwen 3.8 Max',
     tier: 'Extra High',
-    description: '通义千问 3.8 Max（Miau 网关）。最新一代，支持 thinking / reasoning。',
+    description: '通义千问 3.8 Max（Miau 网关）。最新一代旗舰，支持 thinking / reasoning,长文与复杂推理用它。',
     isDefault: false,
   },
   {
     id: 'qwen3.8-flash',
     displayName: 'Qwen 3.8 Flash',
     tier: 'Fast',
-    description: '通义千问 3.8 Flash（Miau 网关）。最新一代里最快最便宜的一档。',
+    description: '通义千问 3.8 Flash（Miau 网关）。最新一代里最快最便宜的纯文本档。',
     isDefault: false,
   },
   {

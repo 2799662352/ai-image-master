@@ -83,6 +83,10 @@ export class ModelUnavailableInGatewayError extends Error {
 const QWEN_MIAU_MODELS = Object.freeze([
   'qwen3.7-plus-dashscope',
   'qwen3.7-max-dashscope',
+  // 2026-09-20 对着生产网关 `/api/pricing` 实测存在(vendor 阿里巴巴,ratio 0.5 /
+  // completion 3,比 3.7-plus 还便宜)。全模态:文本 / 图片 / 视频 / 音频输入,理解工具的
+  // 默认档已换成它。上面两个 3.7 `-dashscope` 别名暂不撤 —— 用户拍板与 3.8 并行一段时间。
+  'qwen3.8-omni-flash',
   'qwen3.8-max',
   // 2026-08-31 对着网关 `/v1/models` 实测存在(74 个模型里有它)。这一步不能省 ——
   // 列进来的 slug 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字
