@@ -49,7 +49,8 @@ export type UnderstandInput =
    * 音频(语音 / 音乐 / 环境声)。只有全模态的 omni 模型收得下 —— `understand()` 对
    * 这一类**强制**走 `QWEN_UNDERSTAND_OMNI_MODEL`,忽略调用方选的 max/flagship(3.8-max
    * 没有音频模态,发过去只会换回 `incorrect modal 'audio'`)。`format` 缺省按 URL 扩展名
-   * 推断(mp3 / wav / m4a…),推不出来按 mp3 发。
+   * 推断,推不出来按 mp3 发;上游只认 mp3 / wav / amr / 3gp / aac(`QWEN_AUDIO_FORMATS`),
+   * m4a / ogg / flac 之类直接回结构化错误让调用方先转码。
    */
   | { kind: 'audio'; mediaUrl: string; question: string; format?: string }
   /**
@@ -215,10 +216,40 @@ export function resolveUnderstandModel(requested?: string): string {
   return QWEN_UNDERSTAND_MODELS.includes(requested) ? requested : QWEN_UNDERSTAND_MODEL
 }
 
+/**
+ * 千问音频输入认的容器(千问平台「音频理解」文档 + 2026-09-20 生产网关实测:传别的回
+ * 400 `Invalid format`,明确列出就这六个)。m4a / ogg / opus / flac / webm / wma 都不在
+ * 里面 —— 那些要先用 ffmpeg 转成 mp3 / wav。
+ */
+export const QWEN_AUDIO_FORMATS: readonly string[] = ['mp3', 'wav', 'amr', '3gp', '3gpp', 'aac']
+
+/** 常见但上游不收的音频容器:认出来就直接报错让调用方转码,别把请求发出去白挨一次 400。 */
+const QWEN_UNSUPPORTED_AUDIO_FORMATS: readonly string[] = ['m4a', 'ogg', 'oga', 'opus', 'flac', 'webm', 'wma', 'aiff', 'aif']
+
 /** `foo.MP3?x=1` → `mp3`;认不出返回 undefined。上游按这个字段解码音频字节。 */
 export function audioFormatFromUrl(url: string): string | undefined {
-  const m = /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus|webm|amr|wma)(?:[?#]|$)/i.exec(url)
+  const m = /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus|webm|amr|3gpp?|wma|aiff?)(?:[?#]|$)/i.exec(url)
   return m ? m[1].toLowerCase() : undefined
+}
+
+/**
+ * 归一音频 `format`:显式传的优先,其次按 URL 扩展名,都认不出按 mp3 发(中转 URL 会保留
+ * 源扩展名,真到这一步的只有无扩展名的 blob)。已知上游不收的容器返回 `{ error }`。
+ */
+export function resolveAudioFormat(
+  url: string,
+  explicit?: string,
+): { format: string } | { error: string } {
+  const candidate = (explicit ?? audioFormatFromUrl(url))?.trim().toLowerCase()
+  if (!candidate) return { format: 'mp3' }
+  if (QWEN_AUDIO_FORMATS.includes(candidate)) return { format: candidate }
+  if (QWEN_UNSUPPORTED_AUDIO_FORMATS.includes(candidate)) {
+    return {
+      error: `千问不收 ${candidate} 音频,只认 ${QWEN_AUDIO_FORMATS.join(' / ')}。`
+        + '请先用 ffmpeg 转成 mp3 或 wav(`ffmpeg -i in -vn -acodec libmp3lame out.mp3`)再传。',
+    }
+  }
+  return { format: candidate }
 }
 
 /**
@@ -4017,6 +4048,10 @@ export class ApiService {
     // 与 `generateImage` 里 `resolvedApiKey` 同一个处理。
     const resolvedKey = key ?? ''
 
+    // 音频容器先验:上游不收的(m4a / ogg / flac…)在这里就报,附上转码办法,不发请求。
+    const audioFormat = input.kind === 'audio' ? resolveAudioFormat(input.mediaUrl, input.format) : undefined
+    if (audioFormat && 'error' in audioFormat) return { success: false, error: audioFormat.error }
+
     const content: unknown =
       input.kind === 'web'
         ? input.query
@@ -4037,7 +4072,7 @@ export class ApiService {
                     type: 'input_audio',
                     input_audio: {
                       data: input.mediaUrl,
-                      format: input.format ?? audioFormatFromUrl(input.mediaUrl) ?? 'mp3',
+                      format: audioFormat && 'format' in audioFormat ? audioFormat.format : 'mp3',
                     },
                   }]
                 // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较

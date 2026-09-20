@@ -400,7 +400,7 @@ describe('ApiService.understand() — 音频(omni 专属)', () => {
 
   it('发 input_audio part,format 从 URL 扩展名推断;不管点了哪档都钉在 omni', async () => {
     const result = await newServiceWithKey('k').understand(
-      { kind: 'audio', mediaUrl: 'https://x/talk.M4A?sig=1', question: '说了什么' },
+      { kind: 'audio', mediaUrl: 'https://x/talk.AAC?sig=1', question: '说了什么' },
       // 调用方点了 3.7 max —— 它听不见,必须被忽略。
       { model: 'max' },
     )
@@ -411,7 +411,7 @@ describe('ApiService.understand() — 音频(omni 专属)', () => {
     expect(body.modalities).toEqual(['text'])
     expect(body.messages[0].content).toEqual([
       { type: 'text', text: '说了什么' },
-      { type: 'input_audio', input_audio: { data: 'https://x/talk.M4A?sig=1', format: 'm4a' } },
+      { type: 'input_audio', input_audio: { data: 'https://x/talk.AAC?sig=1', format: 'aac' } },
     ])
   })
 
@@ -422,6 +422,19 @@ describe('ApiService.understand() — 音频(omni 专属)', () => {
 
     await svc.understand({ kind: 'audio', mediaUrl: 'https://x/blob', question: 'q' })
     expect(bodyAt(1).messages[0].content[1].input_audio.format).toBe('mp3')
+  })
+
+  it('上游不收的容器(m4a / ogg / flac…)不发请求,直接回结构化错误并给转码办法', async () => {
+    const svc = newServiceWithKey('k')
+    for (const url of ['https://x/memo.m4a', 'https://x/note.OGG?sig=1', 'https://x/song.flac']) {
+      const result = await svc.understand({ kind: 'audio', mediaUrl: url, question: 'q' })
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.error).toMatch(/ffmpeg/)
+    }
+    // 显式 format 同样受检。
+    const explicit = await svc.understand({ kind: 'audio', mediaUrl: 'https://x/blob', question: 'q', format: 'opus' })
+    expect(explicit.success).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('音频失败不兜底到 3.7 max(换过去只会再换回 incorrect modal)', async () => {

@@ -148,7 +148,7 @@ All modes work on **both** surfaces(`generate_video` 与 `video_workbench_*`)
 `【@图片1】` 外壳会解成 `@图片1`。`@Image1` / `<图片1>` / 裸 `图片1` 不会被替你改,别写。
 **音频参考只收 mp3 / wav**;视频容器(.mov/.mp4,哪怕黑屏占位)会被拒收——先用
 `ffmpeg-win` 抽音轨(`ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3`)。
-黑屏 MP4 只用于 understand_video,绝不能当音频参考上传。
+要听音频内容用 `understand_audio`(catimation-understand),别再把它包成黑屏 MP4。
 **真人脸**:Seedance 不收真人脸参考,用人像库虚拟形象 `asset://assetId` 或
 Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
 优先用 `ffmpeg-win` 抽尾帧/关键帧成静图(下一镜 `firstFrame` 最稳)或抽音轨续节奏;

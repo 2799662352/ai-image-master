@@ -387,7 +387,9 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'for the soundtrack of a video (extract it first with the ffmpeg-win skill: ' +
         '`ffmpeg -i in.mp4 -vn -c:a libmp3lame out.mp3`). Pass either a public audio_url OR a local ' +
         'audio_path — a local path is auto-uploaded (streamed) to the history COS bucket to obtain a public ' +
-        'URL. Formats: mp3 / wav / m4a / aac / ogg / flac / opus. Long recordings: split into ≤20-minute ' +
+        'URL. Formats upstream accepts: mp3 / wav / aac / amr / 3gp ONLY — m4a / ogg / opus / flac are rejected, ' +
+        'convert them first with the ffmpeg-win skill (`ffmpeg -i in.m4a -vn -acodec libmp3lame out.mp3`). ' +
+        'Long recordings: split into ≤20-minute ' +
         'chunks with ffmpeg and ask per chunk (long inputs may be rejected upstream). The model is FIXED to ' +
         'omni — `model` is accepted for symmetry but no other tier can hear. Bills the platform balance / ' +
         'Miau key like every other qwen tool. Returns a Chinese answer. Do NOT retry on a clean result.',
@@ -396,7 +398,7 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         audio_url: z.string().optional().describe('Public http(s) URL of the audio file (preferred when you already have one).'),
         audio_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
         question: z.string().min(1).describe('What you want to know: transcribe verbatim, summarize, identify the genre / mood / instruments, etc.'),
-        format: z.string().optional().describe('Audio container/codec hint (mp3 | wav | m4a | aac | ogg | flac | opus). Inferred from the URL extension when omitted.'),
+        format: z.string().optional().describe('Audio container hint: mp3 | wav | aac | amr | 3gp (the only values upstream accepts). Inferred from the URL extension when omitted.'),
         model: MODEL_PARAM,
       }),
     },
