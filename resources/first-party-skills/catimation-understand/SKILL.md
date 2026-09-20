@@ -87,12 +87,25 @@ a transcript or music analysis use `understand_audio` — every other tier
 ### understand_audio { audio_url | audio_path, question, format? }
 Listen to an audio file: speech transcription, dialogue, music genre / mood /
 instruments, sound effects, tone of voice. Pass a public `audio_url` OR a local
-`audio_path` (auto-uploaded like video). Formats: mp3 / wav / m4a / aac / ogg /
-flac / opus; `format` is inferred from the extension when omitted. For a video's
-soundtrack extract it first with ffmpeg-win (`ffmpeg -i in.mp4 -vn -c:a libmp3lame
-out.mp3`). Long recordings: split into ≤20-minute chunks and ask per chunk. Always
-runs on omni (no other tier can hear); no fallback. Do NOT wrap audio into a
-placeholder MP4 for `understand_video` — this tool is the audio path.
+`audio_path` (auto-uploaded like video). Upstream accepts **mp3 / wav / aac / amr /
+3gp only** — m4a / ogg / opus / flac come back as a structured error telling you to
+convert first (`ffmpeg -i in.m4a -vn -acodec libmp3lame out.mp3`, ffmpeg-win); `format`
+is inferred from the extension when omitted. For a video's soundtrack extract it first
+(`ffmpeg -i in.mp4 -vn -c:a libmp3lame out.mp3`). Long recordings: split into
+≤20-minute chunks and ask per chunk. Always runs on omni (no other tier can hear); no
+fallback. Do NOT wrap audio into a placeholder MP4 for `understand_video` — this tool
+is the audio path.
+
+### Asking well (from the qwen-omni model card)
+Omni answers exactly what you ask; a vague `question` gets a vague paragraph. For a
+full read of a clip, ask for three sections in one call — **storyline with
+timestamps (blend audio + visual details)**, **visible on-screen text with start/end
+times and appearance**, **speech transcript with speaker, exact words, timestamps and
+speaking state (prosody / emotion)** — and say "explicitly state so" when a section is
+empty. Standard analysis is tuned for clips ≤4 minutes; for fine multi-speaker work
+stay ≤2 minutes; longer material: cut it into segments (ffmpeg-win) and ask per
+segment, then merge. For quick pass/fail review a one-line question is enough and far
+cheaper (a two-minute 1080p clip costs ~30k input tokens per call).
 
 ### understand_canvas_video { question, model?, annotate? }
 Understand the video **selected on the canvas** (or the only video if none is
