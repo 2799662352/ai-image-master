@@ -37,6 +37,12 @@ import {
 } from './portraitOverlay'
 import { persistVideoBytes, type PersistVideoDeps } from './persistVideo'
 import { normalizeSeedancePromptReferences } from './promptReferences'
+import {
+  applyAssetRewrites,
+  collectDirectMediaRefs,
+  libraryAssetName,
+  type DirectMediaKind,
+} from './assetRefRewrite'
 import { SeedanceTaskManager } from './taskManager'
 import { relayDataUrlToCos, relayFileToCos } from '../tencent/mediaRelay'
 import { MIME_BY_EXT, resolveMediaUrl } from './mediaResolve'
@@ -57,7 +63,7 @@ import { notePlatformSpend } from '../auth/platformSpend'
 import { ensureAsset } from '../portraitLibrary/ensureAsset'
 // 软删:只在后台隐藏,不释放配额,已经引用它的 `asset://` 仍解析得到(见其注释)。
 // 正因为是软删,才能在「开关关着」时既登记又不让它出现在库里。
-import { hideAsset as hidePlatformAsset } from '../portraitLibrary/platformAssets'
+import { hideAsset as hidePlatformAsset, type PlatformAssetType } from '../portraitLibrary/platformAssets'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
 import { createSeedanceGatewayClient } from '../seedanceGateway/client'
@@ -194,30 +200,33 @@ async function importImagesToPortraitLibrary(
   const apiKey = getSeedanceApiKey()
   const apiSecret = getSeedanceApiSecret()
   if (!apiKey || !apiSecret) return rewrites
-  const images = content.filter(
-    (item): item is Extract<SeedanceContentItem, { type: 'image_url' }> =>
-      item.type === 'image_url' && !item.image_url.url.startsWith('asset://'),
-  )
-  // 并发:参考图最多个位数,而串行会让每张图的 pending→ready 等待逐个累加。
+  // 图片 + 视频 + 音频(2026-09-22 起):参考视频里的真人脸同样撞
+  // `InputVideoSensitiveContentDetected.PrivacyInformation`,走库登记是同一条过审路;
+  // 音频不涉及真人检测,收进来是为了三种素材同一形态、登记后可跨镜复用(用户拍板)。
+  const media = collectDirectMediaRefs(content)
+  // 并发:参考素材最多个位数,而串行会让每个的 pending→ready 等待逐个累加。
   await Promise.all(
-    images.map(async (item) => {
+    media.map(async (item) => {
       try {
-        const raw = item.image_url.url
+        const raw = item.url
         const mime = /^data:([^;,]+)/i.exec(raw)?.[1]
         // 上游素材接口对 url 长度有硬限制(`400 url is too long`),data: 一律
         // 先走 COS 中转(历史图片上传链路)换 https URL,再转存到素材库。
         const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
         const { asset } = await importSeedanceAsset(
           {
-            kind: 'image',
-            imageCategory: 'image_people',
+            kind: item.kind,
+            ...(item.kind === 'image' ? { imageCategory: 'image_people' as const } : {}),
             url,
-            name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}`,
+            name: libraryAssetName(item),
             ...(mime ? { mimeType: mime } : {}),
           },
           { apiKey, apiSecret },
+          // 视频 / 音频导入要转码,比图片慢得多;默认 ~9s 的二次解析窗口经常等不到 ready,
+          // 结果是白登记一次、当次仍裸 URL 直传。放宽到约 25s,图片仍用默认。
+          item.kind === 'image' ? undefined : { resolveBackoffMs: MEDIA_ASSET_RESOLVE_BACKOFF_MS },
         )
-        rememberAssetThumb(asset, url)
+        if (item.kind === 'image') rememberAssetThumb(asset, url)
         // 只在拿到**真** assetId 时才改写。导入是异步的,pending 那一刻只有内部行 id ——
         // 拿它拼 `asset://` 会得到一个上游解析不了的引用,把「图没过审」换成
         // 「素材不存在」,同样发不出去而且更难查。宁可这次直传原 URL。
@@ -230,6 +239,16 @@ async function importImagesToPortraitLibrary(
     }),
   )
   return rewrites
+}
+
+/** 视频 / 音频素材导入后二次解析 assetId 的重试节奏(首次立即查,累计约 25s)。 */
+const MEDIA_ASSET_RESOLVE_BACKOFF_MS: readonly number[] = [0, 1000, 2000, 4000, 6000, 6000, 6000]
+
+/** 平台库的 assetType(大小写敏感,见 platformAssets 的说明)。 */
+const PLATFORM_ASSET_TYPE_BY_KIND: Readonly<Record<DirectMediaKind, PlatformAssetType>> = {
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio',
 }
 
 /**
@@ -264,20 +283,24 @@ async function importImagesToPlatformLibrary(
     projectId: pool.projectId,
     ...(pool.producerProjectId !== null ? { producerProjectId: pool.producerProjectId } : {}),
   }
-  const images = content.filter(
-    (item): item is Extract<SeedanceContentItem, { type: 'image_url' }> =>
-      item.type === 'image_url' && !item.image_url.url.startsWith('asset://'),
-  )
+  // 图片 + 视频 + 音频,与 vvdance 那条同一套挑选规则(见 assetRefRewrite)。
+  const media = collectDirectMediaRefs(content)
   await Promise.all(
-    images.map(async (item) => {
+    media.map(async (item) => {
       try {
-        const raw = item.image_url.url
+        const raw = item.url
         // 平台库只收公网 URL(上游火山要能自己去拉),data: 一律先过 COS 换永久链。
         const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
         // `ensureAsset` 内部已经轮询到就绪才返回(不就绪抛 ASSET_NOT_READY),
         // 所以拿到 assetId 就一定是可引用的 —— 不需要像 vvdance 那条那样再判 pending。
+        // `assetType` 大小写敏感且拼错会被后端静默降级成 Image(见 platformAssets),
+        // 视频 / 音频必须显式给对应类型,否则会被当成图片登记。
         const assetId = await ensureAsset(
-          { url, name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}` },
+          {
+            url,
+            name: libraryAssetName(item),
+            assetType: PLATFORM_ASSET_TYPE_BY_KIND[item.kind],
+          },
           scope,
         )
         if (assetId) rewrites.set(raw, `asset://${assetId}`)
@@ -296,7 +319,7 @@ async function importImagesToPlatformLibrary(
 }
 
 /**
- * 提交前把参考图登记进人像库,并把 content 里的原始 URL 换成 `asset://` 引用。
+ * 提交前把参考图 / 参考视频 / 参考音频登记进人像库,并把 content 里的原始 URL 换成 `asset://` 引用。
  *
  * ## 为什么值得挡在提交前面
  *
@@ -304,6 +327,12 @@ async function importImagesToPlatformLibrary(
  * 会拒绝整次生成;已登记的 `asset://` 不走这道检测。登记发生在提交之后的话,
  * 永远救不了当次 —— 用户看到的是一句关于「真人」的报错,而它与「入库」之间
  * 在代码里没有任何一处关联,只能靠猜。
+ *
+ * 视频 2026-09-22 起同样收进来:用户上传的参考视频原先裸 URL 直传,撞的是同一道检测的
+ * 视频版 `InputVideoSensitiveContentDetected.PrivacyInformation`(工作台真机截图)。当天用
+ * 一段合成真人脸 3s 片段做了对照:直传 URL → 400 同码;经平台库登记成 `asset://` 再提交
+ * → 任务创建成功。用户自己的 G2_motion.mp4 以 `asset://` 提交也正常渲染。音频随后一并
+ * 收进来(用户拍板),不为过审,为同一形态与复用。登记失败照发原 URL,不比改动前更差。
  *
  * ## 🚨 万相必须原样放行
  *
@@ -337,13 +366,9 @@ async function materializeAssetRefs(
       : new Map<string, string>()
 
   if (rewrites.size === 0) return content
-  // 逐项换,**保持数组顺序**:上游按 content[] 的下标解析提示词里的「图片1」,
-  // 顺序一乱,生成的内容就跟用户想的不是一回事,而且不报任何错。
-  return content.map((item) => {
-    if (item.type !== 'image_url') return item
-    const ref = rewrites.get(item.image_url.url)
-    return ref ? { ...item, image_url: { ...item.image_url, url: ref } } : item
-  })
+  // 逐项回填(图片 + 视频),**保持数组顺序**:上游按 content[] 的下标解析提示词里的
+  // 「图片1 / 视频1」,顺序一乱,生成的内容就跟用户想的不是一回事,而且不报任何错。
+  return applyAssetRewrites(content, rewrites)
 }
 
 /**

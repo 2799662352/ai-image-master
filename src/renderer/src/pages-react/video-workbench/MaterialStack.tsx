@@ -146,7 +146,15 @@ export function MaterialStack({
   // 只是位移动画,不是整批 DOM 增删(缩略图会重新解析,闪一下)。
   const posIndex = (idx: number): number => (showAll ? idx : Math.min(idx, MAX_VISIBLE - 1))
   const columns = Math.min(materials.length, MAX_VISIBLE)
-  const rows = showAll ? Math.ceil(materials.length / MAX_VISIBLE) : 1
+  const canAdd = !disabled && materials.length < limit
+  // 「+ 添加」卡永远排在最后一张**之后**的那一格,不能和任何素材同格:
+  //   收起态:首行 columns 张之后(≥12 张时是第 13 格,容器宽度下面已为它留位);
+  //   铺开态:第 materials.length 格 —— 正好填满整行时另起一行,行数也要把它算进去。
+  // 以前横向写的是 `columns % MAX_VISIBLE`,满 12 张就绕回第 0 格叠在第一张底下,
+  // 于是参考图一到 12 张加号就「消失」了,再也加不进去。
+  const rows = showAll ? Math.ceil((materials.length + (canAdd ? 1 : 0)) / MAX_VISIBLE) : 1
+  const addLeft = showAll ? (materials.length % MAX_VISIBLE) * STEP_PX : columns * STEP_PX
+  const addTop = showAll ? Math.floor(materials.length / MAX_VISIBLE) * STEP_PX : 0
   const expandedWidth = (columns + (showAll ? 0 : 1)) * STEP_PX + 8
   const expandedHeight = showAll ? rows * STEP_PX + 12 : undefined
 
@@ -311,14 +319,17 @@ export function MaterialStack({
             {showAll ? '收起' : `+${materials.length - MAX_VISIBLE}`}
           </button>
         )}
-        {!disabled && materials.length < limit && (
+        {canAdd && (
           <div
             className="vw-stack-add"
             role="button"
             aria-label={`添加${label}`}
             style={{
-              ['--expand-left' as string]: `${(columns % MAX_VISIBLE) * STEP_PX}px`,
-              ['--expand-top' as string]: `${(showAll ? rows - 1 : 0) * STEP_PX}px`,
+              // 素材的 zIndex 是 length - idx(最大 = length),添加卡再高一层:
+              // 位置算对了本不会同格,这是万一同格时也别被盖住的兜底。
+              zIndex: materials.length + 1,
+              ['--expand-left' as string]: `${addLeft}px`,
+              ['--expand-top' as string]: `${addTop}px`,
             }}
             onClick={() => inputRef.current?.click()}
           >
