@@ -628,8 +628,10 @@ All modes work on **both** surfaces(\`generate_video\` 与 \`video_workbench_*\`
 **音频参考只收 mp3 / wav**;视频容器(.mov/.mp4,哪怕黑屏占位)会被拒收——先用
 \`ffmpeg-win\` 抽音轨(\`ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3\`)。
 要听音频内容用 \`understand_audio\`(catimation-understand),别再把它包成黑屏 MP4。
-**真人脸**:Seedance 不收真人脸参考,用人像库虚拟形象 \`asset://assetId\` 或
-Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
+**真人脸**:Seedance 对直传的图 / 视频做真人检测(\`…SensitiveContentDetected.PrivacyInformation\`)。
+app 提交前会把参考图和参考视频自动登记进人像库、改成 \`asset://\` 引用(图片实测能过,
+视频同一条路);仍被拒时换人像库虚拟形象、Seedance 自产片段二创,或用 \`ffmpeg-win\`
+抽关键帧当参考图。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
 优先用 \`ffmpeg-win\` 抽尾帧/关键帧成静图(下一镜 \`firstFrame\` 最稳)或抽音轨续节奏;
 整段回喂只作规避真人脸审核的兜底。
 

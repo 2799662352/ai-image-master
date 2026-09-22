@@ -403,6 +403,25 @@ export async function verifyContentAssetReferences(
  * 未识别的错误原样返回。
  */
 export function translateSeedanceTaskError(message: string): string {
+  // 真人检测(火山 `input_real_face`):图片 / 视频各一个码,param 里带的是 content[] 下标。
+  // 官方说法是「换成合规或虚拟的人像素材,暂无自动脱敏」—— 把这句话连同我们这边的两条
+  // 出路(人像库登记 / 抽帧当参考图)一起说清楚,别让用户盯着一串英文 JSON 猜。
+  const privacy = /Input(Image|Video)SensitiveContentDetected\.PrivacyInformation/.exec(message)
+  if (privacy) {
+    const media = privacy[1] === 'Video' ? '参考视频' : '参考图'
+    const slot = /content\[(\d+)\]/.exec(message)?.[1]
+    const where = slot !== undefined ? `(content[${slot}] 那一项)` : ''
+    const requestId = /Request id:\s*([\w-]+)/i.exec(message)?.[1]
+    return (
+      `${media}${where}被上游判定含有真人,整次生成被拒(火山方舟 PrivacyInformation,官方暂不提供自动脱敏)。` +
+      (privacy[1] === 'Video'
+        ? '可以这样绕:① 用 ffmpeg 抽这段视频的关键帧当参考图(图片会自动登记进人像库再引用);' +
+          '② 换成人像库里的虚拟形象或 Seedance 自己生成的片段做二创;③ 把人脸裁掉 / 打码后再传。'
+        : '可以这样绕:① 从人像库选择已登记的素材(asset:// 引用不走这道检测);' +
+          '② 换成虚拟形象;③ 把人脸裁掉 / 打码后再传。') +
+      (requestId ? ` Request id: ${requestId}` : '')
+    )
+  }
   if (message.includes('LOCAL_ASSET_NOT_FOUND')) {
     const refs = message.match(/asset:\/\/[\w-]+/g) ?? []
     const refText = refs.length > 0 ? `:${refs.join('、')}` : ''
