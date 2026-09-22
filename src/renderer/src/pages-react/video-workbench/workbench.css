@@ -214,10 +214,14 @@
   pointer-events: none;
 }
 
+/* 钉住铺开(.vw-expanded)时也常驻:用户点开就是要整理素材,尾部那格「+」得一直在,
+   不能靠 hover 才淡入。translate 两个轴都要用 —— 多行铺开后它在最后一行,
+   以前只 translateX,--expand-top 白算了,加号永远留在首行被素材盖住。 */
 .vw-stack-container:hover .vw-stack-add,
-.vw-stack-container.vw-empty .vw-stack-add {
+.vw-stack-container.vw-empty .vw-stack-add,
+.vw-stack-container.vw-expanded .vw-stack-add {
   opacity: 1;
-  transform: translateX(var(--expand-left, 0));
+  transform: translate(var(--expand-left, 0), var(--expand-top, 0));
   pointer-events: auto;
 }
 
