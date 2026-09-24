@@ -422,6 +422,22 @@ export function translateSeedanceTaskError(message: string): string {
       (requestId ? ` Request id: ${requestId}` : '')
     )
   }
+  // 平台余额(网关)那条路的「素材不存在」:任务已经建了、跑到取素材才失败,原文是
+  // `The specified asset asset-… is not found`。几乎总是 id 来自另一个库 / 另一个计费池
+  // (2026-09-24 用户实机:agent 从自填 Key 的人像库挑的素材,拿去平台余额提交)。
+  // 不带原 JSON:它会被下一层当成 InvalidParameter 再包一遍「参数不合法」。
+  const assetMissing = /specified asset (asset-[\w-]+|[\w-]+) is not found/i.exec(message)
+  if (assetMissing) {
+    const slot = /content\[(\d+)\]/.exec(message)?.[1]
+    const requestId = /Request id:\s*([\w-]+)/i.exec(message)?.[1]
+    return (
+      `引用的素材 asset://${assetMissing[1]}${slot !== undefined ? `(content[${slot}])` : ''}` +
+      '在这次提交用的素材库里找不到。素材库按账户和计费池隔离:平台余额只认当前计费池素材库里的素材,' +
+      '自填 Key 只认你自己的人像库 —— 多半是这张素材登记在另一个库或另一个计费池,也可能已被彻底删除。' +
+      '请在卡片上删掉它,从「人像库」按钮重新选择或重新上传后再生成;原样重试还会失败。' +
+      (requestId ? ` Request id: ${requestId}` : '')
+    )
+  }
   if (message.includes('LOCAL_ASSET_NOT_FOUND')) {
     const refs = message.match(/asset:\/\/[\w-]+/g) ?? []
     const refText = refs.length > 0 ? `:${refs.join('、')}` : ''

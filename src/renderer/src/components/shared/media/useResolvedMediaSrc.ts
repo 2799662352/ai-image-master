@@ -206,6 +206,13 @@ export interface UseResolvedMediaSrcOptions {
    * `fullFidelity` is true. Defaults to 256 (main-side default).
    */
   thumbSize?: number
+  /**
+   * Only accept a real thumbnail from `media:thumb`; never fall back to the
+   * original bytes. For video files the fallback would read the whole file
+   * (hundreds of MB) just to hand an `<img>` something it cannot decode.
+   * Ignored when `fullFidelity` is true.
+   */
+  thumbOnly?: boolean
 }
 
 /**
@@ -238,6 +245,7 @@ async function readBytes(
   if (!opts.fullFidelity && attachments?.readMediaThumb) {
     const res = await attachments.readMediaThumb({ path: osPath, size: opts.thumbSize })
     if (res.ok) return res
+    if (opts.thumbOnly) return res
     // Soft failures fall through to the original-bytes IPC; hard failures
     // surface immediately so the consumer sees the real reason.
     if (!/video|whitelist|size|mime|not.*support/i.test(res.reason)) return res
@@ -284,7 +292,8 @@ const mediaCache = new Map<string, MediaCacheEntry>()
 function mediaCacheKey(src: string, hint: MediaKindHint, opts: UseResolvedMediaSrcOptions): string {
   // fullFidelity and thumbSize change the BYTES, so they must partition the
   // cache — a lightbox must not be served the 256px thumbnail a card cached.
-  return `${opts.fullFidelity ? 'full' : `thumb:${opts.thumbSize ?? ''}`}|${hint}|${src}`
+  const mode = opts.fullFidelity ? 'full' : `thumb:${opts.thumbSize ?? ''}${opts.thumbOnly ? ':only' : ''}`
+  return `${mode}|${hint}|${src}`
 }
 
 async function readAsBlobUrl(
@@ -440,6 +449,7 @@ export function useResolvedMediaSrc(
   const [resolved, setResolved] = useState<string | null>(() => initialResolved(src))
   const fullFidelity = opts.fullFidelity === true
   const thumbSize = opts.thumbSize
+  const thumbOnly = opts.thumbOnly === true
   // React's official "Storing information from previous renders" pattern —
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   //
@@ -475,7 +485,7 @@ export function useResolvedMediaSrc(
     // URL the other is still rendering. The release below is this instance's
     // reference, not the blob itself.
     let cancelled = false
-    const opts = { fullFidelity, thumbSize }
+    const opts = { fullFidelity, thumbSize, ...(thumbOnly ? { thumbOnly } : {}) }
     acquireMediaSrc(src, hint, opts)
       .then((url) => {
         if (!cancelled) setResolved(url)
@@ -492,7 +502,7 @@ export function useResolvedMediaSrc(
       cancelled = true
       releaseMediaSrc(src, hint, opts)
     }
-  }, [src, hint, fullFidelity, thumbSize])
+  }, [src, hint, fullFidelity, thumbSize, thumbOnly])
 
   return resolved
 }

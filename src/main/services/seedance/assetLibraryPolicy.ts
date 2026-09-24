@@ -57,6 +57,20 @@ export function usesSeedanceAssetLibrary(
 }
 
 /**
+ * 这次提交的 `asset://` 该在**平台素材库**里解析(平台余额经网关提交 Seedance)。
+ *
+ * 与上面那条互斥:同一次提交只可能落在一个库里。万相不认识 `asset://`,两边都不参与。
+ * 用途是提交前核验卡上的 `asset://` 在当前计费池里真的存在 —— 否则上游要先建任务、
+ * 跑到取素材那一步才回 `The specified asset … is not found`。
+ */
+export function usesPlatformAssetLibrary(
+  model: VideoModelAlias | undefined,
+  billing?: VideoBillingSource,
+): boolean {
+  return billing === 'platform' && capabilitiesFor(model ?? '2.0').provider === 'vvdance'
+}
+
+/**
  * 上游接不接受 `data:` 内联的小素材（≤512KB 走内联捷径，见 `mediaResolve`）。
  *
  * **刻意不吃 `billing`**：钱从哪个钱包出，与上游的协议无关。平台模式下上游仍然是
