@@ -60,6 +60,11 @@ vi.mock('electron', () => ({
   },
 }))
 
+const grabVideoFrameMock = vi.fn<(videoPath: string, size: number) => Promise<Buffer | null>>()
+vi.mock('../videoFrame', () => ({
+  grabVideoFrame: (...args: [string, number]) => grabVideoFrameMock(...args),
+}))
+
 let tmpDir: string
 let pngPath: string
 let svgPath: string
@@ -234,5 +239,70 @@ describe('mediaThumbIpc.handleMediaThumb — rejection paths', () => {
     expect(res.ok).toBe(false)
     if (res.ok) return
     expect(res.reason).toMatch(/size|whitelist/i)
+  })
+})
+
+// 视频工作台的参考视频以前从挂上去就只有 🎬 —— 这条通道对视频直接回「不支持」。
+describe('mediaThumbIpc.handleMediaThumb — video frames', () => {
+  let videoPath: string
+
+  beforeEach(async () => {
+    videoPath = path.join(tmpDir, 'clip.mp4')
+    await fs.writeFile(videoPath, Buffer.from('not really a video'))
+    grabVideoFrameMock.mockReset()
+  })
+
+  async function jpeg(size: number): Promise<Buffer> {
+    return sharp({ create: { width: size, height: size, channels: 3, background: { r: 1, g: 2, b: 3 } } })
+      .jpeg()
+      .toBuffer()
+  }
+
+  it('系统缩略图拿得到就用它,不启动 ffmpeg', async () => {
+    const buf = await jpeg(64)
+    nativeImageThumbMock.mockResolvedValue({
+      isEmpty: () => false,
+      toJPEG: () => buf,
+      getSize: () => ({ width: 64, height: 64 }),
+    })
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    const res = await handleMediaThumb({ path: videoPath, size: 128 })
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.mime).toBe('image/jpeg')
+    expect(grabVideoFrameMock).not.toHaveBeenCalled()
+  })
+
+  it('系统没有缩略图时用自带 ffmpeg 截一帧', async () => {
+    nativeImageThumbMock.mockRejectedValue(new Error('no thumbnail provider'))
+    grabVideoFrameMock.mockResolvedValue(await jpeg(96))
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    const res = await handleMediaThumb({ path: videoPath, size: 128 })
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.width).toBe(96)
+    expect(grabVideoFrameMock).toHaveBeenCalledWith(expect.stringContaining('clip.mp4'), 128)
+  })
+
+  it('两条都拿不到时回失败,reason 仍带 video(渲染层据此选兜底)', async () => {
+    nativeImageThumbMock.mockRejectedValue(new Error('no thumbnail provider'))
+    grabVideoFrameMock.mockResolvedValue(null)
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    const res = await handleMediaThumb({ path: videoPath })
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.reason).toMatch(/video/)
+  })
+
+  it('视频不受 MAX_ATTACHMENT_BYTES 约束 —— 只截一帧,不读整个文件', async () => {
+    const { handleMediaThumb, MAX_ATTACHMENT_BYTES } = await import('../mediaThumbIpc')
+    const bigVideo = path.join(tmpDir, 'long.mp4')
+    const fh = await fs.open(bigVideo, 'w')
+    await fh.truncate(MAX_ATTACHMENT_BYTES + 1)
+    await fh.close()
+    nativeImageThumbMock.mockRejectedValue(new Error('no thumbnail provider'))
+    grabVideoFrameMock.mockResolvedValue(await jpeg(32))
+    const res = await handleMediaThumb({ path: bigVideo })
+    expect(res.ok).toBe(true)
   })
 })

@@ -56,14 +56,26 @@ import type {
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
-import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from './assetLibraryPolicy'
+import {
+  upstreamAcceptsInlineMedia,
+  usesPlatformAssetLibrary,
+  usesSeedanceAssetLibrary,
+} from './assetLibraryPolicy'
+import { verifyPlatformAssetReferences } from './platformAssetGuard'
 import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../auth/gatewayToken'
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { notePlatformSpend } from '../auth/platformSpend'
-import { ensureAsset } from '../portraitLibrary/ensureAsset'
+import { ensureAsset, lookupAssetBinding } from '../portraitLibrary/ensureAsset'
 // 软删:只在后台隐藏,不释放配额,已经引用它的 `asset://` 仍解析得到(见其注释)。
 // 正因为是软删,才能在「开关关着」时既登记又不让它出现在库里。
-import { hideAsset as hidePlatformAsset, type PlatformAssetType } from '../portraitLibrary/platformAssets'
+import {
+  getAsset as getPlatformAsset,
+  hideAsset as hidePlatformAsset,
+  listAssets as listPlatformAssets,
+  type PlatformAsset,
+  type PlatformAssetScope,
+  type PlatformAssetType,
+} from '../portraitLibrary/platformAssets'
 import { createWan3Client } from '../wan3/client'
 import { getWan3ApiKey } from '../wan3/credentials'
 import { createSeedanceGatewayClient } from '../seedanceGateway/client'
@@ -241,6 +253,91 @@ async function importImagesToPortraitLibrary(
   return rewrites
 }
 
+/**
+ * 当前计费池 → 平台素材库的作用域。取**主进程的 `activePool`**:提交用的 token 就来自它,
+ * 素材登记 / 核验 / 列表必须与它同源,跨池的 asset 读不出来(见 `auth/gatewayToken.ts`)。
+ */
+function activePlatformScope(): PlatformAssetScope | null {
+  const pool = getActivePool()
+  if (!pool) return null
+  return {
+    projectId: pool.projectId,
+    ...(pool.producerProjectId !== null ? { producerProjectId: pool.producerProjectId } : {}),
+  }
+}
+
+type AgentAssetLibrary = 'platform' | 'own-key'
+
+/**
+ * agent 的素材库工具(list / add_to_portrait_library)落在哪个库 —— 与视频提交用
+ * **同一个计费结论**。以前固定查 / 存自填 Key 的人像库,平台余额的用户让 agent
+ * 挑素材,挑回来的 id 在平台池里不存在,生成时上游回
+ * `The specified asset … is not found`(2026-09-24 用户实机)。
+ */
+function agentPlatformScope(): PlatformAssetScope | null {
+  return resolveVideoBilling() === 'platform' ? activePlatformScope() : null
+}
+
+function platformAssetKind(a: PlatformAsset): 'image' | 'video' | 'audio' {
+  const t = (a.AssetType ?? '').toLowerCase()
+  return t === 'video' ? 'video' : t === 'audio' ? 'audio' : 'image'
+}
+
+/**
+ * 平台素材库给 agent 的一页。形状与 vvdance 那条对齐(items / total / page / hasMore),
+ * agent 不用区分;多带一个 `library` 让它知道自己看的是哪个库。
+ *
+ * 平台列表接口一次回全量(不分页、不按名字查),所以筛选与分页都在这里做。
+ * 分组是 vvdance 人像库的本地叠加层,平台库没有这个概念 —— 带了 group 就如实说明。
+ */
+async function listPlatformLibraryForAgent(
+  p: { query?: string; kind?: string; group?: string; includeHidden?: boolean },
+  page: number,
+  pageSize: number,
+  scope: PlatformAssetScope,
+): Promise<Record<string, unknown>> {
+  const res = await listPlatformAssets(scope)
+  const query = p.query?.trim().toLowerCase()
+  const kind = p.kind && p.kind !== 'all' ? (p.kind.startsWith('image') ? 'image' : p.kind) : null
+  const matched = (res.Items ?? []).filter((a) => {
+    if (!p.includeHidden && a.Hidden) return false
+    if (kind && platformAssetKind(a) !== kind) return false
+    if (query && !`${a.Name ?? ''} ${a.Id}`.toLowerCase().includes(query)) return false
+    return true
+  })
+  const total = matched.length
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const items = matched.slice((safePage - 1) * pageSize, safePage * pageSize).map((a) => {
+    const itemKind = platformAssetKind(a)
+    const media = a.URL || a.cosUrl || a.PreviewUrl
+    const preview = a.PreviewUrl || (itemKind === 'image' ? media : undefined)
+    return {
+      id: a.Id,
+      assetId: a.Id,
+      assetUrl: `asset://${a.Id}`,
+      name: a.Name || a.Id,
+      kind: itemKind,
+      ...(preview ? { previewUrl: preview } : {}),
+      ...(media ? { sourceUrl: media } : {}),
+      ...(a.Status ? { status: a.Status } : {}),
+      ...(a.Hidden ? { hidden: true } : {}),
+      ...(a.CreateTime ? { createdAt: a.CreateTime } : {}),
+    }
+  })
+  return {
+    library: 'platform' satisfies AgentAssetLibrary,
+    items,
+    total,
+    page: safePage,
+    totalPages,
+    hasMore: safePage < totalPages,
+    groups: [],
+    ...(res.Truncated ? { truncated: true } : {}),
+    ...(p.group ? { note: '平台素材库没有分组;已忽略 group 筛选。' } : {}),
+  }
+}
+
 /** 视频 / 音频素材导入后二次解析 assetId 的重试节奏(首次立即查,累计约 25s)。 */
 const MEDIA_ASSET_RESOLVE_BACKOFF_MS: readonly number[] = [0, 1000, 2000, 4000, 6000, 6000, 6000]
 
@@ -277,12 +374,8 @@ async function importImagesToPlatformLibrary(
   visible: boolean,
 ): Promise<Map<string, string>> {
   const rewrites = new Map<string, string>()
-  const pool = getActivePool()
-  if (!pool) return rewrites
-  const scope = {
-    projectId: pool.projectId,
-    ...(pool.producerProjectId !== null ? { producerProjectId: pool.producerProjectId } : {}),
-  }
+  const scope = activePlatformScope()
+  if (!scope) return rewrites
   // 图片 + 视频 + 音频,与 vvdance 那条同一套挑选规则(见 assetRefRewrite)。
   const media = collectDirectMediaRefs(content)
   await Promise.all(
@@ -811,6 +904,11 @@ export function initSeedanceRuntime(opts: {
           apiKey: getSeedanceApiKey(),
           apiSecret: getSeedanceApiSecret(),
         })
+      } else if (usesPlatformAssetLibrary(input.model, billing)) {
+        // 平台余额:卡上的 asset:// 必须在当前计费池的素材库里。否则上游先建任务、
+        // 跑到取素材才回「asset not found」—— 见 platformAssetGuard。
+        const scope = activePlatformScope()
+        if (scope) await verifyPlatformAssetReferences(content, scope, getPlatformAsset)
       }
       // 入库 + 改写引用必须在 submit **之前**:asset:// 不走上游的真人检测,而登记
       // 发生在提交之后就永远救不了当次。agent 这条路没有载荷可带,用渲染端推过来
@@ -931,6 +1029,9 @@ export function initSeedanceRuntime(opts: {
           apiKey: getSeedanceApiKey(),
           apiSecret: getSeedanceApiSecret(),
         })
+      } else if (usesPlatformAssetLibrary(input.model, billing)) {
+        const scope = activePlatformScope()
+        if (scope) await verifyPlatformAssetReferences(content, scope, getPlatformAsset)
       }
       // 入库 + 改写引用在 submit **之前**(理由见 `materializeAssetRefs`)。
       // 开关缺省开(与 UI 默认一致);只有显式 false 才跳过。
@@ -1007,10 +1108,32 @@ export function initSeedanceRuntime(opts: {
     kind?: string
     name?: string
     imageCategory?: 'image_people' | 'image_environment'
-  }): Promise<{ duplicated: boolean; assetId: string; assetUrl: string; name: string; kind: string }> {
+  }): Promise<{
+    duplicated: boolean
+    assetId: string
+    assetUrl: string
+    name: string
+    kind: string
+    library: AgentAssetLibrary
+  }> {
     const source = String(params.source ?? '').trim()
     if (!source) throw new Error('add_to_portrait_library: source is required (local path / data: URL / https URL).')
     const kind = inferAssetKind(source, params.kind)
+    const platformScope = agentPlatformScope()
+    if (platformScope) {
+      // 平台素材库只收公网 URL(上游火山自己去拉),本地 / data: 一律先过 COS。
+      const url = await resolveMediaUrl(source, 'add_to_portrait_library.source', undefined, {
+        alwaysRelay: true,
+        noInline: true,
+      })
+      const duplicated = lookupAssetBinding(url, platformScope) !== null
+      const name = params.name?.trim() || path.basename(source.split('?')[0] ?? '') || `${kind}-${Date.now()}`
+      const assetId = await ensureAsset(
+        { url, name, assetType: PLATFORM_ASSET_TYPE_BY_KIND[kind] },
+        platformScope,
+      )
+      return { duplicated, assetId, assetUrl: `asset://${assetId}`, name, kind, library: 'platform' }
+    }
     const url = await resolveMediaUrl(source, 'add_to_portrait_library.source')
     const mime = /^data:([^;,]+)/i.exec(url)?.[1]
     const { duplicated, asset } = await importSeedanceAsset(
@@ -1023,7 +1146,17 @@ export function initSeedanceRuntime(opts: {
       },
       assetCreds(),
     )
-    return { duplicated, assetId: asset.assetId, assetUrl: asset.assetUrl, name: asset.name, kind: String(asset.kind) }
+    // 按网址导入的素材上游不出缩略图(previewUrl 恒 null),人像库页面上传那条路会自己
+    // 记一份地址,这条以前漏了 —— agent 存进去的图在工作台上永远没缩略图。
+    if (kind === 'image') rememberAssetThumb(asset, url)
+    return {
+      duplicated,
+      assetId: asset.assetId,
+      assetUrl: asset.assetUrl,
+      name: asset.name,
+      kind: String(asset.kind),
+      library: 'own-key',
+    }
   }
 
   /**
@@ -1123,6 +1256,8 @@ export function initSeedanceRuntime(opts: {
     }
     const page = p.page && p.page > 0 ? p.page : 1
     const pageSize = p.pageSize && p.pageSize > 0 ? Math.min(p.pageSize, 50) : 12
+    const platformScope = agentPlatformScope()
+    if (platformScope) return listPlatformLibraryForAgent(p, page, pageSize, platformScope)
     const overlay = getPortraitOverlay()
     const baseQuery = {
       ...(p.query ? { q: p.query } : {}),
@@ -1169,6 +1304,7 @@ export function initSeedanceRuntime(opts: {
       const safePage = Math.min(page, totalPages)
       const start = (safePage - 1) * pageSize
       return {
+        library: 'own-key' satisfies AgentAssetLibrary,
         items: enriched.slice(start, start + pageSize),
         total,
         page: safePage,
@@ -1185,6 +1321,7 @@ export function initSeedanceRuntime(opts: {
     let enriched = result.items.map((a) => enrichWithOverlay(a, overlay))
     if (!p.includeHidden) enriched = enriched.filter((it) => !it.hidden)
     return {
+      library: 'own-key' satisfies AgentAssetLibrary,
       items: enriched,
       total: result.total,
       page: result.page,

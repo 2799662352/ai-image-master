@@ -9,6 +9,7 @@ import {
   isVideoMime,
   mimeFromExt,
 } from './mediaPathValidation'
+import { grabVideoFrame } from './videoFrame'
 
 /**
  * `media:thumb` — resized-thumbnail IPC dedicated to the renderer hot path
@@ -114,6 +115,36 @@ async function sharpThumb(
   return { buf: data, width: info.width, height: info.height }
 }
 
+/**
+ * 视频缩略图:先问系统(Windows 资源管理器同款的缩略图提供者,已缓存时几乎零成本),
+ * 拿不到再用自带 ffmpeg 截一帧。两条都失败时的 reason 仍含 `video`,
+ * 渲染层据此决定要不要退回别的显示方式。
+ */
+async function videoThumb(realPath: string, size: number): Promise<MediaThumbResult> {
+  const fromNative = await tryNativeThumb(realPath, size)
+  if (fromNative) {
+    return {
+      ok: true,
+      base64: fromNative.buf.toString('base64'),
+      mime: 'image/jpeg',
+      width: fromNative.width,
+      height: fromNative.height,
+    }
+  }
+  const frame = await grabVideoFrame(realPath, size)
+  if (!frame) return { ok: false, reason: 'video frame extraction failed' }
+  const meta = await sharp(frame, { failOn: 'none' })
+    .metadata()
+    .catch(() => null)
+  return {
+    ok: true,
+    base64: frame.toString('base64'),
+    mime: 'image/jpeg',
+    ...(meta?.width ? { width: meta.width } : {}),
+    ...(meta?.height ? { height: meta.height } : {}),
+  }
+}
+
 export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumbResult> {
   if (!args || typeof args.path !== 'string' || args.path.length === 0) {
     return { ok: false, reason: 'whitelist: empty path' }
@@ -149,6 +180,12 @@ export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumb
   if (!stat.isFile()) {
     return { ok: false, reason: 'not a regular file' }
   }
+
+  // 视频只截一帧、不读整个文件,所以不受体积上限约束(成片动辄几百 MB)。
+  if (isVideoMime(mime)) {
+    return videoThumb(realPath, requestedSize)
+  }
+
   if (stat.size > MAX_ATTACHMENT_BYTES) {
     return {
       ok: false,
@@ -161,12 +198,6 @@ export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumb
     return readSvgPassthrough(realPath)
   }
 
-  // Video → no frame extraction in PR-A. Renderer paints a play-icon
-  // placeholder via MediaThumbnail's video branch when this returns false.
-  // Future PR-D (or piggyback on smartErase ffmpeg) can add real frame grab.
-  if (isVideoMime(mime)) {
-    return { ok: false, reason: 'video thumbnail not yet supported' }
-  }
   if (!isImageMime(mime)) {
     // Audio (mp3, wav, etc.) — no point thumbnailing.
     return { ok: false, reason: 'no thumbnail for non-image mime' }

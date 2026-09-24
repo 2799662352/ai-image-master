@@ -12,7 +12,11 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { upstreamAcceptsInlineMedia, usesSeedanceAssetLibrary } from '../assetLibraryPolicy'
+import {
+  upstreamAcceptsInlineMedia,
+  usesPlatformAssetLibrary,
+  usesSeedanceAssetLibrary,
+} from '../assetLibraryPolicy'
 
 describe('usesSeedanceAssetLibrary', () => {
   it('Seedance 全家走素材库 / 人像库', () => {
@@ -80,8 +84,58 @@ describe('upstreamAcceptsInlineMedia', () => {
   })
 })
 
+describe('usesPlatformAssetLibrary', () => {
+  it('平台余额下的 Seedance 走平台素材库', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(usesPlatformAssetLibrary(alias, 'platform')).toBe(true)
+    }
+  })
+
+  it('与 vvdance 那条互斥:同一次提交只落在一个库', () => {
+    for (const billing of ['platform', 'own-key', undefined] as const) {
+      for (const alias of ['2.0', '2.5', 'wan3'] as const) {
+        expect(usesPlatformAssetLibrary(alias, billing) && usesSeedanceAssetLibrary(alias, billing)).toBe(false)
+      }
+    }
+  })
+
+  it('万相与自填 Key 都不走', () => {
+    expect(usesPlatformAssetLibrary('wan3', 'platform')).toBe(false)
+    expect(usesPlatformAssetLibrary('2.0', 'own-key')).toBe(false)
+    expect(usesPlatformAssetLibrary('2.0', undefined)).toBe(false)
+  })
+})
+
 describe('两个提交入口都必须问过这个谓词', () => {
   const runtimeSource = readFileSync(join(__dirname, '..', 'runtime.ts'), 'utf8')
+
+  /**
+   * 平台余额的 asset:// 核验也要两个入口都有。漏一个的表现是:工作台提交前就拦下并说清
+   * 原因,agent 那条却照样建任务、排完队才回一句英文的 `asset … is not found`。
+   */
+  it('平台余额下两个入口都在提交前核验素材库引用', () => {
+    const guarded =
+      runtimeSource.match(
+        /\} else if \(usesPlatformAssetLibrary\(input\.model, \w+\)\) \{[\s\S]{0,400}?await verifyPlatformAssetReferences\(content, scope, getPlatformAsset\)/g,
+      ) ?? []
+    expect(guarded).toHaveLength(2)
+    const calls = runtimeSource.match(/await verifyPlatformAssetReferences\(/g) ?? []
+    expect(calls).toHaveLength(2)
+  })
+
+  /**
+   * agent 的素材库工具必须跟随计费。以前固定走自填 Key 的人像库,平台余额的用户让
+   * agent 挑素材,挑回来的 id 在平台池里不存在(2026-09-24 实机)。
+   */
+  it('agent 的 list / add 素材库工具都按计费分派到平台素材库', () => {
+    expect(runtimeSource).toContain(
+      "return resolveVideoBilling() === 'platform' ? activePlatformScope() : null",
+    )
+    const listFn = /router\.registerMain\('list_portrait_library'[\s\S]*?\n {2}\}\)/.exec(runtimeSource)?.[0] ?? ''
+    expect(listFn).toMatch(/agentPlatformScope\(\)[\s\S]{0,120}listPlatformLibraryForAgent\(/)
+    const addFn = /async function addAsset\([\s\S]*?\n {2}\}\r?\n/.exec(runtimeSource)?.[0] ?? ''
+    expect(addFn).toMatch(/agentPlatformScope\(\)[\s\S]{0,600}ensureAsset\(/)
+  })
 
   it('runtime.ts 里 verifyContentAssetReferences / importImagesToPortraitLibrary 的每一次调用都在守卫内', () => {
     // 调用点数量与守卫数量必须对得上。新增一个提交入口却忘了加守卫,这里会红。
