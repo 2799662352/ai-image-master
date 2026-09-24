@@ -103,6 +103,20 @@ describe('useResolvedMediaSrc — default (thumbnail hot path)', () => {
     expect(readThumb).toHaveBeenCalledTimes(1)
   })
 
+  it('thumbOnly: a failed video frame never falls back to reading the whole file', async () => {
+    readMediaThumb.mockResolvedValue({ ok: false, reason: 'video frame extraction failed' })
+
+    const { result } = renderHook(() =>
+      useResolvedMediaSrc('D:\\videos\\long-take.mp4', 'video', { thumbOnly: true }),
+    )
+
+    await waitFor(() => expect(readMediaThumb).toHaveBeenCalledTimes(1))
+    // give any (wrong) fallback a tick to fire
+    await new Promise((r) => setTimeout(r, 10))
+    expect(readThumb).not.toHaveBeenCalled()
+    expect(result.current).toBeNull()
+  })
+
   it('does not invoke any IPC for http(s):// URLs (Chromium native loader)', async () => {
     const { result } = renderHook(() =>
       useResolvedMediaSrc('https://cdn.example.com/cat.png', 'image'),
