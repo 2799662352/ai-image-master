@@ -24,8 +24,13 @@ export type {
 } from '../../../types/seedance'
 
 export {
+  SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_RESOLUTION,
+  SEEDANCE_DRAFT_TTL_MS,
   SEEDANCE_MODEL_CAPABILITIES,
   capabilitiesFor,
+  seedanceDraftExpired,
+  supportsSeedanceDraft,
   validateSeedanceRequest,
 } from '../../../types/seedance'
 
@@ -117,4 +122,14 @@ export interface CreateVideoTaskInput {
   seed?: number
   /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。 */
   webSearch?: boolean
+  /**
+   * Seedance 2.5 样片(Draft):出一条 480p 预览,满意后再用 `fromDraftTaskId` 出 1080p 成片。
+   * 仅平台余额(经网关)可用,见 `supportsSeedanceDraft`。
+   */
+  draft?: boolean
+  /**
+   * 由样片生成成片:样片在网关的公开任务号(`task_…`,不是方舟的 `cgt-…`)。
+   * 提示词 / 素材 / 时长 / 比例 / seed / 音频一律沿用样片,请求里不能再带。
+   */
+  fromDraftTaskId?: string
 }

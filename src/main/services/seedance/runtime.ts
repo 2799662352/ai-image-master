@@ -969,42 +969,56 @@ export function initSeedanceRuntime(opts: {
       caps.taskModes.includes(payload.taskMode)
         ? payload.taskMode
         : undefined
-    const input: CreateVideoTaskInput = {
-      prompt: String(payload?.prompt ?? ''),
-      model,
-      resolution:
-        (caps.resolutions.find((r) => r === payload?.resolution) as
-          | '480p'
-          | '720p'
-          | '1080p'
-          | undefined) ?? '720p',
-      ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
-      // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余按该模型的区间收敛。
-      duration: !Number.isFinite(durationRaw)
-        ? 5
-        : durationRaw === -1
-          ? -1
-          : Math.min(caps.duration.max, Math.max(caps.duration.min, Math.round(durationRaw))),
-      generateAudio: payload?.generateAudio !== false,
-      ...(taskMode ? { taskMode } : {}),
-      // 卡片原始模式。只认该模型能力表里开放的模式 —— 载荷是渲染端来的,不能
-      // 当成可信输入;不认识就不带,由 resolveVideoMode 按素材形状兜底。
-      ...(typeof payload?.mode === 'string' && (caps.modes as readonly string[]).includes(payload.mode)
-        ? { mode: payload.mode as VideoWorkbenchMode }
-        : {}),
-      // 文档/网页链接槽(仅万相)。原样带过去,由组包层解析与校验。
-      ...(typeof payload?.documentOrLink === 'string' && payload.documentOrLink
-        ? { documentOrLink: payload.documentOrLink }
-        : {}),
-      // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
-      ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
-      ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
-      ...(Number.isFinite(seedRaw) && seedRaw >= 0 ? { seed: Math.round(seedRaw) } : {}),
-      ...(payload?.webSearch === true ? { webSearch: true } : {}),
-      referenceImages: asStringArray(payload?.referenceImages),
-      referenceVideos: asStringArray(payload?.referenceVideos),
-      referenceAudios: asStringArray(payload?.referenceAudios),
-    }
+    // 样片 / 成片(Seedance 2.5 Draft)。成片只认样片的任务号:提示词只给网关记日志,
+    // 素材 / 时长 / 比例 / seed / 音频方舟一律沿用样片,这里一样都不往下传。
+    const fromDraftTaskId =
+      typeof payload?.fromDraftTaskId === 'string' && payload.fromDraftTaskId.trim()
+        ? payload.fromDraftTaskId.trim()
+        : undefined
+    const draft = !fromDraftTaskId && payload?.draft === true
+    const input: CreateVideoTaskInput = fromDraftTaskId
+      ? {
+          prompt: String(payload?.prompt ?? '').trim() || '由样片生成成片',
+          model,
+          fromDraftTaskId,
+        }
+      : {
+          prompt: String(payload?.prompt ?? ''),
+          model,
+          resolution:
+            (caps.resolutions.find((r) => r === payload?.resolution) as
+              | '480p'
+              | '720p'
+              | '1080p'
+              | undefined) ?? '720p',
+          ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
+          // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余按该模型的区间收敛。
+          duration: !Number.isFinite(durationRaw)
+            ? 5
+            : durationRaw === -1
+              ? -1
+              : Math.min(caps.duration.max, Math.max(caps.duration.min, Math.round(durationRaw))),
+          generateAudio: payload?.generateAudio !== false,
+          ...(taskMode ? { taskMode } : {}),
+          // 卡片原始模式。只认该模型能力表里开放的模式 —— 载荷是渲染端来的,不能
+          // 当成可信输入;不认识就不带,由 resolveVideoMode 按素材形状兜底。
+          ...(typeof payload?.mode === 'string' && (caps.modes as readonly string[]).includes(payload.mode)
+            ? { mode: payload.mode as VideoWorkbenchMode }
+            : {}),
+          // 文档/网页链接槽(仅万相)。原样带过去,由组包层解析与校验。
+          ...(typeof payload?.documentOrLink === 'string' && payload.documentOrLink
+            ? { documentOrLink: payload.documentOrLink }
+            : {}),
+          // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
+          ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
+          ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
+          ...(Number.isFinite(seedRaw) && seedRaw >= 0 ? { seed: Math.round(seedRaw) } : {}),
+          ...(payload?.webSearch === true ? { webSearch: true } : {}),
+          referenceImages: asStringArray(payload?.referenceImages),
+          referenceVideos: asStringArray(payload?.referenceVideos),
+          referenceAudios: asStringArray(payload?.referenceAudios),
+          ...(draft ? { draft: true } : {}),
+        }
     try {
       if (!input.prompt.trim()) throw new Error('提示词不能为空')
       const content = await buildContent(input)

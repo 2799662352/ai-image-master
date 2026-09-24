@@ -21,7 +21,12 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskUpdate,
 } from '../../../../types/seedance'
-import { capabilitiesFor } from '../../../../types/seedance'
+import {
+  capabilitiesFor,
+  SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_RESOLUTION,
+} from '../../../../types/seedance'
+import { draftFinalAvailability, effectiveDraft, submitResolution } from './seedanceDraft'
 import { DEFAULT_PROJECT_ID, WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import type {
   VideoWorkbenchBoard,
@@ -156,6 +161,15 @@ export interface WorkbenchCardSnapshot {
   mode: string
   seed?: number
   webSearch: boolean
+  /** 样片模式开关(只在开着时出现)。 */
+  draft?: boolean
+  /**
+   * 当前结果是一条成功的 480p 样片 —— agent 据此知道可以调 video_workbench_finalize_draft
+   * 出 1080p 成片,而不是从头再生成一次。
+   */
+  draftRun?: boolean
+  /** 当前结果是由样片生成的 1080p 成片:来源样片任务号。 */
+  fromDraftTaskId?: string
   referenceCounts: { images: number; videos: number; audios: number }
   /** 紧凑素材清单(每类本就有 9/3/3 上限,只列名字)。 */
   references: {
@@ -194,6 +208,9 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     mode: card.mode,
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     webSearch: card.webSearch === true,
+    ...(card.draft ? { draft: true } : {}),
+    ...(card.draftRun ? { draftRun: true } : {}),
+    ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     referenceCounts: {
       images: card.referenceImages.length,
       videos: card.referenceVideos.length,
@@ -533,6 +550,11 @@ export interface VideoWorkbenchState extends ProjectsSlice {
    */
   startCardsFromAgent: (ids?: string[]) => Promise<StartResult>
   /**
+   * 由样片生成 1080p 成片(Seedance 2.5 Draft)。只接受当前结果是成功样片、7 天内、
+   * 平台余额的卡;成片作为同一张卡的新一轮,样片那一版留在 versions 里。
+   */
+  finalizeDrafts: (ids: string[]) => Promise<StartResult>
+  /**
    * 取消/放弃进行中的卡片。返回每张卡的计费口径 —— 上游只允许取消 queued
    * (不计费),running 无法取消(照样扣费),UI 据此写文案。
    */
@@ -686,6 +708,93 @@ type SetState = (
 ) => void
 
 /**
+ * 重启一轮时要清掉的上一轮产物。残留 localPath 会让播放器继续显示旧视频;残留
+ * historyRecorded 会把第二轮及以后的结果永久挡在历史页之外(applyTaskUpdate 的
+ * 写历史门是 !card.historyRecorded)。上一轮的成功产物已经在 versions 里存了档。
+ */
+const CLEARED_RUN_RESULT = {
+  taskId: undefined,
+  upstreamTaskId: undefined,
+  submittedReferences: undefined,
+  videoUrl: undefined,
+  error: undefined,
+  persistence: undefined,
+  localPath: undefined,
+  remoteUrl: undefined,
+  actualSeed: undefined,
+  completionTokens: undefined,
+  billedSeconds: undefined,
+  historyRecorded: undefined,
+  cancelRequested: undefined,
+} as const
+
+/**
+ * 提交发出之后的回写:成功记 taskId 并推到 queued(preparing 期间点过取消的,立刻补发
+ * 取消);失败落 failed。只认 clientId 对得上的那一轮 —— 用户中途又点了一次生成,
+ * 旧一轮的回包不该覆盖新一轮。
+ */
+function trackSubmission(
+  set: SetState,
+  api: { cancel?: (taskId: string) => Promise<unknown> },
+  cardId: string,
+  clientId: string,
+  submission: Promise<VideoWorkbenchSubmitResult>,
+): Promise<void> {
+  return submission
+    .then((res) => {
+      let after: VideoWorkbenchCard | null = null
+      let lateCancelTaskId: string | undefined
+      set((state) => ({
+        cards: state.cards.map((c) => {
+          if (c.id !== cardId || c.clientId !== clientId) return c
+          if (!res.success) {
+            after = { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
+            return after
+          }
+          // preparing 期间用户点了取消:直到现在才拿到 taskId,而此刻任务
+          // 几乎必然还在 queued —— 上游唯一允许真取消(不计费)的窗口,
+          // 立刻补发。状态保持 cancelled,绝不因提交成功而推回 queued。
+          if (c.cancelRequested) {
+            lateCancelTaskId = res.taskId
+            after = {
+              ...c,
+              taskId: res.taskId,
+              status: 'cancelled',
+              cancelRequested: undefined,
+              updatedAt: Date.now(),
+            }
+            return after
+          }
+          after =
+            // 广播可能先一步把状态推到 queued/running/succeeded,别倒回去
+            c.status === 'preparing'
+              ? { ...c, taskId: res.taskId, status: 'queued', updatedAt: Date.now() }
+              : { ...c, taskId: res.taskId, updatedAt: Date.now() }
+          return after
+        }),
+      }))
+      if (after) persistNow(after)
+      if (lateCancelTaskId) void api.cancel?.(lateCancelTaskId)
+    })
+    .catch((e) => {
+      let after: VideoWorkbenchCard | null = null
+      set((state) => ({
+        cards: state.cards.map((c) => {
+          if (c.id !== cardId || c.clientId !== clientId) return c
+          after = {
+            ...c,
+            status: 'failed',
+            error: e instanceof Error ? e.message : String(e),
+            updatedAt: Date.now(),
+          }
+          return after
+        }),
+      }))
+      if (after) persistNow(after)
+    })
+}
+
+/**
  * 把卡片写成 cancelled。**只在卡片仍在飞时写** —— 取消请求往返期间上游结果可能
  * 刚好到达（applyTaskUpdate 已落 succeeded），此时绝不能用 cancelled 覆盖掉一个
  * 已经拿到手的好结果。
@@ -741,7 +850,14 @@ function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSpec {
   return {
     prompt: card.prompt,
     model: card.model,
-    resolution: card.resolution,
+    // 样片 / 成片的分辨率不看卡片设置:前者固定 480p,后者固定 1080p。
+    resolution: card.fromDraftTaskId
+      ? SEEDANCE_DRAFT_FINAL_RESOLUTION
+      : card.draftRun
+        ? SEEDANCE_DRAFT_RESOLUTION
+        : card.resolution,
+    ...(card.draftRun ? { draft: true } : {}),
+    ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     ratio: card.ratio,
     duration: card.duration,
     generateAudio: card.generateAudio,
@@ -1583,6 +1699,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
               ? { seed: normalizeSeed(patch.seed) }
               : {}),
           ...(patch.webSearch !== undefined ? { webSearch: patch.webSearch === true } : {}),
+          // 与 seed 的清除同一写法:关掉 = 键上是 undefined。
+          ...(patch.draft !== undefined ? { draft: patch.draft === true ? true : undefined } : {}),
           // 按**这次改完之后**的模型截断:同一个 patch 里可能既换模型又换素材,
           // 用 card.model(旧值)会把升到 2.5 后本该收下的图当场切掉。
           ...(patch.referenceImages !== undefined
@@ -2061,6 +2179,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             // 每轮刷新:上一轮可能是平台余额、这一轮是自填 Key,而对账与
             // 「重新保存」都靠它决定去问谁。
             billing,
+            // 这一轮出不出样片,由提交那一刻的开关 + 模型 + 计费定下(见 seedanceDraft)。
+            draftRun: effectiveDraft(c) && billing === 'platform' ? true : undefined,
+            fromDraftTaskId: undefined,
             taskId: undefined,
             upstreamTaskId: undefined,
             submittedReferences: undefined,
@@ -2084,11 +2205,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
       if (submitted) persistNow(submitted)
       result.started.push(card.id)
 
+      const draft = effectiveDraft(card) && billing === 'platform'
       const payload: VideoWorkbenchSubmitPayload = {
         clientId,
         prompt: card.prompt.trim(),
         model: card.model,
-        resolution: card.resolution,
+        resolution: draft ? submitResolution(card) : card.resolution,
+        ...(draft ? { draft: true } : {}),
         ratio: card.ratio,
         duration: card.duration,
         generateAudio: card.generateAudio,
@@ -2105,61 +2228,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
         ...buildModeMedia(card),
       }
 
-      submissions.push(
-        api
-          .submit(payload)
-          .then((res) => {
-            let after: VideoWorkbenchCard | null = null
-            let lateCancelTaskId: string | undefined
-            set((state) => ({
-              cards: state.cards.map((c) => {
-                if (c.id !== card.id || c.clientId !== clientId) return c
-                if (!res.success) {
-                  after = { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
-                  return after
-                }
-                // preparing 期间用户点了取消:直到现在才拿到 taskId,而此刻任务
-                // 几乎必然还在 queued —— 上游唯一允许真取消(不计费)的窗口,
-                // 立刻补发。状态保持 cancelled,绝不因提交成功而推回 queued。
-                if (c.cancelRequested) {
-                  lateCancelTaskId = res.taskId
-                  after = {
-                    ...c,
-                    taskId: res.taskId,
-                    status: 'cancelled',
-                    cancelRequested: undefined,
-                    updatedAt: Date.now(),
-                  }
-                  return after
-                }
-                after =
-                  // 广播可能先一步把状态推到 queued/running/succeeded,别倒回去
-                  c.status === 'preparing'
-                    ? { ...c, taskId: res.taskId, status: 'queued', updatedAt: Date.now() }
-                    : { ...c, taskId: res.taskId, updatedAt: Date.now() }
-                return after
-              }),
-            }))
-            if (after) persistNow(after)
-            if (lateCancelTaskId) void api.cancel?.(lateCancelTaskId)
-          })
-          .catch((e) => {
-            let after: VideoWorkbenchCard | null = null
-            set((state) => ({
-              cards: state.cards.map((c) => {
-                if (c.id !== card.id || c.clientId !== clientId) return c
-                after = {
-                  ...c,
-                  status: 'failed',
-                  error: e instanceof Error ? e.message : String(e),
-                  updatedAt: Date.now(),
-                }
-                return after
-              }),
-            }))
-            if (after) persistNow(after)
-          }),
-      )
+      submissions.push(trackSubmission(set, api, card.id, clientId, api.submit(payload)))
     }
 
     // 刻意不 await submissions —— 这个 await 曾让 agent 整个 turn 卡死。
@@ -2175,6 +2244,78 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     // 卡片状态,不会有悬空 rejection;卡片在提交前已同步落 'preparing' 并持久化,
     // 之后的进度由 seedance:task-update 广播流回 applyTaskUpdate —— 工作台页面
     // 本身就是交付通道,跟 agent 等不等完全无关。
+    void Promise.all(submissions)
+    return result
+  },
+
+  finalizeDrafts: async (ids) => {
+    const api = getApi()?.videoWorkbench
+    const result: StartResult = { started: [], skipped: [] }
+    if (!api?.submit) {
+      for (const id of ids) result.skipped.push({ cardId: id, reason: '视频服务未就绪(preload 桥缺失)' })
+      return result
+    }
+    // 同 startCards:提交那一刻现读,主进程不猜。成片必须与样片同一个计费池 ——
+    // 网关按「本人 + 已成功」查样片,换了池就查不到。
+    const billing = useQuotaStore.getState().billingSource
+    const submissions: Array<Promise<void>> = []
+    for (const id of ids) {
+      const card = get().cards.find((c) => c.id === id)
+      if (!card) {
+        result.skipped.push({ cardId: id, reason: '卡片不存在' })
+        continue
+      }
+      const gate = draftFinalAvailability(card, billing)
+      if (!gate.show) {
+        result.skipped.push({ cardId: id, reason: '这张卡当前结果不是一条成功的样片' })
+        continue
+      }
+      if (!gate.enabled) {
+        result.skipped.push({ cardId: id, reason: gate.reason })
+        continue
+      }
+      const draftTaskId = card.taskId!
+      const clientId = `wb-${card.id}-${Date.now()}`
+      let submitted: VideoWorkbenchCard | null = null
+      set((state) => ({
+        cards: state.cards.map((c) => {
+          if (c.id !== card.id) return c
+          // 样片那一版已在成功时存档进 versions,这里清掉的只是卡上的「当前结果」。
+          submitted = {
+            ...c,
+            ...CLEARED_RUN_RESULT,
+            status: 'preparing',
+            clientId,
+            billing,
+            draftRun: undefined,
+            fromDraftTaskId: draftTaskId,
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+          }
+          return submitted
+        }),
+      }))
+      if (submitted) persistNow(submitted)
+      result.started.push(card.id)
+
+      const payload: VideoWorkbenchSubmitPayload = {
+        clientId,
+        // 只进网关日志;方舟沿用样片的提示词,不会拿它重新生成。
+        prompt: card.prompt.trim(),
+        model: card.model,
+        resolution: SEEDANCE_DRAFT_FINAL_RESOLUTION,
+        ratio: card.ratio,
+        duration: card.duration,
+        generateAudio: card.generateAudio,
+        billing,
+        fromDraftTaskId: draftTaskId,
+        referenceImages: [],
+        referenceVideos: [],
+        referenceAudios: [],
+      }
+      submissions.push(trackSubmission(set, api, card.id, clientId, api.submit(payload)))
+    }
+    // 同 startCards:不 await,进度由 seedance:task-update 广播流回。
     void Promise.all(submissions)
     return result
   },

@@ -15,7 +15,15 @@ import type {
   SeedanceAssetListResult,
   SeedanceModelAlias,
 } from '../../../../types/seedance'
-import { capabilitiesFor } from '../../../../types/seedance'
+import { capabilitiesFor, supportsSeedanceDraft } from '../../../../types/seedance'
+import { useQuotaStore } from '../../stores/useQuotaStore'
+import {
+  draftFinalAvailability,
+  draftToggleAvailability,
+  effectiveDraft,
+  runResolution,
+  submitResolution,
+} from '../../features/video-workbench/seedanceDraft'
 import {
   classifyWan3DocumentOrLink,
   documentOrLinkFromUrl,
@@ -330,7 +338,9 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const removeMaterial = useVideoWorkbenchStore((s) => s.removeMaterial)
   const moveMaterial = useVideoWorkbenchStore((s) => s.moveMaterial)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
+  const finalizeDrafts = useVideoWorkbenchStore((s) => s.finalizeDrafts)
   const cancelCards = useVideoWorkbenchStore((s) => s.cancelCards)
+  const billingSource = useQuotaStore((s) => s.billingSource)
   const selected = useVideoWorkbenchStore((s) => s.selectedCardIds.includes(card.id))
   const selectCard = useVideoWorkbenchStore((s) => s.selectCard)
 
@@ -340,6 +350,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   // 拿不到就退回 2.0 家族——少一个选项好过摆一个提交必被拒的选项。
   const availableModels = useSeedanceModels()
   const modelCaps = capabilitiesFor(card.model)
+  // 样片:开关只在 2.5 + 平台余额下生效;不满足时开关置灰并说明原因,提交也照常出正片。
+  const draftToggle = draftToggleAvailability(card.model, billingSource)
+  const draftOn = effectiveDraft(card) && draftToggle.available
+  const draftFinal = draftFinalAvailability(card, billingSource)
   const durationLocked = card.mode === 'edit_video'
   const durationOptions = useMemo(
     () => durationOptionsFor(card.model, card.mode),
@@ -928,7 +942,8 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                       : '失败'}
         </span>
         <span className="text-white/30 text-[10px] ml-auto">
-          {modeSpec.label} · {card.model} · {card.resolution} · {card.ratio} ·{' '}
+          {modeSpec.label} · {card.model} ·{' '}
+          {draftOn ? `${submitResolution(card)} 样片` : card.resolution} · {card.ratio} ·{' '}
           {card.duration === -1 ? '智能时长' : `${card.duration}s`}
           {card.generateAudio ? ' · 有声' : ''}
           {card.seed !== undefined ? ` · seed ${card.seed}` : ''}
@@ -1099,8 +1114,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           </select>
           <select
             aria-label="分辨率"
-            value={card.resolution}
-            disabled={busy}
+            // 样片固定 480p:显示实际要发的那一档并锁住;关掉样片后回到卡片原来的设置。
+            value={draftOn ? submitResolution(card) : card.resolution}
+            disabled={busy || draftOn}
+            title={draftOn ? '样片固定 480p;满意后在结果下方生成 1080P 成片' : undefined}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) =>
               updateCard(card.id, { resolution: e.target.value as '480p' | '720p' | '1080p' })
@@ -1175,6 +1192,25 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             />
             🌐 联网
           </label>
+          {/* 样片(Seedance 2.5 Draft):先出 480p 便宜看效果,满意再一键出 1080p 成片 */}
+          {supportsSeedanceDraft(card.model) && (
+            <label
+              className={`flex items-center gap-1.5 select-none ${draftToggle.available ? 'text-white/70 cursor-pointer' : 'text-white/30 cursor-not-allowed'}`}
+              title={draftToggle.available
+                ? '样片:先出 480p 预览(按 480p 计费),满意后在结果下方一键生成 1080P 成片;沿用样片的提示词、素材、时长、比例、seed 与音频,7 天内有效'
+                : draftToggle.reason}
+            >
+              <input
+                type="checkbox"
+                data-testid="vw-draft-toggle"
+                checked={card.draft === true && draftToggle.available}
+                disabled={busy || !draftToggle.available}
+                className="accent-[#FCE300]"
+                onChange={(e) => updateCard(card.id, { draft: e.target.checked })}
+              />
+              🎞 样片
+            </label>
+          )}
         </div>
 
         {/* 文档 / 网页链接槽 —— 仅万相 3.0 有这个入参。
@@ -1221,6 +1257,23 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/40">
               <VersionSwitcher versions={versions} index={versionIdx} onChange={setVersionIdx} />
+              {showingLatest && card.draftRun && (
+                <span
+                  data-testid="vw-draft-badge"
+                  className="border border-[#FCE300]/50 text-[#FCE300] px-1.5 py-0.5"
+                  title="这是 480p 样片;满意后点「生成 1080P 成片」"
+                >
+                  样片 480P
+                </span>
+              )}
+              {showingLatest && card.fromDraftTaskId && (
+                <span
+                  className="border border-emerald-400/50 text-emerald-300 px-1.5 py-0.5"
+                  title={`由样片 ${card.fromDraftTaskId} 生成的 1080p 成片;样片那一版仍在版本记录里`}
+                >
+                  成片 1080P
+                </span>
+              )}
               {card.persistence === 'done' && card.localPath ? (
                 <span className="flex items-center gap-1.5 min-w-0 max-w-[60%]">
                   <span className={localGone ? 'truncate text-orange-400' : 'truncate'} title={card.localPath}>
@@ -1278,7 +1331,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                   {(() => {
                     const cost = estimateCostUsd(
                       card.model,
-                      card.resolution,
+                      runResolution(card),
                       cardHasVideoInput(card),
                       card.completionTokens,
                     )
@@ -1292,7 +1345,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                 <span title="上游回传的实际出片秒数(按秒计费口径)">
                   {card.billedSeconds}s
                   {(() => {
-                    const cost = estimateCostCny(card.model, card.resolution, card.billedSeconds)
+                    const cost = estimateCostCny(card.model, runResolution(card), card.billedSeconds)
                     return cost != null ? ` ≈ ${formatCostCny(cost)}` : ''
                   })()}
                 </span>
@@ -1322,6 +1375,26 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                 </button>
                 {!gate.ok && gate.reason !== '提示词为空' && (
                   <span className="text-orange-400 text-[10px]">⚠ {gate.reason}</span>
+                )}
+                {/* 样片满意 → 1080p 成片。沿用样片的一切,作为本卡的新一轮;样片那版留在版本里 */}
+                {draftFinal.show && (
+                  <button
+                    type="button"
+                    data-testid="vw-draft-finalize"
+                    className="border border-[#FCE300] text-[#FCE300] text-sm font-bold px-3 py-2 hover:bg-[#FCE300]/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={!draftFinal.enabled}
+                    title={draftFinal.enabled
+                      ? '用这条样片生成 1080P 成片:沿用样片的提示词、素材、时长、比例、seed 与音频,按 1080p 计费'
+                      : draftFinal.reason}
+                    onClick={() => {
+                      void finalizeDrafts([card.id]).then((res) => {
+                        const skip = res.skipped[0]
+                        if (skip) useToastStore.getState().addToast({ type: 'warning', message: skip.reason })
+                      })
+                    }}
+                  >
+                    ⤴ 生成 1080P 成片
+                  </button>
                 )}
               </>
             )

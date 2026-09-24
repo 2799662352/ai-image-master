@@ -43,6 +43,11 @@ export interface VideoWorkbenchSpec {
   /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。仅 Seedance 2.0。 */
   webSearch: boolean
   /**
+   * 样片模式(Seedance 2.5 + 平台余额):开着时出 480p 样片,满意后在卡上一键生成 1080p 成片。
+   * 缺省 = 关。只在 2.5 下生效,切到别的模型时保留开关但不发(`effectiveDraft`)。
+   */
+  draft?: boolean
+  /**
    * 文档 / 网页链接槽（仅万相 3.0）。存**序列化后的 JSON 字符串**，空/缺省 = 未设置。
    *
    * 不直接存对象：那样持久化 schema 要跟着加一层嵌套并做迁移，而这里「有/无」
@@ -305,6 +310,13 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
    * 都得拿它打回同一条上游，否则一律回「任务不存在」。每轮提交刷新。
    */
   billing?: VideoBillingSource
+  /**
+   * 这一轮出的是 480p 样片(提交时开着样片模式)。**是结果不是意图**,每轮提交刷新:
+   * 卡上的「生成 1080P 成片」只看它,不看 spec 里的开关 —— 开关可能在出片后被关掉。
+   */
+  draftRun?: boolean
+  /** 这一轮是由样片生成的 1080p 成片:来源样片的任务号。每轮提交刷新。 */
+  fromDraftTaskId?: string
   /** succeeded 时上游临时结果地址（有效期未知，兜底播放源）。 */
   videoUrl?: string
   /** 落盘后的本地 mp4 绝对路径（权威结果）。 */
@@ -351,6 +363,8 @@ export interface VideoWorkbenchCardInput {
   /** 随机种子;传 null 表示清除（恢复随机）。 */
   seed?: number | null
   webSearch?: boolean
+  /** 样片模式(Seedance 2.5 + 平台余额)。 */
+  draft?: boolean
   /** 文档 / 网页链接槽（仅万相）。序列化 JSON；空串 = 清除。 */
   documentOrLink?: string
   /**
@@ -387,6 +401,10 @@ export interface VideoWorkbenchVersionSpec {
   seed?: number
   webSearch: boolean
   referenceBrief: { images: string[]; videos: string[]; audios: string[] }
+  /** 这一版是 480p 样片。 */
+  draft?: boolean
+  /** 这一版是由样片(该任务号)生成的 1080p 成片。 */
+  fromDraftTaskId?: string
 }
 
 /**
@@ -511,6 +529,8 @@ export interface WorkbenchIRCard {
   mode?: VideoWorkbenchMode
   seed?: number
   webSearch?: boolean
+  /** 样片模式(Seedance 2.5 + 平台余额)。声明式:没写 = 关。 */
+  draft?: boolean
   documentOrLink?: string
   referenceImages?: WorkbenchIRMaterial[]
   referenceVideos?: WorkbenchIRMaterial[]
@@ -687,6 +707,13 @@ export interface VideoWorkbenchSubmitPayload {
    * 缺省交给主进程兜底,那是给**没有渲染层**的 MCP `generate_video` 留的。
    */
   billing?: VideoBillingSource
+  /** Seedance 2.5 样片:出 480p 预览。仅平台余额。 */
+  draft?: boolean
+  /**
+   * 由样片生成 1080p 成片:样片的任务号。给了它,主进程只认这一样 ——
+   * 提示词只进日志,素材 / 时长 / 比例 / seed / 音频一律沿用样片。
+   */
+  fromDraftTaskId?: string
 }
 
 /** `video-workbench:submit` 返回（成功 = 已创建上游任务，轮询在主进程后台跑）。 */

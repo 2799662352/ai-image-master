@@ -107,6 +107,11 @@ const cardInputSchema = z.object({
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
+  draft: z.boolean().optional().describe(
+    '样片 mode — model "2.5" + platform balance only. true = the card renders a cheap 480p draft (billed as '
+    + '480p) instead of the full render; once it succeeds, call video_workbench_finalize_draft to turn it into '
+    + 'the 1080p final (valid 7 days, reuses the draft\'s prompt/materials/duration/ratio/seed/audio). Default false.',
+  ),
   referenceImages: z.array(z.string()).max(30).optional().describe(
     'Up to 9 reference images (30 with model "2.5"): local path / https URL / asset://assetId (portrait library) / data: URL. '
     + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
@@ -239,6 +244,12 @@ const cardSnapshotSchema = z.looseObject({
   mode: z.string(),
   seed: z.number().optional(),
   webSearch: z.boolean(),
+  draft: z.boolean().optional().describe('样片 mode switch is on for this card.'),
+  draftRun: z.boolean().optional().describe(
+    'The current result is a SUCCEEDED 480p 样片 — call video_workbench_finalize_draft for the 1080p final '
+    + 'instead of regenerating.',
+  ),
+  fromDraftTaskId: z.string().optional().describe('The current result is the 1080p final made from this draft task.'),
   referenceCounts: z.object({ images: z.number(), videos: z.number(), audios: z.number() }),
   references: z.object({
     images: z.array(materialBriefSchema),
@@ -428,6 +439,7 @@ const irCardSchema = z.looseObject({
   ),
   seed: z.number().int().min(0).max(4294967295).optional(),
   webSearch: z.boolean().optional(),
+  draft: z.boolean().optional(),
   // 上限取全模型最宽（2.5 的 30/10/10）；按模型收窄由渲染端 canStart 与主进程
   // validateSeedanceRequest 负责 —— schema 写死 9/3/3 会让 2.5 的卡片直接被拒。
   referenceImages: z.array(irMaterialSchema).max(30).optional(),
@@ -739,7 +751,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_set_spec', {
     description:
       'Apply the SAME spec change to many cards at once — resolution, ratio, model, duration, audio, '
-      + 'webSearch, mode. This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5".\n'
+      + 'webSearch, mode, draft (样片). This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5 / 都先出样片".\n'
       + 'USE THIS INSTEAD OF export+apply for spec-only sweeps. apply is declarative over the WHOLE board: '
       + 'omitted fields reset to defaults, so to change three fields you must round-trip every prompt and '
       + 'every material array of every card through the model — on a 17-card board that is the slowest '
@@ -761,6 +773,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       duration: cardInputSchema.shape.duration,
       generateAudio: cardInputSchema.shape.generateAudio,
       webSearch: cardInputSchema.shape.webSearch,
+      draft: cardInputSchema.shape.draft,
       // ⚠️ 不能写 `cardInputSchema.shape.mode` —— 那个 shape 里**没有** mode，取到
       // undefined，注册时 MCP SDK 读 `undefined._zod` 直接让整个服务器起不来
       // ("Cannot read properties of undefined (reading '_zod')")。TypeScript 早就报了
@@ -1026,6 +1039,39 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       ], result)
     } catch (error) {
       return errorResult('video_workbench_start', error)
+    }
+  })
+
+  server.registerTool('video_workbench_finalize_draft', {
+    description:
+      'Turn workbench cards whose current result is a SUCCEEDED 480p 样片 (draftRun:true in status) into the ' +
+      '1080p FINAL. Upstream reuses each draft\'s prompt, materials, duration, ratio, seed and audio — nothing ' +
+      'can be changed (to change something, edit the card and render a new draft). The final becomes a new ' +
+      'version on the same card; the draft stays in its version history. Seedance 2.5 on platform balance only, ' +
+      'within 7 days of the draft, billed at the 1080p rate. Fire-and-forget like video_workbench_start: returns ' +
+      'started/skipped immediately and you are pushed the batch summary when renders settle. Honors the ' +
+      '「允许 AI 自动生成」 switch (blocked:true → ask the user to click 「生成 1080P 成片」 on the card).',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).min(1).describe('Cards whose current result is a succeeded draft.'),
+    }),
+    annotations: WRITE_ADDITIVE_REMOTE,
+    outputSchema: startOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_finalize_draft',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { started: string[]; skipped: Array<{ cardId: string; reason: string }> }
+      return okResult([
+        isAutoStartBlocked(result)
+          ? AUTO_START_BLOCKED_BANNER
+          : result.started.length > 0
+            ? `⏳ video_workbench_finalize_draft — ${result.started.length} 1080p final(s) submitted and this call already returned. Do NOT poll or resubmit; the batch summary is pushed when they settle.`
+            : '⚠️ video_workbench_finalize_draft — nothing started (see skipped reasons).',
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_finalize_draft', error)
     }
   })
 

@@ -25,7 +25,12 @@ import type {
   SeedanceTaskUpdate,
   VideoBillingSource,
 } from './types'
-import { validateSeedanceRequest } from './types'
+import {
+  SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_RESOLUTION,
+  supportsSeedanceDraft,
+  validateSeedanceRequest,
+} from './types'
 import {
   createSeedanceTransport,
   transportFor,
@@ -255,20 +260,38 @@ export class SeedanceTaskManager {
     // 不该被要求去配一个用不到的火山密钥。
     this.transport(model, billing).requireApiKey()
 
-    const resolution = input.resolution ?? '720p'
+    // 样片 / 成片只在平台余额这条路上有(网关按「本人 + 已成功」查样片、锁渠道);
+    // 自填 Key 的直连与万相都没有,提前说清楚,别让上游回一句看不懂的参数错误。
+    const isFinalFromDraft = Boolean(input.fromDraftTaskId)
+    if (input.draft || isFinalFromDraft) {
+      if (!supportsSeedanceDraft(model)) throw new Error('样片模式只有 Seedance 2.5 支持')
+      if (billing !== 'platform') throw new Error('样片模式只在平台余额下可用(自填 Key 的直连不支持)')
+    }
+    if (isFinalFromDraft && content.some((item) => item.type !== 'text')) {
+      throw new Error('由样片生成成片时不能再带参考素材 —— 方舟沿用样片的素材,重传会被拒')
+    }
+
+    const resolution = isFinalFromDraft
+      ? SEEDANCE_DRAFT_FINAL_RESOLUTION
+      : input.draft
+        ? SEEDANCE_DRAFT_RESOLUTION
+        : (input.resolution ?? '720p')
     const duration = input.duration ?? 5
     const taskMode = input.taskMode
 
     // 提交前按模型能力自查。上游对 4k 配 2.5、30 秒配 2.0、edit 不带视频都会 400,
     // 但那时用户已经等过一次网络往返、看到的是一张失败卡片。
-    const errors = validateSeedanceRequest(model, {
-      duration,
-      resolution,
-      taskMode,
-      images: countContent(content, 'image_url'),
-      videos: countContent(content, 'video_url'),
-      audios: countContent(content, 'audio_url'),
-    })
+    // 成片不查:它的规格全部沿用样片,而 1080p 恰恰是 2.5 平时不开放、只有成片才有的一档。
+    const errors = isFinalFromDraft
+      ? []
+      : validateSeedanceRequest(model, {
+          duration,
+          resolution,
+          taskMode,
+          images: countContent(content, 'image_url'),
+          videos: countContent(content, 'video_url'),
+          audios: countContent(content, 'audio_url'),
+        })
     if (errors.length > 0) throw new Error(errors.join('；'))
 
     // edit / extend 由上游强制 adaptive（文档 4.9）—— 与其让它悄悄改写我们传的
@@ -298,6 +321,8 @@ export class SeedanceTaskManager {
       ratio,
       duration,
       ...(referenceUrls ? { referenceUrls } : {}),
+      ...(input.draft && !isFinalFromDraft ? { draft: true } : {}),
+      ...(input.fromDraftTaskId ? { fromDraftTaskId: input.fromDraftTaskId } : {}),
       status: 'queued',
       createdAt: this.now(),
       updatedAt: this.now(),

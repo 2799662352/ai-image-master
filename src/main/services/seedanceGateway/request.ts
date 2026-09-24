@@ -29,9 +29,10 @@
  * 平台人像库的 `asset://<id>` 引用**正是它存在的理由**，拦掉等于把整个功能拦掉。
  */
 
+import { SEEDANCE_DRAFT_FINAL_RESOLUTION, SEEDANCE_DRAFT_RESOLUTION } from '../../../types/seedance'
 import type { SeedanceContentItem } from '../seedance/types'
 
-export interface SeedanceGatewayCreateTaskBody {
+export interface SeedanceGatewayGenerateBody {
   model: string
   /**
    * 与 `metadata.content[0].text` 重复的那一份。不是冗余：网关的 OpenAI 兼容层按顶层
@@ -44,8 +45,27 @@ export interface SeedanceGatewayCreateTaskBody {
     ratio: string
     resolution: string
     generate_audio: boolean
+    /** Seedance 2.5 样片:网关原样透传给方舟。只在样片请求里出现。 */
+    draft?: true
   }
 }
+
+/**
+ * 由样片生成成片。`metadata` **整份**只有这两样(new-api #111 / #113):
+ * `content` 只含一条 `draft_task`(样片在网关的公开任务号),分辨率固定 1080p。
+ * 提示词 / 素材 / 时长 / 比例 / seed / generate_audio 方舟沿用样片,再带任何一样都会被拒。
+ */
+export interface SeedanceGatewayFinalFromDraftBody {
+  model: string
+  /** 只给网关做日志 / 路由;适配器发往方舟前会丢掉,不会被当成重传的提示词。 */
+  prompt: string
+  metadata: {
+    content: [{ type: 'draft_task'; draft_task: { id: string } }]
+    resolution: typeof SEEDANCE_DRAFT_FINAL_RESOLUTION
+  }
+}
+
+export type SeedanceGatewayCreateTaskBody = SeedanceGatewayGenerateBody | SeedanceGatewayFinalFromDraftBody
 
 export interface SeedanceGatewayRequestInput {
   /** 已解析好的上游模型 id（如 `doubao-seedance-2-0-260128`），这里不做任何改写。 */
@@ -58,6 +78,8 @@ export interface SeedanceGatewayRequestInput {
   generateAudio?: boolean
   /** 仅在 `content[]` 里一条 text 都没有时才用。正常链路走不到。 */
   promptFallback?: string
+  /** Seedance 2.5 样片:带 `draft: true`,分辨率强制 480p(方舟只收这一档)。 */
+  draft?: boolean
 }
 
 /**
@@ -90,7 +112,7 @@ function promptFrom(content: SeedanceContentItem[], fallback: string): string {
 
 export function buildSeedanceGatewayCreateBody(
   input: SeedanceGatewayRequestInput,
-): SeedanceGatewayCreateTaskBody {
+): SeedanceGatewayGenerateBody {
   return {
     model: input.model,
     prompt: promptFrom(input.content, input.promptFallback ?? ''),
@@ -99,8 +121,26 @@ export function buildSeedanceGatewayCreateBody(
       // `-1`（智能时长）是合法值，所以判据是「有没有给」而不是「真不真」。
       duration: input.duration ?? SEEDANCE_GATEWAY_DEFAULTS.duration,
       ratio: input.ratio ?? SEEDANCE_GATEWAY_DEFAULTS.ratio,
-      resolution: input.resolution ?? SEEDANCE_GATEWAY_DEFAULTS.resolution,
+      resolution: input.draft
+        ? SEEDANCE_DRAFT_RESOLUTION
+        : (input.resolution ?? SEEDANCE_GATEWAY_DEFAULTS.resolution),
       generate_audio: input.generateAudio ?? SEEDANCE_GATEWAY_DEFAULTS.generateAudio,
+      ...(input.draft ? { draft: true as const } : {}),
+    },
+  }
+}
+
+export function buildSeedanceGatewayFinalFromDraftBody(input: {
+  model: string
+  draftTaskId: string
+  prompt?: string
+}): SeedanceGatewayFinalFromDraftBody {
+  return {
+    model: input.model,
+    prompt: input.prompt ?? '',
+    metadata: {
+      content: [{ type: 'draft_task', draft_task: { id: input.draftTaskId } }],
+      resolution: SEEDANCE_DRAFT_FINAL_RESOLUTION,
     },
   }
 }

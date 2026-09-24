@@ -29,7 +29,11 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskState,
 } from '../../services/seedance/types'
-import { validateSeedanceRequest } from '../../services/seedance/types'
+import {
+  SEEDANCE_DRAFT_RESOLUTION,
+  supportsSeedanceDraft,
+  validateSeedanceRequest,
+} from '../../services/seedance/types'
 import {
   ALL_VIDEO_MODEL_ALIASES,
   ALL_VIDEO_RATIOS,
@@ -207,8 +211,15 @@ type ToolContent = Array<
 >
 
 /** succeeded 任务的统一回包：DONE banner + 本地文件 resource_link。 */
+/** 样片成功后提醒 agent 下一步是出成片,而不是从头再生成一次。 */
+export const DRAFT_NEXT_STEP =
+  'This is a 480p 样片 (draft). Show it to the user; if they are happy, call finalize_video_draft with this ' +
+  'taskId to render the 1080p final (valid 7 days). To change the prompt/materials, make a NEW draft instead.'
+
 function doneContent(task: SeedanceTaskState): { content: ToolContent } {
-  const content: ToolContent = [{ type: 'text', text: buildDoneBanner(task) }]
+  const content: ToolContent = [
+    { type: 'text', text: task.draft ? `${buildDoneBanner(task)}\n${DRAFT_NEXT_STEP}` : buildDoneBanner(task) },
+  ]
   if (task.localPath) {
     content.push({
       type: 'resource_link',
@@ -255,6 +266,28 @@ async function waitForTerminal(
       continue
     }
     if (Date.now() - startedAt > GENERATE_BLOCKING_BUDGET_MS) return task
+  }
+}
+
+/**
+ * 提交一次渲染并按「生成完才回归」策略等结果:约 75s 预算内等到终态就直接回,
+ * 烧完仍在渲染就交还 taskId 走 check_video_task,绝不重复提交。
+ */
+async function renderAndWait(
+  router: ToolRouter,
+  tool: string,
+  params: Record<string, unknown>,
+  codexThreadId: string | undefined,
+): Promise<{ content: ToolContent }> {
+  try {
+    const task = (await router.call('generate_video', params, codexThreadId)) as SeedanceTaskState
+    const final = await waitForTerminal(router, task.taskId, codexThreadId)
+    if (!final) return textResult(buildUnknownTaskBanner(task.taskId))
+    if (final.status === 'failed') return textResult(buildFailedBanner(final))
+    if (final.status === 'succeeded') return doneContent(final)
+    return textResult(buildBudgetExhaustedBanner(final))
+  } catch (error) {
+    return textResult(buildErrorBanner(tool, error))
   }
 }
 
@@ -349,6 +382,12 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         + 'decided by the path extension (pdf/doc/docx/xls/xlsx/ppt/pptx/txt/md/key/pages/numbers = document). '
         + 'Ignored by Seedance models.',
       ),
+      draft: z.boolean().optional().describe(
+        'Seedance "2.5" + platform balance ONLY. true = render a cheap 480p 样片 (draft preview, billed as normal '
+        + '480p) to check composition/motion first. Resolution is forced to 480p. If the user likes it, call '
+        + 'finalize_video_draft with its taskId to get the 1080p final (within 7 days) — do NOT regenerate from '
+        + 'scratch. Use it when the user wants to preview cheaply, or for expensive long takes.',
+      ),
     }),
   }, async (params, ctx?: unknown) => {
     // 提交前按模型能力自查（4k/1080p 归属、时长区间、taskMode 前提、素材上限）。
@@ -361,9 +400,13 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceImages?: unknown[]
       referenceVideos?: unknown[]
       referenceAudios?: unknown[]
+      draft?: boolean
+    }
+    if (p.draft && !supportsSeedanceDraft(p.model)) {
+      return textResult(buildErrorBanner('generate_video', new Error('draft (样片) is Seedance "2.5" only — pass model "2.5".')))
     }
     const errors = validateSeedanceRequest(p.model ?? '2.0', {
-      resolution: p.resolution,
+      resolution: p.draft ? SEEDANCE_DRAFT_RESOLUTION : p.resolution,
       duration: p.duration,
       taskMode: p.taskMode,
       images: p.referenceImages?.length ?? 0,
@@ -373,20 +416,29 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
     if (errors.length > 0) {
       return textResult(buildErrorBanner('generate_video', new Error(errors.join('；'))))
     }
-    const codexThreadId = extractCodexThreadId(ctx)
-    try {
-      const task = (await router.call('generate_video', params, codexThreadId)) as SeedanceTaskState
-      // 优先阻塞等待终态；若约 75s 预算耗尽仍在渲染，则返回 taskId，
-      // 由 check_video_task 继续长轮询，绝不重复提交。
-      const final = await waitForTerminal(router, task.taskId, codexThreadId)
-      if (!final) return textResult(buildUnknownTaskBanner(task.taskId))
-      if (final.status === 'failed') return textResult(buildFailedBanner(final))
-      if (final.status === 'succeeded') return doneContent(final)
-      // 预算烧完仍在渲染：交还 taskId 走 check_video_task 兜底。
-      return textResult(buildBudgetExhaustedBanner(final))
-    } catch (error) {
-      return textResult(buildErrorBanner('generate_video', error))
-    }
+    return renderAndWait(router, 'generate_video', params, extractCodexThreadId(ctx))
+  })
+
+  server.registerTool('finalize_video_draft', {
+    description:
+      'Turn a finished Seedance 2.5 样片 (a 480p draft made with generate_video draft:true) into the 1080p FINAL ' +
+      'video. Pass ONLY the draft\'s taskId: upstream reuses the draft\'s prompt, references, duration, ratio, ' +
+      'seed and audio setting — they cannot be changed or resent (to change anything, make a new draft). ' +
+      'Works within 7 days of the draft, on platform balance only, and must run under the same billing pool ' +
+      'that made the draft. Billed at the 1080p rate. Blocks and reports like generate_video.',
+    annotations: WRITE_ADDITIVE_REMOTE,
+    inputSchema: z.object({
+      taskId: z.string().min(1).describe('taskId of the SUCCEEDED draft — the task_… id generate_video returned.'),
+    }),
+  }, async (params, ctx?: unknown) => {
+    const { taskId } = params as { taskId: string }
+    return renderAndWait(
+      router,
+      'finalize_video_draft',
+      // 走 generate_video 同一条主进程链路;成片的组包在传输层按 fromDraftTaskId 换成 draft_task。
+      { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: taskId.trim() },
+      extractCodexThreadId(ctx),
+    )
   })
 
   server.registerTool('check_video_task', {

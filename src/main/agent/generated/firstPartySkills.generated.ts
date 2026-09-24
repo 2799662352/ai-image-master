@@ -770,6 +770,10 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
    默认 5)、比例(\`16:9\` / \`9:16\` / \`4:3\` / \`3:4\` / \`1:1\` / \`21:9\`),推荐默认项。
    **不要静默升 1080p**;1080p 仅 \`2.0\`(与 wan3),\`2.5\` 只到 720p —— 用户要 1080p 就意味着
    model 改 \`2.0\`、底座改 \`sd2-pe\`;用户已给规格或本会话已确认过就跳过。
+   **例外:2.5 样片 → 1080p 成片**(平台余额才有):\`generate_video\` 带 \`draft: true\` 先出
+   480p 样片(按 480p 计费)看构图和动作;用户满意就 \`finalize_video_draft({ taskId })\` 出
+   1080p 成片 —— 方舟沿用样片的提示词、素材、时长、比例、seed 与音频,改不了也不用重传,
+   样片 7 天内有效。长镜头、贵的片子、用户说「先看看效果」时推荐走这条;要改内容就重出样片。
 3. Call \`generate_video\`:\`prompt\`(必填)、\`model\`(**显式传,且与你载的底座一致**:
    STEP 0 默认 \`2.5\` → 传 \`"2.5"\`;要 1080p / 4k 或用户点名满血画质 → \`"2.0"\` 并改载 \`sd2-pe\`;
    用户明确要快/便宜才 \`"2.0-fast"\`。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
@@ -2014,7 +2018,8 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | --- | --- |
 | 改提示词里几个词 | \`video_workbench_patch_prompt\`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | \`video_workbench_update_task\` |
-| 一批卡同一个规格(整板 480p、都开联网) | \`video_workbench_set_spec\` |
+| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | \`video_workbench_set_spec\`(样片 = \`draft: true\`,仅 2.5 + 平台余额) |
+| 样片满意了要 1080p 成片 | \`video_workbench_finalize_draft\`(\`status\` 里 \`draftRun: true\` 的卡;沿用样片一切,7 天内有效,成片是同卡新版本) |
 | 整页重排 | \`video_workbench_reorder\`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | \`video_workbench_move_task\`(**不要并发调**,重排没有交换律) |
 | 增删卡 | \`video_workbench_add_tasks\` / \`video_workbench_remove_tasks\` |
