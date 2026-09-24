@@ -107,6 +107,7 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
     mode: card.mode,
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     webSearch: card.webSearch,
+    ...(card.draft ? { draft: true } : {}),
     ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
     referenceImages: card.referenceImages.map((m, i) => exportMaterial(m, card.id, 'referenceImages', i)),
     referenceVideos: card.referenceVideos.map((m, i) => exportMaterial(m, card.id, 'referenceVideos', i)),
@@ -212,6 +213,9 @@ function describeSpecDrift(cur: VideoWorkbenchSpec, next: VideoWorkbenchSpec): s
   if (cur.webSearch !== next.webSearch) {
     parts.push(`webSearch(现 ${cur.webSearch} / 你写 ${next.webSearch})`)
   }
+  if ((cur.draft === true) !== (next.draft === true)) {
+    parts.push(`draft(现 ${cur.draft === true} / 你写 ${next.draft === true})`)
+  }
   if ((cur.documentOrLink ?? '') !== (next.documentOrLink ?? '')) {
     // 只报「有/无」与展示名 —— 序列化 JSON 原样打进冲突提示没人读得懂。
     const label = (raw: string | undefined): string =>
@@ -284,7 +288,7 @@ function resolveMaterials(
  */
 const IR_CARD_CONTENT_KEYS = [
   'prompt', 'model', 'resolution', 'ratio', 'duration',
-  'generateAudio', 'mode', 'seed', 'webSearch', 'documentOrLink',
+  'generateAudio', 'mode', 'seed', 'webSearch', 'draft', 'documentOrLink',
   'referenceImages', 'referenceVideos', 'referenceAudios',
 ] as const satisfies readonly (keyof WorkbenchIRCard)[]
 
@@ -323,6 +327,7 @@ function irCardToInput(
     // IR 是声明式的:没写 seed 就是「随机」,而不是「沿用旧值」。
     seed: card.seed ?? null,
     webSearch: card.webSearch,
+    draft: card.draft === true,
     // 同样是声明式:没写就是「清掉」,不沿用旧值。
     documentOrLink: card.documentOrLink ?? '',
     referenceImages: resolveMaterials(card.referenceImages, cardById, skipped, card.id),

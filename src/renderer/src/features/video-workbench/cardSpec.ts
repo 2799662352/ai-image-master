@@ -182,6 +182,8 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
     mode,
     ...(seed !== undefined ? { seed } : {}),
     webSearch: input.webSearch !== false,
+    // 同 seed:只在开着时出现,关掉就是没有这个键(与「从未开过」不可区分才对)。
+    ...(input.draft === true ? { draft: true } : {}),
     // 归一成序列化形态:UI 写 JSON、MCP 写裸 URL,两种都认(coerce)。
     // 认不出的(坏数据/手改过的持久化)当没设置,而不是原样留着等提交时才炸。
     ...(() => {
@@ -231,6 +233,7 @@ export function pickSpec(spec: VideoWorkbenchSpec): VideoWorkbenchSpec {
     mode: spec.mode,
     ...(spec.seed !== undefined ? { seed: spec.seed } : {}),
     webSearch: spec.webSearch,
+    ...(spec.draft ? { draft: true } : {}),
     ...(spec.documentOrLink ? { documentOrLink: spec.documentOrLink } : {}),
     referenceImages: spec.referenceImages,
     referenceVideos: spec.referenceVideos,
@@ -260,6 +263,7 @@ export function specEquals(a: VideoWorkbenchSpec, b: VideoWorkbenchSpec): boolea
     && a.mode === b.mode
     && a.seed === b.seed
     && a.webSearch === b.webSearch
+    && (a.draft === true) === (b.draft === true)
     // 序列化字符串直接比:同一个槽位值序列化结果稳定(字段顺序由 serialize 固定)。
     && (a.documentOrLink ?? '') === (b.documentOrLink ?? '')
     && materialsEqual(a.referenceImages, b.referenceImages)

@@ -345,6 +345,7 @@ export class AgentToolExecutor {
       case 'video_workbench_reorder':
       case 'video_workbench_set_card_summary':
       case 'video_workbench_start':
+      case 'video_workbench_finalize_draft':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
       case 'video_workbench_set_board_summary':
@@ -611,6 +612,24 @@ export class AgentToolExecutor {
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
       }
+      case 'video_workbench_finalize_draft': {
+        const ids = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : []
+        // 出成片同样花钱,与 start 守同一道「允许 AI 自动生成」闸。
+        if (!store.agentAutoStart) {
+          return {
+            started: [],
+            skipped: ids.map((cardId) => ({ cardId, reason: '用户关闭了「允许 AI 自动生成」' })),
+            blocked: true,
+            hint: '用户在视频工作台关闭了「允许 AI 自动生成」。请告诉用户在卡片上点「生成 1080P 成片」,不要反复重试。',
+            workbench: workbenchSummary(),
+          }
+        }
+        const result = await store.finalizeDrafts(ids)
+        registerAgentBatch(result.started, threadId)
+        return { ...result, workbench: workbenchSummary() }
+      }
       case 'video_workbench_set_spec': {
         // 「整板只改规格」的专用路径。此前 agent 只能抓 apply —— 那是**声明式整份 IR**,
         // 省略字段会被当成恢复默认,所以为了改三个字段,17 张卡的完整 prompt 和素材数组
@@ -629,12 +648,12 @@ export class AgentToolExecutor {
         // 只挑规格字段。**prompt 和素材进不来** —— 这是这个工具存在的理由:
         // 让「批量」和「重写内容」彻底分开,批量就不必再背着内容的体积。
         const SPEC_KEYS = [
-          'model', 'resolution', 'ratio', 'duration', 'generateAudio', 'webSearch', 'mode',
+          'model', 'resolution', 'ratio', 'duration', 'generateAudio', 'webSearch', 'mode', 'draft',
         ] as const
         const patch: Record<string, unknown> = {}
         for (const k of SPEC_KEYS) if (params[k] !== undefined) patch[k] = params[k]
         if (Object.keys(patch).length === 0) {
-          throw new Error('video_workbench_set_spec: 至少要给一个规格字段（model/resolution/ratio/duration/generateAudio/webSearch/mode）')
+          throw new Error('video_workbench_set_spec: 至少要给一个规格字段（model/resolution/ratio/duration/generateAudio/webSearch/mode/draft）')
         }
 
         const updated: string[] = []

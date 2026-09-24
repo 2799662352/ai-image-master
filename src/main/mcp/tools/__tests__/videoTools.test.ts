@@ -50,10 +50,38 @@ function makeTask(patch: Partial<SeedanceTaskState> = {}): SeedanceTaskState {
 }
 
 describe('registerVideoTools / schemas', () => {
-  it('registers generate_video and check_video_task', () => {
+  it('registers generate_video, finalize_video_draft and check_video_task', () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)
-    expect(tools.map((t) => t.name)).toEqual(['generate_video', 'check_video_task'])
+    expect(tools.map((t) => t.name)).toEqual(['generate_video', 'finalize_video_draft', 'check_video_task'])
+  })
+
+  it('finalize_video_draft 走 generate_video 同一条主进程链路,只带样片任务号', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const call = vi.mocked(router.call)
+    call.mockImplementation(async (name: string) =>
+      name === 'generate_video'
+        ? { taskId: 'task_final', status: 'queued' }
+        : { found: true, task: { taskId: 'task_final', status: 'failed', error: 'x' } },
+    )
+    await tools.find((t) => t.name === 'finalize_video_draft')!.handler({ taskId: ' task_draft ' }, undefined)
+    expect(call).toHaveBeenCalledWith(
+      'generate_video',
+      { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: 'task_draft' },
+      undefined,
+    )
+  })
+
+  it('generate_video 的 draft 只给 2.5', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const res = await tools.find((t) => t.name === 'generate_video')!.handler(
+      { prompt: 'x', model: '2.0', draft: true },
+      undefined,
+    )
+    expect(JSON.stringify(res)).toContain('Seedance \\"2.5\\" only')
+    expect(router.call).not.toHaveBeenCalled()
   })
 
   it('first blocking window is short (~75s) so turn/steer interjection stays responsive', () => {

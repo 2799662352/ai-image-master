@@ -23,7 +23,10 @@ import { toWan3ResolvedMedia, resolveVideoMode } from './wan3/fromContent'
 import { buildWan3CreateBody } from './wan3/request'
 import { asWan3Alias } from './wan3/model'
 import { coerceDocumentOrLink } from '../../shared/wan3Document'
-import { buildSeedanceGatewayCreateBody } from './seedanceGateway/request'
+import {
+  buildSeedanceGatewayCreateBody,
+  buildSeedanceGatewayFinalFromDraftBody,
+} from './seedanceGateway/request'
 import { describeMissingGatewayToken } from './seedanceGateway/credentials'
 import { gatewayPlatformHeaders } from './auth/gatewayToken'
 import type { Wan3Client } from './wan3/client'
@@ -212,8 +215,20 @@ export function createSeedanceGatewayTransport(
       if (!token) throw new Error(describeMissingGatewayToken(billing))
     },
     createTask(ctx) {
+      const model = resolveSeedanceModelId(ctx.model, GATEWAY_MODEL_REGION)
+      if (ctx.input.fromDraftTaskId) {
+        // 由样片出成片:整份 metadata 只有 draft_task + 1080p,其余一律沿用样片。
+        return client.createTask(
+          buildSeedanceGatewayFinalFromDraftBody({
+            model,
+            draftTaskId: ctx.input.fromDraftTaskId,
+            prompt: ctx.input.prompt,
+          }),
+          resolveToken().token,
+        )
+      }
       const body = buildSeedanceGatewayCreateBody({
-        model: resolveSeedanceModelId(ctx.model, GATEWAY_MODEL_REGION),
+        model,
         // 直通。三条不变量（role 在顶层 / URL 键名跟 type 走 / 顺序即编号）
         // 靠「不碰它」保住，理由见 seedanceGateway/request.ts。
         content: ctx.content,
@@ -223,6 +238,7 @@ export function createSeedanceGatewayTransport(
         generateAudio: ctx.input.generateAudio,
         // content 里没有 text 条目时才用得上；正常链路 buildContent 一定放了一条。
         promptFallback: ctx.input.prompt,
+        ...(ctx.input.draft ? { draft: true } : {}),
       })
       // seed / web_search / taskMode 刻意不带：网关侧 `buildVideoRequest` 里一个
       // 都没有，传了也是被丢掉。要用这几样就得留在 vvdance 直连那条路上。

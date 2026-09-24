@@ -60,6 +60,7 @@ export interface ProjectFileCard {
   mode: string
   seed?: number
   webSearch: boolean
+  draft?: boolean
   documentOrLink?: string
   referenceImages: ProjectFileMaterial[]
   referenceVideos: ProjectFileMaterial[]
@@ -224,6 +225,7 @@ export function buildProjectFile(input: BuildProjectFileInput): BuildProjectFile
           mode: card.mode,
           ...(card.seed !== undefined ? { seed: card.seed } : {}),
           webSearch: card.webSearch,
+          ...(card.draft ? { draft: true } : {}),
           ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
           referenceImages: materials('referenceImages'),
           referenceVideos: materials('referenceVideos'),
@@ -348,6 +350,7 @@ function parseCard(v: unknown, what: string): ProjectFileCard {
     mode: typeof v.mode === 'string' ? v.mode : '',
     ...(seed !== undefined ? { seed } : {}),
     webSearch: v.webSearch !== false,
+    ...(v.draft === true ? { draft: true } : {}),
     ...(documentOrLink ? { documentOrLink } : {}),
     referenceImages: parseMaterials(v.referenceImages, `${what}.referenceImages`),
     referenceVideos: parseMaterials(v.referenceVideos, `${what}.referenceVideos`),
@@ -470,6 +473,7 @@ export function planImport(file: WorkbenchProjectFile): ImportPlan {
           ...(c.mode ? { mode: c.mode as VideoWorkbenchMode } : {}),
           ...(c.seed !== undefined ? { seed: c.seed } : {}),
           webSearch: c.webSearch,
+          ...(c.draft ? { draft: true } : {}),
           ...(c.documentOrLink ? { documentOrLink: c.documentOrLink } : {}),
           referenceImages: c.referenceImages.map((m) => ({ name: m.name, src: m.src })),
           referenceVideos: c.referenceVideos.map((m) => ({ name: m.name, src: m.src })),

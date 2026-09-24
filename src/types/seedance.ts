@@ -305,6 +305,30 @@ export interface SeedanceRequestShape {
  * 存在的理由是「别等上游 400 才知道」：4k 配 2.5、30 秒配 2.0、edit 不带视频,
  * 这几种都会被上游拒,但错误回到用户面前时已经隔了一次网络往返和一张失败卡片。
  */
+/**
+ * Seedance 2.5 Draft 样片模式(与 sora-ui / new-api 的 seedanceDraftModeV1 同口径)。
+ *
+ * - 样片:请求带 `draft: true`,分辨率只能是 480p(按普通 480p 计费),用来便宜地看效果;
+ * - 成片:满意后用样片的任务号生成 1080p 正式视频。方舟沿用样片的提示词、参考素材、
+ *   时长、比例、seed 与音频开关,**成片请求里重传任何一样都会被拒**;
+ * - 样片任务号从创建起 7 天内有效。
+ *
+ * 只有 2.5 支持;桌面端只在平台余额(经网关)这条路开放 —— 网关按「本人 + 已成功」
+ * 查样片并锁它的渠道(new-api #111 / #113),自填 Key 的直连没有这套能力。
+ */
+export const SEEDANCE_DRAFT_RESOLUTION = '480p'
+export const SEEDANCE_DRAFT_FINAL_RESOLUTION = '1080p'
+export const SEEDANCE_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+export function supportsSeedanceDraft(alias: VideoModelAlias | undefined): boolean {
+  return alias === '2.5'
+}
+
+/** 样片还能不能生成成片:从样片创建起 7 天内。缺创建时间时按可用处理(让网关来判)。 */
+export function seedanceDraftExpired(createdAt: number | undefined, now = Date.now()): boolean {
+  return typeof createdAt === 'number' && now - createdAt > SEEDANCE_DRAFT_TTL_MS
+}
+
 export function validateSeedanceRequest(
   alias: SeedanceModelAlias,
   request: SeedanceRequestShape,
@@ -419,6 +443,10 @@ export interface SeedanceTaskState {
    * (纯文生视频不摆三个空数组)。合成的预备 / 失败卡片不带。
    */
   referenceUrls?: SeedanceReferenceUrls
+  /** 这是一条 Seedance 2.5 样片(480p)。成功后 7 天内可用它的 taskId 生成 1080p 成片。 */
+  draft?: boolean
+  /** 这是由样片生成的成片:来源样片的任务号。 */
+  fromDraftTaskId?: string
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
   completionTokens?: number
   /**

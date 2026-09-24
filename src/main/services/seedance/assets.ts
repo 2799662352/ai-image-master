@@ -422,6 +422,20 @@ export function translateSeedanceTaskError(message: string): string {
       (requestId ? ` Request id: ${requestId}` : '')
     )
   }
+  // 由样片生成成片被网关拒(new-api #113:按「本人 + Seedance 渠道 + 已成功」查样片)。
+  // 只有成片请求会带 draft_task,所以这两个码在本 app 里只可能来自这条路。
+  // 不带原 JSON:`task_not_exist` 会被下一层的万相翻译表误读成「任务已过期」。
+  if (/task_origin_not_exist/.test(message)) {
+    return (
+      '找不到这条样片:网关只认同一个账号、同一个计费池里生成的样片。' +
+      '请切回生成样片时用的计费池再点「生成 1080P 成片」,或重新生成样片。'
+    )
+  }
+  if (/invalid_draft_task/.test(message)) {
+    return /not succeeded/i.test(message)
+      ? '这条样片还没有成功,等它出片后再生成 1080P 成片。'
+      : '这条任务不是 Seedance 2.5 样片,不能用来生成成片。'
+  }
   if (message.includes('LOCAL_ASSET_NOT_FOUND')) {
     const refs = message.match(/asset:\/\/[\w-]+/g) ?? []
     const refText = refs.length > 0 ? `:${refs.join('、')}` : ''

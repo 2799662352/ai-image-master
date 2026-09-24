@@ -263,7 +263,8 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | --- | --- |
 | 改提示词里几个词 | `video_workbench_patch_prompt`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | `video_workbench_update_task` |
-| 一批卡同一个规格(整板 480p、都开联网) | `video_workbench_set_spec` |
+| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | `video_workbench_set_spec`(样片 = `draft: true`,仅 2.5 + 平台余额) |
+| 样片满意了要 1080p 成片 | `video_workbench_finalize_draft`(`status` 里 `draftRun: true` 的卡;沿用样片一切,7 天内有效,成片是同卡新版本) |
 | 整页重排 | `video_workbench_reorder`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | `video_workbench_move_task`(**不要并发调**,重排没有交换律) |
 | 增删卡 | `video_workbench_add_tasks` / `video_workbench_remove_tasks` |
