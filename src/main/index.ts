@@ -35,6 +35,7 @@ import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
 import { runStartupDedupOnce } from './agent/historyDedup'
 import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
+import { registerPetsIpc } from './pets/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/cosClient'
 import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
@@ -1664,6 +1665,8 @@ registerPluginMarketplaceIpc({
   // independently owns (review finding I2).
   skillStateFile: marketplaceStateFile,
 })
+
+registerPetsIpc()
 
 // One-shot adoption pass. v4.3.4 users have ~20 bundled skills already on
 // disk (we used to mirror them every launch); marking them as `adopted`

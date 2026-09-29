@@ -1,21 +1,30 @@
 // src/renderer/src/features/agent-chat/pets/petAnimations.ts
 /**
- * Codex 官方宠物 spritesheet 契约(V1)。
+ * Codex 官方宠物 spritesheet 契约(V1 / V2)。
  *
  * 来源:openai/codex `/pets`(TUI PR #21206)与社区文档
- * (awesome-codex-pets docs/pet-contract.md、petdex.crafter.run):
- *   - WebP 图集 1536x1872,8 列 x 9 行,单帧 192x208,透明底;
- *   - 每行一个动画状态,未用格子全透明。
+ * (codexpet.xyz/spec、awesome-codex-pet、petdex.crafter.run):
+ *   - 8 列,单帧 192x208,透明底;每行一个动画状态,未用格子全透明;
+ *   - V1:1536x1872,9 行;
+ *   - V2(pet.json `spriteVersionNumber: 2`):1536x2288,11 行 —— 前 9 行
+ *     与 V1 相同,第 9–10 行是 16 个视线方向(从正上方 0° 起顺时针,每格 22.5°)。
  *
- * 我们的宠物包(public/pets/<id>/)直接取自 petdex 社区市场,和
- * `~/.codex/pets/` 的官方自定义宠物是同一份格式 —— 用户以后想加新宠物,
- * 丢一个同契约文件夹进 public/pets/ 并在 BUILT_IN_PETS 登记即可。
+ * 内置宠物(public/pets/<id>/)取自 petdex 社区市场;用户自装的宠物放在
+ * `<CODEX_HOME>/pets/<folder>/`,由主进程扫描(src/main/pets/),和 Codex
+ * 桌面端读的是同一个目录。
  */
 
 export const PET_FRAME_WIDTH = 192
 export const PET_FRAME_HEIGHT = 208
 export const PET_SHEET_COLS = 8
-export const PET_SHEET_ROWS = 9
+
+export type PetSpriteVersion = 1 | 2
+
+export const PET_SHEET_ROWS_BY_VERSION: Record<PetSpriteVersion, number> = { 1: 9, 2: 11 }
+
+/** V2 视线方向:16 格,占第 9、10 行。 */
+export const PET_LOOK_FIRST_ROW = 9
+export const PET_LOOK_DIRECTIONS = 16
 
 /** 官方 9 行动画表:行号 + 该行实际使用的帧数(列 0..frames-1)。 */
 export type PetAnimationState =
@@ -44,18 +53,48 @@ export const PET_ANIMATIONS: Record<PetAnimationState, { row: number; frames: nu
 /** 动画帧率(官方 App 观感约 8fps)。 */
 export const PET_FPS = 8
 
-export interface BuiltInPet {
+export interface PetDefinition {
   id: string
   displayName: string
-  /** 相对 renderer 根的路径(public/ 静态资源,dev 与打包后一致)。 */
+  /** 可直接放进 CSS `url()` 的地址:内置宠物是相对 renderer 根的路径,自装宠物是 local-file URL。 */
   spritesheetPath: string
+  spriteVersion: PetSpriteVersion
+  /** 来自 `<CODEX_HOME>/pets` 的用户自装宠物。 */
+  custom?: boolean
 }
 
 /** 预装宠物(petdex 社区包,官方契约格式)。 */
-export const BUILT_IN_PETS: BuiltInPet[] = [
-  { id: 'gugugaga', displayName: '咕咕嘎嘎', spritesheetPath: './pets/gugugaga/spritesheet.webp' },
-  { id: 'doro', displayName: 'Doro', spritesheetPath: './pets/doro/spritesheet.webp' },
+export const BUILT_IN_PETS: PetDefinition[] = [
+  {
+    id: 'gugugaga',
+    displayName: '咕咕嘎嘎',
+    spritesheetPath: './pets/gugugaga/spritesheet.webp',
+    spriteVersion: 1,
+  },
+  { id: 'doro', displayName: 'Doro', spritesheetPath: './pets/doro/spritesheet.webp', spriteVersion: 1 },
 ]
+
+/** 自装宠物的 id 前缀:文件夹名可能和内置宠物撞名。 */
+export const CUSTOM_PET_ID_PREFIX = 'custom:'
+
+export interface PetLookFrame {
+  row: number
+  col: number
+}
+
+/**
+ * 屏幕坐标系向量(x 向右、y 向下)→ V2 视线格。0° 在正上方,顺时针。
+ * 零向量没有方向,返回 null。
+ */
+export function lookFrameForVector(dx: number, dy: number): PetLookFrame | null {
+  if (dx === 0 && dy === 0) return null
+  const degrees = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360
+  const index = Math.round(degrees / (360 / PET_LOOK_DIRECTIONS)) % PET_LOOK_DIRECTIONS
+  return {
+    row: PET_LOOK_FIRST_ROW + Math.floor(index / PET_SHEET_COLS),
+    col: index % PET_SHEET_COLS,
+  }
+}
 
 export const PET_STORAGE_KEY = 'catimation.agentPet'
 export const PET_POSITION_STORAGE_KEY = 'catimation.agentPetPos'
@@ -91,6 +130,8 @@ export function loadPetSelection(): string | null {
   try {
     const v = localStorage.getItem(PET_STORAGE_KEY)
     if (v === 'off' || v == null) return null
+    // 自装宠物要等主进程扫描完才知道还在不在,这里先原样保留。
+    if (v.startsWith(CUSTOM_PET_ID_PREFIX) && v.length > CUSTOM_PET_ID_PREFIX.length) return v
     return BUILT_IN_PETS.some((p) => p.id === v) ? v : null
   } catch {
     return null

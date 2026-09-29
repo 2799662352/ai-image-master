@@ -72,6 +72,7 @@ import type {
   PluginListInstalledResult,
   PluginUninstallResult,
 } from '../types/marketplace'
+import type { PetsApi, PetsListCustomResult } from '../types/pets'
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
@@ -241,6 +242,11 @@ const IPC_CHANNELS = {
     INSTALL: 'plugin-marketplace:install',
     UNINSTALL: 'plugin-marketplace:uninstall',
     LIST_INSTALLED: 'plugin-marketplace:list-installed',
+  },
+  // 用户自装宠物(<CODEX_HOME>/pets,见 src/main/pets/)
+  PETS: {
+    LIST_CUSTOM: 'pets:list-custom',
+    OPEN_FOLDER: 'pets:open-folder',
   },
   // 宫格拆图
   STORYBOARD_SPLIT: {
@@ -555,6 +561,7 @@ export interface ElectronAPI {
     uninstall: (pluginName: string) => Promise<PluginUninstallResult>
     listInstalled: () => Promise<PluginListInstalledResult>
   }
+  pets: PetsApi
   // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
   // 各 Section 手写 duck-type 子集的时代结束于此。
   agent: AgentApi
@@ -1160,6 +1167,12 @@ const electronAPI: ElectronAPI = {
       safeInvoke<PluginUninstallResult>(IPC_CHANNELS.PLUGIN_MARKETPLACE.UNINSTALL, pluginName),
     listInstalled: () =>
       safeInvoke<PluginListInstalledResult>(IPC_CHANNELS.PLUGIN_MARKETPLACE.LIST_INSTALLED),
+  },
+
+  // ============ Custom Pets ============
+  pets: {
+    listCustom: () => safeInvoke<PetsListCustomResult>(IPC_CHANNELS.PETS.LIST_CUSTOM),
+    openFolder: () => safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.PETS.OPEN_FOLDER),
   },
 
   // ============ Codex Agent ============

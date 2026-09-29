@@ -6,9 +6,12 @@ import {
   PET_ANIMATIONS,
   PET_POSITION_STORAGE_KEY,
   PET_STORAGE_KEY,
+  loadPetSelection,
+  lookFrameForVector,
 } from '../pets/petAnimations'
 import { usePetStore } from '../pets/petStore'
 import { useAgentChatStore } from '../store'
+import type { PetsListCustomResult } from '../../../../../types/pets'
 
 /**
  * 环境宠物(对齐官方 Codex pets,openai/codex#21206):
@@ -22,11 +25,18 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.useRealTimers()
+  delete (window as { electronAPI?: unknown }).electronAPI
 })
 
 beforeEach(() => {
   localStorage.clear()
-  usePetStore.setState({ petId: null, pickerOpen: false })
+  usePetStore.setState({
+    petId: null,
+    pickerOpen: false,
+    customPets: [],
+    customPetsDir: null,
+    customPetsLoaded: false,
+  })
   useAgentChatStore.setState({
     isRunning: false,
     pendingApprovals: [],
@@ -204,5 +214,156 @@ describe('PetOverlay', () => {
     fireEvent.click(screen.getByTestId('agent-pet-row-off'))
     expect(screen.queryByTestId('agent-pet-sprite')).toBeNull()
     expect(localStorage.getItem(PET_STORAGE_KEY)).toBe('off')
+  })
+})
+
+describe('自装宠物(<CODEX_HOME>/pets)', () => {
+  const MIKU_SCAN: PetsListCustomResult = {
+    ok: true,
+    dir: 'C:\\Users\\me\\.codex\\pets',
+    pets: [
+      {
+        folder: 'greenbyte-miku',
+        displayName: 'Greenbyte Miku',
+        spriteVersion: 2,
+        spritesheetPath: 'C:\\Users\\me\\.codex\\pets\\greenbyte-miku\\spritesheet.webp',
+      },
+    ],
+    skipped: [],
+  }
+
+  function mockPetsApi(result: PetsListCustomResult = MIKU_SCAN) {
+    const api = { listCustom: vi.fn(async () => result), openFolder: vi.fn(async () => ({ ok: true })) }
+    ;(window as { electronAPI?: unknown }).electronAPI = { pets: api }
+    return api
+  }
+
+  it('打开选择器时扫描目录,自装宠物排在内置宠物后面并带「自装」标记', async () => {
+    const api = mockPetsApi()
+    render(<PetOverlay />)
+    await act(async () => usePetStore.getState().openPicker())
+    expect(api.listCustom).toHaveBeenCalledTimes(1)
+    const row = screen.getByTestId('agent-pet-row-custom:greenbyte-miku')
+    expect(row.textContent).toContain('Greenbyte Miku')
+    expect(row.textContent).toContain('自装')
+    const rows = Array.from(screen.getByTestId('agent-pet-picker').querySelectorAll('[data-testid^="agent-pet-row-"]'))
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
+      'agent-pet-row-off',
+      'agent-pet-row-gugugaga',
+      'agent-pet-row-doro',
+      'agent-pet-row-custom:greenbyte-miku',
+    ])
+  })
+
+  it('选中 V2 自装宠物:local-file 图集、按 11 行切图、持久化 custom: id', async () => {
+    mockPetsApi()
+    render(<PetOverlay />)
+    await act(async () => usePetStore.getState().openPicker())
+    fireEvent.click(screen.getByTestId('agent-pet-row-custom:greenbyte-miku'))
+
+    const sprite = screen.getByTestId('agent-pet-sprite')
+    expect(sprite.style.backgroundImage).toContain(
+      'local-file:///C:/Users/me/.codex/pets/greenbyte-miku/spritesheet.webp',
+    )
+    // 0.5 缩放:8 列 x 96px,11 行 x 104px
+    expect(sprite.style.backgroundSize).toBe('768px 1144px')
+    expect(localStorage.getItem(PET_STORAGE_KEY)).toBe('custom:greenbyte-miku')
+  })
+
+  it('内置 V1 宠物仍按 9 行切图', () => {
+    usePetStore.setState({ petId: 'doro' })
+    render(<PetOverlay />)
+    expect(screen.getByTestId('agent-pet-sprite').style.backgroundSize).toBe('768px 936px')
+  })
+
+  it('上次选的是自装宠物:启动时扫描目录后恢复', async () => {
+    localStorage.setItem(PET_STORAGE_KEY, 'custom:greenbyte-miku')
+    expect(loadPetSelection()).toBe('custom:greenbyte-miku')
+    const api = mockPetsApi()
+    usePetStore.setState({ petId: 'custom:greenbyte-miku' })
+    render(<PetOverlay />)
+    await act(async () => {})
+    expect(api.listCustom).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('agent-pet-sprite').style.backgroundImage).toContain('greenbyte-miku')
+  })
+
+  it('自装宠物已被删掉:不渲染精灵', async () => {
+    mockPetsApi({ ...MIKU_SCAN, pets: [] })
+    usePetStore.setState({ petId: 'custom:greenbyte-miku' })
+    render(<PetOverlay />)
+    await act(async () => {})
+    expect(screen.queryByTestId('agent-pet-sprite')).toBeNull()
+  })
+
+  it('「打开宠物文件夹」调用主进程', async () => {
+    const api = mockPetsApi()
+    render(<PetOverlay />)
+    await act(async () => usePetStore.getState().openPicker())
+    fireEvent.click(screen.getByTestId('agent-pet-open-folder'))
+    expect(api.openFolder).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('V2 视线方向', () => {
+  it('lookFrameForVector:0° 正上方起顺时针,16 格分在第 9、10 行', () => {
+    expect(lookFrameForVector(0, -10)).toEqual({ row: 9, col: 0 }) // 上
+    expect(lookFrameForVector(10, -10)).toEqual({ row: 9, col: 2 }) // 右上 45°
+    expect(lookFrameForVector(10, 0)).toEqual({ row: 9, col: 4 }) // 右
+    expect(lookFrameForVector(0, 10)).toEqual({ row: 10, col: 0 }) // 下
+    expect(lookFrameForVector(-10, 0)).toEqual({ row: 10, col: 4 }) // 左
+    expect(lookFrameForVector(-1, -100)).toEqual({ row: 9, col: 0 }) // 接近 360° 回到上
+    expect(lookFrameForVector(0, 0)).toBeNull()
+  })
+
+  function selectMiku() {
+    usePetStore.setState({
+      petId: 'custom:greenbyte-miku',
+      customPetsLoaded: true,
+      customPets: [
+        {
+          id: 'custom:greenbyte-miku',
+          displayName: 'Greenbyte Miku',
+          spritesheetPath: 'local-file:///C:/pets/greenbyte-miku/spritesheet.webp',
+          spriteVersion: 2,
+          custom: true,
+        },
+      ],
+    })
+  }
+
+  it('idle 时看向鼠标,鼠标停下 2.5s 回到 idle 动画', () => {
+    vi.useFakeTimers()
+    selectMiku()
+    render(<PetOverlay />)
+    const sprite = () => screen.getByTestId('agent-pet-sprite')
+
+    // jsdom rect 全 0 → 精灵中心在 (0,0);指针在正右方
+    fireEvent.pointerMove(window, { clientX: 300, clientY: 0 })
+    expect(sprite().getAttribute('data-pet-look')).toBe('9:4')
+    expect(sprite().style.backgroundPosition).toBe(`-${4 * 96}px -${9 * 104}px`)
+
+    act(() => vi.advanceTimersByTime(2500))
+    expect(sprite().getAttribute('data-pet-look')).toBeNull()
+    expect(sprite().getAttribute('data-pet-state')).toBe('idle')
+  })
+
+  it('死区内不转头;agent 干活时不看鼠标', () => {
+    selectMiku()
+    render(<PetOverlay />)
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 10 })
+    expect(screen.getByTestId('agent-pet-sprite').getAttribute('data-pet-look')).toBeNull()
+
+    act(() => useAgentChatStore.setState({ isRunning: true }))
+    fireEvent.pointerMove(window, { clientX: 300, clientY: 0 })
+    const sprite = screen.getByTestId('agent-pet-sprite')
+    expect(sprite.getAttribute('data-pet-look')).toBeNull()
+    expect(sprite.getAttribute('data-pet-state')).toBe('running')
+  })
+
+  it('V1 宠物不响应鼠标', () => {
+    usePetStore.setState({ petId: 'doro' })
+    render(<PetOverlay />)
+    fireEvent.pointerMove(window, { clientX: 300, clientY: 0 })
+    expect(screen.getByTestId('agent-pet-sprite').getAttribute('data-pet-look')).toBeNull()
   })
 })
