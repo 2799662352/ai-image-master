@@ -23,7 +23,7 @@
  * (纯 CSS 背景,无 canvas/无额外依赖)。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAgentChatStore } from '../store'
 import {
@@ -103,7 +103,8 @@ function PetSprite({
 }) {
   const [frame, setFrame] = useState(0)
   const anim = PET_ANIMATIONS[state]
-  const detected = usePetFrameCounts(pet)?.[anim.row]
+  const detectedCounts = usePetFrameCounts(pet)
+  const detected = (pet.frameCounts ?? detectedCounts)?.[anim.row]
   const frames = detected && detected > 0 ? detected : anim.frames
 
   useEffect(() => {
@@ -209,7 +210,16 @@ function usePetLook(
   return look
 }
 
-function DraggablePet({ pet, state }: { pet: PetDefinition; state: PetAnimationState }) {
+function DraggablePet({
+  pet,
+  state,
+  dock,
+}: {
+  pet: PetDefinition
+  state: PetAnimationState
+  /** 停靠容器的位置;面板挪动或变宽时变化,触发重新钳制。 */
+  dock: { left: number; top: number; width: number }
+}) {
   const [offset, setOffset] = useState(loadPetOffset)
   const [dragging, setDragging] = useState(false)
   const [ambient, setAmbient] = useState<AmbientKind | null>(null)
@@ -217,6 +227,24 @@ function DraggablePet({ pet, state }: { pet: PetDefinition; state: PetAnimationS
   const offsetRef = useRef(offset)
   offsetRef.current = offset
   const ambientIndexRef = useRef(0)
+
+  // 存下的偏移是在当时的窗口/面板布局里拖出来的;窗口变小或面板挪位后,
+  // 同一个偏移可能把宠物放到视口外,看起来就是「宠物不见了」。这里只在显示上
+  // 拉回可见区域,不改写 localStorage —— 窗口再变大时回到用户放的位置由下次
+  // 拖动决定。
+  useLayoutEffect(() => {
+    const clampIntoView = () => {
+      const node = nodeRef.current
+      if (!node || dragRef.current) return
+      const r = node.getBoundingClientRect()
+      const dx = r.left < 0 ? -r.left : r.right > window.innerWidth ? window.innerWidth - r.right : 0
+      const dy = r.top < 0 ? -r.top : r.bottom > window.innerHeight ? window.innerHeight - r.bottom : 0
+      if (dx !== 0 || dy !== 0) setOffset((o) => ({ x: o.x + dx, y: o.y + dy }))
+    }
+    clampIntoView()
+    window.addEventListener('resize', clampIntoView)
+    return () => window.removeEventListener('resize', clampIntoView)
+  }, [dock.left, dock.top, dock.width])
 
   // 待机环境行为循环:仅在「真 idle 且没被拎着」时运转;agent 一开始
   // 干活(state 变化)或用户抓起宠物,effect 重跑立即清场回正经状态。
@@ -580,7 +608,7 @@ export function PetOverlay() {
             >
               <div className="pointer-events-none relative flex items-end justify-end">
                 {/* 宠物本体:默认蹲在 composer 右上,可抓取拖走 */}
-                {pet ? <DraggablePet pet={pet} state={state} /> : null}
+                {pet ? <DraggablePet pet={pet} state={state} dock={rect} /> : null}
 
                 {/* `/pets` 选择器(官方入口,无独立按钮) */}
                 {pickerOpen ? <PetPicker /> : null}

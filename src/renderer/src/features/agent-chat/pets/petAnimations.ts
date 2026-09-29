@@ -59,11 +59,23 @@ export interface PetDefinition {
   /** 可直接放进 CSS `url()` 的地址:内置宠物是相对 renderer 根的路径,自装宠物是 local-file URL。 */
   spritesheetPath: string
   spriteVersion: PetSpriteVersion
+  /**
+   * 每行实际帧数(按行号)。内置宠物和推荐帧数不一致时写在这里:打包后内置
+   * 图集走 `file://`,读不了像素,没法像自装宠物那样现场识别。
+   */
+  frameCounts?: readonly number[]
   /** 来自 `<CODEX_HOME>/pets` 的用户自装宠物。 */
   custom?: boolean
 }
 
-/** 预装宠物(petdex 社区包,官方契约格式)。 */
+/** Pixel Miku(LuminZA/pixel-miku-pets)实测帧数:idle 7 帧,其余与推荐一致。 */
+const PIXEL_MIKU_FRAME_COUNTS = [7, 8, 8, 4, 5, 8, 6, 6, 6, 8, 8] as const
+
+/**
+ * 预装宠物:咕咕嘎嘎 / Doro 来自 petdex 社区包;Pixel Miku 经作者同意随客户端
+ * 分发,署名与版权声明见各自目录下的 RIGHTS.md(初音未来角色版权归
+ * Crypton Future Media, INC.,依 PCL)。
+ */
 export const BUILT_IN_PETS: PetDefinition[] = [
   {
     id: 'gugugaga',
@@ -72,6 +84,13 @@ export const BUILT_IN_PETS: PetDefinition[] = [
     spriteVersion: 1,
   },
   { id: 'doro', displayName: 'Doro', spritesheetPath: './pets/doro/spritesheet.webp', spriteVersion: 1 },
+  ...(['greenbyte', 'pinkbyte', 'bluebyte'] as const).map((color) => ({
+    id: `${color}-miku`,
+    displayName: `${color[0].toUpperCase()}${color.slice(1)} Miku`,
+    spritesheetPath: `./pets/${color}-miku/spritesheet.webp`,
+    spriteVersion: 2 as const,
+    frameCounts: PIXEL_MIKU_FRAME_COUNTS,
+  })),
 ]
 
 /** 自装宠物的 id 前缀:文件夹名可能和内置宠物撞名。 */

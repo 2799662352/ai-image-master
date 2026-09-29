@@ -171,6 +171,23 @@ describe('PetOverlay', () => {
     expect(screen.getByTestId('agent-pet-sprite').getAttribute('data-pet-state')).toBe('running')
   })
 
+  it('存下的位置在视口外(窗口变小后):显示上拉回可见区域,不改写存储', () => {
+    const saved = JSON.stringify({ x: -903, y: -125 })
+    localStorage.setItem(PET_POSITION_STORAGE_KEY, saved)
+    // 按 transform 算出的真实位置:x 偏移 -903 时左边缘落在 -200
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('data-testid') !== 'agent-pet-body') return new DOMRect(0, 0, 0, 0)
+      const m = /translate\((-?\d+)px, (-?\d+)px\)/.exec(this.style.transform)
+      const x = m ? Number(m[1]) : 0
+      const y = m ? Number(m[2]) : 0
+      return new DOMRect(703 + x, 400 + y, 96, 104)
+    })
+    usePetStore.setState({ petId: 'doro' })
+    render(<PetOverlay />)
+    expect(screen.getByTestId('agent-pet-body').style.transform).toBe('translate(-703px, -125px)')
+    expect(localStorage.getItem(PET_POSITION_STORAGE_KEY)).toBe(saved)
+  })
+
   it('重新挂载恢复上次拖放的位置', () => {
     localStorage.setItem(PET_POSITION_STORAGE_KEY, JSON.stringify({ x: 12, y: -40 }))
     usePetStore.setState({ petId: 'doro' })
@@ -251,6 +268,9 @@ describe('自装宠物(<CODEX_HOME>/pets)', () => {
       'agent-pet-row-off',
       'agent-pet-row-gugugaga',
       'agent-pet-row-doro',
+      'agent-pet-row-greenbyte-miku',
+      'agent-pet-row-pinkbyte-miku',
+      'agent-pet-row-bluebyte-miku',
       'agent-pet-row-custom:greenbyte-miku',
     ])
   })
@@ -268,6 +288,22 @@ describe('自装宠物(<CODEX_HOME>/pets)', () => {
     // 0.5 缩放:8 列 x 96px,11 行 x 104px
     expect(sprite.style.backgroundSize).toBe('768px 1144px')
     expect(localStorage.getItem(PET_STORAGE_KEY)).toBe('custom:greenbyte-miku')
+  })
+
+  it('内置 Pixel Miku:V2 按 11 行切图,idle 播满实测的 7 帧', () => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0.99) // 待机小动作推到 ~10s 后,不干扰计帧
+    usePetStore.setState({ petId: 'pinkbyte-miku' })
+    render(<PetOverlay />)
+    const sprite = () => screen.getByTestId('agent-pet-sprite')
+    expect(sprite().style.backgroundImage).toContain('./pets/pinkbyte-miku/spritesheet.webp')
+    expect(sprite().style.backgroundSize).toBe('768px 1144px')
+    const cols = new Set<string>()
+    for (let i = 0; i < 8; i++) {
+      cols.add(sprite().style.backgroundPosition)
+      act(() => vi.advanceTimersByTime(125))
+    }
+    expect(cols.size).toBe(7)
   })
 
   it('内置 V1 宠物仍按 9 行切图', () => {
