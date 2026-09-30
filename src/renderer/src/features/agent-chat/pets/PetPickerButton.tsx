@@ -6,16 +6,14 @@
  * 这只是给鼠标党的等价入口。
  */
 
-import { BUILT_IN_PETS } from './petAnimations'
-import { usePetStore } from './petStore'
+import { usePetStore, useSelectedPet } from './petStore'
 
 export function PetPickerButton({ disabled }: { disabled?: boolean }) {
-  const petId = usePetStore((s) => s.petId)
   const pickerOpen = usePetStore((s) => s.pickerOpen)
   const openPicker = usePetStore((s) => s.openPicker)
   const closePicker = usePetStore((s) => s.closePicker)
 
-  const current = petId ? BUILT_IN_PETS.find((p) => p.id === petId) : undefined
+  const current = useSelectedPet()
   const label = current?.displayName ?? '宠物'
 
   return (

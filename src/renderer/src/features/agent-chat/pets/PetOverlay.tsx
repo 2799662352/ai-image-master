@@ -16,29 +16,33 @@
  * - 待机彩蛋:空闲时每隔几秒轮播一个小动作——挥手 / 向左散步 / 跳一下 /
  *   向右散步(用满 spritesheet 的 waving、running-left/right、jumping 行),
  *   做完回 idle。agent 一开始干活立即打断,散步位移不持久化。
+ * - V2 宠物(11 行图集)在 idle 时看向鼠标,鼠标停下 2.5s 放掉视线。
  * - 选择/位置都持久化 localStorage。
  *
- * 渲染方式:官方 8x9 spritesheet 用 background-position 步进逐帧播放
+ * 渲染方式:官方 8x9 / 8x11 spritesheet 用 background-position 步进逐帧播放
  * (纯 CSS 背景,无 canvas/无额外依赖)。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAgentChatStore } from '../store'
 import {
-  BUILT_IN_PETS,
+  CUSTOM_PET_ID_PREFIX,
   PET_ANIMATIONS,
   PET_FPS,
   PET_FRAME_HEIGHT,
   PET_FRAME_WIDTH,
   PET_SHEET_COLS,
-  PET_SHEET_ROWS,
+  PET_SHEET_ROWS_BY_VERSION,
   loadPetOffset,
+  lookFrameForVector,
   savePetOffset,
-  type BuiltInPet,
   type PetAnimationState,
+  type PetDefinition,
+  type PetLookFrame,
 } from './petAnimations'
-import { usePetStore } from './petStore'
+import { detectPetFrameCounts } from './petFrameCounts'
+import { allPets, usePetStore, useSelectedPet } from './petStore'
 
 /** 展示尺寸:原帧 192x208 的一半,和 composer 高度协调。 */
 const DISPLAY_SCALE = 0.5
@@ -57,42 +61,76 @@ const STROLL_DURATION_MS = 2200
 /** 散步时距视口边缘的安全边距(px),防止走出窗口。 */
 const STROLL_EDGE_MARGIN_PX = 8
 
+// ----- V2 视线跟随 -----
+// 指针离精灵中心不足这个距离时不转头(官方 lookDeadzone 的同款语义)。
+const LOOK_DEADZONE_PX = 40
+// 指针停下这么久后放掉视线、回到 idle 动画。官方桌面端视线格一旦非空就一直
+// 盖住 idle(openai/codex#35442),宠物看起来像定格了。
+const LOOK_RELEASE_MS = 2500
+
 type AmbientKind = 'waving' | 'stroll-left' | 'jumping' | 'stroll-right'
 const AMBIENT_ROTATION: readonly AmbientKind[] = ['waving', 'stroll-left', 'jumping', 'stroll-right']
 
+/** 自装宠物每行的实际帧数(内置宠物直接用推荐帧数)。 */
+function usePetFrameCounts(pet: PetDefinition): number[] | null {
+  const { custom, spritesheetPath, spriteVersion } = pet
+  const [counts, setCounts] = useState<number[] | null>(null)
+  useEffect(() => {
+    setCounts(null)
+    if (!custom) return undefined
+    let cancelled = false
+    void detectPetFrameCounts(spritesheetPath, PET_SHEET_ROWS_BY_VERSION[spriteVersion]).then((c) => {
+      if (!cancelled) setCounts(c)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [custom, spritesheetPath, spriteVersion])
+  return counts
+}
+
 function PetSprite({
-  sheet,
+  pet,
   state,
+  look = null,
   scale = DISPLAY_SCALE,
 }: {
-  sheet: string
+  pet: PetDefinition
   state: PetAnimationState
+  /** V2 视线格;非空时显示这一格静帧,盖过 state 动画。 */
+  look?: PetLookFrame | null
   scale?: number
 }) {
   const [frame, setFrame] = useState(0)
   const anim = PET_ANIMATIONS[state]
+  const detectedCounts = usePetFrameCounts(pet)
+  const detected = (pet.frameCounts ?? detectedCounts)?.[anim.row]
+  const frames = detected && detected > 0 ? detected : anim.frames
 
   useEffect(() => {
     setFrame(0)
     const timer = setInterval(() => {
-      setFrame((f) => (f + 1) % anim.frames)
+      setFrame((f) => (f + 1) % frames)
     }, 1000 / PET_FPS)
     return () => clearInterval(timer)
-  }, [state, anim.frames])
+  }, [state, frames])
 
   const w = PET_FRAME_WIDTH * scale
   const h = PET_FRAME_HEIGHT * scale
+  const col = look ? look.col : frame % frames
+  const row = look ? look.row : anim.row
   return (
     <div
       data-testid="agent-pet-sprite"
       data-pet-state={state}
+      data-pet-look={look ? `${look.row}:${look.col}` : undefined}
       aria-hidden
       style={{
         width: w,
         height: h,
-        backgroundImage: `url(${JSON.stringify(sheet)})`,
-        backgroundSize: `${PET_SHEET_COLS * w}px ${PET_SHEET_ROWS * h}px`,
-        backgroundPosition: `-${frame * w}px -${anim.row * h}px`,
+        backgroundImage: `url(${JSON.stringify(pet.spritesheetPath)})`,
+        backgroundSize: `${PET_SHEET_COLS * w}px ${PET_SHEET_ROWS_BY_VERSION[pet.spriteVersion] * h}px`,
+        backgroundPosition: `-${col * w}px -${row * h}px`,
         backgroundRepeat: 'no-repeat',
         imageRendering: 'auto',
         pointerEvents: 'none',
@@ -137,7 +175,51 @@ export function usePetState(): PetAnimationState {
  * 停靠点(composer 右上)+ 用户偏移(transform),拖动时钳制在视口内,
  * 防止拖出窗口后再也抓不回来。
  */
-function DraggablePet({ pet, state }: { pet: BuiltInPet; state: PetAnimationState }) {
+/**
+ * V2 宠物在 idle 时看向鼠标。只听实体指针(官方桌面端只跟 Computer Use 虚拟
+ * 光标,openai/codex#33224);指针静止 LOOK_RELEASE_MS 后放掉视线。
+ */
+function usePetLook(
+  enabled: boolean,
+  nodeRef: React.RefObject<HTMLDivElement | null>,
+): PetLookFrame | null {
+  const [look, setLook] = useState<PetLookFrame | null>(null)
+  useEffect(() => {
+    if (!enabled) {
+      setLook(null)
+      return undefined
+    }
+    let releaseTimer: number | undefined
+    const onMove = (e: PointerEvent) => {
+      const node = nodeRef.current
+      if (!node) return
+      const rect = node.getBoundingClientRect()
+      const dx = e.clientX - (rect.left + rect.width / 2)
+      const dy = e.clientY - (rect.top + rect.height / 2)
+      const next = Math.hypot(dx, dy) < LOOK_DEADZONE_PX ? null : lookFrameForVector(dx, dy)
+      setLook((prev) => (prev?.row === next?.row && prev?.col === next?.col ? prev : next))
+      window.clearTimeout(releaseTimer)
+      releaseTimer = window.setTimeout(() => setLook(null), LOOK_RELEASE_MS)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.clearTimeout(releaseTimer)
+    }
+  }, [enabled, nodeRef])
+  return look
+}
+
+function DraggablePet({
+  pet,
+  state,
+  dock,
+}: {
+  pet: PetDefinition
+  state: PetAnimationState
+  /** 停靠容器的位置;面板挪动或变宽时变化,触发重新钳制。 */
+  dock: { left: number; top: number; width: number }
+}) {
   const [offset, setOffset] = useState(loadPetOffset)
   const [dragging, setDragging] = useState(false)
   const [ambient, setAmbient] = useState<AmbientKind | null>(null)
@@ -145,6 +227,24 @@ function DraggablePet({ pet, state }: { pet: BuiltInPet; state: PetAnimationStat
   const offsetRef = useRef(offset)
   offsetRef.current = offset
   const ambientIndexRef = useRef(0)
+
+  // 存下的偏移是在当时的窗口/面板布局里拖出来的;窗口变小或面板挪位后,
+  // 同一个偏移可能把宠物放到视口外,看起来就是「宠物不见了」。这里只在显示上
+  // 拉回可见区域,不改写 localStorage —— 窗口再变大时回到用户放的位置由下次
+  // 拖动决定。
+  useLayoutEffect(() => {
+    const clampIntoView = () => {
+      const node = nodeRef.current
+      if (!node || dragRef.current) return
+      const r = node.getBoundingClientRect()
+      const dx = r.left < 0 ? -r.left : r.right > window.innerWidth ? window.innerWidth - r.right : 0
+      const dy = r.top < 0 ? -r.top : r.bottom > window.innerHeight ? window.innerHeight - r.bottom : 0
+      if (dx !== 0 || dy !== 0) setOffset((o) => ({ x: o.x + dx, y: o.y + dy }))
+    }
+    clampIntoView()
+    window.addEventListener('resize', clampIntoView)
+    return () => window.removeEventListener('resize', clampIntoView)
+  }, [dock.left, dock.top, dock.width])
 
   // 待机环境行为循环:仅在「真 idle 且没被拎着」时运转;agent 一开始
   // 干活(state 变化)或用户抓起宠物,effect 重跑立即清场回正经状态。
@@ -254,7 +354,8 @@ function DraggablePet({ pet, state }: { pet: BuiltInPet; state: PetAnimationStat
     savePetOffset(offsetRef.current)
   }
 
-  // 展示优先级:被拎着 > agent 状态 > 待机小动作 > idle。
+  // 展示优先级:被拎着 > agent 状态 > 待机小动作 > 看向鼠标(仅 V2)> idle。
+  const look = usePetLook(pet.spriteVersion === 2 && state === 'idle' && !dragging && ambient == null, nodeRef)
   const displayState: PetAnimationState = dragging
     ? 'jumping'
     : state !== 'idle'
@@ -280,33 +381,42 @@ function DraggablePet({ pet, state }: { pet: BuiltInPet; state: PetAnimationStat
         cursor: dragging ? 'grabbing' : 'grab',
       }}
     >
-      <PetSprite sheet={pet.spritesheetPath} state={displayState} />
+      <PetSprite pet={pet} state={displayState} look={look} />
     </div>
   )
 }
 
 /**
- * `/pets` 选择器(官方样式):左列表(首行「关闭宠物」+ 内置宠物),
- * 右侧动画预览。↑/↓ 移动、Enter 选择、Esc 关闭。
+ * `/pets` 选择器(官方样式):左列表(首行「关闭宠物」+ 内置宠物 + 自装宠物),
+ * 右侧动画预览。↑/↓ 移动、Enter 选择、Esc 关闭。每次打开都重扫一遍
+ * `<CODEX_HOME>/pets`,用户刚丢进去的宠物不用重启就能选。
  */
 function PetPicker() {
   const petId = usePetStore((s) => s.petId)
   const selectPet = usePetStore((s) => s.selectPet)
   const closePicker = usePetStore((s) => s.closePicker)
+  const customPets = usePetStore((s) => s.customPets)
+  const refreshCustomPets = usePetStore((s) => s.refreshCustomPets)
+  const pets = allPets(customPets)
 
-  // 行 0 = 关闭宠物;行 1..n = BUILT_IN_PETS[i-1]。初始高亮当前选择。
-  const initialIndex = petId ? BUILT_IN_PETS.findIndex((p) => p.id === petId) + 1 : 0
+  // 行 0 = 关闭宠物;行 1..n = pets[i-1]。初始高亮当前选择。
+  const initialIndex = petId ? pets.findIndex((p) => p.id === petId) + 1 : 0
   const [highlight, setHighlight] = useState(initialIndex < 0 ? 0 : initialIndex)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const rowCount = BUILT_IN_PETS.length + 1
+  const rowCount = pets.length + 1
   const commit = (index: number) => {
-    selectPet(index === 0 ? null : BUILT_IN_PETS[index - 1].id)
+    selectPet(index === 0 ? null : pets[index - 1].id)
   }
 
   useEffect(() => {
     rootRef.current?.focus()
-  }, [])
+    void refreshCustomPets()
+  }, [refreshCustomPets])
+
+  const openPetsFolder = () => {
+    void window.electronAPI?.pets?.openFolder()
+  }
 
   // 点击选择器外部关闭(对齐 ImageChannelPicker 等邻位控件)。工具栏的
   // 宠物按钮除外——它自己负责开/关切换,这里吞掉会导致「关了又开」。
@@ -337,7 +447,7 @@ function PetPicker() {
     }
   }
 
-  const previewPet = highlight > 0 ? BUILT_IN_PETS[highlight - 1] : undefined
+  const previewPet = highlight > 0 ? pets[highlight - 1] : undefined
 
   return (
     <div
@@ -366,7 +476,7 @@ function PetPicker() {
           关闭宠物
           {petId == null ? <span className="ml-1.5 text-[10px] text-zinc-500">当前</span> : null}
         </button>
-        {BUILT_IN_PETS.map((p, i) => (
+        {pets.map((p, i) => (
           <button
             key={p.id}
             type="button"
@@ -378,10 +488,22 @@ function PetPicker() {
             }`}
           >
             {p.displayName}
+            {p.custom ? <span className="ml-1.5 text-[10px] text-zinc-500">自装</span> : null}
             {petId === p.id ? <span className="ml-1.5 text-[10px] text-zinc-500">当前</span> : null}
           </button>
         ))}
         <div className="px-3 pb-0.5 pt-1 text-[10px] text-zinc-600">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
+        {window.electronAPI?.pets ? (
+          <button
+            type="button"
+            data-testid="agent-pet-open-folder"
+            onClick={openPetsFolder}
+            title="把 Codex 宠物包(pet.json + spritesheet.webp)放进这个文件夹"
+            className="block px-3 pb-0.5 pt-0.5 text-left text-[10px] text-zinc-500 hover:text-cyan-300"
+          >
+            打开宠物文件夹…
+          </button>
+        ) : null}
       </div>
 
       {/* 右:动画预览(官方 preview pane) */}
@@ -390,7 +512,7 @@ function PetPicker() {
         className="flex w-28 items-center justify-center border-l border-cyan-400/15 bg-zinc-900/60"
       >
         {previewPet ? (
-          <PetSprite sheet={previewPet.spritesheetPath} state="idle" scale={0.45} />
+          <PetSprite pet={previewPet} state="idle" scale={0.45} />
         ) : (
           <span className="text-[11px] text-zinc-600">无宠物</span>
         )}
@@ -412,8 +534,16 @@ function PetPicker() {
 export function PetOverlay() {
   const petId = usePetStore((s) => s.petId)
   const pickerOpen = usePetStore((s) => s.pickerOpen)
+  const customPetsLoaded = usePetStore((s) => s.customPetsLoaded)
+  const refreshCustomPets = usePetStore((s) => s.refreshCustomPets)
   const state = usePetState()
-  const pet = petId ? BUILT_IN_PETS.find((p) => p.id === petId) : undefined
+  const pet = useSelectedPet()
+
+  // 上次选的是自装宠物:启动后扫一次目录才知道它的图集在哪。
+  const needsCustomScan = Boolean(petId?.startsWith(CUSTOM_PET_ID_PREFIX)) && !customPetsLoaded
+  useEffect(() => {
+    if (needsCustomScan) void refreshCustomPets()
+  }, [needsCustomScan, refreshCustomPets])
 
   const anchorRef = useRef<HTMLDivElement>(null)
   const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null)
@@ -478,7 +608,7 @@ export function PetOverlay() {
             >
               <div className="pointer-events-none relative flex items-end justify-end">
                 {/* 宠物本体:默认蹲在 composer 右上,可抓取拖走 */}
-                {pet ? <DraggablePet pet={pet} state={state} /> : null}
+                {pet ? <DraggablePet pet={pet} state={state} dock={rect} /> : null}
 
                 {/* `/pets` 选择器(官方入口,无独立按钮) */}
                 {pickerOpen ? <PetPicker /> : null}
