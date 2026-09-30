@@ -1,7 +1,7 @@
 /**
  * Native audio / video input for omni-modal main-agent models (qwen3.8-omni-flash).
  *
- * Why this exists — two blockers on the codex side (rust-v0.154.0, verified in source):
+ * Why this exists — two blockers on the codex side (verified in source through rust-v0.159.2):
  *
  * 1. codex gates audio on the model's `input_modalities`. A slug it does not know
  *    (every Miau / DashScope model) falls back to `model_info_from_slug`, whose

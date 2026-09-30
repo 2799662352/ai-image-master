@@ -1,4 +1,8 @@
-import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../mcp/config'
+import {
+  CATIMATION_MCP_HOST,
+  CATIMATION_MCP_TOKEN_HEADER,
+  CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES,
+} from '../mcp/config'
 import { assertCodexModelContextConfig } from '../../shared/modelSettings'
 import { CINEMATOGRAPHY_KB_ENV_SCAFFOLD } from './cinematographyKbMcpLauncher'
 import type {
@@ -710,6 +714,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       // call returns its own saved `paths` / `file://` resource_links the moment
       // that image finishes — no per-call wait stalls the others.
       '-c', 'mcp_servers.catimation.supports_parallel_tool_calls=true',
+      '-c', `mcp_servers.catimation.tool_input_schema_max_bytes=${CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES}`,
     )
     // Make our `generate_image` the FIRST (and only) image path. Codex 0.137
     // ships a built-in `imagegen` system skill (installed to

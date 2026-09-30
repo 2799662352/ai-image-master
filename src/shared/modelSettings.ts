@@ -278,6 +278,12 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
+  // GPT-6 family: same 272K default / 872K max as GPT-5.6 in the 0.159.2
+  // bundled models.json.
+  ['gpt-6.1-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-6-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-6-luna', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-6-astra', { defaultWindow: 272_000, allowExperimental1M: true }],
   // Codex 0.144.6 hotfix corrected the GPT-5.6 family from 372K to 272K
   // (openai/codex#33972 / #34009) — 372K was wrong upstream metadata.
   ['gpt-5.6-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
@@ -608,16 +614,23 @@ export function modelAutoCompactTokenLimit(contextWindow: number): number {
 }
 
 /**
- * Context windows Codex resolves natively from its bundled models.json
- * (verified against openai/codex rust-v0.144.6 codex-rs/models-manager/
- * models.json — the 0.144.6 hotfix corrected the GPT-5.6 family from 372K to
- * 272K). Only slugs listed there belong here: for these models Codex already
- * knows the window AND derives its own auto-compaction budget, so a
- * launch-time `model_context_window` override is redundant — and harmful,
- * because the `-c` override applies globally to every model in the process
- * and forces a full restart whenever it changes.
+ * Context windows Codex resolves on its own, without a launch-time
+ * `model_context_window` override (verified against openai/codex rust-v0.159.2
+ * codex-rs/models-manager). For these models Codex already knows the window
+ * AND derives its own auto-compaction budget, so an override is redundant —
+ * and harmful, because the `-c` override applies globally to every model in
+ * the process and forces a full restart whenever it changes.
+ *
+ * Two sources: the bundled models.json, and `model_info_from_slug`'s fallback
+ * (272K window, 272K max) for slugs the catalog no longer ships. gpt-5.4,
+ * gpt-5.4-mini and gpt-5.2 left the catalog in 0.158 but still resolve to
+ * 272K through that fallback, so they stay unpinned.
  */
 const CODEX_NATIVE_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+  ['gpt-6.1-sol', 272_000],
+  ['gpt-6-sol', 272_000],
+  ['gpt-6-luna', 272_000],
+  ['gpt-6-astra', 272_000],
   ['gpt-5.6-sol', 272_000],
   ['gpt-5.6-terra', 272_000],
   ['gpt-5.6-luna', 272_000],

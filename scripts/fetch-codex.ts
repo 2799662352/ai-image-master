@@ -148,8 +148,19 @@ function getWindowsHelperBinaries(target: string): Array<{ assetName: string; fi
  *
  * `codex-app-server` is reachable as `codex.exe app-server`; shipping the
  * standalone 236MB copy would nearly double the installer for no new capability.
+ *
+ * `codex-windows-sandbox-service` (0.156+) only does anything once an installer
+ * registers it as a Windows service; codex never spawns it from its own
+ * directory. It reaches it over a named pipe, and when the service does not
+ * exist (`ERROR_SERVICE_DOES_NOT_EXIST`) provisioning reports `Unavailable` and
+ * falls back to the bundled `codex-windows-sandbox-setup.exe`
+ * (windows-sandbox-rs/src/provisioning_client.rs, rust-v0.159.2). Our NSIS
+ * installer registers no services, so shipping the binary would change nothing.
  */
-const INTENTIONALLY_UNBUNDLED_CODEX_BINARIES = ['codex-app-server'] as const
+const INTENTIONALLY_UNBUNDLED_CODEX_BINARIES = [
+  'codex-app-server',
+  'codex-windows-sandbox-service',
+] as const
 
 /**
  * Fail the fetch when the release contains a `codex-*` Windows sibling that is
