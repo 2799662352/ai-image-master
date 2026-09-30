@@ -195,7 +195,7 @@ describe('PetOverlay', () => {
     expect(screen.getByTestId('agent-pet-body').style.transform).toBe('translate(12px, -40px)')
   })
 
-  it('工具栏按钮:未选宠物显示「宠物」,点击开/关选择器,选中后显示宠物名', () => {
+  it('工具栏按钮:只有图标,宠物名在 aria-label 里,点击开/关选择器', () => {
     render(
       <>
         <PetPickerButton />
@@ -203,7 +203,8 @@ describe('PetOverlay', () => {
       </>,
     )
     const button = screen.getByTestId('agent-pet-picker-button')
-    expect(button.textContent).toContain('宠物')
+    expect(button.textContent).toBe('')
+    expect(button.getAttribute('aria-label')).toBe('宠物：宠物')
 
     fireEvent.click(button)
     expect(screen.getByTestId('agent-pet-picker')).toBeTruthy()
@@ -212,7 +213,7 @@ describe('PetOverlay', () => {
 
     fireEvent.click(button)
     fireEvent.click(screen.getByTestId('agent-pet-row-doro'))
-    expect(screen.getByTestId('agent-pet-picker-button').textContent).toContain('Doro')
+    expect(screen.getByTestId('agent-pet-picker-button').getAttribute('aria-label')).toBe('宠物：Doro')
   })
 
   it('点击选择器外部关闭(与邻位 picker 行为一致)', () => {

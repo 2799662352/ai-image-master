@@ -4,6 +4,7 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
+import { VOICE_MODEL_SCHEME_PRIVILEGES } from '../voice/voiceModelProtocol'
 
 /** 媒体扩展名 → Content-Type。缺了它 Chromium 只能靠嗅探,mp4 经常猜不中。 */
 const MEDIA_MIME: Readonly<Record<string, string>> = {
@@ -179,6 +180,8 @@ export function registerLocalFileScheme(): void {
         stream: true,
       },
     },
+    // registerSchemesAsPrivileged 只认最后一次调用,所有自定义 scheme 都得在这一个数组里。
+    VOICE_MODEL_SCHEME_PRIVILEGES,
   ])
 }
 
