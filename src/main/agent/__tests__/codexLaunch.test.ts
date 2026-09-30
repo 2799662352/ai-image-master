@@ -6,6 +6,7 @@ import {
   resolveCodexSessionConfig,
 } from '../codexLaunch'
 import { resolveSmokeContextConfig } from '../../../../scripts/smoke-codex-compaction'
+import { CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES } from '../../mcp/config'
 
 describe('buildCodexLaunchArgs', () => {
   it('uses app-server with the default listen URL and maximum-permission defaults', () => {
@@ -549,6 +550,9 @@ describe('buildCodexLaunchArgs', () => {
     // Transport-agnostic knobs still apply on the stdio path.
     expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=25000')
     expect(args).toContain('mcp_servers.catimation.supports_parallel_tool_calls=true')
+    expect(args).toContain(
+      `mcp_servers.catimation.tool_input_schema_max_bytes=${CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES}`,
+    )
     expect(args).toContain('skills.config=[{ name = "imagegen", enabled = false }]')
   })
 

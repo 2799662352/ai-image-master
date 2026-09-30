@@ -294,6 +294,10 @@ describe('model settings capabilities', () => {
 
   it.each([
     ['grok-4.5', GROK_CONTEXT_WINDOW],
+    ['gpt-6.1-sol', 272_000],
+    ['gpt-6-sol', 272_000],
+    ['gpt-6-luna', 272_000],
+    ['gpt-6-astra', 272_000],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
@@ -321,6 +325,10 @@ describe('model settings capabilities', () => {
   )
 
   it.each([
+    ['gpt-6.1-sol', 272_000],
+    ['gpt-6-sol', 272_000],
+    ['gpt-6-luna', 272_000],
+    ['gpt-6-astra', 272_000],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
@@ -386,10 +394,15 @@ describe('model settings capabilities', () => {
 
 describe('model context pin', () => {
   it.each([
+    ['gpt-6.1-sol', 272_000],
+    ['gpt-6-sol', 272_000],
+    ['gpt-6-luna', 272_000],
+    ['gpt-6-astra', 272_000],
     ['gpt-5.5', 272_000],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
+    // Out of the bundled catalog since 0.158; Codex's slug fallback is 272K.
     ['gpt-5.4', 272_000],
     ['gpt-5.4-mini', 272_000],
     ['gpt-5.2', 272_000],
