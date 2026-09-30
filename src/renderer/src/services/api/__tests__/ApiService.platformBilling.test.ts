@@ -105,19 +105,39 @@ describe('平台计费模式下的请求头', () => {
     expect(headers.Authorization).toBe('Bearer user-typed-key')
   })
 
-  // 站点对了模型也可能不对。谷歌原生端点绕开加速域名直连源站(EdgeOne 不支持那条
-  // 路径),而注入器只挂在加速域名那一个 host 上 —— 打了标记也换不到 Authorization,
-  // 结果是必定 401,外加把内部协议头明文发给一个注入器看不见的 IP。
-  it('谷歌原生模型即使在 Miau 站点也不打标记(它绕开了注入器覆盖的 host)', async () => {
-    const headers = await captureHeadersFor({
-      billingSource: 'platform',
-      site: 'antigravity',
-      model: 'gemini-3.1-flash-image',
-    })
+  it('谷歌原生模型在 Miau 站点上同样走平台余额', async () => {
+    for (const model of ['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image']) {
+      const headers = await captureHeadersFor({ billingSource: 'platform', site: 'antigravity', model })
 
-    expect(headers[BILLING_MARKER_HEADER]).toBeUndefined()
-    // 回落到自填 Key。不回落的话这条请求既没 Authorization 也换不到 token,必 401。
-    expect(headers.Authorization).toBe('Bearer user-typed-key')
+      expect(headers[BILLING_MARKER_HEADER], model).toBe(BILLING_MARKER_VALUE)
+      expect(headers.Authorization, model).toBeUndefined()
+    }
+  })
+
+  // 平台用户往往根本没填过自己的 Key。前置门若把谷歌模型判成「要自填 Key」,
+  // 请求到不了网关,用户只会看到「请先设置 API Key」。
+  it('没填自填 Key 时,谷歌原生模型也能经平台余额发到加速域名', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ candidates: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    localStorage.setItem('current_site', 'antigravity')
+    const { useQuotaStore } = await import('../../../stores/useQuotaStore')
+    useQuotaStore.setState({ billingSource: 'platform' })
+    const { ApiService } = await import('../ApiService')
+
+    await new ApiService()
+      .generateImage({ prompt: 'x', model: 'gemini-3-pro-image', siteKey: 'antigravity' })
+      .catch(() => {})
+
+    expect(fetchMock).toHaveBeenCalled()
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(new URL(url).host).toBe('miauapi.13797248455.xyz')
+    expect(new URL(url).pathname).toBe('/v1beta/models/gemini-3-pro-image:generateContent')
+    expect((init.headers as Record<string, string>)[BILLING_MARKER_HEADER]).toBe(BILLING_MARKER_VALUE)
   })
 })
 
@@ -305,13 +325,10 @@ describe('理解族也走平台余额', () => {
 /**
  * 「这个模型能不能用平台余额」的判据。
  *
- * 之所以要独立成纯函数并单测:这件事此前是**两处隐性耦合**——`buildRequestUrl` 决定
- * 请求实际打向哪个 host(谷歌原生模型会被换成 `directBaseURL`),而计费判定看的是
- * `site.baseURL`。两处谁也不知道谁存在,于是「站点是 Miau」为真、「请求打到 Miau」为假,
- * 标记头照打、凭据换不到 —— 静默 401。
- *
- * 判据收进 `evaluatePlatformBillingEligibility` 之后,下面那条 **真源一致性** 用例会
- * 遍历全部模型,拿它的结论和 `buildRequestUrl` 的实际产物对账。谁再单独改一边,这里就红。
+ * 判据看的是站点,而请求实际打向哪个 host 由 `buildRequestUrl` 决定。两处曾经分叉过:
+ * 谷歌原生模型一度被改道到明文源站,「站点是 Miau」为真、「请求打到 Miau」为假,
+ * 标记头照打、凭据换不到 —— 静默 401。下面那条 **真源一致性** 用例遍历全部模型,
+ * 拿判定和 `buildRequestUrl` 的实际产物对账;谁再给某类模型加绕道而不同步判据,这里就红。
  */
 describe('平台余额 × 模型可用性', () => {
   beforeEach(() => {
@@ -339,47 +356,19 @@ describe('平台余额 × 模型可用性', () => {
     return { ...mod, svc, internals }
   }
 
-  it('谷歌原生模型在 Miau 站点上不可用,并说明是模型绕开了网关', async () => {
+  it('谷歌原生模型与普通模型在 Miau 站点上都可用', async () => {
     const { evaluatePlatformBillingEligibility, internals } = await load()
     const gateway = internals.apiSites['antigravity']
 
-    for (const key of GOOGLE_NATIVE_MODELS) {
+    for (const key of [...GOOGLE_NATIVE_MODELS, 'doubao-seedream-5-0-pro-260628']) {
       const verdict = evaluatePlatformBillingEligibility(
         internals.models[key] as never,
         gateway as never,
         gateway as never,
       )
-      expect(verdict.eligible, `${key} 不该被判为可用`).toBe(false)
-      expect(verdict.blocker).toBe('model-bypasses-gateway')
+      expect(verdict.eligible, key).toBe(true)
+      expect(verdict.blocker).toBeNull()
     }
-  })
-
-  it('普通模型在 Miau 站点上可用', async () => {
-    const { evaluatePlatformBillingEligibility, internals } = await load()
-    const gateway = internals.apiSites['antigravity']
-
-    const verdict = evaluatePlatformBillingEligibility(
-      internals.models['doubao-seedream-5-0-pro-260628'] as never,
-      gateway as never,
-      gateway as never,
-    )
-    expect(verdict.eligible).toBe(true)
-    expect(verdict.blocker).toBeNull()
-  })
-
-  // 判据必须挂在「站点有没有配源站直连」上,而不是硬编码那三个模型名。
-  // 站点没配 directBaseURL 时谷歌模型照旧走加速域名,那就是可用的。
-  it('站点没配源站直连时,谷歌原生模型照样可用(不硬编码模型名单)', async () => {
-    const { evaluatePlatformBillingEligibility, internals } = await load()
-    const gateway = internals.apiSites['antigravity'] as Record<string, unknown>
-    const siteWithoutDirect = { ...gateway, directBaseURL: undefined }
-
-    const verdict = evaluatePlatformBillingEligibility(
-      internals.models['gemini-3.1-flash-image'] as never,
-      siteWithoutDirect as never,
-      gateway as never,
-    )
-    expect(verdict.eligible).toBe(true)
   })
 
   it('非网关站点给出的是站点级原因,不是模型级', async () => {
@@ -391,8 +380,6 @@ describe('平台余额 × 模型可用性', () => {
       internals.apiSites['antigravity'] as never,
     )
     expect(verdict.eligible).toBe(false)
-    // 站点就不对,再谈模型没有意义 —— UI 那边已经有一句「仅 Miau 站点生效」了,
-    // 这里若报 model-bypasses-gateway 会让用户以为换个模型就好。
     expect(verdict.blocker).toBe('site-not-gateway')
   })
 
@@ -435,7 +422,7 @@ describe('平台余额 × 模型可用性', () => {
     localStorage.setItem('current_site', 'antigravity')
     const { svc } = await load()
 
-    expect(svc.getPlatformBillingEligibility('gemini-3.1-flash-image').eligible).toBe(false)
+    expect(svc.getPlatformBillingEligibility('gemini-3.1-flash-image').eligible).toBe(true)
     expect(svc.getPlatformBillingEligibility('doubao-seedream-5-0-pro-260628').eligible).toBe(true)
   })
 
