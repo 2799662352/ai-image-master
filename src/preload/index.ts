@@ -74,6 +74,14 @@ import type {
 } from '../types/marketplace'
 import type { PetsApi, PetsListCustomResult } from '../types/pets'
 import type {
+  VoiceApi,
+  VoiceEnsureAsrModelResult,
+  VoiceModelProgress,
+  VoiceRealtimeMessage,
+  VoiceRealtimeModel,
+  VoiceRealtimeOpenResult,
+} from '../types/voice'
+import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
   SeedanceAssetCapacity,
@@ -247,6 +255,15 @@ const IPC_CHANNELS = {
   PETS: {
     LIST_CUSTOM: 'pets:list-custom',
     OPEN_FOLDER: 'pets:open-folder',
+  },
+  // 语音输入 / 朗读(见 src/main/voice/)
+  VOICE: {
+    ENSURE_ASR_MODEL: 'voice:ensure-asr-model',
+    ASR_MODEL_PROGRESS: 'voice:asr-model-progress',
+    REALTIME_OPEN: 'voice:realtime-open',
+    REALTIME_SEND: 'voice:realtime-send',
+    REALTIME_CLOSE: 'voice:realtime-close',
+    REALTIME_MESSAGE: 'voice:realtime-message',
   },
   // 宫格拆图
   STORYBOARD_SPLIT: {
@@ -562,6 +579,7 @@ export interface ElectronAPI {
     listInstalled: () => Promise<PluginListInstalledResult>
   }
   pets: PetsApi
+  voice: VoiceApi
   // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
   // 各 Section 手写 duck-type 子集的时代结束于此。
   agent: AgentApi
@@ -1173,6 +1191,24 @@ const electronAPI: ElectronAPI = {
   pets: {
     listCustom: () => safeInvoke<PetsListCustomResult>(IPC_CHANNELS.PETS.LIST_CUSTOM),
     openFolder: () => safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.PETS.OPEN_FOLDER),
+  },
+
+  voice: {
+    ensureAsrModel: () => safeInvoke<VoiceEnsureAsrModelResult>(IPC_CHANNELS.VOICE.ENSURE_ASR_MODEL),
+    onAsrModelProgress: (cb: (progress: VoiceModelProgress) => void) => {
+      const handler = (_evt: IpcRendererEvent, progress: VoiceModelProgress): void => cb(progress)
+      ipcRenderer.on(IPC_CHANNELS.VOICE.ASR_MODEL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE.ASR_MODEL_PROGRESS, handler)
+    },
+    realtimeOpen: (model: VoiceRealtimeModel) =>
+      safeInvoke<VoiceRealtimeOpenResult>(IPC_CHANNELS.VOICE.REALTIME_OPEN, model),
+    realtimeSend: (id: string, data: string) => ipcRenderer.send(IPC_CHANNELS.VOICE.REALTIME_SEND, id, data),
+    realtimeClose: (id: string) => ipcRenderer.send(IPC_CHANNELS.VOICE.REALTIME_CLOSE, id),
+    onRealtimeMessage: (cb: (message: VoiceRealtimeMessage) => void) => {
+      const handler = (_evt: IpcRendererEvent, message: VoiceRealtimeMessage): void => cb(message)
+      ipcRenderer.on(IPC_CHANNELS.VOICE.REALTIME_MESSAGE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE.REALTIME_MESSAGE, handler)
+    },
   },
 
   // ============ Codex Agent ============

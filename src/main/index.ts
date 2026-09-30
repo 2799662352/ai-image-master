@@ -36,6 +36,7 @@ import { runStartupDedupOnce } from './agent/historyDedup'
 import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
 import { registerPetsIpc } from './pets/ipc'
+import { installVoiceProtocol, registerVoiceIpc } from './voice/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/cosClient'
 import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
@@ -1300,6 +1301,7 @@ app.whenReady().then(async () => {
   }
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
   installLocalFileHandler()
+  installVoiceProtocol()
   registerFsIpc()
   registerProjectFileIpc(() => mainWindow)
   registerAttachmentsTreeIpc(getPrisma)
@@ -1667,6 +1669,7 @@ registerPluginMarketplaceIpc({
 })
 
 registerPetsIpc()
+registerVoiceIpc()
 
 // One-shot adoption pass. v4.3.4 users have ~20 bundled skills already on
 // disk (we used to mirror them every launch); marking them as `adopted`

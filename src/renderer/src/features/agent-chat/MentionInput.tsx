@@ -24,6 +24,7 @@ import { INIT_AGENTS_MD_PROMPT } from './initPrompt'
 import { parseGoalCommand } from './goalCommand'
 import { usePetStore } from './pets/petStore'
 import { PetPickerButton } from './pets/PetPickerButton'
+import { VoiceControls } from '../voice/VoiceControls'
 import { ComposerAttachBar } from './ComposerAttachBar'
 import {
   ComposerAttachmentTile,
@@ -1824,6 +1825,7 @@ export function MentionInput() {
         <CollabModeControl disabled={isRunning || modelSelectionPending} />
         <ImageChannelPicker disabled={isRunning || modelSelectionPending} />
         <PetPickerButton />
+        {isEditing ? null : <VoiceControls disabled={isRunning || modelSelectionPending} />}
         <div className="flex-1" />
         {isEditing ? (
           <button

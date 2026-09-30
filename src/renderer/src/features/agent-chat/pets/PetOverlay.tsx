@@ -43,6 +43,8 @@ import {
 } from './petAnimations'
 import { detectPetFrameCounts } from './petFrameCounts'
 import { allPets, usePetStore, useSelectedPet } from './petStore'
+import { PET_VOICE_NAME, bindAvatarVoice } from '../../voice/voiceRoute'
+import { useVoiceStore } from '../../voice/voiceStore'
 
 /** 展示尺寸:原帧 192x208 的一半,和 composer 高度协调。 */
 const DISPLAY_SCALE = 0.5
@@ -67,6 +69,11 @@ const LOOK_DEADZONE_PX = 40
 // 指针停下这么久后放掉视线、回到 idle 动画。官方桌面端视线格一旦非空就一直
 // 盖住 idle(openai/codex#35442),宠物看起来像定格了。
 const LOOK_RELEASE_MS = 2500
+
+// ----- 朗读口型 -----
+// 口型全开(1)时横向放大 / 纵向压扁的比例。
+const MOUTH_SQUASH_X = 0.04
+const MOUTH_SQUASH_Y = 0.07
 
 type AmbientKind = 'waving' | 'stroll-left' | 'jumping' | 'stroll-right'
 const AMBIENT_ROTATION: readonly AmbientKind[] = ['waving', 'stroll-left', 'jumping', 'stroll-right']
@@ -223,7 +230,23 @@ function DraggablePet({
   const [offset, setOffset] = useState(loadPetOffset)
   const [dragging, setDragging] = useState(false)
   const [ambient, setAmbient] = useState<AmbientKind | null>(null)
+  const speaking = useVoiceStore((s) => s.speaking)
   const nodeRef = useRef<HTMLDivElement>(null)
+  const mouthRef = useRef<HTMLDivElement>(null)
+
+  // 精灵图没有口型帧,朗读时按口型开合轻轻压扁(变宽变矮);直接写 style,不走 React 重渲染。
+  useEffect(
+    () =>
+      bindAvatarVoice(PET_VOICE_NAME, {
+        capabilities: { mouth: true },
+        setMouthOpen: (value) => {
+          const node = mouthRef.current
+          if (!node) return
+          node.style.transform = value > 0 ? `scale(${1 + MOUTH_SQUASH_X * value}, ${1 - MOUTH_SQUASH_Y * value})` : ''
+        },
+      }),
+    [],
+  )
   const offsetRef = useRef(offset)
   offsetRef.current = offset
   const ambientIndexRef = useRef(0)
@@ -249,7 +272,7 @@ function DraggablePet({
   // 待机环境行为循环:仅在「真 idle 且没被拎着」时运转;agent 一开始
   // 干活(state 变化)或用户抓起宠物,effect 重跑立即清场回正经状态。
   // 散步只改 offset 不落 localStorage —— 重启后宠物回到用户放它的地方。
-  const idleActive = state === 'idle' && !dragging
+  const idleActive = state === 'idle' && !dragging && !speaking
   useEffect(() => {
     if (!idleActive) {
       setAmbient(null)
@@ -355,7 +378,7 @@ function DraggablePet({
   }
 
   // 展示优先级:被拎着 > agent 状态 > 待机小动作 > 看向鼠标(仅 V2)> idle。
-  const look = usePetLook(pet.spriteVersion === 2 && state === 'idle' && !dragging && ambient == null, nodeRef)
+  const look = usePetLook(pet.spriteVersion === 2 && state === 'idle' && !dragging && !speaking && ambient == null, nodeRef)
   const displayState: PetAnimationState = dragging
     ? 'jumping'
     : state !== 'idle'
@@ -381,7 +404,14 @@ function DraggablePet({
         cursor: dragging ? 'grabbing' : 'grab',
       }}
     >
-      <PetSprite pet={pet} state={displayState} look={look} />
+      <div
+        ref={mouthRef}
+        data-testid="agent-pet-voice"
+        data-speaking={speaking ? 'true' : undefined}
+        style={{ transformOrigin: '50% 100%' }}
+      >
+        <PetSprite pet={pet} state={displayState} look={look} />
+      </div>
     </div>
   )
 }
