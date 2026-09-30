@@ -15,15 +15,6 @@ import type { ModelVendor } from './modelVendors'
 export interface ApiSite {
   name: string
   baseURL: string
-  /**
-   * 源站地址(不过 CDN)。只给「加速域名扛不住的请求」用,其余照旧走 baseURL。
-   *
-   * 缘由(2026-07-28 实测):Miau 的加速域名前面是 EdgeOne,而它**不支持**谷歌原生
-   * 端点 `/v1beta/models/...:generateContent` —— 该路径的请求一律以 524 收场。
-   * 524 错误页不带 CORS 头,浏览器于是报「No 'Access-Control-Allow-Origin'」,
-   * 把真实原因盖住了。见 buildRequestUrl。
-   */
-  directBaseURL?: string
   description: string
   authType: 'bearer' | 'x-api-key'
   pathPrefix?: string
@@ -599,23 +590,6 @@ function resolveGatewayBaseUrl(): string {
 }
 
 /**
- * 本次请求实际会打到的 host 源。
- *
- * **`buildRequestUrl` 与平台余额判定共用这一个函数,别各写各的。** 这两件事此前是
- * 一对隐性耦合:前者会把谷歌原生模型的 host 换成 `directBaseURL`(源站直连),后者却
- * 照着 `site.baseURL` 判断 —— 于是「站点是网关」为真、「请求打向网关」为假。症状见
- * {@link evaluatePlatformBillingEligibility}。
- */
-export function resolveRequestHostSource(
-  modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
-  site: Pick<ApiSite, 'baseURL' | 'directBaseURL'>,
-): string {
-  return modelConfig?.apiType === 'gemini-native' && site.directBaseURL
-    ? site.directBaseURL
-    : site.baseURL
-}
-
-/**
  * 两个地址是否同源(protocol + host)。
  *
  * 按 origin 而不是字符串相等来比,是因为**主进程注入器认的就是 host**
@@ -638,8 +612,6 @@ export type PlatformBillingBlocker =
   | 'no-site'
   /** 站点整个不在平台计费域内(apiyi / 自建 / 本地)。 */
   | 'site-not-gateway'
-  /** 站点对,但这个模型的请求绕开了注入器覆盖的 host。 */
-  | 'model-bypasses-gateway'
 
 export interface PlatformBillingEligibility {
   eligible: boolean
@@ -655,25 +627,20 @@ export interface PlatformBillingEligibility {
  *   1. 标记换不到凭据、我们又刻意不发用户自填的 Key,于是**必定 401**;
  *   2. 内部协议标记头会原样出网(注入器本该在出网前删掉它)。
  *
- * 谷歌原生模型正是这种情况:加速域名前面的 EdgeOne 不支持 `:generateContent`
- * 那条路径(一律 524),所以 `buildRequestUrl` 把它们改道到 `directBaseURL` ——
- * 一个**明文 HTTP 的源站 IP**。那个地址绝不能加进注入器白名单(等于让一枚永不过期、
- * 无法单独吊销的凭据在网络上裸奔),所以这些模型只能回落到自填 Key。
- *
- * 站点级原因优先于模型级:站点就不对的时候再说「换个模型」是误导。
+ * `buildRequestUrl` 对所有模型都只换成 `site.baseURL` 的 host,所以站点是网关 ⇔
+ * 请求打向网关。**别给某类模型加改道**:谷歌原生模型曾被改道到明文 HTTP 的源站 IP,
+ * 那段时间它们在平台模式下必定 401;那个 IP 也绝不能加进注入器白名单(等于让一枚
+ * 永不过期、无法单独吊销的凭据在网络上裸奔)。
  */
 export function evaluatePlatformBillingEligibility(
   modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
-  site: Pick<ApiSite, 'baseURL' | 'directBaseURL'> | undefined,
+  site: Pick<ApiSite, 'baseURL'> | undefined,
   gateway: Pick<ApiSite, 'baseURL'> | undefined,
 ): PlatformBillingEligibility {
   if (!modelConfig) return { eligible: false, blocker: 'unknown-model' }
   if (!site || !gateway) return { eligible: false, blocker: 'no-site' }
   if (!isSameOrigin(site.baseURL, gateway.baseURL)) {
     return { eligible: false, blocker: 'site-not-gateway' }
-  }
-  if (!isSameOrigin(resolveRequestHostSource(modelConfig, site), gateway.baseURL)) {
-    return { eligible: false, blocker: 'model-bypasses-gateway' }
   }
   return { eligible: true, blocker: null }
 }
@@ -770,8 +737,6 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     // 端口也不再需要。同一台 new-api 实例(401 报文形状一致),换域名后 CSP 里
     // 那几条 `http://175.178.198.17:*` 例外也随之取消。
     baseURL: resolveGatewayBaseUrl(),
-    // 谷歌原生端点走这里(EdgeOne 不支持那条路径,详见 ApiSite.directBaseURL)。
-    directBaseURL: 'http://175.178.198.17:3000',
     description: 'Miau API 服务',
     authType: 'bearer',
     isBuiltIn: true
@@ -1870,9 +1835,9 @@ export class ApiService {
     // 少了这个豁免，这道门会在请求头装配之前就把每一次出图拒掉 —— 表现是用户登录了、
     // 开关也开着，却一直被要求「请先设置 API Key」，而整条平台计费链路一次都到不了。
     //
-    // 判据用 `willUsePlatformBilling` 而不是直接读 store：站点不对（apiyi / 自建）或
-    // 模型绕开网关（gemini-native 走明文源站）时，这次请求实际会回落到自填 Key，
-    // 那就仍然需要它 —— 这两种情况下豁免会放行一个注定 401 的请求，反而更难查。
+    // 判据用 `willUsePlatformBilling` 而不是直接读 store：站点不对（apiyi / 自建）时，
+    // 这次请求实际会回落到自填 Key，那就仍然需要它 —— 豁免会放行一个注定 401 的请求，
+    // 反而更难查。
     if (!apiKey && !this.willUsePlatformBilling(modelKey, effectiveSiteKey)) {
       return {
         success: false,
@@ -2484,19 +2449,11 @@ export class ApiService {
       return `${site.baseURL}/v1/chat/completions`
     }
 
-    // 谷歌原生端点绕开 CDN:加速域名前面的 EdgeOne 不支持
-    // `/v1beta/models/...:generateContent`,走它必 524(且报成 CORS 错误)。
-    // 按 apiType 判定而不是逐个模型打标记 —— 以后新增谷歌模型自动跟随。
-    //
-    // ⚠️ 改这里之前先看 {@link evaluatePlatformBillingEligibility} 与
-    // `shouldUsePlatformBilling`:**改道会同时改掉计费落点**。平台余额的凭据由主进程
-    // 按 host 注入,改道到一个注入器看不见的 host 就等于让那些模型静默 401。所以
-    // host 的选择只有 `resolveRequestHostSource` 这一个出处,两边共用。
-    const hostSource = resolveRequestHostSource(modelConfig, site)
-
+    // ⚠️ 别按模型改道到别的 host:平台余额的凭据由主进程按 host 注入,改道到注入器
+    // 看不见的 host 就等于让那些模型静默 401(见 evaluatePlatformBillingEligibility)。
     try {
       const modelUrl = new URL(sourceUrl)
-      const siteUrl = new URL(hostSource)
+      const siteUrl = new URL(site.baseURL)
       modelUrl.protocol = siteUrl.protocol
       modelUrl.host = siteUrl.host
       return modelUrl.toString()
@@ -2514,13 +2471,9 @@ export class ApiService {
    *    那个 host 上挂过滤器,别的站点(apiyi / 自建)打了标记也换不到凭据,反而因为
    *    我们不再发 Authorization 而直接 401。
    *
-   * 第 2 条按 **实际请求 URL 而不是站点键、也不是 site.baseURL** 判定,两条理由:
-   * - 注入器认的就是 host。用户完全可以自建一个指向同一网关的自定义站点条目,那种
-   *   请求照样会被注入,所以也该打标记 —— 只认站点键会漏掉它。
-   * - **`site.baseURL` 不等于请求真正打向的 host**。`buildRequestUrl` 会把谷歌原生
-   *   模型改道到 `directBaseURL`(见那里的注释),站点仍是网关、请求却已经不是了。
-   *   照 baseURL 判的那段时间里,那三个 Nano Banana 模型在平台模式下必定 401。
-   *   模型维度的同一判据见 {@link evaluatePlatformBillingEligibility}(UI 提示用它)。
+   * 第 2 条按 **实际请求 URL 而不是站点键** 判定:注入器认的就是 host。用户完全可以
+   * 自建一个指向同一网关的自定义站点条目,那种请求照样会被注入,所以也该打标记 ——
+   * 只认站点键会漏掉它。出图前的同一判据见 {@link evaluatePlatformBillingEligibility}。
    */
   private shouldUsePlatformBilling(requestUrl: string): boolean {
     if (useQuotaStore.getState().billingSource !== 'platform') return false
@@ -2535,9 +2488,6 @@ export class ApiService {
    * URL 判（装配请求头时），这个按 模型 + 站点 提前判（决定要不要放行没有 key 的请求）。
    * 两者必须给出一致的结论，否则会出现「门放行了但头没装上」= 裸奔撞 401，
    * 或者「门拦下了但本该走平台」= 登录了还被要求填 key。
-   *
-   * 复用 `evaluatePlatformBillingEligibility`，所以 gemini-native 那三个绕开网关的
-   * 模型在这里也会被判成不合格 —— 它们确实需要自填 Key，门该照常拦。
    */
   private willUsePlatformBilling(modelKey: string, effectiveSiteKey: string): boolean {
     if (useQuotaStore.getState().billingSource !== 'platform') return false
