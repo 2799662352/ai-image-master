@@ -105,6 +105,8 @@ Linux 上如果没有 secret store，`safeStorage` 会用**硬编码明文口令
 
 **根治**：让 EdgeOne 支持 `/v1beta/` 路径，取消 `directBaseURL` 这个例外。属服务端/CDN 工作。
 
+**✅ 已解决（2026-09-30）**：复测经加速域名、平台凭据：Nano Banana 2 1K `/v1beta/...:generateContent` 200 / 17 s，Nano Banana Pro 4K 200 / 42.6 s（响应 9 MB base64），524 不再复现。`directBaseURL` 与 `model-bypasses-gateway` 判据、设置页「这个模型用不了平台余额」提示一并删除，三个模型改走加速域名，平台模式正常扣余额；自填 Key 用户也不再经明文 HTTP 发 Key。残留风险：EdgeOne 回源超时若低于单次生成耗时（Pro 4K 偶发 >60 s）仍会 524，届时调 EdgeOne 回源超时，别再加回明文源站。
+
 ---
 
 ## 六、可选增强：用量归因（未做）
