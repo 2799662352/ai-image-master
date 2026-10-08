@@ -104,11 +104,25 @@ describe('CodexProtocolClient goal methods', () => {
     expect(res.goal).toBeNull()
   })
 
+  it('setThreadGoal forwards the mutation origin', async () => {
+    server.setResponder(() => ({ goal: { threadId: 'thr_1', objective: 'x', status: 'active', tokensUsed: 0, timeUsedSeconds: 0, createdAt: 1, updatedAt: 1 } }))
+    await client.setThreadGoal({ threadId: 'thr_1', objective: 'x', origin: 'user' })
+    expect(server.sent('thread/goal/set').params.origin).toBe('user')
+  })
+
   it('clearThreadGoal sends thread/goal/clear and returns cleared', async () => {
     server.setResponder(() => ({ cleared: true }))
     const res = await client.clearThreadGoal('thr_1')
-    expect(server.sent('thread/goal/clear').params.threadId).toBe('thr_1')
+    const sent = server.sent('thread/goal/clear')
+    expect(sent.params.threadId).toBe('thr_1')
+    expect('origin' in sent.params).toBe(false)
     expect(res.cleared).toBe(true)
+  })
+
+  it('clearThreadGoal forwards the mutation origin when given', async () => {
+    server.setResponder(() => ({ cleared: true }))
+    await client.clearThreadGoal('thr_1', 'user')
+    expect(server.sent('thread/goal/clear').params).toEqual({ threadId: 'thr_1', origin: 'user' })
   })
 
   // ─── Notifications ──────────────────────────────────────────────────────────

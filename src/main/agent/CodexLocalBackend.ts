@@ -145,6 +145,7 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type {
+  ThreadGoalMutationOrigin,
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalGetResponse,
@@ -1002,9 +1003,12 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.getThreadGoal(threadId)
   }
 
-  async clearThreadGoal(threadId: string): Promise<ThreadGoalClearResponse> {
+  async clearThreadGoal(
+    threadId: string,
+    origin?: ThreadGoalMutationOrigin,
+  ): Promise<ThreadGoalClearResponse> {
     if (!this.client) throw new Error('CodexLocalBackend.clearThreadGoal called before start')
-    return this.client.clearThreadGoal(threadId)
+    return this.client.clearThreadGoal(threadId, origin)
   }
 
   async compactThread(threadId: string): Promise<Record<string, never>> {

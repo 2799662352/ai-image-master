@@ -58,6 +58,7 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type {
+  ThreadGoalMutationOrigin,
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalGetResponse,
@@ -684,8 +685,14 @@ export class CodexProtocolClient {
   }
 
   /** Remove the current goal. */
-  async clearThreadGoal(threadId: string): Promise<ThreadGoalClearResponse> {
-    return this.rpc<ThreadGoalClearResponse>('thread/goal/clear', { threadId })
+  async clearThreadGoal(
+    threadId: string,
+    origin?: ThreadGoalMutationOrigin,
+  ): Promise<ThreadGoalClearResponse> {
+    return this.rpc<ThreadGoalClearResponse>('thread/goal/clear', {
+      threadId,
+      ...(origin ? { origin } : {}),
+    })
   }
 
   // ─── Context compaction (thread/compact/*, app-server v2) ─────────────────
