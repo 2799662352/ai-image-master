@@ -24,7 +24,7 @@ import { getUIStateManager, UIStateManager } from '../features/ui-state'
 import { getModelSelectorManager, ModelSelectorManager, getRatioResolutionManager, RatioResolutionManager } from '../features/model-selector'
 import { getImageViewer, ImageViewer } from '../features/image-viewer'
 import { getSiteManager, SiteManager } from '../features/settings/SiteManager'
-import { getTabManager, TabManager } from '../features/tab-manager'
+import { getTabManager, initTabStripScroll, TabManager } from '../features/tab-manager'
 import { getMobileMenuManager, MobileMenuManager } from '../features/mobile-menu'
 import { getModalFactory, ModalFactory } from '../features/dialog'
 import { KeyboardShortcuts, createKeyboardShortcuts } from '../features/keyboard'
@@ -301,6 +301,11 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       // 绑定标签按钮点击事件和初始化 hash 路由
       tabManager.bindTabButtons()
       tabManager.initHashRouter()
+
+      const tabStrip = document.querySelector<HTMLElement>('.tab-strip')
+      const tabStripScroll = tabStrip ? initTabStripScroll(tabStrip) : null
+      tabStripScroll?.revealTab(tabManager.getCurrentTab())
+      tabManager.onTabChange((newTab: string) => tabStripScroll?.revealTab(newTab))
       
       tabManager.onTabChange((newTab: string, oldTab: string) => {
         if (oldTab === 'director') unmountDirectorReact()
