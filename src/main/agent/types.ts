@@ -41,6 +41,7 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type {
+  ThreadGoalMutationOrigin,
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalGetResponse,
@@ -241,7 +242,7 @@ export interface IAgentBackend {
   // backends omit them; the AgentManager RPC wrappers guard on presence.
   setThreadGoal?(params: ThreadGoalSetParams): Promise<ThreadGoalSetResponse>
   getThreadGoal?(threadId: string): Promise<ThreadGoalGetResponse>
-  clearThreadGoal?(threadId: string): Promise<ThreadGoalClearResponse>
+  clearThreadGoal?(threadId: string, origin?: ThreadGoalMutationOrigin): Promise<ThreadGoalClearResponse>
 
   // Native manual context compaction (thread/compact/start, app-server v2).
   // Optional — non-Codex backends omit it; the AgentManager RPC wrapper guards.

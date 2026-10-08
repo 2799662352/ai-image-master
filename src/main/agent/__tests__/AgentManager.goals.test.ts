@@ -59,19 +59,27 @@ function makeManager(backend: ReturnType<typeof fakeBackend>, store?: ReturnType
 }
 
 describe('AgentManager goal Rpc envelopes', () => {
-  it('setThreadGoalRpc maps DB id → codex id and forwards params', async () => {
+  it('setThreadGoalRpc maps DB id → codex id and forwards params as a user edit', async () => {
     const backend = fakeBackend()
     const mgr = makeManager(backend, fakeStore('thr_codex'))
     const res = await mgr.setThreadGoalRpc('db-1', { objective: 'ship it' })
-    expect(backend.setThreadGoal).toHaveBeenCalledWith({ threadId: 'thr_codex', objective: 'ship it' })
+    expect(backend.setThreadGoal).toHaveBeenCalledWith({
+      threadId: 'thr_codex',
+      objective: 'ship it',
+      origin: 'user',
+    })
     expect(res).toEqual({ ok: true, data: sampleGoal })
   })
 
-  it('setThreadGoalRpc forwards a status change (pause/resume)', async () => {
+  it('setThreadGoalRpc forwards a status change (pause/resume) as a user edit', async () => {
     const backend = fakeBackend()
     const mgr = makeManager(backend, fakeStore('thr_codex'))
     await mgr.setThreadGoalRpc('db-1', { status: 'paused' })
-    expect(backend.setThreadGoal).toHaveBeenCalledWith({ threadId: 'thr_codex', status: 'paused' })
+    expect(backend.setThreadGoal).toHaveBeenCalledWith({
+      threadId: 'thr_codex',
+      status: 'paused',
+      origin: 'user',
+    })
   })
 
   it('setThreadGoalRpc returns a friendly error when no codex thread exists yet', async () => {
@@ -99,11 +107,11 @@ describe('AgentManager goal Rpc envelopes', () => {
     expect(res).toEqual({ ok: true, data: sampleGoal })
   })
 
-  it('clearThreadGoalRpc delegates and returns cleared', async () => {
+  it('clearThreadGoalRpc delegates as a user clear and returns cleared', async () => {
     const backend = fakeBackend()
     const mgr = makeManager(backend, fakeStore('thr_codex'))
     const res = await mgr.clearThreadGoalRpc('db-1')
-    expect(backend.clearThreadGoal).toHaveBeenCalledWith('thr_codex')
+    expect(backend.clearThreadGoal).toHaveBeenCalledWith('thr_codex', 'user')
     expect(res).toEqual({ ok: true, data: { cleared: true } })
   })
 

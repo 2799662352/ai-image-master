@@ -2503,6 +2503,9 @@ export class AgentManager {
   // Renderer passes the DB thread id; we resolve it to the codex thread id
   // (in-memory map, falling back to the persisted id) before hitting the
   // app-server. All wrap in the standard `{ ok, error?, data? }` envelope.
+  // Goal set/clear are tagged `origin: 'user'` — codex records those as user
+  // instructions in model history — so only explicit user actions (`/goal`,
+  // GoalChip) may be wired to them.
 
   private async resolveCodexThreadIdForRpc(dbThreadId: string): Promise<string | undefined> {
     const inMem = this.codexThreadIdByDbThreadId.get(dbThreadId)
@@ -2524,7 +2527,7 @@ export class AgentManager {
       if (!codexThreadId) {
         return { ok: false, error: '先发一条消息创建会话,再设置目标(/goal)。' }
       }
-      const res = await this.backend.setThreadGoal({ threadId: codexThreadId, ...params })
+      const res = await this.backend.setThreadGoal({ threadId: codexThreadId, ...params, origin: 'user' })
       return { ok: true, data: res.goal }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -2548,7 +2551,7 @@ export class AgentManager {
       if (!this.backend.clearThreadGoal) throw new Error('Goal API unavailable')
       const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
       if (!codexThreadId) return { ok: true, data: { cleared: false } }
-      const res = await this.backend.clearThreadGoal(codexThreadId)
+      const res = await this.backend.clearThreadGoal(codexThreadId, 'user')
       return { ok: true, data: { cleared: res.cleared } }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
