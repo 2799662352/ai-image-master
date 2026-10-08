@@ -940,6 +940,88 @@ body {
     }
 }
 
+/* 导航标签条:放不下时横向滚动,悬停时在底边下方浮出滑块(逻辑见 features/tab-manager/tabStripScroll.ts)。
+   滚动容器会裁掉角标(top:-4px)和悬停上移(2px),所以顶部留 6px 内边距、用负外边距抵消,版面不动。 */
+.tab-strip {
+    position: relative;
+}
+
+.tab-strip-scroller {
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    padding-top: 6px;
+    margin-top: -6px;
+}
+
+.tab-strip-scroller::-webkit-scrollbar {
+    display: none;
+}
+
+/* 外扩的焦点框会被滚动容器裁掉,改成内收 */
+.tab-strip-scroller .tab-btn:focus-visible {
+    outline-offset: -2px;
+}
+
+.tab-strip-rail {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 12px;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.tab-strip.is-overflowing .tab-strip-rail {
+    display: block;
+}
+
+.tab-strip.is-overflowing:hover .tab-strip-rail,
+.tab-strip.is-dragging .tab-strip-rail {
+    opacity: 1;
+}
+
+.tab-strip-rail::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.tab-strip-thumb {
+    position: absolute;
+    top: 4px;
+    left: 0;
+    height: 3px;
+    background: var(--accent, #FCE300);
+    opacity: 0.55;
+    touch-action: none;
+    transition: opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 可视 3px 太细不好抓,把命中区撑满整条轨道的高度 */
+.tab-strip-thumb::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    bottom: -5px;
+    left: 0;
+    right: 0;
+}
+
+.tab-strip-thumb:hover,
+.tab-strip.is-dragging .tab-strip-thumb {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(252, 227, 0, 0.55);
+}
+
 /* 比例按钮样式 - Kinetic Typography 风格 */
 .ratio-btn.active {
     background: var(--accent, #FCE300) !important;

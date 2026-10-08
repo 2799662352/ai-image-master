@@ -9,3 +9,5 @@ export type {
   TabManagerConfig,
   TabChangeCallback
 } from './TabManager'
+export { initTabStripScroll } from './tabStripScroll'
+export type { TabStripScroll } from './tabStripScroll'
