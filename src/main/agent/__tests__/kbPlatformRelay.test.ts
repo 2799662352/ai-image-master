@@ -150,8 +150,10 @@ describe('kbPlatformRelay', () => {
     const platformHeaders = vi.fn(() => ({ ...PLATFORM_HEADERS }))
     const relay = await startRelay({ gatewayOrigin: () => gateway.origin, platformHeaders })
 
+    // 同长度才会走到 timingSafeEqual;口令末位本来就是 0 时(1/16 的概率)改成 1。
+    const wrongToken = relay.token.slice(0, -1) + (relay.token.endsWith('0') ? '1' : '0')
     const missing = await callRelay(relay, '/knowledge/search', { token: null })
-    const wrong = await callRelay(relay, '/knowledge/search', { token: `${relay.token.slice(0, -1)}0` })
+    const wrong = await callRelay(relay, '/knowledge/search', { token: wrongToken })
 
     expect(missing.status).toBe(401)
     expect(missing.json().error.code).toBe('relay_unauthorized')
