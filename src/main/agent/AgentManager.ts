@@ -679,6 +679,7 @@ export class AgentManager {
         getApiyiKey: () => this.apiyiMcpKey || undefined,
         getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
         getDashVectorKey: () => this.dashVectorKey || undefined,
+        cinematographyKbPlatformRelay: true,
         onApprovalRequest: (request) => this.emitApprovalRequest(request),
         onApprovalResolved: (info) => this.emitApprovalResolved(info),
         onMcpNotification: (event) => this.handleMcpNotification(event),

@@ -307,6 +307,12 @@ export interface CodexLaunchOptions {
    */
   dashVectorKey?: string
   /**
+   * 本机平台中转(`kbPlatformRelay.ts`)的地址与口令,作为 cinematography_kb 的两条 env
+   * 叶子注入。注入后两个检索工具优先按平台余额计费,中转报「平台不可用」时才用上面
+   * 两个自填 Key。口令只对这个中转有效,平台 token 本身不进 argv。
+   */
+  cinematographyKbPlatformRelay?: { url: string; token: string }
+  /**
    * Freshly-resolved stdio transport for the bundled cinematography-kb-mcp:
    * `command` from `resolveApiyiCommand` (system node, else Electron-as-Node)
    * and `args[0]` = this build's `resources/cinematography-kb-mcp/index.js`.
@@ -337,6 +343,33 @@ export interface CodexLaunchOptions {
 
 function quote(value: string): string {
   return JSON.stringify(value)
+}
+
+const SECRET_ENV_NAME = /(?:KEY|TOKEN|SECRET|PASSWORD)$/i
+const INLINE_TABLE_STRING_ENTRY = /("((?:[^"\\]|\\.)*)"\s*=\s*)"(?:[^"\\]|\\.)*"/g
+
+/**
+ * 启动参数要整行进日志(排障靠它),但有几条 `-c` 的值是密钥:MCP 的 env 密钥叶子、
+ * 整表写法的 env、catimation 的 http_headers。只遮值不遮键 —— 排障要看的是「注入了没有」。
+ */
+export function redactCodexLaunchArgsForLog(args: readonly string[]): string[] {
+  return args.map((arg, index) => {
+    if (args[index - 1] !== '-c') return arg
+    const eq = arg.indexOf('=')
+    if (eq <= 0) return arg
+    const key = arg.slice(0, eq)
+    const value = arg.slice(eq + 1)
+    if (value.trimStart().startsWith('{')) {
+      const masked = value.replace(
+        INLINE_TABLE_STRING_ENTRY,
+        (entry: string, prefix: string, name: string) =>
+          SECRET_ENV_NAME.test(name) ? `${prefix}"<redacted>"` : entry,
+      )
+      return `${key}=${masked}`
+    }
+    const leaf = key.slice(key.lastIndexOf('.') + 1)
+    return key.includes('.env.') && SECRET_ENV_NAME.test(leaf) ? `${key}=<redacted>` : arg
+  })
 }
 
 export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): CodexSessionConfig {
@@ -867,6 +900,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push(
       '-c',
       `mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT=${quote(dashVectorEndpoint)}`,
+    )
+  }
+
+  // Platform-billing relay for the same server. Dotted leaves like the key
+  // overlays above, for the same clobbering reason.
+  const kbRelay = options?.cinematographyKbPlatformRelay
+  if (kbRelay?.url && kbRelay.token) {
+    args.push(
+      '-c', `mcp_servers.cinematography_kb.env.CATIMATION_KB_RELAY_URL=${quote(kbRelay.url)}`,
+      '-c', `mcp_servers.cinematography_kb.env.CATIMATION_KB_RELAY_TOKEN=${quote(kbRelay.token)}`,
     )
   }
 

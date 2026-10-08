@@ -19,12 +19,19 @@
  * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` — never persisted to
  * config.toml. An external `codex` CLI user can instead hand-add the key to the
  * `mcp_servers.cinematography_kb.env` block in their `~/.codex/config.toml`.
+ *
+ * Platform billing: the app also injects CATIMATION_KB_RELAY_URL / _TOKEN, a
+ * loopback relay in its main process that forwards to the Miau gateway with the
+ * signed-in user's platform credentials. Both search tools try it first and use
+ * the keys above only when the relay reports the platform can't serve the call
+ * at all (signed out, gateway without the channel, gateway unreachable).
  */
 
 'use strict'
 
 const crypto = require('node:crypto')
 const fs = require('node:fs')
+const http = require('node:http')
 const https = require('node:https')
 const path = require('node:path')
 const readline = require('node:readline')
@@ -34,6 +41,19 @@ const ENDPOINT_PATH = '/api/v1/indices/knowledge/search'
 const AGENT_ID = 'aid-2065266de36042b3aad2505c1ee12dd8'
 const API_KEY_ENV = 'DASHSCOPE_API_KEY'
 const TIMEOUT_MS = 60000
+
+// Platform billing relay. The gateway maps these model names to the agent id /
+// collection through each channel's 模型重定向, so they must match the channel
+// configuration on the gateway.
+const RELAY_URL_ENV = 'CATIMATION_KB_RELAY_URL'
+const RELAY_TOKEN_ENV = 'CATIMATION_KB_RELAY_TOKEN'
+const PLATFORM_KB_MODEL = 'cinematography-kb'
+const PLATFORM_SAKUGA_MODEL = 'sakuga-dataset'
+const EMBED_MODEL = 'text-embedding-v4'
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+// Outlasts the relay's own 60 s upstream timeout, so a slow gateway is reported
+// by the relay's 504 rather than by this process giving up first.
+const RELAY_TIMEOUT_MS = TIMEOUT_MS + 5000
 
 // --- Sakuga-42M raw-dataset retrieval (DashVector) -------------------------
 // The full 1.1M-row Sakuga-42M metadata lives in a DashVector Serverless
@@ -277,13 +297,178 @@ function extractChunks(payload) {
   return chunks
 }
 
-function searchKb(query, topK, agentId = AGENT_ID, raw = false) {
+// --- Platform billing relay -------------------------------------------------
+
+function parseJsonOrNull(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pure: relay coordinates from the env, or null. The relay token is only ever
+ * sent to a plain-http loopback address; anything else in the env is ignored.
+ */
+function platformRelayFromEnv(env) {
+  const source = isObject(env) ? env : {}
+  const rawUrl = String(source[RELAY_URL_ENV] || '').trim()
+  const token = String(source[RELAY_TOKEN_ENV] || '').trim()
+  if (!rawUrl || !token) return null
+  let parsed
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' || !LOOPBACK_HOSTS.has(parsed.hostname)) return null
+  return {
+    hostname: parsed.hostname.replace(/^\[(.*)\]$/, '$1'),
+    port: Number(parsed.port) || 80,
+    token,
+  }
+}
+
+/** POST JSON to the relay. Never rejects; `status: 0` means no HTTP answer. */
+function relayPost(relay, pathName, bodyObj) {
   return new Promise((resolve) => {
-    const apiKey = (process.env[API_KEY_ENV] || '').trim()
-    if (!apiKey) {
-      resolve({ success: false, error: `Environment variable ${API_KEY_ENV} is not set.` })
-      return
-    }
+    const body = Buffer.from(JSON.stringify(bodyObj), 'utf8')
+    let answered = false
+    const req = http.request(
+      {
+        hostname: relay.hostname,
+        port: relay.port,
+        path: pathName,
+        method: 'POST',
+        // A pooled socket the relay already closed would read as "relay unreachable"
+        // and send the call to the user's own key.
+        agent: false,
+        headers: {
+          Authorization: `Bearer ${relay.token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+        },
+        timeout: RELAY_TIMEOUT_MS,
+      },
+      (res) => {
+        answered = true
+        const parts = []
+        res.on('data', (d) => parts.push(d))
+        res.on('end', () => {
+          resolve({ status: res.statusCode || 0, body: Buffer.concat(parts).toString('utf8') })
+        })
+        res.on('error', (err) => {
+          resolve({ status: 0, answered: true, error: `Platform relay response failed: ${err.message}` })
+        })
+      },
+    )
+    req.on('timeout', () => {
+      req.destroy()
+      resolve({ status: 0, timedOut: true, error: `Platform relay timed out after ${RELAY_TIMEOUT_MS}ms` })
+    })
+    req.on('error', (err) => {
+      resolve({ status: 0, answered, error: `Platform relay unreachable: ${err.message}` })
+    })
+    req.write(body)
+    req.end()
+  })
+}
+
+/**
+ * Pure: why the platform cannot serve this call at all, or null when the relay
+ * response is the answer. Only these reasons fall back to the user's own key —
+ * a balance or upstream error is shown as-is, not retried on the user's key.
+ */
+function platformUnavailableReason(res) {
+  if (!res || res.status === 0) {
+    return res && (res.timedOut || res.answered) ? null : 'relay_unreachable'
+  }
+  const payload = parseJsonOrNull(res.body)
+  const code = isObject(payload) && isObject(payload.error) ? String(payload.error.code || '') : ''
+  if (res.status === 401 && code === 'platform_unavailable') return 'signed_out'
+  if (res.status === 502 && code === 'gateway_unreachable') return 'gateway_unreachable'
+  // A gateway without the route answers its JSON 404, or its web page with 200.
+  if (res.status === 404 && code !== 'bad_response_status_code') return 'not_offered'
+  if (res.status >= 200 && res.status < 300 && payload === null) return 'not_offered'
+  // No channel serves the model in the user's group.
+  if (res.status === 503 && code === 'model_not_found') return 'not_offered'
+  return null
+}
+
+function platformFailure(res) {
+  if (res.status === 0) return { success: false, error: res.error || 'Platform relay failed' }
+  const payload = parseJsonOrNull(res.body)
+  const err = isObject(payload) && isObject(payload.error) ? payload.error : {}
+  return {
+    success: false,
+    error: `Platform billing request failed: HTTP ${res.status}${err.code ? ` ${err.code}` : ''}`,
+    detail: String(err.message || res.body || '').slice(0, 1000),
+  }
+}
+
+const PLATFORM_UNAVAILABLE_TEXT = {
+  signed_out: 'Not signed in to the platform (or no billing pool is selected)',
+  not_offered: 'The platform gateway does not offer this search yet',
+  gateway_unreachable: 'The platform gateway is unreachable',
+  relay_unreachable: 'The in-app platform relay is unreachable',
+}
+
+function noCredentialError(reason, missingEnv) {
+  const why = PLATFORM_UNAVAILABLE_TEXT[reason] || 'Platform billing is unavailable'
+  return {
+    success: false,
+    error: `${why}, and ${missingEnv} is not set. `
+      + 'Sign in to bill your platform balance, or set your own key in 设置 → 运镜知识库.',
+  }
+}
+
+function isHttpOk(res) {
+  return res.status >= 200 && res.status < 300
+}
+
+// --- Knowledge-base search ----------------------------------------------------
+
+/** Pure: a knowledge-search HTTP answer → tool result (shared by both routes). */
+function kbSearchResult(statusCode, rawBody, raw) {
+  if (statusCode && (statusCode < 200 || statusCode >= 300)) {
+    return { success: false, error: `HTTP ${statusCode}`, detail: rawBody.slice(0, 1000) }
+  }
+  let payload
+  try {
+    payload = JSON.parse(rawBody)
+  } catch {
+    return raw ? { success: false, error: 'Non-JSON response' } : { success: true, text: rawBody.slice(0, 6000) }
+  }
+  if (raw) return { success: true, payload }
+  const chunks = extractChunks(payload)
+  if (chunks && chunks.length) return { success: true, text: chunks.join('\n\n') }
+  return { success: true, text: JSON.stringify(payload, null, 2).slice(0, 6000) }
+}
+
+async function searchKb(query, topK, agentId = AGENT_ID, raw = false) {
+  // Only the shared 运镜库 agent has a platform channel.
+  const relay = agentId === AGENT_ID ? platformRelayFromEnv(process.env) : null
+  let fallbackReason = null
+  if (relay) {
+    const body = { model: PLATFORM_KB_MODEL, query }
+    const k = Math.floor(Number(topK))
+    if (Number.isFinite(k) && k > 0) body.dense_similarity_top_k = k
+    const res = await relayPost(relay, '/knowledge/search', body)
+    fallbackReason = platformUnavailableReason(res)
+    if (!fallbackReason) return isHttpOk(res) ? kbSearchResult(res.status, res.body, raw) : platformFailure(res)
+  }
+  const apiKey = (process.env[API_KEY_ENV] || '').trim()
+  if (!apiKey) {
+    return fallbackReason
+      ? noCredentialError(fallbackReason, API_KEY_ENV)
+      : { success: false, error: `Environment variable ${API_KEY_ENV} is not set.` }
+  }
+  return searchKbWithKey(apiKey, query, topK, agentId, raw)
+}
+
+function searchKbWithKey(apiKey, query, topK, agentId, raw) {
+  return new Promise((resolve) => {
     const bodyObj = { query, agent_id: agentId }
     if (topK) {
       // Bailian Retrieve rejects `rerank_top_n` in agent_config overrides
@@ -307,28 +492,7 @@ function searchKb(query, topK, agentId = AGENT_ID, raw = false) {
         const parts = []
         res.on('data', (d) => parts.push(d))
         res.on('end', () => {
-          const rawBody = Buffer.concat(parts).toString('utf8')
-          if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-            resolve({ success: false, error: `HTTP ${res.statusCode}`, detail: rawBody.slice(0, 1000) })
-            return
-          }
-          let payload
-          try {
-            payload = JSON.parse(rawBody)
-          } catch {
-            resolve(raw ? { success: false, error: 'Non-JSON response' } : { success: true, text: rawBody.slice(0, 6000) })
-            return
-          }
-          if (raw) {
-            resolve({ success: true, payload })
-            return
-          }
-          const chunks = extractChunks(payload)
-          if (chunks && chunks.length) {
-            resolve({ success: true, text: chunks.join('\n\n') })
-          } else {
-            resolve({ success: true, text: JSON.stringify(payload, null, 2).slice(0, 6000) })
-          }
+          resolve(kbSearchResult(res.statusCode, Buffer.concat(parts).toString('utf8'), raw))
         })
       },
     )
@@ -418,18 +582,43 @@ function getJson(host, pathName, headers) {
   })
 }
 
+/** Pure: the query vector out of an OpenAI-format `/v1/embeddings` answer. */
+function embeddingFromOpenAiPayload(payload) {
+  const first = isObject(payload) && Array.isArray(payload.data) ? payload.data[0] : null
+  if (!isObject(first) || !Array.isArray(first.embedding)) {
+    return { success: false, error: 'Unexpected embedding response shape', detail: JSON.stringify(payload).slice(0, 500) }
+  }
+  return { success: true, vector: first.embedding }
+}
+
 /** Embed the natural-language query with DashScope text-embedding-v4 (512-dim). */
 async function embedQuery(text) {
+  const relay = platformRelayFromEnv(process.env)
+  let fallbackReason = null
+  if (relay) {
+    const res = await relayPost(relay, '/embeddings', {
+      model: EMBED_MODEL,
+      input: text,
+      dimensions: SAKUGA_EMBED_DIM,
+      encoding_format: 'float',
+    })
+    fallbackReason = platformUnavailableReason(res)
+    if (!fallbackReason) {
+      return isHttpOk(res) ? embeddingFromOpenAiPayload(parseJsonOrNull(res.body)) : platformFailure(res)
+    }
+  }
   const apiKey = (process.env[API_KEY_ENV] || '').trim()
   if (!apiKey) {
-    return { success: false, error: `Environment variable ${API_KEY_ENV} is not set.` }
+    return fallbackReason
+      ? noCredentialError(fallbackReason, API_KEY_ENV)
+      : { success: false, error: `Environment variable ${API_KEY_ENV} is not set.` }
   }
   const res = await postJson(
     'dashscope.aliyuncs.com',
     '/api/v1/services/embeddings/text-embedding/text-embedding',
     { Authorization: `Bearer ${apiKey}` },
     {
-      model: 'text-embedding-v4',
+      model: EMBED_MODEL,
       input: { texts: [text] },
       parameters: { dimension: SAKUGA_EMBED_DIM },
     },
@@ -516,29 +705,49 @@ function formatSakugaHits(payload) {
   return lines.join('\n\n')
 }
 
+/** Pure: a DashVector query answer → tool result (shared by both routes). */
+function sakugaResult(payload) {
+  if (isObject(payload) && payload.code !== undefined && payload.code !== 0) {
+    return { success: false, error: `DashVector code ${payload.code}`, detail: String(payload.message || '').slice(0, 500) }
+  }
+  return { success: true, text: formatSakugaHits(payload) }
+}
+
 /** Embed query → DashVector semantic search over the sakuga42m collection. */
 async function querySakuga(args) {
+  const relay = platformRelayFromEnv(process.env)
   const dvKey = (process.env[DASHVECTOR_KEY_ENV] || '').trim()
   const dvEndpoint = (process.env[DASHVECTOR_ENDPOINT_ENV] || '').trim()
-  if (!dvKey || !dvEndpoint) {
-    const missing = [!dvKey && DASHVECTOR_KEY_ENV, !dvEndpoint && DASHVECTOR_ENDPOINT_ENV]
-      .filter(Boolean)
-      .join(', ')
+  const missing = [!dvKey && DASHVECTOR_KEY_ENV, !dvEndpoint && DASHVECTOR_ENDPOINT_ENV]
+    .filter(Boolean)
+    .join(', ')
+  if (!relay && missing) {
     return { success: false, error: `Environment variable(s) not set: ${missing}` }
   }
   const embedded = await embedQuery(String(args.query))
   if (!embedded.success) return embedded
+  if (embedded.vector.length !== SAKUGA_EMBED_DIM) {
+    return {
+      success: false,
+      error: `Query embedding has ${embedded.vector.length} dimensions; ${SAKUGA_COLLECTION} expects ${SAKUGA_EMBED_DIM}.`,
+    }
+  }
+  const body = buildSakugaQueryBody(embedded.vector, args)
+  let fallbackReason = null
+  if (relay) {
+    const res = await relayPost(relay, '/vector/query', { model: PLATFORM_SAKUGA_MODEL, ...body })
+    fallbackReason = platformUnavailableReason(res)
+    if (!fallbackReason) return isHttpOk(res) ? sakugaResult(parseJsonOrNull(res.body)) : platformFailure(res)
+  }
+  if (missing) return noCredentialError(fallbackReason, missing)
   const res = await postJson(
     dvEndpoint,
     `/v1/collections/${SAKUGA_COLLECTION}/query`,
     { 'dashvector-auth-token': dvKey },
-    buildSakugaQueryBody(embedded.vector, args),
+    body,
   )
   if (!res.success) return res
-  if (isObject(res.payload) && res.payload.code !== undefined && res.payload.code !== 0) {
-    return { success: false, error: `DashVector code ${res.payload.code}`, detail: String(res.payload.message || '').slice(0, 500) }
-  }
-  return { success: true, text: formatSakugaHits(res.payload) }
+  return sakugaResult(res.payload)
 }
 
 // --- Sakuga clip search: Bailian AV KB + DashVector metadata join ----------
@@ -929,6 +1138,11 @@ module.exports = {
   ALL_TOOLS,
   CLIP_TOOL_NAMES,
   CLIP_TOOLS_ENABLED,
+  platformRelayFromEnv,
+  platformUnavailableReason,
+  searchKb,
+  embedQuery,
+  querySakuga,
   buildSakugaQueryBody,
   formatSakugaHits,
   parseAvNode,

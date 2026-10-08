@@ -4,7 +4,7 @@ import { promises as fs, type WriteStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { assertCodexModelContextConfig } from '../../shared/modelSettings'
-import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexLaunchOptions, type CodexProviderConfig } from './codexLaunch'
+import { buildCodexLaunchArgs, redactCodexLaunchArgsForLog, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexLaunchOptions, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
@@ -16,9 +16,11 @@ import {
   startProviderCompatibilityProxies,
   type ProviderCompatibilityProxyGroup,
 } from './responsesCompatibilityProxy'
+import { startKbPlatformRelay, type KbPlatformRelay } from './kbPlatformRelay'
 import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
 import { resolveGatewayOrigin } from '../services/auth/gatewayHeaderInjector'
 import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gatewayToken'
+import { notePlatformSpend } from '../services/auth/platformSpend'
 
 /**
  * 让 agent 聊天也能花平台余额。
@@ -285,6 +287,12 @@ export interface CodexLocalBackendOptions {
    * next codex (re)start (AgentManager restarts on key change).
    */
   getDashVectorKey?: () => string | undefined
+  /**
+   * 每次 spawn 给 cinematography_kb 起一个本机平台中转(`kbPlatformRelay.ts`),登录后
+   * 它的两个检索工具按平台余额计费。只有生产 AgentManager 打开 —— 测连通性的临时
+   * backend 不该占端口,单测断言的启动参数也不该多出两条。
+   */
+  cinematographyKbPlatformRelay?: boolean
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   /** 服务端自行解决/清理了某个待决审批请求（`serverRequest/resolved`）。 */
   onApprovalResolved?: (info: { id: string; threadId?: string }) => void
@@ -316,6 +324,7 @@ type SpawnedCodexClient = {
   proc: ChildProcess
   client: CodexProtocolClient
   compatibilityProxies: ProviderCompatibilityProxyGroup | null
+  kbRelay: KbPlatformRelay | null
   /**
    * (round-5) 显式持有 log WriteStream, 让 stop() 能 .end() 它。
    *
@@ -419,6 +428,7 @@ export class CodexLocalBackend implements IAgentBackend {
    */
   private log: WriteStream | null = null
   private compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
+  private kbRelay: KbPlatformRelay | null = null
   /** Provider tables registered on the live spawn (Plan B routing targets). */
   private registeredProviderChannelIds = new Set<string>()
   private readonly options: CodexLocalBackendOptions
@@ -470,11 +480,15 @@ export class CodexLocalBackend implements IAgentBackend {
       return
     }
 
+    const previousKbRelay = this.kbRelay
     const started = await this.spawnClientRetryingPortClashes()
     this.proc = started.proc
     this.client = started.client
     this.log = started.log
     this.compatibilityProxies = started.compatibilityProxies
+    this.kbRelay = started.kbRelay
+    // codex 崩溃后 AgentManager 不经 stop() 直接再调 start(),上一代中转只服务那个已经退出的进程。
+    await previousKbRelay?.close().catch(() => undefined)
   }
 
   private async startWsClient(url: string): Promise<CodexProtocolClient> {
@@ -547,6 +561,7 @@ export class CodexLocalBackend implements IAgentBackend {
     }
 
     let compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
+    let kbRelay: KbPlatformRelay | null = null
     let proc: ChildProcess | null = null
     try {
       const apiKey = this.options.getApiKey?.()
@@ -582,6 +597,13 @@ export class CodexLocalBackend implements IAgentBackend {
         ? compatibilityProxies?.providers[providerIndex++]
         : undefined
       const gatewayChannelProviders = compatibilityProxies?.providers.slice(providerIndex) ?? []
+      kbRelay = this.options.cinematographyKbPlatformRelay
+        ? await startKbPlatformRelay({
+          gatewayOrigin: resolveGatewayOrigin,
+          platformHeaders: gatewayPlatformHeadersFor,
+          onSpend: notePlatformSpend,
+        })
+        : null
       const extraEnv = miauEnvForSpawn(providerConfigs, understand)
       const ffmpegDir = resolveBundledFfmpegDir(resourceRoot)
       const env = buildCodexSpawnEnv(
@@ -605,8 +627,11 @@ export class CodexLocalBackend implements IAgentBackend {
         apiyiKey: this.options.getApiyiKey?.(),
         cinematographyKbKey: this.options.getCinematographyKbKey?.(),
         dashVectorKey: this.options.getDashVectorKey?.(),
+        cinematographyKbPlatformRelay: kbRelay
+          ? { url: kbRelay.url, token: kbRelay.token }
+          : undefined,
       })
-      const spawnLine = `[CodexLaunch] spawn ${bin} ${launchArgs.join(' ')}`
+      const spawnLine = `[CodexLaunch] spawn ${bin} ${redactCodexLaunchArgsForLog(launchArgs).join(' ')}`
       log.write(spawnLine + '\n')
       console.log(spawnLine)
       proc = (this.options.spawnFactory ?? spawn)(
@@ -620,6 +645,7 @@ export class CodexLocalBackend implements IAgentBackend {
     } catch (error) {
       await this.killProcessInstance(proc)
       await compatibilityProxies?.close().catch(() => undefined)
+      await kbRelay?.close().catch(() => undefined)
       if (ownedLog) ownedLog.end()
       throw error
     }
@@ -672,6 +698,7 @@ export class CodexLocalBackend implements IAgentBackend {
       await client.stop().catch(() => { /* ignore */ })
       await this.killProcessInstance(proc)
       await compatibilityProxies?.close().catch(() => undefined)
+      await kbRelay?.close().catch(() => undefined)
       // 启动失败也要把刚开的 log fd 关掉, 否则失败重试场景下泄一个 fd。
       if (ownedLog) ownedLog.end()
       throw error
@@ -681,7 +708,7 @@ export class CodexLocalBackend implements IAgentBackend {
     // One bump per successful spawn — invalidates any thread id minted by a
     // previous codex generation (see `epoch` field jsdoc).
     this.epoch += 1
-    return { proc, client, log: ownedLog, compatibilityProxies }
+    return { proc, client, log: ownedLog, compatibilityProxies, kbRelay }
   }
 
   async stop(): Promise<void> {
@@ -689,15 +716,18 @@ export class CodexLocalBackend implements IAgentBackend {
     const proc = this.proc
     const log = this.log
     const compatibilityProxies = this.compatibilityProxies
+    const kbRelay = this.kbRelay
     this.client = null
     this.proc = null
     this.log = null
     this.compatibilityProxies = null
+    this.kbRelay = null
     if (client) {
       await client.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(proc)
     await compatibilityProxies?.close().catch(() => undefined)
+    await kbRelay?.close().catch(() => undefined)
     // 关 log fd: 用 .end() 而不是 .destroy(), 因为 proc.exit 之后 pipe
     // 可能还有未 flush 的最后几行 buffered data, .end() 会 flush 完再关。
     // 包 try 是因为 stream 内部状态可能已经 destroyed (双重关闭无害但报警)。
@@ -742,17 +772,20 @@ export class CodexLocalBackend implements IAgentBackend {
     const oldProc = this.proc
     const oldLog = this.log
     const oldCompatibilityProxies = this.compatibilityProxies
+    const oldKbRelay = this.kbRelay
     const replacement = await this.spawnClientRetryingPortClashes()
     this.proc = replacement.proc
     this.client = replacement.client
     this.log = replacement.log
     this.compatibilityProxies = replacement.compatibilityProxies
+    this.kbRelay = replacement.kbRelay
 
     if (oldClient) {
       await oldClient.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(oldProc)
     await oldCompatibilityProxies?.close().catch(() => undefined)
+    await oldKbRelay?.close().catch(() => undefined)
     // 跟 stop() 同款关 log: provider/config 切换走的就是这条热重启路径,
     // 高频用户最容易在这里累积 fd 泄漏。
     if (oldLog) {
