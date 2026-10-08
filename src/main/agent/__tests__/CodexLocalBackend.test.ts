@@ -831,6 +831,87 @@ describe('CodexLocalBackend spawn env injection', () => {
     }
   })
 
+  it('starts one cinematography_kb platform relay per spawn and closes it with that spawn', async () => {
+    const workspace = await createWorkspacePaths()
+    const capturedArgs: string[][] = []
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      cinematographyKbPlatformRelay: true,
+      getCinematographyKbKey: () => 'sk-kb-secret-in-argv',
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs.push([...args])
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+    const relayOf = (args: string[]) => {
+      const read = (name: string): string | undefined => {
+        const prefix = `mcp_servers.cinematography_kb.env.${name}=`
+        const arg = args.find((candidate) => candidate.startsWith(prefix))
+        return arg ? JSON.parse(arg.slice(prefix.length)) : undefined
+      }
+      return { url: read('CATIMATION_KB_RELAY_URL'), token: read('CATIMATION_KB_RELAY_TOKEN') }
+    }
+    const probe = async (relay: { url?: string; token?: string }) => {
+      const response = await fetch(`${relay.url}/knowledge/search`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${relay.token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      return { status: response.status, code: (await response.json()).error?.code }
+    }
+
+    try {
+      await backend.start()
+      const first = relayOf(capturedArgs[0])
+      expect(first.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+      expect(first.token).toMatch(/^[0-9a-f]{64}$/)
+      // No billing pool is armed here, so the live relay tells the MCP to fall back.
+      await expect(probe(first)).resolves.toEqual({ status: 401, code: 'platform_unavailable' })
+
+      const spawnLines = consoleLog.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith('[CodexLaunch] spawn'))
+      expect(spawnLines).toHaveLength(1)
+      expect(spawnLines[0]).not.toContain('sk-kb-secret-in-argv')
+      expect(spawnLines[0]).not.toContain(first.token)
+      expect(spawnLines[0]).toContain('CATIMATION_KB_RELAY_TOKEN=<redacted>')
+
+      await backend.restartCodex(workspace.paths)
+      const second = relayOf(capturedArgs[1])
+      expect(second.token).not.toBe(first.token)
+      await expect(probe(second)).resolves.toEqual({ status: 401, code: 'platform_unavailable' })
+      await expect(probe(first)).rejects.toThrow()
+
+      await backend.stop()
+      await expect(probe(second)).rejects.toThrow()
+    } finally {
+      consoleLog.mockRestore()
+      await backend.stop()
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it('starts no platform relay unless asked to', async () => {
+    let capturedArgs: string[] = []
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs = args
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      expect(capturedArgs.some((arg) => arg.includes('CATIMATION_KB_RELAY_'))).toBe(false)
+    } finally {
+      await backend.stop()
+    }
+  })
+
   it('registers sibling Gateway channels as EXTRA provider tables with per-channel bridging (Plan B)', async () => {
     let capturedArgs: string[] = []
     const backend = new CodexLocalBackend({
