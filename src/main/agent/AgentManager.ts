@@ -156,7 +156,12 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
-import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
+import {
+  ThreadTitleGenerator,
+  resolveThreadTitleModel,
+  type ThreadTitleModel,
+  type ThreadTitleRequest,
+} from './threadTitle'
 import { beginObservedChanges, type ObservedChangeTracker } from './observedChanges'
 import { takeSnapshot } from './workspaceSnapshot'
 import { diffSnapshots } from './snapshotDiff'
@@ -169,8 +174,8 @@ const MIAU_CREDENTIAL_ERROR = '请登录使用平台余额，或在设置页填�
 /** Miau 系通道在 codex 里认的环境变量名。与 `gatewayModelRouting` 里各 Miau 通道的 `envKey` 一致。 */
 const MIAU_ENV_KEY = 'MIAU_API_KEY'
 /**
- * Default Codex agent model used by the ThreadTitleSummarizer (and as the
- * fallback model id when a provider preset doesn't pin its own). `gpt-5.5`
+ * Default Codex agent model: the fallback model id when a send carries none
+ * and a provider preset doesn't pin its own. `gpt-5.5`
  * ships full Responses-API tool support including the native `web_search`
  * tool that Codex 0.128 `app-server` registers by default. Keep in sync with
  * the renderer-side `DEFAULT_MODEL_ID` in
@@ -455,7 +460,13 @@ export class AgentManager {
    * {@link cinematographyKbKey}.
    */
   private dashVectorKey = ''
-  private summarizer?: ThreadTitleSummarizer
+  private titleGenerator?: ThreadTitleGenerator
+  /**
+   * Title requests for threads created by a send, keyed by DB thread id. Taken
+   * once, when codex accepts the first user message; threads that already
+   * existed (every thread after a restart) never get an entry.
+   */
+  private readonly pendingThreadTitles = new Map<string, ThreadTitleRequest>()
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
   /**
@@ -467,7 +478,6 @@ export class AgentManager {
   private sessionConfigStore!: SessionConfigStore
   private sessionConfigPersisted = false
   private readonly turnNotifier: TurnNotifier
-  private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
    * Codex-protocol thread id (a UUID like `urn:uuid:...` returned by
@@ -808,7 +818,7 @@ export class AgentManager {
         this.validateModelSelectionIntent(payload, route.modelId, route.channelId),
     })
     if (this.store) {
-      this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
+      this.titleGenerator = new ThreadTitleGenerator(this.store, this.backend)
     }
     // Kick off async legacy migration in the background — the sync load above
     // already covered the v4.3 file; this finishes the codex-agent.json →
@@ -3583,12 +3593,9 @@ export class AgentManager {
       ...(nativePlan?.mediaItems ?? []),
     ]
 
-    // Persist the user turn before kicking off the backend so that:
-    //   1) After an app restart `switchThread` actually has chat history to load
-    //      (regression: AgentMessage rows were never written before this change).
-    //   2) `ThreadTitleSummarizer.maybeSummarize` can read both a user and an
-    //      assistant message later — its gate `messages.length < 2` was the
-    //      reason auto-titles never appeared in the thread switcher.
+    // Persist the user turn before kicking off the backend so that after an app
+    // restart `switchThread` actually has chat history to load (regression:
+    // AgentMessage rows were never written before this change).
     const userTimelineItems = this.buildUserTimelineItems(payload.content, savedAttachments)
     let clientUserMessageId: string | undefined
     if (userTimelineItems.length > 0) {
@@ -3654,6 +3661,19 @@ export class AgentManager {
         selection.modelId,
         selection.contextWindow,
       )
+    }
+
+    if (!payload.threadId) {
+      this.pendingThreadTitles.set(thread.id, {
+        threadId: thread.id,
+        userMessage: payload.content,
+        ...this.threadTitleModel(
+          selectionRoute?.channelId ?? this.channelController.currentChannelId(),
+          model,
+        ),
+        ...(input.modelProvider ? { modelProvider: input.modelProvider } : {}),
+        cwd: input.cwd,
+      })
     }
 
     // Expand the composer's preset KIND into the full experimental codex
@@ -4839,6 +4859,24 @@ export class AgentManager {
     }
   }
 
+  private threadTitleModel(channelId: string, conversationModel: string): ThreadTitleModel {
+    let channel: { memoriesModel?: string } | undefined
+    try {
+      channel = resolveProviderChannel(channelId, this.providerStore.loadSync().customProviders)
+    } catch {
+      channel = undefined
+    }
+    return resolveThreadTitleModel(channel, conversationModel)
+  }
+
+  /** Runs in parallel with the main turn; at most once per new thread. */
+  private startPendingThreadTitle(dbThreadId: string): void {
+    const request = this.pendingThreadTitles.get(dbThreadId)
+    if (!request) return
+    this.pendingThreadTitles.delete(dbThreadId)
+    void this.titleGenerator?.generate(request)
+  }
+
   private async forwardEvents(
     dbThreadId: string,
     input: AgentInput,
@@ -4950,6 +4988,7 @@ export class AgentManager {
                 console.warn('[AgentManager] userMessage reconcile persist failed (best-effort):', err)
               })
             }
+            this.startPendingThreadTitle(dbThreadId)
             continue
           }
           if (!this.eventSink && this.win?.isDestroyed()) return
@@ -5023,12 +5062,7 @@ export class AgentManager {
             // 白拍一份完整工作区快照,而且那份孤儿快照还会在后台一直扫下去。
             observer = null
 
-            if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
-              this.firstTurnDoneByThread.set(dbThreadId, true)
-              this.summarizer?.maybeSummarize(dbThreadId).catch((err: unknown) => {
-                console.warn('[AgentManager] thread title summarization failed:', err)
-              })
-            }
+            this.startPendingThreadTitle(dbThreadId)
           }
         }
         if (!canRetryPoisonedThread && !this.codexThreadIdByDbThreadId.has(dbThreadId)) {

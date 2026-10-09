@@ -116,7 +116,13 @@ import type {
   CodexThreadSummary,
   CodexWorkspacePaths,
 } from '../../types/agent'
-import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
+import type {
+  AgentInput,
+  IAgentBackend,
+  ListThreadsParams,
+  TemporaryStructuredTurnRequest,
+  TemporaryStructuredTurnResult,
+} from './types'
 import type {
   CodexModelListParams,
   CodexModelListResponse,
@@ -858,6 +864,13 @@ export class CodexLocalBackend implements IAgentBackend {
   async unsubscribeThread(threadId: string): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.unsubscribeThread called before start')
     return this.client.unsubscribeThread(threadId)
+  }
+
+  async runTemporaryStructuredTurn(
+    request: TemporaryStructuredTurnRequest,
+  ): Promise<TemporaryStructuredTurnResult> {
+    if (!this.client) throw new Error('CodexLocalBackend.runTemporaryStructuredTurn called before start')
+    return this.client.runTemporaryStructuredTurn(request)
   }
 
   async resumeThread(

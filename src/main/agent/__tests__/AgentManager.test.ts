@@ -2022,11 +2022,9 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
 
   it('persists user message immediately and assistant message on turn_completed (regression: empty thread history)', async () => {
     // Before this test was added, AgentManager.forwardEvents only forwarded
-    // stream events to the renderer and never called store.addMessage. That
-    // meant: (a) restarting the app showed no chat history because
-    // AgentMessage rows didn't exist, and (b) ThreadTitleSummarizer's
-    // `messages.length < 2` gate always tripped so threads kept the
-    // 40-char content fallback as their title.
+    // stream events to the renderer and never called store.addMessage, so
+    // restarting the app showed no chat history because AgentMessage rows
+    // didn't exist.
     const addMessageCalls: Array<{ threadId: string; role: string; items: unknown }> = []
     const lastMessageAtCalls: string[] = []
     const fakeStore = {
