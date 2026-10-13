@@ -156,6 +156,7 @@ describe('registerImageTools / generate_image schema', () => {
       'custom-imagemodel-gt',
       'wan2.7-image-pro',
       'gemini-3.1-flash-image',
+      'gemini-nano-banana-2.1',
       'doubao-seedream-5-0-pro-260628',
     ]) {
       expect(genSchema.safeParse({ prompt: 'x', model }).success, model).toBe(true)

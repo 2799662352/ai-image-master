@@ -53,7 +53,7 @@ export interface ImageChannel {
 
 /**
  * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×4(image2 / fast / 2.5 Flare / 2.5 Sunburst)
- * → Nano2 → 万相 → 千问 → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
+ * → Nano2 → Nano2.1 → 万相 → 千问 → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
  * 默认渠道是腾讯 image2 —— 顺序只影响显示,不改变回落目标。
  * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
  */
@@ -106,6 +106,14 @@ export const IMAGE_CHANNELS = [
     label: 'Nano2',
     fullLabel: 'Nano Banana 2',
     description: 'Gemini 3.1 flash image（当前站点）— 快，多比例 4K。',
+    miauOnly: false,
+  },
+  {
+    // 与 Nano2 是两个模型 id,不是别名:2.1 没有 0.5K 档、默认就会思考,按量计费口径也不同。
+    id: 'gemini-nano-banana-2.1',
+    label: 'Nano2.1',
+    fullLabel: 'Nano Banana 2.1',
+    description: 'Nano Banana 2 升级版（当前站点）— 画质、图中文字、多轮改图一致性更好，1K/2K/4K，按量约 $0.03/张（1K）。',
     miauOnly: false,
   },
   {

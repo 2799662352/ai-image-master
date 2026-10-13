@@ -34,7 +34,7 @@ describe('谷歌原生端点的 host', () => {
   it('Miau 站点上走加速域名(https),路径保持谷歌原生格式', async () => {
     const service = await makeService()
 
-    for (const model of ['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image']) {
+    for (const model of ['gemini-3.1-flash-image', 'gemini-nano-banana-2.1', 'gemini-3-pro-image', 'gemini-2.5-flash-image']) {
       const url = new URL(urlFor(service, model, 'antigravity'))
       expect(url.origin, model).toBe('https://miauapi.13797248455.xyz')
       expect(url.pathname).toBe(`/v1beta/models/${model}:generateContent`)

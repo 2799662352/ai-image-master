@@ -995,6 +995,10 @@
       "name": "🍌 Nano Banana 2",
       "displayName": "15s, gemini-3.1-flash-image нативный эндпоинт Google, поддержка множества размеров до 4K, $0.03/изображение 🚀 Менее 20% от официальной цены"
     },
+    "gemini-nano-banana-2.1": {
+      "name": "🍌 Nano Banana 2.1",
+      "displayName": "20s, gemini-nano-banana-2.1 нативный эндпоинт Google, улучшенная Nano Banana 2: выше качество, точнее текст на изображении, стабильнее многошаговое редактирование, 1K/2K/4K, ~$0.03/изображение (1K, по токенам)"
+    },
     "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s, gemini-3-pro-image нативная конечная точка Google, поддержка многоразмерного 4K, $0.05/изображение 🔥 1/5 официальной цены"

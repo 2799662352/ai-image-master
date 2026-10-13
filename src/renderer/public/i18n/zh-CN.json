@@ -1099,6 +1099,10 @@
       "name": "🍌 Nano Banana 2",
       "displayName": "15s，gemini-3.1-flash-image 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折"
     },
+    "gemini-nano-banana-2.1": {
+      "name": "🍌 Nano Banana 2.1",
+      "displayName": "20s，gemini-nano-banana-2.1 谷歌原生端点请求，Nano Banana 2 升级版，画质/图中文字/多轮一致性更好，1K/2K/4K，按量约 $0.03/张(1K)"
+    },
     "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s，gemini-3-pro-image 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格"
