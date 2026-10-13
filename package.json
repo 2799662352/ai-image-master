@@ -139,6 +139,7 @@
     "@tanstack/react-virtual": "^3.13.23",
     "@uiw/react-codemirror": "^4.25.9",
     "browser-image-compression": "^2.0.2",
+    "buffer": "5.7.1",
     "choices.js": "^11.1.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "diff": "^9.0.0",
