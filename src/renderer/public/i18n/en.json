@@ -1106,6 +1106,10 @@
       "name": "🍌 Nano Banana 2",
       "displayName": "15s, gemini-3.1-flash-image Google native endpoint, supports many sizes up to 4K, $0.03/image 🚀 Less than 20% of official price"
     },
+    "gemini-nano-banana-2.1": {
+      "name": "🍌 Nano Banana 2.1",
+      "displayName": "20s, gemini-nano-banana-2.1 Google native endpoint, upgraded Nano Banana 2 with better quality, in-image text and multi-turn consistency, 1K/2K/4K, metered ~$0.03/image (1K)"
+    },
     "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s, gemini-3-pro-image Google native endpoint, supports multi-size 4K, $0.05/image 🔥 1/5 official price"

@@ -339,7 +339,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
       'composer picker (腾讯 / image2 fast / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Flare / Sunburst / All 2.5 / ' +
-      "Image2 / VIP / Nano2 / 万相 / 千问; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
+      "Image2 / VIP / Nano2 / Nano2.1 / 万相 / 千问; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
       'ONLY when you have a concrete reason to ' +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
       'channel the user explicitly asked for this turn (' +
@@ -354,6 +354,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'same 2.5 abilities — transparentBackground / maskImage / xhigh,max — over the 腾讯 line), ' +
       'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
+      'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
+      'multi-turn edit consistency), 1K/2K/4K only, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
       'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; takes at most 3 reference ' +

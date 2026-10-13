@@ -1378,6 +1378,73 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       resolutionControl: true
     }
   },
+  'gemini-nano-banana-2.1': {
+    name: '🍌 Nano Banana 2.1',
+    vendor: 'google',
+    displayName: '20s，gemini-nano-banana-2.1 谷歌原生端点请求，Nano Banana 2 升级版，画质/图中文字/多轮一致性更好，1K/2K/4K，按量约 $0.03/张(1K)',
+    // 网关按量计费(输入 $0.66/M、输出含思考 $13.2/M),单张随分辨率浮动:
+    // 1K 中位 ~$0.029、2K ~$0.036、4K ~$0.063。这里按默认 1K 估。
+    price: 0.03,
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-nano-banana-2.1:generateContent',
+    apiType: 'gemini-native',
+    inlineRefImageAsBase64: true,
+    internalPrompt: '生成图片：',
+    ratios: [
+      { key: 'auto', label: '自适应', description: '智能' },
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' },
+      { key: '4:1', label: '超横版 4:1', description: '横幅' },
+      { key: '1:4', label: '超竖版 1:4', description: '长图' },
+      { key: '8:1', label: '极横版 8:1', description: '横幅' },
+      { key: '1:8', label: '极竖版 1:8', description: '信息图' }
+    ],
+    // 上游去掉了 512 档,传 imageSize "512" 直接 400,所以这里没有 0.5K。
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '高效' },
+      { key: '2K', label: '2K 高清', description: '稍慢速度' },
+      { key: '4K', label: '4K 超清', description: '印刷所需' }
+    ],
+    defaultResolution: '1K',
+    // 实测过的只有 16:9 全档、2:3 的 1K/4K、3:4 与 8:1 的 1K(apiyi 2026-10-07)。
+    // 前三者与 Nano Banana 2 一致;8:1 不同(2928×352,不是 2896×362),
+    // 其余档按 1K × 2 / × 4 推算。
+    resolutionMap: {
+      '1:1':  { '1K': '1024×1024', '2K': '2048×2048', '4K': '4096×4096' },
+      '2:3':  { '1K': '848×1264',  '2K': '1696×2528', '4K': '3392×5056' },
+      '3:2':  { '1K': '1264×848',  '2K': '2528×1696', '4K': '5056×3392' },
+      '3:4':  { '1K': '896×1200',  '2K': '1792×2400', '4K': '3584×4800' },
+      '4:3':  { '1K': '1200×896',  '2K': '2400×1792', '4K': '4800×3584' },
+      '4:5':  { '1K': '928×1152',  '2K': '1856×2304', '4K': '3712×4608' },
+      '5:4':  { '1K': '1152×928',  '2K': '2304×1856', '4K': '4608×3712' },
+      '9:16': { '1K': '768×1376',  '2K': '1536×2752', '4K': '3072×5504' },
+      '16:9': { '1K': '1376×768',  '2K': '2752×1536', '4K': '5504×3072' },
+      '21:9': { '1K': '1584×672',  '2K': '3168×1344', '4K': '6336×2688' },
+      '4:1':  { '1K': '2048×512',  '2K': '4096×1024', '4K': '8192×2048' },
+      '1:4':  { '1K': '512×2048',  '2K': '1024×4096', '4K': '2048×8192' },
+      '8:1':  { '1K': '2928×352',  '2K': '5856×704',  '4K': '11712×1408' },
+      '1:8':  { '1K': '352×2928',  '2K': '704×5856',  '4K': '1408×11712' },
+      'auto': { '1K': '自适应', '2K': '自适应', '4K': '自适应' }
+    },
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true
+    }
+  },
   'gemini-3-pro-image': {
     name: '🍌 Nano Banana Pro',
     vendor: 'google',
@@ -1735,7 +1802,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
- * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → 万相 2.7 pro →
+ * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
  * 千问 → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
@@ -1747,6 +1814,7 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'custom-model-og-v2.5-f',
   'custom-model-og-v2.5-s',
   'gemini-3.1-flash-image',
+  'gemini-nano-banana-2.1',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
   'gpt-image-2.5-flare',
@@ -4940,22 +5008,26 @@ export function extractImagesFromApiResponse(data: unknown): string[] {
       const parts = (candidate as Record<string, unknown>).content as Record<string, unknown> | undefined
       const partList = parts?.parts
       if (!Array.isArray(partList)) continue
+      // 复杂编辑会在同一个 candidate 里先回几张中间稿,最后一张 inlineData 才是终稿。
+      let finalInline: string | null = null
+      const textImages: string[] = []
       for (const part of partList) {
         if (!part || typeof part !== 'object') continue
         const inlineData = (part as Record<string, unknown>).inlineData as Record<string, unknown> | undefined
         if (typeof inlineData?.data === 'string' && inlineData.data) {
           const mime = typeof inlineData.mimeType === 'string' ? inlineData.mimeType : 'image/png'
-          const dataUrl = `data:${mime};base64,${inlineData.data}`
-          if (!seen.has(dataUrl)) {
-            seen.add(dataUrl)
-            images.push(dataUrl)
-          }
+          finalInline = `data:${mime};base64,${inlineData.data}`
         }
         // 网关把产物传到对象存储后,整条响应里没有 base64,只有 text 里的一条
         // 预签名 URL —— 图是生成成功的,只认 inlineData 会把它报成生成失败。
         const text = (part as Record<string, unknown>).text
-        if (typeof text === 'string' && text) collectImagesFromText(text, images, seen)
+        if (typeof text === 'string' && text) collectImagesFromText(text, textImages, seen)
       }
+      if (finalInline && !seen.has(finalInline)) {
+        seen.add(finalInline)
+        images.push(finalInline)
+      }
+      images.push(...textImages)
     }
   }
 

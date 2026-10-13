@@ -1243,6 +1243,10 @@
       "name": "🍌 Nano Banana 2",
       "displayName": "15s，gemini-3.1-flash-image 谷歌原生端點請求，支援超多尺寸4K，$0.03/張🚀 官網低於2折"
     },
+    "gemini-nano-banana-2.1": {
+      "name": "🍌 Nano Banana 2.1",
+      "displayName": "20s，gemini-nano-banana-2.1 谷歌原生端點請求，Nano Banana 2 升級版，畫質/圖中文字/多輪一致性更好，1K/2K/4K，按量約 $0.03/張(1K)"
+    },
     "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s，gemini-3-pro-image 谷歌原生端點請求，支援多尺寸4K，$0.05/張🔥 官網1/5價格"

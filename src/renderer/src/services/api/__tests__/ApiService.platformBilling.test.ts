@@ -106,7 +106,7 @@ describe('平台计费模式下的请求头', () => {
   })
 
   it('谷歌原生模型在 Miau 站点上同样走平台余额', async () => {
-    for (const model of ['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image']) {
+    for (const model of ['gemini-3.1-flash-image', 'gemini-nano-banana-2.1', 'gemini-3-pro-image', 'gemini-2.5-flash-image']) {
       const headers = await captureHeadersFor({ billingSource: 'platform', site: 'antigravity', model })
 
       expect(headers[BILLING_MARKER_HEADER], model).toBe(BILLING_MARKER_VALUE)
@@ -341,6 +341,7 @@ describe('平台余额 × 模型可用性', () => {
 
   const GOOGLE_NATIVE_MODELS = [
     'gemini-3.1-flash-image',
+    'gemini-nano-banana-2.1',
     'gemini-3-pro-image',
     'gemini-2.5-flash-image',
   ]

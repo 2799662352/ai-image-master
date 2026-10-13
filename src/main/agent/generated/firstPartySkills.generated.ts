@@ -293,7 +293,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 
 The \`model\` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
-VIP / Image2 / 腾讯 / Nano2 / 万相 / Seedream; default 腾讯 image2) — 各渠道共用
+VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / Seedream; default 腾讯 image2) — 各渠道共用
 ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-all\` 把尺寸
 写进 prompt). Omit \`model\` for ordinary requests. Set it only with a concrete reason:
 
@@ -314,6 +314,8 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - **\`gemini-3.1-flash-image\` (Nano Banana 2)** — pick when the user says nano /
   nano2 / nano banana / gemini / 谷歌. 谷歌 Gemini 原生端点，出图快(~15s)、支持
   超多宽高比与 4K，中文/文字与一致性也不错。
+- **\`gemini-nano-banana-2.1\` (Nano Banana 2.1)** — user says nano 2.1 / 新版 nano.
+  Nano2 升级版:画质、图中文字、多轮改图更稳;仅 1K/2K/4K(无 0.5K)。只说 nano 时仍用 Nano2。
 - **\`doubao-seedream-5-0-pro-260628\` (火山豆包 Seedream 5.0 Pro)** — pick when the
   user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
@@ -349,7 +351,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可,无需切换当前站点。
-- 其余渠道(官转 2.5 / -all / vip / gpt-image-2 / Nano2)跟随当前站点(不钉 Miau):
+- 其余渠道(官转 2.5 / -all / vip / gpt-image-2 / Nano2 / Nano2.1)跟随当前站点(不钉 Miau):
   选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
 
 用户没点名渠道就**省略 \`model\`**(交给 composer 选的渠道,默认腾讯 image2);只为具体

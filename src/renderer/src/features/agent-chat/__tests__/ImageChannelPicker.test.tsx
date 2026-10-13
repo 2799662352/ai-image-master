@@ -38,7 +38,10 @@ describe('ImageChannelPicker', () => {
     // 子串匹配会同时命中两个。锚到行尾才能各指各的。
     expect(screen.getByRole('option', { name: /腾讯 image2(?!\s*fast)/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /腾讯 image2 fast/ })).toBeTruthy()
-    expect(screen.getByRole('option', { name: /Nano Banana 2/ })).toBeTruthy()
+    // 同理「Nano Banana 2」是「Nano Banana 2.1」的前缀,而且 2.1 的说明里也写着
+    // 「Nano Banana 2 升级版」,所以连同 Nano2 自己的说明一起匹配。
+    expect(screen.getByRole('option', { name: /Nano Banana 2\s*Gemini 3\.1 flash image/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /Nano Banana 2\.1/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /万相 2\.7 pro/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /Seedream 5\.0 Pro/ })).toBeTruthy()
   })
