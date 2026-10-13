@@ -314,10 +314,8 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - **\`gemini-3.1-flash-image\` (Nano Banana 2)** — pick when the user says nano /
   nano2 / nano banana / gemini / 谷歌. 谷歌 Gemini 原生端点，出图快(~15s)、支持
   超多宽高比与 4K，中文/文字与一致性也不错。
-- **\`gemini-nano-banana-2.1\` (Nano Banana 2.1)** — pick when the user says nano 2.1 /
-  nano2.1 / 新版 nano / nano banana 2.1. Nano2 的升级版:画质、图中文字(海报/信息图)、
-  多轮改图一致性更好,同样支持 14 种比例(含 8:1 / 1:8)。只有 1K/2K/4K —— 没有
-  0.5K,要小缩略图时换回 Nano2。用户只说 nano / 谷歌且没点名版本时仍用 Nano2。
+- **\`gemini-nano-banana-2.1\` (Nano Banana 2.1)** — user says nano 2.1 / 新版 nano.
+  Nano2 升级版:画质、图中文字、多轮改图更稳;仅 1K/2K/4K(无 0.5K)。只说 nano 时仍用 Nano2。
 - **\`doubao-seedream-5-0-pro-260628\` (火山豆包 Seedream 5.0 Pro)** — pick when the
   user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
