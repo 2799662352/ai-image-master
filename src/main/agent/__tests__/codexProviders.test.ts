@@ -119,9 +119,10 @@ describe('codexProviders', () => {
       name: 'Right.Codes DeepSeek',
       baseUrl: 'https://rightapi.ai/deepseek/v1',
       envKey: 'OPENAI_API_KEY',
-      // Flash is the official default chat; Pro is opt-in from the picker.
+      // Pro is served through Miau (same slug, platform balance), so only
+      // Flash is left on this pool.
       model: 'deepseek-v4-flash',
-      allowedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+      allowedModels: ['deepseek-v4-flash'],
       requiresOpenaiAuth: true,
       compatibilityPolicy: 'responses-namespace-bridge',
     })

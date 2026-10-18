@@ -91,7 +91,7 @@ describe('model settings capabilities', () => {
     })
   })
 
-  it('publishes provider-neutral DeepSeek V4 metadata', () => {
+  it('publishes provider-neutral DeepSeek V4 Flash metadata', () => {
     expect(
       CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'deepseek-v4-flash'),
     ).toEqual({
@@ -101,15 +101,24 @@ describe('model settings capabilities', () => {
       description: 'Fast 1M-context V4. Native Responses API; official default chat.',
       isDefault: false,
     })
-    expect(
-      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'deepseek-v4-pro'),
-    ).toEqual({
-      id: 'deepseek-v4-pro',
-      displayName: 'DeepSeek V4 Pro',
-      tier: 'Extra High',
-      description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
-      isDefault: false,
-    })
+  })
+
+  it('lists the Miau DeepSeek rows first in the DeepSeek group, newest slugs on top', () => {
+    const deepseekIds = CANONICAL_MODEL_SETTINGS_ROWS
+      .map((row) => row.id)
+      .filter((id) => id.startsWith('deepseek'))
+    expect(deepseekIds).toEqual([
+      'deepseek-flash',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash-0731',
+      'deepseek-v4-pro-0813',
+      'deepseek-v4-flash',
+    ])
+    // 两个 Pro 都走 Miau,显示名必须分得开,否则选择器里是两行一模一样的字。
+    const names = CANONICAL_MODEL_SETTINGS_ROWS
+      .filter((row) => row.id.startsWith('deepseek'))
+      .map((row) => row.displayName)
+    expect(new Set(names).size).toBe(names.length)
   })
 
   /**
@@ -117,29 +126,38 @@ describe('model settings capabilities', () => {
    * Over-claiming is not the risk here — under-claiming (falling back to
    * UNKNOWN_MODEL_CONTEXT_WINDOW 200K) would compact a 1M model at 180K.
    */
-  it('keeps DeepSeek V4 on the documented 1M, including on Right.Codes', () => {
+  it('keeps DeepSeek V4 on the documented 1M, including on Right.Codes and Miau', () => {
     expect(defaultContextWindowForModel('deepseek-v4-flash')).toBe(DEEPSEEK_CONTEXT_WINDOW)
     expect(defaultContextWindowForModel('deepseek-v4-pro')).toBe(DEEPSEEK_CONTEXT_WINDOW)
+    expect(defaultContextWindowForModel('deepseek-flash')).toBe(DEEPSEEK_CONTEXT_WINDOW)
     expect(
-      defaultContextWindowForModel('deepseek-v4-pro', 'rightcode', 'rightcode-deepseek'),
+      defaultContextWindowForModel('deepseek-v4-flash', 'rightcode', 'rightcode-deepseek'),
     ).toBe(DEEPSEEK_CONTEXT_WINDOW)
     expect(modelContextOptions('deepseek-v4-flash', 'rightcode', 'rightcode-deepseek')).toEqual([
       { value: DEEPSEEK_CONTEXT_WINDOW, experimental: false },
     ])
+    for (const model of ['deepseek-flash', 'deepseek-v4-pro']) {
+      expect(modelContextOptions(model, 'apiyi', 'apiyi-deepseek-miau')).toEqual([
+        { value: DEEPSEEK_CONTEXT_WINDOW, experimental: false },
+      ])
+    }
   })
 
-  it('offers only non-aliased DeepSeek reasoning efforts on Right.Codes', () => {
-    expect(
-      mergeModelSettingsCapabilities({
-        model: 'deepseek-v4-pro',
-        gatewayId: 'rightcode',
-        channelId: 'rightcode-deepseek',
-      }),
-    ).toMatchObject({
-      defaultContextWindow: DEEPSEEK_CONTEXT_WINDOW,
-      defaultReasoningEffort: 'high',
-      supportedReasoningEfforts: ['low', 'high', 'max'],
-    })
+  it('offers only non-aliased DeepSeek reasoning efforts on Right.Codes and Miau', () => {
+    const routes = [
+      { model: 'deepseek-v4-flash', gatewayId: 'rightcode', channelId: 'rightcode-deepseek' },
+      { model: 'deepseek-flash', gatewayId: 'apiyi', channelId: 'apiyi-deepseek-miau' },
+      { model: 'deepseek-v4-pro', gatewayId: 'apiyi', channelId: 'apiyi-deepseek-miau' },
+      { model: 'deepseek-flash', gatewayId: 'rightcode', channelId: 'rightcode-deepseek-miau' },
+      { model: 'deepseek-v4-pro', gatewayId: 'rightcode', channelId: 'rightcode-deepseek-miau' },
+    ]
+    for (const route of routes) {
+      expect(mergeModelSettingsCapabilities(route), JSON.stringify(route)).toMatchObject({
+        defaultContextWindow: DEEPSEEK_CONTEXT_WINDOW,
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'high', 'max'],
+      })
+    }
   })
 
   it('rejects partial gateway scope instead of silently using model-only policy', () => {

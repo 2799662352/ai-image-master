@@ -170,18 +170,26 @@ const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
 /**
  * Miau 上的 DeepSeek —— 与 `rightcode-deepseek` **并存**,不是替换。
  *
- * 两边卖的是同一代模型,但 slug 不同:Miau 带日期(`-0731` / `-0813`),
- * Right.Codes 不带。这个差别不是巧合能依赖的运气,而是这两条能共存的**前提**:
- * 路由靠 slug 精确命中来区分通道(见 `channelForModel`),同名就分不开了。
+ * 路由靠 slug 精确命中来区分通道(见 `channelForModel`),所以同一网关下一个 slug
+ * 只能归一条通道。带日期的两个(`-0731` / `-0813`,上游是阿里)与 Right.Codes 的
+ * `deepseek-v4-flash` 不同名,天然分得开。
  *
- * 2026-09-01 对着网关 `/v1/models` 实测确认存在。这一步不能省 —— 列进来的 slug
- * 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字提到是模型名
+ * `deepseek-flash` / `deepseek-v4-pro` 是 Miau 上 DeepSeek 官方渠道的两个 slug,
+ * 排在本组最前。其中 `deepseek-v4-pro` 与 Right.Codes 同名 —— 产品要求它走平台
+ * 余额,所以它整个归 Miau,`rightcode-deepseek` 只保留 `deepseek-v4-flash`。
+ *
+ * 每个 slug 都对着生产网关实测过才列进来(0731 / 0813 是 2026-09-01;
+ * flash / v4-pro 是 2026-10-19:Responses 流式、工具调用往返、reasoning 回放、
+ * low/high/max 三档思考都是 200,上下文上限 1048576)。这一步不能省 —— 列进来的
+ * slug 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字提到是模型名
  * 写错了(同一条纪律见 grok-4.6 与 qwen3.8-flash 那两段注释)。
  *
  * ⚠️ 上游还有三个 `vanchin/` 前缀的同族 slug(`vanchin/deepseek-v4-pro` 等),
  * 是另一路供应商,**刻意不列**:没有验过它们的计费与协议行为。
  */
 const DEEPSEEK_MIAU_MODELS = Object.freeze([
+  'deepseek-flash',
+  'deepseek-v4-pro',
   'deepseek-v4-flash-0731',
   'deepseek-v4-pro-0813',
 ])
@@ -212,7 +220,10 @@ function deepseekMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelP
     // 记忆任务钉死在便宜的那一档,不跟随选中的对话模型。理由与代价见
     // `qwenChannel` 里那段长注释(2026-08-31 真机撞过:选 Flash 聊天,
     // 记忆却跑在 max 上,¥2.14 vs ¥0.10,而 UI 上完全看不出这笔钱哪来的)。
-    memoriesModel: 'deepseek-v4-flash-0731',
+    //
+    // 本通道最便宜的是 `deepseek-flash`:2026-10-19 生产扣费日志里,量级相同的
+    // 请求它扣 35 额度,`deepseek-v4-flash-0731` 扣 354。
+    memoriesModel: 'deepseek-flash',
     allowedModels: DEEPSEEK_MIAU_MODELS,
     // 与 `rightcode-deepseek` 同样的理由:DeepSeek 原生说 Responses,但 codex 把
     // MCP 工具包进 `{"type":"namespace"}`(openai/codex#23186),而 DeepSeek 文档
@@ -339,6 +350,10 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // the same slugs at 0.3x from a self-hosted box the vendor itself tags
     // as 稳定性差. Official-price `/deepseek` is the one we can stand behind.
     //
+    // `deepseek-v4-pro` is sold here too but is NOT listed: the same slug is
+    // routed to Miau (`DEEPSEEK_MIAU_MODELS`) so it bills the platform
+    // balance, and one slug can belong to only one channel per gateway.
+    //
     // Native Responses is not the same as "codex can talk to it unbridged":
     // Codex wraps MCP tools as `{"type":"namespace"}` (openai/codex#23186),
     // and DeepSeek's docs say unknown tool types are ignored. That is the
@@ -349,7 +364,7 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // Official default chat is Flash (the cheap/fast size). Flipping this
     // to Pro would silently move every user who never picked a model.
     model: 'deepseek-v4-flash',
-    allowedModels: Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']),
+    allowedModels: Object.freeze(['deepseek-v4-flash']),
     requiresOpenaiAuth: true,
     compatibilityPolicy: 'responses-namespace-bridge',
     // This host lists only the two V4 slugs. A GPT memoriesModel would

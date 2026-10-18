@@ -164,34 +164,42 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: '通义千问 3.8 Flash（Miau 网关）。最新一代里最快最便宜的纯文本档。',
     isDefault: false,
   },
+  // DeepSeek 组:Miau 的四行在前(走 Miau 网关,可用平台余额结算),Right.Codes
+  // 的 `deepseek-v4-flash` 垫底(只能用自填 Key)。`deepseek-v4-pro` 两边同名,
+  // 归 Miau —— 见 `DEEPSEEK_MIAU_MODELS` 上的注释。
+  {
+    id: 'deepseek-flash',
+    displayName: 'DeepSeek Flash（Miau）',
+    tier: 'High',
+    description: 'DeepSeek Flash（Miau 网关，DeepSeek 官方渠道）。1M 上下文，能看图，最便宜的一档，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-pro',
+    displayName: 'DeepSeek V4 Pro（Miau）',
+    tier: 'Extra High',
+    description: 'DeepSeek V4 Pro（Miau 网关，DeepSeek 官方渠道）。1M 上下文，旗舰档，长任务与编码，可用平台余额结算；不能看图。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-flash-0731',
+    displayName: 'DeepSeek V4 Flash 0731（Miau）',
+    tier: 'High',
+    description: 'DeepSeek V4 Flash 0731（Miau 网关）。快的一档，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-pro-0813',
+    displayName: 'DeepSeek V4 Pro 0813（Miau）',
+    tier: 'Extra High',
+    description: 'DeepSeek V4 Pro 0813（Miau 网关）。旗舰档，长任务与编码，可用平台余额结算。',
+    isDefault: false,
+  },
   {
     id: 'deepseek-v4-flash',
     displayName: 'DeepSeek V4 Flash',
     tier: 'High',
     description: 'Fast 1M-context V4. Native Responses API; official default chat.',
-    isDefault: false,
-  },
-  {
-    id: 'deepseek-v4-pro',
-    displayName: 'DeepSeek V4 Pro',
-    tier: 'Extra High',
-    description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
-    isDefault: false,
-  },
-  // Miau 上的同代模型,slug 带日期。与上面两行是**不同来源**,不是重复:
-  // 这两条走 Miau 网关,因此能用平台余额结算;上面两条走 Right.Codes,只能用自填 Key。
-  {
-    id: 'deepseek-v4-flash-0731',
-    displayName: 'DeepSeek V4 Flash（Miau）',
-    tier: 'High',
-    description: 'DeepSeek V4 Flash（Miau 网关）。快而便宜的一档，可用平台余额结算。',
-    isDefault: false,
-  },
-  {
-    id: 'deepseek-v4-pro-0813',
-    displayName: 'DeepSeek V4 Pro（Miau）',
-    tier: 'Extra High',
-    description: 'DeepSeek V4 Pro（Miau 网关）。旗舰档，长任务与编码，可用平台余额结算。',
     isDefault: false,
   },
   {
@@ -269,7 +277,12 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
-  // Miau 上的同代模型,窗口同为官方文档的 1M。
+  // Miau 上的同代模型,窗口同为官方文档的 1M。`deepseek-flash` / `deepseek-v4-pro`
+  // 在生产网关上超长请求的报错是「maximum context length is 1048576 tokens」(2026-10-19)。
+  ['deepseek-flash', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
   ['deepseek-v4-flash-0731', {
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
@@ -377,11 +390,15 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
   ['rightcode:rightcode-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
   ['rightcode:rightcode-deepseek:deepseek-v4-flash', DEEPSEEK_REASONING],
-  ['rightcode:rightcode-deepseek:deepseek-v4-pro', DEEPSEEK_REASONING],
-  // Miau 那条同样是 DeepSeek V4,思考档位与上面两行同源(同一份官方文档),
+  // Miau 那条同样是 DeepSeek V4,思考档位与上面一行同源(同一份官方文档),
   // 所以复用同一份策略。两个网关各注册一次 —— 键是 网关:通道:模型 三段。
+  // flash / v4-pro 的 low / high / max 已对生产网关逐档实测(2026-10-19)。
+  ['apiyi:apiyi-deepseek-miau:deepseek-flash', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-pro', DEEPSEEK_REASONING],
   ['apiyi:apiyi-deepseek-miau:deepseek-v4-flash-0731', DEEPSEEK_REASONING],
   ['apiyi:apiyi-deepseek-miau:deepseek-v4-pro-0813', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-flash', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-pro', DEEPSEEK_REASONING],
   ['rightcode:rightcode-deepseek-miau:deepseek-v4-flash-0731', DEEPSEEK_REASONING],
   ['rightcode:rightcode-deepseek-miau:deepseek-v4-pro-0813', DEEPSEEK_REASONING],
   ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
