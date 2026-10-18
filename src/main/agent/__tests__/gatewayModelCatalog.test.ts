@@ -54,12 +54,12 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.8-omni-flash',
       'qwen3.8-max',
       'qwen3.8-flash',
-      'deepseek-v4-flash',
+      // DeepSeek 组:Miau 的四行(可用平台余额)在前,Right.Codes 的 flash 垫底。
+      'deepseek-flash',
       'deepseek-v4-pro',
-      // Miau 那条 DeepSeek 与上面两行同族不同源:同一个 deepseek family,
-      // 但走 Miau 网关(可用平台余额)。canonical 里紧跟其后,所以这里也紧跟。
       'deepseek-v4-flash-0731',
       'deepseek-v4-pro-0813',
+      'deepseek-v4-flash',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -71,9 +71,11 @@ describe('buildGatewayModelCatalog', () => {
       expect(catalog.models.find((model) => model.id === grok)?.route)
         .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
     }
-    for (const slug of ['deepseek-v4-flash', 'deepseek-v4-pro']) {
+    expect(catalog.models.find((model) => model.id === 'deepseek-v4-flash')?.route)
+      .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
+    for (const slug of ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-0731', 'deepseek-v4-pro-0813']) {
       expect(catalog.models.find((model) => model.id === slug)?.route)
-        .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
+        .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
     }
     expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)
       .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
@@ -312,7 +314,9 @@ describe('buildGatewayModelCatalog', () => {
       'claude-sonnet-5',
       // apiyi 现在也挂了 Miau 的 DeepSeek(与 qwen 同样的理由:同一枚 Miau token,
       // 用户不必为了换模型去切网关)。
+      'deepseek-flash',
       'deepseek-v4-flash-0731',
+      'deepseek-v4-pro',
       'deepseek-v4-pro-0813',
       'gpt-5.5',
       'grok-4.5',

@@ -68,32 +68,25 @@ describe('gatewayModelRouting', () => {
       .toThrow(ModelUnavailableInGatewayError)
   })
 
-  it('serves DeepSeek V4 on Right.Codes /deepseek only, never on API Yi or /codex', () => {
+  it('serves DeepSeek V4 Flash on Right.Codes /deepseek only, never on API Yi or /codex', () => {
     expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-flash')).toEqual({
       gatewayId: 'rightcode',
       channelId: 'rightcode-deepseek',
       modelId: 'deepseek-v4-flash',
       family: 'deepseek',
     })
-    expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-pro')).toEqual({
-      gatewayId: 'rightcode',
-      channelId: 'rightcode-deepseek',
-      modelId: 'deepseek-v4-pro',
-      family: 'deepseek',
-    })
     const channel = resolveProviderChannel('rightcode-deepseek')
     expect(channel.baseUrl).toBe('https://rightapi.ai/deepseek/v1')
     expect(channel.model).toBe('deepseek-v4-flash')
-    expect(channel.allowedModels).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
+    // `deepseek-v4-pro` 同名也在 Miau 上卖,归了 Miau(平台余额),所以这里只剩 flash。
+    expect(channel.allowedModels).toEqual(['deepseek-v4-flash'])
     expect(channel.compatibilityPolicy).toBe('responses-namespace-bridge')
-    // 记忆钉在同 host 最便宜的那一档,而不是留空。留空会回落到「上次 spawn 那一刻
-    // 选中的模型」—— 用户选 flash 聊天、记忆却仍跑在 pro 上,且看不出这笔钱哪来的。
-    // (GPT slug 在这个 host 上仍然 400,那部分原判断没变。)
+    // 记忆钉在同 host 最便宜的那一档,而不是留空。(GPT slug 在这个 host 上仍然 400。)
     expect(channel.memoriesModel).toBe('deepseek-v4-flash')
-    // API Yi has no DeepSeek pool. Routing there would put a picker row
-    // that 404s every turn. Unlisted slugs on the Right.Codes pool are
-    // refused the same way — they must not fall through to /codex.
-    expect(() => resolveGatewayModelRoute('apiyi', 'deepseek-v4-pro'))
+    // API Yi has no Right.Codes DeepSeek pool. Routing there would put a
+    // picker row that 404s every turn. Unlisted slugs on the Right.Codes pool
+    // are refused the same way — they must not fall through to /codex.
+    expect(() => resolveGatewayModelRoute('apiyi', 'deepseek-v4-flash'))
       .toThrow(ModelUnavailableInGatewayError)
     expect(() => resolveGatewayModelRoute('rightcode', 'deepseek-chat'))
       .toThrow(ModelUnavailableInGatewayError)
@@ -277,23 +270,26 @@ describe('gatewayModelRouting', () => {
   })
 
   describe('Miau 上的 DeepSeek 与 Right.Codes 那条并存', () => {
-    it('带日期的 slug 落 Miau,不带日期的落 Right.Codes —— 同一个网关下', () => {
-      // 这是这次改动的**全部意义**:两条通道同属 deepseek family,靠 slug 分开。
-      // 若哪天有人把路由改回「family → 后缀」的单条映射,这四行里会有两行落错
-      // 通道 —— 而落错的表现是 404,错误里不会提到通道名。
+    it('Miau 的四个 slug 落 Miau,只有 deepseek-v4-flash 落 Right.Codes —— 同一个网关下', () => {
+      // 两条通道同属 deepseek family,靠 slug 分开。若哪天有人把路由改回
+      // 「family → 后缀」的单条映射,这里会有行落错通道 —— 而落错的表现是 404
+      // 或钱走错钱包,错误里不会提到通道名。
       expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-flash'))
         .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
+      // 与 Right.Codes 同名,但产品要求走平台余额 —— 归 Miau。
       expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-pro'))
-        .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
-      expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-flash-0731'))
         .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
-      expect(resolveGatewayModelRoute('rightcode', 'deepseek-v4-pro-0813'))
-        .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
+      for (const slug of ['deepseek-flash', 'deepseek-v4-flash-0731', 'deepseek-v4-pro-0813']) {
+        expect(resolveGatewayModelRoute('rightcode', slug))
+          .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
+      }
     })
 
-    it('apiyi 只有 Miau 那条 —— Right.Codes 的裸 slug 在这里无处可去', () => {
-      expect(resolveGatewayModelRoute('apiyi', 'deepseek-v4-flash-0731'))
-        .toMatchObject({ channelId: 'apiyi-deepseek-miau', family: 'deepseek' })
+    it('apiyi 只有 Miau 那条 —— Right.Codes 独有的 slug 在这里无处可去', () => {
+      for (const slug of ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-0731', 'deepseek-v4-pro-0813']) {
+        expect(resolveGatewayModelRoute('apiyi', slug))
+          .toMatchObject({ channelId: 'apiyi-deepseek-miau', family: 'deepseek' })
+      }
       // 回落到 `apiyi-deepseek`,而那条通道不存在 → 这个网关跑不了这个模型。
       // 不是崩溃,是可跳过的「本网关无此模型」—— 目录构建靠它筛掉不可路由的行。
       expect(() => resolveGatewayModelRoute('apiyi', 'deepseek-v4-flash'))
@@ -318,7 +314,7 @@ describe('gatewayModelRouting', () => {
       // ¥2.14 vs ¥0.10,而 UI 上完全看不出这笔钱哪来的。
       for (const gatewayId of ['apiyi', 'rightcode']) {
         expect(resolveProviderChannel(`${gatewayId}-deepseek-miau`).memoriesModel)
-          .toBe('deepseek-v4-flash-0731')
+          .toBe('deepseek-flash')
       }
     })
 
