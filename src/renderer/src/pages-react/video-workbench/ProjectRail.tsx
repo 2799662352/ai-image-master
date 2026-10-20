@@ -5,13 +5,18 @@
 // 导入/导出两颗按钮本期只占位(disabled + title「即将推出」),真正的流程在
 // 「工程文件导入/导出」那份计划里接进来 —— 不做假实现。
 
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { Trash2 } from 'lucide-react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
+import { pinnedFirstBy } from '../../features/video-workbench/projects'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 import { isProjectFileName } from '../../features/video-workbench/importProject'
+import { useContextMenu } from './ContextMenu'
 import { CoverImage } from './CoverImage'
 import { SEGMENT_DRAG_MIME } from './ProjectOverview'
+import { RenameDialog } from './RenameDialog'
+import { projectMenuItems } from './workbenchMenus'
 
 function carriesSegment(e: DragEvent): boolean {
   return Array.from(e.dataTransfer.types ?? []).includes(SEGMENT_DRAG_MIME)
@@ -32,6 +37,8 @@ export function relativeTime(ts: number | null, now = Date.now()): string {
 export interface ProjectRailProps {
   onRequestImport?: () => void
   onRequestExport?: () => void
+  /** 打开回收站(由页面挂 TrashDialog)。不传 = 不显示回收站入口。 */
+  onRequestTrash?: () => void
   /** 用户把一个 `*.catwb.json` 拖到了剧栏上:交回路径,由页面打开导入确认页。 */
   onDropProjectFile?: (path: string) => void
 }
@@ -51,7 +58,7 @@ function droppedProjectFilePath(e: DragEvent): string | null {
   return null
 }
 
-export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFile }: ProjectRailProps) {
+export function ProjectRail({ onRequestImport, onRequestExport, onRequestTrash, onDropProjectFile }: ProjectRailProps) {
   const projects = useVideoWorkbenchStore((s) => s.projects)
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
@@ -62,6 +69,11 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
   const switchProject = useVideoWorkbenchStore((s) => s.switchProject)
   const renameProject = useVideoWorkbenchStore((s) => s.renameProject)
   const moveBoardToProject = useVideoWorkbenchStore((s) => s.moveBoardToProject)
+  const pinnedProjectIds = useVideoWorkbenchStore((s) => s.pinnedProjectIds)
+  const trashCount = useVideoWorkbenchStore((s) => s.trash.length)
+  const menu = useContextMenu()
+  /** 折叠态剧栏没有就地输入框,右键「重命名」改走小对话框。 */
+  const [renamingInDialog, setRenamingInDialog] = useState<{ id: string; name: string } | null>(null)
 
   const [query, setQuery] = useState('')
   /** 有分段卡正拖在剧栏上空:顶部露出「新建一部剧并移入」的投放框。 */
@@ -76,16 +88,27 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
   }, [editingId])
 
   const needle = query.trim().toLowerCase()
-  const rows = projects
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map((p) => ({ project: p, stats: summarizeProject(p.id, boards, cards) }))
-    .filter(({ project }) => !needle || project.name.toLowerCase().includes(needle))
+  const rows = pinnedFirstBy(
+    projects
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .map((p) => ({ project: p, stats: summarizeProject(p.id, boards, cards) }))
+      .filter(({ project }) => !needle || project.name.toLowerCase().includes(needle)),
+    pinnedProjectIds,
+    (row) => row.project.id,
+  )
 
   const beginRename = (id: string, current: string) => {
     setEditingId(id)
     setDraft(current)
   }
+  const openMenu = (e: ReactMouseEvent, id: string, name: string) =>
+    menu.open(
+      e,
+      projectMenuItems(id, {
+        onRename: () => (collapsed ? setRenamingInDialog({ id, name }) : beginRename(id, name)),
+      }),
+    )
   const commitRename = () => {
     if (editingId) renameProject(editingId, draft)
     setEditingId(null)
@@ -185,14 +208,20 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
           const isActive = project.id === activeProjectId
           const t = stats.totals
           const cost = formatCostParts(t.cost.usd, t.cost.cny)
+          const pinned = pinnedProjectIds.includes(project.id)
           return (
-            <div key={project.id} role="listitem" className={`vw-rail-row ${isActive ? 'vw-rail-row-active' : ''}`}>
+            <div
+              key={project.id}
+              role="listitem"
+              className={`vw-rail-row ${isActive ? 'vw-rail-row-active' : ''}`}
+              onContextMenu={(e) => openMenu(e, project.id, project.name)}
+            >
               <button
                 type="button"
                 className="vw-rail-rowbtn"
                 aria-label={`切换到剧 ${project.name}`}
                 aria-current={isActive ? 'true' : undefined}
-                title={collapsed ? project.name : undefined}
+                title={collapsed ? `${project.name}${pinned ? '(已置顶)' : ''}` : undefined}
                 onClick={() => switchProject(project.id)}
                 onDoubleClick={() => !collapsed && beginRename(project.id, project.name)}
                 onDragOver={(e) => {
@@ -206,6 +235,7 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
                   moveBoardToProject(boardId, project.id)
                 }}
               >
+                {collapsed && pinned && <span className="vw-pin-dot" aria-hidden="true" />}
                 <div className="vw-rail-cover" aria-hidden="true">
                   <CoverImage src={stats.cover} />
                 </div>
@@ -228,6 +258,9 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
                         />
                       ) : (
                         <span className="truncate">{project.name}</span>
+                      )}
+                      {pinned && editingId !== project.id && (
+                        <span className="vw-pin" title="已置顶">PIN</span>
                       )}
                       {t.active > 0 && (
                         <span className="vw-dot vw-dot-yellow" title={`${t.active} 镜生成中`}>
@@ -254,10 +287,34 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
                 )}
                 {!collapsed && <div className="vw-rail-time">{relativeTime(t.lastActivityAt)}</div>}
               </button>
+              {/* 与右键同一份菜单的可见入口;按钮并列在行按钮旁(按钮里不能再嵌按钮) */}
+              {!collapsed && (
+                <button
+                  type="button"
+                  className="vw-rail-more"
+                  aria-label={`剧菜单 ${project.name}`}
+                  aria-haspopup="menu"
+                  title="更多操作(也可以右键)"
+                  onClick={(e) => openMenu(e, project.id, project.name)}
+                >
+                  ⋯
+                </button>
+              )}
             </div>
           )
         })}
       </div>
+      {collapsed && onRequestTrash && (
+        <button
+          type="button"
+          className="vw-rail-trash-mini"
+          aria-label="回收站"
+          title={trashCount > 0 ? `回收站(${trashCount})` : '回收站'}
+          onClick={onRequestTrash}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      )}
       {!collapsed && (
         <div className="vw-rail-foot">
           <button
@@ -278,8 +335,28 @@ export function ProjectRail({ onRequestImport, onRequestExport, onDropProjectFil
           >
             导出当前剧
           </button>
+          {onRequestTrash && (
+            <button
+              type="button"
+              className="vw-ghost vw-rail-trash"
+              aria-label="回收站"
+              title="查看已删除的剧和分段:可恢复,或确认后彻底删除"
+              onClick={onRequestTrash}
+            >
+              <Trash2 size={12} aria-hidden="true" />
+              回收站{trashCount > 0 ? ` (${trashCount})` : ''}
+            </button>
+          )}
         </div>
       )}
+      {menu.node}
+      <RenameDialog
+        open={renamingInDialog !== null}
+        title="重命名剧"
+        initial={renamingInDialog?.name ?? ''}
+        onCommit={(name) => (renamingInDialog ? renameProject(renamingInDialog.id, name) : false)}
+        onClose={() => setRenamingInDialog(null)}
+      />
     </aside>
   )
 }
