@@ -222,6 +222,13 @@ export interface VideoWorkbenchProject {
    * 改名后清除。不影响任何数据语义。
    */
   legacy?: true
+  /**
+   * 移入回收站的时刻。**只存在于 IndexedDB 的记录上** —— 内存里的 `projects` 只放
+   * 活着的剧,被删的剧(连同它的分段和卡片)在 store 的 `trash` 里。水合时按这个字段
+   * 分流;恢复时去掉它再写回。用「在原记录上打标」而不是新开一个 object store,
+   * 是为了不升库版本(升级失败的代价是整个工作台打不开)。
+   */
+  deletedAt?: number
 }
 
 /**
@@ -249,6 +256,13 @@ export interface VideoWorkbenchBoard {
   /** 页签排序(小在左)。 */
   order: number
   createdAt: number
+  /** 移入回收站的时刻;语义同 `VideoWorkbenchProject.deletedAt`(只在库记录上,内存里的活段没有)。 */
+  deletedAt?: number
+  /**
+   * 是因为**所属剧**被删才进的回收站(而不是单独删的这一段)。恢复剧时只带回这类段;
+   * 之前单独删掉的段仍留在回收站里,由用户单独决定。
+   */
+  deletedWithProject?: true
 }
 
 /** 一张工作台任务卡片（渲染端真相源 + IndexedDB 持久化形状）。 */

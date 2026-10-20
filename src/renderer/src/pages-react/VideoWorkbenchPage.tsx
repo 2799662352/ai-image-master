@@ -23,6 +23,7 @@ import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
 import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
+import { TrashDialog } from './video-workbench/TrashDialog'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
@@ -51,6 +52,7 @@ export default function VideoWorkbenchPage() {
   const [dragging, setDragging] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  const [trashOpen, setTrashOpen] = useState(false)
   /** 待导入的工程文件路径;null = 导入对话框关闭。 */
   const [importPath, setImportPath] = useState<string | null>(null)
   const requestImport = async () => {
@@ -80,7 +82,7 @@ export default function VideoWorkbenchPage() {
 
   // 批量生成的两步确认。一次误点烧的是整批额度,而这颗按钮的邻居是「添加卡片」
   // 和「删除选中」—— 挨得近、后果不对称,所以要一道确认。3.5s 无操作自动复位,
-  // 与 BoardTabs 的删除确认同一套做法(不用 window.confirm:jsdom 里被禁用)。
+  // 与回收站里「彻底删除」的二次确认同一套做法(不用 window.confirm:jsdom 里被禁用)。
   const [confirmingStart, setConfirmingStart] = useState(false)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -178,12 +180,14 @@ export default function VideoWorkbenchPage() {
       <ProjectSearchPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <ExportProjectDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <ImportProjectDialog path={importPath} onClose={() => setImportPath(null)} />
+      <TrashDialog open={trashOpen} onClose={() => setTrashOpen(false)} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">
         <ProjectRail
           onRequestExport={() => setExportOpen(true)}
           onRequestImport={() => void requestImport()}
+          onRequestTrash={() => setTrashOpen(true)}
           onDropProjectFile={(p) => setImportPath(p)}
         />
         <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">

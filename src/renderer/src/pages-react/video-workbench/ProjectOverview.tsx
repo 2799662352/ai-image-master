@@ -3,10 +3,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
+import { pinnedFirstBy } from '../../features/video-workbench/projects'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { useContextMenu } from './ContextMenu'
 import { MigrationNotice } from './MigrationNotice'
+import { RenameDialog } from './RenameDialog'
 import { SegmentCard } from './SegmentCard'
+import { boardMenuItems, projectMenuItems, trashProjectWithToast } from './workbenchMenus'
 
 /** 分段卡拖拽的 dataTransfer 类型;剧栏按它认「这是一个分段」。 */
 export const SEGMENT_DRAG_MIME = 'application/x-catimation-segment'
@@ -24,6 +28,13 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
   const openBoard = useVideoWorkbenchStore((s) => s.openBoard)
   const addBoard = useVideoWorkbenchStore((s) => s.addBoard)
   const renameProject = useVideoWorkbenchStore((s) => s.renameProject)
+  const renameBoard = useVideoWorkbenchStore((s) => s.renameBoard)
+  const pinnedProjectIds = useVideoWorkbenchStore((s) => s.pinnedProjectIds)
+  const pinnedBoardIds = useVideoWorkbenchStore((s) => s.pinnedBoardIds)
+  const onlyProject = useVideoWorkbenchStore((s) => s.projects.length <= 1)
+  const menu = useContextMenu()
+  /** 右键「重命名」的目标分段:分段卡是整张按钮,不能就地改,走小对话框。 */
+  const [renamingBoard, setRenamingBoard] = useState<{ id: string; name: string } | null>(null)
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -49,6 +60,9 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
     renameProject(project.id, draft)
     setEditing(false)
   }
+  // 序号按剧内原顺序编(01、02…),置顶只改显示位置 —— 否则置顶一下序号就乱了。
+  const numbered = stats.segments.map((s, index) => ({ ...s, index }))
+  const shown = pinnedFirstBy(numbered, pinnedBoardIds, (s) => s.board.id)
 
   return (
     <section className="space-y-4" aria-label="剧总览">
@@ -57,7 +71,10 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
         剧 › <span className="text-[#e4e4e7]">{project.name}</span> › <span className="text-[#e4e4e7]">总览</span>
       </div>
       <div className="flex items-start justify-between gap-4 border-b border-[#3F3F46] pb-4">
-        <div className="min-w-0">
+        <div
+          className="min-w-0"
+          onContextMenu={(e) => menu.open(e, projectMenuItems(project.id, { onRename: beginRename }))}
+        >
           <div className="flex items-center gap-2">
             {editing ? (
               <input
@@ -76,6 +93,7 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
               <h2 className="font-orb text-2xl font-bold text-white leading-none">{project.name}</h2>
             )}
             {project.legacy && <span className="vw-chip">旧数据</span>}
+            {pinnedProjectIds.includes(project.id) && <span className="vw-pin" title="已置顶">PIN</span>}
             <button type="button" className="vw-rail-iconbtn" aria-label="重命名剧" title="重命名" onClick={beginRename}>
               ✎
             </button>
@@ -115,23 +133,43 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
               进入「{resumeBoard.name}」 ›
             </button>
           )}
+          <button
+            type="button"
+            className="vw-ghost vw-ghost-danger"
+            aria-label="删除此剧"
+            disabled={onlyProject}
+            title={onlyProject ? '至少保留一部剧' : '删除这部剧:先移入回收站,可恢复,在回收站里再确认才会彻底删除'}
+            onClick={() => trashProjectWithToast(project.id)}
+          >
+            删除此剧
+          </button>
           <button type="button" className="vw-primary" aria-label="新建分段" onClick={() => addBoard()}>
             + 新建分段
           </button>
         </div>
       </div>
       <div className="text-[11px] text-[#71717a]">
-        点分段卡进入编辑镜头;拖分段卡到左侧剧栏可移到别的剧;换剧点左侧剧栏。
+        点分段卡进入编辑镜头;右键分段卡可重命名 / 置顶 / Fork / 删除;拖分段卡到左侧剧栏可移到别的剧;换剧点左侧剧栏。
       </div>
       <div className="vw-seg-grid">
-        {stats.segments.map(({ board, stats: s, cover }, i) => (
+        {shown.map(({ board, stats: s, cover, index }) => (
           <SegmentCard
             key={board.id}
             board={board}
             stats={s}
             cover={cover}
-            index={i}
+            index={index}
+            pinned={pinnedBoardIds.includes(board.id)}
             onOpen={() => openBoard(board.id)}
+            onMenu={(e) =>
+              menu.open(
+                e,
+                boardMenuItems(board.id, {
+                  onOpen: () => openBoard(board.id),
+                  onRename: () => setRenamingBoard({ id: board.id, name: board.name }),
+                }),
+              )
+            }
             onDragStart={(e) => {
               e.dataTransfer.setData(SEGMENT_DRAG_MIME, board.id)
               e.dataTransfer.effectAllowed = 'move'
@@ -149,6 +187,14 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
           <span className="text-[10px] text-[#52525b] mt-1">或从其它剧「移动到…」</span>
         </button>
       </div>
+      {menu.node}
+      <RenameDialog
+        open={renamingBoard !== null}
+        title="重命名分段"
+        initial={renamingBoard?.name ?? ''}
+        onCommit={(name) => (renamingBoard ? renameBoard(renamingBoard.id, name) : false)}
+        onClose={() => setRenamingBoard(null)}
+      />
     </section>
   )
 }

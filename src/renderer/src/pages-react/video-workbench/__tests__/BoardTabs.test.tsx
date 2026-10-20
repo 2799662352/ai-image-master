@@ -1,6 +1,6 @@
-// 多「页」页签组件单测:切换/新建/双击重命名(Enter 确认、Esc 取消)/二次确认删除。
+// 多「页」页签组件单测:切换/新建/双击重命名(Enter 确认、Esc 取消)/删除进回收站/右键菜单。
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ACTIVE_BOARD_KEY,
@@ -172,25 +172,113 @@ describe('BoardTabs', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
-  it('删除需两步确认:第一次点变「确认删除」,再点才删;删后切到剩余页', () => {
+  it('✕ 删除 = 移入回收站(可恢复),不再二次确认;删后切到剩余页', () => {
     useVideoWorkbenchStore.getState().addBoard('待删页')
     render(<BoardTabs />)
 
-    const del = screen.getByRole('button', { name: '删除页「待删页」' })
-    fireEvent.click(del)
-    // 第一次点击不删,进入确认态
-    expect(useVideoWorkbenchStore.getState().boards).toHaveLength(2)
-    const confirm = screen.getByRole('button', { name: '确认删除「待删页」' })
-    fireEvent.click(confirm)
+    fireEvent.click(screen.getByRole('button', { name: '删除页「待删页」' }))
 
     const state = useVideoWorkbenchStore.getState()
     expect(state.boards).toHaveLength(1)
     expect(state.boards[0].name).toBe('页面 1')
     expect(state.activeBoardId).toBe(state.boards[0].id)
+    // 进了回收站,而不是物理删除
+    expect(state.trash).toHaveLength(1)
+    expect(state.trash[0].kind).toBe('board')
+    // 原来的「确认删除」第二步已不存在
+    expect(screen.queryByRole('button', { name: /确认删除/ })).toBeNull()
+    // 恢复后又回来了
+    expect(state.restoreFromTrash(state.trash[0].id).ok).toBe(true)
+    expect(useVideoWorkbenchStore.getState().boards.map((b) => b.name)).toContain('待删页')
   })
 
   it('仅剩一页时不出删除按钮(至少保留一页)', () => {
     render(<BoardTabs />)
     expect(screen.queryByRole('button', { name: /删除页/ })).toBeNull()
+  })
+
+  it('右键页签弹出菜单:重命名 / 置顶 / Fork / 删除', () => {
+    useVideoWorkbenchStore.getState().addBoard('第二页')
+    render(<BoardTabs />)
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    const items = screen.getAllByRole('menuitem').map((el) => el.textContent ?? '')
+    expect(items).toHaveLength(4)
+    expect(items[0]).toContain('重命名')
+    expect(items[1]).toContain('置顶')
+    expect(items[2]).toContain('Fork')
+    expect(items[3]).toContain('删除')
+  })
+
+  it('右键 → 重命名 进入行内编辑', () => {
+    render(<BoardTabs />)
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /重命名/ }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    const input = screen.getByRole('textbox') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '改过的' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(useVideoWorkbenchStore.getState().boards[0].name).toBe('改过的')
+  })
+
+  it('右键 → 置顶:该页排到最前并出 PIN 标;再右键变「取消置顶」', () => {
+    const S = () => useVideoWorkbenchStore.getState()
+    S().addBoard('第二页')
+    render(<BoardTabs />)
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /第二页/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /置顶/ }))
+
+    const tabs = screen.getAllByRole('tab').map((el) => el.textContent ?? '')
+    expect(tabs[0]).toContain('第二页')
+    expect(screen.getByTitle('已置顶')).toBeTruthy()
+    // 置顶不改库里的顺序
+    expect(S().boards.map((b) => b.name)).toEqual(['页面 1', '第二页'])
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /第二页/ }))
+    expect(screen.getByRole('menuitem', { name: /取消置顶/ })).toBeTruthy()
+  })
+
+  it('右键 → Fork:紧跟原页生成「副本」并带上卡片', () => {
+    const S = () => useVideoWorkbenchStore.getState()
+    S().addCards([{ prompt: '一镜到底' }])
+    render(<BoardTabs />)
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Fork/ }))
+
+    expect(S().boards.map((b) => b.name)).toEqual(['页面 1', '页面 1 副本'])
+    const copy = S().boards[1]
+    expect(S().cards.filter((c) => c.boardId === copy.id).map((c) => c.prompt)).toEqual(['一镜到底'])
+  })
+
+  it('右键 → 删除:进回收站;仅剩一页时「删除」是禁用的', () => {
+    const S = () => useVideoWorkbenchStore.getState()
+    render(<BoardTabs />)
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    expect((screen.getByRole('menuitem', { name: /删除/ }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.mouseDown(window)
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    act(() => {
+      S().addBoard('第二页')
+    })
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /第二页/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /删除/ }))
+    expect(S().boards.map((b) => b.name)).toEqual(['页面 1'])
+    expect(S().trash).toHaveLength(1)
+  })
+
+  it('Esc / 点菜单外面都能关掉右键菜单', () => {
+    render(<BoardTabs />)
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    expect(screen.getByRole('menu')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    expect(screen.getByRole('menu')).toBeTruthy()
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 })
