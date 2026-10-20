@@ -216,6 +216,224 @@ describe('Responses namespace compatibility', () => {
     ])
   })
 
+  describe('DeepSeek plaintext reasoning replay', () => {
+    // Live repro 2026-10-20 (Miau deepseek-flash, `rightcode-deepseek-miau`):
+    // turn 1 returned 200, the tool-result continuation returned 400
+    //   "The `reasoning_text` in the thinking mode must be passed back to the API"
+    // DeepSeek's Responses API is stateless; it replays reasoning as plaintext
+    // (`content[].reasoning_text`) and ignores `encrypted_content`, but stamps
+    // its own reasoning items with a 38-byte `<response_id>-<n>` handle there.
+    // The bridge used to treat any non-empty `encrypted_content` as foreign and
+    // dropped the WHOLE item — including the plaintext DeepSeek requires.
+    const DEEPSEEK_HANDLE = '1af0adb7-201e-4e6a-84e5-1888cbbd06e1-0'
+
+    it('keeps the plaintext of a DeepSeek reasoning item and strips only the handle', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'list the dir' }] },
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'reasoning_text', text: 'I should run ls first.' }],
+            encrypted_content: DEEPSEEK_HANDLE,
+          },
+          { type: 'function_call', call_id: 'call_a', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+          { type: 'function_call', call_id: 'call_b', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+          { type: 'function_call_output', call_id: 'call_a', output: 'a.txt' },
+          { type: 'function_call_output', call_id: 'call_b', output: '/tmp' },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      // Order is untouched: reasoning stays right before its (parallel) calls,
+      // so DeepSeek merges reasoning + both calls into ONE assistant message.
+      expect(result.body.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'list the dir' }] },
+        {
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: 'I should run ls first.' }],
+        },
+        { type: 'function_call', call_id: 'call_a', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+        { type: 'function_call', call_id: 'call_b', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+        { type: 'function_call_output', call_id: 'call_a', output: 'a.txt' },
+        { type: 'function_call_output', call_id: 'call_b', output: '/tmp' },
+      ])
+      expect(result.body.input[1]).not.toHaveProperty('encrypted_content')
+      // The original request object is not mutated.
+      expect(request.input[1]).toHaveProperty('encrypted_content', DEEPSEEK_HANDLE)
+    })
+
+    it('also keeps the older plain `text` content-part shape (openai/codex #42249)', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'text', text: 'older codex shape' }],
+            encrypted_content: DEEPSEEK_HANDLE,
+          },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        {
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'text', text: 'older codex shape' }],
+        },
+      ])
+    })
+
+    it('still drops blob-only reasoning even when content is empty or has blank text', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          { type: 'reasoning', summary: [], content: [], encrypted_content: DEEPSEEK_HANDLE },
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'reasoning_text', text: '' }],
+            encrypted_content: 'gAAAA-opaque-openai-blob',
+          },
+          { type: 'reasoning', summary: [], content: [{ type: 'summary_text' }], encrypted_content: 'gAAAA-x' },
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] },
+      ])
+    })
+
+    it('never keeps an encrypted compaction item, plaintext or not', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          {
+            type: 'compaction',
+            content: [{ type: 'reasoning_text', text: 'not a thing' }],
+            encrypted_content: 'gAAAA-opaque-compaction-blob',
+          },
+          { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ])
+    })
+
+    it('in a GPT→DeepSeek thread keeps DeepSeek plaintext and drops the OpenAI blob', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'first, on GPT' }] },
+          {
+            type: 'reasoning',
+            summary: [{ type: 'summary_text', text: 'gpt summary' }],
+            content: null,
+            encrypted_content: 'gAAAA-opaque-openai-blob',
+          },
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'gpt answer' }] },
+          { role: 'user', content: [{ type: 'input_text', text: 'now on DeepSeek' }] },
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'reasoning_text', text: 'deepseek thinking' }],
+            encrypted_content: DEEPSEEK_HANDLE,
+          },
+          { type: 'function_call', call_id: 'call_c', name: 'exec_command', arguments: '{}' },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'first, on GPT' }] },
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'gpt answer' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'now on DeepSeek' }] },
+        {
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: 'deepseek thinking' }],
+        },
+        { type: 'function_call', call_id: 'call_c', name: 'exec_command', arguments: '{}' },
+      ])
+    })
+
+    it('delivers the plaintext reasoning to the upstream across the HTTP boundary', async () => {
+      // Same shape Codex replays after a parallel tool batch (rollout
+      // 01a15965: reasoning, call, call, output, output).
+      let upstreamRequest: { input?: Array<Record<string, unknown>> } | undefined
+      const upstream = createServer(async (request, response) => {
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(Buffer.from(chunk))
+        upstreamRequest = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        response.statusCode = 200
+        response.setHeader('content-type', 'text/event-stream')
+        response.end('data: {"type":"response.completed","response":{"output":[]}}\n\n')
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const upstreamPort = (upstream.address() as AddressInfo).port
+      const proxy = await startResponsesCompatibilityProxy(
+        `http://127.0.0.1:${upstreamPort}/v1`,
+      )
+
+      try {
+        const response = await fetch(`${proxy.baseUrl}/responses`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: 'deepseek-flash',
+            stream: true,
+            input: [
+              { role: 'user', content: [{ type: 'input_text', text: '检查目录' }] },
+              {
+                type: 'reasoning',
+                summary: [],
+                content: [{ type: 'reasoning_text', text: '先 ls 再 pwd。' }],
+                encrypted_content: DEEPSEEK_HANDLE,
+              },
+              { type: 'function_call', call_id: 'call_a', name: 'exec_command', arguments: '{}' },
+              { type: 'function_call', call_id: 'call_b', name: 'exec_command', arguments: '{}' },
+              { type: 'function_call_output', call_id: 'call_a', output: 'a.txt' },
+              { type: 'function_call_output', call_id: 'call_b', output: '/tmp' },
+            ],
+          }),
+        })
+        await response.text()
+
+        const input = upstreamRequest?.input ?? []
+        expect(input.map((item) => item.type ?? 'message')).toEqual([
+          'message',
+          'reasoning',
+          'function_call',
+          'function_call',
+          'function_call_output',
+          'function_call_output',
+        ])
+        expect(input[1]).toEqual({
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: '先 ls 再 pwd。' }],
+        })
+      } finally {
+        await proxy.close()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    })
+  })
+
   it('restores namespace identity on nested function-call response items', () => {
     const event = {
       type: 'response.completed',

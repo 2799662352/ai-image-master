@@ -218,26 +218,69 @@ function stripNullInputItemFields(body: JsonObject): void {
 const ENCRYPTED_REPLAY_ITEM_TYPES = new Set(['reasoning', 'compaction'])
 
 /**
- * Drops replayed reasoning/compaction items that carry provider-bound
- * `encrypted_content`.
+ * True when a replayed `reasoning` item carries plaintext chain-of-thought.
+ *
+ * Codex puts raw reasoning in `content[]` as `reasoning_text` parts (older
+ * builds serialized plain `text` parts, openai/codex #42249). OpenAI's own
+ * reasoning items never have it: they are opaque `encrypted_content` only.
+ */
+function hasReplayableReasoningText(item: JsonObject): boolean {
+  if (!Array.isArray(item.content)) return false
+  return item.content.some(
+    (part) =>
+      isJsonObject(part)
+      && (part.type === 'reasoning_text' || part.type === 'text')
+      && typeof part.text === 'string'
+      && part.text.length > 0,
+  )
+}
+
+/**
+ * Removes provider-bound `encrypted_content` from replayed reasoning/compaction
+ * items, dropping an item only when nothing else in it is replayable.
  *
  * Cross-channel continuation (a GPT thread switched to grok) replays history
  * containing OpenAI-encrypted reasoning blobs; xAI cannot decrypt them and
  * fails the whole turn with "Could not decrypt the provided encrypted_content"
  * (openai/codex #17541). Upstream guidance (#25290) is to remove the WHOLE
  * item — blanking only the field turns the error into "Missing required
- * parameter: input[N].encrypted_content". Safe on bridged (xAI-family)
- * channels: grok itself replays reasoning with `encrypted_content: null`
- * (verified via live capture), so any non-empty blob here is by construction
- * foreign replay data the upstream could never use anyway.
+ * parameter: input[N].encrypted_content". Such items are blob-only
+ * (`content: null`), so they are still dropped.
+ *
+ * What must NOT be dropped: a reasoning item that also carries plaintext
+ * `content`. DeepSeek's Responses API is stateless and replays reasoning as
+ * plaintext — "Plain-text `content` is merged into the adjacent assistant
+ * message; `summary` and `encrypted_content` are not supported" — and in
+ * thinking mode with tool calls a missing reasoning is a hard 400:
+ * "The `reasoning_text` in the thinking mode must be passed back to the API".
+ * DeepSeek stamps its own reasoning items with a 38-byte
+ * `encrypted_content: "<response_id>-<n>"` handle that is meaningless to every
+ * upstream, so "non-empty `encrypted_content` ⇒ foreign" does not hold there;
+ * dropping the whole item threw away the plaintext DeepSeek actually needs
+ * (Miau deepseek-flash, intermittent 400 on tool-call continuations). Keep
+ * the item and strip only the unusable handle. `compaction` has no plaintext
+ * form and is always dropped when encrypted.
  */
 function dropForeignEncryptedReplayItems(body: JsonObject): void {
   if (!Array.isArray(body.input)) return
-  body.input = body.input.filter((item) => {
-    if (!isJsonObject(item)) return true
-    if (typeof item.type !== 'string' || !ENCRYPTED_REPLAY_ITEM_TYPES.has(item.type)) return true
-    return typeof item.encrypted_content !== 'string' || item.encrypted_content.length === 0
-  })
+  const kept: unknown[] = []
+  for (const item of body.input) {
+    if (
+      !isJsonObject(item)
+      || typeof item.type !== 'string'
+      || !ENCRYPTED_REPLAY_ITEM_TYPES.has(item.type)
+      || typeof item.encrypted_content !== 'string'
+      || item.encrypted_content.length === 0
+    ) {
+      kept.push(item)
+      continue
+    }
+    if (item.type === 'reasoning' && hasReplayableReasoningText(item)) {
+      delete item.encrypted_content
+      kept.push(item)
+    }
+  }
+  body.input = kept
 }
 
 /**
