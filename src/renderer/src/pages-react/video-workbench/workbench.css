@@ -540,6 +540,57 @@
 .vw-ghost:hover:not(:disabled) { border-color: #fce300; color: #fff; }
 .vw-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* ---------- 右键菜单 / 回收站 / 置顶标记 ---------- */
+/* 菜单走 portal 挂在 body 上:剧栏列表 overflow:auto、分段卡 hover 有 transform,留在里面会被裁/错位 */
+.vw-ctx-menu { position: fixed; z-index: 90; min-width: 176px; max-width: 260px; padding: 4px 0; background: #111113; border: 1px solid #3f3f46; box-shadow: 0 0 14px rgba(252, 227, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.5); }
+.vw-ctx-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; padding: 7px 12px; font-size: 12px; color: #e4e4e7; text-align: left; background: transparent; white-space: nowrap; }
+.vw-ctx-item:hover:not(:disabled), .vw-ctx-item:focus-visible { background: #18181b; color: #fff; outline: none; box-shadow: inset 2px 0 0 #fce300; }
+.vw-ctx-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.vw-ctx-danger { color: #f87171; }
+.vw-ctx-danger:hover:not(:disabled), .vw-ctx-danger:focus-visible { background: rgba(248, 113, 113, 0.1); color: #fca5a5; box-shadow: inset 2px 0 0 #f87171; }
+.vw-ctx-hint { font-size: 10px; color: #71717a; letter-spacing: 0.04em; }
+.vw-ctx-sep { height: 1px; margin: 4px 0; background: #27272a; }
+
+/* 危险按钮:彻底删除 / 清空回收站;armed = 已点第一下,等第二下确认 */
+.vw-danger { height: 28px; padding: 0 10px; border: 1px solid #4a1f1f; color: #f87171; font-size: 11px; background: transparent; white-space: nowrap; }
+.vw-danger:hover { border-color: #f87171; background: rgba(248, 113, 113, 0.08); }
+.vw-danger-armed { border-color: #ef4444; background: rgba(239, 68, 68, 0.22); color: #fecaca; }
+.vw-ghost-danger:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
+
+.vw-dialog-sm { width: 380px; }
+.vw-dialog-trash { width: 620px; }
+.vw-trash-body { max-height: 52vh; overflow: auto; }
+.vw-trash-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.vw-trash-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; background: #18181b; border: 1px solid #27272a; }
+.vw-trash-meta { min-width: 0; flex: 1; }
+.vw-trash-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 700; color: #fff; }
+.vw-trash-name > .truncate { min-width: 0; }
+.vw-trash-sub { margin-top: 3px; font-size: 11px; color: #71717a; }
+.vw-trash-actions { display: flex; gap: 6px; flex: none; }
+.vw-trash-actions .vw-ghost, .vw-trash-actions .vw-danger { padding: 0 10px; }
+
+/* 置顶标记:黄色小描边 PIN;折叠剧栏里只剩封面,用左上角的黄点代替 */
+.vw-pin { flex: none; font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 8px; letter-spacing: 0.12em; line-height: 1; color: #fce300; border: 1px solid rgba(252, 227, 0, 0.5); padding: 2px 3px; }
+.vw-pin-dot { position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.6); }
+
+/* 剧栏:行右侧的「⋯」(悬停/聚焦才出现,与右键同一份菜单),底部回收站入口 */
+.vw-rail-row { position: relative; }
+.vw-rail-rowbtn { position: relative; }
+.vw-rail-more { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; font-size: 13px; line-height: 1; color: #a1a1aa; background: #111113; border: 1px solid #3f3f46; opacity: 0; transition: opacity .1s; }
+.vw-rail-row:hover .vw-rail-more, .vw-rail-more:focus-visible { opacity: 1; }
+.vw-rail-more:hover { color: #fff; border-color: #fce300; }
+.vw-rail-row:hover .vw-rail-time { opacity: 0; }
+.vw-rail-foot .vw-rail-trash { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.vw-rail-trash-mini { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 8px auto; border: 1px solid #3f3f46; color: #a1a1aa; background: transparent; }
+.vw-rail-trash-mini:hover { border-color: #fce300; color: #fff; }
+
+/* 总览分段卡:卡本体是 <button>,「⋯」只能是它的兄弟,所以包一层定位容器 */
+.vw-seg-wrap { position: relative; min-width: 0; }
+.vw-seg-more { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; font-size: 15px; line-height: 1; color: #e4e4e7; background: rgba(0, 0, 0, 0.72); border: 1px solid #3f3f46; opacity: 0; transition: opacity .1s; z-index: 1; }
+.vw-seg-wrap:hover .vw-seg-more, .vw-seg-more:focus-visible { opacity: 1; }
+.vw-seg-more:hover { color: #fce300; border-color: #fce300; }
+.vw-seg-pin { position: absolute; top: 10px; left: 42px; background: rgba(0, 0, 0, 0.7); padding: 3px 4px; z-index: 1; pointer-events: none; }
+
 /* ---------- 分段页:面包屑 + 页签(自动换行,不出滚动条) ---------- */
 .vw-crumb { font-size: 11px; color: #a1a1aa; background: transparent; border: 1px solid #3f3f46; padding: 1px 8px; cursor: pointer; transition: color .12s, border-color .12s; }
 .vw-crumb:hover { color: #fce300; border-color: #fce300; }

@@ -51,13 +51,17 @@ import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { modeLimit } from './modes'
 import {
+  ACTIVE_BOARD_KEY,
   ACTIVE_PROJECT_KEY,
   createProjectsSlice,
   firstBoardOf,
   nextSegmentName,
+  readPins,
+  writeActiveBoard,
   writeActiveProject,
   type ProjectsSlice,
 } from './projects'
+import { partitionTrash, pruneTrash, softenRemovals, type WorkbenchTrashEntry } from './trash'
 import { cancelPendingPersist, persistTimers } from './persistQueue'
 import { assignDefaultProject, defaultProject, getWorkbenchDb } from './WorkbenchDb'
 import { useToastStore } from '../../stores/useToastStore'
@@ -952,8 +956,8 @@ export const AUTO_IMPORT_PORTRAIT_KEY = 'vw-auto-import-portrait'
 /** 「允许 AI 自动生成」总闸的 localStorage 键。 */
 export const AGENT_AUTO_START_KEY = 'vw-agent-auto-start'
 
-/** 当前激活「页」的 localStorage 键(轻量元数据,不进 IndexedDB)。 */
-export const ACTIVE_BOARD_KEY = 'vw-active-board'
+// 当前激活「页」的 localStorage 键 + 写入口住在 projects.ts(回收站的删段要用),这里转出。
+export { ACTIVE_BOARD_KEY }
 
 function readActiveProjectId(projectIds: ReadonlySet<string>, fallback: string): string {
   try {
@@ -963,14 +967,6 @@ function readActiveProjectId(projectIds: ReadonlySet<string>, fallback: string):
     // localStorage 不可用则回第一部剧
   }
   return fallback
-}
-
-function writeActiveBoard(id: string): void {
-  try {
-    globalThis.localStorage?.setItem(ACTIVE_BOARD_KEY, id)
-  } catch {
-    // localStorage 不可用时仅内存生效
-  }
 }
 
 function toFileUrl(filePath: string): string {
@@ -1175,6 +1171,8 @@ interface WorkbenchWritePlan {
     projects?: VideoWorkbenchProject[]
     removeProjectIds?: string[]
   }
+  /** 这次写把哪些分段 / 剧移进了回收站(由 softenPlan 填)。 */
+  trashed?: WorkbenchTrashEntry[]
 }
 
 type WorkbenchSetter = (partial: Partial<VideoWorkbenchState>) => void
@@ -1205,9 +1203,33 @@ function applyPlanToState(
     viewByProject[plan.next.activeProjectId] = { mode: 'board', boardId: plan.next.activeBoardId }
     projectPatch.viewByProject = viewByProject
   }
-  set({ ...plan.next, ...projectPatch, ...pruneSelection(prev, plan.next.cards) })
+  // 回收站:新进来的排前;id 已经重新出现在活数据里的(撤销「删除」把它救回来了)摘掉。
+  const liveProjectIds = new Set((plan.next.projects ?? prev.projects).map((p) => p.id))
+  const liveBoardIds = new Set(plan.next.boards.map((b) => b.id))
+  const incoming = plan.trashed ?? []
+  const incomingIds = new Set(incoming.map((e) => e.id))
+  const trash: WorkbenchTrashEntry[] = [
+    ...incoming,
+    ...pruneTrash(prev.trash, liveProjectIds, liveBoardIds).filter((e) => !incomingIds.has(e.id)),
+  ]
+  const trashPatch: Partial<VideoWorkbenchState> =
+    trash.length === prev.trash.length && trash.every((e, i) => e === prev.trash[i]) ? {} : { trash }
+  set({ ...plan.next, ...projectPatch, ...trashPatch, ...pruneSelection(prev, plan.next.cards) })
   writeActiveBoard(plan.next.activeBoardId)
   if (plan.next.activeProjectId) writeActiveProject(plan.next.activeProjectId)
+}
+
+/**
+ * 把计划里的「物理删除」改成「移入回收站」(见 trash.ts softenRemovals)。
+ * agent 的 applyIR 与撤销/重做共用:重做一次「删除」、agent 手写 IR 删页,都不该把
+ * 有内容的分段 / 剧永久抹掉。
+ */
+function softenPlan(
+  prev: VideoWorkbenchState,
+  plan: { next: WorkbenchWritePlan['next']; persist: WorkbenchWritePlan['persist'] },
+): WorkbenchWritePlan {
+  const softened = softenRemovals(prev, plan.persist)
+  return { next: plan.next, persist: softened.persist, trashed: softened.entries }
 }
 
 /**
@@ -1322,11 +1344,17 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     hydrationPromise ??= (async () => {
       try {
         const db = getWorkbenchDb()
-        const [stored, storedBoardsRaw, storedProjects] = await Promise.all([
+        const [storedAll, storedBoardsAll, storedProjectsAll] = await Promise.all([
           db.list(),
           db.listBoards(),
           db.listProjects(),
         ])
+        // 回收站分流:被标记删除的剧 / 分段(及其卡片)不进活数据。必须在下面「孤儿卡
+        // 迁入第一页」的归一化之前做,否则回收站里的卡会被当成孤儿塞回活着的第一页。
+        const part = partitionTrash(storedProjectsAll, storedBoardsAll, storedAll)
+        const stored = part.cards
+        const storedBoardsRaw = part.boards
+        const storedProjects = part.projects
 
         // 剧:库里有则以库为准;listProjects 在全新/内存降级时已保证至少有默认项目。
         let projects = storedProjects.length > 0 ? storedProjects : [defaultProject()]
@@ -1423,6 +1451,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             cards,
             boards,
             projects,
+            // 水合期间用户已经删过东西的话,内存里的条目在前、库里读到的在后(同 id 以内存为准)
+            trash: [
+              ...state.trash,
+              ...part.trash.filter((e) => !state.trash.some((t) => t.id === e.id)),
+            ],
             activeProjectId,
             activeBoardId,
             viewByProject: {
@@ -2468,7 +2501,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     const prev = get()
     const plan = planApplyIR(prev, ir, opts)
     if (!plan.next || !plan.persist) return plan.result
-    const write = { next: plan.next, persist: plan.persist }
+    const write = softenPlan(prev, { next: plan.next, persist: plan.persist })
     applyPlanToState(set, write, prev)
     await flushPlanToDb(write)
     // 整板回写同样可能带进新的外链图(agent 手写 IR 时最常见)。
@@ -2534,7 +2567,7 @@ function restoreStep(
     return Promise.resolve(plan.result)
   }
 
-  const write = { next: plan.next, persist: plan.persist }
+  const write = softenPlan(state, { next: plan.next, persist: plan.persist })
   restoringHistory = true
   try {
     applyPlanToState(set, write, state)
@@ -2704,6 +2737,9 @@ export function resetWorkbenchStoreForTest(): void {
       activeProjectId: DEFAULT_PROJECT_ID,
       viewByProject: { [DEFAULT_PROJECT_ID]: { mode: 'board', boardId: board.id } },
       railCollapsed: false,
+      trash: [],
+      pinnedProjectIds: readPins().projects,
+      pinnedBoardIds: readPins().boards,
       hydrated: false,
       revision: 0,
       structureRevision: 0,
