@@ -184,6 +184,74 @@ describe('registerVideoTools / schemas', () => {
     expect((res.content[0] as { text: string }).text).toContain('视频')
   })
 
+  // 深度捕捉是 generate_video 的变体:同一个工具、同一条主进程链,差别只在输入规则。
+  describe('model "depth"(深度捕捉)', () => {
+    const SRC = 'D:/clips/run.mp4'
+
+    it('一段源视频 → 放行并原样交给主进程(model / resolution / referenceVideos 都在)', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      await tools[0].handler({ prompt: '深度捕捉', model: 'depth', resolution: '480p', referenceVideos: [SRC] })
+      // 第 1 次调用 = 提交;之后的(若有)是 renderAndWait 对假任务对象的轮询。
+      const [name, params] = router.call.mock.calls[0]
+      expect(name).toBe('generate_video')
+      expect(params).toMatchObject({ model: 'depth', resolution: '480p', referenceVideos: [SRC] })
+    })
+
+    it('没有 duration / ratio 这些参数也行;给了 duration 不报「4-15」', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      await tools[0].handler({ prompt: '深度捕捉', model: 'depth', referenceVideos: [SRC], duration: 3 })
+      expect(router.call.mock.calls[0][0]).toBe('generate_video')
+    })
+
+    it('不带源视频 → 当场拦下,不打主进程', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({ prompt: '深度捕捉', model: 'depth' })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('一段源视频')
+    })
+
+    it('带了图片 → 拦下', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({
+        prompt: '深度捕捉',
+        model: 'depth',
+        referenceVideos: [SRC],
+        referenceImages: ['D:/a.png'],
+      })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('只接受一段源视频')
+    })
+
+    it('两段源视频 → 拦下', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({
+        prompt: '深度捕捉',
+        model: 'depth',
+        referenceVideos: [SRC, 'D:/clips/b.mp4'],
+      })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('一段源视频')
+    })
+
+    it('4k 不是深度捕捉的档位 → 拦下', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({
+        prompt: '深度捕捉',
+        model: 'depth',
+        resolution: '4k',
+        referenceVideos: [SRC],
+      })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('4k')
+    })
+  })
+
   it('generate_video blocks until succeeded and returns DONE + saved path + resource_link', async () => {
     const { tools, server, router } = capture()
     // 第 1 次 call = 提交（返回 queued 任务）；后续 = check_video_task 轮询。

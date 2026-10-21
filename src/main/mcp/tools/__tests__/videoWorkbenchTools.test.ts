@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z, type ZodTypeAny } from 'zod'
-import { ALL_VIDEO_MODEL_ALIASES, ALL_VIDEO_RATIOS } from '../../../../types/seedance'
+import { ALL_VIDEO_RATIOS, WORKBENCH_VIDEO_MODEL_ALIASES } from '../../../../types/seedance'
 import {
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
@@ -507,10 +507,22 @@ describe('模型/画幅枚举必须是能力表的全集', () => {
   }
 
   it.each(['video_workbench_add_tasks', 'video_workbench_apply'])(
-    '%s 的 model 覆盖全部模型（含 wan3）',
+    '%s 的 model 覆盖全部工作台模型（含 wan3）',
     (toolName) => {
       const json = schemaJson(toolName)
-      for (const alias of ALL_VIDEO_MODEL_ALIASES) expect(json).toContain(`"${alias}"`)
+      for (const alias of WORKBENCH_VIDEO_MODEL_ALIASES) expect(json).toContain(`"${alias}"`)
+      expect(json).toContain('"wan3"')
+    },
+  )
+
+  // 深度捕捉没有卡片字段,只能走 generate_video。放进工作台枚举的后果是:卡片建得出来,
+  // 提交时被 `isSeedanceModelAvailable` 悄悄改回 2.0 —— 用户拿到的是一条普通生成。
+  it.each(['video_workbench_add_tasks', 'video_workbench_apply'])(
+    '%s 的 model 枚举不含 depth(深度捕捉走 generate_video)',
+    (toolName) => {
+      const json = schemaJson(toolName)
+      expect(WORKBENCH_VIDEO_MODEL_ALIASES).not.toContain('depth')
+      expect(json).not.toContain('"depth"')
     },
   )
 
