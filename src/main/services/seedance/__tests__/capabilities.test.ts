@@ -60,6 +60,7 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-fast',
       '2.0-mini',
       '2.5',
+      'depth',
       'wan3',
       'wan3-prime',
     ])
@@ -88,9 +89,20 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
     for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
       const caps = capabilitiesFor(alias)
       expect(['vvdance', 'miau']).toContain(caps.provider)
+      // 「源视频变换」型(深度捕捉)不是生成模型,没有工作台模式 —— 见下面它自己的 describe。
+      if (caps.sourceVideoTransform) {
+        expect(caps.modes).toEqual([])
+        continue
+      }
       expect(caps.modes.length).toBeGreaterThan(0)
       // 文生视频是所有模型的最低保证,没有它这张卡什么都提交不了。
       expect(caps.modes).toContain('text2video')
+    }
+  })
+
+  it('只有深度捕捉是「源视频变换」型,其余全是生成模型', () => {
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      expect(capabilitiesFor(alias).sourceVideoTransform).toBe(alias === 'depth')
     }
   })
 
@@ -150,6 +162,63 @@ describe('万相 3.0 能力', () => {
   it('分辨率按内部小写口径校验(大写转换留给上行组包)', () => {
     expect(validateSeedanceRequest('wan3', { resolution: '1080p' })).toEqual([])
     expect(validateSeedanceRequest('wan3', { resolution: '4k' })).not.toEqual([])
+  })
+})
+
+/**
+ * 深度捕捉(`depth`)—— 把一段视频变成灰度深度视频(近亮远暗)的**变体**,经 Miau 网关
+ * 的 RunningHub 渠道(`rh-video-depth-<分辨率>`),按次计费。
+ *
+ * 它和生成模型的本质区别:没有提示词、没有画幅/时长/seed,输入恰好一段源视频,输出时长随源。
+ * 上游限制(源视频 ≤ 3 分钟、必须公网 URL)见 `depth/model.ts`。
+ */
+describe('深度捕捉 depth 能力', () => {
+  it('走 miau、三档分辨率、画幅只有 adaptive', () => {
+    const caps = capabilitiesFor('depth')
+    expect(caps.provider).toBe('miau')
+    expect(caps.resolutions).toEqual(['480p', '720p', '1080p'])
+    expect(caps.ratios).toEqual(['adaptive'])
+  })
+
+  it('只收一段视频,不收图 / 音频,没有 edit / extend / 擦字幕', () => {
+    const caps = capabilitiesFor('depth')
+    expect([caps.maxImages, caps.maxVideos, caps.maxAudios]).toEqual([0, 1, 0])
+    expect(caps.maxMaterialsTotal).toBe(1)
+    expect(caps.taskModes).toEqual([])
+    expect(caps.subtitleErase).toBe(false)
+    expect(caps.audioOnlyReference).toBe(false)
+  })
+
+  it('没有工作台模式 —— 它是 agent / MCP 的变体,不进「生成视频」工作台', () => {
+    expect(capabilitiesFor('depth').modes).toEqual([])
+  })
+
+  it('恰好一段源视频才放行', () => {
+    expect(validateSeedanceRequest('depth', { resolution: '480p', videos: 1 })).toEqual([])
+    expect(validateSeedanceRequest('depth', { resolution: '1080p', videos: 1 })).toEqual([])
+    expect(validateSeedanceRequest('depth', { videos: 0 })[0]).toMatch(/一段源视频/)
+    expect(validateSeedanceRequest('depth', { videos: 2 })[0]).toMatch(/一段源视频/)
+    expect(validateSeedanceRequest('depth', {})[0]).toMatch(/一段源视频/)
+  })
+
+  it('带图 / 音频给出针对性的话,而不是「参考图最多 0 张」', () => {
+    const imageErrors = validateSeedanceRequest('depth', { videos: 1, images: 1 })
+    expect(imageErrors.join('；')).toMatch(/只接受一段源视频/)
+    expect(imageErrors.join('；')).not.toMatch(/最多 0/)
+    expect(validateSeedanceRequest('depth', { videos: 1, audios: 1 }).join('；')).toMatch(
+      /只接受一段源视频/,
+    )
+  })
+
+  it('时长不是它的参数:任何值都不拦(输出时长随源视频),分辨率照常校验', () => {
+    expect(validateSeedanceRequest('depth', { videos: 1, duration: 5 })).toEqual([])
+    expect(validateSeedanceRequest('depth', { videos: 1, duration: -1 })).toEqual([])
+    expect(validateSeedanceRequest('depth', { videos: 1, resolution: '4k' })[0]).toMatch(/4k/)
+  })
+
+  it('不让别的模型沾上这条规则:2.0 不带视频照样放行', () => {
+    expect(validateSeedanceRequest('2.0', { videos: 0 })).toEqual([])
+    expect(validateSeedanceRequest('wan3', { videos: 0 })).toEqual([])
   })
 })
 

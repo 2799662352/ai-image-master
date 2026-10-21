@@ -38,9 +38,9 @@ import {
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
 import {
-  ALL_VIDEO_MODEL_ALIASES,
   ALL_VIDEO_RATIOS,
   ALL_VIDEO_RESOLUTIONS,
+  WORKBENCH_VIDEO_MODEL_ALIASES,
 } from '../../../types/seedance'
 
 /**
@@ -52,7 +52,8 @@ import {
  * 报 `_zod` 未定义，本文件下方有那次事故的注释）。
  */
 const zEnumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
-const zModelAlias = () => zEnumOf(ALL_VIDEO_MODEL_ALIASES)
+// 工作台只收有工作台模式的模型 —— 深度捕捉(`depth`)没有卡片字段,走 generate_video。
+const zModelAlias = () => zEnumOf(WORKBENCH_VIDEO_MODEL_ALIASES)
 const zResolution = () => zEnumOf(ALL_VIDEO_RESOLUTIONS)
 const zRatio = () => zEnumOf(ALL_VIDEO_RATIOS)
 

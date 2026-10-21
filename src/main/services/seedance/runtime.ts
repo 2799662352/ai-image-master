@@ -45,7 +45,7 @@ import {
 } from './assetRefRewrite'
 import { SeedanceTaskManager } from './taskManager'
 import { relayDataUrlToCos, relayFileToCos } from '../tencent/mediaRelay'
-import { MIME_BY_EXT, resolveMediaUrl } from './mediaResolve'
+import { MIME_BY_EXT, resolveMediaUrl, type ResolveMediaOptions } from './mediaResolve'
 import { cleanupOrphanParts } from './videoDownload'
 import type {
   CreateVideoTaskInput,
@@ -82,11 +82,14 @@ import { createSeedanceGatewayClient } from '../seedanceGateway/client'
 import { createSeedanceGatewayTokenResolver } from '../seedanceGateway/credentials'
 import type { SeedanceGatewayTokenSources } from '../seedanceGateway/credentials'
 import {
+  createDepthTransport,
   createSeedanceGatewayTransport,
   createSeedanceTransport,
   createWan3Transport,
   transportFor,
 } from '../videoTransport'
+import { createMediaKitClient } from '../mediaKit/client'
+import { checkDepthInput } from '../depth/model'
 import { translateVideoTaskError } from '../videoTaskError'
 import type {
   PortraitOverlayMutation,
@@ -525,6 +528,8 @@ function rememberAssetThumb(asset: SeedanceAssetItem, thumbUrl: string): void {
  * 并发的上限由 `mediaRelay` 的 4 槽全局闸兜底,这里不再自设。
  */
 async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceContentItem[]> {
+  // (下面 mediaOptions 的字面量被 portraitLibraryGuard 钉着 —— 别改写那一行,
+  // 要叠加规则就在外面包一层,像 `withSourceVideoRelay` 这样。)
   // 全能参考 / 视频编辑 / 视频延长：视频、音频均可多条（单数字段并入数组，向后兼容）。
   const refImages = input.referenceImages ?? []
   const refVideos = [...(input.referenceVideos ?? []), ...(input.referenceVideo ? [input.referenceVideo] : [])]
@@ -536,7 +541,10 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
   // MAX_INLINE_FILE_BYTES,注释里明说「视频路径不传这个开关,保留内联线」)。
   // Seedance 吃这一套,DashScope 不吃:它只接受可下载的 https 地址。不开这个开关
   // 的后果很隐蔽 —— 大图正常、小图报错,而用户完全想不到是体积的问题。
-  const mediaOptions = upstreamAcceptsInlineMedia(input.model) ? undefined : { alwaysRelay: true }
+  const mediaOptions = withSourceVideoRelay(
+    input.model,
+    upstreamAcceptsInlineMedia(input.model) ? undefined : { alwaysRelay: true },
+  )
 
   const [firstFrameUrl, lastFrameUrl, imageUrls, videoUrls, audioUrls] = await Promise.all([
     input.firstFrame
@@ -571,6 +579,20 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
     content.push({ type: 'audio_url', role: 'reference_audio', audio_url: { url } })
   }
   return content
+}
+
+/**
+ * 深度捕捉(源视频变换)在「非 vvdance 一律先中转」之上再加一条 `noInline`:上游只吃
+ * 可下载的公网地址,COS 中转失败时降级成 data URL 毫无意义 —— 只会把「COS 不通」这个
+ * 真实原因,换成上游一句看不懂的 400。其它模型原样返回,行为不变。
+ */
+export function withSourceVideoRelay(
+  model: CreateVideoTaskInput['model'],
+  base: ResolveMediaOptions | undefined,
+): ResolveMediaOptions | undefined {
+  return capabilitiesFor(model ?? '2.0').sourceVideoTransform
+    ? { ...base, alwaysRelay: true, noInline: true }
+    : base
 }
 
 /** Exposed for tests only — 顺序不变量的回归护栏需要直接调它。 */
@@ -791,6 +813,23 @@ export function initSeedanceRuntime(opts: {
   )
 
   /**
+   * 深度捕捉(`depth`)—— 经 Miau 网关的 RunningHub 通道,与万相一样**不问计费模式**:
+   * 同一条 transport 服务两种钱包,凭据按每次调用现取(`resolveVideoBilling`),
+   * 所以用户中途切模式,下一次轮询就落到新的归属上。
+   *
+   * 客户端复用智能擦除「高清」那条 MediaKit 客户端(同一个 `/v1/videos` 提交 / 轮询
+   * 协议),fetch 注入与 origin 解析的理由同上两处,不再重复。
+   */
+  const depthTransport = createDepthTransport(
+    createMediaKitClient({
+      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      baseUrl: `${resolveGatewayOrigin()}/v1`,
+      onBilledExchange: notePlatformSpend,
+    }),
+    createSeedanceGatewayTokenResolver(gatewayTokenSources, resolveVideoBilling),
+  )
+
+  /**
    * 按模型 + 计费模式选上游。除了提交与轮询(taskManager 内部自己选),另外两条路
    * 也认 taskId —— **重启接管**与**按任务号重取过期地址** —— 它们此前写死了
    * Seedance:万相的任务在 Ark 那边查不到,前者会把一条还在跑、已付费的任务
@@ -802,6 +841,7 @@ export function initSeedanceRuntime(opts: {
       {
         seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey),
         wan3: wan3Transport,
+        depth: depthTransport,
         seedanceGateway: seedanceGatewayTransport,
       },
       model,
@@ -812,6 +852,7 @@ export function initSeedanceRuntime(opts: {
     client: seedanceClient,
     getApiKey: getSeedanceApiKey,
     wan3Transport,
+    depthTransport,
     seedanceGatewayTransport,
     resolveBilling: resolveVideoBilling,
     // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
@@ -888,6 +929,21 @@ export function initSeedanceRuntime(opts: {
     // 卡片。批量并发时每条任务都能瞬间出气泡，不再被前置大图上传压住（根因修复）。
     const clientId = taskManager.announcePreparing({ input, threadId })
     try {
+      // 深度捕捉:图片 / 音频 / asset:// / 超 100 MB 的本地文件在本机就能判出来,
+      // 必须赶在 COS 中转**之前**拦 —— 否则先把几百兆传上去、再等上游拒。
+      if (capabilitiesFor(input.model ?? '2.0').sourceVideoTransform) {
+        const problems = await checkDepthInput(input, {
+          statSize: async (p) => {
+            try {
+              const st = await fs.stat(p)
+              return st.isFile() ? st.size : null
+            } catch {
+              return null
+            }
+          },
+        })
+        if (problems.length > 0) throw new Error(problems.join('；'))
+      }
       const content = await buildContent(input)
       // agent 这条路没有渲染层、拿不到用户的意向,所以在这里用与 taskManager 同一个
       // resolver 落一次锤。**必须在这里落而不是交给 submit 内部兜底** —— 下面的素材库

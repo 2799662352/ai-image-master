@@ -41,6 +41,10 @@ const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   // 按秒计费，走 CNY_PER_SECOND 那条路，不在这张表里出价。
   wan3: NOT_TOKEN_BILLED,
   'wan3-prime': NOT_TOKEN_BILLED,
+  // 深度捕捉:网关按次收费(每次一个固定价,各分辨率同价),既没有 completion_tokens,
+  // 也没有「秒」可乘 —— 所以既不在这张表出价,也**不走**下面的每秒单价(见
+  // `unitPriceCnyPerSecond` 的显式白名单)。不显示一个编出来的价,比显示错价好。
+  depth: NOT_TOKEN_BILLED,
 }
 
 /**
@@ -79,7 +83,9 @@ const WAN3_PRIME_MULTIPLIER = 0.8 / 0.6
 
 /** ¥/秒 单价。非按秒计费的模型、或未知分辨率返回 null。 */
 export function unitPriceCnyPerSecond(model: SeedanceModelAlias, resolution: string): number | null {
-  if (PRICE_TABLE[model] !== NOT_TOKEN_BILLED) return null
+  // 白名单而不是「凡是非 token 计费的都按秒」:深度捕捉同样不按 token,但它是按次收费,
+  // 套万相的每秒价会得出一个看似精确的错数。
+  if (model !== 'wan3' && model !== 'wan3-prime') return null
   const base = CNY_PER_SECOND[resolution.toLowerCase()]
   if (base === undefined) return null
   return model === 'wan3-prime' ? base * WAN3_PRIME_MULTIPLIER : base

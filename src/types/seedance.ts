@@ -40,8 +40,20 @@ export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
  * 经 Miau 网关的 DashScope task),只是共用这张能力表、共用工作台 UI、共用任务
  * 轮询与落盘那一整套。真正按 provider 分派的只有四处 —— 请求组包、响应解析、
  * 计费公式、base URL,见各自的 `provider` 分支。
+ *
+ * `depth`(深度捕捉)是个**例外**:它不生成新内容,而是把一段源视频变成灰度深度视频
+ * (近亮远暗,可作运动参考)。放进同一张表是因为它复用整条任务链(提交 → 轮询 → 落盘
+ * → COS 转存 → 气泡),差别全部由能力表的 `sourceVideoTransform` 声明,而不是再长一个
+ * 平行的 MCP 工具。它**不进工作台**(`modes` 为空)。
  */
-export type VideoModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5' | 'wan3' | 'wan3-prime'
+export type VideoModelAlias =
+  | '2.0'
+  | '2.0-fast'
+  | '2.0-mini'
+  | '2.5'
+  | 'wan3'
+  | 'wan3-prime'
+  | 'depth'
 
 /**
  * @deprecated 用 `VideoModelAlias`。保留这个名字只是为了让既有的十几处引用不必
@@ -112,6 +124,17 @@ export interface SeedanceModelCapabilities {
   subtitleErase: boolean
   /** 是否允许「只有音频、没有图/视频」的参考组合。 */
   audioOnlyReference: boolean
+  /**
+   * 「源视频变换」型模型(目前只有深度捕捉)。
+   *
+   * 与生成模型的区别决定了它要绕开几条通用规则,所以单列一个字段而不是在各处写
+   * `alias === 'depth'`(那样下一个同类模型进来要改一圈):
+   *
+   *   - 输入**恰好一段**源视频,不收图 / 音频、不读提示词;
+   *   - 没有时长 / 画幅 / seed 这些参数 —— 输出时长随源视频,所以不按 `duration` 校验;
+   *   - `modes` 为空:没有「工作台模式」可言,也就不进工作台下拉。
+   */
+  sourceVideoTransform: boolean
 }
 
 /** Seedance 全家的画幅集合。万相不一样（有 adaptive、没有 21:9），见它那行。 */
@@ -157,6 +180,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: [],
     subtitleErase: true,
     audioOnlyReference: false,
+    sourceVideoTransform: false,
   },
   '2.0-fast': {
     provider: 'vvdance',
@@ -174,6 +198,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: [],
     subtitleErase: true,
     audioOnlyReference: false,
+    sourceVideoTransform: false,
   },
   '2.0-mini': {
     provider: 'vvdance',
@@ -189,6 +214,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: [],
     subtitleErase: false,
     audioOnlyReference: false,
+    sourceVideoTransform: false,
   },
   '2.5': {
     provider: 'vvdance',
@@ -204,6 +230,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: ['edit', 'extend'],
     subtitleErase: false,
     audioOnlyReference: true,
+    sourceVideoTransform: false,
   },
   /**
    * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
@@ -235,6 +262,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     // 官方允许「只给参考音频」的组合。
     audioOnlyReference: true,
+    sourceVideoTransform: false,
   },
   /**
    * 万相 3.0 Prime（`wan3.0-video-prime`）—— 同一家、同一套协议、同一枚 Miau Key，
@@ -262,6 +290,38 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     audioOnlyReference: true,
     taskModes: [],
+    sourceVideoTransform: false,
+  },
+  /**
+   * 深度捕捉 —— 把一段视频转成**灰度深度视频**(近亮远暗,可作运动参考)。
+   *
+   * 上游是 Miau 网关的 RunningHub 渠道,模型名 `rh-video-depth-480p|720p|1080p`:**分辨率
+   * 只由模型名决定**,不读 metadata,所以 `resolutions` 就是三个 SKU;按次计费(网关
+   * `/api/pricing` 实测每档 ¥0.5,`quota_type=1`),与源视频时长、体积无关。
+   *
+   * 数字出处 —— 网关适配器与 sora-ui 画布「深度捕捉」(`enhanceVideoModels.ts`):
+   *   - 源视频必须是**公网 http(s) URL**(上游自己去拉,没有 base64 兜底),所以走 COS 中转;
+   *   - 源视频 ≤ 3 分钟、> 100 MB 上游会拒(Web 端由后端 MPS 压缩,桌面端提前拦下并说怎么办)。
+   *
+   * 其余字段是占位:`duration` 区间只表达「源视频上限 180 秒」,实际不参与校验
+   * (`sourceVideoTransform` 跳过时长检查);`seedMax: 0` 表示没有 seed 这个参数;
+   * `modes: []` 让它留在工作台之外。
+   */
+  depth: {
+    provider: 'miau',
+    ratios: ['adaptive'],
+    seedMax: 0,
+    modes: [],
+    duration: { min: 1, max: 180 },
+    resolutions: ['480p', '720p', '1080p'],
+    maxImages: 0,
+    maxVideos: 1,
+    maxAudios: 0,
+    maxMaterialsTotal: 1,
+    taskModes: [],
+    subtitleErase: false,
+    audioOnlyReference: false,
+    sourceVideoTransform: true,
   },
 }
 
@@ -283,6 +343,18 @@ function unionOf(pick: (caps: SeedanceModelCapabilities) => readonly string[]): 
 export const ALL_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = Object.keys(
   SEEDANCE_MODEL_CAPABILITIES,
 ) as VideoModelAlias[]
+
+/**
+ * 能进「视频工作台」的模型 = 至少开放了一种工作台模式的。
+ *
+ * 深度捕捉(`depth`)这类「源视频变换」模型 `modes` 为空:它没有提示词 / 画幅 / 时长这些
+ * 卡片字段,只能经 `generate_video` 提交。工作台的 MCP 工具与工程文件导入必须用这份
+ * 而不是 `ALL_VIDEO_MODEL_ALIASES`,否则 agent 能往卡片里塞 `depth`,提交那一步
+ * 再被 `isSeedanceModelAvailable` 悄悄改回 2.0 —— 用户拿到的是一条普通生成,而不是报错。
+ */
+export const WORKBENCH_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = ALL_VIDEO_MODEL_ALIASES.filter(
+  (alias) => SEEDANCE_MODEL_CAPABILITIES[alias].modes.length > 0,
+)
 
 export const ALL_VIDEO_RESOLUTIONS: readonly string[] = unionOf((caps) => caps.resolutions)
 
@@ -350,7 +422,8 @@ export function validateSeedanceRequest(
     }
   }
 
-  if (duration !== undefined && duration !== -1) {
+  // 源视频变换型(深度捕捉)没有时长参数 —— 输出时长随源视频,调用方带不带都不该被拦。
+  if (duration !== undefined && duration !== -1 && !caps.sourceVideoTransform) {
     const { min, max } = caps.duration
     if (!Number.isInteger(duration) || duration < min || duration > max) {
       errors.push(`模型 ${alias} 的时长支持 ${min}-${max} 秒或 -1，收到 ${duration}`)
@@ -365,6 +438,20 @@ export function validateSeedanceRequest(
 
   if (request.subtitleErase && !caps.subtitleErase) {
     errors.push(`模型 ${alias} 不支持擦除字幕（仅 2.0 与 2.0-fast 支持）`)
+  }
+
+  if (caps.sourceVideoTransform) {
+    // 变换型走自己的话术:通用那三条会说成「参考图最多 0 张」,读起来像素材配额问题,
+    // 而真相是「这个模型根本不是生成模型,只要一段源视频」。
+    if (videos !== 1) {
+      errors.push(
+        `模型 ${alias} 需要恰好一段源视频（referenceVideos 传 1 个），收到 ${videos} 段`,
+      )
+    }
+    if (images > 0 || audios > 0) {
+      errors.push(`模型 ${alias} 只接受一段源视频，不能再带图片 / 音频`)
+    }
+    return errors
   }
 
   if (images > caps.maxImages) errors.push(`参考图最多 ${caps.maxImages} 张，收到 ${images}`)
