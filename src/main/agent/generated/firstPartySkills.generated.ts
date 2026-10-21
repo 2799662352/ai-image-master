@@ -477,7 +477,7 @@ description: >-
   FIRST-CHOICE video generator and the ONLY top-level video orchestrator in
   CATIMATION. Trigger whenever the user asks to generate / render a video or
   animation, animate a still, or says 生成视频 / 图生视频 / 让它动起来 / 视频编辑 /
-  视频延长 / 视频工作台 / 批量出片 / 多镜. Covers text/still-to-video, omni-reference
+  视频延长 / 视频工作台 / 批量出片 / 多镜 / 深度捕捉. Covers text/still-to-video, omni-reference
   (全能参考, default), editing and extension on both output surfaces
   (generate_video one-shot + video_workbench_* batch), and grades every request
   快速/标准/专业/制片 before loading other skills.
@@ -507,7 +507,8 @@ to a local file, and lands in the app history page.
 把已有分镜换个格式、改一段文字 —— 这些**一个 skill 都不要加载,也不进分级**,
 直接做完交付。它们本来是三分钟的事,套上分级和确认闸门会拖成几小时。
 用户说「快点」「简单弄一下」「先给我看看」时同理。
-**只有真要提交生成任务时**,才继续往下看分级表。
+**只有真要提交生成任务时**,才继续往下看分级表。**深度捕捉(\`model:"depth"\`)也不进分级**,
+直接看下面「深度捕捉」一节。
 
 默认进入**快速**模式;只有命中升级条件才升级。定级后把执行状态记成一份 routing receipt
 (\`task_level / direction_confirmed / spec_confirmed / prompt_engineered /
@@ -669,6 +670,27 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
 **规格确认(spec_confirmed)与四级 QA 在两条出片面上口径一致。** 工作台的批次摘要只报
 成败与落盘路径,不代表 QA 已做 —— 人脸/复杂动作的卡照样要抽九宫格,多镜剧情照样要
 \`understand_video\`。做过的级别记进 \`qa_completed\`,别重复抽。
+
+## 深度捕捉(\`generate_video\` 的 \`model: "depth"\` 变体)
+
+把**一段已有视频**转成**灰度深度视频**(近亮远暗,界面定位是「可作运动参考」)。它是
+**变换,不是生成**:不分级、不载提示词底座、不弹规格卡、不跑 QA 分级 —— 用户说「提取深度 /
+深度视频 / 深度捕捉 / depth」就直接做。
+
+- **必须有源视频**:用户给的路径 / 链接,或聊天里刚出的片子(DONE 里的 \`localPath\`)。
+  参数只有三个:\`model:"depth"\`、\`referenceVideos:[源视频]\`(**恰好 1 个**)、
+  \`resolution\`(\`480p\` / \`720p\` / \`1080p\`,默认 720p)。\`prompt\` 在 schema 里必填,写个
+  标签如「深度捕捉」即可,上游不看。**别传**图片 / 音频 / 首尾帧 / \`taskMode\` /
+  \`duration\` / \`ratio\` —— 前几样会被提交前拦下,后两样无效(输出长度与画幅跟着源视频走)。
+- **上游限制**:源视频 ≤ 3 分钟、≤ 100 MB,\`asset://\` 不收;本地文件 app 会自动中转到云端。
+  超了先用 \`ffmpeg-win\` 截 / 压再提交:
+  \`ffmpeg -y -i in.mp4 -t 180 -vf scale=-2:720 -crf 28 -an out.mp4\`。
+- **计费**:平台余额或 Miau 密钥,**按次**而不是按秒(撰写时 ¥0.5 / 次、三档同价,以账单为准)。
+  三档只是输出清晰度:**用户没点名别升 1080p**,只想先看效果就 \`480p\`。
+- **拿它当运动参考喂下一次生成**:深度视频本身就是成片(进聊天、落历史页)。要用它,
+  就作 \`referenceVideos\` 传给 Seedance,并遵守该模型的视频时长上限(2.0 家族合计 ≤15s、
+  \`2.5\` ≤30s)—— **所以源视频要先截到这个长度再做深度**,既合规也省钱。画面内容 / 角色
+  另用 \`referenceImages\` 与文字描述。
 
 ## 角色片 / 多镜(标准及以上):先备齐资产,再开生成
 

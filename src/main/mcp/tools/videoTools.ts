@@ -323,7 +323,9 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       '(the only exception is the workbench chip wrapper 【@图片1】, unwrapped to @图片1), so Fal-style ' +
       '@Image1 or legacy <图片1> would reach upstream unchanged — write @图片N. Note: real ' +
       'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
-      'previously Seedance-generated clip.',
+      'previously Seedance-generated clip. ' +
+      'SPECIAL VARIANT: model "depth" (深度捕捉) is not a generator — it converts ONE existing video into a ' +
+      'grayscale depth video (see the model parameter); every other input rule above does not apply to it.',
     annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       prompt: z.string().min(1).describe(
@@ -331,10 +333,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'parameters appended at the end.',
       ),
       model: zEnumOf(ALL_VIDEO_MODEL_ALIASES).optional().describe(
-        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive". "wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and every input field — same modes, same 10/5/5 materials, same 2–30s, same 480P/720P/1080P, same document/web-link slot, same restrictions. The ONLY differences are the upstream model name and the price (≈1.33× wan3, i.e. ¥0.4/0.8/1.6 per second). Pick it when the user asks for the higher tier; otherwise "wan3".',
+        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive". "wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and every input field — same modes, same 10/5/5 materials, same 2–30s, same 480P/720P/1080P, same document/web-link slot, same restrictions. The ONLY differences are the upstream model name and the price (≈1.33× wan3, i.e. ¥0.4/0.8/1.6 per second). Pick it when the user asks for the higher tier; otherwise "wan3". "depth" = 深度捕捉: NOT a generator but a ONE-SOURCE-VIDEO transform that outputs a grayscale depth video (near = bright, far = dark), useful as a motion/structure reference for a later generation. Pass the source ONLY via referenceVideos with exactly 1 item (local path or https URL, ≤3 minutes, ≤100 MB — compress with ffmpeg-win first if larger); no images, audio, firstFrame/lastFrame or taskMode. resolution picks the 480p/720p/1080p tier (default 720p). Billed a flat per-call fee through the platform balance or Miau key (¥0.5 at time of writing, same at every tier, NOT per second). duration, ratio and generateAudio are ignored — output length and framing follow the source. The schema still requires a prompt: send a short label such as "深度捕捉"; it is not sent upstream.',
       ),
       resolution: zEnumOf(ALL_VIDEO_RESOLUTIONS).optional().describe(
-        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0" or "wan3" (NOT "2.5"); 4k is "2.0" only.',
+        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0" or "wan3" (NOT "2.5"); 4k is "2.0" only. "depth" accepts 480p / 720p / 1080p.',
       ),
       ratio: zEnumOf(ALL_VIDEO_RATIOS).optional().describe(
         'Aspect ratio. Default 16:9. "21:9" is Seedance-only; "adaptive" is wan3-only (and is wan3\'s default). Ignored (forced adaptive) when taskMode is set.',
@@ -367,7 +369,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceVideos: z.array(z.string()).max(10).optional().describe(
         '全能参考: up to 3 reference videos (motion/style), local path / URL / asset://assetId. Each 4–15s, ' +
         'COMBINED total duration ≤15s — model "2.5" raises this to 10 videos combined ≤30s. ' +
-        'No client-side size cap (large local files are relayed automatically).',
+        'No client-side size cap (large local files are relayed automatically). ' +
+        'For model "depth" this is the ONE source video to convert (exactly 1 item, ≤3 minutes, ≤100 MB; asset:// is not accepted).',
       ),
       referenceAudios: z.array(z.string()).max(10).optional().describe(
         '全能参考: up to 3 reference audios (lip-sync/voice), local path / URL / asset://assetId. Each 4–15s, ' +

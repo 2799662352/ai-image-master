@@ -11,7 +11,7 @@
 //   高于本机可读 → 拒绝并提示更新客户端,未知字段一律放行(向前兼容)。
 
 import {
-  ALL_VIDEO_MODEL_ALIASES,
+  WORKBENCH_VIDEO_MODEL_ALIASES,
   type SeedanceModelAlias,
 } from '../../../../types/seedance'
 import type {
@@ -449,7 +449,8 @@ export interface ImportPlan {
   boards: Array<{ name: string; summary?: string; cards: ImportCardPlan[] }>
 }
 
-const KNOWN_MODELS = new Set<string>(ALL_VIDEO_MODEL_ALIASES)
+// 只认工作台能用的模型:`depth`(深度捕捉)没有卡片字段,导入进来也提交不了。
+const KNOWN_MODELS = new Set<string>(WORKBENCH_VIDEO_MODEL_ALIASES)
 const RESOLUTIONS = new Set(['480p', '720p', '1080p'])
 const RATIOS = new Set(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9', 'adaptive'])
 

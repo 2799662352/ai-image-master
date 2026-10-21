@@ -1,7 +1,9 @@
 // Seedance 站点 region 内存态 + Base URL / 模型 ID 解析（无 Electron 依赖，便于单测）。
 // 持久化由 credentials.ts 读写；本模块只持会话级当前值。
 
+import { capabilitiesFor } from '../../../types/seedance'
 import type { SeedanceModelAlias, SeedanceRegion } from '../../../types/seedance'
+import { DEPTH_UPSTREAM_MODEL_ID_BASE } from '../depth/model'
 import { WAN3_PRIME_UPSTREAM_MODEL_ID, WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
@@ -41,6 +43,10 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     // 纯粹是为了保住 `Record<VideoModelAlias, string>` 的穷尽性。
     wan3: WAN3_UPSTREAM_MODEL_ID,
     'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
+    // 深度捕捉同样不分区域,而且这里填的只是**前缀**:真正的上游 id 带分辨率后缀
+    // (`rh-video-depth-480p`…),由 `depth/model.depthUpstreamModelId` 在提交时拼。
+    // 登记仅为保住穷尽性 —— 别把这个值直接发出去。
+    depth: DEPTH_UPSTREAM_MODEL_ID_BASE,
   },
   cn: {
     '2.0': 'doubao-seedance-2-0-260128',
@@ -49,6 +55,7 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     '2.5': 'doubao-seedance-2-5-260628',
     wan3: WAN3_UPSTREAM_MODEL_ID,
     'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
+    depth: DEPTH_UPSTREAM_MODEL_ID_BASE,
   },
 }
 
@@ -95,6 +102,9 @@ export function isSeedanceModelAvailable(
   region: SeedanceRegion = getSeedanceRegion(),
 ): boolean {
   if (NOT_YET_SELECTABLE.has(alias)) return false
+  // 没有工作台模式 = 不是「生成视频」工作台能摆的模型(深度捕捉:agent / MCP 的变体)。
+  // 从能力表派生而不是再列一份名单 —— 同一件事两处说,迟早说岔。
+  if (capabilitiesFor(alias).modes.length === 0) return false
   if (region === 'cn' && CN_ONLY_GATED.has(alias)) return cn25Enabled()
   return true
 }

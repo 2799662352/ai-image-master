@@ -82,6 +82,9 @@ const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   // 标签先备着,免得开闸时又要回来补一处。
   wan3: '万相 3.0',
   'wan3-prime': '万相 3.0 Prime',
+  // 深度捕捉没有工作台模式,`useSeedanceModels` 不会把它放进下拉;这里只为穷尽性
+  // (编译期保证新别名不漏标签)。
+  depth: '深度捕捉',
 }
 /** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
 const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']

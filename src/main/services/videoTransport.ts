@@ -22,6 +22,9 @@
 import { toWan3ResolvedMedia, resolveVideoMode } from './wan3/fromContent'
 import { buildWan3CreateBody } from './wan3/request'
 import { asWan3Alias } from './wan3/model'
+import { depthUpstreamModelId, pickDepthSourceUrl } from './depth/model'
+import { MediaKitApiError } from './mediaKit/client'
+import { SeedanceApiError } from './seedance/apiError'
 import { coerceDocumentOrLink } from '../../shared/wan3Document'
 import {
   buildSeedanceGatewayCreateBody,
@@ -30,6 +33,7 @@ import {
 import { describeMissingGatewayToken } from './seedanceGateway/credentials'
 import { gatewayPlatformHeaders } from './auth/gatewayToken'
 import type { Wan3Client } from './wan3/client'
+import type { MediaKitClient } from './mediaKit/client'
 import type { SeedanceGatewayClient } from './seedanceGateway/client'
 import type {
   GatewayBillingSource,
@@ -121,8 +125,10 @@ export function createSeedanceTransport(
  *
  * 平台那一支必须用 `gatewayPlatformHeaders` 整份组头,不能只贴 Authorization:
  * 少了里面的三个归属头,钱扣对了但平台用量明细里一条都查不到,而且一个错都不报。
+ *
+ * 深度捕捉(`depth`)同样「同一条 transport 服务两种计费」,共用这个函数。
  */
-function wan3AuthHeaders(resolved: ResolvedGatewayToken): Record<string, string> {
+function gatewayAuthHeaders(resolved: ResolvedGatewayToken): Record<string, string> {
   return resolved.billing === 'platform'
     ? gatewayPlatformHeaders(resolved.token)
     : { Authorization: `Bearer ${resolved.token}` }
@@ -165,12 +171,65 @@ export function createWan3Transport(
         },
         resolved,
       )
-      return client.createTask(body, wan3AuthHeaders(resolveToken()))
+      return client.createTask(body, gatewayAuthHeaders(resolveToken()))
     },
     // 现取而不是构造时定死:用户中途切计费模式,下一次轮询就该记到新的归属上,
     // 而 transport 的生命周期跟着整个视频服务走、不跟着一次提交走。
-    queryTask: (taskId) => client.queryTask(taskId, wan3AuthHeaders(resolveToken())),
+    queryTask: (taskId) => client.queryTask(taskId, gatewayAuthHeaders(resolveToken())),
     // 取消接口未经证实,刻意不实现 —— 见文件头。
+  }
+}
+
+/** MediaKit 客户端抛的是它自己的 HTTP 错误类型;pollLoop / 提交重试认的是 `SeedanceApiError`。 */
+function asSeedanceApiError(e: unknown): unknown {
+  return e instanceof MediaKitApiError ? new SeedanceApiError(e.message, e.status) : e
+}
+
+/**
+ * 深度捕捉 —— `generate_video` 的 `depth` 变体(见 `depth/model.ts` 的契约说明)。
+ *
+ * 它不是生成,所以请求体里没有提示词 / 画幅 / 时长 / seed:只有「哪个模型 + 哪一段源视频」。
+ * 底层复用 MediaKit 客户端(同一套 `metadata.content` 任务协议),这里只做三件事:
+ *   - 分辨率 → 模型 id(分辨率只由模型名决定);
+ *   - 从最终 content[] 里取那一段**公网**源视频(提示词那条 text 直接忽略);
+ *   - 把 HTTP 错误换成 `SeedanceApiError`,让任务管理器按状态码区分「重试能自愈」与否。
+ *
+ * 与万相一样**同一条 transport 服务两种计费**,凭据每次现取;平台那一支用整份组头
+ * (少了归属头,钱扣对了但用量明细查不到)。取消接口未经证实,刻意不实现 —— 见文件头。
+ */
+export function createDepthTransport(
+  client: MediaKitClient,
+  resolveToken: () => ResolvedGatewayToken,
+): VideoTransport {
+  return {
+    requireApiKey() {
+      const { billing, token } = resolveToken()
+      if (!token.trim()) throw new Error(describeMissingGatewayToken(billing))
+    },
+    async createTask(ctx) {
+      // 先校验再取凭据:源视频不对 / 分辨率不认识都不该走到打上游那一步。
+      const sourceUrl = pickDepthSourceUrl(ctx.content)
+      const model = depthUpstreamModelId(ctx.resolution)
+      try {
+        return await client.submit(model, sourceUrl, {}, gatewayAuthHeaders(resolveToken()))
+      } catch (e) {
+        throw asSeedanceApiError(e)
+      }
+    },
+    async queryTask(taskId) {
+      try {
+        const r = await client.query(taskId, gatewayAuthHeaders(resolveToken()))
+        return {
+          // 上游没回 id 就用手里的:状态对象丢了身份,后面的广播就对不上卡片了。
+          id: r.id || taskId,
+          status: r.status,
+          ...(r.videoUrl ? { content: { video_url: r.videoUrl } } : {}),
+          ...(r.error ? { error: r.error } : {}),
+        }
+      } catch (e) {
+        throw asSeedanceApiError(e)
+      }
+    },
   }
 }
 
@@ -252,6 +311,8 @@ export function createSeedanceGatewayTransport(
 export interface VideoTransportRegistry {
   seedance: VideoTransport
   wan3?: VideoTransport
+  /** 深度捕捉。没注册 = 抛错,**不回落**(见 `transportFor`)。 */
+  depth?: VideoTransport
   /** 平台余额下的 Seedance。没注册 = 这条路还没接线，一切按老路走。 */
   seedanceGateway?: VideoTransport
 }
@@ -286,6 +347,7 @@ const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
   wan3: 'wan3',
   // Prime 与标准档共用整条万相链路,只有上游 slug 与单价不同。
   'wan3-prime': 'wan3',
+  depth: 'depth',
 }
 
 /**
@@ -312,6 +374,15 @@ export function transportFor(
   // （`metadata.input.media[]` vs `metadata.content[]`），上游只会回一句 400，
   // 里面不会有任何一个字提到路由错了。
   if (key === 'wan3') return registry.wan3 ?? registry.seedance
+  // 🚨 深度捕捉**不能回落**(与上面万相那条回落不同)。万相回落是良性的:同一个钱包、
+  // 只是换个组包器;深度回落到 Seedance 意味着把源视频当 Ark 的 content[] 发给 vvdance,
+  // 扣的还是另一把钥匙,而错误里不会有任何一个字提到路由错了。通道没注册是配置问题。
+  if (key === 'depth') {
+    if (!registry.depth) {
+      throw new Error('深度捕捉通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
+    }
+    return registry.depth
+  }
   if (key === 'seedance' && options?.billing === 'platform') {
     // 🚨 **这一条不能回落。** 上面万相那条回落是良性的（同一个钱包、只是换个组包器），
     // 这一条不是：回落到 `registry.seedance` 意味着扣的是用户自己的 vvdance key，
