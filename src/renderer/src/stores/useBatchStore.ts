@@ -16,6 +16,7 @@ import {
 import { toRenderableUri } from '../features/file-explorer/uri'
 import { LAYER_SPLIT_MODEL } from './useGenerateStore'
 import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
+import type { ModelParamValue } from '../../../shared/imageModelParams'
 
 export type BatchMode = 'card' | 'multi'
 
@@ -41,6 +42,8 @@ export interface BatchItemSnapshot {
   ratio: string
   referenceImages: string[]
   modelKey: string
+  /** 生成时的模型专属参数(悠船原生 2K / 混沌……);没动过参数面板 = 缺省。 */
+  modelParams?: Record<string, ModelParamValue>
 }
 
 export interface BatchItem {
@@ -107,6 +110,13 @@ export interface BatchItem {
    */
   modelKey?: string
   /**
+   * 入队时锁定的模型专属参数(悠船原生 2K / 混沌 / 风格化……),与 ratio / modelKey 同款
+   * per-item 锁定:一批在跑时用户改了参数面板再点「加入队列」,新项带的是改后的值,
+   * 不会被首次 runBatch 闭包里的旧值顶掉,也不会反过来把旧项改掉。
+   * 空对象 = 明确「全部自动」(**不**回落到闭包值);缺省才回落。
+   */
+  modelParams?: Record<string, ModelParamValue>
+  /**
    * 入队时锁定的分辨率档位。目前只有拆分项在用:拆分的档位是「跟随原图 / 1K /
    * 1.5K / 2K」这一套,与出图表单那套(1K/2K/4K)不是一个东西,不能跟着表单走。
    * 缺省 = 用闭包里的表单值(普通批量项的原行为)。
@@ -134,6 +144,8 @@ export interface BatchRunOpts {
   ratio?: string
   resolution?: string
   quality?: string
+  /** 模型专属参数(整批默认值;item 自带的优先)。缺省 = 取 store 当前值。 */
+  modelParams?: Record<string, ModelParamValue>
   referenceImages?: string[]      // base64 数组(去掉 dataURL prefix 的纯 base64)
   perPromptCount?: number          // 每条 prompt 跑几次(扩张到 items)
   count?: number                   // 单次请求组图张数(wan2.7 系列), 默认取 store.count
@@ -171,6 +183,12 @@ export interface BatchState {
   ratio: string              // auto / 1:1 / 2:3 / 3:2
   resolution: string         // 0.5K / 1K / 2K / 4K
   quality: string            // auto / low / medium / high (仅 gpt-image-2)
+  /**
+   * 模型专属参数的**用户显式设置**(悠船原生 2K / 混沌 / 风格化……),语义同
+   * `useGenerateStore.modelParams`:只存用户动过的,空对象 = 全部自动;不按模型分桶、
+   * **不持久化**(忘了关的混沌会带进之后每一批)。外发时 `ApiService` 只取当前模型声明过的键。
+   */
+  modelParams: Record<string, ModelParamValue>
   perPromptCount: number     // 多提示词模式下每条出几张 (1-2)
   /**
    * 组图张数(单次请求出 N 张系列图)。与 perPromptCount 正交:
@@ -183,7 +201,15 @@ export interface BatchState {
   refImages: BatchRefImage[]
 
   // ---- actions: 队列 ----
-  addItem: (prompt: string, opts?: { referenceImages?: string[]; ratio?: string; model?: string }) => void
+  addItem: (
+    prompt: string,
+    opts?: {
+      referenceImages?: string[]
+      ratio?: string
+      model?: string
+      modelParams?: Record<string, ModelParamValue>
+    },
+  ) => void
   /**
    * 把「拆这张图的图层」作为一项排进队列。
    *
@@ -217,6 +243,7 @@ export interface BatchState {
     ratio?: string
     referenceImages?: string[]
     mode?: BatchMode
+    modelParams?: Record<string, ModelParamValue>
   }) => void
 
   // ---- actions: 配置 ----
@@ -227,6 +254,9 @@ export interface BatchState {
   setRatio: (r: string) => void
   setResolution: (r: string) => void
   setQuality: (q: string) => void
+  /** 设置 / 清除一项模型专属参数(语义同 `useGenerateStore.setModelParam`)。 */
+  setModelParam: (key: string, value: ModelParamValue | undefined, defaultValue?: ModelParamValue) => void
+  resetModelParams: () => void
   setPerPromptCount: (n: number) => void
   setCount: (n: number) => void
   setConcurrency: (n: number) => void
@@ -254,6 +284,7 @@ export const initialState = {
   ratio: 'auto',
   resolution: '2K',
   quality: 'auto',
+  modelParams: {} as Record<string, ModelParamValue>,
   perPromptCount: 1,
   count: 1,
   concurrency: 3,
@@ -320,6 +351,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           referenceImages: opts?.referenceImages,
           ratio: opts?.ratio,
           modelKey: opts?.model,
+          // 拷一份:入队后用户再动参数面板,不能把已排队的项一起改掉。
+          ...(opts?.modelParams ? { modelParams: { ...opts.modelParams } } : {}),
         },
       ]),
     }))
@@ -420,6 +453,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const ratio = opts?.ratio ?? get().ratio
     const resolution = opts?.resolution ?? get().resolution
     const quality = opts?.quality ?? get().quality
+    // 整批默认的模型专属参数:拷一份快照,跑的过程中用户改面板不影响这批里没带自己参数的项。
+    const runModelParams = { ...(opts?.modelParams ?? get().modelParams) }
     const refRaw = opts?.referenceImages ?? get().refImages.map((r) => r.base64)
     const referenceImages = refRaw.map(stripDataUrl).filter(Boolean)
     const concurrency = Math.max(1, Math.min(HARD_MAX_WORKERS, opts?.concurrency ?? get().concurrency))
@@ -461,6 +496,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           referenceImages: next.referenceImages ?? runSnapshotBase.referenceImages,
           modelKey: next.modelKey ?? runSnapshotBase.modelKey,
         }
+        // 模型专属参数:item 自带(含「明确全自动」的空对象)优先,缺省才取整批默认;
+        // 拆分项走固定渠道,不带。空的不写进快照,回灌时才不会把表单误清成空对象。
+        const snapParams = next.layerDecomposition ? undefined : (next.modelParams ?? runModelParams)
+        if (snapParams && Object.keys(snapParams).length > 0) snapshot.modelParams = { ...snapParams }
         claimed = { ...next, status: 'generating' as const, snapshot }
         return {
           items: state.items.map((i) =>
@@ -525,6 +564,12 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               ? LAYER_SPLIT_MODEL
               : (item.modelKey ?? modelKey)
             const itemRatio = item.ratio ?? ratio
+            // 模型专属参数:与 ratio / model 同款「item 锁定优先、缺省回落整批」。
+            // 空对象不外发(其它渠道的请求入参一个 key 都不多);拆分项固定渠道,不带。
+            const itemModelParams = item.layerDecomposition
+              ? undefined
+              : (item.modelParams ?? runModelParams)
+            const hasItemModelParams = !!itemModelParams && Object.keys(itemModelParams).length > 0
             // 拆分项不过 stripDataUrl:它会把 data URL 削成裸 base64,再由
             // normalizeImageSource 用默认 mime(jpeg)包回去 —— 一张 PNG 图层源
             // 就这么被贴上 jpeg 的标签。普通批量项沿用原行为不动。
@@ -546,6 +591,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               referenceImages: itemRefs.length > 0 ? itemRefs : undefined,
               signal: ac.signal,
               ...(item.layerDecomposition ? { layerDecomposition: true } : {}),
+              ...(hasItemModelParams ? { modelParams: { ...itemModelParams } } : {}),
             })
 
             if (ac.signal.aborted) break
@@ -790,6 +836,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           nextMode === 'multi' && promptIsSet ? snapshot.prompt! : s.multiText,
         ratio: snapshot.ratio !== undefined ? snapshot.ratio : s.ratio,
         refImages: nextRefs,
+        // 缺省 = 保留表单现状(与 ratio 同款);给了就整体换成快照里的那份。
+        modelParams: snapshot.modelParams !== undefined ? { ...snapshot.modelParams } : s.modelParams,
       }
     })
   },
@@ -801,6 +849,20 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   setRatio: (r) => set({ ratio: r }),
   setResolution: (r) => set({ resolution: r }),
   setQuality: (q) => set({ quality: q }),
+  setModelParam: (key, value, defaultValue) =>
+    set((s) => {
+      const next = { ...s.modelParams }
+      // 清空(空串 / 空数组 / undefined)或改回默认值 = 删键,「已修改」的判断才不会被残留值骗到
+      const cleared =
+        value === undefined ||
+        (typeof value === 'string' && value.trim() === '') ||
+        (Array.isArray(value) && value.length === 0) ||
+        (defaultValue !== undefined && JSON.stringify(value) === JSON.stringify(defaultValue))
+      if (cleared) delete next[key]
+      else next[key] = value
+      return { modelParams: next }
+    }),
+  resetModelParams: () => set({ modelParams: {} }),
   setPerPromptCount: (n) => set({ perPromptCount: Math.max(1, Math.min(2, n)) }),
   setCount: (n) => set({ count: Math.max(1, Math.floor(n)) }),
   setConcurrency: (n) => set({ concurrency: Math.max(1, Math.min(6, n)) }),
