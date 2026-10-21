@@ -9,6 +9,8 @@
  * 改一处即可影响全部页面。详见 ImageParamControls.tsx。
  */
 
+import type { ModelParamSpec } from '../../../../shared/imageModelParams'
+
 export interface ParamOption {
   key: string
   label?: string
@@ -39,7 +41,20 @@ export interface ImageParamModelConfig {
     negativePrompt?: boolean
     /** 支持 `background=transparent` 直接出带 alpha 通道的 PNG(gpt-image-2.5 flare / sunburst) */
     transparentBackgroundControl?: boolean
+    /** 模型专属参数表(悠船原生 2K / 混沌 / 风格化……),生成页据此渲染参数面板 */
+    modelParams?: readonly ModelParamSpec[]
   }
+}
+
+/**
+ * 该模型的专属参数表;没有就是空数组。生成页只看长度决定要不要挂参数面板 ——
+ * 别给没有专属参数的渠道冒出一个空面板。
+ */
+export function getModelParamSpecs(
+  modelConfig: { capabilities?: unknown } | null | undefined,
+): readonly ModelParamSpec[] {
+  const caps = modelConfig?.capabilities as { modelParams?: unknown } | undefined
+  return Array.isArray(caps?.modelParams) ? (caps.modelParams as readonly ModelParamSpec[]) : []
 }
 
 export interface ImageParamControlsState {

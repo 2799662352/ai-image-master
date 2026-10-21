@@ -9,6 +9,8 @@ import type { BatchRefImage } from '../stores/useBatchStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { BillingHintBar } from '../features/account/BillingHintBar'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
+import { ModelParamsPanel } from '../react-app/components/ModelParamsPanel'
+import { getModelParamSpecs } from '../services/api/imageParamControls'
 import { TemplateInline } from '../react-app/components/TemplateInline'
 import BatchRefDrop from './batch/BatchRefDrop'
 import BatchPromptHelperBar from './batch/BatchPromptHelperBar'
@@ -30,6 +32,7 @@ export default function GeneratePage() {
   const resolution = useGenerateStore((s) => s.resolution)
   const quality = useGenerateStore((s) => s.quality)
   const transparentBackground = useGenerateStore((s) => s.transparentBackground)
+  const modelParams = useGenerateStore((s) => s.modelParams)
   const count = useGenerateStore((s) => s.count)
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
@@ -45,6 +48,8 @@ export default function GeneratePage() {
     setResolution,
     setQuality,
     setTransparentBackground,
+    setModelParam,
+    resetModelParams,
     setCount,
     addReferenceImage,
     removeReferenceImage,
@@ -63,6 +68,7 @@ export default function GeneratePage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
+  const modelParamSpecs = useMemo(() => getModelParamSpecs(currentModel), [currentModel])
   // 主按钮右侧「~20S」与 RUN 卡「/ ~20s」共用:模型目录里的 time 字段('20s')。
   const expectedSecondsFor = useCallback(
     (modelKey: string) => parseExpectedSeconds(models[modelKey]?.time as string | number | undefined),
@@ -311,6 +317,16 @@ export default function GeneratePage() {
         transparentBackground={transparentBackground}
         onTransparentBackgroundChange={setTransparentBackground}
       />
+
+      {/* 模型专属参数(悠船:原生 2K / 混沌 / 风格化 / 风格参考……);没声明的渠道不出现 */}
+      {modelParamSpecs.length > 0 && (
+        <ModelParamsPanel
+          specs={modelParamSpecs}
+          values={modelParams}
+          onChange={setModelParam}
+          onReset={resetModelParams}
+        />
+      )}
 
       {/* 参考图:复用 Batch 的拖拽上传 + 自动压缩 + 点击预览 */}
       <BatchRefDrop

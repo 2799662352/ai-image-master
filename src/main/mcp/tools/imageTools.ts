@@ -7,6 +7,7 @@ import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './
 import { IMAGE_CHANNEL_IDS } from '../../../shared/imageChannels'
 import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
+import { buildYouchuanModelParamsSchema } from './modelParamsSchema'
 
 /** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
 interface BatchTaskResult {
@@ -339,7 +340,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
       'composer picker (腾讯 / image2 fast / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Flare / Sunburst / All 2.5 / ' +
-      "Image2 / VIP / Nano2 / Nano2.1 / 万相 / 千问; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
+      "Image2 / VIP / Nano2 / Nano2.1 / 万相 / 千问 / 悠船快速 / 悠船极速; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
       'ONLY when you have a concrete reason to ' +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
       'channel the user explicitly asked for this turn (' +
@@ -362,7 +363,12 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'images (passing more is REJECTED, not trimmed — pick Seedream 5.0 Pro if you need up to 10); ' +
       'upstream may REWRITE the ' +
       'requested size, so do not promise the user an exact pixel size, and negative prompts are ' +
-      'dropped by the gateway — put quality requirements in the positive prompt). The ' +
+      'dropped by the gateway — put quality requirements in the positive prompt, ' +
+      'youchuan-v8.2 = 悠船 Midjourney V8.2 快速 / youchuan-v8.2-turbo = 悠船 Midjourney V8.2 极速 — ' +
+      'pick it when the user asks for Midjourney / MJ / 悠船 / 悠船 v8; the two are the SAME model at ' +
+      'two speeds (极速 is faster and costs more), each call returns 4 images billed ONCE with native 2K ' +
+      'ON by default (×1.5), takes up to 20 http(s) reference images, and its extra knobs (chaos / ' +
+      'stylize / raw / style references …) go in `modelParams` — see that parameter). The ' +
       'result reports the actual channel used in its `model` field.',
     )
 
@@ -458,7 +464,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'OpenAI `n` — ONE request returns count INDEPENDENT variations (text-to-image; the 腾讯 og ' +
           'channels return 1 on edits). These channels are token-billed PER IMAGE, so ' +
           'count=4 costs ~4× a single render — only go above 1 when the user wants options/variations.\n' +
-          'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1. ' +
+          'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1 ' +
+          '(the 悠船 channels always return exactly 4 per call, billed once, whatever `count` says). ' +
           "Out-of-range values are clamped to the channel's ceiling, never rejected. For several " +
           'UNRELATED images (distinct subjects), use generate_images with one prompt each instead of count.',
         ),
@@ -518,6 +525,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'the user asks for a specific tier. The input image must be PNG or JPEG at 512px or larger; ' +
           'other formats (e.g. WebP) are transcoded automatically before the request goes out.',
         ),
+      modelParams: buildYouchuanModelParamsSchema(),
     }).refine(
       // 空 prompt 只在图层拆分下合法 —— 上游把「缺席的 prompt」当作「自动全拆」，这是
       // 一句「图层分离」最想要的行为。普通生图的空 prompt 仍然拒绝(否则就是烧一张图的
@@ -654,6 +662,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'role. A batch is exactly where this goes wrong when skipped: the same character comes back ' +
           'with a different face on some of the images.',
         ),
+      modelParams: buildYouchuanModelParamsSchema(),
     }),
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
@@ -667,6 +676,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       quality?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
       transparentBackground?: boolean
       referenceImages?: string[]
+      modelParams?: Record<string, unknown>
     }
     const prompts = Array.isArray(parsed.prompts) ? parsed.prompts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0) : []
     const codexThreadId = extractCodexThreadId(ctx)

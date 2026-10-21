@@ -11,6 +11,13 @@ import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
 import type { ModelVendor } from './modelVendors'
+import {
+  YOUCHUAN_MAX_REFERENCE_IMAGES,
+  YOUCHUAN_MODEL_IDS,
+  YOUCHUAN_V8_PARAM_SPECS,
+  resolveModelParams,
+  type ModelParamSpec,
+} from '../../../../shared/imageModelParams'
 
 export interface ApiSite {
   name: string
@@ -395,6 +402,15 @@ export interface ModelCapabilities {
    * 才能打开——普通渠道收到这个开关会当未知字段忽略，用户看到的是「拆分没生效但也没报错」。
    */
   layerDecomposition?: boolean
+  /**
+   * 模型专属参数表(悠船:原生 2K / 混沌 / 风格化 / 风格参考……)。有这张表的渠道,
+   * 生成页会渲染对应的参数面板,MCP 的 `modelParams` 也按它校验;外发时只带表里声明过的键。
+   *
+   * 与上面那些布尔能力位的区别:这些参数**只对一个渠道族有意义**,而且绝大多数时候该留空
+   * 由上游自己决定,所以不往 `GenerateImageParams` 里一个一个加字段,而是数据驱动。
+   * 声明、默认值、校验都在 `shared/imageModelParams`。
+   */
+  modelParams?: readonly ModelParamSpec[]
 }
 
 /**
@@ -463,6 +479,14 @@ export interface GenerateImageParams {
    * （张数由上游按图内容决定）；`resolution` 被当作**档位**用，见 LAYER_DECOMPOSITION_SIZE_TIERS。
    */
   layerDecomposition?: boolean
+  /**
+   * 模型专属参数(键 = `capabilities.modelParams` 里声明的 `key`)。**不设置的项由模型自动决定**,
+   * 只有声明了默认值的(悠船原生 2K 默认开)才会补默认。
+   *
+   * 只对声明了 `capabilities.modelParams` 的渠道生效;其它渠道静默忽略(不外发,免得被上游当未知
+   * 字段拒掉)。声明过的键值不合法时整次请求被拒并说明原因,不会悄悄改成合法值再扣费。
+   */
+  modelParams?: Record<string, unknown>
 }
 
 /**
@@ -800,6 +824,98 @@ const GPT_IMAGES_API_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-all',
 ])
+
+/**
+ * 悠船(Midjourney)渠道。**请求形态与上面几族都不一样**,所以单独成族:
+ *
+ *  - 不发 `size` / `n` / `response_format`:BFF(sora-ui-backend `imageModelManifest`)同样不发。
+ *    比例走顶层 `aspect_ratio`(缺省 = 自适应);一次固定回 4 张、只计一次费,`n` 被网关忽略;
+ *    默认就回 URL。
+ *  - 版本 / 速度由**模型名**决定(`youchuan-v8.2` 快速 / `-turbo` 极速),提示词里内联
+ *    `--v` / `--turbo` 会被网关拒掉 —— 所以 `no`(会被拼进 `--no`)校验时不许带 `--`。
+ *  - 其余全是**模型专属参数**(原生 2K / 混沌 / 风格化 / 风格参考……),声明在
+ *    `capabilities.modelParams`(单一事实来源 `shared/imageModelParams`),按「不设置 = 自动」外发。
+ *  - 参考图只收 http(s) 链接(最多 20 张),不收 base64 —— 与「媒体一律传 URL」一致。
+ *  - **不自动重试 5xx**:按次计费,上游可能已经开跑,重试 = 多扣一次钱。失败由用户在界面上重试。
+ */
+const YOUCHUAN_IMAGE_MODELS: ReadonlySet<string> = new Set(YOUCHUAN_MODEL_IDS)
+
+/** 悠船支持的画幅:自适应(不发 aspect_ratio)+ 界面上给的 7 个常用比例。 */
+const YOUCHUAN_RATIOS: RatioOption[] = [
+  { key: 'auto', label: '自适应', description: '由模型决定' },
+  { key: '1:1', label: '方形 1:1', description: '常用' },
+  { key: '4:3', label: '横版 4:3', description: '标准' },
+  { key: '3:2', label: '横版 3:2', description: '经典' },
+  { key: '16:9', label: '横版 16:9', description: '宽屏' },
+  { key: '3:4', label: '竖版 3:4', description: '标准' },
+  { key: '2:3', label: '竖版 2:3', description: '经典' },
+  { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+]
+
+/**
+ * 悠船两档共用的模型配置:快速 / 极速是**同一个模型的两档速度**,请求形态、比例、参数表完全一样,
+ * 只有名字 / 文案 / 耗时不同(价格在网关侧,不写进界面文案 —— 改价不该要发版)。
+ */
+function youchuanModelConfig(speed: { name: string; displayName: string; time: string; isNew?: boolean }): ModelConfig {
+  return {
+    name: speed.name,
+    vendor: 'midjourney',
+    displayName: speed.displayName,
+    time: speed.time,
+    isNew: speed.isNew ?? false,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'image-generation',
+    // 画幅走顶层 aspect_ratio、没有像素尺寸可选:不挂 resolutionMap / resolutions。
+    sizeStrategy: 'aspect-ratio',
+    ratios: YOUCHUAN_RATIOS,
+    capabilities: {
+      // 一次固定 4 张,但那是「一个任务的四个结果」,不是数量轴:n 被网关忽略,所以不开数量选择。
+      multipleImages: false,
+      customSize: false,
+      referenceImage: true,
+      imageEdit: false,
+      maxOutputs: 1,
+      maxReferenceImages: YOUCHUAN_MAX_REFERENCE_IMAGES,
+      modelParams: YOUCHUAN_V8_PARAM_SPECS,
+    },
+  }
+}
+
+/** 网关 `aspect_ratio` 的合法形态:正整数 `W:H`。界面 7 档之外 agent 也可以给(如 21:9)。 */
+const YOUCHUAN_ASPECT_RATIO = /^[1-9]\d{0,2}:[1-9]\d{0,2}$/
+
+/**
+ * 悠船一次请求的事前校验:参数 / 比例 / 参考图。
+ *
+ * 返回中文错误(null = 通过)。**在 `generateImage` 的 try 之外调用**:`formatErrorMessage`
+ * 会按子串把含 `401` / `429` / `fetch` 的消息改写成别的话,而这里的错误会带上用户给的链接
+ * (链接里出现 401 很常见),不能被它吞掉。悠船按次计费,所以任何一项不合法都**拒绝而不是纠正**。
+ */
+function validateYouchuanRequest(options: {
+  ratio?: string
+  modelParams?: Record<string, unknown>
+  referenceCount: number
+  /** 有参考图不是 http(s) 链接(本地文件 / base64 / 解析不出来)。 */
+  hasNonHttpReference: boolean
+  specs: readonly ModelParamSpec[]
+}): string | null {
+  const { ratio, modelParams, referenceCount, hasNonHttpReference, specs } = options
+  if (ratio && ratio !== 'auto' && !YOUCHUAN_ASPECT_RATIO.test(ratio)) {
+    return `悠船不支持画幅「${ratio}」，请使用 W:H 形式的整数比例（如 16:9），或选「自适应」。`
+  }
+  const resolved = resolveModelParams(specs, modelParams)
+  if (resolved.errors.length > 0) {
+    return `悠船参数有误：${resolved.errors.join('；')}`
+  }
+  if (referenceCount > YOUCHUAN_MAX_REFERENCE_IMAGES) {
+    return `悠船最多支持 ${YOUCHUAN_MAX_REFERENCE_IMAGES} 张参考图，当前传了 ${referenceCount} 张，请删减后重试。`
+  }
+  if (hasNonHttpReference) {
+    return '悠船只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。'
+  }
+  return null
+}
 
 /**
  * 上游是 GPT Image 2.5 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
@@ -1721,6 +1837,18 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       negativePrompt: true
     }
   },
+  // 悠船 = Midjourney。同一个模型两档速度:快速(youchuan-v8.2)/ 极速(-turbo)。见 YOUCHUAN_IMAGE_MODELS。
+  'youchuan-v8.2': youchuanModelConfig({
+    name: '悠船-v8.2-快速',
+    displayName: '悠船 Midjourney V8.2 快速模式，一次生成 4 张，支持原生 2K 与参考图（经 Miau API 代理，按次计费）',
+    time: '60s',
+    isNew: true,
+  }),
+  'youchuan-v8.2-turbo': youchuanModelConfig({
+    name: '悠船-v8.2-极速',
+    displayName: '悠船 Midjourney V8.2 极速模式，一次生成 4 张，支持原生 2K 与参考图（经 Miau API 代理，按次计费，价格高于快速档）',
+    time: '30s',
+  }),
   'sora_image': {
     name: 'Sora Image',
     vendor: 'openai',
@@ -1803,7 +1931,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
  * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
- * 千问 → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
+ * 千问 → 悠船(快速 → 极速)→ Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
  */
@@ -1817,6 +1945,8 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'gemini-nano-banana-2.1',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
+  'youchuan-v8.2',
+  'youchuan-v8.2-turbo',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-all',
@@ -1872,13 +2002,28 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition } = params
+    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition, modelParams } = params
 
     const modelKey = this.resolveModelKey(model || this.currentModel)
     const modelConfig = this.models[modelKey]
 
     if (!modelConfig) {
       return { success: false, error: `未知模型: ${modelKey}` }
+    }
+
+    // 悠船按次计费:任何不合法的参数 / 比例 / 参考图都在**出网之前**拒掉,绝不纠正后照发。
+    // 放在 site / key 检查之前 —— 参数错了先说参数错,别让用户先去配一个 Key 再被拒。
+    if (YOUCHUAN_IMAGE_MODELS.has(modelKey)) {
+      const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+      const normalizedRefs = refSources.map((s) => this.normalizeImageSource(s))
+      const invalid = validateYouchuanRequest({
+        ratio,
+        modelParams,
+        referenceCount: refSources.length,
+        hasNonHttpReference: normalizedRefs.some((s) => !s || !/^https?:\/\//i.test(s)),
+        specs: modelConfig.capabilities?.modelParams ?? [],
+      })
+      if (invalid) return { success: false, error: invalid }
     }
 
     // 解析「本次请求的有效站点 + 令牌」，优先级：
@@ -1969,10 +2114,15 @@ export class ApiService {
           apiKey: resolvedApiKey,
           signal,
           layerDecomposition,
+          modelParams,
         }),
         // 瞬时网关错误(502/503/504/429)现在会从 makeApiRequest 抛出，交给这里重试；
         // 给 2 次重试(共 3 次尝试)+ 指数退避(2s、4s)，覆盖上游高峰期的短暂抖动。
-        { maxRetries: 2, retryDelay: 2000 }
+        // 悠船例外:按次计费且上游可能已经开跑,5xx 后重试 = 多扣一次(一次还是 4 张的价),
+        // 所以一次都不自动重试,失败交给用户在界面上点重试。
+        YOUCHUAN_IMAGE_MODELS.has(modelKey)
+          ? { maxRetries: 0 }
+          : { maxRetries: 2, retryDelay: 2000 }
       )
 
       const result = await this.parseResponse(response, modelConfig, layerDecomposition)
@@ -2641,8 +2791,9 @@ export class ApiService {
     apiKey: string
     signal?: AbortSignal
     layerDecomposition?: boolean
+    modelParams?: Record<string, unknown>
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition } = options
+    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition, modelParams } = options
 
     // 遮罩只在 MASK_INPAINT_MODELS 里有位置(官转 multipart 文件 / 腾讯 og-v2.5 JSON 字段);
     // 别的路径拿到它就是调用方搞错了渠道,静默丢掉会把「只擦一角」变成「整张重画」,所以一律早失败。
@@ -2772,7 +2923,8 @@ export class ApiService {
       seed,
       count,
       modelConfig,
-      layerDecomposition
+      layerDecomposition,
+      modelParams
     })
 
     // 检查是否需要 FormData (Flux with images)
@@ -3324,8 +3476,14 @@ export class ApiService {
     count?: number
     modelConfig: ModelConfig
     layerDecomposition?: boolean
+    modelParams?: Record<string, unknown>
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition, modelParams } = options
+
+    // 悠船(Midjourney):自己的一套请求形态(顶层 aspect_ratio + 模型专属参数,无 size / n)
+    if (YOUCHUAN_IMAGE_MODELS.has(model)) {
+      return this.buildYouchuanPayload({ prompt, model, ratio, referenceImages, imageBase64, seed, modelConfig, modelParams })
+    }
 
     // Gemini Native 格式
     if (modelConfig.apiType === 'gemini-native') {
@@ -3365,6 +3523,70 @@ export class ApiService {
       modelConfig,
       layerDecomposition
     })
+  }
+
+  /**
+   * 构建悠船(Midjourney)请求体。字段与网关 `relay/channel/youchuan` 读取的一一对应:
+   *
+   *  - `aspect_ratio`:缺省 / `auto` = 自适应,**不发**;否则原样 `W:H`(网关优先于 `size`);
+   *  - `images: [{ image_url }]`:参考图,只收 http(s)(≤20),不收 base64;
+   *  - 其余是 `capabilities.modelParams` 声明过的键(`hd` / `quality` / `chaos` / `stylize` / `raw` /
+   *    `iw` / `sref` / `sw` / `sv` / `seed` / `no`),默认值 + 用户值,**未设置的不发**。
+   *
+   * 刻意**没有** `size` / `n` / `response_format`:网关忽略 `n`(固定 4 张、计一次费),比例已由
+   * `aspect_ratio` 表达,默认回 URL。通用 `seed` 参数在没有 `modelParams.seed` 时当作它的别名,
+   * 免得 agent 按通用参数传了种子却被静默忽略。
+   *
+   * 校验在 `generateImage` 入口已经做过(返回中文错误、不出网);这里再兜一层并**抛错**,
+   * 是因为这个方法也被直接调用(测试 / 其他入口),带病外发 = 白扣一次钱。
+   */
+  private buildYouchuanPayload(options: {
+    prompt: string
+    model: string
+    ratio?: string
+    referenceImages?: string[]
+    imageBase64?: string
+    seed?: number
+    modelConfig: ModelConfig
+    modelParams?: Record<string, unknown>
+  }): Record<string, unknown> {
+    const { prompt, model, ratio, referenceImages, imageBase64, seed, modelConfig, modelParams } = options
+
+    const input: Record<string, unknown> = { ...modelParams }
+    const seedUnset = input.seed === undefined || input.seed === null || input.seed === ''
+    if (seedUnset && typeof seed === 'number' && Number.isFinite(seed) && seed >= 0) {
+      input.seed = Math.floor(seed)
+    }
+
+    const specs = modelConfig.capabilities?.modelParams ?? []
+    const resolved = resolveModelParams(specs, input)
+    if (resolved.errors.length > 0) {
+      throw new Error(`悠船参数有误：${resolved.errors.join('；')}`)
+    }
+
+    const payload: Record<string, unknown> = { model, prompt }
+
+    if (ratio && ratio !== 'auto') {
+      if (!YOUCHUAN_ASPECT_RATIO.test(ratio)) {
+        throw new Error(`悠船不支持画幅「${ratio}」，请使用 W:H 形式的整数比例（如 16:9），或选「自适应」。`)
+      }
+      payload.aspect_ratio = ratio
+    }
+
+    const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+    if (refSources.length > YOUCHUAN_MAX_REFERENCE_IMAGES) {
+      throw new Error(`悠船最多支持 ${YOUCHUAN_MAX_REFERENCE_IMAGES} 张参考图，当前传了 ${refSources.length} 张，请删减后重试。`)
+    }
+    if (refSources.length > 0) {
+      const urls = refSources.map((s) => this.normalizeImageSource(s))
+      if (urls.some((u) => !u || !/^https?:\/\//i.test(u))) {
+        throw new Error('悠船只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。')
+      }
+      payload.images = (urls as string[]).map((u) => ({ image_url: u }))
+    }
+
+    Object.assign(payload, resolved.values)
+    return payload
   }
 
   /**

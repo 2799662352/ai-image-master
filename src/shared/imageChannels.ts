@@ -53,7 +53,8 @@ export interface ImageChannel {
 
 /**
  * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×4(image2 / fast / 2.5 Flare / 2.5 Sunburst)
- * → Nano2 → Nano2.1 → 万相 → 千问 → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
+ * → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2(v8.2 快速 / 极速)
+ * → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
  * 默认渠道是腾讯 image2 —— 顺序只影响显示,不改变回落目标。
  * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
  */
@@ -133,6 +134,25 @@ export const IMAGE_CHANNELS = [
     label: 'Qwen3',
     fullLabel: '通义千问 Image 3.0 Pro',
     description: '阿里通义千问 Image 3.0 Pro — 同步出图，一次可出 1–6 张、参考图最多 3 张；尺寸以实际返回为准。',
+    miauOnly: true,
+  },
+  {
+    // 悠船 = Midjourney 官方合作伙伴,经 Miau 网关(渠道类型 75)。两条是**同一个模型的
+    // 两档速度**,由模型名决定、不能在提示词里内联 `--turbo`:快速 = youchuan-v8.2,
+    // 极速 = youchuan-v8.2-turbo,价格不同。一次固定出 4 张、只计一次费,所以不走 `count`。
+    // 高级参数(混沌 / 风格化 / 风格参考……)见 `shared/imageModelParams` 的
+    // `YOUCHUAN_V8_PARAM_SPECS`,agent 可设、默认全部不设置。
+    id: 'youchuan-v8.2',
+    label: '悠船快速',
+    fullLabel: '悠船-v8.2-快速',
+    description: '悠船 Midjourney V8.2 快速模式 — 一次生成 4 张，原生 2K 默认开启（计费 ×1.5），支持参考图，经 Miau 代理按次计费。',
+    miauOnly: true,
+  },
+  {
+    id: 'youchuan-v8.2-turbo',
+    label: '悠船极速',
+    fullLabel: '悠船-v8.2-极速',
+    description: '悠船 Midjourney V8.2 极速模式 — 同样一次生成 4 张、支持原生 2K 与参考图，出图更快，按次计费价高于快速档。',
     miauOnly: true,
   },
   {

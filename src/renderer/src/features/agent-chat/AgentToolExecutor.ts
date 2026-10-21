@@ -58,6 +58,8 @@ type GenerateImagesToolParams = {
   quality?: unknown
   transparentBackground?: unknown
   referenceImages?: unknown
+  /** 模型专属参数(悠船原生 2K / 混沌 / 风格化……),整批共用;ApiService 只认当前渠道声明过的键。 */
+  modelParams?: unknown
 }
 
 /** Combined batch result shipped to main; shape matches imageTools' BatchTaskResult. */
@@ -1337,6 +1339,9 @@ export class AgentToolExecutor {
             resolution: params.resolution,
             quality: params.quality,
             transparentBackground: params.transparentBackground,
+            // 逐 prompt 转发:漏掉它,agent 给整批设的悠船参数会被静默丢掉(单张路径靠 ...params 带上,
+            // 这里是手写的字段清单,所以必须显式列出)。
+            modelParams: params.modelParams,
             referenceImages: sharedReferenceImages,
           } as unknown as GenerateImageToolParams,
           requestThreadId,
