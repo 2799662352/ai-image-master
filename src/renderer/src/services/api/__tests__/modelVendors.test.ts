@@ -52,6 +52,9 @@ describe('groupModelsByVendor', () => {
     for (const id of ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-all']) {
       expect(byKey.openai).toContain(id)
     }
+    // 悠船两档(快速 / 极速)单独一组,组名是用户认的 Midjourney,快速在前
+    expect(byKey.midjourney).toEqual(['youchuan-v8.2', 'youchuan-v8.2-turbo'])
+    expect(groups.find((g) => g.vendorKey === 'midjourney')?.meta.name).toBe('Midjourney')
     // 分组不丢模型:所有组合起来 == 模型表
     expect(groups.flatMap((g) => g.models.map((m) => m.key)).sort()).toEqual(Object.keys(models).sort())
   })

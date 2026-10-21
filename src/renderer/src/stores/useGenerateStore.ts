@@ -9,6 +9,7 @@ import {
 } from '../utils/cosUploadDispatcher'
 import { materializeImageUrls, revokeLater, isPersistableUrl } from '../utils/imageResources'
 import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
+import type { ModelParamValue } from '../../../shared/imageModelParams'
 import { toRenderableUri } from '../features/file-explorer/uri'
 
 /**
@@ -107,6 +108,8 @@ export interface GenerateOverrides {
   quality?: string
   count?: number
   transparentBackground?: boolean
+  /** 模型专属参数(悠船原生 2K / 混沌 / 风格化……)。键见 `capabilities.modelParams`。 */
+  modelParams?: Record<string, ModelParamValue>
 }
 
 /**
@@ -161,6 +164,18 @@ export interface GenerateState {
    */
   transparentBackground: boolean
   /**
+   * 模型专属参数的**用户显式设置**(键 = `capabilities.modelParams[*].key`)。
+   *
+   * 只存用户动过的:没有的键 = 不设置 = 由模型自动决定;有默认的(悠船原生 2K 默认开)在
+   * `ApiService` 里补默认,所以这里空对象就是「全部自动」。用户把某项改回默认值时也会
+   * 删掉该键(见 `setModelParam`),「已修改」的判断才不会被一个等于默认的残留值骗到。
+   *
+   * 不按模型分桶:快速 / 极速两档的参数表完全一样,切档不该丢设置;`ApiService` 只外发
+   * 当前模型声明过的键,别家模型的残留值不会泄到请求里。**不持久化**(与透明背景同理):
+   * 混沌 / 风格化这类参数忘了关,会让之后每一次出图都带着,每次启动回到全自动。
+   */
+  modelParams: Record<string, ModelParamValue>
+  /**
    * 出图张数; 仅 multipleImages / nativeBatch 模型有效。万相 wan2.7 多张走 enable_sequential
    * 系列一致; 官转 gpt-image-2 / 2.5 flare / sunburst 与腾讯 image2 fast 走 OpenAI `n`(1-4 个
    * 独立变体, 按张数倍数计费)。ApiService 按模型 maxOutputs 收敛。
@@ -210,6 +225,13 @@ export interface GenerateState {
   setResolution: (v: string) => void
   setQuality: (v: string) => void
   setTransparentBackground: (v: boolean) => void
+  /**
+   * 设置一个模型专属参数。`value` 为 undefined / 空串 / 空数组,或等于 `defaultValue`
+   * 时删掉该键(回到自动 / 默认)。
+   */
+  setModelParam: (key: string, value: ModelParamValue | undefined, defaultValue?: ModelParamValue) => void
+  /** 「全部恢复自动」:清掉所有显式设置。 */
+  resetModelParams: () => void
   setCount: (v: number) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
@@ -287,6 +309,7 @@ export const initialState = {
   resolution: '2K',
   quality: 'auto',
   transparentBackground: false,
+  modelParams: {} as Record<string, ModelParamValue>,
   count: 1,
   generating: false,
   inFlightCount: 0,
@@ -333,6 +356,19 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   setResolution: (v) => set({ resolution: v }),
   setQuality: (v) => set({ quality: v }),
   setTransparentBackground: (v) => set({ transparentBackground: v }),
+  setModelParam: (key, value, defaultValue) =>
+    set((s) => {
+      const next = { ...s.modelParams }
+      const cleared =
+        value === undefined ||
+        (typeof value === 'string' && value.trim() === '') ||
+        (Array.isArray(value) && value.length === 0) ||
+        (defaultValue !== undefined && JSON.stringify(value) === JSON.stringify(defaultValue))
+      if (cleared) delete next[key]
+      else next[key] = value
+      return { modelParams: next }
+    }),
+  resetModelParams: () => set({ modelParams: {} }),
   setCount: (v) => set({ count: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
@@ -430,6 +466,9 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     const prompt = overrides?.prompt ?? form.prompt
     const referenceImages = overrides?.referenceImages ?? form.referenceImages
     const layerDecomposition = overrides?.layerDecomposition ?? false
+    // 拷一份:重试要原样重发,不能被用户之后在面板里改的值带跑。
+    const modelParams = { ...(overrides?.modelParams ?? form.modelParams) }
+    const hasModelParams = Object.keys(modelParams).length > 0
     const templateKey = useTemplateStore.getState().getSelection('generate')
     // 拆分模式下 prompt 的语义是「要拆出什么」,空串=自动全拆。套上出图模板会把
     // 「自动全拆」变成一句风格描述,直接改掉这次请求的含义 —— 所以不套。
@@ -468,6 +507,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         quality,
         count,
         transparentBackground,
+        modelParams,
       },
     }
     const failRun = (message: string) =>
@@ -500,6 +540,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         // 只在开了的时候带字段:老测试按精确对象断言 generateImage 入参,关着时不该多一个 key
         ...(transparentBackground ? { transparentBackground: true } : {}),
         ...(layerDecomposition ? { layerDecomposition: true } : {}),
+        // 同理只在用户动过参数面板时带:默认 / 其它渠道的请求入参一个 key 都不多
+        ...(hasModelParams ? { modelParams } : {}),
       })
       const rawUrls = result.urls ?? result.images ?? []
 

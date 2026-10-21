@@ -7,10 +7,10 @@
  * 厂商名照 apiyi 生图页(imagen.apiyi.com)的写法用英文品牌名(Google / OpenAI /
  * Seedream / Flux),国产两家用中文(腾讯 / 阿里)—— 用户认的是这几个字,不走 i18n。
  * `order` 跟随 `MODEL_DISPLAY_ORDER` 的精神:Seedream 最上,其次腾讯、Google、阿里、
- * OpenAI、Flux;没标厂商的模型落到「其他」组最后。
+ * Midjourney、OpenAI、Flux;没标厂商的模型落到「其他」组最后。
  */
 
-export type ModelVendor = 'bytedance' | 'tencent' | 'google' | 'alibaba' | 'openai' | 'bfl'
+export type ModelVendor = 'bytedance' | 'tencent' | 'google' | 'alibaba' | 'midjourney' | 'openai' | 'bfl'
 
 export interface ModelVendorMeta {
   name: string
@@ -24,8 +24,10 @@ export const MODEL_VENDORS: Record<ModelVendor | typeof OTHER_VENDOR_KEY, ModelV
   tencent: { name: '腾讯', order: 2 },
   google: { name: 'Google', order: 3 },
   alibaba: { name: '阿里', order: 4 },
-  openai: { name: 'OpenAI', order: 5 },
-  bfl: { name: 'Flux', order: 6 },
+  // 悠船是 Midjourney 的官方合作伙伴:用户认的是 Midjourney 这个名字,不是「悠船」。
+  midjourney: { name: 'Midjourney', order: 5 },
+  openai: { name: 'OpenAI', order: 6 },
+  bfl: { name: 'Flux', order: 7 },
   other: { name: '其他', order: 99 },
 }
 

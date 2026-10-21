@@ -17,7 +17,7 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×4 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×4 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
@@ -29,6 +29,8 @@ describe('imageChannels registry', () => {
       'gemini-nano-banana-2.1',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',
+      'youchuan-v8.2',
+      'youchuan-v8.2-turbo',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-all',
@@ -38,6 +40,8 @@ describe('imageChannels registry', () => {
   })
 
   it('marks only the gateway-proxied channels as Miau-only', () => {
+    expect(isMiauOnlyChannel('youchuan-v8.2')).toBe(true)
+    expect(isMiauOnlyChannel('youchuan-v8.2-turbo')).toBe(true)
     expect(isMiauOnlyChannel('custom-imagemodel-gt')).toBe(true)
     expect(isMiauOnlyChannel('custom-model-og-v2.5-f')).toBe(true)
     expect(isMiauOnlyChannel('custom-model-og-v2.5-s')).toBe(true)
