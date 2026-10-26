@@ -1062,3 +1062,83 @@ describe('渐进式披露:export 默认只导当前页', () => {
     expect(tool.config.description).toMatch(/merge mode leaves boards you did not list alone/i)
   })
 })
+
+/**
+ * 写入安全字段必须在 MCP 入参 schema 里**声明**。
+ *
+ * zod 的 `z.object` 默认静默丢掉没声明的键 —— 渲染端执行器写得再对,字段到不了它
+ * 手上就等于功能关着,而且没有任何报错(`expectedRev` 被吞 = 版本校验悄悄失效,
+ * `includeSucceeded` 被吞 = 整页重跑永远拿不到「别跳过」)。
+ * 单测里的 handler 拿到的是未解析的原始参数,看不出这件事,所以这里直接 `parse`
+ * 入参 schema,断言每个字段都活着出来。
+ */
+describe('写入安全字段不被 schema 吞掉', () => {
+  function schemaOf(name: string): ZodTypeAny {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    return toolByName(tools, name).config.inputSchema
+  }
+
+  it('add_tasks:每张卡的 clientRef 与顶层 boardId 原样通过;clientRef 超 64 字被拒', () => {
+    const schema = schemaOf('video_workbench_add_tasks')
+    const input = {
+      tasks: [
+        { prompt: 'a', clientRef: 'ep2-shot-07' },
+        { prompt: 'b', clientRef: 'ep2-shot-08' },
+      ],
+      boardId: 'board-2',
+      autoStart: false,
+      navigate: false,
+    }
+    expect(schema.parse(input)).toEqual(input)
+    expect(schema.safeParse({ tasks: [{ prompt: 'a', clientRef: 'x'.repeat(65) }] }).success).toBe(false)
+  })
+
+  it('update_task:expectedRev 通过,且必须是整数', () => {
+    const schema = schemaOf('video_workbench_update_task')
+    const input = { cardId: 'c1', prompt: 'new', expectedRev: 3 }
+    expect(schema.parse(input)).toMatchObject(input)
+    expect(schema.safeParse({ cardId: 'c1', prompt: 'new', expectedRev: 1.5 }).success).toBe(false)
+  })
+
+  it('set_spec:expectedRevs({cardId: rev})通过', () => {
+    const schema = schemaOf('video_workbench_set_spec')
+    const input = { cardIds: ['c1', 'c2'], resolution: '720p', expectedRevs: { c1: 2, c2: 0 } }
+    expect(schema.parse(input)).toMatchObject({ expectedRevs: { c1: 2, c2: 0 } })
+  })
+
+  it('start:includeSucceeded 通过(整页重跑的开关),cardIds 照常通过', () => {
+    const schema = schemaOf('video_workbench_start')
+    expect(schema.parse({ includeSucceeded: true })).toEqual({ includeSucceeded: true })
+    expect(schema.parse({ cardIds: ['c1'] })).toEqual({ cardIds: ['c1'] })
+  })
+
+  it('switch_project:boardId(把对话钉到某一集)通过', () => {
+    const schema = schemaOf('video_workbench_switch_project')
+    expect(schema.parse({ projectId: 'p1', boardId: 'b2', focus: false })).toEqual({
+      projectId: 'p1',
+      boardId: 'b2',
+      focus: false,
+    })
+  })
+
+  it('start 的回执 schema 声明了 skippedSucceeded,且带它的回执能过校验', () => {
+    const { tools, server, router } = capture()
+    registerVideoWorkbenchTools(server, router)
+    const out = toolByName(tools, 'video_workbench_start').config.outputSchema as ZodTypeAny & {
+      shape: Record<string, unknown>
+    }
+    // 回执 schema 是 looseObject,没声明的键也会被透传 —— 所以单看 parse 结果证明不了
+    // 「已声明」;直接断言字段在 shape 里,模型才读得到它的说明。
+    expect(out.shape).toHaveProperty('skippedSucceeded')
+    const workbench = {
+      project: { id: 'project-default', name: '默认项目', segments: 1, cards: 2 },
+      activeBoardId: 'b1',
+      boards: [{ id: 'b1', name: '页面 1', cardCount: 2 }],
+      statusCounts: { draft: 0, preparing: 0, queued: 0, running: 0, succeeded: 2, failed: 0 },
+      selectedCardIds: [],
+    }
+    const sample = { started: [], skipped: [], skippedSucceeded: 4, workbench }
+    expect(out.parse(sample)).toMatchObject({ skippedSucceeded: 4 })
+  })
+})
