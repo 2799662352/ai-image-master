@@ -320,6 +320,8 @@ describe('applyTaskUpdate 广播对齐', () => {
     const snap = snapshotCardConcise(card)
     expect(snap).toEqual({
       cardId: card.id,
+      // rev 是 expectedRev 的来源,概要里必须有;没设过的老卡按 0 算
+      rev: 0,
       boardId: 'board-1',
       order: 2,
       prompt: `${'x'.repeat(60)}…`,

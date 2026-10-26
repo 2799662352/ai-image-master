@@ -1796,6 +1796,24 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
   该先选剧 —— 照做,别去「force」。绑定后界面是否跟过去由 \`onScreen\` 告诉你(没跟 = 你在后台填,
   用户界面不动,这是对的);用户要你把界面带过去时才传 \`focus: true\`。往指定分段加卡用
   \`add_tasks({ boardId })\`;\`start\` 不带 cardIds 且你不在用户屏幕上时,只启动你剧里该分段的可启动卡。
+- **同一部剧的几集由几个对话各填(分段也要各管各的)。** 只绑剧不绑分段时,几个对话不带 boardId 的写入
+  全落进该剧的同一个「当前页」。所以这种分工下:\`switch_project({ projectId, boardId })\` 把本对话**钉在一个
+  分段**上,之后 \`add_tasks\` / \`start\` / \`set_spec\` / \`export\` / \`status\` 不点名分段时都作用于它,
+  用户在界面上翻到哪页都不影响你;回包 \`boards[]\` 里带 \`inUseByOtherChat\` 的分段别人已经钉着,别抢。
+  没钉分段、而隐式落点正是别人钉着的那一段时,写入会被拒并告诉你怎么钉 —— 照做。
+- **写之前的三件小事(并发写入安全,都是回包里现成的)。**
+  ① \`add_tasks\` 每张卡给一个 **\`clientRef\`**(你自己的稳定编号,如 \`ep2-shot-07\`,同一分段内唯一):
+  超时重发 / 两个对话都想建第 12 镜,都不会建出两张;已存在的回在 \`duplicates\`(不覆盖,
+  \`samePrompt:false\` 表示那张的文字和你这次给的不同,要改请用 \`patch_prompt\` / \`update_task\`)。
+  回包 \`placed\` 告诉你新卡落在哪一段、第几张到第几张。
+  ② 改**已有的卡**时带上 \`expectedRev\`(你上次看到的 \`rev\`;\`set_spec\` 用 \`expectedRevs\`)。卡在你看过之后被
+  改过,就**不写**,回 \`{ ok:false, conflict, card }\` 把它现在的样子给你:基于新内容重新决定,
+  用新的 \`rev\` 重试;**同一张卡连续冲突两次,停下来问用户**,别来回覆盖。\`rev\` 有时只是后台事件(素材上传完)
+  推高的,内容没变 —— 那种情况下用新 \`rev\` 重试一次就过。
+  ③ 回包里出现 **\`changedSinceYourLastCall\`** = 自你上次调用以来,你手上那几段里有卡被别人(用户 / 别的对话 /
+  后台,不知道是谁)增删或改了内容。只报一次;你要写的卡在名单里就先 \`status\` 重看,别凭记忆写。
+  整板 \`start\` 默认**不重跑「出过片且之后没改过」的卡**(回包 \`skippedSucceeded\` 告诉你跳了几张);
+  要重跑就点名 \`cardIds\`,或 \`includeSucceeded: true\`。
 - **三层路标都要写。** 剧:\`video_workbench_set_project_summary\`(≤60 字电报体,
   「三集科幻短剧 · 赛博都市 · 主角林夏」,省略 projectId = 当前剧);分段:
   \`set_board_summary\`;卡片:\`set_card_summary\`。剧名常常是「未命名剧 3」,没有剧摘要,

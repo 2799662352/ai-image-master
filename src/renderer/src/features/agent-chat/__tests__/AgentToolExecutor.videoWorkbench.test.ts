@@ -1069,6 +1069,8 @@ describe('按当前剧隔离(project)', () => {
     expect(concise.cards).toHaveLength(1)
     expect(concise.cards[0]).toEqual({
       cardId: expect.any(String),
+      // rev 概要里也要有:agent 要拿它做 expectedRev,不能为了拿版本号去翻详细模式
+      rev: expect.any(Number),
       boardId: S().activeBoardId,
       order: 0,
       prompt: `${'p'.repeat(60)}…`,

@@ -363,10 +363,20 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
    * 位置计划已经失效。
    */
   rev?: number
+  /**
+   * 调用方给这一镜起的稳定编号(如「第 12 镜」`shot-12`),`video_workbench_add_tasks`
+   * 的幂等键:同一分段里已有同编号的卡就不再建第二张。
+   *
+   * 只在**同一分段内**唯一 —— 分段常常就是「一集」,第 1 集和第 2 集各有自己的第 1 镜。
+   * 随卡存亡:卡删了编号就释放。不参与 spec / rev / IR,纯元数据。
+   */
+  clientRef?: string
 }
 
 /** MCP / IPC 写入卡片时的字段集（全部可选，缺省用默认值）。 */
 export interface VideoWorkbenchCardInput {
+  /** 幂等键,见 `VideoWorkbenchCard.clientRef`。只在建卡时生效,updateCard 不碰它。 */
+  clientRef?: string
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'

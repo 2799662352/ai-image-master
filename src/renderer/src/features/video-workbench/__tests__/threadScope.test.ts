@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { VideoWorkbenchBoard } from '../../../../../types/videoWorkbench'
 import {
   THREAD_SCOPE_LIVE_MS,
+  bindThreadBoard,
   bindThreadProject,
+  boardHeldByOther,
+  forgetThreadBinding,
   otherLiveBindings,
   resetThreadScopesForTest,
   resolveThreadScope,
@@ -47,6 +50,7 @@ describe('resolveThreadScope', () => {
       boardId: 'p1-b1',
       onScreen: true,
       bound: false,
+      boardBound: false,
     })
     expect(resolveThreadScope(state(), 'thread-x').bound).toBe(false)
   })
@@ -58,6 +62,7 @@ describe('resolveThreadScope', () => {
       boardId: 'p2-b1',
       onScreen: false,
       bound: true,
+      boardBound: false,
     })
     const remembered = state({ viewByProject: { p2: { boardId: 'p2-b2' } } })
     expect(resolveThreadScope(remembered, 't').boardId).toBe('p2-b2')
@@ -131,5 +136,87 @@ describe('unboundWriteBlock', () => {
     bindThreadProject('t', 'p1')
     expect(unboundWriteBlock('t', resolveThreadScope(s, 't'), s)).toBeNull()
     expect(unboundWriteBlock(undefined, resolveThreadScope(s, undefined), s)).toBeNull()
+  })
+})
+
+describe('分段绑定(同一部剧里各管一集)', () => {
+  it('钉了分段:隐式落点就是那一段,不随屏幕指针和「该剧上次停的页」走', () => {
+    bindThreadProject('t', 'p2')
+    bindThreadBoard('t', 'p2-b2')
+    const scope = resolveThreadScope(state({ viewByProject: { p2: { boardId: 'p2-b1' } } }), 't')
+    expect(scope).toMatchObject({ projectId: 'p2', boardId: 'p2-b2', bound: true, boardBound: true })
+  })
+
+  it('剧就是屏幕上的剧、屏幕在别的段:仍落在钉的那段(用户翻页不影响 agent)', () => {
+    bindThreadProject('t', 'p2')
+    bindThreadBoard('t', 'p2-b2')
+    const s = state({ activeProjectId: 'p2', activeBoardId: 'p2-b1' })
+    expect(resolveThreadScope(s, 't')).toMatchObject({ onScreen: true, boardId: 'p2-b2', boardBound: true })
+  })
+
+  it('钉的分段已被删 / 不属于这部剧:当作没钉,回落到该剧当前页', () => {
+    bindThreadProject('t', 'p2')
+    bindThreadBoard('t', 'p1-b1') // 别的剧的段
+    expect(resolveThreadScope(state(), 't')).toMatchObject({ boardId: 'p2-b1', boardBound: false })
+    bindThreadBoard('t', 'ghost')
+    expect(resolveThreadScope(state(), 't')).toMatchObject({ boardId: 'p2-b1', boardBound: false })
+  })
+
+  it('重复 switch 到同一部剧不冲掉已钉的分段;换剧则作废', () => {
+    bindThreadProject('t', 'p2')
+    bindThreadBoard('t', 'p2-b2')
+    bindThreadProject('t', 'p2')
+    expect(resolveThreadScope(state(), 't').boardId).toBe('p2-b2')
+    bindThreadProject('t', 'p1')
+    bindThreadProject('t', 'p2')
+    expect(resolveThreadScope(state(), 't')).toMatchObject({ boardId: 'p2-b1', boardBound: false })
+  })
+
+  it('没绑过剧时钉分段什么都不做', () => {
+    bindThreadBoard('t', 'p2-b2')
+    expect(resolveThreadScope(state(), 't')).toMatchObject({ bound: false, boardBound: false })
+  })
+
+  it('scopedView 的 pinned:屏幕上的剧也能换到钉的那段来看,选中清空;pinned 不在这部剧里就忽略', () => {
+    const s = { ...state({ activeProjectId: 'p2', activeBoardId: 'p2-b1' }), selectedCardIds: ['c1'] }
+    const v = scopedView(s, 'p2', 'p2-b2')
+    expect(v).toMatchObject({ activeProjectId: 'p2', activeBoardId: 'p2-b2', selectedCardIds: [] })
+    expect(s.activeBoardId).toBe('p2-b1')
+    // pinned 就是屏幕当前段 → 原样返回
+    expect(scopedView(s, 'p2', 'p2-b1')).toBe(s)
+    // 别的剧的段 → 当没钉
+    expect(scopedView(s, 'p2', 'p1-b1')).toBe(s)
+  })
+
+  it('boardHeldByOther:只看别的、还在干活的对话钉着这一段', () => {
+    bindThreadProject('a', 'p2', 1_000)
+    bindThreadBoard('a', 'p2-b1', 1_000)
+    bindThreadProject('b', 'p2', 1_000)
+    expect(boardHeldByOther('b', 'p2', 'p2-b1', 1_000)).toBe(true)
+    expect(boardHeldByOther('b', 'p2', 'p2-b2', 1_000)).toBe(false)
+    // 自己钉的不算「别人」
+    expect(boardHeldByOther('a', 'p2', 'p2-b1', 1_000)).toBe(false)
+    // 停手超过窗口 → 不再算占着
+    expect(boardHeldByOther('b', 'p2', 'p2-b1', 1_000 + THREAD_SCOPE_LIVE_MS + 1)).toBe(false)
+  })
+
+  it('unboundWriteBlock:同剧里隐式落点正是别人钉着的段 → 拦并指路 boardId;自己钉了或落点没人占 → 放行', () => {
+    const s = state()
+    bindThreadProject('other', 'p2')
+    bindThreadBoard('other', 'p2-b1')
+    bindThreadProject('t', 'p2') // 只绑了剧,隐式落点 = p2-b1,正被 other 占着
+    const msg = unboundWriteBlock('t', resolveThreadScope(s, 't'), s)
+    expect(msg).toContain('p2-b1')
+    expect(msg).toContain('boardId')
+    expect(msg).toContain('video_workbench_switch_project')
+
+    bindThreadBoard('t', 'p2-b2') // 钉了自己的段
+    expect(unboundWriteBlock('t', resolveThreadScope(s, 't'), s)).toBeNull()
+
+    // 落点没人占:放行(先让 t 退出,否则 p2-b2 正被它自己钉着)
+    forgetThreadBinding('t')
+    const s2 = state({ viewByProject: { p2: { boardId: 'p2-b2' } } })
+    bindThreadProject('t2', 'p2')
+    expect(unboundWriteBlock('t2', resolveThreadScope(s2, 't2'), s2)).toBeNull()
   })
 })

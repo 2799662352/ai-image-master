@@ -211,6 +211,10 @@ export function buildCard(
     createdAt: now,
     updatedAt: now,
     rev: 0,
+    // 幂等键只在建卡时落下(见 VideoWorkbenchCard.clientRef);空白当作没给。
+    ...(typeof input.clientRef === 'string' && input.clientRef.trim()
+      ? { clientRef: input.clientRef.trim() }
+      : {}),
     ...normalizeSpec(input),
   }
 }
