@@ -72,6 +72,46 @@ describe('addProject / switchProject', () => {
   })
 })
 
+// 多个对话各填一部剧(thread scope)要的两个原语:建剧不动用户屏幕、往指定分段加卡。
+describe('后台建剧 / 往指定分段加卡', () => {
+  it('addProject({activate:false}) 只登记新剧,屏幕上的剧、分段、选中与持久化指针都不动', () => {
+    const p1 = S().activeProjectId
+    const b1 = S().activeBoardId
+    const [first] = S().addCards([{ prompt: 'A' }])
+    S().selectCard(first)
+    localStorage.setItem(ACTIVE_PROJECT_KEY, p1)
+    const before = S().revision
+
+    const p2 = S().addProject('后台剧', { activate: false })
+
+    expect(S().projects.map((p) => p.id)).toContain(p2)
+    expect(S().activeProjectId).toBe(p1)
+    expect(S().activeBoardId).toBe(b1)
+    expect(S().selectedCardIds).toEqual([first])
+    expect(localStorage.getItem(ACTIVE_PROJECT_KEY)).toBe(p1)
+    expect(boardsOf(p2).map((b) => b.name)).toEqual(['分段 1'])
+    expect(S().viewByProject[p2]).toEqual({ mode: 'overview' })
+    expect(S().revision).toBe(before + 1)
+  })
+
+  it('addCards(..., {boardId}) 落到指定分段,不管屏幕上是哪一段;分段不存在就抛错、不落卡', () => {
+    const p1 = S().activeProjectId
+    const bg = S().addProject('后台剧', { activate: false })
+    const bgBoard = boardsOf(bg)[0].id
+
+    const ids = S().addCards([{ prompt: 'X' }, { prompt: 'Y' }], undefined, { boardId: bgBoard })
+
+    expect(ids).toHaveLength(2)
+    expect(S().cards.filter((c) => c.boardId === bgBoard).map((c) => c.prompt)).toEqual(['X', 'Y'])
+    expect(S().activeProjectId).toBe(p1)
+    expect(S().cards.filter((c) => c.boardId === S().activeBoardId)).toHaveLength(0)
+
+    const count = S().cards.length
+    expect(() => S().addCards([{ prompt: 'Z' }], undefined, { boardId: 'no-such-board' })).toThrow(/board not found/)
+    expect(S().cards).toHaveLength(count)
+  })
+})
+
 describe('addBoard / removeBoard 在剧内', () => {
   it('addBoard 归当前剧,命名「分段 N」按剧内计数;删到本剧仅剩一段时拒绝', () => {
     const p2 = S().addProject()

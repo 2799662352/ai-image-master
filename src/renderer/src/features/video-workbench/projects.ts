@@ -32,8 +32,12 @@ export interface ProjectsSlice {
   /** 每部剧上次停在总览还是哪个分段。纯 UI 状态,不进撤销栈。 */
   viewByProject: Record<string, ProjectView>
   railCollapsed: boolean
-  /** 新建剧(自带「分段 1」),切过去并停在总览。返回剧 id。 */
-  addProject: (name?: string) => string
+  /**
+   * 新建剧(自带「分段 1」),切过去并停在总览。返回剧 id。
+   * `opts.activate === false`:只建不切 —— agent 对话在后台开新剧时,别把用户正在看
+   * (或别的对话正在填)的那部剧从屏幕上挪走。
+   */
+  addProject: (name?: string, opts?: { activate?: boolean }) => string
   /** 改名;trim 后为空拒绝;同名无操作;改名即视为「用户认领了这部剧」,清 legacy。 */
   renameProject: (id: string, name: string) => boolean
   /** 整体重排,必须给出全集(同 reorderCards)。 */
@@ -260,7 +264,8 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
   pinnedProjectIds: readPins().projects,
   pinnedBoardIds: readPins().boards,
 
-  addProject: (name) => {
+  addProject: (name, opts) => {
+    const activate = opts?.activate !== false
     const now = Date.now()
     const { projects } = get()
     const project: VideoWorkbenchProject = {
@@ -281,15 +286,20 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
     set((s) => ({
       projects: [...s.projects, project],
       boards: [...s.boards, board],
-      activeProjectId: project.id,
-      activeBoardId: board.id,
+      // 只建不切时,屏幕指针与选中态都留给正在看的那部剧。
+      ...(activate
+        ? {
+            activeProjectId: project.id,
+            activeBoardId: board.id,
+            selectedCardIds: [],
+            selectionAnchorId: undefined,
+          }
+        : {}),
       viewByProject: { ...s.viewByProject, [project.id]: { mode: 'overview' } },
-      selectedCardIds: [],
-      selectionAnchorId: undefined,
       revision: s.revision + 1,
       structureRevision: s.structureRevision + 1,
     }))
-    writeActiveProject(project.id)
+    if (activate) writeActiveProject(project.id)
     const db = getWorkbenchDb()
     void db.putProject(project).catch(() => {})
     void db.putBoard(board).catch(() => {})

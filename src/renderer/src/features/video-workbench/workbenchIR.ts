@@ -136,6 +136,39 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
 }
 
 /**
+ * 一部剧的结构指纹:页(id + 名字)按顺序、每页卡片 id 按顺序,FNV-1a 32 位哈希。
+ *
+ * 只描述 IR 用数组下标表达的那部分结构,**与别的剧完全无关**;卡片规格不进来
+ * (规格冲突由每张卡的 `rev` 负责)。见 `WorkbenchIR.structureSignature`。
+ */
+export function projectStructureSignature(
+  source: Pick<WorkbenchIRSource, 'boards' | 'cards'>,
+  projectId: string,
+): string {
+  let hash = 0x811c9dc5
+  const feed = (text: string): void => {
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i)
+      hash = Math.imul(hash, 0x01000193) >>> 0
+    }
+    // 分隔符:防止 ['ab','c'] 与 ['a','bc'] 喂出同一串。
+    hash ^= 0x1f
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  const boards = source.boards
+    .filter((b) => b.projectId === projectId)
+    .sort((a, b) => a.order - b.order)
+  for (const board of boards) {
+    feed(`b:${board.id}:${board.name}`)
+    const cards = source.cards
+      .filter((c) => c.boardId === board.id)
+      .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
+    for (const card of cards) feed(`c:${card.id}`)
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+/**
  * 导出整个工作台。页与卡都按 order 升序,数组顺序即最终顺序 —— IR 里没有
  * order 字段,重排就是重排数组。
  */
@@ -155,6 +188,7 @@ export function exportWorkbenchIR(source: WorkbenchIRSource): WorkbenchIR {
   return {
     irVersion: WORKBENCH_IR_VERSION,
     structureRevision: source.structureRevision,
+    structureSignature: projectStructureSignature(source, source.activeProjectId),
     projectId: source.activeProjectId,
     activeBoardId: source.activeBoardId,
     boards: irBoards,
@@ -394,7 +428,13 @@ export function planApplyIR(
       { reason: 'project-mismatch', expected: ir.projectId, actual: source.activeProjectId },
     )
   }
-  if (!opts.force && ir.structureRevision !== source.structureRevision) {
+  // 令牌对不上先看指纹:全工作台一个计数器,隔壁剧里加一张卡它也会 +1。指纹只算
+  // 这部剧自己,一致就说明变的是别的剧 —— 这份 IR 的下标位置依然成立,放行。
+  const tokenStale = ir.structureRevision !== source.structureRevision
+  const signatureHolds =
+    typeof ir.structureSignature === 'string'
+    && ir.structureSignature === projectStructureSignature(source, source.activeProjectId)
+  if (!opts.force && tokenStale && !signatureHolds) {
     return reject(source, [
       {
         reason:

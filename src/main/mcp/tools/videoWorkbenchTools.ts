@@ -182,12 +182,13 @@ const projectBriefSchema = z.object({
 
 const workbenchSummarySchema = z.object({
   project: projectBriefSchema.describe(
-    'The ACTIVE project (剧). Everything below is scoped to it; other projects are invisible here — '
-    + 'see video_workbench_list_projects / video_workbench_switch_project.',
+    "THIS CONVERSATION'S project (剧) — the one you chose with switch_project / create_project, or the one "
+    + 'on screen if you have not chosen yet. Everything below is scoped to it; other projects are invisible '
+    + 'here — see video_workbench_list_projects / video_workbench_switch_project.',
   ),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
-  statusCounts: statusCountsSchema.describe('Card status tally across ALL boards of the active project.'),
+  statusCounts: statusCountsSchema.describe("Card status tally across ALL boards of this conversation's project."),
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
 })
 
@@ -202,20 +203,38 @@ const projectListItemSchema = z.looseObject({
   doneSeconds: z.number().describe('Sum of spec durations of succeeded cards.'),
   summary: z.string().optional().describe(PROJECT_SUMMARY_DOC),
   legacy: z.boolean().optional().describe('The project that absorbed pre-upgrade pages; user has not renamed/dismissed it yet.'),
+  inUseByOtherChat: z.boolean().optional().describe(
+    'true = another conversation of the user is working on this project right now (it touched the workbench '
+    + 'within the last 10 minutes). Leave it alone unless the user asked you to take it over.',
+  ),
 })
 
 const listProjectsOutputSchema = z.looseObject({
-  activeProjectId: z.string(),
+  activeProjectId: z.string().describe('The project the USER is looking at on screen — not necessarily yours.'),
+  yourProjectId: z.string().optional().describe(
+    'The project THIS conversation is bound to (what every other video_workbench_* call acts on). '
+    + 'Absent when you have not chosen one.',
+  ),
+  yourProjectChosen: z.boolean().optional().describe(
+    'false = you never chose a project; reads follow the screen and writes may be refused while another '
+    + 'conversation is busy — call switch_project / create_project first.',
+  ),
   projects: z.array(projectListItemSchema),
 })
 
 const switchProjectOutputSchema = z.looseObject({
-  activeProjectId: z.string(),
+  activeProjectId: z.string().describe('The project on the USER\'s screen after this call (may differ from yourProjectId).'),
+  yourProjectId: z.string().optional().describe('The project this conversation is now bound to.'),
+  onScreen: z.boolean().optional().describe('false = you work on it in the background; the user\'s screen did not move.'),
+  note: z.string().optional(),
   project: z.object({ id: z.string(), name: z.string() }),
   boards: z.array(boardBriefSchema),
 })
 
 const createProjectOutputSchema = z.looseObject({
+  yourProjectId: z.string().optional(),
+  onScreen: z.boolean().optional().describe('false = created in the background; the user\'s screen did not move.'),
+  note: z.string().optional(),
   projectId: z.string(),
   boardId: z.string().describe('The one segment the new project starts with — add cards into it.'),
   name: z.string(),
@@ -359,7 +378,7 @@ const startOutputSchema = z.looseObject({
 
 const statusOutputSchema = z.looseObject({
   fields: z.enum(['concise', 'detailed']).describe('Echo of the requested detail level.'),
-  project: projectBriefSchema.describe('The ACTIVE project this snapshot is scoped to.'),
+  project: projectBriefSchema.describe("This conversation's project, which this snapshot is scoped to."),
   total: z.number().describe('Total cards matching the current scope + cardIds filter, across ALL pages.'),
   scope: z.looseObject({
     boardId: z.string().optional(),
@@ -681,8 +700,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'referenceAudios ≤3, each type ≤15s in total — model "2.5" raises all three to 30/10/10 with ' +
       '≤30s in total. ' +
       'Add one or more video task cards to the 「生成视频」 workbench page (the scroll-style concurrent ' +
-      'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
-      'multiple boards/pages — see video_workbench_status). Each card carries a prompt + Seedance spec ' +
+      'video workbench the user sees). Cards land in THIS CONVERSATION\'S project (the one you chose with ' +
+      'video_workbench_switch_project / video_workbench_create_project — several conversations can fill ' +
+      'different projects at the same time, so choose yours first), on its board named by boardId, else the ' +
+      'board the user has open in that project (the workbench has multiple boards/pages — see ' +
+      'video_workbench_status). Each card carries a prompt + Seedance spec ' +
       '(model/resolution/ratio/duration) + reference materials. By default this only FILLS the cards ' +
       '(user reviews and clicks generate); pass autoStart:true to start rendering immediately — but the ' +
       'user can switch off 「允许 AI 自动生成」 in the workbench, and then autoStart is REFUSED (the result ' +
@@ -706,12 +728,17 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       ),
       autoStart: z.boolean().optional().describe('Start rendering right after adding. Default false (fill only).'),
       navigate: z.boolean().optional().describe('Switch the app to the workbench tab. Default true.'),
+      boardId: z.string().optional().describe(
+        'Append to THIS board (page) of your project instead of the one the user has open. Ids come from '
+        + 'the `boards` list of video_workbench_status / switch_project / create_project. A board of '
+        + 'another project is refused. Ignored when afterCardId / beforeCardId is given.',
+      ),
       afterCardId: z.string().optional().describe(
         'Insert the new cards right AFTER this card instead of appending. Pass a stable card id from '
         + 'video_workbench_status — NOT a position number, those shift whenever anything is inserted, '
         + 'deleted or dragged. The cards land on the ANCHOR card\'s board, which may differ from the '
-        + 'active one. Mutually exclusive with beforeCardId; omit both to append at the end of the '
-        + 'active board. Note this changes the card set, so any structureRevision you are holding for '
+        + 'open one. Mutually exclusive with beforeCardId; omit both to append at the end of the '
+        + 'board (see boardId). Note this changes the card set, so any structureRevision you are holding for '
         + 'video_workbench_apply becomes stale.',
       ),
       beforeCardId: z.string().optional().describe(
@@ -1077,7 +1104,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_status', {
     description:
-      'Snapshot of the 「生成视频」 workbench, SCOPED TO THE ACTIVE PROJECT (剧). The result carries ' +
+      'Snapshot of the 「生成视频」 workbench, SCOPED TO THIS CONVERSATION\'S PROJECT (剧). The result carries ' +
       '`project` {id,name,segments,cards}; other projects are invisible here — use ' +
       'video_workbench_list_projects / video_workbench_switch_project. A project has multiple boards ' +
       '(pages = 分段/segments): the result carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
@@ -1262,8 +1289,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       // 工具间的选择表在 server instructions 里(MCP 官方把「描述里重复 instructions
       // 已有的内容」列为反模式)。这里只留 apply 自己的硬边界。
-      'Acts on the ACTIVE project (剧) only: the IR carries `projectId`, and if the user switched project '
-      + 'since your export the whole apply is rejected with conflict.reason="project-mismatch" — re-export. '
+      'Acts on this conversation\'s project (剧) only: the IR carries `projectId`, and if you (or the user) '
+      + 'switched project since your export the whole apply is rejected with conflict.reason="project-mismatch" — re-export. '
+      + 'Other conversations adding cards to OTHER projects no longer invalidate your IR (structureSignature '
+      + 'fingerprints only your project). '
       + 'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
       + 'rejected with zero writes, and so is omitting a prompt you were carrying (that reads as '
       + 'clearing it). It exists for rebuilding a board wholesale in one atomic shot — all cards '
@@ -1459,7 +1488,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'video_workbench_list_projects otherwise shows only names and counts, and names are often '
       + '"未命名剧 3", so with several projects you would have to switch into each one to learn what it '
       + 'holds. Write one when you start or take over a project, and refresh it when the premise changes. '
-      + 'Pass an empty string to clear it. Omit projectId to annotate the ACTIVE project.\n'
+      + 'Pass an empty string to clear it. Omit projectId to annotate this conversation\'s project.\n'
       + `FORMAT — telegraphic, not prose. Hard limit ${WORKBENCH_PROJECT_SUMMARY_MAX} characters; over that `
       + 'the call is REJECTED (not truncated). 2-4 facts joined by " · ", no verbs, no period: genre/format · '
       + 'setting · lead characters. Say what the project IS; never counts or progress — those are in '
@@ -1468,7 +1497,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'This does NOT invalidate an IR you are holding.',
     inputSchema: z.object({
       projectId: z.string().min(1).optional().describe(
-        'Project to annotate. Omit = the ACTIVE project. Other ids come from video_workbench_list_projects.',
+        'Project to annotate. Omit = this conversation\'s project. Other ids come from video_workbench_list_projects.',
       ),
       summary: z.string().max(WORKBENCH_PROJECT_SUMMARY_MAX).describe(
         `Telegraphic index entry, max ${WORKBENCH_PROJECT_SUMMARY_MAX} chars: 2-4 facts joined by " · ", `
@@ -1522,8 +1551,10 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'List every project (剧 — a series/film that groups the workbench pages/segments). Returns id, name, ' +
       'counts (segments, cards, active, failed, done, doneSeconds) and the one-line `summary` if someone ' +
       'wrote one (video_workbench_set_project_summary) — that summary is how you tell projects apart ' +
-      'without switching into each. Every other video_workbench_* tool ' +
-      'acts on the ACTIVE project only; call video_workbench_switch_project to change it.',
+      'without switching into each. `activeProjectId` is the project the USER is looking at; `yourProjectId` ' +
+      'is the one THIS conversation works on (every other video_workbench_* tool acts on it — call ' +
+      'video_workbench_switch_project to change it). A project marked `inUseByOtherChat` is being filled by ' +
+      'another conversation right now: do not touch it unless the user told you to.',
     inputSchema: z.object({}),
     annotations: READ_ONLY,
     outputSchema: listProjectsOutputSchema,
@@ -1538,12 +1569,19 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_switch_project', {
     description:
-      'Make a project (剧) the ACTIVE one. Every subsequent video_workbench_* call (status / add_tasks / ' +
-      'apply / start …) operates inside it, and the user sees the switch immediately. Get ids from ' +
+      'Bind THIS CONVERSATION to a project (剧). Every subsequent video_workbench_* call from this conversation ' +
+      '(status / add_tasks / apply / start …) operates inside it — other conversations keep their own ' +
+      'projects, so several films can be filled at the same time without fighting. The user\'s screen follows ' +
+      'only when no other conversation is busy on a different project (result `onScreen`); pass focus:true to ' +
+      'force the screen over, focus:false to work silently in the background. Get ids from ' +
       'video_workbench_list_projects. A stale IR exported under another project is rejected by apply ' +
       'with conflict.reason="project-mismatch" — re-export after switching.',
     inputSchema: z.object({
       projectId: z.string().min(1).describe('Project id from video_workbench_list_projects.'),
+      focus: z.boolean().optional().describe(
+        'true = move the user\'s screen to this project; false = bind silently, screen stays. '
+        + 'Omit = follow the screen only when no other conversation is busy on a different project.',
+      ),
     }),
     annotations: WRITE_IDEMPOTENT,
     outputSchema: switchProjectOutputSchema,
@@ -1558,10 +1596,16 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
 
   server.registerTool('video_workbench_create_project', {
     description:
-      'Create a new project (剧) with one empty segment, switch to it, and return { projectId, boardId, name }. ' +
+      'Create a new project (剧) with one empty segment, bind THIS CONVERSATION to it, and return ' +
+      '{ projectId, boardId, name }. The screen follows only when no other conversation is busy on a ' +
+      'different project (result `onScreen`; override with focus). ' +
       'Use when the user starts a new film/series; then add cards with video_workbench_add_tasks.',
     inputSchema: z.object({
       name: z.string().max(80).optional().describe('Project name; omitted = 未命名剧 N.'),
+      focus: z.boolean().optional().describe(
+        'true = move the user\'s screen to the new project; false = create silently in the background. '
+        + 'Omit = follow the screen only when no other conversation is busy on a different project.',
+      ),
     }),
     annotations: WRITE_ADDITIVE,
     outputSchema: createProjectOutputSchema,
