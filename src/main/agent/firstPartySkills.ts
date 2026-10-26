@@ -12,6 +12,7 @@ import {
   CATIMATION_SUBAGENTS_SKILL_CONTENT,
   CATIMATION_UNDERSTAND_SKILL_CONTENT,
   CATIMATION_VIDEO_SKILL_CONTENT,
+  CATIMATION_VIDEO_WORKBENCH_SKILL_CONTENT,
   FFMPEG_WIN_SKILL_CONTENT,
   GRAPHIFY_SKILL_CONTENT,
 } from './generated/firstPartySkills.generated'
@@ -116,6 +117,40 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
       'afea328a3370ca2b6006da3e75c16261e35e4172a36058f02ca5d4053ab4661a',
       'a21c9b2c7dacdccc92c96ab6c73219221ad95a0b0cf1b58e3ad656990925a557',
       'b21308a1232e11a7d8fc678ca2340d75a4fee0e8aedeed978c95f21a38da7840',
+    ]),
+  ],
+  [
+    // `catimation-video-workbench` was generated since #178 (2026-08-01) but never
+    // listed in FIRST_PARTY_SKILLS, so until it was wired in, the only way to get it
+    // was the plugin/skill marketplace — which writes the file WITHOUT a managed
+    // marker. Every version below is a byte-exact earlier state of
+    // resources/plugins/catimation-video/skills/catimation-video-workbench/SKILL.md
+    // (a real markerless copy found on a user machine, dated 2026-09-24, matched
+    // the 2026-09-24 version byte for byte). A match proves the copy is unedited,
+    // so it is safe to adopt and refresh; anything else stays user-owned.
+    //
+    // This set is closed: the content shipped with the app that wires the skill in
+    // is matched directly (see canAdoptUnmarkedCopy), and adopting writes the
+    // marker, so later SKILL.md edits reach those users without extending this list.
+    'catimation-video-workbench',
+    new Set([
+      // 30a573bf (#178, original) → 02f94dc7 → 3b800dcd → 912776d3 (2026-08-01)
+      'c1d20cd55a877eacbd84a41588a9162bbfd012954ccd2770992f6e6a3f1a929a',
+      'dda10fdb0b7d5f993d138ff03fabc5c88e328040c2d180671a17efa6e8719b0f',
+      '8faeaae5b1791d9305747e34f7925dff71aab61aaa6db26dc51e2f57ab593e53',
+      '9805eb7d48c6e52c6fce19b8bcac51f73c59e40ece3376d5999ac987abfdeb8f',
+      // cac5a7c2 → 1f9544f8 (2026-08-03) → 3c0f0ae9 (08-04)
+      '1a2ee1e3f400cd2a39c99d6ac5b2a690211522340b9be0392998ccdafc97f28c',
+      'b0740a981425559f98775a0c19cfb1cc2e9f8d45454ecf5de15460a8802130c4',
+      'ca55394957f39202198929d9c0c3a4d8c33e6a4f1db916b4ac4cda0ff2e31f0a',
+      // cebd3139 → 1efa7269 (2026-08-10) → 4d41e4f6 (08-15)
+      '167b76a591dbd6aa1924693c0b7e3de5a8e70ee190f9e8ad18183aa72578ff56',
+      '308d1a4fd535d3f351d9c5d23ba28b1d78acf67f67c0ea5e959e6708e1af97dd',
+      '8f77c5b0a5388d3c558e4b02de9fcca8808c7808f8feb67e41635264687fc05e',
+      // 8563bb44 (2026-09-06) → 9ed7b9db (09-24) → 16643036 (10-26, last before #367)
+      '3982094b57e574f253392bd504596b1587daea7b8cfc7cab1b90ae23a58e5814',
+      'cde4a5b41cedb280065dc5ee9a8bdc412e26c8d21e293ff2ee055634bcfcacd2',
+      'fa07ef8c898b21736706cbd9562d9d06ce67991282e881672ab02348692c44b7',
     ]),
   ],
 ])
@@ -399,6 +434,17 @@ export const CATIMATION_SUBAGENTS_SKILL: FirstPartySkill = {
   content: CATIMATION_SUBAGENTS_SKILL_CONTENT,
 }
 
+/**
+ * The video workbench is an in-app surface and the embedded agent that drives it
+ * has no session hook — it only ever sees SKILL.md — so the skill has to be
+ * present on every install, not only for users who happened to add it from the
+ * marketplace. Single file by design: `writeManaged` ships only SKILL.md.
+ */
+export const CATIMATION_VIDEO_WORKBENCH_SKILL: FirstPartySkill = {
+  name: 'catimation-video-workbench',
+  content: CATIMATION_VIDEO_WORKBENCH_SKILL_CONTENT,
+}
+
 export const CATIMATION_FFMPEG_WIN_SKILL: FirstPartySkill = {
   name: 'ffmpeg-win',
   content: FFMPEG_WIN_SKILL_CONTENT,
@@ -431,6 +477,7 @@ const RETIRED_FIRST_PARTY_SKILL_NAMES = ['mediakit-cli']
 export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_IMAGE_SKILL,
   CATIMATION_VIDEO_SKILL,
+  CATIMATION_VIDEO_WORKBENCH_SKILL,
   CATIMATION_AUDIO_SKILL,
   CATIMATION_PORTRAIT_LIBRARY_SKILL,
   CATIMATION_BRAINSTORM_SKILL,

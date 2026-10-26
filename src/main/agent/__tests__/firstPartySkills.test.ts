@@ -9,12 +9,14 @@ import {
   CATIMATION_SUBAGENTS_SKILL,
   CATIMATION_UNDERSTAND_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
+  CATIMATION_VIDEO_WORKBENCH_SKILL,
   GRAPHIFY_SKILL,
   FIRST_PARTY_SKILLS,
   KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES,
   installFirstPartySkills,
   type FirstPartySkill,
 } from '../firstPartySkills'
+import { GENERATED_FIRST_PARTY_SKILLS } from '../generated/firstPartySkills.generated'
 // 单一真源生成器(仓库脚本,无 .d.ts,类型由 checkJs 推断)
 import { renderGeneratedModule, GENERATED_RELATIVE_PATH } from '../../../../scripts/generate-first-party-skills.mjs'
 
@@ -487,7 +489,68 @@ describe('installFirstPartySkills', () => {
     })
   })
 
+  describe('CATIMATION_VIDEO_WORKBENCH_SKILL', () => {
+    const NAME = 'catimation-video-workbench'
+    const knownHashes = () => KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.get(NAME)
+
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(CATIMATION_VIDEO_WORKBENCH_SKILL)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.name).toBe(NAME)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content).toMatch(/\nname:\s*catimation-video-workbench\n/)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('carries the multi-conversation write-safety rules agents must follow', () => {
+      const c = CATIMATION_VIDEO_WORKBENCH_SKILL.content
+      expect(c).toContain('clientRef')
+      expect(c).toContain('expectedRev')
+      expect(c).toContain('changedSinceYourLastCall')
+    })
+
+    it('is a single-file skill (no bundled references that would dangle after install)', () => {
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.files).toBeUndefined()
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content).not.toMatch(/references\//)
+    })
+
+    it('installs on a fresh machine, byte-identical to the source of truth', async () => {
+      const officialRoot = await makeTempRoot()
+      const report = await installFirstPartySkills({ officialRoot })
+      expect(report.installed).toContain(NAME)
+      const written = await readFile(path.join(officialRoot, NAME, 'SKILL.md'), 'utf8')
+      expect(written).toBe(CATIMATION_VIDEO_WORKBENCH_SKILL.content)
+    })
+
+    it('recognizes markerless copies that earlier plugin-marketplace installs left behind', () => {
+      // 原始版本(#178)、用户机器上 9/24 的市场副本、#367 之前 main 上的最后一版。
+      for (const hash of [
+        'c1d20cd55a877eacbd84a41588a9162bbfd012954ccd2770992f6e6a3f1a929a',
+        'cde4a5b41cedb280065dc5ee9a8bdc412e26c8d21e293ff2ee055634bcfcacd2',
+        'fa07ef8c898b21736706cbd9562d9d06ce67991282e881672ab02348692c44b7',
+      ]) {
+        expect(knownHashes()?.has(hash), hash).toBe(true)
+      }
+    })
+  })
+
   describe('single-source parity', () => {
+    // 守卫「生成了却没装」这一类漏接:#178 新增工作台 skill 时只改了生成器和生成物,
+    // 没把它放进 FIRST_PARTY_SKILLS,于是 v4.4.21 说明里写的「随应用打包」三个月都没兑现,
+    // 而每个 skill 各自那条「在 FIRST_PARTY_SKILLS 里」的断言又只能防它自己。
+    it('ships exactly the skills the generator produces', () => {
+      const shipped = FIRST_PARTY_SKILLS.map((s) => s.name).sort()
+      const generated = GENERATED_FIRST_PARTY_SKILLS.map((s) => s.name).sort()
+      expect(shipped).toEqual(generated)
+    })
+
+    it('ships the generated content verbatim for every skill', () => {
+      for (const gen of GENERATED_FIRST_PARTY_SKILLS) {
+        const shipped = FIRST_PARTY_SKILLS.find((s) => s.name === gen.name)
+        expect(shipped, `${gen.name} is generated but not shipped`).toBeDefined()
+        expect(shipped?.content, `${gen.name} content differs from generated`).toBe(gen.content)
+      }
+    })
+
     it('generated module matches its Markdown sources (run generate-first-party-skills.mjs if this fails)', async () => {
       const repoRoot = path.resolve(__dirname, '..', '..', '..', '..')
       const onDisk = await readFile(
