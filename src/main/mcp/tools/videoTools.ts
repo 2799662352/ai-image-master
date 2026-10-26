@@ -325,7 +325,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
       'previously Seedance-generated clip. ' +
       'SPECIAL VARIANT: model "depth" (深度捕捉) is not a generator — it converts ONE existing video into a ' +
-      'grayscale depth video (see the model parameter); every other input rule above does not apply to it.',
+      'grayscale depth video (see the model parameter); every other input rule above does not apply to it. ' +
+      'Depth is SLOW and scales with the source length (measured: 5 s clip ~1.5 min, 60 s clip ~22 min, a 180 s clip ' +
+      'had not finished after 34 min) — trim the source to what is needed (usually <=60 s) first; the app polls a depth ' +
+      'task for up to 50 minutes.',
     annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       prompt: z.string().min(1).describe(

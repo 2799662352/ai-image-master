@@ -302,4 +302,74 @@ describe('taskManager × depth', () => {
       mgr.dispose()
     })
   })
+
+  // 腾讯点播的视频深度估计很慢(实测 60 秒的片子 21~22 分钟),30 分钟的通用上限会把
+  // 还在上游跑、也照样计费的任务提前判死。只给 depth 放宽到 50 分钟,别的模型不变。
+  describe('轮询上限', () => {
+    it('depth:30 分钟时仍在跑的任务不判死,仍在继续查询', async () => {
+      const depth = makeTransport([{ id: 'task_depth_1', status: 'running' }])
+      const mgr = makeManager(makeClient(), depth)
+
+      await mgr.submit({ input: INPUT, content: CONTENT })
+      await vi.advanceTimersByTimeAsync(31 * 60_000)
+
+      expect(mgr.get('task_depth_1')?.status).not.toBe('failed')
+      const callsAt31 = depth.queryTask.mock.calls.length
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(depth.queryTask.mock.calls.length).toBeGreaterThan(callsAt31)
+      expect(mgr.get('task_depth_1')?.status).not.toBe('failed')
+      mgr.dispose()
+    })
+
+    it('depth:第 22 分钟出结果(实测量级)照常成功落盘', async () => {
+      let polls = 0
+      const depth = {
+        requireApiKey: vi.fn(() => {}),
+        createTask: vi.fn(async () => ({ id: 'task_depth_1' })),
+        queryTask: vi.fn(async (): Promise<SeedanceQueryResult> => {
+          polls += 1
+          // 6 秒一轮,第 22 分钟 ≈ 第 220 轮。
+          return polls >= 220
+            ? { id: 'task_depth_1', status: 'succeeded', content: { video_url: OUT } }
+            : { id: 'task_depth_1', status: 'running' }
+        }),
+      } satisfies VideoTransport
+      const mgr = makeManager(makeClient(), depth)
+
+      await mgr.submit({ input: INPUT, content: CONTENT })
+      await vi.advanceTimersByTimeAsync(25 * 60_000)
+
+      expect(mgr.get('task_depth_1')?.status).toBe('succeeded')
+      expect(persistVideo).toHaveBeenCalledTimes(1)
+      mgr.dispose()
+    })
+
+    it('depth:超过 50 分钟才判超时,报文里写的是 50 分钟', async () => {
+      const depth = makeTransport([{ id: 'task_depth_1', status: 'running' }])
+      const mgr = makeManager(makeClient(), depth)
+
+      await mgr.submit({ input: INPUT, content: CONTENT })
+      await vi.advanceTimersByTimeAsync(51 * 60_000)
+
+      const task = mgr.get('task_depth_1')
+      expect(task?.status).toBe('failed')
+      expect(task?.error).toContain('轮询超时')
+      expect(task?.error).toContain('50 分钟')
+      expect(persistVideo).not.toHaveBeenCalled()
+      mgr.dispose()
+    })
+
+    it('其它模型仍是 30 分钟,报文写 30 分钟', async () => {
+      const client = makeClient()
+      const mgr = makeManager(client, undefined)
+
+      await mgr.submit({ input: { prompt: '一只猫在雨里跳舞' }, content: [] })
+      await vi.advanceTimersByTimeAsync(31 * 60_000)
+
+      const task = mgr.get('ark-should-not-be-used')
+      expect(task?.status).toBe('failed')
+      expect(task?.error).toContain('30 分钟')
+      mgr.dispose()
+    })
+  })
 })
