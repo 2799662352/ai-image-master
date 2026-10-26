@@ -95,6 +95,18 @@ const POLL_INTERVAL_MS = 6_000
 const POLL_BACKOFF_CAP_MS = 60_000
 /** 单任务轮询上限（30 分钟），防上游悬死导致永久轮询。 */
 const POLL_TIMEOUT_MS = 30 * 60_000
+/**
+ * 深度捕捉的轮询上限(50 分钟)。腾讯点播的视频深度估计按源视频时长处理,实测很慢:
+ * 5 秒短片约 1.5 分钟,60 秒的片子(720p / 1080p 各一条,同时提交三条)约 21~22 分钟,
+ * 180 秒的在 34 分钟后仍未出结果。30 分钟会把还在上游跑、也照样计费的任务提前判死,
+ * 用户既拿不到结果又白花钱,所以只给 depth 放宽;其它模型的 30 分钟兜底不变。
+ */
+const DEPTH_POLL_TIMEOUT_MS = 50 * 60_000
+
+/** 这个模型的轮询上限(毫秒)。 */
+function pollTimeoutMsFor(model: string): number {
+  return model === 'depth' ? DEPTH_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS
+}
 /** 终态任务保留时长，之后从 Map 清理。 */
 const RETENTION_MS = 30 * 60_000
 /**
@@ -598,14 +610,16 @@ export class SeedanceTaskManager {
       if (!task) return // disposed / cleaned up
       if (task.status === 'cancelled') return // 已取消：停止轮询，别再花钱查
 
-      if (this.now() - startedAt > POLL_TIMEOUT_MS) {
+      const pollTimeoutMs = pollTimeoutMsFor(task.model)
+      if (this.now() - startedAt > pollTimeoutMs) {
         // 带上最后一次失败原因：否则「上游一直 503」和「上游一直在跑」会报出
         // 同一句话，用户和日志都无法区分。
+        const minutes = Math.round(pollTimeoutMs / 60_000)
         this.update(taskId, {
           status: 'failed',
           error: lastFailure
-            ? `轮询超时（30 分钟未出结果）；最后一次查询失败：${lastFailure}`
-            : '轮询超时（30 分钟未出结果）',
+            ? `轮询超时（${minutes} 分钟未出结果）；最后一次查询失败：${lastFailure}`
+            : `轮询超时（${minutes} 分钟未出结果）`,
         })
         this.scheduleCleanup(taskId)
         return
