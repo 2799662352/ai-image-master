@@ -28,6 +28,7 @@ import type {
 import {
   SEEDANCE_DRAFT_FINAL_RESOLUTION,
   SEEDANCE_DRAFT_RESOLUTION,
+  capabilitiesFor,
   supportsSeedanceDraft,
   validateSeedanceRequest,
 } from './types'
@@ -73,6 +74,21 @@ function referenceUrlsOf(content: SeedanceContentItem[]): SeedanceReferenceUrls 
   return refs.images.length + refs.videos.length + refs.audios.length > 0 ? refs : undefined
 }
 
+/**
+ * 任务状态里展示用的画幅 / 时长默认值。
+ *
+ * 「源视频变换」型(深度捕捉)没有这两个参数 —— 输出跟着源视频走 —— 所以显示
+ * 「自适应 / 智能时长(-1)」而不是一个编出来的 16:9 / 5 秒。预备卡片、失败卡片、
+ * 真实任务三处必须同口径,否则气泡会在提交前后跳一下。
+ */
+function shapeDefaults(
+  model: SeedanceModelAlias,
+  input: Pick<CreateVideoTaskInput, 'ratio' | 'duration'>,
+): { ratio: string; duration: number } {
+  if (capabilitiesFor(model).sourceVideoTransform) return { ratio: 'adaptive', duration: -1 }
+  return { ratio: input.ratio ?? '16:9', duration: input.duration ?? 5 }
+}
+
 /** 上游轮询间隔。文档建议 5~10s。 */
 const POLL_INTERVAL_MS = 6_000
 /** 连续失败退避的上限：再糟也至少每分钟探一次。 */
@@ -105,6 +121,11 @@ export interface SeedanceTaskManagerDeps {
    * 回落 —— 见 `transportFor` 里那条不能回落的分支。
    */
   seedanceGatewayTransport?: VideoTransport
+  /**
+   * 深度捕捉(`depth`)的传输层。缺省时提交深度捕捉会**抛错**而不是回落 —— 回落到
+   * Seedance 会把源视频当 Ark 的 content[] 发出去,见 `transportFor`。
+   */
+  depthTransport?: VideoTransport
   /**
    * 没有显式意向时，这一次算平台余额还是自填 Key。
    *
@@ -206,6 +227,7 @@ export class SeedanceTaskManager {
       {
         seedance: createSeedanceTransport(this.deps.client, this.deps.getApiKey),
         ...(this.deps.wan3Transport ? { wan3: this.deps.wan3Transport } : {}),
+        ...(this.deps.depthTransport ? { depth: this.deps.depthTransport } : {}),
         ...(this.deps.seedanceGatewayTransport
           ? { seedanceGateway: this.deps.seedanceGatewayTransport }
           : {}),
@@ -276,7 +298,7 @@ export class SeedanceTaskManager {
       : input.draft
         ? SEEDANCE_DRAFT_RESOLUTION
         : (input.resolution ?? '720p')
-    const duration = input.duration ?? 5
+    const { ratio: defaultRatio, duration } = shapeDefaults(model, input)
     const taskMode = input.taskMode
 
     // 提交前按模型能力自查。上游对 4k 配 2.5、30 秒配 2.0、edit 不带视频都会 400,
@@ -296,7 +318,7 @@ export class SeedanceTaskManager {
 
     // edit / extend 由上游强制 adaptive（文档 4.9）—— 与其让它悄悄改写我们传的
     // 比例、再让 UI 显示一个与成片不符的值，不如提交时就写成真实生效的那个。
-    const ratio = taskMode ? 'adaptive' : (input.ratio ?? '16:9')
+    const ratio = taskMode ? 'adaptive' : defaultRatio
 
     // 组包归传输层 —— 两家 provider 的请求体毫无共同点,这里只交出已解析的事实。
     const { id } = await this.transport(model, billing).createTask({
@@ -345,15 +367,15 @@ export class SeedanceTaskManager {
     status: SeedanceTaskStatus,
   ): SeedanceTaskUpdate {
     const now = this.now()
+    const model = input.model ?? '2.0'
     return {
       taskId: clientId,
       clientId,
       threadId,
       prompt: input.prompt,
-      model: input.model ?? '2.0',
+      model,
       resolution: input.resolution ?? '720p',
-      ratio: input.ratio ?? '16:9',
-      duration: input.duration ?? 5,
+      ...shapeDefaults(model, input),
       status,
       createdAt: now,
       updatedAt: now,

@@ -48,13 +48,21 @@ function toFileUrl(filePath: string): string {
   return `file:///${filePath.replace(/\\/g, '/')}`
 }
 
+/**
+ * 深度捕捉(`depth`)不是 Seedance —— 上游是网关的腾讯云点播深度估计通道。文件名 / 历史模型串
+ * 带 `seedance-` 会让用户以为这是一条 Seedance 生成;其余模型保持原样(一个字节不变)。
+ */
+const isDepth = (update: SeedanceTaskUpdate): boolean => update.model === 'depth'
+
 function videoArtifact(update: SeedanceTaskUpdate, uri: string): AttachmentRef {
   // 注意：artifact id 故意用真实上游 taskId（持久身份），而非气泡 key（clientid 兜底）；
   // 别在「一致性清理」时误改成 key。
   return {
     id: `seedance-${update.taskId}`,
     kind: 'video',
-    name: `seedance-${update.model.replace('.', '_')}-${update.taskId.slice(-8)}.mp4`,
+    name: isDepth(update)
+      ? `depth-${update.taskId.slice(-8)}.mp4`
+      : `seedance-${update.model.replace('.', '_')}-${update.taskId.slice(-8)}.mp4`,
     mime: 'video/mp4',
     size: 0,
     uri,
@@ -63,12 +71,17 @@ function videoArtifact(update: SeedanceTaskUpdate, uri: string): AttachmentRef {
 
 function progressLabel(update: SeedanceTaskUpdate): string {
   const elapsed = Math.max(0, Math.round((Date.now() - update.createdAt) / 1000))
-  const spec = `Seedance ${update.model} · ${update.duration}s ${update.resolution}`
+  // 深度捕捉没有时长 / 画幅参数(状态里是 duration=-1),写「-1s」会很怪;输出长度跟着源视频走。
+  const depth = isDepth(update)
+  const spec = depth
+    ? `深度捕捉 · ${update.resolution}`
+    : `Seedance ${update.model} · ${update.duration}s ${update.resolution}`
+  const verb = depth ? '正在提取深度视频' : '正在生成视频'
   // 预备卡片（createTask 之前的素材准备阶段）：与上游「排队中」区分开，让
   // 批量并发时每条任务在前置上传/导入期间就有可见且可辨识的进度气泡。
   if (update.phase === 'preparing') return `正在准备素材… (${spec})`
-  if (update.status === 'queued') return `正在生成视频 · 排队中 (${spec})`
-  return `正在生成视频 · ${elapsed}s (${spec})`
+  if (update.status === 'queued') return `${verb} · 排队中 (${spec})`
+  return `${verb} · ${elapsed}s (${spec})`
 }
 
 function dirOf(filePath: string): string | undefined {
@@ -97,7 +110,7 @@ async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Pr
       update.prompt,
       [durableUrl],
       update.ratio,
-      `seedance-${update.model}`,
+      isDepth(update) ? 'depth-capture' : `seedance-${update.model}`,
     )) as { id?: number | string } | null
     const historyId = saved?.id
     if (historyId != null && task.threadId) {

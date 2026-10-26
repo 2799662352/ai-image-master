@@ -155,6 +155,71 @@ describe('seedance task-update → artifact bubble', () => {
     })
   })
 
+  describe('深度捕捉(depth)', () => {
+    // 它没有时长 / 画幅参数(状态里 duration=-1),也不是 Seedance:气泡不能写「-1s」
+    // 或「Seedance depth」,文件名 / 历史模型串也别带 seedance- 前缀。
+    const depth = (partial: Partial<SeedanceTaskUpdate>) =>
+      makeUpdate({ model: 'depth', resolution: '480p', ratio: 'adaptive', duration: -1, ...partial })
+
+    it('进度文案说「提取深度视频」,不出现 -1s / Seedance', () => {
+      const clientId = `pending-${taskSeq}-depth`
+      handleSeedanceTaskUpdate(depth({ taskId: clientId, clientId, phase: 'preparing' }))
+      expect(lastArtifact().progressText).toContain('正在准备素材')
+      expect(lastArtifact().progressText).toContain('深度捕捉 · 480p')
+
+      handleSeedanceTaskUpdate(depth({ taskId: 'real-d', clientId, status: 'queued' }))
+      expect(lastArtifact().progressText).toContain('排队中')
+
+      handleSeedanceTaskUpdate(
+        depth({ taskId: 'real-d', clientId, status: 'running', createdAt: Date.now() - 9_000 }),
+      )
+      const text = lastArtifact().progressText ?? ''
+      expect(text).toMatch(/正在提取深度视频 · \d+s/)
+      expect(text).not.toContain('-1s')
+      expect(text).not.toContain('Seedance')
+      expect(useAgentChatStore.getState().messages).toHaveLength(1)
+    })
+
+    it('成片文件名 depth-<任务尾号>.mp4,历史模型串 depth-capture', async () => {
+      const addToHistory = vi.fn().mockResolvedValue({ id: 7 })
+      ServiceRegistry.register(SERVICE_KEYS.HISTORY_DATA, {
+        init: vi.fn().mockResolvedValue(undefined),
+        addToHistory,
+      })
+      useAgentChatStore.setState({ threadId: 'thread-1' })
+
+      const taskId = 'task_depth_abcd1234'
+      handleSeedanceTaskUpdate(depth({ taskId, threadId: 'thread-1', status: 'running' }))
+      handleSeedanceTaskUpdate(
+        depth({
+          taskId,
+          threadId: 'thread-1',
+          status: 'succeeded',
+          remoteUrl: 'https://cos.example/depth.mp4',
+          localPath: 'C:\\data\\downloads\\depth.mp4',
+          persistence: 'done',
+        }),
+      )
+      await vi.waitFor(() => expect(addToHistory).toHaveBeenCalledTimes(1))
+
+      expect(lastArtifact().artifacts[0].name).toBe('depth-abcd1234.mp4')
+      expect(addToHistory).toHaveBeenCalledWith(
+        'codex-video',
+        '一只赛博猫在雨夜奔跑',
+        ['https://cos.example/depth.mp4'],
+        'adaptive',
+        'depth-capture',
+      )
+    })
+
+    it('别的模型的文案不受影响', () => {
+      handleSeedanceTaskUpdate(makeUpdate({ model: '2.5', status: 'running', duration: 12 }))
+      const text = lastArtifact().progressText ?? ''
+      expect(text).toContain('Seedance 2.5 · 12s 720p')
+      expect(text).not.toContain('深度')
+    })
+  })
+
   it('persistence failed keeps the playable video but shows the failed-save banner', () => {
     const taskId = `task-${taskSeq}`
     handleSeedanceTaskUpdate(

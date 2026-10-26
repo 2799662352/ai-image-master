@@ -67,6 +67,17 @@ describe('按秒计费(万相)', () => {
     expect(unitPriceCnyPerSecond('wan3', '4k')).toBeNull()
   })
 
+  it('深度捕捉按次收费 —— 既不是 token 价也不是每秒价,三条估价路都得是 null', () => {
+    // 它和万相一样「不是 token 计费」,但不能因此被当成按秒:套万相的 ¥0.6/秒 会得出
+    // 一个看似精确的错数。
+    for (const res of ['480p', '720p', '1080p']) {
+      expect(unitPriceCnyPerSecond('depth', res), res).toBeNull()
+      expect(unitPriceUsd('depth', res, true), res).toBeNull()
+      expect(estimateCostCny('depth', res, 12), res).toBeNull()
+      expect(estimateCostUsd('depth', res, true, 123_456), res).toBeNull()
+    }
+  })
+
   it('费用 = 实际出片秒数 × 单价', () => {
     expect(estimateCostCny('wan3', '720p', 5)).toBeCloseTo(3.0, 6)
     expect(estimateCostCny('wan3', '480p', 10)).toBeCloseTo(3.0, 6)
