@@ -146,6 +146,11 @@ const boardBriefSchema = z.object({
     + 'pulling — page names are often just "页面 3". A summary lets you pick the right page without '
     + 'fetching any of its cards.',
   ),
+  inUseByOtherChat: z.literal(true).optional().describe(
+    'Present = another conversation has pinned itself to this board (an episode / act) and touched the '
+    + 'workbench within the last 10 minutes. Write elsewhere, or pin your own board with '
+    + 'video_workbench_switch_project({ projectId, boardId }).',
+  ),
 })
 
 const statusCountsSchema = z.object({
@@ -192,6 +197,31 @@ const workbenchSummarySchema = z.object({
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
 })
 
+const idListSchema = z.object({
+  count: z.number().describe('Real number of cards affected.'),
+  ids: z.array(z.string()).describe('At most 8 of them.'),
+})
+
+/**
+ * 「自你上次调用以来别人动过什么」:几个对话(加上用户)同时写同一份工作台时,回包里顺带告诉你
+ * 这段时间你手上那几页发生了什么。字段缺席 = 没有变化(或这是并行批里的非首次调用)。
+ */
+const changedSinceYourLastCallSchema = z.object({
+  added: idListSchema.optional().describe('Cards that appeared on your boards.'),
+  removed: idListSchema.optional().describe('Cards that disappeared from your boards.'),
+  edited: idListSchema.optional().describe(
+    'Cards whose CONTENT (prompt / spec / materials) changed. Render progress and background updates do not count.',
+  ),
+  reordered: z.array(z.string()).optional().describe('Board ids whose card order changed.'),
+}).describe(
+  'Something other than your own previous calls changed your boards since your last call (the user, '
+  + 'another conversation, or a background process — the cause is not known). Reported ONCE. If you are '
+  + 'about to write to the cards listed here, re-read them first (video_workbench_status) instead of '
+  + 'writing from memory. Absent = nothing changed.',
+)
+
+const changedSinceField = { changedSinceYourLastCall: changedSinceYourLastCallSchema.optional() }
+
 const projectListItemSchema = z.looseObject({
   id: z.string(),
   name: z.string(),
@@ -219,12 +249,20 @@ const listProjectsOutputSchema = z.looseObject({
     'false = you never chose a project; reads follow the screen and writes may be refused while another '
     + 'conversation is busy — call switch_project / create_project first.',
   ),
+  yourBoardId: z.string().optional().describe(
+    'The board (episode / act) THIS conversation is pinned to. Absent = not pinned: implicit writes land on '
+    + 'the project\'s current page.',
+  ),
   projects: z.array(projectListItemSchema),
 })
 
 const switchProjectOutputSchema = z.looseObject({
   activeProjectId: z.string().describe('The project on the USER\'s screen after this call (may differ from yourProjectId).'),
   yourProjectId: z.string().optional().describe('The project this conversation is now bound to.'),
+  yourBoardId: z.string().optional().describe(
+    'The board you pinned (only when you passed boardId or it was already pinned). Implicit writes from this '
+    + 'conversation land there regardless of which page the user has open.',
+  ),
   onScreen: z.boolean().optional().describe('false = you work on it in the background; the user\'s screen did not move.'),
   note: z.string().optional(),
   project: z.object({ id: z.string(), name: z.string() }),
@@ -246,6 +284,16 @@ const materialBriefSchema = z.object({ name: z.string() })
 const cardSnapshotSchema = z.looseObject({
   cardId: z.string(),
   boardId: z.string().optional().describe('Owning board id; board name lives in the top-level boards list.'),
+  rev: z.number().optional().describe(
+    'Version of this card\'s content/spec. Pass it back as `expectedRev` on video_workbench_update_task '
+    + '(or in `expectedRevs` on set_spec) to say "I edited the version I saw": if the card changed since, '
+    + 'the write is refused and the current card comes back instead. It can also rise on background events '
+    + '(e.g. a material finishing upload) with no content change — then the retry with the new rev just works.',
+  ),
+  clientRef: z.string().optional().describe(
+    'Your own stable key for this card (e.g. "ep2-shot-07"), if you gave one on add_tasks. Lets you find the '
+    + 'card again after losing context, and makes add_tasks safe to repeat.',
+  ),
   order: z.number(),
   summary: z.string().optional().describe(
     'The one-line note for this card, present only while it still matches the current prompt.',
@@ -330,6 +378,11 @@ const startResultShape = {
     + '请用户自己点「全部生成」或让他打开那个开关。',
   ),
   hint: z.string().optional().describe('blocked 时给用户的原话。'),
+  skippedSucceeded: z.number().optional().describe(
+    'Whole-board start only: how many already-rendered cards (unchanged since their render) were left alone '
+    + 'so they are not paid for twice. To redo them anyway pass their ids in cardIds, or includeSucceeded:true.',
+  ),
+  note: z.string().optional(),
 }
 
 /**
@@ -350,16 +403,41 @@ function isAutoStartBlocked(result: unknown): boolean {
 }
 
 const addTasksOutputSchema = z.looseObject({
-  cardIds: z.array(z.string()),
+  cardIds: z.array(z.string()).describe(
+    'Ids of the cards CREATED by this call, in input order. Cards skipped as duplicates (clientRef) are not here.',
+  ),
   total: z.number().describe('Card count across all boards.'),
+  placed: z.object({
+    boardId: z.string(),
+    firstIndex: z.number(),
+    lastIndex: z.number(),
+  }).optional().describe(
+    'Where the new cards landed: board + first/last position (0-based, same as move_task.toIndex). Absent when '
+    + 'nothing was created.',
+  ),
+  duplicates: z.array(z.object({
+    clientRef: z.string(),
+    cardId: z.string().optional(),
+    status: z.string().optional(),
+    rev: z.number().optional(),
+    samePrompt: z.boolean(),
+  })).optional().describe(
+    'Tasks NOT created because a card with the same clientRef already exists on that board. Nothing was '
+    + 'overwritten; samePrompt:false means the existing card has different text than you just sent.',
+  ),
+  hint: z.string().optional(),
   start: z.object(startResultShape).optional(),
   workbench: workbenchSummarySchema,
+  ...changedSinceField,
 })
 
 const updateTaskOutputSchema = z.looseObject({
-  ok: z.boolean(),
-  card: cardSnapshotSchema,
-  workbench: workbenchSummarySchema,
+  ok: z.boolean().describe('false = refused because expectedRev is stale; see `conflict` and `card`.'),
+  card: cardSnapshotSchema.describe('The card as it is NOW (after the write, or the current state on a conflict).'),
+  conflict: z.object({ expectedRev: z.number(), currentRev: z.number() }).optional(),
+  hint: z.string().optional(),
+  workbench: workbenchSummarySchema.optional(),
+  ...changedSinceField,
 })
 
 /**
@@ -374,9 +452,11 @@ const cardOnlyOutputSchema = z.looseObject({
 const startOutputSchema = z.looseObject({
   ...startResultShape,
   workbench: workbenchSummarySchema,
+  ...changedSinceField,
 })
 
 const statusOutputSchema = z.looseObject({
+  ...changedSinceField,
   fields: z.enum(['concise', 'detailed']).describe('Echo of the requested detail level.'),
   project: projectBriefSchema.describe("This conversation's project, which this snapshot is scoped to."),
   total: z.number().describe('Total cards matching the current scope + cardIds filter, across ALL pages.'),
@@ -720,9 +800,22 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'With autoStart:true the earlier batch starts rendering while you write the next one. ' +
       'WHEN A CARD CARRIES REFERENCE IMAGES, view_image ONE of them BEFORE writing that card\'s prompt — ' +
       'the render follows the picture, so a prompt written from a filename argues with it. Viewing an ' +
-      'INPUT is not the batch-opening of generated OUTPUTS that other tools warn against.',
+      'INPUT is not the batch-opening of generated OUTPUTS that other tools warn against.\n' +
+      'EVERY RESULT also tells you `placed` (board + first/last position of the new cards) and, when other ' +
+      'conversations or the user touched your boards since your last call, `changedSinceYourLastCall`. Give ' +
+      'each card a `clientRef` (your own key, e.g. "ep2-shot-07") so repeating this call never duplicates a card — ' +
+      'existing ones come back under `duplicates` and are left exactly as they are.',
     inputSchema: z.object({
-      tasks: z.array(cardInputSchema).min(1).max(WORKBENCH_MAX_TASKS_PER_CALL).describe(
+      tasks: z.array(cardInputSchema.extend({
+        clientRef: z.string().max(64).optional().describe(
+          'YOUR stable key for this card, unique within its board (page), e.g. "ep2-shot-07". Strongly '
+          + 'recommended whenever the card corresponds to something you can name (a shot number, a scene id). '
+          + 'If a card with the same clientRef already exists on that board it is NOT created again and NOT '
+          + 'overwritten — the reply lists it under `duplicates`. That makes a retry after a timeout safe, and '
+          + 'stops two conversations that both planned shot 12 from creating it twice. The key lives and dies '
+          + 'with the card. Boards are separate: "shot-1" on episode 2 does not clash with "shot-1" on episode 1.',
+        ),
+      })).min(1).max(WORKBENCH_MAX_TASKS_PER_CALL).describe(
         `Cards to append, top-to-bottom order (1–${WORKBENCH_MAX_TASKS_PER_CALL} per call — `
         + 'call again for more rather than trying to fit everything in one request).',
       ),
@@ -762,8 +855,23 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       const startedCount = Array.isArray((start as { started?: unknown } | undefined)?.started)
         ? (start as { started: string[] }).started.length
         : 0
+      const createdCount = Array.isArray((result as { cardIds?: unknown } | null | undefined)?.cardIds)
+        ? (result as { cardIds: unknown[] }).cardIds.length
+        : 0
+      const dupCount = Array.isArray((result as { duplicates?: unknown } | null | undefined)?.duplicates)
+        ? (result as { duplicates: unknown[] }).duplicates.length
+        : 0
+      if (createdCount === 0 && dupCount > 0) {
+        // 全是重放:什么都没写。不能说「cards added」,否则模型会以为又加了一批。
+        return okResult([
+          `ℹ️ video_workbench_add_tasks — nothing was created: all ${dupCount} task(s) already exist on that board (matched by clientRef). Nothing was overwritten; see \`duplicates\` for their cardIds and whether the text differs.`,
+        ], result)
+      }
       return okResult([
         '✅ video_workbench_add_tasks — cards added to the workbench page (visible to the user).',
+        ...(dupCount > 0
+          ? [`ℹ️ ${dupCount} task(s) were skipped because their clientRef already exists on that board — see \`duplicates\`.`]
+          : []),
         isAutoStartBlocked(start)
           ? AUTO_START_BLOCKED_BANNER
           : startedCount > 0
@@ -794,6 +902,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'Pass ids from `pageIndex` / status when you only want some of them.',
       ),
       boardId: z.string().optional().describe('Sweep this page instead of the active one. Ignored when cardIds is given.'),
+      expectedRevs: z.record(z.string(), z.number().int()).optional().describe(
+        'Optional {cardId: rev} from the `rev` you last saw. A listed card whose rev has moved on is SKIPPED '
+        + '(reported in `skipped` with `conflict` and the current values of the fields you tried to set) instead '
+        + 'of being overwritten. Cards you do not list are changed as usual.',
+      ),
       model: cardInputSchema.shape.model,
       resolution: cardInputSchema.shape.resolution,
       ratio: cardInputSchema.shape.ratio,
@@ -822,10 +935,18 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     annotations: { ...DESTRUCTIVE, idempotentHint: true },
     outputSchema: z.looseObject({
       updated: z.array(z.string()).describe('Card ids actually changed.'),
-      skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })).describe(
-        'Cards left untouched (rendering, or the patch was a no-op for them).',
+      skipped: z.array(z.object({
+        cardId: z.string(),
+        reason: z.string(),
+        conflict: z.object({ expectedRev: z.number(), currentRev: z.number() }).optional(),
+        current: z.record(z.string(), z.unknown()).optional().describe(
+          'On a rev conflict: the card\'s current values for the fields you tried to set.',
+        ),
+      })).describe(
+        'Cards left untouched (rendering, a stale expectedRevs entry, or the patch was a no-op for them).',
       ),
       workbench: workbenchSummarySchema,
+      ...changedSinceField,
     }),
   }, async (params, ctx?: unknown) => {
     try {
@@ -864,6 +985,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'video_workbench_apply for RESTRUCTURING (adding/deleting/reordering cards or pages). And if you ' +
       'only want the same spec across many cards ("整板 480p / 都开联网"), use video_workbench_set_spec ' +
       '— NOT apply. Call it once per card — one focused call per card beats one giant IR. ' +
+      'To avoid overwriting someone else\'s edit, pass expectedRev (the `rev` you last saw): if the card ' +
+      'moved on, you get { ok:false, conflict, card } back with NO write — look at the card, decide again, ' +
+      'retry with expectedRev = its current rev; if the same card conflicts twice in a row, stop and ask the user. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       'ON AN edit_video CARD, when the user says WHERE to change something and words are not enough ' +
@@ -874,6 +998,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
+      expectedRev: z.number().int().optional().describe(
+        'The `rev` of the card as you last saw it (status / a previous update_task reply). If the card has '
+        + 'changed since — you were working from a stale copy — nothing is written and the reply is '
+        + '{ ok:false, conflict, card } with the card as it is now. Pass it whenever you read the card more than '
+        + 'a moment ago, or other conversations are active. Omit = overwrite regardless (last write wins).',
+      ),
     }).merge(cardInputSchema),
     // 幂等（同参数重复调结果一致），但**会删素材**：切模型 / 切模式时 updateCard 按新
     // 上限截断超限的参考图与音视频（store.ts 的 modeLimit 截断），2.5 降回 2.0 就会掉 21 张。
@@ -883,6 +1013,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_update_task', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      if ((result as { ok?: unknown } | null | undefined)?.ok === false) {
+        // 冲突不是错误:没有写入,但回了这张卡现在的样子 —— 横幅防止模型把它当成已经改好。
+        return okResult([
+          '⚠️ video_workbench_update_task — NOT written: the card changed since the `rev` you passed. `card` is its current state; re-decide from that (see `hint`).',
+        ], result)
+      }
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_update_task', error)
@@ -1035,8 +1171,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_start', {
     description:
       'Batch output surface of the catimation-video skill (load it for grading and prompt discipline). ' +
-      'Start rendering workbench cards (concurrent). Omit cardIds to start EVERY startable card on the ' +
-      'ACTIVE board (draft/failed/succeeded with a non-empty prompt); pass cardIds to start specific ones ' +
+      'Start rendering workbench cards (concurrent). Omit cardIds to start every startable card on YOUR ' +
+      'board (draft/failed/edited-since-render with a non-empty prompt — cards that already rendered and ' +
+      'are unchanged are skipped and counted in `skippedSucceeded`, unless includeSucceeded:true); pass cardIds to start specific ones ' +
       '(any board). Renders run 1–3 minutes each, concurrently. Returns IMMEDIATELY (fire-and-forget) ' +
       'with started/skipped plus a compact `workbench` overview — it does NOT wait for the renders. ' +
       'Do NOT poll video_workbench_status afterwards: when every card in the batch settles you are ' +
@@ -1046,6 +1183,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'comes back with blocked:true — do not retry, ask them to click 「全部生成」 themselves.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
+      includeSucceeded: z.boolean().optional().describe(
+        'Only matters when cardIds is omitted. By default a whole-board start LEAVES ALONE cards that already '
+        + 'rendered and have not been edited since (re-running them just pays twice; the reply counts them in '
+        + '`skippedSucceeded`). true = re-run those too. Naming a card in cardIds always re-runs it.',
+      ),
     }),
     annotations: WRITE_ADDITIVE_REMOTE,
     outputSchema: startOutputSchema,
@@ -1054,6 +1196,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       const result = await router.call('video_workbench_start', params as Record<string, unknown>, extractCodexThreadId(ctx)) as {
         started: string[]
         skipped: Array<{ cardId: string; reason: string }>
+        skippedSucceeded?: number
       }
       return okResult([
         isAutoStartBlocked(result)
@@ -1062,7 +1205,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
           ? AUTO_START_BLOCKED_BANNER
           : result.started.length > 0
             ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
-            : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
+            : result.skippedSucceeded
+              ? `ℹ️ video_workbench_start — nothing to start: the ${result.skippedSucceeded} card(s) on this board already rendered and are unchanged. To redo specific ones pass their cardIds; to redo all pass includeSucceeded:true.`
+              : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
       ], result)
     } catch (error) {
       return errorResult('video_workbench_start', error)
@@ -1574,10 +1719,19 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'projects, so several films can be filled at the same time without fighting. The user\'s screen follows ' +
       'only when no other conversation is busy on a different project (result `onScreen`); pass focus:true to ' +
       'force the screen over, focus:false to work silently in the background. Get ids from ' +
-      'video_workbench_list_projects. A stale IR exported under another project is rejected by apply ' +
+      'video_workbench_list_projects. If other conversations are filling OTHER EPISODES of this same project, ' +
+      'also pass boardId to pin yours: unpinned conversations all write to the project\'s one current page, ' +
+      'and a write that would land on a board someone else pinned is refused. A stale IR exported under another project is rejected by apply ' +
       'with conflict.reason="project-mismatch" — re-export after switching.',
     inputSchema: z.object({
       projectId: z.string().min(1).describe('Project id from video_workbench_list_projects.'),
+      boardId: z.string().optional().describe(
+        'Also pin THIS conversation to one board (an episode / act) of that project. From then on every call that '
+        + 'does not name a board — add_tasks, start, set_spec, export, status — works on that board, no matter which '
+        + 'page the user or another conversation has open. Use it when several conversations fill different '
+        + 'episodes of the SAME project. Boards marked `inUseByOtherChat` in the reply are pinned by someone else. '
+        + 'Omit = stay unpinned (implicit writes land on the project\'s current page).',
+      ),
       focus: z.boolean().optional().describe(
         'true = move the user\'s screen to this project; false = bind silently, screen stays. '
         + 'Omit = follow the screen only when no other conversation is busy on a different project.',

@@ -26,6 +26,13 @@ const THREAD_SCOPE_PRUNE_MS = THREAD_SCOPE_LIVE_MS * 6
 
 interface Binding {
   projectId: string
+  /**
+   * 对话钉在这部剧里的哪一段(一集 / 一幕)。可选:没钉 = 隐式作用域落在「该剧当前页」。
+   *
+   * 为什么要到分段这一层:同一部剧的几集常常由几个对话同时填,只绑到剧的话,它们不带
+   * boardId 的写入全都落进同一个「当前页」(对在屏幕上的剧而言,那就是用户翻到哪页算哪页)。
+   */
+  boardId?: string
   touchedAt: number
 }
 
@@ -49,6 +56,8 @@ export interface ResolvedScope {
   onScreen: boolean
   /** 来自这个对话自己的绑定;false = 没绑过,回落到屏幕上的当前剧。 */
   bound: boolean
+  /** `boardId` 来自这个对话自己钉的分段;false = 隐式落在该剧「当前页」。 */
+  boardBound: boolean
 }
 
 function prune(now: number): void {
@@ -65,7 +74,26 @@ export function bindThreadProject(
 ): void {
   if (!threadId) return
   prune(now)
-  bindings.set(threadId, { projectId, touchedAt: now })
+  const prev = bindings.get(threadId)
+  // 还在同一部剧:保留已钉的分段(重复 switch 不该把它冲掉);换剧:分段属于旧剧,作废。
+  bindings.set(threadId, {
+    projectId,
+    ...(prev && prev.projectId === projectId && prev.boardId ? { boardId: prev.boardId } : {}),
+    touchedAt: now,
+  })
+}
+
+/** 把对话钉到(已绑定那部剧的)某一段。没绑过剧时什么都不做。 */
+export function bindThreadBoard(
+  threadId: string | undefined,
+  boardId: string,
+  now: number = Date.now(),
+): void {
+  if (!threadId) return
+  const b = bindings.get(threadId)
+  if (!b) return
+  b.boardId = boardId
+  b.touchedAt = now
 }
 
 /** 对话又碰了一次工作台:刷新「正在干活」时间。没绑过的不记。 */
@@ -86,6 +114,7 @@ export function resetThreadScopesForTest(): void {
 export interface OtherBinding {
   threadId: string
   projectId: string
+  boardId?: string
 }
 
 /** 别的、最近还在碰工作台的对话各自绑在哪部剧。 */
@@ -97,9 +126,19 @@ export function otherLiveBindings(
   for (const [id, b] of bindings) {
     if (id === threadId) continue
     if (now - b.touchedAt > THREAD_SCOPE_LIVE_MS) continue
-    out.push({ threadId: id, projectId: b.projectId })
+    out.push({ threadId: id, projectId: b.projectId, ...(b.boardId ? { boardId: b.boardId } : {}) })
   }
   return out
+}
+
+/** 别的、最近还在碰工作台的对话里,有没有谁把自己钉在这一段上。 */
+export function boardHeldByOther(
+  threadId: string | undefined,
+  projectId: string,
+  boardId: string,
+  now: number = Date.now(),
+): boolean {
+  return otherLiveBindings(threadId, now).some((o) => o.projectId === projectId && o.boardId === boardId)
 }
 
 /**
@@ -108,13 +147,21 @@ export function otherLiveBindings(
  * 当前页取该剧上次停的那页,没记录就第一页 —— 与 `switchProject` 的落点一致;
  * 选中态是屏幕上那部剧的语境,换剧看就清掉。剧就是屏幕上的当前剧时原样返回。
  */
-export function scopedView<T extends ScopeState>(state: T, projectId: string): T {
-  if (projectId === state.activeProjectId) return state
+export function scopedView<T extends ScopeState>(state: T, projectId: string, pinnedBoardId?: string): T {
+  // 钉住的分段必须真在这部剧里,否则当没钉(分段被删 / 传错 id 不该把视图带到别处)。
+  const pinned =
+    pinnedBoardId && state.boards.some((b) => b.id === pinnedBoardId && b.projectId === projectId)
+      ? pinnedBoardId
+      : undefined
+  if (projectId === state.activeProjectId && (!pinned || pinned === state.activeBoardId)) return state
   const remembered = state.viewByProject[projectId]?.boardId
   const boardId =
-    remembered && state.boards.some((b) => b.id === remembered && b.projectId === projectId)
-      ? remembered
-      : (firstBoardOf(state.boards, projectId)?.id ?? state.activeBoardId)
+    pinned
+    ?? (projectId === state.activeProjectId
+      ? state.activeBoardId
+      : remembered && state.boards.some((b) => b.id === remembered && b.projectId === projectId)
+        ? remembered
+        : (firstBoardOf(state.boards, projectId)?.id ?? state.activeBoardId))
   const selection = 'selectedCardIds' in state ? { selectedCardIds: [] as string[] } : {}
   return { ...state, activeProjectId: projectId, activeBoardId: boardId, ...selection }
 }
@@ -127,11 +174,16 @@ export function resolveThreadScope(
   const binding = threadId ? bindings.get(threadId) : undefined
   const bound = !!binding && state.projects.some((p) => p.id === binding.projectId)
   const projectId = bound ? binding!.projectId : state.activeProjectId
+  const boundBoard =
+    bound && binding!.boardId && state.boards.some((b) => b.id === binding!.boardId && b.projectId === projectId)
+      ? binding!.boardId
+      : undefined
   return {
     projectId,
-    boardId: scopedView(state, projectId).activeBoardId,
+    boardId: scopedView(state, projectId, boundBoard).activeBoardId,
     onScreen: projectId === state.activeProjectId,
     bound,
+    boardBound: !!boundBoard,
   }
 }
 
@@ -145,10 +197,26 @@ export function resolveThreadScope(
 export function unboundWriteBlock(
   threadId: string | undefined,
   scope: ResolvedScope,
-  state: Pick<ScopeState, 'projects'>,
+  state: Pick<ScopeState, 'projects'> & Partial<Pick<ScopeState, 'boards'>>,
   now: number = Date.now(),
 ): string | null {
-  if (!threadId || scope.bound) return null
+  if (!threadId) return null
+  // 分段这一层:没钉分段、而隐式落点正好是别的对话钉着的那一段 → 九成会写进人家的集里。
+  // 已经钉了分段的对话(自己的选择)和点名了 boardId / cardIds 的写入不会走到这里。
+  if (
+    scope.bound
+    && !scope.boardBound
+    && boardHeldByOther(threadId, scope.projectId, scope.boardId, now)
+  ) {
+    const board = state.boards?.find((b) => b.id === scope.boardId)
+    return (
+      `这个对话还没钉定要写哪个分段,而隐式落点「${board?.name ?? scope.boardId}」(${scope.boardId})`
+      + '已经被另一个对话占着,写进去会和人家的卡混在一起。请先 '
+      + `video_workbench_switch_project({ projectId: "${scope.projectId}", boardId: "<你要写的分段>" }) 钉定,`
+      + '(workbench.boards 里标了 inUseByOtherChat 的是别人占着的),或者这次写入里显式传 boardId / cardIds。'
+    )
+  }
+  if (scope.bound) return null
   const others = otherLiveBindings(threadId, now)
   if (others.length === 0) return null
   const names = new Map(state.projects.map((p) => [p.id, p.name ?? p.id]))

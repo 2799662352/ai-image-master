@@ -86,6 +86,7 @@ import { mountMaterialTransferHandler, startMaterialTransfer } from './materialT
 import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
 import { scopedView } from './threadScope'
+import { resetThreadObservationsForTest } from './threadObservation'
 import {
   type HistoryCursor,
   type WorkbenchIntent,
@@ -147,6 +148,10 @@ function materialBrief(material: VideoWorkbenchMaterial): WorkbenchMaterialBrief
 /** MCP status 工具返回的单卡快照(截断 prompt,别撑爆模型上下文)。 */
 export interface WorkbenchCardSnapshot {
   cardId: string
+  /** 规格版本号:单卡写入带上它(`expectedRev`)就是「我基于这一版改的」。 */
+  rev: number
+  /** 调用方起的镜号(add_tasks 的幂等键);没起过就没有这个字段。 */
+  clientRef?: string
   /** 所属「页」id(页名从 status 顶层 boards 表查,卡上不重复带,省 token)。 */
   boardId?: string
   order: number
@@ -200,6 +205,8 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
   const summaryState = cardSummaryState(card)
   return {
     cardId: card.id,
+    rev: card.rev ?? 0,
+    ...(card.clientRef ? { clientRef: card.clientRef } : {}),
     ...(card.boardId ? { boardId: card.boardId } : {}),
     order: card.order,
     ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
@@ -241,6 +248,10 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
 /** status `fields:'concise'` 下的单卡:只回「这是哪一镜、什么状态」,规格与素材留给 detailed。 */
 export interface WorkbenchCardSnapshotConcise {
   cardId: string
+  /** 规格版本号:单卡写入带上它(`expectedRev`)就是「我基于这一版改的」。 */
+  rev: number
+  /** 调用方起的镜号(add_tasks 的幂等键);没起过就没有这个字段。 */
+  clientRef?: string
   boardId?: string
   order: number
   summary?: string
@@ -262,6 +273,8 @@ export function snapshotCardConcise(card: VideoWorkbenchCard): WorkbenchCardSnap
   const summaryState = cardSummaryState(card)
   return {
     cardId: card.id,
+    rev: card.rev ?? 0,
+    ...(card.clientRef ? { clientRef: card.clientRef } : {}),
     ...(card.boardId ? { boardId: card.boardId } : {}),
     order: card.order,
     ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
@@ -294,6 +307,8 @@ export interface WorkbenchBoardBrief {
   cardCount: number
   /** 这一页装的是什么（agent 自己写的一句话）。没写过就没有这个字段。 */
   summary?: string
+  /** 另一个对话把自己钉在这一段上、最近还在干活。只在有人占着时出现。 */
+  inUseByOtherChat?: true
 }
 
 /** 全局状态计数(跨页聚合)。 */
@@ -398,11 +413,19 @@ export function snapshotWorkbench(
  */
 export interface StartScopeOptions {
   boardId?: string
+  /**
+   * 整页启动(没点名 cardIds、也没有用户选中)时,跳过「已经出过片、且出片后没改过」的卡。
+   * agent 那条路默认开:整页 start 被重复调用(重试 / 两个对话撞同一页)时不会把整页再花一遍钱。
+   * 界面上用户自己点「全部生成」不传它,行为不变。
+   */
+  skipUpToDate?: boolean
 }
 
 export interface StartResult {
   started: string[]
   skipped: Array<{ cardId: string; reason: string }>
+  /** 因为「已出片且没改过」被整页启动跳过的张数(只在 > 0 时出现;不逐张列进 skipped,免得一整页灌进回包)。 */
+  skippedSucceeded?: number
   /**
    * 整批被「允许 AI 自动生成」总闸拦下,一次提交都没发。只会出现在 agent 那条路
    * (startCardsFromAgent);用户自己点的生成永远不过这道闸。
@@ -868,7 +891,7 @@ function toReconcileItem(card: VideoWorkbenchCard): VideoWorkbenchReconcileItem 
 }
 
 /** 素材只取展示名 —— 字节留在卡片上,版本记录不复制(见 VideoWorkbenchVersionSpec)。 */
-function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSpec {
+export function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSpec {
   return {
     prompt: card.prompt,
     model: card.model,
@@ -922,6 +945,39 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       spec: versionSpecOf(card),
     },
   ]
+}
+
+/**
+ * 这张卡当前的结果,是不是用「现在这份规格」出的。整页启动据此决定要不要再花一次钱:
+ * 出过片且之后没动过 → 重跑只会得到同样的东西;出片之后改过提示词 / 参数 / 素材 → 该重跑。
+ *
+ * 对照的是最新一版存档里的规格(版本在成功那一刻抓取,见 archiveVersion)。样片 / 成片的
+ * 分辨率由模式决定而不是卡上的设置,所以那两种结果不比分辨率。
+ *
+ * 没有存档的老数据查不出改没改过:按「没改过」算 —— 宁可少跑一次让人点名重做,
+ * 也不在人不知情时再花一遍钱。
+ */
+export function isResultUpToDate(card: VideoWorkbenchCard): boolean {
+  if (card.status !== 'succeeded') return false
+  const last = card.versions && card.versions.length > 0 ? card.versions[card.versions.length - 1] : undefined
+  if (!last) return true
+  const was = last.spec
+  const now = versionSpecOf(card)
+  const briefKey = (b: VideoWorkbenchVersionSpec['referenceBrief']): string =>
+    [b.images, b.videos, b.audios].map((x) => x.join('\u0000')).join('\u0001')
+  const comparesResolution = !was.draft && !was.fromDraftTaskId
+  return (
+    was.prompt === now.prompt
+    && was.model === now.model
+    && was.ratio === now.ratio
+    && was.duration === now.duration
+    && was.generateAudio === now.generateAudio
+    && was.mode === now.mode
+    && was.seed === now.seed
+    && was.webSearch === now.webSearch
+    && (!comparesResolution || was.resolution === now.resolution)
+    && briefKey(was.referenceBrief) === briefKey(now.referenceBrief)
+  )
 }
 
 /**
@@ -2205,7 +2261,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     }
 
     const submissions: Array<Promise<void>> = []
+    let skippedSucceeded = 0
     for (const card of targets) {
+      // 整页启动(没点名、没选中)才跳:点名 / 选中就是「我要这几张」,照常重跑。
+      if (startOpts?.skipUpToDate && !scope && isResultUpToDate(card)) {
+        skippedSucceeded += 1
+        continue
+      }
       const gate = canStart(card)
       if (!gate.ok) {
         // 整页全量启动时 draft 空卡静默跳过;显式指名(id / 选中)才报原因
@@ -2304,6 +2366,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     // 之后的进度由 seedance:task-update 广播流回 applyTaskUpdate —— 工作台页面
     // 本身就是交付通道,跟 agent 等不等完全无关。
     void Promise.all(submissions)
+    if (skippedSucceeded > 0) result.skippedSucceeded = skippedSucceeded
     return result
   },
 
@@ -2749,6 +2812,7 @@ export function mountWorkbenchTaskListener(): () => void {
 
 /** 测试用:重置模块级订阅/水合状态。 */
 export function resetWorkbenchStoreForTest(): void {
+  resetThreadObservationsForTest()
   hydrationPromise = null
   taskUnsubscribe = null
   taskMountCount = 0

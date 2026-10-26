@@ -31,9 +31,17 @@ import {
   snapshotWorkbench,
   useVideoWorkbenchStore,
 } from '../video-workbench/store'
+import {
+  beginThreadCall,
+  diffObservation,
+  endThreadCall,
+  recordObservation,
+  type WorkbenchDelta,
+} from '../video-workbench/threadObservation'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
 import {
+  bindThreadBoard,
   bindThreadProject,
   otherLiveBindings,
   resolveThreadScope,
@@ -229,6 +237,9 @@ const BACKGROUND_PROJECT_NOTE = (name: string): string =>
   + '用户的屏幕仍停在别的剧上(没有跟过去,免得几个对话来回抢同一个屏幕)。'
   + `告诉用户:点工作台左侧的剧列表里的「${name}」就能看到你填的卡。`
 
+/** add_tasks 的 clientRef 上限。超长直接报错 —— 截断会让两个不同的键悄悄变成同一个。 */
+const CLIENT_REF_MAX = 64
+
 export class AgentToolExecutor {
   start(): () => void {
     const agent = this.getAgentApi()
@@ -391,6 +402,54 @@ export class AgentToolExecutor {
     params: Record<string, unknown>,
     threadId?: string,
   ): Promise<unknown> {
+    // 「自你上次调用以来别人动过什么」:调用前对照这个对话上次看到的,调用后把「现在」记成新基线
+    // (所以它自己的写入不会在下一次被当成别人的)。细节与取舍见 threadObservation.ts。
+    const alone = beginThreadCall(threadId)
+    let delta: WorkbenchDelta | null = null
+    let failed = false
+    try {
+      if (alone) {
+        await useVideoWorkbenchStore.getState().ensureHydrated()
+        const st = useVideoWorkbenchStore.getState()
+        delta = diffObservation(threadId, resolveThreadScope(st, threadId).projectId, st)
+      }
+      const result = await this.runVideoWorkbench(toolName, params, threadId)
+      return delta && result && typeof result === 'object' && !Array.isArray(result)
+        ? { ...(result as Record<string, unknown>), changedSinceYourLastCall: delta }
+        : result
+    } catch (err) {
+      failed = true
+      throw err
+    } finally {
+      if (endThreadCall(threadId) && !(failed && delta)) {
+        // 出错且增量没送到模型手里时不推进基线 —— 下一次调用还要把它报出来。
+        const st = useVideoWorkbenchStore.getState()
+        const sc = resolveThreadScope(st, threadId)
+        const touched = new Set<string>([sc.boardId])
+        if (typeof params.boardId === 'string') touched.add(params.boardId)
+        if (params.allBoards === true) {
+          for (const b of st.boards) if (b.projectId === sc.projectId) touched.add(b.id)
+        }
+        const named = [
+          ...(Array.isArray(params.cardIds) ? params.cardIds : []),
+          params.cardId,
+          params.afterCardId,
+          params.beforeCardId,
+        ].filter((x): x is string => typeof x === 'string')
+        for (const id of named) {
+          const card = st.cards.find((c) => c.id === id)
+          if (card?.boardId) touched.add(card.boardId)
+        }
+        recordObservation(threadId, sc.projectId, st, touched)
+      }
+    }
+  }
+
+  private async runVideoWorkbench(
+    toolName: string,
+    params: Record<string, unknown>,
+    threadId?: string,
+  ): Promise<unknown> {
     const store = useVideoWorkbenchStore.getState()
     await store.ensureHydrated()
 
@@ -400,8 +459,12 @@ export class AgentToolExecutor {
     // 没有 threadId(渲染端直调)= 老行为,scope 恒等于屏幕当前剧。
     const scope = resolveThreadScope(useVideoWorkbenchStore.getState(), threadId)
     touchThread(threadId)
-    /** 从这个对话的视角看 store:它的剧是「当前剧」(屏幕指针不动)。 */
-    const scopedState = () => scopedView(useVideoWorkbenchStore.getState(), scope.projectId)
+    /**
+     * 从这个对话的视角看 store:它的剧是「当前剧」、它钉的分段是「当前页」(屏幕指针不动)。
+     * 只有对话自己钉过分段才把分段带进视图;没钉就保持老行为(落在该剧当前页)。
+     */
+    const pinnedBoardId = scope.boardBound ? scope.boardId : undefined
+    const scopedState = () => scopedView(useVideoWorkbenchStore.getState(), scope.projectId, pinnedBoardId)
     /** 隐式作用域的写操作前过一道:没选剧、而别的对话正占着别的剧 → 让它先选。 */
     const assertProjectChosen = (tool: string): void => {
       const block = unboundWriteBlock(threadId, scope, useVideoWorkbenchStore.getState())
@@ -481,15 +544,35 @@ export class AgentToolExecutor {
 
     // 写操作统一回带的全局摘要(boards + 状态计数):每次写操作等于强制观测
     // 一次全局现状,agent 无需追加 status 调用。体积 O(页数),紧凑。
-    const workbenchSummary = () => snapshotWorkbench(scopedState())
+    const withBoardHolders = <T extends { boards: Array<{ id: string }> }>(
+      s: T,
+      projectId: string = scope.projectId,
+    ): T => {
+      // 别的对话钉着的分段打上标记:同一部剧的几集常由几个对话各填各的,
+      // 看见哪一集有人在干活,就别往里写、也别去动它的卡。
+      const held = new Set(
+        otherLiveBindings(threadId)
+          .filter((o) => o.projectId === projectId && o.boardId)
+          .map((o) => o.boardId),
+      )
+      if (held.size === 0) return s
+      return { ...s, boards: s.boards.map((b) => (held.has(b.id) ? { ...b, inUseByOtherChat: true } : b)) }
+    }
+    const workbenchSummary = () => withBoardHolders(snapshotWorkbench(scopedState()))
 
     switch (toolName) {
       case 'video_workbench_add_tasks': {
         const rawTasks = Array.isArray(params.tasks) ? (params.tasks as Record<string, unknown>[]) : []
         if (rawTasks.length === 0) throw new Error('video_workbench_add_tasks: tasks is empty')
-        // asset:// 引用 → 带 previewUrl 的 Material(人像库列表批量解析,
-        // 失败/查不到保持字符串原样),新挂的素材缩略图直接有图。
-        const tasks = await enrichAssetReferences(rawTasks)
+        // 幂等键的长度在这里挡:截断会让两个不同的键悄悄变成同一个。
+        const refOf = (t: Record<string, unknown>): string => {
+          const ref = typeof t.clientRef === 'string' ? t.clientRef.trim() : ''
+          if (ref.length > CLIENT_REF_MAX) {
+            throw new Error(`video_workbench_add_tasks: clientRef 最长 ${CLIENT_REF_MAX} 个字符(收到 ${ref.length})`)
+          }
+          return ref
+        }
+        rawTasks.forEach(refOf)
         // 位置由稳定锚点 cardId 表达,不收下标 —— 下标在模型手里随时可能已经过期。
         const afterCardId = typeof params.afterCardId === 'string' ? params.afterCardId : undefined
         const beforeCardId = typeof params.beforeCardId === 'string' ? params.beforeCardId : undefined
@@ -518,13 +601,105 @@ export class AgentToolExecutor {
         }
         if (!anchor && !explicitBoardId) assertProjectChosen('video_workbench_add_tasks')
         const targetBoardId = anchor ? undefined : (explicitBoardId ?? scope.boardId)
-        const cardIds = store.addCards(tasks, anchor, targetBoardId ? { boardId: targetBoardId } : undefined)
-        if (params.navigate !== false) {
+
+        // ---- clientRef 幂等:同一分段里已有同编号的卡就不再建 ----
+        // 落点分段:锚点路径 = 锚点卡所在页;否则就是上面解析出的页。锚点不存在时留给
+        // addCards 去报 "anchor card not found"(这里不抢它的错误)。
+        const anchorCardId = anchor ? (anchor.afterCardId ?? anchor.beforeCardId) : undefined
+        const destBoardId = anchorCardId
+          ? useVideoWorkbenchStore.getState().cards.find((c) => c.id === anchorCardId)?.boardId
+          : targetBoardId
+        const existingByRef = new Map<string, { id: string; status: string; rev: number; prompt: string }>()
+        for (const c of useVideoWorkbenchStore.getState().cards) {
+          if (destBoardId && c.clientRef && c.boardId === destBoardId) {
+            existingByRef.set(c.clientRef, { id: c.id, status: c.status, rev: c.rev ?? 0, prompt: c.prompt ?? '' })
+          }
+        }
+        const samePrompt = (a: string, b: unknown): boolean =>
+          a.trim() === (typeof b === 'string' ? b : '').trim()
+        const keep: number[] = []
+        const firstOfRef = new Map<string, number>() // ref → 这一批里第一次出现的下标
+        const duplicates: Array<{
+          clientRef: string
+          cardId?: string
+          status?: string
+          rev?: number
+          samePrompt: boolean
+          /** 与同一次调用里更靠前的那条重复(那张卡这次才建,回包时补上 cardId) */
+          laterInThisCall?: number
+        }> = []
+        rawTasks.forEach((t, i) => {
+          const ref = refOf(t)
+          if (!ref) {
+            keep.push(i)
+            return
+          }
+          const existing = existingByRef.get(ref)
+          if (existing) {
+            duplicates.push({
+              clientRef: ref,
+              cardId: existing.id,
+              status: existing.status,
+              rev: existing.rev,
+              samePrompt: samePrompt(existing.prompt, t.prompt),
+            })
+            return
+          }
+          const first = firstOfRef.get(ref)
+          if (first !== undefined) {
+            duplicates.push({
+              clientRef: ref,
+              samePrompt: samePrompt(typeof rawTasks[first].prompt === 'string' ? rawTasks[first].prompt as string : '', t.prompt),
+              laterInThisCall: first,
+            })
+            return
+          }
+          firstOfRef.set(ref, i)
+          keep.push(i)
+        })
+
+        // asset:// 引用 → 带 previewUrl 的 Material(人像库列表批量解析,
+        // 失败/查不到保持字符串原样),新挂的素材缩略图直接有图。只解析真要建的那几张。
+        const tasks = keep.length > 0
+          ? await enrichAssetReferences(keep.map((i) => rawTasks[i]))
+          : []
+        const cardIds = tasks.length > 0
+          ? store.addCards(tasks, anchor, targetBoardId ? { boardId: targetBoardId } : undefined)
+          : []
+        // 这一批里后出现的重复项:指回它们重复的那张(刚建出来的)。
+        const createdByRef = new Map<string, string>()
+        keep.forEach((taskIndex, k) => {
+          const ref = refOf(rawTasks[taskIndex])
+          if (ref) createdByRef.set(ref, cardIds[k])
+        })
+        const dupReport = duplicates.map(({ laterInThisCall, ...d }) => ({
+          ...d,
+          ...(laterInThisCall !== undefined ? { cardId: createdByRef.get(d.clientRef), status: 'draft' } : {}),
+        }))
+
+        // 落点:新卡在这一页里的起止位置(0 起,与 move_task 的 toIndex 同口径)。
+        let placed: { boardId: string; firstIndex: number; lastIndex: number } | undefined
+        if (cardIds.length > 0) {
+          const after = useVideoWorkbenchStore.getState().cards
+          const created = new Set(cardIds)
+          const landed = after.find((c) => created.has(c.id))
+          const boardOfNew = landed?.boardId
+          if (boardOfNew) {
+            const order = after
+              .filter((c) => c.boardId === boardOfNew)
+              .sort((a, b) => a.order - b.order)
+              .map((c) => c.id)
+            const at = order.map((id, i) => (created.has(id) ? i : -1)).filter((i) => i >= 0)
+            if (at.length > 0) placed = { boardId: boardOfNew, firstIndex: at[0], lastIndex: at[at.length - 1] }
+          }
+        }
+        if (cardIds.length > 0 && params.navigate !== false) {
           useTabStore.getState().switchTab('videoWorkbench')
         }
         let start: unknown
-        if (params.autoStart === true) {
+        if (params.autoStart === true && cardIds.length > 0) {
           // 经 agent 专用入口:用户可以在工作台关掉「允许 AI 自动生成」。
+          // 只启动这次**新建**的卡 —— 重放时已存在的卡不会被再提交一遍。
           const started = await useVideoWorkbenchStore.getState().startCardsFromAgent(cardIds)
           // 登记批次：跑完后由 batchCompletion watcher 主动推给本线程，
           // 模型不需要（也不应该）轮询 video_workbench_status 等结果。
@@ -536,6 +711,15 @@ export class AgentToolExecutor {
           cardIds,
           // 这部剧里一共多少张(别的剧的卡对这个对话不存在,也就不该算进「总数」)
           total: summary.project.cards,
+          ...(placed ? { placed } : {}),
+          ...(dupReport.length > 0
+            ? {
+                duplicates: dupReport,
+                hint:
+                  `${dupReport.length} 张按 clientRef 判定已存在,没有重复创建(它们的 cardId 见 duplicates)。`
+                  + 'samePrompt:false 的那几张提示词和这次给的不同 —— 没有覆盖,要改请用 patch_prompt / update_task。',
+              }
+            : {}),
           ...(start ? { start } : {}),
           workbench: summary,
         }
@@ -544,6 +728,26 @@ export class AgentToolExecutor {
         const cardId = typeof params.cardId === 'string' ? params.cardId : ''
         if (!cardId) throw new Error('video_workbench_update_task: cardId is required')
         const [patch] = await enrichAssetReferences([params])
+        // 不变量:从这里的版本检查到下面的 updateCard 之间**不能有 await**(同 patch_prompt)
+        // —— 否则检查通过后别人的写入插进来,检查就白做了。
+        const before = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!before) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
+        // expectedRev:调用方声明「我是基于这一版改的」。省略 = 不检查(最后写入者赢,与以前一致);
+        // 给了而卡已经被改过 → 不写,把这张卡现在的样子交回去让它重新决定。
+        const expectedRev = typeof params.expectedRev === 'number' && Number.isInteger(params.expectedRev)
+          ? params.expectedRev
+          : undefined
+        if (expectedRev !== undefined && (before.rev ?? 0) !== expectedRev) {
+          return {
+            ok: false,
+            conflict: { expectedRev, currentRev: before.rev ?? 0 },
+            card: snapshotCard(before),
+            hint:
+              `这张卡在你上次看到之后被改过(rev ${expectedRev} → ${before.rev ?? 0}),这次没有写入。`
+              + `上面的 card 是它现在的样子:内容和你预期的一致就用 expectedRev:${before.rev ?? 0} 重试;`
+              + '内容变了就基于新内容重新决定。同一张卡连续冲突两次,停下来问用户。',
+          }
+        }
         const ok = store.updateCard(cardId, patch)
         const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
         if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
@@ -678,13 +882,29 @@ export class AgentToolExecutor {
         // 不点名整页启动时:对话在屏幕之外的剧里 → 显式指定它那一页并忽略屏幕上的选中
         // (那是别人的语境);就在屏幕上的剧里 → 与以前一样(整页 / 用户当前选中)。
         if (!ids) assertProjectChosen('video_workbench_start')
+        // 作用的分段不是屏幕当前页(剧不在屏幕上,或对话钉了别的一集)→ 显式指定并忽略屏幕上的选中。
+        const startBoard = !ids && (!scope.onScreen || scope.boardId !== useVideoWorkbenchStore.getState().activeBoardId)
         const result = await store.startCardsFromAgent(
           ids,
-          !ids && !scope.onScreen ? { boardId: scope.boardId } : undefined,
+          startBoard
+            ? { boardId: scope.boardId, skipUpToDate: params.includeSucceeded !== true }
+            : !ids
+              ? { skipUpToDate: params.includeSucceeded !== true }
+              : undefined,
         )
         // 同上：批次跑完主动推送，取代轮询。
         registerAgentBatch(result.started, threadId)
-        return { ...result, workbench: workbenchSummary() }
+        return {
+          ...result,
+          ...(result.skippedSucceeded
+            ? {
+                note:
+                  `${result.skippedSucceeded} 张已经出过片、出片后没改过的卡没有重跑(整页启动默认跳过,免得重复花钱)。`
+                  + '要重做哪几张就点名 cardIds;整页全部重跑传 includeSucceeded:true。',
+              }
+            : {}),
+          workbench: workbenchSummary(),
+        }
       }
       case 'video_workbench_finalize_draft': {
         const ids = Array.isArray(params.cardIds)
@@ -731,8 +951,30 @@ export class AgentToolExecutor {
         }
 
         const updated: string[] = []
-        const skipped: Array<{ cardId: string; reason: string }> = []
+        const skipped: Array<{
+          cardId: string
+          reason: string
+          conflict?: { expectedRev: number; currentRev: number }
+          /** 冲突时这张卡上你想改的那几个字段现在的值 */
+          current?: Record<string, unknown>
+        }> = []
+        // expectedRevs:{cardId: rev}。给了的卡按版本把关(过期就跳过并回当前值),没给的不受约束。
+        const expectedRevs = params.expectedRevs && typeof params.expectedRevs === 'object'
+          ? (params.expectedRevs as Record<string, unknown>)
+          : {}
         for (const card of targets) {
+          const exp = expectedRevs[card.id]
+          if (typeof exp === 'number' && (card.rev ?? 0) !== exp) {
+            skipped.push({
+              cardId: card.id,
+              reason: '这张卡在你上次看到之后被改过,没有写入。看 current 里的现值,再决定要不要用新的 rev 重试',
+              conflict: { expectedRev: exp, currentRev: card.rev ?? 0 },
+              current: Object.fromEntries(
+                Object.keys(patch).map((k) => [k, (card as unknown as Record<string, unknown>)[k]]),
+              ),
+            })
+            continue
+          }
           // 生成中的卡跳过而不是报错:一次扫板不该因为某张卡正好在渲染就整个失败,
           // 但也不能悄悄跳过 —— 回执里逐条列出,让 agent 有话可说。
           const ok = store.updateCard(card.id, patch as VideoWorkbenchCardInput)
@@ -772,7 +1014,9 @@ export class AgentToolExecutor {
         if (scopeBoardId && !Array.isArray(params.cardIds)) {
           cards = cards.filter((c) => c.boardId === scopeBoardId)
         }
-        const summary = snapshotWorkbench(scopedView(state, scope.projectId))
+        // 同一份「我这一集」的视图 + 别的对话占着的分段标记;不能只按剧取,否则钉了分段的
+        // 对话读到的 activeBoardId 还是屏幕上那一页。
+        const summary = withBoardHolders(snapshotWorkbench(scopedView(state, scope.projectId, pinnedBoardId)))
         // 分页:一个工作台能装 200 张卡,整份倒出去会被客户端静默截断。口径与
         // list_portrait_library 一致(page 从 1 起 / pageSize 有上限 / hasMore)。
         const pageSize = clampPageSize(params.pageSize)
@@ -871,7 +1115,8 @@ export class AgentToolExecutor {
         // 模式保证没列出的页原样不动。要跨页改动才显式传 allBoards。
         const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
         if (!explicitBoardId && params.allBoards === true) return trim(ir)
-        const boardId = explicitBoardId ?? ir.activeBoardId
+        // 钉过分段的对话默认导自己那一段,而不是屏幕上用户翻到的那页。
+        const boardId = explicitBoardId ?? (scope.boardBound ? scope.boardId : ir.activeBoardId)
         const board = boardId ? ir.boards.find((b) => b.id === boardId) : undefined
         if (!board) {
           // 只有**显式**要了一页却找不到才算调用方的错。隐式取当前页时解析不出
@@ -924,6 +1169,8 @@ export class AgentToolExecutor {
           // 你这个对话现在作用的剧:自己 switch/create 过的那部,没选过 = 屏幕上的那部
           yourProjectId: scope.projectId,
           yourProjectChosen: scope.bound,
+          // 钉了分段才有(没钉 = 隐式落在该剧当前页)
+          ...(scope.boardBound ? { yourBoardId: scope.boardId } : {}),
           projects: state.projects
             .slice()
             .sort((a, b) => a.order - b.order)
@@ -970,18 +1217,33 @@ export class AgentToolExecutor {
             `video_workbench_switch_project: project not found: ${projectId} (existing: ${state.projects.map((p) => p.id).join(', ')})`,
           )
         }
+        // 想钉的分段必须是这部剧里的 —— 钉错到别的剧的分段 = 之后每次写入都落错地方。
+        const pinBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (pinBoardId && !state.boards.some((b) => b.id === pinBoardId && b.projectId === projectId)) {
+          throw new Error(
+            `video_workbench_switch_project: board ${pinBoardId} 不在「${project.name}」里 `
+            + `(它的分段: ${state.boards.filter((b) => b.projectId === projectId).map((b) => b.id).join(', ')})`,
+          )
+        }
         // 先判断屏幕要不要跟(要看「别的对话」当前的绑定),再绑定自己。
         const focus = decideFocus(projectId)
         bindThreadProject(threadId, projectId)
+        if (pinBoardId) bindThreadBoard(threadId, pinBoardId)
         if (focus) state.switchProject(projectId)
         const after = useVideoWorkbenchStore.getState()
+        const afterScope = resolveThreadScope(after, threadId)
         return {
           // 屏幕上的当前剧(用户看的);yourProjectId 才是这个对话之后所有调用作用的剧
           activeProjectId: after.activeProjectId,
           yourProjectId: projectId,
+          // 这个对话钉住的分段(没钉 = 不返回,隐式写入落在该剧当前页)
+          ...(afterScope.boardBound ? { yourBoardId: afterScope.boardId } : {}),
           onScreen: after.activeProjectId === projectId,
           project: { id: project.id, name: project.name },
-          boards: snapshotWorkbench(scopedView(after, projectId)).boards,
+          boards: withBoardHolders(
+            snapshotWorkbench(scopedView(after, projectId, afterScope.boardBound ? afterScope.boardId : undefined)),
+            projectId,
+          ).boards,
           ...(after.activeProjectId === projectId ? {} : { note: BACKGROUND_PROJECT_NOTE(project.name) }),
         }
       }
@@ -994,6 +1256,9 @@ export class AgentToolExecutor {
         bindThreadProject(threadId, projectId)
         const after = useVideoWorkbenchStore.getState()
         const board = after.boards.find((b) => b.projectId === projectId)!
+        // 自己建的新剧,它那一个起始分段就是这个对话的:隐式写入落在这里,
+        // 不随用户在屏幕上翻页而漂走。
+        bindThreadBoard(threadId, board.id)
         const created = after.projects.find((p) => p.id === projectId)!.name
         return {
           projectId,
