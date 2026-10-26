@@ -97,10 +97,18 @@ function normalizedSha256(text: string): string {
 }
 
 // Markerless copies are normally user-owned and must never be overwritten.
-// `ffmpeg-win` is the one historical exception: before the managed sidecar was
-// introduced it was distributed through the app/skills installer in these
-// exact canonical forms. Matching normalized hashes prove the file was not
-// edited, so it is safe to adopt and refresh. Keep this allowlist append-only.
+// A plugin/marketplace install replaces the whole skill directory and with it the
+// managed marker, so the skills listed below are the exceptions: a markerless copy
+// whose normalized hash is listed here is proven unedited, hence safe to adopt and
+// refresh.
+//
+// MAINTENANCE RULE (append-only; enforced by firstPartySkills.test.ts): whenever the
+// SKILL.md of a listed skill changes, append the hash of the NEW content in the same
+// change. Every version is then registered before it becomes "history". Skipping this
+// strands anyone whose marketplace copy is older than the app: their copy matches
+// neither the shipped content nor this list, so it is treated as user-owned and never
+// updated again. (ffmpeg-win's list once stopped at 2026-07-10 and silently missed
+// the 07-15 and 08-09 versions — that is the failure the test now prevents.)
 export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
   string,
   ReadonlySet<string>
@@ -117,6 +125,12 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
       'afea328a3370ca2b6006da3e75c16261e35e4172a36058f02ca5d4053ab4661a',
       'a21c9b2c7dacdccc92c96ab6c73219221ad95a0b0cf1b58e3ad656990925a557',
       'b21308a1232e11a7d8fc678ca2340d75a4fee0e8aedeed978c95f21a38da7840',
+      // Backfilled once the maintenance rule above was enforced: the versions after
+      // dcba09ba that were never registered, up to the current content.
+      // 5af50fcb (2026-07-15) → e46d8f12 (2026-08-09) → 97fd6e33 (2026-09-20, current).
+      'dbfb8345e1c703459696a7bf7b8a7904f529eb9eb23c3dc9fca79901121d934e',
+      '3485332f75ee1e4b5b2134511da69a1733cf0bfc0ae229bcf7ea7303656d5eed',
+      'c334e7b2c7883a6d06c0a0f0c82ae207ca61cec36cd9b27136024dbd58d1bef6',
     ]),
   ],
   [
@@ -129,9 +143,10 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
     // the 2026-09-24 version byte for byte). A match proves the copy is unedited,
     // so it is safe to adopt and refresh; anything else stays user-owned.
     //
-    // This set is closed: the content shipped with the app that wires the skill in
-    // is matched directly (see canAdoptUnmarkedCopy), and adopting writes the
-    // marker, so later SKILL.md edits reach those users without extending this list.
+    // Append the hash of the new content whenever SKILL.md changes (see the
+    // maintenance rule above). The content currently shipped also matches directly
+    // in canAdoptUnmarkedCopy, but it is listed too so that it is already registered
+    // by the time the next change turns it into history.
     'catimation-video-workbench',
     new Set([
       // 30a573bf (#178, original) → 02f94dc7 → 3b800dcd → 912776d3 (2026-08-01)
@@ -151,6 +166,8 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
       '3982094b57e574f253392bd504596b1587daea7b8cfc7cab1b90ae23a58e5814',
       'cde4a5b41cedb280065dc5ee9a8bdc412e26c8d21e293ff2ee055634bcfcacd2',
       'fa07ef8c898b21736706cbd9562d9d06ce67991282e881672ab02348692c44b7',
+      // fa9f737e (#367, 2026-10-26) — current.
+      '5e8414d7a33f53c0be2c5b06065c0aa166e2cb45adeb7ffdca223c1ea65ad981',
     ]),
   ],
 ])

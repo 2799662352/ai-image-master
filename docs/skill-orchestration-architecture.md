@@ -100,6 +100,8 @@ resources/first-party-skills/<name>/SKILL.md ← App-only skill 权威源(canvas
 
 这不是故障——更新权只是从「随应用版本」转给了「随插件市场」,保持插件最新即可。但要恢复应用托管,得**删掉该 skill 目录再重启应用**(目录不存在时 installer 才会重新写一份带标记的)。排查时看 `~/.agents/skills/<name>/.catimation-managed` 在不在即可判断当前归谁管。
 
+**例外与维护规则。** `ffmpeg-win`、`catimation-video-workbench` 在 `firstPartySkills.ts` 的 `KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES` 里登记了内容哈希:标记被插件安装抹掉后,只要副本内容等于本应用自带的、或哈希在这份清单里,下次开机就会被重新接管,不必删目录。清单是 **append-only**,**改这两个 skill 的 SKILL.md 时,必须在同一个改动里把新内容的哈希追加进去**,否则「商城里是旧版、应用里是新版」时装了商城版的人会被永远当成用户自己的副本。`firstPartySkills.test.ts` 会在漏登记时让 CI 变红,报错里直接给出要追加的哈希。其余首方 skill 没有这份清单,仍按上一段处理。
+
 ### 4.2 单技能市场的准入规则(标签有误导性)
 
 `sync-plugin-skills-to-codex.mjs` 的判定只有一行:

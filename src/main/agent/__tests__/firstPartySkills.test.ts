@@ -551,6 +551,48 @@ describe('installFirstPartySkills', () => {
       }
     })
 
+    // 「已知无标记副本」清单的维护守卫。商城安装会抹掉 .catimation-managed 标记,之后只有
+    // 「内容等于本应用自带的」或「哈希在这份清单里」的副本才会被应用重新接管;否则当作用户的、
+    // 永不再更新。所以每个版本在变成「历史版本」之前就得已经登记 —— 靠这条测试强制,不靠记性:
+    // 改了 SKILL.md 却没把新内容的哈希追加进清单,CI 就红。(ffmpeg-win 的清单曾停在 7/10,
+    // 之后 7/15、8/9 两个版本没登记,正是没有这道守卫的结果。)
+    it('registers the CURRENT content of every skill that has a known-hash entry (append-only list)', () => {
+      expect(KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.size).toBeGreaterThan(0)
+      for (const [name, hashes] of KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES) {
+        const skill = FIRST_PARTY_SKILLS.find((s) => s.name === name)
+        expect(skill, `${name} has a known-hash entry but is not a shipped first-party skill`).toBeDefined()
+        const current = crypto
+          .createHash('sha256')
+          .update((skill?.content ?? '').replace(/\r\n/g, '\n'), 'utf8')
+          .digest('hex')
+        expect(
+          hashes.has(current),
+          `${name}: SKILL.md changed but its new hash is not registered. Append '${current}' to ` +
+            `KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES['${name}'] (append-only) so copies installed from ` +
+            `the marketplace before the next change stay adoptable.`,
+        ).toBe(true)
+      }
+    })
+
+    it('known-hash entries are well-formed sha256 hex (a typo would silently never match)', () => {
+      for (const [name, hashes] of KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES) {
+        for (const hash of hashes) {
+          expect(hash, `${name}: ${hash}`).toMatch(/^[0-9a-f]{64}$/)
+        }
+      }
+    })
+
+    it('keeps the ffmpeg-win versions that were once missing from the list (append-only)', () => {
+      const known = KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.get('ffmpeg-win')
+      for (const hash of [
+        'dbfb8345e1c703459696a7bf7b8a7904f529eb9eb23c3dc9fca79901121d934e', // 2026-07-15 5af50fcb
+        '3485332f75ee1e4b5b2134511da69a1733cf0bfc0ae229bcf7ea7303656d5eed', // 2026-08-09 e46d8f12
+        'c334e7b2c7883a6d06c0a0f0c82ae207ca61cec36cd9b27136024dbd58d1bef6', // 2026-09-20 97fd6e33
+      ]) {
+        expect(known?.has(hash), hash).toBe(true)
+      }
+    })
+
     it('generated module matches its Markdown sources (run generate-first-party-skills.mjs if this fails)', async () => {
       const repoRoot = path.resolve(__dirname, '..', '..', '..', '..')
       const onDisk = await readFile(
