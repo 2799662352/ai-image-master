@@ -33,6 +33,14 @@ import {
 } from '../video-workbench/store'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
+import {
+  bindThreadProject,
+  otherLiveBindings,
+  resolveThreadScope,
+  scopedView,
+  touchThread,
+  unboundWriteBlock,
+} from '../video-workbench/threadScope'
 import type { VideoWorkbenchCardInput, WorkbenchIR } from '../../../../types/videoWorkbench'
 import {
   WORKBENCH_CARD_SUMMARY_MAX,
@@ -212,6 +220,15 @@ async function settleWithConcurrency<T, R>(
   return results
 }
 
+/**
+ * 对话被绑到一部**不在屏幕上**的剧时回给模型的话:它之后所有 video_workbench_* 都作用于
+ * 那部剧,而用户屏幕仍停在别处 —— 要如实告诉用户去哪看,别让他以为卡没填。
+ */
+const BACKGROUND_PROJECT_NOTE = (name: string): string =>
+  `这个对话现在在「${name}」里干活,之后所有 video_workbench_* 都作用于它。`
+  + '用户的屏幕仍停在别的剧上(没有跟过去,免得几个对话来回抢同一个屏幕)。'
+  + `告诉用户:点工作台左侧的剧列表里的「${name}」就能看到你填的卡。`
+
 export class AgentToolExecutor {
   start(): () => void {
     const agent = this.getAgentApi()
@@ -377,13 +394,40 @@ export class AgentToolExecutor {
     const store = useVideoWorkbenchStore.getState()
     await store.ensureHydrated()
 
+    // 这个对话在哪部剧里干活:自己绑定的那部,没绑过才回落到屏幕上的当前剧。
+    // 屏幕上的「当前剧」是用户在看的,不是 agent 的 —— 两个对话同时填两部剧时
+    // 如果都读它,谁切谁赢,另一个对话的下一次写入就落进了别人的剧。
+    // 没有 threadId(渲染端直调)= 老行为,scope 恒等于屏幕当前剧。
+    const scope = resolveThreadScope(useVideoWorkbenchStore.getState(), threadId)
+    touchThread(threadId)
+    /** 从这个对话的视角看 store:它的剧是「当前剧」(屏幕指针不动)。 */
+    const scopedState = () => scopedView(useVideoWorkbenchStore.getState(), scope.projectId)
+    /** 隐式作用域的写操作前过一道:没选剧、而别的对话正占着别的剧 → 让它先选。 */
+    const assertProjectChosen = (tool: string): void => {
+      const block = unboundWriteBlock(threadId, scope, useVideoWorkbenchStore.getState())
+      if (block) throw new Error(`${tool}: ${block}`)
+    }
+
+    /**
+     * 切到 / 新建一部剧时,屏幕要不要跟过去。
+     * 默认只在「没有别的对话正在别的剧里干活」时跟:有的话屏幕留在原处,免得几个对话
+     * 抢同一个屏幕指针、工作台来回跳。显式 `focus: true/false` 压过默认。
+     * 没有 threadId(渲染端直调)= 老行为,恒跟随。
+     */
+    const decideFocus = (targetProjectId: string): boolean => {
+      if (params.focus === true) return true
+      if (params.focus === false) return false
+      if (!threadId) return true
+      return !otherLiveBindings(threadId).some((o) => o.projectId !== targetProjectId)
+    }
+
     const pickCards = (cardIds?: unknown) => {
       const ids = Array.isArray(cardIds)
         ? cardIds.filter((x): x is string => typeof x === 'string')
         : null
-      const s = useVideoWorkbenchStore.getState()
+      const s = scopedState()
       if (ids) return s.cards.filter((c) => ids.includes(c.id))
-      // 不点名时只看当前剧:别的剧的卡对 agent 不存在(与界面上的隔离一致)
+      // 不点名时只看这个对话的剧:别的剧的卡对 agent 不存在(与界面上的隔离一致)
       const ownBoardIds = new Set(s.boards.filter((b) => b.projectId === s.activeProjectId).map((b) => b.id))
       return s.cards.filter((c) => c.boardId && ownBoardIds.has(c.boardId))
     }
@@ -437,7 +481,7 @@ export class AgentToolExecutor {
 
     // 写操作统一回带的全局摘要(boards + 状态计数):每次写操作等于强制观测
     // 一次全局现状,agent 无需追加 status 调用。体积 O(页数),紧凑。
-    const workbenchSummary = () => snapshotWorkbench(useVideoWorkbenchStore.getState())
+    const workbenchSummary = () => snapshotWorkbench(scopedState())
 
     switch (toolName) {
       case 'video_workbench_add_tasks': {
@@ -454,7 +498,27 @@ export class AgentToolExecutor {
           : beforeCardId
             ? ({ beforeCardId } as const)
             : undefined
-        const cardIds = store.addCards(tasks, anchor)
+        // 落点页:显式 boardId > 这个对话所在剧的当前页。**不读屏幕上的当前页** ——
+        // 那是用户(或别的对话)在看的。锚点路径落在锚点卡所在页,不受影响。
+        const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (explicitBoardId) {
+          const board = useVideoWorkbenchStore.getState().boards.find((b) => b.id === explicitBoardId)
+          if (!board) {
+            throw new Error(
+              `video_workbench_add_tasks: board not found: ${explicitBoardId} `
+              + `(existing: ${scopedState().boards.filter((b) => b.projectId === scope.projectId).map((b) => b.id).join(', ')})`,
+            )
+          }
+          if (board.projectId !== scope.projectId) {
+            throw new Error(
+              `video_workbench_add_tasks: board ${explicitBoardId} belongs to another project; `
+              + 'call video_workbench_switch_project to that project first (boards are listed per project).',
+            )
+          }
+        }
+        if (!anchor && !explicitBoardId) assertProjectChosen('video_workbench_add_tasks')
+        const targetBoardId = anchor ? undefined : (explicitBoardId ?? scope.boardId)
+        const cardIds = store.addCards(tasks, anchor, targetBoardId ? { boardId: targetBoardId } : undefined)
         if (params.navigate !== false) {
           useTabStore.getState().switchTab('videoWorkbench')
         }
@@ -467,11 +531,13 @@ export class AgentToolExecutor {
           registerAgentBatch(started.started, threadId)
           start = started
         }
+        const summary = workbenchSummary()
         return {
           cardIds,
-          total: useVideoWorkbenchStore.getState().cards.length,
+          // 这部剧里一共多少张(别的剧的卡对这个对话不存在,也就不该算进「总数」)
+          total: summary.project.cards,
           ...(start ? { start } : {}),
-          workbench: workbenchSummary(),
+          workbench: summary,
         }
       }
       case 'video_workbench_update_task': {
@@ -609,7 +675,13 @@ export class AgentToolExecutor {
         const ids = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : undefined
-        const result = await store.startCardsFromAgent(ids)
+        // 不点名整页启动时:对话在屏幕之外的剧里 → 显式指定它那一页并忽略屏幕上的选中
+        // (那是别人的语境);就在屏幕上的剧里 → 与以前一样(整页 / 用户当前选中)。
+        if (!ids) assertProjectChosen('video_workbench_start')
+        const result = await store.startCardsFromAgent(
+          ids,
+          !ids && !scope.onScreen ? { boardId: scope.boardId } : undefined,
+        )
         // 同上：批次跑完主动推送，取代轮询。
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
@@ -637,12 +709,12 @@ export class AgentToolExecutor {
         // 省略字段会被当成恢复默认,所以为了改三个字段,17 张卡的完整 prompt 和素材数组
         // 都得在模型里走一遍。用户看到的就是右边一直 RUNNING,而真正的改动一秒就能做完。
         const state = useVideoWorkbenchStore.getState()
-        const boardId = typeof params.boardId === 'string' && params.boardId
-          ? params.boardId
-          : state.activeBoardId
         const explicitIds = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : null
+        const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (!explicitIds && !explicitBoardId) assertProjectChosen('video_workbench_set_spec')
+        const boardId = explicitBoardId ?? scope.boardId
         const targets = explicitIds
           ? state.cards.filter((c) => explicitIds.includes(c.id))
           : state.cards.filter((c) => c.boardId === boardId)
@@ -694,13 +766,13 @@ export class AgentToolExecutor {
         // 工作台会把几百张卡的摘要一股脑塞进上下文，而用户九成时间只在看一页。
         // 要看别页得明说：给 boardId，或 allBoards:true。
         const allBoards = params.allBoards === true
-        const scopeBoardId = boardId ?? (allBoards ? undefined : state.activeBoardId)
+        const scopeBoardId = boardId ?? (allBoards ? undefined : scope.boardId)
         let cards = pickCards(params.cardIds)
         // 点名了 cardIds 就按 id 取，不再按页收窄 —— 那是「我就要这几张」的意思。
         if (scopeBoardId && !Array.isArray(params.cardIds)) {
           cards = cards.filter((c) => c.boardId === scopeBoardId)
         }
-        const summary = snapshotWorkbench(state)
+        const summary = snapshotWorkbench(scopedView(state, scope.projectId))
         // 分页:一个工作台能装 200 张卡,整份倒出去会被客户端静默截断。口径与
         // list_portrait_library 一致(page 从 1 起 / pageSize 有上限 / hasMore)。
         const pageSize = clampPageSize(params.pageSize)
@@ -742,14 +814,16 @@ export class AgentToolExecutor {
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : []
         for (const id of ids) store.removeCard(id)
+        const summary = workbenchSummary()
         return {
           removed: ids,
-          total: useVideoWorkbenchStore.getState().cards.length,
-          workbench: workbenchSummary(),
+          total: summary.project.cards,
+          workbench: summary,
         }
       }
       case 'video_workbench_export': {
-        const ir = store.exportIR()
+        // 导的是这个对话所在的剧(不是屏幕上的当前剧);令牌与指纹也按那部剧算。
+        const ir = store.exportIR(scope.projectId)
         /**
          * **默认出骨架**:每张卡剥成 `{id, rev}` 的占位条目,要全文得显式 `full: true`。
          *
@@ -832,12 +906,24 @@ export class AgentToolExecutor {
           })),
         )
         const mode = params.mode === 'replace' ? 'replace' : 'merge'
-        return await store.applyIR({ ...ir, boards }, { mode, force: params.force === true })
+        // IR 自带 projectId 时它就是明确的目标(不匹配由 planApplyIR 整份拒绝);
+        // 老 IR 没带时落到这个对话的剧,没选过剧又有别的对话占着别的剧则先拦下。
+        if (!ir.projectId) assertProjectChosen('video_workbench_apply')
+        return await store.applyIR(
+          { ...ir, boards },
+          { mode, force: params.force === true, scopeProjectId: scope.projectId },
+        )
       }
       case 'video_workbench_list_projects': {
         const state = useVideoWorkbenchStore.getState()
+        // 别的对话最近还在碰的剧:新对话挑剧时避开,别和人家挤在同一部里。
+        const busyElsewhere = new Set(otherLiveBindings(threadId).map((o) => o.projectId))
         return {
+          // 用户屏幕上正在看的剧(只是展示指针,不是你的作用域)
           activeProjectId: state.activeProjectId,
+          // 你这个对话现在作用的剧:自己 switch/create 过的那部,没选过 = 屏幕上的那部
+          yourProjectId: scope.projectId,
+          yourProjectChosen: scope.bound,
           projects: state.projects
             .slice()
             .sort((a, b) => a.order - b.order)
@@ -846,6 +932,7 @@ export class AgentToolExecutor {
               return {
                 id: p.id,
                 name: p.name,
+                ...(busyElsewhere.has(p.id) && p.id !== scope.projectId ? { inUseByOtherChat: true } : {}),
                 segments: st.segments.length,
                 cards: st.totals.total,
                 active: st.totals.active,
@@ -860,10 +947,12 @@ export class AgentToolExecutor {
       }
       case 'video_workbench_set_project_summary': {
         const state = useVideoWorkbenchStore.getState()
-        // 省略 projectId = 当前剧:agent 九成时候是在给自己正在做的这部剧写路标。
-        const projectId = typeof params.projectId === 'string' && params.projectId
+        // 省略 projectId = 这个对话所在的剧:agent 九成时候是在给自己正在做的这部剧写路标。
+        const explicitProjectId = typeof params.projectId === 'string' && params.projectId
           ? params.projectId
-          : state.activeProjectId
+          : undefined
+        if (!explicitProjectId) assertProjectChosen('video_workbench_set_project_summary')
+        const projectId = explicitProjectId ?? scope.projectId
         const summary = typeof params.summary === 'string' ? params.summary : ''
         if (!state.setProjectSummary(projectId, summary)) {
           throw new Error(
@@ -881,21 +970,39 @@ export class AgentToolExecutor {
             `video_workbench_switch_project: project not found: ${projectId} (existing: ${state.projects.map((p) => p.id).join(', ')})`,
           )
         }
-        state.switchProject(projectId)
+        // 先判断屏幕要不要跟(要看「别的对话」当前的绑定),再绑定自己。
+        const focus = decideFocus(projectId)
+        bindThreadProject(threadId, projectId)
+        if (focus) state.switchProject(projectId)
         const after = useVideoWorkbenchStore.getState()
         return {
+          // 屏幕上的当前剧(用户看的);yourProjectId 才是这个对话之后所有调用作用的剧
           activeProjectId: after.activeProjectId,
+          yourProjectId: projectId,
+          onScreen: after.activeProjectId === projectId,
           project: { id: project.id, name: project.name },
-          boards: snapshotWorkbench(after).boards,
+          boards: snapshotWorkbench(scopedView(after, projectId)).boards,
+          ...(after.activeProjectId === projectId ? {} : { note: BACKGROUND_PROJECT_NOTE(project.name) }),
         }
       }
       case 'video_workbench_create_project': {
         const name = typeof params.name === 'string' ? params.name : undefined
         const state = useVideoWorkbenchStore.getState()
-        const projectId = state.addProject(name)
+        // 新剧还不存在,没有「别的对话占着它」一说:只要还有别的对话在干活就不抢屏幕。
+        const focus = decideFocus('')
+        const projectId = state.addProject(name, { activate: focus })
+        bindThreadProject(threadId, projectId)
         const after = useVideoWorkbenchStore.getState()
         const board = after.boards.find((b) => b.projectId === projectId)!
-        return { projectId, boardId: board.id, name: after.projects.find((p) => p.id === projectId)!.name }
+        const created = after.projects.find((p) => p.id === projectId)!.name
+        return {
+          projectId,
+          boardId: board.id,
+          name: created,
+          yourProjectId: projectId,
+          onScreen: after.activeProjectId === projectId,
+          ...(after.activeProjectId === projectId ? {} : { note: BACKGROUND_PROJECT_NOTE(created) }),
+        }
       }
       default:
         throw new Error(`Unknown video workbench tool: ${toolName}`)

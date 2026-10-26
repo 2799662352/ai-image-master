@@ -573,6 +573,15 @@ export interface WorkbenchIR {
    */
   structureRevision: number
   /**
+   * 导出时**这部剧**的结构指纹(页 id/名 + 各页卡片 id 顺序的哈希)。
+   *
+   * `structureRevision` 是全工作台一个计数器:别的对话在别的剧里加一张卡,它就 +1,
+   * 于是「同时跑三部剧」时,每次 apply 都会被隔壁剧的动作误伤成「结构变过」。指纹只看
+   * 这部剧自己 —— 令牌对不上但指纹没变,说明变的是别的剧,放行;指纹也变了才是真冲突。
+   * 省略(老 IR / 模型没抄回来)= 退回只看 structureRevision,行为与以前一致。
+   */
+  structureSignature?: string
+  /**
    * 导出时的当前剧。apply 时若给了且与当前剧不同 → 整份拒绝:用户中途切了剧,
    * 这份 IR 描述的是另一部剧的看板。省略(老 IR)= 不校验。
    */
@@ -591,6 +600,11 @@ export interface WorkbenchApplyOptions {
   mode?: 'merge' | 'replace'
   /** 跳过两级并发校验。明知会盖掉用户改动时的逃生门,默认不给。 */
   force?: boolean
+  /**
+   * 这次 apply 作用的剧(agent 对话绑定的那部)。与屏幕上的当前剧不同时,整份 IR
+   * 在**那部剧**的语境里校验和落地,屏幕上正在看的页不会被挪走。省略 = 屏幕上的当前剧。
+   */
+  scopeProjectId?: string
 }
 
 /** 单项被跳过的原因(渲染中不可改规格、id 不存在等)。 */

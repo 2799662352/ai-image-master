@@ -151,12 +151,94 @@ describe('planApplyIR / 拒绝路径', () => {
     })
     const ir = roundTrip(src)
     ir.structureRevision = 3 // agent 手里是旧令牌:这期间有卡被增删或挪过位
+    // 老 IR / 模型没把指纹抄回来:只剩令牌可看,严格按令牌拒绝(指纹见下面的专门用例)
+    delete ir.structureSignature
     ir.boards[0].cards[0].prompt = '新'
     const plan = planApplyIR(src, ir)
     expect(plan.result.ok).toBe(false)
     expect(plan.result.conflict).toEqual({ expected: 3, actual: 5 })
     expect(plan.next).toBeUndefined()
     expect(plan.result.structureRevision).toBe(5)
+  })
+
+  describe('structureSignature:令牌是全工作台的,指纹只看这部剧', () => {
+    const base = () =>
+      source({
+        structureRevision: 5,
+        cards: [
+          card({ id: 'c1', boardId: 'b1', order: 0, prompt: '一' }),
+          card({ id: 'c2', boardId: 'b1', order: 1, prompt: '二' }),
+        ],
+      })
+
+    it('导出带指纹;规格改动不变指纹,增删/挪位/改页名才变', () => {
+      const ir = exportWorkbenchIR(base())
+      expect(ir.structureSignature).toMatch(/^[0-9a-f]{8}$/)
+
+      const specOnly = base()
+      specOnly.cards[0] = { ...specOnly.cards[0], prompt: '改了提示词', rev: 9 }
+      expect(exportWorkbenchIR(specOnly).structureSignature).toBe(ir.structureSignature)
+
+      const added = base()
+      added.cards.push(card({ id: 'c3', boardId: 'b1', order: 2 }))
+      const moved = base()
+      moved.cards[0] = { ...moved.cards[0], order: 1 }
+      moved.cards[1] = { ...moved.cards[1], order: 0 }
+      const renamed = base()
+      renamed.boards = [{ ...renamed.boards[0], name: '新页名' }]
+      for (const changed of [added, moved, renamed]) {
+        expect(exportWorkbenchIR(changed).structureSignature).not.toBe(ir.structureSignature)
+      }
+    })
+
+    it('别的剧里加了卡(令牌涨了,本剧结构没变):放行', () => {
+      const src = base()
+      const ir = roundTrip(src)
+      ir.boards[0].cards[0].resolution = '1080p' // apply 不许改已有卡的提示词,用规格当载体
+      const after = {
+        ...src,
+        structureRevision: 8, // 隔壁剧加卡 / 新建剧各 +1
+        boards: [...src.boards, { id: 'x1', projectId: 'p2', name: '别的剧', order: 0, createdAt: 1 }],
+        cards: [...src.cards, card({ id: 'x-c1', boardId: 'x1' }), card({ id: 'x-c2', boardId: 'x1', order: 1 })],
+      }
+      const plan = planApplyIR(after, ir)
+      expect(plan.result.ok).toBe(true)
+      expect(plan.result.cards.updated).toEqual(['c1'])
+      // 本剧结构没动,令牌原样保留,不会因为放行就凭空 +1
+      expect(plan.result.structureRevision).toBe(8)
+    })
+
+    it('本剧自己的结构变了:令牌与指纹都对不上,照旧整份拒绝', () => {
+      const src = base()
+      const ir = roundTrip(src)
+      const after = {
+        ...src,
+        structureRevision: 6,
+        cards: [...src.cards, card({ id: 'c3', boardId: 'b1', order: 2, prompt: '用户加的' })],
+      }
+      const plan = planApplyIR(after, ir)
+      expect(plan.result.ok).toBe(false)
+      expect(plan.result.conflict).toEqual({ expected: 5, actual: 6 })
+    })
+
+    it('别的剧的卡/页不进指纹', () => {
+      const src = base()
+      const withOther = {
+        ...src,
+        boards: [...src.boards, { id: 'x1', projectId: 'p2', name: '别的剧', order: 0, createdAt: 1 }],
+        cards: [...src.cards, card({ id: 'x-c1', boardId: 'x1' })],
+      }
+      expect(exportWorkbenchIR(withOther).structureSignature).toBe(exportWorkbenchIR(src).structureSignature)
+    })
+
+    it('指纹不挡 force 之外的任何其它校验:projectId 不符照拒不误', () => {
+      const src = base()
+      const ir = roundTrip(src)
+      ir.projectId = 'p-other'
+      const plan = planApplyIR(src, ir)
+      expect(plan.result.ok).toBe(false)
+      expect(plan.result.conflict).toMatchObject({ reason: 'project-mismatch' })
+    })
   })
 
   it('force 可以越过两级校验', () => {

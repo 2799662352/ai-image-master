@@ -1783,14 +1783,19 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 工作台按**剧(project)→ 分段(board,界面文案「分段」,老数据叫「页面」)→ 卡片**组织。
 一部剧是一部片子;分段是剧里的一段成片单元(一集 / 一幕 / 一条 140s 的分 P);卡片是一镜。
 
-- **所有 \`video_workbench_*\` 工具只作用于当前剧。** \`status\` 与写工具回带的 \`workbench\`
+- **所有 \`video_workbench_*\` 工具只作用于「本对话的剧」。** \`status\` 与写工具回带的 \`workbench\`
   摘要都带 \`project {id,name,segments,cards}\`,\`boards\` 只列这部剧的分段;别的剧对你不可见,
-  这与用户在界面上看到的隔离一致。
-- 要看/换剧:\`video_workbench_list_projects\`(列全部剧与统计)→
-  \`video_workbench_switch_project\`(切过去,用户界面同步切换)。用户在界面切了剧,
-  你下一轮就在新剧里干活,不会往旧剧塞卡。
+  这与用户在界面上看到的隔离一致。本对话没选过剧时,读跟着用户界面走;写则看有没有别的对话正占着别的剧(见下)。
+- 要看/换剧:\`video_workbench_list_projects\`(列全部剧与统计;\`activeProjectId\` = 用户眼前那部,
+  \`yourProjectId\` = 你在干的那部)→ \`video_workbench_switch_project\`(把本对话绑到那部剧)。
 - 用户开一部新片子:\`video_workbench_create_project\`(自带一个空分段,返回
-  \`projectId\` + \`boardId\`),然后照常 \`video_workbench_add_tasks\`。
+  \`projectId\` + \`boardId\`,本对话自动绑过去),然后照常 \`video_workbench_add_tasks\`。
+- **用户可能同时开着好几个对话、各填一部剧。** 每个对话各绑各的剧,互不抢指针:开工第一步就
+  \`list_projects\` 看清哪部是你的(\`inUseByOtherChat: true\` 的剧正被别的对话填着,用户没明说别碰),
+  再 \`switch_project\` / \`create_project\` 绑定。别的对话占着别的剧而你还没绑定时,写工具会被拒并告诉你
+  该先选剧 —— 照做,别去「force」。绑定后界面是否跟过去由 \`onScreen\` 告诉你(没跟 = 你在后台填,
+  用户界面不动,这是对的);用户要你把界面带过去时才传 \`focus: true\`。往指定分段加卡用
+  \`add_tasks({ boardId })\`;\`start\` 不带 cardIds 且你不在用户屏幕上时,只启动你剧里该分段的可启动卡。
 - **三层路标都要写。** 剧:\`video_workbench_set_project_summary\`(≤60 字电报体,
   「三集科幻短剧 · 赛博都市 · 主角林夏」,省略 projectId = 当前剧);分段:
   \`set_board_summary\`;卡片:\`set_card_summary\`。剧名常常是「未命名剧 3」,没有剧摘要,
@@ -1798,7 +1803,7 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 - **巡视用 \`status({ fields: "concise" })\`。** 只回 id / 位置 / 状态 / 摘要 / 60 字提示词 /
   error,体积约为缺省 detailed 的三分之一。「进展怎样」「哪几张失败」「哪张是天台戏」
   「先挑几张再动手」都用它;要改规格、要报成片地址,再对点名的几张拿 detailed 或 export。
-- \`video_workbench_export\` 的 IR 带 \`projectId\`;\`apply\` 时若用户已切到别的剧,整份被拒
+- \`video_workbench_export\` 的 IR 带 \`projectId\`;\`apply\` 时若本对话已换到别的剧,整份被拒
   (\`conflict.reason = "project-mismatch"\`)—— 重新 export,别 force。
 - 批次完成推送里带「剧名 › 分段名」,汇报时照抄这个位置,用户按它去找成片。
 >

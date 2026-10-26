@@ -85,6 +85,7 @@ import { cardSummaryState, promptFingerprint } from './cardSummary'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
 import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
+import { scopedView } from './threadScope'
 import {
   type HistoryCursor,
   type WorkbenchIntent,
@@ -391,6 +392,14 @@ export function snapshotWorkbench(
   }
 }
 
+/**
+ * 不点名 cardIds 时「整页启动」作用的页。agent 对话绑在一部**不在屏幕上**的剧里时,
+ * 隐式的「屏幕当前页」和「用户选中的卡」都是别人的语境,必须显式指定页并忽略选中。
+ */
+export interface StartScopeOptions {
+  boardId?: string
+}
+
 export interface StartResult {
   started: string[]
   skipped: Array<{ cardId: string; reason: string }>
@@ -493,8 +502,14 @@ export interface VideoWorkbenchState extends ProjectsSlice {
    *   否则在非活动页插卡会跑到别的页去。
    * - 锚点不存在:抛错、零写入。调用方明确要求了位置,静默退化成追加等于
    *   给它一个错误的成功。
+   * - `opts.boardId`:不传 anchor 时追加到**这一页**而不是屏幕上的当前页 —— 多个对话
+   *   各管一部剧时,各自的页都不是屏幕上那一页。页不存在 = 抛错、零写入。
    */
-  addCards: (inputs: VideoWorkbenchCardInput[], anchor?: VideoWorkbenchInsertAnchor) => string[]
+  addCards: (
+    inputs: VideoWorkbenchCardInput[],
+    anchor?: VideoWorkbenchInsertAnchor,
+    opts?: { boardId?: string },
+  ) => string[]
   /** 更新卡片可编辑字段(生成中的卡片拒绝编辑)。 */
   updateCard: (id: string, patch: VideoWorkbenchCardInput) => boolean
   /**
@@ -543,7 +558,7 @@ export interface VideoWorkbenchState extends ProjectsSlice {
   agentAutoStart: boolean
   setAgentAutoStart: (enabled: boolean) => void
   /** 启动生成:缺省=全部可启动卡片;可指定 id 列表。并发提交。 */
-  startCards: (ids?: string[]) => Promise<StartResult>
+  startCards: (ids?: string[], opts?: StartScopeOptions) => Promise<StartResult>
   /**
    * agent(MCP)专用的启动入口。总闸关着时一张都不提交,返回 blocked 让 agent
    * 转告用户去工作台自己点。
@@ -552,7 +567,7 @@ export interface VideoWorkbenchState extends ProjectsSlice {
    * (video_workbench_start / add_tasks 的 autoStart),把闸门收在这一个函数里,
    * 将来加第三条也漏不掉;而用户点的 startCards 永远不受影响。
    */
-  startCardsFromAgent: (ids?: string[]) => Promise<StartResult>
+  startCardsFromAgent: (ids?: string[], opts?: StartScopeOptions) => Promise<StartResult>
   /**
    * 由样片生成 1080p 成片(Seedance 2.5 Draft)。只接受当前结果是成功样片、7 天内、
    * 平台余额的卡;成片作为同一张卡的新一轮,样片那一版留在 versions 里。
@@ -571,8 +586,11 @@ export interface VideoWorkbenchState extends ProjectsSlice {
   /** seedance:task-update 广播入口(仅消费 source==='workbench')。 */
   applyTaskUpdate: (update: SeedanceTaskUpdate) => void
 
-  /** 导出整个工作台为声明式 IR(带 revision 令牌)。 */
-  exportIR: () => WorkbenchIR
+  /**
+   * 导出一部剧为声明式 IR(带 revision 令牌)。`scopeProjectId` 省略 = 屏幕上的当前剧;
+   * 给了就导那部剧,屏幕不动。
+   */
+  exportIR: (scopeProjectId?: string) => WorkbenchIR
   /**
    * 声明式回写整个工作台。revision 对不上直接拒绝(除非 force),渲染中的卡片
    * 规格定格、在飞的卡片拒绝删除,逐项结果都在返回里。
@@ -1648,16 +1666,22 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     return true
   },
 
-  addCards: (inputs, anchor) => {
+  addCards: (inputs, anchor, opts) => {
     const created: VideoWorkbenchCard[] = []
     let targetBoardId: string | undefined
     let missingAnchor: string | null = null
 
+    // 显式指定的页必须存在 —— 静默退回屏幕当前页等于把卡写进另一部剧。
+    if (!anchor && opts?.boardId && !get().boards.some((b) => b.id === opts.boardId)) {
+      throw new Error(`board not found: ${opts.boardId}`)
+    }
+
     set((state) => {
       if (!anchor) {
-        targetBoardId = state.activeBoardId
-        const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
-        inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
+        const boardId = opts?.boardId ?? state.activeBoardId
+        targetBoardId = boardId
+        const base = state.cards.filter((c) => c.boardId === boardId).length
+        inputs.forEach((input, i) => created.push(buildCard(input, base + i, boardId)))
         return {
           cards: [...state.cards, ...created],
           revision: state.revision + 1,
@@ -2133,8 +2157,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     if (updated) schedulePersist(updated)
   },
 
-  startCardsFromAgent: async (ids) => {
-    if (get().agentAutoStart) return get().startCards(ids)
+  startCardsFromAgent: async (ids, opts) => {
+    if (get().agentAutoStart) return get().startCards(ids, opts)
     // 拦下时**不碰卡片状态** —— 留一张假的 preparing 比不启动更糟:用户会等一个
     // 永远不来的结果。卡片保持原样,agent 拿着 hint 去请用户自己按。
     return {
@@ -2151,11 +2175,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     }
   },
 
-  startCards: async (ids) => {
+  startCards: async (ids, startOpts) => {
     const api = getApi()?.videoWorkbench
     const result: StartResult = { started: [], skipped: [] }
     if (!api?.submit) {
-      const selected = get().selectedCardIds
+      const selected = startOpts?.boardId ? [] : get().selectedCardIds
       const scope = ids ?? (selected.length > 0 ? selected : get().cards.map((c) => c.id))
       for (const id of scope) {
         result.skipped.push({ cardId: id, reason: '视频服务未就绪(preload 桥缺失)' })
@@ -2167,10 +2191,12 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     //
     // 「有选中就只作用于选中」是 UI 侧的期待;MCP 走的是显式 ids 分支,不受影响 ——
     // agent 不该因为用户碰巧选了几张卡就改变行为。
-    const selected = get().selectedCardIds
+    // 指定了 boardId = 调用方在屏幕之外的剧里干活:选中态是屏幕上那部剧的,不能算。
+    const selected = startOpts?.boardId ? [] : get().selectedCardIds
     const scope: string[] | undefined = ids ?? (selected.length > 0 ? selected : undefined)
+    const wholeBoardId = startOpts?.boardId ?? get().activeBoardId
     const targets = get().cards.filter((c) =>
-      scope ? scope.includes(c.id) : c.boardId === get().activeBoardId,
+      scope ? scope.includes(c.id) : c.boardId === wholeBoardId,
     )
     if (scope) {
       for (const id of scope) {
@@ -2495,12 +2521,18 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     if (after && shouldUpgradeHistory) void upgradeCardHistoryUrl(after)
   },
 
-  exportIR: () => exportWorkbenchIR(get()),
+  exportIR: (scopeProjectId) =>
+    exportWorkbenchIR(scopeProjectId ? scopedView(get(), scopeProjectId) : get()),
 
   applyIR: async (ir, opts) => {
     const prev = get()
-    const plan = planApplyIR(prev, ir, opts)
+    // 对话绑在屏幕之外的剧里:整份 IR 在那部剧的语境里校验与落地。`next.activeBoardId`
+    // 是「那部剧的当前页」,写回去会把用户正在看的页挪走 —— 屏幕上的当前页保持不动。
+    const offScreen = !!opts?.scopeProjectId && opts.scopeProjectId !== prev.activeProjectId
+    const source = opts?.scopeProjectId ? scopedView(prev, opts.scopeProjectId) : prev
+    const plan = planApplyIR(source, ir, opts)
     if (!plan.next || !plan.persist) return plan.result
+    if (offScreen) plan.next.activeBoardId = prev.activeBoardId
     const write = softenPlan(prev, { next: plan.next, persist: plan.persist })
     applyPlanToState(set, write, prev)
     await flushPlanToDb(write)
