@@ -813,7 +813,7 @@ export function initSeedanceRuntime(opts: {
   )
 
   /**
-   * 深度捕捉(`depth`)—— 经 Miau 网关的 RunningHub 通道,与万相一样**不问计费模式**:
+   * 深度捕捉(`depth`)—— 经 Miau 网关的腾讯云点播深度估计通道,与万相一样**不问计费模式**:
    * 同一条 transport 服务两种钱包,凭据按每次调用现取(`resolveVideoBilling`),
    * 所以用户中途切模式,下一次轮询就落到新的归属上。
    *

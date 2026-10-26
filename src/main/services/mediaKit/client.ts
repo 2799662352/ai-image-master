@@ -45,9 +45,9 @@ import {
  * 形状,算法档与目标分辨率从模型名推导、不读 metadata —— 所以一个客户端服务两家,
  * 差别只在 `model` 字串。
  *
- * RunningHub 深度捕捉(`rh-video-depth-{480p|720p|1080p}`,见 `depth/model.ts`)也是同一个
- * `metadata.content` 形状,分辨率同样只由模型名决定 —— 它是 `generate_video` 的 `depth`
- * 变体,走 `videoTransport.createDepthTransport`,底层复用这个客户端。
+ * 深度捕捉(`rh-video-depth-{480p|720p|1080p}`,后端现为腾讯云点播深度估计,见
+ * `depth/model.ts`)也是同一个 `metadata.content` 形状 —— 它是 `generate_video` 的
+ * `depth` 变体,走 `videoTransport.createDepthTransport`,底层复用这个客户端。
  */
 export type MediaKitModel =
   | 'volc-enhance-video'

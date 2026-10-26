@@ -2,26 +2,34 @@
  * 深度捕捉(`depth`)—— `generate_video` 的一个**变体**,把一段视频转成灰度深度视频
  * (近亮远暗,可作运动参考)。
  *
- * ## 上游是什么(读网关源码 + 生产 `/api/pricing` 实测,不是猜的)
+ * ## 上游是什么(读网关源码 + 腾讯官方文档 + 真实调用,不是猜的)
  *
- * Miau 网关的 RunningHub 渠道(new-api `relay/channel/task/runninghub`):
- *   - 模型 `rh-video-depth-480p | 720p | 1080p` —— **分辨率只由模型名决定**,适配器不读
- *     metadata 里的 resolution,所以三个 SKU 就是三个模型 id;
+ * Miau 网关的**腾讯云点播**渠道(new-api 渠道类型 76 `TencentVOD`,
+ * `relay/channel/task/tencentvod`,new-api PR #170),调的是点播的「视频深度估计」
+ * `VideoDepthEstimation`。它**取代**了 RunningHub —— RunningHub 的这几个模型官方已下线。
+ * 对调用方的契约没变,所以模型名仍叫 `rh-video-depth-*`(改名会让已有计价和调用点失效):
+ *   - 模型 `rh-video-depth-480p | 720p | 1080p`。**腾讯这个接口没有分辨率参数**:三档产物
+ *     完全一致、同价,档位只是一个名字,选哪个都一样(默认值取中间档只是为了与别的模型一致);
  *   - 提交 `POST /v1/videos`,body `{ model, metadata: { content: [{ type: 'video_url',
  *     video_url: { url } }] } }` —— 与火山 MediaKit / DAMO 超分是**同一套任务协议**,
  *     所以直接复用 `mediaKit/client`,不再造一个平行的客户端;
- *   - 轮询 `GET /v1/videos/{id}`,结果在 `metadata.url`;
- *   - 按次计费,每档 ¥0.5,与源视频时长、体积无关。
+ *   - 轮询 `GET /v1/videos/{id}`,结果在 `metadata.url`,失败原因在 `error.message`
+ *     (网关只在有产物时才写 `metadata.url`,失败任务不会把原因塞进去);
+ *   - 按次计费,网关默认单价 ¥0.5,与源视频时长、体积无关。**这是网关价目表的默认值,
+ *     腾讯没有公开该接口的价格,是否覆盖成本要看腾讯账单**;
+ *   - 产物是腾讯的**临时存储,7 天后过期**;任务一成功,`taskManager` 就经 `persistVideo`
+ *     把它下载到本地并转存 COS(与别的视频模型同一条链),历史记录存的是转存后的地址。
  *
  * ## 上游的限制(桌面端提前拦下,别等上游回一句看不懂的话)
  *
  *   - 源视频必须是**公网 http(s) URL**:上游自己去拉,`data:` / `asset://` / 本机路径一律
- *     拉不到,所以本地文件要先中转 COS(`relayFileToCos`);
- *   - 源视频 ≤ 3 分钟(180 秒);
- *   - 源视频 > 100 MB 上游会拒。Web 端由后端 MPS 压缩后再提交,桌面端没有这一步 ——
- *     体积在本地能直接量到,所以**提交前**拦下并告诉调用方怎么压(ffmpeg-win),比中转
- *     几百兆再被上游拒划算得多。时长在本地量不到(没有 ffprobe 助手),交给上游判,
- *     失败任务网关会退款。
+ *     拉不到(网关有意不开放 `vod://` 与 `data:`),所以本地文件要先中转 COS(`relayFileToCos`)。
+ *     地址超过 8182 字符网关会在入口拒掉;中转出来的 COS 地址远短于此;
+ *   - **时长 / 体积上限腾讯没有公布。** 旧后端(RunningHub)的「≤3 分钟、≤100 MB」不再是上游
+ *     的限制。实测只跑过 5 秒、960×540 的短片,更长 / 更大的视频没验证过;
+ *   - 下面的 {@link DEPTH_MAX_SOURCE_BYTES} 因此是**桌面端自己设的保守上限**,不是上游的:
+ *     体积在本地能直接量到,几百兆的文件先中转 COS 再被拒(或超时)不划算,**提交前**拦下并告诉
+ *     调用方怎么压(ffmpeg-win)。时长在本地量不到(没有 ffprobe 助手),不拦;任务失败时网关会退款。
  */
 
 import type { MediaKitModel } from '../mediaKit/client'
@@ -35,10 +43,10 @@ import type { CreateVideoTaskInput, SeedanceContentItem } from '../seedance/type
  */
 export const DEPTH_UPSTREAM_MODEL_ID_BASE = 'rh-video-depth'
 
-/** 上游允许的源视频最长时长(秒)。 */
-export const DEPTH_MAX_SOURCE_SECONDS = 180
-
-/** 上游允许的源视频最大体积(字节)。 */
+/**
+ * 桌面端对本地源视频设的**保守**体积上限(字节)—— 不是上游的限制,腾讯没公布上限(见文件头)。
+ * 旧后端 RunningHub 的 100 MB 沿用至今;真要放宽,先拿更大的视频实测过再改。
+ */
 export const DEPTH_MAX_SOURCE_BYTES = 100 * 1024 * 1024
 
 const DEPTH_RESOLUTIONS: readonly string[] = ['480p', '720p', '1080p']
@@ -138,7 +146,8 @@ export async function checkDepthInput(
 
 function oversizeMessage(bytes: number): string {
   return (
-    `源视频 ${mb(bytes)} MB，超过深度捕捉上游的 ${mb(DEPTH_MAX_SOURCE_BYTES)} MB 上限。` +
-    '请先用 ffmpeg-win 压缩（如 `-vf scale=-2:720 -crf 28`）或截取 3 分钟内的片段，再重新提交'
+    `源视频 ${mb(bytes)} MB，超过深度捕捉的 ${mb(DEPTH_MAX_SOURCE_BYTES)} MB 保守上限` +
+    '（这是桌面端为避免中转大文件后失败设的，腾讯点播没有公布上限，更大的视频也没测过）。' +
+    '请先用 ffmpeg-win 压缩（如 `-vf scale=-2:720 -crf 28`）或截取需要的片段，再重新提交'
   )
 }

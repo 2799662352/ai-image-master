@@ -49,7 +49,7 @@ function toFileUrl(filePath: string): string {
 }
 
 /**
- * 深度捕捉(`depth`)不是 Seedance —— 上游是网关的 RunningHub 通道。文件名 / 历史模型串
+ * 深度捕捉(`depth`)不是 Seedance —— 上游是网关的腾讯云点播深度估计通道。文件名 / 历史模型串
  * 带 `seedance-` 会让用户以为这是一条 Seedance 生成;其余模型保持原样(一个字节不变)。
  */
 const isDepth = (update: SeedanceTaskUpdate): boolean => update.model === 'depth'

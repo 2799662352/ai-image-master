@@ -163,7 +163,7 @@ describe('taskManager × depth', () => {
       mgr.dispose()
     })
 
-    it('默认分辨率与别的模型一致:720p(三档同价,取中间档)', async () => {
+    it('默认分辨率与别的模型一致:720p(三档产物与价格都一样,取中间档)', async () => {
       const depth = makeTransport([{ id: 'task_depth_1', status: 'running' }])
       const mgr = makeManager(makeClient(), depth)
       const { resolution: _drop, ...noRes } = INPUT

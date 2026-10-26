@@ -1,4 +1,4 @@
-// 深度捕捉(depth)传输层 —— `generate_video` 的变体,经 Miau 网关 RunningHub 渠道。
+// 深度捕捉(depth)传输层 —— `generate_video` 的变体,经 Miau 网关腾讯云点播深度估计渠道。
 //
 // 钉住四件事:
 //   1. 分派:alias 是 depth 就走 depth 通道,**没注册绝不回落**(回落到 Seedance 会把源视频

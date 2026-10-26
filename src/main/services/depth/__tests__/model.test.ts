@@ -12,7 +12,7 @@ const MB = 1024 * 1024
 const statOf = (size: number | null) => ({ statSize: vi.fn(async () => size) })
 
 describe('depthUpstreamModelId', () => {
-  it('三档分辨率各是一个独立的上游 SKU', () => {
+  it('三档分辨率各对应一个网关模型名(腾讯后端三档产物一致,名字不能变)', () => {
     expect(depthUpstreamModelId('480p')).toBe('rh-video-depth-480p')
     expect(depthUpstreamModelId('720p')).toBe('rh-video-depth-720p')
     expect(depthUpstreamModelId('1080p')).toBe('rh-video-depth-1080p')
