@@ -41,6 +41,12 @@ export interface Wan3TaskResult {
    * 真实口径。定价按秒，所以这是唯一能算出「已经花了多少」的输入。
    */
   billedSeconds?: number
+  /**
+   * 见 `SeedanceQueryResult.upstreamTaskId`:网关之后那一跳的任务号。万相这条路
+   * 上它就是内层 DashScope 的 `output.task_id`(uuid)—— 找阿里对账认的是它,
+   * 网关的 `task_…` 号他们不认。
+   */
+  upstreamTaskId?: string
 }
 
 /** DashScope 大写状态 + Miau 网关大写状态 → 内部小写状态。 */
@@ -147,6 +153,13 @@ export function parseWan3TaskResult(raw: unknown): Wan3TaskResult {
   const code = asString(output.code) ?? envelopeErrorCode(body.code)
   const message = asString(output.message) ?? asString(record.fail_reason) ?? asString(body.message)
   const billedSeconds = billedSecondsFrom(asRecord(asRecord(record.data).usage ?? body.usage))
+  // 显式的 metadata.upstream_task_id(网关若哪天补上)压过内层 uuid;与网关 id 相同
+  // 就是直连回形,没有「另一跳」,不重复给。
+  const upstreamRaw =
+    asString(asRecord(record.metadata).upstream_task_id) ??
+    asString(asRecord(record.data).upstream_task_id) ??
+    asString(output.task_id)
+  const upstreamTaskId = upstreamRaw && upstreamRaw !== id ? upstreamRaw : undefined
 
   return {
     id,
@@ -154,6 +167,7 @@ export function parseWan3TaskResult(raw: unknown): Wan3TaskResult {
     ...(videoUrl ? { content: { video_url: videoUrl } } : {}),
     ...(code || message ? { error: { ...(code ? { code } : {}), ...(message ? { message } : {}) } } : {}),
     ...(billedSeconds !== undefined ? { billedSeconds } : {}),
+    ...(upstreamTaskId ? { upstreamTaskId } : {}),
   }
   // 刻意不透传 completion_tokens:万相按秒计费,没有这个口径。透传会让 pricing
   // 以为能按 token 估价,算出一个凭空的数字 —— 比不显示价格糟得多。

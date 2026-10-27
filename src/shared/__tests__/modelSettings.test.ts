@@ -5,6 +5,7 @@ import {
   EXPERIMENTAL_CONTEXT_WINDOW,
   GROK_CONTEXT_WINDOW,
   UNKNOWN_MODEL_CONTEXT_WINDOW,
+  successorForRetiredModel,
   defaultContextWindowForModel,
   isConcreteModelReasoningEffort,
   isModelContextWindowSupported,
@@ -91,25 +92,60 @@ describe('model settings capabilities', () => {
     })
   })
 
-  it('publishes provider-neutral DeepSeek V4 metadata', () => {
-    expect(
-      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'deepseek-v4-flash'),
-    ).toEqual({
-      id: 'deepseek-v4-flash',
-      displayName: 'DeepSeek V4 Flash',
+  it('publishes the two Volcengine Ark DeepSeek-V4.1-Flash rows (standard + economy)', () => {
+    const standard = CANONICAL_MODEL_SETTINGS_ROWS
+      .find((row) => row.id === 'deepseek-v4-1-flash-261017')
+    const economy = CANONICAL_MODEL_SETTINGS_ROWS
+      .find((row) => row.id === 'deepseek-v4-1-flash-economy-261017')
+    // 档位与 `deepseek-flash`(Miau)同为 High —— 同一档模型,只是供应商不同。
+    expect(standard).toMatchObject({
+      displayName: 'DeepSeek V4.1 Flash（火山引擎）',
       tier: 'High',
-      description: 'Fast 1M-context V4. Native Responses API; official default chat.',
       isDefault: false,
     })
-    expect(
-      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'deepseek-v4-pro'),
-    ).toEqual({
-      id: 'deepseek-v4-pro',
-      displayName: 'DeepSeek V4 Pro',
-      tier: 'Extra High',
-      description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
+    expect(economy).toMatchObject({
+      displayName: 'DeepSeek V4.1 Flash 经济版（火山引擎）',
+      tier: 'High',
       isDefault: false,
     })
+  })
+
+  it('DeepSeek 组只剩 Miau 的四行:官方渠道两个在前,火山方舟两个在后', () => {
+    const deepseekIds = CANONICAL_MODEL_SETTINGS_ROWS
+      .map((row) => row.id)
+      .filter((id) => id.startsWith('deepseek'))
+    expect(deepseekIds).toEqual([
+      'deepseek-flash',
+      'deepseek-v4-pro',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
+    ])
+    // 撤下的三行(0731 / 0813 / Right.Codes 直连的 flash)不能再出现在选择器里。
+    for (const retired of ['deepseek-v4-flash-0731', 'deepseek-v4-pro-0813', 'deepseek-v4-flash']) {
+      expect(deepseekIds, retired).not.toContain(retired)
+    }
+    // 显示名必须分得开,否则选择器里是两行一模一样的字。
+    const names = CANONICAL_MODEL_SETTINGS_ROWS
+      .filter((row) => row.id.startsWith('deepseek'))
+      .map((row) => row.displayName)
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  it('撤下的 DeepSeek slug 各有一个接替者,只在这张表里登记', () => {
+    // 老用户已保存的选择若还是撤下的 slug,启动时按它解析通道会抛
+    // 「本网关无此模型」。接替者必须是仍在选择器里的同档模型。
+    expect(successorForRetiredModel('deepseek-v4-flash-0731')).toBe('deepseek-flash')
+    expect(successorForRetiredModel('deepseek-v4-pro-0813')).toBe('deepseek-v4-pro')
+    expect(successorForRetiredModel('deepseek-v4-flash')).toBe('deepseek-flash')
+    // 没撤下的、以及根本不认识的,都原样返回 undefined —— 不能误伤。
+    expect(successorForRetiredModel('deepseek-flash')).toBeUndefined()
+    expect(successorForRetiredModel('deepseek-v4-1-flash-261017')).toBeUndefined()
+    expect(successorForRetiredModel('gpt-5.5')).toBeUndefined()
+    const visible = new Set(CANONICAL_MODEL_SETTINGS_ROWS.map((row) => row.id))
+    for (const retired of ['deepseek-v4-flash-0731', 'deepseek-v4-pro-0813', 'deepseek-v4-flash']) {
+      expect(visible.has(retired), `${retired} 还在选择器里却被登记为撤下`).toBe(false)
+      expect(visible.has(successorForRetiredModel(retired) as string), `${retired} 的接替者不在选择器里`).toBe(true)
+    }
   })
 
   /**
@@ -117,29 +153,43 @@ describe('model settings capabilities', () => {
    * Over-claiming is not the risk here — under-claiming (falling back to
    * UNKNOWN_MODEL_CONTEXT_WINDOW 200K) would compact a 1M model at 180K.
    */
-  it('keeps DeepSeek V4 on the documented 1M, including on Right.Codes', () => {
-    expect(defaultContextWindowForModel('deepseek-v4-flash')).toBe(DEEPSEEK_CONTEXT_WINDOW)
-    expect(defaultContextWindowForModel('deepseek-v4-pro')).toBe(DEEPSEEK_CONTEXT_WINDOW)
-    expect(
-      defaultContextWindowForModel('deepseek-v4-pro', 'rightcode', 'rightcode-deepseek'),
-    ).toBe(DEEPSEEK_CONTEXT_WINDOW)
-    expect(modelContextOptions('deepseek-v4-flash', 'rightcode', 'rightcode-deepseek')).toEqual([
-      { value: DEEPSEEK_CONTEXT_WINDOW, experimental: false },
-    ])
+  it('keeps DeepSeek V4 on the documented 1M on Miau, volcano rows included', () => {
+    const models = [
+      'deepseek-flash',
+      'deepseek-v4-pro',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
+    ]
+    for (const model of models) {
+      expect(defaultContextWindowForModel(model), model).toBe(DEEPSEEK_CONTEXT_WINDOW)
+      for (const [gatewayId, channelId] of [
+        ['apiyi', 'apiyi-deepseek-miau'],
+        ['rightcode', 'rightcode-deepseek-miau'],
+      ]) {
+        expect(modelContextOptions(model, gatewayId, channelId), `${channelId} / ${model}`)
+          .toEqual([{ value: DEEPSEEK_CONTEXT_WINDOW, experimental: false }])
+      }
+    }
   })
 
-  it('offers only non-aliased DeepSeek reasoning efforts on Right.Codes', () => {
-    expect(
-      mergeModelSettingsCapabilities({
-        model: 'deepseek-v4-pro',
-        gatewayId: 'rightcode',
-        channelId: 'rightcode-deepseek',
-      }),
-    ).toMatchObject({
-      defaultContextWindow: DEEPSEEK_CONTEXT_WINDOW,
-      defaultReasoningEffort: 'high',
-      supportedReasoningEfforts: ['low', 'high', 'max'],
-    })
+  it('offers only non-aliased DeepSeek reasoning efforts on Miau, volcano rows included', () => {
+    // 火山方舟两个模型与 deepseek-flash 同一套档位 —— 「调用方法一致」的一部分。
+    const routes = [
+      'deepseek-flash',
+      'deepseek-v4-pro',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
+    ].flatMap((model) => [
+      { model, gatewayId: 'apiyi', channelId: 'apiyi-deepseek-miau' },
+      { model, gatewayId: 'rightcode', channelId: 'rightcode-deepseek-miau' },
+    ])
+    for (const route of routes) {
+      expect(mergeModelSettingsCapabilities(route), JSON.stringify(route)).toMatchObject({
+        defaultContextWindow: DEEPSEEK_CONTEXT_WINDOW,
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'high', 'max'],
+      })
+    }
   })
 
   it('rejects partial gateway scope instead of silently using model-only policy', () => {
@@ -294,6 +344,10 @@ describe('model settings capabilities', () => {
 
   it.each([
     ['grok-4.5', GROK_CONTEXT_WINDOW],
+    ['gpt-6.1-sol', 272_000],
+    ['gpt-6-sol', 272_000],
+    ['gpt-6-luna', 272_000],
+    ['gpt-6-astra', 272_000],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
@@ -321,6 +375,10 @@ describe('model settings capabilities', () => {
   )
 
   it.each([
+    ['gpt-6.1-sol', 272_000],
+    ['gpt-6-sol', 272_000],
+    ['gpt-6-luna', 272_000],
+    ['gpt-6-astra', 272_000],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
@@ -386,10 +444,15 @@ describe('model settings capabilities', () => {
 
 describe('model context pin', () => {
   it.each([
+    ['gpt-6.1-sol', 272_000],
+    ['gpt-6-sol', 272_000],
+    ['gpt-6-luna', 272_000],
+    ['gpt-6-astra', 272_000],
     ['gpt-5.5', 272_000],
     ['gpt-5.6-sol', 272_000],
     ['gpt-5.6-terra', 272_000],
     ['gpt-5.6-luna', 272_000],
+    // Out of the bundled catalog since 0.158; Codex's slug fallback is 272K.
     ['gpt-5.4', 272_000],
     ['gpt-5.4-mini', 272_000],
     ['gpt-5.2', 272_000],

@@ -4,7 +4,7 @@ import { promises as fs, type WriteStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { assertCodexModelContextConfig } from '../../shared/modelSettings'
-import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexLaunchOptions, type CodexProviderConfig } from './codexLaunch'
+import { buildCodexLaunchArgs, redactCodexLaunchArgsForLog, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexLaunchOptions, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
@@ -16,6 +16,95 @@ import {
   startProviderCompatibilityProxies,
   type ProviderCompatibilityProxyGroup,
 } from './responsesCompatibilityProxy'
+import { startKbPlatformRelay, type KbPlatformRelay } from './kbPlatformRelay'
+import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
+import { resolveGatewayOrigin } from '../services/auth/gatewayHeaderInjector'
+import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gatewayToken'
+import { notePlatformSpend } from '../services/auth/platformSpend'
+
+/**
+ * 让 agent 聊天也能花平台余额。
+ *
+ * codex 自己带的是用户自填的 Miau Key(provider 的 `env_key="MIAU_API_KEY"`)。
+ * 而 `qwen3.8-max` 这一路打的就是 Miau 网关,所以平台池的钱同样付得了它 ——
+ * 用户登录之后不该还要为聊天单独填一枚 key。
+ *
+ * ## 两道闸,缺一不可
+ *
+ * 1. **上游必须是 Miau 网关。** `rightcode-claude` / `grok` / `deepseek` 打的是
+ *    别家的本地代理,把平台影子 token 发过去就是**凭据外泄** —— 这与出网注入器
+ *    的 host 白名单是同一条纪律,那边的注释写了为什么不能放宽。
+ * 2. **必须已 arm 平台池。** 没 arm 时回 null,codex 自带的 Key 原样透传,
+ *    行为与这个功能上线之前逐字节相同。
+ *
+ * 拿到的是 `gatewayPlatformHeaders` 的**整份**(Authorization + 计费归属):
+ * 少了归属那几个,钱扣对了但用量明细里查不到,而且一个错都不报。
+ */
+/**
+ * 开发期把 Miau 的生产地址换成 `CATIMATION_GATEWAY_ORIGIN`。
+ *
+ * **这一步必须在主进程做。** 那批 provider preset 住在 `gatewayModelRouting.ts`,
+ * 而那个文件被渲染层直接 import(`agent-chat/ModelPicker.tsx`)—— 在它顶层写
+ * `import { app } from 'electron'` 会让渲染进程加载即失败,表现是「应用初始化超时」
+ * 加整页空白。所以 preset 里留生产常量,覆盖在这里落。
+ *
+ * 打包产物原样返回:`resolveMiauBaseUrl` 自己有那道闸,理由见它的注释。
+ */
+function withDevGatewayOverride(
+  providers: readonly CodexProviderConfig[],
+): CodexProviderConfig[] {
+  // `app` 在测试的 electron mock 里是 undefined。缺省按**已打包**算 —— 证不出这是
+  // 开发构建,就不该放行「改凭据去向」这种操作;顺带让测试不受本机是否设了那个
+  // 环境变量影响。
+  const resolved = resolveMiauBaseUrl(app?.isPackaged ?? true)
+  if (resolved === MIAU_BASE_URL) return [...providers]
+  return providers.map((provider) =>
+    provider.baseUrl === MIAU_BASE_URL ? { ...provider, baseUrl: resolved } : { ...provider },
+  )
+}
+
+function gatewayPlatformHeadersFor(target: URL): Record<string, string> | null {
+  if (target.origin !== resolveGatewayOrigin()) return null
+  const token = getActivePoolToken()
+  if (!token) return null
+  return gatewayPlatformHeaders(token)
+}
+
+/**
+ * 用户没填 Miau Key 时塞给 `MIAU_API_KEY` 的占位值。
+ *
+ * codex 对 `env_key` 指向的环境变量要求**存在**,否则请求发出前就报
+ * `Missing environment variable`。而平台余额一开,这个值根本到不了网关 ——
+ * 兼容代理在出网前按 origin 把 `Authorization` 整个换成影子 token
+ * (见 `gatewayPlatformHeadersFor` 与代理里那段「判据是 origin」)。
+ *
+ * 没登录又没填 Key 时它会原样送到网关,网关回 401 `Invalid token`,走既有错误
+ * 路径提示用户 —— 与用户填了一把错 Key 的表现完全一致,不是新的失败模式。
+ *
+ * 取一个一眼能认出的字面量,不用空串:空串会被 codex 当成「没设」。
+ */
+export const MIAU_PLACEHOLDER_TOKEN = 'catimation-platform-balance'
+
+/**
+ * 决定这次 spawn 要往环境里放哪把 Miau 凭据。
+ *
+ * 只要注册的任何一条 provider 认 `MIAU_API_KEY`,这个变量就必须有值 —— 用户填了
+ * 就用真的,没填就用占位。以前是「没填就不设」,于是登录了、平台余额也开了的用户,
+ * 选千问或 DeepSeek Miau 时被 codex 自己的缺变量检查拦下,而报错里完全看不出
+ * 这和「没填 Key」有什么关系(2026-09-01 真机撞到)。
+ *
+ * spawn 不依赖登录态是刻意的:登录 / 登出都不需要重启 codex,占位值送不送到网关
+ * 由代理在**每个请求**上按当时的 pool 状态决定。
+ */
+export function miauEnvForSpawn(
+  providers: readonly CodexProviderConfig[],
+  understand: { provider: CodexProviderConfig; token: string } | undefined,
+): Record<string, string> | undefined {
+  const envKey = understand?.provider.envKey ?? 'MIAU_API_KEY'
+  if (understand?.token) return { [envKey]: understand.token }
+  const anyMiau = providers.some((p) => p.envKey === envKey)
+  return anyMiau ? { [envKey]: MIAU_PLACEHOLDER_TOKEN } : undefined
+}
 import type {
   AgentStreamEvent,
   CodexApprovalRequest,
@@ -27,7 +116,13 @@ import type {
   CodexThreadSummary,
   CodexWorkspacePaths,
 } from '../../types/agent'
-import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
+import type {
+  AgentInput,
+  IAgentBackend,
+  ListThreadsParams,
+  TemporaryStructuredTurnRequest,
+  TemporaryStructuredTurnResult,
+} from './types'
 import type {
   CodexModelListParams,
   CodexModelListResponse,
@@ -58,6 +153,7 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type {
+  ThreadGoalMutationOrigin,
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalGetResponse,
@@ -151,7 +247,7 @@ export interface CodexLocalBackendOptions {
    */
   cinematographyKbStdio?: CodexLaunchOptions['cinematographyKbStdio']
   /**
-   * Resolves the qwen3.7-max-dashscope understanding provider (Path B) at spawn
+   * Resolves the qwen understanding provider (Path B, default qwen3.8-omni-flash) at spawn
    * time. When it returns a config + token, the spawned codex registers an
    * EXTRA `[model_providers.qwen]` table (so a subagent can select
    * `modelProvider="qwen"`) and the token is injected as the provider's env var
@@ -198,6 +294,12 @@ export interface CodexLocalBackendOptions {
    * next codex (re)start (AgentManager restarts on key change).
    */
   getDashVectorKey?: () => string | undefined
+  /**
+   * 每次 spawn 给 cinematography_kb 起一个本机平台中转(`kbPlatformRelay.ts`),登录后
+   * 它的两个检索工具按平台余额计费。只有生产 AgentManager 打开 —— 测连通性的临时
+   * backend 不该占端口,单测断言的启动参数也不该多出两条。
+   */
+  cinematographyKbPlatformRelay?: boolean
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   /** 服务端自行解决/清理了某个待决审批请求（`serverRequest/resolved`）。 */
   onApprovalResolved?: (info: { id: string; threadId?: string }) => void
@@ -229,6 +331,7 @@ type SpawnedCodexClient = {
   proc: ChildProcess
   client: CodexProtocolClient
   compatibilityProxies: ProviderCompatibilityProxyGroup | null
+  kbRelay: KbPlatformRelay | null
   /**
    * (round-5) 显式持有 log WriteStream, 让 stop() 能 .end() 它。
    *
@@ -332,6 +435,7 @@ export class CodexLocalBackend implements IAgentBackend {
    */
   private log: WriteStream | null = null
   private compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
+  private kbRelay: KbPlatformRelay | null = null
   /** Provider tables registered on the live spawn (Plan B routing targets). */
   private registeredProviderChannelIds = new Set<string>()
   private readonly options: CodexLocalBackendOptions
@@ -383,11 +487,15 @@ export class CodexLocalBackend implements IAgentBackend {
       return
     }
 
+    const previousKbRelay = this.kbRelay
     const started = await this.spawnClientRetryingPortClashes()
     this.proc = started.proc
     this.client = started.client
     this.log = started.log
     this.compatibilityProxies = started.compatibilityProxies
+    this.kbRelay = started.kbRelay
+    // codex 崩溃后 AgentManager 不经 stop() 直接再调 start(),上一代中转只服务那个已经退出的进程。
+    await previousKbRelay?.close().catch(() => undefined)
   }
 
   private async startWsClient(url: string): Promise<CodexProtocolClient> {
@@ -460,6 +568,7 @@ export class CodexLocalBackend implements IAgentBackend {
     }
 
     let compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
+    let kbRelay: KbPlatformRelay | null = null
     let proc: ChildProcess | null = null
     try {
       const apiKey = this.options.getApiKey?.()
@@ -470,18 +579,22 @@ export class CodexLocalBackend implements IAgentBackend {
       // can route a thread to any of them without a codex restart.
       const gatewayChannels = (this.options.getGatewayChannelProviders?.() ?? [])
         .filter((channel) => channel.id !== this.currentProvider?.id)
-      const providerConfigs = [
+      // 开发期把 Miau 生产地址换成 `CATIMATION_GATEWAY_ORIGIN`。preset 里留的是
+      // 生产常量,因为那批 preset 的文件被渲染层 import,不能碰 electron。
+      const providerConfigs = withDevGatewayOverride([
         ...(this.currentProvider ? [this.currentProvider] : []),
         ...(understand ? [understand.provider] : []),
         ...gatewayChannels,
-      ]
+      ])
       // Records what THIS spawn can serve: only ids in this set are valid
       // in-process `thread/start.modelProvider` targets (Plan B).
       this.registeredProviderChannelIds = new Set(
         providerConfigs.map((provider) => provider.id),
       )
       compatibilityProxies = providerConfigs.length > 0
-        ? await startProviderCompatibilityProxies(providerConfigs)
+        ? await startProviderCompatibilityProxies(providerConfigs, {
+          platformHeaders: gatewayPlatformHeadersFor,
+        })
         : null
       let providerIndex = 0
       const activeProvider = this.currentProvider
@@ -491,9 +604,14 @@ export class CodexLocalBackend implements IAgentBackend {
         ? compatibilityProxies?.providers[providerIndex++]
         : undefined
       const gatewayChannelProviders = compatibilityProxies?.providers.slice(providerIndex) ?? []
-      const extraEnv = understand?.token
-        ? { [understand.provider.envKey]: understand.token }
-        : undefined
+      kbRelay = this.options.cinematographyKbPlatformRelay
+        ? await startKbPlatformRelay({
+          gatewayOrigin: resolveGatewayOrigin,
+          platformHeaders: gatewayPlatformHeadersFor,
+          onSpend: notePlatformSpend,
+        })
+        : null
+      const extraEnv = miauEnvForSpawn(providerConfigs, understand)
       const ffmpegDir = resolveBundledFfmpegDir(resourceRoot)
       const env = buildCodexSpawnEnv(
         process.env,
@@ -516,8 +634,11 @@ export class CodexLocalBackend implements IAgentBackend {
         apiyiKey: this.options.getApiyiKey?.(),
         cinematographyKbKey: this.options.getCinematographyKbKey?.(),
         dashVectorKey: this.options.getDashVectorKey?.(),
+        cinematographyKbPlatformRelay: kbRelay
+          ? { url: kbRelay.url, token: kbRelay.token }
+          : undefined,
       })
-      const spawnLine = `[CodexLaunch] spawn ${bin} ${launchArgs.join(' ')}`
+      const spawnLine = `[CodexLaunch] spawn ${bin} ${redactCodexLaunchArgsForLog(launchArgs).join(' ')}`
       log.write(spawnLine + '\n')
       console.log(spawnLine)
       proc = (this.options.spawnFactory ?? spawn)(
@@ -531,6 +652,7 @@ export class CodexLocalBackend implements IAgentBackend {
     } catch (error) {
       await this.killProcessInstance(proc)
       await compatibilityProxies?.close().catch(() => undefined)
+      await kbRelay?.close().catch(() => undefined)
       if (ownedLog) ownedLog.end()
       throw error
     }
@@ -583,6 +705,7 @@ export class CodexLocalBackend implements IAgentBackend {
       await client.stop().catch(() => { /* ignore */ })
       await this.killProcessInstance(proc)
       await compatibilityProxies?.close().catch(() => undefined)
+      await kbRelay?.close().catch(() => undefined)
       // 启动失败也要把刚开的 log fd 关掉, 否则失败重试场景下泄一个 fd。
       if (ownedLog) ownedLog.end()
       throw error
@@ -592,7 +715,7 @@ export class CodexLocalBackend implements IAgentBackend {
     // One bump per successful spawn — invalidates any thread id minted by a
     // previous codex generation (see `epoch` field jsdoc).
     this.epoch += 1
-    return { proc, client, log: ownedLog, compatibilityProxies }
+    return { proc, client, log: ownedLog, compatibilityProxies, kbRelay }
   }
 
   async stop(): Promise<void> {
@@ -600,15 +723,18 @@ export class CodexLocalBackend implements IAgentBackend {
     const proc = this.proc
     const log = this.log
     const compatibilityProxies = this.compatibilityProxies
+    const kbRelay = this.kbRelay
     this.client = null
     this.proc = null
     this.log = null
     this.compatibilityProxies = null
+    this.kbRelay = null
     if (client) {
       await client.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(proc)
     await compatibilityProxies?.close().catch(() => undefined)
+    await kbRelay?.close().catch(() => undefined)
     // 关 log fd: 用 .end() 而不是 .destroy(), 因为 proc.exit 之后 pipe
     // 可能还有未 flush 的最后几行 buffered data, .end() 会 flush 完再关。
     // 包 try 是因为 stream 内部状态可能已经 destroyed (双重关闭无害但报警)。
@@ -653,17 +779,20 @@ export class CodexLocalBackend implements IAgentBackend {
     const oldProc = this.proc
     const oldLog = this.log
     const oldCompatibilityProxies = this.compatibilityProxies
+    const oldKbRelay = this.kbRelay
     const replacement = await this.spawnClientRetryingPortClashes()
     this.proc = replacement.proc
     this.client = replacement.client
     this.log = replacement.log
     this.compatibilityProxies = replacement.compatibilityProxies
+    this.kbRelay = replacement.kbRelay
 
     if (oldClient) {
       await oldClient.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(oldProc)
     await oldCompatibilityProxies?.close().catch(() => undefined)
+    await oldKbRelay?.close().catch(() => undefined)
     // 跟 stop() 同款关 log: provider/config 切换走的就是这条热重启路径,
     // 高频用户最容易在这里累积 fd 泄漏。
     if (oldLog) {
@@ -735,6 +864,13 @@ export class CodexLocalBackend implements IAgentBackend {
   async unsubscribeThread(threadId: string): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.unsubscribeThread called before start')
     return this.client.unsubscribeThread(threadId)
+  }
+
+  async runTemporaryStructuredTurn(
+    request: TemporaryStructuredTurnRequest,
+  ): Promise<TemporaryStructuredTurnResult> {
+    if (!this.client) throw new Error('CodexLocalBackend.runTemporaryStructuredTurn called before start')
+    return this.client.runTemporaryStructuredTurn(request)
   }
 
   async resumeThread(
@@ -913,9 +1049,12 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.getThreadGoal(threadId)
   }
 
-  async clearThreadGoal(threadId: string): Promise<ThreadGoalClearResponse> {
+  async clearThreadGoal(
+    threadId: string,
+    origin?: ThreadGoalMutationOrigin,
+  ): Promise<ThreadGoalClearResponse> {
     if (!this.client) throw new Error('CodexLocalBackend.clearThreadGoal called before start')
-    return this.client.clearThreadGoal(threadId)
+    return this.client.clearThreadGoal(threadId, origin)
   }
 
   async compactThread(threadId: string): Promise<Record<string, never>> {
@@ -936,6 +1075,11 @@ export class CodexLocalBackend implements IAgentBackend {
   async deleteThread(threadId: string): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.deleteThread called before start')
     return this.client.deleteThread(threadId)
+  }
+
+  async updateThreadMetadata(threadId: string, patch: { isPinned?: boolean }): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.updateThreadMetadata called before start')
+    return this.client.updateThreadMetadata(threadId, patch)
   }
 
   async listPlugins(params?: PluginListParams): Promise<PluginListResponse> {

@@ -53,10 +53,23 @@ async function walkFiles(rootDir) {
   return out
 }
 
+const TEXT_FILE_RE = /\.(md|json|txt|ya?ml|toml|mjs|cjs|js|ts|tsx|css|html|svg)$/i
+
+/** `\r\n` → `\n` so a Windows checkout (core.autocrlf=true) hashes like the LF original. */
+function normalizeNewlines(text) {
+  return text.replace(/\r\n?/g, '\n')
+}
+
 /**
  * Content signature of a plugin directory, EXCLUDING the `version` field of the
  * three plugin manifests. Bumping/aligning a version therefore never perturbs
  * the signature — only real content edits do.
+ *
+ * Text files are hashed with line endings normalized: with `core.autocrlf=true`
+ * every `git checkout` rewrites LF → CRLF in the working copy, and hashing raw
+ * bytes made the publisher "detect a change" (and auto-bump + republish) after
+ * nothing but a branch switch — 2026-09-22 shipped catimation-video 1.0.42 /
+ * ffmpeg-win 1.0.13 for exactly zero content difference.
  */
 export async function pluginContentSignature(pluginDir) {
   const files = await walkFiles(pluginDir)
@@ -65,7 +78,9 @@ export async function pluginContentSignature(pluginDir) {
     h.update(f.rel)
     h.update('\0')
     if (MANIFEST_RE.test(f.rel)) {
-      h.update(stripVersion(await fs.readFile(f.abs, 'utf8')))
+      h.update(normalizeNewlines(stripVersion(await fs.readFile(f.abs, 'utf8'))))
+    } else if (TEXT_FILE_RE.test(f.rel)) {
+      h.update(normalizeNewlines(await fs.readFile(f.abs, 'utf8')))
     } else {
       h.update(await fs.readFile(f.abs))
     }

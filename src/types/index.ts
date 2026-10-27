@@ -1,5 +1,8 @@
 // src/types/index.ts - 核心类型定义
 
+import type { PetsApi } from './pets'
+import type { VoiceApi } from './voice'
+
 // ==================== 历史记录类型 ====================
 
 export type HistoryItemType = 
@@ -229,6 +232,8 @@ export interface ElectronAPI {
     showItemInFolder: (p: string) => Promise<void>
     openExternal: (url: string) => Promise<IpcResponse>
   }
+  pets?: PetsApi
+  voice?: VoiceApi
 }
 
 // ==================== IPC 通道定义 ====================

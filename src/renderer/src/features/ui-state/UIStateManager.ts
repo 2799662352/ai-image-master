@@ -354,7 +354,9 @@ export class UIStateManager {
   setupSeedreamCountHint(modelConfig: any): void {
     const isSeedream = modelConfig?.name?.toLowerCase().includes('seedream')
     const batchCountLabel = document.getElementById('batchCountLabel')
-    let hint = document.getElementById('batchCountHint')
+    // 只读不改:新建的按钮走下面的局部变量。getElementById 只能给出 HTMLElement,
+    // 复用同一个变量去接 createElement('button') 就拿不到 .type(TS2339)。
+    const hint = document.getElementById('batchCountHint')
 
     if (!batchCountLabel) return
 
@@ -362,19 +364,19 @@ export class UIStateManager {
       const message = 'Seedream 模型支持一次生成多张，每张按单价计费（最多 15 张）。如需批量多图，请分批提交任务。'
 
       if (!hint) {
-        hint = document.createElement('button')
-        hint.id = 'batchCountHint'
-        hint.type = 'button'
-        hint.className = 'ml-2 w-4 h-4 flex items-center justify-center text-orange-200 hover:text-orange-100 transition-colors'
-        hint.innerHTML = `<i class="fas fa-question-circle"></i>`
-        hint.title = message
-        hint.setAttribute('aria-label', message)
-        hint.addEventListener('click', () => {
+        const button = document.createElement('button')
+        button.id = 'batchCountHint'
+        button.type = 'button'
+        button.className = 'ml-2 w-4 h-4 flex items-center justify-center text-orange-200 hover:text-orange-100 transition-colors'
+        button.innerHTML = `<i class="fas fa-question-circle"></i>`
+        button.title = message
+        button.setAttribute('aria-label', message)
+        button.addEventListener('click', () => {
           // 使用 ToastManager 显示提示
           const toast = (window as any).toastManagerTS
           toast?.show(message, 'info')
         })
-        batchCountLabel.appendChild(hint)
+        batchCountLabel.appendChild(button)
       } else {
         hint.title = message
         hint.setAttribute('aria-label', message)

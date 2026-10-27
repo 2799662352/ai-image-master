@@ -51,6 +51,22 @@ export interface RunnerProgressPatch {
   taskDetail?: EraseTaskDetailSnapshot
 }
 
+/**
+ * The subset of `RunnerProgressPatch` that the submit+poll phase can emit —
+ * it never reports the `uploading` stage or `uploadProgress`.
+ *
+ * Derived from `RunnerProgressPatch` rather than re-listing the fields: the
+ * phase signature used to spell out its own `{ stage; mpsTaskId }` literal,
+ * so when `mpsProgress` / `taskDetail` were added they landed in
+ * `RunnerProgressPatch` only. The poll emit then failed excess-property
+ * checks and the composer's reads of both fields were rejected, even though
+ * every poll has carried them all along. Deriving makes that drift
+ * impossible to reintroduce.
+ */
+export type ProcessProgressPatch = Omit<RunnerProgressPatch, 'stage' | 'uploadProgress'> & {
+  stage: 'submitting' | 'processing'
+}
+
 export interface RunnerEvents {
   onProgress?: (patch: RunnerProgressPatch) => void
 }
@@ -219,7 +235,7 @@ export async function runUpload(
 export async function runProcessAndPoll(
   job: ProcessPhaseInput,
   signal: AbortSignal,
-  events: { onProgress?: (p: { stage: 'submitting' | 'processing'; mpsTaskId?: string }) => void } = {},
+  events: { onProgress?: (p: ProcessProgressPatch) => void } = {},
 ): Promise<ProcessPhaseOutput> {
   events.onProgress?.({ stage: 'submitting' })
   // 永久密钥优先,未配置时走 STS 免密钥通道(桶/区域随票据下发)。
@@ -372,7 +388,7 @@ export async function runEraseJob(
   const { inputCosKey } = await runUpload(
     { taskId: job.taskId, filePath: job.filePath, filename: job.filename },
     signal,
-    events as any,
+    events,
   )
 
   if (signal.aborted) throw makeError('TASK_CANCELLED', 'Cancelled after upload', 'upload')
@@ -386,7 +402,7 @@ export async function runEraseJob(
       inputCosKey,
     },
     signal,
-    events as any,
+    events,
   )
 
   return {

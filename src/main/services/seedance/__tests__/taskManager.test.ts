@@ -152,6 +152,66 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  it('轮询学到 upstreamTaskId 就广播一次,之后每条广播都带着;不因它重复刷屏', async () => {
+    const mgr = makeManager(
+      makeClient([
+        // 第一轮:状态没变(queued→queued 不广播),但学到了上游任务号 → 必须广播
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'cgt-20260903172200-5n7rt' },
+        // 第二轮:同一个上游号、同一状态 → 什么都没新学到,不广播
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'cgt-20260903172200-5n7rt' },
+        { id: 'task-1', status: 'succeeded', content: { video_url: 'https://cdn/v.mp4' }, upstreamTaskId: 'cgt-20260903172200-5n7rt' },
+      ]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    expect(broadcasts).toHaveLength(1) // submit 的 queued
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(2)
+    expect(broadcasts[1]).toMatchObject({ status: 'queued', upstreamTaskId: 'cgt-20260903172200-5n7rt' })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(6_000)
+    const succeededBroadcast = broadcasts.find((b) => b.status === 'succeeded')
+    expect(succeededBroadcast).toMatchObject({ upstreamTaskId: 'cgt-20260903172200-5n7rt' })
+    expect(mgr.get('task-1')?.upstreamTaskId).toBe('cgt-20260903172200-5n7rt')
+    mgr.dispose()
+  })
+
+  it('submit 把实际递给上游的素材地址(已解析成 https)按类记进状态与每条广播', async () => {
+    const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
+    const state = await mgr.submit({
+      input: INPUT,
+      content: [
+        { type: 'text', text: INPUT.prompt },
+        { type: 'image_url', role: 'reference_image', image_url: { url: 'https://cos/a.png' } },
+        { type: 'image_url', role: 'reference_image', image_url: { url: 'https://cos/b.png' }, assetId: 'as-1' },
+        { type: 'video_url', video_url: { url: 'https://cos/v.mp4' } },
+      ],
+    })
+    const expected = { images: ['https://cos/a.png', 'https://cos/b.png'], videos: ['https://cos/v.mp4'], audios: [] }
+    expect(state.referenceUrls).toEqual(expected)
+    expect(broadcasts[0].referenceUrls).toEqual(expected)
+    await vi.advanceTimersByTimeAsync(6_000)
+    // 状态对象上一直挂着,后续广播(running)自然也带
+    expect(broadcasts.at(-1)?.referenceUrls).toEqual(expected)
+    mgr.dispose()
+  })
+
+  it('纯文本提交:状态里没有 referenceUrls 这个键(不给三个空数组占位)', async () => {
+    const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
+    const state = await mgr.submit({ input: INPUT, content: [{ type: 'text', text: INPUT.prompt }] })
+    expect(Object.hasOwn(state, 'referenceUrls')).toBe(false)
+    mgr.dispose()
+  })
+
+  it('直连回形(查询结果不带 upstreamTaskId)一切照旧,状态里也没有这个键', async () => {
+    const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(2)
+    expect(Object.hasOwn(broadcasts[1], 'upstreamTaskId')).toBe(false)
+    mgr.dispose()
+  })
+
   it('announcePreparing 广播 queued 预备卡片并返回 clientId，不创建轮询任务', () => {
     const mgr = makeManager(makeClient([]))
     const clientId = mgr.announcePreparing({ input: INPUT, threadId: 'th-1' })

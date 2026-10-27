@@ -5,6 +5,7 @@
  */
 
 import { BasePage, type AppInterface } from './BasePage'
+import type { GenerateResult } from '../services/api/ApiService'
 import { compressImage } from '../utils/image-compress'
 import { useTemplateStore } from '../react-app/stores/useTemplateStore'
 import { composePromptWithTemplate } from '../react-app/constants/templates'
@@ -37,10 +38,10 @@ export interface ProgressToast {
   close: () => void
 }
 
-export interface GenerateResult {
-  success: boolean
-  urls: string[]
-}
+// GenerateResult 的权威定义在 ApiService:出图结果的主字段是 images,urls 只是
+// 它的旧别名(见 ApiService 返回 `{ success, images, urls: images }`)。本文件原先
+// 另写了一份只有 { success, urls } 的窄版,于是读 result.images 全是 TS2339。
+export type { GenerateResult }
 
 export interface ImageDimensions {
   width: number

@@ -18,6 +18,7 @@ import type {
   VideoWorkbenchMode,
   VideoWorkbenchSpec,
 } from '../../../../types/videoWorkbench'
+import { DEFAULT_PROJECT_ID } from '../../../../types/videoWorkbench'
 import type { SeedanceModelAlias } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
@@ -56,8 +57,30 @@ export const MATERIAL_KINDS = [
   'referenceAudios',
 ] as const satisfies readonly MaterialKind[]
 
+const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz'
+const ID_LENGTH = 10
+
+/**
+ * 卡片 / 分段 / 剧的 id:10 位 base36(约 52 bit)。
+ *
+ * 之前是 randomUUID —— 36 字符,而这些 id 会随每次 status / export 成批进模型上下文,
+ * 一张卡的 id 比它截断后的提示词还长;Anthropic 实测长随机 id 还会拉低模型对 id 的
+ * 复述精度。id 只是不透明句柄,老数据里的 UUID 照旧可用,不迁移。
+ *
+ * 52 bit 对单机工作台绝对够(一万张卡的碰撞概率 ~1e-8),但不要在跨用户的全局
+ * 命名空间里复用这个函数。
+ */
 export function createId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `wb-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const bytes = new Uint8Array(ID_LENGTH)
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < ID_LENGTH; i += 1) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  // 36 不整除 256,取模会让 0–27 略多出现(概率偏 ~1/256),对唯一性无影响。
+  let out = ''
+  for (let i = 0; i < ID_LENGTH; i += 1) out += ID_ALPHABET[bytes[i] % 36]
+  return out
 }
 
 /** 字符串源 → Material(展示名从路径/URL 猜)。 */
@@ -159,6 +182,8 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
     mode,
     ...(seed !== undefined ? { seed } : {}),
     webSearch: input.webSearch !== false,
+    // 同 seed:只在开着时出现,关掉就是没有这个键(与「从未开过」不可区分才对)。
+    ...(input.draft === true ? { draft: true } : {}),
     // 归一成序列化形态:UI 写 JSON、MCP 写裸 URL,两种都认(coerce)。
     // 认不出的(坏数据/手改过的持久化)当没设置,而不是原样留着等提交时才炸。
     ...(() => {
@@ -186,6 +211,10 @@ export function buildCard(
     createdAt: now,
     updatedAt: now,
     rev: 0,
+    // 幂等键只在建卡时落下(见 VideoWorkbenchCard.clientRef);空白当作没给。
+    ...(typeof input.clientRef === 'string' && input.clientRef.trim()
+      ? { clientRef: input.clientRef.trim() }
+      : {}),
     ...normalizeSpec(input),
   }
 }
@@ -208,6 +237,7 @@ export function pickSpec(spec: VideoWorkbenchSpec): VideoWorkbenchSpec {
     mode: spec.mode,
     ...(spec.seed !== undefined ? { seed: spec.seed } : {}),
     webSearch: spec.webSearch,
+    ...(spec.draft ? { draft: true } : {}),
     ...(spec.documentOrLink ? { documentOrLink: spec.documentOrLink } : {}),
     referenceImages: spec.referenceImages,
     referenceVideos: spec.referenceVideos,
@@ -237,6 +267,7 @@ export function specEquals(a: VideoWorkbenchSpec, b: VideoWorkbenchSpec): boolea
     && a.mode === b.mode
     && a.seed === b.seed
     && a.webSearch === b.webSearch
+    && (a.draft === true) === (b.draft === true)
     // 序列化字符串直接比:同一个槽位值序列化结果稳定(字段顺序由 serialize 固定)。
     && (a.documentOrLink ?? '') === (b.documentOrLink ?? '')
     && materialsEqual(a.referenceImages, b.referenceImages)
@@ -264,6 +295,6 @@ export function reorderBoard(
   })
 }
 
-export function createDefaultBoard(order = 0, name?: string): VideoWorkbenchBoard {
-  return { id: createId(), name: name ?? `页面 ${order + 1}`, order, createdAt: Date.now() }
+export function createDefaultBoard(order = 0, name?: string, projectId = DEFAULT_PROJECT_ID): VideoWorkbenchBoard {
+  return { id: createId(), projectId, name: name ?? `页面 ${order + 1}`, order, createdAt: Date.now() }
 }

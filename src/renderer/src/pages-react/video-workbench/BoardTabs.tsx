@@ -1,19 +1,42 @@
-// 「生成视频」工作台多「页」页签条:切换 / 新建(+) / 双击行内重命名(Enter
-// 确认、Esc 取消)/ 两步确认删除(避开 window.confirm,jsdom 与桌面端一致)。
-// 视觉遵循 DESIGN.md 赛博朋克 token:激活页 #FCE300 描边,未激活 #3F3F46。
+// 「生成视频」工作台「分段」(board)页签条:只显示当前剧的分段,自动换行不出滚动条;
+// 切换 / 新建(+) / 双击行内重命名(Enter 确认、Esc 取消)/ 删除(✕ 或右键:移入回收站,
+// 可恢复,在回收站里确认后才彻底删除)/ 右键菜单(重命名、置顶、Fork、删除)。
+// 上方一行面包屑「‹ 剧名 › 分段名」,‹ 回总览。
+// 视觉遵循赛博朋克 token:激活段 #FCE300 描边,未激活 #3F3F46。
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
+import { pinnedFirst } from '../../features/video-workbench/projects'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { useContextMenu } from './ContextMenu'
+import { boardMenuItems, trashBoardWithToast } from './workbenchMenus'
+
+/**
+ * 卡片拖动时写入的 dataTransfer 类型。与 WorkbenchCard.tsx 里的私有常量同值 ——
+ * 卡片文件不改,这里以字面量复述;WorkbenchCard.dragFix.test 也钉着这个字符串。
+ */
+const CARD_DRAG_MIME = 'application/x-vw-card'
 
 export function BoardTabs() {
-  const boards = useVideoWorkbenchStore((s) => s.boards)
+  const activeProjectId = useVideoWorkbenchStore((s) => s.activeProjectId)
+  const projectName = useVideoWorkbenchStore(
+    (s) => s.projects.find((p) => p.id === s.activeProjectId)?.name ?? '',
+  )
+  const openOverview = useVideoWorkbenchStore((s) => s.openOverview)
+  const allBoards = useVideoWorkbenchStore((s) => s.boards)
+  // 页签只认本剧:别的剧的分段在剧栏里切剧才看得到 —— 这就是「隔离」在这一屏的样子。
+  const pinnedBoardIds = useVideoWorkbenchStore((s) => s.pinnedBoardIds)
+  const boards = pinnedFirst(
+    allBoards.filter((b) => b.projectId === activeProjectId).sort((a, b) => a.order - b.order),
+    pinnedBoardIds,
+  )
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const addBoard = useVideoWorkbenchStore((s) => s.addBoard)
   const switchBoard = useVideoWorkbenchStore((s) => s.switchBoard)
   const renameBoard = useVideoWorkbenchStore((s) => s.renameBoard)
-  const removeBoard = useVideoWorkbenchStore((s) => s.removeBoard)
+  const menu = useContextMenu()
   const setBoardSummary = useVideoWorkbenchStore((s) => s.setBoardSummary)
+  const moveCardToBoard = useVideoWorkbenchStore((s) => s.moveCardToBoard)
 
   /**
    * 行内编辑中的页(同一时刻最多一个)。带 field 是因为页名和摘要共用同一套
@@ -31,22 +54,6 @@ export function BoardTabs() {
   useEffect(() => {
     setSummaryExpanded(false)
   }, [activeBoardId])
-
-  /** 两步删除确认中的页 id;3.5s 无操作自动复位。 */
-  const [confirmingId, setConfirmingId] = useState<string | null>(null)
-  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    return () => {
-      if (confirmTimer.current) clearTimeout(confirmTimer.current)
-    }
-  }, [])
-
-  const armConfirm = (id: string) => {
-    setConfirmingId(id)
-    if (confirmTimer.current) clearTimeout(confirmTimer.current)
-    confirmTimer.current = setTimeout(() => setConfirmingId(null), 3500)
-  }
 
   const beginEdit = (id: string, field: 'name' | 'summary', value: string) => {
     setEditing({ id, field })
@@ -67,24 +74,60 @@ export function BoardTabs() {
   const editingActiveSummary = editing?.id === activeBoardId && editing.field === 'summary'
 
   return (
+    <div className="flex flex-col gap-1.5 min-w-0 w-full">
+      {/* 面包屑:‹ 回总览。剧名点击也回总览 —— 分段页里「我在哪部剧」要一眼可见。 */}
+      <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+        {/* 「‹ 总览」要长得像一个可点的按钮:11px 灰字的剧名没人会想到去点。 */}
+        <button
+          type="button"
+          aria-label="返回总览"
+          title="返回这部剧的总览"
+          className="vw-crumb"
+          onClick={openOverview}
+        >
+          ‹ 总览
+        </button>
+        <span className="vw-crumb-sep">›</span>
+        <span className="vw-crumb-project">{projectName}</span>
+        <span className="vw-crumb-sep">›</span>
+        <span className="vw-crumb-cur">{activeBoard?.name ?? ''}</span>
+      </div>
     <div className="flex items-start gap-3 flex-wrap">
-    <div role="tablist" aria-label="工作台页" className="flex items-center gap-1 flex-wrap">
+    {/*
+      自动换行,不出滚动条 —— 与 superdesign 定稿(方案 A)一致。「十几个页签折成三排」
+      的病根是所有片子挤在一部剧里,现在分段按剧隔开,一部剧几段换一两行是正常的;
+      横向滚动条反而把后面的分段藏起来,用户看不见也想不到去滚。
+    */}
+    <div role="tablist" aria-label="本剧分段" className="vw-tabs">
       {boards.map((board) => {
         const active = board.id === activeBoardId
         const editingName = editing?.id === board.id && editing.field === 'name'
         const editingSummary = editing?.id === board.id && editing.field === 'summary'
         const busy = editingName || editingSummary
-        const confirming = confirmingId === board.id
+        const pinned = pinnedBoardIds.includes(board.id)
         const summary = board.summary?.trim() ?? ''
         return (
           <div
             key={board.id}
+            onContextMenu={(e) =>
+              menu.open(e, boardMenuItems(board.id, { onRename: () => beginEdit(board.id, 'name', board.name) }))
+            }
             className={[
               'group flex items-center gap-1 border px-2 py-1.5 transition-colors',
               active
                 ? 'border-[#FCE300] bg-[#FCE300]/10 text-[#FCE300]'
                 : 'border-[#3F3F46] text-white/60 hover:border-[#FCE300]/60 hover:text-white',
             ].join(' ')}
+            // 把卡片拖到页签上 = 挪到那一段末尾(同段拖到自己的页签是无操作)
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer.types ?? []).includes(CARD_DRAG_MIME)) e.preventDefault()
+            }}
+            onDrop={(e) => {
+              const cardId = e.dataTransfer.getData(CARD_DRAG_MIME)
+              if (!cardId) return
+              e.preventDefault()
+              moveCardToBoard(cardId, board.id)
+            }}
           >
             {editingName ? (
               <input
@@ -114,6 +157,7 @@ export function BoardTabs() {
                 {board.name}
               </button>
             )}
+            {pinned && !editingName && <span className="vw-pin" title="已置顶">PIN</span>}
             {/*
               摘要行内显示,而不是塞进第二行 —— 页签栏会 flex-wrap,加一行等于把整条
               栏抬高一倍,哪怕大多数页根本没写摘要。这里横向截断得比页名更狠(7rem):
@@ -167,40 +211,29 @@ export function BoardTabs() {
                 ＋摘要
               </button>
             )}
-            {/* 至少保留一页:仅剩一页时不出删除入口 */}
+            {/*
+              每部剧至少保留一段:本剧仅剩一段时不出删除入口(boards 已按剧过滤)。
+              ✕ 一下就进回收站(可恢复、可 Ctrl+Z),「确认」放在回收站里彻底删除那一步 ——
+              误点的代价从「丢数据」降为「去回收站恢复」,所以这里不再二次确认。
+            */}
             {boards.length > 1 && !busy && (
-              confirming ? (
-                <button
-                  type="button"
-                  aria-label={`确认删除「${board.name}」`}
-                  title="再点一次确认删除本页及其全部卡片"
-                  className="text-[10px] px-1 border border-red-500 bg-red-500/20 text-red-400"
-                  onClick={() => {
-                    setConfirmingId(null)
-                    removeBoard(board.id)
-                  }}
-                >
-                  确认删除
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  aria-label={`删除页「${board.name}」`}
-                  title="删除本页(需二次确认)"
-                  className="text-white/30 hover:text-red-400 text-xs px-0.5"
-                  onClick={() => armConfirm(board.id)}
-                >
-                  ✕
-                </button>
-              )
+              <button
+                type="button"
+                aria-label={`删除页「${board.name}」`}
+                title="删除本页:移入回收站,可恢复"
+                className="text-white/30 hover:text-red-400 text-xs px-0.5"
+                onClick={() => trashBoardWithToast(board.id)}
+              >
+                ✕
+              </button>
             )}
           </div>
         )
       })}
       <button
         type="button"
-        aria-label="新建页"
-        title="新建一个独立的工作页"
+        aria-label="新建分段"
+        title="在这部剧里新建一个分段"
         className="text-xs border border-dashed border-[#3F3F46] text-white/50 hover:border-[#FCE300] hover:text-[#FCE300] px-2.5 py-1.5 transition-colors"
         onClick={() => addBoard()}
       >
@@ -262,6 +295,8 @@ export function BoardTabs() {
           onBlur={commitEdit}
         />
       )}
+    </div>
+    {menu.node}
     </div>
   )
 }

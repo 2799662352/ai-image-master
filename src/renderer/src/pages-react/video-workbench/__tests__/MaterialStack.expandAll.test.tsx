@@ -89,3 +89,52 @@ describe('素材堆：超出一行时也要能看全、能操作', () => {
     expect(at(29)).toContain('--expand-top: 128px')
   })
 })
+
+// 「+ 添加」卡必须永远排在最后一张**之后**的那一格。
+//
+// 背景:它的横向位置原本是 `columns % 12`,满 12 张时绕回第 0 格,叠在第一张底下 ——
+// 于是参考图一到 12 张,加号就「消失」了,用户只能删一张再加(见 2026-09-22 反馈:
+// 22/30 张铺开后没有再次添加素材的按钮)。这里断言的是「不与任何素材同格」。
+describe('素材堆:「+ 添加」卡在任何数量下都不能被素材盖住', () => {
+  const addStyle = (): string =>
+    screen.getByRole('button', { name: '添加参考图' }).getAttribute('style') ?? ''
+
+  it('正好 12 张(满一行)时,添加卡排在第 13 格,而不是绕回第 0 格', () => {
+    renderStack(12)
+    expect(addStyle()).toContain('--expand-left: 768px') // 12 * 64
+    expect(addStyle()).toContain('--expand-top: 0px')
+  })
+
+  it('22 张收起态:添加卡仍在首行「+N」角标右侧(容器宽度已为它留位)', () => {
+    renderStack(22)
+    expect(addStyle()).toContain('--expand-left: 768px')
+    expect(addStyle()).toContain('--expand-top: 0px')
+    expect(screen.getByTestId('vw-stack-image').getAttribute('style')).toContain(`width: ${13 * 64 + 8}px`)
+  })
+
+  it('22 张展开后:添加卡跟到最后一张后面(第 2 行第 11 格)', () => {
+    renderStack(22)
+    fireEvent.click(screen.getByRole('button', { name: /展开全部/ }))
+    expect(addStyle()).toContain('--expand-left: 640px') // (22 % 12) * 64
+    expect(addStyle()).toContain('--expand-top: 64px') // floor(22 / 12) * 64
+  })
+
+  it('24 张展开后正好填满两行:添加卡另起第 3 行,容器高度也要把这一行算进去', () => {
+    renderStack(24)
+    fireEvent.click(screen.getByRole('button', { name: /展开全部/ }))
+    expect(addStyle()).toContain('--expand-left: 0px')
+    expect(addStyle()).toContain('--expand-top: 128px')
+    expect(screen.getByTestId('vw-stack-image').getAttribute('style')).toContain(`height: ${3 * 64 + 12}px`)
+  })
+
+  it('添加卡叠放层级高于任何一张素材 —— 同格兜底也不能被盖住', () => {
+    renderStack(22)
+    const z = Number.parseInt(/z-index:\s*(\d+)/.exec(addStyle())?.[1] ?? '0', 10)
+    expect(z).toBeGreaterThan(22)
+  })
+
+  it('到上限 30 张时不再出现添加卡', () => {
+    renderStack(30)
+    expect(screen.queryByRole('button', { name: '添加参考图' })).toBeNull()
+  })
+})

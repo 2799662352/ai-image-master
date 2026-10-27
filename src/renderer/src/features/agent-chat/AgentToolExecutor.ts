@@ -24,9 +24,31 @@ import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { generateAudioToLibrary, type AudioGenerationApi } from '../audio/audioGeneration'
 import { getAudioLibraryStore } from '../audio/AudioLibraryStore'
 import { cardSummaryState } from '../video-workbench/cardSummary'
-import { snapshotCard, snapshotWorkbench, useVideoWorkbenchStore } from '../video-workbench/store'
+import { summarizeProject } from '../video-workbench/projectStats'
+import {
+  snapshotCard,
+  snapshotCardConcise,
+  snapshotWorkbench,
+  useVideoWorkbenchStore,
+} from '../video-workbench/store'
+import {
+  beginThreadCall,
+  diffObservation,
+  endThreadCall,
+  recordObservation,
+  type WorkbenchDelta,
+} from '../video-workbench/threadObservation'
 import { enrichAssetReferences } from '../video-workbench/assetPreview'
 import { registerAgentBatch } from '../video-workbench/batchCompletion'
+import {
+  bindThreadBoard,
+  bindThreadProject,
+  otherLiveBindings,
+  resolveThreadScope,
+  scopedView,
+  touchThread,
+  unboundWriteBlock,
+} from '../video-workbench/threadScope'
 import type { VideoWorkbenchCardInput, WorkbenchIR } from '../../../../types/videoWorkbench'
 import {
   WORKBENCH_CARD_SUMMARY_MAX,
@@ -50,7 +72,10 @@ type GenerateImagesToolParams = {
   ratio?: unknown
   resolution?: unknown
   quality?: unknown
+  transparentBackground?: unknown
   referenceImages?: unknown
+  /** 模型专属参数(悠船原生 2K / 混沌 / 风格化……),整批共用;ApiService 只认当前渠道声明过的键。 */
+  modelParams?: unknown
 }
 
 /** Combined batch result shipped to main; shape matches imageTools' BatchTaskResult. */
@@ -203,6 +228,18 @@ async function settleWithConcurrency<T, R>(
   return results
 }
 
+/**
+ * 对话被绑到一部**不在屏幕上**的剧时回给模型的话:它之后所有 video_workbench_* 都作用于
+ * 那部剧,而用户屏幕仍停在别处 —— 要如实告诉用户去哪看,别让他以为卡没填。
+ */
+const BACKGROUND_PROJECT_NOTE = (name: string): string =>
+  `这个对话现在在「${name}」里干活,之后所有 video_workbench_* 都作用于它。`
+  + '用户的屏幕仍停在别的剧上(没有跟过去,免得几个对话来回抢同一个屏幕)。'
+  + `告诉用户:点工作台左侧的剧列表里的「${name}」就能看到你填的卡。`
+
+/** add_tasks 的 clientRef 上限。超长直接报错 —— 截断会让两个不同的键悄悄变成同一个。 */
+const CLIENT_REF_MAX = 64
+
 export class AgentToolExecutor {
   start(): () => void {
     const agent = this.getAgentApi()
@@ -325,6 +362,7 @@ export class AgentToolExecutor {
       case 'director_exec':
         return this.callDirector(toolName, params)
       case 'understand_video':
+      case 'understand_audio':
       case 'understand_document':
       case 'web_research':
         return this.callUnderstand(toolName, params)
@@ -337,12 +375,17 @@ export class AgentToolExecutor {
       case 'video_workbench_reorder':
       case 'video_workbench_set_card_summary':
       case 'video_workbench_start':
+      case 'video_workbench_finalize_draft':
       case 'video_workbench_status':
       case 'video_workbench_set_spec':
       case 'video_workbench_set_board_summary':
       case 'video_workbench_remove_tasks':
       case 'video_workbench_export':
       case 'video_workbench_apply':
+      case 'video_workbench_list_projects':
+      case 'video_workbench_switch_project':
+      case 'video_workbench_create_project':
+      case 'video_workbench_set_project_summary':
         return this.callVideoWorkbench(toolName, params, threadId)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
@@ -359,15 +402,97 @@ export class AgentToolExecutor {
     params: Record<string, unknown>,
     threadId?: string,
   ): Promise<unknown> {
+    // 「自你上次调用以来别人动过什么」:调用前对照这个对话上次看到的,调用后把「现在」记成新基线
+    // (所以它自己的写入不会在下一次被当成别人的)。细节与取舍见 threadObservation.ts。
+    const alone = beginThreadCall(threadId)
+    let delta: WorkbenchDelta | null = null
+    let failed = false
+    try {
+      if (alone) {
+        await useVideoWorkbenchStore.getState().ensureHydrated()
+        const st = useVideoWorkbenchStore.getState()
+        delta = diffObservation(threadId, resolveThreadScope(st, threadId).projectId, st)
+      }
+      const result = await this.runVideoWorkbench(toolName, params, threadId)
+      return delta && result && typeof result === 'object' && !Array.isArray(result)
+        ? { ...(result as Record<string, unknown>), changedSinceYourLastCall: delta }
+        : result
+    } catch (err) {
+      failed = true
+      throw err
+    } finally {
+      if (endThreadCall(threadId) && !(failed && delta)) {
+        // 出错且增量没送到模型手里时不推进基线 —— 下一次调用还要把它报出来。
+        const st = useVideoWorkbenchStore.getState()
+        const sc = resolveThreadScope(st, threadId)
+        const touched = new Set<string>([sc.boardId])
+        if (typeof params.boardId === 'string') touched.add(params.boardId)
+        if (params.allBoards === true) {
+          for (const b of st.boards) if (b.projectId === sc.projectId) touched.add(b.id)
+        }
+        const named = [
+          ...(Array.isArray(params.cardIds) ? params.cardIds : []),
+          params.cardId,
+          params.afterCardId,
+          params.beforeCardId,
+        ].filter((x): x is string => typeof x === 'string')
+        for (const id of named) {
+          const card = st.cards.find((c) => c.id === id)
+          if (card?.boardId) touched.add(card.boardId)
+        }
+        recordObservation(threadId, sc.projectId, st, touched)
+      }
+    }
+  }
+
+  private async runVideoWorkbench(
+    toolName: string,
+    params: Record<string, unknown>,
+    threadId?: string,
+  ): Promise<unknown> {
     const store = useVideoWorkbenchStore.getState()
     await store.ensureHydrated()
+
+    // 这个对话在哪部剧里干活:自己绑定的那部,没绑过才回落到屏幕上的当前剧。
+    // 屏幕上的「当前剧」是用户在看的,不是 agent 的 —— 两个对话同时填两部剧时
+    // 如果都读它,谁切谁赢,另一个对话的下一次写入就落进了别人的剧。
+    // 没有 threadId(渲染端直调)= 老行为,scope 恒等于屏幕当前剧。
+    const scope = resolveThreadScope(useVideoWorkbenchStore.getState(), threadId)
+    touchThread(threadId)
+    /**
+     * 从这个对话的视角看 store:它的剧是「当前剧」、它钉的分段是「当前页」(屏幕指针不动)。
+     * 只有对话自己钉过分段才把分段带进视图;没钉就保持老行为(落在该剧当前页)。
+     */
+    const pinnedBoardId = scope.boardBound ? scope.boardId : undefined
+    const scopedState = () => scopedView(useVideoWorkbenchStore.getState(), scope.projectId, pinnedBoardId)
+    /** 隐式作用域的写操作前过一道:没选剧、而别的对话正占着别的剧 → 让它先选。 */
+    const assertProjectChosen = (tool: string): void => {
+      const block = unboundWriteBlock(threadId, scope, useVideoWorkbenchStore.getState())
+      if (block) throw new Error(`${tool}: ${block}`)
+    }
+
+    /**
+     * 切到 / 新建一部剧时,屏幕要不要跟过去。
+     * 默认只在「没有别的对话正在别的剧里干活」时跟:有的话屏幕留在原处,免得几个对话
+     * 抢同一个屏幕指针、工作台来回跳。显式 `focus: true/false` 压过默认。
+     * 没有 threadId(渲染端直调)= 老行为,恒跟随。
+     */
+    const decideFocus = (targetProjectId: string): boolean => {
+      if (params.focus === true) return true
+      if (params.focus === false) return false
+      if (!threadId) return true
+      return !otherLiveBindings(threadId).some((o) => o.projectId !== targetProjectId)
+    }
 
     const pickCards = (cardIds?: unknown) => {
       const ids = Array.isArray(cardIds)
         ? cardIds.filter((x): x is string => typeof x === 'string')
         : null
-      const cards = useVideoWorkbenchStore.getState().cards
-      return ids ? cards.filter((c) => ids.includes(c.id)) : cards
+      const s = scopedState()
+      if (ids) return s.cards.filter((c) => ids.includes(c.id))
+      // 不点名时只看这个对话的剧:别的剧的卡对 agent 不存在(与界面上的隔离一致)
+      const ownBoardIds = new Set(s.boards.filter((b) => b.projectId === s.activeProjectId).map((b) => b.id))
+      return s.cards.filter((c) => c.boardId && ownBoardIds.has(c.boardId))
     }
 
     // 分页参数容错:zod 已在工具层挡过一遍,但这条路也被渲染端直调,坏值一律回退
@@ -419,15 +544,35 @@ export class AgentToolExecutor {
 
     // 写操作统一回带的全局摘要(boards + 状态计数):每次写操作等于强制观测
     // 一次全局现状,agent 无需追加 status 调用。体积 O(页数),紧凑。
-    const workbenchSummary = () => snapshotWorkbench(useVideoWorkbenchStore.getState())
+    const withBoardHolders = <T extends { boards: Array<{ id: string }> }>(
+      s: T,
+      projectId: string = scope.projectId,
+    ): T => {
+      // 别的对话钉着的分段打上标记:同一部剧的几集常由几个对话各填各的,
+      // 看见哪一集有人在干活,就别往里写、也别去动它的卡。
+      const held = new Set(
+        otherLiveBindings(threadId)
+          .filter((o) => o.projectId === projectId && o.boardId)
+          .map((o) => o.boardId),
+      )
+      if (held.size === 0) return s
+      return { ...s, boards: s.boards.map((b) => (held.has(b.id) ? { ...b, inUseByOtherChat: true } : b)) }
+    }
+    const workbenchSummary = () => withBoardHolders(snapshotWorkbench(scopedState()))
 
     switch (toolName) {
       case 'video_workbench_add_tasks': {
         const rawTasks = Array.isArray(params.tasks) ? (params.tasks as Record<string, unknown>[]) : []
         if (rawTasks.length === 0) throw new Error('video_workbench_add_tasks: tasks is empty')
-        // asset:// 引用 → 带 previewUrl 的 Material(人像库列表批量解析,
-        // 失败/查不到保持字符串原样),新挂的素材缩略图直接有图。
-        const tasks = await enrichAssetReferences(rawTasks)
+        // 幂等键的长度在这里挡:截断会让两个不同的键悄悄变成同一个。
+        const refOf = (t: Record<string, unknown>): string => {
+          const ref = typeof t.clientRef === 'string' ? t.clientRef.trim() : ''
+          if (ref.length > CLIENT_REF_MAX) {
+            throw new Error(`video_workbench_add_tasks: clientRef 最长 ${CLIENT_REF_MAX} 个字符(收到 ${ref.length})`)
+          }
+          return ref
+        }
+        rawTasks.forEach(refOf)
         // 位置由稳定锚点 cardId 表达,不收下标 —— 下标在模型手里随时可能已经过期。
         const afterCardId = typeof params.afterCardId === 'string' ? params.afterCardId : undefined
         const beforeCardId = typeof params.beforeCardId === 'string' ? params.beforeCardId : undefined
@@ -436,30 +581,173 @@ export class AgentToolExecutor {
           : beforeCardId
             ? ({ beforeCardId } as const)
             : undefined
-        const cardIds = store.addCards(tasks, anchor)
-        if (params.navigate !== false) {
+        // 落点页:显式 boardId > 这个对话所在剧的当前页。**不读屏幕上的当前页** ——
+        // 那是用户(或别的对话)在看的。锚点路径落在锚点卡所在页,不受影响。
+        const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (explicitBoardId) {
+          const board = useVideoWorkbenchStore.getState().boards.find((b) => b.id === explicitBoardId)
+          if (!board) {
+            throw new Error(
+              `video_workbench_add_tasks: board not found: ${explicitBoardId} `
+              + `(existing: ${scopedState().boards.filter((b) => b.projectId === scope.projectId).map((b) => b.id).join(', ')})`,
+            )
+          }
+          if (board.projectId !== scope.projectId) {
+            throw new Error(
+              `video_workbench_add_tasks: board ${explicitBoardId} belongs to another project; `
+              + 'call video_workbench_switch_project to that project first (boards are listed per project).',
+            )
+          }
+        }
+        if (!anchor && !explicitBoardId) assertProjectChosen('video_workbench_add_tasks')
+        const targetBoardId = anchor ? undefined : (explicitBoardId ?? scope.boardId)
+
+        // ---- clientRef 幂等:同一分段里已有同编号的卡就不再建 ----
+        // 落点分段:锚点路径 = 锚点卡所在页;否则就是上面解析出的页。锚点不存在时留给
+        // addCards 去报 "anchor card not found"(这里不抢它的错误)。
+        const anchorCardId = anchor ? (anchor.afterCardId ?? anchor.beforeCardId) : undefined
+        const destBoardId = anchorCardId
+          ? useVideoWorkbenchStore.getState().cards.find((c) => c.id === anchorCardId)?.boardId
+          : targetBoardId
+        const existingByRef = new Map<string, { id: string; status: string; rev: number; prompt: string }>()
+        for (const c of useVideoWorkbenchStore.getState().cards) {
+          if (destBoardId && c.clientRef && c.boardId === destBoardId) {
+            existingByRef.set(c.clientRef, { id: c.id, status: c.status, rev: c.rev ?? 0, prompt: c.prompt ?? '' })
+          }
+        }
+        const samePrompt = (a: string, b: unknown): boolean =>
+          a.trim() === (typeof b === 'string' ? b : '').trim()
+        const keep: number[] = []
+        const firstOfRef = new Map<string, number>() // ref → 这一批里第一次出现的下标
+        const duplicates: Array<{
+          clientRef: string
+          cardId?: string
+          status?: string
+          rev?: number
+          samePrompt: boolean
+          /** 与同一次调用里更靠前的那条重复(那张卡这次才建,回包时补上 cardId) */
+          laterInThisCall?: number
+        }> = []
+        rawTasks.forEach((t, i) => {
+          const ref = refOf(t)
+          if (!ref) {
+            keep.push(i)
+            return
+          }
+          const existing = existingByRef.get(ref)
+          if (existing) {
+            duplicates.push({
+              clientRef: ref,
+              cardId: existing.id,
+              status: existing.status,
+              rev: existing.rev,
+              samePrompt: samePrompt(existing.prompt, t.prompt),
+            })
+            return
+          }
+          const first = firstOfRef.get(ref)
+          if (first !== undefined) {
+            duplicates.push({
+              clientRef: ref,
+              samePrompt: samePrompt(typeof rawTasks[first].prompt === 'string' ? rawTasks[first].prompt as string : '', t.prompt),
+              laterInThisCall: first,
+            })
+            return
+          }
+          firstOfRef.set(ref, i)
+          keep.push(i)
+        })
+
+        // asset:// 引用 → 带 previewUrl 的 Material(人像库列表批量解析,
+        // 失败/查不到保持字符串原样),新挂的素材缩略图直接有图。只解析真要建的那几张。
+        const tasks = keep.length > 0
+          ? await enrichAssetReferences(keep.map((i) => rawTasks[i]))
+          : []
+        const cardIds = tasks.length > 0
+          ? store.addCards(tasks, anchor, targetBoardId ? { boardId: targetBoardId } : undefined)
+          : []
+        // 这一批里后出现的重复项:指回它们重复的那张(刚建出来的)。
+        const createdByRef = new Map<string, string>()
+        keep.forEach((taskIndex, k) => {
+          const ref = refOf(rawTasks[taskIndex])
+          if (ref) createdByRef.set(ref, cardIds[k])
+        })
+        const dupReport = duplicates.map(({ laterInThisCall, ...d }) => ({
+          ...d,
+          ...(laterInThisCall !== undefined ? { cardId: createdByRef.get(d.clientRef), status: 'draft' } : {}),
+        }))
+
+        // 落点:新卡在这一页里的起止位置(0 起,与 move_task 的 toIndex 同口径)。
+        let placed: { boardId: string; firstIndex: number; lastIndex: number } | undefined
+        if (cardIds.length > 0) {
+          const after = useVideoWorkbenchStore.getState().cards
+          const created = new Set(cardIds)
+          const landed = after.find((c) => created.has(c.id))
+          const boardOfNew = landed?.boardId
+          if (boardOfNew) {
+            const order = after
+              .filter((c) => c.boardId === boardOfNew)
+              .sort((a, b) => a.order - b.order)
+              .map((c) => c.id)
+            const at = order.map((id, i) => (created.has(id) ? i : -1)).filter((i) => i >= 0)
+            if (at.length > 0) placed = { boardId: boardOfNew, firstIndex: at[0], lastIndex: at[at.length - 1] }
+          }
+        }
+        if (cardIds.length > 0 && params.navigate !== false) {
           useTabStore.getState().switchTab('videoWorkbench')
         }
         let start: unknown
-        if (params.autoStart === true) {
+        if (params.autoStart === true && cardIds.length > 0) {
           // 经 agent 专用入口:用户可以在工作台关掉「允许 AI 自动生成」。
+          // 只启动这次**新建**的卡 —— 重放时已存在的卡不会被再提交一遍。
           const started = await useVideoWorkbenchStore.getState().startCardsFromAgent(cardIds)
           // 登记批次：跑完后由 batchCompletion watcher 主动推给本线程，
           // 模型不需要（也不应该）轮询 video_workbench_status 等结果。
           registerAgentBatch(started.started, threadId)
           start = started
         }
+        const summary = workbenchSummary()
         return {
           cardIds,
-          total: useVideoWorkbenchStore.getState().cards.length,
+          // 这部剧里一共多少张(别的剧的卡对这个对话不存在,也就不该算进「总数」)
+          total: summary.project.cards,
+          ...(placed ? { placed } : {}),
+          ...(dupReport.length > 0
+            ? {
+                duplicates: dupReport,
+                hint:
+                  `${dupReport.length} 张按 clientRef 判定已存在,没有重复创建(它们的 cardId 见 duplicates)。`
+                  + 'samePrompt:false 的那几张提示词和这次给的不同 —— 没有覆盖,要改请用 patch_prompt / update_task。',
+              }
+            : {}),
           ...(start ? { start } : {}),
-          workbench: workbenchSummary(),
+          workbench: summary,
         }
       }
       case 'video_workbench_update_task': {
         const cardId = typeof params.cardId === 'string' ? params.cardId : ''
         if (!cardId) throw new Error('video_workbench_update_task: cardId is required')
         const [patch] = await enrichAssetReferences([params])
+        // 不变量:从这里的版本检查到下面的 updateCard 之间**不能有 await**(同 patch_prompt)
+        // —— 否则检查通过后别人的写入插进来,检查就白做了。
+        const before = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
+        if (!before) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
+        // expectedRev:调用方声明「我是基于这一版改的」。省略 = 不检查(最后写入者赢,与以前一致);
+        // 给了而卡已经被改过 → 不写,把这张卡现在的样子交回去让它重新决定。
+        const expectedRev = typeof params.expectedRev === 'number' && Number.isInteger(params.expectedRev)
+          ? params.expectedRev
+          : undefined
+        if (expectedRev !== undefined && (before.rev ?? 0) !== expectedRev) {
+          return {
+            ok: false,
+            conflict: { expectedRev, currentRev: before.rev ?? 0 },
+            card: snapshotCard(before),
+            hint:
+              `这张卡在你上次看到之后被改过(rev ${expectedRev} → ${before.rev ?? 0}),这次没有写入。`
+              + `上面的 card 是它现在的样子:内容和你预期的一致就用 expectedRev:${before.rev ?? 0} 重试;`
+              + '内容变了就基于新内容重新决定。同一张卡连续冲突两次,停下来问用户。',
+          }
+        }
         const ok = store.updateCard(cardId, patch)
         const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardId)
         if (!card) throw new Error(`video_workbench_update_task: card not found: ${cardId}`)
@@ -591,8 +879,48 @@ export class AgentToolExecutor {
         const ids = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : undefined
-        const result = await store.startCardsFromAgent(ids)
+        // 不点名整页启动时:对话在屏幕之外的剧里 → 显式指定它那一页并忽略屏幕上的选中
+        // (那是别人的语境);就在屏幕上的剧里 → 与以前一样(整页 / 用户当前选中)。
+        if (!ids) assertProjectChosen('video_workbench_start')
+        // 作用的分段不是屏幕当前页(剧不在屏幕上,或对话钉了别的一集)→ 显式指定并忽略屏幕上的选中。
+        const startBoard = !ids && (!scope.onScreen || scope.boardId !== useVideoWorkbenchStore.getState().activeBoardId)
+        const result = await store.startCardsFromAgent(
+          ids,
+          startBoard
+            ? { boardId: scope.boardId, skipUpToDate: params.includeSucceeded !== true }
+            : !ids
+              ? { skipUpToDate: params.includeSucceeded !== true }
+              : undefined,
+        )
         // 同上：批次跑完主动推送，取代轮询。
+        registerAgentBatch(result.started, threadId)
+        return {
+          ...result,
+          ...(result.skippedSucceeded
+            ? {
+                note:
+                  `${result.skippedSucceeded} 张已经出过片、出片后没改过的卡没有重跑(整页启动默认跳过,免得重复花钱)。`
+                  + '要重做哪几张就点名 cardIds;整页全部重跑传 includeSucceeded:true。',
+              }
+            : {}),
+          workbench: workbenchSummary(),
+        }
+      }
+      case 'video_workbench_finalize_draft': {
+        const ids = Array.isArray(params.cardIds)
+          ? params.cardIds.filter((x): x is string => typeof x === 'string')
+          : []
+        // 出成片同样花钱,与 start 守同一道「允许 AI 自动生成」闸。
+        if (!store.agentAutoStart) {
+          return {
+            started: [],
+            skipped: ids.map((cardId) => ({ cardId, reason: '用户关闭了「允许 AI 自动生成」' })),
+            blocked: true,
+            hint: '用户在视频工作台关闭了「允许 AI 自动生成」。请告诉用户在卡片上点「生成 1080P 成片」,不要反复重试。',
+            workbench: workbenchSummary(),
+          }
+        }
+        const result = await store.finalizeDrafts(ids)
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
       }
@@ -601,12 +929,12 @@ export class AgentToolExecutor {
         // 省略字段会被当成恢复默认,所以为了改三个字段,17 张卡的完整 prompt 和素材数组
         // 都得在模型里走一遍。用户看到的就是右边一直 RUNNING,而真正的改动一秒就能做完。
         const state = useVideoWorkbenchStore.getState()
-        const boardId = typeof params.boardId === 'string' && params.boardId
-          ? params.boardId
-          : state.activeBoardId
         const explicitIds = Array.isArray(params.cardIds)
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : null
+        const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (!explicitIds && !explicitBoardId) assertProjectChosen('video_workbench_set_spec')
+        const boardId = explicitBoardId ?? scope.boardId
         const targets = explicitIds
           ? state.cards.filter((c) => explicitIds.includes(c.id))
           : state.cards.filter((c) => c.boardId === boardId)
@@ -614,17 +942,39 @@ export class AgentToolExecutor {
         // 只挑规格字段。**prompt 和素材进不来** —— 这是这个工具存在的理由:
         // 让「批量」和「重写内容」彻底分开,批量就不必再背着内容的体积。
         const SPEC_KEYS = [
-          'model', 'resolution', 'ratio', 'duration', 'generateAudio', 'webSearch', 'mode',
+          'model', 'resolution', 'ratio', 'duration', 'generateAudio', 'webSearch', 'mode', 'draft',
         ] as const
         const patch: Record<string, unknown> = {}
         for (const k of SPEC_KEYS) if (params[k] !== undefined) patch[k] = params[k]
         if (Object.keys(patch).length === 0) {
-          throw new Error('video_workbench_set_spec: 至少要给一个规格字段（model/resolution/ratio/duration/generateAudio/webSearch/mode）')
+          throw new Error('video_workbench_set_spec: 至少要给一个规格字段（model/resolution/ratio/duration/generateAudio/webSearch/mode/draft）')
         }
 
         const updated: string[] = []
-        const skipped: Array<{ cardId: string; reason: string }> = []
+        const skipped: Array<{
+          cardId: string
+          reason: string
+          conflict?: { expectedRev: number; currentRev: number }
+          /** 冲突时这张卡上你想改的那几个字段现在的值 */
+          current?: Record<string, unknown>
+        }> = []
+        // expectedRevs:{cardId: rev}。给了的卡按版本把关(过期就跳过并回当前值),没给的不受约束。
+        const expectedRevs = params.expectedRevs && typeof params.expectedRevs === 'object'
+          ? (params.expectedRevs as Record<string, unknown>)
+          : {}
         for (const card of targets) {
+          const exp = expectedRevs[card.id]
+          if (typeof exp === 'number' && (card.rev ?? 0) !== exp) {
+            skipped.push({
+              cardId: card.id,
+              reason: '这张卡在你上次看到之后被改过,没有写入。看 current 里的现值,再决定要不要用新的 rev 重试',
+              conflict: { expectedRev: exp, currentRev: card.rev ?? 0 },
+              current: Object.fromEntries(
+                Object.keys(patch).map((k) => [k, (card as unknown as Record<string, unknown>)[k]]),
+              ),
+            })
+            continue
+          }
           // 生成中的卡跳过而不是报错:一次扫板不该因为某张卡正好在渲染就整个失败,
           // 但也不能悄悄跳过 —— 回执里逐条列出,让 agent 有话可说。
           const ok = store.updateCard(card.id, patch as VideoWorkbenchCardInput)
@@ -658,20 +1008,26 @@ export class AgentToolExecutor {
         // 工作台会把几百张卡的摘要一股脑塞进上下文，而用户九成时间只在看一页。
         // 要看别页得明说：给 boardId，或 allBoards:true。
         const allBoards = params.allBoards === true
-        const scopeBoardId = boardId ?? (allBoards ? undefined : state.activeBoardId)
+        const scopeBoardId = boardId ?? (allBoards ? undefined : scope.boardId)
         let cards = pickCards(params.cardIds)
         // 点名了 cardIds 就按 id 取，不再按页收窄 —— 那是「我就要这几张」的意思。
         if (scopeBoardId && !Array.isArray(params.cardIds)) {
           cards = cards.filter((c) => c.boardId === scopeBoardId)
         }
-        const summary = snapshotWorkbench(state)
+        // 同一份「我这一集」的视图 + 别的对话占着的分段标记;不能只按剧取,否则钉了分段的
+        // 对话读到的 activeBoardId 还是屏幕上那一页。
+        const summary = withBoardHolders(snapshotWorkbench(scopedView(state, scope.projectId, pinnedBoardId)))
         // 分页:一个工作台能装 200 张卡,整份倒出去会被客户端静默截断。口径与
         // list_portrait_library 一致(page 从 1 起 / pageSize 有上限 / hasMore)。
         const pageSize = clampPageSize(params.pageSize)
         const totalPages = Math.max(1, Math.ceil(cards.length / pageSize))
         const page = Math.min(Math.max(1, toPositiveInt(params.page) ?? 1), totalPages)
         const pageCards = cards.slice((page - 1) * pageSize, page * pageSize)
+        // concise:只回 id/位置/状态/摘要/60 字提示词/error。缺省 detailed 保持旧形状 ——
+        // 「改规格前先看一眼」是 status 最常见的用法,那时正需要规格字段。
+        const fields = params.fields === 'concise' ? 'concise' : 'detailed'
         return {
+          fields,
           // 每页一条的目录。**这才是分批读取能成立的前提** —— 只回 3 张卡而不告诉
           // 你剩下的是什么,agent 只能从第 1 页翻到最后一页,比一次性倒出去还费。
           // 有了目录它能直接跳到相关那一页。刻意做得很省:每张卡只留 id + 截断的
@@ -683,12 +1039,14 @@ export class AgentToolExecutor {
           // 在回包里长得一样。boards 里的 cardCount 是各页真实总数,可据此判断
           // 要不要去看别页。
           scope: scopeBoardId ? { boardId: scopeBoardId } : { allBoards: true },
+          // 当前剧:所有 video_workbench_* 都作用于它;要看别的剧先 switch_project
+          project: summary.project,
           activeBoardId: summary.activeBoardId,
           boards: summary.boards,
           // status 是**读**工具,不带 workbench 包装,所以选中态得在这一层平铺 ——
           // 否则「按需回读」在唯一一个专门用来回读的工具上反而看不到它。
           selectedCardIds: summary.selectedCardIds,
-          cards: pageCards.map(snapshotCard),
+          cards: fields === 'concise' ? pageCards.map(snapshotCardConcise) : pageCards.map(snapshotCard),
           page,
           pageSize,
           totalPages,
@@ -700,14 +1058,16 @@ export class AgentToolExecutor {
           ? params.cardIds.filter((x): x is string => typeof x === 'string')
           : []
         for (const id of ids) store.removeCard(id)
+        const summary = workbenchSummary()
         return {
           removed: ids,
-          total: useVideoWorkbenchStore.getState().cards.length,
-          workbench: workbenchSummary(),
+          total: summary.project.cards,
+          workbench: summary,
         }
       }
       case 'video_workbench_export': {
-        const ir = store.exportIR()
+        // 导的是这个对话所在的剧(不是屏幕上的当前剧);令牌与指纹也按那部剧算。
+        const ir = store.exportIR(scope.projectId)
         /**
          * **默认出骨架**:每张卡剥成 `{id, rev}` 的占位条目,要全文得显式 `full: true`。
          *
@@ -755,7 +1115,8 @@ export class AgentToolExecutor {
         // 模式保证没列出的页原样不动。要跨页改动才显式传 allBoards。
         const explicitBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
         if (!explicitBoardId && params.allBoards === true) return trim(ir)
-        const boardId = explicitBoardId ?? ir.activeBoardId
+        // 钉过分段的对话默认导自己那一段,而不是屏幕上用户翻到的那页。
+        const boardId = explicitBoardId ?? (scope.boardBound ? scope.boardId : ir.activeBoardId)
         const board = boardId ? ir.boards.find((b) => b.id === boardId) : undefined
         if (!board) {
           // 只有**显式**要了一页却找不到才算调用方的错。隐式取当前页时解析不出
@@ -790,7 +1151,123 @@ export class AgentToolExecutor {
           })),
         )
         const mode = params.mode === 'replace' ? 'replace' : 'merge'
-        return await store.applyIR({ ...ir, boards }, { mode, force: params.force === true })
+        // IR 自带 projectId 时它就是明确的目标(不匹配由 planApplyIR 整份拒绝);
+        // 老 IR 没带时落到这个对话的剧,没选过剧又有别的对话占着别的剧则先拦下。
+        if (!ir.projectId) assertProjectChosen('video_workbench_apply')
+        return await store.applyIR(
+          { ...ir, boards },
+          { mode, force: params.force === true, scopeProjectId: scope.projectId },
+        )
+      }
+      case 'video_workbench_list_projects': {
+        const state = useVideoWorkbenchStore.getState()
+        // 别的对话最近还在碰的剧:新对话挑剧时避开,别和人家挤在同一部里。
+        const busyElsewhere = new Set(otherLiveBindings(threadId).map((o) => o.projectId))
+        return {
+          // 用户屏幕上正在看的剧(只是展示指针,不是你的作用域)
+          activeProjectId: state.activeProjectId,
+          // 你这个对话现在作用的剧:自己 switch/create 过的那部,没选过 = 屏幕上的那部
+          yourProjectId: scope.projectId,
+          yourProjectChosen: scope.bound,
+          // 钉了分段才有(没钉 = 隐式落在该剧当前页)
+          ...(scope.boardBound ? { yourBoardId: scope.boardId } : {}),
+          projects: state.projects
+            .slice()
+            .sort((a, b) => a.order - b.order)
+            .map((p) => {
+              const st = summarizeProject(p.id, state.boards, state.cards)
+              return {
+                id: p.id,
+                name: p.name,
+                ...(busyElsewhere.has(p.id) && p.id !== scope.projectId ? { inUseByOtherChat: true } : {}),
+                segments: st.segments.length,
+                cards: st.totals.total,
+                active: st.totals.active,
+                failed: st.totals.failed,
+                done: st.totals.done,
+                doneSeconds: st.totals.doneSeconds,
+                ...(p.summary ? { summary: p.summary } : {}),
+                ...(p.legacy ? { legacy: true } : {}),
+              }
+            }),
+        }
+      }
+      case 'video_workbench_set_project_summary': {
+        const state = useVideoWorkbenchStore.getState()
+        // 省略 projectId = 这个对话所在的剧:agent 九成时候是在给自己正在做的这部剧写路标。
+        const explicitProjectId = typeof params.projectId === 'string' && params.projectId
+          ? params.projectId
+          : undefined
+        if (!explicitProjectId) assertProjectChosen('video_workbench_set_project_summary')
+        const projectId = explicitProjectId ?? scope.projectId
+        const summary = typeof params.summary === 'string' ? params.summary : ''
+        if (!state.setProjectSummary(projectId, summary)) {
+          throw new Error(
+            `video_workbench_set_project_summary: project not found: ${projectId} (existing: ${state.projects.map((p) => p.id).join(', ')})`,
+          )
+        }
+        return { ok: true, workbench: workbenchSummary() }
+      }
+      case 'video_workbench_switch_project': {
+        const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+        const state = useVideoWorkbenchStore.getState()
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) {
+          throw new Error(
+            `video_workbench_switch_project: project not found: ${projectId} (existing: ${state.projects.map((p) => p.id).join(', ')})`,
+          )
+        }
+        // 想钉的分段必须是这部剧里的 —— 钉错到别的剧的分段 = 之后每次写入都落错地方。
+        const pinBoardId = typeof params.boardId === 'string' && params.boardId ? params.boardId : undefined
+        if (pinBoardId && !state.boards.some((b) => b.id === pinBoardId && b.projectId === projectId)) {
+          throw new Error(
+            `video_workbench_switch_project: board ${pinBoardId} 不在「${project.name}」里 `
+            + `(它的分段: ${state.boards.filter((b) => b.projectId === projectId).map((b) => b.id).join(', ')})`,
+          )
+        }
+        // 先判断屏幕要不要跟(要看「别的对话」当前的绑定),再绑定自己。
+        const focus = decideFocus(projectId)
+        bindThreadProject(threadId, projectId)
+        if (pinBoardId) bindThreadBoard(threadId, pinBoardId)
+        if (focus) state.switchProject(projectId)
+        const after = useVideoWorkbenchStore.getState()
+        const afterScope = resolveThreadScope(after, threadId)
+        return {
+          // 屏幕上的当前剧(用户看的);yourProjectId 才是这个对话之后所有调用作用的剧
+          activeProjectId: after.activeProjectId,
+          yourProjectId: projectId,
+          // 这个对话钉住的分段(没钉 = 不返回,隐式写入落在该剧当前页)
+          ...(afterScope.boardBound ? { yourBoardId: afterScope.boardId } : {}),
+          onScreen: after.activeProjectId === projectId,
+          project: { id: project.id, name: project.name },
+          boards: withBoardHolders(
+            snapshotWorkbench(scopedView(after, projectId, afterScope.boardBound ? afterScope.boardId : undefined)),
+            projectId,
+          ).boards,
+          ...(after.activeProjectId === projectId ? {} : { note: BACKGROUND_PROJECT_NOTE(project.name) }),
+        }
+      }
+      case 'video_workbench_create_project': {
+        const name = typeof params.name === 'string' ? params.name : undefined
+        const state = useVideoWorkbenchStore.getState()
+        // 新剧还不存在,没有「别的对话占着它」一说:只要还有别的对话在干活就不抢屏幕。
+        const focus = decideFocus('')
+        const projectId = state.addProject(name, { activate: focus })
+        bindThreadProject(threadId, projectId)
+        const after = useVideoWorkbenchStore.getState()
+        const board = after.boards.find((b) => b.projectId === projectId)!
+        // 自己建的新剧,它那一个起始分段就是这个对话的:隐式写入落在这里,
+        // 不随用户在屏幕上翻页而漂走。
+        bindThreadBoard(threadId, board.id)
+        const created = after.projects.find((p) => p.id === projectId)!.name
+        return {
+          projectId,
+          boardId: board.id,
+          name: created,
+          yourProjectId: projectId,
+          onScreen: after.activeProjectId === projectId,
+          ...(after.activeProjectId === projectId ? {} : { note: BACKGROUND_PROJECT_NOTE(created) }),
+        }
       }
       default:
         throw new Error(`Unknown video workbench tool: ${toolName}`)
@@ -885,8 +1362,8 @@ export class AgentToolExecutor {
       ) => Promise<{ success: true; text: string } | { success: false; error: string }>
     }>(SERVICE_KEYS.API)
 
-    // Optional model switch ('plus' | 'max' | full -dashscope name). Non-allow-listed
-    // values fall back to the default (plus) inside ApiService.resolveUnderstandModel.
+    // Optional model switch ('omni' | 'plus' | 'max' | 'flagship' | full slug). Non-allow-listed
+    // values fall back to the default (omni) inside ApiService.resolveUnderstandModel.
     const model = typeof params.model === 'string' ? params.model : undefined
 
     if (toolName === 'web_research') {
@@ -898,12 +1375,18 @@ export class AgentToolExecutor {
     const question = typeof params.question === 'string' ? params.question : ''
     if (!question) return { success: false, error: `${toolName} 缺少 question。` }
 
-    const media = this.resolveMediaUrl(params, toolName === 'understand_video' ? 'video' : 'document')
+    const mediaKind = toolName === 'understand_video' ? 'video' : toolName === 'understand_audio' ? 'audio' : 'document'
+    const media = this.resolveMediaUrl(params, mediaKind)
     if (!media.ok) return { success: false, error: media.error }
 
     if (toolName === 'understand_video') {
       const fps = typeof params.fps === 'number' ? params.fps : undefined
       return api.understand({ kind: 'video', mediaUrl: media.url, question, fps }, { model })
+    }
+    if (toolName === 'understand_audio') {
+      // 音频在 ApiService.understand 里被钉到 omni 模型上,这里的 model 只是透传给它决定。
+      const format = typeof params.format === 'string' ? params.format : undefined
+      return api.understand({ kind: 'audio', mediaUrl: media.url, question, format }, { model })
     }
     // 追加图由主进程先逐张中转成公网 URL 再放进 file_urls,这里只透传 —— 顺序
     // 已在那一侧按输入序固定好,不要在这里重排或去重(去重在 understand() 里做,
@@ -928,10 +1411,10 @@ export class AgentToolExecutor {
    */
   private resolveMediaUrl(
     params: Record<string, unknown>,
-    kind: 'video' | 'document',
+    kind: 'video' | 'audio' | 'document',
   ): { ok: true; url: string } | { ok: false; error: string } {
-    const urlKey = kind === 'video' ? 'video_url' : 'file_url'
-    const pathKey = kind === 'video' ? 'video_path' : 'file_path'
+    const urlKey = kind === 'video' ? 'video_url' : kind === 'audio' ? 'audio_url' : 'file_url'
+    const pathKey = kind === 'video' ? 'video_path' : kind === 'audio' ? 'audio_path' : 'file_path'
     const url = params[urlKey]
     if (typeof url === 'string' && /^(https?:|data:)/.test(url)) {
       return { ok: true, url }
@@ -1065,9 +1548,17 @@ export class AgentToolExecutor {
         ? await this.resolveReferenceImages(params.referenceImages, model)
         : undefined)
 
+    // 局部重绘遮罩走与参考图同一条解析路(uploads 路径 → COS URL / 内联 data URL),
+    // ApiService 再转成 `mask` multipart 字段。遮罩的渠道 / 原图约束由 ApiService 早失败。
+    const maskImage =
+      typeof params.maskImage === 'string' && params.maskImage.length > 0
+        ? (await this.resolveReferenceImages([params.maskImage], model))?.[0]
+        : undefined
+
     const request: GenerateImageParams = {
       ...params,
       referenceImages,
+      maskImage,
       model,
       // 拆分的默认档位不是 2K:输出该跟随被拆那张图的尺寸与宽高比,发 2K 会让
       // 底图按 2K 档重出、与原图对不上。agent 显式给了就听它的。
@@ -1219,6 +1710,10 @@ export class AgentToolExecutor {
             ratio: params.ratio,
             resolution: params.resolution,
             quality: params.quality,
+            transparentBackground: params.transparentBackground,
+            // 逐 prompt 转发:漏掉它,agent 给整批设的悠船参数会被静默丢掉(单张路径靠 ...params 带上,
+            // 这里是手写的字段清单,所以必须显式列出)。
+            modelParams: params.modelParams,
             referenceImages: sharedReferenceImages,
           } as unknown as GenerateImageToolParams,
           requestThreadId,

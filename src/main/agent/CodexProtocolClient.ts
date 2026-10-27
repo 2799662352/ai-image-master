@@ -28,6 +28,7 @@ import {
 import type {
   AgentStreamEvent,
   AgentStreamEventBase,
+  AgentTokenUsage,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexSessionConfig,
@@ -35,7 +36,13 @@ import type {
   CodexThreadDetail,
   CodexThreadSummary,
 } from '../../types/agent'
-import type { AgentInput, ListThreadsParams } from './types'
+import { CODEX_REQUEST_USER_INPUT_METHOD } from '../../types/agent'
+import type {
+  AgentInput,
+  ListThreadsParams,
+  TemporaryStructuredTurnRequest,
+  TemporaryStructuredTurnResult,
+} from './types'
 import type {
   AppsListParams,
   AppsListResponse,
@@ -57,6 +64,7 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type {
+  ThreadGoalMutationOrigin,
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalGetResponse,
@@ -122,6 +130,13 @@ const DEFAULT_CONNECT_INTERVAL_MS = 100
 const CANCEL_GRACE_MS = 2_000
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
 /**
+ * `item/tool/requestUserInput` 等的是**人**，不是审批一个已经摆在眼前的命令 ——
+ * 用户可能离开几小时再回来点。和自家 `ask_user` 的 `ASK_USER_TOOL_TIMEOUT_MS`
+ * （ToolRouter.ts，6h）对齐：同一个人同一种等待，不该因为问题来自 codex 内置工具
+ * 还是我们的 MCP 工具就差 70 倍。
+ */
+const DEFAULT_USER_INPUT_TIMEOUT_MS = 6 * 60 * 60_000
+/**
  * Stream-idle watchdog (upstream gap: openai/codex#30526 — app-server can go
  * permanently silent mid-turn with no turn/completed and no error). If NO
  * event arrives on an active turn for this long, we synthesize a terminal
@@ -141,6 +156,47 @@ const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
  */
 const DEFAULT_TURN_IDLE_TIMEOUT_MS = 0
 
+const TEMPORARY_TURN_TIMEOUT_MS = 30_000
+const TEMPORARY_RESPONSE_MAX_BYTES = 8 * 1024
+/**
+ * Pinned from upstream `start_temporary_thread` @ rust-v0.161.0. Thread-level
+ * `config` outranks our launch `-c` pins (smoke-session-tuning-overlay.ts), so
+ * these hold even where the process enables the feature.
+ */
+const TEMPORARY_THREAD_DISABLED_FEATURES = [
+  'apps',
+  'code_mode',
+  'code_mode_only',
+  'context_management',
+  'current_time_reminder',
+  'deferred_executor',
+  'enable_fanout',
+  'goals',
+  'hooks',
+  'image_generation',
+  'memories',
+  'multi_agent',
+  'multi_agent_v2',
+  'plugins',
+  'request_permissions_tool',
+  'shell_snapshot',
+  'shell_tool',
+  'standalone_web_search',
+  'token_budget',
+  'tool_suggest',
+  'unified_exec',
+  'view_image',
+] as const
+const TEMPORARY_THREAD_CONFIG: Readonly<Record<string, unknown>> = Object.freeze({
+  ...Object.fromEntries(TEMPORARY_THREAD_DISABLED_FEATURES.map((feature) => [`features.${feature}`, false])),
+  'cloud.skills.enabled': false,
+  'skills.include_instructions': false,
+  'tools.experimental_request_user_input.enabled': false,
+  'tools.update_plan.enabled': false,
+  web_search: 'disabled',
+  default_permissions: ':read-only',
+})
+
 type PendingRpc = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -153,6 +209,8 @@ type TurnQueue = {
   buffer: AgentStreamEvent[]
   waiter?: (event: AgentStreamEvent) => void
   closed: boolean
+  /** Hidden structured turns: invisible to the busy probes. */
+  background: boolean
 }
 
 /**
@@ -181,6 +239,8 @@ export interface CodexProtocolClientOptions {
   connectIntervalMs?: number
   rpcTimeoutMs?: number
   approvalTimeoutMs?: number
+  /** 只作用于 `item/tool/requestUserInput`。默认 {@link DEFAULT_USER_INPUT_TIMEOUT_MS}。 */
+  userInputTimeoutMs?: number
   /**
    * Max silence (no events at all) tolerated on an active turn before the
    * stream-idle watchdog ends it with a terminal error. `0` disables the
@@ -270,8 +330,11 @@ export class CodexProtocolClient {
    * separates "arrived a beat early" from "belongs to somebody else".
    */
   private readonly awaitingTurnStart = new Set<string>()
+  /** Live hidden structured-request threads → last `turn/completed` status. */
+  private readonly temporaryThreads = new Map<string, { turnStatus?: string }>()
   private readonly rpcTimeoutMs: number
   private readonly approvalTimeoutMs: number
+  private readonly userInputTimeoutMs: number
   private readonly connectTimeoutMs: number
   private readonly connectIntervalMs: number
   private readonly turnIdleTimeoutMs: number
@@ -282,6 +345,7 @@ export class CodexProtocolClient {
   constructor(private readonly options: CodexProtocolClientOptions) {
     this.rpcTimeoutMs = options.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
     this.approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS
+    this.userInputTimeoutMs = options.userInputTimeoutMs ?? DEFAULT_USER_INPUT_TIMEOUT_MS
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     this.connectIntervalMs = options.connectIntervalMs ?? DEFAULT_CONNECT_INTERVAL_MS
     this.turnIdleTimeoutMs = options.turnIdleTimeoutMs ?? DEFAULT_TURN_IDLE_TIMEOUT_MS
@@ -326,7 +390,10 @@ export class CodexProtocolClient {
   }
 
   hasActiveTurns(): boolean {
-    return this.queues.size > 0
+    for (const queue of this.queues.values()) {
+      if (!queue.background) return true
+    }
+    return false
   }
 
   hasInFlightWork(): boolean {
@@ -368,33 +435,14 @@ export class CodexProtocolClient {
       // `collaborationMode` (EXPERIMENTAL, needs experimentalApi capability):
       // preset that takes precedence over model/effort/instructions for this
       // and subsequent turns. Same spread-omit posture as clientUserMessageId.
-      // Opens the buffering window for THIS thread and nothing else: events
-      // arriving before the queue exists are ours to claim; events for any
-      // other thread belong to a sub-agent and go to `onUnroutedEvent`.
-      this.awaitingTurnStart.add(actualThreadId)
-      let turnResponse: TurnStartResponse
-      try {
-        turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
-          threadId: actualThreadId,
-          input: mapUserInput(input.items),
-          model: input.model,
-          ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
-          ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
-          ...(input.collaborationMode ? { collaborationMode: input.collaborationMode } : {}),
-        })
-      } catch (error) {
-        this.awaitingTurnStart.delete(actualThreadId)
-        throw error
-      }
-      const turnId = turnResponse.turn.id
-      this.turnIdByThread.set(actualThreadId, turnId)
-
-      const key = queueKey(actualThreadId, turnId)
-      const queue: TurnQueue = { threadId: actualThreadId, turnId, buffer: [], closed: false }
-      this.queues.set(key, queue)
-      this.drainOrphansInto(actualThreadId, turnId, queue)
-      // Closed only after the drain: anything still in flight now has a queue.
-      this.awaitingTurnStart.delete(actualThreadId)
+      const queue = await this.openTurnQueue(actualThreadId, {
+        threadId: actualThreadId,
+        input: mapUserInput(input.items),
+        model: input.model,
+        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+        ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
+        ...(input.collaborationMode ? { collaborationMode: input.collaborationMode } : {}),
+      })
 
       try {
         while (true) {
@@ -408,15 +456,220 @@ export class CodexProtocolClient {
           if (event.type === 'error' && event.willRetry !== true) return
         }
       } finally {
-        queue.closed = true
-        this.queues.delete(key)
-        if (this.turnIdByThread.get(actualThreadId) === turnId) {
-          this.turnIdByThread.delete(actualThreadId)
-        }
+        this.closeTurnQueue(queue)
       }
     } finally {
       this.activeSends -= 1
     }
+  }
+
+  /**
+   * `turn/start`, then register the turn's event queue. Opens the buffering
+   * window for THIS thread and nothing else: events arriving before the queue
+   * exists are ours to claim; events for any other thread belong to a
+   * sub-agent and go to `onUnroutedEvent`.
+   */
+  private async openTurnQueue(
+    threadId: string,
+    params: Record<string, unknown>,
+    options: { background?: boolean; timeoutMs?: number } = {},
+  ): Promise<TurnQueue> {
+    this.awaitingTurnStart.add(threadId)
+    let turnResponse: TurnStartResponse
+    try {
+      turnResponse = await this.rpc<TurnStartResponse>('turn/start', params, options.timeoutMs)
+    } catch (error) {
+      this.awaitingTurnStart.delete(threadId)
+      throw error
+    }
+    const turnId = turnResponse.turn.id
+    this.turnIdByThread.set(threadId, turnId)
+
+    const queue: TurnQueue = {
+      threadId,
+      turnId,
+      buffer: [],
+      closed: false,
+      background: options.background === true,
+    }
+    this.queues.set(queueKey(threadId, turnId), queue)
+    this.drainOrphansInto(threadId, turnId, queue)
+    // Closed only after the drain: anything still in flight now has a queue.
+    this.awaitingTurnStart.delete(threadId)
+    return queue
+  }
+
+  private closeTurnQueue(queue: TurnQueue): void {
+    queue.closed = true
+    this.queues.delete(queueKey(queue.threadId, queue.turnId))
+    if (this.turnIdByThread.get(queue.threadId) === queue.turnId) {
+      this.turnIdByThread.delete(queue.threadId)
+    }
+  }
+
+  /**
+   * Mirrors upstream `temporary_structured_request.rs` @ rust-v0.161.0. The
+   * prompt can carry untrusted user text, so the effective config is read
+   * first (fail closed) and every MCP server is disabled alongside the
+   * built-in tool families. Approval policy is inherited; interaction requests
+   * on the thread are declined. The thread is always unsubscribed afterwards.
+   */
+  async runTemporaryStructuredTurn(
+    request: TemporaryStructuredTurnRequest,
+  ): Promise<TemporaryStructuredTurnResult> {
+    const timeoutMs = request.timeoutMs ?? TEMPORARY_TURN_TIMEOUT_MS
+    const started = await this.startTemporaryThread(request, timeoutMs)
+    const threadId = started.thread.id
+    this.temporaryThreads.set(threadId, {})
+    try {
+      if (toRecord(started.sandbox).type !== 'readOnly') {
+        throw new Error('temporary structured thread did not start with read-only permissions')
+      }
+      return await this.runTemporaryTurn(threadId, request, timeoutMs)
+    } finally {
+      try {
+        await this.rpc('thread/unsubscribe', { threadId }, timeoutMs)
+      } catch (error) {
+        this.options.onLog?.(`[codex] temporary thread unsubscribe failed: ${stringifyError(error)}`)
+      }
+      this.temporaryThreads.delete(threadId)
+    }
+  }
+
+  private async startTemporaryThread(
+    request: TemporaryStructuredTurnRequest,
+    timeoutMs: number,
+  ): Promise<ThreadStartResponse & { sandbox?: unknown }> {
+    const deadline = Date.now() + timeoutMs
+    const effective = await this.rpc<unknown>(
+      'config/read',
+      { includeLayers: false, cwd: request.cwd },
+      timeoutMs,
+    )
+    const mcpServerNames = Object.keys(toRecord(toRecord(toRecord(effective).config).mcp_servers))
+    return this.rpc<ThreadStartResponse & { sandbox?: unknown }>(
+      'thread/start',
+      {
+        model: request.model,
+        ...(request.modelProvider ? { modelProvider: request.modelProvider } : {}),
+        cwd: request.cwd,
+        sandbox: 'read-only',
+        ephemeral: true,
+        threadSource: request.threadSource,
+        ...(this.options.experimentalApi
+          ? { runtimeWorkspaceRoots: [], environments: [], dynamicTools: [], selectedCapabilityRoots: [] }
+          : {}),
+        config: {
+          ...TEMPORARY_THREAD_CONFIG,
+          // Leaf keys, not upstream's single `mcp_servers` table: a table here
+          // replaces every launch `-c mcp_servers.*` entry and the catimation
+          // server loses its url (codex: "invalid transport").
+          ...Object.fromEntries(mcpServerNames.map((name) => [`mcp_servers.${name}.enabled`, false])),
+        },
+      },
+      Math.max(1, deadline - Date.now()),
+    )
+  }
+
+  private async runTemporaryTurn(
+    threadId: string,
+    request: TemporaryStructuredTurnRequest,
+    timeoutMs: number,
+  ): Promise<TemporaryStructuredTurnResult> {
+    const deadline = Date.now() + timeoutMs
+    const queue = await this.openTurnQueue(
+      threadId,
+      {
+        threadId,
+        input: [{ type: 'text', text: request.prompt, text_elements: [] }],
+        outputSchema: request.outputSchema,
+        ...(request.effort ? { effort: request.effort } : {}),
+      },
+      { background: true, timeoutMs },
+    )
+    try {
+      const result = await this.collectStructuredResponse(queue, deadline)
+      if (result) return result
+      try {
+        await this.rpc('turn/interrupt', { threadId, turnId: queue.turnId }, TEMPORARY_TURN_TIMEOUT_MS)
+      } catch (error) {
+        this.options.onLog?.(`[codex] temporary turn interrupt failed: ${stringifyError(error)}`)
+      }
+      throw new Error(`temporary structured turn timed out after ${timeoutMs}ms`)
+    } finally {
+      this.closeTurnQueue(queue)
+    }
+  }
+
+  /** Resolves `null` when the deadline passes first. */
+  private async collectStructuredResponse(
+    queue: TurnQueue,
+    deadline: number,
+  ): Promise<TemporaryStructuredTurnResult | null> {
+    const textByItem = new Map<string, string>()
+    let lastItemId: string | undefined
+    let usage: AgentTokenUsage | undefined
+    while (true) {
+      const event = await this.takeEventBefore(queue, deadline)
+      if (!event) return null
+      switch (event.type) {
+        case 'item_delta': {
+          const patch = event.patch
+          if (event.itemType !== 'text' || patch.kind !== 'appendText' || patch.field !== 'content') break
+          const text = (textByItem.get(event.itemId) ?? '') + patch.text
+          if (Buffer.byteLength(text, 'utf8') > TEMPORARY_RESPONSE_MAX_BYTES) {
+            throw new Error(`temporary structured response exceeds ${TEMPORARY_RESPONSE_MAX_BYTES} bytes`)
+          }
+          textByItem.set(event.itemId, text)
+          lastItemId = event.itemId
+          break
+        }
+        case 'token_usage_updated':
+          usage = event.usage
+          break
+        case 'error':
+          if (event.willRetry !== true) throw new Error(event.error)
+          break
+        case 'cancelled':
+          throw new Error('temporary structured turn cancelled')
+        case 'turn_completed': {
+          const status = this.temporaryThreads.get(queue.threadId)?.turnStatus
+          if (status !== undefined && status !== 'completed') {
+            throw new Error(`temporary structured turn ended with status ${status}`)
+          }
+          const text = lastItemId === undefined ? undefined : textByItem.get(lastItemId)
+          if (!text) throw new Error('temporary structured turn completed without a response')
+          return usage ? { text, usage } : { text }
+        }
+        default:
+          break
+      }
+    }
+  }
+
+  private takeEventBefore(queue: TurnQueue, deadline: number): Promise<AgentStreamEvent | null> {
+    return new Promise<AgentStreamEvent | null>((resolve) => {
+      const buffered = queue.buffer.shift()
+      if (buffered) {
+        resolve(buffered)
+        return
+      }
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        resolve(null)
+        return
+      }
+      const waiter = (event: AgentStreamEvent): void => {
+        clearTimeout(timer)
+        resolve(event)
+      }
+      const timer = setTimeout(() => {
+        if (queue.waiter === waiter) queue.waiter = undefined
+        resolve(null)
+      }, remainingMs)
+      timer.unref?.()
+      queue.waiter = waiter
+    })
   }
 
   /**
@@ -672,8 +925,14 @@ export class CodexProtocolClient {
   }
 
   /** Remove the current goal. */
-  async clearThreadGoal(threadId: string): Promise<ThreadGoalClearResponse> {
-    return this.rpc<ThreadGoalClearResponse>('thread/goal/clear', { threadId })
+  async clearThreadGoal(
+    threadId: string,
+    origin?: ThreadGoalMutationOrigin,
+  ): Promise<ThreadGoalClearResponse> {
+    return this.rpc<ThreadGoalClearResponse>('thread/goal/clear', {
+      threadId,
+      ...(origin ? { origin } : {}),
+    })
   }
 
   // ─── Context compaction (thread/compact/*, app-server v2) ─────────────────
@@ -795,22 +1054,24 @@ export class CodexProtocolClient {
     await this.rpc('thread/delete', { threadId })
   }
 
+  /**
+   * `thread/metadata/update` — patch stored thread metadata without resuming
+   * the thread. Only the provided keys are sent (omitted fields stay
+   * unchanged server-side), so an `isPinned`-only patch never clobbers gitInfo.
+   */
+  async updateThreadMetadata(threadId: string, patch: { isPinned?: boolean }): Promise<void> {
+    await this.rpc('thread/metadata/update', {
+      threadId,
+      ...(patch.isPinned === undefined ? {} : { isPinned: patch.isPinned }),
+    })
+  }
+
   respondToServerRequest(response: CodexApprovalResponse): void {
     const pending = this.pendingServerRequests.get(response.id)
     if (!pending) throw new Error(`No pending Codex server request for id ${response.id}`)
     this.pendingServerRequests.delete(response.id)
     clearTimeout(pending.timer)
-    const result = pending.method === 'mcpServer/elicitation/request'
-      ? {
-          action: response.approved ? 'accept' : 'decline',
-          content: null,
-          _meta: null,
-        }
-      : {
-          approved: response.approved,
-          ...(response.message ? { message: response.message } : {}),
-        }
-    this.sendServerRequestResponse(pending.wireId, result)
+    this.sendServerRequestResponse(pending.wireId, encodeServerRequestResult(pending.method, response))
   }
 
   private openOnce(url: string): Promise<WebSocket> {
@@ -945,6 +1206,14 @@ export class CodexProtocolClient {
 
   private queueServerRequest(msg: { id: number; method: string; params?: unknown }): void {
     const id = String(msg.id)
+    const params = toRecord(msg.params)
+    if (typeof params.threadId === 'string' && this.temporaryThreads.has(params.threadId)) {
+      this.sendServerRequestResponse(
+        msg.id,
+        this.serverRequestRejection(msg.method, 'hidden structured request accepts no interaction', 'decline'),
+      )
+      return
+    }
     if (this.pendingServerRequests.has(id)) {
       this.sendServerRequestResponse(
         msg.id,
@@ -953,7 +1222,9 @@ export class CodexProtocolClient {
       return
     }
 
-    const params = toRecord(msg.params)
+    const timeoutMs = msg.method === CODEX_REQUEST_USER_INPUT_METHOD
+      ? this.userInputTimeoutMs
+      : this.approvalTimeoutMs
     const timer = setTimeout(() => {
       const pending = this.pendingServerRequests.get(id)
       if (!pending) return
@@ -962,7 +1233,7 @@ export class CodexProtocolClient {
         pending.wireId,
         this.serverRequestRejection(pending.method, 'approval request timed out', 'cancel'),
       )
-    }, this.approvalTimeoutMs)
+    }, timeoutMs)
     timer.unref?.()
     this.pendingServerRequests.set(id, { wireId: msg.id, method: msg.method, timer })
 
@@ -988,6 +1259,11 @@ export class CodexProtocolClient {
   ): unknown {
     if (method === 'mcpServer/elicitation/request') {
       return { action: elicitationAction, content: null, _meta: null }
+    }
+    // 空答案表 = 「用户没有作答」，是协议里合法的应答；回 `{approved:false}` 会让
+    // codex 反序列化失败，工具调用连一句「用户没答」都拿不到。
+    if (method === CODEX_REQUEST_USER_INPUT_METHOD) {
+      return { answers: {} }
     }
     return { approved: false, message }
   }
@@ -1099,6 +1375,13 @@ export class CodexProtocolClient {
 
     this.tallyDiffChannel(method, itemType)
 
+    // The mapped `turn_completed` event drops `turn.status`; a hidden turn
+    // needs it to tell "completed" from "failed" / "interrupted".
+    if (method === 'turn/completed' && typeof params.threadId === 'string') {
+      const temporary = this.temporaryThreads.get(params.threadId)
+      if (temporary) temporary.turnStatus = typeof params.turn?.status === 'string' ? params.turn.status : undefined
+    }
+
     const event = this.notificationRouter.route(method, params)
     if (!event) {
       // Log each unhandled method once per session so we can diagnose missing
@@ -1123,17 +1406,20 @@ export class CodexProtocolClient {
       this.options.onMcpNotification?.(event)
       return
     }
-    if (event.type === 'goal_updated' || event.type === 'goal_cleared') {
-      this.options.onGoalNotification?.(event)
-      return
-    }
-    if (event.type === 'thread_settings_updated') {
-      this.options.onThreadSettingsNotification?.(event)
-      return
-    }
     if (event.type === 'skills_changed' || event.type === 'notice') {
       // Not turn-scoped (no threadId); the router never produces these today.
       // Drop rather than wedge them into a per-turn queue they don't belong to.
+      return
+    }
+    // A hidden structured-request thread only ever feeds its own turn queue:
+    // no goal / settings side channels, and never sub-agent routing.
+    const temporary = this.temporaryThreads.has(event.threadId)
+    if (event.type === 'goal_updated' || event.type === 'goal_cleared') {
+      if (!temporary) this.options.onGoalNotification?.(event)
+      return
+    }
+    if (event.type === 'thread_settings_updated') {
+      if (!temporary) this.options.onThreadSettingsNotification?.(event)
       return
     }
     const threadId = event.threadId
@@ -1159,6 +1445,7 @@ export class CodexProtocolClient {
       }
       return
     }
+    if (temporary) return
     // The turn id rides along because it is not on the event and cannot be
     // recovered later: interrupting a sub-agent needs its own
     // `(threadId, turnId)`, and this is the only place both are in hand.
@@ -1275,6 +1562,31 @@ function queueKey(threadId: string, turnId: string): string {
 
 function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 把渲染层的统一应答翻成各类服务端请求各自的线上形状。三种形状互不兼容，
+ * 而 app-server 对不认识的形状是直接反序列化失败，不会宽容处理。
+ *
+ * - `mcpServer/elicitation/request` → `{ action, content, _meta }`（0.144 起）
+ * - `item/tool/requestUserInput`   → `{ answers: { [questionId]: { answers } } }`
+ * - 其余审批                        → `{ approved, message? }`
+ */
+export function encodeServerRequestResult(method: string, response: CodexApprovalResponse): unknown {
+  if (method === 'mcpServer/elicitation/request') {
+    return {
+      action: response.approved ? 'accept' : 'decline',
+      content: null,
+      _meta: null,
+    }
+  }
+  if (method === CODEX_REQUEST_USER_INPUT_METHOD) {
+    return { answers: response.answers ?? {} }
+  }
+  return {
+    approved: response.approved,
+    ...(response.message ? { message: response.message } : {}),
+  }
 }
 
 function toRecord(value: unknown): Record<string, unknown> {

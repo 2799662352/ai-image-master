@@ -214,10 +214,14 @@
   pointer-events: none;
 }
 
+/* 钉住铺开(.vw-expanded)时也常驻:用户点开就是要整理素材,尾部那格「+」得一直在,
+   不能靠 hover 才淡入。translate 两个轴都要用 —— 多行铺开后它在最后一行,
+   以前只 translateX,--expand-top 白算了,加号永远留在首行被素材盖住。 */
 .vw-stack-container:hover .vw-stack-add,
-.vw-stack-container.vw-empty .vw-stack-add {
+.vw-stack-container.vw-empty .vw-stack-add,
+.vw-stack-container.vw-expanded .vw-stack-add {
   opacity: 1;
-  transform: translateX(var(--expand-left, 0));
+  transform: translate(var(--expand-left, 0), var(--expand-top, 0));
   pointer-events: auto;
 }
 
@@ -493,3 +497,211 @@
   .vw-card { animation: none; }
   .vw-chip-preview { animation: none; }
 }
+
+/* ---------- 剧栏(ProjectRail):剧 / 分段两层的左栏 ---------- */
+.vw-rail { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #3f3f46; background: #111113; }
+.vw-rail-fileover { outline: 1px dashed #fce300; outline-offset: -1px; background: #141410; }
+.vw-rail-collapsed { width: 48px; }
+.vw-rail-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px 8px; }
+.vw-rail-collapsed .vw-rail-head { justify-content: center; }
+.vw-rail-title { font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 10px; letter-spacing: 0.25em; color: #71717a; }
+.vw-rail-iconbtn { width: 22px; height: 22px; border: 1px solid #3f3f46; color: #a1a1aa; background: transparent; font-size: 12px; line-height: 1; }
+.vw-rail-iconbtn:hover { border-color: #fce300; color: #fff; }
+.vw-rail-tools { display: flex; gap: 6px; padding: 0 10px 10px; border-bottom: 1px solid #3f3f46; }
+.vw-rail-search { flex: 1; min-width: 0; height: 28px; background: #09090b; border: 1px solid #3f3f46; color: #fafafa; font-size: 11px; padding: 0 8px; }
+.vw-rail-search:focus { outline: none; border-color: #fce300; }
+.vw-rail-add { width: 28px; height: 28px; flex: none; background: #fce300; color: #000; font-weight: 700; font-size: 16px; line-height: 1; }
+.vw-rail-add:hover { background: #ffe500; box-shadow: 0 0 10px rgba(252, 227, 0, 0.3); }
+.vw-rail-list { flex: 1; overflow: auto; padding: 6px 0; }
+.vw-rail-row { border-left: 2px solid transparent; }
+.vw-rail-row:hover { background: #18181b; }
+.vw-rail-row-active { border-left-color: #fce300; background: #18181b; }
+.vw-rail-rowbtn { width: 100%; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; text-align: left; background: transparent; color: inherit; }
+.vw-rail-collapsed .vw-rail-rowbtn { justify-content: center; padding: 8px 0; }
+.vw-rail-cover { width: 56px; height: 32px; flex: none; border: 1px solid #3f3f46; background: #18181b repeating-linear-gradient(90deg, #27272a 0 1px, transparent 1px 33.33%); overflow: hidden; }
+.vw-rail-collapsed .vw-rail-cover { width: 26px; height: 26px; }
+.vw-rail-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vw-rail-meta { min-width: 0; flex: 1; }
+.vw-rail-name { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #e4e4e7; min-width: 0; }
+.vw-rail-name > span.truncate { min-width: 0; }
+.vw-rail-row-active .vw-rail-name { color: #fff; font-weight: 700; }
+.vw-rail-nameinput { width: 100%; background: #09090b; border: 1px solid #fce300; color: #fff; font-size: 12px; padding: 1px 4px; }
+.vw-rail-sub { font-size: 10px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-rail-time { font-size: 10px; color: #52525b; flex: none; padding-top: 2px; }
+.vw-strip { display: flex; gap: 1px; height: 2px; margin-top: 4px; }
+.vw-dot { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; flex: none; }
+.vw-dot::before { content: ''; width: 6px; height: 6px; display: inline-block; }
+.vw-dot-yellow { color: #fce300; }
+.vw-dot-yellow::before { background: #fce300; }
+.vw-dot-red { color: #f87171; }
+.vw-dot-red::before { background: #f87171; }
+.vw-rail-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; border-top: 1px solid #3f3f46; }
+.vw-ghost { height: 28px; border: 1px solid #3f3f46; color: #e4e4e7; font-size: 11px; background: transparent; }
+.vw-ghost:hover:not(:disabled) { border-color: #fce300; color: #fff; }
+.vw-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- 右键菜单 / 回收站 / 置顶标记 ---------- */
+/* 菜单走 portal 挂在 body 上:剧栏列表 overflow:auto、分段卡 hover 有 transform,留在里面会被裁/错位 */
+.vw-ctx-menu { position: fixed; z-index: 90; min-width: 176px; max-width: 260px; padding: 4px 0; background: #111113; border: 1px solid #3f3f46; box-shadow: 0 0 14px rgba(252, 227, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.5); }
+.vw-ctx-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; padding: 7px 12px; font-size: 12px; color: #e4e4e7; text-align: left; background: transparent; white-space: nowrap; }
+.vw-ctx-item:hover:not(:disabled), .vw-ctx-item:focus-visible { background: #18181b; color: #fff; outline: none; box-shadow: inset 2px 0 0 #fce300; }
+.vw-ctx-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.vw-ctx-danger { color: #f87171; }
+.vw-ctx-danger:hover:not(:disabled), .vw-ctx-danger:focus-visible { background: rgba(248, 113, 113, 0.1); color: #fca5a5; box-shadow: inset 2px 0 0 #f87171; }
+.vw-ctx-hint { font-size: 10px; color: #71717a; letter-spacing: 0.04em; }
+.vw-ctx-sep { height: 1px; margin: 4px 0; background: #27272a; }
+
+/* 危险按钮:彻底删除 / 清空回收站;armed = 已点第一下,等第二下确认 */
+.vw-danger { height: 28px; padding: 0 10px; border: 1px solid #4a1f1f; color: #f87171; font-size: 11px; background: transparent; white-space: nowrap; }
+.vw-danger:hover { border-color: #f87171; background: rgba(248, 113, 113, 0.08); }
+.vw-danger-armed { border-color: #ef4444; background: rgba(239, 68, 68, 0.22); color: #fecaca; }
+.vw-ghost-danger:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
+
+.vw-dialog-sm { width: 380px; }
+.vw-dialog-trash { width: 620px; }
+.vw-trash-body { max-height: 52vh; overflow: auto; }
+.vw-trash-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.vw-trash-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; background: #18181b; border: 1px solid #27272a; }
+.vw-trash-meta { min-width: 0; flex: 1; }
+.vw-trash-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 700; color: #fff; }
+.vw-trash-name > .truncate { min-width: 0; }
+.vw-trash-sub { margin-top: 3px; font-size: 11px; color: #71717a; }
+.vw-trash-actions { display: flex; gap: 6px; flex: none; }
+.vw-trash-actions .vw-ghost, .vw-trash-actions .vw-danger { padding: 0 10px; }
+
+/* 置顶标记:黄色小描边 PIN;折叠剧栏里只剩封面,用左上角的黄点代替 */
+.vw-pin { flex: none; font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 8px; letter-spacing: 0.12em; line-height: 1; color: #fce300; border: 1px solid rgba(252, 227, 0, 0.5); padding: 2px 3px; }
+.vw-pin-dot { position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.6); }
+
+/* 剧栏:行右侧的「⋯」(悬停/聚焦才出现,与右键同一份菜单),底部回收站入口 */
+.vw-rail-row { position: relative; }
+.vw-rail-rowbtn { position: relative; }
+.vw-rail-more { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; font-size: 13px; line-height: 1; color: #a1a1aa; background: #111113; border: 1px solid #3f3f46; opacity: 0; transition: opacity .1s; }
+.vw-rail-row:hover .vw-rail-more, .vw-rail-more:focus-visible { opacity: 1; }
+.vw-rail-more:hover { color: #fff; border-color: #fce300; }
+.vw-rail-row:hover .vw-rail-time { opacity: 0; }
+.vw-rail-foot .vw-rail-trash { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.vw-rail-trash-mini { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 8px auto; border: 1px solid #3f3f46; color: #a1a1aa; background: transparent; }
+.vw-rail-trash-mini:hover { border-color: #fce300; color: #fff; }
+
+/* 总览分段卡:卡本体是 <button>,「⋯」只能是它的兄弟,所以包一层定位容器 */
+.vw-seg-wrap { position: relative; min-width: 0; }
+.vw-seg-more { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; font-size: 15px; line-height: 1; color: #e4e4e7; background: rgba(0, 0, 0, 0.72); border: 1px solid #3f3f46; opacity: 0; transition: opacity .1s; z-index: 1; }
+.vw-seg-wrap:hover .vw-seg-more, .vw-seg-more:focus-visible { opacity: 1; }
+.vw-seg-more:hover { color: #fce300; border-color: #fce300; }
+.vw-seg-pin { position: absolute; top: 10px; left: 42px; background: rgba(0, 0, 0, 0.7); padding: 3px 4px; z-index: 1; pointer-events: none; }
+
+/* ---------- 分段页:面包屑 + 页签(自动换行,不出滚动条) ---------- */
+.vw-crumb { font-size: 11px; color: #a1a1aa; background: transparent; border: 1px solid #3f3f46; padding: 1px 8px; cursor: pointer; transition: color .12s, border-color .12s; }
+.vw-crumb:hover { color: #fce300; border-color: #fce300; }
+.vw-crumb-sep { color: #3f3f46; font-size: 11px; }
+.vw-crumb-project { font-size: 11px; color: #71717a; }
+.vw-crumb-cur { font-size: 11px; color: #e4e4e7; }
+.vw-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.vw-tabs > * { flex: none; }
+
+/* ---------- 剧总览(ProjectOverview / SegmentCard / MigrationNotice) ---------- */
+.vw-chip { border: 1px solid #3f3f46; color: #71717a; font-size: 11px; padding: 2px 8px; line-height: 16px; }
+.vw-chip-ok { color: #22c55e; border-color: #1f3d2a; }
+.vw-chip-warn { color: #fce300; border-color: #4a4300; }
+.vw-chip-bad { color: #f87171; border-color: #4a1f1f; }
+.vw-primary { background: #fce300; color: #000; font-weight: 700; font-size: 12px; height: 30px; padding: 0 12px; }
+.vw-primary:hover { background: #ffe500; box-shadow: 0 0 10px rgba(252, 227, 0, 0.3); }
+.vw-title-input { background: #09090b; border: 1px solid #fce300; color: #fff; font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 22px; font-weight: 700; padding: 2px 6px; min-width: 240px; }
+.vw-project-summary { margin-top: 6px; font-size: 12px; color: #a1a1aa; letter-spacing: 0.02em; }
+.vw-notice { display: flex; align-items: flex-start; gap: 12px; border-left: 2px solid #fce300; background: #18181b; padding: 12px 16px; }
+.vw-notice-icon { width: 18px; height: 18px; flex: none; border: 1px solid #fce300; color: #fce300; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; }
+.vw-notice-text { flex: 1; font-size: 12px; color: #e4e4e7; line-height: 1.6; }
+.vw-notice-actions { display: flex; gap: 6px; flex: none; }
+.vw-notice-actions .vw-ghost { padding: 0 10px; }
+.vw-seg-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1100px) { .vw-seg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.vw-seg { display: block; text-align: left; background: #18181b; border: 1px solid #3f3f46; color: inherit; padding: 0; width: 100%; }
+.vw-seg { cursor: pointer; transition: border-color .12s, transform .12s; }
+.vw-seg:hover { border-color: #fce300; transform: translateY(-1px); }
+.vw-seg:hover .vw-seg-name { color: #fce300; }
+.vw-seg:hover .vw-seg-open { color: #fce300; }
+.vw-seg-open { color: #a1a1aa; font-size: 11px; letter-spacing: .04em; white-space: nowrap; }
+.vw-seg-new { display: flex; flex-direction: column; align-items: center; justify-content: center; border-style: dashed; color: #71717a; min-height: 200px; }
+.vw-seg-new:hover { color: #fce300; }
+.vw-seg-cover { position: relative; aspect-ratio: 16 / 9; border-bottom: 1px solid #3f3f46; background: #18181b repeating-linear-gradient(90deg, #27272a 0 1px, transparent 1px 33.33%); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.vw-seg-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vw-seg-play { color: #3f3f46; font-size: 28px; }
+.vw-seg-badge { position: absolute; font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 10px; color: rgba(255, 255, 255, 0.9); background: rgba(0, 0, 0, 0.7); padding: 2px 6px; }
+.vw-seg-badge-tl { top: 8px; left: 8px; }
+.vw-seg-badge-br { bottom: 8px; right: 8px; }
+.vw-seg-badge-bl { bottom: 8px; left: 8px; font-family: 'Exo 2', 'Noto Sans SC', sans-serif; }
+.vw-rail-drop { display: block; width: calc(100% - 16px); margin: 6px 8px; padding: 10px 12px; border: 1px dashed #fce300; background: rgba(252, 227, 0, 0.06); color: #fce300; font-size: 11px; text-align: left; }
+
+/* ---------- Ctrl+P 搜索面板 ---------- */
+.vw-palette-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 60; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.vw-palette { width: 480px; max-width: calc(100vw - 32px); max-height: 60vh; background: #111113; border: 1px solid #3f3f46; box-shadow: 0 0 14px rgba(252, 227, 0, 0.18); display: flex; flex-direction: column; }
+.vw-palette-input { height: 40px; background: #09090b; border: 0; border-bottom: 1px solid #3f3f46; color: #fff; font-size: 13px; padding: 0 12px; }
+.vw-palette-input:focus { outline: none; border-bottom-color: #fce300; }
+.vw-palette-list { overflow: auto; padding: 4px 0; margin: 0; list-style: none; }
+.vw-palette-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; font-size: 12px; color: #e4e4e7; cursor: pointer; }
+.vw-palette-item-active { background: #18181b; color: #fff; box-shadow: inset 2px 0 0 #fce300; }
+.vw-palette-sub { color: #71717a; font-size: 11px; flex: none; }
+.vw-palette-empty { padding: 12px; font-size: 12px; color: #71717a; }
+/* 确认页(导入/导出工程):复用 palette 的遮罩与面板 */
+.vw-dialog { width: 520px; max-height: none; margin-top: 10vh; }
+.vw-dialog-title { font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 14px; font-weight: 700; color: #fce300; letter-spacing: .08em; padding: 12px 16px; border-bottom: 1px solid #3f3f46; }
+.vw-dialog-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; font-size: 12px; color: #e4e4e7; }
+.vw-dialog-line { line-height: 1.6; }
+.vw-dialog-field { display: flex; flex-direction: column; gap: 6px; }
+.vw-dialog-label { font-size: 11px; color: #71717a; letter-spacing: .04em; }
+.vw-dialog-path { font-size: 11px; color: #a1a1aa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.vw-dialog-input { height: 32px; background: #09090b; border: 1px solid #3f3f46; color: #fff; font-size: 13px; padding: 0 10px; }
+.vw-dialog-input:focus { outline: none; border-color: #fce300; }
+.vw-dialog-note { font-size: 11px; color: #71717a; line-height: 1.6; margin: 0; }
+.vw-dialog-error { font-size: 12px; color: #f87171; line-height: 1.6; margin: 0; }
+.vw-dialog-ok { font-size: 12px; color: #22c55e; line-height: 1.6; margin: 0; display: flex; gap: 6px; min-width: 0; }
+.vw-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #3f3f46; }
+
+/* ---------- 任务详情面板(TaskDetailDialog) ---------- */
+/* 比普通对话框宽:里面是整行 ID 与地址,520px 会把 cgt-…/https://… 折成三行。
+   主体自己滚,标题与底部按钮钉住 —— 面板高度上限跟 .vw-palette 的 60vh 分开算。 */
+.vw-detail { width: 680px; }
+.vw-detail-body { max-height: 68vh; overflow: auto; gap: 14px; }
+.vw-detail-section { display: flex; flex-direction: column; gap: 4px; }
+.vw-detail-section-title { font-size: 11px; color: #71717a; letter-spacing: .08em; text-transform: uppercase; padding-bottom: 4px; border-bottom: 1px solid #27272a; margin-bottom: 4px; }
+.vw-detail-row { display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 5px 6px; }
+.vw-detail-row:hover { background: #18181b; }
+.vw-detail-label { font-size: 11px; color: #a1a1aa; padding-top: 1px; }
+.vw-detail-value { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 12px; color: #e4e4e7; word-break: break-all; line-height: 1.5; }
+.vw-detail-value-missing { color: #71717a; font-style: italic; font-family: inherit; }
+.vw-detail-hint { font-size: 11px; color: #71717a; line-height: 1.5; margin-top: 2px; }
+.vw-detail-actions { display: flex; gap: 6px; flex: none; }
+.vw-detail-copy { height: 22px; padding: 0 8px; border: 1px solid #3f3f46; background: transparent; color: #a1a1aa; font-size: 11px; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s; }
+.vw-detail-copy:hover { border-color: #fce300; color: #fce300; }
+/* 上游任务号:用户来这一页多半就是为了它 —— 黄边 + 白字加粗,和其余行拉开。 */
+.vw-detail-hero { border-left: 2px solid #fce300; background: rgba(252, 227, 0, 0.05); }
+.vw-detail-hero .vw-detail-label { color: #fce300; }
+.vw-detail-hero .vw-detail-value { color: #fff; font-weight: 700; }
+.vw-detail-hero .vw-detail-value-missing { color: #a1a1aa; font-weight: 400; }
+.vw-detail-json { margin: 0; padding: 10px 12px; background: #09090b; border: 1px solid #27272a; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.55; color: #d4d4d8; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+
+/* ---------- 任务详情面板 ---------- */
+/* 比普通确认页宽:一行要摆 标签 / 长 ID 或地址 / 复制按钮;正文可滚,标题与底栏钉住 */
+.vw-detail { width: 680px; max-height: 82vh; margin-top: 7vh; }
+.vw-detail-body { overflow: auto; gap: 14px; }
+.vw-detail-section { display: flex; flex-direction: column; gap: 6px; }
+.vw-detail-section-title { font-size: 11px; color: #71717a; letter-spacing: .08em; text-transform: uppercase; padding-bottom: 4px; border-bottom: 1px solid #27272a; }
+.vw-detail-row { display: grid; grid-template-columns: 132px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 4px 6px; }
+.vw-detail-label { font-size: 11px; color: #a1a1aa; line-height: 1.6; }
+.vw-detail-value { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 12px; color: #e4e4e7; line-height: 1.6; word-break: break-all; user-select: text; }
+.vw-detail-value-missing { color: #71717a; font-style: italic; font-family: inherit; }
+.vw-detail-hint { font-size: 11px; color: #71717a; line-height: 1.5; margin-top: 1px; }
+.vw-detail-actions { display: flex; gap: 6px; flex: none; }
+.vw-detail-copy { height: 22px; padding: 0 8px; border: 1px solid #3f3f46; background: transparent; color: #a1a1aa; font-size: 11px; white-space: nowrap; }
+.vw-detail-copy:hover { border-color: #fce300; color: #fce300; }
+/* 上游任务号:用户来这一页多半就是为了它 —— 黄边 + 亮字,一眼锁定 */
+.vw-detail-hero { border-left: 2px solid #fce300; background: rgba(252, 227, 0, 0.05); }
+.vw-detail-hero .vw-detail-label { color: #fce300; font-weight: 700; }
+.vw-detail-hero .vw-detail-value { color: #fff; font-size: 13px; }
+/* 历史版本区:面板此刻展示的那一版,和其余行的「查看」按钮同尺寸,不跳版 */
+.vw-detail-current { height: 22px; padding: 0 8px; border: 1px solid rgba(252, 227, 0, 0.5); color: #fce300; font-size: 11px; line-height: 20px; white-space: nowrap; }
+.vw-detail-json { margin: 0; padding: 10px 12px; background: #09090b; border: 1px solid #27272a; color: #d4d4d8; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.55; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.vw-seg-body { padding: 10px 12px 12px; }
+.vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }

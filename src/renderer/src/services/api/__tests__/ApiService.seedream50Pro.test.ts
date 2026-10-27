@@ -31,20 +31,33 @@ describe('ApiService Seedream 5.0 Pro model config', () => {
     expect(cfg.defaultParams?.stream).toBeUndefined()
   })
 
-  it('orders the model dropdown: SD5 → 腾讯 → Nano2 → 万相 → 千问 → Image2 → VIP, rest untouched after', () => {
+  it('orders the model dropdown: SD5 → 腾讯 ×4 → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2 → Image 2.5 → Image2 → VIP, rest untouched after', () => {
     const keys = Object.keys(service.getAllModels())
-    expect(keys.slice(0, 7)).toEqual([
+    expect(keys.slice(0, 16)).toEqual([
       'doubao-seedream-5-0-pro-260628',
+      // 四个腾讯模型相邻摆放,便于对比选择。它们是**不同的模型、不同的渠道**
+      // (定价也不同),旧那条不会因为新增而下掉 —— 这里同时钉住「都在」。
       'custom-imagemodel-gt',
+      'custom-model-og-v2',
+      'custom-model-og-v2.5-f',
+      'custom-model-og-v2.5-s',
       'gemini-3.1-flash-image',
+      'gemini-nano-banana-2.1',
       'wan2.7-image-pro',
       'qwen-image-3.0-pro',
+      'youchuan-v8.2',
+      'youchuan-v8.2-turbo',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2.5-all',
       'gpt-image-2',
       'gpt-image-2-vip',
     ])
     // 未指定顺序的模型仍在列表里(相对顺序不变),没有丢失。
     expect(keys).toContain('seedream-4-5-251128')
-    expect(keys).toContain('gpt-image-2-all')
+    expect(keys).toContain('gpt-image-2.5-all')
+    expect(keys).not.toContain('gpt-image-2-all')
+    expect(keys).not.toContain('gpt-image-2.5-vip')
     expect(keys).toContain('sora_image')
   })
 })

@@ -8,7 +8,7 @@ interface ImageChannelPickerProps {
 
 /**
  * Composer-footer dropdown that lets the user pick which image *channel* the
- * chat renders on (VIP / 腾讯 / Nano2 / Wan2.7). The selection is authoritative:
+ * chat renders on (Flare / Sunburst / All 2.5 / Image2 / VIP / 腾讯 / Nano2 / Wan). The selection is authoritative:
  * every `generate_image` the agent runs uses it — the mirror of the GPT model
  * picker sitting right next to it. Options come straight from `IMAGE_CHANNELS`
  * so the list tracks the registry automatically.

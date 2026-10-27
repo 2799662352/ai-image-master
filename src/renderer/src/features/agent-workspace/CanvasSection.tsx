@@ -9,6 +9,7 @@ import { canvasShapeUtils } from './canvas/FileCardShapeUtil'
 import { makeFileAssetHandlerWithDiskPath, makeFilesContentHandlerWithPlaceholders } from './canvas/shapeOps'
 import { makeCanvasAssetStore } from './canvas/canvasAssetStore'
 import { canvasAssetUtils } from './canvas/canvasAssetUtils'
+import { resolveTldrawLicenseKey } from './canvas/tldrawLicense'
 import { useAgentChatStore } from '../agent-chat/store'
 import { parseFileDrop } from '../file-explorer/dragHelpers'
 
@@ -34,6 +35,12 @@ const CANVAS_MAX_IMAGE_DIMENSION = 8192 // 支持到 8K 长边,超过才降采�
  * v2 keeps only path-backed `local-file://` srcs (this asset store).
  */
 const CANVAS_PERSISTENCE_KEY = 'catimation-canvas-v2'
+
+// Packaged builds (file://, NODE_ENV=production) are "production" to tldraw
+// ≥ 5.3.2: without a key the editor unmounts itself 5 s after opening the
+// canvas. Inlined from VITE_TLDRAW_LICENSE_KEY at build time; undefined keeps
+// today's behaviour (dev stays license-free). See canvas/tldrawLicense.ts.
+const TLDRAW_LICENSE_KEY = resolveTldrawLicenseKey()
 
 const canvasAssetStore = makeCanvasAssetStore({
   resolveDiskPath: (file, threadId) => canvasBridge.resolveDroppedFileDiskPath(file, threadId),
@@ -317,6 +324,7 @@ export function CanvasSection(): React.JSX.Element {
     <div ref={wrapperRef} className="relative h-full min-h-0 w-full">
       <Tldraw
         persistenceKey={CANVAS_PERSISTENCE_KEY}
+        licenseKey={TLDRAW_LICENSE_KEY}
         assets={canvasAssetStore}
         // Do NOT grab global keyboard/clipboard on mount — see the FOCUS
         // OWNERSHIP block in handleMount. We focus the editor ourselves on

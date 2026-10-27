@@ -1,5 +1,6 @@
-import Select, { type SingleValue } from 'react-select'
+import Select, { type GroupBase, type SingleValue } from 'react-select'
 import { useModelStore } from '../../stores'
+import { groupModelsByVendor } from '../../services/api/modelVendors'
 import { darkSelectStyles } from '../../styles/selectTheme'
 
 interface ModelOption {
@@ -8,17 +9,25 @@ interface ModelOption {
   isNew?: boolean
 }
 
+type ModelGroup = GroupBase<ModelOption>
+
 const selectStyles = darkSelectStyles<ModelOption>()
 
+/**
+ * 顶栏模型选择器 —— 按厂商聚合(Seedream / 腾讯 / Google / 阿里 / OpenAI / Flux 各一组,
+ * 组头带该厂商的模型数),组内顺序沿用 getAllModels() 的展示顺序。分组逻辑在
+ * groupModelsByVendor 里,这里只负责把它喂给 react-select 的 grouped options。
+ */
 export function ModelSelector() {
   const { currentModelKey, models, switchModel } = useModelStore()
 
-  const options: ModelOption[] = Object.entries(models).map(([key, info]) => ({
-    value: key,
-    label: info.name,
+  const groups: ModelGroup[] = groupModelsByVendor(models).map((group) => ({
+    label: `${group.meta.name} · ${group.models.length}`,
+    options: group.models.map(({ key, model }) => ({ value: key, label: model.name })),
   }))
 
-  const selected = options.find((o) => o.value === currentModelKey) ?? null
+  const selected =
+    groups.flatMap((g) => g.options).find((o) => o.value === currentModelKey) ?? null
 
   const handleChange = (opt: SingleValue<ModelOption>) => {
     if (opt) switchModel(opt.value)
@@ -26,10 +35,10 @@ export function ModelSelector() {
 
   return (
     <div className="w-56">
-      <Select<ModelOption>
+      <Select<ModelOption, false, ModelGroup>
         value={selected}
         onChange={handleChange}
-        options={options}
+        options={groups}
         styles={selectStyles}
         placeholder="Select model..."
         isSearchable

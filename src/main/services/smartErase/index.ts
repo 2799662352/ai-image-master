@@ -12,15 +12,30 @@ import {
 } from './runner'
 // posterGen and probe replaced by renderer-side HTML5 <video>+<canvas>
 import { trackForReaping } from './reaper'
-import { DEFAULT_ERASE_CONFIG } from '../../../types/smartErase'
+import { DEFAULT_ERASE_CONFIG, DEFAULT_ERASE_TOOL } from '../../../types/smartErase'
 import type {
   EraseConfig,
+  EraseTool,
   EraseSubmitPayload,
   EraseProgressEvent,
   EraseFinishedEvent,
   EraseFailedEvent,
 } from '../../../types/smartErase'
-import type { BrowserWindow } from 'electron'
+import { net, type BrowserWindow } from 'electron'
+import { createMediaKitClient, type MediaKitAuthHeaders } from '../mediaKit/client'
+import { runMediaKitUpload, runMediaKitProcessAndPoll } from '../mediaKit/runner'
+import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
+import { getActivePoolToken, gatewayPlatformHeaders } from '../auth/gatewayToken'
+import { notePlatformSpend } from '../auth/platformSpend'
+import { getWan3ApiKey } from '../wan3/credentials'
+import {
+  describeMissingGatewayToken,
+  resolveSeedanceGatewayToken,
+  type SeedanceGatewayTokenSources,
+} from '../seedanceGateway/credentials'
+import { coerceVideoBillingSource } from '../seedance/billing'
+import { coerceEnhanceSpec, enhanceModelFor } from '../../../shared/videoEnhance'
+import type { MediaKitModel } from '../mediaKit/client'
 
 const MAX_UPLOAD_CONCURRENT = 3
 const MAX_INFLIGHT = 40
@@ -47,15 +62,63 @@ function safeSend(channel: string, data: unknown): void {
 
 let defaultConfig: EraseConfig = { ...DEFAULT_ERASE_CONFIG }
 
+// ─── 高清(火山 MediaKit 经 Miau 网关)─────────────────────────────────────
+//
+// 凭据与计费判据**照搬视频链路**:同一对 token 来源、同一个解析器、同一句缺席提示。
+// 各判各的会出现「按平台余额路由、拿自填 Key 提交」这种组合 —— 请求照样成功,
+// 钱从错的钱包出,两边日志看起来都对(理由见 `seedance/billing.ts`)。
+
+const mediaKitTokenSources: SeedanceGatewayTokenSources = {
+  platformToken: getActivePoolToken,
+  ownKey: getWan3ApiKey,
+}
+
+/**
+ * 每次现取而不是构造时定死:用户中途切计费模式,下一轮轮询就该记到新的归属上。
+ * 平台那一支必须用 `gatewayPlatformHeaders` 整份组头 —— 少了归属头,钱扣对了
+ * 但用量明细里一条都查不到,而且一个错都不报。
+ */
+function mediaKitAuthFor(prefer: 'platform' | 'own-key' | undefined): () => MediaKitAuthHeaders {
+  return () => {
+    const { billing, token } = resolveSeedanceGatewayToken(mediaKitTokenSources, prefer)
+    if (!token) {
+      const err: any = new Error(describeMissingGatewayToken(billing))
+      err.code = 'CREDENTIALS_MISSING'
+      throw err
+    }
+    return billing === 'platform' ? gatewayPlatformHeaders(token) : { Authorization: `Bearer ${token}` }
+  }
+}
+
+// 懒建:`resolveGatewayOrigin()` 读的是环境覆盖,在模块加载期取值太早;而且
+// 这个文件被不装 electron 的测试 import,顶层调 `net.fetch` 会炸。
+let mediaKitClientRef: ReturnType<typeof createMediaKitClient> | null = null
+function mediaKitClient() {
+  if (!mediaKitClientRef) {
+    mediaKitClientRef = createMediaKitClient({
+      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      // 🚨 与出网注入器共用同一个 origin 解析 —— 写死生产地址在测试服模式下会把
+      // 测试签发的 token 发到生产网关(2026-08-31 万相踩过,`seedance/runtime.ts` 有详述)。
+      baseUrl: `${resolveGatewayOrigin()}/v1`,
+      onBilledExchange: notePlatformSpend,
+    })
+  }
+  return mediaKitClientRef
+}
+
 // ─── Task registry ─────────────────────────────────────────────────────────
 // Single source of truth bridging the two queues; carries posterDataUrl and
 // mpsTaskId across phases so cancel-during-processing can route to the reaper.
 
 interface TaskMeta {
   payload: EraseSubmitPayload
+  tool: EraseTool
   posterDataUrl: string
   config: EraseConfig
+  /** 去字幕:媒体桶里的对象键。高清:不用(它的输入是中转桶的公网 URL)。 */
   inputCosKey?: string
+  /** 高清:中转后的公网源 URL。 */
+  sourceUrl?: string
   mpsTaskId?: string
   phase: 'queued-upload' | 'uploading' | 'queued-process' | 'processing' | 'done' | 'failed' | 'cancelled'
 }
@@ -64,7 +127,14 @@ const taskRegistry = new Map<string, TaskMeta>()
 
 // ─── Queues ────────────────────────────────────────────────────────────────
 
-const uploadQueue = new JobQueue<UploadPhaseInput, UploadPhaseOutput>({
+/**
+ * 上传阶段的产物。两条路各自只填自己那个字段:去字幕拿媒体桶对象键,高清拿
+ * 中转桶公网 URL。用一个联合而不是两个队列 —— 并发上限、取消、失败路由都是
+ * 同一套,分成两个队列只会把这些复制一遍。
+ */
+type UploadOutput = UploadPhaseOutput | { sourceUrl: string }
+
+const uploadQueue = new JobQueue<UploadPhaseInput & { fileSize: number }, UploadOutput>({
   name: 'smart-erase-upload',
   maxConcurrent: MAX_UPLOAD_CONCURRENT,
   runner: async (job, signal) => {
@@ -74,6 +144,12 @@ const uploadQueue = new JobQueue<UploadPhaseInput, UploadPhaseOutput>({
       taskId: job.taskId,
       status: 'uploading',
     } satisfies EraseProgressEvent)
+
+    if (meta?.tool === 'enhance') {
+      // 中转到公网 URL。没有百分比回调(relayFileToCos 不提供),队列条目会停在
+      // 「上传中」直到完成 —— 与理解 / 工作台那边的行为一致。
+      return runMediaKitUpload(job, signal)
+    }
 
     return runUpload(job, signal, {
       onProgress: (p) => {
@@ -89,7 +165,8 @@ const uploadQueue = new JobQueue<UploadPhaseInput, UploadPhaseOutput>({
     onFinished: (job, result) => {
       const meta = taskRegistry.get(job.taskId)
       if (!meta) return
-      meta.inputCosKey = result.inputCosKey
+      if ('sourceUrl' in result) meta.sourceUrl = result.sourceUrl
+      else meta.inputCosKey = result.inputCosKey
       // Defensive: if cancelled in the brief window between upload finish
       // and process enqueue, do not hand off.
       if (meta.phase === 'cancelled') return
@@ -104,7 +181,8 @@ const uploadQueue = new JobQueue<UploadPhaseInput, UploadPhaseOutput>({
           filename: meta.payload.filename,
           durationSeconds: meta.payload.durationSeconds,
           config: meta.config,
-          inputCosKey: result.inputCosKey,
+          // 去字幕用;高清那条在 runner 里读 meta.sourceUrl,这里留空串占位。
+          inputCosKey: 'inputCosKey' in result ? result.inputCosKey : '',
         })
         .catch(() => {
           // Failure already routed through processQueue's onFailed handler
@@ -148,42 +226,86 @@ const uploadQueue = new JobQueue<UploadPhaseInput, UploadPhaseOutput>({
   getJobId: (job) => job.taskId,
 })
 
+/**
+ * 高清的处理阶段。产物压成与去字幕相同的 `ProcessPhaseOutput`,这样转存、完成事件、
+ * 历史记录三处都不用分叉。`outputCosKey` 留空:结果不在媒体桶里,转存后的历史桶
+ * 对象由转存函数自己命名;`mpsTaskId` 放网关任务号,给「查看详情」当标识用。
+ */
+async function runEnhanceProcess(
+  taskId: string,
+  meta: TaskMeta,
+  signal: AbortSignal,
+): Promise<ProcessPhaseOutput> {
+  if (!meta.sourceUrl) {
+    const err: any = new Error('高清任务缺少源 URL —— 上传阶段没有产出中转链接')
+    err.code = 'SOURCE_URL_MISSING'
+    err.stage = 'submit'
+    throw err
+  }
+  // 规格 → 网关模型名。DAMO 的档位全在模型名里(算法 × 分辨率 × 帧率),
+  // 火山是单一模型;两家共用同一个客户端与请求形状。
+  const model = enhanceModelFor(coerceEnhanceSpec(meta.payload.enhance)) as MediaKitModel
+  const { videoUrl, taskId: gatewayTaskId } = await runMediaKitProcessAndPoll(
+    mediaKitClient(),
+    mediaKitAuthFor(coerceVideoBillingSource(meta.payload.billing)),
+    { model, sourceUrl: meta.sourceUrl, options: {} },
+    signal,
+    {
+      onProgress: (p) => {
+        if (p.taskId) meta.mpsTaskId = p.taskId
+        safeSend('erase:progress', {
+          taskId,
+          status: p.stage === 'submitting' ? 'submitting' : 'processing',
+          mpsTaskId: p.taskId,
+          mpsProgress: p.progress,
+        } satisfies EraseProgressEvent)
+      },
+    },
+  )
+  return { videoUrl, videoExpiresAt: 0, outputCosKey: '', mpsTaskId: gatewayTaskId }
+}
+
 const processQueue = new JobQueue<ProcessPhaseInput, ProcessPhaseOutput>({
   name: 'smart-erase-process',
   maxConcurrent: MAX_INFLIGHT,
   runner: async (job, signal) => {
     const meta = taskRegistry.get(job.taskId)
     if (meta) meta.phase = 'processing'
-    const result = await runProcessAndPoll(job, signal, {
-      onProgress: (p) => {
-        if (meta && p.mpsTaskId) meta.mpsTaskId = p.mpsTaskId
-        safeSend('erase:progress', {
-          taskId: job.taskId,
-          status: p.stage === 'submitting' ? 'submitting' : 'processing',
-          mpsTaskId: p.mpsTaskId,
-          // Real Tencent progress + the curated detail snapshot. Both
-          // are optional — they're absent on the initial 'submitting'
-          // emit (before any DescribeTaskDetail poll) and present on
-          // every subsequent 'processing' emit. Renderer falls back to
-          // the exponential estimate when mpsProgress is undefined.
-          mpsProgress: p.mpsProgress,
-          taskDetail: p.taskDetail,
-        } satisfies EraseProgressEvent)
-      },
-    })
+
+    const result: ProcessPhaseOutput = meta?.tool === 'enhance'
+      ? await runEnhanceProcess(job.taskId, meta, signal)
+      : await runProcessAndPoll(job, signal, {
+        onProgress: (p) => {
+          if (meta && p.mpsTaskId) meta.mpsTaskId = p.mpsTaskId
+          safeSend('erase:progress', {
+            taskId: job.taskId,
+            status: p.stage === 'submitting' ? 'submitting' : 'processing',
+            mpsTaskId: p.mpsTaskId,
+            // Real Tencent progress + the curated detail snapshot. Both
+            // are optional — they're absent on the initial 'submitting'
+            // emit (before any DescribeTaskDetail poll) and present on
+            // every subsequent 'processing' emit. Renderer falls back to
+            // the exponential estimate when mpsProgress is undefined.
+            mpsProgress: p.mpsProgress,
+            taskDetail: p.taskDetail,
+          } satisfies EraseProgressEvent)
+        },
+      })
 
     // 转存历史桶(公开读)拿永久 URL —— 媒体桶里的签名 URL 在 STS 模式下
     // 只活到票据过期(≤30 分钟),转存后 videoExpiresAt=0 表示永不过期。
-    // 转存失败不影响任务成功,退回签名 URL + 原过期时间。
+    // 高清那条同样要转:上游给的是火山侧的临时链接,过期时间未知。
+    // 转存失败不影响任务成功,退回原 URL + 原过期时间。
+    const subdir = meta?.tool === 'enhance' ? 'video-enhance' : 'smart-erase'
     try {
       const permanentUrl = await transferUrlToHistoryBucket({
         sourceUrl: result.videoUrl,
-        key: `image-history/smart-erase/${job.taskId}.mp4`,
+        key: `image-history/${subdir}/${job.taskId}.mp4`,
         contentType: 'video/mp4',
       })
       return { ...result, videoUrl: permanentUrl, videoExpiresAt: 0 }
     } catch (err: any) {
-      console.warn('[smart-erase] transfer to history bucket failed; falling back to presigned URL:', err?.message ?? err)
+      console.warn(`[${subdir}] transfer to history bucket failed; falling back to upstream URL:`, err?.message ?? err)
       return result
     }
   },
@@ -283,9 +405,22 @@ export async function submitErase(
   // 的 scope=media 免密钥临时票据。端点故障会以正常任务失败面呈现。
   const posterDataUrl = payload.posterDataUrl ?? ''
 
-  const taskId = `erase-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  const tool: EraseTool = payload.tool === 'erase' || payload.tool === 'enhance' ? payload.tool : DEFAULT_ERASE_TOOL
+
+  // 高清的凭据在入队前就验一次:缺凭据是用户当场就能补的事,不该先传完几百 MB
+  // 再告诉他「没选计费池」。去字幕那条的凭据校验在 runner 里(它有 STS 免密钥通道)。
+  if (tool === 'enhance') {
+    try {
+      mediaKitAuthFor(coerceVideoBillingSource(payload.billing))()
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? String(err), errorCode: err?.code ?? 'CREDENTIALS_MISSING' }
+    }
+  }
+
+  const taskId = `${tool}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
   taskRegistry.set(taskId, {
     payload,
+    tool,
     posterDataUrl,
     config: { ...defaultConfig },
     phase: 'queued-upload',
@@ -301,6 +436,7 @@ export async function submitErase(
       taskId,
       filePath: payload.filePath,
       filename: payload.filename,
+      fileSize: payload.fileSize,
     })
     .catch(() => {
       // Failure already routed through uploadQueue's onFailed handler

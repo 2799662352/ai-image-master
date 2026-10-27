@@ -284,6 +284,33 @@ describe('useGenerateStore', () => {
     })
   })
 
+  describe('generate — 透明背景', () => {
+    it('默认 false 且不持久化到请求形状(关着时请求里没有这个 key)', async () => {
+      expect(useGenerateStore.getState().transparentBackground).toBe(false)
+      useGenerateStore.setState({ prompt: 'a cat', ratio: '1:1' })
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'gpt-image-2.5-flare')
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.not.objectContaining({ transparentBackground: expect.anything() }),
+      )
+    })
+
+    it('开了就随请求发 transparentBackground: true(能力闸在 ApiService)', async () => {
+      useGenerateStore.setState({ prompt: 'sticker', ratio: '1:1' })
+      useGenerateStore.getState().setTransparentBackground(true)
+      expect(useGenerateStore.getState().transparentBackground).toBe(true)
+      const api = createMockApi()
+
+      await useGenerateStore.getState().generate(api, 'gpt-image-2.5-flare')
+
+      expect(api.generateImage).toHaveBeenCalledWith(
+        expect.objectContaining({ transparentBackground: true, model: 'gpt-image-2.5-flare' }),
+      )
+    })
+  })
+
   describe('generate — 图层分离', () => {
     it('表单里没有 layerDecomposition 这个字段 —— 拆分只能从 overrides 进来', () => {
       // 它曾经是表单状态 + 参数区一个开关，勾上就改掉「生成」按钮的语义。

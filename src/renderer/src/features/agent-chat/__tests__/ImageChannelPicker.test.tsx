@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ImageChannelPicker } from '../ImageChannelPicker'
 import { useAgentChatStore } from '../store'
-import { DEFAULT_IMAGE_CHANNEL_ID } from '../imageChannels'
+import { DEFAULT_IMAGE_CHANNEL_ID, findImageChannel } from '../imageChannels'
 
 beforeEach(() => {
   localStorage.clear()
@@ -14,18 +14,34 @@ afterEach(() => {
 })
 
 describe('ImageChannelPicker', () => {
-  it('shows the current channel label (VIP by default)', () => {
+  it('shows the current channel label (默认渠道)', () => {
     render(<ImageChannelPicker />)
-    expect(screen.getByRole('button', { name: /出图渠道/ }).textContent).toContain('VIP')
+    // 取默认渠道自己的短标签，而不是写死某个字面量 —— 默认值改过一次
+    // （2026-09-01 VIP → 腾讯 image2），再改时这条不该又红。
+    const label = findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)!.label
+    expect(screen.getByRole('button', { name: /出图渠道/ }).textContent).toContain(label)
   })
 
   it('opens the dropdown and lists all channels', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(screen.getByRole('button', { name: /出图渠道/ }))
+    // 官转 2.5 与腾讯线上的 2.5 同名异前缀(「GPT Image 2.5 Flare」/「腾讯 GPT Image 2.5 Flare」),
+    // 裸子串会同时命中两条 —— 官转的锚到行首,腾讯的带前缀各指各的。
+    expect(screen.getByRole('option', { name: /^GPT Image 2\.5 Flare/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /^GPT Image 2\.5 Sunburst/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /腾讯 GPT Image 2\.5 Flare/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /腾讯 GPT Image 2\.5 Sunburst/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /GPT Image 2\.5 All/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /VIP image2/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /GPT Image 2 官方/ })).toBeTruthy()
-    expect(screen.getByRole('option', { name: /腾讯 image2/ })).toBeTruthy()
-    expect(screen.getByRole('option', { name: /Nano Banana 2/ })).toBeTruthy()
+    // 两条腾讯渠道的名字互为前缀（「腾讯 image2」/「腾讯 image2 fast」），
+    // 子串匹配会同时命中两个。锚到行尾才能各指各的。
+    expect(screen.getByRole('option', { name: /腾讯 image2(?!\s*fast)/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /腾讯 image2 fast/ })).toBeTruthy()
+    // 同理「Nano Banana 2」是「Nano Banana 2.1」的前缀,而且 2.1 的说明里也写着
+    // 「Nano Banana 2 升级版」,所以连同 Nano2 自己的说明一起匹配。
+    expect(screen.getByRole('option', { name: /Nano Banana 2\s*Gemini 3\.1 flash image/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /Nano Banana 2\.1/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /万相 2\.7 pro/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /Seedream 5\.0 Pro/ })).toBeTruthy()
   })
@@ -33,7 +49,7 @@ describe('ImageChannelPicker', () => {
   it('picking a channel updates the store and closes the dropdown', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(screen.getByRole('button', { name: /出图渠道/ }))
-    fireEvent.click(screen.getByRole('option', { name: /腾讯 image2/ }))
+    fireEvent.click(screen.getByRole('option', { name: /腾讯 image2(?!\s*fast)/ }))
 
     expect(useAgentChatStore.getState().selectedImageChannel).toBe('custom-imagemodel-gt')
     // Dropdown closed → options no longer rendered.

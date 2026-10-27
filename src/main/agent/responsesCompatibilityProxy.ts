@@ -16,7 +16,10 @@ import {
   repairResponsesUsage,
 } from './anthropicUsageRepair'
 import type { CodexProviderConfig } from './codexLaunch'
+import { notePlatformSpend } from '../services/auth/platformSpend'
 import { inferModelFamily } from './gatewayModelRouting'
+import { rewriteOmniMediaInput } from './omniMediaInput'
+import { evictStaleToolImages } from './staleToolImages'
 
 type JsonObject = Record<string, unknown>
 
@@ -51,6 +54,16 @@ export interface ResponsesCompatibilityProxy {
  */
 export const PROXY_KEEP_ALIVE_TIMEOUT_MS = 120_000
 export const PROXY_HEADERS_TIMEOUT_MS = 125_000
+
+/**
+ * 桥接代理的可选行为。
+ *
+ * 只有一项:平台余额组头。**Anthropic 桥不接它** —— 那条路的上游是 Claude,
+ * 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+ */
+export interface CompatibilityProxyOptions {
+  platformHeaders?: (target: URL) => Record<string, string> | null
+}
 
 export interface ProviderCompatibilityProxyGroup {
   providers: CodexProviderConfig[]
@@ -206,26 +219,69 @@ function stripNullInputItemFields(body: JsonObject): void {
 const ENCRYPTED_REPLAY_ITEM_TYPES = new Set(['reasoning', 'compaction'])
 
 /**
- * Drops replayed reasoning/compaction items that carry provider-bound
- * `encrypted_content`.
+ * True when a replayed `reasoning` item carries plaintext chain-of-thought.
+ *
+ * Codex puts raw reasoning in `content[]` as `reasoning_text` parts (older
+ * builds serialized plain `text` parts, openai/codex #42249). OpenAI's own
+ * reasoning items never have it: they are opaque `encrypted_content` only.
+ */
+function hasReplayableReasoningText(item: JsonObject): boolean {
+  if (!Array.isArray(item.content)) return false
+  return item.content.some(
+    (part) =>
+      isJsonObject(part)
+      && (part.type === 'reasoning_text' || part.type === 'text')
+      && typeof part.text === 'string'
+      && part.text.length > 0,
+  )
+}
+
+/**
+ * Removes provider-bound `encrypted_content` from replayed reasoning/compaction
+ * items, dropping an item only when nothing else in it is replayable.
  *
  * Cross-channel continuation (a GPT thread switched to grok) replays history
  * containing OpenAI-encrypted reasoning blobs; xAI cannot decrypt them and
  * fails the whole turn with "Could not decrypt the provided encrypted_content"
  * (openai/codex #17541). Upstream guidance (#25290) is to remove the WHOLE
  * item — blanking only the field turns the error into "Missing required
- * parameter: input[N].encrypted_content". Safe on bridged (xAI-family)
- * channels: grok itself replays reasoning with `encrypted_content: null`
- * (verified via live capture), so any non-empty blob here is by construction
- * foreign replay data the upstream could never use anyway.
+ * parameter: input[N].encrypted_content". Such items are blob-only
+ * (`content: null`), so they are still dropped.
+ *
+ * What must NOT be dropped: a reasoning item that also carries plaintext
+ * `content`. DeepSeek's Responses API is stateless and replays reasoning as
+ * plaintext — "Plain-text `content` is merged into the adjacent assistant
+ * message; `summary` and `encrypted_content` are not supported" — and in
+ * thinking mode with tool calls a missing reasoning is a hard 400:
+ * "The `reasoning_text` in the thinking mode must be passed back to the API".
+ * DeepSeek stamps its own reasoning items with a 38-byte
+ * `encrypted_content: "<response_id>-<n>"` handle that is meaningless to every
+ * upstream, so "non-empty `encrypted_content` ⇒ foreign" does not hold there;
+ * dropping the whole item threw away the plaintext DeepSeek actually needs
+ * (Miau deepseek-flash, intermittent 400 on tool-call continuations). Keep
+ * the item and strip only the unusable handle. `compaction` has no plaintext
+ * form and is always dropped when encrypted.
  */
 function dropForeignEncryptedReplayItems(body: JsonObject): void {
   if (!Array.isArray(body.input)) return
-  body.input = body.input.filter((item) => {
-    if (!isJsonObject(item)) return true
-    if (typeof item.type !== 'string' || !ENCRYPTED_REPLAY_ITEM_TYPES.has(item.type)) return true
-    return typeof item.encrypted_content !== 'string' || item.encrypted_content.length === 0
-  })
+  const kept: unknown[] = []
+  for (const item of body.input) {
+    if (
+      !isJsonObject(item)
+      || typeof item.type !== 'string'
+      || !ENCRYPTED_REPLAY_ITEM_TYPES.has(item.type)
+      || typeof item.encrypted_content !== 'string'
+      || item.encrypted_content.length === 0
+    ) {
+      kept.push(item)
+      continue
+    }
+    if (item.type === 'reasoning' && hasReplayableReasoningText(item)) {
+      delete item.encrypted_content
+      kept.push(item)
+    }
+  }
+  body.input = kept
 }
 
 /**
@@ -340,6 +396,41 @@ function requestHeaders(headers: IncomingHttpHeaders): Headers {
   return forwarded
 }
 
+/**
+ * 把桥接失败翻译成能定位的一句话。
+ *
+ * undici 的 `fetch` 对**一切**传输层失败都只给一句 `fetch failed` —— DNS 没解出来、
+ * 端口拒绝、证书不过、代理挡了,全长一个样,真实原因埋在 `error.cause` 里。原来的
+ * 502 只回 `error.message`,于是用户看到的就是「unexpected status 502 Bad Gateway:
+ * fetch failed」,既不知道打的哪个地址,也不知道为什么。
+ *
+ * 补上 origin 而不是整条 URL:路径可能带查询串,而定位只需要知道打的是哪一家。
+ */
+function describeBridgeFailure(error: unknown, target: URL | undefined): string {
+  const base = error instanceof Error ? error.message : String(error)
+  const causes: string[] = []
+  let cause: unknown = error instanceof Error ? error.cause : undefined
+  // 链式展开:undici 常见形状是 TypeError('fetch failed') → AggregateError → 逐个 Error。
+  for (let depth = 0; depth < 4 && cause; depth += 1) {
+    if (cause instanceof AggregateError && cause.errors.length > 0) {
+      causes.push(cause.errors.map((e) => describeCauseNode(e)).join('; '))
+      cause = cause.errors[0] instanceof Error ? cause.errors[0].cause : undefined
+      continue
+    }
+    causes.push(describeCauseNode(cause))
+    cause = cause instanceof Error ? cause.cause : undefined
+  }
+  const where = target ? ` (upstream ${target.origin})` : ''
+  const why = causes.length > 0 ? `: ${causes.join(' <- ')}` : ''
+  return `${base}${where}${why}`
+}
+
+function describeCauseNode(cause: unknown): string {
+  if (!(cause instanceof Error)) return String(cause)
+  const code = (cause as NodeJS.ErrnoException).code
+  return code ? `${code} ${cause.message}` : cause.message
+}
+
 function upstreamUrl(baseUrl: URL, requestUrl: string): URL {
   const incoming = new URL(requestUrl, 'http://127.0.0.1')
   const basePath = baseUrl.pathname.replace(/\/+$/, '')
@@ -433,6 +524,18 @@ interface CompatibilityBridgeTransport {
    */
   resolveTarget: (requestUrl: string) => URL | undefined
   fetch: typeof fetch
+  /**
+   * 平台余额组头。给定这次请求的**上游** URL,回一整份要覆盖上去的头
+   * (`Authorization` + 计费归属),或 `null` 表示这条不走平台余额。
+   *
+   * **注入而不是 import**:真实实现要读 `auth/gatewayToken`,那个模块顶层 import
+   * electron —— 本文件刻意保持在 Electron 之外可加载(同 wan3/seedanceGateway 的纪律),
+   * 直接 import 会让这里二十多条现成测试全部需要 mock electron。
+   *
+   * 缺省不传 = 逐字节的旧行为:原样转发 codex 自己带的 `Authorization`
+   * (那是用户自填的 Miau Key)。
+   */
+  platformHeaders?: (target: URL) => Record<string, string> | null
   /** Optional in-place tweak applied to a `/responses` body after flattening. */
   transformBody?: (body: JsonObject) => void
 }
@@ -460,10 +563,21 @@ async function startCompatibilityBridgeServer(
     }
     request.once('aborted', abortUpstream)
     response.once('close', abortOnEarlyClose)
+    // 提到 try 外面,只为让 502 分支能报出「打的是哪个上游」。
+    let target: URL | undefined
+    /**
+     * 这次是否花了平台的钱 —— 两个条件都要成立,`finally` 里据此刷余额。
+     *
+     * `upstreamAnswered` 单独记一笔而不是只看头表:502 那一支是**连都没连上**
+     * (undici 传输层失败),上游不可能计费,报上去只是白查一次余额。反过来,只要
+     * 上游回过话就算,哪怕是 4xx/5xx —— 那时钱可能已经扣了。
+     */
+    let usedPlatformCredentials = false
+    let upstreamAnswered = false
     try {
       const method = request.method ?? 'GET'
       const rawBody = await readRequestBody(request)
-      const target = transport.resolveTarget(request.url ?? '/')
+      target = transport.resolveTarget(request.url ?? '/')
       if (!target) {
         response.statusCode = 404
         response.setHeader('content-type', 'application/json')
@@ -481,20 +595,46 @@ async function startCompatibilityBridgeServer(
       ) {
         const parsed = JSON.parse(rawBody) as JsonObject
         const flattened = flattenNamespaceTools(parsed)
+        // 旧的工具结果图只留最近一小撮(社区做法,Codex 官方没有)。放在 transformBody
+        // 之前:两条桥共用这段信封,Claude / 千问 / DeepSeek / xAI 都受益。
+        // 失败放行:这只是瘦身,出任何岔子都不能把用户的请求打成 502。
+        try {
+          const eviction = evictStaleToolImages(flattened.body)
+          if (eviction.evicted > 0) {
+            console.info(
+              `[bridge] 淘汰旧工具图 ${eviction.evicted} 张(释放 ${Math.round(eviction.freedBytes / 1024)} KB),保留 ${eviction.retained} 张`,
+            )
+          }
+        } catch (error) {
+          console.warn('[bridge] 淘汰旧工具图失败,原样转发:', error)
+        }
         transport.transformBody?.(flattened.body)
         body = JSON.stringify(flattened.body)
         bindings = flattened.bindings
+      }
+
+      // 平台余额:把 codex 带来的自填 Key 换成影子 token + 计费归属。
+      //
+      // **判据是上游 target 的 origin,不是「有没有 token」。** rightcode-claude /
+      // grok / deepseek 打的是别家的本地代理,把平台凭据发过去就是凭据外泄 ——
+      // 这与出网注入器的 host 白名单是同一条纪律。
+      const forwarded = requestHeaders(request.headers)
+      const platform = transport.platformHeaders?.(target)
+      usedPlatformCredentials = Boolean(platform)
+      if (platform) {
+        for (const [name, value] of Object.entries(platform)) forwarded.set(name, value)
       }
 
       const upstreamResponse = await transport.fetch(
         target,
         {
           method,
-          headers: requestHeaders(request.headers),
+          headers: forwarded,
           body: method === 'GET' || method === 'HEAD' ? undefined : body,
           signal: abortController.signal,
         },
       )
+      upstreamAnswered = true
       response.statusCode = upstreamResponse.status
       copyResponseHeaders(upstreamResponse.headers, response)
       if (!upstreamResponse.body) {
@@ -531,10 +671,14 @@ async function startCompatibilityBridgeServer(
       response.setHeader('content-type', 'application/json')
       response.end(JSON.stringify({
         error: {
-          message: error instanceof Error ? error.message : String(error),
+          message: describeBridgeFailure(error, target),
         },
       }))
     } finally {
+      // 放在 `finally` 而不是某个成功分支里:出口有五个(无 body / SSE / JSON /
+      // 裸转发 / 502),挑其中几个贴一定会漏,而漏掉的那条就是「这类聊天扣了钱
+      // 余额不动」。流式那两支在这里已经 `await pipeline` 完,时机也对。
+      if (usedPlatformCredentials && upstreamAnswered) notePlatformSpend()
       request.off('aborted', abortUpstream)
       response.off('close', abortOnEarlyClose)
     }
@@ -578,15 +722,25 @@ function parseUpstreamBase(upstreamBaseUrl: string, label: string): URL {
 
 /**
  * Starts a loopback proxy that adapts Codex namespace tools to standard Responses calls.
+ *
+ * Besides the namespace flattening, the Responses bridge is where omni media
+ * sentinels (see omniMediaInput) become real `input_audio` / `input_video` parts.
+ * The rewrite gates itself on `body.model`, so non-omni channels behind the same
+ * bridge (grok, qwen 3.7 / 3.8-max) forward the sentinel as the plain text it is.
  */
 export async function startResponsesCompatibilityProxy(
   upstreamBaseUrl: string,
+  options: CompatibilityProxyOptions = {},
 ): Promise<ResponsesCompatibilityProxy> {
   const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Responses')
   return startCompatibilityBridgeServer({
     basePath: upstreamBase.pathname.replace(/\/+$/, ''),
     resolveTarget: (requestUrl) => upstreamUrl(upstreamBase, requestUrl),
     fetch,
+    transformBody: (body) => {
+      rewriteOmniMediaInput(body)
+    },
+    ...(options.platformHeaders ? { platformHeaders: options.platformHeaders } : {}),
   })
 }
 
@@ -715,6 +869,7 @@ export async function startAnthropicMessagesBridge(
  */
 export async function startProviderCompatibilityProxies(
   providers: readonly CodexProviderConfig[],
+  options: CompatibilityProxyOptions = {},
 ): Promise<ProviderCompatibilityProxyGroup> {
   const proxies: ResponsesCompatibilityProxy[] = []
   try {
@@ -729,7 +884,9 @@ export async function startProviderCompatibilityProxies(
         ? await startAnthropicMessagesBridge(provider.baseUrl, {
           promptCacheBreakpoints: provider.promptCacheBreakpoints,
         })
-        : await startResponsesCompatibilityProxy(provider.baseUrl)
+        // 只有 Responses 这条给平台组头:Anthropic 桥的上游是 Claude,
+        // 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+        : await startResponsesCompatibilityProxy(provider.baseUrl, options)
       proxies.push(proxy)
       rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
     }

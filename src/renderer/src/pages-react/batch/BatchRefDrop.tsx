@@ -1,4 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react'
+import { Image as ImageIcon, Minus, Plus } from 'lucide-react'
 import type { BatchRefImage } from '../../stores/useBatchStore'
 import { uploadRefImageOriginalFirst, type RefUploadStage } from '../../utils/refImageUpload'
 import { useToastStore } from '../../stores/useToastStore'
@@ -283,9 +284,15 @@ export default function BatchRefDrop({
   }
 
   return (
-    <div className="border-2 border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
+    <div className="relative border-2 border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
+      {/* 设计稿 M4 · 6:一级容器四角角标;标签前加线性图标;空槽换斜纹 + 十字 */}
+      <span aria-hidden className="st-tick st-tick-tl">+</span>
+      <span aria-hidden className="st-tick st-tick-tr">+</span>
+      <span aria-hidden className="st-tick st-tick-bl">+</span>
+      <span aria-hidden className="st-tick st-tick-br">+</span>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <label className="font-mono text-[11px] uppercase tracking-[0.2em] text-cyberpunk-yellow/80">
+        <label className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.2em] text-cyberpunk-yellow/80">
+          <ImageIcon size={12} className="text-cyberpunk-yellow/70" aria-hidden />
           // REF 参考图 (共享)
         </label>
         <div className="flex items-center gap-2">
@@ -322,17 +329,21 @@ export default function BatchRefDrop({
           }
         }}
         aria-label={`点击或拖拽上传参考图 (剩余 ${remaining})`}
-        className={`border-2 border-dashed py-6 text-center transition-colors ${
+        className={`relative border border-dashed py-6 text-center transition-colors ${
           remaining > 0
             ? dragOver
               ? 'border-cyberpunk-yellow bg-cyberpunk-yellow/5 cursor-pointer'
-              : 'border-zinc-700 bg-zinc-950/40 cursor-pointer hover:border-zinc-500'
-            : 'border-zinc-800 bg-zinc-950/20 opacity-50 cursor-not-allowed'
+              : 'st-hatch border-zinc-600 cursor-pointer hover:border-zinc-400'
+            : 'st-hatch border-zinc-800 opacity-50 cursor-not-allowed'
         }`}
       >
+        <span aria-hidden className="st-cross mb-2 block text-zinc-500" style={{ width: 22, height: 22, margin: '0 auto 8px' }} />
         <div className="font-orbitron text-sm uppercase tracking-wider text-zinc-200">
           {remaining > 0 ? '点击或拖拽上传' : '⛔ 已满'}
         </div>
+        <span className="pointer-events-none absolute bottom-1.5 left-2.5 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
+          REF_SLOT · {images.length} / {max}
+        </span>
         <div className="mt-1 font-mono text-[11px] text-zinc-500">
           {preferBase64
             ? `JPG / PNG / WEBP · ≤ ${MAX_FILE_MB}MB · 本地 base64 直传,免上传云端`
@@ -356,9 +367,10 @@ export default function BatchRefDrop({
         <button
           type="button"
           onClick={() => setUrlMode((v) => !v)}
-          className="font-mono text-[11px] uppercase tracking-[0.15em] text-zinc-400 hover:text-cyberpunk-yellow transition-colors"
+          className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.15em] text-zinc-400 hover:text-cyberpunk-yellow transition-colors"
         >
-          {urlMode ? '− 收起链接输入' : '+ 用图片链接 / 历史图 URL'}
+          {urlMode ? <Minus size={12} aria-hidden /> : <Plus size={12} aria-hidden />}
+          {urlMode ? '收起链接输入' : '用图片链接 / 历史图 URL'}
         </button>
         {urlMode && (
           <div className="flex items-stretch gap-2">

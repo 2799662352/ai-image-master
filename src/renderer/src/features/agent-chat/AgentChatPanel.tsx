@@ -13,6 +13,7 @@ import { ThreadSidebar } from './ThreadSidebar'
 import { GoalChip } from './GoalChip'
 import { TokenUsageMeter } from './TokenUsageMeter'
 import { CodexApprovalPrompt } from './CodexApprovalPrompt'
+import { CodexUserInputPrompt } from './CodexUserInputPrompt'
 import { CodexPermissionsPanel } from './CodexPermissionsPanel'
 import { CodexStatusPanel } from './CodexStatusPanel'
 import { NoticesBanner } from './NoticesBanner'
@@ -26,6 +27,7 @@ import { useFileExplorerStore } from '../file-explorer/store'
 import { FileTreeIcon } from '../file-explorer/icons'
 import { useTabStore } from '../../stores/useTabStore'
 import { getAgentApi } from '../../utils/agentBridge'
+import { CODEX_REQUEST_USER_INPUT_METHOD } from '../../../../types/agent'
 import type {
   AgentStreamEvent,
   CodexSessionConfig,
@@ -471,17 +473,6 @@ export function AgentChatPanel() {
           className="chat-scroll flex-1 overflow-y-scroll px-4 py-4"
         >
           <NoticesBanner />
-          {pendingApprovals.length > 0 ? (
-            <div className="mb-3 space-y-3">
-              {pendingApprovals.map((request) => (
-                <CodexApprovalPrompt
-                  key={request.id}
-                  request={request}
-                  onRespond={(response) => respondToApproval(response)}
-                />
-              ))}
-            </div>
-          ) : null}
           {messages.length === 0 ? (
             <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4 text-sm text-zinc-300">
               Tell the agent what to create or inspect. It can call CATIMATION tools and use local Codex
@@ -517,6 +508,32 @@ export function AgentChatPanel() {
             </div>
           ) : null}
         </div>
+
+        {/* 待决的服务端请求（审批 / 提问）停靠在滚动区和输入框之间，不放进滚动区。
+            它们出现时 turn 正在跑，用户的眼睛在底部等结果；放在滚动区顶部会随着
+            对话变长滚出视野 —— 用户看到的就是「卡住了」，而不是一张等他点的卡。 */}
+        {pendingApprovals.length > 0 ? (
+          <div
+            data-testid="pending-server-requests"
+            className="max-h-[45%] space-y-3 overflow-y-auto border-t border-cyan-400/20 px-4 py-3"
+          >
+            {pendingApprovals.map((request) =>
+              request.method === CODEX_REQUEST_USER_INPUT_METHOD ? (
+                <CodexUserInputPrompt
+                  key={request.id}
+                  request={request}
+                  onRespond={(response) => respondToApproval(response)}
+                />
+              ) : (
+                <CodexApprovalPrompt
+                  key={request.id}
+                  request={request}
+                  onRespond={(response) => respondToApproval(response)}
+                />
+              ),
+            )}
+          </div>
+        ) : null}
 
         {/* Footer composer hides while inline-editing — there's only one
             MentionInput in the tree, and it's been re-parented to the

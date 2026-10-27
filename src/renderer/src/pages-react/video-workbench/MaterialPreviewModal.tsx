@@ -7,8 +7,8 @@
 //     由主进程按 Range 分段发,整份文件不进内存、进度条能拖;
 //   - 本地**图片**仍走 useResolvedMediaSrc(IPC → blob:):它要的是全保真字节,
 //     且没有 Range 可言,换过去只是白改;
-//   - asset://(人像库)没有可播放源:图片用 previewUrl 大图兜底,
-//     视频/音频显示「无法本地预览」提示(previewUrl 仅是缩略图)。
+//   - asset://(素材库 / 人像库)查回原始地址:图片看大图、视频/音频直接播;
+//     查不到才提示(多半是在另一个计费池里)。
 //
 // 关闭:Esc / 点遮罩 / 右上角 ✕;内容区 stopPropagation。
 
@@ -17,7 +17,11 @@ import { createPortal } from 'react-dom'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
 import { useResolvedMediaSrc } from '../../components/shared/media/useResolvedMediaSrc'
 import { toStreamableUri } from '../../features/file-explorer/uri'
-import { extractAssetId } from '../../features/video-workbench/assetPreview'
+import {
+  cachedAssetSourceUrl,
+  extractAssetId,
+  getCachedAssetPreview,
+} from '../../features/video-workbench/assetPreview'
 import type { MediaTokenKind } from '../../features/video-workbench/promptTokens'
 import { useAssetPreviewMaterial } from './MaterialThumb'
 
@@ -47,10 +51,18 @@ function PreviewError({ reason }: { reason: string }) {
  * 解析;asset:// 缺 previewUrl 时先惰性查人像库列表(会话缓存)。
  */
 function ImagePreviewBody({ material: raw }: { material: VideoWorkbenchMaterial }) {
-  const material = useAssetPreviewMaterial(raw)
-  const target = material.previewUrl ?? (extractAssetId(material.src) ? '' : material.src)
+  const material = useAssetPreviewMaterial(raw, true)
+  const assetId = extractAssetId(material.src)
+  // 素材库素材看大图用原始地址,previewUrl 往往是压过的缩略图。
+  const target = assetId
+    ? (cachedAssetSourceUrl(material) ?? material.previewUrl ?? '')
+    : (material.previewUrl ?? material.src)
   const resolved = useResolvedMediaSrc(target, 'image', { fullFidelity: true })
-  if (!target) return <PreviewError reason="素材库素材没有可预览地址" />
+  if (!target) {
+    // 还没查完就先转圈,查完确实没有才报错。
+    if (assetId && getCachedAssetPreview(assetId) === undefined) return <Spinner />
+    return <PreviewError reason="素材库里查不到这张素材(可能在另一个计费池,或已被彻底删除)" />
+  }
   if (!resolved) return <Spinner />
   return (
     <img
@@ -93,9 +105,14 @@ function MediaElement({ kind, src }: { kind: 'video' | 'audio'; src: string }) {
 }
 
 /** 视频/音频:https/data 直通;本地路径走流式协议;asset:// 提示不可本地播放。 */
-function AvPreviewBody({ kind, material }: { kind: 'video' | 'audio'; material: VideoWorkbenchMaterial }) {
+function AvPreviewBody({ kind, material: raw }: { kind: 'video' | 'audio'; material: VideoWorkbenchMaterial }) {
+  const material = useAssetPreviewMaterial(raw, true)
   if (isDirectSrc(material.src)) return <MediaElement kind={kind} src={material.src} />
-  if (extractAssetId(material.src)) {
+  const assetId = extractAssetId(material.src)
+  if (assetId) {
+    const source = cachedAssetSourceUrl(material)
+    if (source) return <MediaElement kind={kind} src={source} />
+    if (getCachedAssetPreview(assetId) === undefined) return <Spinner />
     return (
       <div className="px-4 py-6 space-y-3 text-center">
         {material.previewUrl && (
@@ -105,7 +122,7 @@ function AvPreviewBody({ kind, material }: { kind: 'video' | 'audio'; material: 
             className="block max-w-[60vw] max-h-[50vh] object-contain mx-auto"
           />
         )}
-        <PreviewError reason="人像库素材仅存于云端,无法本地播放(生成时上游直接引用)" />
+        <PreviewError reason="素材库里查不到这条素材的播放地址(可能在另一个计费池,或已被彻底删除)" />
       </div>
     )
   }

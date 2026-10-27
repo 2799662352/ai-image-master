@@ -88,3 +88,24 @@ describe('cinematography_kb transport 注入', () => {
     expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.enabled'))).toBe(false)
   })
 })
+
+describe('cinematography_kb 平台中转注入', () => {
+  it('中转地址与口令作为两条 env 叶子注入,和自填 Key 并存', () => {
+    const args = buildCodexLaunchArgs({
+      cinematographyKbStdio: { command: NODE, args: [ENTRY], env: {} },
+      cinematographyKbKey: 'sk-kb',
+      cinematographyKbPlatformRelay: { url: 'http://127.0.0.1:52011', token: 'relay-secret' },
+    })
+    expect(args).toContain('mcp_servers.cinematography_kb.env.CATIMATION_KB_RELAY_URL="http://127.0.0.1:52011"')
+    expect(args).toContain('mcp_servers.cinematography_kb.env.CATIMATION_KB_RELAY_TOKEN="relay-secret"')
+    expect(args).toContain('mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY="sk-kb"')
+    expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.env='))).toBe(false)
+  })
+
+  it('没起中转时一条都不注入(外部 CLI 用户与测连通性的临时 backend 走自填 Key)', () => {
+    const args = buildCodexLaunchArgs({
+      cinematographyKbStdio: { command: NODE, args: [ENTRY], env: {} },
+    })
+    expect(args.some((a) => a.includes('CATIMATION_KB_RELAY_'))).toBe(false)
+  })
+})

@@ -97,6 +97,33 @@ function attachmentMessageItems(localPath: string): unknown {
 }
 
 describe('AttachmentService.cleanup — message-reference-aware sweep', () => {
+  /**
+   * 工作台成片走 persistVideo → ingest 归档进 uploads,卡片存在渲染端 IndexedDB,这个
+   * 扫描看不见。COS 转存又失败时,这份本地 mp4 就是唯一不过期的副本 —— 7 天后被当
+   * 缓存扫掉,卡片上写着「已保存」而磁盘上已经没有(实机 2026-09-06 复现)。
+   */
+  it('never sweeps video files, even 30 days old and unreferenced by any message — they are outputs, not cache', async () => {
+    const { AttachmentService } = await import('../AttachmentService')
+    const video = await writeUpload('seedance-2_0-abcd1234.mp4')
+    const image = await writeUpload('cccc.png')
+    const prisma = makePrismaStub(
+      [
+        { id: 'att-v', threadId: 'seedance', originalName: 'seedance-2_0-abcd1234.mp4', localPath: video, mime: 'video/mp4', size: 5, uploadedAt: daysAgo(30) },
+        { id: 'att-i', threadId: 't1', originalName: 'cccc.png', localPath: image, mime: 'image/png', size: 5, uploadedAt: daysAgo(30) },
+      ],
+      [],
+    )
+    const service = new AttachmentService(prisma as never)
+
+    const deleted = await service.cleanup()
+
+    // 同一轮里图片照旧被扫,证明例外只对视频生效,不是整个 sweep 失效。
+    expect(deleted).toBe(1)
+    expect(prisma.rows.map((r) => r.id)).toEqual(['att-v'])
+    await expect(fs.stat(video)).resolves.toBeTruthy()
+    await expect(fs.stat(image)).rejects.toThrow()
+  })
+
   it('keeps the file AND the row when a chat message still references the attachment', async () => {
     const { AttachmentService } = await import('../AttachmentService')
     const localPath = await writeUpload('aaaa.png')

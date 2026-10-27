@@ -9,6 +9,7 @@ import {
 } from '../utils/cosUploadDispatcher'
 import { materializeImageUrls, revokeLater, isPersistableUrl } from '../utils/imageResources'
 import { LAYER_SPLIT_DEFAULT_RESOLUTION } from '../services/api/imageParamControls'
+import type { ModelParamValue } from '../../../shared/imageModelParams'
 import { toRenderableUri } from '../features/file-explorer/uri'
 
 /**
@@ -69,6 +70,15 @@ export interface ResultUploadMeta {
   uploadStatus: ResultUploadStatus
   uploadError?: string
   snapshot?: GenerateSnapshot
+  /** 产出这张图的那次 generate()(见 {@link GenerateRun});老结果没有。 */
+  runId?: string
+  /** 结果入库时刻(epoch ms),结果卡按它「新在前」排序。 */
+  createdAt?: number
+  /** 从点「开始生成」到拿到这批图的耗时(ms),结果卡元数据行用。 */
+  elapsedMs?: number
+  /** 本次请求用的分辩率档位 / 模型;比例与 prompt 在 snapshot 里。 */
+  resolution?: string
+  modelKey?: string
   /**
    * 同一次图层拆分产出的所有图共享这个 id。ResultGrid 据此把它们收成**一张**卡片
    * —— 平铺成 N 张会让「一个带内部结构的产物」看起来像 N 个互不相干的结果。
@@ -82,6 +92,51 @@ export interface ResultUploadMeta {
 export interface GenerateOutcome {
   added: number
   error?: string
+}
+
+/**
+ * 不经表单的一次性入参。`generate()` 用它替换对应的表单快照值,**表单本身一个字
+ * 都不动**。两个来源:图层分离(prompt / refs / layerDecomposition / resolution)
+ * 与失败卡「重试」(把那次的全部参数原样再发一次,不受用户之后改过的表单影响)。
+ */
+export interface GenerateOverrides {
+  prompt?: string
+  referenceImages?: string[]
+  layerDecomposition?: boolean
+  resolution?: string
+  ratio?: string
+  quality?: string
+  count?: number
+  transparentBackground?: boolean
+  /** 模型专属参数(悠船原生 2K / 混沌 / 风格化……)。键见 `capabilities.modelParams`。 */
+  modelParams?: Record<string, ModelParamValue>
+}
+
+/**
+ * 一次点「开始生成」的生命周期(设计稿 M5 · 状态卡族)。以前 store 只有
+ * `inFlightCount` + 一条 `error`,画不出「哪一次在跑、哪一次失败了」。
+ *
+ * - `running`:请求在飞,结果区第一格立刻出现 RUN 卡;
+ * - `error`  :失败原因留在卡上,直到用户「重试」/ 移除 / 清空;
+ * - 成功没有 `done` 态 —— 成功的 run 直接从这里消失,它的产物就是结果卡本身
+ *   (`ResultUploadMeta.runId` 指回来)。两处各存一份会让「已完成 3 张」有两个真相。
+ */
+export interface GenerateRun {
+  id: string
+  status: 'running' | 'error'
+  startedAt: number
+  endedAt?: number
+  /** 用户看到的原始 prompt(不含模板套词),卡片文字用。 */
+  prompt: string
+  modelKey: string
+  ratio: string
+  resolution: string
+  count: number
+  error?: string
+  /** 重编辑用。 */
+  snapshot: GenerateSnapshot
+  /** 重试用:与这次 generate() 完全相同的入参。 */
+  overrides: GenerateOverrides
 }
 
 /** 待执行的一次图层分离。字段就这两个 —— 拆分不吃 prompt/比例/张数。 */
@@ -100,9 +155,31 @@ export interface GenerateState {
   ratio: string
   /** 分辨率档位(1K/2K/4K); 仅支持 resolutionControl 的模型有效 */
   resolution: string
-  /** 清晰度 quality(auto/low/medium/high); 仅 gpt-image-2 等有效 */
+  /** 清晰度 quality(auto/low/medium/high, 2.5 为 low…max 五档); 仅支持 quality 轴的模型有效 */
   quality: string
-  /** 出图张数(组图); 仅 multipleImages 模型有效, 万相 wan2.7 多张走 enable_sequential 系列一致 */
+  /**
+   * 透明背景(`background=transparent`, 上游直接出带 alpha 的 PNG); 仅
+   * `transparentBackgroundControl` 的模型(2.5 flare / sunburst)有效, 其它渠道 ApiService 不外发。
+   * 刻意**不持久化**: 这是特殊出图模式, 忘了关会让之后每张图都带透明底, 所以每次启动回到 false。
+   */
+  transparentBackground: boolean
+  /**
+   * 模型专属参数的**用户显式设置**(键 = `capabilities.modelParams[*].key`)。
+   *
+   * 只存用户动过的:没有的键 = 不设置 = 由模型自动决定;有默认的(悠船原生 2K 默认开)在
+   * `ApiService` 里补默认,所以这里空对象就是「全部自动」。用户把某项改回默认值时也会
+   * 删掉该键(见 `setModelParam`),「已修改」的判断才不会被一个等于默认的残留值骗到。
+   *
+   * 不按模型分桶:快速 / 极速两档的参数表完全一样,切档不该丢设置;`ApiService` 只外发
+   * 当前模型声明过的键,别家模型的残留值不会泄到请求里。**不持久化**(与透明背景同理):
+   * 混沌 / 风格化这类参数忘了关,会让之后每一次出图都带着,每次启动回到全自动。
+   */
+  modelParams: Record<string, ModelParamValue>
+  /**
+   * 出图张数; 仅 multipleImages / nativeBatch 模型有效。万相 wan2.7 多张走 enable_sequential
+   * 系列一致; 官转 gpt-image-2 / 2.5 flare / sunburst 与腾讯 image2 fast 走 OpenAI `n`(1-4 个
+   * 独立变体, 按张数倍数计费)。ApiService 按模型 maxOutputs 收敛。
+   */
   count: number
   /**
    * True when at least one in-flight generate call exists.
@@ -125,6 +202,8 @@ export interface GenerateState {
   referenceImages: string[]
   /** Latest error message (overwritten on each failure). */
   error: string | null
+  /** 在飞 / 失败的 generate() 调用,新在前。成功的不在这里(见 {@link GenerateRun})。 */
+  runs: GenerateRun[]
   /**
    * 拆图状态。非 null = 页面处于「图层分离」待执行状态:主按钮从「生成」改名
    * 「拆图」,点它跑的是拆分而不是出图;状态里还能改档位、换待拆的图。
@@ -145,6 +224,14 @@ export interface GenerateState {
   setRatio: (v: string) => void
   setResolution: (v: string) => void
   setQuality: (v: string) => void
+  setTransparentBackground: (v: boolean) => void
+  /**
+   * 设置一个模型专属参数。`value` 为 undefined / 空串 / 空数组,或等于 `defaultValue`
+   * 时删掉该键(回到自动 / 默认)。
+   */
+  setModelParam: (key: string, value: ModelParamValue | undefined, defaultValue?: ModelParamValue) => void
+  /** 「全部恢复自动」:清掉所有显式设置。 */
+  resetModelParams: () => void
   setCount: (v: number) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
@@ -157,7 +244,17 @@ export interface GenerateState {
    * 让用户重新上传(重新上传走正确的 skipCos 策略,见 BatchRefDrop / refImageUpload)。
    */
   syncReferenceImagesForModel: (wantsInlineBase64: boolean) => number
+  /** 清空结果区:结果图 + 失败卡一起清;在飞的 run 不动(它回来时还要有地方落)。 */
   clearResults: () => void
+  /** 移除一张结果(× 按钮)。blob: 源延迟 revoke。 */
+  removeResult: (id: string) => void
+  /** 收掉一张失败卡(× 按钮)。 */
+  dismissRun: (runId: string) => void
+  /**
+   * 失败卡「重试」:用那次的全部参数原样再发一次(不看用户之后改过的表单),
+   * 旧失败卡随即消失、新的 RUN 卡顶上。找不到 / 不是失败态返回 `added: 0`。
+   */
+  retryRun: (api: ApiActions, runId: string) => Promise<GenerateOutcome>
   /**
    * 发起一次生成。
    *
@@ -174,16 +271,7 @@ export interface GenerateState {
    * 产出照常进结果区,复用同一条物化 / FIFO / COS 上传流水线 —— 复用管线不等于耦合
    * 语义,那条管线只关心「有 N 张图要落盘」。
    */
-  generate: (
-    api: ApiActions,
-    modelKey: string,
-    overrides?: {
-      prompt?: string
-      referenceImages?: string[]
-      layerDecomposition?: boolean
-      resolution?: string
-    },
-  ) => Promise<GenerateOutcome>
+  generate: (api: ApiActions, modelKey: string, overrides?: GenerateOverrides) => Promise<GenerateOutcome>
   /** 进入拆图状态。已在状态中则换掉待拆的图,档位保留(用户刚调过的不该被重置)。 */
   enterSplitMode: (imageUrl: string) => void
   /** 状态中调参(目前只有档位)。不在状态中是 no-op。 */
@@ -220,6 +308,8 @@ export const initialState = {
   ratio: '1:1',
   resolution: '2K',
   quality: 'auto',
+  transparentBackground: false,
+  modelParams: {} as Record<string, ModelParamValue>,
   count: 1,
   generating: false,
   inFlightCount: 0,
@@ -227,6 +317,7 @@ export const initialState = {
   resultMeta: [] as ResultUploadMeta[],
   referenceImages: [] as string[],
   error: null as string | null,
+  runs: [] as GenerateRun[],
   splitDraft: null as SplitDraft | null,
 }
 
@@ -264,6 +355,20 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   setRatio: (v) => set({ ratio: v }),
   setResolution: (v) => set({ resolution: v }),
   setQuality: (v) => set({ quality: v }),
+  setTransparentBackground: (v) => set({ transparentBackground: v }),
+  setModelParam: (key, value, defaultValue) =>
+    set((s) => {
+      const next = { ...s.modelParams }
+      const cleared =
+        value === undefined ||
+        (typeof value === 'string' && value.trim() === '') ||
+        (Array.isArray(value) && value.length === 0) ||
+        (defaultValue !== undefined && JSON.stringify(value) === JSON.stringify(defaultValue))
+      if (cleared) delete next[key]
+      else next[key] = value
+      return { modelParams: next }
+    }),
+  resetModelParams: () => set({ modelParams: {} }),
   setCount: (v) => set({ count: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
@@ -285,7 +390,27 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   clearResults: () => {
     // blob: 结果延迟 revoke 释放堆外 Blob(http/cos URL no-op)。
     for (const u of get().resultUrls) revokeLater(u)
-    set({ resultUrls: [], resultMeta: [], error: null })
+    set((s) => ({ resultUrls: [], resultMeta: [], error: null, runs: s.runs.filter((r) => r.status === 'running') }))
+  },
+
+  removeResult: (id) =>
+    set((s) => {
+      const idx = s.resultMeta.findIndex((m) => m.id === id)
+      if (idx < 0) return s
+      revokeLater(s.resultUrls[idx])
+      return {
+        resultUrls: s.resultUrls.filter((_, i) => i !== idx),
+        resultMeta: s.resultMeta.filter((_, i) => i !== idx),
+      }
+    }),
+
+  dismissRun: (runId) => set((s) => ({ runs: s.runs.filter((r) => r.id !== runId) })),
+
+  retryRun: async (api, runId) => {
+    const run = get().runs.find((r) => r.id === runId)
+    if (!run || run.status !== 'error') return { added: 0 }
+    set((s) => ({ runs: s.runs.filter((r) => r.id !== runId) }))
+    return get().generate(api, run.modelKey, run.overrides)
   },
 
   enterSplitMode: (imageUrl) =>
@@ -333,11 +458,17 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
     const form = get()
-    const { ratio, quality, count } = form
+    const ratio = overrides?.ratio ?? form.ratio
+    const quality = overrides?.quality ?? form.quality
+    const count = overrides?.count ?? form.count
+    const transparentBackground = overrides?.transparentBackground ?? form.transparentBackground
     const resolution = overrides?.resolution ?? form.resolution
     const prompt = overrides?.prompt ?? form.prompt
     const referenceImages = overrides?.referenceImages ?? form.referenceImages
     const layerDecomposition = overrides?.layerDecomposition ?? false
+    // 拷一份:重试要原样重发,不能被用户之后在面板里改的值带跑。
+    const modelParams = { ...(overrides?.modelParams ?? form.modelParams) }
+    const hasModelParams = Object.keys(modelParams).length > 0
     const templateKey = useTemplateStore.getState().getSelection('generate')
     // 拆分模式下 prompt 的语义是「要拆出什么」,空串=自动全拆。套上出图模板会把
     // 「自动全拆」变成一句风格描述,直接改掉这次请求的含义 —— 所以不套。
@@ -353,10 +484,48 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       modelKey,
     }
 
+    // 这次调用的生命周期卡:点下去的一瞬间 RUN 卡就出现在结果区第一格。
+    const runId = nextId()
+    const startedAt = Date.now()
+    const run: GenerateRun = {
+      id: runId,
+      status: 'running',
+      startedAt,
+      prompt,
+      modelKey,
+      ratio,
+      resolution,
+      count,
+      snapshot: editSnapshot,
+      // 完整入参留给「重试」:那时表单可能早被用户改过了。
+      overrides: {
+        prompt,
+        referenceImages: refsSnapshot ?? [],
+        layerDecomposition,
+        resolution,
+        ratio,
+        quality,
+        count,
+        transparentBackground,
+        modelParams,
+      },
+    }
+    const failRun = (message: string) =>
+      set((s) => {
+        const nextCount = Math.max(0, s.inFlightCount - 1)
+        return {
+          error: message,
+          inFlightCount: nextCount,
+          generating: nextCount > 0,
+          runs: s.runs.map((r) => (r.id === runId ? { ...r, status: 'error' as const, error: message, endedAt: Date.now() } : r)),
+        }
+      })
+
     set((s) => ({
       inFlightCount: s.inFlightCount + 1,
       generating: true,
       error: null,
+      runs: [run, ...s.runs],
     }))
 
     try {
@@ -368,7 +537,11 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         count,
         model: modelKey,
         referenceImages: refsSnapshot,
+        // 只在开了的时候带字段:老测试按精确对象断言 generateImage 入参,关着时不该多一个 key
+        ...(transparentBackground ? { transparentBackground: true } : {}),
         ...(layerDecomposition ? { layerDecomposition: true } : {}),
+        // 同理只在用户动过参数面板时带:默认 / 其它渠道的请求入参一个 key 都不多
+        ...(hasModelParams ? { modelParams } : {}),
       })
       const rawUrls = result.urls ?? result.images ?? []
 
@@ -378,10 +551,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       if (!result.success || rawUrls.length === 0) {
         const message = result.error
           ?? (result.success ? '上游返回成功但没有图片' : '生成失败')
-        set((s) => {
-          const nextCount = Math.max(0, s.inFlightCount - 1)
-          return { error: message, inFlightCount: nextCount, generating: nextCount > 0 }
-        })
+        failRun(message)
         return { added: 0, error: message }
       }
 
@@ -401,11 +571,17 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       // 为每张图分配 id + meta, 同步推入 resultUrls / resultMeta 两个数组。
       // snapshot 同一批 N 张图共享 — 浅引用即可, restoreForEdit 在写入时
       // 会拷一份, 这里不防御性深拷。
+      const finishedAt = Date.now()
       const newMetas: ResultUploadMeta[] = urls.map((u: string, i: number) => ({
         id: nextId(),
         modelUrl: u,
         uploadStatus: 'uploading' as const,
         snapshot: editSnapshot,
+        runId,
+        createdAt: finishedAt,
+        elapsedMs: finishedAt - startedAt,
+        resolution,
+        modelKey,
         ...(layers && layerGroupId
           ? {
               layerGroupId,
@@ -434,6 +610,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
           resultMeta: overflow > 0 ? combinedMeta.slice(overflow) : combinedMeta,
           inFlightCount: nextCount,
           generating: nextCount > 0,
+          // 成功的 run 退场 —— 它的产物就是上面这批结果卡。
+          runs: s.runs.filter((r) => r.id !== runId),
         }
       })
 
@@ -465,10 +643,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       return { added: urls.length }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      set((s) => {
-        const nextCount = Math.max(0, s.inFlightCount - 1)
-        return { error: message, inFlightCount: nextCount, generating: nextCount > 0 }
-      })
+      failRun(message)
       return { added: 0, error: message }
     }
   },

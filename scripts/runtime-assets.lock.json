@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "components": {
     "codex": {
-      "version": "0.149.1",
+      "version": "0.164.0",
       "targets": {
         "win32-x64": {
-          "codex-x86_64-pc-windows-msvc.exe": "sha256:a395030b56b126f608f2403036dddb654a9c063213e9c2b5f85d954cf490ebe6",
-          "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe": "sha256:cff8f8861d0bb0dba601f5d4e74d8eeb578a6b9a5956a6a83c818dafc7d4894a",
-          "codex-command-runner-x86_64-pc-windows-msvc.exe": "sha256:7f14523fe94a2d3ee3737198afa3328fcde04b53f6774bbd1a3f165666bec682",
-          "codex-code-mode-host-x86_64-pc-windows-msvc.exe": "sha256:8f98cc7aa079b51dbfbb16a8e655a468a9c37c1cd23e22422c10cdfd6cace543",
-          "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe": "sha256:11e970fec0bf2f566de5ea46ba4f6c404d1f26573ec642194fc8096b7ce278eb"
+          "codex-x86_64-pc-windows-msvc.exe": "sha256:6f267830b029ee25d9339864aa867cd45de9f8fd4c5ea007d2e63c13a0c66d36",
+          "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe": "sha256:2cac62ff24aca3aef7768ab5b96d4102e8434eb0cf8ddbc6171b85a8fb3bb4ef",
+          "codex-command-runner-x86_64-pc-windows-msvc.exe": "sha256:30b0ba5d42d3a95c839731fbf9939d728a70fcd9e433245a7cb15bc79418a4db",
+          "codex-code-mode-host-x86_64-pc-windows-msvc.exe": "sha256:be52517ca0f9a8eb626ec065ed3a357b5ee150fe1934a254d0126e6d40f29b57",
+          "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe": "sha256:c5a0530ee5b7277d0c451ef37573c55d05430786c3f34adc84ee2a9355594891"
         }
       }
     },

@@ -19,11 +19,19 @@ import type {
   SeedanceCreateTaskBody,
   SeedanceContentItem,
   SeedanceModelAlias,
+  SeedanceReferenceUrls,
   SeedanceTaskState,
   SeedanceTaskStatus,
   SeedanceTaskUpdate,
+  VideoBillingSource,
 } from './types'
-import { validateSeedanceRequest } from './types'
+import {
+  SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_RESOLUTION,
+  capabilitiesFor,
+  supportsSeedanceDraft,
+  validateSeedanceRequest,
+} from './types'
 import {
   createSeedanceTransport,
   transportFor,
@@ -38,12 +46,67 @@ function countContent(
   return content.filter((item) => item.type === type).length
 }
 
+/**
+ * 实际递给上游的素材地址,按类分列、保持 content[] 顺序。一条素材都没有返回
+ * undefined —— 纯文生视频的状态里不摆三个空数组。
+ */
+function referenceUrlsOf(content: SeedanceContentItem[]): SeedanceReferenceUrls | undefined {
+  const refs: SeedanceReferenceUrls = { images: [], videos: [], audios: [] }
+  for (const item of content) {
+    switch (item.type) {
+      case 'image_url':
+        refs.images.push(item.image_url.url)
+        break
+      case 'video_url':
+        refs.videos.push(item.video_url.url)
+        break
+      case 'audio_url':
+        refs.audios.push(item.audio_url.url)
+        break
+      case 'text':
+        break
+      default: {
+        const exhaustive: never = item
+        throw new Error(`unknown content item: ${JSON.stringify(exhaustive)}`)
+      }
+    }
+  }
+  return refs.images.length + refs.videos.length + refs.audios.length > 0 ? refs : undefined
+}
+
+/**
+ * 任务状态里展示用的画幅 / 时长默认值。
+ *
+ * 「源视频变换」型(深度捕捉)没有这两个参数 —— 输出跟着源视频走 —— 所以显示
+ * 「自适应 / 智能时长(-1)」而不是一个编出来的 16:9 / 5 秒。预备卡片、失败卡片、
+ * 真实任务三处必须同口径,否则气泡会在提交前后跳一下。
+ */
+function shapeDefaults(
+  model: SeedanceModelAlias,
+  input: Pick<CreateVideoTaskInput, 'ratio' | 'duration'>,
+): { ratio: string; duration: number } {
+  if (capabilitiesFor(model).sourceVideoTransform) return { ratio: 'adaptive', duration: -1 }
+  return { ratio: input.ratio ?? '16:9', duration: input.duration ?? 5 }
+}
+
 /** 上游轮询间隔。文档建议 5~10s。 */
 const POLL_INTERVAL_MS = 6_000
 /** 连续失败退避的上限：再糟也至少每分钟探一次。 */
 const POLL_BACKOFF_CAP_MS = 60_000
 /** 单任务轮询上限（30 分钟），防上游悬死导致永久轮询。 */
 const POLL_TIMEOUT_MS = 30 * 60_000
+/**
+ * 深度捕捉的轮询上限(50 分钟)。腾讯点播的视频深度估计按源视频时长处理,实测很慢:
+ * 5 秒短片约 1.5 分钟,60 秒的片子(720p / 1080p 各一条,同时提交三条)约 21~22 分钟,
+ * 180 秒的在 34 分钟后仍未出结果。30 分钟会把还在上游跑、也照样计费的任务提前判死,
+ * 用户既拿不到结果又白花钱,所以只给 depth 放宽;其它模型的 30 分钟兜底不变。
+ */
+const DEPTH_POLL_TIMEOUT_MS = 50 * 60_000
+
+/** 这个模型的轮询上限(毫秒)。 */
+function pollTimeoutMsFor(model: string): number {
+  return model === 'depth' ? DEPTH_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS
+}
 /** 终态任务保留时长，之后从 Map 清理。 */
 const RETENTION_MS = 30 * 60_000
 /**
@@ -65,6 +128,27 @@ export interface SeedanceTaskManagerDeps {
    * 接线的调用方（老测试）会走到，见 `transportFor`。
    */
   wan3Transport?: VideoTransport
+  /**
+   * 平台余额下的 Seedance（经 Miau 网关）。缺省时按平台余额提交会**抛错**而不是
+   * 回落 —— 见 `transportFor` 里那条不能回落的分支。
+   */
+  seedanceGatewayTransport?: VideoTransport
+  /**
+   * 深度捕捉(`depth`)的传输层。缺省时提交深度捕捉会**抛错**而不是回落 —— 回落到
+   * Seedance 会把源视频当 Ark 的 content[] 发出去,见 `transportFor`。
+   */
+  depthTransport?: VideoTransport
+  /**
+   * 没有显式意向时，这一次算平台余额还是自填 Key。
+   *
+   * 注入而不是自己去读:判据是「主进程手上有没有平台影子 token」,读它要碰
+   * `auth/gatewayToken`,而本类是纯状态机(单测里不该拉起 electron)。真正的
+   * 判据函数是 `seedanceGateway/credentials.ts` 的 `resolveSeedanceGatewayToken`
+   * —— 路由与取 token 必须是**同一个**结论,所以那边也用它。
+   *
+   * 缺省 = 一律自填 Key,与接入网关之前逐字节相同。
+   */
+  resolveBilling?: (prefer?: VideoBillingSource) => VideoBillingSource
   /**
    * 把上游裸错误翻成人话。缺省 = 原样透出。
    *
@@ -96,6 +180,13 @@ export interface SubmitParams {
   clientId?: string
   /** 任务来源（'workbench' = 生成视频工作台页；缺省 = 聊天/MCP 链路）。 */
   source?: 'workbench'
+  /**
+   * 这一次的钱从哪出。**工作台那条路必须显式带**（值来自渲染层的
+   * `useQuotaStore.billingSource`）；MCP 那条路没有渲染层，缺省交给
+   * `deps.resolveBilling` 兜底。理由见 `seedanceGateway/credentials.ts`
+   * 的「已知缺口」：主进程的 activePool 只是渲染层状态的镜像，可能落后。
+   */
+  billing?: VideoBillingSource
 }
 
 /**
@@ -116,6 +207,12 @@ export interface AdoptParams {
   duration: number
   /** 原提交时间，用于 UI 显示真实总耗时；缺省用当前时间。 */
   createdAt?: number
+  /**
+   * 原提交时的计费模式。**接管必须带**：重启后恢复的轮询要打回同一条上游，
+   * 缺了它一条平台任务会被拿 vvdance key 去查，回一句「任务不存在」。
+   * 缺省 = 自填 Key（接网关之前建的任务都是这样）。
+   */
+  billing?: VideoBillingSource
 }
 
 export class SeedanceTaskManager {
@@ -126,17 +223,35 @@ export class SeedanceTaskManager {
   constructor(private deps: SeedanceTaskManagerDeps) {}
 
   /**
-   * 这个模型该走哪条传输层。**本类里唯一与 provider 有关的一行** —— 提交、轮询、
-   * 取消都经由它，此后代码不再区分 provider（见 videoTransport.ts 的文件头）。
+   * 这个模型 + 这种计费模式该走哪条传输层。**本类里唯一与 provider 有关的一行**
+   * —— 提交、轮询、取消都经由它，此后代码不再区分 provider（见 videoTransport.ts
+   * 的文件头）。
+   *
+   * `billing` 由调用方给到底、途中不许有默认值：提交时定下的那个值被写进任务
+   * 状态，轮询与取消再原样取回来。三处给的必须是同一个值，否则就是「按平台余额
+   * 建的任务，拿自填 Key 去查」。
    */
-  private transport(model: SeedanceModelAlias | undefined): VideoTransport {
+  private transport(
+    model: SeedanceModelAlias | undefined,
+    billing: VideoBillingSource | undefined,
+  ): VideoTransport {
     return transportFor(
       {
         seedance: createSeedanceTransport(this.deps.client, this.deps.getApiKey),
         ...(this.deps.wan3Transport ? { wan3: this.deps.wan3Transport } : {}),
+        ...(this.deps.depthTransport ? { depth: this.deps.depthTransport } : {}),
+        ...(this.deps.seedanceGatewayTransport
+          ? { seedanceGateway: this.deps.seedanceGatewayTransport }
+          : {}),
       },
       model,
+      { ...(billing ? { billing } : {}) },
     )
+  }
+
+  /** 显式意向优先；没有就问兜底；连兜底都没注入就是自填 Key（老行为）。 */
+  private billingFor(prefer: VideoBillingSource | undefined): VideoBillingSource {
+    return this.deps.resolveBilling ? this.deps.resolveBilling(prefer) : (prefer ?? 'own-key')
   }
 
   private now(): number {
@@ -172,32 +287,53 @@ export class SeedanceTaskManager {
   async submit(params: SubmitParams): Promise<SeedanceTaskState> {
     const { input, content, threadId } = params
     const model: SeedanceModelAlias = input.model ?? '2.0'
+    // 意向只在这里落一次锤,之后整条任务的生命周期都用这个值 —— 用户中途切了
+    // 计费来源不该让一条已经在上游跑着的任务换一条路去轮询。
+    const billing = this.billingFor(params.billing)
     // 密钥检查交给这条路自己的 transport —— 只配了 Miau 密钥的用户生成万相时,
     // 不该被要求去配一个用不到的火山密钥。
-    this.transport(model).requireApiKey()
+    this.transport(model, billing).requireApiKey()
 
-    const resolution = input.resolution ?? '720p'
-    const duration = input.duration ?? 5
+    // 样片 / 成片只在平台余额这条路上有(网关按「本人 + 已成功」查样片、锁渠道);
+    // 自填 Key 的直连与万相都没有,提前说清楚,别让上游回一句看不懂的参数错误。
+    const isFinalFromDraft = Boolean(input.fromDraftTaskId)
+    if (input.draft || isFinalFromDraft) {
+      if (!supportsSeedanceDraft(model)) throw new Error('样片模式只有 Seedance 2.5 支持')
+      if (billing !== 'platform') throw new Error('样片模式只在平台余额下可用(自填 Key 的直连不支持)')
+    }
+    if (isFinalFromDraft && content.some((item) => item.type !== 'text')) {
+      throw new Error('由样片生成成片时不能再带参考素材 —— 方舟沿用样片的素材,重传会被拒')
+    }
+
+    const resolution = isFinalFromDraft
+      ? SEEDANCE_DRAFT_FINAL_RESOLUTION
+      : input.draft
+        ? SEEDANCE_DRAFT_RESOLUTION
+        : (input.resolution ?? '720p')
+    const { ratio: defaultRatio, duration } = shapeDefaults(model, input)
     const taskMode = input.taskMode
 
     // 提交前按模型能力自查。上游对 4k 配 2.5、30 秒配 2.0、edit 不带视频都会 400,
     // 但那时用户已经等过一次网络往返、看到的是一张失败卡片。
-    const errors = validateSeedanceRequest(model, {
-      duration,
-      resolution,
-      taskMode,
-      images: countContent(content, 'image_url'),
-      videos: countContent(content, 'video_url'),
-      audios: countContent(content, 'audio_url'),
-    })
+    // 成片不查:它的规格全部沿用样片,而 1080p 恰恰是 2.5 平时不开放、只有成片才有的一档。
+    const errors = isFinalFromDraft
+      ? []
+      : validateSeedanceRequest(model, {
+          duration,
+          resolution,
+          taskMode,
+          images: countContent(content, 'image_url'),
+          videos: countContent(content, 'video_url'),
+          audios: countContent(content, 'audio_url'),
+        })
     if (errors.length > 0) throw new Error(errors.join('；'))
 
     // edit / extend 由上游强制 adaptive（文档 4.9）—— 与其让它悄悄改写我们传的
     // 比例、再让 UI 显示一个与成片不符的值，不如提交时就写成真实生效的那个。
-    const ratio = taskMode ? 'adaptive' : (input.ratio ?? '16:9')
+    const ratio = taskMode ? 'adaptive' : defaultRatio
 
     // 组包归传输层 —— 两家 provider 的请求体毫无共同点,这里只交出已解析的事实。
-    const { id } = await this.transport(model).createTask({
+    const { id } = await this.transport(model, billing).createTask({
       input,
       content,
       model,
@@ -206,16 +342,21 @@ export class SeedanceTaskManager {
       duration,
       ...(taskMode ? { taskMode } : {}),
     })
+    const referenceUrls = referenceUrlsOf(content)
     const state: SeedanceTaskState = {
       taskId: id,
       clientId: params.clientId,
       ...(params.source ? { source: params.source } : {}),
+      billing,
       threadId,
       prompt: input.prompt,
       model,
       resolution,
       ratio,
       duration,
+      ...(referenceUrls ? { referenceUrls } : {}),
+      ...(input.draft && !isFinalFromDraft ? { draft: true } : {}),
+      ...(input.fromDraftTaskId ? { fromDraftTaskId: input.fromDraftTaskId } : {}),
       status: 'queued',
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -238,15 +379,15 @@ export class SeedanceTaskManager {
     status: SeedanceTaskStatus,
   ): SeedanceTaskUpdate {
     const now = this.now()
+    const model = input.model ?? '2.0'
     return {
       taskId: clientId,
       clientId,
       threadId,
       prompt: input.prompt,
-      model: input.model ?? '2.0',
+      model,
       resolution: input.resolution ?? '720p',
-      ratio: input.ratio ?? '16:9',
-      duration: input.duration ?? 5,
+      ...shapeDefaults(model, input),
       status,
       createdAt: now,
       updatedAt: now,
@@ -293,6 +434,7 @@ export class SeedanceTaskManager {
       ...(params.clientId ? { clientId: params.clientId } : {}),
       ...(params.source ? { source: params.source } : {}),
       ...(params.threadId ? { threadId: params.threadId } : {}),
+      ...(params.billing ? { billing: params.billing } : {}),
       prompt: params.prompt,
       model: params.model,
       resolution: params.resolution,
@@ -326,7 +468,9 @@ export class SeedanceTaskManager {
 
     let billed = true
     let reason: string | undefined
-    const deleteTask = this.transport(task.model).deleteTask
+    // 建任务时用的哪条路，取消就问哪条路 —— 网关那条没有取消接口，拿 vvdance 的
+    // deleteTask 去删一个网关任务只会白删，然后把「其实还在计费」报成「已取消」。
+    const deleteTask = this.transport(task.model, task.billing).deleteTask
     if (task.status === 'queued' && !deleteTask) {
       // 该 provider 没有验证过的取消接口。发一个没把握的请求、再把它的失败报成
       // 「取消失败」,会让用户以为这笔钱本来能省下来 —— 如实说。
@@ -466,14 +610,16 @@ export class SeedanceTaskManager {
       if (!task) return // disposed / cleaned up
       if (task.status === 'cancelled') return // 已取消：停止轮询，别再花钱查
 
-      if (this.now() - startedAt > POLL_TIMEOUT_MS) {
+      const pollTimeoutMs = pollTimeoutMsFor(task.model)
+      if (this.now() - startedAt > pollTimeoutMs) {
         // 带上最后一次失败原因：否则「上游一直 503」和「上游一直在跑」会报出
         // 同一句话，用户和日志都无法区分。
+        const minutes = Math.round(pollTimeoutMs / 60_000)
         this.update(taskId, {
           status: 'failed',
           error: lastFailure
-            ? `轮询超时（30 分钟未出结果）；最后一次查询失败：${lastFailure}`
-            : '轮询超时（30 分钟未出结果）',
+            ? `轮询超时（${minutes} 分钟未出结果）；最后一次查询失败：${lastFailure}`
+            : `轮询超时（${minutes} 分钟未出结果）`,
         })
         this.scheduleCleanup(taskId)
         return
@@ -481,7 +627,7 @@ export class SeedanceTaskManager {
 
       let result
       try {
-        result = await this.transport(task.model).queryTask(taskId)
+        result = await this.transport(task.model, task.billing).queryTask(taskId)
       } catch (e) {
         // 密钥失效 / 参数非法 / 任务不存在：重试到 30 分钟也不会变好，而且最后只会
         // 报一句与真因无关的「轮询超时」。立刻如实失败。
@@ -503,6 +649,14 @@ export class SeedanceTaskManager {
       // 上一句 await 期间用户可能点了取消 —— 结果一律作废，不落盘不写历史。
       if (this.tasks.get(taskId)?.status === 'cancelled') return
 
+      // 网关之后那一跳的任务号(火山 `cgt-…`):第一轮轮询就有。学到就随这一条
+      // 广播带出去,不等成片 —— 用户找供应商对账多半正是在任务卡住的时候。
+      // 挂到状态对象上之后每条广播自然都带着,所以只在「新学到」时才当成变化。
+      const learnedUpstream =
+        result.upstreamTaskId && result.upstreamTaskId !== task.upstreamTaskId
+          ? { upstreamTaskId: result.upstreamTaskId }
+          : {}
+
       if (result.status === 'failed') {
         const err = result.error
         this.update(taskId, {
@@ -510,6 +664,7 @@ export class SeedanceTaskManager {
           error: err
             ? this.humanError(`${err.code ?? 'error'}: ${err.message ?? 'unknown'}`)
             : '生成失败（上游未给出原因）',
+          ...learnedUpstream,
         })
         this.scheduleCleanup(taskId)
         return
@@ -518,7 +673,7 @@ export class SeedanceTaskManager {
       if (result.status === 'succeeded') {
         const videoUrl = result.content?.video_url
         if (!videoUrl) {
-          this.update(taskId, { status: 'failed', error: 'succeeded 但缺少 video_url' })
+          this.update(taskId, { status: 'failed', error: 'succeeded 但缺少 video_url', ...learnedUpstream })
           this.scheduleCleanup(taskId)
           return
         }
@@ -528,6 +683,7 @@ export class SeedanceTaskManager {
           status: 'succeeded',
           videoUrl,
           persistence: 'running',
+          ...learnedUpstream,
           ...(typeof result.seed === 'number' ? { actualSeed: result.seed } : {}),
           ...(typeof result.usage?.completion_tokens === 'number'
             ? { completionTokens: result.usage.completion_tokens }
@@ -540,9 +696,9 @@ export class SeedanceTaskManager {
         return
       }
 
-      // queued / running：仅在状态切换时广播，避免每 6s 刷一次噪音。
-      if (result.status !== task.status) {
-        this.update(taskId, { status: result.status })
+      // queued / running：仅在状态切换（或刚学到上游任务号）时广播，避免每 6s 刷一次噪音。
+      if (result.status !== task.status || learnedUpstream.upstreamTaskId) {
+        this.update(taskId, { status: result.status, ...learnedUpstream })
       }
     }
   }

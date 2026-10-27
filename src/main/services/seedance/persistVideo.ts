@@ -10,11 +10,18 @@
  * 二是让「ingest 失败时留不留文件」这个决策可以被测试钉住。
  */
 
+import type { VideoBillingSource } from '../../../types/seedance'
+
 export interface PersistVideoTask {
   videoUrl?: string
   model: string
   taskId: string
   threadId?: string
+  /**
+   * 这条任务是用哪种计费模式建的。只有重查地址会用到 —— 见 `refreshVideoUrl`。
+   * 缺省 = 自填 Key。
+   */
+  billing?: VideoBillingSource
 }
 
 export interface PersistVideoResult {
@@ -32,8 +39,16 @@ export interface PersistVideoDeps {
    *
    * 要 `model` 是因为重查得打对上游：万相的任务在 Ark 那边查不到。少这个参数
    * 时万相卡片的「重新保存」会问错地方，然后报一句「任务不存在」。
+   *
+   * `billing` 同理:平台余额那条任务是按计费池签发的影子 token 建的，拿用户自填
+   * 的 key 去重查拿回的还是「任务不存在」——「重新保存」于是永远失败，而那正是
+   * 上游地址过期后唯一不用花钱的补救。
    */
-  refreshVideoUrl?: (taskId: string, model: string) => Promise<string | undefined>
+  refreshVideoUrl?: (
+    taskId: string,
+    model: string,
+    billing: VideoBillingSource | undefined,
+  ) => Promise<string | undefined>
   ingest: (
     threadId: string,
     files: { name: string; mime: string; size: number; path: string }[],
@@ -69,7 +84,7 @@ async function resolveVideoUrl(
 ): Promise<string> {
   if (deps.refreshVideoUrl) {
     try {
-      const fresh = await deps.refreshVideoUrl(task.taskId, task.model)
+      const fresh = await deps.refreshVideoUrl(task.taskId, task.model, task.billing)
       if (fresh) return fresh
       console.warn('[seedance] task re-query returned no video_url; falling back to stored URL')
     } catch (e) {

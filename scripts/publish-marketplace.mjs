@@ -130,7 +130,12 @@ async function main() {
     console.log('\n(DRY-RUN) would align 3 manifests per plugin to the versions above,')
     console.log('(DRY-RUN) then sync skills + publish both catalogs. Running sub-steps in dry mode:')
   } else {
-    // ---- STEP 1b: persist versions + align manifests + save state ----------
+    // ---- STEP 1b: persist versions + align manifests -----------------------
+    // The publish-state is deliberately NOT written here: it is the "what is
+    // live on COS" baseline, so it must only advance after STEP 4 succeeded.
+    // Writing it up front let a failed upload leave the repo claiming a version
+    // the catalog never received (2026-09-20: local 1.0.41, COS 1.0.40) — and
+    // the next run then skipped it as "unchanged".
     await fs.writeFile(MARKETPLACE_FILE, JSON.stringify(marketplace, null, 2) + '\n', 'utf8')
     for (const plugin of marketplace.plugins ?? []) {
       const rel = (plugin.source || `./${plugin.name}`).replace(/^\.\//, '')
@@ -138,15 +143,9 @@ async function main() {
         await setManifestVersion(path.join(PLUGINS_SRC, rel, dir, 'plugin.json'), plugin.version)
       }
     }
-    await fs.writeFile(
-      STATE_FILE,
-      JSON.stringify({ generatedAt: new Date().toISOString(), plugins: nextStateFromDecisions(decisions) }, null, 2) +
-        '\n',
-      'utf8',
-    )
     console.log(
       `\n✔ marketplace.json + ${(marketplace.plugins?.length ?? 0) * 3} manifests aligned; ` +
-        `${bumped.length} plugin(s) bumped; publish-state saved.`,
+        `${bumped.length} plugin(s) bumped.`,
     )
   }
 
@@ -176,6 +175,17 @@ async function main() {
   const pubArgs = dryRun ? ['--dry-run'] : []
   run('Publish plugin catalog', 'scripts/upload-plugins-to-cos.mjs', pubArgs)
   run('Publish per-skill catalog', 'scripts/upload-skills-to-cos.mjs', pubArgs)
+
+  // ---- STEP 5: only now is the new baseline true ---------------------------
+  if (!dryRun) {
+    await fs.writeFile(
+      STATE_FILE,
+      JSON.stringify({ generatedAt: new Date().toISOString(), plugins: nextStateFromDecisions(decisions) }, null, 2) +
+        '\n',
+      'utf8',
+    )
+    console.log('✔ publish-state saved (catalogs confirmed uploaded).')
+  }
 
   console.log(
     `\n🎉 Done${dryRun ? ' (dry-run — nothing uploaded)' : ''}. Plugins + skills marketplace ${

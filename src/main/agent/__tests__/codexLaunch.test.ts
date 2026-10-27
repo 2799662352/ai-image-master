@@ -6,6 +6,7 @@ import {
   resolveCodexSessionConfig,
 } from '../codexLaunch'
 import { resolveSmokeContextConfig } from '../../../../scripts/smoke-codex-compaction'
+import { CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES } from '../../mcp/config'
 
 describe('buildCodexLaunchArgs', () => {
   it('uses app-server with the default listen URL and maximum-permission defaults', () => {
@@ -53,6 +54,8 @@ describe('buildCodexLaunchArgs', () => {
       // Native cross-session memory (feature key `memories`, verified beta on
       // the 0.142.2 binary). See codexLaunch.ts for the full rationale.
       '-c', 'features.memories=true',
+      // Codex 0.152.0 made update_plan opt-in; PlanCard depends on it.
+      '-c', 'tools.update_plan.enabled=true',
       // No apiyi key configured (neither 设置/localStorage nor config.toml) →
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
@@ -85,6 +88,7 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'project_root_markers=[".git"]',
       '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
       '-c', 'features.memories=true',
+      '-c', 'tools.update_plan.enabled=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
     ])
@@ -170,6 +174,23 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs({ sessionConfig: { memoriesEnabled: true } })
     expect(args).toContain('features.memories=true')
     expect(args).not.toContain('features.memories=false')
+  })
+
+  it('re-enables update_plan, which Codex 0.152.0 (openai/codex#41744) made opt-in', () => {
+    // PlanCard is driven end-to-end by the `update_plan` tool
+    // (`turn/plan/updated` → codexNotificationRouter → ActivityCard 'plan').
+    // 0.152.0 flipped `tools.update_plan.enabled` to false by default and
+    // strips planning guidance from every prompt path when off — so without
+    // this pin the card silently stops appearing. No user-facing toggle yet,
+    // hence unconditional.
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('tools.update_plan.enabled=true')
+    // Unconditional — present even with a custom provider/MCP wired.
+    const withMcp = buildCodexLaunchArgs({
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+      catimationMcp: { port: 7842, token: 'deadbeef' },
+    })
+    expect(withMcp).toContain('tools.update_plan.enabled=true')
   })
 
   it('pins memories side-request models to the channel model (grok 400 fix)', () => {
@@ -529,6 +550,9 @@ describe('buildCodexLaunchArgs', () => {
     // Transport-agnostic knobs still apply on the stdio path.
     expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=25000')
     expect(args).toContain('mcp_servers.catimation.supports_parallel_tool_calls=true')
+    expect(args).toContain(
+      `mcp_servers.catimation.tool_input_schema_max_bytes=${CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES}`,
+    )
     expect(args).toContain('skills.config=[{ name = "imagegen", enabled = false }]')
   })
 
@@ -898,6 +922,84 @@ describe('buildCodexLaunchArgs', () => {
   it('treats a whitespace-only cinematographyKbKey as no secret injection', () => {
     const args = buildCodexLaunchArgs({ cinematographyKbKey: '   ' })
     expect(args.some((a) => a.includes('DASHSCOPE_API_KEY'))).toBe(false)
+  })
+
+  /**
+   * 运镜知识库**永远**只吃 设置 → 运镜知识库 的那两把 key，登录与否都一样。
+   *
+   * ## 为什么单独守这条
+   *
+   * 用户 2026-08-31 明确要求过两次:「就算用户登录了也是走设置 key」。这条今天成立
+   * 是三件事凑出来的 —— 它是 stdio 子进程(不经 Electron 的 session.webRequest,
+   * 网关注入器结构上够不着)、打的是阿里的 host(百炼 maas / dashscope / oss)、
+   * 用的是 `cinematography-kb` 与 `dashvector` 两个独立凭据位。三件事没有一件是
+   * 由测试保证的,而**最容易被后人好心破坏的是第三件**:「用户没填 KB key,但登录了
+   * 平台,不如回落到 Miau token 让他能用」—— 那种回落写起来只要一行 `?? miauToken`,
+   * 而后果是拿一枚跟百炼毫无关系的凭据去打阿里,或者更糟:把平台的钱花在这里。
+   *
+   * 所以这里同时钉死两侧:没配就是没有(不许替代),配了就必须原样是它自己那把。
+   */
+  describe('运镜知识库只认设置里的 key,不受登录 / 平台余额影响', () => {
+    const kbEnvArgs = (args: readonly string[]): string[] =>
+      args.filter((a) => a.startsWith('mcp_servers.cinematography_kb.env.'))
+
+    it('登录态下没配 KB key,就一把 key 都不注入 —— 不许拿 Miau / 平台 token 顶替', () => {
+      // 模拟「已登录 + 正在用 Miau 网关聊天 + apiyi MCP 也配了 key」的最丰满现场:
+      // 除了 KB 自己那两把,手头能拿到的凭据全都有。
+      const args = buildCodexLaunchArgs({
+        provider: {
+          id: 'rightcode-qwen',
+          name: '通义千问 (Miau)',
+          baseUrl: 'https://miauapi.13797248455.xyz/v1',
+          envKey: 'MIAU_API_KEY',
+          model: 'qwen3.8-max',
+        },
+        apiyiKey: 'sk-apiyi-should-not-leak-into-kb',
+      })
+
+      const kbEnv = kbEnvArgs(args)
+      // 只剩那条非密的集群地址,没有任何一把密钥。
+      expect(kbEnv).toEqual([
+        'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
+      ])
+      expect(kbEnv.join(' ')).not.toContain('DASHSCOPE_API_KEY')
+      expect(kbEnv.join(' ')).not.toContain('DASHVECTOR_API_KEY')
+      // 手边那把 apiyi 的 key 也不许漏进 KB 的 env。
+      expect(kbEnv.join(' ')).not.toContain('sk-apiyi-should-not-leak-into-kb')
+    })
+
+    it('配了就必须原样是设置里那把,不被任何其它凭据覆盖', () => {
+      const args = buildCodexLaunchArgs({
+        provider: {
+          id: 'rightcode-qwen',
+          name: '通义千问 (Miau)',
+          baseUrl: 'https://miauapi.13797248455.xyz/v1',
+          envKey: 'MIAU_API_KEY',
+          model: 'qwen3.8-max',
+        },
+        apiyiKey: 'sk-apiyi-other',
+        cinematographyKbKey: 'sk-kb-from-settings',
+        dashVectorKey: 'sk-dv-from-settings',
+      })
+
+      const kbEnv = kbEnvArgs(args).join(' ')
+      expect(kbEnv).toContain('DASHSCOPE_API_KEY="sk-kb-from-settings"')
+      expect(kbEnv).toContain('DASHVECTOR_API_KEY="sk-dv-from-settings"')
+      expect(kbEnv).not.toContain('sk-apiyi-other')
+    })
+
+    it('KB 的 env 里不许出现平台计费标记 —— 它不走网关,也就不该带计费归属', () => {
+      // 这条防的是「顺手给所有 MCP 都加上平台计费头」这类横扫式改动。KB 打的是
+      // 阿里,带上这些头要么无意义、要么把凭据送错地方。
+      const args = buildCodexLaunchArgs({
+        cinematographyKbKey: 'sk-kb-from-settings',
+        dashVectorKey: 'sk-dv-from-settings',
+      })
+      const kbEnv = kbEnvArgs(args).join(' ')
+      for (const marker of ['X-Catimation-Billing', 'X-Platform-User-Id', 'X-Project-Id', 'Bearer ']) {
+        expect(kbEnv).not.toContain(marker)
+      }
+    })
   })
 
   // DashVector key (Sakuga-42M raw-dataset retrieval, 设置 → 运镜知识库): same

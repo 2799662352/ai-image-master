@@ -48,7 +48,7 @@ describe('ArtifactCard audio', () => {
       />,
     )
     const audio = container.querySelector('audio')
-    expect(audio!.getAttribute('src')).toBe('local-file:///C%3A/ud/audio-history/x.mp3')
+    expect(audio!.getAttribute('src')).toBe('local-file:///C:/ud/audio-history/x.mp3')
   })
 
   it('detects audio by extension even without an audio/* mime', () => {

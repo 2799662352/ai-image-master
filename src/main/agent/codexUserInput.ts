@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { CodexTextElement, CodexUserInput } from './codexProtocol'
+import { isNativeVideo, type VideoReference } from './omniMediaInput'
 import type { AgentInput } from './types'
 import type { AgentReference } from '../../types/agent-reference'
 
@@ -121,17 +122,35 @@ export interface ReferenceInputMapping {
    * as a notice instead of failing the whole send.
    */
   skippedReferences: string[]
+  /**
+   * Video references set aside for native omni input (see omniMediaInput).
+   * Only populated with `collectVideo: true`; otherwise videos stay in
+   * `textMentions` as `label: path` like any other non-image file.
+   */
+  videoReferences: VideoReference[]
+}
+
+export interface ReferenceMappingOptions {
+  /**
+   * Return video references separately instead of flattening them into
+   * `textMentions`. The caller turns them into omni media sentinels when the
+   * turn's model can take video natively.
+   */
+  collectVideo?: boolean
 }
 
 export async function mapReferencesToInputItems(
   references: readonly AgentReference[] | undefined,
   allowedRoots: readonly string[],
+  options: ReferenceMappingOptions = {},
 ): Promise<ReferenceInputMapping> {
   const items: AgentInput['items'] = []
   const textMentions: string[] = []
   const skippedReferences: string[] = []
+  const videoReferences: VideoReference[] = []
   const seenLocalImages = new Set<string>()
   const seenLocalAudio = new Set<string>()
+  const seenVideos = new Set<string>()
   const normalizedAllowedRoots = await Promise.all(allowedRoots.map((root) => fs.realpath(root).catch(() => undefined)))
   const realAllowedRoots = normalizedAllowedRoots.filter((root): root is string => typeof root === 'string')
 
@@ -163,6 +182,11 @@ export async function mapReferencesToInputItems(
           seenLocalAudio.add(resolvedPath)
           items.push({ type: 'localAudio', path: resolvedPath })
         }
+      } else if (options.collectVideo && isVideoReference(reference, resolvedPath)) {
+        if (!seenVideos.has(resolvedPath)) {
+          seenVideos.add(resolvedPath)
+          videoReferences.push({ label: reference.label, path: resolvedPath })
+        }
       } else {
         textMentions.push(`${reference.label}: ${resolvedPath}`)
       }
@@ -178,11 +202,17 @@ export async function mapReferencesToInputItems(
         items.push({ type: 'image', url: safeUrl.toString() })
       } else if (isAudioReference(reference, safeUrl.pathname)) {
         items.push({ type: 'audio', url: safeUrl.toString() })
+      } else if (options.collectVideo && isVideoReference(reference, safeUrl.pathname)) {
+        const url = safeUrl.toString()
+        if (!seenVideos.has(url)) {
+          seenVideos.add(url)
+          videoReferences.push({ label: reference.label, url })
+        }
       }
     }
   }
 
-  return { items, textMentions, skippedReferences }
+  return { items, textMentions, skippedReferences, videoReferences }
 }
 
 function isInsideAnyRoot(filePath: string, roots: readonly string[]): boolean {
@@ -222,5 +252,13 @@ function isAudioReference(reference: AgentReference, nameOrPath: string): boolea
     reference.openBehavior === 'audio' ||
     reference.preview?.mime?.startsWith('audio/') === true ||
     AUDIO_EXTENSIONS.has(path.extname(nameOrPath).toLowerCase())
+  )
+}
+
+function isVideoReference(reference: AgentReference, nameOrPath: string): boolean {
+  return (
+    reference.type === 'video' ||
+    reference.openBehavior === 'video' ||
+    isNativeVideo(nameOrPath, reference.preview?.mime)
   )
 }

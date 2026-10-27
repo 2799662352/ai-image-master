@@ -30,6 +30,7 @@ import {
   WORKBENCH_APPLY_MAX_CONTENT_CARDS,
   WORKBENCH_BOARD_SUMMARY_MAX,
   WORKBENCH_CARD_SUMMARY_MAX,
+  WORKBENCH_PROJECT_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_INDEX_ENTRIES,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
   WORKBENCH_STATUS_PAGE_SIZE,
@@ -37,9 +38,9 @@ import {
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
 import {
-  ALL_VIDEO_MODEL_ALIASES,
   ALL_VIDEO_RATIOS,
   ALL_VIDEO_RESOLUTIONS,
+  WORKBENCH_VIDEO_MODEL_ALIASES,
 } from '../../../types/seedance'
 
 /**
@@ -51,7 +52,8 @@ import {
  * 报 `_zod` 未定义，本文件下方有那次事故的注释）。
  */
 const zEnumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
-const zModelAlias = () => zEnumOf(ALL_VIDEO_MODEL_ALIASES)
+// 工作台只收有工作台模式的模型 —— 深度捕捉(`depth`)没有卡片字段,走 generate_video。
+const zModelAlias = () => zEnumOf(WORKBENCH_VIDEO_MODEL_ALIASES)
 const zResolution = () => zEnumOf(ALL_VIDEO_RESOLUTIONS)
 const zRatio = () => zEnumOf(ALL_VIDEO_RATIOS)
 
@@ -78,7 +80,10 @@ const cardInputSchema = z.object({
     + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only). '
     + '"wan3" = 阿里万相 3.0 (All-in-One): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, '
     + 'accepts one document or web link as reference, billed per second (¥) instead of per token. '
-    + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive".',
+    + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive". '
+    + '"wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and input field; the only '
+    + 'differences are the upstream model name and the price (≈1.33× wan3). Same modes, materials, '
+    + 'durations, resolutions, document slot and restrictions — treat it exactly like "wan3".',
   ),
   resolution: zResolution().optional().describe('Default 720p. 1080p requires model "2.0" or "wan3" (NOT "2.5").'),
   ratio: zRatio().optional().describe(
@@ -103,6 +108,11 @@ const cardInputSchema = z.object({
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
+  draft: z.boolean().optional().describe(
+    '样片 mode — model "2.5" + platform balance only. true = the card renders a cheap 480p draft (billed as '
+    + '480p) instead of the full render; once it succeeds, call video_workbench_finalize_draft to turn it into '
+    + 'the 1080p final (valid 7 days, reuses the draft\'s prompt/materials/duration/ratio/seed/audio). Default false.',
+  ),
   referenceImages: z.array(z.string()).max(30).optional().describe(
     'Up to 9 reference images (30 with model "2.5"): local path / https URL / asset://assetId (portrait library) / data: URL. '
     + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
@@ -137,6 +147,11 @@ const boardBriefSchema = z.object({
     + 'pulling — page names are often just "页面 3". A summary lets you pick the right page without '
     + 'fetching any of its cards.',
   ),
+  inUseByOtherChat: z.literal(true).optional().describe(
+    'Present = another conversation has pinned itself to this board (an episode / act) and touched the '
+    + 'workbench within the last 10 minutes. Write elsewhere, or pin your own board with '
+    + 'video_workbench_switch_project({ projectId, boardId }).',
+  ),
 })
 
 const statusCountsSchema = z.object({
@@ -157,11 +172,111 @@ const SELECTED_CARD_IDS_DOC =
   + 'Dragging cards into the chat also syncs the selection to the dragged cards, so this doubles '
   + 'as "what the user just handed me".'
 
+/** 当前剧(project)的头:所有 video_workbench_* 都作用于它,boards / statusCounts 也只统计它。 */
+const PROJECT_SUMMARY_DOC =
+  'One-line note about what this project IS, written by you via video_workbench_set_project_summary '
+  + '("三集科幻短剧 · 赛博都市 · 主角林夏"). Absent until someone writes it. Project names are often '
+  + 'just "未命名剧 3", so this is how you tell eight projects apart without switching into each one.'
+
+const projectBriefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  segments: z.number().describe('Boards (pages / 分段) in this project.'),
+  cards: z.number().describe('Cards in this project across all its boards.'),
+  summary: z.string().optional().describe(PROJECT_SUMMARY_DOC),
+})
+
 const workbenchSummarySchema = z.object({
+  project: projectBriefSchema.describe(
+    "THIS CONVERSATION'S project (剧) — the one you chose with switch_project / create_project, or the one "
+    + 'on screen if you have not chosen yet. Everything below is scoped to it; other projects are invisible '
+    + 'here — see video_workbench_list_projects / video_workbench_switch_project.',
+  ),
   activeBoardId: z.string(),
   boards: z.array(boardBriefSchema),
-  statusCounts: statusCountsSchema.describe('Global card status tally across ALL boards.'),
+  statusCounts: statusCountsSchema.describe("Card status tally across ALL boards of this conversation's project."),
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
+})
+
+const idListSchema = z.object({
+  count: z.number().describe('Real number of cards affected.'),
+  ids: z.array(z.string()).describe('At most 8 of them.'),
+})
+
+/**
+ * 「自你上次调用以来别人动过什么」:几个对话(加上用户)同时写同一份工作台时,回包里顺带告诉你
+ * 这段时间你手上那几页发生了什么。字段缺席 = 没有变化(或这是并行批里的非首次调用)。
+ */
+const changedSinceYourLastCallSchema = z.object({
+  added: idListSchema.optional().describe('Cards that appeared on your boards.'),
+  removed: idListSchema.optional().describe('Cards that disappeared from your boards.'),
+  edited: idListSchema.optional().describe(
+    'Cards whose CONTENT (prompt / spec / materials) changed. Render progress and background updates do not count.',
+  ),
+  reordered: z.array(z.string()).optional().describe('Board ids whose card order changed.'),
+}).describe(
+  'Something other than your own previous calls changed your boards since your last call (the user, '
+  + 'another conversation, or a background process — the cause is not known). Reported ONCE. If you are '
+  + 'about to write to the cards listed here, re-read them first (video_workbench_status) instead of '
+  + 'writing from memory. Absent = nothing changed.',
+)
+
+const changedSinceField = { changedSinceYourLastCall: changedSinceYourLastCallSchema.optional() }
+
+const projectListItemSchema = z.looseObject({
+  id: z.string(),
+  name: z.string(),
+  segments: z.number(),
+  cards: z.number(),
+  active: z.number().describe('Cards preparing/queued/running.'),
+  failed: z.number(),
+  done: z.number(),
+  doneSeconds: z.number().describe('Sum of spec durations of succeeded cards.'),
+  summary: z.string().optional().describe(PROJECT_SUMMARY_DOC),
+  legacy: z.boolean().optional().describe('The project that absorbed pre-upgrade pages; user has not renamed/dismissed it yet.'),
+  inUseByOtherChat: z.boolean().optional().describe(
+    'true = another conversation of the user is working on this project right now (it touched the workbench '
+    + 'within the last 10 minutes). Leave it alone unless the user asked you to take it over.',
+  ),
+})
+
+const listProjectsOutputSchema = z.looseObject({
+  activeProjectId: z.string().describe('The project the USER is looking at on screen — not necessarily yours.'),
+  yourProjectId: z.string().optional().describe(
+    'The project THIS conversation is bound to (what every other video_workbench_* call acts on). '
+    + 'Absent when you have not chosen one.',
+  ),
+  yourProjectChosen: z.boolean().optional().describe(
+    'false = you never chose a project; reads follow the screen and writes may be refused while another '
+    + 'conversation is busy — call switch_project / create_project first.',
+  ),
+  yourBoardId: z.string().optional().describe(
+    'The board (episode / act) THIS conversation is pinned to. Absent = not pinned: implicit writes land on '
+    + 'the project\'s current page.',
+  ),
+  projects: z.array(projectListItemSchema),
+})
+
+const switchProjectOutputSchema = z.looseObject({
+  activeProjectId: z.string().describe('The project on the USER\'s screen after this call (may differ from yourProjectId).'),
+  yourProjectId: z.string().optional().describe('The project this conversation is now bound to.'),
+  yourBoardId: z.string().optional().describe(
+    'The board you pinned (only when you passed boardId or it was already pinned). Implicit writes from this '
+    + 'conversation land there regardless of which page the user has open.',
+  ),
+  onScreen: z.boolean().optional().describe('false = you work on it in the background; the user\'s screen did not move.'),
+  note: z.string().optional(),
+  project: z.object({ id: z.string(), name: z.string() }),
+  boards: z.array(boardBriefSchema),
+})
+
+const createProjectOutputSchema = z.looseObject({
+  yourProjectId: z.string().optional(),
+  onScreen: z.boolean().optional().describe('false = created in the background; the user\'s screen did not move.'),
+  note: z.string().optional(),
+  projectId: z.string(),
+  boardId: z.string().describe('The one segment the new project starts with — add cards into it.'),
+  name: z.string(),
 })
 
 /** 素材紧凑清单条目:只有截断后的展示名,无 URL 全文。 */
@@ -170,6 +285,16 @@ const materialBriefSchema = z.object({ name: z.string() })
 const cardSnapshotSchema = z.looseObject({
   cardId: z.string(),
   boardId: z.string().optional().describe('Owning board id; board name lives in the top-level boards list.'),
+  rev: z.number().optional().describe(
+    'Version of this card\'s content/spec. Pass it back as `expectedRev` on video_workbench_update_task '
+    + '(or in `expectedRevs` on set_spec) to say "I edited the version I saw": if the card changed since, '
+    + 'the write is refused and the current card comes back instead. It can also rise on background events '
+    + '(e.g. a material finishing upload) with no content change — then the retry with the new rev just works.',
+  ),
+  clientRef: z.string().optional().describe(
+    'Your own stable key for this card (e.g. "ep2-shot-07"), if you gave one on add_tasks. Lets you find the '
+    + 'card again after losing context, and makes add_tasks safe to repeat.',
+  ),
   order: z.number(),
   summary: z.string().optional().describe(
     'The one-line note for this card, present only while it still matches the current prompt.',
@@ -187,6 +312,12 @@ const cardSnapshotSchema = z.looseObject({
   mode: z.string(),
   seed: z.number().optional(),
   webSearch: z.boolean(),
+  draft: z.boolean().optional().describe('样片 mode switch is on for this card.'),
+  draftRun: z.boolean().optional().describe(
+    'The current result is a SUCCEEDED 480p 样片 — call video_workbench_finalize_draft for the 1080p final '
+    + 'instead of regenerating.',
+  ),
+  fromDraftTaskId: z.string().optional().describe('The current result is the 1080p final made from this draft task.'),
   referenceCounts: z.object({ images: z.number(), videos: z.number(), audios: z.number() }),
   references: z.object({
     images: z.array(materialBriefSchema),
@@ -194,7 +325,14 @@ const cardSnapshotSchema = z.looseObject({
     audios: z.array(materialBriefSchema),
   }).describe('Compact material lists: display names only (≤40 chars, asset:// gets @assetId suffix).'),
   status: z.string().describe('draft/preparing/queued/running/succeeded/failed'),
-  taskId: z.string().optional(),
+  taskId: z.string().optional().describe(
+    'Task id issued by the gateway; only meaningful between this app and the gateway.',
+  ),
+  upstreamTaskId: z.string().optional().describe(
+    "The provider's own task id one hop behind the gateway (Volcengine Ark `cgt-…` / DashScope uuid). "
+    + 'This is the id the provider recognises when the user asks them to look into a task — quote THIS '
+    + 'one, not taskId. Absent for direct (own-key) submissions, where taskId already is the provider id.',
+  ),
   error: z.string().optional(),
   localPath: z.string().optional(),
   remoteUrl: z.string().optional(),
@@ -211,6 +349,28 @@ const cardSnapshotSchema = z.looseObject({
   ),
 })
 
+/**
+ * status 回包里的卡:`fields:'concise'` 时只有 id/位置/状态/摘要/截短提示词/error,
+ * 规格与素材字段整块缺席。用一个 object 把两档都装下(spec 字段 optional),而不是
+ * union —— anyOf 在客户端校验器里不可靠(见 toolAnnotations.test 的说明),对 output
+ * 同样成立。update_task 等永远 detailed 的回包仍用严格的 cardSnapshotSchema。
+ */
+const statusCardSchema = cardSnapshotSchema.partial({
+  model: true,
+  resolution: true,
+  ratio: true,
+  duration: true,
+  generateAudio: true,
+  mode: true,
+  webSearch: true,
+  referenceCounts: true,
+  references: true,
+}).describe(
+  'With fields:"detailed" (default) every field below is present. With fields:"concise" only cardId/'
+  + 'boardId/order/summary/summaryStale/prompt (60 chars)/status/error come back — no spec, no '
+  + 'materials, no taskId/paths/versions.',
+)
+
 const startResultShape = {
   started: z.array(z.string()),
   skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })),
@@ -219,6 +379,11 @@ const startResultShape = {
     + '请用户自己点「全部生成」或让他打开那个开关。',
   ),
   hint: z.string().optional().describe('blocked 时给用户的原话。'),
+  skippedSucceeded: z.number().optional().describe(
+    'Whole-board start only: how many already-rendered cards (unchanged since their render) were left alone '
+    + 'so they are not paid for twice. To redo them anyway pass their ids in cardIds, or includeSucceeded:true.',
+  ),
+  note: z.string().optional(),
 }
 
 /**
@@ -239,16 +404,41 @@ function isAutoStartBlocked(result: unknown): boolean {
 }
 
 const addTasksOutputSchema = z.looseObject({
-  cardIds: z.array(z.string()),
+  cardIds: z.array(z.string()).describe(
+    'Ids of the cards CREATED by this call, in input order. Cards skipped as duplicates (clientRef) are not here.',
+  ),
   total: z.number().describe('Card count across all boards.'),
+  placed: z.object({
+    boardId: z.string(),
+    firstIndex: z.number(),
+    lastIndex: z.number(),
+  }).optional().describe(
+    'Where the new cards landed: board + first/last position (0-based, same as move_task.toIndex). Absent when '
+    + 'nothing was created.',
+  ),
+  duplicates: z.array(z.object({
+    clientRef: z.string(),
+    cardId: z.string().optional(),
+    status: z.string().optional(),
+    rev: z.number().optional(),
+    samePrompt: z.boolean(),
+  })).optional().describe(
+    'Tasks NOT created because a card with the same clientRef already exists on that board. Nothing was '
+    + 'overwritten; samePrompt:false means the existing card has different text than you just sent.',
+  ),
+  hint: z.string().optional(),
   start: z.object(startResultShape).optional(),
   workbench: workbenchSummarySchema,
+  ...changedSinceField,
 })
 
 const updateTaskOutputSchema = z.looseObject({
-  ok: z.boolean(),
-  card: cardSnapshotSchema,
-  workbench: workbenchSummarySchema,
+  ok: z.boolean().describe('false = refused because expectedRev is stale; see `conflict` and `card`.'),
+  card: cardSnapshotSchema.describe('The card as it is NOW (after the write, or the current state on a conflict).'),
+  conflict: z.object({ expectedRev: z.number(), currentRev: z.number() }).optional(),
+  hint: z.string().optional(),
+  workbench: workbenchSummarySchema.optional(),
+  ...changedSinceField,
 })
 
 /**
@@ -263,9 +453,13 @@ const cardOnlyOutputSchema = z.looseObject({
 const startOutputSchema = z.looseObject({
   ...startResultShape,
   workbench: workbenchSummarySchema,
+  ...changedSinceField,
 })
 
 const statusOutputSchema = z.looseObject({
+  ...changedSinceField,
+  fields: z.enum(['concise', 'detailed']).describe('Echo of the requested detail level.'),
+  project: projectBriefSchema.describe("This conversation's project, which this snapshot is scoped to."),
   total: z.number().describe('Total cards matching the current scope + cardIds filter, across ALL pages.'),
   scope: z.looseObject({
     boardId: z.string().optional(),
@@ -279,7 +473,7 @@ const statusOutputSchema = z.looseObject({
   boards: z.array(boardBriefSchema),
   // 读工具不带 workbench 包装,选中态在这一层平铺(写工具在 workbench.selectedCardIds)。
   selectedCardIds: z.array(z.string()).describe(SELECTED_CARD_IDS_DOC),
-  cards: z.array(cardSnapshotSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
+  cards: z.array(statusCardSchema).describe('Cards on THIS page only — see page/totalPages/hasMore.'),
   pageIndex: z.array(z.object({
     page: z.number(),
     cardIds: z.array(z.string()),
@@ -345,6 +539,7 @@ const irCardSchema = z.looseObject({
   ),
   seed: z.number().int().min(0).max(4294967295).optional(),
   webSearch: z.boolean().optional(),
+  draft: z.boolean().optional(),
   // 上限取全模型最宽（2.5 的 30/10/10）；按模型收窄由渲染端 canStart 与主进程
   // validateSeedanceRequest 负责 —— schema 写死 9/3/3 会让 2.5 的卡片直接被拒。
   referenceImages: z.array(irMaterialSchema).max(30).optional(),
@@ -353,6 +548,7 @@ const irCardSchema = z.looseObject({
   result: z.looseObject({
     status: z.string(),
     taskId: z.string().optional(),
+    upstreamTaskId: z.string().optional(),
     error: z.string().optional(),
     localPath: z.string().optional(),
     remoteUrl: z.string().optional(),
@@ -378,10 +574,14 @@ const irSchema = z.looseObject({
 
 const applyOutputSchema = z.looseObject({
   ok: z.boolean(),
-  conflict: z.object({ expected: z.number(), actual: z.number() }).optional().describe(
+  conflict: z.union([
+    z.object({ expected: z.number(), actual: z.number() }),
+    z.object({ reason: z.literal('project-mismatch'), expected: z.string(), actual: z.string() }),
+  ]).optional().describe(
     'Set when the STRUCTURE token was stale (cards added/deleted/reordered) — NOTHING was written. '
     + 'Re-export, redo your edits, apply again. Single-card conflicts never land here; they appear in '
-    + '`skipped` while everything else is applied.',
+    + '`skipped` while everything else is applied. reason="project-mismatch" means the IR was exported '
+    + 'under another project (the user switched) — also nothing written; re-export.',
   ),
   boards: z.object({
     created: z.array(z.string()),
@@ -581,8 +781,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'referenceAudios ≤3, each type ≤15s in total — model "2.5" raises all three to 30/10/10 with ' +
       '≤30s in total. ' +
       'Add one or more video task cards to the 「生成视频」 workbench page (the scroll-style concurrent ' +
-      'video workbench the user sees). Cards land on the currently ACTIVE board (the workbench has ' +
-      'multiple boards/pages — see video_workbench_status). Each card carries a prompt + Seedance spec ' +
+      'video workbench the user sees). Cards land in THIS CONVERSATION\'S project (the one you chose with ' +
+      'video_workbench_switch_project / video_workbench_create_project — several conversations can fill ' +
+      'different projects at the same time, so choose yours first), on its board named by boardId, else the ' +
+      'board the user has open in that project (the workbench has multiple boards/pages — see ' +
+      'video_workbench_status). Each card carries a prompt + Seedance spec ' +
       '(model/resolution/ratio/duration) + reference materials. By default this only FILLS the cards ' +
       '(user reviews and clicks generate); pass autoStart:true to start rendering immediately — but the ' +
       'user can switch off 「允许 AI 自动生成」 in the workbench, and then autoStart is REFUSED (the result ' +
@@ -598,20 +801,38 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'With autoStart:true the earlier batch starts rendering while you write the next one. ' +
       'WHEN A CARD CARRIES REFERENCE IMAGES, view_image ONE of them BEFORE writing that card\'s prompt — ' +
       'the render follows the picture, so a prompt written from a filename argues with it. Viewing an ' +
-      'INPUT is not the batch-opening of generated OUTPUTS that other tools warn against.',
+      'INPUT is not the batch-opening of generated OUTPUTS that other tools warn against.\n' +
+      'EVERY RESULT also tells you `placed` (board + first/last position of the new cards) and, when other ' +
+      'conversations or the user touched your boards since your last call, `changedSinceYourLastCall`. Give ' +
+      'each card a `clientRef` (your own key, e.g. "ep2-shot-07") so repeating this call never duplicates a card — ' +
+      'existing ones come back under `duplicates` and are left exactly as they are.',
     inputSchema: z.object({
-      tasks: z.array(cardInputSchema).min(1).max(WORKBENCH_MAX_TASKS_PER_CALL).describe(
+      tasks: z.array(cardInputSchema.extend({
+        clientRef: z.string().max(64).optional().describe(
+          'YOUR stable key for this card, unique within its board (page), e.g. "ep2-shot-07". Strongly '
+          + 'recommended whenever the card corresponds to something you can name (a shot number, a scene id). '
+          + 'If a card with the same clientRef already exists on that board it is NOT created again and NOT '
+          + 'overwritten — the reply lists it under `duplicates`. That makes a retry after a timeout safe, and '
+          + 'stops two conversations that both planned shot 12 from creating it twice. The key lives and dies '
+          + 'with the card. Boards are separate: "shot-1" on episode 2 does not clash with "shot-1" on episode 1.',
+        ),
+      })).min(1).max(WORKBENCH_MAX_TASKS_PER_CALL).describe(
         `Cards to append, top-to-bottom order (1–${WORKBENCH_MAX_TASKS_PER_CALL} per call — `
         + 'call again for more rather than trying to fit everything in one request).',
       ),
       autoStart: z.boolean().optional().describe('Start rendering right after adding. Default false (fill only).'),
       navigate: z.boolean().optional().describe('Switch the app to the workbench tab. Default true.'),
+      boardId: z.string().optional().describe(
+        'Append to THIS board (page) of your project instead of the one the user has open. Ids come from '
+        + 'the `boards` list of video_workbench_status / switch_project / create_project. A board of '
+        + 'another project is refused. Ignored when afterCardId / beforeCardId is given.',
+      ),
       afterCardId: z.string().optional().describe(
         'Insert the new cards right AFTER this card instead of appending. Pass a stable card id from '
         + 'video_workbench_status — NOT a position number, those shift whenever anything is inserted, '
         + 'deleted or dragged. The cards land on the ANCHOR card\'s board, which may differ from the '
-        + 'active one. Mutually exclusive with beforeCardId; omit both to append at the end of the '
-        + 'active board. Note this changes the card set, so any structureRevision you are holding for '
+        + 'open one. Mutually exclusive with beforeCardId; omit both to append at the end of the '
+        + 'board (see boardId). Note this changes the card set, so any structureRevision you are holding for '
         + 'video_workbench_apply becomes stale.',
       ),
       beforeCardId: z.string().optional().describe(
@@ -635,8 +856,23 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       const startedCount = Array.isArray((start as { started?: unknown } | undefined)?.started)
         ? (start as { started: string[] }).started.length
         : 0
+      const createdCount = Array.isArray((result as { cardIds?: unknown } | null | undefined)?.cardIds)
+        ? (result as { cardIds: unknown[] }).cardIds.length
+        : 0
+      const dupCount = Array.isArray((result as { duplicates?: unknown } | null | undefined)?.duplicates)
+        ? (result as { duplicates: unknown[] }).duplicates.length
+        : 0
+      if (createdCount === 0 && dupCount > 0) {
+        // 全是重放:什么都没写。不能说「cards added」,否则模型会以为又加了一批。
+        return okResult([
+          `ℹ️ video_workbench_add_tasks — nothing was created: all ${dupCount} task(s) already exist on that board (matched by clientRef). Nothing was overwritten; see \`duplicates\` for their cardIds and whether the text differs.`,
+        ], result)
+      }
       return okResult([
         '✅ video_workbench_add_tasks — cards added to the workbench page (visible to the user).',
+        ...(dupCount > 0
+          ? [`ℹ️ ${dupCount} task(s) were skipped because their clientRef already exists on that board — see \`duplicates\`.`]
+          : []),
         isAutoStartBlocked(start)
           ? AUTO_START_BLOCKED_BANNER
           : startedCount > 0
@@ -651,7 +887,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_set_spec', {
     description:
       'Apply the SAME spec change to many cards at once — resolution, ratio, model, duration, audio, '
-      + 'webSearch, mode. This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5".\n'
+      + 'webSearch, mode, draft (样片). This is the tool for "把整板都改成 480p / 都开联网 / 都换 2.5 / 都先出样片".\n'
       + 'USE THIS INSTEAD OF export+apply for spec-only sweeps. apply is declarative over the WHOLE board: '
       + 'omitted fields reset to defaults, so to change three fields you must round-trip every prompt and '
       + 'every material array of every card through the model — on a 17-card board that is the slowest '
@@ -667,12 +903,18 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'Pass ids from `pageIndex` / status when you only want some of them.',
       ),
       boardId: z.string().optional().describe('Sweep this page instead of the active one. Ignored when cardIds is given.'),
+      expectedRevs: z.record(z.string(), z.number().int()).optional().describe(
+        'Optional {cardId: rev} from the `rev` you last saw. A listed card whose rev has moved on is SKIPPED '
+        + '(reported in `skipped` with `conflict` and the current values of the fields you tried to set) instead '
+        + 'of being overwritten. Cards you do not list are changed as usual.',
+      ),
       model: cardInputSchema.shape.model,
       resolution: cardInputSchema.shape.resolution,
       ratio: cardInputSchema.shape.ratio,
       duration: cardInputSchema.shape.duration,
       generateAudio: cardInputSchema.shape.generateAudio,
       webSearch: cardInputSchema.shape.webSearch,
+      draft: cardInputSchema.shape.draft,
       // ⚠️ 不能写 `cardInputSchema.shape.mode` —— 那个 shape 里**没有** mode，取到
       // undefined，注册时 MCP SDK 读 `undefined._zod` 直接让整个服务器起不来
       // ("Cannot read properties of undefined (reading '_zod')")。TypeScript 早就报了
@@ -694,10 +936,18 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     annotations: { ...DESTRUCTIVE, idempotentHint: true },
     outputSchema: z.looseObject({
       updated: z.array(z.string()).describe('Card ids actually changed.'),
-      skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })).describe(
-        'Cards left untouched (rendering, or the patch was a no-op for them).',
+      skipped: z.array(z.object({
+        cardId: z.string(),
+        reason: z.string(),
+        conflict: z.object({ expectedRev: z.number(), currentRev: z.number() }).optional(),
+        current: z.record(z.string(), z.unknown()).optional().describe(
+          'On a rev conflict: the card\'s current values for the fields you tried to set.',
+        ),
+      })).describe(
+        'Cards left untouched (rendering, a stale expectedRevs entry, or the patch was a no-op for them).',
       ),
       workbench: workbenchSummarySchema,
+      ...changedSinceField,
     }),
   }, async (params, ctx?: unknown) => {
     try {
@@ -736,6 +986,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'video_workbench_apply for RESTRUCTURING (adding/deleting/reordering cards or pages). And if you ' +
       'only want the same spec across many cards ("整板 480p / 都开联网"), use video_workbench_set_spec ' +
       '— NOT apply. Call it once per card — one focused call per card beats one giant IR. ' +
+      'To avoid overwriting someone else\'s edit, pass expectedRev (the `rev` you last saw): if the card ' +
+      'moved on, you get { ok:false, conflict, card } back with NO write — look at the card, decide again, ' +
+      'retry with expectedRev = its current rev; if the same card conflicts twice in a row, stop and ask the user. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
       'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
       'ON AN edit_video CARD, when the user says WHERE to change something and words are not enough ' +
@@ -746,6 +999,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE}`,
     inputSchema: z.object({
       cardId: z.string().min(1).describe('Target card id.'),
+      expectedRev: z.number().int().optional().describe(
+        'The `rev` of the card as you last saw it (status / a previous update_task reply). If the card has '
+        + 'changed since — you were working from a stale copy — nothing is written and the reply is '
+        + '{ ok:false, conflict, card } with the card as it is now. Pass it whenever you read the card more than '
+        + 'a moment ago, or other conversations are active. Omit = overwrite regardless (last write wins).',
+      ),
     }).merge(cardInputSchema),
     // 幂等（同参数重复调结果一致），但**会删素材**：切模型 / 切模式时 updateCard 按新
     // 上限截断超限的参考图与音视频（store.ts 的 modeLimit 截断），2.5 降回 2.0 就会掉 21 张。
@@ -755,6 +1014,12 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   }, async (params, ctx?: unknown) => {
     try {
       const result = await router.call('video_workbench_update_task', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      if ((result as { ok?: unknown } | null | undefined)?.ok === false) {
+        // 冲突不是错误:没有写入,但回了这张卡现在的样子 —— 横幅防止模型把它当成已经改好。
+        return okResult([
+          '⚠️ video_workbench_update_task — NOT written: the card changed since the `rev` you passed. `card` is its current state; re-decide from that (see `hint`).',
+        ], result)
+      }
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_update_task', error)
@@ -907,8 +1172,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_start', {
     description:
       'Batch output surface of the catimation-video skill (load it for grading and prompt discipline). ' +
-      'Start rendering workbench cards (concurrent). Omit cardIds to start EVERY startable card on the ' +
-      'ACTIVE board (draft/failed/succeeded with a non-empty prompt); pass cardIds to start specific ones ' +
+      'Start rendering workbench cards (concurrent). Omit cardIds to start every startable card on YOUR ' +
+      'board (draft/failed/edited-since-render with a non-empty prompt — cards that already rendered and ' +
+      'are unchanged are skipped and counted in `skippedSucceeded`, unless includeSucceeded:true); pass cardIds to start specific ones ' +
       '(any board). Renders run 1–3 minutes each, concurrently. Returns IMMEDIATELY (fire-and-forget) ' +
       'with started/skipped plus a compact `workbench` overview — it does NOT wait for the renders. ' +
       'Do NOT poll video_workbench_status afterwards: when every card in the batch settles you are ' +
@@ -918,6 +1184,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'comes back with blocked:true — do not retry, ask them to click 「全部生成」 themselves.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
+      includeSucceeded: z.boolean().optional().describe(
+        'Only matters when cardIds is omitted. By default a whole-board start LEAVES ALONE cards that already '
+        + 'rendered and have not been edited since (re-running them just pays twice; the reply counts them in '
+        + '`skippedSucceeded`). true = re-run those too. Naming a card in cardIds always re-runs it.',
+      ),
     }),
     annotations: WRITE_ADDITIVE_REMOTE,
     outputSchema: startOutputSchema,
@@ -926,6 +1197,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       const result = await router.call('video_workbench_start', params as Record<string, unknown>, extractCodexThreadId(ctx)) as {
         started: string[]
         skipped: Array<{ cardId: string; reason: string }>
+        skippedSucceeded?: number
       }
       return okResult([
         isAutoStartBlocked(result)
@@ -934,17 +1206,54 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
           ? AUTO_START_BLOCKED_BANNER
           : result.started.length > 0
             ? `⏳ video_workbench_start — ${result.started.length} render(s) submitted and this call already returned. Do NOT poll, do NOT wait, do NOT resubmit: you will be pushed a 「[视频工作台] 批次渲染完成」 summary when the batch settles. Reply to the user now.`
-            : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
+            : result.skippedSucceeded
+              ? `ℹ️ video_workbench_start — nothing to start: the ${result.skippedSucceeded} card(s) on this board already rendered and are unchanged. To redo specific ones pass their cardIds; to redo all pass includeSucceeded:true.`
+              : '⚠️ video_workbench_start — nothing started (see skipped reasons).',
       ], result)
     } catch (error) {
       return errorResult('video_workbench_start', error)
     }
   })
 
+  server.registerTool('video_workbench_finalize_draft', {
+    description:
+      'Turn workbench cards whose current result is a SUCCEEDED 480p 样片 (draftRun:true in status) into the ' +
+      '1080p FINAL. Upstream reuses each draft\'s prompt, materials, duration, ratio, seed and audio — nothing ' +
+      'can be changed (to change something, edit the card and render a new draft). The final becomes a new ' +
+      'version on the same card; the draft stays in its version history. Seedance 2.5 on platform balance only, ' +
+      'within 7 days of the draft, billed at the 1080p rate. Fire-and-forget like video_workbench_start: returns ' +
+      'started/skipped immediately and you are pushed the batch summary when renders settle. Honors the ' +
+      '「允许 AI 自动生成」 switch (blocked:true → ask the user to click 「生成 1080P 成片」 on the card).',
+    inputSchema: z.object({
+      cardIds: z.array(z.string()).min(1).describe('Cards whose current result is a succeeded draft.'),
+    }),
+    annotations: WRITE_ADDITIVE_REMOTE,
+    outputSchema: startOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_finalize_draft',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { started: string[]; skipped: Array<{ cardId: string; reason: string }> }
+      return okResult([
+        isAutoStartBlocked(result)
+          ? AUTO_START_BLOCKED_BANNER
+          : result.started.length > 0
+            ? `⏳ video_workbench_finalize_draft — ${result.started.length} 1080p final(s) submitted and this call already returned. Do NOT poll or resubmit; the batch summary is pushed when they settle.`
+            : '⚠️ video_workbench_finalize_draft — nothing started (see skipped reasons).',
+      ], result)
+    } catch (error) {
+      return errorResult('video_workbench_finalize_draft', error)
+    }
+  })
+
   server.registerTool('video_workbench_status', {
     description:
-      'Snapshot of the 「生成视频」 workbench. The workbench has multiple boards (pages): the result ' +
-      'carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
+      'Snapshot of the 「生成视频」 workbench, SCOPED TO THIS CONVERSATION\'S PROJECT (剧). The result carries ' +
+      '`project` {id,name,segments,cards}; other projects are invisible here — use ' +
+      'video_workbench_list_projects / video_workbench_switch_project. A project has multiple boards ' +
+      '(pages = 分段/segments): the result carries `boards` [{id,name,cardCount}] + `activeBoardId`, and every card carries its `boardId` ' +
       '(look up board names in the boards list). Each card: prompt, spec, status (draft/preparing/' +
       'queued/running/succeeded/failed), compact reference-material name lists, taskId, error, and the ' +
       'saved localPath / permanent remoteUrl for finished videos. Use it to inspect what the user has ' +
@@ -974,8 +1283,21 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'Do NOT raise pageSize just to avoid paging: paging is already cheap thanks to pageIndex, while '
       + 'cards you pull sit in your context for the rest of the session, and oversized results get '
       + 'silently truncated by the client. `total` counts every match in scope; hasMore/page/totalPages '
-      + 'describe the slice you got.',
+      + 'describe the slice you got.\n'
+      + 'PICK THE DETAIL LEVEL. `fields:"concise"` returns each card as id/position/status/summary/'
+      + 'a 60-char prompt head/error only — about a third of the size — and is the right call for '
+      + '"how is it going", "which cards failed", "which card is the rooftop shot" and for choosing '
+      + 'cardIds before acting. Use the default `"detailed"` only when you are about to EDIT specs or '
+      + 'need materials/paths/versions. Concise first, detailed for the few cards you then care about.',
     inputSchema: z.object({
+      fields: z.enum(['concise', 'detailed']).optional().describe(
+        'Detail level per card. "concise" = cardId/boardId/order/summary/prompt(60 chars)/status/error — '
+        + 'use it for progress checks and for picking cards. "detailed" (default) adds model/resolution/'
+        + 'ratio/duration/generateAudio/mode/webSearch, material name lists, taskId, upstreamTaskId '
+        + '(the provider-side id to quote when the user asks the provider about a task), localPath/'
+        + 'remoteUrl and versions — use it right before editing specs or when you must report a video '
+        + 'address or a task id.',
+      ),
       cardIds: z.array(z.string()).optional().describe(
         'Limit to specific cards, ACROSS pages (an explicit id list means "just these", so it is not '
         + 'narrowed to the active board). Omit to list the scoped board.',
@@ -1113,7 +1435,11 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     description:
       // 工具间的选择表在 server instructions 里(MCP 官方把「描述里重复 instructions
       // 已有的内容」列为反模式)。这里只留 apply 自己的硬边界。
-      'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
+      'Acts on this conversation\'s project (剧) only: the IR carries `projectId`, and if you (or the user) '
+      + 'switched project since your export the whole apply is rejected with conflict.reason="project-mismatch" — re-export. '
+      + 'Other conversations adding cards to OTHER projects no longer invalidate your IR (structureSignature '
+      + 'fingerprints only your project). '
+      + 'STRUCTURE ONLY — this tool CANNOT change the prompt of an existing card. Attempting it is '
       + 'rejected with zero writes, and so is omitting a prompt you were carrying (that reads as '
       + 'clearing it). It exists for rebuilding a board wholesale in one atomic shot — all cards '
       + 'change or none do, which no sequence of per-card calls can guarantee.\n'
@@ -1301,6 +1627,48 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
     }
   })
 
+  server.registerTool('video_workbench_set_project_summary', {
+    description:
+      'Leave a one-line note on a project (剧) saying what it IS ("三集科幻短剧 · 赛博都市 · 主角林夏"). '
+      + 'This is the top layer of the three signposts (project → board → card summaries): '
+      + 'video_workbench_list_projects otherwise shows only names and counts, and names are often '
+      + '"未命名剧 3", so with several projects you would have to switch into each one to learn what it '
+      + 'holds. Write one when you start or take over a project, and refresh it when the premise changes. '
+      + 'Pass an empty string to clear it. Omit projectId to annotate this conversation\'s project.\n'
+      + `FORMAT — telegraphic, not prose. Hard limit ${WORKBENCH_PROJECT_SUMMARY_MAX} characters; over that `
+      + 'the call is REJECTED (not truncated). 2-4 facts joined by " · ", no verbs, no period: genre/format · '
+      + 'setting · lead characters. Say what the project IS; never counts or progress — those are in '
+      + 'list_projects and go stale.\n'
+      + 'It rides along in the `project` header of every workbench call, so keep it short. '
+      + 'This does NOT invalidate an IR you are holding.',
+    inputSchema: z.object({
+      projectId: z.string().min(1).optional().describe(
+        'Project to annotate. Omit = this conversation\'s project. Other ids come from video_workbench_list_projects.',
+      ),
+      summary: z.string().max(WORKBENCH_PROJECT_SUMMARY_MAX).describe(
+        `Telegraphic index entry, max ${WORKBENCH_PROJECT_SUMMARY_MAX} chars: 2-4 facts joined by " · ", `
+        + 'no verbs, no period ("三集科幻短剧 · 赛博都市 · 主角林夏"). Empty string clears it. Over the limit '
+        + 'is rejected, not trimmed.',
+      ),
+    }),
+    outputSchema: z.looseObject({
+      ok: z.boolean(),
+      workbench: workbenchSummarySchema,
+    }),
+    annotations: WRITE_IDEMPOTENT,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call(
+        'video_workbench_set_project_summary',
+        params as Record<string, unknown>,
+        extractCodexThreadId(ctx),
+      ) as { ok: boolean }
+      return okResult(['✅ video_workbench_set_project_summary — saved.'], result)
+    } catch (error) {
+      return errorResult('video_workbench_set_project_summary', error)
+    }
+  })
+
   server.registerTool('video_workbench_remove_tasks', {
     description:
       'Remove cards from the 「生成视频」 workbench page. Only use when the user explicitly asks to ' +
@@ -1317,6 +1685,91 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       return okResult([], result)
     } catch (error) {
       return errorResult('video_workbench_remove_tasks', error)
+    }
+  })
+
+  // ==================== 剧(project) ====================
+  // 工作台是「剧 → 分段(board / page)→ 卡片」三层。上面所有工具都隐式作用于
+  // **当前剧**;这里三个工具负责看/切/建剧。
+
+  server.registerTool('video_workbench_list_projects', {
+    description:
+      'List every project (剧 — a series/film that groups the workbench pages/segments). Returns id, name, ' +
+      'counts (segments, cards, active, failed, done, doneSeconds) and the one-line `summary` if someone ' +
+      'wrote one (video_workbench_set_project_summary) — that summary is how you tell projects apart ' +
+      'without switching into each. `activeProjectId` is the project the USER is looking at; `yourProjectId` ' +
+      'is the one THIS conversation works on (every other video_workbench_* tool acts on it — call ' +
+      'video_workbench_switch_project to change it). A project marked `inUseByOtherChat` is being filled by ' +
+      'another conversation right now: do not touch it unless the user told you to.',
+    inputSchema: z.object({}),
+    annotations: READ_ONLY,
+    outputSchema: listProjectsOutputSchema,
+  }, async (_params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_list_projects', {}, extractCodexThreadId(ctx))
+      return okResult(['✓ video_workbench_list_projects'], result)
+    } catch (error) {
+      return errorResult('video_workbench_list_projects', error)
+    }
+  })
+
+  server.registerTool('video_workbench_switch_project', {
+    description:
+      'Bind THIS CONVERSATION to a project (剧). Every subsequent video_workbench_* call from this conversation ' +
+      '(status / add_tasks / apply / start …) operates inside it — other conversations keep their own ' +
+      'projects, so several films can be filled at the same time without fighting. The user\'s screen follows ' +
+      'only when no other conversation is busy on a different project (result `onScreen`); pass focus:true to ' +
+      'force the screen over, focus:false to work silently in the background. Get ids from ' +
+      'video_workbench_list_projects. If other conversations are filling OTHER EPISODES of this same project, ' +
+      'also pass boardId to pin yours: unpinned conversations all write to the project\'s one current page, ' +
+      'and a write that would land on a board someone else pinned is refused. A stale IR exported under another project is rejected by apply ' +
+      'with conflict.reason="project-mismatch" — re-export after switching.',
+    inputSchema: z.object({
+      projectId: z.string().min(1).describe('Project id from video_workbench_list_projects.'),
+      boardId: z.string().optional().describe(
+        'Also pin THIS conversation to one board (an episode / act) of that project. From then on every call that '
+        + 'does not name a board — add_tasks, start, set_spec, export, status — works on that board, no matter which '
+        + 'page the user or another conversation has open. Use it when several conversations fill different '
+        + 'episodes of the SAME project. Boards marked `inUseByOtherChat` in the reply are pinned by someone else. '
+        + 'Omit = stay unpinned (implicit writes land on the project\'s current page).',
+      ),
+      focus: z.boolean().optional().describe(
+        'true = move the user\'s screen to this project; false = bind silently, screen stays. '
+        + 'Omit = follow the screen only when no other conversation is busy on a different project.',
+      ),
+    }),
+    annotations: WRITE_IDEMPOTENT,
+    outputSchema: switchProjectOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_switch_project', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      return okResult(['✓ video_workbench_switch_project'], result)
+    } catch (error) {
+      return errorResult('video_workbench_switch_project', error)
+    }
+  })
+
+  server.registerTool('video_workbench_create_project', {
+    description:
+      'Create a new project (剧) with one empty segment, bind THIS CONVERSATION to it, and return ' +
+      '{ projectId, boardId, name }. The screen follows only when no other conversation is busy on a ' +
+      'different project (result `onScreen`; override with focus). ' +
+      'Use when the user starts a new film/series; then add cards with video_workbench_add_tasks.',
+    inputSchema: z.object({
+      name: z.string().max(80).optional().describe('Project name; omitted = 未命名剧 N.'),
+      focus: z.boolean().optional().describe(
+        'true = move the user\'s screen to the new project; false = create silently in the background. '
+        + 'Omit = follow the screen only when no other conversation is busy on a different project.',
+      ),
+    }),
+    annotations: WRITE_ADDITIVE,
+    outputSchema: createProjectOutputSchema,
+  }, async (params, ctx?: unknown) => {
+    try {
+      const result = await router.call('video_workbench_create_project', params as Record<string, unknown>, extractCodexThreadId(ctx))
+      return okResult(['✓ video_workbench_create_project'], result)
+    } catch (error) {
+      return errorResult('video_workbench_create_project', error)
     }
   })
 }

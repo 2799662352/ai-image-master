@@ -10,7 +10,8 @@ import { ImageAssetUtil, T, VideoAssetUtil, defaultAssetUtils, imageAssetProps, 
  * `canvasAssetStore` refuses to do, because rehydrating those bytes on canvas
  * open is what OOM-crashed the renderer and made Electron relaunch the app.
  * Our store therefore writes a PATH instead:
- *   - `local-file:///D%3A/…`      images (custom standard scheme, protocolHandler.ts)
+ *   - `local-file:///D:/…`        images (custom standard scheme, protocolHandler.ts;
+ *                                 drive colon RAW — the `%3A` form is an invalid URL)
  *   - `local-file://media/?p=…`   video/audio (Range-capable streaming)
  *   - `blob:…`                    last resort for a clipboard File with no disk path
  *

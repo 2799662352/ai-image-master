@@ -61,7 +61,7 @@ function makeEditor(opts: { withCanvasAssetUtils: boolean }): Editor {
   return editor
 }
 
-const IMAGE_URL = 'local-file:///C%3A/Users/me/Downloads/image_1783320656940.png'
+const IMAGE_URL = 'local-file:///C:/Users/me/Downloads/image_1783320656940.png'
 const VIDEO_URL = 'local-file://media/?p=C%3A%5Cclips%5Cshot.mp4'
 
 function assetSrcs(editor: Editor): string[] {

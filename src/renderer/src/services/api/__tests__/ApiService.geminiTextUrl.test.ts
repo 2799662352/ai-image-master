@@ -60,6 +60,22 @@ describe('Gemini 响应把图片放在文本里', () => {
     ])
   })
 
+  it('同一 candidate 有多张 inlineData 时只取最后一张(前面是中间稿),mime 从响应读', () => {
+    const data = {
+      candidates: [{
+        content: {
+          parts: [
+            { text: '先出个草稿' },
+            { inlineData: { mimeType: 'image/png', data: 'DRAFT' } },
+            { inlineData: { mimeType: 'image/jpeg', data: 'FINAL' } },
+          ],
+        },
+      }],
+    }
+
+    expect(extractImagesFromApiResponse(data)).toEqual(['data:image/jpeg;base64,FINAL'])
+  })
+
   it('文本里的 data URL 同样收下', () => {
     const data = {
       candidates: [{

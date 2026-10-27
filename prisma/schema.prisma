@@ -28,6 +28,10 @@ model AgentThread {
   // single codex thread and be re-asserted whenever one is established. Null =
   // never chosen (codex default applies).
   memoryMode    String?
+  // Sidebar pin. Null = not pinned. Authoritative here (offline, pre-first-
+  // message threads); codex's `thread/metadata/update { isPinned }` is only a
+  // best-effort mirror because it needs a live codex thread id.
+  pinnedAt      DateTime?
   lastMessageAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt

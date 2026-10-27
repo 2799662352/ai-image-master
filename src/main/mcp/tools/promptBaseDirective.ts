@@ -11,16 +11,33 @@
 //
 // 单一真源：同一份素材上限口径今晚因为被复制成三份而漂移过三次（schema 放宽了、
 // prose 没跟上；IR 素材放宽了、model 枚举没跟上）。这句话不再复制。
+//
+// 「底座是知识源，不接管回合」这一句也写死在这里：sd25-pe 的正文是火山官方给独立
+// 优化助手写的，自带「只输出 Prompt、不调接口」的结束规则。实测 agent 读完就停在输出
+// 一段模板上，入口的交付 / QA 全丢。skill 顶部已经翻译过裁决顺序，但 agent 直接调工具
+// 时读的是工具描述，所以这里也要有一句。
+//
+// `model` 必须显式传：工具不传时落到 "2.0"（见 taskManager 的 `input.model ?? '2.0'`），
+// 而底座默认按 2.5 写 —— 不传就是拿 2.5 模板去喂 2.0。
 
 /** 视频出片面用：按 Seedance 档位二选一。 */
 export const PROMPT_BASE_DIRECTIVE =
   'PROMPT BASE — load exactly ONE, keyed by `model`: "2.5" (also the default when the model is unknown) ' +
   '→ skill `sd25-pe`; "2.0" / "2.0-fast" / "2.0-mini" → skill `sd2-pe`. Load it ONCE per task and reuse ' +
-  'it across every card — re-reading it per shot is pure overhead. Never load both: they are ~70KB ' +
+  'it across every card — re-reading it per shot is pure overhead. Never load both: they are ~40k characters ' +
   'combined and you can only follow one template anyway. The base owns the material reference syntax ' +
-  '(图片N / 视频N / 音频N), the shot-structure formula, and, on 2.5 only, the edit / extend / keyframe / ' +
-  'grid-storyboard templates. Writing the prompt from memory instead is how you end up with one that ' +
-  'argues with the attached materials.'
+  '(@图片N / @视频N / @音频N, sent verbatim — the @ stays), the shot-structure formula, and, on 2.5 only, the edit / extend / keyframe / ' +
+  'grid-storyboard templates (its references/*.md load on demand by task). The base is a KNOWLEDGE ' +
+  'source, not a new workflow: its "output only the prompt / never call the generator" wording describes ' +
+  'the vendor skill running standalone — here the finished prompt goes into this tool\'s `prompt` field ' +
+  'and the entry flow (spec ask_user, name the mode, deliver, tiered QA) continues. Always pass `model` ' +
+  'explicitly and keep it equal to the base you loaded: omitted `model` falls back to "2.0", which sends ' +
+  'a 2.5-template prompt to the wrong generation. LAYOUT: write the prompt as continuous prose — no blank ' +
+  'lines, no one-sentence-per-line; consecutive actions / plot / character / setting / inner-state join ' +
+  'with 、，；。—— and a newline appears only between shots (镜头N) or template blocks; the base templates\' ' +
+  'spacing is for human reading, not the submission format, and the prompt is sent exactly as you write ' +
+  'it — the runtime does not reflow it, so every blank line or stray space reaches the model. Writing the ' +
+  'prompt from memory instead is how you end up with one that argues with the attached materials.'
 
 /**
  * 视频出片面用：素材逐份负责。
@@ -33,13 +50,13 @@ export const PROMPT_BASE_DIRECTIVE =
  * 里的人一起演进画面，或者拿风格参考的运镜去覆盖你写好的镜头。
  */
 export const MATERIAL_ROLE_DIRECTIVE =
-  'ORDER IS IDENTITY, AND EVERY MATERIAL NEEDS A ROLE: the Nth entry of each array is 图片N / 视频N / ' +
-  '音频N in the prompt, and the app preserves that order exactly. Give EVERY material you pass one ' +
+  'ORDER IS IDENTITY, AND EVERY MATERIAL NEEDS A ROLE: the Nth entry of each array is @图片N / @视频N / ' +
+  '@音频N in the prompt, and the app preserves that order exactly. Give EVERY material you pass one ' +
   'explicit role line — a person gets bound (`将 @图片1 中的[2-3 个稳定静态特征] 定义为 <主体1>`), ' +
   'a mood board / style clip / voice sample gets told what it contributes and what it must NOT ' +
   'contribute. An unaccounted material gets a role invented for it, typically the people from a mood ' +
   'board walking into the shot. If you are not using one this turn, drop it from the array rather than ' +
-  'passing it silently. Never write a raw asset:// id in the prompt body — bridge it through 图片N / <主体N>.'
+  'passing it silently. Never write a raw asset:// id in the prompt body — bridge it through @图片N / <主体N>.'
 
 /**
  * 出图面用。图片这边**只有一个**底座，而且就是入口卡本身。

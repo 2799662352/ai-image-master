@@ -7,6 +7,7 @@ import {
   useVideoWorkbenchStore,
 } from '../../video-workbench/store'
 import { resetWorkbenchDbForTest } from '../../video-workbench/WorkbenchDb'
+import { resetThreadScopesForTest } from '../../video-workbench/threadScope'
 import {
   WORKBENCH_CARD_SUMMARY_MAX,
   WORKBENCH_STATUS_MAX_PAGE_SIZE,
@@ -21,15 +22,20 @@ import {
  * 的人机协同契约,以及回给 main(videoWorkbenchTools banner)的结构体。
  */
 
-function callTool(toolName: string, params: Record<string, unknown>): Promise<any> {
+function callTool(
+  toolName: string,
+  params: Record<string, unknown>,
+  threadId?: string,
+): Promise<any> {
   return (
     new AgentToolExecutor() as unknown as {
-      callVideoWorkbench: (n: string, p: Record<string, unknown>) => Promise<any>
+      callVideoWorkbench: (n: string, p: Record<string, unknown>, t?: string) => Promise<any>
     }
-  ).callVideoWorkbench(toolName, params)
+  ).callVideoWorkbench(toolName, params, threadId)
 }
 
 beforeEach(() => {
+  resetThreadScopesForTest()
   resetWorkbenchStoreForTest()
   resetWorkbenchDbForTest()
   resetAssetPreviewCacheForTest()
@@ -481,6 +487,8 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     })
     const activeBoardId = useVideoWorkbenchStore.getState().activeBoardId
     expect(added.workbench).toEqual({
+      // 摘要带当前剧:所有 video_workbench_* 都作用于它,统计也只算它
+      project: { id: 'project-default', name: '默认项目', segments: 1, cards: 2 },
       activeBoardId,
       boards: [{ id: activeBoardId, name: expect.any(String), cardCount: 2 }],
       statusCounts: { draft: 2, preparing: 0, queued: 0, running: 0, succeeded: 0, failed: 0 },
@@ -958,5 +966,358 @@ describe('video_workbench_reorder', () => {
 
     expect(r.order).toEqual([a, b])
     expect(useVideoWorkbenchStore.getState().structureRevision).toBe(before)
+  })
+})
+
+describe('按当前剧隔离(project)', () => {
+  const S = () => useVideoWorkbenchStore.getState()
+
+  // 先水合再造数据:callTool 会顺手 ensureHydrated,而水合以库里的分段为准 ——
+  // 水合前在内存里建的分段/卡片会被归并,与生产时序(先水合再操作)不符。
+  beforeEach(async () => {
+    await S().ensureHydrated()
+  })
+
+  it('status 只回当前剧的分段与卡,并带 project 头', async () => {
+    S().addCards([{ prompt: 'in-default' }])
+    const p2 = S().addProject('第二部')
+    S().addCards([{ prompt: 'in-p2' }])
+    const r = await callTool('video_workbench_status', { allBoards: true })
+    expect(r.project).toMatchObject({ id: p2, name: '第二部', segments: 1, cards: 1 })
+    expect(r.boards.every((b: { id: string }) => S().boards.find((x) => x.id === b.id)!.projectId === p2)).toBe(true)
+    expect(r.cards.map((c: { prompt: string }) => c.prompt)).toEqual(['in-p2'])
+  })
+
+  it('写工具回带的 workbench 摘要也只看当前剧', async () => {
+    S().addCards([{ prompt: 'in-default' }])
+    S().addProject('第二部')
+    const r = await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'in-p2' }] })
+    expect(r.workbench.project.name).toBe('第二部')
+    expect(r.workbench.boards).toHaveLength(1)
+    expect(r.workbench.statusCounts.draft).toBe(1)
+  })
+
+  it('export 带 projectId;切了剧再 apply 被整份拒绝', async () => {
+    S().addCards([{ prompt: 'a' }])
+    const p1 = S().activeProjectId
+    const ir = await callTool('video_workbench_export', {})
+    expect(ir.projectId).toBe(p1)
+    S().addProject('别的剧')
+    const r = await callTool('video_workbench_apply', { ir })
+    expect(r.ok).toBe(false)
+    expect(r.conflict).toMatchObject({ reason: 'project-mismatch', expected: p1 })
+  })
+
+  it('list / switch / create 三个工具', async () => {
+    const created = await callTool('video_workbench_create_project', { name: '新剧' })
+    expect(S().activeProjectId).toBe(created.projectId)
+    expect(S().boards.find((b) => b.id === created.boardId)!.projectId).toBe(created.projectId)
+    expect(created.name).toBe('新剧')
+    const list = await callTool('video_workbench_list_projects', {})
+    expect(list.projects.map((p: { name: string }) => p.name)).toEqual(['默认项目', '新剧'])
+    expect(list.projects[0].legacy).toBe(true)
+    expect(list.activeProjectId).toBe(created.projectId)
+    const sw = await callTool('video_workbench_switch_project', { projectId: 'project-default' })
+    expect(sw.activeProjectId).toBe('project-default')
+    expect(sw.project.name).toBe('默认项目')
+    expect(S().activeProjectId).toBe('project-default')
+    await expect(callTool('video_workbench_switch_project', { projectId: 'ghost' })).rejects.toThrow(
+      /project not found/,
+    )
+  })
+
+  /**
+   * 剧摘要是三层里最后补上的路标:分段有 set_board_summary、卡片有 set_card_summary,
+   * 剧此前只有数字 —— 八部剧摆在 list_projects 里,agent 只能靠「未命名剧 3」猜。
+   */
+  it('剧摘要:写完出现在 list_projects 与每次回包的 project 头里;省略 projectId = 当前剧', async () => {
+    const p1 = S().activeProjectId
+    const p2 = S().addProject('第二部')
+    const r = await callTool('video_workbench_set_project_summary', { summary: '三集科幻短剧 · 赛博都市' })
+    expect(r.ok).toBe(true)
+    expect(r.workbench.project).toMatchObject({ id: p2, summary: '三集科幻短剧 · 赛博都市' })
+
+    await callTool('video_workbench_set_project_summary', { projectId: p1, summary: '旧片子 · 迁移进来的' })
+    const list = await callTool('video_workbench_list_projects', {})
+    expect(list.projects.map((p: { id: string; summary?: string }) => [p.id, p.summary])).toEqual([
+      [p1, '旧片子 · 迁移进来的'],
+      [p2, '三集科幻短剧 · 赛博都市'],
+    ])
+    // 写摘要不作废 IR 令牌、不进撤销栈
+    const before = S().structureRevision
+    const depth = S().undoStack.length
+    await callTool('video_workbench_set_project_summary', { summary: '' })
+    expect(S().structureRevision).toBe(before)
+    expect(S().undoStack).toHaveLength(depth)
+    expect(S().projects.find((p) => p.id === p2)!.summary).toBeUndefined()
+  })
+
+  it('剧摘要:剧不存在时抛可读错误并列出可用 id', async () => {
+    await expect(
+      callTool('video_workbench_set_project_summary', { projectId: 'ghost', summary: 'x' }),
+    ).rejects.toThrow(/project not found.*project-default/)
+  })
+
+  /**
+   * 「进展怎样了 / 挑几张下手」这类巡视不需要规格与素材清单。concise 只回
+   * id/位置/状态/摘要/60 字提示词/error,体积约为 detailed 的三分之一。
+   */
+  it('status fields:concise 不带规格与素材;缺省仍是 detailed', async () => {
+    S().addCards([{ prompt: 'p'.repeat(200), referenceImages: ['a.png'] }])
+    const concise = await callTool('video_workbench_status', { fields: 'concise' })
+    expect(concise.fields).toBe('concise')
+    expect(concise.cards).toHaveLength(1)
+    expect(concise.cards[0]).toEqual({
+      cardId: expect.any(String),
+      // rev 概要里也要有:agent 要拿它做 expectedRev,不能为了拿版本号去翻详细模式
+      rev: expect.any(Number),
+      boardId: S().activeBoardId,
+      order: 0,
+      prompt: `${'p'.repeat(60)}…`,
+      status: 'draft',
+    })
+    expect(concise.cards[0].model).toBeUndefined()
+    expect(concise.cards[0].references).toBeUndefined()
+
+    const detailed = await callTool('video_workbench_status', {})
+    expect(detailed.fields).toBe('detailed')
+    expect(detailed.cards[0].model).toEqual(expect.any(String))
+    expect(detailed.cards[0].references.images).toHaveLength(1)
+    expect(JSON.stringify(concise.cards).length).toBeLessThan(JSON.stringify(detailed.cards).length / 2)
+  })
+})
+
+/**
+ * 多个对话同时填不同的剧。
+ *
+ * 症状(2026-10-26 用户同时跑三部剧):工作台只有一个全局「当前剧」指针,两个对话各自
+ * switch_project 就在抢它 —— 谁切谁赢,另一个对话的下一次写入落进别人的剧,界面也来回跳。
+ * 现在每个对话记住自己绑定的剧,隐式作用域不再读屏幕指针。
+ */
+describe('多对话各管一部剧(thread scope)', () => {
+  const S = () => useVideoWorkbenchStore.getState()
+  const cardsOf = (projectId: string) => {
+    const boardIds = new Set(S().boards.filter((b) => b.projectId === projectId).map((b) => b.id))
+    return S().cards.filter((c) => c.boardId && boardIds.has(c.boardId))
+  }
+
+  beforeEach(async () => {
+    await S().ensureHydrated()
+  })
+
+  it('两个对话各建一部剧:屏幕只跟第一个,各自的卡落在各自的剧里', async () => {
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+
+    // A 建剧时没有别人在干活,屏幕跟过去;B 建剧时 A 正在干活,屏幕留在 A。
+    expect(a.onScreen).toBe(true)
+    expect(b.onScreen).toBe(false)
+    expect(b.note).toMatch(/B剧/)
+    expect(S().activeProjectId).toBe(a.projectId)
+
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A-1' }], navigate: false }, 'thread-a')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B-1' }, { prompt: 'B-2' }], navigate: false }, 'thread-b')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A-2' }], navigate: false }, 'thread-a')
+
+    expect(cardsOf(a.projectId).map((c) => c.prompt)).toEqual(['A-1', 'A-2'])
+    expect(cardsOf(b.projectId).map((c) => c.prompt)).toEqual(['B-1', 'B-2'])
+    // 整个过程屏幕上的剧一次都没被挪动
+    expect(S().activeProjectId).toBe(a.projectId)
+  })
+
+  it('读与回带摘要也只看自己的剧:B 的 status 看不到 A 的卡,屏幕不动', async () => {
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A-1' }], navigate: false }, 'thread-a')
+    const added = await callTool(
+      'video_workbench_add_tasks',
+      { tasks: [{ prompt: 'B-1' }], navigate: false },
+      'thread-b',
+    )
+
+    expect(added.total).toBe(1)
+    expect(added.workbench.project).toMatchObject({ id: b.projectId, name: 'B剧', cards: 1 })
+
+    const status = await callTool('video_workbench_status', {}, 'thread-b')
+    expect(status.project.id).toBe(b.projectId)
+    expect(status.activeBoardId).toBe(b.boardId)
+    expect(status.cards.map((c: { prompt: string }) => c.prompt)).toEqual(['B-1'])
+    expect(S().activeProjectId).toBe(a.projectId)
+  })
+
+  it('没选过剧、而别的对话正占着别的剧:隐式写入被拦并指路;只有一个对话时照旧放行', async () => {
+    // 单对话:没人竞争,不拦(与改动前一致)
+    const solo = await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'solo' }], navigate: false }, 'thread-solo')
+    expect(solo.cardIds).toHaveLength(1)
+
+    await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    await expect(
+      callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'oops' }], navigate: false }, 'thread-new'),
+    ).rejects.toThrow(/还没选定.*A剧.*switch_project/)
+    // 点名了页 / 点名了卡的写入是显式的,不拦
+    const boardId = S().boards.find((b) => b.projectId === S().activeProjectId)!.id
+    await expect(
+      callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'ok' }], boardId, navigate: false }, 'thread-new'),
+    ).resolves.toBeTruthy()
+    // 读不拦
+    await expect(callTool('video_workbench_status', {}, 'thread-new')).resolves.toBeTruthy()
+  })
+
+  it('对话停手超过 10 分钟就不再算占着剧:新对话不被拦,屏幕也照常跟随', async () => {
+    // 只改 Date.now,不用 fake timers —— 库的异步写不该被时钟冻住。
+    const realNow = Date.now.bind(Date)
+    let offset = 0
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset)
+    try {
+      await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+      offset = 11 * 60 * 1000
+      const r = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+      expect(r.onScreen).toBe(true)
+      // 过期的 A 不再被当成「别的对话正占着的剧」
+      const list = await callTool('video_workbench_list_projects', {}, 'thread-b')
+      expect(list.projects.some((p: { inUseByOtherChat?: boolean }) => p.inUseByOtherChat)).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('switch_project 的 focus:true 强制把屏幕拉过去;focus:false 即使只有一个对话也不动屏幕', async () => {
+    await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+    expect(b.onScreen).toBe(false)
+
+    const pulled = await callTool('video_workbench_switch_project', { projectId: b.projectId, focus: true }, 'thread-b')
+    expect(pulled.onScreen).toBe(true)
+    expect(S().activeProjectId).toBe(b.projectId)
+
+    resetThreadScopesForTest()
+    const stay = await callTool('video_workbench_switch_project', { projectId: 'project-default', focus: false }, 'thread-solo')
+    expect(stay.onScreen).toBe(false)
+    expect(stay.yourProjectId).toBe('project-default')
+    expect(S().activeProjectId).toBe(b.projectId)
+    // 虽然屏幕在别处,这个对话的写入仍然落进它选的剧
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'bg' }], navigate: false }, 'thread-solo')
+    expect(cardsOf('project-default').map((c) => c.prompt)).toEqual(['bg'])
+  })
+
+  it('没有 threadId(渲染端直调):switch 恒跟随屏幕,与改动前一致', async () => {
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' })
+    expect(b.onScreen).toBe(true)
+    const sw = await callTool('video_workbench_switch_project', { projectId: 'project-default' })
+    expect(sw.onScreen).toBe(true)
+    expect(S().activeProjectId).toBe('project-default')
+  })
+
+  it('add_tasks 的 boardId:落在指定页;别的剧的页 / 不存在的页报错且不写', async () => {
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const second = S().addBoard('第二段')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+
+    const r = await callTool(
+      'video_workbench_add_tasks',
+      { tasks: [{ prompt: 'x' }], boardId: second, navigate: false },
+      'thread-a',
+    )
+    expect(S().cards.find((c) => c.id === r.cardIds[0])!.boardId).toBe(second)
+
+    await expect(
+      callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'y' }], boardId: a.boardId, navigate: false }, 'thread-b'),
+    ).rejects.toThrow(/belongs to another project/)
+    await expect(
+      callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'y' }], boardId: 'ghost', navigate: false }, 'thread-b'),
+    ).rejects.toThrow(/board not found: ghost/)
+    expect(cardsOf(b.projectId)).toHaveLength(0)
+  })
+
+  it('start 不点名:屏幕之外的剧只启动它自己那一页,不被屏幕上的选中带偏', async () => {
+    const submit = vi.fn(async () => ({ success: true, taskId: 't' }))
+    ;(window as any).electronAPI = { videoWorkbench: { submit } }
+
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+    const [a1] = (await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A-1' }], navigate: false }, 'thread-a')).cardIds
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B-1' }, { prompt: 'B-2' }], navigate: false }, 'thread-b')
+    // 用户在屏幕上(A 剧)选中了一张卡
+    useVideoWorkbenchStore.setState({ selectedCardIds: [a1] })
+
+    const r = await callTool('video_workbench_start', {}, 'thread-b')
+
+    expect(r.started).toHaveLength(2)
+    expect(submit).toHaveBeenCalledTimes(2)
+    const sent = submit.mock.calls.map((c: unknown[]) => (c[0] as { prompt: string }).prompt).sort()
+    expect(sent).toEqual(['B-1', 'B-2'])
+    // A 剧的卡与屏幕上的选中都没被碰
+    expect(cardsOf(a.projectId)[0].status).toBe('draft')
+    expect(S().selectedCardIds).toEqual([a1])
+  })
+
+  it('export/apply 按对话所在的剧走:屏幕上换了剧也不算 project-mismatch,且不挪屏幕', async () => {
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B-1' }], navigate: false }, 'thread-b')
+
+    const ir = await callTool('video_workbench_export', { full: true }, 'thread-b')
+    expect(ir.projectId).toBe(b.projectId)
+    expect(ir.boards.map((x: { id: string }) => x.id)).toEqual([b.boardId])
+    const screenBoard = S().activeBoardId
+
+    // apply 不许改已有卡的提示词(只改规格),所以用分辨率当载体
+    expect(cardsOf(b.projectId)[0].resolution).not.toBe('1080p')
+    ir.boards[0].cards[0].resolution = '1080p'
+    const res = await callTool('video_workbench_apply', { ir }, 'thread-b')
+
+    expect(res.ok).toBe(true)
+    expect(cardsOf(b.projectId)[0].resolution).toBe('1080p')
+    expect(S().activeProjectId).toBe(a.projectId)
+    expect(S().activeBoardId).toBe(screenBoard)
+  })
+
+  it('别的剧里的结构变动不再让 apply 误报「结构变过」;自己剧里变了才拒绝', async () => {
+    await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B-1' }], navigate: false }, 'thread-b')
+
+    const ir = await callTool('video_workbench_export', { full: true }, 'thread-b')
+    // 隔壁剧(A)加卡、再新建一部剧:全局 structureRevision 涨了两次
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A-1' }], navigate: false }, 'thread-a')
+    S().addProject('第三部', { activate: false })
+    expect(S().structureRevision).not.toBe(ir.structureRevision)
+
+    ir.boards[0].cards[0].resolution = '1080p'
+    const ok = await callTool('video_workbench_apply', { ir }, 'thread-b')
+    expect(ok.ok).toBe(true)
+    expect(cardsOf(b.projectId)[0].resolution).toBe('1080p')
+
+    // 自己的剧里被别人加了一张卡:这才是真冲突
+    const ir2 = await callTool('video_workbench_export', { full: true }, 'thread-b')
+    S().addCards([{ prompt: '用户手加的' }], undefined, { boardId: b.boardId })
+    const rejected = await callTool('video_workbench_apply', { ir: ir2 }, 'thread-b')
+    expect(rejected.ok).toBe(false)
+    expect(rejected.conflict).toMatchObject({ expected: expect.any(Number), actual: expect.any(Number) })
+  })
+
+  it('list_projects 标出你的剧与被别的对话占着的剧', async () => {
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+
+    const list = await callTool('video_workbench_list_projects', {}, 'thread-b')
+    expect(list.activeProjectId).toBe(a.projectId)
+    expect(list.yourProjectId).toBe(b.projectId)
+    expect(list.yourProjectChosen).toBe(true)
+    const byId = Object.fromEntries(list.projects.map((p: { id: string }) => [p.id, p]))
+    expect(byId[a.projectId].inUseByOtherChat).toBe(true)
+    expect(byId[b.projectId].inUseByOtherChat).toBeUndefined()
+  })
+
+  it('set_spec 不点名页:作用于对话自己那部剧的当前页,别的剧的卡不动', async () => {
+    const a = await callTool('video_workbench_create_project', { name: 'A剧' }, 'thread-a')
+    const b = await callTool('video_workbench_create_project', { name: 'B剧' }, 'thread-b')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'A-1', duration: 5 }], navigate: false }, 'thread-a')
+    await callTool('video_workbench_add_tasks', { tasks: [{ prompt: 'B-1', duration: 5 }], navigate: false }, 'thread-b')
+
+    await callTool('video_workbench_set_spec', { duration: 10 }, 'thread-b')
+
+    expect(cardsOf(b.projectId)[0].duration).toBe(10)
+    expect(cardsOf(a.projectId)[0].duration).toBe(5)
   })
 })

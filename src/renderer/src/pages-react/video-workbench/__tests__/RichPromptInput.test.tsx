@@ -173,6 +173,40 @@ describe('@ 建议分组(本页素材 / 人像库)', () => {
     expect(popup.querySelectorAll('.vw-at-group-label')).toHaveLength(2)
   })
 
+  // 2026-09-22 反馈:「只能 @ 12 张素材,有多少就能 @ 多少,视频 音频 音乐都要有」。
+  // 病根是弹层总数硬顶 12:本卡 22 张图先把名额占满,13–22 号图和排在后面的
+  // 视频、音频全被切掉。本卡素材是「第 N 张 = reference N」的硬绑定,一个都不能少。
+  it('本卡 22 图 + 3 视频 + 2 音频:@ 弹层一个不少地列出全部 27 个,其他组仍在后面', async () => {
+    const many: PromptMediaRef[] = [
+      ...Array.from({ length: 22 }, (_, i) => ({ kind: 'image' as const, index1: i + 1, name: `图${i + 1}.png` })),
+      ...Array.from({ length: 3 }, (_, i) => ({ kind: 'video' as const, index1: i + 1, name: `片${i + 1}.mp4` })),
+      ...Array.from({ length: 2 }, (_, i) => ({ kind: 'audio' as const, index1: i + 1, name: `曲${i + 1}.mp3` })),
+    ]
+    render(
+      <RichPromptInput
+        value=""
+        mediaRefs={many}
+        onChange={vi.fn()}
+        getPageMaterials={() => [PAGE_MATERIAL]}
+        searchAssets={async () => [ASSET]}
+      />,
+    )
+    await typeInEditor(screen.getByRole('textbox'), '@')
+    const popup = await screen.findByTestId('vw-at-popup')
+    await screen.findByRole('button', { name: /赛博猫/ })
+
+    // 本卡素材全在:第 13 张、第 22 张、视频 3、音频 2 都要能选到
+    expect(screen.getByRole('button', { name: /图片13/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /图片22/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /视频3/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /音频2/ })).toBeTruthy()
+    const existing = popup.querySelectorAll('button[data-source="existing"]')
+    expect(existing).toHaveLength(27)
+    // 其他卡片素材与人像库不被本卡素材挤掉
+    expect(screen.getByRole('button', { name: /别卡的图\.png/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /赛博猫/ })).toBeTruthy()
+  })
+
   it('键盘上下键跨组移动高亮,Enter 提交人像库项', async () => {
     const onChange = vi.fn()
     const onPickAsset = vi.fn(() => ({ kind: 'image' as const, index1: 2 }))

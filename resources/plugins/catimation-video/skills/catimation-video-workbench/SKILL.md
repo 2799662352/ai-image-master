@@ -28,6 +28,53 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 >
 > **本文说「底座」时,指的就是当前这张卡的 model 对应的那一个。** 工作台的纪律
 > (素材绑定、多镜拆卡、资产门、摘要、跨卡锚点)与模型无关,三个底座上都成立。
+
+## 剧 → 分段 → 卡片:工作台的三层
+
+工作台按**剧(project)→ 分段(board,界面文案「分段」,老数据叫「页面」)→ 卡片**组织。
+一部剧是一部片子;分段是剧里的一段成片单元(一集 / 一幕 / 一条 140s 的分 P);卡片是一镜。
+
+- **所有 `video_workbench_*` 工具只作用于「本对话的剧」。** `status` 与写工具回带的 `workbench`
+  摘要都带 `project {id,name,segments,cards}`,`boards` 只列这部剧的分段;别的剧对你不可见,
+  这与用户在界面上看到的隔离一致。本对话没选过剧时,读跟着用户界面走;写则看有没有别的对话正占着别的剧(见下)。
+- 要看/换剧:`video_workbench_list_projects`(列全部剧与统计;`activeProjectId` = 用户眼前那部,
+  `yourProjectId` = 你在干的那部)→ `video_workbench_switch_project`(把本对话绑到那部剧)。
+- 用户开一部新片子:`video_workbench_create_project`(自带一个空分段,返回
+  `projectId` + `boardId`,本对话自动绑过去),然后照常 `video_workbench_add_tasks`。
+- **用户可能同时开着好几个对话、各填一部剧。** 每个对话各绑各的剧,互不抢指针:开工第一步就
+  `list_projects` 看清哪部是你的(`inUseByOtherChat: true` 的剧正被别的对话填着,用户没明说别碰),
+  再 `switch_project` / `create_project` 绑定。别的对话占着别的剧而你还没绑定时,写工具会被拒并告诉你
+  该先选剧 —— 照做,别去「force」。绑定后界面是否跟过去由 `onScreen` 告诉你(没跟 = 你在后台填,
+  用户界面不动,这是对的);用户要你把界面带过去时才传 `focus: true`。往指定分段加卡用
+  `add_tasks({ boardId })`;`start` 不带 cardIds 且你不在用户屏幕上时,只启动你剧里该分段的可启动卡。
+- **同一部剧的几集由几个对话各填(分段也要各管各的)。** 只绑剧不绑分段时,几个对话不带 boardId 的写入
+  全落进该剧的同一个「当前页」。所以这种分工下:`switch_project({ projectId, boardId })` 把本对话**钉在一个
+  分段**上,之后 `add_tasks` / `start` / `set_spec` / `export` / `status` 不点名分段时都作用于它,
+  用户在界面上翻到哪页都不影响你;回包 `boards[]` 里带 `inUseByOtherChat` 的分段别人已经钉着,别抢。
+  没钉分段、而隐式落点正是别人钉着的那一段时,写入会被拒并告诉你怎么钉 —— 照做。
+- **写之前的三件小事(并发写入安全,都是回包里现成的)。**
+  ① `add_tasks` 每张卡给一个 **`clientRef`**(你自己的稳定编号,如 `ep2-shot-07`,同一分段内唯一):
+  超时重发 / 两个对话都想建第 12 镜,都不会建出两张;已存在的回在 `duplicates`(不覆盖,
+  `samePrompt:false` 表示那张的文字和你这次给的不同,要改请用 `patch_prompt` / `update_task`)。
+  回包 `placed` 告诉你新卡落在哪一段、第几张到第几张。
+  ② 改**已有的卡**时带上 `expectedRev`(你上次看到的 `rev`;`set_spec` 用 `expectedRevs`)。卡在你看过之后被
+  改过,就**不写**,回 `{ ok:false, conflict, card }` 把它现在的样子给你:基于新内容重新决定,
+  用新的 `rev` 重试;**同一张卡连续冲突两次,停下来问用户**,别来回覆盖。`rev` 有时只是后台事件(素材上传完)
+  推高的,内容没变 —— 那种情况下用新 `rev` 重试一次就过。
+  ③ 回包里出现 **`changedSinceYourLastCall`** = 自你上次调用以来,你手上那几段里有卡被别人(用户 / 别的对话 /
+  后台,不知道是谁)增删或改了内容。只报一次;你要写的卡在名单里就先 `status` 重看,别凭记忆写。
+  整板 `start` 默认**不重跑「出过片且之后没改过」的卡**(回包 `skippedSucceeded` 告诉你跳了几张);
+  要重跑就点名 `cardIds`,或 `includeSucceeded: true`。
+- **三层路标都要写。** 剧:`video_workbench_set_project_summary`(≤60 字电报体,
+  「三集科幻短剧 · 赛博都市 · 主角林夏」,省略 projectId = 当前剧);分段:
+  `set_board_summary`;卡片:`set_card_summary`。剧名常常是「未命名剧 3」,没有剧摘要,
+  下次面对八部剧只能逐个切进去看。接手或开新剧时就写,前提变了就刷新。
+- **巡视用 `status({ fields: "concise" })`。** 只回 id / 位置 / 状态 / 摘要 / 60 字提示词 /
+  error,体积约为缺省 detailed 的三分之一。「进展怎样」「哪几张失败」「哪张是天台戏」
+  「先挑几张再动手」都用它;要改规格、要报成片地址,再对点名的几张拿 detailed 或 export。
+- `video_workbench_export` 的 IR 带 `projectId`;`apply` 时若本对话已换到别的剧,整份被拒
+  (`conflict.reason = "project-mismatch"`)—— 重新 export,别 force。
+- 批次完成推送里带「剧名 › 分段名」,汇报时照抄这个位置,用户按它去找成片。
 >
 > 几处**点名**了具体 skill(路径 A/B 与 cinematic-prompt-format、八大要素、
 > create-storyboard 制片包的 `scenedance_prompt`),那些名字带 seedance 只是历史
@@ -239,7 +286,8 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | --- | --- |
 | 改提示词里几个词 | `video_workbench_patch_prompt`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | `video_workbench_update_task` |
-| 一批卡同一个规格(整板 480p、都开联网) | `video_workbench_set_spec` |
+| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | `video_workbench_set_spec`(样片 = `draft: true`,仅 2.5 + 平台余额) |
+| 样片满意了要 1080p 成片 | `video_workbench_finalize_draft`(`status` 里 `draftRun: true` 的卡;沿用样片一切,7 天内有效,成片是同卡新版本) |
 | 整页重排 | `video_workbench_reorder`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | `video_workbench_move_task`(**不要并发调**,重排没有交换律) |
 | 增删卡 | `video_workbench_add_tasks` / `video_workbench_remove_tasks` |

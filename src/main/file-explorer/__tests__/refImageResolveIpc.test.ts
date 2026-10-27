@@ -38,8 +38,9 @@ describe('resolveRefImage — 本地路径走 COS', () => {
     const out = await resolveRefImage('D:\\shots\\hero.png')
 
     expect(out).toEqual({ ok: true, url: 'https://bucket/relayed.png' })
-    // 必须显式要求一律中转 —— 默认的 512KB 内联线是视频那边的口径。
-    expect(resolveMediaUrl.mock.calls[0][3]).toEqual({ alwaysRelay: true })
+    // 必须显式要求一律中转 —— 默认的 512KB 内联线是视频那边的口径;
+    // 并且中转失败不降级内联:调用方只收 https,降级只会把真实原因吞掉。
+    expect(resolveMediaUrl.mock.calls[0][3]).toEqual({ alwaysRelay: true, noInline: true })
     // mime 由扩展名推出,交给 resolveMediaUrl 生成 COS Key。
     expect(resolveMediaUrl.mock.calls[0][2]).toBe('image/png')
   })
@@ -109,7 +110,7 @@ describe('resolveRefMedia — 放宽到图片/视频/音频', () => {
         url: 'https://bucket/relayed',
       })
       expect(resolveMediaUrl.mock.calls[0][2]).toBe(mime)
-      expect(resolveMediaUrl.mock.calls[0][3]).toEqual({ alwaysRelay: true })
+      expect(resolveMediaUrl.mock.calls[0][3]).toEqual({ alwaysRelay: true, noInline: true })
     }
   })
 

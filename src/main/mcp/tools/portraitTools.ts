@@ -36,7 +36,25 @@ interface ListItem {
   hidden: boolean
 }
 
+/** 结果来自哪个库:平台余额 → 当前计费池的平台素材库;自填 Key → 自己的人像库。 */
+type AssetLibrary = 'platform' | 'own-key'
+
+const LIBRARY_LABEL: Record<AssetLibrary, string> = {
+  platform: '平台素材库(当前计费池)',
+  'own-key': '人像库(自填 Key)',
+}
+
+/** 两个库的 asset:// 不通用 —— 这句要进工具描述,agent 才不会拿别处查到的 id 来用。 */
+const LIBRARY_NOTE =
+  'The library FOLLOWS THE USER\'S CURRENT BILLING: on platform balance it is the platform 素材库 of the ' +
+  'active billing pool; with the user\'s own key it is their own portrait library. asset:// ids are NOT ' +
+  'interchangeable between the two (or between billing pools) — an id taken from elsewhere fails at ' +
+  'generation with "asset … is not found". Always use ids returned by these tools in the current session.'
+
 interface ListResult {
+  library?: AssetLibrary
+  note?: string
+  truncated?: boolean
   items: ListItem[]
   total: number
   page: number
@@ -71,7 +89,8 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'asset://assetId (pass it to generate_video as firstFrame/referenceImages). Supports a text ' +
         'query, kind filter, and group filter. Results are paginated (the library can be large): the ' +
         'response carries page/totalPages/hasMore — when hasMore is true, fetch the next page with ' +
-        'page:N+1 instead of asking for a huge pageSize. Narrow with query/kind/group before paging.',
+        'page:N+1 instead of asking for a huge pageSize. Narrow with query/kind/group before paging. ' +
+        LIBRARY_NOTE,
       annotations: READ_ONLY_REMOTE,
       inputSchema: z.object({
         query: z.string().optional().describe('Text to search asset names.'),
@@ -88,9 +107,18 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
     async (params) => {
       try {
         const res = (await router.call('list_portrait_library', params)) as ListResult
+        const libLabel = LIBRARY_LABEL[res.library ?? 'own-key']
+        const extra = {
+          ...(res.library ? { library: res.library } : {}),
+          ...(res.note ? { note: res.note } : {}),
+          ...(res.truncated ? { truncated: true } : {}),
+        }
         if (res.items.length === 0) {
           return textResult(
-            ['📭 人像库为空(或当前筛选无结果)。', JSON.stringify({ ok: true, count: 0, total: res.total, groups: res.groups })].join('\n'),
+            [
+              `📭 ${libLabel}为空(或当前筛选无结果)。`,
+              JSON.stringify({ ok: true, count: 0, total: res.total, groups: res.groups, ...extra }),
+            ].join('\n'),
           )
         }
         // 渐进式披露:只回一行人类摘要 + 一行精简 JSON(避免人类行/JSON 重复
@@ -99,9 +127,10 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         const capped = res.scanCapped ? '(分组扫描达上限,结果可能不全)' : ''
         return textResult(
           [
-            `📚 人像库 第 ${res.page}/${res.totalPages} 页,本页 ${res.items.length} 项 / 共 ${res.total}${more}${capped}。引用素材把 asset://assetId 传给 generate_video。`,
+            `📚 ${libLabel} 第 ${res.page}/${res.totalPages} 页,本页 ${res.items.length} 项 / 共 ${res.total}${more}${capped}。引用素材把 asset://assetId 传给 generate_video。`,
             JSON.stringify({
               ok: true,
+              ...extra,
               count: res.items.length,
               total: res.total,
               page: res.page,
@@ -133,7 +162,9 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'generation task FAILS (内容审核未通过 / not ready). A duplicated:true result means it was already ' +
         'in the (reviewed) library and is safe to use now; for a fresh duplicated:false upload, wait for ' +
         'review to pass (it shows up normally in list_portrait_library with no 审核中 marker) — or tell ' +
-        'the user to wait for review — before generating with it.',
+        'the user to wait for review — before generating with it. On platform balance the tool itself ' +
+        'waits until the asset is ready, so the returned asset:// is usable right away. ' +
+        LIBRARY_NOTE,
       annotations: WRITE_ADDITIVE_REMOTE,
       inputSchema: z.object({
         source: z.string().min(1).describe('Local file path, data: URL, https URL, or asset://assetId.'),
@@ -153,10 +184,12 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
           assetUrl: string
           name: string
           kind: string
+          library?: AssetLibrary
         }
+        const libLabel = LIBRARY_LABEL[res.library ?? 'own-key']
         return textResult(
           [
-            `✅ add_to_portrait_library DONE — ${res.duplicated ? '已存在(去重复用)' : '已上传'} 「${res.name}」[${res.kind}]。`,
+            `✅ add_to_portrait_library DONE — ${res.duplicated ? '已存在(去重复用)' : '已上传'}到${libLabel} 「${res.name}」[${res.kind}]。`,
             `引用:把 ${res.assetUrl} 传给 generate_video 的 firstFrame/referenceImages 即可。`,
             JSON.stringify({ ok: true, ...res }),
           ].join('\n'),

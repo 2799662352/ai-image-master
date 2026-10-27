@@ -11,7 +11,7 @@ beforeEach(() => {
 
 describe('useAgentChatStore selectedImageChannel', () => {
   it('starts on the default (VIP) channel', () => {
-    expect(useAgentChatStore.getState().selectedImageChannel).toBe('gpt-image-2-vip')
+    expect(useAgentChatStore.getState().selectedImageChannel).toBe(DEFAULT_IMAGE_CHANNEL_ID)
   })
 
   it('setSelectedImageChannel updates state and persists a valid channel', () => {
@@ -22,7 +22,7 @@ describe('useAgentChatStore selectedImageChannel', () => {
 
   it('ignores an invalid channel id (no state change, no persistence)', () => {
     useAgentChatStore.getState().setSelectedImageChannel('nope-not-real')
-    expect(useAgentChatStore.getState().selectedImageChannel).toBe('gpt-image-2-vip')
+    expect(useAgentChatStore.getState().selectedImageChannel).toBe(DEFAULT_IMAGE_CHANNEL_ID)
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
   })
 })

@@ -9,6 +9,7 @@ import {
   buildUnknownTaskBanner,
   GENERATE_BLOCKING_BUDGET_MS,
 } from '../videoTools'
+import { ALL_VIDEO_MODEL_ALIASES } from '../../../../types/seedance'
 import type { SeedanceTaskState } from '../../../services/seedance/types'
 
 type Handler = (
@@ -49,10 +50,38 @@ function makeTask(patch: Partial<SeedanceTaskState> = {}): SeedanceTaskState {
 }
 
 describe('registerVideoTools / schemas', () => {
-  it('registers generate_video and check_video_task', () => {
+  it('registers generate_video, finalize_video_draft and check_video_task', () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)
-    expect(tools.map((t) => t.name)).toEqual(['generate_video', 'check_video_task'])
+    expect(tools.map((t) => t.name)).toEqual(['generate_video', 'finalize_video_draft', 'check_video_task'])
+  })
+
+  it('finalize_video_draft 走 generate_video 同一条主进程链路,只带样片任务号', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const call = vi.mocked(router.call)
+    call.mockImplementation(async (name: string) =>
+      name === 'generate_video'
+        ? { taskId: 'task_final', status: 'queued' }
+        : { found: true, task: { taskId: 'task_final', status: 'failed', error: 'x' } },
+    )
+    await tools.find((t) => t.name === 'finalize_video_draft')!.handler({ taskId: ' task_draft ' }, undefined)
+    expect(call).toHaveBeenCalledWith(
+      'generate_video',
+      { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: 'task_draft' },
+      undefined,
+    )
+  })
+
+  it('generate_video 的 draft 只给 2.5', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const res = await tools.find((t) => t.name === 'generate_video')!.handler(
+      { prompt: 'x', model: '2.0', draft: true },
+      undefined,
+    )
+    expect(JSON.stringify(res)).toContain('Seedance \\"2.5\\" only')
+    expect(router.call).not.toHaveBeenCalled()
   })
 
   it('first blocking window is short (~75s) so turn/steer interjection stays responsive', () => {
@@ -69,6 +98,41 @@ describe('registerVideoTools / schemas', () => {
     registerVideoTools(server, router)
     const schema = tools[0].config.inputSchema
     expect(schema.safeParse({ prompt: '猫跳舞' }).success).toBe(true)
+  })
+
+  /**
+   * 每个可选模型都必须在 `model` 的 describe 里被提到。
+   *
+   * ## 为什么这条会漏,以及漏了会怎样
+   *
+   * 枚举是从能力表**自动派生**的(`ALL_VIDEO_MODEL_ALIASES`),所以加一个模型别名
+   * 立刻就能被传进来 —— 而那段人话描述是**手写**的。两者不同步时,schema 层一切
+   * 正常、类型检查一切正常、测试一切正常,唯一的症状是 **agent 不知道这个模型
+   * 存在**:它照着描述选型,永远选不到没写进去的那个;万一选了,也不知道它的约束。
+   *
+   * 2026-08-31 加 `wan3-prime` 时正是这么漏的 —— 派生的枚举自动带上了它,两个
+   * MCP 工具的描述里却一个字都没有。
+   *
+   * 只查「名字出现过」而不查措辞:描述该怎么写是人的判断,这里只保证**没有模型
+   * 被忘掉**。
+   */
+  it('每个可选模型都在 model 描述里被提到 —— 枚举自动派生,描述是手写的', () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const shape = (tools[0].config.inputSchema as unknown as {
+      shape: Record<string, { description?: string }>
+    }).shape
+    const desc = shape.model?.description ?? ''
+    expect(desc, 'model 字段没有 describe').not.toBe('')
+
+    const missing = ALL_VIDEO_MODEL_ALIASES.filter((alias) => !desc.includes(`"${alias}"`))
+    expect(
+      missing,
+      missing.length === 0
+        ? ''
+        : `这些模型能被传进来,但描述里没提到:\n${missing.map((m) => `  - ${m}`).join('\n')}\n` +
+          `agent 照着描述选型,选不到没写进去的那个。`,
+    ).toEqual([])
   })
 
   it('generate_video rejects empty prompt / bad duration / bad resolution', () => {
@@ -118,6 +182,74 @@ describe('registerVideoTools / schemas', () => {
     const res = await tools[0].handler({ prompt: 'x', model: '2.5', taskMode: 'edit', duration: -1 })
     expect(router.call).not.toHaveBeenCalled()
     expect((res.content[0] as { text: string }).text).toContain('视频')
+  })
+
+  // 深度捕捉是 generate_video 的变体:同一个工具、同一条主进程链,差别只在输入规则。
+  describe('model "depth"(深度捕捉)', () => {
+    const SRC = 'D:/clips/run.mp4'
+
+    it('一段源视频 → 放行并原样交给主进程(model / resolution / referenceVideos 都在)', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      await tools[0].handler({ prompt: '深度捕捉', model: 'depth', resolution: '480p', referenceVideos: [SRC] })
+      // 第 1 次调用 = 提交;之后的(若有)是 renderAndWait 对假任务对象的轮询。
+      const [name, params] = router.call.mock.calls[0]
+      expect(name).toBe('generate_video')
+      expect(params).toMatchObject({ model: 'depth', resolution: '480p', referenceVideos: [SRC] })
+    })
+
+    it('没有 duration / ratio 这些参数也行;给了 duration 不报「4-15」', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      await tools[0].handler({ prompt: '深度捕捉', model: 'depth', referenceVideos: [SRC], duration: 3 })
+      expect(router.call.mock.calls[0][0]).toBe('generate_video')
+    })
+
+    it('不带源视频 → 当场拦下,不打主进程', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({ prompt: '深度捕捉', model: 'depth' })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('一段源视频')
+    })
+
+    it('带了图片 → 拦下', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({
+        prompt: '深度捕捉',
+        model: 'depth',
+        referenceVideos: [SRC],
+        referenceImages: ['D:/a.png'],
+      })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('只接受一段源视频')
+    })
+
+    it('两段源视频 → 拦下', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({
+        prompt: '深度捕捉',
+        model: 'depth',
+        referenceVideos: [SRC, 'D:/clips/b.mp4'],
+      })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('一段源视频')
+    })
+
+    it('4k 不是深度捕捉的档位 → 拦下', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({
+        prompt: '深度捕捉',
+        model: 'depth',
+        resolution: '4k',
+        referenceVideos: [SRC],
+      })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('4k')
+    })
   })
 
   it('generate_video blocks until succeeded and returns DONE + saved path + resource_link', async () => {

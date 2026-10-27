@@ -1,3 +1,4 @@
+import { MIAU_BASE_URL } from '../../shared/miau'
 import type { CodexProviderConfig } from './codexLaunch'
 import {
   BUILTIN_CHANNELS,
@@ -75,9 +76,12 @@ export const RETIRED_RIGHTCODE_PRO_ID = 'rightcode-pro' as const
  *    gateway's `/v1/chat/completions` directly via the renderer
  *    (ApiService.understand), so understanding keeps working regardless.
  *
- * Model defaults to `qwen3.7-plus-dashscope` (cheaper). A subagent may override
- * per-spawn with `model="qwen3.7-max-dashscope"` for the stronger model (the
- * launch config sets the provider's default; the spawn can pin model).
+ * Model defaults to `qwen3.8-omni-flash` (cheapest, and omni-modal: text / image /
+ * video / audio in). A subagent may override per-spawn with `model="qwen3.8-max"`
+ * for the stronger model, or with the 3.7 `-dashscope` aliases
+ * (`qwen3.7-plus-dashscope` / `qwen3.7-max-dashscope`) which stay registered while
+ * both generations run in parallel (the launch config sets the provider's default;
+ * the spawn can pin model).
  */
 export const QWEN_UNDERSTAND_PROVIDER_ID = 'qwen' as const
 
@@ -86,9 +90,11 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   name: 'Qwen Understanding (DashScope via new-api)',
   // 加速域名(2026-07-28),仅 https 可达。这个常量在每次 spawn 时现读、不落库,
   // 所以改了下次启动即生效,老用户无需迁移。
-  baseUrl: 'https://miauapi.13797248455.xyz/v1',
+  // 生产常量。开发期覆盖在主进程侧做(`CodexLocalBackend.withDevGatewayOverride`)——
+  // 这类 preset 文件与渲染层共享,顶层不能 import electron。
+  baseUrl: MIAU_BASE_URL,
   envKey: 'MIAU_API_KEY',
-  model: 'qwen3.7-plus-dashscope',
+  model: 'qwen3.8-omni-flash',
   wireApi: 'responses',
 }
 

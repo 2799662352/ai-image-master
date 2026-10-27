@@ -127,7 +127,7 @@ describe('MaterialThumb', () => {
 })
 
 describe('useMaterialThumbSrcs(chip / @ 建议数据源)', () => {
-  it('本地路径解析为 blob:,直通源保持原样,视频无 previewUrl 为 undefined', async () => {
+  it('本地路径解析为 blob:,直通源保持原样,本地视频走截帧缩略图', async () => {
     readMediaThumb.mockResolvedValue(okThumb())
     const entries = [
       { kind: 'image' as const, material: { name: 'a', src: 'D:\\pics\\a.png' } },
@@ -137,7 +137,18 @@ describe('useMaterialThumbSrcs(chip / @ 建议数据源)', () => {
     const { result } = renderHook(() => useMaterialThumbSrcs(entries))
     await waitFor(() => expect(result.current[0]).toMatch(/^blob:/))
     expect(result.current[1]).toBe('data:image/png;base64,BBB')
-    expect(result.current[2]).toBeUndefined()
+    await waitFor(() => expect(result.current[2]).toMatch(/^blob:/))
+    expect(readMediaThumb).toHaveBeenCalledWith(expect.objectContaining({ path: 'D:\\v.mp4' }))
+  })
+
+  it('视频截帧失败时不退回读整个文件(保持 undefined,消费方回落 🎬)', async () => {
+    readMediaThumb.mockResolvedValue({ ok: false, reason: 'video frame extraction failed' })
+    const entries = [{ kind: 'video' as const, material: { name: 'v', src: 'D:\\big.mp4' } }]
+    const { result } = renderHook(() => useMaterialThumbSrcs(entries))
+    await waitFor(() => expect(readMediaThumb).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 10))
+    expect(readThumb).not.toHaveBeenCalled()
+    expect(result.current[0]).toBeUndefined()
   })
 
   it('解析失败的项保持 undefined(消费方回落 emoji)', async () => {

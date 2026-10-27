@@ -29,7 +29,9 @@ function card(patch: Partial<VideoWorkbenchCard> & { id: string; boardId: string
 
 function source(patch: Partial<WorkbenchHistorySource> = {}): WorkbenchHistorySource {
   return {
-    boards: [{ id: 'b1', name: '页面 1', order: 0, createdAt: 1_000 }],
+    projects: [{ id: 'p1', name: '剧 1', order: 0, createdAt: 1_000, updatedAt: 1_000 }],
+    activeProjectId: 'p1',
+    boards: [{ id: 'b1', projectId: 'p1', name: '页面 1', order: 0, createdAt: 1_000 }],
     cards: [],
     activeBoardId: 'b1',
     revision: 0,
@@ -303,8 +305,8 @@ describe('planRestore', () => {
     const snapshot = captureIntent(
       source({
         boards: [
-          { id: 'b1', name: '原名', order: 0, createdAt: 1 },
-          { id: 'b2', name: '第二页', order: 1, createdAt: 1 },
+          { id: 'b1', projectId: 'p1', name: '原名', order: 0, createdAt: 1 },
+          { id: 'b2', projectId: 'p1', name: '第二页', order: 1, createdAt: 1 },
         ],
         cards: [card({ id: 'c2', boardId: 'b2' })],
         activeBoardId: 'b2',
@@ -313,8 +315,8 @@ describe('planRestore', () => {
     const src = source({
       revision: 3,
       boards: [
-        { id: 'b1', name: '改过的名', order: 0, createdAt: 1 },
-        { id: 'b3', name: '后来新建的', order: 1, createdAt: 2 },
+        { id: 'b1', projectId: 'p1', name: '改过的名', order: 0, createdAt: 1 },
+        { id: 'b3', projectId: 'p1', name: '后来新建的', order: 1, createdAt: 2 },
       ],
       cards: [card({ id: 'c3', boardId: 'b3' })],
       activeBoardId: 'b3',
@@ -373,7 +375,13 @@ describe('planRestore', () => {
   })
 
   it('空快照拒绝还原,避免清空工作台', () => {
-    const plan = planRestore(source(), { boards: [], cards: [], activeBoardId: 'b1' })
+    const plan = planRestore(source(), {
+      projects: source().projects,
+      activeProjectId: 'p1',
+      boards: [],
+      cards: [],
+      activeBoardId: 'b1',
+    })
     expect(plan.result.ok).toBe(false)
     expect(plan.next).toBeUndefined()
     expect(plan.result.skipped[0].reason).toContain('清空工作台')
@@ -396,5 +404,81 @@ describe('planRestore', () => {
     expect(plan.result.cards.resurrected).toHaveLength(300)
     // 300 张复活的 + 1 张停到第一页末尾的在飞卡
     expect(plan.next!.cards).toHaveLength(301)
+  })
+})
+
+describe('planRestore · 剧', () => {
+  const project = (id: string, order: number, name = id) => ({ id, name, order, createdAt: 1, updatedAt: 1 })
+  const board = (id: string, projectId: string, order: number) => ({ id, projectId, name: id, order, createdAt: 1 })
+
+  it('快照里有、现在没有的剧被复活,连同它的分段;现在有、快照没有的剧被删', () => {
+    const snapshot: WorkbenchIntent = {
+      projects: [project('p1', 0), project('p2', 1)],
+      activeProjectId: 'p2',
+      boards: [board('b1', 'p1', 0), board('b2', 'p2', 0)],
+      cards: [],
+      activeBoardId: 'b1',
+    }
+    const src = source({
+      projects: [project('p1', 0), project('p3', 1)],
+      activeProjectId: 'p1',
+      boards: [board('b1', 'p1', 0), board('b3', 'p3', 0)],
+      revision: 5,
+      structureRevision: 5,
+    })
+    const plan = planRestore(src, snapshot)
+    expect(plan.result.ok).toBe(true)
+    expect(plan.next!.projects.map((p) => p.id)).toEqual(['p1', 'p2'])
+    expect(plan.next!.activeProjectId).toBe('p2')
+    expect(plan.next!.boards.map((b) => b.id)).toEqual(['b1', 'b2'])
+    expect(plan.persist!.projects.map((p) => p.id)).toEqual(['p2'])
+    expect(plan.persist!.removeProjectIds).toEqual(['p3'])
+    expect(plan.persist!.removeBoardIds).toEqual(['b3'])
+  })
+
+  it('剧改名回滚:名字不同的剧进 persist', () => {
+    const snapshot: WorkbenchIntent = {
+      projects: [project('p1', 0, '旧名')],
+      activeProjectId: 'p1',
+      boards: [board('b1', 'p1', 0)],
+      cards: [],
+      activeBoardId: 'b1',
+    }
+    const src = source({ projects: [project('p1', 0, '新名')], revision: 1, structureRevision: 1 })
+    const plan = planRestore(src, snapshot)
+    expect(plan.next!.projects[0].name).toBe('旧名')
+    expect(plan.persist!.projects.map((p) => p.name)).toEqual(['旧名'])
+  })
+
+  it('快照的 activeProjectId 已不存在于快照 projects → 回第一部', () => {
+    const snapshot: WorkbenchIntent = {
+      projects: [project('p1', 0)],
+      activeProjectId: 'ghost',
+      boards: [board('b1', 'p1', 0)],
+      cards: [],
+      activeBoardId: 'b1',
+    }
+    const plan = planRestore(source({ revision: 1, structureRevision: 1 }), snapshot)
+    expect(plan.next!.activeProjectId).toBe('p1')
+  })
+
+  it('分段换了剧也算变化并进 persist', () => {
+    const snapshot: WorkbenchIntent = {
+      projects: [project('p1', 0), project('p2', 1)],
+      activeProjectId: 'p1',
+      boards: [board('b1', 'p1', 0), board('b2', 'p1', 1)],
+      cards: [],
+      activeBoardId: 'b1',
+    }
+    const src = source({
+      projects: snapshot.projects,
+      boards: [board('b1', 'p1', 0), board('b2', 'p2', 0)],
+      revision: 1,
+      structureRevision: 1,
+    })
+    const plan = planRestore(src, snapshot)
+    expect(plan.result.noop).toBe(false)
+    expect(plan.next!.boards.find((b) => b.id === 'b2')!.projectId).toBe('p1')
+    expect(plan.persist!.boards.map((b) => b.id)).toEqual(['b2'])
   })
 })

@@ -1,6 +1,7 @@
 import type {
   AgentSendMessagePayload,
   AgentStreamEvent,
+  AgentTokenUsage,
   CodexApprovalResponse,
   CodexSessionConfig,
   CodexSubagentInfo,
@@ -41,6 +42,7 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type {
+  ThreadGoalMutationOrigin,
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalGetResponse,
@@ -112,6 +114,32 @@ export interface ListThreadsParams {
   searchTerm?: string
 }
 
+/**
+ * One hidden request on an ephemeral, read-only codex thread with every MCP
+ * server and built-in tool family disabled (upstream TUI
+ * `temporary_structured_request.rs`). Prompts may carry untrusted user text.
+ */
+export interface TemporaryStructuredTurnRequest {
+  /** `thread/start.threadSource`, e.g. `thread_title`. */
+  threadSource: string
+  model: string
+  /** Omitted = the process-active provider. */
+  modelProvider?: string
+  cwd: string
+  prompt: string
+  /** JSON schema for `turn/start.outputSchema`. */
+  outputSchema: Record<string, unknown>
+  effort?: string
+  /** Bounds thread start and the turn separately. Defaults to 30 s each. */
+  timeoutMs?: number
+}
+
+export interface TemporaryStructuredTurnResult {
+  /** Text of the turn's last agent message. */
+  text: string
+  usage?: AgentTokenUsage
+}
+
 export interface IAgentBackend {
   start(): Promise<void>
   stop(): Promise<void>
@@ -177,6 +205,13 @@ export interface IAgentBackend {
    * Best-effort at the call site: the local delete is authoritative.
    */
   deleteThread?(threadId: string): Promise<void>
+  /**
+   * Patch codex's SQLite-backed thread metadata (`thread/metadata/update`,
+   * codex ≥ 0.146 / PR #34840) — today only `isPinned`. Mirror of the local
+   * `pinnedAt` column so codex's own `thread/list { isPinned }` agrees with our
+   * sidebar; the local row stays authoritative and the call is best-effort.
+   */
+  updateThreadMetadata?(threadId: string, patch: { isPinned?: boolean }): Promise<void>
   setSessionConfig?(patch: Partial<CodexSessionConfig>): void
   /**
    * Swap the active model provider. The new value is consumed on the next
@@ -214,6 +249,11 @@ export interface IAgentBackend {
    * cascade. See `CodexProtocolClient.interruptTurn`.
    */
   interruptTurn?(threadId: string, turnId: string): Promise<void>
+  /**
+   * Runs one {@link TemporaryStructuredTurnRequest}. Never counts as in-flight
+   * work, so it cannot block a provider switch; a restart simply fails it.
+   */
+  runTemporaryStructuredTurn?(request: TemporaryStructuredTurnRequest): Promise<TemporaryStructuredTurnResult>
   archiveThread?(threadId: string): Promise<void>
   unarchiveThread?(threadId: string): Promise<CodexThreadSummary>
   /** Run `codex doctor --json` against the bundled binary (install diagnostics). */
@@ -234,7 +274,7 @@ export interface IAgentBackend {
   // backends omit them; the AgentManager RPC wrappers guard on presence.
   setThreadGoal?(params: ThreadGoalSetParams): Promise<ThreadGoalSetResponse>
   getThreadGoal?(threadId: string): Promise<ThreadGoalGetResponse>
-  clearThreadGoal?(threadId: string): Promise<ThreadGoalClearResponse>
+  clearThreadGoal?(threadId: string, origin?: ThreadGoalMutationOrigin): Promise<ThreadGoalClearResponse>
 
   // Native manual context compaction (thread/compact/start, app-server v2).
   // Optional — non-Codex backends omit it; the AgentManager RPC wrapper guards.

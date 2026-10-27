@@ -157,6 +157,8 @@ export interface AgentApi {
   loadThread: (threadId: string) => Promise<unknown>
   openThread: (threadId: string) => Promise<unknown>
   renameThread: (threadId: string, title: string) => Promise<void>
+  /** Pin / unpin a conversation in the sidebar (persisted on the thread row). */
+  setThreadPinned: (threadId: string, pinned: boolean) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
   onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
   onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void

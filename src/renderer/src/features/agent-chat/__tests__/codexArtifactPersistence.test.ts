@@ -65,6 +65,43 @@ describe('codexArtifactPersistence', () => {
     }
   })
 
+  it('carries the tool-saved local copies as fallbackUris so an unreachable COS url still renders', () => {
+    recordCodexArtifact(THREAD, {
+      id: 'a',
+      createdAt: 1,
+      historyId: 9,
+      paths: ['D:\\out\\a-1.png', 'D:\\out\\a-2.png'],
+    })
+    const merged = mergeCodexArtifacts(THREAD, [], () => [
+      'https://bucket.cos.ap-guangzhou.myqcloud.com/a-1.png',
+      'https://bucket.cos.ap-guangzhou.myqcloud.com/a-2.png',
+    ])
+    const item = merged[0].items[0]
+    expect(item.type).toBe('artifact')
+    if (item.type !== 'artifact') return
+    // Copy #i backs url #i first, the rest trail behind it.
+    expect(item.artifacts[0].fallbackUris).toEqual(['file:///D:/out/a-1.png', 'file:///D:/out/a-2.png'])
+    expect(item.artifacts[1].fallbackUris).toEqual(['file:///D:/out/a-2.png', 'file:///D:/out/a-1.png'])
+  })
+
+  it('drops an expired presigned model url from history and falls back to the local copies', () => {
+    const expired =
+      'https://aigc-output-image-1326893053.cos.ap-guangzhou.myqcloud.com/x.png?q-sign-algorithm=sha1&q-ak=AKID&q-sign-time=1700000000;1700003600&q-key-time=1700000000;1700003600&q-header-list=host&q-url-param-list=&q-signature=abc'
+    recordCodexArtifact(THREAD, { id: 'a', createdAt: 1, historyId: 9, paths: ['D:\\out\\x.png'] })
+    const merged = mergeCodexArtifacts(THREAD, [], () => [expired])
+    const item = merged[0].items[0]
+    if (item.type !== 'artifact') throw new Error('expected artifact')
+    expect(item.artifacts).toHaveLength(1)
+    expect(item.artifacts[0].uri).toBe('file:///D:/out/x.png')
+    expect(item.artifacts[0].fallbackUris).toBeUndefined()
+  })
+
+  it('skips the bubble entirely when the history url expired and no local copy exists', () => {
+    const expired = 'https://x.cos.ap-guangzhou.myqcloud.com/x.png?q-sign-time=1700000000;1700003600&q-signature=abc'
+    recordCodexArtifact(THREAD, { id: 'a', createdAt: 1, historyId: 9 })
+    expect(mergeCodexArtifacts(THREAD, [], () => [expired])).toEqual([])
+  })
+
   it('never floats a rebuilt bubble above the server messages, even when server times read newer (reload clock skew)', () => {
     // Reproduces the reported bug: after closing/reopening, server messages can
     // come back stamped with the reopen time (newer than the anchor). The image

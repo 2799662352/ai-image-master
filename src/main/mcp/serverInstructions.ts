@@ -25,9 +25,9 @@ export const CATIMATION_SERVER_INSTRUCTIONS = [
   'Per-card writes touch different cards and are safe in parallel. Reordering is order-dependent '
   + 'and is the exception: never issue video_workbench_move_task calls in parallel.',
 
-  'Every tool result is silently truncated at ~10k tokens, so read the workbench in layers: page '
-  + 'summaries, then the per-page card index, then full prompts only for cards you name in '
-  + 'video_workbench_export cardIds. Engineered prompts all open alike, so a truncated head barely '
-  + 'distinguishes cards — leaving one-line notes (video_workbench_set_board_summary, '
-  + 'video_workbench_set_card_summary) is what keeps the upper layers worth reading.',
+  'Every tool result is silently truncated at ~10k tokens, so read the workbench in layers: projects, '
+  + 'page summaries, video_workbench_status fields:"concise", then detailed cards or full prompts only '
+  + 'for cards you name. Engineered prompts all open alike, so a truncated head barely distinguishes '
+  + 'cards — the one-line notes (video_workbench_set_project_summary / _set_board_summary / '
+  + '_set_card_summary) are what keep the upper layers worth reading.',
 ].join('\n\n')

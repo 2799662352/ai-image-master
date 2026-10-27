@@ -35,14 +35,18 @@ import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
 import { runStartupDedupOnce } from './agent/historyDedup'
 import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
+import { registerPetsIpc } from './pets/ipc'
+import { installVoiceProtocol, registerVoiceIpc } from './voice/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/cosClient'
+import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
 import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
 import { renameWithRetry } from './utils/atomicFile'
 import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } from './services/audioHistoryFiles'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
+import { registerProjectFileIpc } from './services/videoWorkbench/projectFileIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
@@ -55,6 +59,9 @@ import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { registerAuthIpc } from './services/auth/ipc'
+import { allowAuthBaseUrlOverride } from './services/auth/authBaseUrl'
+import { registerPortraitLibraryIpc } from './services/portraitLibrary/ipc'
+import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
@@ -465,6 +472,10 @@ function createWindow(): void {
     }
   })
 
+  // 平台余额：出网时把标记头换成真凭据。必须用同一个 session 对象 ——
+  // 用 session.defaultSession 在设了 partition 的窗口上会挂错地方。
+  installGatewayHeaderInjector(mainWindow.webContents.session)
+
   // 安全: 设置 Content Security Policy
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -528,8 +539,18 @@ function createWindow(): void {
   //   3. F11 是 v4.3.12 重新接回的 affordance:`Menu.setApplicationMenu(null)`
   //      去掉默认菜单后副作用是 togglefullscreen role 的 accelerator 也丢,
   //      这里在 keyDown 上显式 toggle 把行为还回来。
+  //   4. Electron 把 `Input.type` 声明成宽 `string`(运行时只会是 keyDown/keyUp),
+  //      所以这里先做一次运行时收窄再往下传。keyDown 的取舍仍留在被测的
+  //      resolveMainWindowShortcut 里,本文件不重复那个判断。
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    const action = resolveMainWindowShortcut(input)
+    if (input.type !== 'keyDown' && input.type !== 'keyUp') return
+    const action = resolveMainWindowShortcut({
+      key: input.key,
+      type: input.type,
+      control: input.control,
+      meta: input.meta,
+      shift: input.shift,
+    })
     if (!action || !mainWindow) return
     switch (action.type) {
       case 'toggleDevTools':
@@ -1280,7 +1301,9 @@ app.whenReady().then(async () => {
   }
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
   installLocalFileHandler()
+  installVoiceProtocol()
   registerFsIpc()
+  registerProjectFileIpc(() => mainWindow)
   registerAttachmentsTreeIpc(getPrisma)
   registerAttachmentsThumbIpc()
   // media:thumb — resized-JPEG hot-path IPC for chat/thumbnail render surfaces
@@ -1320,9 +1343,27 @@ app.whenReady().then(async () => {
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
 
+  // 🚨 必须**先于** registerAuthIpc:后者内部的 `loadPersisted()` 会拿 `authBaseUrl()`
+  // 去比对盘上凭据的签发环境,比对早于注入的话,开发构建会把自己上一轮在测试服存的
+  // token 判成「别的环境」而丢弃 —— 每次启动都白重取一次。
+  //
+  // 默认关、这里才打开:忘了这一行的后果是「开发时 override 不生效」(看得见);
+  // 反过来默认开的话,忘了关就是「打包产物被环境变量牵去测试服」(看不见,且表现为
+  // 一句没头没脑的 401)。见 `allowAuthBaseUrlOverride` 的注释。
+  allowAuthBaseUrlOverride(!app.isPackaged)
+
+  // 顺带把上次会话落盘的网关 token 读回内存(registerAuthIpc 内的 loadPersisted)。
+  // 它要用 app.getPath / safeStorage,所以只能挂在 whenReady 之后的这条路径上。
   registerAuthIpc(
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
+
+  // 平台人像库(走平台余额那条路)。与上面 vvdance 那套人像库并存,两边素材互不可见。
+  //
+  // 同样必须在 createWindow 之前:人像库页面挂载即调 list(),晚注册会被
+  // 「No handler registered」reject,页面钉死在空状态。这一层没有启动副作用、
+  // 不读盘(绑定文件是懒读的),所以放在这里不增加启动开销。
+  registerPortraitLibraryIpc()
 
   // 关键路径：创建窗口
   createWindow()
@@ -1627,6 +1668,9 @@ registerPluginMarketplaceIpc({
   skillStateFile: marketplaceStateFile,
 })
 
+registerPetsIpc()
+registerVoiceIpc()
+
 // One-shot adoption pass. v4.3.4 users have ~20 bundled skills already on
 // disk (we used to mirror them every launch); marking them as `adopted`
 // lets the marketplace UI show them under "Installed" so users can
@@ -1873,6 +1917,7 @@ ipcMain.handle(
         key,
         body,
         contentType: mimeType,
+        picOperations: imageHistoryPicOperations(key, mimeType),
       })
 
       void metadata
@@ -2011,6 +2056,7 @@ ipcMain.handle(
             key,
             body,
             contentType: mimeType,
+            picOperations: imageHistoryPicOperations(key, mimeType),
           })
         } else {
           // 流式必须先有目标路径,但真实 content-type 要等响应头到了才知道。
@@ -2042,6 +2088,7 @@ ipcMain.handle(
               key: fallbackKey,
               body: buffered.body,
               contentType: fallbackMime,
+              picOperations: imageHistoryPicOperations(fallbackKey, fallbackMime),
             })
             void metadata
             broadcastUploadResult({ requestId, success: true, url: fallbackUrl, key: fallbackKey })
@@ -2069,6 +2116,7 @@ ipcMain.handle(
             key,
             filePath: localPath,
             contentType: mimeType,
+            picOperations: imageHistoryPicOperations(key, mimeType),
           })
         }
 
@@ -2151,6 +2199,7 @@ ipcMain.handle(
           key,
           body,
           contentType: mimeType,
+          picOperations: imageHistoryPicOperations(key, mimeType),
         })
         void metadata
         broadcastUploadResult({ requestId, success: true, url, key, localPath })
@@ -2228,6 +2277,7 @@ ipcMain.handle(
         key,
         body,
         contentType: mimeType,
+        picOperations: imageHistoryPicOperations(key, mimeType),
       })
 
       void metadata

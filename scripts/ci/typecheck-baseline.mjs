@@ -145,7 +145,19 @@ function runCli() {
     const baseline = {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
-      expiresAt: '2026-08-31',
+      // 到期日**刻意硬编码在这里**,不做成配置项 —— `--write` 重新生成基线不能顺手续期,
+      // 否则这个债务闸就退化成「每次跑一下就永远不过期」。改这个字面量是一次显式决定,
+      // 应当配一份复审记录。
+      //
+      // 2026-08-31 → 2026-10-31（2026-08-28 复审,记录见
+      // `docs/superpowers/specs/2026-08-28-typecheck-baseline-review.md`）:
+      // 诊断数 828 →（基线快照 51）→ 43 → **7**,零新增。剩下的 7 条不是「懒得修」,
+      // 是每条的修法都需要一个**不属于类型系统的决定**:
+      //   - smartErase × 4：`stack` 恒为 undefined，修它要改 JobQueue 的运行时日志行为；
+      //   - StorageBridge × 2：两份 `HistoryItem` 打架，要先定权威那份住在哪；
+      //   - deepagents × 1：包未声明未安装，而它的 peer 依赖要跨 6 个包升 LangChain 生态。
+      // 两个月后再复审一次,那时上面三个决定应该已经有答案。
+      expiresAt: '2026-10-31',
       diagnostics: baselineEntriesFromDiagnostics(diagnostics),
     }
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`)

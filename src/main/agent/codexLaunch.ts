@@ -1,4 +1,8 @@
-import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../mcp/config'
+import {
+  CATIMATION_MCP_HOST,
+  CATIMATION_MCP_TOKEN_HEADER,
+  CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES,
+} from '../mcp/config'
 import { assertCodexModelContextConfig } from '../../shared/modelSettings'
 import { CINEMATOGRAPHY_KB_ENV_SCAFFOLD } from './cinematographyKbMcpLauncher'
 import type {
@@ -229,7 +233,7 @@ export interface CodexLaunchOptions {
   /**
    * Additional provider tables to REGISTER (but not activate). Each becomes a
    * `[model_providers.<id>]` entry so a subagent can select it via
-   * `modelProvider="<id>"` (Path B: a qwen3.7-max-dashscope understanding
+   * `modelProvider="<id>"` (Path B: a qwen3.8-omni-flash understanding
    * subagent alongside the main agent's active provider). Unlike
    * {@link provider}, these never set the top-level `model_provider`/`model`,
    * so the main agent's provider is untouched.
@@ -303,6 +307,12 @@ export interface CodexLaunchOptions {
    */
   dashVectorKey?: string
   /**
+   * 本机平台中转(`kbPlatformRelay.ts`)的地址与口令,作为 cinematography_kb 的两条 env
+   * 叶子注入。注入后两个检索工具优先按平台余额计费,中转报「平台不可用」时才用上面
+   * 两个自填 Key。口令只对这个中转有效,平台 token 本身不进 argv。
+   */
+  cinematographyKbPlatformRelay?: { url: string; token: string }
+  /**
    * Freshly-resolved stdio transport for the bundled cinematography-kb-mcp:
    * `command` from `resolveApiyiCommand` (system node, else Electron-as-Node)
    * and `args[0]` = this build's `resources/cinematography-kb-mcp/index.js`.
@@ -333,6 +343,33 @@ export interface CodexLaunchOptions {
 
 function quote(value: string): string {
   return JSON.stringify(value)
+}
+
+const SECRET_ENV_NAME = /(?:KEY|TOKEN|SECRET|PASSWORD)$/i
+const INLINE_TABLE_STRING_ENTRY = /("((?:[^"\\]|\\.)*)"\s*=\s*)"(?:[^"\\]|\\.)*"/g
+
+/**
+ * 启动参数要整行进日志(排障靠它),但有几条 `-c` 的值是密钥:MCP 的 env 密钥叶子、
+ * 整表写法的 env、catimation 的 http_headers。只遮值不遮键 —— 排障要看的是「注入了没有」。
+ */
+export function redactCodexLaunchArgsForLog(args: readonly string[]): string[] {
+  return args.map((arg, index) => {
+    if (args[index - 1] !== '-c') return arg
+    const eq = arg.indexOf('=')
+    if (eq <= 0) return arg
+    const key = arg.slice(0, eq)
+    const value = arg.slice(eq + 1)
+    if (value.trimStart().startsWith('{')) {
+      const masked = value.replace(
+        INLINE_TABLE_STRING_ENTRY,
+        (entry: string, prefix: string, name: string) =>
+          SECRET_ENV_NAME.test(name) ? `${prefix}"<redacted>"` : entry,
+      )
+      return `${key}=${masked}`
+    }
+    const leaf = key.slice(key.lastIndexOf('.') + 1)
+    return key.includes('.env.') && SECRET_ENV_NAME.test(leaf) ? `${key}=<redacted>` : arg
+  })
 }
 
 export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): CodexSessionConfig {
@@ -554,19 +591,24 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // `stage=removed`（设了不生效），接替它的 `resize_all_images` 是
     // `removed + default=true`，即「一律缩图」已是无条件的内建行为，无需再钉。
     //
-    // 下面两个都是 `underDevelopment / default=false`，我们主动打开：
-    //   • unified_image_budget（openai/codex#37206）——对支持 original detail /
-    //     Responses Lite 的模型统一按 6000 像素 / 10000 patch 预处理，并把 `detail`
-    //     控件从 view_image 与 code mode 里藏掉。从工具契约层面消灭「模型自作主张传
-    //     original」这条路，比旧开关更彻底。
-    //   • compaction_image_budget（openai/codex#40280）——远程压缩的保留预算以前只数
-    //     文字不数图片，图多的历史压完后实际上下文比预算以为的大。开启后图片计入预算，
-    //     图会更早被甩掉；本 app 图密集，受益最大的就是这条。
+    // 下面两个我们都显式钉成 true（0.164 的实际阶段见各条）：
+    //   • unified_image_budget（openai/codex#37206，0.164 仍是 underDevelopment / 默认
+    //     关）——对支持 original detail / Responses Lite 的模型统一按 6000 像素 / 10000
+    //     patch 预处理，并把 `detail` 控件从 view_image 与 code mode 里藏掉。从工具契约
+    //     层面消灭「模型自作主张传 original」这条路，比旧开关更彻底。
+    //   • compaction_image_budget（openai/codex#40280，0.164 已是 stable / 默认开）——
+    //     **只作用于远程压缩 v2**：保留预算把图片也计入，图会更早被甩掉。而远程 v2 默认
+    //     只对 OpenAI / Azure 开；千问 / DeepSeek / Claude 等自定义 provider 走**本地压缩**
+    //     （只留最近的用户文字，图和工具结果整条丢掉，再加摘要），这个开关对它们不起作用。
+    //     2026-10-27 在 Miau 网关实测：千问 / DeepSeek 不认 `compaction_trigger`，也没有
+    //     `/v1/responses/compact`，只有 gpt-5.5 能走 v2。所以钉着它只惠及走 OpenAI 通道的
+    //     会话，别指望它管第三方网关上的图。
     //
-    // 破例开 underDevelopment 的依据：实测两者都能被 `-c` 接受并翻成 enabled，前置的
-    // `remote_compaction_v2` 是 stable + 默认开；失败模式温和（不会崩，最坏是压缩时比
-    // 以前多丢一点上下文）。真实压缩效果尚未在第三方网关上实测——那需要一段够长、图够
-    // 多的真实对话——升 stable 时应复核这两行是否还需要显式钉。
+    // 第三方网关上「图越积越多、请求体越来越大」的实际防线是兼容桥的出站淘汰
+    // （`staleToolImages.ts`，社区做法，Codex 官方没有）：Codex 对每张图的 token 估算是
+    // 固定值、与字节数无关，靠 token 触发的压缩等不到图把请求体撑爆之前。
+    // 两个开关都保留显式钉：`codexLaunch.test.ts` 守着；升 stable 或 Codex 改默认值时
+    // 再复核是否还需要。
     '-c', 'features.unified_image_budget=true',
     '-c', 'features.compaction_image_budget=true',
     // Keep first-party MCP tools directly visible instead of deferring them behind tool_search.
@@ -623,6 +665,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // through CodexProtocolClient.setThreadMemoryMode / resetMemory
     // (smoke-verified on the 0.146.0 binary).
     '-c', `features.memories=${sessionConfig.memoriesEnabled}`,
+    // Codex 0.152.0 (openai/codex#41744) made `update_plan` OPT-IN: the
+    // default flipped to `tools.update_plan.enabled=false` AND the planning
+    // guidance was stripped from every prompt path (model, collaboration
+    // mode, multi-agent, compaction, goal continuation) when the tool is off.
+    // Our PlanCard is driven entirely by that tool — `update_plan` →
+    // `turn/plan/updated` → codexNotificationRouter → ActivityCard 'plan' —
+    // so without this pin the card silently never appears on 0.152+. Pinned
+    // explicitly (never omitted) so a future default flip in either direction
+    // can't change what users see.
+    '-c', 'tools.update_plan.enabled=true',
   ]
 
   // Assistant personality (session tuning). 'default' means "let codex
@@ -700,6 +752,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       // call returns its own saved `paths` / `file://` resource_links the moment
       // that image finishes — no per-call wait stalls the others.
       '-c', 'mcp_servers.catimation.supports_parallel_tool_calls=true',
+      '-c', `mcp_servers.catimation.tool_input_schema_max_bytes=${CATIMATION_TOOL_INPUT_SCHEMA_MAX_BYTES}`,
     )
     // Make our `generate_image` the FIRST (and only) image path. Codex 0.137
     // ships a built-in `imagegen` system skill (installed to
@@ -852,6 +905,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push(
       '-c',
       `mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT=${quote(dashVectorEndpoint)}`,
+    )
+  }
+
+  // Platform-billing relay for the same server. Dotted leaves like the key
+  // overlays above, for the same clobbering reason.
+  const kbRelay = options?.cinematographyKbPlatformRelay
+  if (kbRelay?.url && kbRelay.token) {
+    args.push(
+      '-c', `mcp_servers.cinematography_kb.env.CATIMATION_KB_RELAY_URL=${quote(kbRelay.url)}`,
+      '-c', `mcp_servers.cinematography_kb.env.CATIMATION_KB_RELAY_TOKEN=${quote(kbRelay.token)}`,
     )
   }
 

@@ -2,6 +2,7 @@ import COS from 'cos-nodejs-sdk-v5'
 import { getCredentials, onCredentialsInvalidated } from './credentials'
 import { getStsCredentials, getMediaStsCredentials } from './stsCredentials'
 import { getMediaAuth } from './mediaAuth'
+import { picOperationsHeader, type PicOperations } from './cosThumbRules'
 
 type CosInstance = {
   putObject: (params: any, cb: any) => void
@@ -176,6 +177,39 @@ export interface UploadBufferToBucketOptions {
   key: string
   body: Buffer
   contentType?: string
+  /**
+   * 数据万象「上传时处理」规则(见 cosThumbRules.ts):万象在存原图的同时把缩略图
+   * 存成桶里的独立对象。处理失败**不能**拖垮上传 —— 带头的请求出错时会去掉头
+   * 原样重传一次,原图照常落桶,只是没有持久化缩略图(读侧回落实时 imageMogr2)。
+   */
+  picOperations?: PicOperations
+}
+
+/**
+ * 带 Pic-Operations 的请求失败时,去掉头再试一次。万象那边的错(原图超 32 MB、
+ * 格式不认、CI 抖动)和网络错在 SDK 回调里长得一样,不值得分辨:重传一次成本
+ * 是一次上传,而缩略图缺失读侧本来就有兜底。
+ */
+async function withPicOperationsFallback(
+  op: string,
+  ctx: Record<string, unknown>,
+  picOperations: PicOperations | undefined,
+  run: (headers: Record<string, string> | undefined) => Promise<void>,
+): Promise<void> {
+  if (!picOperations) {
+    await run(undefined)
+    return
+  }
+  try {
+    await run({ 'Pic-Operations': picOperationsHeader(picOperations) })
+  } catch (err) {
+    console.warn(`[cosClient] ${op}: upload with Pic-Operations failed, retrying without persistent thumbnails`, {
+      ...ctx,
+      code: (err as { code?: unknown })?.code,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    await run(undefined)
+  }
 }
 
 /**
@@ -198,29 +232,29 @@ export async function uploadBufferToBucket(opts: UploadBufferToBucketOptions): P
   const cos = getStsCosInstance()
   await ensureStsCredentials()
   const Key = opts.key.replace(/^\/+/, '')
-  await new Promise<void>((resolve, reject) => {
-    cos.putObject(
-      {
-        Bucket: opts.bucket,
-        Region: opts.region,
-        Key,
-        Body: opts.body,
-        ContentType: opts.contentType,
-      },
-      (err: any) => {
-        if (err) {
-          logCosError('uploadBufferToBucket', err, {
-            Bucket: opts.bucket,
-            Region: opts.region,
-            Key,
-          })
-          reject(err)
-          return
-        }
-        resolve()
-      },
-    )
-  })
+  const ctx = { Bucket: opts.bucket, Region: opts.region, Key }
+  await withPicOperationsFallback('uploadBufferToBucket', ctx, opts.picOperations, (Headers) =>
+    new Promise<void>((resolve, reject) => {
+      cos.putObject(
+        {
+          Bucket: opts.bucket,
+          Region: opts.region,
+          Key,
+          Body: opts.body,
+          ContentType: opts.contentType,
+          ...(Headers ? { Headers } : {}),
+        },
+        (err: any) => {
+          if (err) {
+            logCosError('uploadBufferToBucket', err, ctx)
+            reject(err)
+            return
+          }
+          resolve()
+        },
+      )
+    }),
+  )
   return `https://${opts.bucket}.cos.${opts.region}.myqcloud.com/${Key}`
 }
 
@@ -243,6 +277,8 @@ export interface UploadStreamToBucketOptions {
    */
   hardTimeoutMs?: number
   onProgress?: (info: UploadStreamProgress) => void
+  /** 同 {@link UploadBufferToBucketOptions.picOperations};SDK 把 Headers 传到 CompleteMultipartUpload,分块上传同样生效(实测)。 */
+  picOperations?: PicOperations
 }
 
 /**
@@ -272,47 +308,47 @@ export async function uploadStreamToBucket(opts: UploadStreamToBucketOptions): P
     try { cos.cancelTask(taskId) } catch { /* SDK 内部可能已 cleanup */ }
   }
 
-  await new Promise<void>((resolve, reject) => {
-    const hardTimer = setTimeout(() => {
-      logCosError(
-        'uploadStreamToBucket-timeout',
-        new Error(`sliceUploadFile 超过 ${hardTimeoutMs}ms 仍未完成`),
-        { Bucket: opts.bucket, Region: opts.region, Key, filePath: opts.filePath, taskId },
-      )
-      safeCancel()
-      reject(new Error('sliceUploadFile timeout'))
-    }, hardTimeoutMs)
-    hardTimer.unref?.()
+  const ctx = { Bucket: opts.bucket, Region: opts.region, Key, filePath: opts.filePath }
+  await withPicOperationsFallback('uploadStreamToBucket', ctx, opts.picOperations, (Headers) =>
+    new Promise<void>((resolve, reject) => {
+      taskId = undefined
+      const hardTimer = setTimeout(() => {
+        logCosError(
+          'uploadStreamToBucket-timeout',
+          new Error(`sliceUploadFile 超过 ${hardTimeoutMs}ms 仍未完成`),
+          { ...ctx, taskId },
+        )
+        safeCancel()
+        reject(new Error('sliceUploadFile timeout'))
+      }, hardTimeoutMs)
+      hardTimer.unref?.()
 
-    cos.sliceUploadFile(
-      {
-        Bucket: opts.bucket,
-        Region: opts.region,
-        Key,
-        FilePath: opts.filePath,
-        ContentType: opts.contentType,
-        onProgress: opts.onProgress,
-        onTaskReady: (id: string) => {
-          taskId = id
+      cos.sliceUploadFile(
+        {
+          Bucket: opts.bucket,
+          Region: opts.region,
+          Key,
+          FilePath: opts.filePath,
+          ContentType: opts.contentType,
+          ...(Headers ? { Headers } : {}),
+          onProgress: opts.onProgress,
+          onTaskReady: (id: string) => {
+            taskId = id
+          },
         },
-      },
-      (err: any) => {
-        clearTimeout(hardTimer)
-        if (err) {
-          logCosError('uploadStreamToBucket', err, {
-            Bucket: opts.bucket,
-            Region: opts.region,
-            Key,
-            filePath: opts.filePath,
-          })
-          safeCancel()
-          reject(err)
-          return
-        }
-        resolve()
-      },
-    )
-  })
+        (err: any) => {
+          clearTimeout(hardTimer)
+          if (err) {
+            logCosError('uploadStreamToBucket', err, ctx)
+            safeCancel()
+            reject(err)
+            return
+          }
+          resolve()
+        },
+      )
+    }),
+  )
   return `https://${opts.bucket}.cos.${opts.region}.myqcloud.com/${Key}`
 }
 

@@ -11,6 +11,7 @@
 //   catimation-video-workbench <- resources/plugins/catimation-video/skills/catimation-video-workbench/SKILL.md
 //   ffmpeg-win <- resources/plugins/catimation-video/skills/ffmpeg-win/SKILL.md
 //   catimation-director-stage <- resources/first-party-skills/catimation-director-stage/SKILL.md
+//   graphify <- resources/first-party-skills/graphify/SKILL.md
 
 export interface GeneratedFirstPartySkill {
   name: string
@@ -104,34 +105,27 @@ image_gen skill: they render inside the chat AND persist results to local files
   合并到同一个标签。
 - **裸 asset ID 严禁进正文。** \`asset://…\` 只出现在 \`referenceImages\` 参数里,
   提示词里一律用 \`[charN]\` 或 \`reference image N\` —— 模型关联不了无语义 ID。
-- **别照抄视频侧的 \`@图片N\`。** 视频那条路会在发送前把 \`@图片1\` 归一成 \`图片1\`
-  (\`normalizeSeedancePromptReferences\`),**图片链路不做这道归一**,提示词原样透传,
-  \`@\` 会连着进模型。图片提示词一律写英文原形 \`reference image N\`。
+- **别照抄视频侧的 \`@图片N\`。** 那是 Seedance 上游认识的提示词素材引用语法,视频链路
+  原样发过去正好;图片模型不认识它,同样原样透传就成了一段无意义文字。图片提示词一律写
+  英文原形 \`reference image N\`。
 
 **第 4 字段(镜头相机)和第 6 字段(构图)不许凭记忆编术语 —— 但也不必逐张查库。**
-查的单位是「这个机位/运动」,不是「这条提示词」。这条曾写成「每条至少查三次」,
-一组 20 张就是 60 次工具往返,几十分钟耗在把同一个 \`dolly in\` 反复查上。现在的口径:
+查的单位是「这个机位/运动」,不是「这条提示词」(逐张查会让一组 20 张白耗几十分钟):
 
 - **只有用到非常规机位或运动时才查** \`search_cinematography_kb\`(\`dolly in\`、\`arc\`、
-  \`low-angle pedestal\`、\`rack focus\`…),拿库里的权威写法而不是「镜头慢慢靠近」。
-  \`medium shot, eye-level, 50mm\` 这类常规组合**不查** —— 本来就没歧义。
-- **一个机位查一次就够。** 只有它是这组图的关键设计、或第一版措辞被判定含糊时,
-  才追加一次查描述规范或 critique/fix 对照。
-- **同一任务内查过的直接复用,不逐张重查。** 一组图通常只有 1–3 种机位,
-  整组的查库次数是个位数,不是张数的三倍。
+  \`low-angle pedestal\`、\`rack focus\`…),拿库里的权威写法;\`medium shot, eye-level, 50mm\`
+  这类常规组合**不查**。
+- **一个机位查一次,同一任务内直接复用**;只有它是关键设计、或第一版措辞含糊时,才追加
+  一次 critique/fix 对照。整组的查库次数是个位数,不是张数的三倍。
 - **查到什么就原样写什么,不要译成中文。** \`rack focus\`、\`low-angle\`、\`deep focus\`
-  是模型训练时见到的**确切词形**,中文对译(「变焦对焦」「仰拍」)不是等价物 ——
-  换过去等于把一个精确坐标换成一个大致方向。**提示词整体是中文也照样保留这些英文
-  原词**:中英混排正是知识库里那些参考 caption 的真实样子,不是将就。跟用户解释时
-  怎么说都行,但进提示词的那份必须是检索回来的原文。
+  是模型训练时见到的**确切词形**;**提示词整体是中文也照样保留这些英文原词**。
 
 做动画风格时按同样口径用 \`query_sakuga_dataset\` 拿技法标签(smears、
 impact_frames、background_animation…)与作画/studio 归属。工具不可用时退回联网
 检索,并在交付里说明这条未经库校准。
 
-> 需要展开讲字段边界、负向清单、完整范例或常见错误对照时,再读
-> \`director-prompt-engineering\`。**上面这份骨架够用的任务不要去读它** —— 多一次
-> 文件读取就是多一个来回,而它给的就是这七行加上面这条查库纪律。
+> 需要字段边界、负向清单、完整范例时再读 \`director-prompt-engineering\`;
+> **骨架够用的任务不要读它** —— 多一次文件读取就是多一个来回。
 
 **角色要复用时才载角色链。** 判据是**这个人还要再出现**(组图、系列、同一个人跨会话
 再出、或用户给了人物参考图)—— 只有这时才载下面两个;单张一次性的人物图不载:
@@ -146,16 +140,11 @@ impact_frames、background_animation…)与作画/studio 归属。工具不可�
 外貌导致微漂移、想省 token 时,再按需看 director-structured-captioning
 (HoloCine 结构,用 \`[char1]\` 标签引用而不重描外貌)。
 
-**跨任务一致性靠人像库,不靠记忆。** 角色链解决的是「这一批图里不漂」;
-**「下次、下个会话、下个项目还是同一个人」要靠 \`catimation-portrait-library\`** ——
-角色需要跨任务复用时载它,一次性配图不载。上面提出来的 Face / Build / Outfit / Markers 锚点,
-以及用户选定的主锚图,**出完图就 \`add_to_portrait_library\` 存成 \`asset://assetId\`**;
-下次要同一个人时 \`list_portrait_library\` 找回同一个 asset 再传进 \`referenceImages\`,
-而不是凭聊天记录重新描述一遍。
-
-判据很简单:**这个角色会不会再出现第二次?** 会 → 存库并用 \`asset://\` 引用。
-用户说「还是上次那个人」「用之前那个角色」时,先查库,查不到再问,别自己重画一个。
-一次性的路人、不会复用的配角不必入库。
+**跨任务一致性靠人像库,不靠记忆。** 角色链只管「这一批图里不漂」;「下个会话还是同一个人」
+要靠 \`catimation-portrait-library\`。判据:**这个角色会不会再出现第二次?** 会 → 出完图就
+\`add_to_portrait_library\` 把 Face / Build / Outfit / Markers 锚点和用户选定的主锚图存成
+\`asset://assetId\`,下次 \`list_portrait_library\` 找回再传进 \`referenceImages\`,别凭聊天记录重新
+描述。用户说「还是上次那个人」时先查库,查不到再问,别自己重画。一次性的路人、配角不必入库。
 
 | 模式 | 典型请求 | 自选技法预算 | 默认动作 |
 |---|---|---|---|
@@ -198,28 +187,43 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
    - \`model\` (optional): rendering channel **override**. **Omit it** to honor the
-     user's channel picker in the chat composer (default VIP). Only set it when you
+     user's channel picker in the chat composer (default 腾讯 image2). Only set it when you
      have a concrete reason — a consistent 组图 series (→ \`wan2.7-image-pro\`) or a
-     channel the user explicitly names this turn (see "Choosing a model" below):
-     - \`gpt-image-2-vip\` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
-     - \`gpt-image-2\` — API易 OpenAI 官方旗舰 Image2（按 token 计费，慢但质量上限最高，4K+mask 重绘）.
-     - \`wan2.7-image-pro\` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
-     - \`gemini-3.1-flash-image\` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
-     - \`doubao-seedream-5-0-pro-260628\` — 火山豆包 Seedream 5.0 Pro（多图融合最强，
-       最多 10 张参考图；1K/2K、仅单图）.
-     站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
+     channel the user explicitly names this turn (see "Choosing a model" below).
    - \`ratio\` (optional): aspect ratio, e.g. \`1:1\`, \`16:9\`, \`9:16\`, \`4:3\`, \`3:2\`.
      Omit or \`auto\` lets the model decide.
    - \`resolution\` (optional): clarity tier — prefer \`2K\` by default. Use \`1K\`
      only when the user asks for fast/cheap/draft; use \`4K\` only when the user
      explicitly asks for print/ultra-detail/4K.
-   - \`quality\` (optional): \`auto\` (default), \`low\`, \`medium\`, or \`high\`. Use
-     \`high\` for images with text or fine detail.
-   - \`count\` (optional, **wan2.7 only**): number of images from THIS one prompt
-     (1–12, default 1). Set \`model: 'wan2.7-image-pro'\` + \`count > 1\` to get a
-     front-to-back **consistent 组图 series** (same character/subject across
-     frames, e.g. 同一只猫的四季). Other channels ignore \`count\` (always 1). For
-     several *unrelated* images, use \`generate_images\` (one prompt each) instead.
+   - \`quality\` (optional): \`auto\`/\`low\`/\`medium\`/\`high\`; 2.5(官转 flare/sunburst 与
+     腾讯 og-v2.5)另有 \`xhigh\`/\`max\`. Prefer \`high\` on 2.5 (\`auto\` drifts cost).
+   - \`transparentBackground\` (optional, **2.5 only**:官转 flare/sunburst 或腾讯
+     \`custom-model-og-v2.5-f\`/\`-s\`): \`true\` 出带 alpha 的透明底 PNG——用户要 透明底 / 贴纸 /
+     logo / 素材 / 「不要背景」时用,并显式传一条 2.5 的 \`model\`。其它渠道忽略此参数照常出
+     不透明底;这不是图层分离(那是 \`layerDecomposition\`)。
+   - \`maskImage\` (optional, **gpt-image-2 / 2.5 only**,2.5 含腾讯 og-v2.5): 局部重绘(inpainting /
+     擦除)遮罩,本地路径或 URL。**带 alpha 的 PNG**,alpha=0 处 = 允许重绘;**尺寸须与
+     \`referenceImages[0]\` 一致**(只作用于第一张),<4MB。用法:\`referenceImages: [原图]\` +
+     \`maskImage\` + 显式 \`model\`;prompt 先写透明区域里的那一个改动,再列必须保留的部分——
+     mask 是 prompt-guided,不是像素级硬约束。灯箱「擦除」会附 \`<原图名>.mask.png\`,即此参数,
+     并点名用户当前选的那条 2.5;其它渠道没有 mask 字段,传了会被拒(不会静默重画整张)。
+   - \`modelParams\` (optional, **悠船 \`youchuan-*\` only**): 悠船专属旋钮(\`hd\` 原生 2K /
+     \`quality\` / \`chaos\` / \`stylize\` / \`raw\` / \`iw\` / \`sref\` / \`sw\` / \`seed\` / \`no\`)。**默认一个都
+     别传**;只有用户明说「更疯 / 风格化拉高 / 关掉 2K / 固定 seed / 排除某元素」才设对应项。
+     越界值会被**拒绝**而不是截断(按次计费)。
+   - \`count\` (optional): number of images from THIS one prompt (default 1). Two
+     different meanings, pick by what the user wants:
+     - **consistent 组图 series** — \`model: 'wan2.7-image-pro'\` + \`count\` 2–12
+       (same character/subject across frames, e.g. 同一只猫的四季).
+     - **independent variations (原生多图)** — \`count\` 2–4 on the OpenAI 官转
+       channels \`gpt-image-2.5-flare\` / \`gpt-image-2.5-sunburst\` / \`gpt-image-2\`
+       (and 腾讯 og-v2 / og-v2.5, 文生图), or 2–6 on \`qwen-image-3.0-pro\`. ONE
+       request returns \`count\` variants of the same prompt (文生图与改图都行).
+       官转按 token **每张**计费,\`count: 4\` ≈ 单张 4 倍 —— 用户要「几个方案挑一挑」
+       时才加,别默认给多张。
+     Other channels (2.5 -all / vip / 腾讯 image2 / nano / seedream) ignore \`count\`
+     (always 1). For several *unrelated* images, use \`generate_images\` (one prompt
+     each) instead.
    - \`referenceImages\` (optional but **important**): array of local file paths
      or data/http URLs for image-to-image / editing. **If the user gave you any
      image material, you MUST reuse it here** (see "Reference images" below).
@@ -280,18 +284,17 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 ## Choosing a model (user's composer picker is the default; you may override)
 
 The \`model\` param is an **optional override**. By default (omit it) generation runs
-on the channel the **user picked in the chat composer** (VIP / Image2 官方 / 腾讯 /
-Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default VIP) — 各渠道共用同一套 ratio ×
-resolution × quality 参数面(Seedream 5.0 Pro 只有 1K/2K、无 quality 轴,多传会被
-网关安全剔除)。
-Omitting \`model\` honors the user's pick — do this for ordinary requests. Set \`model\`
-only when you have a concrete reason to override:
+on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
+VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / Seedream; default 腾讯 image2) — 各渠道共用
+ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-all\` 把尺寸
+写进 prompt). Omit \`model\` for ordinary requests. Set it only with a concrete reason:
 
-- **\`gpt-image-2-vip\` (OpenAI 官逆)** — pick when the user says 官逆 / vip /
-  稳定渠道. Stable alternate; same param surface as the default.
-- **\`gpt-image-2\` (API易 OpenAI 官方旗舰 / Image2 官方)** — pick when the user says
-  官方 / 旗舰 / image2 官方 / gpt-image-2. 按 token 计费(low/med/high 价差大),
-  60–360s 慢渠道,但质量上限最高,支持 4K+mask 重绘;日常出图别默认选它。
+- **\`gpt-image-2.5-flare\`** — flare / 速度优先 / 2.5 文生图 / 透明底. ~20s,同价取代 gpt-image-2; quality 默认 high,另有 xhigh/max; 支持 \`transparentBackground\`(2.5 家族独有,含下面腾讯两条).
+- **\`gpt-image-2.5-sunburst\`** — sunburst / 画质优先 / 2.5 改图 / 透明底. ~40s,同价更锐; 也支持 \`transparentBackground\`.
+- **\`gpt-image-2.5-all\`** — all / 网页逆向 / $0.03. 尺寸写进 prompt,不发 size/quality.
+- **\`gpt-image-2-vip\`** — 仅用户说 官逆/vip 时. 不要当默认,也不要编 2.5 vip 渠道.
+- **\`gpt-image-2\`** — 仅用户点名旧官转/gpt-image-2. 日常改用 flare/sunburst.
+  三条官转(flare / sunburst / gpt-image-2)都支持原生多图 \`count\` 1–4(独立变体,按张计费)。
 - **\`wan2.7-image-pro\` (阿里万相 2.7 pro)** — pick when the user says 万相 /
   wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
   series** (e.g. "同一只猫的四季组图，前后一致"). For a 组图 series, call
@@ -303,6 +306,8 @@ only when you have a concrete reason to override:
 - **\`gemini-3.1-flash-image\` (Nano Banana 2)** — pick when the user says nano /
   nano2 / nano banana / gemini / 谷歌. 谷歌 Gemini 原生端点，出图快(~15s)、支持
   超多宽高比与 4K，中文/文字与一致性也不错。
+- **\`gemini-nano-banana-2.1\` (Nano Banana 2.1)** — user says nano 2.1 / 新版 nano.
+  Nano2 升级版:画质、图中文字、多轮改图更稳;仅 1K/2K/4K(无 0.5K)。只说 nano 时仍用 Nano2。
 - **\`doubao-seedream-5-0-pro-260628\` (火山豆包 Seedream 5.0 Pro)** — pick when the
   user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
@@ -310,26 +315,48 @@ only when you have a concrete reason to override:
   见「图层分离」一节). 注意:普通出图仅单图(\`count\` 无效)、分辨率只有 1K/2K
   (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。图层分离是例外——那一次会
   返回 1 底图 + 最多 16 层。
-- All six accept \`referenceImages\` for image-to-image / editing.
+- **\`custom-imagemodel-gt\` (腾讯 image2)** — pick when the user says 腾讯 / tencent /
+  image2 腾讯. 快(~30s),网关已关水印。
+- **\`custom-model-og-v2\` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
+  image2 fast / og. 与腾讯 image2 **能力相同**,但更快(~20s)、价格约 1/6、且能一次
+  出多张。用户没有特别偏好而只是想省钱或求快时,这条优先于 \`custom-imagemodel-gt\`。
+- **\`custom-model-og-v2.5-f\` / \`custom-model-og-v2.5-s\` (腾讯 2.5 Flare / Sunburst)**
+  — pick when the user says 腾讯 2.5 / 腾讯 flare / 腾讯 sunburst, or wants 2.5 但走
+  平台额度. 与官转同模型、不同线:og 协议、与 image2 fast 同价、五档 quality 默认
+  high、\`count\` 1–4(文生图);\`transparentBackground\` / \`maskImage\` **同样支持**——
+  用户选了腾讯线就别为透明底或擦除跳回官转。
+- **\`qwen-image-3.0-pro\` (阿里通义千问 Image 3.0 Pro)** — pick when the user says
+  千问 / qwen / qwen image. 一次可出 1–6 张,参考图最多 3 张(传更多会被**拒绝**,
+  不是截断——需要最多 10 张时改用 Seedream 5.0 Pro)。上游可能改写请求尺寸,
+  所以别向用户承诺确切像素;负向提示词会被网关丢弃,要压画质问题写进正向提示词。
+- **\`youchuan-v8.2\` / \`youchuan-v8.2-turbo\` (悠船 Midjourney V8.2 快速 / 极速)** — pick when
+  the user says Midjourney / MJ / 悠船。同一模型两档速度(快速 ~60s、极速 ~30s 但更贵),
+  **一次固定出 4 张、只计一次费**(\`count\` 无效);用户没说要快就用快速。\`ratio\` 支持 auto 与
+  任意 W:H;最多 20 张 http(s) 参考图(本地图自动上传,不收 base64);没有 \`resolution\` /
+  \`quality\` 轴,原生 2K 等旋钮走 \`modelParams\`(\`hd\` 默认开、计费 ×1.5)。**提示词里别写
+  \`--v\` / \`--turbo\` / \`--hd\` 这类参数**(网关会拒):版本与速度只由 \`model\` 决定,其余走 \`ratio\` / \`modelParams\`。
+  不自动重试,失败后先告诉用户再重来。
+- 以上渠道都接受 \`referenceImages\`(图生图 / 图像编辑)。
 
 ### 站点要求(已自动处理 — 无需手动切站点)
 
-\`custom-imagemodel-gt\`(腾讯 image2)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)和
-\`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)**都只经 Miau API 代理提供**。
+四条腾讯渠道(\`custom-imagemodel-gt\` / \`custom-model-og-v2\` / \`custom-model-og-v2.5-f\` /
+\`custom-model-og-v2.5-s\`)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`
+(通义千问 Image 3.0 Pro)、\`youchuan-v8.2\` / \`youchuan-v8.2-turbo\`(悠船)和
+\`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)
+**都只经 Miau API 代理提供**。
 出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
 里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
 
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可,无需切换当前站点。
-- \`gpt-image-2-vip\`、\`gpt-image-2\`(Image2 官方)和 \`gemini-3.1-flash-image\`
-  (Nano Banana 2)走当前选中站点(任意站点可用,无需 Miau)。
+- 其余渠道(官转 2.5 / -all / vip / gpt-image-2 / Nano2 / Nano2.1)跟随当前站点(不钉 Miau):
+  选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
 
-When the user does not name a channel, **do not guess** — just omit \`model\` so the
-render honors the user's composer picker (default VIP). Set \`model\` only for a
-concrete reason (组图 → \`wan2.7-image-pro\`, 多参考图融合 →
-\`doubao-seedream-5-0-pro-260628\`, or a channel the user named). Never invent a
-model name; only these six values are valid.
+用户没点名渠道就**省略 \`model\`**(交给 composer 选的渠道,默认腾讯 image2);只为具体
+理由设它(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、2.5 改图 →
+sunburst、MJ/悠船 → youchuan、或用户点名的渠道)。Never invent a model name.
 
 ## Reference images — reuse the user's material (important)
 
@@ -385,10 +412,8 @@ Rules:
 
 **计费按张,不是按次。** 一次拆分出 N 张就扣 N 张的钱(2026-08-24 实测:一张四元素
 海报拆出 4 张,上游 \`usage.generated_images = 4\`)。复杂图可能到 17 张——**先告诉用户
-这一点再拆**,尤其是用户说「随便试试」的时候。
-
-结果在出图页会收成**一张**卡片(角标「▤ N 层」),点开是图层查看器:叠加预览 + 图层
-列表(最上层在最上面)、单层查看、单层/全部下载。你不需要为此做任何额外操作。
+这一点再拆**,尤其是用户说「随便试试」的时候。结果在出图页收成**一张**卡片(角标
+「▤ N 层」),你不用额外操作。
 
 ## Multiple images at once — use generate_images (important)
 
@@ -396,14 +421,10 @@ Rules:
 几个不同主体,**或者一个剧本/分镜里的多个镜头**——都是 \`generate_images\` 一次调用,
 不是循环调 \`generate_image\`。
 
-**带参考图时这条是硬性的,不是偏好。** \`generate_images\` 把共享的
-\`referenceImages\` **只解析上传一次**,然后所有 prompt 复用同一批地址;循环调单张
-则是同一组人物参考图**被重新读盘、重新上传 N 遍**。十个镜头共用三张角色锚图,
-一次批量是 3 次上传,循环调是 30 次——参考图越大差距越明显,而画面结果完全一样。
-
-批量还顺带解决另外两件事:内部有 3 路并发(模型自己发多个 \`generate_image\` 往往会
-被串行化),以及各分支共用同一个渠道解析结果,参考图按那个渠道真正要的形式只编码
-一次。
+**带参考图时这条是硬性的,不是偏好。** \`generate_images\` 把共享的 \`referenceImages\`
+**只上传一次**、所有 prompt 复用;循环调单张会把同一组参考图重读重传 N 遍(十个镜头共用
+三张锚图:3 次 vs 30 次,画面结果完全一样)。批量还自带 3 路并发,参考图也只按渠道要的
+形式编码一次。
 
 - If the user asks for N images (2–20), pass exactly N prompts to
   \`generate_images.prompts\`.
@@ -432,11 +453,9 @@ directory and give it a descriptive, ordered name — e.g.
 
 - 用户给了图却忘传 \`referenceImages\`,改成从零文生图。
 - 多张图却逐个调 \`generate_image\`,而不是一次 \`generate_images\`。
-- 凭空编造 \`model\` 名;只有六个合法值。用户没点名就省略 \`model\`(交给用户在 composer 选的渠道,默认 VIP)。
-- 用户点名某渠道却不显式传 \`model\`(应显式传:vip/官逆 → \`gpt-image-2-vip\`、
-  官方/旗舰/image2 官方 → \`gpt-image-2\`、nano/nano2 → \`gemini-3.1-flash-image\`、
-  万相/组图 → \`wan2.7-image-pro\`、seedream/即梦/豆包/多参考图融合 →
-  \`doubao-seedream-5-0-pro-260628\`)。
+- 凭空编造 \`model\` 名;合法值只有上面「Choosing a model」列出的那些。用户没点名就
+  省略 \`model\`(交给用户在 composer 选的渠道,默认腾讯 image2)。
+- 用户点名某渠道却不显式传 \`model\`。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
 - 图层分离时**给 \`layerDecomposition\` 却忘了同时指定 \`model\`** —— 会落到用户选的渠道上被拒。
 - 图层分离时**为了「填满参数」编一句 prompt** —— 空 prompt 才是自动全拆,编一句就变成
@@ -445,13 +464,8 @@ directory and give it a descriptive, ordered name — e.g.
 
 ## Notes
 
-- This is the generate → save → read path. The file is on disk (see \`paths\`), in
-  the history page, and in the ATTACHMENTS panel — no extra save step is needed.
-  Only move/copy a file if the user wants it somewhere specific (see the organize
-  section above when working in a project).
-- For edits, image-to-image, or multi-image prompts, use \`generate_image\` for one
-  output or \`generate_images\` for multiple outputs, always with \`referenceImages\`
-  when references are present.
+- 结果已落盘(见 \`paths\`)、进了历史页和 ATTACHMENTS 面板,无需额外保存;只有用户要它
+  放到指定位置时才移动/复制(项目内见上面的整理一节)。
 - If \`generate_image\` is genuinely unavailable in this session, you may fall back
   to whatever image tool you do have — but \`generate_image\` is the preferred,
   in-app path that actually displays and saves the result.
@@ -463,7 +477,7 @@ description: >-
   FIRST-CHOICE video generator and the ONLY top-level video orchestrator in
   CATIMATION. Trigger whenever the user asks to generate / render a video or
   animation, animate a still, or says 生成视频 / 图生视频 / 让它动起来 / 视频编辑 /
-  视频延长 / 视频工作台 / 批量出片 / 多镜. Covers text/still-to-video, omni-reference
+  视频延长 / 视频工作台 / 批量出片 / 多镜 / 深度捕捉. Covers text/still-to-video, omni-reference
   (全能参考, default), editing and extension on both output surfaces
   (generate_video one-shot + video_workbench_* batch), and grades every request
   快速/标准/专业/制片 before loading other skills.
@@ -493,12 +507,16 @@ to a local file, and lands in the app history page.
 把已有分镜换个格式、改一段文字 —— 这些**一个 skill 都不要加载,也不进分级**,
 直接做完交付。它们本来是三分钟的事,套上分级和确认闸门会拖成几小时。
 用户说「快点」「简单弄一下」「先给我看看」时同理。
-**只有真要提交生成任务时**,才继续往下看分级表。
+**只有真要提交生成任务时**,才继续往下看分级表。**深度捕捉(\`model:"depth"\`)也不进分级**,
+直接看下面「深度捕捉」一节。
 
-默认进入**快速**模式;只有命中升级条件才升级。定级后在心里记住执行状态
+默认进入**快速**模式;只有命中升级条件才升级。定级后把执行状态记成一份 routing receipt
 (\`task_level / direction_confirmed / spec_confirmed / prompt_engineered /
-qa_completed / generation_attempts\`),已完成的步骤**不再重复执行**:
-规格确认过就不再问、提示词写好就不再重写、QA 做过就不再重抽。
+qa_completed / generation_attempts\`):有专属素材夹(见「角色片 / 多镜」第 5 条)时写进
+该夹的 \`receipt.json\`,每完成一步就更新;没有素材夹的一次性任务至少在回复里用一行复述它。
+**每读完一份大 skill(提示词底座 / 结构叶子 / 镜头设计编排器)先回读 receipt 再动手** ——
+两万字进上下文最容易把它冲掉,读完只剩模板、忘了锚点和已确认的规格就是这么来的。
+已完成的步骤**不再重复执行**:规格确认过就不再问、提示词写好就不再重写、QA 做过就不再重抽。
 
 **提示词底座:要真写 Seedance 提示词时才载。** 出片、改写视频提示词、Seedance
 语法问答 —— 这些确实需要底座,不必等用户点名。但**纯文本任务不载**(见上面 STEP -1),
@@ -584,10 +602,11 @@ cinematic-prompt-format。路径 B 条件优先于生成/编辑/延长/组合等
 ## 模式与素材规则(所有等级通用)
 
 **Default mode = 全能参考 (omni-reference)** — use it unless told otherwise.
-Caps: \`referenceImages\` ≤9 张;\`referenceVideos\` ≤3 段、合计 ≤15s;
-\`referenceAudios\` ≤3 段、合计 ≤15s。Only switch to strict \`firstFrame\`/\`lastFrame\`
-when the user explicitly asks. **Always name the mode you used**(如「我用**全能
-参考**模式生成」)。
+Caps 按 model:**2.5** = 图 30 / 视频 10 / 音频 10(合计 50),视频、音频各自合计 ≤30s;
+**2.0 家族** = 图 9 / 视频 3 / 音频 3,视频、音频各自合计 ≤15s;**wan3** = 10 / 5 / 5。
+超了会在提交前被拦下并报出该模型的上限,不用自己数。Only switch to strict
+\`firstFrame\`/\`lastFrame\` when the user explicitly asks. **Always name the mode you used**
+(如「我用**全能参考**模式生成」)。
 
 All modes work on **both** surfaces(\`generate_video\` 与 \`video_workbench_*\`)
 — pick by inputs + prompt:
@@ -598,14 +617,16 @@ All modes work on **both** surfaces(\`generate_video\` 与 \`video_workbench_*\`
   增加元素=「特征+时机+位置」;删除=点名要删的、强调保留的;修改=直接描述换后的样子。
 - **视频延长**: 1–3 段源片入 \`referenceVideos\`,描述连接/向前向后延长。
 
-**素材引用铁律**:Skill 写作与 prompt 示例用 \`@图片1 / @视频1 / @音频1\` 指代，
-严禁裸写 assetId；提交生成工具时自动归一为 \`图片1 / 视频1 / 音频1\`，\`@\` 不是
-上游 API 参数。运行时兼容 \`@Image1/@图片1/【@图片1】/<图片1>\` 等外部写法。
+**素材引用铁律**:提示词里用 \`@图片1 / @视频1 / @音频1\` 指代素材(火山 OpenAPI 的写法),
+严禁裸写 assetId。**提示词原样发给上游**:运行时不改写、不删 \`@\`,唯一例外是工作台 chip 的
+\`【@图片1】\` 外壳会解成 \`@图片1\`。\`@Image1\` / \`<图片1>\` / 裸 \`图片1\` 不会被替你改,别写。
 **音频参考只收 mp3 / wav**;视频容器(.mov/.mp4,哪怕黑屏占位)会被拒收——先用
 \`ffmpeg-win\` 抽音轨(\`ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3\`)。
-黑屏 MP4 只用于 understand_video,绝不能当音频参考上传。
-**真人脸**:Seedance 不收真人脸参考,用人像库虚拟形象 \`asset://assetId\` 或
-Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
+要听音频内容用 \`understand_audio\`(catimation-understand),别再把它包成黑屏 MP4。
+**真人脸**:Seedance 对直传的图 / 视频做真人检测(\`…SensitiveContentDetected.PrivacyInformation\`)。
+app 提交前会把参考图和参考视频自动登记进人像库、改成 \`asset://\` 引用(图片实测能过,
+视频同一条路);仍被拒时换人像库虚拟形象、Seedance 自产片段二创,或用 \`ffmpeg-win\`
+抽关键帧当参考图。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
 优先用 \`ffmpeg-win\` 抽尾帧/关键帧成静图(下一镜 \`firstFrame\` 最稳)或抽音轨续节奏;
 整段回喂只作规避真人脸审核的兜底。
 
@@ -650,6 +671,37 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
 成败与落盘路径,不代表 QA 已做 —— 人脸/复杂动作的卡照样要抽九宫格,多镜剧情照样要
 \`understand_video\`。做过的级别记进 \`qa_completed\`,别重复抽。
 
+## 深度捕捉(\`generate_video\` 的 \`model: "depth"\` 变体)
+
+把**一段已有视频**转成**灰度深度视频**(近亮远暗,界面定位是「可作运动参考」)。它是
+**变换,不是生成**:不分级、不载提示词底座、不弹规格卡、不跑 QA 分级 —— 用户说「提取深度 /
+深度视频 / 深度捕捉 / depth」就直接做。
+
+- **必须有源视频**:用户给的路径 / 链接,或聊天里刚出的片子(DONE 里的 \`localPath\`)。
+  参数只有两个必要的:\`model:"depth"\`、\`referenceVideos:[源视频]\`(**恰好 1 个**)。
+  \`resolution\` 可以不传:\`480p\` / \`720p\` / \`1080p\` 三档**产物完全一样、价格也一样**
+  (后端是腾讯云点播的深度估计,它没有分辨率参数),**不用问用户、也不用升档**。\`prompt\` 在
+  schema 里必填,写个标签如「深度捕捉」即可,上游不看。**别传**图片 / 音频 / 首尾帧 /
+  \`taskMode\` / \`duration\` / \`ratio\` —— 前几样会被提交前拦下,后两样无效(输出长度与画幅
+  跟着源视频走)。
+- **源视频限制**:必须是公网可下载的视频(\`asset://\` 不收;本地文件 app 会自动中转到云端)。
+  **腾讯没公布时长 / 体积上限,只有我们自己的实测**(同一测试令牌,后三条同时提交):
+  5 秒 / 0.8 MB ≈ **1.5 分钟**;60 秒 / 720p / 20 MB、60 秒 / 1080p / 86 MB 各 ≈ **22 分钟**,
+  都成功;180 秒 / 60 MB 等了 34 分钟仍没出结果(没等到头)。**它很慢,耗时随源视频时长明显
+  增长**(同时提交三条,慢多少是排队还是视频本身,没法区分)。所以**先把源视频截到真正要用
+  的长度(一般 ≤60 秒)再提交**,并如实告诉用户要等多久。app 对深度任务最多轮询 **50 分钟**,
+  超了会报「轮询超时」,但上游可能还在处理、照常计费。app 自己对本地文件设了 100 MB 的
+  保守上限,超了先用 \`ffmpeg-win\` 压再提交:
+  \`ffmpeg -y -i in.mp4 -vf scale=-2:720 -crf 28 -an out.mp4\`(只要前几秒再加 \`-t 秒数\`)。
+  任务失败时腾讯只回笼统的 \`depth job failed\`,分不清原因;先查**源视频链接是不是真能
+  公开下载、是不是视频**(上线测试里见过的失败就是链接返回 403),别连发重试。
+- **计费**:平台余额或 Miau 密钥,**按次**而不是按秒(撰写时网关默认 ¥0.5 / 次,腾讯没公布
+  该接口价格,以账单为准)。产物是腾讯的临时存储(7 天),任务成功后 app 会自动下载并转存。
+- **拿它当运动参考喂下一次生成**:深度视频本身就是成片(进聊天、落历史页)。要用它,
+  就作 \`referenceVideos\` 传给 Seedance,并遵守该模型的视频时长上限(2.0 家族合计 ≤15s、
+  \`2.5\` ≤30s)—— **所以源视频要先截到这个长度再做深度**,既合规也省钱。画面内容 / 角色
+  另用 \`referenceImages\` 与文字描述。
+
 ## 角色片 / 多镜(标准及以上):先备齐资产,再开生成
 
 只要有**反复出现的角色**或**不止一个镜头**,先锁资产再生成(绑定语法与镜头规划
@@ -676,7 +728,8 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
 4. **生成用上全部可用资产**:图/视频/音频逐一传入并在 prompt 里绑定,
    有素材却只发纯文字 = 错；有故事板/多宫格却漏掉 mandatory 氛围职责前缀 = 错。
 5. **一次生成一个专属素材夹**(如 \`<workspace>/assets/jobs/S01_<slug>/\`),
-   复用、检查、定位问题都只看一个夹。
+   复用、检查、定位问题都只看一个夹;STEP 0 的 routing receipt 也写在这里
+   (\`receipt.json\`),每完成一步就更新。
 
 > 轻量例外:单图「让它动起来」这类一次性请求(快速模式)不必强排人物卡/故事板。
 
@@ -699,6 +752,12 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
    形容词。
 2. **写运镜/景别前先调 \`search_cinematography_kb\` 工具**(本地运镜与结构化描述库)
    拿真实术语再落笔;工具不可用再退回联网检索。
+   **排版(三个底座通用):最终提示词连续成段,不空行分块。** 动作接动作、情节接情节、外貌 →
+   性格 → 心理 → 环境这些连着发生的描写不用换行或空行切开,用 \`，\` \`；\` \`。\` \`——\` \`：\` 衔接;
+   底座模板里的空行和「一句一行」是给人看的排版示意,不是提交格式,方括号标签后直接接正文;
+   只在镜头之间(\`镜头1：\` / \`镜头2：\`)和模板块之间换行。中文字、标点前后不留空格。
+   **提示词是什么,发过去就是什么**:运行时不改排版,空行、碎行、多余空格都会原样进上游,
+   填 \`prompt\` 字段前自己看一眼。
 3. **标准模式:按最主要症状挑 1 个技法 skill**(浏览 \`~/.agents/skills/\`,plain-text
    名称按需加载,不是全量)。多风险协同时升级专业模式,而不是突破标准级预算:
 
@@ -733,14 +792,21 @@ Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**
 1. Turn the request into one clear video prompt(subject, action, camera 运镜/景别,
    scene, lighting, mood;dialogue 与 \`--style\` 可后置)。
 2. **规格确认(spec_confirmed)**:用户没说规格时,发一张 \`ask_user\` 卡确认
-   分辨率(\`480p\` 草稿 / **\`720p\` 默认** / \`1080p\`)、时长(4–15s,默认 5)、
-   比例(\`16:9\` / \`9:16\` / \`4:3\` / \`3:4\` / \`1:1\` / \`21:9\`),推荐默认项。
-   **不要静默升 1080p**;1080p 仅满血 \`2.0\`;用户已给规格或本会话已确认过就跳过。
-3. Call \`generate_video\`:\`prompt\`(必填)、\`model\`(\`2.0\` 默认,用户明确要
-   快/便宜才 \`2.0-fast\`)、\`resolution\` / \`ratio\` / \`duration\`、
+   分辨率(\`480p\` 草稿 / **\`720p\` 默认** / \`1080p\`)、时长(**2.5 为 4–30s,2.0 家族 4–15s**,
+   默认 5)、比例(\`16:9\` / \`9:16\` / \`4:3\` / \`3:4\` / \`1:1\` / \`21:9\`),推荐默认项。
+   **不要静默升 1080p**;1080p 仅 \`2.0\`(与 wan3),\`2.5\` 只到 720p —— 用户要 1080p 就意味着
+   model 改 \`2.0\`、底座改 \`sd2-pe\`;用户已给规格或本会话已确认过就跳过。
+   **例外:2.5 样片 → 1080p 成片**(平台余额才有):\`generate_video\` 带 \`draft: true\` 先出
+   480p 样片(按 480p 计费)看构图和动作;用户满意就 \`finalize_video_draft({ taskId })\` 出
+   1080p 成片 —— 方舟沿用样片的提示词、素材、时长、比例、seed 与音频,改不了也不用重传,
+   样片 7 天内有效。长镜头、贵的片子、用户说「先看看效果」时推荐走这条;要改内容就重出样片。
+3. Call \`generate_video\`:\`prompt\`(必填)、\`model\`(**显式传,且与你载的底座一致**:
+   STEP 0 默认 \`2.5\` → 传 \`"2.5"\`;要 1080p / 4k 或用户点名满血画质 → \`"2.0"\` 并改载 \`sd2-pe\`;
+   用户明确要快/便宜才 \`"2.0-fast"\`。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
+   模板写的提示词就会被送去 2.0 渲染)、\`resolution\` / \`ratio\` / \`duration\`、
    \`referenceImages\`(**用户给过的图必须传**;支持 \`asset://assetId\`)、
-   \`referenceVideos\` / \`referenceAudios\`(每段 4–15s、合计 ≤15s)、或显式要求时的
-   \`firstFrame\` / \`lastFrame\`。
+   \`referenceVideos\` / \`referenceAudios\`(上限按 model,见「模式与素材规则」)、或显式要求时的
+   \`firstFrame\` / \`lastFrame\`;2.5 的编辑 / 延长走 \`taskMode\`(\`edit\` / \`extend\`),不靠提示词措辞。
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
 5. Read the result banner:
@@ -820,7 +886,8 @@ The \`catimation\` MCP server exposes portrait-library tools
 - One \`generate_video\` call = ONE video. 多条就多次调用、复用同一 asset://
   保持一致性;可并行,但**一次要发 20+ 个任务先向用户确认**(每条都花钱且渲染
   1–3 分钟)。
-- Local input files are handled for you(video/audio 4–15s);pass plain local paths
+- Local input files are handled for you(video/audio 每段 4–15s,合计上限按 model 见
+  「模式与素材规则」);pass plain local paths
   and do NOT pre-compress or reject anything for size — there is no client-side size
   cap, large files are streamed to a relay bucket automatically. If a file really is
   too big for upstream, upstream returns the exact limit.
@@ -1355,30 +1422,48 @@ Use checkpoints for "存个版本 / 回到之前那版 / 试一个分支" type r
 export const CATIMATION_UNDERSTAND_SKILL_CONTENT = `---
 name: catimation-understand
 description: >-
-  Understand video / documents / and research the web with qwen3.7-plus-dashscope
-  inside CATIMATION. Trigger to 理解/分析视频, 看懂/读 文档/PDF, or 上网查/搜一下/扒资料/最新消息.
-  Also the model understand/review stage of the multimedia inspect→verify loop
-  (不只审片): judge content here with understand_video, then hand technical QC +
-  fixes back to the ffmpeg-win skill. 视频理解以 qwen(understand_video)为主、apiyi 为辅;
-  apiyi 的 Gemini(gemini-3.5-flash,禁传 2.5)主要做音频理解(qwen 音频不好)和视频的深度理解。
+  Understand video / audio / documents / and research the web with the omni-modal
+  qwen3.8-omni-flash inside CATIMATION. Trigger to 理解/分析视频, 听/转写 音频/录音/音乐,
+  看懂/读 文档/PDF, or 上网查/搜一下/扒资料/最新消息. Also the model understand/review
+  stage of the multimedia inspect→verify loop (不只审片): judge content here with
+  understand_video / understand_audio, then hand technical QC + fixes back to the
+  ffmpeg-win skill. 视频/音频/图文理解以 qwen(omni)为主;apiyi 的 Gemini
+  (gemini-3.5-flash,禁传 2.5)只作深度复核的备选。
 ---
 
-# CATIMATION Understand — video / document / web via qwen
+# CATIMATION Understand — video / audio / document / web via qwen
 
 <!-- skill-budget: fast -->
 
-These tools run on qwen through the same new-api gateway and Miau token used for
-image/video generation, and return Chinese text answers. **Model defaults to
-\`qwen3.7-plus-dashscope\`** (cheaper); pass \`model="max"\` on any tool for the
-stronger \`qwen3.7-max-dashscope\`. You rarely need to: if plus fails, the renderer
-automatically retries once on max as a fallback. Only ask for \`max\` when plus
-struggles on a hard clip or the user explicitly wants the strongest model.
+These tools run on qwen through the Miau gateway (platform balance or Miau key —
+the same billing as image / video generation) and return Chinese text answers.
+**Model defaults to the omni-modal \`qwen3.8-omni-flash\`** (cheapest tier, and the
+ONLY tier that can hear audio). The 3.7 generation stays available in parallel:
+\`model="plus"\` → \`qwen3.7-plus-dashscope\`, \`model="max"\` → \`qwen3.7-max-dashscope\`
+(text + image + video, no audio); \`model="flagship"\` → \`qwen3.8-max\` (strongest
+reasoning, 1M context, no audio). You rarely need any of them: if omni fails, the
+renderer automatically retries once on 3.7 max as a fallback (audio excepted). Only
+pick a bigger tier on a hard document / cross-modal reasoning job or when the user
+explicitly asks for it.
+
+## If YOU are qwen3.8-omni-flash (main agent): attachments arrive natively
+
+When the user picked Qwen 3.8 Omni Flash as the chat model, audio / video files
+attached to the message are delivered **inside the message itself** (the app relays
+them and sends real \`input_audio\` / \`input_video\` parts) — you already see the frames
+and hear the soundtrack. Answer from what you perceive; do not call \`understand_video\`
+/ \`understand_audio\` on the same file unless the user asks for a second opinion or a
+different tier. Two exceptions still need the tools: files upstream cannot decode
+natively (audio in m4a / ogg / opus / flac — convert with ffmpeg-win to mp3 / wav
+first, or hand the path to \`understand_audio\`), and anything that arrived only as a
+\`name: path\` mention because the relay failed.
 
 ## When to use
 
 - "理解 / 分析这个视频"、"这段视频在干什么" → \`understand_video\`
 - "理解 / 分析画布上(选中)的这段视频" → \`understand_canvas_video\`
-- "读一下这份文档 / PDF 讲了什么" → \`understand_document\`
+- "听一下 / 转写 / 这段录音说了什么 / 这首歌什么风格" → \`understand_audio\`
+- "读一下这份文档 / PDF 讲了什么"、"看看这几张图" → \`understand_document\`
 - "上网查 / 搜一下 / 最新消息 / 扒点资料" → \`web_research\`
 - "审查/审片/检查内容"、"剧情/字幕/连续性对不对",或任何**理解/处理 视频音频 前后**的核对 → \`understand_video\`(你是多媒体 inspect→verify loop 的内容阶段,见下)
 
@@ -1389,7 +1474,7 @@ struggles on a hard clip or the user explicitly wants the strongest model.
 而且 **agent 自主触发、别等人催**:
 
 \`\`\`
-ffprobe 粗检(ffmpeg-win) → 九宫格视觉(ffmpeg-win) → 模型内容理解/审查(你 · understand_video)
+ffprobe 粗检(ffmpeg-win) → 九宫格视觉(ffmpeg-win) → 模型内容理解/审查(你 · understand_video / understand_audio)
    → 不达标/要改 → ffmpeg 修复 + 回到粗检复检(ffmpeg-win) → 发布前 checkpoint(ffmpeg-win,仅交付时)
 \`\`\`
 
@@ -1398,23 +1483,50 @@ ffprobe 粗检(ffmpeg-win) → 九宫格视觉(ffmpeg-win) → 模型内容理�
 复核输出;**刚生成**的视频先 grid+理解再说「做好了」;**发布/交付前**才走完整闭环到 checkpoint。
 
 你负责的是**内容那一半**:用 \`understand_video\` 看这条片子的 **剧情 / 字幕 / 动作 /
-连续性 / 有无穿帮错字**,对照需求给出「过 / 不过 + 具体问题」。
+连续性 / 有无穿帮错字**,用 \`understand_audio\` 听 **对白 / 配乐 / 音效是否对**,对照需求
+给出「过 / 不过 + 具体问题」。
 
-- 用户说「审查这部片子」而你被叫起来时:先用 \`understand_video\` 做内容审查并报告
-  发现,**然后把技术问题(分辨率/响度/编码/odd 尺寸/转码/拼接修复)和发布前
-  checkpoint 交回 ffmpeg-win 技能**——那些是像素/码流层面,不是你的活。
+- 用户说「审查这部片子」而你被叫起来时:先做内容审查并报告发现,**然后把技术问题
+  (分辩率/响度/编码/odd 尺寸/转码/拼接修复)和发布前 checkpoint 交回 ffmpeg-win 技能**
+  ——那些是像素/码流层面,不是你的活。
 - 不要假装能判分辨率/响度/编码是否达标;也不要替 ffmpeg-win 跑修复。各司其职、
   互相衔接,才是一个完整的审片闭环。
 
 ## Tools
 
-### understand_video { video_url | video_path, question, fps? }
+### understand_video { video_url | video_path, question, fps?, model? }
 Pass EITHER a public http(s) \`video_url\` OR a local \`video_path\`. qwen only
 accepts publicly reachable URLs, so a local path (or a \`data:\` URL) is
 **auto-uploaded to the history COS bucket** (\`image-history/media-relay/*\`,
-≤200MB) and the resulting public URL is used — you do NOT need to upload
-manually. \`fps\` is an optional sampling hint (reserved). Returns a description
-of 画面/动作/字幕/剧情.
+≤2GB / 2h) and the resulting public URL is used — you do NOT need to upload
+manually. \`fps\` is the frame-sampling rate (0.1–10, upstream default 2). Returns a
+description of 画面/动作/字幕/剧情. The default omni model also attends to the
+soundtrack (a black-screen clip's dialogue came back verbatim in testing), but for
+a transcript or music analysis use \`understand_audio\` — every other tier
+(\`plus\` / \`max\` / \`flagship\`) is frame-only, it never hears.
+
+### understand_audio { audio_url | audio_path, question, format? }
+Listen to an audio file: speech transcription, dialogue, music genre / mood /
+instruments, sound effects, tone of voice. Pass a public \`audio_url\` OR a local
+\`audio_path\` (auto-uploaded like video). Upstream accepts **mp3 / wav / aac / amr /
+3gp only** — m4a / ogg / opus / flac come back as a structured error telling you to
+convert first (\`ffmpeg -i in.m4a -vn -acodec libmp3lame out.mp3\`, ffmpeg-win); \`format\`
+is inferred from the extension when omitted. For a video's soundtrack extract it first
+(\`ffmpeg -i in.mp4 -vn -c:a libmp3lame out.mp3\`). Long recordings: split into
+≤20-minute chunks and ask per chunk. Always runs on omni (no other tier can hear); no
+fallback. Do NOT wrap audio into a placeholder MP4 for \`understand_video\` — this tool
+is the audio path.
+
+### Asking well (from the qwen-omni model card)
+Omni answers exactly what you ask; a vague \`question\` gets a vague paragraph. For a
+full read of a clip, ask for three sections in one call — **storyline with
+timestamps (blend audio + visual details)**, **visible on-screen text with start/end
+times and appearance**, **speech transcript with speaker, exact words, timestamps and
+speaking state (prosody / emotion)** — and say "explicitly state so" when a section is
+empty. Standard analysis is tuned for clips ≤4 minutes; for fine multi-speaker work
+stay ≤2 minutes; longer material: cut it into segments (ffmpeg-win) and ask per
+segment, then merge. For quick pass/fail review a one-line question is enough and far
+cheaper (a two-minute 1080p clip costs ~30k input tokens per call).
 
 ### understand_canvas_video { question, model?, annotate? }
 Understand the video **selected on the canvas** (or the only video if none is
@@ -1426,43 +1538,36 @@ it also **writes the result back onto the canvas as a text note** next to the
 video; pass \`annotate=false\` to only return the text. Requires the Canvas tab
 open. Use this for "理解画布上选中的这段视频" instead of asking the user for a URL.
 
-### understand_document { file_url | file_path, question }
-Pass EITHER a public \`file_url\` OR a local \`file_path\` (auto-uploaded to COS
-just like video, ≤200MB). Native document understanding is only PARTIAL
-upstream — for best results render the page(s) to image(s) and pass an image,
-or extract the text and just ask normally.
+### understand_document { file_url | file_path, file_urls? | file_paths?, question, model? }
+Pass EITHER a public \`file_url\` OR a local \`file_path\` (auto-uploaded to COS just
+like video, ≤2GB). PDFs are parsed natively (text AND images inside the file;
+150MB / 500 pages) — just pass the \`.pdf\`. To compare several images in ONE call
+(同一角色跨镜头是否一致 / 多页文档 / 哪版更好) add \`file_urls\` / \`file_paths\`;
+order is preserved and "第二张" in your question means the first extra entry.
 
-### web_research { query }
+### web_research { query, model? }
 Natural-language query; the tool sets \`enable_search\` so the answer incorporates
 live web results. Prefer this over guessing from stale memory; cite what you used.
 
-## apiyi-mcp(Gemini)为辅:音频理解 + 视频深度理解(常规视频理解仍 qwen 为主)
+## apiyi-mcp(Gemini)只作深度复核的备选
 
-常规「看懂这段视频」**仍以上面的 qwen \`understand_video\` 为主**(便宜、够用)。但有两类
-情况改用 **apiyi-mcp 的 Gemini**(\`generate_content\`,直接吃媒体文件):
-
-- **音频理解**:qwen 对音频要么不收(返回 \`incorrect modal 'audio'\`)要么质量差 → 走 apiyi。
-- **视频的深度理解**:需要更细的剧情 / 细节 / 多模态深读,或 qwen 的结论不够 → 用 apiyi 复核 / 补强。
-
-用法:
-1. 确认 **\`apiyi\` MCP 已启用**(应用「MCP 服务器」页;\`APIYI_API_KEY\` 已由应用自动复用
-   「API 设置」里的 api易 key,无需手填)。
-2. 调 apiyi 的 **\`generate_content\`**,带音频 / 视频文件 + 你的问题。**\`model\` 固定用
-   \`gemini-3.5-flash\`(为主);绝不要传 \`gemini-2.x\`(\`gemini-2.5-*\` 旧 id)——已弃用、
-   明显掉点。** 要最深推理时才手动切 \`gemini-3.1-pro-preview-thinking\`,默认不切。
-
-**音频兜底(仅当 apiyi MCP 不可用 / 未配 key 时)**:用 **ffmpeg-win** 把音频转成带占位画面的
-MP4(\`ffmpeg -i in.mp3 -f lavfi -i color=c=black:s=640x360 -shortest -c:v libx264 out.mp4\`),
-再用 qwen \`understand_video\` 传该 MP4 \`video_path\`——并说明这是次选兜底,效果不如 apiyi 的 Gemini。
+Video / audio / image understanding all run on qwen omni by default (cheap, and it
+hears). Reach for **apiyi-mcp \`generate_content\`** with \`gemini-3.5-flash\` only when
+the omni answer is not enough and you want an independent second read of a hard
+clip. Confirm the \`apiyi\` MCP is enabled first; **never pass \`gemini-2.x\`** (retired,
+markedly worse). Do not route audio to apiyi first any more — \`understand_audio\`
+is the primary path.
 
 ## Path B — delegate to a qwen subagent
 
 For heavy/parallel/independent understanding jobs (e.g. "分头读这三份文档并汇总",
 "开个子代理去查资料"), spawn a subagent **pinned to the qwen provider**:
-\`modelProvider="qwen"\`, \`model="qwen3.7-max-dashscope"\`. The subagent does the
-understanding/research and reports a distilled result; you synthesize.
+\`modelProvider="qwen"\`, \`model="qwen3.8-omni-flash"\` (or \`"qwen3.8-max"\` for hard
+reasoning; the 3.7 aliases \`qwen3.7-plus-dashscope\` / \`qwen3.7-max-dashscope\` are
+still registered too). The subagent does the understanding/research and reports a
+distilled result; you synthesize.
 
-**先想清楚要不要子代理。** 上面那三个工具本来就返回文本、可以在同一轮里并发发多个
+**先想清楚要不要子代理。** 上面那些工具本来就返回文本、可以在同一轮里并发发多个
 调用 —— 只要一个结论,那条路更便宜(没有子代理的启动成本)。子代理留给「看完还要
 接着干活」:需要独立的工具权限和推理预算,而不只是一个答案。判据、并发上限与旁挂
 落盘规范见 catimation-subagents。
@@ -1470,14 +1575,15 @@ understanding/research and reports a distilled result; you synthesize.
 派活时**交接要写全**:子代理看不到你的对话历史,必须带上绝对路径、判据、产物写到
 哪、以什么格式回话。少一样它就得靠猜。
 
-If the Miau token is not configured, the qwen provider is unavailable; fall back
-to calling the three tools directly and tell the user.
+If neither the platform balance nor a Miau token is configured, the qwen provider
+is unavailable; fall back to calling the tools directly and tell the user.
 
 ## Boundaries
 
 - Media reaches qwen as a public URL; local paths / \`data:\` URLs are
-  auto-uploaded to the history COS bucket first (≤200MB; larger → compress).
-- Documents: partial support; degrade to page-image or extracted-text + ask.
+  auto-uploaded to the history COS bucket first (≤2GB; larger → compress).
+- Audio is omni-only: \`understand_audio\` ignores \`model\`; every other tier returns
+  \`incorrect modal 'audio'\`.
 - On a clean result, do NOT retry; just answer the user.
 `
 
@@ -1550,8 +1656,8 @@ description: >-
 |---|---|---|
 | **图片**(png/jpg/webp/gif/avif) | **\`understand_document\`** | ⚠️ 名字带 document,但**它就是看图那条路** —— 图片 mime 在它的白名单里。别被名字骗过去 |
 | **多张图一起看** | 同上 + \`file_urls\` / \`file_paths\` | 见下方「跨图比较」——**问题只要牵涉一张以上,就必须一次传完** |
-| 视频 | \`understand_video\` | **只看画面,听不见声音**——见下方「千问没有音频通道」。\`fps\` 可调抽帧密度(0.1–10,默认 2):快动作调高,静态长片调低省 token |
-| 音频 / 配音 / BGM | **没有工具** | 千问这条线不收音频,见下方 |
+| 视频 | \`understand_video\` | 默认 omni 档**画面和音轨都看**(实测黑屏片能复述对白);\`plus\` / \`max\` / \`flagship\` 各档纯抽帧、听不见。\`fps\` 可调抽帧密度(0.1–10,默认 2):快动作调高,静态长片调低省 token |
+| 音频 / 配音 / BGM | **\`understand_audio\`** | 逐字转写 / 对白 / 音乐风格 / 音效;只收 mp3 / wav / aac 等,m4a / ogg / flac 先用 ffmpeg-win 转。视频里的音轨要精听就先 \`-vn\` 抽出来 |
 | 画布上的视频 | \`understand_canvas_video\` | 不用先找路径 |
 | PDF | \`understand_document\` | 直接传 \`.pdf\`,上游原生解析里面的文字**和图片**。**别自己先渲成图**(150MB / 500 页以内) |
 
@@ -1565,27 +1671,27 @@ description: >-
 - **一张都不会被悄悄丢掉**:任何一张中转失败,整条调用报错。少一张会让后面所有序号前移,而模型察觉不到。
 - 上限 2048 张(公网 URL),真到那个量级应该先自己聚合。
 
-### 千问没有音频通道
+### 声音这条路:只有 omni 听得见
 
-\`understand_video\` 是**抽帧看画面**,音轨从头到尾没被读过。它能认出**烧进画面的字幕**,
-但听不见台词、音乐、音效和语气。所以:
+理解工具的默认档是全模态 \`qwen3.8-omni-flash\`:\`understand_video\` 看画面的同时也听音轨,
+\`understand_audio\` 直接收音频文件。但**只有这一档听得见** —— 传了 \`model="plus"\` / \`"max"\`
+(3.7)或 \`"flagship"\`(3.8-max)就回到纯抽帧,只认得**烧进画面的字幕**。所以:
 
-- 「这段台词说了什么」——只有字幕在画面上时才答得了。
-- **永远不要说「我听到……」。** 需要靠听才能回答的问题,就直说「画面里没有可读字幕,
-  这个工具听不了声音」。编一段听起来合理的对白,比说不知道糟得多。
-- **别把音频包成 MP4(配波形图或占位画面)再传进来。** 模型只会去描述那张波形图,
-  然后开始编内容 —— 一个看起来有答案、实则全是杜撰的回复。
-
-这不是我们的限制,是模型的:qwen3.7 / qwen3.8 的输入模态是**文本 + 图片 + 视频**,
-音频输入只存在于 qwen3.5-omni 那条线,而理解工具没有路由到它。要处理语音得走转写,
-这里没有那个能力。
+- 要听台词、音乐、音效、语气,别切档;要逐字转写或音乐分析,用 \`understand_audio\`
+  (视频先用 ffmpeg-win \`-vn -acodec libmp3lame\` 把音轨抽成 mp3)。
+- **永远不要说「我听到……」,除非结果里真有。** 用了听不见的档位又碰到靠听才能答的问题,
+  就直说,别编一段听起来合理的对白。
+- **别把音频包成 MP4(配波形图或占位画面)喂 \`understand_video\`。** 音频就走 \`understand_audio\`。
+- 你自己就是 omni 主模型时(用户选了 Qwen 3.8 Omni Flash 聊天),附件里的音视频已经原生进了
+  你的上下文 —— 直接看、直接听,不必再对同一个文件调工具。
 
 三件事让这条路便宜:
 
 1. **返回文本,不返回像素。** 主上下文只涨一段话。
 2. **同一轮可以并发发多个调用。** 九张图就是九个 \`understand_document\`,一起发出去。
    这不是子代理,没有 \`agents.max_threads\` 的限制。
-3. **默认 \`qwen3.7-plus\`**(便宜)。硬骨头才传 \`model="max"\`;失败时渲染层会自动回退一次。
+3. **默认 omni**(最便宜,比 3.7 Plus 还便宜)。硬骨头才传 \`model="max"\`(3.7 Max)或
+   \`"flagship"\`(3.8 Max);失败时渲染层会自动用 3.7 Max 回退一次(音频除外)。
 
 **问题要问具体。** \`question\` 决定这次调用值不值:
 
@@ -1603,8 +1709,9 @@ description: >-
 典型:「把这九张分镜逐张核对锚点,不符的直接改提示词并重生成」。
 
 - 上限 8 路并发(\`agents.max_threads=8\`),深度 1(子代理不能再开子代理)。
-- 理解类的重活可以把子代理钉到 qwen:\`modelProvider="qwen"\`,\`model="qwen3.7-max-dashscope"\`
-  (详见 catimation-understand 的 Path B;未配 Miau 令牌时该 provider 不可用)。
+- 理解类的重活可以把子代理钉到 qwen:\`modelProvider="qwen"\`,\`model="qwen3.8-omni-flash"\`
+  (硬推理换 \`"qwen3.8-max"\`;3.7 别名仍在;详见 catimation-understand 的 Path B;
+  既没登录平台也没配 Miau 令牌时该 provider 不可用)。
 - **交接要写全。** 子代理看不到你的对话历史。派活时必须带上:要看哪个文件的绝对路径、
   判据是什么(锚点原文 / 质检四项 / 具体要找的穿帮)、产物写到哪、以什么格式回话。
   少一样,它就得靠猜,你拿回来的东西没法直接用。
@@ -1702,6 +1809,53 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 >
 > **本文说「底座」时,指的就是当前这张卡的 model 对应的那一个。** 工作台的纪律
 > (素材绑定、多镜拆卡、资产门、摘要、跨卡锚点)与模型无关,三个底座上都成立。
+
+## 剧 → 分段 → 卡片:工作台的三层
+
+工作台按**剧(project)→ 分段(board,界面文案「分段」,老数据叫「页面」)→ 卡片**组织。
+一部剧是一部片子;分段是剧里的一段成片单元(一集 / 一幕 / 一条 140s 的分 P);卡片是一镜。
+
+- **所有 \`video_workbench_*\` 工具只作用于「本对话的剧」。** \`status\` 与写工具回带的 \`workbench\`
+  摘要都带 \`project {id,name,segments,cards}\`,\`boards\` 只列这部剧的分段;别的剧对你不可见,
+  这与用户在界面上看到的隔离一致。本对话没选过剧时,读跟着用户界面走;写则看有没有别的对话正占着别的剧(见下)。
+- 要看/换剧:\`video_workbench_list_projects\`(列全部剧与统计;\`activeProjectId\` = 用户眼前那部,
+  \`yourProjectId\` = 你在干的那部)→ \`video_workbench_switch_project\`(把本对话绑到那部剧)。
+- 用户开一部新片子:\`video_workbench_create_project\`(自带一个空分段,返回
+  \`projectId\` + \`boardId\`,本对话自动绑过去),然后照常 \`video_workbench_add_tasks\`。
+- **用户可能同时开着好几个对话、各填一部剧。** 每个对话各绑各的剧,互不抢指针:开工第一步就
+  \`list_projects\` 看清哪部是你的(\`inUseByOtherChat: true\` 的剧正被别的对话填着,用户没明说别碰),
+  再 \`switch_project\` / \`create_project\` 绑定。别的对话占着别的剧而你还没绑定时,写工具会被拒并告诉你
+  该先选剧 —— 照做,别去「force」。绑定后界面是否跟过去由 \`onScreen\` 告诉你(没跟 = 你在后台填,
+  用户界面不动,这是对的);用户要你把界面带过去时才传 \`focus: true\`。往指定分段加卡用
+  \`add_tasks({ boardId })\`;\`start\` 不带 cardIds 且你不在用户屏幕上时,只启动你剧里该分段的可启动卡。
+- **同一部剧的几集由几个对话各填(分段也要各管各的)。** 只绑剧不绑分段时,几个对话不带 boardId 的写入
+  全落进该剧的同一个「当前页」。所以这种分工下:\`switch_project({ projectId, boardId })\` 把本对话**钉在一个
+  分段**上,之后 \`add_tasks\` / \`start\` / \`set_spec\` / \`export\` / \`status\` 不点名分段时都作用于它,
+  用户在界面上翻到哪页都不影响你;回包 \`boards[]\` 里带 \`inUseByOtherChat\` 的分段别人已经钉着,别抢。
+  没钉分段、而隐式落点正是别人钉着的那一段时,写入会被拒并告诉你怎么钉 —— 照做。
+- **写之前的三件小事(并发写入安全,都是回包里现成的)。**
+  ① \`add_tasks\` 每张卡给一个 **\`clientRef\`**(你自己的稳定编号,如 \`ep2-shot-07\`,同一分段内唯一):
+  超时重发 / 两个对话都想建第 12 镜,都不会建出两张;已存在的回在 \`duplicates\`(不覆盖,
+  \`samePrompt:false\` 表示那张的文字和你这次给的不同,要改请用 \`patch_prompt\` / \`update_task\`)。
+  回包 \`placed\` 告诉你新卡落在哪一段、第几张到第几张。
+  ② 改**已有的卡**时带上 \`expectedRev\`(你上次看到的 \`rev\`;\`set_spec\` 用 \`expectedRevs\`)。卡在你看过之后被
+  改过,就**不写**,回 \`{ ok:false, conflict, card }\` 把它现在的样子给你:基于新内容重新决定,
+  用新的 \`rev\` 重试;**同一张卡连续冲突两次,停下来问用户**,别来回覆盖。\`rev\` 有时只是后台事件(素材上传完)
+  推高的,内容没变 —— 那种情况下用新 \`rev\` 重试一次就过。
+  ③ 回包里出现 **\`changedSinceYourLastCall\`** = 自你上次调用以来,你手上那几段里有卡被别人(用户 / 别的对话 /
+  后台,不知道是谁)增删或改了内容。只报一次;你要写的卡在名单里就先 \`status\` 重看,别凭记忆写。
+  整板 \`start\` 默认**不重跑「出过片且之后没改过」的卡**(回包 \`skippedSucceeded\` 告诉你跳了几张);
+  要重跑就点名 \`cardIds\`,或 \`includeSucceeded: true\`。
+- **三层路标都要写。** 剧:\`video_workbench_set_project_summary\`(≤60 字电报体,
+  「三集科幻短剧 · 赛博都市 · 主角林夏」,省略 projectId = 当前剧);分段:
+  \`set_board_summary\`;卡片:\`set_card_summary\`。剧名常常是「未命名剧 3」,没有剧摘要,
+  下次面对八部剧只能逐个切进去看。接手或开新剧时就写,前提变了就刷新。
+- **巡视用 \`status({ fields: "concise" })\`。** 只回 id / 位置 / 状态 / 摘要 / 60 字提示词 /
+  error,体积约为缺省 detailed 的三分之一。「进展怎样」「哪几张失败」「哪张是天台戏」
+  「先挑几张再动手」都用它;要改规格、要报成片地址,再对点名的几张拿 detailed 或 export。
+- \`video_workbench_export\` 的 IR 带 \`projectId\`;\`apply\` 时若本对话已换到别的剧,整份被拒
+  (\`conflict.reason = "project-mismatch"\`)—— 重新 export,别 force。
+- 批次完成推送里带「剧名 › 分段名」,汇报时照抄这个位置,用户按它去找成片。
 >
 > 几处**点名**了具体 skill(路径 A/B 与 cinematic-prompt-format、八大要素、
 > create-storyboard 制片包的 \`scenedance_prompt\`),那些名字带 seedance 只是历史
@@ -1913,7 +2067,8 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | --- | --- |
 | 改提示词里几个词 | \`video_workbench_patch_prompt\`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | \`video_workbench_update_task\` |
-| 一批卡同一个规格(整板 480p、都开联网) | \`video_workbench_set_spec\` |
+| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | \`video_workbench_set_spec\`(样片 = \`draft: true\`,仅 2.5 + 平台余额) |
+| 样片满意了要 1080p 成片 | \`video_workbench_finalize_draft\`(\`status\` 里 \`draftRun: true\` 的卡;沿用样片一切,7 天内有效,成片是同卡新版本) |
 | 整页重排 | \`video_workbench_reorder\`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | \`video_workbench_move_task\`(**不要并发调**,重排没有交换律) |
 | 增删卡 | \`video_workbench_add_tasks\` / \`video_workbench_remove_tasks\` |
@@ -2225,14 +2380,11 @@ To AAC: \`-vn -acodec aac -b:a 192k "D:/out.m4a"\`. To WAV: \`-vn "D:/out.wav"\`
 > Allowed formats: mp3, wav.\`。**先用上面的命令抽音轨** \`-vn -acodec libmp3lame\`(mp3)
 > 或 \`-vn\`(wav),再导入。
 >
-> ⛔ **反方向的那个「技巧」是错的,已废弃:把音频包成「黑屏/波形 MP4」喂
-> \`understand_video\` 不会让它听见声音。** 那个接口是**抽帧看画面**,音轨从头到尾
-> 没被读过 —— 送进去它只会认真描述那张波形图,然后开始编内容,给你一个看起来
-> 有答案、实则全是杜撰的回复。这比报错糟得多。
->
-> 千问这条线(qwen3.7 / qwen3.8)的输入模态就是**文本 + 图片 + 视频**,没有音频;
-> 音频输入只存在于 qwen3.5-omni 那条线,理解工具没有路由到它。**要处理语音得走转写,
-> 本 app 目前没有这个能力** —— 遇到「听一下这段说了什么」,如实说做不到。
+> ⛔ **别把音频包成「黑屏/波形 MP4」喂 \`understand_video\`。** 要听声音就用
+> **\`understand_audio\`**(catimation-understand 技能):先按上面的命令抽出真实音轨,
+> 再把 \`audio_path\` 传给它 —— 全模态 \`qwen3.8-omni-flash\` 原生收音频(转写 / 对白 /
+> 音乐风格 / 音效),走平台余额或 Miau Key 计费;长录音切成 ≤20 分钟一段逐段问。其余
+> 各档(3.7 \`plus\`/\`max\`、3.8-max \`flagship\`)纯抽帧,听不见。
 
 ## Mix / Mux Audio
 
@@ -2626,6 +2778,128 @@ for variants.
 - Do not call director_record export without ≥2 keyframes (it will be static).
 `
 
+export const GRAPHIFY_SKILL_CONTENT = `---
+name: graphify
+description: >-
+  Map a folder or codebase into a queryable knowledge graph with the graphify CLI
+  (local tree-sitter AST, zero LLM cost) and answer structure questions from it:
+  架构 / 依赖关系 / 什么调用了 X / A 和 B 怎么关联 / 这个项目怎么组织 / 知识图谱 /
+  graphify. Trigger when the user points at a project directory and asks about
+  its structure, wants a graph or architecture report of it, or types /graphify
+  or $graphify. Query an existing graphify-out/ first; build one only when missing.
+---
+
+# graphify — code / folder → knowledge graph (in-app agent edition)
+
+<!-- skill-budget: fast -->
+
+graphify turns a directory into \`graphify-out/\` with three files: \`graph.json\`
+(the graph you query), \`GRAPH_REPORT.md\` (hubs, communities, surprising
+connections, suggested questions) and \`graph.html\` (clickable). Every edge is
+tagged \`EXTRACTED\` (explicit in source) or \`INFERRED\` (resolved by graphify), so
+you can tell what was read from what was guessed. Code is parsed locally with
+tree-sitter — no model call, nothing leaves the machine.
+
+This is the compact edition shipped with the CATIMATION app. If the user has
+installed the official skill (\`graphify install --platform agents\`), that copy
+replaces this one and its longer pipeline applies instead.
+
+## Step 0 — pin the target directory
+
+- Use the folder the user named. Without one, use the current thread workspace
+  root. Never run on \`~\`, a drive root, or a parent that contains other projects.
+- Quote paths with spaces. In PowerShell type \`graphify\`, not \`/graphify\`
+  (the leading slash is a path separator there).
+
+## Step 1 — make sure the CLI exists (ask before installing)
+
+\`\`\`
+graphify --version
+\`\`\`
+
+If that fails, tell the user graphify is missing and offer to install it:
+
+\`\`\`
+uv tool install --python 3.13 "graphifyy[sql]"     # preferred (isolated env)
+pipx install graphifyy                              # alternative
+python -m pip install --user graphifyy              # last resort
+\`\`\`
+
+The PyPI package is \`graphifyy\` (double y); the command is \`graphify\`. Pin
+Python 3.13 — networkx breaks on CPython 3.14.1. On Windows the binary lands in
+\`%USERPROFILE%\\.local\\bin\`; if a fresh shell still cannot find it, call it by
+full path (\`"$env:USERPROFILE\\.local\\bin\\graphify.exe"\`). Do not install
+anything without an explicit yes from the user.
+
+## Step 2 — fast path: the graph already exists
+
+If \`<dir>/graphify-out/graph.json\` exists and the request is a question (how
+does X work / what calls Y / trace Z), do NOT rebuild. Go straight to Step 4.
+
+## Step 3 — build (local, free)
+
+\`\`\`
+graphify update <dir>                     # ~1 min per 1000 files; writes graph.json + GRAPH_REPORT.md + graph.html
+\`\`\`
+
+- \`update\` is the AST-only path: code via tree-sitter plus a heading/link scan
+  of Markdown, no model call. It works from a cold start (no \`graphify-out/\`
+  yet) and is the same command used to refresh later, so the graph never
+  changes shape between builds. Do not use \`graphify extract --code-only\` for
+  the initial build — it omits the Markdown layer that \`update\` will add anyway.
+- Tell the user roughly how long it will take before starting; run it in the
+  foreground — it needs no interaction.
+- If the directory contains vendored bundles, minified JS, build output, media
+  or generated mirrors, write a \`<dir>/.graphifyignore\` (gitignore syntax, merged
+  on top of \`.gitignore\`) before extracting. Junk hubs with two-letter names
+  (\`tu\`, \`Yt\`, \`__\`) in the report mean a minified file slipped in — add it to
+  \`.graphifyignore\` and re-run with \`--force\`.
+- Concepts inside docs, PDFs and images are **not** in this default build (only
+  Markdown structure is). They need a model pass: \`graphify extract <dir>
+  --backend openai\` with \`OPENAI_BASE_URL\` / \`OPENAI_API_KEY\` (or \`--backend
+  claude|gemini|ollama\`). Only do this when the user explicitly wants document
+  content in the graph and provides or approves a backend — never reuse the
+  app's image/video gateway token for it silently, and never paste keys into
+  the chat.
+- Community names stay \`Community N\` without a backend. That is fine; the hub
+  names in the report are what you navigate by.
+
+## Step 4 — answer from the graph, then confirm in source
+
+\`\`\`
+graphify query "<the user's question>" --budget 1500
+graphify path "<SymbolA>" "<SymbolB>"                # add --undirected if no directed path
+graphify explain "<Symbol or file>"
+\`\`\`
+
+- Start with \`query\`; narrow with \`path\`/\`explain\`. Raise \`--budget\` only when
+  the answer is clearly among the truncated nodes.
+- Every node carries \`src=<file> loc=L<line>\` and every edge an EXTRACTED /
+  INFERRED tag. Open the two or three files the graph points at to verify before
+  stating how something works; say which claims are INFERRED.
+- Summarize in prose with file:line citations. Do not paste raw graph output.
+- \`GRAPH_REPORT.md\` is for broad "what is this project" questions; open
+  \`graph.html\` in the browser when the user wants to explore (above 5000 nodes
+  it shows an aggregated community view).
+
+## Keeping the graph current
+
+- After editing code in that directory: \`graphify update <dir>\` (AST only).
+- After deleting or excluding files: \`graphify update <dir> --force\`, otherwise
+  the shrink guard keeps the stale nodes.
+- \`graphify-out/\` is an artifact. Do not commit it unless the user asks; suggest
+  adding it to \`.gitignore\` if the directory is a git repo.
+
+## Boundaries
+
+- \`graphify update\` sends nothing anywhere. The documents pass (\`extract
+  --backend …\`) sends file contents to whichever backend the user configured —
+  say so before running it.
+- Do not loop: one build, one report, then answer. If extraction fails
+  (missing grammar extra, sensitive-file skip, Python version), report the exact
+  message and the one-line fix rather than retrying blindly.
+`
+
 export const GENERATED_FIRST_PARTY_SKILLS: GeneratedFirstPartySkill[] = [
   { name: 'catimation-image', content: CATIMATION_IMAGE_SKILL_CONTENT },
   { name: 'catimation-video', content: CATIMATION_VIDEO_SKILL_CONTENT },
@@ -2638,4 +2912,5 @@ export const GENERATED_FIRST_PARTY_SKILLS: GeneratedFirstPartySkill[] = [
   { name: 'catimation-video-workbench', content: CATIMATION_VIDEO_WORKBENCH_SKILL_CONTENT },
   { name: 'ffmpeg-win', content: FFMPEG_WIN_SKILL_CONTENT },
   { name: 'catimation-director-stage', content: CATIMATION_DIRECTOR_STAGE_SKILL_CONTENT },
+  { name: 'graphify', content: GRAPHIFY_SKILL_CONTENT },
 ]

@@ -82,6 +82,9 @@ interface RichPromptInputProps {
 
 const KIND_EMOJI: Record<MediaTokenKind, string> = { image: '🖼', video: '🎬', audio: '🎵' }
 const TOKEN_RE_G = /【@(图片|视频|音频)(\d+)】/g
+/** @ 弹层里两个补充分组各自的上限;本卡素材没有上限(见 suggestions 注释)。 */
+const PAGE_MATERIAL_SUGGESTION_CAP = 8
+const ASSET_SUGGESTION_CAP = 6
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -328,6 +331,11 @@ export function RichPromptInput({
    * 建议列表(扁平数组,分组渲染时按 source 切段):
    * 主分组「本页素材」= 本卡已有素材 + 页面其他卡片素材;
    * 次分组「人像库」排在后面。按前缀过滤;键盘上下键在扁平索引上跨组移动。
+   *
+   * 本卡素材**永不截断**:「第 N 张 = reference N」是硬绑定,Seedance 2.5 一张卡
+   * 收 30 图 + 10 视频 + 10 音频,每一个都得能 @ 到。以前整张列表硬顶 12 条,
+   * 22 张图先把名额占满,13–22 号图和排在后面的视频、音频全被切掉(2026-09-22 反馈)。
+   * 只有两个补充分组各自限额,而且互不挤占。列表本身可滚(见下面的 wheel 处理)。
    */
   const suggestions = useMemo<SuggestionItem[]>(() => {
     if (!popupOpen) return []
@@ -346,10 +354,12 @@ export function RichPromptInput({
         })
       }
     }
+    let pageCount = 0
     for (const hit of pageHits) {
-      if (list.length >= 8) break
+      if (pageCount >= PAGE_MATERIAL_SUGGESTION_CAP) break
       const name = hit.material.name
       if (prefix && !name.toLowerCase().includes(prefix) && !hit.kind.includes(prefix)) continue
+      pageCount += 1
       list.push({
         key: `material:${hit.kind}:${hit.material.src.slice(0, 128)}`,
         label: name,
@@ -360,8 +370,7 @@ export function RichPromptInput({
         pageMaterial: hit,
       })
     }
-    const existingCount = list.length
-    for (const asset of assetHits.slice(0, Math.max(2, 8 - existingCount))) {
+    for (const asset of assetHits.slice(0, ASSET_SUGGESTION_CAP)) {
       list.push({
         key: `asset:${asset.assetId}`,
         label: asset.name,
@@ -372,10 +381,18 @@ export function RichPromptInput({
         asset,
       })
     }
-    return list.slice(0, 12)
+    return list
   }, [popupOpen, mediaRefs, prefix, pageHits, assetHits])
 
   const popupVisible = popupOpen && suggestions.length > 0
+
+  // 列表不再截断后可能有 30+ 行,超出 max-height 要滚:键盘上下键移到折叠区外的
+  // 那一行时把它滚进视口(block:nearest 不跳动)。jsdom 没有 scrollIntoView,可选调用。
+  useEffect(() => {
+    if (!popupVisible) return
+    const active = popupRef.current?.querySelector<HTMLElement>('.vw-at-active')
+    active?.scrollIntoView?.({ block: 'nearest' })
+  }, [popupVisible, selectedIdx])
 
   // 弹层滚轮只滚列表本身:到顶/到底继续滚时 preventDefault(阻止滚动链回
   // 页面),且一律 stopPropagation 不冒泡到页面滚动容器。React 的 onWheel
@@ -540,6 +557,7 @@ export function RichPromptInput({
                   <button
                     type="button"
                     className={`vw-at-item ${i === selectedIdx ? 'vw-at-active' : ''}`}
+                    data-source={s.source}
                     onMouseEnter={() => setSelectedIdx(i)}
                     onClick={() => commitSuggestion(s)}
                   >

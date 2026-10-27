@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThreadSidebar } from '../ThreadSidebar'
 import { useAgentChatStore } from '../store'
+import { useTabStore } from '../../../stores/useTabStore'
 
 const fakeAgent = {
   listThreads: vi.fn(),
@@ -9,6 +10,7 @@ const fakeAgent = {
   forkCodexThread: vi.fn(),
   openThread: vi.fn(),
   renameThread: vi.fn(),
+  setThreadPinned: vi.fn(),
   deleteThread: vi.fn(),
   sendMessage: vi.fn(),
   cancel: vi.fn(),
@@ -26,6 +28,7 @@ beforeEach(() => {
     electronAPI: { agent: fakeAgent },
   }
   fakeAgent.renameThread.mockResolvedValue(undefined)
+  fakeAgent.setThreadPinned.mockResolvedValue(undefined)
   fakeAgent.deleteThread.mockResolvedValue(undefined)
   fakeAgent.listThreads.mockResolvedValue([])
   fakeAgent.listCodexThreads.mockResolvedValue([])
@@ -234,6 +237,110 @@ describe('ThreadSidebar', () => {
     expect(screen.getByRole('alert').textContent).toContain('memory feature is disabled')
     // Still open — a dismissed menu would hide the explanation.
     expect(screen.getByTestId('thread-memory-toggle-older-1')).toBeTruthy()
+  })
+
+  // Pinning (D1). The DB row is authoritative; the store patches the list
+  // optimistically so the row jumps into the Pinned group before the refresh.
+  it('pin button pins the thread and moves it into a leading Pinned group', async () => {
+    // The refresh after the write returns the row truth: older-1 now pinned.
+    const [today, older] = useAgentChatStore.getState().threadList
+    fakeAgent.listThreads.mockResolvedValue([today, { ...older, pinnedAt: new Date().toISOString() }])
+    render(<ThreadSidebar />)
+    expect(screen.queryByText('Pinned')).toBeNull()
+    fireEvent.click(screen.getByTestId('thread-pin-older-1'))
+    await flush()
+
+    expect(fakeAgent.setThreadPinned).toHaveBeenCalledWith('older-1', true)
+    expect(fakeAgent.listThreads).toHaveBeenCalled()
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent ?? '')
+    expect(headings[0]).toMatch(/pinned/i)
+    // The pinned row left the Older bucket.
+    expect(screen.queryByText('Older')).toBeNull()
+  })
+
+  it('unpins from the ⋯ menu', async () => {
+    useAgentChatStore.setState({
+      threadList: [
+        {
+          id: 'older-1',
+          title: 'Older thread',
+          createdAt: '',
+          updatedAt: '',
+          lastMessageAt: new Date(Date.now() - 100 * 24 * 60 * 60_000).toISOString(),
+          pinnedAt: new Date().toISOString(),
+        },
+      ],
+    })
+    render(<ThreadSidebar />)
+    expect(screen.getByText('Pinned')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('thread-menu-older-1'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /取消置顶/ }))
+    await flush()
+    expect(fakeAgent.setThreadPinned).toHaveBeenCalledWith('older-1', false)
+  })
+
+  it('search filters rows by title without touching the store list', () => {
+    render(<ThreadSidebar />)
+    fireEvent.change(screen.getByLabelText(/search threads/i), { target: { value: 'older' } })
+    expect(screen.queryByText('Today thread')).toBeNull()
+    expect(screen.getByText('Older thread')).toBeTruthy()
+    expect(useAgentChatStore.getState().threadList).toHaveLength(2)
+  })
+
+  it('Agent 工作台 row opens the agent workspace tab and closes the drawer', () => {
+    useAgentChatStore.setState({ isOpen: true })
+    useTabStore.setState({ activeTab: 'generate', previousTab: null })
+    render(<ThreadSidebar />)
+    fireEvent.click(screen.getByRole('button', { name: /agent 工作台/i }))
+    expect(useTabStore.getState().activeTab).toBe('agentWorkspace')
+    expect(useAgentChatStore.getState().isOpen).toBe(false)
+  })
+
+  it('collapses a group longer than 6 rows behind a 更多 button', () => {
+    useAgentChatStore.setState({
+      threadId: undefined,
+      threadList: Array.from({ length: 8 }, (_, i) => ({
+        id: `t${i}`,
+        title: `Thread ${i}`,
+        createdAt: '',
+        updatedAt: '',
+        lastMessageAt: new Date(Date.now() - i * 60_000).toISOString(),
+      })),
+    })
+    render(<ThreadSidebar />)
+    expect(screen.getByText('Thread 5')).toBeTruthy()
+    expect(screen.queryByText('Thread 7')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /更多/ }))
+    expect(screen.getByText('Thread 7')).toBeTruthy()
+  })
+
+  // Subline (after Cursor's per-thread status line): message count + relative
+  // time; a running thread says so instead of the time.
+  it('shows the message count and relative time under the title', () => {
+    useAgentChatStore.setState({
+      threadList: [
+        {
+          id: 'today-1',
+          title: 'Today thread',
+          createdAt: '',
+          updatedAt: '',
+          lastMessageAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+          messageCount: 12,
+        },
+        {
+          id: 'older-1',
+          title: 'Older thread',
+          createdAt: '',
+          updatedAt: '',
+          lastMessageAt: new Date(Date.now() - 100 * 24 * 60 * 60_000).toISOString(),
+          messageCount: 0,
+        },
+      ],
+      runningByThread: { 'older-1': true },
+    })
+    render(<ThreadSidebar />)
+    expect(screen.getByText('12 条消息 · 12m ago')).toBeTruthy()
+    expect(screen.getByText('运行中 · 0 条消息')).toBeTruthy()
   })
 
   it('renders nothing when sidebarOpen is false', () => {

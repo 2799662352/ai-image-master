@@ -21,6 +21,7 @@ description: >-
 2. **只缺剧本**(剧情/分场/对白/节拍表/改稿/片长) → `screenwriter` 先写好,再回 film-studio 进入分镜与出片。
 3. **要做预告片**(已有剧本/梗概,出 90 秒方案) → `trailer-plan-generator`。
 4. **动画作画风格**(絵コンテ/芝居/作画技法) → 本插件另有日式动画作画子技能,名称与加载时机见 references/family-catalog.md。
+5. **已有单集剧本,要它更可拍**(补神态走位、光影/粒子/风态三要素、加武戏攻防与玄幻特效,但不改剧情台词) → 本插件的剧本可视化子技能 script-visual-optimizer,加载时机见 references/family-catalog.md;它产出的是可配音、不含镜头术语的文字脚本,不是好莱坞格式剧本,也不是视频提示词。
 
 ## 边界
 

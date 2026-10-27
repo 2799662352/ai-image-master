@@ -46,9 +46,17 @@ export interface ThreadGoal {
   updatedAt: number
 }
 
+/**
+ * Who asked for a goal mutation (0.161.0+). Only `user`
+ * edits/clears are recorded in model history as user instructions (surviving
+ * thread unload and compaction); an omitted origin carries no user authorization.
+ */
+export type ThreadGoalMutationOrigin = 'user' | 'automatic'
+
 /** `thread/goal/set` — create/replace/update a goal or change its status. */
 export interface ThreadGoalSetParams {
   threadId: string
+  origin?: ThreadGoalMutationOrigin
   objective?: string
   tokenBudget?: number
   status?: ThreadGoalStatus
@@ -68,6 +76,7 @@ export interface ThreadGoalGetResponse {
 /** `thread/goal/clear` — delete the current goal. */
 export interface ThreadGoalClearParams {
   threadId: string
+  origin?: ThreadGoalMutationOrigin
 }
 export interface ThreadGoalClearResponse {
   cleared: boolean

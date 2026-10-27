@@ -222,14 +222,24 @@ test('video and storyboard instructions match runtime limits and orchestration c
   assert.match(videoEntry, /自动修正[\s\S]*最多 2 次/)
   assert.doesNotMatch(videoEntry, /iterate at MOST 2–3 times/)
 
+  // 引用原样发送(用户 2026-09 拍板):`@图片N` 就是火山 OpenAPI 的提示词写法,运行时
+  // 不删 `@`、不翻译 `@Image1` / `<图片1>` 别名、不改排版;唯一动的是工作台 chip 的
+  // `【@图片N】` 外壳。skill、工具描述、运行时三处必须说同一句话。
   assert.match(sd2, /Skill 写作主形式.*`@图片N` \/ `@视频N` \/ `@音频N`/s)
-  assert.match(sd2, /工具边界规范形式.*`图片N` \/ `视频N` \/ `音频N`/s)
-  assert.match(sd2, /不要把 `@` 描述成上游 API 参数/)
+  assert.match(sd2, /工具边界规范形式就是 `@图片N` \/ `@视频N` \/ `@音频N` 本身/)
+  assert.match(sd2, /原样发给上游，不删 `@`/)
+  assert.doesNotMatch(sd2, /归一为 `图片N`|自动归一/, 'sd2-pe 不得再声称运行时会剥掉 @')
   assert.match(sd2, /接口支持时间戳\/scene-cut 指令/)
   assert.doesNotMatch(sd2, /精确时间支持不稳定/)
-  assert.match(promptNormalizer, /@Image1/)
-  assert.match(promptNormalizer, /图片1 \/ 视频1 \/ 音频1/)
-  assert.match(videoTool, /runtime also accepts and normalizes @Video1\/@Image1\/@Audio1/)
+  assert.match(promptNormalizer, /【\(@\(\?:图片\|视频\|音频\)\\d\+\)】/, 'runtime unwraps only the workbench chip wrapper')
+  assert.doesNotMatch(
+    promptNormalizer,
+    /AT_REFERENCE_RE|ANGLE_REFERENCE_RE|BRACKETED_REFERENCE_RE|canonicalReference|CANONICAL_KIND/,
+    'runtime must not translate aliases or strip @ (the old rewrite tables must stay gone)',
+  )
+  assert.match(videoTool, /The prompt is sent VERBATIM/)
+  assert.match(videoTool, /does not rewrite, reflow, or strip the @/)
+  assert.doesNotMatch(videoTool, /normalizes @Video1\/@Image1\/@Audio1/)
 
   assert.match(outputTemplate, /路径 A 使用连续任务正文；路径 B 覆盖总体设定/)
   assert.doesNotMatch(helper, /不新增作品参考/)
@@ -349,7 +359,8 @@ test('skill-authored media tokens use @ while runtime canonicalization stays exp
     assert.match(source, /@图片N|@图片1/)
   }
   assert.match(capabilities, /Skill 写作.*@图片1 \/ @视频1 \/ @音频1/)
-  assert.match(capabilities, /工具边界.*图片1 \/ 视频1 \/ 音频1/)
+  assert.match(capabilities, /工具边界规范就是同一形式 `@图片1 \/ @视频1 \/ @音频1`/)
+  assert.match(capabilities, /不删 `@`/)
   assert.doesNotMatch(videoCraft, /单次前向/)
   assert.doesNotMatch(gridRules, /独立的推理过程|不会"记住"前一镜/)
   assert.match(gridRules, /每段重复绑定素材职责/)

@@ -11,7 +11,7 @@
  * - 动态导入: const { HistoryPage } = await loadHistoryPage()
  * 
  * ⚠️ 注意: src/services/ 和 src/features/ 下的文件不应从此 barrel 导入，
- * 应直接导入具体页面文件 (如 from '../pages/DirectorPage')，
+ * 应直接导入具体页面文件 (如 from '../pages/UnderstandPage')，
  * 以避免循环 chunk 依赖 (V18: ServiceBridge 已改为直接导入)
  */
 
@@ -52,21 +52,9 @@ export type { PromptTemplate, TemplateCategories, PromptTemplatesState } from '.
 export { UnderstandPage, createUnderstandPage, getUnderstandPage } from './UnderstandPage'
 export type { UploadedImage, VisionModel, ModelConfig, AnalysisRole, RoleConfig, UnderstandPageState } from './UnderstandPage'
 
-// DirectorPage
-export { DirectorPage, createDirectorPage, getDirectorPage } from './DirectorPage'
-export type {
-  LayoutType,
-  GenerationMode,
-  StyleTemplateKey,
-  StyleTemplate,
-  StyleTemplates,
-  LayoutConfig,
-  LayoutConfigs,
-  DirectorReferenceImage,
-  DirectorResult,
-  CustomGalleryImage,
-  DirectorPageState
-} from './DirectorPage'
+// DirectorPage 不在此导出: vanilla 的 pages/DirectorPage.ts 已随 Director V2
+// 一起删除(commit 21d6574e),现由 pages-react/DirectorPage.tsx 接管。React 版是
+// 默认导出的组件,形状与本 barrel 的 create*/get* 工厂约定不同,不能在此转发。
 
 // ========== 动态导入函数: 按需加载 (推荐) ==========
 
@@ -98,11 +86,6 @@ export const loadPromptTemplates = () => import('./PromptTemplates')
  */
 export const loadUnderstandPage = () => import('./UnderstandPage')
 
-/**
- * 动态加载 DirectorPage
- */
-export const loadDirectorPage = () => import('./DirectorPage')
-
 // ========== 页面加载状态管理 ==========
 
 /** 页面加载状态缓存 */
@@ -125,14 +108,13 @@ export async function loadPageWithCache<T>(
 /**
  * 预加载指定页面 (用于空闲时预热)
  */
-export function preloadPage(pageName: 'history' | 'batch' | 'compare' | 'promptTemplates' | 'understand' | 'director'): void {
+export function preloadPage(pageName: 'history' | 'batch' | 'compare' | 'promptTemplates' | 'understand'): void {
   const loaders: Record<string, () => Promise<any>> = {
     history: loadHistoryPage,
     batch: loadBatchPage,
     compare: loadComparePage,
     promptTemplates: loadPromptTemplates,
-    understand: loadUnderstandPage,
-    director: loadDirectorPage
+    understand: loadUnderstandPage
   }
   
   const loader = loaders[pageName]
@@ -152,8 +134,8 @@ export function preloadPage(pageName: 'history' | 'batch' | 'compare' | 'promptT
  * 预加载所有非首屏页面 (用于首屏渲染完成后)
  */
 export function preloadAllPages(): void {
-  const pages: Array<'history' | 'batch' | 'compare' | 'promptTemplates' | 'understand' | 'director'> = [
-    'history', 'batch', 'compare', 'promptTemplates', 'understand', 'director'
+  const pages: Array<'history' | 'batch' | 'compare' | 'promptTemplates' | 'understand'> = [
+    'history', 'batch', 'compare', 'promptTemplates', 'understand'
   ]
   pages.forEach(preloadPage)
 }

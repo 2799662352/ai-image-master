@@ -5,9 +5,20 @@
  */
 
 import type { ModelCapabilities } from '@/types'
+import { MODEL_VENDORS, groupModelsByVendor } from '../../services/api/modelVendors'
+import { VendorModelPanel } from './VendorModelPanel'
 
 declare const Choices: any
 declare const i18n: any
+
+/** Choices.js 模板是字符串拼接，模型名 / 厂商名进 HTML 前先转义。 */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 export interface RatioOption {
   key: string
@@ -144,18 +155,14 @@ export class ModelSelectorManager {
 
     this.populateSelectOptions(selectElement, models, currentModelKey)
 
-    this.desktopChoice = new Choices(selectElement, {
-      searchEnabled: false,
-      itemSelectText: '',
-      shouldSort: false,
-      position: 'bottom',
-      renderChoiceLimit: -1,
-      allowHTML: true,
-      removeItemButton: false,
-      callbackOnInit: () => {
-        console.log('🎉 桌面端 Choices 实例初始化完成')
-      },
-      callbackOnCreateTemplates: (template: any) => this.createChoicesTemplates(template)
+    // 桌面端不再用 Choices.js:改成「厂商 → 模型」两级面板(设计稿 D6,照 apiyi 生图页)。
+    // <select> 仍是选项 / 当前值的真源,面板点选会写回它并派发 change,下面
+    // bindSelectorEvents 的监听照旧生效。对象表面兼容 Choices(setChoiceByValue 等)。
+    this.desktopChoice = new VendorModelPanel({
+      select: selectElement,
+      getModels: () => ((window as any).aiImageAPI?.getAllModels?.() as Record<string, ModelConfig>) || {},
+      getDisplayName: this.config.getModelDisplayName,
+      onSelect: (modelKey) => this.handleModelSwitch(modelKey),
     })
 
     this.bindSelectorEvents(selectElement, '🖥️')
@@ -198,7 +205,12 @@ export class ModelSelectorManager {
   }
 
   /**
-   * 填充选择器选项
+   * 填充选择器选项 —— 按厂商聚合(腾讯 / OpenAI / Google …各占一档)。
+   *
+   * 分组用原生 `<optgroup>`:Choices.js 读 `<optgroup>` 生成分组抬头(`choiceGroup` 模板),
+   * 与 apiyi 生图页(imagen.apiyi.com)顶栏「厂商 → 模型」的两级结构一致。组序 / 组内顺序
+   * 由 {@link groupModelsByVendor} 决定(组内保留 getAllModels() 的展示序)。
+   * 只有一家厂商(或全都没标 vendor)时退回平铺:一组一个抬头只是噪音。
    */
   private populateSelectOptions(
     selectElement: HTMLSelectElement,
@@ -207,23 +219,36 @@ export class ModelSelectorManager {
   ): void {
     selectElement.innerHTML = ''
 
-    Object.keys(models).forEach(modelKey => {
-      const model = models[modelKey]
-      const option = document.createElement('option')
-      option.value = modelKey
+    const groups = groupModelsByVendor(models)
+    const grouped = groups.length > 1
 
-      const displayName = this.config.getModelDisplayName
-        ? this.config.getModelDisplayName(modelKey)
-        : model.displayName
-
-      option.textContent = `${model.name} - ${displayName}`
-
-      if (modelKey === currentModelKey) {
-        option.selected = true
+    for (const group of groups) {
+      let parent: HTMLElement = selectElement
+      if (grouped) {
+        const optgroup = document.createElement('optgroup')
+        optgroup.label = group.meta.name
+        optgroup.dataset.vendor = group.vendorKey
+        selectElement.appendChild(optgroup)
+        parent = optgroup
       }
 
-      selectElement.appendChild(option)
-    })
+      for (const { key: modelKey, model } of group.models) {
+        const option = document.createElement('option')
+        option.value = modelKey
+
+        const displayName = this.config.getModelDisplayName
+          ? this.config.getModelDisplayName(modelKey)
+          : model.displayName
+
+        option.textContent = `${model.name} - ${displayName}`
+
+        if (modelKey === currentModelKey) {
+          option.selected = true
+        }
+
+        parent.appendChild(option)
+      }
+    }
   }
 
   /**
@@ -231,14 +256,49 @@ export class ModelSelectorManager {
    */
   private createChoicesTemplates(template: any) {
     const api = (window as any).aiImageAPI
+    // 模型表通过公开的 getAllModels() 取(与 init() 同一条路);`api.models` 是 ApiService
+    // 的私有字段,在真机上不可靠,只留作兜底。每次渲染都重新取,自定义站点改了模型表也能跟上。
+    const lookupModel = (key: string): any =>
+      api?.getAllModels?.()?.[key] ?? api?.models?.[key] ?? undefined
 
     return {
-      item: ({ classNames }: any, data: any) => {
-        const modelName = data.label.split(' - ')[0]
-        // 模型名称本身已包含 emoji，直接显示即可
+      /**
+       * 厂商分组抬头:「OpenAI · 5」。Choices.js 把 `<optgroup>` 的 label 与其下 choices
+       * 一起交过来,抬头是 choices 的兄弟节点(不是父级),所以 CSS 里可以直接 sticky。
+       */
+      choiceGroup: ({ classNames }: any, group: any) => {
+        const label = String(group.label ?? '')
+        const count = Array.isArray(group.choices) ? group.choices.length : 0
         return template(`
-          <div class="${classNames.item}" style="display: flex; align-items: center; gap: 0.5rem;">
-            <span style="font-size: 16px; font-weight: 500;">${modelName}</span>
+          <div class="${classNames.group}" role="group" data-group data-id="${group.id}" data-value="${label}">
+            <div class="${classNames.groupHeading} model-group-heading">
+              <span class="model-group-name">${label}</span>
+              ${count > 0 ? `<span class="model-group-count">${count}</span>` : ''}
+            </div>
+          </div>
+        `)
+      },
+      /**
+       * 选中态（顶栏里那一格）。设计稿 D6：36px 单行 =「厂商小标签 + 模型名 + ▾」。
+       * 厂商读模型表的 `vendor`（与下拉分组同一张 {@link MODEL_VENDORS}）；模型名若已以厂商名
+       * 开头（「腾讯 Image 2」）就去掉前缀，免得小标签和正文重复说一遍「腾讯」。
+       */
+      item: ({ classNames }: any, data: any) => {
+        const modelName = String(data.label ?? '').split(' - ')[0]
+        const vendorRaw = lookupModel(data.value)?.vendor
+        const vendorName =
+          typeof vendorRaw === 'string' && vendorRaw in MODEL_VENDORS
+            ? MODEL_VENDORS[vendorRaw as keyof typeof MODEL_VENDORS].name
+            : ''
+        const shownName =
+          vendorName && modelName.startsWith(vendorName)
+            ? modelName.slice(vendorName.length).trim() || modelName
+            : modelName
+        return template(`
+          <div class="${classNames.item} model-selected" title="${escapeHtml(modelName)}">
+            ${vendorName ? `<span class="model-vendor-chip">${escapeHtml(vendorName)}</span>` : ''}
+            <span class="model-selected-name">${escapeHtml(shownName)}</span>
+            <svg class="model-selected-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
         `)
       },
@@ -247,7 +307,7 @@ export class ModelSelectorManager {
         const name = parts[0] || ''
         const desc = parts[1] || ''
 
-        const modelInfo = api?.models?.[data.value]
+        const modelInfo = lookupModel(data.value)
 
         let badges = ''
         if (modelInfo) {
@@ -855,7 +915,7 @@ export class ModelSelectorManager {
   }
 
   /**
-   * 获取桌面端 Choices 实例
+   * 获取桌面端选择器实例(现在是 {@link VendorModelPanel},表面兼容 Choices)
    */
   getDesktopChoice(): any {
     return this.desktopChoice

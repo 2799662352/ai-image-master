@@ -3,10 +3,12 @@
 // 把 MCP CardInput 里的 asset:// 字符串升级成带 previewUrl 的 Material。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useQuotaStore } from '../../../stores/useQuotaStore'
 import {
   enrichAssetReferences,
   extractAssetId,
   getCachedAssetPreview,
+  MISS_TTL_MS,
   resetAssetPreviewCacheForTest,
   resolveAssetPreviews,
   withCachedAssetPreview,
@@ -27,6 +29,7 @@ function mockAssets(items: Array<{ assetId: string; name?: string; previewUrl?: 
 beforeEach(() => {
   resetAssetPreviewCacheForTest()
   listAssets.mockReset()
+  useQuotaStore.setState({ billingSource: 'own-key', selectedPool: null })
   ;(globalThis as unknown as { electronAPI?: unknown }).electronAPI = {
     seedance: { listAssets },
   }
@@ -135,5 +138,94 @@ describe('enrichAssetReferences(MCP 写入侧)', () => {
     const out = await enrichAssetReferences(input)
     expect(out[0]).toBe(input[0])
     expect(listAssets).not.toHaveBeenCalled()
+  })
+})
+
+describe('查不到只短暂记住', () => {
+  it('miss 在 MISS_TTL_MS 内不重查,过期后重新查(agent 刚登记的素材列表里暂时没有)', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    mockAssets([])
+    await resolveAssetPreviews(['fresh'])
+    expect(getCachedAssetPreview('fresh')).toBeNull()
+
+    now.mockReturnValue(1_000_000 + MISS_TTL_MS + 1)
+    expect(getCachedAssetPreview('fresh')).toBeUndefined()
+    mockAssets([{ assetId: 'fresh', previewUrl: 'https://cdn/fresh.jpg' }])
+    const found = await resolveAssetPreviews(['fresh'])
+    expect(found.get('fresh')?.previewUrl).toBe('https://cdn/fresh.jpg')
+    expect(listAssets).toHaveBeenCalledTimes(2)
+    now.mockRestore()
+  })
+})
+
+// 平台余额下 agent 挂的是「素材库」(平台库)的 asset://。以前这里只扫 vvdance 库,
+// 平台素材永远查不到 → 卡上没缩略图、预览弹窗报「素材库素材没有可预览地址」。
+describe('平台余额:查素材库(按计费池)', () => {
+  const list = vi.fn()
+  const resolve = vi.fn()
+  const asset = (Id: string, extra: Record<string, unknown> = {}) => ({
+    Id,
+    Status: 'Active',
+    AssetType: 'Image',
+    URL: `https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/a/${Id}.png`,
+    ...extra,
+  })
+
+  beforeEach(() => {
+    list.mockReset()
+    resolve.mockReset()
+    ;(globalThis as unknown as { electronAPI?: unknown }).electronAPI = {
+      seedance: { listAssets },
+      portraitLibrary: { list, resolve },
+    }
+    useQuotaStore.setState({ billingSource: 'platform', selectedPool: { projectId: 42, producerProjectId: null } })
+  })
+
+  afterEach(() => {
+    useQuotaStore.setState({ billingSource: 'own-key', selectedPool: null })
+  })
+
+  it('列表命中出缩略图 + 原图地址,不碰 vvdance 库', async () => {
+    list.mockResolvedValue({ ok: true, data: { Items: [asset('p1', { Name: '女主' })], TotalCount: 1, HiddenCount: 0, Truncated: false } })
+    const found = await resolveAssetPreviews(['p1'])
+    const entry = found.get('p1')
+    expect(entry?.name).toBe('女主')
+    expect(entry?.previewUrl).toContain('/a/p1.png?imageMogr2/thumbnail/')
+    expect(entry?.sourceUrl).toBe('https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/a/p1.png')
+    expect(list).toHaveBeenCalledWith({ projectId: 42, producerProjectId: null })
+    expect(listAssets).not.toHaveBeenCalled()
+  })
+
+  it('列表里没有的按 id 单查;两边都没有才记 miss', async () => {
+    list.mockResolvedValue({ ok: true, data: { Items: [], TotalCount: 0, HiddenCount: 0, Truncated: true } })
+    resolve.mockImplementation(async (_scope: unknown, id: string) =>
+      id === 'deep' ? { ok: true, data: asset('deep') } : { ok: true, data: null },
+    )
+    const found = await resolveAssetPreviews(['deep', 'ghost'])
+    expect(found.get('deep')?.sourceUrl).toContain('/a/deep.png')
+    expect(getCachedAssetPreview('ghost')).toBeNull()
+    expect(resolve).toHaveBeenCalledTimes(2)
+  })
+
+  it('视频素材不把媒体地址当缩略图(塞进 <img> 只会裂),只给原始地址 + 名字', async () => {
+    list.mockResolvedValue({
+      ok: true,
+      data: { Items: [asset('v1', { AssetType: 'Video', Name: '动作参考', URL: 'https://cdn/v1.mp4' })], TotalCount: 1, HiddenCount: 0, Truncated: false },
+    })
+    const [out] = await enrichAssetReferences([{ referenceVideos: ['asset://v1'] }])
+    expect(out.referenceVideos).toEqual([{ name: '动作参考', src: 'asset://v1' }])
+    expect(getCachedAssetPreview('v1')).toEqual({ name: '动作参考', sourceUrl: 'https://cdn/v1.mp4' })
+  })
+
+  it('缓存按计费池分区:换池后同一个 id 重新查', async () => {
+    list.mockResolvedValue({ ok: true, data: { Items: [asset('p1')], TotalCount: 1, HiddenCount: 0, Truncated: false } })
+    await resolveAssetPreviews(['p1'])
+    useQuotaStore.setState({ selectedPool: { projectId: 7, producerProjectId: 3 } })
+    expect(getCachedAssetPreview('p1')).toBeUndefined()
+    list.mockResolvedValue({ ok: true, data: { Items: [], TotalCount: 0, HiddenCount: 0, Truncated: false } })
+    resolve.mockResolvedValue({ ok: true, data: null })
+    await resolveAssetPreviews(['p1'])
+    expect(list).toHaveBeenLastCalledWith({ projectId: 7, producerProjectId: 3 })
+    expect(getCachedAssetPreview('p1')).toBeNull()
   })
 })

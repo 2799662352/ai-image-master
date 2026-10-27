@@ -257,6 +257,7 @@ describe('ThreadStore.listThreads', () => {
     const result = await store.listThreads()
     expect(findMany).toHaveBeenCalledWith({
       orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+      include: { _count: { select: { messages: true } } },
     })
     expect(result[0]).toMatchObject({
       id: 't1',
@@ -264,5 +265,19 @@ describe('ThreadStore.listThreads', () => {
       lastMessageAt: fakeRows[0].lastMessageAt,
       manualTitle: false,
     })
+  })
+
+  // Sidebar rows show 「N 条消息」(design D1, after Cursor's per-thread subline).
+  // The count rides the list query as a Prisma relation count and is flattened
+  // to `messageCount`; the raw `_count` never reaches the renderer.
+  it('flattens the message relation count to messageCount and drops _count', async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      { id: 't1', title: 'Busy', createdAt: new Date(), updatedAt: new Date(), _count: { messages: 12 } },
+      { id: 't2', title: 'Empty', createdAt: new Date(), updatedAt: new Date(), _count: { messages: 0 } },
+    ])
+    const store = new ThreadStore({ agentThread: { findMany } } as any)
+    const result = await store.listThreads()
+    expect(result.map((r) => r.messageCount)).toEqual([12, 0])
+    expect(result[0]).not.toHaveProperty('_count')
   })
 })

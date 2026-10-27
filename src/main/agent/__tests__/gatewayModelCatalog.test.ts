@@ -50,9 +50,16 @@ describe('buildGatewayModelCatalog', () => {
       'gpt-5.5-openai-compact',
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
+      // 3.8 全模态档(2026-09-20 加入),与 3.7 两档并行,canonical 里排在 3.7 之后。
+      'qwen3.8-omni-flash',
       'qwen3.8-max',
-      'deepseek-v4-flash',
+      'qwen3.8-flash',
+      // DeepSeek 组:只剩 Miau 的四行(可用平台余额)——官方渠道两个在前,
+      // 火山方舟的标准版 / 经济版在后。
+      'deepseek-flash',
       'deepseek-v4-pro',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -64,9 +71,18 @@ describe('buildGatewayModelCatalog', () => {
       expect(catalog.models.find((model) => model.id === grok)?.route)
         .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
     }
-    for (const slug of ['deepseek-v4-flash', 'deepseek-v4-pro']) {
+    for (const slug of [
+      'deepseek-flash',
+      'deepseek-v4-pro',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
+    ]) {
       expect(catalog.models.find((model) => model.id === slug)?.route)
-        .toMatchObject({ channelId: 'rightcode-deepseek', family: 'deepseek' })
+        .toMatchObject({ channelId: 'rightcode-deepseek-miau', family: 'deepseek' })
+    }
+    // 撤下的三个选择器行不能再出现(0731 / 0813 / Right.Codes 直连的 flash)。
+    for (const retired of ['deepseek-v4-flash-0731', 'deepseek-v4-pro-0813', 'deepseek-v4-flash']) {
+      expect(catalog.models.find((model) => model.id === retired), retired).toBeUndefined()
     }
     expect(catalog.models.find((model) => model.id === 'claude-opus-5')?.route)
       .toMatchObject({ channelId: 'rightcode-claude', family: 'anthropic' })
@@ -178,6 +194,29 @@ describe('buildGatewayModelCatalog', () => {
     expect(reasonOf('gpt-5.5')).toBe('请先配置网关 Key')
   })
 
+  /**
+   * 新加的模型必须**同时**在两处登记才真的可用:`QWEN_MIAU_MODELS`(白名单,
+   * 决定能不能路由)与 `CANONICAL_MODEL_SETTINGS_ROWS`(展示名/档位/排序)。
+   *
+   * 🧬 变异点:只加白名单不加 canonical 行,`displayName` 会回落成裸 slug
+   * 「qwen3.8-flash」,档位也没有 —— 选择器里那一行看起来像没配好。
+   * 反过来只加 canonical 不加白名单,它根本不会出现在目录里。
+   */
+  it('qwen3.8-flash 两处都登记了:能路由,且有展示名', () => {
+    const catalog = buildGatewayModelCatalog({
+      gatewayId: 'rightcode',
+      dynamicSource: 'codex',
+      dynamicModels: [dynamicModel('gpt-5.5')],
+      hasCredential: () => true,
+      availabilityByModel: new Map(),
+    })
+
+    const flash = catalog.models.find((model) => model.id === 'qwen3.8-flash')
+    expect(flash, 'qwen3.8-flash 不在目录里 —— 白名单没加?').toBeDefined()
+    expect(flash?.displayName).toBe('Qwen 3.8 Flash')
+    expect(flash?.route.channelId).toBe('rightcode-qwen')
+  })
+
   it('uses mixed source when static declared models augment Codex rows', () => {
     const catalog = buildGatewayModelCatalog({
       gatewayId: 'rightcode',
@@ -280,11 +319,19 @@ describe('buildGatewayModelCatalog', () => {
       'claude-fable-5',
       'claude-opus-5',
       'claude-sonnet-5',
+      // apiyi 现在也挂了 Miau 的 DeepSeek(与 qwen 同样的理由:同一枚 Miau token,
+      // 用户不必为了换模型去切网关)。
+      'deepseek-flash',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
+      'deepseek-v4-pro',
       'gpt-5.5',
       'grok-4.5',
       'qwen3.7-max-dashscope',
       'qwen3.7-plus-dashscope',
+      'qwen3.8-flash',
       'qwen3.8-max',
+      'qwen3.8-omni-flash',
     ])
   })
 })

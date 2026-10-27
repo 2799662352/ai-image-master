@@ -6,7 +6,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
-import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification, resolveStableCodexHome } from '../CodexLocalBackend'
+import {
+  buildCodexSpawnEnv,
+  CodexLocalBackend,
+  mapServerNotification,
+  MIAU_PLACEHOLDER_TOKEN,
+  miauEnvForSpawn,
+  resolveStableCodexHome,
+} from '../CodexLocalBackend'
+import type { CodexProviderConfig } from '../codexLaunch'
 import { resolveWorkspacePaths } from '../codexConfigStore'
 import type { AgentStreamEvent, CodexApprovalRequest } from '../../../types/agent'
 import type { AgentInput } from '../types'
@@ -600,6 +608,33 @@ describe('buildCodexSpawnEnv', () => {
   })
 })
 
+/**
+ * codex 对 `env_key` 指向的变量要求**存在**,否则请求前就报缺变量。以前 Miau Key
+ * 没填就不设 `MIAU_API_KEY`,于是登录了、平台余额也开了的用户,选千问或 DeepSeek
+ * Miau 时被 codex 自己拦下 —— 而报错里看不出跟「没填 Key」有什么关系。
+ */
+describe('miauEnvForSpawn', () => {
+  const miau = (id: string): CodexProviderConfig =>
+    ({ id, name: id, baseUrl: 'https://miau.example/v1', envKey: 'MIAU_API_KEY' }) as CodexProviderConfig
+  const rightcode = { id: 'rightcode-standard', name: 'rc', baseUrl: 'https://rc.example/v1', envKey: 'OPENAI_API_KEY' } as CodexProviderConfig
+
+  it('用户填了 Miau Key:原样用真的', () => {
+    expect(miauEnvForSpawn([miau('rightcode-qwen')], { provider: miau('qwen'), token: 'real-miau' }))
+      .toEqual({ MIAU_API_KEY: 'real-miau' })
+  })
+
+  it('没填 Key、但注册了 Miau 通道:放占位值,让 codex 能把请求发出去(代理会换掉它)', () => {
+    const env = miauEnvForSpawn([rightcode, miau('rightcode-qwen')], undefined)
+    expect(env).toEqual({ MIAU_API_KEY: MIAU_PLACEHOLDER_TOKEN })
+    // 占位值不能是空串 —— 空串会被 codex 当成「没设」。
+    expect(MIAU_PLACEHOLDER_TOKEN.length).toBeGreaterThan(0)
+  })
+
+  it('没填 Key、也没有任何 Miau 通道:什么都不设', () => {
+    expect(miauEnvForSpawn([rightcode], undefined)).toBeUndefined()
+  })
+})
+
 describe('CodexLocalBackend spawn env injection', () => {
   function makeFakeChildProc(): any {
     const proc = new EventEmitter() as any
@@ -791,6 +826,87 @@ describe('CodexLocalBackend spawn env injection', () => {
       )
       expect(activeBaseUrl).not.toContain('api.apiyi.com')
       expect(extraBaseUrl).not.toContain('127.0.0.1')
+    } finally {
+      await backend.stop()
+    }
+  })
+
+  it('starts one cinematography_kb platform relay per spawn and closes it with that spawn', async () => {
+    const workspace = await createWorkspacePaths()
+    const capturedArgs: string[][] = []
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      cinematographyKbPlatformRelay: true,
+      getCinematographyKbKey: () => 'sk-kb-secret-in-argv',
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs.push([...args])
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+    const relayOf = (args: string[]) => {
+      const read = (name: string): string | undefined => {
+        const prefix = `mcp_servers.cinematography_kb.env.${name}=`
+        const arg = args.find((candidate) => candidate.startsWith(prefix))
+        return arg ? JSON.parse(arg.slice(prefix.length)) : undefined
+      }
+      return { url: read('CATIMATION_KB_RELAY_URL'), token: read('CATIMATION_KB_RELAY_TOKEN') }
+    }
+    const probe = async (relay: { url?: string; token?: string }) => {
+      const response = await fetch(`${relay.url}/knowledge/search`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${relay.token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      return { status: response.status, code: (await response.json()).error?.code }
+    }
+
+    try {
+      await backend.start()
+      const first = relayOf(capturedArgs[0])
+      expect(first.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+      expect(first.token).toMatch(/^[0-9a-f]{64}$/)
+      // No billing pool is armed here, so the live relay tells the MCP to fall back.
+      await expect(probe(first)).resolves.toEqual({ status: 401, code: 'platform_unavailable' })
+
+      const spawnLines = consoleLog.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith('[CodexLaunch] spawn'))
+      expect(spawnLines).toHaveLength(1)
+      expect(spawnLines[0]).not.toContain('sk-kb-secret-in-argv')
+      expect(spawnLines[0]).not.toContain(first.token)
+      expect(spawnLines[0]).toContain('CATIMATION_KB_RELAY_TOKEN=<redacted>')
+
+      await backend.restartCodex(workspace.paths)
+      const second = relayOf(capturedArgs[1])
+      expect(second.token).not.toBe(first.token)
+      await expect(probe(second)).resolves.toEqual({ status: 401, code: 'platform_unavailable' })
+      await expect(probe(first)).rejects.toThrow()
+
+      await backend.stop()
+      await expect(probe(second)).rejects.toThrow()
+    } finally {
+      consoleLog.mockRestore()
+      await backend.stop()
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it('starts no platform relay unless asked to', async () => {
+    let capturedArgs: string[] = []
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs = args
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      expect(capturedArgs.some((arg) => arg.includes('CATIMATION_KB_RELAY_'))).toBe(false)
     } finally {
       await backend.stop()
     }

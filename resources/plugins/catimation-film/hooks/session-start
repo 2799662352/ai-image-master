@@ -2,7 +2,7 @@
 # SessionStart hook for catimation-film plugin.
 set -euo pipefail
 
-session_context="<IMPORTANT>\nCATIMATION 制片编排器已启用。\n\n【先判断:是不是纯文本任务】写剧本、拆脚本、拆批次、整理文件、列镜头清单、改一段文字——这些**不加载任何 skill**,直接做完交付。用户说「快点」「简单弄一下」时同理。制片流水线是给**真要做成片**的项目用的,套在纯文本任务上只会把三分钟拖成几小时。\n\n【真要做成片时】用户要「做电影 / 做短片 / 一条龙 / 从剧本到成片」时,才用 Skill 工具加载 film-studio 总编排器,由它按 G0→G8 门控推进;每个 G 阶段各自按需加载该阶段的 skill,**不要一次全载**。每镜出图 / 出视频委托 catimation-image / catimation-video 入口执行。\n\n【角色片 / 多镜的资产门】片中有反复出现的角色、或不止一个镜头时,先锁人物卡与故事板再开生成 —— 完整规则在 catimation-video 与 film-studio 正文里,用到时去读,这里不复述。\n\n命令:/make-film 端到端制片,/write-script 写剧本,/trailer 预告片方案。\n</IMPORTANT>"
+session_context="<IMPORTANT>\nCATIMATION 制片编排器已启用。\n\n【先判断:是不是纯文本任务】写剧本、拆脚本、拆批次、整理文件、列镜头清单、改一段文字——这些**不加载任何 skill**,直接做完交付。用户说「快点」「简单弄一下」时同理。制片流水线是给**真要做成片**的项目用的,套在纯文本任务上只会把三分钟拖成几小时。\n\n【真要做成片时】用户要「做电影 / 做短片 / 一条龙 / 从剧本到成片」时,才用 Skill 工具加载 film-studio 总编排器,由它按 G0→G8 门控推进;每个 G 阶段各自按需加载该阶段的 skill,**不要一次全载**。每镜出图 / 出视频委托 catimation-image / catimation-video 入口执行。\n\n【角色片 / 多镜的资产门】片中有反复出现的角色、或不止一个镜头时,先锁人物卡与故事板再开生成 —— 完整规则在 catimation-video 与 film-studio 正文里,用到时去读,这里不复述。\n\n命令:/make-film 端到端制片,/write-script 写剧本,/optimize-script 剧本可视化改写,/trailer 预告片方案。\n</IMPORTANT>"
 
 if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
   printf '{\n  "additional_context": "%s"\n}\n' "$session_context"

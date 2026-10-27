@@ -318,12 +318,12 @@ describe('撤销 / 重做', () => {
     expect(state().redoStack).toHaveLength(1)
   })
 
-  it('撤销会 bump structureRevision:agent 手里的整份 IR 随之作废', async () => {
-    const [cardId] = state().addCards([{ prompt: '一' }])
-    state().updateCard(cardId, { prompt: '二' })
+  it('撤销会 bump structureRevision:撤销改了这部剧的结构时,agent 手里的整份 IR 随之作废', async () => {
+    state().addCards([{ prompt: '一' }])
+    state().addCards([{ prompt: '二' }])
     const stale = state().exportIR()
 
-    await state().undo()
+    await state().undo() // 撤掉第二张卡 → 本剧的卡序指纹变了
 
     const applied = await state().applyIR(stale)
     expect(applied.ok).toBe(false)
@@ -331,6 +331,26 @@ describe('撤销 / 重做', () => {
       expected: stale.structureRevision,
       actual: state().structureRevision,
     })
+  })
+
+  // 令牌是全工作台一个计数,撤销又总会 bump 它;若这部剧的结构原封没动(撤的只是一次
+  // 提示词/规格编辑),整份拒绝就成了冤枉 —— 并发安全由按卡 rev 兜着:撤销把 rev 往上推,
+  // 旧 IR 里的规格改动被逐卡跳过,不会把被撤销掉的内容写回来。
+  it('撤销只改了卡内容、没动结构:整份不拒,但旧 IR 的规格改动被按卡 rev 拦下', async () => {
+    const [cardId] = state().addCards([{ prompt: '一' }])
+    state().updateCard(cardId, { resolution: '1080p' })
+    const stale = state().exportIR()
+    stale.boards[0].cards[0].resolution = '480p'
+
+    await state().undo() // 规格回到撤销前,rev 往上推
+    const resolutionAfterUndo = state().cards[0].resolution
+    expect(resolutionAfterUndo).not.toBe('1080p')
+
+    const applied = await state().applyIR(stale)
+
+    expect(applied.ok).toBe(true)
+    expect(applied.skipped.map((s) => s.cardId)).toEqual([cardId])
+    expect(state().cards[0].resolution).toBe(resolutionAfterUndo)
   })
 
   it('撤销把卡片的 rev 往上推,不跟着快照回退', async () => {
@@ -344,5 +364,23 @@ describe('撤销 / 重做', () => {
     // rev 而校验通过,把被撤销掉的内容悄悄写回来。
     expect(state().cards[0].prompt).toBe('旧')
     expect(state().cards[0].rev!).toBeGreaterThan(revAfterEdit)
+  })
+})
+
+describe('撤销删剧', () => {
+  it('removeProject 后 undo 复活剧、分段、卡片并回到那部剧;redo 再删', async () => {
+    const p2 = state().addProject('第二部')
+    state().addCards([{ prompt: 'in-p2' }])
+    expect(state().removeProject(p2).ok).toBe(true)
+    expect(state().projects.some((p) => p.id === p2)).toBe(false)
+    const r = await state().undo()
+    expect(r.ok).toBe(true)
+    expect(state().projects.some((p) => p.id === p2)).toBe(true)
+    expect(state().boards.some((b) => b.projectId === p2)).toBe(true)
+    expect(state().cards.some((c) => c.prompt === 'in-p2')).toBe(true)
+    expect(state().activeProjectId).toBe(p2)
+    await state().redo()
+    expect(state().projects.some((p) => p.id === p2)).toBe(false)
+    expect(state().boards.some((b) => b.projectId === p2)).toBe(false)
   })
 })

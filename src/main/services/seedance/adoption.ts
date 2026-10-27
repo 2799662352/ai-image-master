@@ -12,9 +12,10 @@
 //     还在跑、钱已经付了，照旧接管让 pollLoop 带退避继续探。渲染端在相邻的 IPC
 //     失败分支里写着「别把还在跑的任务错杀」，这里遵循同一条意图。
 
+import { coerceVideoBillingSource } from './billing'
 import { SeedanceApiError } from './client'
 import type { AdoptParams } from './taskManager'
-import type { SeedanceModelAlias } from './types'
+import type { SeedanceModelAlias, VideoBillingSource } from './types'
 import { SEEDANCE_MODEL_CAPABILITIES } from './types'
 import type {
   VideoWorkbenchReconcileItem,
@@ -30,8 +31,15 @@ export interface ReconcileDeps {
    * 带 `model` 是因为要打对上游 —— 万相的任务在 Ark 那边查不到，会被
    * `meansTaskIsGone` 判成「任务没了」，于是一条还在跑、已经付过钱的任务被
    * 错杀成失败卡片。
+   *
+   * 带 `billing` 是同一个理由的第二层:平台余额那条任务是按计费池签发的影子
+   * token 建的,拿用户自填的 vvdance key 去问同样只会拿回「任务不存在」。
    */
-  probe: (taskId: string, model: SeedanceModelAlias) => Promise<unknown>
+  probe: (
+    taskId: string,
+    model: SeedanceModelAlias,
+    billing: VideoBillingSource | undefined,
+  ) => Promise<unknown>
   /** 重新登记并恢复轮询。 */
   adopt: (params: AdoptParams) => void
   /** 上游错误原文转成给用户看的中文。 */
@@ -62,9 +70,11 @@ function normalizeAdoptParams(item: VideoWorkbenchReconcileItem): AdoptParams {
   const model = MODEL_ALIASES.includes(raw.model as SeedanceModelAlias)
     ? (raw.model as SeedanceModelAlias)
     : '2.0'
+  const billing = coerceVideoBillingSource(raw.billing)
   return {
     taskId: item.taskId,
     source: 'workbench',
+    ...(billing ? { billing } : {}),
     ...(typeof raw.clientId === 'string' && raw.clientId ? { clientId: raw.clientId } : {}),
     prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
     model,
@@ -89,10 +99,10 @@ export async function reconcileInFlightTasks(
       results.push({ taskId, outcome: 'tracked' })
       continue
     }
-    // 先归一化：probe 要按 model 选上游，而 model 的容错就在这个函数里。
+    // 先归一化：probe 要按 model + 计费模式选上游，而两者的容错都在这个函数里。
     const params = normalizeAdoptParams({ ...item, taskId })
     try {
-      await deps.probe(taskId, params.model)
+      await deps.probe(taskId, params.model, params.billing)
     } catch (e) {
       if (meansTaskIsGone(e)) {
         results.push({

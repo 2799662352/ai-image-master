@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VideoWorkbenchMaterial } from '../../../../../types/videoWorkbench'
 import { resetAssetPreviewCacheForTest } from '../../../features/video-workbench/assetPreview'
+import { useQuotaStore } from '../../../stores/useQuotaStore'
 import { MaterialStack } from '../MaterialStack'
 
 const readThumb = vi.fn()
@@ -147,13 +148,40 @@ describe('MaterialStack 点击预览', () => {
     expect(screen.queryByTestId('vw-material-preview')).toBeNull()
   })
 
-  it('asset:// 视频素材:提示云端素材无法本地播放(previewUrl 缩略兜底)', async () => {
+  it('asset:// 视频素材:库里查不到播放地址时说清原因(previewUrl 缩略兜底)', async () => {
     renderStack('video', [
       { name: '库素材', src: 'asset://a1', previewUrl: 'https://cdn/a1.jpg' },
     ])
     fireEvent.click(screen.getByTestId('vw-stack-item-video-0'))
     const dialog = await screen.findByTestId('vw-material-preview')
-    expect(dialog.textContent).toContain('无法本地播放')
+    await waitFor(() => expect(dialog.textContent).toContain('查不到这条素材的播放地址'))
     expect(dialog.querySelector('img')?.getAttribute('src')).toBe('https://cdn/a1.jpg')
+  })
+
+  it('asset:// 视频素材:素材库查到原始地址就直接播放', async () => {
+    useQuotaStore.setState({ billingSource: 'platform', selectedPool: { projectId: 42, producerProjectId: null } })
+    ;(globalThis as unknown as { electronAPI?: Record<string, unknown> }).electronAPI = {
+      attachments: { readThumb, readMediaThumb },
+      portraitLibrary: {
+        list: async () => ({
+          ok: true,
+          data: {
+            Items: [{ Id: 'v9', AssetType: 'Video', Status: 'Active', URL: 'https://cos/v9.mp4', Name: '动作参考' }],
+            TotalCount: 1,
+            HiddenCount: 0,
+            Truncated: false,
+          },
+        }),
+        resolve: async () => ({ ok: true, data: null }),
+      },
+    }
+    try {
+      renderStack('video', [{ name: '素材库 v9', src: 'asset://v9' }])
+      fireEvent.click(screen.getByTestId('vw-stack-item-video-0'))
+      const dialog = await screen.findByTestId('vw-material-preview')
+      await waitFor(() => expect(dialog.querySelector('video')?.getAttribute('src')).toBe('https://cos/v9.mp4'))
+    } finally {
+      useQuotaStore.setState({ billingSource: 'own-key', selectedPool: null })
+    }
   })
 })

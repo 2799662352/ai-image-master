@@ -13,14 +13,17 @@ const X_URL = 'https://pbs.twimg.com/media/G2ktJBna8AAhgIg?format=jpg&name=orig'
 const COS_URL = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/x.jpg'
 
 let enqueueUploadFromUrl: ReturnType<typeof vi.fn>
+let enqueueUploadBytes: ReturnType<typeof vi.fn>
 let emit: ((result: CosResult) => void) | undefined
 
 function installBridge(): void {
   enqueueUploadFromUrl = vi.fn(async () => ({ queued: true as const }))
+  enqueueUploadBytes = vi.fn(async () => ({ queued: true as const }))
   emit = undefined
   ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
     cos: {
       enqueueUploadFromUrl,
+      enqueueUploadBytes,
       onUploadResult: (cb: (r: CosResult) => void) => {
         emit = cb
         return () => { emit = undefined }
@@ -91,6 +94,42 @@ describe('外链素材转存', () => {
 
     await new Promise((r) => setTimeout(r, 10))
     expect(enqueueUploadFromUrl).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 库里残留的内联图(离线粘贴 / 转存曾失败 / 老版本存下的)在水合后补一次转存;
+   * 换成 https 后再水合就扫不到,不会重复发。
+   */
+  it('水合后补转存库里残留的 data:image 素材;成功换地址后重复水合不再发', async () => {
+    const useStore = await loadStore()
+    const db = (await import('../WorkbenchDb')).getWorkbenchDb()
+    const { buildCard } = await import('../cardSpec')
+    const inline = buildCard({
+      prompt: 'pasted',
+      referenceImages: [
+        { name: '粘贴图', src: 'data:image/png;base64,iVBORw0KGgo=' },
+        { name: '云端图', src: COS_URL },
+      ],
+    }, 0)
+    await db.put(inline)
+
+    await useStore.getState().ensureHydrated()
+    await vi.waitFor(() => expect(enqueueUploadBytes).toHaveBeenCalledTimes(1))
+    const [requestId, , mime, meta] = enqueueUploadBytes.mock.calls[0]
+    expect(requestId).toMatch(/^vwmaterial:/)
+    expect(mime).toBe('image/png')
+    expect(meta).toMatchObject({ name: '粘贴图' })
+    // https 的那张不碰
+    expect(enqueueUploadFromUrl).not.toHaveBeenCalled()
+
+    emit?.({ requestId, success: true, url: 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/p.png', key: 'k' })
+    const imagesOf = () => useStore.getState().cards.find((c) => c.id === inline.id)!.referenceImages
+    await vi.waitFor(() => expect(imagesOf()[0].src).toMatch(/^https:/))
+
+    // 再水合一次:素材已是 https,不再发
+    const { sweepInlineMaterials } = await import('../store')
+    expect(sweepInlineMaterials(useStore.getState().cards)).toBe(0)
+    expect(enqueueUploadBytes).toHaveBeenCalledTimes(1)
   })
 
   it('结果迟到时按原地址匹配 —— 期间用户又加了图也不会错位', async () => {

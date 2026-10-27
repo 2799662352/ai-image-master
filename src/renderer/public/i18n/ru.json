@@ -995,6 +995,10 @@
       "name": "🍌 Nano Banana 2",
       "displayName": "15s, gemini-3.1-flash-image нативный эндпоинт Google, поддержка множества размеров до 4K, $0.03/изображение 🚀 Менее 20% от официальной цены"
     },
+    "gemini-nano-banana-2.1": {
+      "name": "🍌 Nano Banana 2.1",
+      "displayName": "20s, gemini-nano-banana-2.1 нативный эндпоинт Google, улучшенная Nano Banana 2: выше качество, точнее текст на изображении, стабильнее многошаговое редактирование, 1K/2K/4K, ~$0.03/изображение (1K, по токенам)"
+    },
     "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s, gemini-3-pro-image нативная конечная точка Google, поддержка многоразмерного 4K, $0.05/изображение 🔥 1/5 официальной цены"
@@ -1007,9 +1011,21 @@
       "name": "SeeDream 4.5",
       "displayName": "Генерация 15s, зарубежная версия SeeDream seedream-4-5-251128, сверхчеткая генерация и редактирование, поддержка разрешений 2K/4K, вывод URL и Base64, $0.045/изображение"
     },
+    "gpt-image-2.5-flare": {
+      "name": "GPT Image 2.5 Flare",
+      "displayName": "20s, официальный OpenAI — приоритет скорости, примерно вдвое быстрее gpt-image-2 при той же цене"
+    },
+    "gpt-image-2.5-sunburst": {
+      "name": "GPT Image 2.5 Sunburst",
+      "displayName": "40s, официальный OpenAI — приоритет качества/редактирования, та же цена, что у Flare"
+    },
+    "gpt-image-2.5-all": {
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s, реверс ChatGPT (Images 2.5), размер в промпте, $0.03/изображение"
+    },
     "gpt-image-2-all": {
-      "name": "GPT Image 2 All",
-      "displayName": "Генерация 30s, GPT генерация изображений, текст-в-изображение/редактирование/слияние, высокая точность текста, поддержка китайского, $0.03/изображение🔥"
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s, реверс ChatGPT (Images 2.5), размер в промпте, $0.03/изображение"
     },
     "sora_image": {
       "name": "Sora_image",

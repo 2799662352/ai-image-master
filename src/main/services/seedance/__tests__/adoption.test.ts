@@ -57,7 +57,42 @@ describe('reconcileInFlightTasks', () => {
     const { deps } = makeDeps()
     await reconcileInFlightTasks([{ ...ITEM, model: 'wan3' }], deps)
 
-    expect(deps.probe).toHaveBeenCalledWith('task-1', 'wan3')
+    expect(deps.probe).toHaveBeenCalledWith('task-1', 'wan3', undefined)
+  })
+
+  /**
+   * 与上面那条 model 同源、但更贵:平台余额那条路用的是按计费池签发的影子 token。
+   * 探测不带计费模式的话,一条平台任务会被拿用户自填的 vvdance key 去问,回一句
+   * 「任务不存在」,再被 meansTaskIsGone 判成 unknown —— 重启后卡片当场变红,
+   * 而视频照样在跑、钱照样扣。接管参数也要带,否则恢复出来的轮询同样走错路。
+   */
+  it('探测与接管都带上计费模式 —— 平台任务不能拿自填 Key 去问', async () => {
+    const { deps, adopted } = makeDeps()
+    await reconcileInFlightTasks([{ ...ITEM, billing: 'platform' }], deps)
+
+    expect(deps.probe).toHaveBeenCalledWith('task-1', '2.0', 'platform')
+    expect(adopted[0]).toMatchObject({ billing: 'platform' })
+  })
+
+  it('没带计费模式的老卡片按自填 Key 走,与接网关之前一致', async () => {
+    const { deps, adopted } = makeDeps()
+    await reconcileInFlightTasks([ITEM], deps)
+
+    expect(deps.probe).toHaveBeenCalledWith('task-1', '2.0', undefined)
+    expect(adopted[0]?.billing).toBeUndefined()
+  })
+
+  it('计费模式认不出时当没带 —— 不猜成 platform', async () => {
+    // 载荷来自渲染端 IndexedDB,可能是手改过的或旧 schema。猜成 platform 会让
+    // 一条自填 Key 的任务被拿影子 token 去问;猜成 own-key 只是回到老行为。
+    const { deps, adopted } = makeDeps()
+    await reconcileInFlightTasks(
+      [{ ...ITEM, billing: 'bogus' } as unknown as VideoWorkbenchReconcileItem],
+      deps,
+    )
+
+    expect(deps.probe).toHaveBeenCalledWith('task-1', '2.0', undefined)
+    expect(adopted[0]?.billing).toBeUndefined()
   })
 
   it('2.5 / wan3 都认得,不再被静默归一成 2.0', async () => {
@@ -74,7 +109,7 @@ describe('reconcileInFlightTasks', () => {
     const { deps, adopted } = makeDeps()
     await reconcileInFlightTasks([{ ...ITEM, model: 'bogus' as never }], deps)
 
-    expect(deps.probe).toHaveBeenCalledWith('task-1', '2.0')
+    expect(deps.probe).toHaveBeenCalledWith('task-1', '2.0', undefined)
     expect(adopted[0]).toMatchObject({ model: '2.0' })
   })
 

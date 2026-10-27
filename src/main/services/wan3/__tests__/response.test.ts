@@ -315,6 +315,34 @@ describe('parseWan3TaskResult · 逐字真实样本（2026-08-14 task_7p7tCl…�
     // 用它而不是用户选的 duration —— 智能时长(-1)时两者根本不是一回事。
     expect(parseWan3TaskResult(succeeded).billedSeconds).toBe(5)
   })
+
+  it('内层 DashScope 的 output.task_id 就是上游任务号,作 upstreamTaskId 带出(id 仍是网关的)', () => {
+    // 找阿里对账要的是这个 uuid,网关 task_ 号他们不认。第一轮轮询(IN_PROGRESS)就有。
+    expect(parseWan3TaskResult(running).upstreamTaskId).toBe('316bb68d-414d-4ee1-b852-7ae9da5f089e')
+    expect(parseWan3TaskResult(succeeded).upstreamTaskId).toBe('316bb68d-414d-4ee1-b852-7ae9da5f089e')
+    expect(parseWan3TaskResult(succeeded).id).toBe('task_7p7tClwgXFIj4vMjRLFjQCb8Uli2Yg1D')
+  })
+})
+
+describe('parseWan3TaskResult · upstreamTaskId', () => {
+  it('metadata.upstream_task_id 优先于内层 output.task_id', () => {
+    const r = parseWan3TaskResult({
+      data: {
+        task_id: 'task_g',
+        status: 'IN_PROGRESS',
+        metadata: { upstream_task_id: 'up-meta' },
+        data: { output: { task_id: 'up-inner', task_status: 'RUNNING' } },
+      },
+    })
+    expect(r.upstreamTaskId).toBe('up-meta')
+  })
+
+  it('内层 task_id 与网关 id 相同(直连 DashScope 回形)就不重复给;没有就不出现这个键', () => {
+    const same = parseWan3TaskResult({ output: { task_id: 'uuid-1', task_status: 'RUNNING' }, task_id: 'uuid-1' })
+    expect(Object.hasOwn(same, 'upstreamTaskId')).toBe(false)
+    const none = parseWan3TaskResult({ data: { task_id: 'task_g', status: 'IN_PROGRESS' } })
+    expect(Object.hasOwn(none, 'upstreamTaskId')).toBe(false)
+  })
 })
 
 describe('parseWan3TaskResult · 计费秒数', () => {

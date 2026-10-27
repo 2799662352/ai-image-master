@@ -39,6 +39,10 @@ function makeItem(i: number): DonorItemView {
     displayUrls: [`https://example.com/${i}.png`],
     status: 'ok-local',
     isBroken: false,
+    // 必填字段,`.png` 走的正是 `useHistoryData.toView` 会算出 false 的那条路
+    // (`VIDEO_URL_RE` 不匹配)。省掉它并不是「默认 false」,而是整个夹具不再满足
+    // `DonorItemView` —— 卡片按 `isVideo` 决定渲染 <img> 还是 <video>。
+    isVideo: false,
   }
 }
 

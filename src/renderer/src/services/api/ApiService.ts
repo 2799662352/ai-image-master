@@ -4,23 +4,24 @@
  * 处理与 AI 图片生成 API 的所有通信
  */
 
+import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../types/authApi'
+import { useQuotaStore } from '../../stores/useQuotaStore'
 import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
 import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
+import type { ModelVendor } from './modelVendors'
+import {
+  YOUCHUAN_MAX_REFERENCE_IMAGES,
+  YOUCHUAN_MODEL_IDS,
+  YOUCHUAN_V8_PARAM_SPECS,
+  resolveModelParams,
+  type ModelParamSpec,
+} from '../../../../shared/imageModelParams'
 
 export interface ApiSite {
   name: string
   baseURL: string
-  /**
-   * 源站地址(不过 CDN)。只给「加速域名扛不住的请求」用,其余照旧走 baseURL。
-   *
-   * 缘由(2026-07-28 实测):Miau 的加速域名前面是 EdgeOne,而它**不支持**谷歌原生
-   * 端点 `/v1beta/models/...:generateContent` —— 该路径的请求一律以 524 收场。
-   * 524 错误页不带 CORS 头,浏览器于是报「No 'Access-Control-Allow-Origin'」,
-   * 把真实原因盖住了。见 buildRequestUrl。
-   */
-  directBaseURL?: string
   description: string
   authType: 'bearer' | 'x-api-key'
   pathPrefix?: string
@@ -42,6 +43,14 @@ export interface ResolutionOption {
  */
 export type UnderstandInput =
   | { kind: 'video'; mediaUrl: string; question: string; fps?: number }
+  /**
+   * 音频(语音 / 音乐 / 环境声)。只有全模态的 omni 模型收得下 —— `understand()` 对
+   * 这一类**强制**走 `QWEN_UNDERSTAND_OMNI_MODEL`,忽略调用方选的 max/flagship(3.8-max
+   * 没有音频模态,发过去只会换回 `incorrect modal 'audio'`)。`format` 缺省按 URL 扩展名
+   * 推断,推不出来按 mp3 发;上游只认 mp3 / wav / amr / 3gp / aac(`QWEN_AUDIO_FORMATS`),
+   * m4a / ogg / flac 之类直接回结构化错误让调用方先转码。
+   */
+  | { kind: 'audio'; mediaUrl: string; question: string; format?: string }
   /**
    * 图片 / 文档。`mediaUrl` 是单张;要一次看多张(商品对比、多页文档、
    * 分镜连续性)就再给 `mediaUrls` —— 上游把同一条 user message 里并列的多个
@@ -110,33 +119,40 @@ function dedupePreservingOrder(urls: readonly unknown[]): string[] {
 }
 
 /**
- * 理解能力上游模型(走 antigravity new-api 网关的 DashScope 原生通道)。
+ * 理解能力上游模型(走 Miau new-api 网关,平台余额 / Miau Key 计费,与对话栏同一枚)。
  *
- * 默认 `qwen3.7-plus-dashscope`(更便宜,日常足够);`qwen3.7-max-dashscope`
- * 作为「更强 + 兜底」备选。两者能力一致(文本/图像/视频/联网/工具,均不支持
- * 音频),差别是 plus 更便宜、max 更强更贵。
+ * 默认 `qwen3.8-omni-flash`(2026-09-20 生产网关上线):**全模态** —— 文本 / 图片 /
+ * 视频 / **音频**输入都收,价目表 ratio 0.5,比 3.7 Plus(ratio 1)还便宜。
  *
- * 历史:plus 是「多模态专用」模型,其纯文本(如 web_research)必须被网关强制路由到
- * multimodal 端点(`aliMultimodalOnlyModels`),否则上游回 `url error`。该端点强制
- * 一度只在测试网关、prod 未上。2026-06-23 实测 prod(175.178.198.17)上 plus 的
- * web_research + understand_video 均已通过(见 docs 24/25),故 plus 现已稳定可作默认。
+ * 历史:2026-06 起默认 `qwen3.7-plus-dashscope`、兜底 `qwen3.7-max-dashscope`(两个
+ * DashScope 原生别名,均不收音频,音频只能绕 apiyi 的 Gemini 或 ffmpeg 套 MP4)。
+ * 2026-09-20 用户拍板:omni 上了生产,理解默认档改走它;**3.7 Plus / Max 暂不撤下**,
+ * 与 3.8 一代并行一段时间 —— 'plus' / 'max' 别名仍按字面指向 3.7,兜底也仍是 3.7 Max。
  *
- * 切换/兜底:`understand(input, { model })` 可显式指定('max' / 'plus' / 全名);
- * 非法值回落默认 plus。primary 失败(同模型重试耗尽后)且 primary≠max 时,自动用
- * max 兜底重试一次(见 understand)。
+ * 切换/兜底:`understand(input, { model })` 可显式指定('omni' / 'plus' / 'max' /
+ * 'flagship' / 全名);非法值回落默认 omni。primary 失败(同模型重试耗尽后)且
+ * primary≠max 时,自动用 max 兜底重试一次(见 understand);**音频除外** —— 只有 omni
+ * 听得见,兜底没有意义。
  */
-export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-plus-dashscope'
+export const QWEN_UNDERSTAND_MODEL = 'qwen3.8-omni-flash'
 
-/** 更强 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
+/** 全模态模型:唯一收音频的一档。`kind:'audio'` 一律钉在它上。 */
+export const QWEN_UNDERSTAND_OMNI_MODEL = QWEN_UNDERSTAND_MODEL
+
+/** 3.7 Plus:上一代的理解默认档,与 3.8 并行保留;经 `{ model: 'plus' }` 显式选用。 */
+export const QWEN_UNDERSTAND_PLUS_MODEL = 'qwen3.7-plus-dashscope'
+
+/** 更强 + 兜底模型(3.7 Max):primary 失败时自动重试一次。也可经 `{ model: 'max' }` 显式选用。 */
 export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
 
 /**
  * 旗舰理解模型 `qwen3.8-max`(2026-08-03 GA)。
  *
- * **不设为默认。** 它与 3.7-plus 的视频规格完全相同(2 小时 / 2GB / 单次 64 段
+ * **不设为默认。** 它与 omni / 3.7 的视频规格完全相同(2 小时 / 2GB / 单次 64 段
  * 视频 / 2048 张 URL 图),差别在推理强度、1M 上下文和内置工具 —— 而理解工具的
- * 绝大多数调用是「看一段片子讲了什么」,这些规格上 plus 已经吃满,换旗舰只是更贵。
- * 需要长文档深读或复杂跨模态推理时由调用方显式指定 `model="flagship"`。
+ * 绝大多数调用是「看一段片子讲了什么」,这些规格上默认档已经吃满,换旗舰只是更贵;
+ * 它也**没有音频模态**。需要长文档深读或复杂跨模态推理时由调用方显式指定
+ * `model="flagship"`。
  *
  * 注意模型 id **没有** `-dashscope` 后缀 —— 它走的是网关里 `QWEN_MIAU_MODELS`
  * 那条(与对话栏同一枚 Miau key),不是 3.7 那两个 DashScope 原生别名。
@@ -171,28 +187,91 @@ export const DASHSCOPE_API_KEY_STORAGE = 'dashscope_api_key'
 export const DASHVECTOR_MCP_PROVIDER_ID = 'dashvector'
 export const DASHVECTOR_API_KEY_STORAGE = 'dashvector_api_key'
 
-/** 允许显式选用的理解模型白名单(其余值回落到默认 plus)。 */
+/** 允许显式选用的理解模型白名单(其余值回落到默认 omni)。 */
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
+  QWEN_UNDERSTAND_PLUS_MODEL,
   QWEN_UNDERSTAND_FALLBACK_MODEL,
   QWEN_UNDERSTAND_FLAGSHIP_MODEL,
 ]
 
 /**
  * 把调用方请求的模型归一成白名单内的真实模型名。
- * - `'max'` / `'plus'` 简称 → 对应 -dashscope 全名(与默认无关,按字面映射);
- * - 已是白名单全名 → 原样;
- * - 其余(含幻觉名 / undefined)→ 默认 plus。
+ * - `'omni'` → 默认全模态档 qwen3.8-omni-flash;
+ * - `'plus'` / `'max'` 简称 → 对应 3.7 `-dashscope` 全名(与默认无关,按字面映射 ——
+ *   老 skill / 老会话里写的 max 就是 3.7 Max,并行期间不改它的意思);
+ * - `'flagship'` / `'3.8'` → 3.8 旗舰。'flagship' 而不是版本号:别名要表达「选最强的
+ *   那档」,写死版本号会在下次换代时变成需要同步改动的死值;
+ * - 已是白名单全名 → 原样;其余(含幻觉名 / undefined)→ 默认 omni。
  */
 export function resolveUnderstandModel(requested?: string): string {
   if (typeof requested !== 'string') return QWEN_UNDERSTAND_MODEL
   const r = requested.trim().toLowerCase()
-  if (r === 'max') return 'qwen3.7-max-dashscope'
-  if (r === 'plus') return 'qwen3.7-plus-dashscope'
-  // 'flagship' 而不是 '3.8':别名要表达「选最强的那档」,写死版本号会在下次换代时
-  // 变成需要同步改动的死值(plus/max 就是这么活过好几代的)。
+  if (r === 'omni') return QWEN_UNDERSTAND_MODEL
+  if (r === 'plus') return QWEN_UNDERSTAND_PLUS_MODEL
+  if (r === 'max') return QWEN_UNDERSTAND_FALLBACK_MODEL
   if (r === 'flagship' || r === '3.8') return QWEN_UNDERSTAND_FLAGSHIP_MODEL
   return QWEN_UNDERSTAND_MODELS.includes(requested) ? requested : QWEN_UNDERSTAND_MODEL
+}
+
+/**
+ * 千问音频输入认的容器(千问平台「音频理解」文档 + 2026-09-20 生产网关实测:传别的回
+ * 400 `Invalid format`,明确列出就这六个)。m4a / ogg / opus / flac / webm / wma 都不在
+ * 里面 —— 那些要先用 ffmpeg 转成 mp3 / wav。
+ */
+export const QWEN_AUDIO_FORMATS: readonly string[] = ['mp3', 'wav', 'amr', '3gp', '3gpp', 'aac']
+
+/** 常见但上游不收的音频容器:认出来就直接报错让调用方转码,别把请求发出去白挨一次 400。 */
+const QWEN_UNSUPPORTED_AUDIO_FORMATS: readonly string[] = ['m4a', 'ogg', 'oga', 'opus', 'flac', 'webm', 'wma', 'aiff', 'aif']
+
+/** `foo.MP3?x=1` → `mp3`;认不出返回 undefined。上游按这个字段解码音频字节。 */
+export function audioFormatFromUrl(url: string): string | undefined {
+  const m = /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus|webm|amr|3gpp?|wma|aiff?)(?:[?#]|$)/i.exec(url)
+  return m ? m[1].toLowerCase() : undefined
+}
+
+/**
+ * 归一音频 `format`:显式传的优先,其次按 URL 扩展名,都认不出按 mp3 发(中转 URL 会保留
+ * 源扩展名,真到这一步的只有无扩展名的 blob)。已知上游不收的容器返回 `{ error }`。
+ */
+export function resolveAudioFormat(
+  url: string,
+  explicit?: string,
+): { format: string } | { error: string } {
+  const candidate = (explicit ?? audioFormatFromUrl(url))?.trim().toLowerCase()
+  if (!candidate) return { format: 'mp3' }
+  if (QWEN_AUDIO_FORMATS.includes(candidate)) return { format: candidate }
+  if (QWEN_UNSUPPORTED_AUDIO_FORMATS.includes(candidate)) {
+    return {
+      error: `千问不收 ${candidate} 音频,只认 ${QWEN_AUDIO_FORMATS.join(' / ')}。`
+        + '请先用 ffmpeg 转成 mp3 或 wav(`ffmpeg -i in -vn -acodec libmp3lame out.mp3`)再传。',
+    }
+  }
+  return { format: candidate }
+}
+
+/**
+ * 把一段 Chat Completions SSE 拼成整段回答。返回 `null` 表示这不是 SSE(一行
+ * `data:` 都没有)—— 调用方据此改按普通 JSON 解析。只收 `delta.content`;`reasoning_content`
+ * 与 `[DONE]` 跳过,坏掉的半行 JSON 也跳过而不是整段作废(流被网关掐断时尾巴常是半行)。
+ */
+export function collectSseContent(raw: string): string | null {
+  let sawData = false
+  let text = ''
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    sawData = true
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      const chunk = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }> }
+      const delta = chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content
+      if (typeof delta === 'string') text += delta
+    } catch {
+      // 半行 / 心跳注释,跳过。
+    }
+  }
+  return sawData ? text : null
 }
 
 export interface QualityOption {
@@ -203,6 +282,11 @@ export interface QualityOption {
 
 export interface ModelConfig {
   name: string
+  /**
+   * 厂商归属,驱动模型选择器的「按厂商聚合」分组(腾讯 / 阿里 / OpenAI …各自一组)。
+   * 缺省落到「其他」组;见 {@link groupModelsByVendor}。
+   */
+  vendor?: ModelVendor
   displayName: string
   time?: string
   isNew?: boolean
@@ -264,7 +348,28 @@ export interface ModelCapabilities {
   resolutionControl?: boolean
   /** 是否暴露独立的「清晰度 quality」下拉（官转 gpt-image-2 与 gpt-image-2-vip） */
   qualityControl?: boolean
+  /**
+   * 支持 `background=transparent`：上游直接出带 alpha 通道的 PNG（模型原生生成，
+   * 不是事后抠图），要求 output_format 为 png/webp。
+   *
+   * 只在 OpenAI 文档明确列出该参数的渠道上打开（gpt-image-2.5 flare / sunburst）。
+   * gpt-image-2 官方文档写的是不支持（apiyi 自家前端虽也给它开了，本站未验证，暂不声明）；
+   * gpt-image-2.5-all 走 ChatGPT 网页线路，根本没有这个参数。
+   * 没打开的渠道即使调用方传了 transparentBackground 也不会外发，避免上游 400。
+   */
+  transparentBackgroundControl?: boolean
   maxOutputs?: number
+  /**
+   * 原生多图：上游一次请求按 OpenAI Images API 的 `n` 回 N 张**独立变体**（不是客户端
+   * 并发多打几次，也不是万相那种前后一致的组图）。官转 gpt-image-2 / 2.5 flare / sunburst
+   * 与腾讯 image2 fast 都是这条路径（apiyi 生图页同样给官转开了 n=1–4）。
+   *
+   * 这个位只管**文案与提示**：数量轴标题写「数量（原生支持）」，并提示「按张数倍数计费」——
+   * 官转按 token 计费，n 张就是 n 份 token，不像 -all 那种按张固定价能一眼看出总价。
+   * 请求侧 `n` 的外发只看 maxOutputs（>1 才发，见 resolveImagesApiCount），与此位无关：
+   * 否则谁把 maxOutputs 调大却忘了这个位，数量轴会出现、n 却发不出去，用户选 4 只回 1。
+   */
+  nativeBatch?: boolean
   useExtraBody?: boolean
   /** 出多张时需显式开启组图模式（如万相 wan2.7 的 enable_sequential），且一次返回的系列图前后一致 */
   sequentialGroup?: boolean
@@ -297,17 +402,55 @@ export interface ModelCapabilities {
    * 才能打开——普通渠道收到这个开关会当未知字段忽略，用户看到的是「拆分没生效但也没报错」。
    */
   layerDecomposition?: boolean
+  /**
+   * 模型专属参数表(悠船:原生 2K / 混沌 / 风格化 / 风格参考……)。有这张表的渠道,
+   * 生成页会渲染对应的参数面板,MCP 的 `modelParams` 也按它校验;外发时只带表里声明过的键。
+   *
+   * 与上面那些布尔能力位的区别:这些参数**只对一个渠道族有意义**,而且绝大多数时候该留空
+   * 由上游自己决定,所以不往 `GenerateImageParams` 里一个一个加字段,而是数据驱动。
+   * 声明、默认值、校验都在 `shared/imageModelParams`。
+   */
+  modelParams?: readonly ModelParamSpec[]
 }
+
+/**
+ * 参考图 / 输入图的合法源形态,与 {@link ApiService.normalizeImageSource} 认得的
+ * 分支一一对应:裸字符串（http(s) URL / data URL / 纯 base64），或带
+ * `dataUrl` / `url` / `base64` 之一的对象（`mimeType` 只在裸 base64 时用于拼
+ * data URL 前缀）。
+ *
+ * 注意**没有** `{ data }` 这一支：归一化不认这个键，传进来的图会被静默丢掉。
+ */
+export type ReferenceImageSource =
+  | string
+  | { dataUrl: string; mimeType?: string }
+  | { url: string; mimeType?: string }
+  | { base64: string; mimeType?: string }
 
 export interface GenerateImageParams {
   prompt: string
   model?: string
   ratio?: string
   resolution?: string
-  /** 清晰度档位（官转 gpt-image-2 专属，auto/low/medium/high）；其它模型忽略 */
+  /** 清晰度档位（gpt-image-2: auto/low/medium/high; 2.5 flare/sunburst 另有 xhigh/max）；其它模型忽略 */
   quality?: string
+  /**
+   * 透明背景：发 `background=transparent`，上游直接回带 alpha 通道的 PNG。
+   * 只对 `capabilities.transparentBackgroundControl` 的渠道（2.5 flare / sunburst）生效，
+   * 其它渠道静默忽略——不外发这个参数，避免被上游当未知字段拒掉。
+   */
+  transparentBackground?: boolean
   referenceImages?: string[]
   imageBase64?: string  // 编辑模式的图片
+  /**
+   * 局部重绘遮罩（`/v1/images/edits` 的 `mask`）。PNG，**必须带 alpha 通道**：alpha=0 的
+   * 区域 = 允许重绘，255 = 尽量保留；尺寸必须与第一张参考图**完全一致**，只作用于
+   * `image[0]`，<4MB。官方口径是「prompt-guided」而非像素级硬约束——提示词里要把
+   * 不能动的东西写清楚。只有走 OpenAI Images 多部分 edit 契约的渠道（gpt-image-2 /
+   * 2.5 flare / sunburst / vip）支持；网页逆向(-all)与腾讯 JSON 契约没有这个字段，
+   * 传了会明确报错而不是静默重画整张图。
+   */
+  maskImage?: string
   /**
    * 反向提示词。仅 DashScope 原生渠道（千问 / 万相）会把它放进 `parameters`。
    *
@@ -336,6 +479,14 @@ export interface GenerateImageParams {
    * （张数由上游按图内容决定）；`resolution` 被当作**档位**用，见 LAYER_DECOMPOSITION_SIZE_TIERS。
    */
   layerDecomposition?: boolean
+  /**
+   * 模型专属参数(键 = `capabilities.modelParams` 里声明的 `key`)。**不设置的项由模型自动决定**,
+   * 只有声明了默认值的(悠船原生 2K 默认开)才会补默认。
+   *
+   * 只对声明了 `capabilities.modelParams` 的渠道生效;其它渠道静默忽略(不外发,免得被上游当未知
+   * 字段拒掉)。声明过的键值不合法时整次请求被拒并说明原因,不会悄悄改成合法值再扣费。
+   */
+  modelParams?: Record<string, unknown>
 }
 
 /**
@@ -416,6 +567,107 @@ function resolveLayerDecompositionSizeTier(value: string | undefined): LayerDeco
  * {@link ModelConfig.requiredSiteKey} 声明,请求会被钉在这里而不跟随用户选的站点。
  */
 export const MIAU_SITE_KEY = 'antigravity'
+
+// 「本次请求走平台余额」的标记头曾在这里重复声明过一份(理由写的是「渲染层不能
+// import 主进程模块」)。那条理由只对**主进程模块**成立,而常量本身可以住在两边共吃的
+// `src/types/authApi.ts` 里 —— 现在就在那儿,连同它为什么必须只有一份的说明。
+
+/** 生产网关。开发构建可被 `CATIMATION_GATEWAY_ORIGIN` 覆盖，见下。 */
+export const DEFAULT_GATEWAY_BASE_URL = 'https://miauapi.13797248455.xyz'
+
+/**
+ * Miau 网关根地址。**只有开发构建能覆盖。**
+ *
+ * 为什么需要覆盖：整条平台余额链路在生产之外没法验证 —— 认证后端能用
+ * `CATIMATION_AUTH_BASE_URL` 指到测试服，而网关地址若写死，测试服换来的 token
+ * 会被发到生产网关、必定 401。「攻击者不能改」和「开发时也不能改」是两回事，
+ * 只做前者会让这条链路不可验证，而不可验证本身也是风险。
+ *
+ * 为什么必须只在开发构建：这个值同时决定**请求发给谁**和**要不要打计费标记**
+ * （`shouldUsePlatformBilling` 拿请求 URL 与它比 origin），所以改它等于改凭据的
+ * 落点。环境变量是攻击者也能设的 —— 同一登录用户下的任何进程、快捷方式属性、
+ * 外面套一层批处理都能设。
+ *
+ * 闸门用 `import.meta.env.DEV` 而不是运行时判断：它是 electron-vite 的**构建期
+ * 常量**，生产构建里整个分支连同 `process.env` 读取会被 tree-shake 掉，安装包里
+ * 根本不存在这段代码 —— 比任何运行时检查都硬。
+ *
+ * ⚠️ 主进程侧有对应的一半（`main/services/auth/gatewayHeaderInjector.ts` 的
+ * `resolveGatewayOrigin`，闸门是 `!app.isPackaged`）。**两边必须用同一个环境变量、
+ * 同时生效**：只改一边的后果是渲染层发到 A、注入器只认 B，凭据一次都注不进去。
+ */
+function resolveGatewayBaseUrl(): string {
+  if (!import.meta.env.DEV) return DEFAULT_GATEWAY_BASE_URL
+
+  const raw = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+    ?.CATIMATION_GATEWAY_ORIGIN?.trim()
+  if (!raw) return DEFAULT_GATEWAY_BASE_URL
+
+  try {
+    // 只取 origin：带路径的输入会让下游拼出 `<origin>/<path>/v1/images/...`，
+    // 表现成「覆盖了但每个请求 404」。
+    return new URL(raw).origin
+  } catch {
+    console.warn('[ApiService] CATIMATION_GATEWAY_ORIGIN 不是合法 URL，已忽略')
+    return DEFAULT_GATEWAY_BASE_URL
+  }
+}
+
+/**
+ * 两个地址是否同源(protocol + host)。
+ *
+ * 按 origin 而不是字符串相等来比,是因为**主进程注入器认的就是 host**
+ * (`gatewayHeaderInjector` 的 URL 过滤器)。字符串相等会被一个尾斜杠骗过去,
+ * 而那种站点条目的请求其实照样会被注入。
+ */
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a)
+    const right = new URL(b)
+    return left.protocol === right.protocol && left.host === right.host
+  } catch {
+    return false
+  }
+}
+
+/** 平台余额用不了的原因。`null` 表示能用。 */
+export type PlatformBillingBlocker =
+  | 'unknown-model'
+  | 'no-site'
+  /** 站点整个不在平台计费域内(apiyi / 自建 / 本地)。 */
+  | 'site-not-gateway'
+
+export interface PlatformBillingEligibility {
+  eligible: boolean
+  blocker: PlatformBillingBlocker | null
+}
+
+/**
+ * 这个模型在这个站点上能不能用平台余额。
+ *
+ * 判据只有一条:**请求最终打到的 host 必须落在注入器的过滤器里**。凭据在主进程,
+ * 渲染层只打一个标记头,由 `onBeforeSendHeaders` 在出网前换成真 `Authorization` ——
+ * 而那个过滤器只挂在网关那一个 host 上。打到别处的请求有两个后果,都不响:
+ *   1. 标记换不到凭据、我们又刻意不发用户自填的 Key,于是**必定 401**;
+ *   2. 内部协议标记头会原样出网(注入器本该在出网前删掉它)。
+ *
+ * `buildRequestUrl` 对所有模型都只换成 `site.baseURL` 的 host,所以站点是网关 ⇔
+ * 请求打向网关。**别给某类模型加改道**:谷歌原生模型曾被改道到明文 HTTP 的源站 IP,
+ * 那段时间它们在平台模式下必定 401;那个 IP 也绝不能加进注入器白名单(等于让一枚
+ * 永不过期、无法单独吊销的凭据在网络上裸奔)。
+ */
+export function evaluatePlatformBillingEligibility(
+  modelConfig: Pick<ModelConfig, 'apiType'> | undefined,
+  site: Pick<ApiSite, 'baseURL'> | undefined,
+  gateway: Pick<ApiSite, 'baseURL'> | undefined,
+): PlatformBillingEligibility {
+  if (!modelConfig) return { eligible: false, blocker: 'unknown-model' }
+  if (!site || !gateway) return { eligible: false, blocker: 'no-site' }
+  if (!isSameOrigin(site.baseURL, gateway.baseURL)) {
+    return { eligible: false, blocker: 'site-not-gateway' }
+  }
+  return { eligible: true, blocker: null }
+}
 
 /**
  * seed-audio-1.0(火山豆包音频生成 1.0,经 Miau 网关 OpenAI Audio Speech 兼容端点)。
@@ -508,9 +760,7 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     // 走加速域名而非源站 IP(2026-07-28)。只有 https 可达 —— 明文 http 连不上,
     // 端口也不再需要。同一台 new-api 实例(401 报文形状一致),换域名后 CSP 里
     // 那几条 `http://175.178.198.17:*` 例外也随之取消。
-    baseURL: 'https://miauapi.13797248455.xyz',
-    // 谷歌原生端点走这里(EdgeOne 不支持那条路径,详见 ApiSite.directBaseURL)。
-    directBaseURL: 'http://175.178.198.17:3000',
+    baseURL: resolveGatewayBaseUrl(),
     description: 'Miau API 服务',
     authType: 'bearer',
     isBuiltIn: true
@@ -523,6 +773,186 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     isBuiltIn: true
   }
 }
+
+/**
+ * 走腾讯私有约定的图像模型。
+ *
+ * ⚠️ **这是两个不同的模型、两条不同的渠道,不是同一个东西的两个入口。**
+ * 上游实现与定价都不同(2026-09-01 网关价目表:`custom-model-og-v2` 倍率 5,
+ * `custom-imagemodel-gt` 倍率 29.05),谁也替代不了谁 —— 新增一条不等于旧的
+ * 那条可以下掉。
+ *
+ *  - `custom-imagemodel-gt`     —— TokenHub gtimage,aiart 官方渠道;
+ *  - `custom-model-og-v2`       —— TokenHub og-image,新渠道新模型,便宜近 6 倍,
+ *                                  且支持多张输出;
+ *  - `custom-model-og-v2.5-f` / `custom-model-og-v2.5-s` —— 同一条 og-image 渠道上的
+ *                                  GPT Image 2.5 Flare / Sunburst(2026-09-15 网关价目表:
+ *                                  倍率 5 / 补全 1,与 og-v2 同价)。走的仍是 og 那套线上
+ *                                  协议,不是 apiyi 官转的 multipart:网关 `tokenhubog`
+ *                                  适配器的 JSON `/edits` 收 `images:[{image_url}]` +
+ *                                  `mask:{image_url}`(URL 或 base64),`background` 两个
+ *                                  端点都原样透传(用户 2026-09-15 实测透明底 / 擦除均可)。
+ *                                  所以 mask 在这两条上是 **JSON 字段**,不是 multipart 文件。
+ *
+ * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
+ * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
+ * 参考图要包成 `images: [{ image_url }]` 的 JSON 而不是 multipart。
+ * 逐处写 `model === '...'` 的话,加第二条时一定会漏掉其中一两处 ——
+ * 而漏掉的表现是「水印没关掉」或「参考图没生效」,都不报错。
+ *
+ * 🚫 **不要收 `hunyuan-gpt-image-2`。** 那是更早的一条渠道,网关侧已经不用了
+ * (而且它只开了 generations,打 edits 会回 `does not support relay mode 6`)。
+ * 它仍出现在 `/v1/models` 里,所以看起来像个可选项 —— 不是。
+ */
+const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
+  'custom-imagemodel-gt',
+  'custom-model-og-v2',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
+])
+
+/**
+ * OpenAI Images API 家族(generations / edits)。含 2.5 官转、按张计费的 -all,
+ * 以及旧 id `gpt-image-2-all`(generateImage 会先走 alias,这里再兜一层)。
+ * 不收 `gpt-image-2.5-vip` —— 用户明确不接不稳定的 vip 模式。
+ */
+const GPT_IMAGES_API_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+  'gpt-image-2-vip',
+  'gpt-image-2-all',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-all',
+])
+
+/**
+ * 悠船(Midjourney)渠道。**请求形态与上面几族都不一样**,所以单独成族:
+ *
+ *  - 不发 `size` / `n` / `response_format`:BFF(sora-ui-backend `imageModelManifest`)同样不发。
+ *    比例走顶层 `aspect_ratio`(缺省 = 自适应);一次固定回 4 张、只计一次费,`n` 被网关忽略;
+ *    默认就回 URL。
+ *  - 版本 / 速度由**模型名**决定(`youchuan-v8.2` 快速 / `-turbo` 极速),提示词里内联
+ *    `--v` / `--turbo` 会被网关拒掉 —— 所以 `no`(会被拼进 `--no`)校验时不许带 `--`。
+ *  - 其余全是**模型专属参数**(原生 2K / 混沌 / 风格化 / 风格参考……),声明在
+ *    `capabilities.modelParams`(单一事实来源 `shared/imageModelParams`),按「不设置 = 自动」外发。
+ *  - 参考图只收 http(s) 链接(最多 20 张),不收 base64 —— 与「媒体一律传 URL」一致。
+ *  - **不自动重试 5xx**:按次计费,上游可能已经开跑,重试 = 多扣一次钱。失败由用户在界面上重试。
+ */
+const YOUCHUAN_IMAGE_MODELS: ReadonlySet<string> = new Set(YOUCHUAN_MODEL_IDS)
+
+/** 悠船支持的画幅:自适应(不发 aspect_ratio)+ 界面上给的 7 个常用比例。 */
+const YOUCHUAN_RATIOS: RatioOption[] = [
+  { key: 'auto', label: '自适应', description: '由模型决定' },
+  { key: '1:1', label: '方形 1:1', description: '常用' },
+  { key: '4:3', label: '横版 4:3', description: '标准' },
+  { key: '3:2', label: '横版 3:2', description: '经典' },
+  { key: '16:9', label: '横版 16:9', description: '宽屏' },
+  { key: '3:4', label: '竖版 3:4', description: '标准' },
+  { key: '2:3', label: '竖版 2:3', description: '经典' },
+  { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+]
+
+/**
+ * 悠船两档共用的模型配置:快速 / 极速是**同一个模型的两档速度**,请求形态、比例、参数表完全一样,
+ * 只有名字 / 文案 / 耗时不同(价格在网关侧,不写进界面文案 —— 改价不该要发版)。
+ */
+function youchuanModelConfig(speed: { name: string; displayName: string; time: string; isNew?: boolean }): ModelConfig {
+  return {
+    name: speed.name,
+    vendor: 'midjourney',
+    displayName: speed.displayName,
+    time: speed.time,
+    isNew: speed.isNew ?? false,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'image-generation',
+    // 画幅走顶层 aspect_ratio、没有像素尺寸可选:不挂 resolutionMap / resolutions。
+    sizeStrategy: 'aspect-ratio',
+    ratios: YOUCHUAN_RATIOS,
+    capabilities: {
+      // 一次固定 4 张,但那是「一个任务的四个结果」,不是数量轴:n 被网关忽略,所以不开数量选择。
+      multipleImages: false,
+      customSize: false,
+      referenceImage: true,
+      imageEdit: false,
+      maxOutputs: 1,
+      maxReferenceImages: YOUCHUAN_MAX_REFERENCE_IMAGES,
+      modelParams: YOUCHUAN_V8_PARAM_SPECS,
+    },
+  }
+}
+
+/** 网关 `aspect_ratio` 的合法形态:正整数 `W:H`。界面 7 档之外 agent 也可以给(如 21:9)。 */
+const YOUCHUAN_ASPECT_RATIO = /^[1-9]\d{0,2}:[1-9]\d{0,2}$/
+
+/**
+ * 悠船一次请求的事前校验:参数 / 比例 / 参考图。
+ *
+ * 返回中文错误(null = 通过)。**在 `generateImage` 的 try 之外调用**:`formatErrorMessage`
+ * 会按子串把含 `401` / `429` / `fetch` 的消息改写成别的话,而这里的错误会带上用户给的链接
+ * (链接里出现 401 很常见),不能被它吞掉。悠船按次计费,所以任何一项不合法都**拒绝而不是纠正**。
+ */
+function validateYouchuanRequest(options: {
+  ratio?: string
+  modelParams?: Record<string, unknown>
+  referenceCount: number
+  /** 有参考图不是 http(s) 链接(本地文件 / base64 / 解析不出来)。 */
+  hasNonHttpReference: boolean
+  specs: readonly ModelParamSpec[]
+}): string | null {
+  const { ratio, modelParams, referenceCount, hasNonHttpReference, specs } = options
+  if (ratio && ratio !== 'auto' && !YOUCHUAN_ASPECT_RATIO.test(ratio)) {
+    return `悠船不支持画幅「${ratio}」，请使用 W:H 形式的整数比例（如 16:9），或选「自适应」。`
+  }
+  const resolved = resolveModelParams(specs, modelParams)
+  if (resolved.errors.length > 0) {
+    return `悠船参数有误：${resolved.errors.join('；')}`
+  }
+  if (referenceCount > YOUCHUAN_MAX_REFERENCE_IMAGES) {
+    return `悠船最多支持 ${YOUCHUAN_MAX_REFERENCE_IMAGES} 张参考图，当前传了 ${referenceCount} 张，请删减后重试。`
+  }
+  if (hasNonHttpReference) {
+    return '悠船只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。'
+  }
+  return null
+}
+
+/**
+ * 上游是 GPT Image 2.5 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
+ * 含 apiyi 官转两条与腾讯 og-image 上的两条 —— 后者只是换了条线到同一个模型,
+ * 清晰度梯子是模型的,不是渠道的。
+ */
+const GPT_IMAGE_25_QUALITY_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
+])
+
+/** 发 size + quality 的 Images 模型。*-all 不在内(尺寸写进 prompt,回 b64_json)。 */
+const GPT_IMAGE_SIZE_QUALITY_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+  'gpt-image-2-vip',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+])
+
+/**
+ * 支持 mask 局部重绘(inpainting)的渠道。两种线格式:
+ *  - OpenAI Images multipart(官转 / vip):`mask` 是一个带 alpha 的 PNG 文件;
+ *  - 腾讯 og-image JSON(og-v2.5-f / -s):`mask: { image_url }`,URL 或 base64。
+ * 不在这里的渠道(-all / 腾讯 image2 / og-v2 / 万相 / nano)没有 mask 位,传了要早失败,
+ * 静默丢掉会把「只擦一角」变成「整张重画」。og-v2 上游是 gpt-image-2、网关同样透传 mask,
+ * 但没实测过,不收 —— 灯箱擦除也只绑 2.5。
+ */
+export const MASK_INPAINT_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+  'gpt-image-2-vip',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
+])
 
 // gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
 // 尺寸体系：30 档 size 满足 16 倍数边长 / 最大边 ≤3840 / 比例 ≤3:1 / 总像素 ∈ [655360, 8294400]。
@@ -554,6 +984,38 @@ const GPT_IMAGE_2_QUALITIES: QualityOption[] = [
   { key: 'high', label: '高', description: '文字/印刷 $0.211' }
 ]
 
+/**
+ * gpt-image-2.5 flare / sunburst 的清晰度档位(apiyi 文档 2026-09-14)。
+ *
+ * 五档 low→max,且**画质梯子重新分级**:`low` 不变,2.5 的 `high` 只等于
+ * gpt-image-2 的 `medium`(1,756 tokens),2.5 的 `max` 才等于老 `high`(7,024 tokens);
+ * `medium`(439)/`xhigh`(3,122)是两个新的中间档。所以默认档从老模型的 `auto` 换成
+ * `high` —— 花老 `medium` 的钱拿到比老 `medium` 更好的画质。
+ *
+ * **不给 `auto` 档**:2.5 的 auto 是动态推理档,费用和耗时都会漂移,apiyi 自家生图页
+ * (imagen.apiyi.com)也只放 5 个实测档、不放 auto。老会话里残留的 `auto` 由
+ * `normalizeOption` 归位到默认 `high`。文案对齐 apiyi 生图页的「高 =2代中 / 最高 =2代高」
+ * 写法,让用户一眼看出与老模型的对应关系;价格为 1024×1024 一张、$30/1M 输出 token
+ * 折算(2026-09-09 实测,flare 与 sunburst 逐档 token 相同、只差耗时)。
+ */
+const GPT_IMAGE_25_QUALITIES: QualityOption[] = [
+  { key: 'low', label: '低', description: '草图 $0.006' },
+  { key: 'medium', label: '中', description: '均衡 $0.013' },
+  { key: 'high', label: '高', description: '=2代中 · 推荐 $0.053' },
+  { key: 'xhigh', label: '超高', description: '精细 · 文字/印刷 $0.094' },
+  { key: 'max', label: '最高', description: '=2代高 $0.211' }
+]
+
+/**
+ * 腾讯 og-image 上的 2.5 用同一把清晰度梯子,但价格不同(网关按倍率 5 的 token 计费,
+ * 比 apiyi 官转便宜),上面那些按 $30/1M 折算的美元数在这里是错的 —— 去掉数字、
+ * 保留「=2代中 / 推荐」这类档位对照,别让用户按官转价估腾讯的账。
+ */
+const TENCENT_IMAGE_25_QUALITIES: QualityOption[] = GPT_IMAGE_25_QUALITIES.map((q) => ({
+  ...q,
+  description: q.description?.replace(/\s*\$[\d.]+$/, ''),
+}))
+
 const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
   '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
   '2:3':  { '1K': '848x1280',  '2K': '1360x2048', '4K': '2336x3520' },
@@ -572,6 +1034,7 @@ const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'wan2.7-image-pro': {
     name: '万相 2.7 Pro',
+    vendor: 'alibaba',
     displayName: '20s出图，阿里万相 wan2.7-image-pro，超清文生图/图像编辑/组图，文生图支持4K、编辑/组图最高2K（经 Miau API 代理，OpenAI 兼容端点）',
     time: '20s',
     isNew: true,
@@ -632,6 +1095,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'custom-imagemodel-gt': {
     name: '腾讯 Image 2',
+    vendor: 'tencent',
     displayName: '30s出图，tokenhub 新渠道·更快更好，腾讯 image2（custom-imagemodel-gt），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（经 Miau API 代理，OpenAI 兼容端点）',
     time: '30s',
     isNew: true,
@@ -661,12 +1125,195 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       qualityControl: true
     }
   },
+  'custom-model-og-v2': {
+    name: '腾讯 Image 2 Fast',
+    vendor: 'tencent',
+    displayName: '20s出图，比腾讯 image2 便宜近 6 倍且可出多张，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（后台渠道 TokenHub og-image / custom-model-og-v2，经 Miau API 代理）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    // 30 档 size 实测全收(1024x1024 与 3840x2160 两端都验过),与 gpt-image-2 同规格。
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_2_QUALITIES,
+    defaultQuality: 'auto',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      // 与另一条腾讯渠道不同:这条实测 `n=2` 真的回 2 张。
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true
+    }
+  },
+  // ── 腾讯 og-image 上的 GPT Image 2.5(2026-09-15 上架,生产 / 测试网关都有)──────────
+  // 与 `custom-model-og-v2` 同一条 TokenHub og-image 渠道、同一套线上协议(腾讯 JSON
+  // 改图 + logo_add + 原生 n)、同一档价(倍率 5),只是上游模型换成 2.5 Flare / Sunburst,
+  // 所以清晰度是 2.5 的五档梯子、默认 high。透明底与 mask 都开:网关 `tokenhubog` 适配器
+  // 把 `background` 与 `mask:{image_url}` 原样透传到 og-image,用户实测两者可用 ——
+  // mask 走 JSON 字段(见 makeTencentImage2JsonEdit),不是官转那种 multipart 文件。
+  // 钉 Miau 站点:只经这一家网关提供,可走平台额度。
+  'custom-model-og-v2.5-f': {
+    name: '腾讯 Image 2.5 Flare',
+    vendor: 'tencent',
+    displayName: '20s出图，GPT Image 2.5 Flare 走腾讯渠道·速度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-f，经 Miau API 代理）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  'custom-model-og-v2.5-s': {
+    name: '腾讯 Image 2.5 Sunburst',
+    vendor: 'tencent',
+    displayName: '40s出图，GPT Image 2.5 Sunburst 走腾讯渠道·画质与改图精度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-s，经 Miau API 代理）',
+    time: '40s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  // ── GPT Image 2.5 家族(2026-09-08 发布,apiyi 2026-09-14 上架)────────────────
+  // flare / sunburst 是 OpenAI 官转,与 gpt-image-2 同端点、同价、同 size 体系,
+  // 差别只在速度 / 画质取向与 quality 多出 xhigh / max 两档;-all 是 ChatGPT 网页逆向
+  // 的按张计费通道。三者在 ApiService 内的请求分支与 gpt-image-2 家族完全共用
+  // (见 isSizeQualityImageModel / GPT_IMAGES_API_MODELS),这里只声明能力与文案。
+  // 不钉 requiredSiteKey:跟随当前站点。Miau 上可走平台额度,apiyi / Miau Key 都能打。
+  'gpt-image-2.5-flare': {
+    name: 'GPT Image 2.5 Flare',
+    vendor: 'openai',
+    displayName: '20s，OpenAI 官转·速度优先，画质≈gpt-image-2 但快一半，按token计费 high$0.053/xhigh$0.094/max$0.211，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，原生多图 1-4 张，文生图首选🔥',
+    price: 0.053,
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_25_QUALITIES,
+    // 2.5 的 high ≈ 老 medium 的 token 量,是「花中档钱拿高档画质」的甜点;不用 auto(费用漂移)
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      // 官转直连 OpenAI Images API,`n` 原生支持一次回多张(官方上限 10);UI 与 apiyi 生图页
+      // 一样只开到 4 —— 按 token 计费,4 张 max 档就是 $0.84,再往上没人会一次点。
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      // OpenAI 2.5 文档列出 background: auto/opaque/transparent;apiyi 生图页同样给 2.5 开了透明底
+      transparentBackgroundControl: true
+    }
+  },
+  'gpt-image-2.5-sunburst': {
+    name: 'GPT Image 2.5 Sunburst',
+    vendor: 'openai',
+    displayName: '40s，OpenAI 官转·画质与编辑精度优先，比 gpt-image-2 更锐、多轮改图主体更稳但慢 2-3 倍，按token计费与 flare 同价，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，原生多图 1-4 张，改图/多图融合首选🔥',
+    price: 0.053,
+    time: '40s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
   'gpt-image-2': {
     name: 'GPT Image 2',
-    displayName: '60-360s，OpenAI官方旗舰，按token计费 low$0.006/med$0.053/high$0.211，比例×分辨率(1K/2K/4K)×清晰度三参数，4K+mask重绘🔥',
+    vendor: 'openai',
+    displayName: '60-360s，OpenAI官方上一代旗舰(已被 2.5 flare/sunburst 同价取代)，按token计费 low$0.006/med$0.053/high$0.211，比例×分辨率(1K/2K/4K)×清晰度三参数，原生多图 1-4 张，4K+mask重绘',
     price: 0.006,
     time: '60-360s',
-    isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
     apiType: 'openai',
@@ -682,21 +1329,24 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       output_format: 'png'
     },
     capabilities: {
-      multipleImages: false,
+      multipleImages: true,
       customSize: true,
       aspectRatioControl: true,
       referenceImage: true,
       imageEdit: true,
-      maxOutputs: 1,
+      maxOutputs: 4,
+      nativeBatch: true,
       resolutionControl: true,
       qualityControl: true
     }
   },
-  'gpt-image-2-all': {
-    name: 'GPT Image 2 All',
-    displayName: '30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥',
+  // 旧 key `gpt-image-2-all` 由 modelKeyAliases 归一到这里(历史记录 / 已保存设置不丢)。
+  'gpt-image-2.5-all': {
+    name: 'GPT Image 2.5 All',
+    vendor: 'openai',
+    displayName: '60s，ChatGPT 网页逆向(已升 Images 2.5)，文生图/多图编辑/自然语言改图，文字还原度高，中文友好，尺寸写进提示词，$0.03/张🔥',
     price: 0.03,
-    time: '30s',
+    time: '60s',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
@@ -713,6 +1363,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gpt-image-2-vip': {
     name: 'GPT Image 2 VIP',
+    vendor: 'openai',
     displayName: '90s，gpt-image-2-vip Codex 官逆，支持 size 参数，10 比例 × 1K/2K/4K，$0.03/张🔥 限时特价',
     price: 0.03,
     time: '90s',
@@ -783,6 +1434,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-3.1-flash-image': {
     name: '🍌 Nano Banana 2',
+    vendor: 'google',
     displayName: '15s，gemini-3.1-flash-image 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
     price: 0.06,
     time: '15s',
@@ -842,8 +1494,76 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       resolutionControl: true
     }
   },
+  'gemini-nano-banana-2.1': {
+    name: '🍌 Nano Banana 2.1',
+    vendor: 'google',
+    displayName: '20s，gemini-nano-banana-2.1 谷歌原生端点请求，Nano Banana 2 升级版，画质/图中文字/多轮一致性更好，1K/2K/4K，按量约 $0.03/张(1K)',
+    // 网关按量计费(输入 $0.66/M、输出含思考 $13.2/M),单张随分辨率浮动:
+    // 1K 中位 ~$0.029、2K ~$0.036、4K ~$0.063。这里按默认 1K 估。
+    price: 0.03,
+    time: '20s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-nano-banana-2.1:generateContent',
+    apiType: 'gemini-native',
+    inlineRefImageAsBase64: true,
+    internalPrompt: '生成图片：',
+    ratios: [
+      { key: 'auto', label: '自适应', description: '智能' },
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' },
+      { key: '4:1', label: '超横版 4:1', description: '横幅' },
+      { key: '1:4', label: '超竖版 1:4', description: '长图' },
+      { key: '8:1', label: '极横版 8:1', description: '横幅' },
+      { key: '1:8', label: '极竖版 1:8', description: '信息图' }
+    ],
+    // 上游去掉了 512 档,传 imageSize "512" 直接 400,所以这里没有 0.5K。
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '高效' },
+      { key: '2K', label: '2K 高清', description: '稍慢速度' },
+      { key: '4K', label: '4K 超清', description: '印刷所需' }
+    ],
+    defaultResolution: '1K',
+    // 实测过的只有 16:9 全档、2:3 的 1K/4K、3:4 与 8:1 的 1K(apiyi 2026-10-07)。
+    // 前三者与 Nano Banana 2 一致;8:1 不同(2928×352,不是 2896×362),
+    // 其余档按 1K × 2 / × 4 推算。
+    resolutionMap: {
+      '1:1':  { '1K': '1024×1024', '2K': '2048×2048', '4K': '4096×4096' },
+      '2:3':  { '1K': '848×1264',  '2K': '1696×2528', '4K': '3392×5056' },
+      '3:2':  { '1K': '1264×848',  '2K': '2528×1696', '4K': '5056×3392' },
+      '3:4':  { '1K': '896×1200',  '2K': '1792×2400', '4K': '3584×4800' },
+      '4:3':  { '1K': '1200×896',  '2K': '2400×1792', '4K': '4800×3584' },
+      '4:5':  { '1K': '928×1152',  '2K': '1856×2304', '4K': '3712×4608' },
+      '5:4':  { '1K': '1152×928',  '2K': '2304×1856', '4K': '4608×3712' },
+      '9:16': { '1K': '768×1376',  '2K': '1536×2752', '4K': '3072×5504' },
+      '16:9': { '1K': '1376×768',  '2K': '2752×1536', '4K': '5504×3072' },
+      '21:9': { '1K': '1584×672',  '2K': '3168×1344', '4K': '6336×2688' },
+      '4:1':  { '1K': '2048×512',  '2K': '4096×1024', '4K': '8192×2048' },
+      '1:4':  { '1K': '512×2048',  '2K': '1024×4096', '4K': '2048×8192' },
+      '8:1':  { '1K': '2928×352',  '2K': '5856×704',  '4K': '11712×1408' },
+      '1:8':  { '1K': '352×2928',  '2K': '704×5856',  '4K': '1408×11712' },
+      'auto': { '1K': '自适应', '2K': '自适应', '4K': '自适应' }
+    },
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true
+    }
+  },
   'gemini-3-pro-image': {
     name: '🍌 Nano Banana Pro',
+    vendor: 'google',
     displayName: '60s，gemini-3-pro-image 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
     price: 0.09,
     time: '60s',
@@ -896,6 +1616,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-2.5-flash-image': {
     name: '🍌 Nano Banana',
+    vendor: 'google',
     displayName: '15s，gemini-2.5-flash-image 谷歌原生端点请求，支持多宽高比，固定1K分辨率，$0.025/张',
     time: '15s',
     isNew: false,
@@ -925,6 +1646,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'seedream-4-5-251128': {
     name: 'SeeDream 4.5',
+    vendor: 'bytedance',
     displayName: '15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，支持URL与Base64输出, $0.045/张',
     time: '15s',
     isNew: true,
@@ -975,6 +1697,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'doubao-seedream-5-0-pro-260628': {
     name: 'Seedream 5.0 Pro',
+    vendor: 'bytedance',
     displayName: '20s出图，火山豆包 Seedream 5.0 Pro，文生图/图生图/多图融合(最多10张参考图)，1K/2K分辨率，仅单图（经 Miau API 代理，OpenAI 兼容端点）',
     time: '20s',
     isNew: true,
@@ -1033,6 +1756,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'qwen-image-3.0-pro': {
     name: '通义千问 Image 3.0 Pro',
+    vendor: 'alibaba',
     displayName: '通义千问 Image 3.0 Pro，DashScope 同步多模态出图（经 Miau API 代理，OpenAI 兼容端点）；尺寸以实际返回为准',
     time: '30s',
     isNew: true,
@@ -1113,8 +1837,21 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       negativePrompt: true
     }
   },
+  // 悠船 = Midjourney。同一个模型两档速度:快速(youchuan-v8.2)/ 极速(-turbo)。见 YOUCHUAN_IMAGE_MODELS。
+  'youchuan-v8.2': youchuanModelConfig({
+    name: '悠船-v8.2-快速',
+    displayName: '悠船 Midjourney V8.2 快速模式，一次生成 4 张，支持原生 2K 与参考图（经 Miau API 代理，按次计费）',
+    time: '60s',
+    isNew: true,
+  }),
+  'youchuan-v8.2-turbo': youchuanModelConfig({
+    name: '悠船-v8.2-极速',
+    displayName: '悠船 Midjourney V8.2 极速模式，一次生成 4 张，支持原生 2K 与参考图（经 Miau API 代理，按次计费，价格高于快速档）',
+    time: '30s',
+  }),
   'sora_image': {
     name: 'Sora Image',
+    vendor: 'openai',
     displayName: '90s出图，Sora网页版出图，同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】',
     time: '90s',
     isNew: false,
@@ -1127,6 +1864,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'flux-kontext-pro': {
     name: 'Flux Kontext Pro',
+    vendor: 'bfl',
     displayName: '15s出图，flux-kontext-pro，只支持英文提示词，高质量图片生成，$0.035/张',
     time: '15s',
     isNew: false,
@@ -1158,6 +1896,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'flux-kontext-max': {
     name: 'Flux Kontext Max',
+    vendor: 'bfl',
     displayName: '15s出图，flux-kontext-max，提示词支持中文，超高质量图片编辑。$0.07/张',
     time: '15s',
     isNew: false,
@@ -1191,16 +1930,26 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
- * 其次 腾讯 → Nano2 → 万相 2.7 pro → Image2 官方 → VIP;未列出的模型保持
+ * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
+ * 千问 → 悠船(快速 → 极速)→ Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
  */
 const MODEL_DISPLAY_ORDER: readonly string[] = [
   'doubao-seedream-5-0-pro-260628',
   'custom-imagemodel-gt',
+  'custom-model-og-v2',
+  'custom-model-og-v2.5-f',
+  'custom-model-og-v2.5-s',
   'gemini-3.1-flash-image',
+  'gemini-nano-banana-2.1',
   'wan2.7-image-pro',
   'qwen-image-3.0-pro',
+  'youchuan-v8.2',
+  'youchuan-v8.2-turbo',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-all',
   'gpt-image-2',
   'gpt-image-2-vip',
 ]
@@ -1253,13 +2002,28 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition } = params
+    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count = 1, signal, siteKey, layerDecomposition, modelParams } = params
 
     const modelKey = this.resolveModelKey(model || this.currentModel)
     const modelConfig = this.models[modelKey]
 
     if (!modelConfig) {
       return { success: false, error: `未知模型: ${modelKey}` }
+    }
+
+    // 悠船按次计费:任何不合法的参数 / 比例 / 参考图都在**出网之前**拒掉,绝不纠正后照发。
+    // 放在 site / key 检查之前 —— 参数错了先说参数错,别让用户先去配一个 Key 再被拒。
+    if (YOUCHUAN_IMAGE_MODELS.has(modelKey)) {
+      const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+      const normalizedRefs = refSources.map((s) => this.normalizeImageSource(s))
+      const invalid = validateYouchuanRequest({
+        ratio,
+        modelParams,
+        referenceCount: refSources.length,
+        hasNonHttpReference: normalizedRefs.some((s) => !s || !/^https?:\/\//i.test(s)),
+        specs: modelConfig.capabilities?.modelParams ?? [],
+      })
+      if (invalid) return { success: false, error: invalid }
     }
 
     // 解析「本次请求的有效站点 + 令牌」，优先级：
@@ -1280,7 +2044,14 @@ export class ApiService {
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
 
-    if (!apiKey) {
+    // ⚠️ 平台余额模式下**本来就没有 key**，凭据由主进程在出网时按 host 注入。
+    // 少了这个豁免，这道门会在请求头装配之前就把每一次出图拒掉 —— 表现是用户登录了、
+    // 开关也开着，却一直被要求「请先设置 API Key」，而整条平台计费链路一次都到不了。
+    //
+    // 判据用 `willUsePlatformBilling` 而不是直接读 store：站点不对（apiyi / 自建）时，
+    // 这次请求实际会回落到自填 Key，那就仍然需要它 —— 豁免会放行一个注定 401 的请求，
+    // 反而更难查。
+    if (!apiKey && !this.willUsePlatformBilling(modelKey, effectiveSiteKey)) {
       return {
         success: false,
         error:
@@ -1289,6 +2060,11 @@ export class ApiService {
             : '请先设置 API Key',
       }
     }
+
+    // 走到这里 `apiKey` 可能是 null（平台模式放行的那一支），而下游签名要 `string`。
+    // 归一成空串，**不放宽下游签名**：放宽会让每一个下游都得重新判断「null 是什么意思」，
+    // 而这里只有一种含义 —— `applyAuthHeaders` 会走平台分支打标记，根本不读它。
+    const resolvedApiKey = apiKey ?? ''
 
     // 图层拆分的前置条件在这里一次问清 —— 这两条不满足时上游的反应都是「静默降级」:
     // 不支持的渠道把 layer_decomposition 当未知字段丢掉、照常出一张普通图;没有输入图
@@ -1325,21 +2101,28 @@ export class ApiService {
           ratio,
           resolution,
           quality,
+          transparentBackground,
           // 拆分模式下输入图已归一化为 png/jpeg,用它顶掉原始来源(payload 只取一张)。
           referenceImages: splitInput ? [splitInput] : referenceImages,
           imageBase64: splitInput ?? imageBase64,
+          maskImage,
           negativePrompt,
           seed,
           count,
           modelConfig,
           site,
-          apiKey,
+          apiKey: resolvedApiKey,
           signal,
           layerDecomposition,
+          modelParams,
         }),
         // 瞬时网关错误(502/503/504/429)现在会从 makeApiRequest 抛出，交给这里重试；
         // 给 2 次重试(共 3 次尝试)+ 指数退避(2s、4s)，覆盖上游高峰期的短暂抖动。
-        { maxRetries: 2, retryDelay: 2000 }
+        // 悠船例外:按次计费且上游可能已经开跑,5xx 后重试 = 多扣一次(一次还是 4 张的价),
+        // 所以一次都不自动重试,失败交给用户在界面上点重试。
+        YOUCHUAN_IMAGE_MODELS.has(modelKey)
+          ? { maxRetries: 0 }
+          : { maxRetries: 2, retryDelay: 2000 }
       )
 
       const result = await this.parseResponse(response, modelConfig, layerDecomposition)
@@ -1423,8 +2206,7 @@ export class ApiService {
         // 必须带 Accept 才走 JSON 响应(只改 Content-Type 不行,见接入文档 §7)
         'Accept': 'application/json',
       }
-      if (site.authType === 'bearer') headers['Authorization'] = `Bearer ${apiKey}`
-      else headers['x-api-key'] = apiKey
+      this.applyAuthHeaders(headers, site, apiKey, url)
 
       const response = await this.withRetry(
         async () => {
@@ -1491,18 +2273,43 @@ export class ApiService {
    */
   async generateImageWithReference(
     prompt: string,
-    referenceImages: Array<string | { data: string; mimeType?: string }>,
+    referenceImages: ReferenceImageSource[],
     ratio: string = '1:1',
     count: number = 1,
     resolution?: string
   ): Promise<GenerateResult> {
     return this.generateImage({
       prompt,
-      referenceImages,
+      referenceImages: this.flattenReferenceSources(referenceImages),
       ratio,
       count,
       resolution
     })
+  }
+
+  /**
+   * 把旧签名允许的对象形态参考图压成 generateImage 声明的 `string[]`。
+   *
+   * generateImage 往下每一站（拆分预处理、resolveSourcesToDataUrls、各家 payload
+   * 构造）都按「元素是字符串源」写的，只有最末端的 normalizeImageSource 兼容对象。
+   * 所以在入口就用同一套规则压平：压出来的字符串与末端自己归一化出的结果一致，
+   * 而字符串元素原样透传、不提前改写。
+   */
+  private flattenReferenceSources(sources: ReferenceImageSource[]): string[] {
+    const flattened: string[] = []
+    for (const source of sources) {
+      if (typeof source === 'string') {
+        flattened.push(source)
+        continue
+      }
+      const normalized = this.normalizeImageSource(source)
+      if (normalized) {
+        flattened.push(normalized)
+      } else {
+        console.warn('[ApiService] generateImageWithReference: 参考图形态无法识别，已跳过')
+      }
+    }
+    return flattened
   }
 
   /**
@@ -1610,8 +2417,16 @@ export class ApiService {
   async understandImage(params: VisionParams): Promise<VisionResult> {
     const { images, prompt = '请描述这张图片', role, model = 'gemini-1.5-flash' } = params
 
+    // 站点与 URL 提到守卫之前算 —— 「这次走不走平台余额」的判据是**请求 URL 的
+    // host**（见 `shouldUsePlatformBilling`），不先把 URL 拼出来就没法豁免下面那道门。
+    const site = this.apiSites[this.currentSite]
+    const url = `${site.baseURL}/v1/chat/completions`
+
     const apiKey = this.visionApiKey || this.apiKey
-    if (!apiKey) {
+    // 平台余额模式下**本来就不该有 Key** —— 凭据在主进程，渲染层只打标记头。
+    // 少了这道豁免，用户登录了、开关也开着，图像理解却一直被要求「请先设置 API Key」，
+    // 而整条平台计费链路一次都到不了。与 `generateImage` 那道门同一个修法。
+    if (!apiKey && !this.shouldUsePlatformBilling(url)) {
       return { success: false, error: '请先设置 API Key' }
     }
 
@@ -1620,8 +2435,6 @@ export class ApiService {
     }
 
     try {
-      const site = this.apiSites[this.currentSite]
-      const url = `${site.baseURL}/v1/chat/completions`
 
       const content: any[] = []
       
@@ -1640,12 +2453,15 @@ export class ApiService {
         }
       }
 
+      // 走统一装配:平台模式打标记头(主进程换成影子 token + 计费归属),否则照旧
+      // 发自填 Key。手写 Authorization 的后果是这条路**永远**扣自填 Key 的钱,
+      // 而用户以为图像理解也在花账号余额。
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      this.applyAuthHeaders(headers, site, apiKey ?? '', url)
+
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content }],
@@ -1698,7 +2514,11 @@ export class ApiService {
     onComplete: () => void,
     onError: (error: Error) => void
   ): Promise<void> {
-    if (!this.visionApiKey) {
+    // 见 `understandImage`:URL 要先拼出来,那道门才能按「这次是否走平台余额」豁免。
+    const site = this.apiSites[this.currentSite]
+    const apiUrl = `${site.baseURL}/v1/chat/completions`
+
+    if (!this.visionApiKey && !this.shouldUsePlatformBilling(apiUrl)) {
       const error = new Error('请先设置图像理解 API Key')
       onError?.(error)
       throw error
@@ -1711,7 +2531,6 @@ export class ApiService {
     }
 
     const useMaxTokens = typeof maxTokens === 'number' && maxTokens > 0
-    const site = this.apiSites[this.currentSite]
 
     console.log('🔍 开始图像理解分析 (流式输出):', {
       model,
@@ -1754,15 +2573,15 @@ export class ApiService {
     }
 
     try {
-      const apiUrl = `${site.baseURL}/v1/chat/completions`
       console.log('🔗 图像理解流式 API 请求 URL:', apiUrl)
+
+      // 见 `understandImage`:统一装配,平台模式打标记头而不是自填 Key。
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      this.applyAuthHeaders(headers, site, this.visionApiKey ?? '', apiUrl)
 
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.visionApiKey}`
-        },
+        headers,
         body: JSON.stringify(requestBody)
       })
 
@@ -1848,23 +2667,106 @@ export class ApiService {
       return `${site.baseURL}/v1/chat/completions`
     }
 
-    // 谷歌原生端点绕开 CDN:加速域名前面的 EdgeOne 不支持
-    // `/v1beta/models/...:generateContent`,走它必 524(且报成 CORS 错误)。
-    // 按 apiType 判定而不是逐个模型打标记 —— 以后新增谷歌模型自动跟随。
-    const hostSource =
-      modelConfig.apiType === 'gemini-native' && site.directBaseURL
-        ? site.directBaseURL
-        : site.baseURL
-
+    // ⚠️ 别按模型改道到别的 host:平台余额的凭据由主进程按 host 注入,改道到注入器
+    // 看不见的 host 就等于让那些模型静默 401(见 evaluatePlatformBillingEligibility)。
     try {
       const modelUrl = new URL(sourceUrl)
-      const siteUrl = new URL(hostSource)
+      const siteUrl = new URL(site.baseURL)
       modelUrl.protocol = siteUrl.protocol
       modelUrl.host = siteUrl.host
       return modelUrl.toString()
     } catch {
       return sourceUrl
     }
+  }
+
+  /**
+   * 本次请求是否改用平台账号余额出图。
+   *
+   * 两个条件缺一不可:
+   * 1. 用户在「账号」分区把计费来源切到了 `platform`(切的那一刻主进程已按池取好凭据);
+   * 2. 请求确实打向 Miau 网关。**平台余额只覆盖这一个计费域** —— 主进程的注入器只在
+   *    那个 host 上挂过滤器,别的站点(apiyi / 自建)打了标记也换不到凭据,反而因为
+   *    我们不再发 Authorization 而直接 401。
+   *
+   * 第 2 条按 **实际请求 URL 而不是站点键** 判定:注入器认的就是 host。用户完全可以
+   * 自建一个指向同一网关的自定义站点条目,那种请求照样会被注入,所以也该打标记 ——
+   * 只认站点键会漏掉它。出图前的同一判据见 {@link evaluatePlatformBillingEligibility}。
+   */
+  private shouldUsePlatformBilling(requestUrl: string): boolean {
+    if (useQuotaStore.getState().billingSource !== 'platform') return false
+    const gateway = this.apiSites[MIAU_SITE_KEY]
+    return !!gateway && isSameOrigin(requestUrl, gateway.baseURL)
+  }
+
+  /**
+   * 「这次请求会走平台余额吗」—— 给**出图前的前置门**用，此时请求 URL 还没拼出来。
+   *
+   * 与 {@link shouldUsePlatformBilling} 是同一个问题的两个时点：那个按已成型的请求
+   * URL 判（装配请求头时），这个按 模型 + 站点 提前判（决定要不要放行没有 key 的请求）。
+   * 两者必须给出一致的结论，否则会出现「门放行了但头没装上」= 裸奔撞 401，
+   * 或者「门拦下了但本该走平台」= 登录了还被要求填 key。
+   */
+  private willUsePlatformBilling(modelKey: string, effectiveSiteKey: string): boolean {
+    if (useQuotaStore.getState().billingSource !== 'platform') return false
+    return evaluatePlatformBillingEligibility(
+      this.models[modelKey],
+      this.apiSites[effectiveSiteKey],
+      this.apiSites[MIAU_SITE_KEY],
+    ).eligible
+  }
+
+  /**
+   * 「当前设置下这个模型能不能走平台余额」—— 给 UI 用的入口。
+   *
+   * 站点解析照 `generateImage` 那套优先级(requiredSiteKey → 当前站点),不能让组件
+   * 自己抄一份:抄错的症状是提示与实际计费落点不一致,比没有提示更糟。
+   */
+  getPlatformBillingEligibility(modelKey: string): PlatformBillingEligibility {
+    const modelConfig = this.getModelConfig(modelKey)
+    const siteKey =
+      modelConfig?.requiredSiteKey && this.apiSites[modelConfig.requiredSiteKey]
+        ? modelConfig.requiredSiteKey
+        : this.currentSite
+    return evaluatePlatformBillingEligibility(
+      modelConfig,
+      this.apiSites[siteKey],
+      this.apiSites[MIAU_SITE_KEY],
+    )
+  }
+
+  /**
+   * 给请求头装上认证信息。
+   *
+   * 平台模式下**只打标记、绝不发 Authorization**:凭据在主进程,由
+   * `onBeforeSendHeaders` 在出网前换上。渲染层是 `nodeIntegration: true` 且无
+   * contextIsolation 的环境,不放凭据。发用户那把旧 Key 更糟 —— 注入一旦没生效,
+   * 请求就会**静默地用用户自己的钱出图成功**,而他以为在花平台余额。
+   *
+   * 抽成一个方法,是因为请求头装配散在 6 个地方(通用 JSON 出图 / gpt-image-2 JSON /
+   * Flux multipart / 腾讯 image2 JSON / gpt-image-2 multipart / TTS)。漏掉任何一处的
+   * 症状都是「有的模型走平台余额、有的模型静默用自填 Key」——两条计费链路同时在跑,
+   * 而账单要到月底才对得出来。新增出网点请一律走这里,别再手写那三条分支。
+   *
+   * `requestUrl` 是本次请求**真正要 fetch 的那个地址**,不是站点根地址 —— 平台余额
+   * 判定按它的 host 走(理由见 `shouldUsePlatformBilling`)。每个出网点手上本来就有
+   * 这个值,传它比传 modelConfig 更难写错:URL 是既成事实,而 modelConfig 在
+   * TTS / multipart 那几条路径上压根不在作用域里。
+   */
+  private applyAuthHeaders(
+    headers: Record<string, string>,
+    site: ApiSite,
+    apiKey: string,
+    requestUrl: string,
+  ): Record<string, string> {
+    if (this.shouldUsePlatformBilling(requestUrl)) {
+      headers[BILLING_MARKER_HEADER] = BILLING_MARKER_VALUE
+    } else if (site.authType === 'bearer') {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    } else {
+      headers['x-api-key'] = apiKey
+    }
+    return headers
   }
 
   /**
@@ -1876,8 +2778,10 @@ export class ApiService {
     ratio?: string
     resolution?: string
     quality?: string
+    transparentBackground?: boolean
     referenceImages?: string[]
     imageBase64?: string
+    maskImage?: string
     negativePrompt?: string
     seed?: number
     count: number
@@ -1887,16 +2791,34 @@ export class ApiService {
     apiKey: string
     signal?: AbortSignal
     layerDecomposition?: boolean
+    modelParams?: Record<string, unknown>
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition } = options
+    const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition, modelParams } = options
 
-    // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
-    if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
-        || model === 'custom-imagemodel-gt') {
+    // 遮罩只在 MASK_INPAINT_MODELS 里有位置(官转 multipart 文件 / 腾讯 og-v2.5 JSON 字段);
+    // 别的路径拿到它就是调用方搞错了渠道,静默丢掉会把「只擦一角」变成「整张重画」,所以一律早失败。
+    if (maskImage) {
+      if (!MASK_INPAINT_MODELS.has(model)) {
+        throw new Error(`${modelConfig.name || model} 不支持 mask 遮罩局部重绘，请改用 gpt-image-2 / 2.5 flare / 2.5 sunburst / 腾讯 2.5(custom-model-og-v2.5-f / -s)`)
+      }
+      const hasReference = !!imageBase64 || (referenceImages?.length ?? 0) > 0
+      if (!hasReference) {
+        throw new Error('mask 遮罩需要配合原图：请把要重绘的那张图放进 referenceImages（遮罩只作用于第一张）')
+      }
+    }
+
+    // gpt-image-2 家族(含 2.5 flare/sunburst/all) / vip / 腾讯 image2: 专用 Images API 路径
+    if (GPT_IMAGES_API_MODELS.has(model) || TENCENT_IMAGE_MODELS.has(model)) {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
       // 支持 size + quality 三参数的模型：官转 / vip / 腾讯 image2（同规格，复用 resolutionMap）
       const acceptsSizeQuality = this.isSizeQualityImageModel(model)
+      // 透明背景只在能力位打开的渠道外发（2.5 flare / sunburst）；其它渠道传了也不发,
+      // 免得 -all / 腾讯 这类没有该参数的上游把整单拒掉。
+      const background = this.resolveTransparentBackground(transparentBackground, modelConfig)
+      // 原生多图：数量轴 → OpenAI Images API `n`，按模型 maxOutputs 收敛到 [1, maxOutputs]。
+      // maxOutputs=1 的渠道(-all / vip / 腾讯 image2)恒为 1，请求体里不出现 n。
+      const n = this.resolveImagesApiCount(count, modelConfig)
       // 用户反馈：宁可等后台真正返回结果或明确报错，也不要"快失败"。
       // 三档统一拉到约 2000s（~33 分钟）当作"基本不设超时"的天花板——完成耗时主要
       // 受上游排队 / 审核触发影响，之前 1200s 偶尔仍在 2K/4K high 下被截断，导致
@@ -1909,7 +2831,7 @@ export class ApiService {
         ? this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
         : undefined
       // quality：官转 / vip / 腾讯 均支持独立的 quality 参数（不借用 resolution）
-      const resolvedQuality = acceptsSizeQuality ? this.resolveGptImage2Quality(quality) : undefined
+      const resolvedQuality = acceptsSizeQuality ? this.resolveGptImage2Quality(quality, model) : undefined
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
@@ -1921,28 +2843,31 @@ export class ApiService {
         //   两者最终都包成 ImageRef 对象放进 images:[] —— image_url 字段官方明确"传图片的
         //   url 地址或 base64 编码数据"，所以腾讯也能像 gpt-image-2 一样吃 base64 参考图，
         //   而不是回落到网关根本不支持的 multipart 导致失败。
-        if (model === 'custom-imagemodel-gt') {
+        if (TENCENT_IMAGE_MODELS.has(model)) {
           const jsonSources = imageSources
             .map((s) => this.normalizeImageSource(s))
             .filter((s): s is string => !!s)
           if (jsonSources.length === 0) {
             throw new Error('腾讯 image2 参考图无法解析为 URL 或 base64，请检查输入参考图')
           }
+          // 遮罩在腾讯 JSON 契约里是 `mask: { image_url }`(URL 或 base64,与参考图同形态);
+          // 能走到这里的 maskImage 已过上面 MASK_INPAINT_MODELS 的门。
+          const jsonMask = maskImage ? this.normalizeImageSource(maskImage, 'image/png') : null
+          if (maskImage && !jsonMask) {
+            throw new Error('mask 遮罩无法解析为 URL 或 base64，请检查遮罩图片（需要带 alpha 通道的 PNG）')
+          }
           return this.makeTencentImage2JsonEdit(
             editUrl, model, prompt, jsonSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality,
+            background, jsonMask ?? undefined,
           )
         }
-        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality)
+        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality, background, n, maskImage)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
-        const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
+        const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality, background, n)
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-        if (site.authType === 'bearer') {
-          headers['Authorization'] = `Bearer ${apiKey}`
-        } else {
-          headers['x-api-key'] = apiKey
-        }
+        this.applyAuthHeaders(headers, site, apiKey, genUrl)
         const fetchSignal = this.composeTimeoutSignal(signal, timeoutMs)
         const resp = await fetch(genUrl, {
           method: 'POST',
@@ -1998,7 +2923,8 @@ export class ApiService {
       seed,
       count,
       modelConfig,
-      layerDecomposition
+      layerDecomposition,
+      modelParams
     })
 
     // 检查是否需要 FormData (Flux with images)
@@ -2010,11 +2936,7 @@ export class ApiService {
       'Content-Type': 'application/json'
     }
 
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     // 所有模型(nano/gemini、wan、sora、通用 OpenAI-compat)统一打印请求体到 F12，
     // 方便核对发出去的到底是 URL 还是 base64；base64/超长串会被截断，避免刷屏。
@@ -2122,11 +3044,7 @@ export class ApiService {
     }
 
     const headers: Record<string, string> = {}
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     const fetchSignal = this.composeTimeoutSignal(signal, 2_000_000)
 
@@ -2140,19 +3058,34 @@ export class ApiService {
 
   /**
    * gpt-image-2 系列：文生图 JSON payload（无参考图）
-   * - gpt-image-2 (官转)：支持 size/quality 参数
-   * - gpt-image-2-vip (Codex 官逆)：支持 size/quality 参数（2026-06-05 实测 quality 被校验且生效）
-   * - gpt-image-2-all (官逆)：均不支持，回 b64_json
+   * - 官转(gpt-image-2 / 2.5 flare / 2.5 sunburst)：支持 size/quality
+   * - gpt-image-2-vip：支持 size/quality（2026-06-05 实测 quality 被校验且生效）
+   * - *-all (ChatGPT 网页逆向)：均不支持，回 b64_json
    */
-  private buildGptImage2JsonPayload(model: string, prompt: string, size?: string, quality?: string): object {
+  private buildGptImage2JsonPayload(
+    model: string,
+    prompt: string,
+    size?: string,
+    quality?: string,
+    background?: 'transparent',
+    n = 1,
+  ): object {
     const acceptsSizeQuality = this.isSizeQualityImageModel(model)
     const payload: Record<string, unknown> = { model, prompt }
+    // 原生多图:一次请求回 n 张独立变体(OpenAI Images API `n`)。只在 >1 时带字段 ——
+    // 单张请求体保持原样,老测试按精确对象断言;上游对缺省 n 的语义就是 1。
+    if (n > 1) payload.n = n
     if (acceptsSizeQuality) {
       if (size && size !== 'auto') payload.size = size
       if (quality) payload.quality = quality
       const cfg = this.getModelConfig(model)
       if (cfg?.defaultParams?.output_format) {
         payload.output_format = cfg.defaultParams.output_format
+      }
+      // 透明底要 alpha 通道:jpeg 没有,与 background=transparent 冲突时以不发为兜底
+      // (我们的 output_format 固定 png,这条是防将来有人把默认格式改成 jpeg)。
+      if (background === 'transparent' && payload.output_format !== 'jpeg') {
+        payload.background = 'transparent'
       }
       // 注意: vip 默认走 b64_json (apiyi 文档虽支持 "url", 但实测国内访问不了
       // CDN 返回的 URL —— 用户已验证过), 单张几 MB base64 的主线程开销留待
@@ -2205,11 +3138,11 @@ export class ApiService {
 
   /**
    * 是否为「支持 size + quality 三参数」的 Images 模型：
-   * gpt-image-2（官转）、gpt-image-2-vip（官逆）、custom-imagemodel-gt（腾讯 image2，同规格复用）。
-   * gpt-image-2-all（官逆）不在内 —— 它把尺寸写进 prompt，回 b64_json。
+   * 官转(gpt-image-2 / 2.5 flare / 2.5 sunburst)、vip、腾讯 image2。
+   * *-all（网页逆向）不在内 —— 它把尺寸写进 prompt，回 b64_json。
    */
   private isSizeQualityImageModel(model: string): boolean {
-    return model === 'gpt-image-2' || model === 'gpt-image-2-vip' || model === 'custom-imagemodel-gt'
+    return GPT_IMAGE_SIZE_QUALITY_MODELS.has(model) || this.isTencentImage2(model)
   }
 
   /**
@@ -2219,23 +3152,54 @@ export class ApiService {
    * (文生图 generations / JSON edit / FormData edit)共用，避免再漏。
    */
   private isTencentImage2(model: string): boolean {
-    return model === 'custom-imagemodel-gt'
+    return TENCENT_IMAGE_MODELS.has(model)
   }
 
   /**
-   * gpt-image-2 官转：独立的「清晰度 quality」参数（auto/low/medium/high）。
+   * Images 官转 / vip / 腾讯：独立的「清晰度 quality」参数。
    * auto / 空 / 非法值都返回 undefined（不发 quality，由模型按默认处理）。
+   * 2.5 flare/sunburst 额外接受 xhigh / max;其它渠道丢掉这两档,避免上游拒未知枚举。
    */
-  private resolveGptImage2Quality(quality?: string): string | undefined {
+  private resolveGptImage2Quality(quality?: string, model?: string): string | undefined {
     if (!quality || quality === 'auto') return undefined
     if (['low', 'medium', 'high'].includes(quality)) return quality
+    if (model && GPT_IMAGE_25_QUALITY_MODELS.has(model) && (quality === 'xhigh' || quality === 'max')) {
+      return quality
+    }
     return undefined
   }
 
   /**
-   * 腾讯 image2(custom-imagemodel-gt) 图片编辑：JSON `images:[url]` 请求。
+   * 透明背景:调用方要了 **且** 该渠道声明了 `transparentBackgroundControl` 才外发
+   * `background=transparent`。能力位是唯一裁决者 —— 没声明的渠道(-all / 腾讯 / gpt-image-2)
+   * 传了也当没传,不让一个 UI 开关变成上游 400。
+   */
+  private resolveTransparentBackground(
+    transparentBackground: boolean | undefined,
+    modelConfig: ModelConfig | undefined,
+  ): 'transparent' | undefined {
+    if (!transparentBackground) return undefined
+    return modelConfig?.capabilities?.transparentBackgroundControl ? 'transparent' : undefined
+  }
+
+  /**
+   * Images API 路径(官转 / vip / -all / 腾讯)的出图张数：数量轴的 count 按模型 maxOutputs
+   * 收敛到 [1, maxOutputs]。裁决只看 maxOutputs —— 它是数量轴上限的同一真源，UI 给得出的
+   * 数字这里一定放得过，UI 给不出的(MCP 直接传 count=9)收敛到上限而不是拒掉。
+   * 非法 / 缺省 → 1。
+   */
+  private resolveImagesApiCount(count: number | undefined, modelConfig: ModelConfig | undefined): number {
+    const maxOutputs = Math.max(1, Math.floor(modelConfig?.capabilities?.maxOutputs ?? 1))
+    const requested = Number.isFinite(count) ? Math.max(1, Math.floor(count as number)) : 1
+    return Math.min(requested, maxOutputs)
+  }
+
+  /**
+   * 腾讯 image2 家族(gt / og-v2 / og-v2.5) 图片编辑：JSON `images:[{image_url}]` 请求。
    * - 该网关 edit 端点接受公网 URL 数组（无需 base64 multipart）；
    * - logo_add:0 关闭水印，与全局 watermark:false 对齐；
+   * - og-v2.5:`background` 与 `mask:{image_url}` 是网关 `tokenhubog` 适配器认的 JSON 字段
+   *   (mask 只在 MASK_INPAINT_MODELS 放行后才会传进来;background 由能力位裁决);
    * - 响应解析复用 extractImagesFromApiResponse（url / b64_json 都吃）。
    */
   private async makeTencentImage2JsonEdit(
@@ -2249,6 +3213,8 @@ export class ApiService {
     timeoutMs = 2_000_000,
     size?: string,
     quality?: string,
+    background?: 'transparent',
+    mask?: string,
   ): Promise<Response> {
     // 官方文档(GPT-Maas)：images 类型是 `Array of ImageRef`，线格式为对象数组
     // `[{ image_url: "<url 或 base64 编码数据>" }]`（见官方 curl 示例）。image_url 字段
@@ -2258,20 +3224,22 @@ export class ApiService {
       model,
       prompt,
       images: imageSources.map((image_url) => ({ image_url })),
+      // 腾讯 JSON 改图固定 1 张：这条网关只实测过 generations 的 n=2 回 2 张，edit 端点的
+      // n>1 没验过，不盲放(数量轴选了 >1 时改图仍回 1 张,文生图按 n 回)。
       n: 1,
     }
     if (size && size !== 'auto') body.size = size
     if (quality) body.quality = quality
+    // 透明底:调用方要了且能力位放行时才到这里(resolveTransparentBackground 已裁决)。
+    if (background === 'transparent') body.background = 'transparent'
+    // 遮罩:网关 normalizeMask 收 `{image_url}` 对象或裸字符串,这里用对象形态,与 images[] 同形。
+    if (mask) body.mask = { image_url: mask }
     if (this.isTencentImage2(model)) body.extra_body = { logo_add: 0 }
 
     this.logImageRequest(model, url, body)
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
-    }
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
     const resp = await fetch(url, {
@@ -2297,9 +3265,9 @@ export class ApiService {
 
   /**
    * gpt-image-2 系列：图片编辑 FormData 请求（有参考图）
-   * - gpt-image-2 (官转)：额外支持 size/quality
-   * - gpt-image-2-vip (Codex 官逆)：支持 size/quality（2026-06-05 实测 quality 生效）
-   * - gpt-image-2-all (官逆)：均不支持，回 b64_json
+   * - 官转(gpt-image-2 / 2.5 flare / 2.5 sunburst)：额外支持 size/quality
+   * - gpt-image-2-vip：支持 size/quality（2026-06-05 实测 quality 生效）
+   * - *-all (ChatGPT 网页逆向)：均不支持，回 b64_json
    * 三档统一超时约 2000s（~33 分钟，基本不设超时），见上游调用点。
    */
   private async makeGptImage2FormDataRequest(
@@ -2313,16 +3281,24 @@ export class ApiService {
     timeoutMs = 2_000_000,
     size?: string,
     quality?: string,
+    background?: 'transparent',
+    n = 1,
+    maskImage?: string,
   ): Promise<Response> {
     const acceptsSize = this.isSizeQualityImageModel(model)
     const formData = new FormData()
     formData.append('model', model)
     formData.append('prompt', prompt)
+    // /v1/images/edits 同样吃 `n`(官方 1–10):改图一次出 n 个独立变体。缺省不发 = 1。
+    if (n > 1) formData.append('n', String(n))
     if (!acceptsSize) formData.append('response_format', 'b64_json')
     // 不给 vip 显式设 response_format —— 走 apiyi 默认的 b64_json。
     // 文档虽支持 url, 但实测返回的 URL 在国内访问不了, 留 b64_json 才能保证图片能展示。
     if (acceptsSize && size && size !== 'auto') formData.append('size', size)
     if (acceptsSize && quality) formData.append('quality', quality)
+    // /v1/images/edits 同样吃 background=transparent(改图也能直接出透明底);
+    // multipart 路径没发 output_format,上游默认 png,天然带 alpha。
+    if (acceptsSize && background === 'transparent') formData.append('background', 'transparent')
     // 腾讯 image2 去水印：multipart edit(data: 参考图回落路径)同样要带 extra_body，
     // 否则这条回落路径产出的编辑图右下角仍有 logo。以 JSON 字符串字段下发，与 JSON
     // 路径的嵌套 extra_body 结构对齐。
@@ -2343,12 +3319,18 @@ export class ApiService {
       throw new Error(`参考图转换失败：${imageSources.length} 张图片均无法转为 Blob，请检查图片格式（支持 png/jpg/webp）`)
     }
 
-    const headers: Record<string, string> = {}
-    if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else {
-      headers['x-api-key'] = apiKey
+    // 局部重绘遮罩:OpenAI 契约是单个 `mask` 字段(不是 mask[]),PNG 带 alpha,只作用于 image[0]。
+    // 文件名固定 mask.png —— 部分网关按扩展名校验「Mask must be a PNG」。
+    let maskAppended = false
+    if (maskImage) {
+      const maskBlob = await this.convertToBlob(maskImage, imageSources.length)
+      if (!maskBlob) throw new Error('mask 遮罩无法转为 PNG，请检查遮罩图片（需要带 alpha 通道的 PNG）')
+      formData.append('mask', maskBlob, 'mask.png')
+      maskAppended = true
     }
+
+    const headers: Record<string, string> = {}
+    this.applyAuthHeaders(headers, site, apiKey, url)
 
     // FormData 不是 JSON：打印结构化摘要(含参考图源)到 F12，标注 multipart。
     this.logImageRequest(model, url, {
@@ -2356,8 +3338,11 @@ export class ApiService {
       prompt,
       size: size ?? 'auto',
       quality,
+      ...(n > 1 ? { n } : {}),
+      ...(acceptsSize && background === 'transparent' ? { background } : {}),
       ...(this.isTencentImage2(model) ? { extra_body: { logo_add: 0 } } : {}),
       'image[]': `${appendedCount} blob (multipart/form-data)`,
+      ...(maskAppended ? { mask: '1 blob (alpha PNG, applies to image[0])' } : {}),
       sources: imageSources,
     })
 
@@ -2491,8 +3476,14 @@ export class ApiService {
     count?: number
     modelConfig: ModelConfig
     layerDecomposition?: boolean
+    modelParams?: Record<string, unknown>
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition, modelParams } = options
+
+    // 悠船(Midjourney):自己的一套请求形态(顶层 aspect_ratio + 模型专属参数,无 size / n)
+    if (YOUCHUAN_IMAGE_MODELS.has(model)) {
+      return this.buildYouchuanPayload({ prompt, model, ratio, referenceImages, imageBase64, seed, modelConfig, modelParams })
+    }
 
     // Gemini Native 格式
     if (modelConfig.apiType === 'gemini-native') {
@@ -2532,6 +3523,70 @@ export class ApiService {
       modelConfig,
       layerDecomposition
     })
+  }
+
+  /**
+   * 构建悠船(Midjourney)请求体。字段与网关 `relay/channel/youchuan` 读取的一一对应:
+   *
+   *  - `aspect_ratio`:缺省 / `auto` = 自适应,**不发**;否则原样 `W:H`(网关优先于 `size`);
+   *  - `images: [{ image_url }]`:参考图,只收 http(s)(≤20),不收 base64;
+   *  - 其余是 `capabilities.modelParams` 声明过的键(`hd` / `quality` / `chaos` / `stylize` / `raw` /
+   *    `iw` / `sref` / `sw` / `sv` / `seed` / `no`),默认值 + 用户值,**未设置的不发**。
+   *
+   * 刻意**没有** `size` / `n` / `response_format`:网关忽略 `n`(固定 4 张、计一次费),比例已由
+   * `aspect_ratio` 表达,默认回 URL。通用 `seed` 参数在没有 `modelParams.seed` 时当作它的别名,
+   * 免得 agent 按通用参数传了种子却被静默忽略。
+   *
+   * 校验在 `generateImage` 入口已经做过(返回中文错误、不出网);这里再兜一层并**抛错**,
+   * 是因为这个方法也被直接调用(测试 / 其他入口),带病外发 = 白扣一次钱。
+   */
+  private buildYouchuanPayload(options: {
+    prompt: string
+    model: string
+    ratio?: string
+    referenceImages?: string[]
+    imageBase64?: string
+    seed?: number
+    modelConfig: ModelConfig
+    modelParams?: Record<string, unknown>
+  }): Record<string, unknown> {
+    const { prompt, model, ratio, referenceImages, imageBase64, seed, modelConfig, modelParams } = options
+
+    const input: Record<string, unknown> = { ...modelParams }
+    const seedUnset = input.seed === undefined || input.seed === null || input.seed === ''
+    if (seedUnset && typeof seed === 'number' && Number.isFinite(seed) && seed >= 0) {
+      input.seed = Math.floor(seed)
+    }
+
+    const specs = modelConfig.capabilities?.modelParams ?? []
+    const resolved = resolveModelParams(specs, input)
+    if (resolved.errors.length > 0) {
+      throw new Error(`悠船参数有误：${resolved.errors.join('；')}`)
+    }
+
+    const payload: Record<string, unknown> = { model, prompt }
+
+    if (ratio && ratio !== 'auto') {
+      if (!YOUCHUAN_ASPECT_RATIO.test(ratio)) {
+        throw new Error(`悠船不支持画幅「${ratio}」，请使用 W:H 形式的整数比例（如 16:9），或选「自适应」。`)
+      }
+      payload.aspect_ratio = ratio
+    }
+
+    const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+    if (refSources.length > YOUCHUAN_MAX_REFERENCE_IMAGES) {
+      throw new Error(`悠船最多支持 ${YOUCHUAN_MAX_REFERENCE_IMAGES} 张参考图，当前传了 ${refSources.length} 张，请删减后重试。`)
+    }
+    if (refSources.length > 0) {
+      const urls = refSources.map((s) => this.normalizeImageSource(s))
+      if (urls.some((u) => !u || !/^https?:\/\//i.test(u))) {
+        throw new Error('悠船只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。')
+      }
+      payload.images = (urls as string[]).map((u) => ({ image_url: u }))
+    }
+
+    Object.assign(payload, resolved.values)
+    return payload
   }
 
   /**
@@ -3198,21 +4253,21 @@ export class ApiService {
   }
 
   /**
-   * qwen 多模态理解（视频/文档/联网扒资料）。默认 `qwen3.7-plus-dashscope`(更便宜),
-   * `qwen3.7-max-dashscope` 作为更强 + 兜底备选。
+   * qwen 多模态理解(视频 / 图片文档 / 音频 / 联网扒资料)。默认全模态
+   * `qwen3.8-omni-flash`,`qwen3.7-max-dashscope` 作为更强 + 兜底备选;3.7 Plus 与
+   * 3.8 旗舰可显式点名。
    *
-   * 复用出图同一条链路:经 new-api(antigravity 站点)网关
-   * /v1/chat/completions,Bearer = Miau 令牌。网关已做 OpenAI→DashScope 转换,
-   * 客户端只发标准 OpenAI content parts;多模态请求不带 result_format(手册 §2)。
-   * 联网用顶层 enable_search:true。
+   * 复用出图同一条链路:经 new-api(antigravity 站点 = Miau)网关
+   * /v1/chat/completions,Bearer = Miau 令牌(或平台余额:打计费标记头,主进程换成
+   * 平台 token)。网关已做 OpenAI→DashScope 转换,客户端只发标准 OpenAI content parts;
+   * 多模态请求不带 result_format(手册 §2)。联网用顶层 enable_search:true。
    *
-   * 模型选择:`opts.model`('max' / 'plus' / 全名)显式指定,非法值回落默认 plus。
-   * 兜底:primary(默认 plus)在同模型重试耗尽后仍失败,且 primary≠max 且未禁用
-   * 兜底时,自动用 max 再跑一轮(plus 偶发对个别请求不稳时由更强的 max 救场)。
+   * 模型选择:`opts.model`('omni' / 'plus' / 'max' / 'flagship' / 全名)显式指定,非法值
+   * 回落默认。兜底:primary 在同模型重试耗尽后仍失败,且 primary≠max 且未禁用兜底时,
+   * 自动用 max(3.7)再跑一轮。音频例外:一律钉在 omni 上且不兜底(其余各档都没有音频模态)。
    *
    * 健壮解析:先 text() 再 try-parse,502/503/504 与非 JSON 返回都映射成
    * 结构化中文错误而非抛异常,避免重蹈 parseResponse「先 json 后判 ok」的坑。
-   * 音频:qwen 上游不收 audio,音频走 skill 指导的 ffmpeg→MP4→understand_video。
    */
   async understand(
     input: UnderstandInput,
@@ -3220,9 +4275,22 @@ export class ApiService {
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
     const site = this.apiSites['antigravity']
     const key = this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity')
-    if (!key) {
+    // 平台余额模式下没有自填 Key 是正常的 —— 凭据在主进程。这道门原先无条件拦,
+    // 于是 understand_video / understand_document / web_research 这三个 MCP 工具
+    // 在平台模式下一律报「未配置 Miau API 令牌」,而用户明明已经登录并选好了计费池。
+    // 判据用请求 URL 的 host(与 `applyAuthHeaders` 内部同一个),不是站点键。
+    if (!key && !this.shouldUsePlatformBilling(`${site.baseURL}/v1/chat/completions`)) {
       return { success: false, error: '未配置 Miau API 令牌,请到设置页填入 API Key 后重试。' }
     }
+    // 走到这里 `key` 可能是 null(平台模式放行的那一支),而下游签名要 `string`。
+    // 归一成空串,**不放宽下游签名** —— 放宽会让每个下游都得重新判断「null 是什么
+    // 意思」,而这里只有一种含义:`applyAuthHeaders` 会走平台分支打标记,根本不读它。
+    // 与 `generateImage` 里 `resolvedApiKey` 同一个处理。
+    const resolvedKey = key ?? ''
+
+    // 音频容器先验:上游不收的(m4a / ogg / flac…)在这里就报,附上转码办法,不发请求。
+    const audioFormat = input.kind === 'audio' ? resolveAudioFormat(input.mediaUrl, input.format) : undefined
+    if (audioFormat && 'error' in audioFormat) return { success: false, error: audioFormat.error }
 
     const content: unknown =
       input.kind === 'web'
@@ -3237,28 +4305,41 @@ export class ApiService {
                   video_url: { url: input.mediaUrl },
                   ...(typeof input.fps === 'number' ? { fps: input.fps } : {}),
                 }]
-              // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
-              // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
-              // 拆成多次调用模型就看不到彼此了。
-              : buildDocumentParts(
-                  dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])]),
-                )),
+              : input.kind === 'audio'
+                // OpenAI 兼容形态的音频 part:`data` 放公网 URL(上游也接 base64),
+                // `format` 告诉解码器字节是什么。omni 专属 —— 见下面的模型钉死。
+                ? [{
+                    type: 'input_audio',
+                    input_audio: {
+                      data: input.mediaUrl,
+                      format: audioFormat && 'format' in audioFormat ? audioFormat.format : 'mp3',
+                    },
+                  }]
+                // 多图并列在同一条 message 里 —— 上游把它们当成一组来看,跨图比较
+                // (同一角色在不同镜头里是否一致、多页文档前后呼应)才成立;
+                // 拆成多次调用模型就看不到彼此了。
+                : buildDocumentParts(
+                    dedupePreservingOrder([input.mediaUrl, ...(input.mediaUrls ?? [])]),
+                  )),
           ]
 
     const baseBody: Record<string, unknown> = { messages: [{ role: 'user', content }] }
     if (input.kind === 'web') baseBody.enable_search = true
 
-    const primary = resolveUnderstandModel(opts.model)
-    const primaryRes = await this.understandWithModel(site.baseURL, key, baseBody, primary, opts)
+    // 音频只有 omni 听得见:不管调用方点了哪档,都钉到它上,兜底也关掉(换 3.7-max 重试
+    // 只会再换回一句 `incorrect modal 'audio'`,白花一次上游往返)。
+    const isAudio = input.kind === 'audio'
+    const primary = isAudio ? QWEN_UNDERSTAND_OMNI_MODEL : resolveUnderstandModel(opts.model)
+    const primaryRes = await this.understandWithModel(site, resolvedKey, baseBody, primary, opts)
     if (primaryRes.success) return primaryRes
 
-    // 兜底:primary 不是 max 时(默认 plus / 显式 plus)用更强的 max 再跑一轮。可经
+    // 兜底:primary 不是 max 时(默认 omni / 显式 omni)用更强的 max 再跑一轮。可经
     // `fallback:false` 关闭(如调用方明确只想要 primary 的结果)。
-    const allowFallback = opts.fallback !== false
+    const allowFallback = opts.fallback !== false && !isAudio
     if (allowFallback && primary !== QWEN_UNDERSTAND_FALLBACK_MODEL) {
       const fb = await this.understandWithModel(
-        site.baseURL,
-        key,
+        site,
+        resolvedKey,
         baseBody,
         QWEN_UNDERSTAND_FALLBACK_MODEL,
         opts,
@@ -3274,19 +4355,22 @@ export class ApiService {
    * 重试即可恢复;4xx/非 JSON 属确定性错误,不重试。默认 2 次重试、退避 600ms*attempt。
    */
   private async understandWithModel(
-    baseURL: string,
+    site: ApiSite,
     key: string,
     baseBody: Record<string, unknown>,
     model: string,
     opts: { retries?: number; retryDelayMs?: number },
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
     const body: Record<string, unknown> = { ...baseBody, model }
+    // omni 模型只要文本回来。它还能出语音,但那是另一种产品(以及另一种计费);
+    // `modalities` 是 OpenAI 标准字段,网关原样透传给 DashScope 兼容模式。
+    if (model === QWEN_UNDERSTAND_OMNI_MODEL) body.modalities = ['text']
     const maxAttempts = Math.max(1, (opts.retries ?? 2) + 1)
     const retryDelayMs = opts.retryDelayMs ?? 600
     let lastError = 'qwen 理解请求失败。'
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const r = await this.understandAttempt(baseURL, key, body)
+      const r = await this.understandAttempt(site, key, body)
       if (r.kind === 'ok') return { success: true, text: r.text }
       lastError = r.error
       if (!r.retryable || attempt === maxAttempts) {
@@ -3297,20 +4381,56 @@ export class ApiService {
     return { success: false, error: lastError }
   }
 
-  /** 单次 understand 请求。瞬时错误(网络异常 / 502·503·504)标 retryable。 */
+  /**
+   * 单次 understand 请求。瞬时错误(网络异常 / 502·503·504)标 retryable。
+   *
+   * 流式自适应:DashScope 兼容模式下 Qwen-Omni 一族**只支持流式输出**(非流式回 400,
+   * 错误文本里带 "stream")。新网关是否替我们做了这层转换没有验过,所以这里不猜:
+   * 先按非流式发;若上游明确因为流式拒绝,同一请求改 `stream:true` 再发一次并把 SSE
+   * 拼成整段文本,同时把这个模型记进 {@link understandStreamOnlyModels},之后直接走
+   * 流式,不再白花一次往返。
+   */
   private async understandAttempt(
-    baseURL: string,
+    site: ApiSite,
     key: string,
     body: Record<string, unknown>,
   ): Promise<{ kind: 'ok'; text: string } | { kind: 'fail'; retryable: boolean; error: string }> {
+    const model = typeof body.model === 'string' ? body.model : ''
+    if (this.understandStreamOnlyModels.has(model)) {
+      return this.understandRequest(site, key, { ...body, stream: true }, true)
+    }
+    const first = await this.understandRequest(site, key, body, false)
+    if (first.kind === 'fail' && first.streamRequired) {
+      this.understandStreamOnlyModels.add(model)
+      return this.understandRequest(site, key, { ...body, stream: true }, true)
+    }
+    return first
+  }
+
+  /** 会话级记忆:哪些模型经网关只接受流式(见 understandAttempt)。 */
+  private readonly understandStreamOnlyModels = new Set<string>()
+
+  private async understandRequest(
+    site: ApiSite,
+    key: string,
+    body: Record<string, unknown>,
+    stream: boolean,
+  ): Promise<
+    | { kind: 'ok'; text: string }
+    | { kind: 'fail'; retryable: boolean; error: string; streamRequired?: boolean }
+  > {
+    const url = `${site.baseURL}/v1/chat/completions`
+    // 收 `site` 而不是裸 baseURL,就是为了能走这一步:平台模式打标记头(主进程换成
+    // 影子 token + 计费归属),否则照旧发自填 Key。手写 Authorization 的后果是
+    // understand 这一族**永远**扣自填 Key 的钱,而且在平台用量明细里一条都查不到。
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    this.applyAuthHeaders(headers, site, key, url)
+
     let resp: Response
     try {
-      resp = await fetch(`${baseURL}/v1/chat/completions`, {
+      resp = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${key}`,
-        },
+        headers,
         body: JSON.stringify(body),
       })
     } catch (e) {
@@ -3326,11 +4446,25 @@ export class ApiService {
           error: '上游服务器繁忙或无响应(502/503/504),请稍后重试。',
         }
       }
+      // 非流式被拒且原因是流式:交给 understandAttempt 换流式重发。只认 4xx —— 5xx 是
+      // 上游自己的问题,换个形状再发只是多扣一次。
+      const streamRequired = !stream && resp.status >= 400 && resp.status < 500 && /stream/i.test(raw)
       return {
         kind: 'fail',
         retryable: false,
-        error: `qwen 理解请求失败:${resp.status} ${resp.statusText}`,
+        error: `qwen 理解请求失败:${resp.status} ${resp.statusText}${streamRequired ? '' : ` ${raw.slice(0, 200)}`}`,
+        ...(streamRequired ? { streamRequired: true } : {}),
       }
+    }
+
+    if (stream) {
+      const text = collectSseContent(raw)
+      if (text !== null) {
+        return text.length > 0
+          ? { kind: 'ok', text }
+          : { kind: 'fail', retryable: false, error: 'qwen 未返回可用文本。' }
+      }
+      // 不是 SSE:网关可能忽略了 stream 直接回了 JSON,按非流式解析即可。
     }
 
     let json: any
@@ -3614,10 +4748,11 @@ export class ApiService {
             resolution: resolution || undefined,
             count: n
           })
+          // success 由 `...result` 提供（GenerateResult.success 是必填项）。之前在展开
+          // 之前还显式写了一遍同值的 success，展开必然盖掉它，纯属死代码。
           const resultData = {
             index: promptIndex,
             prompt,
-            success: result.success,
             ...result
           }
 
@@ -3714,10 +4849,10 @@ export class ApiService {
             referenceImages,
             count: n
           })
+          // 同 batchGenerate：success 以 `...result` 为准，显式那一份是被覆盖的死代码。
           const resultData = {
             index: promptIndex,
             prompt,
-            success: result.success,
             ...result
           }
 
@@ -4095,22 +5230,26 @@ export function extractImagesFromApiResponse(data: unknown): string[] {
       const parts = (candidate as Record<string, unknown>).content as Record<string, unknown> | undefined
       const partList = parts?.parts
       if (!Array.isArray(partList)) continue
+      // 复杂编辑会在同一个 candidate 里先回几张中间稿,最后一张 inlineData 才是终稿。
+      let finalInline: string | null = null
+      const textImages: string[] = []
       for (const part of partList) {
         if (!part || typeof part !== 'object') continue
         const inlineData = (part as Record<string, unknown>).inlineData as Record<string, unknown> | undefined
         if (typeof inlineData?.data === 'string' && inlineData.data) {
           const mime = typeof inlineData.mimeType === 'string' ? inlineData.mimeType : 'image/png'
-          const dataUrl = `data:${mime};base64,${inlineData.data}`
-          if (!seen.has(dataUrl)) {
-            seen.add(dataUrl)
-            images.push(dataUrl)
-          }
+          finalInline = `data:${mime};base64,${inlineData.data}`
         }
         // 网关把产物传到对象存储后,整条响应里没有 base64,只有 text 里的一条
         // 预签名 URL —— 图是生成成功的,只认 inlineData 会把它报成生成失败。
         const text = (part as Record<string, unknown>).text
-        if (typeof text === 'string' && text) collectImagesFromText(text, images, seen)
+        if (typeof text === 'string' && text) collectImagesFromText(text, textImages, seen)
       }
+      if (finalInline && !seen.has(finalInline)) {
+        seen.add(finalInline)
+        images.push(finalInline)
+      }
+      images.push(...textImages)
     }
   }
 

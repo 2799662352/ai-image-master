@@ -40,8 +40,20 @@ export type SeedancePersistence = 'idle' | 'running' | 'done' | 'failed'
  * 经 Miau 网关的 DashScope task),只是共用这张能力表、共用工作台 UI、共用任务
  * 轮询与落盘那一整套。真正按 provider 分派的只有四处 —— 请求组包、响应解析、
  * 计费公式、base URL,见各自的 `provider` 分支。
+ *
+ * `depth`(深度捕捉)是个**例外**:它不生成新内容,而是把一段源视频变成灰度深度视频
+ * (近亮远暗,可作运动参考)。放进同一张表是因为它复用整条任务链(提交 → 轮询 → 落盘
+ * → COS 转存 → 气泡),差别全部由能力表的 `sourceVideoTransform` 声明,而不是再长一个
+ * 平行的 MCP 工具。它**不进工作台**(`modes` 为空)。
  */
-export type VideoModelAlias = '2.0' | '2.0-fast' | '2.0-mini' | '2.5' | 'wan3'
+export type VideoModelAlias =
+  | '2.0'
+  | '2.0-fast'
+  | '2.0-mini'
+  | '2.5'
+  | 'wan3'
+  | 'wan3-prime'
+  | 'depth'
 
 /**
  * @deprecated 用 `VideoModelAlias`。保留这个名字只是为了让既有的十几处引用不必
@@ -112,6 +124,17 @@ export interface SeedanceModelCapabilities {
   subtitleErase: boolean
   /** 是否允许「只有音频、没有图/视频」的参考组合。 */
   audioOnlyReference: boolean
+  /**
+   * 「源视频变换」型模型(目前只有深度捕捉)。
+   *
+   * 与生成模型的区别决定了它要绕开几条通用规则,所以单列一个字段而不是在各处写
+   * `alias === 'depth'`(那样下一个同类模型进来要改一圈):
+   *
+   *   - 输入**恰好一段**源视频,不收图 / 音频、不读提示词;
+   *   - 没有时长 / 画幅 / seed 这些参数 —— 输出时长随源视频,所以不按 `duration` 校验;
+   *   - `modes` 为空:没有「工作台模式」可言,也就不进工作台下拉。
+   */
+  sourceVideoTransform: boolean
 }
 
 /** Seedance 全家的画幅集合。万相不一样（有 adaptive、没有 21:9），见它那行。 */
@@ -157,6 +180,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: [],
     subtitleErase: true,
     audioOnlyReference: false,
+    sourceVideoTransform: false,
   },
   '2.0-fast': {
     provider: 'vvdance',
@@ -174,6 +198,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: [],
     subtitleErase: true,
     audioOnlyReference: false,
+    sourceVideoTransform: false,
   },
   '2.0-mini': {
     provider: 'vvdance',
@@ -189,6 +214,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: [],
     subtitleErase: false,
     audioOnlyReference: false,
+    sourceVideoTransform: false,
   },
   '2.5': {
     provider: 'vvdance',
@@ -204,6 +230,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     taskModes: ['edit', 'extend'],
     subtitleErase: false,
     audioOnlyReference: true,
+    sourceVideoTransform: false,
   },
   /**
    * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
@@ -235,6 +262,68 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     // 官方允许「只给参考音频」的组合。
     audioOnlyReference: true,
+    sourceVideoTransform: false,
+  },
+  /**
+   * 万相 3.0 Prime（`wan3.0-video-prime`）—— 同一家、同一套协议、同一枚 Miau Key，
+   * 只是上游 slug 与单价不同。
+   *
+   * **能力逐项与 wan3 相同**（2026-08-31 与用户确认）。这里写成展开的一份而不是
+   * `{ ...wan3 }` 扩展：能力表是「这个档位的规格」的真源，两档将来完全可能分叉
+   * （官方给 prime 单独放宽时长或分辨率都不奇怪），而扩展写法会让分叉那天的 diff
+   * 看起来像是在“改 wan3”。多几行换一处清晰的归属。
+   *
+   * 价格不同 —— 见 `video-workbench/pricing.ts` 的 `CNY_PER_SECOND`：网关实测
+   * `model_price` 为 0.6（wan3）与 0.8（prime），按次计费。
+   */
+  'wan3-prime': {
+    provider: 'miau',
+    ratios: WAN3_RATIOS,
+    seedMax: 2_147_483_647,
+    modes: WAN3_MODES,
+    duration: { min: 2, max: 30 },
+    resolutions: ['480p', '720p', '1080p'],
+    maxImages: 10,
+    maxVideos: 5,
+    maxAudios: 5,
+    maxMaterialsTotal: 20,
+    subtitleErase: false,
+    audioOnlyReference: true,
+    taskModes: [],
+    sourceVideoTransform: false,
+  },
+  /**
+   * 深度捕捉 —— 把一段视频转成**灰度深度视频**(近亮远暗,可作运动参考)。
+   *
+   * 上游是 Miau 网关的腾讯云点播渠道(渠道类型 76,「视频深度估计」),取代了已下线的
+   * RunningHub;模型名仍是 `rh-video-depth-480p|720p|1080p`。腾讯这个接口**没有分辨率
+   * 参数,三档产物一致、同价**,`resolutions` 保留三个只是为了沿用模型名(调用方不用改);
+   * 按次计费(网关默认单价 ¥0.5,腾讯没公布价格,以账单为准),与源视频时长、体积无关。
+   *
+   * 限制 —— 详见 `depth/model.ts` 文件头:
+   *   - 源视频必须是**公网 http(s) URL**(上游自己去拉,没有 base64 兜底),所以走 COS 中转;
+   *   - 腾讯没公布源视频的时长 / 体积上限,只实测过 5 秒的短片;本地 100 MB 的拦截是桌面端
+   *     自己设的保守上限,不是上游的。
+   *
+   * 其余字段是占位:`duration` 区间(1–180)不代表任何上游限制,实际也不参与校验
+   * (`sourceVideoTransform` 跳过时长检查);`seedMax: 0` 表示没有 seed 这个参数;
+   * `modes: []` 让它留在工作台之外。
+   */
+  depth: {
+    provider: 'miau',
+    ratios: ['adaptive'],
+    seedMax: 0,
+    modes: [],
+    duration: { min: 1, max: 180 },
+    resolutions: ['480p', '720p', '1080p'],
+    maxImages: 0,
+    maxVideos: 1,
+    maxAudios: 0,
+    maxMaterialsTotal: 1,
+    taskModes: [],
+    subtitleErase: false,
+    audioOnlyReference: false,
+    sourceVideoTransform: true,
   },
 }
 
@@ -257,6 +346,18 @@ export const ALL_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = Object.keys(
   SEEDANCE_MODEL_CAPABILITIES,
 ) as VideoModelAlias[]
 
+/**
+ * 能进「视频工作台」的模型 = 至少开放了一种工作台模式的。
+ *
+ * 深度捕捉(`depth`)这类「源视频变换」模型 `modes` 为空:它没有提示词 / 画幅 / 时长这些
+ * 卡片字段,只能经 `generate_video` 提交。工作台的 MCP 工具与工程文件导入必须用这份
+ * 而不是 `ALL_VIDEO_MODEL_ALIASES`,否则 agent 能往卡片里塞 `depth`,提交那一步
+ * 再被 `isSeedanceModelAvailable` 悄悄改回 2.0 —— 用户拿到的是一条普通生成,而不是报错。
+ */
+export const WORKBENCH_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = ALL_VIDEO_MODEL_ALIASES.filter(
+  (alias) => SEEDANCE_MODEL_CAPABILITIES[alias].modes.length > 0,
+)
+
 export const ALL_VIDEO_RESOLUTIONS: readonly string[] = unionOf((caps) => caps.resolutions)
 
 /** 含万相的 `adaptive` 与 Seedance 的 `21:9` —— 谁支持谁由能力表 `ratios` 说了算。 */
@@ -278,6 +379,30 @@ export interface SeedanceRequestShape {
  * 存在的理由是「别等上游 400 才知道」：4k 配 2.5、30 秒配 2.0、edit 不带视频,
  * 这几种都会被上游拒,但错误回到用户面前时已经隔了一次网络往返和一张失败卡片。
  */
+/**
+ * Seedance 2.5 Draft 样片模式(与 sora-ui / new-api 的 seedanceDraftModeV1 同口径)。
+ *
+ * - 样片:请求带 `draft: true`,分辨率只能是 480p(按普通 480p 计费),用来便宜地看效果;
+ * - 成片:满意后用样片的任务号生成 1080p 正式视频。方舟沿用样片的提示词、参考素材、
+ *   时长、比例、seed 与音频开关,**成片请求里重传任何一样都会被拒**;
+ * - 样片任务号从创建起 7 天内有效。
+ *
+ * 只有 2.5 支持;桌面端只在平台余额(经网关)这条路开放 —— 网关按「本人 + 已成功」
+ * 查样片并锁它的渠道(new-api #111 / #113),自填 Key 的直连没有这套能力。
+ */
+export const SEEDANCE_DRAFT_RESOLUTION = '480p'
+export const SEEDANCE_DRAFT_FINAL_RESOLUTION = '1080p'
+export const SEEDANCE_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+export function supportsSeedanceDraft(alias: VideoModelAlias | undefined): boolean {
+  return alias === '2.5'
+}
+
+/** 样片还能不能生成成片:从样片创建起 7 天内。缺创建时间时按可用处理(让网关来判)。 */
+export function seedanceDraftExpired(createdAt: number | undefined, now = Date.now()): boolean {
+  return typeof createdAt === 'number' && now - createdAt > SEEDANCE_DRAFT_TTL_MS
+}
+
 export function validateSeedanceRequest(
   alias: SeedanceModelAlias,
   request: SeedanceRequestShape,
@@ -299,7 +424,8 @@ export function validateSeedanceRequest(
     }
   }
 
-  if (duration !== undefined && duration !== -1) {
+  // 源视频变换型(深度捕捉)没有时长参数 —— 输出时长随源视频,调用方带不带都不该被拦。
+  if (duration !== undefined && duration !== -1 && !caps.sourceVideoTransform) {
     const { min, max } = caps.duration
     if (!Number.isInteger(duration) || duration < min || duration > max) {
       errors.push(`模型 ${alias} 的时长支持 ${min}-${max} 秒或 -1，收到 ${duration}`)
@@ -316,6 +442,20 @@ export function validateSeedanceRequest(
     errors.push(`模型 ${alias} 不支持擦除字幕（仅 2.0 与 2.0-fast 支持）`)
   }
 
+  if (caps.sourceVideoTransform) {
+    // 变换型走自己的话术:通用那三条会说成「参考图最多 0 张」,读起来像素材配额问题,
+    // 而真相是「这个模型根本不是生成模型,只要一段源视频」。
+    if (videos !== 1) {
+      errors.push(
+        `模型 ${alias} 需要恰好一段源视频（referenceVideos 传 1 个），收到 ${videos} 段`,
+      )
+    }
+    if (images > 0 || audios > 0) {
+      errors.push(`模型 ${alias} 只接受一段源视频，不能再带图片 / 音频`)
+    }
+    return errors
+  }
+
   if (images > caps.maxImages) errors.push(`参考图最多 ${caps.maxImages} 张，收到 ${images}`)
   if (videos > caps.maxVideos) errors.push(`参考视频最多 ${caps.maxVideos} 段，收到 ${videos}`)
   if (audios > caps.maxAudios) errors.push(`参考音频最多 ${caps.maxAudios} 段，收到 ${audios}`)
@@ -328,6 +468,31 @@ export function validateSeedanceRequest(
 
 /** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
 export type SeedanceRegion = 'global' | 'cn'
+
+/**
+ * 这一次生成的钱从哪出。
+ *
+ * 放在三端共享类型里而不是主进程内部,是因为**真相源在渲染层**
+ * (`useQuotaStore.billingSource`):意向要经 IPC 载荷一路带到主进程的
+ * `transportFor`,途中每一层都要能说出这个类型。
+ *
+ * 主进程内部同一个联合叫 `GatewayBillingSource`（`seedanceGateway/credentials.ts`）,
+ * 那边是「取哪枚 token」的视角、这边是「走哪条上游」的视角,值域刻意保持一致 ——
+ * 两个视角必须给出同一个结论,否则就是「按平台余额提交、拿自填 Key 去查」。
+ */
+export type VideoBillingSource = 'platform' | 'own-key'
+
+/**
+ * 一次提交**实际递给上游**的素材地址,按类分列、与提交顺序一致。到这里的都已经是
+ * 上游能拉到的 https(本地文件 / data: 图在主进程转存 COS 之后的地址;人像库
+ * asset:// 解析后的地址)。给「任务详情」把素材写成地址而不是本机路径 ——
+ * 本机路径贴给别人毫无意义,地址才对得上供应商那边的记录。
+ */
+export interface SeedanceReferenceUrls {
+  images: string[]
+  videos: string[]
+  audios: string[]
+}
 
 /** 任务快照（也是 `seedance:task-update` IPC 的载荷）。 */
 export interface SeedanceTaskState {
@@ -356,6 +521,21 @@ export interface SeedanceTaskState {
   error?: string
   /** succeeded 时上游回传的**实际使用**种子（含随机 seed 的最终值,可复现）。 */
   actualSeed?: number
+  /**
+   * 网关**之后那一跳**的任务号（火山 Ark `cgt-…` / DashScope uuid）。只在走网关时
+   * 出现:`taskId` 是网关签发的,找供应商对账他们不认它,认的是这个。第一轮轮询
+   * 学到就随广播带出,此后每条广播都带着(状态对象上一直挂着)。
+   */
+  upstreamTaskId?: string
+  /**
+   * 见 `SeedanceReferenceUrls`。提交时从最终 content[] 抽出,一条素材都没有就不给
+   * (纯文生视频不摆三个空数组)。合成的预备 / 失败卡片不带。
+   */
+  referenceUrls?: SeedanceReferenceUrls
+  /** 这是一条 Seedance 2.5 样片(480p)。成功后 7 天内可用它的 taskId 生成 1080p 成片。 */
+  draft?: boolean
+  /** 这是由样片生成的成片:来源样片的任务号。 */
+  fromDraftTaskId?: string
   /** succeeded 时上游回传的 usage.completion_tokens（计费口径,文档 9.1）。 */
   completionTokens?: number
   /**
@@ -386,6 +566,17 @@ export interface SeedanceTaskState {
    * 气泡/聊天历史）。缺省 = 聊天/MCP `generate_video` 链路，行为不变。
    */
   source?: 'workbench'
+  /**
+   * 这条任务是**用哪种计费模式建的**。提交时定下,此后轮询、取消、重取过期地址
+   * 都必须照它走。
+   *
+   * 不是装饰字段:平台余额那条路用的是按计费池签发的影子 token,拿用户自填的
+   * vvdance key 去查同一个 taskId,上游只会回一句「任务不存在」—— 而卡片会把它
+   * 报成「生成失败」,用户以为片子没出来,其实它正在跑、钱也已经花了。
+   *
+   * 缺省 = 自填 Key（接入网关之前的全部历史任务都是这样）。
+   */
+  billing?: VideoBillingSource
 }
 
 export type SeedanceTaskUpdate = SeedanceTaskState

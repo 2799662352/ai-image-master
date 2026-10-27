@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import { registerImageTools } from '../imageTools'
 import { ImageTaskManager } from '../imageTaskRegistry'
+import { YOUCHUAN_V8_PARAM_SPECS } from '../../../../shared/imageModelParams'
 
 type Handler = (params: Record<string, unknown>) => Promise<{ content: Array<Record<string, unknown>> }>
 type Captured = {
@@ -110,20 +111,195 @@ describe('registerImageTools / generate_image schema', () => {
     const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
     expect(schema.safeParse({ prompt: 'x', resolution: '8K' }).success).toBe(false)
     expect(schema.safeParse({ prompt: 'x', quality: 'ultra' }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', quality: 'xhigh' }).success).toBe(true)
+    expect(schema.safeParse({ prompt: 'x', quality: 'max' }).success).toBe(true)
+  })
+
+  it('accepts a boolean transparentBackground on both generate_image and generate_images', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(single.safeParse({ prompt: 'sticker', model: 'gpt-image-2.5-flare', transparentBackground: true }).success).toBe(true)
+    expect(single.safeParse({ prompt: 'sticker', transparentBackground: 'yes' }).success).toBe(false)
+    expect(Object.keys(single.shape)).toContain('transparentBackground')
+
+    const batch = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
+    expect(batch.safeParse({ prompts: ['a', 'b'], transparentBackground: true }).success).toBe(true)
+    expect(batch.safeParse({ prompts: ['a', 'b'], transparentBackground: 1 }).success).toBe(false)
+  })
+
+  // 局部重绘遮罩(P3c)。语义按 OpenAI /v1/images/edits 的 `mask`:带 alpha 的 PNG,alpha=0 =
+  // 可重绘,尺寸必须与第一张参考图一致。工具层只校验形状,渠道/参考图约束由 ApiService 早失败。
+  it('accepts a string maskImage on generate_image and documents the alpha semantics', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(Object.keys(single.shape)).toContain('maskImage')
+    expect(
+      single.safeParse({ prompt: 'remove the cup', model: 'gpt-image-2.5-sunburst', referenceImages: ['C:/x/a.png'], maskImage: 'C:/x/a.mask.png' }).success,
+    ).toBe(true)
+    expect(single.safeParse({ prompt: 'x', maskImage: 42 }).success).toBe(false)
+    const desc = (single.shape.maskImage as { description?: string }).description ?? ''
+    expect(desc).toMatch(/alpha/i)
+    expect(desc).toMatch(/referenceImages/)
   })
 
   it('accepts the selectable model channels (vip / image2 官方 / 腾讯 / 万相 / nano2 / seedream 5.0 pro) and rejects others', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
     const genSchema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
-    for (const model of ['gpt-image-2-vip', 'gpt-image-2', 'custom-imagemodel-gt', 'wan2.7-image-pro', 'gemini-3.1-flash-image', 'doubao-seedream-5-0-pro-260628']) {
+    for (const model of [
+      'gpt-image-2-vip',
+      'gpt-image-2',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2.5-all',
+      'custom-imagemodel-gt',
+      'wan2.7-image-pro',
+      'gemini-3.1-flash-image',
+      'gemini-nano-banana-2.1',
+      'youchuan-v8.2',
+      'youchuan-v8.2-turbo',
+      'doubao-seedream-5-0-pro-260628',
+    ]) {
       expect(genSchema.safeParse({ prompt: 'x', model }).success, model).toBe(true)
     }
     expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2-all' }).success).toBe(false)
+    expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2.5-vip' }).success).toBe(false)
 
     const batchSchema = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
     expect(batchSchema.safeParse({ prompts: ['a', 'b'], model: 'wan2.7-image-pro' }).success).toBe(true)
     expect(batchSchema.safeParse({ prompts: ['a', 'b'], model: 'nope' }).success).toBe(false)
+  })
+
+  describe('悠船 modelParams', () => {
+    function schemas() {
+      const { tools, server, router } = capture()
+      registerImageTools(server, router)
+      return {
+        single: tools.find((t) => t.name === 'generate_image')!.config.inputSchema,
+        batch: tools.find((t) => t.name === 'generate_images')!.config.inputSchema,
+      }
+    }
+    const withParams = (modelParams: unknown) => ({ prompt: 'x', model: 'youchuan-v8.2', modelParams })
+
+    it('schema 的键就是共享参数表的键(单一事实来源,加参数不会漏一边)', () => {
+      const { single, batch } = schemas()
+      for (const schema of [single, batch]) {
+        const field = schema.shape.modelParams as { unwrap: () => { shape: Record<string, unknown> } }
+        expect(Object.keys(field.unwrap().shape).sort()).toEqual(
+          YOUCHUAN_V8_PARAM_SPECS.map((s) => s.key).sort(),
+        )
+      }
+    })
+
+    it('不传 / 传空对象都合法 —— 默认一个都不用设', () => {
+      const { single, batch } = schemas()
+      expect(single.safeParse({ prompt: 'x', model: 'youchuan-v8.2' }).success).toBe(true)
+      expect(single.safeParse(withParams({})).success).toBe(true)
+      expect(batch.safeParse({ prompts: ['a', 'b'], model: 'youchuan-v8.2-turbo' }).success).toBe(true)
+    })
+
+    it('接受全部合法旋钮(单张与批量都有)', () => {
+      const { single, batch } = schemas()
+      const full = {
+        hd: false,
+        quality: '4',
+        chaos: 30,
+        stylize: 500,
+        raw: true,
+        iw: 1.5,
+        sref: ['https://example.com/a.png'],
+        sw: 200,
+        sv: 6,
+        seed: 42,
+        no: 'text, watermark',
+      }
+      expect(single.safeParse(withParams(full)).success).toBe(true)
+      expect(batch.safeParse({ prompts: ['a', 'b'], model: 'youchuan-v8.2', modelParams: full }).success).toBe(true)
+      // 数字档位:模型常把 quality 传成数字,一个引号不该让它被退回
+      expect(single.safeParse(withParams({ quality: 4 })).success).toBe(true)
+    })
+
+    it('越界 / 类型错 / 不认识的键一律在 agent 一侧就拒掉', () => {
+      const { single, batch } = schemas()
+      const bad: unknown[] = [
+        { chaos: 101 },
+        { chaos: -1 },
+        { chaos: 1.5 },
+        { stylize: 1001 },
+        { iw: 3.5 },
+        { sw: 1001 },
+        { quality: '2' },
+        { sv: 5 },
+        { seed: -1 },
+        { raw: 'yes' },
+        { hd: 'false' },
+        { no: 'x'.repeat(501) },
+        { sref: Array.from({ length: 21 }, (_, i) => `https://e.com/${i}.png`) },
+        { sref: 'https://e.com/a.png' },
+        // strictObject:写错键名(stylise)直接报错,而不是静默忽略后白出一张图
+        { stylise: 100 },
+        // 版本 / 速度只由模型名决定,不能当旋钮传
+        { version: '7' },
+        { turbo: true },
+      ]
+      for (const modelParams of bad) {
+        expect(single.safeParse(withParams(modelParams)).success, JSON.stringify(modelParams)).toBe(false)
+      }
+      expect(batch.safeParse({ prompts: ['a', 'b'], model: 'youchuan-v8.2', modelParams: { chaos: 500 } }).success).toBe(false)
+    })
+
+    it('说明文案把「默认别设、用户明说才设」放前面,并写清不会截断、4 张只计一次费', () => {
+      const { single } = schemas()
+      const desc = (single.shape.modelParams as { description?: string }).description ?? ''
+      expect(desc).toMatch(/LEAVE THIS OUT/)
+      expect(desc).toMatch(/explicitly asks/)
+      expect(desc).toMatch(/REJECTED/)
+      expect(desc).toMatch(/4 images/)
+    })
+
+    it('modelParams 原样转发给渲染层(单张)', async () => {
+      const { tools, server, manager } = captureAsync()
+      const router = autoRouter(manager, () => ({
+        status: 'succeeded',
+        result: { ok: true, count: 4, model: 'youchuan-v8.2', paths: [] },
+      }))
+      registerImageTools(server, router as any, { manager, blockingBudgetMs: 5_000 })
+
+      await getHandler(tools, 'generate_image')({
+        prompt: 'neon street',
+        model: 'youchuan-v8.2',
+        modelParams: { chaos: 30, hd: false },
+      })
+
+      expect(router.call).toHaveBeenCalledWith(
+        'generate_image',
+        expect.objectContaining({ model: 'youchuan-v8.2', modelParams: { chaos: 30, hd: false } }),
+        undefined,
+      )
+    })
+
+    it('modelParams 原样转发给渲染层(批量)', async () => {
+      const { tools, server, manager } = captureAsync()
+      const router = autoRouter(manager, () => ({
+        status: 'succeeded',
+        result: { successes: [], failures: [], savedPaths: [] },
+      }))
+      registerImageTools(server, router as any, { manager, blockingBudgetMs: 5_000 })
+
+      await getHandler(tools, 'generate_images')({
+        prompts: ['a', 'b'],
+        model: 'youchuan-v8.2-turbo',
+        modelParams: { stylize: 800 },
+      })
+
+      expect(router.call).toHaveBeenCalledWith(
+        'generate_images',
+        expect.objectContaining({ model: 'youchuan-v8.2-turbo', modelParams: { stylize: 800 } }),
+        undefined,
+      )
+    })
   })
 
   it('accepts count 1–12 for wan2.7 组图 and rejects out-of-range / non-int', () => {

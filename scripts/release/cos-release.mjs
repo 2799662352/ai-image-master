@@ -14,7 +14,7 @@ import { parse } from 'yaml'
 import {
   verifyReleaseBundle,
 } from './artifact-contract.mjs'
-import { CosClientAdapter } from './cos-client.mjs'
+import { CosClientAdapter, describeCosError } from './cos-client.mjs'
 import {
   IMMUTABLE_CACHE_CONTROL,
   assertChannelCacheControl,
@@ -468,9 +468,7 @@ async function verifyPublicRestoration(
     }
   }
   throw new Error(
-    `Public channel restoration verification failed: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
+    `Public channel restoration verification failed: ${describeCosError(lastError)}`,
   )
 }
 
@@ -589,9 +587,7 @@ async function run() {
         }
       } catch (error) {
         console.warn(
-          `[status] Ignoring invalid release folder ${JSON.stringify(candidate)}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `[status] Ignoring invalid release folder ${JSON.stringify(candidate)}: ${describeCosError(error)}`,
         )
       }
     }
@@ -874,9 +870,7 @@ if (
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
   run().catch((error) => {
-    console.error(
-      `[release] ${error instanceof Error ? error.message : String(error)}`,
-    )
+    console.error(`[release] ${describeCosError(error)}`)
     process.exitCode = 1
   })
 }

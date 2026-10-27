@@ -93,7 +93,7 @@ describe('canvasBridge.insertFileAt routing', () => {
     const res = await canvasBridge.insertFileAt('D:/work/shot.png', { x: 10, y: 20 })
     expect(res).toEqual({ ok: true, kind: 'image' })
     const asset = shapes.find((s) => s.typeName === 'asset')
-    expect(asset.props.src).toBe('local-file:///D%3A/work/shot.png')
+    expect(asset.props.src).toBe('local-file:///D:/work/shot.png')
     expect(String(asset.props.src).startsWith('data:')).toBe(false)
   })
 

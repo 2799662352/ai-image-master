@@ -57,6 +57,15 @@ export const FIRST_PARTY_SKILL_SOURCES = [
     name: 'catimation-director-stage',
     source: 'resources/first-party-skills/catimation-director-stage/SKILL.md',
   },
+  {
+    // Compact in-app edition of the graphify skill (code → knowledge graph via the
+    // graphify CLI). Named `graphify` on purpose: a user who ran
+    // `graphify install --platform agents` already has ~/.agents/skills/graphify —
+    // the installer's hash check then preserves their fuller official copy instead
+    // of shipping a second skill with the same triggers.
+    name: 'graphify',
+    source: 'resources/first-party-skills/graphify/SKILL.md',
+  },
 ]
 
 export const GENERATED_RELATIVE_PATH = 'src/main/agent/generated/firstPartySkills.generated.ts'

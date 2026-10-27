@@ -15,7 +15,15 @@ import type {
   SeedanceAssetListResult,
   SeedanceModelAlias,
 } from '../../../../types/seedance'
-import { capabilitiesFor } from '../../../../types/seedance'
+import { capabilitiesFor, supportsSeedanceDraft } from '../../../../types/seedance'
+import { useQuotaStore } from '../../stores/useQuotaStore'
+import {
+  draftFinalAvailability,
+  draftToggleAvailability,
+  effectiveDraft,
+  runResolution,
+  submitResolution,
+} from '../../features/video-workbench/seedanceDraft'
 import {
   classifyWan3DocumentOrLink,
   documentOrLinkFromUrl,
@@ -51,8 +59,9 @@ import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { AdvancedVideoEditModal, type AdvancedEditFrame } from './AdvancedVideoEditModal'
 import { PortraitPickerModal } from './PortraitPickerModal'
-import { ResultVideoPlayer, hasPlaybackSource } from './ResultVideoPlayer'
+import { ResultVideoPlayer, hasPlaybackSource, type PlaybackSource } from './ResultVideoPlayer'
 import { RichPromptInput, type PageMaterialRef, type PromptMediaRef } from './RichPromptInput'
+import { TaskDetailDialog } from './TaskDetailDialog'
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { cardHasVideoInput, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
@@ -72,6 +81,10 @@ const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   // 传输层未接完前 region.ts 的 NOT_YET_SELECTABLE 会把它挡在下拉之外;
   // 标签先备着,免得开闸时又要回来补一处。
   wan3: '万相 3.0',
+  'wan3-prime': '万相 3.0 Prime',
+  // 深度捕捉没有工作台模式,`useSeedanceModels` 不会把它放进下拉;这里只为穷尽性
+  // (编译期保证新别名不漏标签)。
+  depth: '深度捕捉',
 }
 /** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
 const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
@@ -328,7 +341,9 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const removeMaterial = useVideoWorkbenchStore((s) => s.removeMaterial)
   const moveMaterial = useVideoWorkbenchStore((s) => s.moveMaterial)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
+  const finalizeDrafts = useVideoWorkbenchStore((s) => s.finalizeDrafts)
   const cancelCards = useVideoWorkbenchStore((s) => s.cancelCards)
+  const billingSource = useQuotaStore((s) => s.billingSource)
   const selected = useVideoWorkbenchStore((s) => s.selectedCardIds.includes(card.id))
   const selectCard = useVideoWorkbenchStore((s) => s.selectCard)
 
@@ -338,6 +353,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   // 拿不到就退回 2.0 家族——少一个选项好过摆一个提交必被拒的选项。
   const availableModels = useSeedanceModels()
   const modelCaps = capabilitiesFor(card.model)
+  // 样片:开关只在 2.5 + 平台余额下生效;不满足时开关置灰并说明原因,提交也照常出正片。
+  const draftToggle = draftToggleAvailability(card.model, billingSource)
+  const draftOn = effectiveDraft(card) && draftToggle.available
+  const draftFinal = draftFinalAvailability(card, billingSource)
   const durationLocked = card.mode === 'edit_video'
   const durationOptions = useMemo(
     () => durationOptionsFor(card.model, card.mode),
@@ -654,6 +673,8 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
 
   // 人像库选择器
   const [pickerOpen, setPickerOpen] = useState(false)
+  // 「任务详情」面板(任务号 / 上游任务号 / 请求参数 / 结果地址,可整份复制)
+  const [detailOpen, setDetailOpen] = useState(false)
   // 「图片链接」输入行(拖放/粘贴之外的显式入口)
   const [urlInputOpen, setUrlInputOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState('')
@@ -747,7 +768,25 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
     setVersionIdx(versions.length > 0 ? versions.length - 1 : 0)
   }, [versions.length])
   // 渲染中显示历史版本;没有版本记录(老数据)时退回卡片自身的结果字段。
-  const playbackSource = versions[versionIdx] ?? card
+  //
+  // 最新那一版 = 卡片当前的结果,以卡片字段为准、版本记录兜底。不能只看版本记录:
+  // 早于「持久地址回填」那批老卡,版本条目里没有 localPath,只看它就会跳过本地副本
+  // 直接去播那条早已过期的上游地址,而卡片底部却拿 card.localPath 写着「已保存」。
+  const showingLatest = versions.length === 0 || versionIdx === versions.length - 1
+  const shownVersion = versions[versionIdx]
+  const footerTaskId = showingLatest ? card.taskId : shownVersion?.taskId
+  const playbackSource: PlaybackSource = showingLatest
+    ? {
+        localPath: card.localPath ?? shownVersion?.localPath,
+        remoteUrl: card.remoteUrl ?? shownVersion?.remoteUrl,
+        videoUrl: card.videoUrl ?? shownVersion?.videoUrl,
+      }
+    : shownVersion ?? card
+  // 播放器报「本地副本读不出」:persistence 仍是 done,但文件已不在(被清理/被挪)。
+  // 这时要把免费的「重新保存」亮出来,不然用户只看得见花钱的「重新生成」。
+  // 重新保存成功会换 localPath,key 变化让这个标记自然归零。
+  const [localGone, setLocalGone] = useState(false)
+  useEffect(() => { setLocalGone(false) }, [card.localPath])
 
   return (
     <div
@@ -906,12 +945,30 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                       : '失败'}
         </span>
         <span className="text-white/30 text-[10px] ml-auto">
-          {modeSpec.label} · {card.model} · {card.resolution} · {card.ratio} ·{' '}
+          {modeSpec.label} · {card.model} ·{' '}
+          {draftOn ? `${submitResolution(card)} 样片` : card.resolution} · {card.ratio} ·{' '}
           {card.duration === -1 ? '智能时长' : `${card.duration}s`}
           {card.generateAudio ? ' · 有声' : ''}
           {card.seed !== undefined ? ` · seed ${card.seed}` : ''}
           {card.webSearch ? ' · 联网' : ''}
         </span>
+        {/* 任务详情:只有提交过的卡才有东西可看 —— 草稿上这个入口只会打开一页空白。
+            脚注那行 `task: …` 露的是网关号,用户找供应商对账要的「上游任务号」在这里。 */}
+        {card.status !== 'draft' && (
+          <button
+            type="button"
+            aria-label="任务详情"
+            title="任务详情:任务号 / 上游任务号 / 请求参数 / 结果地址"
+            className="text-white/40 hover:text-[#FCE300] px-1 leading-none"
+            onClick={() => setDetailOpen(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4" />
+              <path d="M12 8h.01" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           aria-label="删除卡片"
@@ -1060,8 +1117,10 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           </select>
           <select
             aria-label="分辨率"
-            value={card.resolution}
-            disabled={busy}
+            // 样片固定 480p:显示实际要发的那一档并锁住;关掉样片后回到卡片原来的设置。
+            value={draftOn ? submitResolution(card) : card.resolution}
+            disabled={busy || draftOn}
+            title={draftOn ? '样片固定 480p;满意后在结果下方生成 1080P 成片' : undefined}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) =>
               updateCard(card.id, { resolution: e.target.value as '480p' | '720p' | '1080p' })
@@ -1136,6 +1195,25 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             />
             🌐 联网
           </label>
+          {/* 样片(Seedance 2.5 Draft):先出 480p 便宜看效果,满意再一键出 1080p 成片 */}
+          {supportsSeedanceDraft(card.model) && (
+            <label
+              className={`flex items-center gap-1.5 select-none ${draftToggle.available ? 'text-white/70 cursor-pointer' : 'text-white/30 cursor-not-allowed'}`}
+              title={draftToggle.available
+                ? '样片:先出 480p 预览(按 480p 计费),满意后在结果下方一键生成 1080P 成片;沿用样片的提示词、素材、时长、比例、seed 与音频,7 天内有效'
+                : draftToggle.reason}
+            >
+              <input
+                type="checkbox"
+                data-testid="vw-draft-toggle"
+                checked={card.draft === true && draftToggle.available}
+                disabled={busy || !draftToggle.available}
+                className="accent-[#FCE300]"
+                onChange={(e) => updateCard(card.id, { draft: e.target.checked })}
+              />
+              🎞 样片
+            </label>
+          )}
         </div>
 
         {/* 文档 / 网页链接槽 —— 仅万相 3.0 有这个入参。
@@ -1173,14 +1251,48 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           <div className="space-y-2">
             {/* 本地字节经 IPC 转 blob: 播放(local-file:// 直塞 <video> 会空白,
                 见 ResultVideoPlayer 注释);失败自动降级远程源/错误兜底 */}
-            <ResultVideoPlayer source={playbackSource} />
+            <ResultVideoPlayer
+              source={playbackSource}
+              onLocalUnavailable={showingLatest ? () => setLocalGone(true) : undefined}
+            />
             {isActiveStatus(card.status) && versions.length > 0 && (
               <p className="text-[10px] text-white/40">新版本生成中,当前显示历史版本</p>
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/40">
               <VersionSwitcher versions={versions} index={versionIdx} onChange={setVersionIdx} />
+              {showingLatest && card.draftRun && (
+                <span
+                  data-testid="vw-draft-badge"
+                  className="border border-[#FCE300]/50 text-[#FCE300] px-1.5 py-0.5"
+                  title="这是 480p 样片;满意后点「生成 1080P 成片」"
+                >
+                  样片 480P
+                </span>
+              )}
+              {showingLatest && card.fromDraftTaskId && (
+                <span
+                  className="border border-emerald-400/50 text-emerald-300 px-1.5 py-0.5"
+                  title={`由样片 ${card.fromDraftTaskId} 生成的 1080p 成片;样片那一版仍在版本记录里`}
+                >
+                  成片 1080P
+                </span>
+              )}
               {card.persistence === 'done' && card.localPath ? (
-                <span className="truncate max-w-[50%]" title={card.localPath}>已保存: {card.localPath}</span>
+                <span className="flex items-center gap-1.5 min-w-0 max-w-[60%]">
+                  <span className={localGone ? 'truncate text-orange-400' : 'truncate'} title={card.localPath}>
+                    {localGone ? '本地副本已丢失: ' : '已保存: '}{card.localPath}
+                  </span>
+                  {localGone && (card.taskId || card.videoUrl) && (
+                    <button
+                      type="button"
+                      title="按任务号重新取一次视频并保存，不重新生成、不花钱"
+                      className="shrink-0 border border-orange-400/50 px-1.5 py-0.5 text-[10px] text-orange-400 hover:border-[#FCE300] hover:text-[#FCE300] transition-colors"
+                      onClick={() => { void resaveCard(card.id) }}
+                    >
+                      ↻ 重新保存
+                    </button>
+                  )}
+                </span>
               ) : card.persistence === 'failed' ? (
                 <span className="flex items-center gap-1.5 text-orange-400">
                   {/* 不能写「视频仍可播放/下载」—— 本地和 COS 都没副本时只剩上游那条会
@@ -1222,7 +1334,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                   {(() => {
                     const cost = estimateCostUsd(
                       card.model,
-                      card.resolution,
+                      runResolution(card),
                       cardHasVideoInput(card),
                       card.completionTokens,
                     )
@@ -1236,7 +1348,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                 <span title="上游回传的实际出片秒数(按秒计费口径)">
                   {card.billedSeconds}s
                   {(() => {
-                    const cost = estimateCostCny(card.model, card.resolution, card.billedSeconds)
+                    const cost = estimateCostCny(card.model, runResolution(card), card.billedSeconds)
                     return cost != null ? ` ≈ ${formatCostCny(cost)}` : ''
                   })()}
                 </span>
@@ -1266,6 +1378,26 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                 </button>
                 {!gate.ok && gate.reason !== '提示词为空' && (
                   <span className="text-orange-400 text-[10px]">⚠ {gate.reason}</span>
+                )}
+                {/* 样片满意 → 1080p 成片。沿用样片的一切,作为本卡的新一轮;样片那版留在版本里 */}
+                {draftFinal.show && (
+                  <button
+                    type="button"
+                    data-testid="vw-draft-finalize"
+                    className="border border-[#FCE300] text-[#FCE300] text-sm font-bold px-3 py-2 hover:bg-[#FCE300]/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={!draftFinal.enabled}
+                    title={draftFinal.enabled
+                      ? '用这条样片生成 1080P 成片:沿用样片的提示词、素材、时长、比例、seed 与音频,按 1080p 计费'
+                      : draftFinal.reason}
+                    onClick={() => {
+                      void finalizeDrafts([card.id]).then((res) => {
+                        const skip = res.skipped[0]
+                        if (skip) useToastStore.getState().addToast({ type: 'warning', message: skip.reason })
+                      })
+                    }}
+                  >
+                    ⤴ 生成 1080P 成片
+                  </button>
                 )}
               </>
             )
@@ -1304,14 +1436,25 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
               </button>
             )
           })()}
-          {card.taskId && (
-            <span className="text-white/25 text-[10px] truncate" title={card.taskId}>task: {card.taskId}</span>
+          {/* 脚注任务号跟着上面正在播的那一版走:切到 v1 就写 v1 的号,老存档没记号就不写。 */}
+          {footerTaskId && (
+            <span className="text-white/25 text-[10px] truncate" title={footerTaskId}>task: {footerTaskId}</span>
           )}
         </div>
       </div>
 
       {/* 人像库选择器(asset:// 回填) */}
       <PortraitPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} onConfirm={handlePortraitConfirm} />
+      {/* 面板展示的版本 = 卡片上切到的版本(单一真源在这里);面板里「查看」某版也切的是同一份状态 */}
+      {detailOpen && (
+        <TaskDetailDialog
+          card={card}
+          index={index}
+          versionIdx={versionIdx}
+          onSelectVersion={setVersionIdx}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
       {/* 地址解析完才挂:<video src=""> 会立刻报一个没有意义的加载错误 */}
       {aveOpen && aveVideoSrc && (
         <AdvancedVideoEditModal

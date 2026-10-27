@@ -387,8 +387,13 @@ function CinematographyKbSection() {
         <span className="font-bold text-white uppercase tracking-tight">运镜知识库（Codex MCP）</span>
         {saved && <span className="text-xs text-green-400">(已配置 {maskKey(saved)})</span>}
       </div>
+      <p className="text-xs text-zinc-400">
+        登录平台账号后，<code className="text-zinc-300">search_cinematography_kb</code> 与
+        <code className="text-zinc-300"> query_sakuga_dataset</code> 两个检索工具按平台余额计费，无需填写下面的 Key；
+        未登录或平台暂不可用时才使用这里的自有 Key。余额不足会直接提示，不会改扣自有 Key。
+      </p>
       <p className="text-xs text-zinc-500">
-        为 Codex Agent 的 <code className="text-zinc-400">search_cinematography_kb</code> 工具提供阿里云百炼
+        未登录时，为 Codex Agent 的 <code className="text-zinc-400">search_cinematography_kb</code> 工具提供阿里云百炼
         <code className="text-zinc-400"> DASHSCOPE_API_KEY</code>，用于检索「运镜与结构化描述库」（245 个运镜基元 /
         CHAI 五维结构化描述 / 专业范例）。Key 仅存本地并在 codex 启动时注入，绝不写入 config.toml。留空保存可清除。
       </p>
@@ -409,7 +414,7 @@ function CinematographyKbSection() {
         </button>
       </div>
       <p className="text-xs text-zinc-500">
-        （可选）为 <code className="text-zinc-400">query_sakuga_dataset</code> 工具提供
+        （可选，未登录时使用）为 <code className="text-zinc-400">query_sakuga_dataset</code> 工具提供
         <code className="text-zinc-400"> DashVector API Key</code>，用于检索 Sakuga-42M 真实动画数据集
         （110 万条手绘作画片段描述 / 技法标签 / 回源链接）。同样仅本地保存、启动时注入。
         {dvSaved && <span className="text-green-400">（已配置 {maskKey(dvSaved)}）</span>}

@@ -2,7 +2,7 @@ import type { ArtifactItem, AttachmentRef } from '../../../../../types/agent-tim
 import type { AgentReference } from '../../../../../types/agent-reference'
 import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
-import { appendCosThumb } from '../../../utils/cosThumb'
+import { appendCosThumb, persistedCosThumbUrl } from '../../../utils/cosThumb'
 import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
 import { useFileExplorerStore } from '../../file-explorer/store'
 import { FileIcon, OpenInPanelIcon } from '../icons'
@@ -69,7 +69,24 @@ function AudioArtifact({ artifact }: { artifact: AttachmentRef }) {
  */
 function bubbleThumbSrc(ref: AttachmentRef, kind: MediaKind): string {
   if (kind === 'video') return toRenderableUri(ref.uri)
-  return toRenderableUri(ref.thumbnailUri ?? appendCosThumb(ref.uri))
+  // 桶里已存的持久化缩略图(普通 COS 对象,不经万象在线处理)排第一;没有就是
+  // 实时 imageMogr2。老图的持久化对象不存在 → 404 → 候选链立刻换到下一条。
+  return toRenderableUri(ref.thumbnailUri ?? persistedCosThumbUrl(ref.uri) ?? appendCosThumb(ref.uri))
+}
+
+/**
+ * Ordered fallbacks for the bubble when `bubbleThumbSrc` fails to load:
+ *  1. the real-time 数据万象 thumbnail (when the primary was the persisted object);
+ *  2. the bare `ref.uri` — 数据万象 may reject an object (or be unreachable
+ *     through a proxy) while the plain COS GET still works;
+ *  3. `ref.fallbackUris` — local copies saved by the generate tool, which
+ *     never expire and need no network. Duplicates of the primary are dropped
+ *     by `buildMediaCandidates` downstream.
+ */
+function bubbleFallbackSrcs(ref: AttachmentRef, kind: MediaKind): string[] {
+  const out = kind === 'image' ? [toRenderableUri(appendCosThumb(ref.uri)), toRenderableUri(ref.uri)] : []
+  for (const uri of ref.fallbackUris ?? []) out.push(toRenderableUri(uri))
+  return out
 }
 
 /**
@@ -227,6 +244,7 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
             <MediaThumbWithPoster
               key={ref.id}
               src={bubbleThumbSrc(ref, kind)}
+              fallbackSrcs={bubbleFallbackSrcs(ref, kind)}
               videoUri={ref.uri}
               thumbnailUri={ref.thumbnailUri}
               kind={kind}

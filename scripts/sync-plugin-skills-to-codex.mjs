@@ -68,6 +68,9 @@ const ADD_LIST = new Set([
   'wan3-cinematic-30s',
   'wan3-product-tvc',
   'wan3-emotion-shotlist',
+  // 短剧剧本可视化改写叶子(screenwriter 之后、拆镜头之前)。纯知识型,不依赖 app 工具,
+  // 引的三个下游(research-grounded / kinematic-reverse / character-acting)都已策展。
+  'script-visual-optimizer',
 ])
 
 async function listDirs(dir) {

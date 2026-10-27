@@ -16,9 +16,15 @@ export class ThreadStore {
     // Order by lastMessageAt so empty threads (no messages yet) sink to the
     // bottom; fall back to updatedAt for rows whose lastMessageAt is still
     // null (Prisma sorts nulls to the end of `desc` by default).
-    return this.prisma.agentThread.findMany({
+    //
+    // `_count.messages` rides along for the sidebar's「N 条消息」subline (one
+    // query, no N+1) and is flattened to `messageCount` so the renderer never
+    // sees Prisma's relation-count shape.
+    const rows = await this.prisma.agentThread.findMany({
       orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+      include: { _count: { select: { messages: true } } },
     })
+    return rows.map(({ _count, ...row }) => ({ ...row, messageCount: _count?.messages ?? 0 }))
   }
 
   async addMessage(input: { threadId: string; role: string; items: Prisma.InputJsonValue }) {
@@ -71,6 +77,18 @@ export class ThreadStore {
     await this.prisma.agentThread.update({
       where: { id: threadId },
       data: { title, manualTitle: true },
+    })
+  }
+
+  /**
+   * Pin / unpin a thread for the sidebar. `pinnedAt` (not a boolean) so the
+   * Pinned group can keep "most recently pinned first" order. Scoped to the
+   * target thread only, matching {@link renameThread}.
+   */
+  async setThreadPinned(threadId: string, pinned: boolean): Promise<void> {
+    await this.prisma.agentThread.update({
+      where: { id: threadId },
+      data: { pinnedAt: pinned ? new Date() : null },
     })
   }
 

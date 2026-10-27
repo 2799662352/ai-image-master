@@ -1,0 +1,275 @@
+/**
+ * 出图**渠道**清单 —— 聊天选择器与 MCP 工具共用的唯一事实来源。
+ *
+ * ## 选择器设的是「默认」,不是「锁死」
+ *
+ * 实际优先级见 `AgentToolExecutor.resolveEffectiveImageChannel`,三级:
+ *
+ *   1. agent 显式传的合法 `model` —— **agent 自主权**。它可以为具体任务挑更合适
+ *      的渠道(比如 `count>1` 的组图切到万相 2.7 pro);
+ *   2. 用户在输入框下面选的渠道;
+ *   3. `DEFAULT_IMAGE_CHANNEL_ID`。
+ *
+ * ⚠️ 这段注释以前写的是「agent 传的 model 在选渠道时被忽略」—— **与实际相反**,
+ * 是随文件搬迁一路抄下来的陈述。留个记号:改这里时对着那个解析函数核一遍,
+ * 别再让文档和代码各说各话。
+ *
+ * ## 为什么在 shared 而不是 renderer
+ *
+ * 这份清单有两个消费方,分别住在两个进程里:
+ *
+ *   - 渲染层 `features/agent-chat/ImageChannelPicker` —— 用户在输入框下面选渠道;
+ *   - 主进程 `mcp/tools/imageTools` —— agent 调 `generate_image` 时的参数枚举。
+ *
+ * 主进程 import 不了渲染层的模块(整个仓库没有这种先例,打包边界也不同),
+ * 所以它以前**自己抄了一份 enum**。抄的那份必然漂移:2026-09-01 接
+ * TokenHub og-image 时,生成页有了、聊天和 MCP 都没有;而且这种漏不会报错 ——
+ * 用户只会觉得「新模型在有的地方看不见」,报障时也说不清是哪儿的问题。
+ *
+ * 现在 MCP 那边的枚举从这个数组**推导**,加渠道只改这一处。
+ *
+ * ## 与 `ApiService.DEFAULT_MODELS` 的关系
+ *
+ * 那边存的是**怎么发请求**(端点、尺寸表、能力位),这边存的是**给谁看、怎么显示**。
+ * 两者按 `id` 对应,但不是同一份:`DEFAULT_MODELS` 里的模型多得多(经典生成页全都
+ * 提供),而聊天渠道是精选子集。有条守卫钉住「这里的每个 id 在那边都存在」——
+ * 否则用户选得到、发出去 404。
+ *
+ * `miauOnly` 标记那些**只能**经 Miau 网关到达的渠道;解析器会把这些请求钉到
+ * Miau 站点,与用户当前选了哪个站点无关。
+ */
+export interface ImageChannel {
+  /** 转发给 `ApiService.generateImage` 的原始模型 id。 */
+  id: string
+  /** 选择器胶囊上的短标签(如 "VIP")。 */
+  label: string
+  /** 下拉行里的长标签。 */
+  fullLabel: string
+  /** 行下方的一句话说明。 */
+  description: string
+  /** 为 true 时,生成请求固定打 Miau 站点。 */
+  miauOnly: boolean
+}
+
+/**
+ * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×4(image2 / fast / 2.5 Flare / 2.5 Sunburst)
+ * → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2(v8.2 快速 / 极速)
+ * → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
+ * 默认渠道是腾讯 image2 —— 顺序只影响显示,不改变回落目标。
+ * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
+ */
+export const IMAGE_CHANNELS = [
+  {
+    id: 'doubao-seedream-5-0-pro-260628',
+    label: 'SD5',
+    fullLabel: 'Seedream 5.0 Pro',
+    description: '火山豆包 Seedream 5.0 Pro — 多图融合(≤10 参考图)，1K/2K 单图，经 Miau 代理。',
+    miauOnly: true,
+  },
+  {
+    id: 'custom-imagemodel-gt',
+    label: '腾讯',
+    fullLabel: '腾讯 image2',
+    description: '经 Miau 代理 — 快 ~30s，网关去水印。',
+    miauOnly: true,
+  },
+  {
+    // TokenHub og-image。与上面那条(TokenHub gtimage / aiart 官方)是**两个不同的
+    // 模型、两条不同的渠道**,不是同一个东西的两个入口:网关价目表倍率 5 对 29.05,
+    // 而且这条实测能一次出多张。所以两条并列而不是替换。
+    id: 'custom-model-og-v2',
+    label: 'Fast',
+    fullLabel: '腾讯 image2 fast',
+    // 后台渠道名(TokenHub og-image)写进描述而不是标题:用户看标题选模型,
+    // 而对账时要能和 New API 后台的渠道名对上号。
+    description: '经 Miau 代理 — 快 ~20s，比 image2 便宜近 6 倍，可出多张。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    // 同一条 og-image 渠道上的 GPT Image 2.5 Flare / Sunburst(2026-09-15 上架)。
+    // 与 apiyi 官转是同一个模型、不同的线:这两条走腾讯 JSON 协议、与 image2 fast
+    // 同价、可走平台额度;但透明底 / mask 局部重绘在腾讯中转上没验过,不承诺。
+    id: 'custom-model-og-v2.5-f',
+    label: '腾讯Flare',
+    fullLabel: '腾讯 GPT Image 2.5 Flare',
+    description: '经 Miau 代理 — 2.5 Flare 走腾讯渠道，速度优先 ~20s，与 image2 fast 同价、可走平台额度，五档清晰度、一次 1–4 张。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    id: 'custom-model-og-v2.5-s',
+    label: '腾讯Sunburst',
+    fullLabel: '腾讯 GPT Image 2.5 Sunburst',
+    description: '经 Miau 代理 — 2.5 Sunburst 走腾讯渠道，画质 / 改图精度优先 ~40s，与 image2 fast 同价、可走平台额度，五档清晰度、一次 1–4 张。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    id: 'gemini-3.1-flash-image',
+    label: 'Nano2',
+    fullLabel: 'Nano Banana 2',
+    description: 'Gemini 3.1 flash image（当前站点）— 快，多比例 4K。',
+    miauOnly: false,
+  },
+  {
+    // 与 Nano2 是两个模型 id,不是别名:2.1 没有 0.5K 档、默认就会思考,按量计费口径也不同。
+    id: 'gemini-nano-banana-2.1',
+    label: 'Nano2.1',
+    fullLabel: 'Nano Banana 2.1',
+    description: 'Nano Banana 2 升级版（当前站点）— 画质、图中文字、多轮改图一致性更好，1K/2K/4K，按量约 $0.03/张（1K）。',
+    miauOnly: false,
+  },
+  {
+    id: 'wan2.7-image-pro',
+    label: 'Wan2.7',
+    fullLabel: '万相 2.7 pro',
+    description: '阿里万相 2.7 pro — 超清/组图，经 Miau 代理。',
+    miauOnly: true,
+  },
+  {
+    // DashScope 同步多模态出图，经 Miau 的 OpenAI 兼容 /v1/images/generations。
+    // 注意两条与别家不同的脾气（接入说明 2026-08-07 §6 / §9）：上游可能忽略或
+    // 改写请求尺寸（实测请求 1328×1328 拿回约 1792×2400），所以别把 size 当承诺；
+    // `negative_prompt` 不会经网关透传（AliImageParameters 里没有这个键，反序列化
+    // 时直接丢弃），要压画质问题得写进正向提示词。
+    id: 'qwen-image-3.0-pro',
+    label: 'Qwen3',
+    fullLabel: '通义千问 Image 3.0 Pro',
+    description: '阿里通义千问 Image 3.0 Pro — 同步出图，一次可出 1–6 张、参考图最多 3 张；尺寸以实际返回为准。',
+    miauOnly: true,
+  },
+  {
+    // 悠船 = Midjourney 官方合作伙伴,经 Miau 网关(渠道类型 75)。两条是**同一个模型的
+    // 两档速度**,由模型名决定、不能在提示词里内联 `--turbo`:快速 = youchuan-v8.2,
+    // 极速 = youchuan-v8.2-turbo,价格不同。一次固定出 4 张、只计一次费,所以不走 `count`。
+    // 高级参数(混沌 / 风格化 / 风格参考……)见 `shared/imageModelParams` 的
+    // `YOUCHUAN_V8_PARAM_SPECS`,agent 可设、默认全部不设置。
+    id: 'youchuan-v8.2',
+    label: '悠船快速',
+    fullLabel: '悠船-v8.2-快速',
+    description: '悠船 Midjourney V8.2 快速模式 — 一次生成 4 张，原生 2K 默认开启（计费 ×1.5），支持参考图，经 Miau 代理按次计费。',
+    miauOnly: true,
+  },
+  {
+    id: 'youchuan-v8.2-turbo',
+    label: '悠船极速',
+    fullLabel: '悠船-v8.2-极速',
+    description: '悠船 Midjourney V8.2 极速模式 — 同样一次生成 4 张、支持原生 2K 与参考图，出图更快，按次计费价高于快速档。',
+    miauOnly: true,
+  },
+  {
+    id: 'gpt-image-2.5-flare',
+    label: 'Flare',
+    fullLabel: 'GPT Image 2.5 Flare',
+    description: '⏱20s · OpenAI 官转·速度优先 — 画质≈Image2、延迟约一半，按 token 计费，可出透明底、一次 1–4 张，文生图首选。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2.5-sunburst',
+    label: 'Sunburst',
+    fullLabel: 'GPT Image 2.5 Sunburst',
+    description: '⏱40s · OpenAI 官转·画质优先 — 更锐、改图更稳，约 2–3× 更慢，与 Flare 同价，可出透明底、一次 1–4 张。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2.5-all',
+    label: 'All 2.5',
+    fullLabel: 'GPT Image 2.5 All',
+    description: '⏱60s · ChatGPT 网页逆向 — 已升 Images 2.5，$0.03/张，尺寸写进提示词。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2',
+    label: 'Image2',
+    fullLabel: 'GPT Image 2 官方',
+    description: '上一代 OpenAI 官转 — 按 token 计费，已被 2.5 flare/sunburst 同价取代。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2-vip',
+    label: 'VIP',
+    fullLabel: 'VIP image2',
+    description: 'OpenAI 官逆，稳定。仅用户点名 vip/官逆时用，不要当默认推荐。',
+    miauOnly: false,
+  },
+  // ⚠️ `as const satisfies` 而不是 `: readonly ImageChannel[]`。
+  //
+  // 写成类型标注会把每个 `id` **拓宽成 `string`**,于是下面派生出来的
+  // `IMAGE_CHANNEL_IDS` 也是 `string[]`,`z.enum()` 拿到它之后
+  // `z.infer` 只能得出 `string` —— MCP 那个 `model` 参数就退化成「任意字符串」,
+  // 比它替换掉的手写联合还弱。`satisfies` 同样能校验结构,但保留字面量。
+] as const satisfies readonly ImageChannel[]
+
+/**
+ * 用户没选(或存的值已失效)时的默认渠道。
+ *
+ * 2026-09-01 由 `gpt-image-2-vip` 改为腾讯 image2(产品要求)。
+ *
+ * 这个常量的影响面比它看起来大:所有**从没手动选过渠道**的用户都落在这里,
+ * 而且 `resolveImageChannel` 把任何认不出的值(过期的本地存储、agent 传来的
+ * 野值)也回落到它。所以改它等于改绝大多数人的实际出图渠道与成本。
+ */
+export const DEFAULT_IMAGE_CHANNEL_ID = 'custom-imagemodel-gt'
+
+/**
+ * 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。
+ *
+ * ## 为什么是**封闭**枚举,不留 `| (string & {})` 的开口
+ *
+ * Vercel AI SDK 给自定义 provider 的 model id 是开放的
+ * (`'a' | 'b' | (string & {})`,见其 custom-providers 文档):上游模型目录变得比
+ * SDK 发版快,放行未知 id、只保留自动补全,是对它那个场景更合适的取舍。
+ *
+ * 这里反过来:出图渠道不只是个字符串,每条都要在 `ApiService` 里配端点、尺寸表、
+ * 能力位。放行一个没配过的 id,结果不是「用了个新模型」而是每轮 404,而错误里
+ * 不会有一个字提到是模型名的问题(网关的报错只说 model 不存在)。这种情况下
+ * 在边界上拒掉、让 agent 立刻拿到「不是合法值」,比放进去再失败有用得多。
+ */
+export type ImageChannelId = (typeof IMAGE_CHANNELS)[number]['id']
+
+/**
+ * 编译期自证:`ImageChannelId` 必须是**字面量联合**,不能退化成 `string`。
+ *
+ * Zod 官方文档写明了这个陷阱:传给 `z.enum()` 的数组若没保住字面量,
+ * `z.infer` 只能得出 `string`(https://zod.dev — "Pass string array variables
+ * to z.enum")。后果是 MCP 的 `model` 参数变成「任意字符串」,而**类型检查照样
+ * 通过**,没有任何信号 —— 2026-09-01 就这么丢过一次。
+ *
+ * 下面这行是纯类型层面的:`string extends ImageChannelId` 只有在它被拓宽成
+ * `string` 时才成立,那时右边求值成 `never`,把 `true` 赋给 `never` 立刻编译失败。
+ * 放在 `tsc` 里拦,而不是靠某个测试文件去正则匹配源码 —— 后者只在跑到那个文件
+ * 时才有效,而这条不变量任何一次编译都该守住。
+ */
+type AssertLiteralChannelIds = string extends ImageChannelId ? never : true
+const _assertChannelIdsAreLiterals: AssertLiteralChannelIds = true
+void _assertChannelIdsAreLiterals
+
+/**
+ * 供 MCP 的 `z.enum()` 使用 —— zod 的签名要 `readonly [string, ...string[]]`
+ * (非空元组),而 `.map()` 给的是普通数组,所以要窄化一次。
+ *
+ * 从上面的数组推导,所以加渠道时 MCP 那边**自动跟上**,不需要记得同步。
+ * 断言只改「非空」这一点,元素类型仍是 `ImageChannelId`(由上面那行保证是字面量)。
+ */
+export const IMAGE_CHANNEL_IDS = IMAGE_CHANNELS.map((c) => c.id) as [
+  ImageChannelId,
+  ...ImageChannelId[],
+]
+
+export function findImageChannel(id: string): ImageChannel | undefined {
+  return IMAGE_CHANNELS.find((c) => c.id === id)
+}
+
+export function isSelectableImageChannel(id: unknown): id is string {
+  return typeof id === 'string' && IMAGE_CHANNELS.some((c) => c.id === id)
+}
+
+export function isMiauOnlyChannel(id: string): boolean {
+  return findImageChannel(id)?.miauOnly === true
+}
+
+/**
+ * 把任意候选值(用户选择、过期的本地存储、agent 传来的值)解析成一个合法渠道 id,
+ * 认不出就回落到默认(VIP),这样出图永远不会因为这个而失败。
+ */
+export function resolveImageChannel(candidate: unknown): string {
+  return isSelectableImageChannel(candidate) ? candidate : DEFAULT_IMAGE_CHANNEL_ID
+}

@@ -9,6 +9,7 @@ import GeneratePage from '../pages-react/GeneratePage'
 import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
 import SmartErasePage from '../pages-react/SmartErasePage'
 import VideoWorkbenchPage from '../pages-react/VideoWorkbenchPage'
+import { AccountBadge } from '../features/account/AccountBadge'
 import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
 import { GeneratePromptHelperBar } from './components/GeneratePromptHelperBar'
@@ -32,6 +33,7 @@ let agentWorkspaceRoot: Root | null = null
 let marketplaceRoot: Root | null = null
 let portraitLibraryRoot: Root | null = null
 let desktopLoginRoot: Root | null = null
+let accountBadgeRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
@@ -491,6 +493,25 @@ export function unmountDesktopLoginReact(): void {
   const container = document.getElementById('desktop-login-react-root')
   if (container) {
     container.style.display = 'none'
+  }
+}
+
+/**
+ * 头部账号胶囊。**只挂一次,永不卸载** —— 它是常驻 chrome 的一部分,不跟标签页走。
+ *
+ * 与那些「切 display」的页面岛不同:那些是因为重建整棵 tree 会卡顿,这个是因为
+ * 它压根没有隐藏态 —— 未登录时它是登录入口,登录后是余额,两者都得一直在。
+ */
+export function mountAccountBadge(): void {
+  const container = document.getElementById('account-badge-mount')
+  if (!container) {
+    console.warn('[React] account-badge-mount not found')
+    return
+  }
+  if (!accountBadgeRoot) {
+    accountBadgeRoot = createRoot(container)
+    accountBadgeRoot.render(<AccountBadge />)
+    console.log('[React] AccountBadge mounted')
   }
 }
 

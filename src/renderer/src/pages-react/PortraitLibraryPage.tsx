@@ -1,7 +1,17 @@
-// 人像库页面 —— 浏览 / 搜索 / 上传 / 选择 Seedance 素材库（人像分类）图片。
-// 数据来自上游 /api/open/v1/local-assets（主进程 IPC 转发，HMAC 签名）。
-// 视频生成 (generate_video) 的参考图会自动入库到这里；在本页选中图片后可
-// 复制 asset:// 引用或一键发送到 Agent 对话，用于人物一致性的视频生成。
+// 人像库页面 —— 浏览 / 搜索 / 上传 / 选择素材,复制 asset:// 引用或一键发送到
+// Agent 对话,用于人物一致性的视频生成。
+//
+// **数据源按计费来源分叉**,两边的素材互不可见:
+//
+//   平台余额 (`billingSource === 'platform'`)
+//     → `window.electronAPI.portraitLibrary.*`,主进程持平台 JWT,素材按计费池分组;
+//       有服务端的软删/回收站/彻底删除与配额。见 `PlatformPortraitLibrary`。
+//   自填 Key (`'own-key'`)
+//     → vvdance 的 `/api/open/v1/local-assets`(HMAC 签名),分组/改名/隐藏是
+//       纯本地叠加层。就是下面这个 `SeedancePortraitLibrary`,一行没动。
+//
+// 分叉只有本文件末尾那一处 —— 不在两套数据形状之间做归一,理由写在
+// `PlatformPortraitLibrary.tsx` 顶部。
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type {
@@ -10,8 +20,11 @@ import type {
   SeedanceAssetListResult,
 } from '../../../types/seedance'
 import { useToastStore, useTabStore } from '../stores'
+import { useQuotaStore } from '../stores/useQuotaStore'
 import { useAgentChatStore } from '../features/agent-chat'
 import { usePortraitLibraryOverlay } from '../hooks/usePortraitLibraryOverlay'
+import { PlatformPortraitLibrary } from '../features/portrait-library/PlatformPortraitLibrary'
+import { TextPromptModal } from '../features/portrait-library/TextPromptModal'
 import { fileUploadKind, uploadFilesToPortraitLibrary } from '../features/portrait-library/portraitUpload'
 
 const PAGE_SIZE = 24
@@ -96,64 +109,8 @@ function seekVideoToFirstFrame(e: React.SyntheticEvent<HTMLVideoElement>): void 
   }
 }
 
-/**
- * 自建文本输入弹窗 —— Electron 渲染进程不实现 window.prompt(始终返回 null),
- * 改名 / 新建分组必须用这个。组件自持输入态,避免父组件每次 render 抢焦点。
- */
-function TextPromptModal({
-  title,
-  placeholder,
-  initial,
-  confirmLabel,
-  onConfirm,
-  onCancel,
-}: {
-  title: string
-  placeholder?: string
-  initial: string
-  confirmLabel: string
-  onConfirm: (value: string) => void
-  onCancel: () => void
-}) {
-  const [val, setVal] = useState(initial)
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-6" onClick={onCancel}>
-      <div
-        className="w-full max-w-sm bg-zinc-900 border border-cyberpunk-yellow/40 rounded-lg p-4 flex flex-col gap-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-bold text-white">{title}</h3>
-        <input
-          autoFocus
-          value={val}
-          placeholder={placeholder}
-          onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onConfirm(val)
-            else if (e.key === 'Escape') onCancel()
-          }}
-          className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded w-full"
-        />
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="px-3 py-1.5 bg-zinc-800 border border-zinc-600 text-zinc-300 text-sm rounded hover:bg-zinc-700"
-          >
-            取消
-          </button>
-          <button
-            onClick={() => onConfirm(val)}
-            className="px-3 py-1.5 bg-cyberpunk-yellow text-cyberpunk-black font-bold text-sm rounded hover:opacity-90"
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-export default function PortraitLibraryPage() {
+/** 自填 Key 模式的人像库主体 —— vvdance 素材接口那条老路。 */
+function SeedancePortraitLibrary() {
   const addToast = useToastStore((s) => s.addToast)
   const switchTab = useTabStore((s) => s.switchTab)
 
@@ -948,4 +905,19 @@ export default function PortraitLibraryPage() {
       )}
     </div>
   )
+}
+
+/**
+ * 按计费来源选数据源。
+ *
+ * 分叉放在这里(而不是页面内部逐处判断),是为了让自填 Key 那条路**一行不动** ——
+ * 它已经带着一整套本地叠加层与既有测试,任何一处「顺手统一一下」都要重新证明
+ * 那批行为没变。两个兄弟组件各自完整,顶上一个三元就够了。
+ *
+ * `billingSource` 刻意不持久化,每次启动都回到 `'own-key'`(见 `useQuotaStore`),
+ * 所以这里也不需要任何「还没决定」的中间态。
+ */
+export default function PortraitLibraryPage() {
+  const billingSource = useQuotaStore((s) => s.billingSource)
+  return billingSource === 'platform' ? <PlatformPortraitLibrary /> : <SeedancePortraitLibrary />
 }

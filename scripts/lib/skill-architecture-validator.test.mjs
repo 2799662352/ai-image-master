@@ -274,6 +274,38 @@ test('generation entries get their own fanout ceiling, separate from pro', () =>
   assert.ok(refs.length > 0)
 })
 
+// 正文限长:单份 skill 写不进 20k 字符就该拆成 references/*.md 按任务加载。
+// 加载后整份正文都进上下文,体量一大模型就只记得它 —— sd25-pe 28k 正文冲掉入口流程
+// 与人物锚点就是实例。棘轮表只给历史超标者,只许缩不许涨。
+test('enforces the skill body length budget and the shrink-only debt ratchet', () => {
+  const run = (bodyLength, name = 'oversized', debt = {}) =>
+    validateArchitecture(
+      {
+        skills: [
+          {
+            path: `resources/plugins/p/skills/${name}/SKILL.md`,
+            content: skill(name, 'A helper.', '汉'.repeat(bodyLength)),
+          },
+        ],
+        hooks: [],
+        firstParty: { sourceExists: true, generatedExists: true, sourceSkills: [], generatedSkills: [] },
+      },
+      { maxSkillBodyChars: 100, skillBodyDebt: debt },
+    ).filter((item) => item.code === 'SKILL_BODY_TOO_LONG')
+
+  assert.equal(run(50).length, 0)
+  const over = run(150)
+  assert.equal(over.length, 1)
+  assert.match(over[0].message, /\(max 100\)/)
+  assert.match(over[0].message, /references\/\*\.md/)
+
+  // 钉在棘轮里的旧账:不超过钉住的体量就不报,超过钉住的体量才报,报的是 debt pin。
+  assert.equal(run(150, 'legacy-giant', { 'legacy-giant': 200 }).length, 0)
+  const grown = run(260, 'legacy-giant', { 'legacy-giant': 200 })
+  assert.equal(grown.length, 1)
+  assert.match(grown[0].message, /above its debt pin 200/)
+})
+
 test('reports missing first-party source/generated inputs and content parity drift', () => {
   const sourceContent = skill('catimation-image', 'Source copy.')
   const missing = validateArchitecture({

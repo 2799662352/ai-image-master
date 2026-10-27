@@ -1,6 +1,16 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+/**
+ * 扣费上报。mock 掉汇合点而不是用真的:真模块带 1200ms 尾部防抖,这个文件里
+ * 都是真起服务器的用例,再叠一层定时器只会让它们变慢变脆。这里要测的是
+ * 「代理在什么条件下报」,汇合点自己的防抖有它自己的测试。
+ */
+const noteSpend = vi.fn()
+vi.mock('../../services/auth/platformSpend', () => ({
+  notePlatformSpend: () => noteSpend(),
+}))
 import { resolveProviderChannel } from '../gatewayModelRouting'
 import {
   flattenNamespaceTools,
@@ -204,6 +214,224 @@ describe('Responses namespace compatibility', () => {
         content: [{ type: 'reasoning_text', text: 'raw' }],
       },
     ])
+  })
+
+  describe('DeepSeek plaintext reasoning replay', () => {
+    // Live repro 2026-10-20 (Miau deepseek-flash, `rightcode-deepseek-miau`):
+    // turn 1 returned 200, the tool-result continuation returned 400
+    //   "The `reasoning_text` in the thinking mode must be passed back to the API"
+    // DeepSeek's Responses API is stateless; it replays reasoning as plaintext
+    // (`content[].reasoning_text`) and ignores `encrypted_content`, but stamps
+    // its own reasoning items with a 38-byte `<response_id>-<n>` handle there.
+    // The bridge used to treat any non-empty `encrypted_content` as foreign and
+    // dropped the WHOLE item — including the plaintext DeepSeek requires.
+    const DEEPSEEK_HANDLE = '1af0adb7-201e-4e6a-84e5-1888cbbd06e1-0'
+
+    it('keeps the plaintext of a DeepSeek reasoning item and strips only the handle', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'list the dir' }] },
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'reasoning_text', text: 'I should run ls first.' }],
+            encrypted_content: DEEPSEEK_HANDLE,
+          },
+          { type: 'function_call', call_id: 'call_a', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+          { type: 'function_call', call_id: 'call_b', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+          { type: 'function_call_output', call_id: 'call_a', output: 'a.txt' },
+          { type: 'function_call_output', call_id: 'call_b', output: '/tmp' },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      // Order is untouched: reasoning stays right before its (parallel) calls,
+      // so DeepSeek merges reasoning + both calls into ONE assistant message.
+      expect(result.body.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'list the dir' }] },
+        {
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: 'I should run ls first.' }],
+        },
+        { type: 'function_call', call_id: 'call_a', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+        { type: 'function_call', call_id: 'call_b', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+        { type: 'function_call_output', call_id: 'call_a', output: 'a.txt' },
+        { type: 'function_call_output', call_id: 'call_b', output: '/tmp' },
+      ])
+      expect(result.body.input[1]).not.toHaveProperty('encrypted_content')
+      // The original request object is not mutated.
+      expect(request.input[1]).toHaveProperty('encrypted_content', DEEPSEEK_HANDLE)
+    })
+
+    it('also keeps the older plain `text` content-part shape (openai/codex #42249)', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'text', text: 'older codex shape' }],
+            encrypted_content: DEEPSEEK_HANDLE,
+          },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        {
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'text', text: 'older codex shape' }],
+        },
+      ])
+    })
+
+    it('still drops blob-only reasoning even when content is empty or has blank text', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          { type: 'reasoning', summary: [], content: [], encrypted_content: DEEPSEEK_HANDLE },
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'reasoning_text', text: '' }],
+            encrypted_content: 'gAAAA-opaque-openai-blob',
+          },
+          { type: 'reasoning', summary: [], content: [{ type: 'summary_text' }], encrypted_content: 'gAAAA-x' },
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] },
+      ])
+    })
+
+    it('never keeps an encrypted compaction item, plaintext or not', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          {
+            type: 'compaction',
+            content: [{ type: 'reasoning_text', text: 'not a thing' }],
+            encrypted_content: 'gAAAA-opaque-compaction-blob',
+          },
+          { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ])
+    })
+
+    it('in a GPT→DeepSeek thread keeps DeepSeek plaintext and drops the OpenAI blob', () => {
+      const request = {
+        model: 'deepseek-flash',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'first, on GPT' }] },
+          {
+            type: 'reasoning',
+            summary: [{ type: 'summary_text', text: 'gpt summary' }],
+            content: null,
+            encrypted_content: 'gAAAA-opaque-openai-blob',
+          },
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'gpt answer' }] },
+          { role: 'user', content: [{ type: 'input_text', text: 'now on DeepSeek' }] },
+          {
+            type: 'reasoning',
+            summary: [],
+            content: [{ type: 'reasoning_text', text: 'deepseek thinking' }],
+            encrypted_content: DEEPSEEK_HANDLE,
+          },
+          { type: 'function_call', call_id: 'call_c', name: 'exec_command', arguments: '{}' },
+        ],
+      }
+
+      const result = flattenNamespaceTools(request)
+
+      expect(result.body.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'first, on GPT' }] },
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'gpt answer' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'now on DeepSeek' }] },
+        {
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: 'deepseek thinking' }],
+        },
+        { type: 'function_call', call_id: 'call_c', name: 'exec_command', arguments: '{}' },
+      ])
+    })
+
+    it('delivers the plaintext reasoning to the upstream across the HTTP boundary', async () => {
+      // Same shape Codex replays after a parallel tool batch (rollout
+      // 01a15965: reasoning, call, call, output, output).
+      let upstreamRequest: { input?: Array<Record<string, unknown>> } | undefined
+      const upstream = createServer(async (request, response) => {
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(Buffer.from(chunk))
+        upstreamRequest = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        response.statusCode = 200
+        response.setHeader('content-type', 'text/event-stream')
+        response.end('data: {"type":"response.completed","response":{"output":[]}}\n\n')
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const upstreamPort = (upstream.address() as AddressInfo).port
+      const proxy = await startResponsesCompatibilityProxy(
+        `http://127.0.0.1:${upstreamPort}/v1`,
+      )
+
+      try {
+        const response = await fetch(`${proxy.baseUrl}/responses`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: 'deepseek-flash',
+            stream: true,
+            input: [
+              { role: 'user', content: [{ type: 'input_text', text: '检查目录' }] },
+              {
+                type: 'reasoning',
+                summary: [],
+                content: [{ type: 'reasoning_text', text: '先 ls 再 pwd。' }],
+                encrypted_content: DEEPSEEK_HANDLE,
+              },
+              { type: 'function_call', call_id: 'call_a', name: 'exec_command', arguments: '{}' },
+              { type: 'function_call', call_id: 'call_b', name: 'exec_command', arguments: '{}' },
+              { type: 'function_call_output', call_id: 'call_a', output: 'a.txt' },
+              { type: 'function_call_output', call_id: 'call_b', output: '/tmp' },
+            ],
+          }),
+        })
+        await response.text()
+
+        const input = upstreamRequest?.input ?? []
+        expect(input.map((item) => item.type ?? 'message')).toEqual([
+          'message',
+          'reasoning',
+          'function_call',
+          'function_call',
+          'function_call_output',
+          'function_call_output',
+        ])
+        expect(input[1]).toEqual({
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: '先 ls 再 pwd。' }],
+        })
+      } finally {
+        await proxy.close()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    })
   })
 
   it('restores namespace identity on nested function-call response items', () => {
@@ -559,6 +787,262 @@ async function startFakeMessagesUpstream(): Promise<{
   }
 }
 
+/**
+ * agent 聊天走平台余额。
+ *
+ * codex 自己带的是用户自填的 Miau Key,而 `qwen3.8-max` 那一路打的就是 Miau 网关,
+ * 所以平台池的钱同样付得了它 —— 用户登录之后不该还要为聊天单独填一枚 key。
+ *
+ * 这一组守的是两件事,第二件比第一件重要得多。
+ */
+describe('平台余额组头', () => {
+  async function startCapturingUpstream(): Promise<{
+    baseUrl: string
+    headers: () => Record<string, string>
+    close: () => Promise<void>
+  }> {
+    let seen: Record<string, string> = {}
+    const server = createServer((request, response) => {
+      seen = Object.fromEntries(
+        Object.entries(request.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : (v ?? '')]),
+      )
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      headers: () => seen,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  it('上游是网关时,用平台整份头顶掉 codex 自带的 Key', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => ({
+        Authorization: 'Bearer sk-platform',
+        'X-Platform-User-Id': 'user-1',
+        'X-Project-Id': '345',
+      }),
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      const h = upstream.headers()
+      expect(h.authorization).toBe('Bearer sk-platform')
+      expect(h['x-platform-user-id']).toBe('user-1')
+      expect(h['x-project-id']).toBe('345')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  /**
+   * 🧬 变异点:把 `CodexLocalBackend.gatewayPlatformHeadersFor` 里的 origin 判定删掉
+   * (改成只看有没有 token),线上就会把平台影子 token 发给 rightcode-claude /
+   * grok / deepseek 那几个**别家**的代理 —— 那是凭据外泄,与出网注入器的 host
+   * 白名单是同一条纪律。
+   *
+   * 这里用「resolver 回 null」代表「上游不是网关」,守的是代理这一侧:
+   * 回 null 时必须**原样透传** codex 自带的 Key,不能自作主张动它。
+   */
+  it('resolver 回 null 时原样透传 codex 自带的 Key', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => null,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      const h = upstream.headers()
+      expect(h.authorization).toBe('Bearer sk-user-own')
+      expect(h['x-platform-user-id']).toBeUndefined()
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  it('不传这个选项时行为与上线前逐字节相同', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      expect(upstream.headers().authorization).toBe('Bearer sk-user-own')
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+})
+
+/**
+ * 扣费上报。codex 聊天走平台余额时,这条决定了余额数字会不会跟着动。
+ */
+describe('平台消费上报', () => {
+  async function startUpstream(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+    const server = createServer((_request, response) => {
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  /** 先绑后关,拿一个保证无人监听的端口 —— 连过去必然 ECONNREFUSED。 */
+  async function deadBaseUrl(): Promise<string> {
+    const port = await new Promise<number>((resolve) => {
+      const probe = createServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const p = (probe.address() as AddressInfo).port
+        probe.close(() => resolve(p))
+      })
+    })
+    return `http://127.0.0.1:${port}/v1`
+  }
+
+  const PLATFORM = { Authorization: 'Bearer sk-platform', 'X-Platform-User-Id': 'u1' }
+
+  beforeEach(() => {
+    noteSpend.mockClear()
+  })
+
+  it('用了平台凭据且上游回过话,报一次', async () => {
+    const upstream = await startUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl, {
+      platformHeaders: () => PLATFORM,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  /**
+   * 🧬 变异点:把 `finally` 里的判据从 `usedPlatformCredentials && upstreamAnswered`
+   * 放宽成只看前者,这条必红。
+   *
+   * 502 是**连都没连上**(undici 传输层失败),上游不可能计费。报了就是白查一次余额,
+   * 而且恰好是在网关不可达、每次重试都失败的时候 —— 那正是最不该加压的时刻。
+   */
+  it('连不上上游(502)时不报 —— 没连上就不可能扣钱', async () => {
+    const proxy = await startResponsesCompatibilityProxy(await deadBaseUrl(), {
+      platformHeaders: () => PLATFORM,
+    })
+    try {
+      const r = await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(r.status).toBe(502)
+      expect(noteSpend).not.toHaveBeenCalled()
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  // 上游回了 4xx/5xx 也要报:钱可能已经扣了才失败。
+  it('上游回了错误状态码仍然报', async () => {
+    const server = createServer((_request, response) => {
+      response.statusCode = 500
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    const proxy = await startResponsesCompatibilityProxy(`http://127.0.0.1:${port}/v1`, {
+      platformHeaders: () => PLATFORM,
+    })
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(noteSpend).toHaveBeenCalledTimes(1)
+    } finally {
+      await proxy.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('没用平台凭据时不报 —— 那是用户自己的 Key', async () => {
+    const upstream = await startUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: 'Bearer sk-user-own' },
+        body: '{}',
+      })
+      expect(noteSpend).not.toHaveBeenCalled()
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+})
+
+describe('上游连不上时的 502 可定位性', () => {
+  /**
+   * 回归 2026-08-29:用户拿到的是「unexpected status 502 Bad Gateway: fetch failed」,
+   * 既没有上游地址也没有失败原因 —— undici 对 DNS/拒绝/证书全都只说 `fetch failed`,
+   * 真因埋在 `error.cause` 里,而 502 分支当时只回 `error.message`。
+   */
+  it('把上游 origin 和 cause 的错误码一起写进 502 正文', async () => {
+    // 先绑一个临时端口再立刻关掉:拿到的端口保证无人监听,连过去必然 ECONNREFUSED。
+    // 不用 1 这类保留端口 —— fetch 规范把它们列为 bad port,请求在到达 TCP 前就被
+    // 拒了,cause 里没有 errno,验不到我们真正关心的那条链路。
+    const deadPort = await new Promise<number>((resolve) => {
+      const probe = createServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const { port } = probe.address() as AddressInfo
+        probe.close(() => resolve(port))
+      })
+    })
+    const proxy = await startResponsesCompatibilityProxy(`http://127.0.0.1:${deadPort}/v1`)
+    try {
+      const response = await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(response.status).toBe(502)
+      const message = ((await response.json()) as { error: { message: string } }).error.message
+      expect(message).toContain(`http://127.0.0.1:${deadPort}`)
+      expect(message).toContain('ECONNREFUSED')
+    } finally {
+      await proxy.close()
+    }
+  })
+})
+
 describe('Anthropic Messages bridge', () => {
   it('bridges Claude channels, including ones whose preset forgot to say so', () => {
     expect(resolveCompatibilityBridge(resolveProviderChannel('rightcode-claude')))
@@ -728,6 +1212,84 @@ describe('Anthropic Messages bridge', () => {
       }))
     } finally {
       await group.close()
+    }
+  })
+})
+
+/**
+ * omni 主 agent 的音视频:主进程发的是文本哨兵,桥在这里把它改写成网关文档里的
+ * `input_audio` / `input_video`(见 omniMediaInput)。守两件事:改写发生在 HTTP 边界上
+ * (不是只在纯函数里),以及非 omni 模型原样透传。
+ */
+describe('omni media sentinels across the HTTP boundary', () => {
+  async function startCapturingUpstream(): Promise<{
+    baseUrl: string
+    body: () => unknown
+    close: () => Promise<void>
+  }> {
+    let seen: unknown
+    const server = createServer(async (request, response) => {
+      let raw = ''
+      for await (const chunk of request) raw += chunk
+      seen = JSON.parse(raw)
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    return {
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      body: () => seen,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    }
+  }
+
+  const VIDEO = 'https://cos.example.com/image-history/media-relay/2026/09/20/clip.mp4'
+  const AUDIO = 'https://cos.example.com/image-history/media-relay/2026/09/20/talk.wav'
+  const userMessage = {
+    type: 'message',
+    role: 'user',
+    content: [
+      { type: 'input_text', text: '这段视频和录音讲了什么' },
+      { type: 'input_text', text: `<catimation_media kind="video" name="clip.mp4" url="${VIDEO}" />` },
+      { type: 'input_text', text: `<catimation_media kind="audio" name="talk.wav" format="wav" url="${AUDIO}" />` },
+    ],
+  }
+
+  it('rewrites the sentinels for qwen3.8-omni-flash before forwarding', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'qwen3.8-omni-flash', stream: true, input: [userMessage] }),
+      })
+      expect((upstream.body() as { input: Array<{ content: unknown[] }> }).input[0].content).toEqual([
+        { type: 'input_text', text: '这段视频和录音讲了什么' },
+        { type: 'input_video', video_url: VIDEO },
+        { type: 'input_audio', audio_url: AUDIO, format: 'wav' },
+      ])
+    } finally {
+      await proxy.close()
+      await upstream.close()
+    }
+  })
+
+  it('forwards the sentinels as plain text for any other model on the same bridge', async () => {
+    const upstream = await startCapturingUpstream()
+    const proxy = await startResponsesCompatibilityProxy(upstream.baseUrl)
+    try {
+      await fetch(`${proxy.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'qwen3.8-max', stream: true, input: [userMessage] }),
+      })
+      expect((upstream.body() as { input: Array<{ content: unknown[] }> }).input[0].content).toEqual(userMessage.content)
+    } finally {
+      await proxy.close()
+      await upstream.close()
     }
   })
 })

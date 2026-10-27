@@ -4,8 +4,10 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './imageTaskRegistry'
+import { IMAGE_CHANNEL_IDS } from '../../../shared/imageChannels'
 import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
+import { buildYouchuanModelParamsSchema } from './modelParamsSchema'
 
 /** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
 interface BatchTaskResult {
@@ -324,35 +326,49 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     )
 
   // Optional channel OVERRIDE. Default = the channel the user picked in the chat
-  // composer (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro). Omit to honor the
+  // composer（默认腾讯 image2）. Omit to honor the
   // user's pick; set it only when you have a concrete reason to override (e.g. 万相
   // for a 组图 series, or the user asked for a specific channel this turn).
+  // 从 `shared/imageChannels` 推导,**不手抄**。
+  //
+  // 这里以前是一份手写的 enum,与聊天选择器的清单各自维护。加渠道时漏掉这边
+  // 的后果是:用户在选择器里选得到,agent 却传不了这个值 —— 而且不报错,
+  // 只是 agent 用了别的渠道出图。2026-09-01 接 og-image 时正是这么漏的。
   const modelSchema = z
-    .enum([
-      'custom-imagemodel-gt',
-      'gpt-image-2-vip',
-      'gpt-image-2',
-      'wan2.7-image-pro',
-      'gemini-3.1-flash-image',
-      'doubao-seedream-5-0-pro-260628',
-      'qwen-image-3.0-pro',
-    ])
+    .enum(IMAGE_CHANNEL_IDS)
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro / Seedream 5.0 Pro; default ' +
-      "VIP) — OMIT this to honor the user's pick. Set it ONLY when you have a concrete reason to " +
+      'composer picker (腾讯 / image2 fast / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Flare / Sunburst / All 2.5 / ' +
+      "Image2 / VIP / Nano2 / Nano2.1 / 万相 / 千问 / 悠船快速 / 悠船极速; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
+      'ONLY when you have a concrete reason to ' +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
-      'channel the user explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, ' +
-      'gpt-image-2 = API易 OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ' +
-      'ceiling, custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2, ' +
+      'channel the user explicitly asked for this turn (' +
+      'gpt-image-2.5-flare = OpenAI 官转·速度优先 / 文生图首选, ' +
+      'gpt-image-2.5-sunburst = OpenAI 官转·画质优先 / 改图首选, ' +
+      'gpt-image-2.5-all = ChatGPT 网页逆向 $0.03/张 (size in prompt), ' +
+      'gpt-image-2 = 上一代 Image2 官方 (superseded by 2.5, same price), ' +
+      'gpt-image-2-vip = OpenAI 官逆/vip — ONLY when the user names vip/官逆, do not pick it by default, ' +
+      'custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
+      'custom-model-og-v2 = TokenHub og-image — 另一条腾讯渠道，更快(~20s)、便宜近 6 倍、可出多张, ' +
+      'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度可用; ' +
+      'same 2.5 abilities — transparentBackground / maskImage / xhigh,max — over the 腾讯 line), ' +
+      'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
+      'gemini-3.1-flash-image = Nano Banana 2, ' +
+      'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
+      'multi-turn edit consistency), 1K/2K/4K only, ' +
       'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
       'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
       'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; takes at most 3 reference ' +
       'images (passing more is REJECTED, not trimmed — pick Seedream 5.0 Pro if you need up to 10); ' +
       'upstream may REWRITE the ' +
       'requested size, so do not promise the user an exact pixel size, and negative prompts are ' +
-      'dropped by the gateway — put quality requirements in the positive prompt). The ' +
+      'dropped by the gateway — put quality requirements in the positive prompt, ' +
+      'youchuan-v8.2 = 悠船 Midjourney V8.2 快速 / youchuan-v8.2-turbo = 悠船 Midjourney V8.2 极速 — ' +
+      'pick it when the user asks for Midjourney / MJ / 悠船 / 悠船 v8; the two are the SAME model at ' +
+      'two speeds (极速 is faster and costs more), each call returns 4 images billed ONCE with native 2K ' +
+      'ON by default (×1.5), takes up to 20 http(s) reference images, and its extra knobs (chaos / ' +
+      'stylize / raw / style references …) go in `modelParams` — see that parameter). The ' +
       'result reports the actual channel used in its `model` field.',
     )
 
@@ -364,7 +380,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'results). ' +
       `${IMAGE_PROMPT_BASE_DIRECTIVE} ` +
       'By default it renders on the channel the USER picked in the chat composer (default ' +
-      'VIP); you may override per-call via `model` when you have a reason (see below). It ' +
+      '腾讯 image2); you may override per-call via `model` when you have a reason (see below). It ' +
       'shows the result directly in the chat, AND — exactly like codex native image_gen — saves the ' +
       'image to a local file (returned to you) plus the in-app history page. The result is ' +
       '`{ ok, count, model, historyId, paths }` where `paths` are the saved local file paths, and ' +
@@ -372,11 +388,14 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'reference them. Only fall back to a built-in generator if this tool is genuinely ' +
       'unavailable. Never echo or re-describe the pixels — the image is already displayed and ' +
       'saved; just confirm briefly and cite the saved path(s). The render channel defaults to the ' +
-      "user's composer channel picker (default VIP); pass `model` to override when needed (the " +
+      "user's composer channel picker (default 腾讯 image2); pass `model` to override when needed (the " +
       'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
-      'INDEPENDENT variations of one prompt, model="qwen-image-3.0-pro" with `count`>1 (1–6). ' +
-      '`count` takes effect on those two channels only; for unrelated images use generate_images. ' +
+      'INDEPENDENT variations of one prompt, use `count`>1 on model="qwen-image-3.0-pro" (1–6) or on ' +
+      'the OpenAI 官转 channels gpt-image-2.5-flare / gpt-image-2.5-sunburst / gpt-image-2 and 腾讯 ' +
+      'custom-model-og-v2 / custom-model-og-v2.5-f / custom-model-og-v2.5-s (native `n`, 1–4, billed ' +
+      'per image). Other channels ignore `count`; for ' +
+      'unrelated images use generate_images. ' +
       'This tool ALSO does 图层分离 / layer splitting (turn one image into a base + transparent PNG ' +
       'layers) — set `layerDecomposition: true` with model="doubao-seedream-5-0-pro-260628"; see that ' +
       'parameter for the rules. ' +
@@ -409,9 +428,24 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           '`auto` / `1.5K` are split-only — on ordinary generation they fall back to the model default.',
         ),
       quality: z
-        .enum(['auto', 'low', 'medium', 'high'])
+        .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
         .optional()
-        .describe('Rendering quality. "high" for text/print; "auto" lets the model decide (default).'),
+        .describe(
+          'Rendering quality. Prefer "high" for GPT Image 2.5 (≈ old medium token cost). ' +
+          '"xhigh"/"max" are 2.5-only (text/print) — accepted on gpt-image-2.5-flare / -sunburst and the ' +
+          '腾讯 custom-model-og-v2.5-f / -s; other channels drop them. "auto" lets the model decide but ' +
+          'drifts cost on 2.5.',
+        ),
+      transparentBackground: z
+        .boolean()
+        .optional()
+        .describe(
+          'Render on a TRANSPARENT background (alpha PNG) — for 透明底 / 抠图 / 贴纸 / logo / 素材 / ' +
+          '"no background" requests. Only honored by the GPT Image 2.5 channels: model="gpt-image-2.5-flare" / ' +
+          '"gpt-image-2.5-sunburst" (OpenAI 官转) or "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 line, ' +
+          '平台额度) — pass one explicitly; every other channel ignores it ' +
+          'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
+        ),
       count: z
         .number()
         .int()
@@ -419,15 +453,21 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .max(12)
         .optional()
         .describe(
-          'Number of images from THIS single prompt (default 1). Supported on two channels, with ' +
+          'Number of images from THIS single prompt (default 1). Supported on these channels, with ' +
           'DIFFERENT semantics — pick by what you want:\n' +
           '- model="wan2.7-image-pro" (up to 12): count>1 turns on 万相 组图 / enable_sequential, a ' +
           'front-to-back CONSISTENT series (同一只猫的四季, same character across shots).\n' +
           '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
           'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
-          'Every other channel ignores it and always returns 1. Out-of-range values are clamped to the ' +
-          "channel's ceiling, never rejected. For several UNRELATED images (distinct subjects), use " +
-          'generate_images with one prompt each instead of count.',
+          '- model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" / "gpt-image-2" / ' +
+          '"custom-model-og-v2" / "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (up to 4): native ' +
+          'OpenAI `n` — ONE request returns count INDEPENDENT variations (text-to-image; the 腾讯 og ' +
+          'channels return 1 on edits). These channels are token-billed PER IMAGE, so ' +
+          'count=4 costs ~4× a single render — only go above 1 when the user wants options/variations.\n' +
+          'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1 ' +
+          '(the 悠船 channels always return exactly 4 per call, billed once, whatever `count` says). ' +
+          "Out-of-range values are clamped to the channel's ceiling, never rejected. For several " +
+          'UNRELATED images (distinct subjects), use generate_images with one prompt each instead of count.',
         ),
       referenceImages: z
         .array(z.string())
@@ -450,6 +490,23 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'follows the user-provided material — do NOT silently fall back to text-to-image when a ' +
           'reference image was given.',
         ),
+      maskImage: z
+        .string()
+        .optional()
+        .describe(
+          'Inpainting mask for a LOCAL edit (擦除 / 局部重绘 / 只改这一块), as a local file path or ' +
+          'data/http URL. Must be a PNG WITH an alpha channel: fully transparent pixels (alpha = 0) mark ' +
+          'the region the model may repaint, opaque pixels are preserved as much as possible. It must ' +
+          'have EXACTLY the same pixel dimensions as the first `referenceImages` entry (the mask applies ' +
+          'to image[0] only), under 4MB. REQUIRES `referenceImages` with the original image first. Only ' +
+          'honored by model="gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst" (OpenAI 官转) or ' +
+          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 2.5 line, 平台额度) — pass one explicitly; ' +
+          '-all / 腾讯 image2 & image2 fast / 万相 / nano reject it up front rather than repainting the whole ' +
+          'image. Masking is prompt-guided, not pixel-exact: the prompt must name the ONE change inside ' +
+          'the transparent region first, then list everything that must stay unchanged (composition, ' +
+          'lighting, subjects outside the mask). When the user attached a `*.mask.png` next to an image, ' +
+          'that file is this parameter.',
+        ),
       layerDecomposition: z
         .boolean()
         .optional()
@@ -468,6 +525,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'the user asks for a specific tier. The input image must be PNG or JPEG at 512px or larger; ' +
           'other formats (e.g. WebP) are transcoded automatically before the request goes out.',
         ),
+      modelParams: buildYouchuanModelParamsSchema(),
     }).refine(
       // 空 prompt 只在图层拆分下合法 —— 上游把「缺席的 prompt」当作「自动全拆」，这是
       // 一句「图层分离」最想要的行为。普通生图的空 prompt 仍然拒绝(否则就是烧一张图的
@@ -582,9 +640,17 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe('Resolution tier shared by all images. Prefer 2K by default. Use 1K only for fast/cheap/draft, and 4K only for explicit print/ultra-detail requests.'),
       quality: z
-        .enum(['auto', 'low', 'medium', 'high'])
+        .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
         .optional()
-        .describe('Rendering quality shared by all images.'),
+        .describe('Rendering quality shared by all images. Prefer "high" for GPT Image 2.5; xhigh/max are 2.5-only (official flare/sunburst and 腾讯 og-v2.5-f/-s).'),
+      transparentBackground: z
+        .boolean()
+        .optional()
+        .describe(
+          'Transparent (alpha PNG) background shared by all images — 透明底 / 贴纸 / 素材 sets. Only ' +
+          'honored on the GPT Image 2.5 channels (model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" or 腾讯 ' +
+          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s"); other channels ignore it.',
+        ),
       referenceImages: z
         .array(z.string())
         .optional()
@@ -596,15 +662,21 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'role. A batch is exactly where this goes wrong when skipped: the same character comes back ' +
           'with a different face on some of the images.',
         ),
+      modelParams: buildYouchuanModelParamsSchema(),
     }),
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
       prompts?: unknown
-      model?: 'gpt-image-2-vip' | 'gpt-image-2' | 'custom-imagemodel-gt' | 'wan2.7-image-pro' | 'gemini-3.1-flash-image'
+      // 从 schema 推导,不手写。原先这里是一份手抄的联合类型,已经漂移了 ——
+      // 漏掉 Seedream 5.0 Pro 和千问 Image 3.0 Pro 两个(它们在 enum 里、在这里没有)。
+      // 手抄一份就意味着每加一个渠道都要记得同步两处,而漏掉的那处不会报错。
+      model?: z.infer<typeof modelSchema>
       ratio?: string
       resolution?: '1K' | '2K' | '4K'
-      quality?: 'auto' | 'low' | 'medium' | 'high'
+      quality?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+      transparentBackground?: boolean
       referenceImages?: string[]
+      modelParams?: Record<string, unknown>
     }
     const prompts = Array.isArray(parsed.prompts) ? parsed.prompts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0) : []
     const codexThreadId = extractCodexThreadId(ctx)

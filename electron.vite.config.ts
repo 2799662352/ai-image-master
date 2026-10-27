@@ -109,7 +109,26 @@ export default defineConfig({
   },
   renderer: {
     root: 'src/renderer',
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        // tldraw ≥ 5.3.2 treats the packaged app (file://, NODE_ENV=production)
+        // as an unlicensed production deployment when no key is inlined and
+        // unmounts the canvas 5 s after it opens. Nothing in dev reproduces
+        // this, so make the *build* log say it loudly instead of the installer.
+        // See src/renderer/src/features/agent-workspace/canvas/tldrawLicense.ts.
+        name: 'catimation:tldraw-license-guard',
+        configResolved(config) {
+          if (config.command !== 'build' || config.mode !== 'production') return
+          if (String(config.env['VITE_TLDRAW_LICENSE_KEY'] ?? '').trim()) return
+          config.logger.warn(
+            '\n[tldraw] VITE_TLDRAW_LICENSE_KEY is not set for this production renderer build.\n' +
+              '[tldraw] The packaged canvas will run as UNLICENSED PRODUCTION: tldraw hides the editor 5 s after the Canvas tab opens.\n' +
+              '[tldraw] Set VITE_TLDRAW_LICENSE_KEY (trial / commercial / hobby key from tldraw.dev) before shipping an installer.\n',
+          )
+        },
+      },
+    ],
     build: {
       outDir: 'dist/renderer',
       // 目标为 Electron 的 Chromium 版本，启用现代 JS 特性

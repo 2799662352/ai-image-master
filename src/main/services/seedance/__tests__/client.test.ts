@@ -9,7 +9,12 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { seedanceClient, ARK_REQUEST_TIMEOUT_MS, SeedanceApiError } from '../client'
+import {
+  seedanceClient,
+  SeedanceApiError,
+  VIDEO_CREATE_TIMEOUT_MS,
+  VIDEO_QUERY_TIMEOUT_MS,
+} from '../client'
 import { setSeedanceRegionMemory } from '../region'
 
 function jsonResponse(body: unknown, status = 200) {
@@ -210,20 +215,54 @@ describe('arkRequest 硬超时（防 net.fetch 永久悬挂 → turn 卡满 2000
     vi.useRealTimers()
   })
 
-  it('createTask/queryTask 都带 AbortSignal，超时后以明确错误 reject', async () => {
-    vi.useFakeTimers()
-    // 模拟半开连接：fetch 永不 settle，只在被 abort 时 reject（真实 net.fetch 行为）。
+  /** 模拟半开连接：fetch 永不 settle，只在被 abort 时 reject（真实 net.fetch 行为）。 */
+  function hangUntilAborted(): void {
     fetchMock.mockImplementation((_url: string, init: { signal: AbortSignal }) => {
       expect(init.signal).toBeInstanceOf(AbortSignal)
       return new Promise((_resolve, reject) => {
-        init.signal.addEventListener('abort', () => reject(new Error('aborted')))
+        init.signal.addEventListener('abort', () => {
+          const err = new Error('This operation was aborted')
+          err.name = 'AbortError'
+          reject(err)
+        })
       })
     })
+  }
+
+  it('queryTask 用查询超时(30s),到点以人话 reject 而不是裸 AbortError', async () => {
+    vi.useFakeTimers()
+    hangUntilAborted()
 
     const pending = seedanceClient.queryTask('t-hang', 'key')
-    const assertion = expect(pending).rejects.toThrow(/timed out after 30s/)
-    await vi.advanceTimersByTimeAsync(ARK_REQUEST_TIMEOUT_MS + 1)
+    const assertion = expect(pending).rejects.toThrow(/查询任务状态超过 30 秒/)
+    await vi.advanceTimersByTimeAsync(VIDEO_QUERY_TIMEOUT_MS + 1)
     await assertion
+  })
+
+  it('createTask 用提交超时(5 分钟):30s 时还挂着,到点后文案点明「可能已计费」', async () => {
+    vi.useFakeTimers()
+    hangUntilAborted()
+
+    let settled = false
+    const pending = seedanceClient.createTask({} as never, 'key').catch((e: Error) => {
+      settled = true
+      return e
+    })
+    // 老的 30 秒过去了,提交必须还在等 —— 多图提交真的会超过 30s,掐早了就是把一个
+    // 已经在跑的任务判成失败。
+    await vi.advanceTimersByTimeAsync(VIDEO_QUERY_TIMEOUT_MS + 1)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(VIDEO_CREATE_TIMEOUT_MS - VIDEO_QUERY_TIMEOUT_MS)
+    const err = await pending
+    expect(settled).toBe(true)
+    expect(String((err as Error).message)).toMatch(
+      new RegExp(`提交超过 ${VIDEO_CREATE_TIMEOUT_MS / 60_000} 分钟`),
+    )
+    expect(String((err as Error).message)).toMatch(/可能已被网关受理并计费/)
+    expect(String((err as Error).message)).not.toMatch(/operation was aborted/i)
+    // 提交重试有 3 次尝试,但超时不属于「可安全重发」—— 只允许发过一次。
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('未超时的正常响应不受影响', async () => {

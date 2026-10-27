@@ -117,8 +117,12 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
     isDefault: false,
   },
-  // 通义千问三档（Miau / new-api 网关，完整 OpenAI 兼容 Responses）。这些 slug
+  // 通义千问五档（Miau / new-api 网关，完整 OpenAI 兼容 Responses）。这些 slug
   // 之前只在后台跑（qwen 子代理 + MCP 理解工具），现在也能当主对话模型选。
+  //
+  // 2026-09-20 加入全模态 Omni Flash(文本 + 图片 + 视频 + **音频**输入都收,网关价目表
+  // ratio 0.5,比 3.7 Plus 的 1 还便宜),接任理解工具的默认档。3.7 Plus / Max(`-dashscope`
+  // 别名)**暂不撤下** —— 用户拍板与 3.8 一代并行一段时间,届时再做持久化选择的迁移。
   //
   // ⚠️ 本数组的顺序**不等于**选择器里的顺序。`buildGatewayModelCatalog` 先铺网关
   // `model/list` 回来的动态行、再补静态行，而 qwen 不在 apiyi/rightcode 的
@@ -129,7 +133,7 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     id: 'qwen3.7-plus-dashscope',
     displayName: 'Qwen 3.7 Plus',
     tier: 'Medium',
-    description: '通义千问 3.7 Plus（Miau 网关）。日常够用且更便宜，理解类任务的默认档。',
+    description: '通义千问 3.7 Plus（Miau 网关）。日常够用且便宜;理解类默认档已交给 3.8 Omni Flash,本档并行保留。',
     isDefault: false,
   },
   {
@@ -140,24 +144,56 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
-    id: 'qwen3.8-max',
-    displayName: 'Qwen 3.8 Max',
-    tier: 'Extra High',
-    description: '通义千问 3.8 Max（Miau 网关）。最新一代，支持 thinking / reasoning。',
+    id: 'qwen3.8-omni-flash',
+    displayName: 'Qwen 3.8 Omni Flash',
+    tier: 'Fast',
+    description: '通义千问 3.8 Omni Flash（Miau 网关）。全模态:文本 / 图片 / 视频 / 音频都能看和听,理解类工具的默认档;选它当主模型时,聊天附件里的音频 / 视频会直接送进模型。',
     isDefault: false,
   },
   {
-    id: 'deepseek-v4-flash',
-    displayName: 'DeepSeek V4 Flash',
+    id: 'qwen3.8-max',
+    displayName: 'Qwen 3.8 Max',
+    tier: 'Extra High',
+    description: '通义千问 3.8 Max（Miau 网关）。最新一代旗舰，支持 thinking / reasoning,长文与复杂推理用它。',
+    isDefault: false,
+  },
+  {
+    id: 'qwen3.8-flash',
+    displayName: 'Qwen 3.8 Flash',
+    tier: 'Fast',
+    description: '通义千问 3.8 Flash（Miau 网关）。最新一代里最快最便宜的纯文本档。',
+    isDefault: false,
+  },
+  // DeepSeek 组:只剩 Miau 的四行(走 Miau 网关,可用平台余额结算)——
+  // 官方渠道的 flash / v4-pro 在前,火山方舟的标准版 / 经济版在后。
+  // 带日期的 0731 / 0813 与 Right.Codes 直连的 `deepseek-v4-flash` 已撤下,
+  // 老选择换成谁见 `RETIRED_MODEL_SUCCESSORS`;路由见 `DEEPSEEK_MIAU_MODELS`。
+  {
+    id: 'deepseek-flash',
+    displayName: 'DeepSeek Flash（Miau）',
     tier: 'High',
-    description: 'Fast 1M-context V4. Native Responses API; official default chat.',
+    description: 'DeepSeek Flash（Miau 网关，DeepSeek 官方渠道）。1M 上下文，能看图，最便宜的一档，可用平台余额结算。',
     isDefault: false,
   },
   {
     id: 'deepseek-v4-pro',
-    displayName: 'DeepSeek V4 Pro',
+    displayName: 'DeepSeek V4 Pro（Miau）',
     tier: 'Extra High',
-    description: 'Frontier 1M-context V4. Native Responses API; coding and long-running agents.',
+    description: 'DeepSeek V4 Pro（Miau 网关，DeepSeek 官方渠道）。1M 上下文，旗舰档，长任务与编码，可用平台余额结算；不能看图。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-1-flash-261017',
+    displayName: 'DeepSeek V4.1 Flash（火山引擎）',
+    tier: 'High',
+    description: 'DeepSeek V4.1 Flash（火山引擎方舟，经 Miau 网关；网页端「DeepSeek(火山引擎)」同款）。1M 上下文，能看图，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-1-flash-economy-261017',
+    displayName: 'DeepSeek V4.1 Flash 经济版（火山引擎）',
+    tier: 'High',
+    description: 'DeepSeek V4.1 Flash 经济版（火山引擎方舟，经 Miau 网关；网页端「DeepSeek 经济版(火山引擎)」同款）。模型同上，价格约为标准版的 8 折，可用平台余额结算。',
     isDefault: false,
   },
   {
@@ -227,14 +263,32 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     defaultWindow: GROK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
-  ['deepseek-v4-flash', {
-    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
-    allowExperimental1M: false,
-  }],
   ['deepseek-v4-pro', {
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
+  // Miau 上的同代模型,窗口同为官方文档的 1M。`deepseek-flash` / `deepseek-v4-pro`
+  // 在生产网关上超长请求的报错是「maximum context length is 1048576 tokens」(2026-10-19)。
+  ['deepseek-flash', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  // 火山方舟的 V4.1 Flash(标准 / 经济):网关目录(codex-gateway #58)声明的窗口
+  // 也是 1M。这是目录声明、**尚未对生产网关实测超长请求的报错上限**。
+  ['deepseek-v4-1-flash-261017', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  ['deepseek-v4-1-flash-economy-261017', {
+    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  // GPT-6 family: same 272K default / 872K max as GPT-5.6 in the 0.159.2
+  // bundled models.json.
+  ['gpt-6.1-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-6-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-6-luna', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-6-astra', { defaultWindow: 272_000, allowExperimental1M: true }],
   // Codex 0.144.6 hotfix corrected the GPT-5.6 family from 372K to 272K
   // (openai/codex#33972 / #34009) — 372K was wrong upstream metadata.
   ['gpt-5.6-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
@@ -327,12 +381,48 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
   ['apiyi:apiyi-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
-  ['rightcode:rightcode-deepseek:deepseek-v4-flash', DEEPSEEK_REASONING],
-  ['rightcode:rightcode-deepseek:deepseek-v4-pro', DEEPSEEK_REASONING],
+  // DeepSeek 只剩 Miau 这一条通道。思考档位来自 DeepSeek V4 的官方文档,
+  // 四个模型复用同一份策略 —— 火山方舟两个与 deepseek-flash「调用方法一致」。
+  // 两个网关各注册一次 —— 键是 网关:通道:模型 三段。
+  // flash / v4-pro 的 low / high / max 已对生产网关逐档实测(2026-10-19);
+  // 火山方舟两个**还没实测**(网关目录里 supported_reasoning_levels 为空,
+  // 即上游是否接受 reasoning.effort 未经验证)。
+  ['apiyi:apiyi-deepseek-miau:deepseek-flash', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-pro', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-1-flash-261017', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-1-flash-economy-261017', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-flash', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-pro', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-1-flash-261017', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-1-flash-economy-261017', DEEPSEEK_REASONING],
   ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
     (key) => [key, ANTHROPIC_ADAPTIVE_REASONING] as const,
   ),
 ])
+
+/**
+ * 从选择器撤下的模型 → 接替者。只给**内置网关**(API Yi / Right.Codes)用:
+ * 自定义网关上同名 slug 可能是另一个真实存在的模型,不能替人换掉。
+ *
+ * 为什么要有这张表:主进程启动时按「已保存的 (网关, 模型)」解析通道,保存的 slug
+ * 不在任何通道的白名单里就抛 `ModelUnavailableInGatewayError`,应用起不来。
+ * 接替者必须仍在 `CANONICAL_MODEL_SETTINGS_ROWS` 里(测试守着)。
+ *
+ * - 0731 / 0813 → 同档的官方渠道模型(`deepseek-flash` / `deepseek-v4-pro`)。
+ * - Right.Codes 直连的 `deepseek-v4-flash` → `deepseek-flash`。**注意计费来源变了**:
+ *   前者用自填的 Right.Codes Key,后者走 Miau token(平台余额)。选择器里显示的就是
+ *   换后的模型,用户看得见;但这是行为变化,发布说明要写。
+ */
+const RETIRED_MODEL_SUCCESSORS: ReadonlyMap<string, string> = new Map([
+  ['deepseek-v4-flash-0731', 'deepseek-flash'],
+  ['deepseek-v4-pro-0813', 'deepseek-v4-pro'],
+  ['deepseek-v4-flash', 'deepseek-flash'],
+])
+
+/** 撤下模型的接替者;没撤下或不认识的返回 `undefined`(调用方保持原样)。 */
+export function successorForRetiredModel(modelId: string): string | undefined {
+  return RETIRED_MODEL_SUCCESSORS.get(modelId)
+}
 
 const LEGACY_SELECTIONS: ReadonlyMap<
   string,
@@ -559,16 +649,23 @@ export function modelAutoCompactTokenLimit(contextWindow: number): number {
 }
 
 /**
- * Context windows Codex resolves natively from its bundled models.json
- * (verified against openai/codex rust-v0.144.6 codex-rs/models-manager/
- * models.json — the 0.144.6 hotfix corrected the GPT-5.6 family from 372K to
- * 272K). Only slugs listed there belong here: for these models Codex already
- * knows the window AND derives its own auto-compaction budget, so a
- * launch-time `model_context_window` override is redundant — and harmful,
- * because the `-c` override applies globally to every model in the process
- * and forces a full restart whenever it changes.
+ * Context windows Codex resolves on its own, without a launch-time
+ * `model_context_window` override (verified against openai/codex rust-v0.159.2
+ * codex-rs/models-manager). For these models Codex already knows the window
+ * AND derives its own auto-compaction budget, so an override is redundant —
+ * and harmful, because the `-c` override applies globally to every model in
+ * the process and forces a full restart whenever it changes.
+ *
+ * Two sources: the bundled models.json, and `model_info_from_slug`'s fallback
+ * (272K window, 272K max) for slugs the catalog no longer ships. gpt-5.4,
+ * gpt-5.4-mini and gpt-5.2 left the catalog in 0.158 but still resolve to
+ * 272K through that fallback, so they stay unpinned.
  */
 const CODEX_NATIVE_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+  ['gpt-6.1-sol', 272_000],
+  ['gpt-6-sol', 272_000],
+  ['gpt-6-luna', 272_000],
+  ['gpt-6-astra', 272_000],
   ['gpt-5.6-sol', 272_000],
   ['gpt-5.6-terra', 272_000],
   ['gpt-5.6-luna', 272_000],

@@ -34,6 +34,7 @@ import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from './gatewayModelRouting'
+import { getActivePoolToken } from '../services/auth/gatewayToken'
 import {
   ProviderChannelController,
   ProviderChannelRecoveryError,
@@ -56,6 +57,8 @@ import {
 } from './codexConfigStore'
 import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
 import { AUDIO_EXTENSIONS, mapReferencesToInputItems } from './codexUserInput'
+import { modelAcceptsNativeMedia, planOmniNativeMedia } from './omniMediaInput'
+import { relayFileToCos } from '../services/tencent/mediaRelay'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import { SessionConfigStore } from './SessionConfigStore'
 import { TurnNotifier, type TurnNotification } from './TurnNotifier'
@@ -153,7 +156,12 @@ import type {
   PluginReadResponse,
 } from '../../types/codexPlugins'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
-import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
+import {
+  ThreadTitleGenerator,
+  resolveThreadTitleModel,
+  type ThreadTitleModel,
+  type ThreadTitleRequest,
+} from './threadTitle'
 import { beginObservedChanges, type ObservedChangeTracker } from './observedChanges'
 import { takeSnapshot } from './workspaceSnapshot'
 import { diffSnapshots } from './snapshotDiff'
@@ -161,9 +169,13 @@ import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 import { setWan3TokenSource } from '../services/wan3/credentials'
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
+const MIAU_CREDENTIAL_ERROR = '请登录使用平台余额，或在设置页填写 Miau API Key'
+
+/** Miau 系通道在 codex 里认的环境变量名。与 `gatewayModelRouting` 里各 Miau 通道的 `envKey` 一致。 */
+const MIAU_ENV_KEY = 'MIAU_API_KEY'
 /**
- * Default Codex agent model used by the ThreadTitleSummarizer (and as the
- * fallback model id when a provider preset doesn't pin its own). `gpt-5.5`
+ * Default Codex agent model: the fallback model id when a send carries none
+ * and a provider preset doesn't pin its own. `gpt-5.5`
  * ships full Responses-API tool support including the native `web_search`
  * tool that Codex 0.128 `app-server` registers by default. Keep in sync with
  * the renderer-side `DEFAULT_MODEL_ID` in
@@ -292,6 +304,12 @@ export interface AgentManagerOptions {
   /** Runtime context-settings persistence seam. Production uses userDataDir. */
   runtimeSettingsStore?: CodexRuntimeSettingsStore
   /**
+   * Uploads a local audio / video file to the public COS relay prefix and returns
+   * its https URL — the omni main-agent media path (see omniMediaInput). Test seam;
+   * production uses `relayFileToCos`.
+   */
+  relayMediaToCos?: (filePath: string, mime: string, size?: number) => Promise<string>
+  /**
    * Local catimation MCP server coordinates produced by
    * `startCatimationMcpServer` (+ stdio bridge launch info when available).
    * Forwarded to the default `CodexLocalBackend` so the spawned Codex
@@ -360,6 +378,7 @@ export class AgentManager {
   private readonly userDataDir: string
   private readonly providerStore: CodexProviderStore
   private readonly runtimeSettingsStore: CodexRuntimeSettingsStore
+  private readonly relayMediaToCos: (filePath: string, mime: string, size?: number) => Promise<string>
   private runtimeSettings: PersistedCodexRuntimeSettingsV1
   /**
    * In-flight launch pin for a context restart. `undefined` = no transition in
@@ -441,7 +460,13 @@ export class AgentManager {
    * {@link cinematographyKbKey}.
    */
   private dashVectorKey = ''
-  private summarizer?: ThreadTitleSummarizer
+  private titleGenerator?: ThreadTitleGenerator
+  /**
+   * Title requests for threads created by a send, keyed by DB thread id. Taken
+   * once, when codex accepts the first user message; threads that already
+   * existed (every thread after a restart) never get an entry.
+   */
+  private readonly pendingThreadTitles = new Map<string, ThreadTitleRequest>()
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
   /**
@@ -453,7 +478,6 @@ export class AgentManager {
   private sessionConfigStore!: SessionConfigStore
   private sessionConfigPersisted = false
   private readonly turnNotifier: TurnNotifier
-  private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
    * Codex-protocol thread id (a UUID like `urn:uuid:...` returned by
@@ -613,6 +637,8 @@ export class AgentManager {
     this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
     this.runtimeSettingsStore = opts.runtimeSettingsStore
       ?? new CodexRuntimeSettingsStore(opts.userDataDir)
+    this.relayMediaToCos = opts.relayMediaToCos
+      ?? ((filePath, mime, size) => relayFileToCos(filePath, mime, size ? { fileSize: size } : undefined))
     this.runtimeSettings = this.runtimeSettingsStore.loadSync()
     const persisted = this.providerStore.loadSync()
     // v4.4.2 persistence migration: the store now separates the Gateway
@@ -663,6 +689,7 @@ export class AgentManager {
         getApiyiKey: () => this.apiyiMcpKey || undefined,
         getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
         getDashVectorKey: () => this.dashVectorKey || undefined,
+        cinematographyKbPlatformRelay: true,
         onApprovalRequest: (request) => this.emitApprovalRequest(request),
         onApprovalResolved: (info) => this.emitApprovalResolved(info),
         onMcpNotification: (event) => this.handleMcpNotification(event),
@@ -791,7 +818,7 @@ export class AgentManager {
         this.validateModelSelectionIntent(payload, route.modelId, route.channelId),
     })
     if (this.store) {
-      this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
+      this.titleGenerator = new ThreadTitleGenerator(this.store, this.backend)
     }
     // Kick off async legacy migration in the background — the sync load above
     // already covered the v4.3 file; this finishes the codex-agent.json →
@@ -2191,6 +2218,11 @@ export class AgentManager {
    * 「请先配置网关 Key」——一枚它们根本不用的密钥。
    */
   private hasCredentialFor(credentialId: string): boolean {
+    // Miau 那个槽位有两种「配好了」:用户自填 Key,**或**登录后 arm 了平台池 ——
+    // 后者时代理会在出网前换成影子 token,自填 Key 用不上。不把平台余额算进来的
+    // 话,登录了的用户会看到千问 / DeepSeek Miau 被标灰、提示去填一枚根本不需要
+    // 的 Key(2026-09-01 真机撞到)。
+    if (credentialId === QWEN_UNDERSTAND_PROVIDER_ID && getActivePoolToken()) return true
     const persisted = this.providerStore.loadSync()
     const activeCredentialId = credentialIdForProvider(
       this.activeGatewayId,
@@ -2482,6 +2514,9 @@ export class AgentManager {
   // Renderer passes the DB thread id; we resolve it to the codex thread id
   // (in-memory map, falling back to the persisted id) before hitting the
   // app-server. All wrap in the standard `{ ok, error?, data? }` envelope.
+  // Goal set/clear are tagged `origin: 'user'` — codex records those as user
+  // instructions in model history — so only explicit user actions (`/goal`,
+  // GoalChip) may be wired to them.
 
   private async resolveCodexThreadIdForRpc(dbThreadId: string): Promise<string | undefined> {
     const inMem = this.codexThreadIdByDbThreadId.get(dbThreadId)
@@ -2503,7 +2538,7 @@ export class AgentManager {
       if (!codexThreadId) {
         return { ok: false, error: '先发一条消息创建会话,再设置目标(/goal)。' }
       }
-      const res = await this.backend.setThreadGoal({ threadId: codexThreadId, ...params })
+      const res = await this.backend.setThreadGoal({ threadId: codexThreadId, ...params, origin: 'user' })
       return { ok: true, data: res.goal }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -2527,7 +2562,7 @@ export class AgentManager {
       if (!this.backend.clearThreadGoal) throw new Error('Goal API unavailable')
       const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
       if (!codexThreadId) return { ok: true, data: { cleared: false } }
-      const res = await this.backend.clearThreadGoal(codexThreadId)
+      const res = await this.backend.clearThreadGoal(codexThreadId, 'user')
       return { ok: true, data: { cleared: res.cleared } }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -3066,15 +3101,72 @@ export class AgentManager {
     }
   }
 
+  /**
+   * 这一轮 codex 请求缺哪把凭据;`null` 表示齐了。
+   *
+   * ## 为什么不能只看 `codexApiKey`
+   *
+   * `codexApiKey` 是**所选网关**(Right.Codes / API Yi)那把 Key,只喂给
+   * `OPENAI_API_KEY`。Miau 系通道(千问、DeepSeek Miau)走的是另一把
+   * (`MIAU_API_KEY`),而且平台余额一开,代理会在出网前把它整个换成影子 token
+   * —— 那时用户手里**哪把 Key 都不需要**。
+   *
+   * 以前这里是 `if (!codexApiKey) throw`,于是登录了、平台余额也开了的用户,
+   * 只因为没填 Right.Codes 的 Key,连千问都发不出去 —— 而那把 Key 跟这一轮
+   * 请求毫无关系(2026-09-01 真机撞到,见图 3 那条「请在设置页填写 Codex Agent
+   * API Key」)。所以改成按**本轮实际要走的通道**判:
+   *
+   *   - Miau 通道:有 Miau Key **或**平台已登录,二者其一即可;
+   *   - 其他通道:仍要网关那把 Key。
+   *
+   * 解析不出通道时退回旧闸(要 `codexApiKey`)—— 宁可多拦,不可漏拦。
+   */
+  private credentialGapForTurn(gatewayId: string, modelId: string): string | null {
+    let envKey: string
+    try {
+      const custom = this.providerStore.loadSync().customProviders
+      const route = resolveGatewayModelRoute(gatewayId, modelId, custom)
+      envKey = resolveProviderChannel(route.channelId, custom).envKey
+    } catch {
+      return this.codexApiKey ? null : EMPTY_KEY_ERROR
+    }
+    if (envKey === MIAU_ENV_KEY) {
+      return this.miauToken || getActivePoolToken() ? null : MIAU_CREDENTIAL_ERROR
+    }
+    return this.codexApiKey ? null : EMPTY_KEY_ERROR
+  }
+
+  /**
+   * 凭据闸:缺就发错误事件并抛出。
+   *
+   * 每轮调**两次**,模型选择之前一次、之后一次:
+   *  - 之前那次用意图里的模型(payload 给的,否则当前选中的)**预判**。它的价值是
+   *    在任何 store / 协调器动作之前就给出准确提示 —— 不然模型选择协调器会先抛
+   *    一句更含糊的「请先配置网关 Key」;
+   *  - 之后那次才是权威:线程绑定快照可能把模型换成别的,通道也随之变。
+   */
+  private assertTurnCredential(gatewayId: string, modelId: string, threadId: string): void {
+    const gap = this.credentialGapForTurn(gatewayId, modelId)
+    if (!gap) return
+    this.emitEvent({ type: 'error', threadId, error: gap })
+    throw new Error(gap)
+  }
+
+  /** 模型选择之前能拿到的最好猜测,只给快闸预判用。 */
+  private intendedModelId(payload: AgentSendMessagePayload): string {
+    return (
+      payload.modelSelection?.modelId?.trim()
+      || payload.model?.trim()
+      || this.providerStore.loadSync().selectedModelId
+    )
+  }
+
   private async sendMessageAfterProviderBarrier(
     payload: AgentSendMessagePayload,
     reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessageResult> {
-    if (!this.codexApiKey) {
-      const threadId = payload.threadId ?? 'pending'
-      this.emitEvent({ type: 'error', threadId, error: EMPTY_KEY_ERROR })
-      throw new Error(EMPTY_KEY_ERROR)
-    }
+    const pendingThreadId = payload.threadId ?? 'pending'
+    this.assertTurnCredential(this.activeGatewayId, this.intendedModelId(payload), pendingThreadId)
 
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.sendMessage called without store/attachments')
@@ -3083,6 +3175,11 @@ export class AgentManager {
     const confirmedPayload = await this.ensureTurnModelSelection(
       payload,
       reservation,
+    )
+    this.assertTurnCredential(
+      confirmedPayload.modelSelection?.gatewayId ?? this.activeGatewayId,
+      confirmedPayload.modelSelection?.modelId ?? confirmedPayload.model ?? '',
+      pendingThreadId,
     )
 
     // Lazily (re)start the backend if the bootstrap start() failed or never
@@ -3187,16 +3284,19 @@ export class AgentManager {
     steer: NonNullable<IAgentBackend['steer']>,
     reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessageResult> {
-    if (!this.codexApiKey) {
-      this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
-      throw new Error(EMPTY_KEY_ERROR)
-    }
+    // 与 sendMessage 同一道闸、同一个理由:按本轮通道判缺哪把 Key(见 assertTurnCredential)。
+    this.assertTurnCredential(this.activeGatewayId, this.intendedModelId(payload), threadIdIn)
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.steer called without store/attachments')
     }
     const confirmedPayload = await this.ensureTurnModelSelection(
       payload,
       reservation,
+    )
+    this.assertTurnCredential(
+      confirmedPayload.modelSelection?.gatewayId ?? this.activeGatewayId,
+      confirmedPayload.modelSelection?.modelId ?? confirmedPayload.model ?? '',
+      threadIdIn,
     )
     try {
       await this.ensureBackendStarted()
@@ -3330,10 +3430,14 @@ export class AgentManager {
     // it so chips are clickable. Mirror that here, otherwise referencing an
     // uploaded file (drag from the ATTACHMENTS tree, edit-and-resend) previews
     // fine and then dies at send with "Reference path is outside allowed roots".
+    // Omni main-agent models take audio / video natively (see omniMediaInput):
+    // videos are set aside here instead of being flattened into path mentions,
+    // and further down both they and audio attachments become media sentinels.
+    const nativeMedia = modelAcceptsNativeMedia(model)
     const referenceMapping = await mapReferencesToInputItems(payload.references, [
       ...this.allowedRoots,
       path.join(this.userDataDir, 'agent', 'uploads'),
-    ])
+    ], { collectVideo: nativeMedia })
     // Plan B routing for the upcoming `thread/start`: when the confirmed
     // selection routes to a Channel other than the process-active one (a
     // same-gateway sibling registered as an extra provider table), the new
@@ -3408,14 +3512,28 @@ export class AgentManager {
     // `localImage` for vision models, but listing the path here is what
     // lets the agent's filesystem tools touch the same file. See
     // AgentManager.test.ts > "injects the localPath of every attachment".
-    const promptText = buildPromptWithReferenceMentions(
-      buildPromptWithAttachments(payload.content, savedAttachments),
-      referenceMapping.textMentions,
-    )
-    const referenceItems = mapDuplicateAttachmentReferencesToUploadedPaths(
+    const mappedReferenceItems = mapDuplicateAttachmentReferencesToUploadedPaths(
       referenceMapping.items,
       attachmentInputs,
       savedAttachments,
+    )
+    // Omni turn: relay audio / video (attachments + references) to the public COS
+    // prefix and carry each one as a sentinel text item the Responses bridge turns
+    // into `input_audio` / `input_video`. Files upstream cannot decode (m4a / ogg /
+    // opus…) or that fail to relay degrade to a `name: path` mention below — the
+    // agent can still reach them through ffmpeg-win / understand_*.
+    const nativePlan = nativeMedia
+      ? await planOmniNativeMedia({
+          referenceItems: mappedReferenceItems,
+          videoReferences: referenceMapping.videoReferences,
+          attachments: savedAttachments,
+          relay: this.relayMediaToCos,
+        })
+      : undefined
+    const referenceItems = nativePlan ? nativePlan.referenceItems : mappedReferenceItems
+    const promptText = buildPromptWithReferenceMentions(
+      buildPromptWithAttachments(payload.content, savedAttachments),
+      [...referenceMapping.textMentions, ...(nativePlan?.fallbackMentions ?? [])],
     )
     const localImagePaths = new Set(
       referenceItems
@@ -3458,25 +3576,26 @@ export class AgentManager {
       // serialization time) instead of degrading to a path-text mention.
       // Extension fallback covers sources that stat audio files as
       // application/octet-stream; .webm/.mp4 need an explicit audio/* mime.
+      // On an omni turn the media plan already consumed these (codex would
+      // strip `localAudio` for a slug it does not know), so they are skipped.
       ...savedAttachments
         .filter((item) =>
           item.mime.startsWith('audio/') ||
           AUDIO_EXTENSIONS.has(path.extname(item.localPath).toLowerCase()))
         .filter((item) => {
           const resolved = path.resolve(item.localPath)
+          if (nativePlan?.consumedAttachmentPaths.has(resolved)) return false
           if (localAudioPaths.has(resolved)) return false
           localAudioPaths.add(resolved)
           return true
         })
         .map((item) => ({ type: 'localAudio' as const, path: item.localPath })),
+      ...(nativePlan?.mediaItems ?? []),
     ]
 
-    // Persist the user turn before kicking off the backend so that:
-    //   1) After an app restart `switchThread` actually has chat history to load
-    //      (regression: AgentMessage rows were never written before this change).
-    //   2) `ThreadTitleSummarizer.maybeSummarize` can read both a user and an
-    //      assistant message later — its gate `messages.length < 2` was the
-    //      reason auto-titles never appeared in the thread switcher.
+    // Persist the user turn before kicking off the backend so that after an app
+    // restart `switchThread` actually has chat history to load (regression:
+    // AgentMessage rows were never written before this change).
     const userTimelineItems = this.buildUserTimelineItems(payload.content, savedAttachments)
     let clientUserMessageId: string | undefined
     if (userTimelineItems.length > 0) {
@@ -3542,6 +3661,19 @@ export class AgentManager {
         selection.modelId,
         selection.contextWindow,
       )
+    }
+
+    if (!payload.threadId) {
+      this.pendingThreadTitles.set(thread.id, {
+        threadId: thread.id,
+        userMessage: payload.content,
+        ...this.threadTitleModel(
+          selectionRoute?.channelId ?? this.channelController.currentChannelId(),
+          model,
+        ),
+        ...(input.modelProvider ? { modelProvider: input.modelProvider } : {}),
+        cwd: input.cwd,
+      })
     }
 
     // Expand the composer's preset KIND into the full experimental codex
@@ -4083,6 +4215,26 @@ export class AgentManager {
   async renameThread(threadId: string, title: string): Promise<void> {
     if (!this.store) throw new Error('AgentManager.renameThread called without store')
     return this.store.renameThread(threadId, title)
+  }
+
+  /**
+   * Pin / unpin a conversation. The DB column is authoritative (works offline
+   * and for threads that never talked to codex); codex's own persisted pin
+   * (`thread/metadata/update { isPinned }`) is mirrored best-effort so its
+   * `thread/list { isPinned }` agrees with our sidebar. Mirror failures (old
+   * binary without the method, backend down, thread never started) only warn.
+   */
+  async setThreadPinned(threadId: string, pinned: boolean): Promise<void> {
+    if (!this.store) throw new Error('AgentManager.setThreadPinned called without store')
+    await this.store.setThreadPinned(threadId, pinned)
+    if (!this.backend.updateThreadMetadata || !this.backend.isHealthy()) return
+    try {
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(threadId)
+      if (!codexThreadId) return
+      await this.backend.updateThreadMetadata(codexThreadId, { isPinned: pinned })
+    } catch (err) {
+      console.warn('[AgentManager] thread/metadata/update (isPinned) failed; local pin kept:', err)
+    }
   }
 
   /**
@@ -4707,6 +4859,24 @@ export class AgentManager {
     }
   }
 
+  private threadTitleModel(channelId: string, conversationModel: string): ThreadTitleModel {
+    let channel: { memoriesModel?: string } | undefined
+    try {
+      channel = resolveProviderChannel(channelId, this.providerStore.loadSync().customProviders)
+    } catch {
+      channel = undefined
+    }
+    return resolveThreadTitleModel(channel, conversationModel)
+  }
+
+  /** Runs in parallel with the main turn; at most once per new thread. */
+  private startPendingThreadTitle(dbThreadId: string): void {
+    const request = this.pendingThreadTitles.get(dbThreadId)
+    if (!request) return
+    this.pendingThreadTitles.delete(dbThreadId)
+    void this.titleGenerator?.generate(request)
+  }
+
   private async forwardEvents(
     dbThreadId: string,
     input: AgentInput,
@@ -4818,6 +4988,7 @@ export class AgentManager {
                 console.warn('[AgentManager] userMessage reconcile persist failed (best-effort):', err)
               })
             }
+            this.startPendingThreadTitle(dbThreadId)
             continue
           }
           if (!this.eventSink && this.win?.isDestroyed()) return
@@ -4891,12 +5062,7 @@ export class AgentManager {
             // 白拍一份完整工作区快照,而且那份孤儿快照还会在后台一直扫下去。
             observer = null
 
-            if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
-              this.firstTurnDoneByThread.set(dbThreadId, true)
-              this.summarizer?.maybeSummarize(dbThreadId).catch((err: unknown) => {
-                console.warn('[AgentManager] thread title summarization failed:', err)
-              })
-            }
+            this.startPendingThreadTitle(dbThreadId)
           }
         }
         if (!canRetryPoisonedThread && !this.codexThreadIdByDbThreadId.has(dbThreadId)) {

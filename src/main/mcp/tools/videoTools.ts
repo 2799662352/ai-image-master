@@ -29,7 +29,11 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskState,
 } from '../../services/seedance/types'
-import { validateSeedanceRequest } from '../../services/seedance/types'
+import {
+  SEEDANCE_DRAFT_RESOLUTION,
+  supportsSeedanceDraft,
+  validateSeedanceRequest,
+} from '../../services/seedance/types'
 import {
   ALL_VIDEO_MODEL_ALIASES,
   ALL_VIDEO_RATIOS,
@@ -207,8 +211,15 @@ type ToolContent = Array<
 >
 
 /** succeeded 任务的统一回包：DONE banner + 本地文件 resource_link。 */
+/** 样片成功后提醒 agent 下一步是出成片,而不是从头再生成一次。 */
+export const DRAFT_NEXT_STEP =
+  'This is a 480p 样片 (draft). Show it to the user; if they are happy, call finalize_video_draft with this ' +
+  'taskId to render the 1080p final (valid 7 days). To change the prompt/materials, make a NEW draft instead.'
+
 function doneContent(task: SeedanceTaskState): { content: ToolContent } {
-  const content: ToolContent = [{ type: 'text', text: buildDoneBanner(task) }]
+  const content: ToolContent = [
+    { type: 'text', text: task.draft ? `${buildDoneBanner(task)}\n${DRAFT_NEXT_STEP}` : buildDoneBanner(task) },
+  ]
   if (task.localPath) {
     content.push({
       type: 'resource_link',
@@ -258,6 +269,28 @@ async function waitForTerminal(
   }
 }
 
+/**
+ * 提交一次渲染并按「生成完才回归」策略等结果:约 75s 预算内等到终态就直接回,
+ * 烧完仍在渲染就交还 taskId 走 check_video_task,绝不重复提交。
+ */
+async function renderAndWait(
+  router: ToolRouter,
+  tool: string,
+  params: Record<string, unknown>,
+  codexThreadId: string | undefined,
+): Promise<{ content: ToolContent }> {
+  try {
+    const task = (await router.call('generate_video', params, codexThreadId)) as SeedanceTaskState
+    const final = await waitForTerminal(router, task.taskId, codexThreadId)
+    if (!final) return textResult(buildUnknownTaskBanner(task.taskId))
+    if (final.status === 'failed') return textResult(buildFailedBanner(final))
+    if (final.status === 'succeeded') return doneContent(final)
+    return textResult(buildBudgetExhaustedBanner(final))
+  } catch (error) {
+    return textResult(buildErrorBanner(tool, error))
+  }
+}
+
 export function registerVideoTools(server: McpServer, router: ToolRouter): void {
   server.registerTool('generate_video', {
     description:
@@ -285,11 +318,17 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'stitching up to 3 clips): both are just omni-reference under the hood — pass the source clip(s) ' +
       'via referenceVideos and write an edit/extend-style prompt (see the catimation-video skill). ' +
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE} In ` +
-      'the prompt, refer to materials by canonical ordinal ("视频1 / 图片1 / 音频1"), never by assetId. ' +
-      'The runtime also accepts and normalizes @Video1/@Image1/@Audio1, @视频1/@图片1/@音频1, ' +
-      '【@图片1】, and legacy <图片1> aliases before submission. Note: real ' +
+      'the prompt, refer to materials as "@图片1 / @视频1 / @音频1" exactly as the prompt base writes them, ' +
+      'never by assetId. The prompt is sent VERBATIM: the runtime does not rewrite, reflow, or strip the @ ' +
+      '(the only exception is the workbench chip wrapper 【@图片1】, unwrapped to @图片1), so Fal-style ' +
+      '@Image1 or legacy <图片1> would reach upstream unchanged — write @图片N. Note: real ' +
       'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
-      'previously Seedance-generated clip.',
+      'previously Seedance-generated clip. ' +
+      'SPECIAL VARIANT: model "depth" (深度捕捉) is not a generator — it converts ONE existing video into a ' +
+      'grayscale depth video (see the model parameter); every other input rule above does not apply to it. ' +
+      'Depth is SLOW and scales with the source length (measured: 5 s clip ~1.5 min, 60 s clip ~22 min, a 180 s clip ' +
+      'had not finished after 34 min) — trim the source to what is needed (usually <=60 s) first; the app polls a depth ' +
+      'task for up to 50 minutes.',
     annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       prompt: z.string().min(1).describe(
@@ -297,10 +336,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'parameters appended at the end.',
       ),
       model: zEnumOf(ALL_VIDEO_MODEL_ALIASES).optional().describe(
-        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive".',
+        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive". "wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and every input field — same modes, same 10/5/5 materials, same 2–30s, same 480P/720P/1080P, same document/web-link slot, same restrictions. The ONLY differences are the upstream model name and the price (≈1.33× wan3, i.e. ¥0.4/0.8/1.6 per second). Pick it when the user asks for the higher tier; otherwise "wan3". "depth" = 深度捕捉: NOT a generator but a ONE-SOURCE-VIDEO transform that outputs a grayscale depth video (near = bright, far = dark), useful as a motion/structure reference for a later generation. Pass the source ONLY via referenceVideos with exactly 1 item (local path or https URL; local files over 100 MB are rejected up front — compress with ffmpeg-win first; longer/larger sources than a few seconds are untested); no images, audio, firstFrame/lastFrame or taskMode. resolution is accepted (480p/720p/1080p) but every tier produces the SAME output at the SAME price — leave the default. Billed a flat per-call fee through the platform balance or Miau key (¥0.5 at time of writing, NOT per second). duration, ratio and generateAudio are ignored — output length and framing follow the source. The schema still requires a prompt: send a short label such as "深度捕捉"; it is not sent upstream.',
       ),
       resolution: zEnumOf(ALL_VIDEO_RESOLUTIONS).optional().describe(
-        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0" or "wan3" (NOT "2.5"); 4k is "2.0" only.',
+        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0" or "wan3" (NOT "2.5"); 4k is "2.0" only. "depth" accepts 480p / 720p / 1080p but all three give the same result and price.',
       ),
       ratio: zEnumOf(ALL_VIDEO_RATIOS).optional().describe(
         'Aspect ratio. Default 16:9. "21:9" is Seedance-only; "adaptive" is wan3-only (and is wan3\'s default). Ignored (forced adaptive) when taskMode is set.',
@@ -333,7 +372,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceVideos: z.array(z.string()).max(10).optional().describe(
         '全能参考: up to 3 reference videos (motion/style), local path / URL / asset://assetId. Each 4–15s, ' +
         'COMBINED total duration ≤15s — model "2.5" raises this to 10 videos combined ≤30s. ' +
-        'No client-side size cap (large local files are relayed automatically).',
+        'No client-side size cap (large local files are relayed automatically). ' +
+        'For model "depth" this is the ONE source video to convert (exactly 1 item; local files over 100 MB are rejected up front; asset:// is not accepted).',
       ),
       referenceAudios: z.array(z.string()).max(10).optional().describe(
         '全能参考: up to 3 reference audios (lip-sync/voice), local path / URL / asset://assetId. Each 4–15s, ' +
@@ -348,6 +388,12 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         + 'decided by the path extension (pdf/doc/docx/xls/xlsx/ppt/pptx/txt/md/key/pages/numbers = document). '
         + 'Ignored by Seedance models.',
       ),
+      draft: z.boolean().optional().describe(
+        'Seedance "2.5" + platform balance ONLY. true = render a cheap 480p 样片 (draft preview, billed as normal '
+        + '480p) to check composition/motion first. Resolution is forced to 480p. If the user likes it, call '
+        + 'finalize_video_draft with its taskId to get the 1080p final (within 7 days) — do NOT regenerate from '
+        + 'scratch. Use it when the user wants to preview cheaply, or for expensive long takes.',
+      ),
     }),
   }, async (params, ctx?: unknown) => {
     // 提交前按模型能力自查（4k/1080p 归属、时长区间、taskMode 前提、素材上限）。
@@ -360,9 +406,13 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceImages?: unknown[]
       referenceVideos?: unknown[]
       referenceAudios?: unknown[]
+      draft?: boolean
+    }
+    if (p.draft && !supportsSeedanceDraft(p.model)) {
+      return textResult(buildErrorBanner('generate_video', new Error('draft (样片) is Seedance "2.5" only — pass model "2.5".')))
     }
     const errors = validateSeedanceRequest(p.model ?? '2.0', {
-      resolution: p.resolution,
+      resolution: p.draft ? SEEDANCE_DRAFT_RESOLUTION : p.resolution,
       duration: p.duration,
       taskMode: p.taskMode,
       images: p.referenceImages?.length ?? 0,
@@ -372,20 +422,29 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
     if (errors.length > 0) {
       return textResult(buildErrorBanner('generate_video', new Error(errors.join('；'))))
     }
-    const codexThreadId = extractCodexThreadId(ctx)
-    try {
-      const task = (await router.call('generate_video', params, codexThreadId)) as SeedanceTaskState
-      // 优先阻塞等待终态；若约 75s 预算耗尽仍在渲染，则返回 taskId，
-      // 由 check_video_task 继续长轮询，绝不重复提交。
-      const final = await waitForTerminal(router, task.taskId, codexThreadId)
-      if (!final) return textResult(buildUnknownTaskBanner(task.taskId))
-      if (final.status === 'failed') return textResult(buildFailedBanner(final))
-      if (final.status === 'succeeded') return doneContent(final)
-      // 预算烧完仍在渲染：交还 taskId 走 check_video_task 兜底。
-      return textResult(buildBudgetExhaustedBanner(final))
-    } catch (error) {
-      return textResult(buildErrorBanner('generate_video', error))
-    }
+    return renderAndWait(router, 'generate_video', params, extractCodexThreadId(ctx))
+  })
+
+  server.registerTool('finalize_video_draft', {
+    description:
+      'Turn a finished Seedance 2.5 样片 (a 480p draft made with generate_video draft:true) into the 1080p FINAL ' +
+      'video. Pass ONLY the draft\'s taskId: upstream reuses the draft\'s prompt, references, duration, ratio, ' +
+      'seed and audio setting — they cannot be changed or resent (to change anything, make a new draft). ' +
+      'Works within 7 days of the draft, on platform balance only, and must run under the same billing pool ' +
+      'that made the draft. Billed at the 1080p rate. Blocks and reports like generate_video.',
+    annotations: WRITE_ADDITIVE_REMOTE,
+    inputSchema: z.object({
+      taskId: z.string().min(1).describe('taskId of the SUCCEEDED draft — the task_… id generate_video returned.'),
+    }),
+  }, async (params, ctx?: unknown) => {
+    const { taskId } = params as { taskId: string }
+    return renderAndWait(
+      router,
+      'finalize_video_draft',
+      // 走 generate_video 同一条主进程链路;成片的组包在传输层按 fromDraftTaskId 换成 draft_task。
+      { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: taskId.trim() },
+      extractCodexThreadId(ctx),
+    )
   })
 
   server.registerTool('check_video_task', {

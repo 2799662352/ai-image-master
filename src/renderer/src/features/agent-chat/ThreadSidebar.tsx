@@ -2,9 +2,59 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentThreadSummary, CodexThreadSummary } from '../../../../types/agent'
-import { BrainIcon, ChatBubbleIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
-import { formatRelativeTime, groupThreadsByRecency, type ThreadGroup } from './relativeTime'
+import {
+  ArrowUpRightIcon,
+  BrainIcon,
+  ChatBubbleIcon,
+  CircleCheckIcon,
+  CloseIcon,
+  LayoutDashboardIcon,
+  LoaderIcon,
+  MoreIcon,
+  PanelCollapseRightIcon,
+  PencilIcon,
+  PinIcon,
+  PlusIcon,
+  SearchIcon,
+  TrashIcon,
+} from './icons'
+import {
+  formatRelativeTime,
+  groupThreadsByRecency,
+  isThreadPinned,
+  type ThreadGroup,
+} from './relativeTime'
 import { useAgentChatStore } from './store'
+import { useTabStore } from '../../stores/useTabStore'
+
+/**
+ * Rows shown per group before the rest folds behind「更多 +N」. Six is what
+ * Cursor's agent sidebar shows before its "More" row; it keeps four groups on
+ * one 900px-tall screen without scrolling.
+ */
+const GROUP_FOLD_AT = 6
+
+/**
+ * Row subline, after Cursor's per-thread status line:「12 条消息 · 5h ago」, or
+ *「运行中 · 12 条消息」while a turn streams. Count omitted when the list
+ * predates the `messageCount` column (older main process).
+ */
+export function threadSubline(thread: AgentThreadSummary, running: boolean): string {
+  const count = typeof thread.messageCount === 'number' ? `${thread.messageCount} 条消息` : null
+  if (running) return count ? `运行中 · ${count}` : '运行中'
+  const when = formatRelativeTime(thread.lastMessageAt)
+  return count ? `${count} · ${when}` : when
+}
+
+/** Case-insensitive substring match on the title; empty query matches all. */
+export function filterThreadsByQuery(
+  threads: ReadonlyArray<AgentThreadSummary>,
+  query: string,
+): AgentThreadSummary[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [...threads]
+  return threads.filter((t) => t.title.toLowerCase().includes(q))
+}
 
 /**
  * Right-edge thread sidebar. Pinned to `right: 0` so it sits flush against the
@@ -14,11 +64,18 @@ import { useAgentChatStore } from './store'
  *
  * Owned by AgentChatPanel: it is only mounted while the panel itself is open,
  * so closing the panel takes the sidebar with it.
+ *
+ * Layout (design D1, Cursor-style): search + collapse → New chat → Agent
+ * 工作台 → groups Pinned / Today / Yesterday / Last 7 days / Older (each folds
+ * past {@link GROUP_FOLD_AT}) → Codex Sessions. Rows carry a status column
+ * (running / done), a title and a subline (running or relative time); hover
+ * reveals pin + ⋯.
  */
 export function ThreadSidebar(): JSX.Element | null {
   const sidebarOpen = useAgentChatStore((s) => s.sidebarOpen)
   const sidebarWidth = useAgentChatStore((s) => s.sidebarWidth)
   const setSidebarWidth = useAgentChatStore((s) => s.setSidebarWidth)
+  const toggleSidebar = useAgentChatStore((s) => s.toggleSidebar)
   const threadList = useAgentChatStore((s) => s.threadList)
   const threadListLoading = useAgentChatStore((s) => s.threadListLoading)
   const codexThreadList = useAgentChatStore((s) => s.codexThreadList)
@@ -29,11 +86,22 @@ export function ThreadSidebar(): JSX.Element | null {
   const switchThread = useAgentChatStore((s) => s.switchThread)
   const renameThread = useAgentChatStore((s) => s.renameThread)
   const deleteThread = useAgentChatStore((s) => s.deleteThread)
+  const setThreadPinned = useAgentChatStore((s) => s.setThreadPinned)
   const setThreadMemoryMode = useAgentChatStore((s) => s.setThreadMemoryMode)
   const memoriesGloballyEnabled = useAgentChatStore((s) => s.memoriesGloballyEnabled)
   const forkCodexThread = useAgentChatStore((s) => s.forkCodexThread)
 
-  const groups: ThreadGroup[] = useMemo(() => groupThreadsByRecency(threadList), [threadList])
+  const [query, setQuery] = useState('')
+  const filtered = useMemo(() => filterThreadsByQuery(threadList, query), [threadList, query])
+  const groups: ThreadGroup[] = useMemo(() => groupThreadsByRecency(filtered), [filtered])
+  const searching = query.trim().length > 0
+
+  // Same action as the header's "Open Agent Workspace": the workspace page is
+  // a full tab, so the drawer gets out of the way.
+  const openAgentWorkspace = useCallback(() => {
+    useTabStore.getState().switchTab('agentWorkspace')
+    useAgentChatStore.setState({ isOpen: false })
+  }, [])
 
   // Drag the left edge to resize. The store action clamps to [200, 360] and
   // persists to localStorage for us — we just need to translate cursor X into
@@ -79,37 +147,96 @@ export function ThreadSidebar(): JSX.Element | null {
         className="absolute left-0 top-0 z-10 h-full w-1 cursor-ew-resize hover:bg-cyan-400/40 active:bg-cyan-400/60"
         data-testid="thread-sidebar-resize"
       />
-      <header className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2.5">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.32em] text-cyan-300/70">
-          Threads
-        </span>
-        <button
-          type="button"
-          onClick={() => newThread()}
-          className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-[11px] font-medium text-cyan-100 transition-colors duration-200 hover:border-cyan-300/60 hover:bg-cyan-400/20"
-          title="Start a new chat"
-        >
-          <PlusIcon className="h-3.5 w-3.5" />
-          New chat
-        </button>
+
+      <header className="border-b border-zinc-800/80 px-3 pb-2 pt-3">
+        <div className="flex items-center gap-2">
+          <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/70 px-2 text-zinc-500 transition-colors focus-within:border-cyan-400/40">
+            <SearchIcon className="h-3.5 w-3.5 shrink-0" />
+            <input
+              type="search"
+              aria-label="Search threads"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && query) {
+                  e.preventDefault()
+                  setQuery('')
+                }
+              }}
+              placeholder="搜索线程…"
+              className="min-w-0 flex-1 bg-transparent text-[12px] text-zinc-100 outline-none placeholder:text-zinc-500 [&::-webkit-search-cancel-button]:hidden"
+            />
+            {searching ? (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => setQuery('')}
+                className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded text-zinc-500 hover:text-zinc-100"
+              >
+                <CloseIcon className="h-3 w-3" />
+              </button>
+            ) : null}
+          </label>
+          <button
+            type="button"
+            aria-label="Collapse sidebar"
+            title="收起线程侧栏"
+            onClick={() => toggleSidebar()}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-zinc-700/60 bg-zinc-900/60 text-zinc-400 transition-colors hover:border-cyan-300/50 hover:text-cyan-100"
+          >
+            <PanelCollapseRightIcon className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-2 space-y-0.5">
+          <button
+            type="button"
+            onClick={() => newThread()}
+            title="Start a new chat"
+            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-cyan-100 transition-colors hover:bg-cyan-400/10"
+          >
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-cyan-400/40 bg-cyan-400/10">
+              <PlusIcon className="h-3 w-3" />
+            </span>
+            <span className="flex-1 font-medium">New chat</span>
+          </button>
+          <button
+            type="button"
+            onClick={openAgentWorkspace}
+            title="打开 Agent 工作台（Overview / Permissions / MCP Servers / Skills / Connectors / Threads / Doctor / Logs）"
+            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-zinc-200 transition-colors hover:bg-zinc-800/60"
+          >
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-zinc-400">
+              <LayoutDashboardIcon className="h-3.5 w-3.5" />
+            </span>
+            <span className="flex-1">Agent 工作台</span>
+            <ArrowUpRightIcon className="h-3 w-3 text-zinc-500" />
+          </button>
+        </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto pb-2">
         <div>
           {threadListLoading && groups.length === 0 ? (
             <ThreadListSkeleton />
           ) : groups.length === 0 ? (
-            <EmptyThreadList />
+            searching ? (
+              <NoSearchMatches query={query} />
+            ) : (
+              <EmptyThreadList />
+            )
           ) : (
             groups.map((group) => (
               <ThreadGroupSection
                 key={group.label}
                 group={group}
+                // A search already narrows the list; folding on top of it hides hits.
+                foldAt={searching ? Number.POSITIVE_INFINITY : GROUP_FOLD_AT}
                 activeThreadId={threadId}
                 runningByThread={runningByThread}
                 onSwitch={switchThread}
                 onRename={renameThread}
                 onDelete={deleteThread}
+                onSetPinned={setThreadPinned}
                 onSetMemoryMode={setThreadMemoryMode}
                 memoriesGloballyEnabled={memoriesGloballyEnabled}
               />
@@ -138,11 +265,19 @@ function EmptyThreadList(): JSX.Element {
   )
 }
 
+function NoSearchMatches({ query }: { query: string }): JSX.Element {
+  return (
+    <div className="px-4 py-8 text-center text-[11px] text-zinc-500">
+      没有标题包含「{query.trim()}」的线程
+    </div>
+  )
+}
+
 function ThreadListSkeleton(): JSX.Element {
   return (
     <div className="space-y-1.5 px-2 pt-3">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-7 animate-pulse rounded-md bg-zinc-800/60" />
+        <div key={i} className="h-9 animate-pulse rounded-md bg-zinc-800/60" />
       ))}
     </div>
   )
@@ -157,7 +292,7 @@ interface CodexSessionsSectionProps {
 function CodexSessionsSection(props: CodexSessionsSectionProps): JSX.Element | null {
   if (!props.loading && props.sessions.length === 0) return null
   return (
-    <section className="border-t border-zinc-800/80 py-2">
+    <section className="mt-2 border-t border-zinc-800/80 py-2">
       <h3 className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
         Codex Sessions
       </h3>
@@ -198,11 +333,14 @@ function CodexSessionsSection(props: CodexSessionsSectionProps): JSX.Element | n
 
 interface ThreadGroupSectionProps {
   group: ThreadGroup
+  /** Rows shown before the fold; `Infinity` disables folding. */
+  foldAt: number
   activeThreadId: string | undefined
   runningByThread: Record<string, boolean>
   onSwitch: (id: string) => Promise<void> | void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onSetPinned: (id: string, pinned: boolean) => Promise<void>
   onSetMemoryMode: (
     id: string,
     mode: 'enabled' | 'disabled',
@@ -211,13 +349,24 @@ interface ThreadGroupSectionProps {
 }
 
 function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const total = props.group.threads.length
+  const folded = !expanded && total > props.foldAt
+  const visible = folded ? props.group.threads.slice(0, props.foldAt) : props.group.threads
+  const hidden = total - visible.length
+  const pinnedGroup = props.group.label === 'Pinned'
+
   return (
     <section>
-      <h3 className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
-        {props.group.label}
+      <h3 className="flex items-center justify-between px-3.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
+        <span className="flex items-center gap-1.5">
+          {pinnedGroup ? <PinIcon className="h-3 w-3 rotate-45 text-cyan-300/70" /> : null}
+          <span>{props.group.label}</span>
+        </span>
+        <span className="font-mono text-[10px] tabular-nums normal-case tracking-normal text-zinc-600">{total}</span>
       </h3>
-      <ul className="px-1 pb-2">
-        {props.group.threads.map((t) => (
+      <ul className="space-y-0.5 px-1.5 pb-1">
+        {visible.map((t) => (
           <ThreadRow
             key={t.id}
             thread={t}
@@ -226,11 +375,25 @@ function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
             onSwitch={props.onSwitch}
             onRename={props.onRename}
             onDelete={props.onDelete}
+            onSetPinned={props.onSetPinned}
             onSetMemoryMode={props.onSetMemoryMode}
             memoriesGloballyEnabled={props.memoriesGloballyEnabled}
           />
         ))}
       </ul>
+      {folded ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="mx-1.5 mb-1 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left text-[11px] text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300"
+        >
+          <span className="inline-flex h-4 w-4 items-center justify-center">
+            <MoreIcon className="h-3.5 w-3.5" />
+          </span>
+          <span>更多</span>
+          <span className="font-mono text-[10px] tabular-nums text-zinc-600">+{hidden}</span>
+        </button>
+      ) : null}
     </section>
   )
 }
@@ -243,6 +406,7 @@ interface ThreadRowProps {
   onSwitch: (id: string) => Promise<void> | void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onSetPinned: (id: string, pinned: boolean) => Promise<void>
   onSetMemoryMode: (
     id: string,
     mode: 'enabled' | 'disabled',
@@ -263,6 +427,8 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
 
+  const pinned = isThreadPinned(props.thread)
+
   const startRename = useCallback(() => {
     setDraftTitle(props.thread.title)
     setMode('rename')
@@ -275,6 +441,11 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     if (!next || next === props.thread.title) return
     await props.onRename(props.thread.id, next)
   }, [draftTitle, props])
+
+  const togglePinned = useCallback(async () => {
+    setMode('idle')
+    await props.onSetPinned(props.thread.id, !pinned)
+  }, [pinned, props])
 
   // Absent memoryMode means "never chosen", and codex remembers by default —
   // so an unchosen thread reads as remembering.
@@ -314,7 +485,7 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
       const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
       const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
       const left = Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width))
-      const top = Math.max(8, Math.min(viewportHeight - 150, rect.bottom + 4))
+      const top = Math.max(8, Math.min(viewportHeight - 190, rect.bottom + 4))
       setMenuPos({ top, left })
     }
     syncMenuPosition()
@@ -391,12 +562,14 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     )
   }
 
+  const actionsVisible = mode === 'menu'
+
   return (
-    <li className="group relative px-1">
+    <li className="group relative">
       <div
         className={[
           'flex items-stretch overflow-hidden rounded-md transition-colors duration-150',
-          props.active ? 'bg-cyan-500/10' : 'hover:bg-zinc-800/60',
+          props.active ? 'bg-cyan-500/10 ring-1 ring-cyan-400/25' : 'hover:bg-zinc-800/60',
         ].join(' ')}
       >
         <span
@@ -407,7 +580,6 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
           ].join(' ')}
         />
         <button
-          ref={menuButtonRef}
           type="button"
           onClick={() => {
             if (props.active) return
@@ -416,50 +588,96 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
           onDoubleClick={() => startRename()}
           title={props.thread.title}
           className={[
-            'flex flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left text-[12px] transition-colors cursor-pointer',
+            'flex min-w-0 flex-1 cursor-pointer items-start gap-2 px-2 py-1.5 text-left text-[12px] transition-colors',
             props.active ? 'text-cyan-100' : 'text-zinc-200',
           ].join(' ')}
         >
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center">
             {props.running ? (
               <span
                 aria-label="Running"
                 title="正在运行（可切走，不会中断）"
-                className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-cyan-400"
-              />
-            ) : null}
-            <span className="truncate">{props.thread.title}</span>
+                className="inline-flex h-4 w-4 items-center justify-center text-cyan-300"
+              >
+                <LoaderIcon className="h-3.5 w-3.5 animate-spin" />
+              </span>
+            ) : (
+              <CircleCheckIcon className="h-3.5 w-3.5 text-zinc-600" />
+            )}
           </span>
-          <span className="shrink-0 text-[10px] text-zinc-500">
-            {formatRelativeTime(props.thread.lastMessageAt)}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{props.thread.title}</span>
+            <span
+              className={[
+                'mt-0.5 block truncate text-[10px]',
+                props.running ? 'text-cyan-300/80' : 'text-zinc-500',
+              ].join(' ')}
+            >
+              {threadSubline(props.thread, props.running)}
+            </span>
           </span>
         </button>
-        <button
-          type="button"
-          data-testid={`thread-menu-${props.thread.id}`}
-          aria-label={`Thread actions for ${props.thread.title}`}
-          aria-haspopup="menu"
-          aria-expanded={mode === 'menu'}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (mode === 'menu') {
-              setMode('idle')
-              return
-            }
-            const rect = e.currentTarget.getBoundingClientRect()
-            const width = 190
-            const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
-            const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
-            setMenuPos({
-              top: Math.max(8, Math.min(viewportHeight - 150, rect.bottom + 4)),
-              left: Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width)),
-            })
-            setMode('menu')
-          }}
-          className="flex w-7 cursor-pointer items-center justify-center text-zinc-500 opacity-0 transition-opacity duration-150 hover:text-zinc-100 group-hover:opacity-100 aria-expanded:opacity-100"
+        <span
+          className={[
+            'flex shrink-0 items-center gap-0.5 pr-1.5 transition-opacity duration-150',
+            actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
+          ].join(' ')}
         >
-          <MoreIcon className="h-3.5 w-3.5" />
-        </button>
+          <button
+            type="button"
+            data-testid={`thread-pin-${props.thread.id}`}
+            aria-label={pinned ? `Unpin thread ${props.thread.title}` : `Pin thread ${props.thread.title}`}
+            aria-pressed={pinned}
+            title={pinned ? '取消置顶' : '置顶'}
+            onClick={(e) => {
+              e.stopPropagation()
+              void togglePinned()
+            }}
+            className={[
+              'inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors',
+              pinned ? 'text-cyan-300 hover:bg-zinc-700/60' : 'text-zinc-500 hover:bg-zinc-700/60 hover:text-zinc-100',
+            ].join(' ')}
+          >
+            <PinIcon className="h-3.5 w-3.5 rotate-45" />
+          </button>
+          <button
+            ref={menuButtonRef}
+            type="button"
+            data-testid={`thread-menu-${props.thread.id}`}
+            aria-label={`Thread actions for ${props.thread.title}`}
+            aria-haspopup="menu"
+            aria-expanded={mode === 'menu'}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (mode === 'menu') {
+                setMode('idle')
+                return
+              }
+              const rect = e.currentTarget.getBoundingClientRect()
+              const width = 190
+              const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
+              const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
+              setMenuPos({
+                top: Math.max(8, Math.min(viewportHeight - 190, rect.bottom + 4)),
+                left: Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width)),
+              })
+              setMode('menu')
+            }}
+            className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-zinc-500 transition-colors hover:bg-zinc-700/60 hover:text-zinc-100 aria-expanded:bg-zinc-700/60 aria-expanded:text-zinc-100"
+          >
+            <MoreIcon className="h-3.5 w-3.5" />
+          </button>
+        </span>
+        {/* Resting pin marker: pinned rows show a faint pin where the hover
+            actions will appear, so pinned state reads without hovering. */}
+        {pinned && !actionsVisible ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute right-3 top-2 text-cyan-300/60 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+          >
+            <PinIcon className="h-3 w-3 rotate-45" />
+          </span>
+        ) : null}
       </div>
       {mode === 'menu' && menuPos ? createPortal(
         <>
@@ -500,6 +718,19 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
             }}
             className="fixed z-[99999] min-w-[190px] overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 py-1 text-[12px] text-zinc-200 shadow-[0_18px_60px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/20"
           >
+            <button
+              role="menuitem"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                void togglePinned()
+              }}
+              className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-zinc-800/60"
+            >
+              <PinIcon className="h-3.5 w-3.5 rotate-45" />
+              {pinned ? '取消置顶' : '置顶'}
+            </button>
             <button
               role="menuitem"
               type="button"
@@ -550,6 +781,7 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
                 {memoryError}
               </p>
             ) : null}
+            <div className="my-1 border-t border-zinc-800" />
             <button
               role="menuitem"
               type="button"

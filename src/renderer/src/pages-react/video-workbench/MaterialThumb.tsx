@@ -16,19 +16,21 @@ import {
   useResolvedMediaSrc,
 } from '../../components/shared/media/useResolvedMediaSrc'
 import {
+  cachedAssetSourceUrl,
   extractAssetId,
   getCachedAssetPreview,
   resolveAssetPreviews,
   withCachedAssetPreview,
 } from '../../features/video-workbench/assetPreview'
 import type { MediaTokenKind } from '../../features/video-workbench/promptTokens'
+import { canResolveVideoPoster, resolveVideoPoster } from '../../features/video-workbench/videoPoster'
 
 /**
  * 素材 → 需要解析的缩略图目标地址:
  *  - previewUrl(人像库/官方素材的 https 预览)优先,任何 kind 都可用;
  *  - 图片素材用 src 本身(data:/https 直通;本地路径由解析层经 IPC 转 blob:);
  *  - asset:// 没有 previewUrl 时渲染端无法直连 → undefined(调用方给占位);
- *  - 视频/音频素材不出图片缩略(与既有 emoji 占位行为一致)。
+ *  - 视频/音频不在这里出图 —— 视频缩略图见 `materialThumbSpec`。
  */
 export function materialThumbTarget(
   kind: MediaTokenKind,
@@ -41,13 +43,97 @@ export function materialThumbTarget(
 }
 
 /**
- * asset:// 且缺 previewUrl 的素材(agent 经 MCP 挂上的旧数据)→ 惰性经
- * seedance.listAssets 解析 previewUrl(assetPreview 会话级缓存,同一
- * assetId 只查一次;多素材共享一轮全量拉取)。命中后返回补了 previewUrl
- * 的素材;未命中/解析中返回原素材(调用方保持文件名占位)。
+ * 缩略图怎么来:
+ *  - `image`:图片地址(见 materialThumbTarget);
+ *  - `video-frame`:本地视频 → 主进程截一帧(系统缩略图 / 自带 ffmpeg,不花钱);
+ *  - `video-poster`:COS 上的视频(含平台素材库里的视频)→ 数据万象封面,生成一次后复用。
+ *
+ * 以前视频一律没有缩略图,从挂上去那一刻起就只显示 🎬。
  */
-export function useAssetPreviewMaterial(material: VideoWorkbenchMaterial): VideoWorkbenchMaterial {
-  const assetId = material.previewUrl ? null : extractAssetId(material.src)
+export type MaterialThumbSpec =
+  | { key: string; kind: 'image'; src: string }
+  | { key: string; kind: 'video-frame'; src: string }
+  | { key: string; kind: 'video-poster'; src: string }
+
+/** 视频截帧失败时不许退回读整个文件(见 useResolvedMediaSrc 的 thumbOnly)。 */
+const VIDEO_FRAME_OPTS = { thumbOnly: true } as const
+
+export function materialThumbSpec(
+  kind: MediaTokenKind,
+  m: VideoWorkbenchMaterial,
+): MaterialThumbSpec | undefined {
+  const image = materialThumbTarget(kind, m)
+  if (image) return { key: image, kind: 'image', src: image }
+  if (kind !== 'video') return undefined
+  const remote = cachedAssetSourceUrl(m) ?? (/^https?:/i.test(m.src) ? m.src : undefined)
+  if (remote) {
+    return canResolveVideoPoster(remote)
+      ? { key: `video-poster:${remote}`, kind: 'video-poster', src: remote }
+      : undefined
+  }
+  if (/^(asset:|data:|blob:)/i.test(m.src)) return undefined
+  return { key: `video-frame:${m.src}`, kind: 'video-frame', src: m.src }
+}
+
+function acquireThumb(spec: MaterialThumbSpec): Promise<string | null> {
+  switch (spec.kind) {
+    case 'image':
+      return acquireMediaSrc(spec.src, 'image')
+    case 'video-frame':
+      return acquireMediaSrc(spec.src, 'video', VIDEO_FRAME_OPTS)
+    case 'video-poster':
+      return resolveVideoPoster(spec.src)
+    default: {
+      const unreachable: never = spec
+      return unreachable
+    }
+  }
+}
+
+function releaseThumb(spec: MaterialThumbSpec): void {
+  switch (spec.kind) {
+    case 'image':
+      releaseMediaSrc(spec.src, 'image')
+      return
+    case 'video-frame':
+      releaseMediaSrc(spec.src, 'video', VIDEO_FRAME_OPTS)
+      return
+    case 'video-poster':
+      // 封面是 https 静态对象,没有 blob 要回收。
+      return
+    default: {
+      const unreachable: never = spec
+      return unreachable
+    }
+  }
+}
+
+function useVideoPoster(videoUrl: string): string | null {
+  const [state, setState] = useState<{ url: string; poster: string | null }>({ url: '', poster: null })
+  useEffect(() => {
+    if (!videoUrl) return
+    let cancelled = false
+    void resolveVideoPoster(videoUrl).then((poster) => {
+      if (!cancelled) setState({ url: videoUrl, poster })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [videoUrl])
+  return state.url === videoUrl ? state.poster : null
+}
+
+/**
+ * asset:// 的素材(agent 经 MCP 挂上的)→ 惰性去素材所在的库里查预览地址
+ * (assetPreview 会话级缓存,同一 assetId 只查一次;多素材共享一轮拉取)。命中后
+ * 返回补了 previewUrl 的素材;未命中/解析中返回原素材(调用方保持文件名占位)。
+ */
+export function useAssetPreviewMaterial(
+  material: VideoWorkbenchMaterial,
+  /** 预览弹窗要原始地址:即便素材已带缩略图 previewUrl 也去库里查一次。 */
+  wantSource = false,
+): VideoWorkbenchMaterial {
+  const assetId = material.previewUrl && !wantSource ? null : extractAssetId(material.src)
   const needsResolve = assetId !== null && getCachedAssetPreview(assetId) === undefined
   const [, setVersion] = useState(0)
   useEffect(() => {
@@ -95,11 +181,14 @@ export function MaterialThumb({
   resolvedSrc,
 }: MaterialThumbProps) {
   const effective = useAssetPreviewMaterial(material)
-  const target = materialThumbTarget(kind, effective) ?? ''
-  // hook 不能有条件地调,所以父层接管时喂空 target —— 空串走不到 IPC。
+  const spec = materialThumbSpec(kind, effective)
+  // hook 不能有条件地调,所以父层接管 / 不是这条路时喂空串 —— 空串走不到 IPC。
   const parentOwns = resolvedSrc !== undefined
-  const own = useResolvedMediaSrc(parentOwns ? '' : target, 'image')
-  const resolved = parentOwns ? resolvedSrc : own
+  const fileSrc = !parentOwns && spec && spec.kind !== 'video-poster' ? spec.src : ''
+  const isFrame = spec?.kind === 'video-frame'
+  const ownFile = useResolvedMediaSrc(fileSrc, isFrame ? 'video' : 'image', isFrame ? VIDEO_FRAME_OPTS : {})
+  const ownPoster = useVideoPoster(!parentOwns && spec?.kind === 'video-poster' ? spec.src : '')
+  const resolved = parentOwns ? resolvedSrc : spec?.kind === 'video-poster' ? ownPoster : ownFile
   const [erroredSrc, setErroredSrc] = useState<string | null>(null)
   if (!resolved || erroredSrc === resolved) return <>{fallback}</>
   return (
@@ -154,46 +243,47 @@ export function useMaterialThumbSrcs(entries: MaterialThumbEntry[]): Array<strin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assetKey])
 
-  const targets = entries.map((e) => materialThumbTarget(e.kind, withCachedAssetPreview(e.material)))
-  const depKey = targets.join('\n')
-  // 本地视图(target → 可渲染地址)。字节与 blob 的所有权在 acquireMediaSrc 的
+  const specs = entries.map((e) => materialThumbSpec(e.kind, withCachedAssetPreview(e.material)))
+  const depKey = specs.map((s) => s?.key ?? '').join('\n')
+  // 本地视图(key → 可渲染地址)。字节与 blob 的所有权在 acquireMediaSrc 的
   // 共享缓存里,这里只记「本 hook 实例看到的结果」并持有对应的引用 —— 所以两张
   // 卡引用同一个文件只读一次盘、只造一个 blob,而任一张卡卸载都不会 revoke 掉
   // 另一张仍在渲染的那个地址。
   const viewRef = useRef<Map<string, string>>(new Map())
-  /** 本实例已取过引用的 target,卸载/换素材时按它归还。 */
-  const heldRef = useRef<Set<string>>(new Set())
+  /** 本实例已取过引用的缩略图,卸载/换素材时按它归还。 */
+  const heldRef = useRef<Map<string, MaterialThumbSpec>>(new Map())
   const [version, setVersion] = useState(0)
 
   useEffect(() => {
     const view = viewRef.current
     const held = heldRef.current
-    const wanted = new Set(targets.filter((t): t is string => !!t))
+    const wanted = new Map<string, MaterialThumbSpec>()
+    for (const s of specs) if (s) wanted.set(s.key, s)
 
     // 先归还已经用不到的 —— 素材被删掉后不该继续占着那份字节。
-    for (const target of [...held]) {
-      if (wanted.has(target)) continue
-      releaseMediaSrc(target, 'image')
-      held.delete(target)
-      view.delete(target)
+    for (const [key, spec] of [...held]) {
+      if (wanted.has(key)) continue
+      releaseThumb(spec)
+      held.delete(key)
+      view.delete(key)
     }
 
-    const pending = [...wanted].filter((t) => !held.has(t))
+    const pending = [...wanted.values()].filter((s) => !held.has(s.key))
     if (pending.length === 0) return
     let cancelled = false
     // 取引用要同步做:等到 then 里再取,期间别处 release 到 0 就会白读一遍。
-    const acquired = pending.map((target) => {
-      held.add(target)
-      return [target, acquireMediaSrc(target, 'image')] as const
+    const acquired = pending.map((spec) => {
+      held.set(spec.key, spec)
+      return [spec.key, acquireThumb(spec)] as const
     })
     void Promise.all(
-      acquired.map(async ([target, p]) => [target, await p] as const),
+      acquired.map(async ([key, p]) => [key, await p] as const),
     ).then((pairs) => {
       if (cancelled) return
       let changed = false
-      for (const [target, out] of pairs) {
+      for (const [key, out] of pairs) {
         if (!out) continue
-        view.set(target, out)
+        view.set(key, out)
         changed = true
       }
       if (changed) setVersion((v) => v + 1)
@@ -201,7 +291,7 @@ export function useMaterialThumbSrcs(entries: MaterialThumbEntry[]): Array<strin
     return () => {
       cancelled = true
     }
-    // targets 的内容全部编码进 depKey,数组引用本身每次渲染都会变,不能进依赖
+    // specs 的内容全部编码进 depKey,数组引用本身每次渲染都会变,不能进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depKey])
 
@@ -210,14 +300,14 @@ export function useMaterialThumbSrcs(entries: MaterialThumbEntry[]): Array<strin
     const view = viewRef.current
     const held = heldRef.current
     return () => {
-      for (const target of held) releaseMediaSrc(target, 'image')
+      for (const spec of held.values()) releaseThumb(spec)
       held.clear()
       view.clear()
     }
   }, [])
 
   return useMemo(
-    () => targets.map((t) => (t ? viewRef.current.get(t) : undefined)),
+    () => specs.map((s) => (s ? viewRef.current.get(s.key) : undefined)),
     // 同上:targets 内容由 depKey 表达;version 表达解析结果变化
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [depKey, version],

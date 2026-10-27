@@ -9,11 +9,14 @@ import {
   CATIMATION_SUBAGENTS_SKILL,
   CATIMATION_UNDERSTAND_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
+  CATIMATION_VIDEO_WORKBENCH_SKILL,
+  GRAPHIFY_SKILL,
   FIRST_PARTY_SKILLS,
   KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES,
   installFirstPartySkills,
   type FirstPartySkill,
 } from '../firstPartySkills'
+import { GENERATED_FIRST_PARTY_SKILLS } from '../generated/firstPartySkills.generated'
 // 单一真源生成器(仓库脚本,无 .d.ts,类型由 checkJs 推断)
 import { renderGeneratedModule, GENERATED_RELATIVE_PATH } from '../../../../scripts/generate-first-party-skills.mjs'
 
@@ -262,6 +265,10 @@ describe('installFirstPartySkills', () => {
       expect(c).toContain('resolution')
       expect(c).toContain('quality')
       expect(c).toContain('gpt-image-2-vip')
+      expect(c).toContain('gpt-image-2.5-flare')
+      expect(c).toContain('gpt-image-2.5-sunburst')
+      expect(c).toContain('gpt-image-2.5-all')
+      expect(c).not.toContain('gpt-image-2.5-vip')
     })
 
     it('installs cleanly into a fresh root', async () => {
@@ -371,15 +378,18 @@ describe('installFirstPartySkills', () => {
       expect(desc.length).toBeLessThanOrEqual(500)
     })
 
-    it('documents the three understand tools, the audio→MP4 fallback, and the qwen subagent', () => {
+    it('documents the four understand tools, the native audio path, and the qwen subagent', () => {
       const c = CATIMATION_UNDERSTAND_SKILL.content
       expect(c).toContain('understand_video')
+      expect(c).toContain('understand_audio')
       expect(c).toContain('understand_document')
       expect(c).toContain('web_research')
-      // audio is not native → ffmpeg → MP4 → understand_video
+      // audio is native on omni: extract the track with ffmpeg, never wrap it into a placeholder MP4
       expect(c).toContain('ffmpeg')
-      expect(c).toContain('MP4')
-      // Path B: spawn a subagent pinned to the qwen provider/model
+      expect(c).toMatch(/Do NOT wrap audio into a\s+placeholder MP4/)
+      // Path B: spawn a subagent pinned to the qwen provider; omni is the default model,
+      // and the 3.7 aliases stay documented while both generations run in parallel.
+      expect(c).toContain('qwen3.8-omni-flash')
       expect(c).toContain('qwen3.7-max-dashscope')
       expect(c).toContain('modelProvider')
     })
@@ -436,7 +446,153 @@ describe('installFirstPartySkills', () => {
     })
   })
 
+  describe('GRAPHIFY_SKILL', () => {
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(GRAPHIFY_SKILL)
+      expect(GRAPHIFY_SKILL.name).toBe('graphify')
+      expect(GRAPHIFY_SKILL.name).toMatch(/^[a-z0-9-]+$/)
+      expect(GRAPHIFY_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(GRAPHIFY_SKILL.content).toMatch(/\nname:\s*graphify\n/)
+      expect(GRAPHIFY_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('is query-first and never builds when a graph already exists', () => {
+      const c = GRAPHIFY_SKILL.content
+      expect(c).toContain('graphify-out/graph.json')
+      expect(c).toMatch(/do NOT rebuild/i)
+      expect(c).toContain('graphify query')
+      expect(c).toContain('graphify path')
+      expect(c).toContain('graphify explain')
+    })
+
+    it('defaults to the local AST-only build and gates anything that costs tokens or installs software', () => {
+      const c = GRAPHIFY_SKILL.content
+      expect(c).toContain('graphify update <dir>')
+      expect(c).toMatch(/Do not use `graphify extract --code-only`/)
+      expect(c).toContain('graphify --version')
+      expect(c).toMatch(/Do not install\s+anything without an explicit yes/)
+      expect(c).toMatch(/never reuse the\s+app's image\/video gateway\s+token/)
+    })
+
+    it('is preserved when the user already installed the official skill under the same name', async () => {
+      const officialRoot = await makeTempRoot()
+      const official = '---\nname: graphify\ndescription: official\n---\n# official graphify skill\n'
+      const dir = path.join(officialRoot, 'graphify')
+      await mkdir(dir, { recursive: true })
+      await writeFile(path.join(dir, 'SKILL.md'), official, 'utf8')
+
+      const report = await installFirstPartySkills({ officialRoot })
+
+      expect(report.preserved).toContain('graphify')
+      expect(report.installed).not.toContain('graphify')
+      expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(official)
+    })
+  })
+
+  describe('CATIMATION_VIDEO_WORKBENCH_SKILL', () => {
+    const NAME = 'catimation-video-workbench'
+    const knownHashes = () => KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.get(NAME)
+
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(CATIMATION_VIDEO_WORKBENCH_SKILL)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.name).toBe(NAME)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content).toMatch(/\nname:\s*catimation-video-workbench\n/)
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('carries the multi-conversation write-safety rules agents must follow', () => {
+      const c = CATIMATION_VIDEO_WORKBENCH_SKILL.content
+      expect(c).toContain('clientRef')
+      expect(c).toContain('expectedRev')
+      expect(c).toContain('changedSinceYourLastCall')
+    })
+
+    it('is a single-file skill (no bundled references that would dangle after install)', () => {
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.files).toBeUndefined()
+      expect(CATIMATION_VIDEO_WORKBENCH_SKILL.content).not.toMatch(/references\//)
+    })
+
+    it('installs on a fresh machine, byte-identical to the source of truth', async () => {
+      const officialRoot = await makeTempRoot()
+      const report = await installFirstPartySkills({ officialRoot })
+      expect(report.installed).toContain(NAME)
+      const written = await readFile(path.join(officialRoot, NAME, 'SKILL.md'), 'utf8')
+      expect(written).toBe(CATIMATION_VIDEO_WORKBENCH_SKILL.content)
+    })
+
+    it('recognizes markerless copies that earlier plugin-marketplace installs left behind', () => {
+      // 原始版本(#178)、用户机器上 9/24 的市场副本、#367 之前 main 上的最后一版。
+      for (const hash of [
+        'c1d20cd55a877eacbd84a41588a9162bbfd012954ccd2770992f6e6a3f1a929a',
+        'cde4a5b41cedb280065dc5ee9a8bdc412e26c8d21e293ff2ee055634bcfcacd2',
+        'fa07ef8c898b21736706cbd9562d9d06ce67991282e881672ab02348692c44b7',
+      ]) {
+        expect(knownHashes()?.has(hash), hash).toBe(true)
+      }
+    })
+  })
+
   describe('single-source parity', () => {
+    // 守卫「生成了却没装」这一类漏接:#178 新增工作台 skill 时只改了生成器和生成物,
+    // 没把它放进 FIRST_PARTY_SKILLS,于是 v4.4.21 说明里写的「随应用打包」三个月都没兑现,
+    // 而每个 skill 各自那条「在 FIRST_PARTY_SKILLS 里」的断言又只能防它自己。
+    it('ships exactly the skills the generator produces', () => {
+      const shipped = FIRST_PARTY_SKILLS.map((s) => s.name).sort()
+      const generated = GENERATED_FIRST_PARTY_SKILLS.map((s) => s.name).sort()
+      expect(shipped).toEqual(generated)
+    })
+
+    it('ships the generated content verbatim for every skill', () => {
+      for (const gen of GENERATED_FIRST_PARTY_SKILLS) {
+        const shipped = FIRST_PARTY_SKILLS.find((s) => s.name === gen.name)
+        expect(shipped, `${gen.name} is generated but not shipped`).toBeDefined()
+        expect(shipped?.content, `${gen.name} content differs from generated`).toBe(gen.content)
+      }
+    })
+
+    // 「已知无标记副本」清单的维护守卫。商城安装会抹掉 .catimation-managed 标记,之后只有
+    // 「内容等于本应用自带的」或「哈希在这份清单里」的副本才会被应用重新接管;否则当作用户的、
+    // 永不再更新。所以每个版本在变成「历史版本」之前就得已经登记 —— 靠这条测试强制,不靠记性:
+    // 改了 SKILL.md 却没把新内容的哈希追加进清单,CI 就红。(ffmpeg-win 的清单曾停在 7/10,
+    // 之后 7/15、8/9 两个版本没登记,正是没有这道守卫的结果。)
+    it('registers the CURRENT content of every skill that has a known-hash entry (append-only list)', () => {
+      expect(KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.size).toBeGreaterThan(0)
+      for (const [name, hashes] of KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES) {
+        const skill = FIRST_PARTY_SKILLS.find((s) => s.name === name)
+        expect(skill, `${name} has a known-hash entry but is not a shipped first-party skill`).toBeDefined()
+        const current = crypto
+          .createHash('sha256')
+          .update((skill?.content ?? '').replace(/\r\n/g, '\n'), 'utf8')
+          .digest('hex')
+        expect(
+          hashes.has(current),
+          `${name}: SKILL.md changed but its new hash is not registered. Append '${current}' to ` +
+            `KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES['${name}'] (append-only) so copies installed from ` +
+            `the marketplace before the next change stay adoptable.`,
+        ).toBe(true)
+      }
+    })
+
+    it('known-hash entries are well-formed sha256 hex (a typo would silently never match)', () => {
+      for (const [name, hashes] of KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES) {
+        for (const hash of hashes) {
+          expect(hash, `${name}: ${hash}`).toMatch(/^[0-9a-f]{64}$/)
+        }
+      }
+    })
+
+    it('keeps the ffmpeg-win versions that were once missing from the list (append-only)', () => {
+      const known = KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.get('ffmpeg-win')
+      for (const hash of [
+        'dbfb8345e1c703459696a7bf7b8a7904f529eb9eb23c3dc9fca79901121d934e', // 2026-07-15 5af50fcb
+        '3485332f75ee1e4b5b2134511da69a1733cf0bfc0ae229bcf7ea7303656d5eed', // 2026-08-09 e46d8f12
+        'c334e7b2c7883a6d06c0a0f0c82ae207ca61cec36cd9b27136024dbd58d1bef6', // 2026-09-20 97fd6e33
+      ]) {
+        expect(known?.has(hash), hash).toBe(true)
+      }
+    })
+
     it('generated module matches its Markdown sources (run generate-first-party-skills.mjs if this fails)', async () => {
       const repoRoot = path.resolve(__dirname, '..', '..', '..', '..')
       const onDisk = await readFile(

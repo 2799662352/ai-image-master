@@ -19,6 +19,7 @@ CREATE TABLE "AgentThread" (
     "gatewayId" TEXT,
     "modelProvider" TEXT,
     "memoryMode" TEXT,
+    "pinnedAt" TIMESTAMP(3),
     "lastMessageAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -111,6 +112,8 @@ const ALIGN_SCHEMA_SQL: readonly string[] = [
   // Per-thread memory eligibility. NULL on existing rows = never chosen, which
   // is exactly the pre-feature behavior (codex default applies).
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "memoryMode" TEXT`,
+  // Sidebar pin (D1). NULL on existing rows = not pinned.
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "pinnedAt" TIMESTAMP(3)`,
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "lastMessageAt" TIMESTAMP(3)`,
   `CREATE INDEX IF NOT EXISTS "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC)`,
   `ALTER TABLE "AgentMessage" ADD COLUMN IF NOT EXISTS "items" JSONB NOT NULL DEFAULT '[]'`,

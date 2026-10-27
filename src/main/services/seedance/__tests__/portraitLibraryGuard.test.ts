@@ -12,7 +12,11 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { usesSeedanceAssetLibrary } from '../assetLibraryPolicy'
+import {
+  upstreamAcceptsInlineMedia,
+  usesPlatformAssetLibrary,
+  usesSeedanceAssetLibrary,
+} from '../assetLibraryPolicy'
 
 describe('usesSeedanceAssetLibrary', () => {
   it('Seedance 全家走素材库 / 人像库', () => {
@@ -28,38 +32,276 @@ describe('usesSeedanceAssetLibrary', () => {
   it('缺省(未指定模型)按 2.0 处理,行为与接入万相之前一致', () => {
     expect(usesSeedanceAssetLibrary(undefined)).toBe(true)
   })
+
+  /**
+   * 🧬 变异点:把 `billing === 'platform'` 那一支删掉(退回只看 provider),这几条必红。
+   *
+   * 平台余额那条路用的是**平台的**素材库(`/api/volcengine-asset/*`,平台 JWT +
+   * X-Project-Id),与 vvdance 的 `/api/open/v1/local-assets`(HMAC)是**两个池**,
+   * `asset://` 不通用。只看 provider 的话,平台模式下仍会:
+   *
+   *   - 拿 vvdance 的 apiKey/apiSecret 去校验**平台的** asset id —— 那些 id 在
+   *     vvdance 库里根本不存在,校验判定「缺失」并**硬拦下整次提交**
+   *   - 把参考图导进 **vvdance 的**人像库,而用户看的是平台库
+   *
+   * 只配平台、没配 vvdance 密钥的用户撞不到(`assets.ts:375` 缺凭据提前 return),
+   * **但从 vvdance 迁过来的用户两边密钥都有** —— 他们是这个 bug 的靶心,
+   * 而报出来的是一句关于素材不存在的中文错误,根因完全看不出来。
+   */
+  it('平台余额下一律不碰 vvdance 素材库 —— 那是另一个池', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(usesSeedanceAssetLibrary(alias, 'platform')).toBe(false)
+    }
+  })
+
+  it('自填 Key 与缺省意向保持原行为', () => {
+    expect(usesSeedanceAssetLibrary('2.0', 'own-key')).toBe(true)
+    expect(usesSeedanceAssetLibrary('2.0', undefined)).toBe(true)
+  })
+
+  it('万相在任何计费模式下都不走', () => {
+    expect(usesSeedanceAssetLibrary('wan3', 'platform')).toBe(false)
+    expect(usesSeedanceAssetLibrary('wan3', 'own-key')).toBe(false)
+  })
+})
+
+/**
+ * 与上面那个谓词**同源但不同问题**,拆开是这次修复的核心。
+ *
+ * 「要不要碰 vvdance 素材库」取决于计费模式;「上游吃不吃 base64 内联」只取决于
+ * provider —— 平台模式下上游仍然是 Seedance(经网关中转),内联与否不因为换了钱包
+ * 而改变。合成一个谓词的后果就是这次的 bug:改对了一个问题,另一个跟着被改错。
+ */
+describe('upstreamAcceptsInlineMedia', () => {
+  it('Seedance 吃内联,与计费模式无关', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(upstreamAcceptsInlineMedia(alias)).toBe(true)
+    }
+  })
+
+  it('万相不吃 —— DashScope 只认可下载的 https', () => {
+    expect(upstreamAcceptsInlineMedia('wan3')).toBe(false)
+  })
+})
+
+describe('usesPlatformAssetLibrary', () => {
+  it('平台余额下的 Seedance 走平台素材库', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(usesPlatformAssetLibrary(alias, 'platform')).toBe(true)
+    }
+  })
+
+  it('与 vvdance 那条互斥:同一次提交只落在一个库', () => {
+    for (const billing of ['platform', 'own-key', undefined] as const) {
+      for (const alias of ['2.0', '2.5', 'wan3'] as const) {
+        expect(usesPlatformAssetLibrary(alias, billing) && usesSeedanceAssetLibrary(alias, billing)).toBe(false)
+      }
+    }
+  })
+
+  it('万相与自填 Key 都不走', () => {
+    expect(usesPlatformAssetLibrary('wan3', 'platform')).toBe(false)
+    expect(usesPlatformAssetLibrary('2.0', 'own-key')).toBe(false)
+    expect(usesPlatformAssetLibrary('2.0', undefined)).toBe(false)
+  })
 })
 
 describe('两个提交入口都必须问过这个谓词', () => {
   const runtimeSource = readFileSync(join(__dirname, '..', 'runtime.ts'), 'utf8')
 
+  /**
+   * 平台余额的 asset:// 核验也要两个入口都有。漏一个的表现是:工作台提交前就拦下并说清
+   * 原因,agent 那条却照样建任务、排完队才回一句英文的 `asset … is not found`。
+   */
+  it('平台余额下两个入口都在提交前核验素材库引用', () => {
+    const guarded =
+      runtimeSource.match(
+        /\} else if \(usesPlatformAssetLibrary\(input\.model, \w+\)\) \{[\s\S]{0,400}?await verifyPlatformAssetReferences\(content, scope, getPlatformAsset\)/g,
+      ) ?? []
+    expect(guarded).toHaveLength(2)
+    const calls = runtimeSource.match(/await verifyPlatformAssetReferences\(/g) ?? []
+    expect(calls).toHaveLength(2)
+  })
+
+  /**
+   * agent 的素材库工具必须跟随计费。以前固定走自填 Key 的人像库,平台余额的用户让
+   * agent 挑素材,挑回来的 id 在平台池里不存在(2026-09-24 实机)。
+   */
+  it('agent 的 list / add 素材库工具都按计费分派到平台素材库', () => {
+    expect(runtimeSource).toContain(
+      "return resolveVideoBilling() === 'platform' ? activePlatformScope() : null",
+    )
+    const listFn = /router\.registerMain\('list_portrait_library'[\s\S]*?\n {2}\}\)/.exec(runtimeSource)?.[0] ?? ''
+    expect(listFn).toMatch(/agentPlatformScope\(\)[\s\S]{0,120}listPlatformLibraryForAgent\(/)
+    const addFn = /async function addAsset\([\s\S]*?\n {2}\}\r?\n/.exec(runtimeSource)?.[0] ?? ''
+    expect(addFn).toMatch(/agentPlatformScope\(\)[\s\S]{0,600}ensureAsset\(/)
+  })
+
   it('runtime.ts 里 verifyContentAssetReferences / importImagesToPortraitLibrary 的每一次调用都在守卫内', () => {
     // 调用点数量与守卫数量必须对得上。新增一个提交入口却忘了加守卫,这里会红。
+    // 允许带第二个实参(计费模式)。**不允许不带** —— 只传 model 的调用正是当初修的 bug,
+    // 所以这里刻意要求逗号后面有东西。
     const verifyCalls = runtimeSource.match(/await verifyContentAssetReferences\(/g) ?? []
-    const importCalls = runtimeSource.match(/void importImagesToPortraitLibrary\(/g) ?? []
-    const guards = runtimeSource.match(/if \(usesSeedanceAssetLibrary\(input\.model\)\) \{/g) ?? []
-
+    const verifyGuards = runtimeSource.match(/if \(usesSeedanceAssetLibrary\(input\.model, \w+\)\) \{/g) ?? []
     expect(verifyCalls.length).toBeGreaterThan(0)
-    expect(importCalls.length).toBeGreaterThan(0)
-    expect(guards.length).toBe(verifyCalls.length + importCalls.length)
+    expect(verifyGuards.length).toBe(verifyCalls.length)
+
+    // 自动入库的分派 2026-08-31 收进了 `materializeAssetRefs`(为了能在提交前改写
+    // 引用),所以它的谓词不再长在调用点上,而在那个函数里 —— 但仍必须存在。
+    expect(runtimeSource).toMatch(/usesSeedanceAssetLibrary\(model, billing\)/)
   })
 
   // 另一个同源的坑:小素材(≤512KB)默认被读成 base64 内联进 content[],不是 URL。
   // Seedance 吃这一套,DashScope 只认可下载的 https。不跳过内联捷径的后果很隐蔽 ——
   // 大图正常、小图报错,用户完全想不到是体积的问题。
   it('非 Seedance provider 必须跳过内联捷径(alwaysRelay)', () => {
+    // 这一处**刻意不吃 billing**:上游吃不吃内联与钱从哪个钱包出无关。
+    // 用另一个谓词正是为了让这件事在类型上说得出口。
     expect(runtimeSource).toContain(
-      'usesSeedanceAssetLibrary(input.model) ? undefined : { alwaysRelay: true }',
+      'upstreamAcceptsInlineMedia(input.model) ? undefined : { alwaysRelay: true }',
     )
     // buildContent 里五处素材解析都要带上这个选项,漏一处就是那一类素材内联。
     const withOptions = runtimeSource.match(/resolveMediaUrl\([^)]*mediaOptions\)/g) ?? []
     expect(withOptions).toHaveLength(5)
   })
 
+  /**
+   * 平台模式下「自动入库」必须**改道**到平台库,而不是跳过。
+   *
+   * 这条是补一个我自己造出来的缺口:修「平台模式别碰 vvdance 素材库」时,
+   * `verifyContentAssetReferences` 与 `importImagesToPortraitLibrary` 共用同一个谓词,
+   * 于是被一起关掉了。关 verify 是必须的(拿 vvdance 凭据去校验平台 id 会硬拦下提交);
+   * 关 import 是**过度** —— 结果是平台用户生成用的参考图不会自动成为可复用的
+   * `asset://` 锚点,下次跨镜锁同一张脸得手动再传一次,而 vvdance 用户有这个自动化。
+   *
+   * 两个提交入口都要有,漏一个的表现是「MCP 出的片进库、工作台出的不进」这种
+   * 说不清的不一致。
+   */
+  it('平台模式下自动入库改道平台库,两个入口都要有', () => {
+    // 分派收进了 `materializeAssetRefs`,所以「两个入口都有」现在等价于
+    // 「两个入口都调它」+「它自己两条分支都在」。
+    const entryCalls = runtimeSource.match(/await materializeAssetRefs\(/g) ?? []
+    expect(entryCalls.length).toBe(2)
+      // 第二个实参叫什么无所谓(它被改过一次名:enabled → visibleInLibrary),
+      // 这里要守的是「两个库分支都在 materializeAssetRefs 里接上了」。
+      expect(runtimeSource).toMatch(/importImagesToPortraitLibrary\(content, \w+\)/)
+      expect(runtimeSource).toMatch(/importImagesToPlatformLibrary\(content, \w+\)/)
+    })
+
+    /**
+     * 登记**不受**「默认上传人像库」开关管。
+     *
+     * 这条曾经反过来:开关关着就整个跳过。后来登记从「顺带的复用优化」变成了
+     * 「过审的前提」—— 上游对直传 https 图做真人检测,只有 `asset://` 引用能过。
+     * 于是「不登记」= 真人图必被拒,那不该由一个讲「要不要进库」的开关决定生成
+     * 能不能成。开关的语义收窄成字面意思:登记照做,只是关着时立刻软删隐藏。
+     *
+     * 回归长这样:有人把 `if (!visible) return rewrites` 加回两个 import 函数的
+     * 开头。症状是「关掉开关后真人参考图就发不出去」—— 两件看起来毫不相干的事,
+     * 用户不会把它们联系起来报给你。所以在这里钉死。
+     */
+    it('登记不被开关拦下 —— 开关只管可见性,不管入不入库', () => {
+      const importFns =
+        runtimeSource.match(
+          /async function importImagesTo(?:Portrait|Platform)Library\([\s\S]*?\n\}/g,
+        ) ?? []
+      expect(importFns.length).toBe(2)
+      for (const fn of importFns) {
+        // 从签名里取出第二个形参(即那个开关)的名字,而不是硬编码 `visible` ——
+        // 这样改名不会让守卫失效,也不会像 `if (!\w+)` 那样误伤 `!pool` / `!apiKey`
+        // 这类**合法**的早退(没登录、没凭据时本来就登记不了)。
+        const flag = /content: SeedanceContentItem\[\],\s*(\w+): boolean/.exec(fn)?.[1]
+        expect(flag).toBeDefined()
+        expect(fn).not.toMatch(new RegExp(`if \\(!${flag}\\) return`))
+      }
+      // 而隐藏这条路必须真的在:否则开关就成了纯装饰。
+      expect(runtimeSource).toMatch(/if \(!visible\) hideFromLibrary\(/)
+      expect(runtimeSource).toMatch(/!visible[\s\S]{0,120}hidePlatformAsset\(/)
+    })
+
+  /**
+   * 入库改写必须发生在 `taskManager.submit` **之前**。
+   *
+   * 这是 2026-08-31 那次改动的**全部意义**:上游对直传的 https 图做真人检测,
+   * `InputImageSensitiveContentDetected.PrivacyInformation` 会拒掉整次生成,而已登记的
+   * `asset://` 不走这道检测。登记发生在提交之后的话永远救不了当次 —— 用户看到的是
+   * 一句关于「真人」的报错,它与「入库」之间没有任何字面关联,只能靠猜。
+   *
+   * 断言「submit 收到的是改写后的 content」而不是比较代码位置:前者是真正的不变量,
+   * 有人把顺序挪回去、或者忘了把改写结果传下去,都会被抓住。
+   *
+   * 🧬 变异点:把任一处 `content: submitContent` 改回 `content`,这条必红。
+   */
+  it('提交拿到的是改写后的 content,不是原始的', () => {
+    const submits = runtimeSource.match(/taskManager\.submit\(\{[\s\S]{0,240}?\}\)/g) ?? []
+    expect(submits.length).toBe(2)
+    for (const s of submits) {
+      expect(s, `这处 submit 没用改写后的 content:\n${s}`).toContain('content: submitContent')
+    }
+  })
+
+  /**
+   * 万相必须原样放行,不能被改写成 `asset://`。
+   *
+   * `wan3/request.ts` 的 `requireHttpUrl` 见到 `asset://` 直接抛「万相 3.0 不支持
+   * 人像库素材」。所以这个判据只能按**模型**来,不能按计费 —— 按计费判的话,
+   * 平台模式下每一次万相生成都会挂,而那与本功能想解决的问题毫无关系。
+   *
+   * 🧬 变异点:删掉 `acceptsAssetRefs` 那道早退,这条必红。
+   */
+  it('只有认 asset:// 的模型才改写引用(万相原样放行)', () => {
+    expect(runtimeSource).toContain(
+      "const acceptsAssetRefs = capabilitiesFor(model ?? '2.0').provider === 'vvdance'",
+    )
+    expect(runtimeSource).toContain('if (!acceptsAssetRefs) return content')
+  })
+
+  /**
+   * 网关地址必须与出网注入器**同源解析**,不能各写各的。
+   *
+   * 分叉的表现是「注入器盯着 A、视频提交打到 B」:测试服签的影子 token 发到生产网关
+   * 一律 401,而错误里不会有任何一个字提到是地址配错了 —— 只会看见「Invalid token」,
+   * 于是人去查 token 而不是查地址。
+   *
+   * 🧬 变异点:把 `baseUrl` 那一行删掉(退回默认的 `MIAU_BASE_URL`),这条必红。
+   */
+  it('每一个打网关的视频客户端都各自接了 origin 解析', () => {
+    // ⚠️ 这条**曾经写成** `expect(runtimeSource).toContain('baseUrl: …')` ——
+    // 只证明「至少有一个客户端接了」。于是 2026-08-31 万相漏接 baseUrl 时它照样
+    // 是绿的:seedanceGateway 那一处让整个文件包含了这个字符串。
+    //
+    // 后果是真机故障:测试服模式下 codex / 出图 / 平台版 Seedance 都跟着 override
+    // 打测试网关并正常扣费,唯独万相把测试服签发的影子 token 发到生产网关,
+    // 回一句 `401 无效的令牌` —— 别的功能全对,只有它错,人必然先去查凭据,
+    // 而凭据是对的,错的是收件人。
+    //
+    // 所以现在**逐个客户端**查:新增第三个网关客户端而忘了接 origin,这里会点名。
+    const GATEWAY_CLIENTS = ['createWan3Client', 'createSeedanceGatewayClient'] as const
+
+    const missing: string[] = []
+    for (const fn of GATEWAY_CLIENTS) {
+      const start = runtimeSource.indexOf(`${fn}({`)
+      expect(start, `${fn} 没在 runtime.ts 里构造`).toBeGreaterThanOrEqual(0)
+      // 从构造点往后取一段足够覆盖整个选项对象的窗口。用窗口而不是配对花括号:
+      // 选项里有箭头函数和模板串,手写配对反而更容易出错,而这一段本来就不长。
+      const block = runtimeSource.slice(start, start + 2000)
+      if (!block.includes('baseUrl: `${resolveGatewayOrigin()}/v1`')) missing.push(fn)
+    }
+
+    expect(
+      missing,
+      missing.length === 0
+        ? ''
+        : `这些网关客户端没接 resolveGatewayOrigin():\n${missing.map((m) => `  - ${m}`).join('\n')}\n` +
+          `不接就会回落到写死的生产 MIAU_BASE_URL —— 测试服模式下它会把测试服的\n` +
+          `影子 token 发到生产网关,回一句 401,而错误里不会提到是地址分叉了。`,
+    ).toEqual([])
+  })
+
   it('没有任何一处裸调用(守卫之外直接调)', () => {
     // 把「守卫 + 紧随其后的调用」整段抠掉,剩下的正文里不该再出现这两个调用。
     const stripped = runtimeSource.replace(
-      /if \(usesSeedanceAssetLibrary\(input\.model\)\) \{[\s\S]*?\n {6}\}/g,
+      /if \(usesSeedanceAssetLibrary\(input\.model, \w+\)\) \{[\s\S]*?\n {6}\}/g,
       '',
     )
     expect(stripped).not.toContain('await verifyContentAssetReferences(')

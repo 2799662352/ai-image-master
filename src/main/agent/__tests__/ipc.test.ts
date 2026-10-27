@@ -36,6 +36,7 @@ import { registerAgentIpc } from '../ipc'
 interface FakeManager {
   openThread: ReturnType<typeof vi.fn>
   renameThread: ReturnType<typeof vi.fn>
+  setThreadPinned: ReturnType<typeof vi.fn>
   deleteThread: ReturnType<typeof vi.fn>
   sendMessage: ReturnType<typeof vi.fn>
   steer: ReturnType<typeof vi.fn>
@@ -65,6 +66,7 @@ function makeManager(): FakeManager {
   return {
     openThread: vi.fn().mockResolvedValue({ id: 't1' }),
     renameThread: vi.fn().mockResolvedValue(undefined),
+    setThreadPinned: vi.fn().mockResolvedValue(undefined),
     deleteThread: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn(),
     steer: vi.fn().mockResolvedValue({ threadId: 't1' }),
@@ -239,6 +241,21 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(manager.renameThread).toHaveBeenCalledWith('thread-abc', 'New title')
   })
 
+  it('registers agent:set-thread-pinned and forwards id + pinned flag', async () => {
+    const handler = get('agent:set-thread-pinned')
+    expect(handler).toBeTypeOf('function')
+    await handler!({}, 'thread-abc', true)
+    expect(manager.setThreadPinned).toHaveBeenCalledWith('thread-abc', true)
+    await handler!({}, 'thread-abc', false)
+    expect(manager.setThreadPinned).toHaveBeenLastCalledWith('thread-abc', false)
+  })
+
+  it('agent:set-thread-pinned rejects a non-boolean flag without touching the manager', async () => {
+    const handler = get('agent:set-thread-pinned')
+    await expect(handler!({}, 'thread-abc', 'yes')).rejects.toThrow()
+    expect(manager.setThreadPinned).not.toHaveBeenCalled()
+  })
+
   it('registers agent:delete-thread and forwards the id', async () => {
     const handler = get('agent:delete-thread')
     expect(handler).toBeTypeOf('function')
@@ -283,6 +300,35 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(handler).toBeTypeOf('function')
 
     await expect(handler!({}, { id: '', approved: true })).rejects.toThrow(/id/)
+    expect(manager.respondToApprovalResponse).not.toHaveBeenCalled()
+  })
+
+  it('放行 request_user_input 的 answers 表(否则会被字段白名单无声丢掉)', async () => {
+    const handler = get('agent:respond-approval')!
+
+    await handler({}, {
+      id: '7',
+      approved: true,
+      answers: { style: { answers: ['写实'] }, count: { answers: ['3 张'] } },
+    })
+
+    expect(manager.respondToApprovalResponse).toHaveBeenCalledWith({
+      id: '7',
+      approved: true,
+      answers: { style: { answers: ['写实'] }, count: { answers: ['3 张'] } },
+    })
+  })
+
+  it('answers 形状不对整条拒掉,不让畸形对象到 app-server', async () => {
+    const handler = get('agent:respond-approval')!
+
+    await expect(handler({}, { id: '7', approved: true, answers: ['写实'] })).rejects.toThrow(/answers/)
+    await expect(
+      handler({}, { id: '7', approved: true, answers: { style: { answers: [1, 2] } } }),
+    ).rejects.toThrow(/answers\[style\]/)
+    await expect(
+      handler({}, { id: '7', approved: true, answers: { style: 'writes' } }),
+    ).rejects.toThrow(/answers\[style\]/)
     expect(manager.respondToApprovalResponse).not.toHaveBeenCalled()
   })
 

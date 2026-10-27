@@ -1,0 +1,80 @@
+# graphify ignore rules (gitignore syntax). Evaluated AFTER .gitignore, so this
+# file can only exclude more — node_modules/, dist/, resources/apiyi-mcp/ etc.
+# are already dropped by .gitignore.
+#
+# Goal: keep the graph to first-party source + authoritative docs. Drop vendored
+# copies, generated mirrors, media, test artifacts and third-party reference
+# skills that would otherwise flood the graph with nodes we don't own.
+
+# --- Third-party / reference skill bundles (agent tooling, not project code)
+.cursor/
+.agents/
+.claude/
+.codex/
+.superpowers/
+.superdesign/
+
+# --- Generated mirrors. Authoritative sources are resources/plugins/*/skills
+#     and resources/first-party-skills (see scripts/sync-top-level-skills.mjs,
+#     scripts/generate-first-party-skills.mjs, sync-plugin-skills-to-codex.mjs).
+skills/
+resources/codex-skills/
+resources/skills/
+src/main/agent/generated/
+
+# --- Vendored / external projects and binaries
+25/
+lib/
+cdn/
+resources/codex/
+resources/catimation-bridge/
+# static assets served verbatim (mirrors of root assets/cdn/lib/i18n; tsconfig excludes it too)
+src/renderer/public/
+# minified bundles and scratch scripts dropped into docs/ — they produce junk hubs like `tu`/`Yt`/`__`
+*.min.js
+*.min.css
+*.bundle.js
+docs/_*
+
+# --- Build output, reports, caches
+build/
+dist/
+out/
+playwright-report/
+test-results/
+coverage/
+*.tsbuildinfo
+*.log
+*.har
+
+# --- Media & binary assets (images would otherwise be sent to the LLM pass)
+assets/
+images/
+videos/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.icns
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.ttf
+*.woff
+*.woff2
+
+# --- Locale bundles and lockfiles. `.json` counts as code for graphify's
+#     tree-sitter pass; locale/lock JSON would add thousands of string nodes.
+i18n/
+pnpm-lock.yaml
+*.lock
+version.json
+manifest.json
+sitemap.xml
+browserconfig.xml
+
+# --- graphify's own output
+graphify-out/

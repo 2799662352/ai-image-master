@@ -1243,6 +1243,10 @@
       "name": "🍌 Nano Banana 2",
       "displayName": "15s，gemini-3.1-flash-image 谷歌原生端點請求，支援超多尺寸4K，$0.03/張🚀 官網低於2折"
     },
+    "gemini-nano-banana-2.1": {
+      "name": "🍌 Nano Banana 2.1",
+      "displayName": "20s，gemini-nano-banana-2.1 谷歌原生端點請求，Nano Banana 2 升級版，畫質/圖中文字/多輪一致性更好，1K/2K/4K，按量約 $0.03/張(1K)"
+    },
     "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s，gemini-3-pro-image 谷歌原生端點請求，支援多尺寸4K，$0.05/張🔥 官網1/5價格"
@@ -1255,9 +1259,21 @@
       "name": "SeeDream 4.5",
       "displayName": "15s出圖，即夢海外版seedream-4-5-251128，超清生圖編輯，支援2K/4K解析度，支援URL與Base64輸出, $0.045/張"
     },
+    "gpt-image-2.5-flare": {
+      "name": "GPT Image 2.5 Flare",
+      "displayName": "20s，OpenAI 官轉·速度優先，畫質≈gpt-image-2 但快一半，按 token 計費，文生圖首選"
+    },
+    "gpt-image-2.5-sunburst": {
+      "name": "GPT Image 2.5 Sunburst",
+      "displayName": "40s，OpenAI 官轉·畫質與編輯精度優先，比 gpt-image-2 更銳、改圖更穩，改圖/多圖融合首選"
+    },
+    "gpt-image-2.5-all": {
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s，ChatGPT 網頁逆向(已升 Images 2.5)，尺寸寫進提示詞，$0.03/張"
+    },
     "gpt-image-2-all": {
-      "name": "GPT Image 2 All",
-      "displayName": "30s，GPT圖像生成，文生圖/圖片編輯/多圖融合，文字還原度高，中文友好，$0.03/張🔥"
+      "name": "GPT Image 2.5 All",
+      "displayName": "60s，ChatGPT 網頁逆向(已升 Images 2.5)，尺寸寫進提示詞，$0.03/張"
     },
     "sora_image": {
       "name": "Sora_image",

@@ -37,12 +37,14 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-function renderOpenPanel(): void {
+function renderOpenPanel(
+  pendingApprovals: ReturnType<typeof useAgentChatStore.getState>['pendingApprovals'] = [],
+): void {
   Object.defineProperty(window, 'electronAPI', {
     configurable: true,
     value: { agent: fakeAgent },
   })
-  useAgentChatStore.setState({ isOpen: true, messages: [], pendingApprovals: [] })
+  useAgentChatStore.setState({ isOpen: true, messages: [], pendingApprovals })
   render(<AgentChatPanel />)
 }
 
@@ -97,5 +99,44 @@ describe('AgentChatPanel slim-down', () => {
 
     await waitFor(() => expect(fakeAgent.restartCodex).toHaveBeenCalled())
     expect(useAgentWorkspaceStore.getState().configDirty).toBe(false)
+  })
+})
+
+describe('AgentChatPanel pending server requests', () => {
+  const base = { threadId: 'thread-1', createdAt: '2026-09-02T00:00:00.000Z' }
+
+  it('停靠在滚动区外(输入框上方),而不是塞在对话顶部随内容滚走', () => {
+    renderOpenPanel([
+      { ...base, id: '1', method: 'item/commandExecution/requestApproval', params: { command: 'ls' } },
+    ])
+
+    const dock = screen.getByTestId('pending-server-requests')
+    const scroll = document.querySelector('.chat-scroll')
+    expect(scroll).toBeTruthy()
+    expect(scroll!.contains(dock)).toBe(false)
+    // 紧挨着滚动区之后,composer 之前。
+    expect(scroll!.nextElementSibling).toBe(dock)
+  })
+
+  it('按方法分派:requestUserInput 走提问卡,其余走审批卡', () => {
+    renderOpenPanel([
+      { ...base, id: '1', method: 'item/commandExecution/requestApproval', params: { command: 'ls' } },
+      {
+        ...base,
+        id: '2',
+        method: 'item/tool/requestUserInput',
+        params: {
+          questions: [
+            { id: 'q', header: 'H', question: '选哪个？', isOther: false, isSecret: false, options: [{ label: 'A', description: '' }] },
+          ],
+        },
+      },
+    ])
+
+    expect(screen.getByRole('button', { name: /execute/i })).toBeTruthy()
+    expect(screen.getByTestId('codex-user-input-card')).toBeTruthy()
+    expect(screen.getByText('选哪个？')).toBeTruthy()
+    // 提问卡绝不能长成 Approve/Deny —— 那个回包形状 app-server 不认。
+    expect(screen.queryByRole('button', { name: /^approve$/i })).toBeNull()
   })
 })

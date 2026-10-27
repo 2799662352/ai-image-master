@@ -21,8 +21,13 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskUpdate,
 } from '../../../../types/seedance'
-import { capabilitiesFor } from '../../../../types/seedance'
-import { WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
+import {
+  capabilitiesFor,
+  SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_RESOLUTION,
+} from '../../../../types/seedance'
+import { draftFinalAvailability, effectiveDraft, submitResolution } from './seedanceDraft'
+import { DEFAULT_PROJECT_ID, WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import type {
   VideoWorkbenchBoard,
   VideoWorkbenchCard,
@@ -33,6 +38,7 @@ import type {
   VideoWorkbenchCardStatus,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
+  VideoWorkbenchProject,
   VideoWorkbenchReconcileItem,
   VideoWorkbenchReconcileResult,
   VideoWorkbenchSubmitPayload,
@@ -44,8 +50,22 @@ import type {
 import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import { modeLimit } from './modes'
-import { getWorkbenchDb } from './WorkbenchDb'
+import {
+  ACTIVE_BOARD_KEY,
+  ACTIVE_PROJECT_KEY,
+  createProjectsSlice,
+  firstBoardOf,
+  nextSegmentName,
+  readPins,
+  writeActiveBoard,
+  writeActiveProject,
+  type ProjectsSlice,
+} from './projects'
+import { partitionTrash, pruneTrash, softenRemovals, type WorkbenchTrashEntry } from './trash'
+import { cancelPendingPersist, persistTimers } from './persistQueue'
+import { assignDefaultProject, defaultProject, getWorkbenchDb } from './WorkbenchDb'
 import { useToastStore } from '../../stores/useToastStore'
+import { useQuotaStore } from '../../stores/useQuotaStore'
 import {
   type MaterialKind,
   buildCard,
@@ -65,6 +85,8 @@ import { cardSummaryState, promptFingerprint } from './cardSummary'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
 import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
+import { scopedView } from './threadScope'
+import { resetThreadObservationsForTest } from './threadObservation'
 import {
   type HistoryCursor,
   type WorkbenchIntent,
@@ -126,6 +148,10 @@ function materialBrief(material: VideoWorkbenchMaterial): WorkbenchMaterialBrief
 /** MCP status 工具返回的单卡快照(截断 prompt,别撑爆模型上下文)。 */
 export interface WorkbenchCardSnapshot {
   cardId: string
+  /** 规格版本号:单卡写入带上它(`expectedRev`)就是「我基于这一版改的」。 */
+  rev: number
+  /** 调用方起的镜号(add_tasks 的幂等键);没起过就没有这个字段。 */
+  clientRef?: string
   /** 所属「页」id(页名从 status 顶层 boards 表查,卡上不重复带,省 token)。 */
   boardId?: string
   order: number
@@ -145,6 +171,15 @@ export interface WorkbenchCardSnapshot {
   mode: string
   seed?: number
   webSearch: boolean
+  /** 样片模式开关(只在开着时出现)。 */
+  draft?: boolean
+  /**
+   * 当前结果是一条成功的 480p 样片 —— agent 据此知道可以调 video_workbench_finalize_draft
+   * 出 1080p 成片,而不是从头再生成一次。
+   */
+  draftRun?: boolean
+  /** 当前结果是由样片生成的 1080p 成片:来源样片任务号。 */
+  fromDraftTaskId?: string
   referenceCounts: { images: number; videos: number; audios: number }
   /** 紧凑素材清单(每类本就有 9/3/3 上限,只列名字)。 */
   references: {
@@ -154,6 +189,8 @@ export interface WorkbenchCardSnapshot {
   }
   status: string
   taskId?: string
+  /** 网关之后那一跳的任务号(火山 `cgt-…`),用户找供应商对账要的是它;直连时没有。 */
+  upstreamTaskId?: string
   error?: string
   localPath?: string
   remoteUrl?: string
@@ -168,6 +205,8 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
   const summaryState = cardSummaryState(card)
   return {
     cardId: card.id,
+    rev: card.rev ?? 0,
+    ...(card.clientRef ? { clientRef: card.clientRef } : {}),
     ...(card.boardId ? { boardId: card.boardId } : {}),
     order: card.order,
     ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
@@ -181,6 +220,9 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     mode: card.mode,
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     webSearch: card.webSearch === true,
+    ...(card.draft ? { draft: true } : {}),
+    ...(card.draftRun ? { draftRun: true } : {}),
+    ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     referenceCounts: {
       images: card.referenceImages.length,
       videos: card.referenceVideos.length,
@@ -193,12 +235,53 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     },
     status: card.status,
     ...(card.taskId ? { taskId: card.taskId } : {}),
+    ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
     ...(card.error ? { error: card.error } : {}),
     ...(card.localPath ? { localPath: card.localPath } : {}),
     ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
     ...(card.versions && card.versions.length > 0
       ? { versions: card.versions.map(versionBrief) }
       : {}),
+  }
+}
+
+/** status `fields:'concise'` 下的单卡:只回「这是哪一镜、什么状态」,规格与素材留给 detailed。 */
+export interface WorkbenchCardSnapshotConcise {
+  cardId: string
+  /** 规格版本号:单卡写入带上它(`expectedRev`)就是「我基于这一版改的」。 */
+  rev: number
+  /** 调用方起的镜号(add_tasks 的幂等键);没起过就没有这个字段。 */
+  clientRef?: string
+  boardId?: string
+  order: number
+  summary?: string
+  summaryStale?: boolean
+  /** 截到 60 字(detailed 是 120)。 */
+  prompt: string
+  status: string
+  error?: string
+}
+
+const CONCISE_PROMPT_MAX = 60
+
+/**
+ * 精简快照:约为完整快照三分之一的体积。给「进展怎样了 / 挑几张下手」这类只需要
+ * 知道存在与状态的巡视用;要改规格、要报地址,再拿 detailed 或 export。
+ * error 保留 —— 它是 failed 状态下唯一有信息量的字段,截掉就得再来一趟。
+ */
+export function snapshotCardConcise(card: VideoWorkbenchCard): WorkbenchCardSnapshotConcise {
+  const summaryState = cardSummaryState(card)
+  return {
+    cardId: card.id,
+    rev: card.rev ?? 0,
+    ...(card.clientRef ? { clientRef: card.clientRef } : {}),
+    ...(card.boardId ? { boardId: card.boardId } : {}),
+    order: card.order,
+    ...(summaryState === 'fresh' ? { summary: card.summary } : {}),
+    ...(summaryState === 'stale' ? { summaryStale: true } : {}),
+    prompt: card.prompt.length > CONCISE_PROMPT_MAX ? `${card.prompt.slice(0, CONCISE_PROMPT_MAX)}…` : card.prompt,
+    status: card.status,
+    ...(card.error ? { error: card.error } : {}),
   }
 }
 
@@ -224,6 +307,8 @@ export interface WorkbenchBoardBrief {
   cardCount: number
   /** 这一页装的是什么（agent 自己写的一句话）。没写过就没有这个字段。 */
   summary?: string
+  /** 另一个对话把自己钉在这一段上、最近还在干活。只在有人占着时出现。 */
+  inUseByOtherChat?: true
 }
 
 /** 全局状态计数(跨页聚合)。 */
@@ -242,6 +327,18 @@ export interface WorkbenchStatusCounts {
  * 最强的事实来源,大结果压缩成紧凑 schema)。体积 O(页数),极小。
  */
 export interface WorkbenchSummary {
+  /**
+   * 当前剧(project)。所有 video_workbench_* 工具都作用于它;boards / statusCounts
+   * 也只统计它 —— 别的剧对 agent 不可见,和用户在界面上看到的一致。
+   */
+  project: {
+    id: string
+    name: string
+    segments: number
+    cards: number
+    /** agent 写的一行剧摘要(video_workbench_set_project_summary);没写过就没有这个字段。 */
+    summary?: string
+  }
   activeBoardId: string
   boards: WorkbenchBoardBrief[]
   statusCounts: WorkbenchStatusCounts
@@ -259,7 +356,10 @@ export interface WorkbenchSummary {
 }
 
 export function snapshotWorkbench(
-  state: Pick<VideoWorkbenchState, 'cards' | 'boards' | 'activeBoardId' | 'selectedCardIds'>,
+  state: Pick<
+    VideoWorkbenchState,
+    'cards' | 'boards' | 'activeBoardId' | 'selectedCardIds' | 'projects' | 'activeProjectId'
+  >,
 ): WorkbenchSummary {
   const statusCounts: WorkbenchStatusCounts = {
     draft: 0,
@@ -269,18 +369,30 @@ export function snapshotWorkbench(
     succeeded: 0,
     failed: 0,
   }
+  // 只看当前剧:别的剧的分段和卡片对 agent 不存在
+  const ownBoards = state.boards.filter((b) => b.projectId === state.activeProjectId)
+  const ownBoardIds = new Set(ownBoards.map((b) => b.id))
   const cardCountByBoard = new Map<string, number>()
+  let ownCardCount = 0
   for (const card of state.cards) {
+    if (!card.boardId || !ownBoardIds.has(card.boardId)) continue
+    ownCardCount += 1
     if (card.status in statusCounts) {
       statusCounts[card.status as keyof WorkbenchStatusCounts] += 1
     }
-    if (card.boardId) {
-      cardCountByBoard.set(card.boardId, (cardCountByBoard.get(card.boardId) ?? 0) + 1)
-    }
+    cardCountByBoard.set(card.boardId, (cardCountByBoard.get(card.boardId) ?? 0) + 1)
   }
+  const project = state.projects.find((p) => p.id === state.activeProjectId)
   return {
+    project: {
+      id: state.activeProjectId,
+      name: project?.name ?? '',
+      segments: ownBoards.length,
+      cards: ownCardCount,
+      ...(project?.summary ? { summary: project.summary } : {}),
+    },
     activeBoardId: state.activeBoardId,
-    boards: [...state.boards]
+    boards: [...ownBoards]
       .sort((a, b) => a.order - b.order)
       // 摘要一起带上：这是别页在「只读当前页」下唯一的判据 —— 光看「第 3 页 20 张卡」
       // 决定不了要不要翻过去，而页名常常只是「页面 3」。没写摘要的页不带这个字段。
@@ -295,9 +407,25 @@ export function snapshotWorkbench(
   }
 }
 
+/**
+ * 不点名 cardIds 时「整页启动」作用的页。agent 对话绑在一部**不在屏幕上**的剧里时,
+ * 隐式的「屏幕当前页」和「用户选中的卡」都是别人的语境,必须显式指定页并忽略选中。
+ */
+export interface StartScopeOptions {
+  boardId?: string
+  /**
+   * 整页启动(没点名 cardIds、也没有用户选中)时,跳过「已经出过片、且出片后没改过」的卡。
+   * agent 那条路默认开:整页 start 被重复调用(重试 / 两个对话撞同一页)时不会把整页再花一遍钱。
+   * 界面上用户自己点「全部生成」不传它,行为不变。
+   */
+  skipUpToDate?: boolean
+}
+
 export interface StartResult {
   started: string[]
   skipped: Array<{ cardId: string; reason: string }>
+  /** 因为「已出片且没改过」被整页启动跳过的张数(只在 > 0 时出现;不逐张列进 skipped,免得一整页灌进回包)。 */
+  skippedSucceeded?: number
   /**
    * 整批被「允许 AI 自动生成」总闸拦下,一次提交都没发。只会出现在 agent 那条路
    * (startCardsFromAgent);用户自己点的生成永远不过这道闸。
@@ -315,10 +443,10 @@ export interface CancelResult {
   reason?: string
 }
 
-export interface VideoWorkbenchState {
+export interface VideoWorkbenchState extends ProjectsSlice {
   /** 全部页的卡片扁平存放(跨页任务回流仍能按 clientId/taskId 对齐);页面按 boardId 过滤展示。 */
   cards: VideoWorkbenchCard[]
-  /** 「页」(工作区)列表,按 order 排。 */
+  /** 全部剧的「分段」(board)列表,按 order 排;界面按 activeProjectId 过滤。 */
   boards: VideoWorkbenchBoard[]
   activeBoardId: string
   hydrated: boolean
@@ -397,8 +525,14 @@ export interface VideoWorkbenchState {
    *   否则在非活动页插卡会跑到别的页去。
    * - 锚点不存在:抛错、零写入。调用方明确要求了位置,静默退化成追加等于
    *   给它一个错误的成功。
+   * - `opts.boardId`:不传 anchor 时追加到**这一页**而不是屏幕上的当前页 —— 多个对话
+   *   各管一部剧时,各自的页都不是屏幕上那一页。页不存在 = 抛错、零写入。
    */
-  addCards: (inputs: VideoWorkbenchCardInput[], anchor?: VideoWorkbenchInsertAnchor) => string[]
+  addCards: (
+    inputs: VideoWorkbenchCardInput[],
+    anchor?: VideoWorkbenchInsertAnchor,
+    opts?: { boardId?: string },
+  ) => string[]
   /** 更新卡片可编辑字段(生成中的卡片拒绝编辑)。 */
   updateCard: (id: string, patch: VideoWorkbenchCardInput) => boolean
   /**
@@ -412,6 +546,11 @@ export interface VideoWorkbenchState {
   removeCard: (id: string) => void
   /** 拖拽排序:把卡片移到目标下标。 */
   moveCard: (id: string, toIndex: number) => void
+  /**
+   * 把卡片挪到另一分段末尾(拖到页签上)。目标不存在 / 已在该段 / 生成中 → false。
+   * 源段 order 压实。
+   */
+  moveCardToBoard: (cardId: string, boardId: string) => boolean
   /**
    * 整页重排:一次给出该页**完整**的 id 顺序。返回是否生效。
    *
@@ -442,7 +581,7 @@ export interface VideoWorkbenchState {
   agentAutoStart: boolean
   setAgentAutoStart: (enabled: boolean) => void
   /** 启动生成:缺省=全部可启动卡片;可指定 id 列表。并发提交。 */
-  startCards: (ids?: string[]) => Promise<StartResult>
+  startCards: (ids?: string[], opts?: StartScopeOptions) => Promise<StartResult>
   /**
    * agent(MCP)专用的启动入口。总闸关着时一张都不提交,返回 blocked 让 agent
    * 转告用户去工作台自己点。
@@ -451,7 +590,12 @@ export interface VideoWorkbenchState {
    * (video_workbench_start / add_tasks 的 autoStart),把闸门收在这一个函数里,
    * 将来加第三条也漏不掉;而用户点的 startCards 永远不受影响。
    */
-  startCardsFromAgent: (ids?: string[]) => Promise<StartResult>
+  startCardsFromAgent: (ids?: string[], opts?: StartScopeOptions) => Promise<StartResult>
+  /**
+   * 由样片生成 1080p 成片(Seedance 2.5 Draft)。只接受当前结果是成功样片、7 天内、
+   * 平台余额的卡;成片作为同一张卡的新一轮,样片那一版留在 versions 里。
+   */
+  finalizeDrafts: (ids: string[]) => Promise<StartResult>
   /**
    * 取消/放弃进行中的卡片。返回每张卡的计费口径 —— 上游只允许取消 queued
    * (不计费),running 无法取消(照样扣费),UI 据此写文案。
@@ -465,8 +609,11 @@ export interface VideoWorkbenchState {
   /** seedance:task-update 广播入口(仅消费 source==='workbench')。 */
   applyTaskUpdate: (update: SeedanceTaskUpdate) => void
 
-  /** 导出整个工作台为声明式 IR(带 revision 令牌)。 */
-  exportIR: () => WorkbenchIR
+  /**
+   * 导出一部剧为声明式 IR(带 revision 令牌)。`scopeProjectId` 省略 = 屏幕上的当前剧;
+   * 给了就导那部剧,屏幕不动。
+   */
+  exportIR: (scopeProjectId?: string) => WorkbenchIR
   /**
    * 声明式回写整个工作台。revision 对不上直接拒绝(除非 force),渲染中的卡片
    * 规格定格、在飞的卡片拒绝删除,逐项结果都在返回里。
@@ -606,6 +753,93 @@ type SetState = (
 ) => void
 
 /**
+ * 重启一轮时要清掉的上一轮产物。残留 localPath 会让播放器继续显示旧视频;残留
+ * historyRecorded 会把第二轮及以后的结果永久挡在历史页之外(applyTaskUpdate 的
+ * 写历史门是 !card.historyRecorded)。上一轮的成功产物已经在 versions 里存了档。
+ */
+const CLEARED_RUN_RESULT = {
+  taskId: undefined,
+  upstreamTaskId: undefined,
+  submittedReferences: undefined,
+  videoUrl: undefined,
+  error: undefined,
+  persistence: undefined,
+  localPath: undefined,
+  remoteUrl: undefined,
+  actualSeed: undefined,
+  completionTokens: undefined,
+  billedSeconds: undefined,
+  historyRecorded: undefined,
+  cancelRequested: undefined,
+} as const
+
+/**
+ * 提交发出之后的回写:成功记 taskId 并推到 queued(preparing 期间点过取消的,立刻补发
+ * 取消);失败落 failed。只认 clientId 对得上的那一轮 —— 用户中途又点了一次生成,
+ * 旧一轮的回包不该覆盖新一轮。
+ */
+function trackSubmission(
+  set: SetState,
+  api: { cancel?: (taskId: string) => Promise<unknown> },
+  cardId: string,
+  clientId: string,
+  submission: Promise<VideoWorkbenchSubmitResult>,
+): Promise<void> {
+  return submission
+    .then((res) => {
+      let after: VideoWorkbenchCard | null = null
+      let lateCancelTaskId: string | undefined
+      set((state) => ({
+        cards: state.cards.map((c) => {
+          if (c.id !== cardId || c.clientId !== clientId) return c
+          if (!res.success) {
+            after = { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
+            return after
+          }
+          // preparing 期间用户点了取消:直到现在才拿到 taskId,而此刻任务
+          // 几乎必然还在 queued —— 上游唯一允许真取消(不计费)的窗口,
+          // 立刻补发。状态保持 cancelled,绝不因提交成功而推回 queued。
+          if (c.cancelRequested) {
+            lateCancelTaskId = res.taskId
+            after = {
+              ...c,
+              taskId: res.taskId,
+              status: 'cancelled',
+              cancelRequested: undefined,
+              updatedAt: Date.now(),
+            }
+            return after
+          }
+          after =
+            // 广播可能先一步把状态推到 queued/running/succeeded,别倒回去
+            c.status === 'preparing'
+              ? { ...c, taskId: res.taskId, status: 'queued', updatedAt: Date.now() }
+              : { ...c, taskId: res.taskId, updatedAt: Date.now() }
+          return after
+        }),
+      }))
+      if (after) persistNow(after)
+      if (lateCancelTaskId) void api.cancel?.(lateCancelTaskId)
+    })
+    .catch((e) => {
+      let after: VideoWorkbenchCard | null = null
+      set((state) => ({
+        cards: state.cards.map((c) => {
+          if (c.id !== cardId || c.clientId !== clientId) return c
+          after = {
+            ...c,
+            status: 'failed',
+            error: e instanceof Error ? e.message : String(e),
+            updatedAt: Date.now(),
+          }
+          return after
+        }),
+      }))
+      if (after) persistNow(after)
+    })
+}
+
+/**
  * 把卡片写成 cancelled。**只在卡片仍在飞时写** —— 取消请求往返期间上游结果可能
  * 刚好到达（applyTaskUpdate 已落 succeeded），此时绝不能用 cancelled 覆盖掉一个
  * 已经拿到手的好结果。
@@ -649,15 +883,26 @@ function toReconcileItem(card: VideoWorkbenchCard): VideoWorkbenchReconcileItem 
     ratio: card.ratio,
     duration: card.duration,
     ...(card.startedAt ? { createdAt: card.startedAt } : {}),
+    // 送回提交那一轮用的计费模式:主进程要拿它打回同一条上游。少了它,一条
+    // 平台余额的任务会被拿自填 Key 去探,回一句「任务不存在」,而对账把那当成
+    // 「任务没了」—— 一条还在跑、已经付过钱的任务当场被判成失败卡片。
+    ...(card.billing ? { billing: card.billing } : {}),
   }
 }
 
 /** 素材只取展示名 —— 字节留在卡片上,版本记录不复制(见 VideoWorkbenchVersionSpec)。 */
-function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSpec {
+export function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSpec {
   return {
     prompt: card.prompt,
     model: card.model,
-    resolution: card.resolution,
+    // 样片 / 成片的分辨率不看卡片设置:前者固定 480p,后者固定 1080p。
+    resolution: card.fromDraftTaskId
+      ? SEEDANCE_DRAFT_FINAL_RESOLUTION
+      : card.draftRun
+        ? SEEDANCE_DRAFT_RESOLUTION
+        : card.resolution,
+    ...(card.draftRun ? { draft: true } : {}),
+    ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     ratio: card.ratio,
     duration: card.duration,
     generateAudio: card.generateAudio,
@@ -689,6 +934,8 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       seq: (prev.at(-1)?.seq ?? 0) + 1,
       createdAt: Date.now(),
       ...(card.taskId ? { taskId: card.taskId } : {}),
+      ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
+      ...(card.submittedReferences ? { submittedReferences: card.submittedReferences } : {}),
       ...(card.localPath ? { localPath: card.localPath } : {}),
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
@@ -698,6 +945,39 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       spec: versionSpecOf(card),
     },
   ]
+}
+
+/**
+ * 这张卡当前的结果,是不是用「现在这份规格」出的。整页启动据此决定要不要再花一次钱:
+ * 出过片且之后没动过 → 重跑只会得到同样的东西;出片之后改过提示词 / 参数 / 素材 → 该重跑。
+ *
+ * 对照的是最新一版存档里的规格(版本在成功那一刻抓取,见 archiveVersion)。样片 / 成片的
+ * 分辨率由模式决定而不是卡上的设置,所以那两种结果不比分辨率。
+ *
+ * 没有存档的老数据查不出改没改过:按「没改过」算 —— 宁可少跑一次让人点名重做,
+ * 也不在人不知情时再花一遍钱。
+ */
+export function isResultUpToDate(card: VideoWorkbenchCard): boolean {
+  if (card.status !== 'succeeded') return false
+  const last = card.versions && card.versions.length > 0 ? card.versions[card.versions.length - 1] : undefined
+  if (!last) return true
+  const was = last.spec
+  const now = versionSpecOf(card)
+  const briefKey = (b: VideoWorkbenchVersionSpec['referenceBrief']): string =>
+    [b.images, b.videos, b.audios].map((x) => x.join('\u0000')).join('\u0001')
+  const comparesResolution = !was.draft && !was.fromDraftTaskId
+  return (
+    was.prompt === now.prompt
+    && was.model === now.model
+    && was.ratio === now.ratio
+    && was.duration === now.duration
+    && was.generateAudio === now.generateAudio
+    && was.mode === now.mode
+    && was.seed === now.seed
+    && was.webSearch === now.webSearch
+    && (!comparesResolution || was.resolution === now.resolution)
+    && briefKey(was.referenceBrief) === briefKey(now.referenceBrief)
+  )
 }
 
 /**
@@ -721,8 +1001,6 @@ function upgradeLatestVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[]
   ]
 }
 
-const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
-
 function schedulePersist(card: VideoWorkbenchCard): void {
   const prev = persistTimers.get(card.id)
   if (prev) clearTimeout(prev)
@@ -738,11 +1016,7 @@ function schedulePersist(card: VideoWorkbenchCard): void {
 }
 
 function persistNow(card: VideoWorkbenchCard): void {
-  const prev = persistTimers.get(card.id)
-  if (prev) {
-    clearTimeout(prev)
-    persistTimers.delete(card.id)
-  }
+  cancelPendingPersist(card.id)
   void getWorkbenchDb().put(card).catch((e) => {
     console.warn('[VideoWorkbench] 卡片持久化失败(忽略):', e)
   })
@@ -756,23 +1030,17 @@ export const AUTO_IMPORT_PORTRAIT_KEY = 'vw-auto-import-portrait'
 /** 「允许 AI 自动生成」总闸的 localStorage 键。 */
 export const AGENT_AUTO_START_KEY = 'vw-agent-auto-start'
 
-/** 当前激活「页」的 localStorage 键(轻量元数据,不进 IndexedDB)。 */
-export const ACTIVE_BOARD_KEY = 'vw-active-board'
+// 当前激活「页」的 localStorage 键 + 写入口住在 projects.ts(回收站的删段要用),这里转出。
+export { ACTIVE_BOARD_KEY }
 
-/** 自动命名「页面 N」:从 boards.length+1 起找未占用的编号。 */
-function nextBoardName(boards: VideoWorkbenchBoard[]): string {
-  const taken = new Set(boards.map((b) => b.name))
-  let n = boards.length + 1
-  while (taken.has(`页面 ${n}`)) n += 1
-  return `页面 ${n}`
-}
-
-function writeActiveBoard(id: string): void {
+function readActiveProjectId(projectIds: ReadonlySet<string>, fallback: string): string {
   try {
-    globalThis.localStorage?.setItem(ACTIVE_BOARD_KEY, id)
+    const saved = globalThis.localStorage?.getItem(ACTIVE_PROJECT_KEY)
+    if (saved && projectIds.has(saved)) return saved
   } catch {
-    // localStorage 不可用时仅内存生效
+    // localStorage 不可用则回第一部剧
   }
+  return fallback
 }
 
 function toFileUrl(filePath: string): string {
@@ -800,6 +1068,31 @@ function startTransfersFor(
 /** 一张卡上所有可转存的素材(目前只有图片走转存)。 */
 function startTransfersForCard(card: VideoWorkbenchCard): void {
   startTransfersFor(card.id, 'referenceImages', card.referenceImages)
+}
+
+/**
+ * 水合后补转存:把库里残留的 `data:image/*` 素材重新发起一次 COS 转存。
+ *
+ * 转存本来在素材挂上时就发,但离线粘贴、转存失败、老版本存下的卡,都会让 base64
+ * 一直躺在 IndexedDB 里(每次写卡都整段重写,导出工程时还得先上传)。这里只补图片
+ * —— 字节通道只认 image/*,内联视频/音频没有诚实 mime 的入口。幂等:换成 https 后
+ * 下次水合自然扫不到;失败保持原样,下次再试。空闲时跑,不抢首屏。
+ */
+export function sweepInlineMaterials(cards: readonly VideoWorkbenchCard[]): number {
+  let count = 0
+  for (const card of cards) {
+    const inline = card.referenceImages.filter((m) => /^data:image\//i.test(m.src))
+    if (inline.length === 0) continue
+    count += inline.length
+    startTransfersFor(card.id, 'referenceImages', inline)
+  }
+  return count
+}
+
+function scheduleIdle(fn: () => void): void {
+  const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
+  if (typeof ric === 'function') ric(fn, { timeout: 5_000 })
+  else setTimeout(fn, 0)
 }
 
 /**
@@ -935,6 +1228,9 @@ function readAgentAutoStart(): boolean {
  */
 interface WorkbenchWritePlan {
   next: {
+    /** 撤销/重做会带;看板 IR 的 apply 只描述当前剧,不带。 */
+    projects?: VideoWorkbenchProject[]
+    activeProjectId?: string
     boards: VideoWorkbenchBoard[]
     cards: VideoWorkbenchCard[]
     activeBoardId: string
@@ -946,7 +1242,11 @@ interface WorkbenchWritePlan {
     removeCardIds: string[]
     boards: VideoWorkbenchBoard[]
     removeBoardIds: string[]
+    projects?: VideoWorkbenchProject[]
+    removeProjectIds?: string[]
   }
+  /** 这次写把哪些分段 / 剧移进了回收站(由 softenPlan 填)。 */
+  trashed?: WorkbenchTrashEntry[]
 }
 
 type WorkbenchSetter = (partial: Partial<VideoWorkbenchState>) => void
@@ -964,14 +1264,46 @@ function applyPlanToState(
 ): void {
   // 一条 500ms 前排好的旧内容写入会在整板写之后落地,把刚写好的卡片打回旧值。
   for (const id of [...plan.persist.cards.map((c) => c.id), ...plan.persist.removeCardIds]) {
-    const timer = persistTimers.get(id)
-    if (timer) {
-      clearTimeout(timer)
-      persistTimers.delete(id)
-    }
+    cancelPendingPersist(id)
   }
-  set({ ...plan.next, ...pruneSelection(prev, plan.next.cards) })
+  // 剧被撤销掉/复活时,把每部剧记住的视图裁到仍存在的剧;当前剧的视图跟着
+  // 快照的 activeBoardId 落到分段页 —— 撤销要看得见效果。
+  const projectPatch: Partial<VideoWorkbenchState> = {}
+  if (plan.next.projects && plan.next.activeProjectId) {
+    const alive = new Set(plan.next.projects.map((p) => p.id))
+    const viewByProject = Object.fromEntries(
+      Object.entries(prev.viewByProject).filter(([id]) => alive.has(id)),
+    )
+    viewByProject[plan.next.activeProjectId] = { mode: 'board', boardId: plan.next.activeBoardId }
+    projectPatch.viewByProject = viewByProject
+  }
+  // 回收站:新进来的排前;id 已经重新出现在活数据里的(撤销「删除」把它救回来了)摘掉。
+  const liveProjectIds = new Set((plan.next.projects ?? prev.projects).map((p) => p.id))
+  const liveBoardIds = new Set(plan.next.boards.map((b) => b.id))
+  const incoming = plan.trashed ?? []
+  const incomingIds = new Set(incoming.map((e) => e.id))
+  const trash: WorkbenchTrashEntry[] = [
+    ...incoming,
+    ...pruneTrash(prev.trash, liveProjectIds, liveBoardIds).filter((e) => !incomingIds.has(e.id)),
+  ]
+  const trashPatch: Partial<VideoWorkbenchState> =
+    trash.length === prev.trash.length && trash.every((e, i) => e === prev.trash[i]) ? {} : { trash }
+  set({ ...plan.next, ...projectPatch, ...trashPatch, ...pruneSelection(prev, plan.next.cards) })
   writeActiveBoard(plan.next.activeBoardId)
+  if (plan.next.activeProjectId) writeActiveProject(plan.next.activeProjectId)
+}
+
+/**
+ * 把计划里的「物理删除」改成「移入回收站」(见 trash.ts softenRemovals)。
+ * agent 的 applyIR 与撤销/重做共用:重做一次「删除」、agent 手写 IR 删页,都不该把
+ * 有内容的分段 / 剧永久抹掉。
+ */
+function softenPlan(
+  prev: VideoWorkbenchState,
+  plan: { next: WorkbenchWritePlan['next']; persist: WorkbenchWritePlan['persist'] },
+): WorkbenchWritePlan {
+  const softened = softenRemovals(prev, plan.persist)
+  return { next: plan.next, persist: softened.persist, trashed: softened.entries }
 }
 
 /**
@@ -1011,6 +1343,8 @@ async function flushPlanToDb(plan: WorkbenchWritePlan): Promise<void> {
     ...plan.persist.removeCardIds.map((id) => db.remove(id).catch(() => {})),
     ...plan.persist.boards.map((board) => db.putBoard(board).catch(() => {})),
     ...plan.persist.removeBoardIds.map((id) => db.removeBoard(id).catch(() => {})),
+    ...(plan.persist.projects ?? []).map((project) => db.putProject(project).catch(() => {})),
+    ...(plan.persist.removeProjectIds ?? []).map((id) => db.removeProject(id).catch(() => {})),
   ])
 }
 
@@ -1041,7 +1375,12 @@ function mirrorAutoImportPortraitToMain(enabled: boolean): void {
 
 const initialBoard = createDefaultBoard()
 
-export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) => ({
+export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, api) => ({
+  // 剧 slice 先展开,再用下面的初值覆盖它的空默认(默认项目 + 初始段归它)。
+  ...createProjectsSlice(set, get, api),
+  projects: [defaultProject()],
+  activeProjectId: DEFAULT_PROJECT_ID,
+  viewByProject: { [DEFAULT_PROJECT_ID]: { mode: 'board', boardId: initialBoard.id } },
   cards: [],
   boards: [initialBoard],
   activeBoardId: initialBoard.id,
@@ -1079,16 +1418,53 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     hydrationPromise ??= (async () => {
       try {
         const db = getWorkbenchDb()
-        const [stored, storedBoards] = await Promise.all([db.list(), db.listBoards()])
+        const [storedAll, storedBoardsAll, storedProjectsAll] = await Promise.all([
+          db.list(),
+          db.listBoards(),
+          db.listProjects(),
+        ])
+        // 回收站分流:被标记删除的剧 / 分段(及其卡片)不进活数据。必须在下面「孤儿卡
+        // 迁入第一页」的归一化之前做,否则回收站里的卡会被当成孤儿塞回活着的第一页。
+        const part = partitionTrash(storedProjectsAll, storedBoardsAll, storedAll)
+        const stored = part.cards
+        const storedBoardsRaw = part.boards
+        const storedProjects = part.projects
 
-        // 页列表:db 有则以 db 为准;没有(全新用户 / v1 老库)则把内存默认页
-        // 落库 —— 老用户的单页草稿数据由下面的 boardId 迁移进这第一页。
-        let boards = storedBoards
+        // 剧:库里有则以库为准;listProjects 在全新/内存降级时已保证至少有默认项目。
+        let projects = storedProjects.length > 0 ? storedProjects : [defaultProject()]
+        if (storedProjects.length === 0) void db.putProject(projects[0]).catch(() => {})
+        const projectIds = new Set(projects.map((p) => p.id))
+
+        // 分段列表:db 有则以 db 为准;没有(全新用户 / v1 老库)则把内存默认段
+        // 落库 —— 老用户的单页草稿数据由下面的 boardId 迁移进这第一段。
+        // 缺 projectId 或指向不存在的剧 → 归默认项目并写回(升级迁移的兜底,幂等)。
+        let boards = storedBoardsRaw
         if (boards.length === 0) {
           boards = get().boards
-          for (const b of boards) void db.putBoard(b).catch(() => {})
         }
-        const firstBoardId = boards[0].id
+        boards = assignDefaultProject(boards).boards.map((b) =>
+          projectIds.has(b.projectId) ? b : { ...b, projectId: DEFAULT_PROJECT_ID },
+        )
+        if (!projectIds.has(DEFAULT_PROJECT_ID) && boards.some((b) => b.projectId === DEFAULT_PROJECT_ID)) {
+          const dp = defaultProject()
+          projects = [dp, ...projects]
+          projectIds.add(dp.id)
+          void db.putProject(dp).catch(() => {})
+        }
+        // 每部剧至少一段:库里空着的剧补一段(activeBoardId 这个硬不变量要有落点)
+        for (const p of projects) {
+          if (!boards.some((b) => b.projectId === p.id)) {
+            boards = [...boards, { id: createId(), projectId: p.id, name: '分段 1', order: 0, createdAt: Date.now() }]
+          }
+        }
+        const storedById = new Map(storedBoardsRaw.map((b) => [b.id, b]))
+        for (const b of boards) {
+          const prev = storedById.get(b.id)
+          if (!prev || prev.projectId !== b.projectId) void db.putBoard(b).catch(() => {})
+        }
+
+        const activeProjectId = readActiveProjectId(projectIds, projects[0].id)
+        const firstBoardId = firstBoardOf(boards, activeProjectId)!.id
         const boardIds = new Set(boards.map((b) => b.id))
 
         // 重启后「进行中」的卡片是否还活着,只有对账问过上游才知道 —— 主进程
@@ -1128,24 +1504,45 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           return next
         })
 
-        // 当前页:localStorage 记忆,失效则回第一页
+        // 当前段:localStorage 记忆,且必须属于当前剧;失效则回当前剧第一段
         let activeBoardId = firstBoardId
         try {
           const saved = globalThis.localStorage?.getItem(ACTIVE_BOARD_KEY)
-          if (saved && boardIds.has(saved)) activeBoardId = saved
+          if (saved && boards.some((b) => b.id === saved && b.projectId === activeProjectId)) activeBoardId = saved
         } catch {
-          // localStorage 不可用则回第一页
+          // localStorage 不可用则回第一段
         }
 
         set((state) => {
           // hydrate 与首个 addCards 竞态时,保留内存中已有的新卡(排在恢复卡之后);
-          // 其 boardId 若指向被替换掉的临时默认页,归并到第一页。
+          // 其 boardId 若指向被替换掉的临时默认页,归并到当前剧第一段。
           const extras = state.cards
             .filter((c) => !normalized.some((n) => n.id === c.id))
             .map((c) => (c.boardId && boardIds.has(c.boardId) ? c : { ...c, boardId: firstBoardId }))
           let cards = [...normalized, ...extras]
           for (const b of boards) cards = reorderBoard(cards, b.id)
-          return { cards, boards, activeBoardId, hydrated: true }
+          return {
+            cards,
+            boards,
+            projects,
+            // 水合期间用户已经删过东西的话,内存里的条目在前、库里读到的在后(同 id 以内存为准)
+            trash: [
+              ...state.trash,
+              ...part.trash.filter((e) => !state.trash.some((t) => t.id === e.id)),
+            ],
+            activeProjectId,
+            activeBoardId,
+            viewByProject: {
+              ...state.viewByProject,
+              [activeProjectId]: state.viewByProject[activeProjectId] ?? { mode: 'board', boardId: activeBoardId },
+            },
+            hydrated: true,
+          }
+        })
+        writeActiveProject(activeProjectId)
+        scheduleIdle(() => {
+          const n = sweepInlineMaterials(get().cards)
+          if (n > 0) console.info(`[VideoWorkbench] 补转存 ${n} 个内联图片素材`)
         })
       } catch (e) {
         console.warn('[VideoWorkbench] 历史卡片恢复失败(忽略):', e)
@@ -1156,17 +1553,20 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
   },
 
   addBoard: (name) => {
-    const boards = get().boards
+    const { boards, activeProjectId } = get()
+    const own = boards.filter((b) => b.projectId === activeProjectId)
     const trimmed = name?.trim()
     const board: VideoWorkbenchBoard = {
       id: createId(),
-      name: trimmed || nextBoardName(boards),
-      order: boards.length,
+      projectId: activeProjectId,
+      name: trimmed || nextSegmentName(own),
+      order: own.length,
       createdAt: Date.now(),
     }
     set((state) => ({
       boards: [...state.boards, board],
       activeBoardId: board.id,
+      viewByProject: { ...state.viewByProject, [activeProjectId]: { mode: 'board', boardId: board.id } },
       selectedCardIds: [],
       selectionAnchorId: undefined,
       revision: state.revision + 1,
@@ -1174,16 +1574,25 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     }))
     writeActiveBoard(board.id)
     void getWorkbenchDb().putBoard(board).catch((e) => {
-      console.warn('[VideoWorkbench] 页持久化失败(忽略):', e)
+      console.warn('[VideoWorkbench] 分段持久化失败(忽略):', e)
     })
     return board.id
   },
 
   switchBoard: (id) => {
-    if (!get().boards.some((b) => b.id === id)) return
-    // 选中是当前页的语境,切页必须清 —— 否则 ⚡ 会去生成另一页上看不见的卡。
-    set({ activeBoardId: id, selectedCardIds: [], selectionAnchorId: undefined })
+    const board = get().boards.find((b) => b.id === id)
+    if (!board) return
+    // 选中是当前段的语境,切段必须清 —— 否则 ⚡ 会去生成另一段上看不见的卡。
+    // 段属于别的剧时连剧一起切:切段永远是「进入那一段」,不该留下剧/段不一致。
+    set((state) => ({
+      activeBoardId: id,
+      activeProjectId: board.projectId,
+      viewByProject: { ...state.viewByProject, [board.projectId]: { mode: 'board', boardId: id } },
+      selectedCardIds: [],
+      selectionAnchorId: undefined,
+    }))
     writeActiveBoard(id)
+    writeActiveProject(board.projectId)
   },
 
   renameBoard: (id, name) => {
@@ -1229,6 +1638,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       model: card.model,
       ...(card.videoUrl ? { videoUrl: card.videoUrl } : {}),
       ...(card.taskId ? { taskId: card.taskId } : {}),
+      // 重查地址得打回签发 taskId 的那条通道 —— 拿错通道只会回「任务不存在」,
+      // 而这条路正是上游地址过期后唯一不用花钱的补救。
+      ...(card.billing ? { billing: card.billing } : {}),
     }).catch((e: unknown): Resaved => ({ ok: false, error: e instanceof Error ? e.message : String(e) }))
 
     set((s) => ({
@@ -1274,15 +1686,25 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
 
   removeBoard: (id) => {
     const state = get()
-    if (state.boards.length <= 1 || !state.boards.some((b) => b.id === id)) return false
+    const target = state.boards.find((b) => b.id === id)
+    if (!target) return false
+    // 每部剧至少一段:本剧仅剩一段时拒绝(别的剧的段数不作数)
+    const own = state.boards.filter((b) => b.projectId === target.projectId)
+    if (own.length <= 1) return false
     const removedCards = state.cards.filter((c) => c.boardId === id)
-    const boards = state.boards
-      .filter((b) => b.id !== id)
-      .map((b, i) => (b.order === i ? b : { ...b, order: i }))
-    const activeBoardId = state.activeBoardId === id ? boards[0].id : state.activeBoardId
+    // 只压实同剧内的 order,别的剧原样
+    const ownRest = own.filter((b) => b.id !== id).sort((a, b) => a.order - b.order)
+    const compacted = new Map(ownRest.map((b, i) => [b.id, b.order === i ? b : { ...b, order: i }]))
+    const boards = state.boards.filter((b) => b.id !== id).map((b) => compacted.get(b.id) ?? b)
+    const removedActive = state.activeBoardId === id
+    const activeBoardId = removedActive ? ownRest[0].id : state.activeBoardId
     set({
       boards,
       activeBoardId,
+      // 删的是当前段 → 回这部剧的总览,别把用户扔进一个他没选的段
+      ...(removedActive
+        ? { viewByProject: { ...state.viewByProject, [target.projectId]: { mode: 'overview' } } }
+        : {}),
       cards: state.cards.filter((c) => c.boardId !== id),
       selectedCardIds: [],
       selectionAnchorId: undefined,
@@ -1292,28 +1714,30 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     writeActiveBoard(activeBoardId)
     const db = getWorkbenchDb()
     void db.removeBoard(id).catch(() => {})
-    for (const b of boards) void db.putBoard(b).catch(() => {})
+    for (const b of compacted.values()) void db.putBoard(b).catch(() => {})
     for (const card of removedCards) {
-      const timer = persistTimers.get(card.id)
-      if (timer) {
-        clearTimeout(timer)
-        persistTimers.delete(card.id)
-      }
+      cancelPendingPersist(card.id)
       void db.remove(card.id).catch(() => {})
     }
     return true
   },
 
-  addCards: (inputs, anchor) => {
+  addCards: (inputs, anchor, opts) => {
     const created: VideoWorkbenchCard[] = []
     let targetBoardId: string | undefined
     let missingAnchor: string | null = null
 
+    // 显式指定的页必须存在 —— 静默退回屏幕当前页等于把卡写进另一部剧。
+    if (!anchor && opts?.boardId && !get().boards.some((b) => b.id === opts.boardId)) {
+      throw new Error(`board not found: ${opts.boardId}`)
+    }
+
     set((state) => {
       if (!anchor) {
-        targetBoardId = state.activeBoardId
-        const base = state.cards.filter((c) => c.boardId === state.activeBoardId).length
-        inputs.forEach((input, i) => created.push(buildCard(input, base + i, state.activeBoardId)))
+        const boardId = opts?.boardId ?? state.activeBoardId
+        targetBoardId = boardId
+        const base = state.cards.filter((c) => c.boardId === boardId).length
+        inputs.forEach((input, i) => created.push(buildCard(input, base + i, boardId)))
         return {
           cards: [...state.cards, ...created],
           revision: state.revision + 1,
@@ -1388,6 +1812,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
               ? { seed: normalizeSeed(patch.seed) }
               : {}),
           ...(patch.webSearch !== undefined ? { webSearch: patch.webSearch === true } : {}),
+          // 与 seed 的清除同一写法:关掉 = 键上是 undefined。
+          ...(patch.draft !== undefined ? { draft: patch.draft === true ? true : undefined } : {}),
           // 按**这次改完之后**的模型截断:同一个 patch 里可能既换模型又换素材,
           // 用 card.model(旧值)会把升到 2.5 后本该收下的图当场切掉。
           ...(patch.referenceImages !== undefined
@@ -1499,6 +1925,35 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     for (const card of get().cards) {
       if (card.boardId === boardId) schedulePersist(card)
     }
+  },
+
+  moveCardToBoard: (cardId, boardId) => {
+    const { cards, boards } = get()
+    const card = cards.find((c) => c.id === cardId)
+    if (!card || !boards.some((b) => b.id === boardId) || card.boardId === boardId) return false
+    // 生成中不挪段:任务回流按 clientId 对齐卡片,不看 boardId,挪了也不丢进度 ——
+    // 但用户会在另一段看到一张突然出现的进行中卡,与「生成不被导航打断」的直觉相悖。
+    if (isActiveStatus(card.status)) return false
+    const from = card.boardId
+    const targetCount = cards.filter((c) => c.boardId === boardId).length
+    set((state) => {
+      let next = state.cards.map((c) =>
+        c.id === cardId ? { ...c, boardId, order: targetCount, updatedAt: Date.now() } : c,
+      )
+      if (from) next = reorderBoard(next, from)
+      return {
+        cards: next,
+        selectedCardIds: [],
+        selectionAnchorId: undefined,
+        revision: state.revision + 1,
+        structureRevision: state.structureRevision + 1,
+      }
+    })
+    const db = getWorkbenchDb()
+    for (const c of get().cards) {
+      if (c.id === cardId || c.boardId === from) void db.put(c).catch(() => {})
+    }
+    return true
   },
 
   moveCard: (id, toIndex) => {
@@ -1758,8 +2213,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (updated) schedulePersist(updated)
   },
 
-  startCardsFromAgent: async (ids) => {
-    if (get().agentAutoStart) return get().startCards(ids)
+  startCardsFromAgent: async (ids, opts) => {
+    if (get().agentAutoStart) return get().startCards(ids, opts)
     // 拦下时**不碰卡片状态** —— 留一张假的 preparing 比不启动更糟:用户会等一个
     // 永远不来的结果。卡片保持原样,agent 拿着 hint 去请用户自己按。
     return {
@@ -1776,11 +2231,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     }
   },
 
-  startCards: async (ids) => {
+  startCards: async (ids, startOpts) => {
     const api = getApi()?.videoWorkbench
     const result: StartResult = { started: [], skipped: [] }
     if (!api?.submit) {
-      const selected = get().selectedCardIds
+      const selected = startOpts?.boardId ? [] : get().selectedCardIds
       const scope = ids ?? (selected.length > 0 ? selected : get().cards.map((c) => c.id))
       for (const id of scope) {
         result.skipped.push({ cardId: id, reason: '视频服务未就绪(preload 桥缺失)' })
@@ -1792,10 +2247,12 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     //
     // 「有选中就只作用于选中」是 UI 侧的期待;MCP 走的是显式 ids 分支,不受影响 ——
     // agent 不该因为用户碰巧选了几张卡就改变行为。
-    const selected = get().selectedCardIds
+    // 指定了 boardId = 调用方在屏幕之外的剧里干活:选中态是屏幕上那部剧的,不能算。
+    const selected = startOpts?.boardId ? [] : get().selectedCardIds
     const scope: string[] | undefined = ids ?? (selected.length > 0 ? selected : undefined)
+    const wholeBoardId = startOpts?.boardId ?? get().activeBoardId
     const targets = get().cards.filter((c) =>
-      scope ? scope.includes(c.id) : c.boardId === get().activeBoardId,
+      scope ? scope.includes(c.id) : c.boardId === wholeBoardId,
     )
     if (scope) {
       for (const id of scope) {
@@ -1804,7 +2261,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     }
 
     const submissions: Array<Promise<void>> = []
+    let skippedSucceeded = 0
     for (const card of targets) {
+      // 整页启动(没点名、没选中)才跳:点名 / 选中就是「我要这几张」,照常重跑。
+      if (startOpts?.skipUpToDate && !scope && isResultUpToDate(card)) {
+        skippedSucceeded += 1
+        continue
+      }
       const gate = canStart(card)
       if (!gate.ok) {
         // 整页全量启动时 draft 空卡静默跳过;显式指名(id / 选中)才报原因
@@ -1815,6 +2278,14 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       }
 
       const clientId = `wb-${card.id}-${Date.now()}`
+      // 🚨 提交那一刻现读,而且**必须由这里给出** —— 主进程刻意不猜。
+      //
+      // 它手上那份 activePool 只是本 store 的镜像:`setBillingSource('own-key')`
+      // 先落本地状态、再尽力调 `clearBillingPool()`,那一步失败时被吞掉。于是
+      // 存在一个窗口 —— 渲染层已经是自填 Key,主进程仍握着 activePool。此刻让
+      // 主进程猜,猜出来的是平台余额,用户在不知情的情况下花掉组织的钱。
+      // 完整论证见 seedanceGateway/credentials.ts 的「已知缺口」。
+      const billing = useQuotaStore.getState().billingSource
       let submitted: VideoWorkbenchCard | null = null
       set((state) => ({
         cards: state.cards.map((c) => {
@@ -1826,7 +2297,15 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
             ...c,
             status: 'preparing',
             clientId,
+            // 每轮刷新:上一轮可能是平台余额、这一轮是自填 Key,而对账与
+            // 「重新保存」都靠它决定去问谁。
+            billing,
+            // 这一轮出不出样片,由提交那一刻的开关 + 模型 + 计费定下(见 seedanceDraft)。
+            draftRun: effectiveDraft(c) && billing === 'platform' ? true : undefined,
+            fromDraftTaskId: undefined,
             taskId: undefined,
+            upstreamTaskId: undefined,
+            submittedReferences: undefined,
             videoUrl: undefined,
             error: undefined,
             persistence: undefined,
@@ -1847,11 +2326,13 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
       if (submitted) persistNow(submitted)
       result.started.push(card.id)
 
+      const draft = effectiveDraft(card) && billing === 'platform'
       const payload: VideoWorkbenchSubmitPayload = {
         clientId,
         prompt: card.prompt.trim(),
         model: card.model,
-        resolution: card.resolution,
+        resolution: draft ? submitResolution(card) : card.resolution,
+        ...(draft ? { draft: true } : {}),
         ratio: card.ratio,
         duration: card.duration,
         generateAudio: card.generateAudio,
@@ -1864,64 +2345,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
         ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
         // 总闸随每次提交带过去 —— 关着时主进程不把这批参考图登记进人像库。
         autoImportPortrait: get().autoImportPortrait,
+        billing,
         ...buildModeMedia(card),
       }
 
-      submissions.push(
-        api
-          .submit(payload)
-          .then((res) => {
-            let after: VideoWorkbenchCard | null = null
-            let lateCancelTaskId: string | undefined
-            set((state) => ({
-              cards: state.cards.map((c) => {
-                if (c.id !== card.id || c.clientId !== clientId) return c
-                if (!res.success) {
-                  after = { ...c, status: 'failed', error: res.error, updatedAt: Date.now() }
-                  return after
-                }
-                // preparing 期间用户点了取消:直到现在才拿到 taskId,而此刻任务
-                // 几乎必然还在 queued —— 上游唯一允许真取消(不计费)的窗口,
-                // 立刻补发。状态保持 cancelled,绝不因提交成功而推回 queued。
-                if (c.cancelRequested) {
-                  lateCancelTaskId = res.taskId
-                  after = {
-                    ...c,
-                    taskId: res.taskId,
-                    status: 'cancelled',
-                    cancelRequested: undefined,
-                    updatedAt: Date.now(),
-                  }
-                  return after
-                }
-                after =
-                  // 广播可能先一步把状态推到 queued/running/succeeded,别倒回去
-                  c.status === 'preparing'
-                    ? { ...c, taskId: res.taskId, status: 'queued', updatedAt: Date.now() }
-                    : { ...c, taskId: res.taskId, updatedAt: Date.now() }
-                return after
-              }),
-            }))
-            if (after) persistNow(after)
-            if (lateCancelTaskId) void api.cancel?.(lateCancelTaskId)
-          })
-          .catch((e) => {
-            let after: VideoWorkbenchCard | null = null
-            set((state) => ({
-              cards: state.cards.map((c) => {
-                if (c.id !== card.id || c.clientId !== clientId) return c
-                after = {
-                  ...c,
-                  status: 'failed',
-                  error: e instanceof Error ? e.message : String(e),
-                  updatedAt: Date.now(),
-                }
-                return after
-              }),
-            }))
-            if (after) persistNow(after)
-          }),
-      )
+      submissions.push(trackSubmission(set, api, card.id, clientId, api.submit(payload)))
     }
 
     // 刻意不 await submissions —— 这个 await 曾让 agent 整个 turn 卡死。
@@ -1937,6 +2365,79 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     // 卡片状态,不会有悬空 rejection;卡片在提交前已同步落 'preparing' 并持久化,
     // 之后的进度由 seedance:task-update 广播流回 applyTaskUpdate —— 工作台页面
     // 本身就是交付通道,跟 agent 等不等完全无关。
+    void Promise.all(submissions)
+    if (skippedSucceeded > 0) result.skippedSucceeded = skippedSucceeded
+    return result
+  },
+
+  finalizeDrafts: async (ids) => {
+    const api = getApi()?.videoWorkbench
+    const result: StartResult = { started: [], skipped: [] }
+    if (!api?.submit) {
+      for (const id of ids) result.skipped.push({ cardId: id, reason: '视频服务未就绪(preload 桥缺失)' })
+      return result
+    }
+    // 同 startCards:提交那一刻现读,主进程不猜。成片必须与样片同一个计费池 ——
+    // 网关按「本人 + 已成功」查样片,换了池就查不到。
+    const billing = useQuotaStore.getState().billingSource
+    const submissions: Array<Promise<void>> = []
+    for (const id of ids) {
+      const card = get().cards.find((c) => c.id === id)
+      if (!card) {
+        result.skipped.push({ cardId: id, reason: '卡片不存在' })
+        continue
+      }
+      const gate = draftFinalAvailability(card, billing)
+      if (!gate.show) {
+        result.skipped.push({ cardId: id, reason: '这张卡当前结果不是一条成功的样片' })
+        continue
+      }
+      if (!gate.enabled) {
+        result.skipped.push({ cardId: id, reason: gate.reason })
+        continue
+      }
+      const draftTaskId = card.taskId!
+      const clientId = `wb-${card.id}-${Date.now()}`
+      let submitted: VideoWorkbenchCard | null = null
+      set((state) => ({
+        cards: state.cards.map((c) => {
+          if (c.id !== card.id) return c
+          // 样片那一版已在成功时存档进 versions,这里清掉的只是卡上的「当前结果」。
+          submitted = {
+            ...c,
+            ...CLEARED_RUN_RESULT,
+            status: 'preparing',
+            clientId,
+            billing,
+            draftRun: undefined,
+            fromDraftTaskId: draftTaskId,
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+          }
+          return submitted
+        }),
+      }))
+      if (submitted) persistNow(submitted)
+      result.started.push(card.id)
+
+      const payload: VideoWorkbenchSubmitPayload = {
+        clientId,
+        // 只进网关日志;方舟沿用样片的提示词,不会拿它重新生成。
+        prompt: card.prompt.trim(),
+        model: card.model,
+        resolution: SEEDANCE_DRAFT_FINAL_RESOLUTION,
+        ratio: card.ratio,
+        duration: card.duration,
+        generateAudio: card.generateAudio,
+        billing,
+        fromDraftTaskId: draftTaskId,
+        referenceImages: [],
+        referenceVideos: [],
+        referenceAudios: [],
+      }
+      submissions.push(trackSubmission(set, api, card.id, clientId, api.submit(payload)))
+    }
+    // 同 startCards:不 await,进度由 seedance:task-update 广播流回。
     void Promise.all(submissions)
     return result
   },
@@ -2037,6 +2538,10 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
           ...card,
           status: update.status,
           taskId: update.taskId,
+          // 主进程一学到就每条广播都带;这里仍按「有才写」,一条不带它的迟到广播
+          // 不该把已经记下的号抹掉。
+          ...(update.upstreamTaskId ? { upstreamTaskId: update.upstreamTaskId } : {}),
+          ...(update.referenceUrls ? { submittedReferences: update.referenceUrls } : {}),
           ...(update.videoUrl ? { videoUrl: update.videoUrl } : {}),
           ...(update.localPath ? { localPath: update.localPath } : {}),
           ...(update.remoteUrl ? { remoteUrl: update.remoteUrl } : {}),
@@ -2079,13 +2584,19 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get) =
     if (after && shouldUpgradeHistory) void upgradeCardHistoryUrl(after)
   },
 
-  exportIR: () => exportWorkbenchIR(get()),
+  exportIR: (scopeProjectId) =>
+    exportWorkbenchIR(scopeProjectId ? scopedView(get(), scopeProjectId) : get()),
 
   applyIR: async (ir, opts) => {
     const prev = get()
-    const plan = planApplyIR(prev, ir, opts)
+    // 对话绑在屏幕之外的剧里:整份 IR 在那部剧的语境里校验与落地。`next.activeBoardId`
+    // 是「那部剧的当前页」,写回去会把用户正在看的页挪走 —— 屏幕上的当前页保持不动。
+    const offScreen = !!opts?.scopeProjectId && opts.scopeProjectId !== prev.activeProjectId
+    const source = opts?.scopeProjectId ? scopedView(prev, opts.scopeProjectId) : prev
+    const plan = planApplyIR(source, ir, opts)
     if (!plan.next || !plan.persist) return plan.result
-    const write = { next: plan.next, persist: plan.persist }
+    if (offScreen) plan.next.activeBoardId = prev.activeBoardId
+    const write = softenPlan(prev, { next: plan.next, persist: plan.persist })
     applyPlanToState(set, write, prev)
     await flushPlanToDb(write)
     // 整板回写同样可能带进新的外链图(agent 手写 IR 时最常见)。
@@ -2151,7 +2662,7 @@ function restoreStep(
     return Promise.resolve(plan.result)
   }
 
-  const write = { next: plan.next, persist: plan.persist }
+  const write = softenPlan(state, { next: plan.next, persist: plan.persist })
   restoringHistory = true
   try {
     applyPlanToState(set, write, state)
@@ -2301,6 +2812,7 @@ export function mountWorkbenchTaskListener(): () => void {
 
 /** 测试用:重置模块级订阅/水合状态。 */
 export function resetWorkbenchStoreForTest(): void {
+  resetThreadObservationsForTest()
   hydrationPromise = null
   taskUnsubscribe = null
   taskMountCount = 0
@@ -2317,6 +2829,13 @@ export function resetWorkbenchStoreForTest(): void {
       cards: [],
       boards: [board],
       activeBoardId: board.id,
+      projects: [defaultProject()],
+      activeProjectId: DEFAULT_PROJECT_ID,
+      viewByProject: { [DEFAULT_PROJECT_ID]: { mode: 'board', boardId: board.id } },
+      railCollapsed: false,
+      trash: [],
+      pinnedProjectIds: readPins().projects,
+      pinnedBoardIds: readPins().boards,
       hydrated: false,
       revision: 0,
       structureRevision: 0,

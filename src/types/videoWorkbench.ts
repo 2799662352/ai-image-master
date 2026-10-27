@@ -12,8 +12,10 @@
 import type {
   SeedanceModelAlias,
   SeedancePersistence,
+  SeedanceReferenceUrls,
   SeedanceTaskMode,
   SeedanceTaskStatus,
+  VideoBillingSource,
 } from './seedance'
 import type { VideoWorkbenchMode } from './videoModes'
 
@@ -40,6 +42,11 @@ export interface VideoWorkbenchSpec {
   seed?: number
   /** 联网搜索增强（上游 tools: [{type:'web_search'}]）。仅 Seedance 2.0。 */
   webSearch: boolean
+  /**
+   * 样片模式(Seedance 2.5 + 平台余额):开着时出 480p 样片,满意后在卡上一键生成 1080p 成片。
+   * 缺省 = 关。只在 2.5 下生效,切到别的模型时保留开关但不发(`effectiveDraft`)。
+   */
+  draft?: boolean
   /**
    * 文档 / 网页链接槽（仅万相 3.0）。存**序列化后的 JSON 字符串**，空/缺省 = 未设置。
    *
@@ -106,6 +113,12 @@ export const WORKBENCH_STATUS_MAX_INDEX_ENTRIES = 30
  * 超限在工具层**报错**而不是静默截断:截断会在半个词上切断,agent 还以为写进去了。
  */
 export const WORKBENCH_BOARD_SUMMARY_MAX = 60
+
+/**
+ * 剧摘要上限。与页摘要同长:一部剧一条,随 list_projects 和每次工具回包的 project 头
+ * 一起回传,八部剧就是八条。够写「三集科幻短剧 · 赛博都市 · 主角林夏」,不够写简介。
+ */
+export const WORKBENCH_PROJECT_SUMMARY_MAX = 60
 
 /**
  * 卡片摘要上限。比页摘要更短 —— 页摘要一页一条,卡片摘要是**一页里每张卡一条**,
@@ -180,12 +193,53 @@ export type VideoWorkbenchCardStatus =
   | 'preparing'
   | SeedanceTaskStatus
 
+/** 升级时承接全部老页面的那部剧。id 固定,便于迁移幂等与测试。 */
+export const DEFAULT_PROJECT_ID = 'project-default'
+export const DEFAULT_PROJECT_NAME = '默认项目'
+
 /**
- * 工作台「页」(board / 工作区):每页一套独立的卡片集合,页签在顶部工具栏切换。
- * IndexedDB `boards` object store 持久化;老数据(无 boards)迁移进第一页。
+ * 「剧」(project):一部片子/一个项目,是分段(board)的容器。不同剧之间在界面上
+ * 完全隔离,工作台任意时刻只呈现一部剧。IndexedDB `projects` object store 持久化。
+ */
+export interface VideoWorkbenchProject {
+  id: string
+  name: string
+  /** 剧栏排序(小在上)。 */
+  order: number
+  createdAt: number
+  /** 只在改名时更新;「最近活动」由卡片的 updatedAt 派生,见 projectStats。 */
+  updatedAt: number
+  /**
+   * 一句话说明这部剧是什么(「三集科幻短剧 · 赛博都市 · 主角林夏」)。
+   *
+   * 分段和卡片各有一层 agent 写的路标,剧此前没有:list_projects 只回数字,agent 面对
+   * 八部剧只能靠剧名猜,而剧名常常是「未命名剧 3」。由 agent 写
+   * (video_workbench_set_project_summary),不参与生成、不进撤销栈、不动并发令牌。
+   */
+  summary?: string
+  /**
+   * 仅升级生成的「默认项目」带此标记:总览顶部显示迁移提示条。用户关闭提示或
+   * 改名后清除。不影响任何数据语义。
+   */
+  legacy?: true
+  /**
+   * 移入回收站的时刻。**只存在于 IndexedDB 的记录上** —— 内存里的 `projects` 只放
+   * 活着的剧,被删的剧(连同它的分段和卡片)在 store 的 `trash` 里。水合时按这个字段
+   * 分流;恢复时去掉它再写回。用「在原记录上打标」而不是新开一个 object store,
+   * 是为了不升库版本(升级失败的代价是整个工作台打不开)。
+   */
+  deletedAt?: number
+}
+
+/**
+ * 工作台「分段」(board;界面文案原为「页面」):每段一套独立的卡片集合,页签在
+ * 分段页顶部切换。IndexedDB `boards` object store 持久化;老数据(无 boards)迁移
+ * 进第一段,无 projectId 的老段在 v3 升级时归入 DEFAULT_PROJECT_ID。
  */
 export interface VideoWorkbenchBoard {
   id: string
+  /** 所属剧。v3 起必填;老数据在升级/水合时归入 DEFAULT_PROJECT_ID。 */
+  projectId: string
   name: string
   /**
    * 一句话说明这一页装的是什么（「追车戏 8 镜，全部夜景」）。
@@ -202,6 +256,13 @@ export interface VideoWorkbenchBoard {
   /** 页签排序(小在左)。 */
   order: number
   createdAt: number
+  /** 移入回收站的时刻;语义同 `VideoWorkbenchProject.deletedAt`(只在库记录上,内存里的活段没有)。 */
+  deletedAt?: number
+  /**
+   * 是因为**所属剧**被删才进的回收站(而不是单独删的这一段)。恢复剧时只带回这类段;
+   * 之前单独删掉的段仍留在回收站里,由用户单独决定。
+   */
+  deletedWithProject?: true
 }
 
 /** 一张工作台任务卡片（渲染端真相源 + IndexedDB 持久化形状）。 */
@@ -240,6 +301,36 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   cancelRequested?: boolean
   /** createTask 成功后的上游任务 id（可用 check_video_task 续轮询）。 */
   taskId?: string
+  /**
+   * 网关**之后那一跳**的任务号（火山 Ark `cgt-…` / DashScope uuid）,只在走网关时有。
+   * `taskId` 是网关签发的,找供应商对账他们不认它,认的是这个 —— 「任务详情」面板
+   * 把它摆在最显眼的一行。**是结果不是意图**:与 actualSeed 同一待遇,不进 spec、
+   * 不参与 specEquals、重新生成随上一轮结果一起清掉(版本存档里的保留)。
+   */
+  upstreamTaskId?: string
+  /**
+   * 这一轮**实际递给上游**的素材地址(已解析成 https,与 referenceImages /
+   * referenceVideos / referenceAudios 同序),来自提交时的广播。「任务详情」把素材
+   * 写成这些地址而不是本机路径 —— 路径贴给别人没有意义。同样是结果不是意图。
+   */
+  submittedReferences?: SeedanceReferenceUrls
+  /**
+   * 这一轮提交时的计费来源（取自 `useQuotaStore.billingSource`）。
+   *
+   * **是结果不是意图** —— 挂在 Card 上而不是 Spec 上：它不参与 specEquals、
+   * 不进 IR、不涨 rev，用户在设置里切计费来源不该让每张卡都变成「改过」。
+   *
+   * 留着它是因为 taskId 只在**签发它的那条通道**里有效：重启对账与「重新保存」
+   * 都得拿它打回同一条上游，否则一律回「任务不存在」。每轮提交刷新。
+   */
+  billing?: VideoBillingSource
+  /**
+   * 这一轮出的是 480p 样片(提交时开着样片模式)。**是结果不是意图**,每轮提交刷新:
+   * 卡上的「生成 1080P 成片」只看它,不看 spec 里的开关 —— 开关可能在出片后被关掉。
+   */
+  draftRun?: boolean
+  /** 这一轮是由样片生成的 1080p 成片:来源样片的任务号。每轮提交刷新。 */
+  fromDraftTaskId?: string
   /** succeeded 时上游临时结果地址（有效期未知，兜底播放源）。 */
   videoUrl?: string
   /** 落盘后的本地 mp4 绝对路径（权威结果）。 */
@@ -272,10 +363,20 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
    * 位置计划已经失效。
    */
   rev?: number
+  /**
+   * 调用方给这一镜起的稳定编号(如「第 12 镜」`shot-12`),`video_workbench_add_tasks`
+   * 的幂等键:同一分段里已有同编号的卡就不再建第二张。
+   *
+   * 只在**同一分段内**唯一 —— 分段常常就是「一集」,第 1 集和第 2 集各有自己的第 1 镜。
+   * 随卡存亡:卡删了编号就释放。不参与 spec / rev / IR,纯元数据。
+   */
+  clientRef?: string
 }
 
 /** MCP / IPC 写入卡片时的字段集（全部可选，缺省用默认值）。 */
 export interface VideoWorkbenchCardInput {
+  /** 幂等键,见 `VideoWorkbenchCard.clientRef`。只在建卡时生效,updateCard 不碰它。 */
+  clientRef?: string
   prompt?: string
   model?: SeedanceModelAlias
   resolution?: '480p' | '720p' | '1080p'
@@ -286,6 +387,8 @@ export interface VideoWorkbenchCardInput {
   /** 随机种子;传 null 表示清除（恢复随机）。 */
   seed?: number | null
   webSearch?: boolean
+  /** 样片模式(Seedance 2.5 + 平台余额)。 */
+  draft?: boolean
   /** 文档 / 网页链接槽（仅万相）。序列化 JSON；空串 = 清除。 */
   documentOrLink?: string
   /**
@@ -322,6 +425,10 @@ export interface VideoWorkbenchVersionSpec {
   seed?: number
   webSearch: boolean
   referenceBrief: { images: string[]; videos: string[]; audios: string[] }
+  /** 这一版是 480p 样片。 */
+  draft?: boolean
+  /** 这一版是由样片(该任务号)生成的 1080p 成片。 */
+  fromDraftTaskId?: string
 }
 
 /**
@@ -340,6 +447,10 @@ export interface VideoWorkbenchVersion {
   seq: number
   createdAt: number
   taskId?: string
+  /** 产出这一版的上游任务号(见 `VideoWorkbenchCard.upstreamTaskId`)。 */
+  upstreamTaskId?: string
+  /** 产出这一版时实际递给上游的素材地址(见 `VideoWorkbenchCard.submittedReferences`)。 */
+  submittedReferences?: SeedanceReferenceUrls
   localPath?: string
   remoteUrl?: string
   videoUrl?: string
@@ -404,6 +515,8 @@ export interface WorkbenchIRMaterial {
 export interface WorkbenchIRCardResult {
   status: VideoWorkbenchCardStatus
   taskId?: string
+  /** 网关之后那一跳的任务号(火山 `cgt-…`),找供应商对账用;直连时没有。 */
+  upstreamTaskId?: string
   error?: string
   localPath?: string
   remoteUrl?: string
@@ -440,6 +553,8 @@ export interface WorkbenchIRCard {
   mode?: VideoWorkbenchMode
   seed?: number
   webSearch?: boolean
+  /** 样片模式(Seedance 2.5 + 平台余额)。声明式:没写 = 关。 */
+  draft?: boolean
   documentOrLink?: string
   referenceImages?: WorkbenchIRMaterial[]
   referenceVideos?: WorkbenchIRMaterial[]
@@ -467,6 +582,20 @@ export interface WorkbenchIR {
    * 单张卡的规格冲突不看这个,看 `WorkbenchIRCard.rev`。
    */
   structureRevision: number
+  /**
+   * 导出时**这部剧**的结构指纹(页 id/名 + 各页卡片 id 顺序的哈希)。
+   *
+   * `structureRevision` 是全工作台一个计数器:别的对话在别的剧里加一张卡,它就 +1,
+   * 于是「同时跑三部剧」时,每次 apply 都会被隔壁剧的动作误伤成「结构变过」。指纹只看
+   * 这部剧自己 —— 令牌对不上但指纹没变,说明变的是别的剧,放行;指纹也变了才是真冲突。
+   * 省略(老 IR / 模型没抄回来)= 退回只看 structureRevision,行为与以前一致。
+   */
+  structureSignature?: string
+  /**
+   * 导出时的当前剧。apply 时若给了且与当前剧不同 → 整份拒绝:用户中途切了剧,
+   * 这份 IR 描述的是另一部剧的看板。省略(老 IR)= 不校验。
+   */
+  projectId?: string
   /** 当前激活页(apply 时若能解析就切过去)。 */
   activeBoardId?: string
   boards: WorkbenchIRBoard[]
@@ -481,6 +610,11 @@ export interface WorkbenchApplyOptions {
   mode?: 'merge' | 'replace'
   /** 跳过两级并发校验。明知会盖掉用户改动时的逃生门,默认不给。 */
   force?: boolean
+  /**
+   * 这次 apply 作用的剧(agent 对话绑定的那部)。与屏幕上的当前剧不同时,整份 IR
+   * 在**那部剧**的语境里校验和落地,屏幕上正在看的页不会被挪走。省略 = 屏幕上的当前剧。
+   */
+  scopeProjectId?: string
 }
 
 /** 单项被跳过的原因(渲染中不可改规格、id 不存在等)。 */
@@ -528,8 +662,12 @@ export interface WorkbenchApplyResult {
   /**
    * 结构冲突:卡片集合/位置在导出之后变过,整份被拒,什么都没写。agent 该重新
    * export 再改。单张卡的规格冲突不在这里 —— 那是逐项 `skipped`,其余改动已生效。
+   *
+   * `project-mismatch`:IR 是在另一部剧下导出的(用户中途切了剧),同样整份拒绝。
    */
-  conflict?: { expected: number; actual: number }
+  conflict?:
+    | { expected: number; actual: number }
+    | { reason: 'project-mismatch'; expected: string; actual: string }
   boards: { created: string[]; renamed: string[]; removed: string[] }
   cards: {
     created: string[]
@@ -595,6 +733,25 @@ export interface VideoWorkbenchSubmitPayload {
    * 见 runtime.ts 的 setAutoImportPortraitEnabled。缺省按开处理(与 UI 默认一致)。
    */
   autoImportPortrait?: boolean
+  /**
+   * 这一次的钱从哪出 —— 值来自渲染层的 `useQuotaStore.billingSource`。
+   *
+   * **必须由渲染层带过来,不能让主进程自己猜。** 主进程手上那份 activePool 只是
+   * 渲染层状态的镜像:`setBillingSource('own-key')` 先落本地状态、再尽力调
+   * `clearBillingPool()`,而那一步失败时被吞掉。于是存在一个窗口 —— 渲染层已经
+   * 是自填 Key,主进程仍握着 activePool。此时让主进程去猜,猜出来的是平台余额。
+   * (完整论证见 `seedanceGateway/credentials.ts` 的「已知缺口」。)
+   *
+   * 缺省交给主进程兜底,那是给**没有渲染层**的 MCP `generate_video` 留的。
+   */
+  billing?: VideoBillingSource
+  /** Seedance 2.5 样片:出 480p 预览。仅平台余额。 */
+  draft?: boolean
+  /**
+   * 由样片生成 1080p 成片:样片的任务号。给了它,主进程只认这一样 ——
+   * 提示词只进日志,素材 / 时长 / 比例 / seed / 音频一律沿用样片。
+   */
+  fromDraftTaskId?: string
 }
 
 /** `video-workbench:submit` 返回（成功 = 已创建上游任务，轮询在主进程后台跑）。 */
@@ -615,6 +772,12 @@ export interface VideoWorkbenchReconcileItem {
   ratio: string
   duration: number
   createdAt?: number
+  /**
+   * 提交这条任务时用的计费模式。重启后恢复的探测与轮询要打回同一条上游 ——
+   * 一条平台余额的任务拿自填 Key 去问只会回「任务不存在」,而对账会把那当成
+   * 「任务没了」,把一条还在跑、已经付过钱的任务错杀成失败卡片。
+   */
+  billing?: VideoBillingSource
 }
 
 /**

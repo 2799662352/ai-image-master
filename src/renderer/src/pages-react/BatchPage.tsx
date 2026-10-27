@@ -16,7 +16,8 @@ import BatchModeSwitcher from './batch/BatchModeSwitcher'
 import BatchPromptCard from './batch/BatchPromptCard'
 import BatchPromptMulti from './batch/BatchPromptMulti'
 import BatchConfigGrid from './batch/BatchConfigGrid'
-import type { ImageParamModelConfig } from '../services/api/imageParamControls'
+import { getModelParamSpecs, type ImageParamModelConfig } from '../services/api/imageParamControls'
+import { ModelParamsPanel } from '../react-app/components/ModelParamsPanel'
 import BatchRefDrop from './batch/BatchRefDrop'
 import BatchActionBar from './batch/BatchActionBar'
 import BatchResultGrid from './batch/BatchResultGrid'
@@ -57,6 +58,7 @@ export default function BatchPage() {
   const ratio = useBatchStore((s) => s.ratio)
   const resolution = useBatchStore((s) => s.resolution)
   const quality = useBatchStore((s) => s.quality)
+  const modelParams = useBatchStore((s) => s.modelParams)
   const perPromptCount = useBatchStore((s) => s.perPromptCount)
   const count = useBatchStore((s) => s.count)
   const concurrency = useBatchStore((s) => s.concurrency)
@@ -69,7 +71,8 @@ export default function BatchPage() {
   // ---- actions (引用稳定, getState 一次取出) ----
   const {
     setMode, setCardPrompt, setCardCount, setMultiText,
-    setRatio, setResolution, setQuality, setPerPromptCount, setCount, setConcurrency,
+    setRatio, setResolution, setQuality, setModelParam, resetModelParams,
+    setPerPromptCount, setCount, setConcurrency,
     addRefImage, removeRefImage, clearRefImages,
     addItem, removeItem, clearAll, runBatch, cancelBatch,
   } = useBatchStore.getState()
@@ -140,6 +143,16 @@ export default function BatchPage() {
     () => (models[currentModelKey] as unknown as ModelConfigSnapshot | undefined) ?? null,
     [models, currentModelKey],
   )
+
+  // 模型专属参数(悠船:原生 2K / 混沌 / 风格化 / 风格参考……)。没声明的渠道 specs 为空,面板不出现。
+  const modelParamSpecs = useMemo(() => getModelParamSpecs(modelConfig), [modelConfig])
+  // 入队时锁进 item 的那一份:只取当前模型声明过的键(切过模型留下的残留值不进队列),
+  // 且**永远是对象**(空 = 明确「全部自动」)—— worker 用 `item.modelParams ?? 整批默认`,
+  // 传 undefined 会让一批跑到一半改过的面板被首次点击时的旧值顶回去。
+  const lockedModelParams = useMemo(() => {
+    const keys = new Set(modelParamSpecs.map((s) => s.key))
+    return Object.fromEntries(Object.entries(modelParams).filter(([k]) => keys.has(k)))
+  }, [modelParamSpecs, modelParams])
 
   // gemini 原生端点 = base64 内联组:参考图以 inline_data 发送。
   // ⚠️ 必须从 model store **同步**派生(而非异步的 modelConfig),否则切换那一刻 flag
@@ -215,6 +228,8 @@ export default function BatchPage() {
             prompt: snap.prompt,
             ratio: snap.ratio,
             referenceImages: snap.referenceImages,
+            // 快照里没有 = 当时全自动:回灌成空,别把现在面板上的值带进「重编辑」
+            modelParams: snap.modelParams ?? {},
             mode: 'card',
           }
         : {
@@ -290,6 +305,7 @@ export default function BatchPage() {
           ratio,
           resolution,
           concurrency,
+          modelParams: lockedModelParams,
           referenceImages: refImages.map((r) => r.base64),
         })
       }
@@ -310,7 +326,12 @@ export default function BatchPage() {
     // 切换后的 currentModelKey, 否则会被在跑那批的闭包 modelKey 顶替(原 bug:
     // 切到 nano 后加的任务被当 gpt-image 发, 带着 nano 的 base64 refs → 失败)。
     const currentRefs = refImages.map((r) => r.base64)
-    const itemOpts = { referenceImages: currentRefs, ratio, model: currentModelKey }
+    const itemOpts = {
+      referenceImages: currentRefs,
+      ratio,
+      model: currentModelKey,
+      modelParams: lockedModelParams,
+    }
     if (mode === 'card') {
       const p = cardPrompt.trim()
       if (!p && stats.pending === 0 && !running) {
@@ -355,6 +376,7 @@ export default function BatchPage() {
     try {
       await runBatch(api, currentModelKey, {
         ratio, resolution, concurrency,
+        modelParams: lockedModelParams,
         referenceImages: refImages.map((r) => r.base64),
       })
       const finalState = useBatchStore.getState()
@@ -446,6 +468,15 @@ export default function BatchPage() {
             onCountChange={setCount}
             onConcurrencyChange={setConcurrency}
           />
+          {/* 模型专属参数(悠船:原生 2K / 混沌 / 风格化 / 风格参考……);没声明的渠道不出现 */}
+          {modelParamSpecs.length > 0 && (
+            <ModelParamsPanel
+              specs={modelParamSpecs}
+              values={modelParams}
+              onChange={setModelParam}
+              onReset={resetModelParams}
+            />
+          )}
           <BatchRefDrop
             images={refImages}
             onAdd={addRefImage}
