@@ -135,6 +135,85 @@ describe('CodexProviderStore', () => {
     expect(state.apiKeys['rightcode-pro']).toBeUndefined()
   })
 
+  describe('撤下的 DeepSeek 模型:已保存的选择在读取时换成接替者', () => {
+    // 选择器撤下了 0731 / 0813 / Right.Codes 直连的 flash。AgentManager 构造时
+    // 按已保存的 (网关, 模型) 解析通道且没有 try/catch,留着撤下的 slug 会让
+    // 应用在启动阶段抛「本网关无此模型」。所以读文件那一刻就换掉。
+    async function writeV2(selectedGatewayId: string, selectedModelId: string, extra: object = {}) {
+      await fs.writeFile(
+        path.join(tmpDir, 'codex-providers.json'),
+        JSON.stringify({
+          version: 2,
+          selectedGatewayId,
+          selectedModelId,
+          apiKeys: { apiyi: 'sk-apiyi', rightcode: 'sk-rc' },
+          customProviders: [],
+          ...extra,
+        }),
+      )
+    }
+
+    it.each([
+      ['rightcode', 'deepseek-v4-flash-0731', 'deepseek-flash'],
+      ['apiyi', 'deepseek-v4-flash-0731', 'deepseek-flash'],
+      ['rightcode', 'deepseek-v4-pro-0813', 'deepseek-v4-pro'],
+      ['apiyi', 'deepseek-v4-pro-0813', 'deepseek-v4-pro'],
+      ['rightcode', 'deepseek-v4-flash', 'deepseek-flash'],
+    ])('%s 网关上保存的 %s → %s(异步与同步两条读取路径一致)', async (gatewayId, retired, successor) => {
+      await writeV2(gatewayId, retired)
+
+      const state = await makeStore().load()
+      expect(state.selectedGatewayId).toBe(gatewayId)
+      expect(state.selectedModelId).toBe(successor)
+      // 只动模型,不碰任何密钥。
+      expect(state.apiKeys).toEqual({ apiyi: 'sk-apiyi', rightcode: 'sk-rc' })
+
+      const syncState = new CodexProviderStore({ userDataDir: tmpDir }).loadSync()
+      expect(syncState.selectedModelId).toBe(successor)
+    })
+
+    it('没撤下的模型原样保留(含火山方舟两个新 slug)', async () => {
+      for (const model of [
+        'deepseek-flash',
+        'deepseek-v4-pro',
+        'deepseek-v4-1-flash-261017',
+        'deepseek-v4-1-flash-economy-261017',
+        'gpt-5.5',
+      ]) {
+        await writeV2('apiyi', model)
+        expect((await makeStore().load()).selectedModelId, model).toBe(model)
+      }
+    })
+
+    it('自定义网关不动:同名 slug 在别人的网关上是另一个真实存在的模型', async () => {
+      await writeV2('custom-mine', 'deepseek-v4-flash', {
+        customProviders: [{
+          id: 'custom-mine',
+          name: 'Mine',
+          baseUrl: 'https://mine.example.com/v1',
+          envKey: 'OPENAI_API_KEY',
+          isCustom: true,
+        }],
+      })
+
+      const state = await makeStore().load()
+      expect(state.selectedGatewayId).toBe('custom-mine')
+      expect(state.selectedModelId).toBe('deepseek-v4-flash')
+    })
+
+    it('换成接替者后下一次写入会把它落盘(此前文件保持原样)', async () => {
+      await writeV2('rightcode', 'deepseek-v4-pro-0813')
+      const store = makeStore()
+      expect((await store.load()).selectedModelId).toBe('deepseek-v4-pro')
+
+      await store.setApiKey('apiyi', 'sk-rotated')
+      const persisted = JSON.parse(
+        await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
+      )
+      expect(persisted.selectedModelId).toBe('deepseek-v4-pro')
+    })
+  })
+
   it('migrates apiyi-grok to gateway plus Grok selection', async () => {
     await fs.writeFile(
       path.join(tmpDir, 'codex-providers.json'),

@@ -168,21 +168,28 @@ const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
 ])
 
 /**
- * Miau 上的 DeepSeek —— 与 `rightcode-deepseek` **并存**,不是替换。
+ * Miau 上的 DeepSeek —— 现在是 DeepSeek 在桌面端**唯一**的通道。
  *
- * 路由靠 slug 精确命中来区分通道(见 `channelForModel`),所以同一网关下一个 slug
- * 只能归一条通道。带日期的两个(`-0731` / `-0813`,上游是阿里)与 Right.Codes 的
- * `deepseek-v4-flash` 不同名,天然分得开。
+ * 曾经与 Right.Codes 自家的 `rightcode-deepseek`(自填 Key、`deepseek-v4-flash`)
+ * 并存,靠 slug 精确命中区分(见 `channelForModel`)。那条通道和带日期的
+ * `-0731` / `-0813` 两个模型一并撤下了;已保存的旧选择由
+ * `successorForRetiredModel`(modelSettings.ts)在读文件时换成接替者。
  *
- * `deepseek-flash` / `deepseek-v4-pro` 是 Miau 上 DeepSeek 官方渠道的两个 slug,
- * 排在本组最前。其中 `deepseek-v4-pro` 与 Right.Codes 同名 —— 产品要求它走平台
- * 余额,所以它整个归 Miau,`rightcode-deepseek` 只保留 `deepseek-v4-flash`。
+ * 四个 slug 同走这一条通道,**调用方法完全一致**(同 baseUrl、同 Miau token、
+ * 同 Responses 协议垫桥、同思考档位策略、同 1M 窗口)——这是产品的明确要求:
+ *   - `deepseek-flash` / `deepseek-v4-pro`:Miau 上 DeepSeek 官方渠道(基准)。
+ *   - `deepseek-v4-1-flash-261017` / `deepseek-v4-1-flash-economy-261017`:
+ *     火山方舟的 V4.1 Flash 标准版 / 经济版(Miau 网页端「DeepSeek(火山引擎)」
+ *     与「DeepSeek 经济版(火山引擎)」同款;new-api #185 上架、codex-gateway #58
+ *     目录声明 1M 窗口 / 文本+图片输入)。
  *
- * 每个 slug 都对着生产网关实测过才列进来(0731 / 0813 是 2026-09-01;
- * flash / v4-pro 是 2026-10-19:Responses 流式、工具调用往返、reasoning 回放、
- * low/high/max 三档思考都是 200,上下文上限 1048576)。这一步不能省 —— 列进来的
- * slug 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字提到是模型名
- * 写错了(同一条纪律见 grok-4.6 与 qwen3.8-flash 那两段注释)。
+ * 每个 slug 都应对着生产网关实测过才列进来 —— 列进来的 slug 若上游没有,选择器里
+ * 看得见、点下去每轮 404,而错误里不会有一个字提到是模型名写错了(同一条纪律见
+ * grok-4.6 与 qwen3.8-flash 那两段注释)。flash / v4-pro 是 2026-10-19 实测的
+ * (Responses 流式、工具调用往返、reasoning 回放、low/high/max 三档思考都是 200,
+ * 上下文上限 1048576)。⚠️ **火山方舟两个目前只有 PR 描述与网关目录作依据,
+ * 没有对生产网关跑过 `/v1/responses`**:流式、工具往返、reasoning 回放、
+ * `reasoning.effort` 是否被上游接受都还没验。
  *
  * ⚠️ 上游还有三个 `vanchin/` 前缀的同族 slug(`vanchin/deepseek-v4-pro` 等),
  * 是另一路供应商,**刻意不列**:没有验过它们的计费与协议行为。
@@ -190,8 +197,8 @@ const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
 const DEEPSEEK_MIAU_MODELS = Object.freeze([
   'deepseek-flash',
   'deepseek-v4-pro',
-  'deepseek-v4-flash-0731',
-  'deepseek-v4-pro-0813',
+  'deepseek-v4-1-flash-261017',
+  'deepseek-v4-1-flash-economy-261017',
 ])
 
 /**
@@ -216,18 +223,20 @@ function deepseekMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelP
     baseUrl: MIAU_BASE_URL,
     envKey: 'MIAU_API_KEY',
     credentialId: 'qwen',
-    model: 'deepseek-v4-flash-0731',
+    // 通道默认模型与记忆模型都是 `deepseek-flash`:整组里最便宜的一档,而且是
+    // 实测过的基准。默认值只对「没选过具体模型」的人生效,换它不会挪动任何已有选择。
+    model: 'deepseek-flash',
     // 记忆任务钉死在便宜的那一档,不跟随选中的对话模型。理由与代价见
     // `qwenChannel` 里那段长注释(2026-08-31 真机撞过:选 Flash 聊天,
     // 记忆却跑在 max 上,¥2.14 vs ¥0.10,而 UI 上完全看不出这笔钱哪来的)。
     //
-    // 本通道最便宜的是 `deepseek-flash`:2026-10-19 生产扣费日志里,量级相同的
-    // 请求它扣 35 额度,`deepseek-v4-flash-0731` 扣 354。
+    // 2026-10-19 生产扣费日志:量级相同的请求,`deepseek-flash` 扣 35 额度,
+    // 已撤下的 `deepseek-v4-flash-0731` 扣 354。
     memoriesModel: 'deepseek-flash',
     allowedModels: DEEPSEEK_MIAU_MODELS,
-    // 与 `rightcode-deepseek` 同样的理由:DeepSeek 原生说 Responses,但 codex 把
-    // MCP 工具包进 `{"type":"namespace"}`(openai/codex#23186),而 DeepSeek 文档
-    // 明说未知 tool 类型会被忽略 —— 静默丢弃,不报错。所以仍要垫桥。
+    // DeepSeek 原生说 Responses,但 codex 把 MCP 工具包进 `{"type":"namespace"}`
+    // (openai/codex#23186),而 DeepSeek 文档明说未知 tool 类型会被忽略 ——
+    // 静默丢弃,不报错。所以仍要垫桥。火山方舟的两个模型同样经这座桥,不另开口子。
     compatibilityPolicy: 'responses-namespace-bridge',
   })
 }
@@ -249,10 +258,10 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'rightcode',
     name: 'Right.Codes',
-    description: 'Right.Codes Codex、Grok 与 DeepSeek 网关',
+    description: 'Right.Codes Codex 与 Grok 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen'],
   }),
 ])
 
@@ -335,49 +344,8 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     // subagent tools stay callable instead of being stripped upstream.
     compatibilityPolicy: 'responses-namespace-bridge',
   }),
-  Object.freeze({
-    id: 'rightcode-deepseek',
-    gatewayId: 'rightcode',
-    name: 'Right.Codes DeepSeek',
-    // Official OpenAI-format pool at `/deepseek` (Right.Codes model list,
-    // 官方正价渠道, 官方同价). DeepSeek V4 natively speaks the Responses API
-    // (`POST /responses`, https://api-docs.deepseek.com/api/create-response)
-    // — slugs `deepseek-v4-flash` / `deepseek-v4-pro` only.
-    //
-    // Two sibling pools on the same vendor are deliberately unused:
-    // `/deepseek/anthropic` speaks Messages, which would need the Claude
-    // bridge for no gain (Codex already speaks Responses); `/cn-sale` lists
-    // the same slugs at 0.3x from a self-hosted box the vendor itself tags
-    // as 稳定性差. Official-price `/deepseek` is the one we can stand behind.
-    //
-    // `deepseek-v4-pro` is sold here too but is NOT listed: the same slug is
-    // routed to Miau (`DEEPSEEK_MIAU_MODELS`) so it bills the platform
-    // balance, and one slug can belong to only one channel per gateway.
-    //
-    // Native Responses is not the same as "codex can talk to it unbridged":
-    // Codex wraps MCP tools as `{"type":"namespace"}` (openai/codex#23186),
-    // and DeepSeek's docs say unknown tool types are ignored. That is the
-    // silent-drop failure the qwen channel already hit — flatten/restore
-    // here for the same reason, not because the wire protocol is foreign.
-    baseUrl: 'https://rightapi.ai/deepseek/v1',
-    envKey: 'OPENAI_API_KEY',
-    // Official default chat is Flash (the cheap/fast size). Flipping this
-    // to Pro would silently move every user who never picked a model.
-    model: 'deepseek-v4-flash',
-    allowedModels: Object.freeze(['deepseek-v4-flash']),
-    requiresOpenaiAuth: true,
-    compatibilityPolicy: 'responses-namespace-bridge',
-    // This host lists only the two V4 slugs. A GPT memoriesModel would
-    // 400 the same way it does on rightcode-grok — that part of the original
-    // reasoning still holds.
-    //
-    // 但「不声明」并不等于「跟随对话模型」:不声明会回落到 **codex 上次 spawn 那一刻
-    // 选中的模型**,而这两条是启动时 `-c` 写死的,之后换模型不会改它。用户选 flash
-    // 聊天、记忆却仍跑在 pro 上,而且看不出这笔钱是哪来的(qwen 通道 2026-08-31
-    // 真机撞过这个形状)。所以钉同 host 最便宜的那一档 —— 记忆抽取是总结活,
-    // 用不着 pro,也不需要跨到别的端点去。
-    memoriesModel: 'deepseek-v4-flash',
-  }),
+  // (Right.Codes 自家的 `/deepseek` 通道 `rightcode-deepseek` 已撤下 ——
+  // DeepSeek 只走 Miau,见 `DEEPSEEK_MIAU_MODELS`。)
   Object.freeze({
     id: 'rightcode-claude',
     gatewayId: 'rightcode',
@@ -505,22 +473,23 @@ const FAMILY_CHANNEL_SUFFIX: Readonly<Record<AgentModelFamily, string>> =
  *
  * ## 为什么不能只靠 family → 后缀
  *
- * 那套映射是「一个 family 在一个网关下只有一条通道」。这个前提在 Miau 上架
- * DeepSeek 之后不成立了:同一个 `deepseek` family 下有两条通道(Right.Codes 的
- * `/deepseek` 和 Miau),卖的是同一代模型的不同 slug。
+ * 那套映射的前提是「一个 family 在一个网关下只有一条通道」。Miau 上架 DeepSeek
+ * 时这个前提曾经不成立:同一个 `deepseek` family 下有两条通道(Right.Codes 的
+ * `/deepseek` 和 Miau),卖的是同一代模型的不同 slug。Right.Codes 那条后来撤下了,
+ * 现在每个 family 又只剩一条 —— 但精确命中这一步仍保留:下次再让同一 family 出现
+ * 第二个来源,不用回头改路由。
  *
  * 所以先按 slug **精确命中**:哪条通道明确列了这个 slug,就是哪条。命不中再回落到
  * 原来的 family 后缀 —— 那条路给的是不限 `allowedModels` 的通道(standard),以及
- * 「这个网关压根没这个 family」的判定。
+ * 「这个网关压根没这个 family」的判定(撤下的 DeepSeek slug 就是这样在两个内置网关
+ * 上都得到 `ModelUnavailableInGatewayError`)。
  *
- * 对改动之前就存在的每个模型,两步得到的结果完全一致:当时没有任何 slug 同时
- * 出现在同一网关的两条通道里(`gatewayModelRouting.test.ts` 里有条守卫钉住这点,
- * 一旦有人让两条通道抢同一个 slug 就会红 —— 那时先命中谁将取决于数组顺序,
- * 是个没人会想到去查的静默故障)。
+ * 两步得到的结果一致的前提是没有任何 slug 同时出现在同一网关的两条通道里
+ * (`gatewayModelRouting.test.ts` 里有条守卫钉住这点,一旦有人让两条通道抢同一个
+ * slug 就会红 —— 那时先命中谁将取决于数组顺序,是个没人会想到去查的静默故障)。
  *
- * 让两种 DeepSeek 留在**同一个** family 是有意的:选择器按 family 分组,拆成两个
- * family 会让用户看到「DEEPSEEK」和「DEEPSEEK-MIAU」两个割裂区块,而它们其实是
- * 同一族模型的两个来源,并排列在一组里才对。
+ * 同一族模型的不同来源应留在**同一个** family:选择器按 family 分组,拆成两个
+ * family 会让用户看到割裂的区块,而它们其实是同一族模型,并排列在一组里才对。
  */
 function channelForModel(
   gatewayId: string,
