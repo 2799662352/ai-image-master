@@ -591,19 +591,24 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // `stage=removed`（设了不生效），接替它的 `resize_all_images` 是
     // `removed + default=true`，即「一律缩图」已是无条件的内建行为，无需再钉。
     //
-    // 下面两个都是 `underDevelopment / default=false`，我们主动打开：
-    //   • unified_image_budget（openai/codex#37206）——对支持 original detail /
-    //     Responses Lite 的模型统一按 6000 像素 / 10000 patch 预处理，并把 `detail`
-    //     控件从 view_image 与 code mode 里藏掉。从工具契约层面消灭「模型自作主张传
-    //     original」这条路，比旧开关更彻底。
-    //   • compaction_image_budget（openai/codex#40280）——远程压缩的保留预算以前只数
-    //     文字不数图片，图多的历史压完后实际上下文比预算以为的大。开启后图片计入预算，
-    //     图会更早被甩掉；本 app 图密集，受益最大的就是这条。
+    // 下面两个我们都显式钉成 true（0.164 的实际阶段见各条）：
+    //   • unified_image_budget（openai/codex#37206，0.164 仍是 underDevelopment / 默认
+    //     关）——对支持 original detail / Responses Lite 的模型统一按 6000 像素 / 10000
+    //     patch 预处理，并把 `detail` 控件从 view_image 与 code mode 里藏掉。从工具契约
+    //     层面消灭「模型自作主张传 original」这条路，比旧开关更彻底。
+    //   • compaction_image_budget（openai/codex#40280，0.164 已是 stable / 默认开）——
+    //     **只作用于远程压缩 v2**：保留预算把图片也计入，图会更早被甩掉。而远程 v2 默认
+    //     只对 OpenAI / Azure 开；千问 / DeepSeek / Claude 等自定义 provider 走**本地压缩**
+    //     （只留最近的用户文字，图和工具结果整条丢掉，再加摘要），这个开关对它们不起作用。
+    //     2026-10-27 在 Miau 网关实测：千问 / DeepSeek 不认 `compaction_trigger`，也没有
+    //     `/v1/responses/compact`，只有 gpt-5.5 能走 v2。所以钉着它只惠及走 OpenAI 通道的
+    //     会话，别指望它管第三方网关上的图。
     //
-    // 破例开 underDevelopment 的依据：实测两者都能被 `-c` 接受并翻成 enabled，前置的
-    // `remote_compaction_v2` 是 stable + 默认开；失败模式温和（不会崩，最坏是压缩时比
-    // 以前多丢一点上下文）。真实压缩效果尚未在第三方网关上实测——那需要一段够长、图够
-    // 多的真实对话——升 stable 时应复核这两行是否还需要显式钉。
+    // 第三方网关上「图越积越多、请求体越来越大」的实际防线是兼容桥的出站淘汰
+    // （`staleToolImages.ts`，社区做法，Codex 官方没有）：Codex 对每张图的 token 估算是
+    // 固定值、与字节数无关，靠 token 触发的压缩等不到图把请求体撑爆之前。
+    // 两个开关都保留显式钉：`codexLaunch.test.ts` 守着；升 stable 或 Codex 改默认值时
+    // 再复核是否还需要。
     '-c', 'features.unified_image_budget=true',
     '-c', 'features.compaction_image_budget=true',
     // Keep first-party MCP tools directly visible instead of deferring them behind tool_search.
