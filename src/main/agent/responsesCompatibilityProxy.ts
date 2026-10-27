@@ -19,6 +19,7 @@ import type { CodexProviderConfig } from './codexLaunch'
 import { notePlatformSpend } from '../services/auth/platformSpend'
 import { inferModelFamily } from './gatewayModelRouting'
 import { rewriteOmniMediaInput } from './omniMediaInput'
+import { evictStaleToolImages } from './staleToolImages'
 
 type JsonObject = Record<string, unknown>
 
@@ -594,6 +595,19 @@ async function startCompatibilityBridgeServer(
       ) {
         const parsed = JSON.parse(rawBody) as JsonObject
         const flattened = flattenNamespaceTools(parsed)
+        // 旧的工具结果图只留最近一小撮(社区做法,Codex 官方没有)。放在 transformBody
+        // 之前:两条桥共用这段信封,Claude / 千问 / DeepSeek / xAI 都受益。
+        // 失败放行:这只是瘦身,出任何岔子都不能把用户的请求打成 502。
+        try {
+          const eviction = evictStaleToolImages(flattened.body)
+          if (eviction.evicted > 0) {
+            console.info(
+              `[bridge] 淘汰旧工具图 ${eviction.evicted} 张(释放 ${Math.round(eviction.freedBytes / 1024)} KB),保留 ${eviction.retained} 张`,
+            )
+          }
+        } catch (error) {
+          console.warn('[bridge] 淘汰旧工具图失败,原样转发:', error)
+        }
         transport.transformBody?.(flattened.body)
         body = JSON.stringify(flattened.body)
         bindings = flattened.bindings
