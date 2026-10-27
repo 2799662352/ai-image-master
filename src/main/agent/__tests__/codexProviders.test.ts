@@ -49,14 +49,13 @@ describe('codexProviders', () => {
       'apiyi-grok',
       'rightcode-standard',
       'rightcode-grok',
-      'rightcode-deepseek',
       'rightcode-claude',
       'apiyi-claude',
       // 同一个 Miau 端点在两个网关下各注册一次（过渡态，见 QWEN_CHANNELS 注释）。
       'apiyi-qwen',
       'rightcode-qwen',
-      // Miau 上的 DeepSeek，同样两个网关各一次。与 `rightcode-deepseek` 并存
-      // 而非替换：slug 不同（带日期 vs 不带），路由靠这个差别把两条分开。
+      // Miau 上的 DeepSeek（官方渠道 + 火山方舟），同样两个网关各一次。
+      // Right.Codes 自家的 `rightcode-deepseek` 已撤下，DeepSeek 只剩这一条。
       'apiyi-deepseek-miau',
       'rightcode-deepseek-miau',
     ])
@@ -114,21 +113,27 @@ describe('codexProviders', () => {
     expect(grok).not.toHaveProperty('reasoningEffort')
     expect(grok).not.toHaveProperty('verbosity')
 
-    const deepseek = resolveProviderChannel('rightcode-deepseek')
-    expect(deepseek).toMatchObject({
-      name: 'Right.Codes DeepSeek',
-      baseUrl: 'https://rightapi.ai/deepseek/v1',
-      envKey: 'OPENAI_API_KEY',
-      // Pro is served through Miau (same slug, platform balance), so only
-      // Flash is left on this pool.
-      model: 'deepseek-v4-flash',
-      allowedModels: ['deepseek-v4-flash'],
-      requiresOpenaiAuth: true,
-      compatibilityPolicy: 'responses-namespace-bridge',
-    })
-    // 见 gatewayModelRouting 里那条注释:留空不等于「跟随对话模型」,而是跟随
-    // **上次 spawn 那一刻**选中的模型 —— 那笔钱用户在 UI 上看不出来。
-    expect(deepseek.memoriesModel).toBe('deepseek-v4-flash')
+    // DeepSeek 只剩 Miau:官方渠道的 flash / v4-pro + 火山方舟的标准版 / 经济版。
+    // 四个都在同一条通道上 —— 调用方法一致是用户的明确要求。
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      const deepseek = resolveProviderChannel(`${gatewayId}-deepseek-miau`)
+      expect(deepseek).toMatchObject({
+        name: 'DeepSeek (Miau)',
+        envKey: 'MIAU_API_KEY',
+        credentialId: 'qwen',
+        model: 'deepseek-flash',
+        allowedModels: [
+          'deepseek-flash',
+          'deepseek-v4-pro',
+          'deepseek-v4-1-flash-261017',
+          'deepseek-v4-1-flash-economy-261017',
+        ],
+        compatibilityPolicy: 'responses-namespace-bridge',
+      })
+      // 见 gatewayModelRouting 里那条注释:留空不等于「跟随对话模型」,而是跟随
+      // **上次 spawn 那一刻**选中的模型 —— 那笔钱用户在 UI 上看不出来。
+      expect(deepseek.memoriesModel).toBe('deepseek-flash')
+    }
 
     const apiyiGrok = resolveProviderChannel('apiyi-grok')
     expect(apiyiGrok).toMatchObject({
@@ -152,7 +157,6 @@ describe('codexProviders', () => {
     expect(channelsForGateway('rightcode').map((channel) => channel.id)).toEqual([
       'rightcode-standard',
       'rightcode-grok',
-      'rightcode-deepseek',
       'rightcode-claude',
       'rightcode-qwen',
       'rightcode-deepseek-miau',

@@ -164,9 +164,10 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: '通义千问 3.8 Flash（Miau 网关）。最新一代里最快最便宜的纯文本档。',
     isDefault: false,
   },
-  // DeepSeek 组:Miau 的四行在前(走 Miau 网关,可用平台余额结算),Right.Codes
-  // 的 `deepseek-v4-flash` 垫底(只能用自填 Key)。`deepseek-v4-pro` 两边同名,
-  // 归 Miau —— 见 `DEEPSEEK_MIAU_MODELS` 上的注释。
+  // DeepSeek 组:只剩 Miau 的四行(走 Miau 网关,可用平台余额结算)——
+  // 官方渠道的 flash / v4-pro 在前,火山方舟的标准版 / 经济版在后。
+  // 带日期的 0731 / 0813 与 Right.Codes 直连的 `deepseek-v4-flash` 已撤下,
+  // 老选择换成谁见 `RETIRED_MODEL_SUCCESSORS`;路由见 `DEEPSEEK_MIAU_MODELS`。
   {
     id: 'deepseek-flash',
     displayName: 'DeepSeek Flash（Miau）',
@@ -182,24 +183,17 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
-    id: 'deepseek-v4-flash-0731',
-    displayName: 'DeepSeek V4 Flash 0731（Miau）',
+    id: 'deepseek-v4-1-flash-261017',
+    displayName: 'DeepSeek V4.1 Flash（火山引擎）',
     tier: 'High',
-    description: 'DeepSeek V4 Flash 0731（Miau 网关）。快的一档，可用平台余额结算。',
+    description: 'DeepSeek V4.1 Flash（火山引擎方舟，经 Miau 网关；网页端「DeepSeek(火山引擎)」同款）。1M 上下文，能看图，可用平台余额结算。',
     isDefault: false,
   },
   {
-    id: 'deepseek-v4-pro-0813',
-    displayName: 'DeepSeek V4 Pro 0813（Miau）',
-    tier: 'Extra High',
-    description: 'DeepSeek V4 Pro 0813（Miau 网关）。旗舰档，长任务与编码，可用平台余额结算。',
-    isDefault: false,
-  },
-  {
-    id: 'deepseek-v4-flash',
-    displayName: 'DeepSeek V4 Flash',
+    id: 'deepseek-v4-1-flash-economy-261017',
+    displayName: 'DeepSeek V4.1 Flash 经济版（火山引擎）',
     tier: 'High',
-    description: 'Fast 1M-context V4. Native Responses API; official default chat.',
+    description: 'DeepSeek V4.1 Flash 经济版（火山引擎方舟，经 Miau 网关；网页端「DeepSeek 经济版(火山引擎)」同款）。模型同上，价格约为标准版的 8 折，可用平台余额结算。',
     isDefault: false,
   },
   {
@@ -269,10 +263,6 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     defaultWindow: GROK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
-  ['deepseek-v4-flash', {
-    defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
-    allowExperimental1M: false,
-  }],
   ['deepseek-v4-pro', {
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
@@ -283,11 +273,13 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
-  ['deepseek-v4-flash-0731', {
+  // 火山方舟的 V4.1 Flash(标准 / 经济):网关目录(codex-gateway #58)声明的窗口
+  // 也是 1M。这是目录声明、**尚未对生产网关实测超长请求的报错上限**。
+  ['deepseek-v4-1-flash-261017', {
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
-  ['deepseek-v4-pro-0813', {
+  ['deepseek-v4-1-flash-economy-261017', {
     defaultWindow: DEEPSEEK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
@@ -389,22 +381,48 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
   ['apiyi:apiyi-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
-  ['rightcode:rightcode-deepseek:deepseek-v4-flash', DEEPSEEK_REASONING],
-  // Miau 那条同样是 DeepSeek V4,思考档位与上面一行同源(同一份官方文档),
-  // 所以复用同一份策略。两个网关各注册一次 —— 键是 网关:通道:模型 三段。
-  // flash / v4-pro 的 low / high / max 已对生产网关逐档实测(2026-10-19)。
+  // DeepSeek 只剩 Miau 这一条通道。思考档位来自 DeepSeek V4 的官方文档,
+  // 四个模型复用同一份策略 —— 火山方舟两个与 deepseek-flash「调用方法一致」。
+  // 两个网关各注册一次 —— 键是 网关:通道:模型 三段。
+  // flash / v4-pro 的 low / high / max 已对生产网关逐档实测(2026-10-19);
+  // 火山方舟两个**还没实测**(网关目录里 supported_reasoning_levels 为空,
+  // 即上游是否接受 reasoning.effort 未经验证)。
   ['apiyi:apiyi-deepseek-miau:deepseek-flash', DEEPSEEK_REASONING],
   ['apiyi:apiyi-deepseek-miau:deepseek-v4-pro', DEEPSEEK_REASONING],
-  ['apiyi:apiyi-deepseek-miau:deepseek-v4-flash-0731', DEEPSEEK_REASONING],
-  ['apiyi:apiyi-deepseek-miau:deepseek-v4-pro-0813', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-1-flash-261017', DEEPSEEK_REASONING],
+  ['apiyi:apiyi-deepseek-miau:deepseek-v4-1-flash-economy-261017', DEEPSEEK_REASONING],
   ['rightcode:rightcode-deepseek-miau:deepseek-flash', DEEPSEEK_REASONING],
   ['rightcode:rightcode-deepseek-miau:deepseek-v4-pro', DEEPSEEK_REASONING],
-  ['rightcode:rightcode-deepseek-miau:deepseek-v4-flash-0731', DEEPSEEK_REASONING],
-  ['rightcode:rightcode-deepseek-miau:deepseek-v4-pro-0813', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-1-flash-261017', DEEPSEEK_REASONING],
+  ['rightcode:rightcode-deepseek-miau:deepseek-v4-1-flash-economy-261017', DEEPSEEK_REASONING],
   ...ANTHROPIC_ADAPTIVE_CHANNEL_MODELS.map(
     (key) => [key, ANTHROPIC_ADAPTIVE_REASONING] as const,
   ),
 ])
+
+/**
+ * 从选择器撤下的模型 → 接替者。只给**内置网关**(API Yi / Right.Codes)用:
+ * 自定义网关上同名 slug 可能是另一个真实存在的模型,不能替人换掉。
+ *
+ * 为什么要有这张表:主进程启动时按「已保存的 (网关, 模型)」解析通道,保存的 slug
+ * 不在任何通道的白名单里就抛 `ModelUnavailableInGatewayError`,应用起不来。
+ * 接替者必须仍在 `CANONICAL_MODEL_SETTINGS_ROWS` 里(测试守着)。
+ *
+ * - 0731 / 0813 → 同档的官方渠道模型(`deepseek-flash` / `deepseek-v4-pro`)。
+ * - Right.Codes 直连的 `deepseek-v4-flash` → `deepseek-flash`。**注意计费来源变了**:
+ *   前者用自填的 Right.Codes Key,后者走 Miau token(平台余额)。选择器里显示的就是
+ *   换后的模型,用户看得见;但这是行为变化,发布说明要写。
+ */
+const RETIRED_MODEL_SUCCESSORS: ReadonlyMap<string, string> = new Map([
+  ['deepseek-v4-flash-0731', 'deepseek-flash'],
+  ['deepseek-v4-pro-0813', 'deepseek-v4-pro'],
+  ['deepseek-v4-flash', 'deepseek-flash'],
+])
+
+/** 撤下模型的接替者;没撤下或不认识的返回 `undefined`(调用方保持原样)。 */
+export function successorForRetiredModel(modelId: string): string | undefined {
+  return RETIRED_MODEL_SUCCESSORS.get(modelId)
+}
 
 const LEGACY_SELECTIONS: ReadonlyMap<
   string,

@@ -157,11 +157,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           // apiyi 也挂了 Miau 的 DeepSeek（与 qwen 同一枚 token、同一个端点），
-          // 所以这四行在两个网关的目录里都有。只有 deepseek-v4-flash 是 Right.Codes 独有。
+          // 所以这四行在两个网关的目录里都有:官方渠道两个 + 火山方舟两个。
           expect.objectContaining({ id: 'deepseek-flash' }),
           expect.objectContaining({ id: 'deepseek-v4-pro' }),
-          expect.objectContaining({ id: 'deepseek-v4-flash-0731' }),
-          expect.objectContaining({ id: 'deepseek-v4-pro-0813' }),
+          expect.objectContaining({ id: 'deepseek-v4-1-flash-261017' }),
+          expect.objectContaining({ id: 'deepseek-v4-1-flash-economy-261017' }),
           // No 4.6 here on purpose: it is declared on the Right.Codes Grok
           // channel only, so the API Yi catalog stays one row shorter.
           expect.objectContaining({ id: 'grok-4.5' }),
@@ -228,9 +228,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           expect.objectContaining({ id: 'deepseek-flash' }),
           expect.objectContaining({ id: 'deepseek-v4-pro' }),
-          expect.objectContaining({ id: 'deepseek-v4-flash-0731' }),
-          expect.objectContaining({ id: 'deepseek-v4-pro-0813' }),
-          expect.objectContaining({ id: 'deepseek-v4-flash' }),
+          expect.objectContaining({ id: 'deepseek-v4-1-flash-261017' }),
+          expect.objectContaining({ id: 'deepseek-v4-1-flash-economy-261017' }),
           expect.objectContaining({ id: 'grok-4.6' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
@@ -342,8 +341,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
             id: 'qwen3.8-flash',
             route: expect.objectContaining({ channelId: 'rightcode-qwen' }),
           }),
-          // 同族不同源：Miau 的四行在前、落 Miau 那条，因此能吃平台余额；
-          // 只有 deepseek-v4-flash 落 Right.Codes —— 正是「slug 精确命中」在起作用。
+          // DeepSeek 四行全部落 Miau 那条通道，因此都能吃平台余额；火山方舟
+          // 两个与 deepseek-flash 同一条通道 —— 调用方法一致。
           expect.objectContaining({
             id: 'deepseek-flash',
             route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
@@ -353,16 +352,12 @@ describe('AgentManager model settings catalog and snapshot', () => {
             route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
           }),
           expect.objectContaining({
-            id: 'deepseek-v4-flash-0731',
+            id: 'deepseek-v4-1-flash-261017',
             route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
           }),
           expect.objectContaining({
-            id: 'deepseek-v4-pro-0813',
+            id: 'deepseek-v4-1-flash-economy-261017',
             route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
-          }),
-          expect.objectContaining({
-            id: 'deepseek-v4-flash',
-            route: expect.objectContaining({ channelId: 'rightcode-deepseek' }),
           }),
           expect.objectContaining({
             id: 'grok-4.6',
@@ -420,9 +415,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'qwen3.8-flash',
       'deepseek-flash',
       'deepseek-v4-pro',
-      'deepseek-v4-flash-0731',
-      'deepseek-v4-pro-0813',
-      'deepseek-v4-flash',
+      'deepseek-v4-1-flash-261017',
+      'deepseek-v4-1-flash-economy-261017',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -458,11 +452,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'qwen3.8-max' }),
           expect.objectContaining({ id: 'qwen3.8-flash' }),
           // apiyi 也挂了 Miau 的 DeepSeek（与 qwen 同一枚 token、同一个端点），
-          // 所以这四行在两个网关的目录里都有。只有 deepseek-v4-flash 是 Right.Codes 独有。
+          // 所以这四行在两个网关的目录里都有:官方渠道两个 + 火山方舟两个。
           expect.objectContaining({ id: 'deepseek-flash' }),
           expect.objectContaining({ id: 'deepseek-v4-pro' }),
-          expect.objectContaining({ id: 'deepseek-v4-flash-0731' }),
-          expect.objectContaining({ id: 'deepseek-v4-pro-0813' }),
+          expect.objectContaining({ id: 'deepseek-v4-1-flash-261017' }),
+          expect.objectContaining({ id: 'deepseek-v4-1-flash-economy-261017' }),
           // No 4.6 here on purpose: it is declared on the Right.Codes Grok
           // channel only, so the API Yi catalog stays one row shorter.
           expect.objectContaining({ id: 'grok-4.5' }),

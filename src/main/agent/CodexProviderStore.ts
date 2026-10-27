@@ -1,7 +1,9 @@
 import { promises as fs, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { successorForRetiredModel } from '../../shared/modelSettings'
 import {
   BUILTIN_CHANNEL_PRESETS,
+  BUILTIN_GATEWAY_PRESETS,
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
   RETIRED_RIGHTCODE_PRO_ID,
@@ -459,7 +461,7 @@ function parseOrDefault(raw: string): PersistedProvidersV2 {
     const parsed = JSON.parse(raw) as { version?: unknown }
     if (parsed.version === 2) {
       const v2 = parsed as Partial<PersistedProvidersV2>
-      return {
+      return migrateRetiredModelSelection({
         version: 2,
         selectedGatewayId:
           typeof v2.selectedGatewayId === 'string' && v2.selectedGatewayId
@@ -471,7 +473,7 @@ function parseOrDefault(raw: string): PersistedProvidersV2 {
             : DEFAULT_MODEL_ID,
         apiKeys: sanitizeApiKeys(v2.apiKeys),
         customProviders: sanitizeCustomProviders(v2.customProviders),
-      }
+      })
     }
     const v1 = parsed as Partial<PersistedProvidersV1>
     const sanitizedV1: PersistedProvidersV1 = {
@@ -506,6 +508,30 @@ function migrateRetiredRightcodePro(state: PersistedProvidersV1): PersistedProvi
   if (state.selectedProviderId === RETIRED_RIGHTCODE_PRO_ID) {
     state.selectedProviderId = 'rightcode'
   }
+  return state
+}
+
+/**
+ * Read-time migration for models pulled from the picker (see
+ * `successorForRetiredModel`). `AgentManager`'s constructor resolves the saved
+ * (gateway, model) pair into a channel with no try/catch, and a retired slug
+ * is in no channel's allow-list — so without this the app would throw
+ * `ModelUnavailableInGatewayError` before it even opens a window.
+ *
+ * Builtin gateways only. A custom gateway accepts any slug
+ * (`customGatewayModelRoute`), and on someone else's endpoint a name like
+ * `deepseek-v4-flash` may be a perfectly real model we must not swap out.
+ *
+ * Like `migrateRetiredRightcodePro` this only fixes the in-memory copy; the
+ * file is rewritten the next time anything is persisted.
+ */
+function migrateRetiredModelSelection(state: PersistedProvidersV2): PersistedProvidersV2 {
+  const onBuiltinGateway = BUILTIN_GATEWAY_PRESETS.some(
+    (gateway) => gateway.id === state.selectedGatewayId,
+  )
+  if (!onBuiltinGateway) return state
+  const successor = successorForRetiredModel(state.selectedModelId)
+  if (successor) state.selectedModelId = successor
   return state
 }
 
