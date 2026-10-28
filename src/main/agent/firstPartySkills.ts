@@ -168,8 +168,10 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
       'fa07ef8c898b21736706cbd9562d9d06ce67991282e881672ab02348692c44b7',
       // fa9f737e (#367, 2026-10-26)
       '5e8414d7a33f53c0be2c5b06065c0aa166e2cb45adeb7ffdca223c1ea65ad981',
-      // Kling 4.0 / 4.0 Omni (2026-10-28) — current.
+      // Kling 4.0 / 4.0 Omni (2026-10-28, #383)
       'e25734ecd8db4dcd3c9a43b25b4976bbcbe7947e7f11e2f38eca676e3053e103',
+      // Kling multi-shot (2026-10-28) — current.
+      '8134974b001fcc05e58658f4c5a62121a5517f894ce14d59ef60c715d37386ad',
     ]),
   ],
 ])

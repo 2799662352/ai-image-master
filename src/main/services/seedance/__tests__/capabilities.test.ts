@@ -223,6 +223,44 @@ describe('可灵 4.0 能力', () => {
     )
     expect(validateSeedanceRequest('kling4', { subtitleErase: true })[0]).toMatch(/不支持擦除字幕/)
   })
+
+  it('分镜:只有可灵两个模型声明支持', () => {
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      expect(capabilitiesFor(alias).multiShot, alias).toBe(alias === 'kling4' || alias === 'kling4-omni')
+    }
+  })
+
+  it('分镜校验:镜头时长之和必须等于总时长;对上了就放行', () => {
+    const shots = [
+      { prompt: '雨夜街头', duration: 2 },
+      { prompt: '雨滴特写', duration: 3 },
+    ]
+    const multiShot = { type: 'customize' as const, shots }
+    expect(validateSeedanceRequest('kling4', { duration: 5, multiShot })).toEqual([])
+    expect(validateSeedanceRequest('kling4-omni', { duration: 8, multiShot })[0]).toMatch(/各镜头时长之和需等于视频总时长/)
+  })
+
+  it('智能分镜需要总提示词;自定义分镜不需要', () => {
+    expect(validateSeedanceRequest('kling4', { duration: 5, multiShot: { type: 'intelligence' }, prompt: '  ' })[0]).toMatch(
+      /智能分镜需要填写提示词/,
+    )
+    expect(validateSeedanceRequest('kling4', { duration: 5, multiShot: { type: 'intelligence' }, prompt: '雨夜' })).toEqual([])
+    const customize = { type: 'customize' as const, shots: [{ prompt: '雨夜', duration: 5 }] }
+    expect(validateSeedanceRequest('kling4', { duration: 5, multiShot: customize, prompt: '' })).toEqual([])
+  })
+
+  it('镜头数 / 描述长度上限:1–6 个镜头,每镜 ≤512 字', () => {
+    const seven = { type: 'customize' as const, shots: Array.from({ length: 7 }, () => ({ prompt: 'a', duration: 1 })) }
+    expect(validateSeedanceRequest('kling4', { duration: 7, multiShot: seven })).not.toEqual([])
+    const long = { type: 'customize' as const, shots: [{ prompt: 'x'.repeat(513), duration: 5 }] }
+    expect(validateSeedanceRequest('kling4', { duration: 5, multiShot: long })[0]).toMatch(/512/)
+  })
+
+  it('其它模型带分镜:明说不支持,而不是悄悄忽略', () => {
+    const multiShot = { type: 'customize' as const, shots: [{ prompt: 'a', duration: 5 }] }
+    expect(validateSeedanceRequest('2.0', { duration: 5, multiShot })[0]).toMatch(/不支持分镜/)
+    expect(validateSeedanceRequest('wan3', { duration: 5, multiShot })[0]).toMatch(/不支持分镜/)
+  })
 })
 
 describe('万相 3.0 能力', () => {

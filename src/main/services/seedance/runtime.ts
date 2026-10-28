@@ -56,6 +56,7 @@ import type {
 } from './types'
 import { capabilitiesFor, isSeedanceModelAvailable } from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
+import { coerceKlingMultiShot } from '../../../types/klingMultiShot'
 import {
   upstreamAcceptsInlineMedia,
   usesPlatformAssetLibrary,
@@ -1085,6 +1086,12 @@ export function initSeedanceRuntime(opts: {
           ...(caps.documentSlot && typeof payload?.documentOrLink === 'string' && payload.documentOrLink
             ? { documentOrLink: payload.documentOrLink }
             : {}),
+          // 分镜(仅可灵,能力表 `multiShot`)。载荷来自渲染端,不当成可信输入:先宽松解析,
+          // 再按能力表丢弃 —— 其它模型的请求里没有这组字段,留着只会让用户以为生效了。
+          ...(() => {
+            const multiShot = caps.multiShot ? coerceKlingMultiShot(payload?.multiShot) : null
+            return multiShot ? { multiShot } : {}
+          })(),
           // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。
           ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
           ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
@@ -1096,7 +1103,9 @@ export function initSeedanceRuntime(opts: {
           ...(draft ? { draft: true } : {}),
         }
     try {
-      if (!input.prompt.trim()) throw new Error('提示词不能为空')
+      // 自定义分镜以各镜头的描述为准,总提示词可以空(组包时拼一份);智能分镜没提示词则由
+      // `validateSeedanceRequest` 说明白。
+      if (!input.prompt.trim() && input.multiShot?.type !== 'customize') throw new Error('提示词不能为空')
       const content = await buildContent(input)
       // 同上:只有 vvdance 直连那条路才碰它的素材库 / 人像库。见 usesSeedanceAssetLibrary。
       // `billing` 缺省(旧渲染层的载荷没有这个字段)时按自填 Key 处理,行为不变。

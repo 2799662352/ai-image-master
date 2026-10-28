@@ -19,6 +19,7 @@ import type {
   VideoResolution,
 } from './seedance'
 import type { VideoWorkbenchMode } from './videoModes'
+import type { KlingMultiShot } from './klingMultiShot'
 
 /**
  * 生成模式。定义搬到了 `./videoModes` —— 能力表要按模型声明可用模式，而本文件
@@ -55,6 +56,11 @@ export interface VideoWorkbenchSpec {
    * 两态就够了。读写用 `shared/wan3Document` 的 parse/serialize，别手搓 JSON。
    */
   documentOrLink?: string
+  /**
+   * 分镜(仅可灵 4.0 / 4.0 Omni;见 `klingMultiShot.ts`)。缺省 = 单镜头。
+   * 直接存对象(不像 documentOrLink 序列化成串):镜头列表要逐条编辑,每次改一个字都 parse / serialize 太绕。
+   */
+  multiShot?: KlingMultiShot
   /** 参考图（≤9）：data: URL / 本地路径 / https / asset://。 */
   referenceImages: VideoWorkbenchMaterial[]
   /** 参考视频（≤3，总时长 ≤15s）。 */
@@ -392,6 +398,8 @@ export interface VideoWorkbenchCardInput {
   draft?: boolean
   /** 文档 / 网页链接槽（仅万相）。序列化 JSON；空串 = 清除。 */
   documentOrLink?: string
+  /** 分镜(仅可灵)。传 null = 清除(回到单镜头)。 */
+  multiShot?: KlingMultiShot | null
   /**
    * 字符串源（本地路径 / https / asset:// / data:，会包成 Material），
    * 或已解析好的 Material 对象（MCP 写入侧给 asset:// 引用带 previewUrl）。
@@ -557,6 +565,8 @@ export interface WorkbenchIRCard {
   /** 样片模式(Seedance 2.5 + 平台余额)。声明式:没写 = 关。 */
   draft?: boolean
   documentOrLink?: string
+  /** 分镜(仅可灵)。声明式:没写 = 单镜头。 */
+  multiShot?: KlingMultiShot
   referenceImages?: WorkbenchIRMaterial[]
   referenceVideos?: WorkbenchIRMaterial[]
   referenceAudios?: WorkbenchIRMaterial[]
@@ -721,6 +731,8 @@ export interface VideoWorkbenchSubmitPayload {
   mode?: VideoWorkbenchMode
   /** 文档 / 网页链接槽（仅万相）。序列化 JSON；缺省 = 没有。 */
   documentOrLink?: string
+  /** 分镜(仅可灵)。缺省 = 单镜头。 */
+  multiShot?: KlingMultiShot
   referenceImages: string[]
   referenceVideos: string[]
   referenceAudios: string[]

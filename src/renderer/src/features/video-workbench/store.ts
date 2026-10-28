@@ -27,6 +27,8 @@ import {
   SEEDANCE_DRAFT_RESOLUTION,
 } from '../../../../types/seedance'
 import { draftFinalAvailability, effectiveDraft, submitResolution } from './seedanceDraft'
+import type { KlingMultiShot } from '../../../../types/klingMultiShot'
+import { coerceKlingMultiShot, validateKlingMultiShot } from '../../../../types/klingMultiShot'
 import { DEFAULT_PROJECT_ID, WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
 import type {
   VideoWorkbenchBoard,
@@ -70,6 +72,7 @@ import {
   type MaterialKind,
   buildCard,
   clampMaterials,
+  conformMultiShot,
   conformToModel,
   createDefaultBoard,
   createId,
@@ -174,6 +177,8 @@ export interface WorkbenchCardSnapshot {
   webSearch: boolean
   /** 样片模式开关(只在开着时出现)。 */
   draft?: boolean
+  /** 可灵分镜(只在设了时出现;各镜头描述同样截到 120 字,要原文走 export)。 */
+  multiShot?: KlingMultiShot
   /**
    * 当前结果是一条成功的 480p 样片 —— agent 据此知道可以调 video_workbench_finalize_draft
    * 出 1080p 成片,而不是从头再生成一次。
@@ -202,6 +207,18 @@ export interface WorkbenchCardSnapshot {
   versions?: Array<{ seq: number; localPath?: string; remoteUrl?: string; prompt: string }>
 }
 
+/** 快照里的分镜:镜头描述截 120 字(同总提示词的口径),不然 6 个镜头 × 512 字撑大每张卡的回包。 */
+function briefMultiShot(multiShot: KlingMultiShot): KlingMultiShot {
+  if (multiShot.type === 'intelligence') return multiShot
+  return {
+    type: 'customize',
+    shots: multiShot.shots.map((s) => ({
+      prompt: s.prompt.length > 120 ? `${s.prompt.slice(0, 120)}…` : s.prompt,
+      duration: s.duration,
+    })),
+  }
+}
+
 export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
   const summaryState = cardSummaryState(card)
   return {
@@ -222,6 +239,7 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     webSearch: card.webSearch === true,
     ...(card.draft ? { draft: true } : {}),
+    ...(card.multiShot ? { multiShot: briefMultiShot(card.multiShot) } : {}),
     ...(card.draftRun ? { draftRun: true } : {}),
     ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     referenceCounts: {
@@ -722,7 +740,8 @@ export function taskModeForCard(card: VideoWorkbenchCard): SeedanceTaskMode | un
 
 /** 卡片当前是否允许(重新)提交生成。 */
 export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: string } {
-  if (!card.prompt.trim()) return { ok: false, reason: '提示词为空' }
+  // 自定义分镜以各镜头的描述为准,总提示词可以留空(组包时拼一份);智能分镜靠总提示词切镜头,所以仍要它。
+  if (!card.prompt.trim() && card.multiShot?.type !== 'customize') return { ok: false, reason: '提示词为空' }
   if (card.status === 'preparing' || card.status === 'queued' || card.status === 'running') {
     return { ok: false, reason: '任务进行中' }
   }
@@ -760,7 +779,22 @@ export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: stri
     const smart = caps.smartDuration ? '或智能时长' : ''
     return { ok: false, reason: `${card.model} 的时长支持 ${caps.duration.min}-${caps.duration.max} 秒${smart}` }
   }
+  // 分镜:镜头数 / 描述 / 时长之和等规则与主进程组包层是同一份(types/klingMultiShot),
+  // 在卡片上先说清楚,别等素材中转完再被拒。
+  if (card.multiShot) {
+    if (!caps.multiShot) return { ok: false, reason: `${card.model} 不支持分镜` }
+    const invalid = validateKlingMultiShot(card.multiShot, card.duration, card.prompt)
+    if (invalid) return { ok: false, reason: invalid }
+  }
   return { ok: true }
+}
+
+/** 写回分镜:`undefined` = 清除,且清除时不在卡上留一个值为 undefined 的键。 */
+function withMultiShot(card: VideoWorkbenchCard, multiShot: KlingMultiShot | undefined): VideoWorkbenchCard {
+  if (multiShot) return { ...card, multiShot }
+  if (!('multiShot' in card)) return card
+  const { multiShot: _cleared, ...rest } = card
+  return rest
 }
 
 type SetState = (
@@ -1829,6 +1863,11 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           ...(patch.webSearch !== undefined ? { webSearch: patch.webSearch === true } : {}),
           // 与 seed 的清除同一写法:关掉 = 键上是 undefined。
           ...(patch.draft !== undefined ? { draft: patch.draft === true ? true : undefined } : {}),
+          // 分镜:给了就按宽松解析写入(认不出 / off / null = 清除),没给不动。是否留下 /
+          // 要不要对齐总时长在下面统一收敛。
+          ...(patch.multiShot !== undefined
+            ? { multiShot: coerceKlingMultiShot(patch.multiShot) ?? undefined }
+            : {}),
           // 按**这次改完之后**的模型截断:同一个 patch 里可能既换模型又换素材,
           // 用 card.model(旧值)会把升到 2.5 后本该收下的图当场切掉。
           ...(patch.referenceImages !== undefined
@@ -1862,6 +1901,18 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
         // 无条件跑:对合法卡片是恒等变换,只有历史遗留的非法组合会被就地纠正 ——
         // 那种卡在提交前是看不出问题的,越早纠正越好。
         updated = { ...updated, duration: lockDurationForMode(updated.mode, updated.duration) }
+        // 分镜跟着模型 / 总时长走。只在这一笔动了模型或总时长、且没显式给分镜时才对齐 ——
+        // 提示词逐字符 updateCard 不能碰它(用户正在手填镜头时长,合计暂时对不上是正常的);
+        // 显式给了分镜(用户 / agent 的明确意图)则原样,错了由 canStart 说明。
+        // 不收分镜的模型一律丢掉(切到 Seedance / 万相时)。
+        updated = withMultiShot(
+          updated,
+          patch.multiShot === undefined && (patch.model !== undefined || patch.duration !== undefined)
+            ? conformMultiShot(updated.model, updated.duration, updated.multiShot)
+            : capabilitiesFor(updated.model).multiShot
+              ? updated.multiShot
+              : undefined,
+        )
         // 模式或模型切换后按新上限截断超限素材(soraui 是清空,这里保守只截断)。
         // 模型也要管:2.5 收 30 张图,降回 2.0 只收 9 张——不截断的话卡片看着正常,
         // 一提交就被 validateSeedanceRequest 拒,用户还得自己去数哪几张多余。
@@ -2368,6 +2419,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
         // 选分支并核对能力表 —— 反推会把「编辑视频」悄悄变成普通生成。
         mode: card.mode,
         ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
+        ...(card.multiShot ? { multiShot: card.multiShot } : {}),
         // 总闸随每次提交带过去 —— 关着时主进程不把这批参考图登记进人像库。
         autoImportPortrait: get().autoImportPortrait,
         billing,

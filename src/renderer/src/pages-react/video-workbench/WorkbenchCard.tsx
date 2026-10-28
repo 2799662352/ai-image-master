@@ -58,6 +58,7 @@ import {
   externalImageMaterialFromText,
   pasteTargetAcceptsMaterial,
 } from '../../features/video-workbench/externalImageUrl'
+import { KlingMultiShotEditor } from './KlingMultiShotEditor'
 import { MaterialStack } from './MaterialStack'
 import { useMaterialThumbSrcs, type MaterialThumbEntry } from './MaterialThumb'
 import { AdvancedVideoEditModal, type AdvancedEditFrame } from './AdvancedVideoEditModal'
@@ -1247,6 +1248,17 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             value={card.documentOrLink}
             busy={busy}
             onChange={(next) => updateCard(card.id, { documentOrLink: next })}
+          />
+        )}
+
+        {/* 分镜 —— 仅可灵(能力表 multiShot)。单镜头时只是一个下拉,不占地方;
+            自定义分镜展开成镜头列表,规则与主进程组包层共用 types/klingMultiShot。 */}
+        {modelCaps.multiShot && (
+          <KlingMultiShotEditor
+            multiShot={card.multiShot}
+            duration={card.duration}
+            busy={busy}
+            onChange={(next) => updateCard(card.id, { multiShot: next })}
           />
         )}
 

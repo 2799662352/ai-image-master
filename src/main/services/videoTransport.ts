@@ -346,6 +346,8 @@ export function createKlingTransport(
         duration: ctx.duration,
         generateAudio: ctx.input.generateAudio,
         promptFallback: ctx.input.prompt,
+        // 分镜:缺省 = 单镜头。组包层负责校验(镜头数 / 时长之和)与把它写进 metadata。
+        multiShot: ctx.input.multiShot ?? null,
       })
       const resolved = resolveToken()
       return client.createTask(body, resolved.token, gatewayAuthHeaders(resolved))

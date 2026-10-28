@@ -103,6 +103,8 @@ export function cardContentKey(card: VideoWorkbenchCard): string {
       card.webSearch ? 1 : 0,
       card.draft ? 1 : 0,
       card.documentOrLink ?? '',
+      // 分镜改了(镜头描述 / 时长)就是内容变了;没有分镜的卡与改动前的指纹一致(空串)。
+      card.multiShot ? JSON.stringify(card.multiShot) : '',
       materialKey(card.referenceImages),
       materialKey(card.referenceVideos),
       materialKey(card.referenceAudios),

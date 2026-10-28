@@ -6,6 +6,8 @@
 
 import type { VideoWorkbenchMode } from './videoModes'
 import { ALL_VIDEO_WORKBENCH_MODES } from './videoModes'
+import type { KlingMultiShot } from './klingMultiShot'
+import { validateKlingMultiShot } from './klingMultiShot'
 
 /**
  * 上游任务状态（Ark 协议原样）。`cancelled` 由 DELETE 接口在 queued 阶段产生，
@@ -134,6 +136,14 @@ export interface SeedanceModelCapabilities {
    */
   webSearch: boolean
   /**
+   * 是否收「分镜」(多镜头):请求体 `metadata.multi_shot / shot_type / multi_prompt`。
+   *
+   * 只有可灵两款收;Seedance / 万相的请求构造里没有这组字段,摆一个分镜编辑器、写进去的镜头却
+   * 一个都不会发出去,比没有更糟。规则(1~6 个镜头、每镜 ≤512 字、整数秒、时长之和 = 总时长)见
+   * `klingMultiShot.ts`。
+   */
+  multiShot: boolean
+  /**
    * 这个模型开放哪几种生成模式。
    *
    * ⚠️ 别把它和 `taskModes` 搞混（我第一版就搞混了）：
@@ -246,6 +256,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: false,
     webSearch: true,
+    multiShot: false,
   },
   '2.0-fast': {
     provider: 'vvdance',
@@ -269,6 +280,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: false,
     webSearch: true,
+    multiShot: false,
   },
   '2.0-mini': {
     provider: 'vvdance',
@@ -290,6 +302,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: false,
     webSearch: true,
+    multiShot: false,
   },
   '2.5': {
     provider: 'vvdance',
@@ -311,6 +324,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: false,
     webSearch: true,
+    multiShot: false,
   },
   /**
    * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
@@ -348,6 +362,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: true,
     publicUrlMediaOnly: false,
     webSearch: false,
+    multiShot: false,
   },
   /**
    * 万相 3.0 Prime（`wan3.0-video-prime`）—— 同一家、同一套协议、同一枚 Miau Key，
@@ -381,6 +396,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: true,
     publicUrlMediaOnly: false,
     webSearch: false,
+    multiShot: false,
   },
   /**
    * 可灵 4.0（`kling-v4-vod`）—— 腾讯云 VOD AIGC 的可灵,经 Miau 网关(渠道类型 76)。
@@ -402,6 +418,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: true,
     webSearch: false,
+    multiShot: true,
     modes: KLING_MODES,
     duration: { min: 3, max: 30 },
     resolutions: ['720p', '1080p', '2k', '4k'],
@@ -433,6 +450,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: true,
     webSearch: false,
+    multiShot: true,
     modes: KLING_OMNI_MODES,
     duration: { min: 3, max: 30 },
     resolutions: ['720p', '1080p', '2k', '4k'],
@@ -482,6 +500,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     documentSlot: false,
     publicUrlMediaOnly: true,
     webSearch: false,
+    multiShot: false,
   },
 }
 
@@ -529,6 +548,10 @@ export interface SeedanceRequestShape {
   videos?: number
   audios?: number
   subtitleErase?: boolean
+  /** 分镜(仅可灵)。校验规则见 `klingMultiShot.ts`。 */
+  multiShot?: KlingMultiShot | null
+  /** 卡片 / 请求的总提示词:智能分镜靠它切镜头,校验要判「是否为空」,所以随请求带上。 */
+  prompt?: string
 }
 
 /**
@@ -597,6 +620,15 @@ export function validateSeedanceRequest(
   // 智能时长」的意思 —— 在本地说清楚。深度捕捉没有时长参数,不在此列。
   if (duration === -1 && !caps.smartDuration && !caps.sourceVideoTransform) {
     errors.push(`模型 ${alias} 不支持智能时长（-1），请指定 ${caps.duration.min}-${caps.duration.max} 秒`)
+  }
+
+  if (request.multiShot) {
+    if (!caps.multiShot) {
+      errors.push(`模型 ${alias} 不支持分镜（仅可灵 4.0 / 4.0 Omni 支持）`)
+    } else {
+      const multiShotError = validateKlingMultiShot(request.multiShot, duration ?? Number.NaN, request.prompt)
+      if (multiShotError) errors.push(multiShotError)
+    }
   }
 
   if (resolution && !caps.resolutions.includes(resolution)) {
