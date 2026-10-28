@@ -44,6 +44,7 @@ import {
   specEquals,
 } from './cardSpec'
 import { parseDocumentOrLink } from '../../../../shared/wan3Document'
+import { klingMultiShotEquals, klingMultiShotLabel } from '../../../../types/klingMultiShot'
 /** IR 导出/apply 只需要 store 的这几个字段,方便测试直接喂普通对象。 */
 export interface WorkbenchIRSource {
   cards: VideoWorkbenchCard[]
@@ -109,6 +110,7 @@ function exportCard(card: VideoWorkbenchCard): WorkbenchIRCard {
     webSearch: card.webSearch,
     ...(card.draft ? { draft: true } : {}),
     ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
+    ...(card.multiShot ? { multiShot: card.multiShot } : {}),
     referenceImages: card.referenceImages.map((m, i) => exportMaterial(m, card.id, 'referenceImages', i)),
     referenceVideos: card.referenceVideos.map((m, i) => exportMaterial(m, card.id, 'referenceVideos', i)),
     referenceAudios: card.referenceAudios.map((m, i) => exportMaterial(m, card.id, 'referenceAudios', i)),
@@ -256,6 +258,9 @@ function describeSpecDrift(cur: VideoWorkbenchSpec, next: VideoWorkbenchSpec): s
       parseDocumentOrLink(raw)?.displayName ?? (raw ? '已设置' : '无')
     parts.push(`documentOrLink(现 ${label(cur.documentOrLink)} / 你写 ${label(next.documentOrLink)})`)
   }
+  if (!klingMultiShotEquals(cur.multiShot, next.multiShot)) {
+    parts.push(`multiShot(现 ${klingMultiShotLabel(cur.multiShot)} / 你写 ${klingMultiShotLabel(next.multiShot)})`)
+  }
   for (const [key, label] of [
     ['referenceImages', '参考图'],
     ['referenceVideos', '参考视频'],
@@ -322,7 +327,7 @@ function resolveMaterials(
  */
 const IR_CARD_CONTENT_KEYS = [
   'prompt', 'model', 'resolution', 'ratio', 'duration',
-  'generateAudio', 'mode', 'seed', 'webSearch', 'draft', 'documentOrLink',
+  'generateAudio', 'mode', 'seed', 'webSearch', 'draft', 'documentOrLink', 'multiShot',
   'referenceImages', 'referenceVideos', 'referenceAudios',
 ] as const satisfies readonly (keyof WorkbenchIRCard)[]
 
@@ -364,6 +369,8 @@ function irCardToInput(
     draft: card.draft === true,
     // 同样是声明式:没写就是「清掉」,不沿用旧值。
     documentOrLink: card.documentOrLink ?? '',
+    // 同样是声明式:没写分镜 = 单镜头。
+    multiShot: card.multiShot ?? null,
     referenceImages: resolveMaterials(card.referenceImages, cardById, skipped, card.id),
     referenceVideos: resolveMaterials(card.referenceVideos, cardById, skipped, card.id),
     referenceAudios: resolveMaterials(card.referenceAudios, cardById, skipped, card.id),
@@ -654,9 +661,9 @@ export function planApplyIR(
           index += 1
           continue
         }
-        // seed 是规格里唯一可缺省的字段:先摘掉再铺新规格,IR 没写 seed 才能
-        // 真的清成随机,而不是被 cur 的旧值顶回来。
-        const { seed: _dropped, ...rest } = cur
+        // seed / multiShot 是「没有就不出现键」的规格字段:先摘掉再铺新规格,IR 没写 seed
+        // 才能真的清成随机、没写 multiShot(或写 off)才能真的退回单镜头,而不是被 cur 的旧值顶回来。
+        const { seed: _dropped, multiShot: _droppedMultiShot, ...rest } = cur
         const next: VideoWorkbenchCard = {
           ...rest,
           ...claim.spec,

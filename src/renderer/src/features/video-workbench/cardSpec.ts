@@ -23,6 +23,12 @@ import type { SeedanceModelAlias } from '../../../../types/seedance'
 import { capabilitiesFor } from '../../../../types/seedance'
 import { WORKBENCH_MODES } from './modes'
 import { coerceDocumentOrLink, serializeDocumentOrLink } from '../../../../shared/wan3Document'
+import type { KlingMultiShot } from '../../../../types/klingMultiShot'
+import {
+  coerceKlingMultiShot,
+  fitKlingShotsToDuration,
+  klingMultiShotEquals,
+} from '../../../../types/klingMultiShot'
 
 /**
  * 值不在这个模型的支持集里就退回默认值。
@@ -94,6 +100,27 @@ export function conformToModel(spec: {
       ? DEFAULT_FIXED_DURATION
       : spec.duration
   return { mode, duration }
+}
+
+/**
+ * 分镜跟着模型 / 总时长走:
+ *   - 模型不收分镜(Seedance / 万相)→ 丢掉 —— 留着只会让卡片显示一个不会发出去的分镜;
+ *   - 自定义分镜 + 总时长是整数 → 把各镜头时长按比例对齐到总时长(描述保留),已对得上就原样返回同一个引用;
+ *   - 智能分镜 / 总时长不是整数(-1)→ 原样。
+ *
+ * 只在**换模型 / 改总时长**时调用。提示词逐字符 updateCard 不能调它:用户正在手填镜头时长、
+ * 合计暂时对不上,这时候悄悄改他的数,比 canStart 明说「差几秒」更糟。
+ */
+export function conformMultiShot(
+  model: SeedanceModelAlias,
+  duration: number,
+  multiShot: KlingMultiShot | undefined,
+): KlingMultiShot | undefined {
+  if (!multiShot || !capabilitiesFor(model).multiShot) return undefined
+  if (multiShot.type === 'intelligence') return multiShot
+  if (!Number.isInteger(duration) || duration <= 0) return multiShot
+  const fitted = fitKlingShotsToDuration(multiShot.shots, duration)
+  return fitted === multiShot.shots ? multiShot : { type: 'customize', shots: fitted }
 }
 
 // 素材条数上限没有「与模型无关」的版本 —— 2.0 家族 9/3/3、2.5 是 30/10/10。
@@ -246,6 +273,12 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
       const doc = coerceDocumentOrLink(input.documentOrLink)
       return doc ? { documentOrLink: serializeDocumentOrLink(doc) } : {}
     })(),
+    // 分镜:只有收它的模型(可灵)留;认不出 / off / 其它模型都当没设置。镜头时长之和对不上也**不**在这里
+    // 修 —— IR 里写错了由 canStart 明说,悄悄改成别的数比报错更糟。
+    ...(() => {
+      const multiShot = capabilitiesFor(model).multiShot ? coerceKlingMultiShot(input.multiShot) : null
+      return multiShot ? { multiShot } : {}
+    })(),
     referenceImages: clampMaterials((input.referenceImages ?? []).map(toMaterial), 'referenceImages', model),
     referenceVideos: clampMaterials((input.referenceVideos ?? []).map(toMaterial), 'referenceVideos', model),
     referenceAudios: clampMaterials((input.referenceAudios ?? []).map(toMaterial), 'referenceAudios', model),
@@ -295,6 +328,7 @@ export function pickSpec(spec: VideoWorkbenchSpec): VideoWorkbenchSpec {
     webSearch: spec.webSearch,
     ...(spec.draft ? { draft: true } : {}),
     ...(spec.documentOrLink ? { documentOrLink: spec.documentOrLink } : {}),
+    ...(spec.multiShot ? { multiShot: spec.multiShot } : {}),
     referenceImages: spec.referenceImages,
     referenceVideos: spec.referenceVideos,
     referenceAudios: spec.referenceAudios,
@@ -326,6 +360,7 @@ export function specEquals(a: VideoWorkbenchSpec, b: VideoWorkbenchSpec): boolea
     && (a.draft === true) === (b.draft === true)
     // 序列化字符串直接比:同一个槽位值序列化结果稳定(字段顺序由 serialize 固定)。
     && (a.documentOrLink ?? '') === (b.documentOrLink ?? '')
+    && klingMultiShotEquals(a.multiShot, b.multiShot)
     && materialsEqual(a.referenceImages, b.referenceImages)
     && materialsEqual(a.referenceVideos, b.referenceVideos)
     && materialsEqual(a.referenceAudios, b.referenceAudios)

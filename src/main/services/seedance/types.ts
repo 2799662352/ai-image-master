@@ -6,6 +6,7 @@
 
 import type { SeedanceModelAlias, SeedanceTaskMode, VideoResolution } from '../../../types/seedance'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
+import type { KlingMultiShot } from '../../../types/klingMultiShot'
 import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
 
 export type {
@@ -114,6 +115,11 @@ export interface CreateVideoTaskInput {
    * Seedance 那条路完全忽略它。
    */
   documentOrLink?: string
+  /**
+   * 分镜(仅可灵,能力表 `multiShot`)。缺省 = 单镜头。规则与校验见 `types/klingMultiShot.ts`;
+   * 其它模型的请求构造里没有这组字段,runtime 在载荷入口就按能力表丢掉了。
+   */
+  multiShot?: KlingMultiShot
   /** @deprecated 单数别名，buildContent 会并入 referenceVideos。 */
   referenceVideo?: string
   /** @deprecated 单数别名，buildContent 会并入 referenceAudios。 */
