@@ -86,7 +86,10 @@ const INLINE_PLACEHOLDER = '(内嵌 data: 图,已省略)'
 
 /** 网关之后那一跳是谁家 —— 决定上游任务号该拿去找谁。 */
 function upstreamVendor(model: VideoModelAlias): string {
-  return model.startsWith('wan') ? '阿里云百炼 · DashScope' : '火山引擎 · Ark'
+  if (model.startsWith('wan')) return '阿里云百炼 · DashScope'
+  // 可灵走腾讯云点播 AIGC(渠道类型 76):上游任务号是腾讯 VOD 的 TaskId,不是火山的 cgt-。
+  if (model.startsWith('kling')) return '腾讯云 VOD · 可灵'
+  return '火山引擎 · Ark'
 }
 
 function billingLabel(billing: VideoBillingSource | undefined): string {

@@ -45,6 +45,9 @@ const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   // 也没有「秒」可乘 —— 所以既不在这张表出价,也**不走**下面的每秒单价(见
   // `unitPriceCnyPerSecond` 的显式白名单)。不显示一个编出来的价,比显示错价好。
   depth: NOT_TOKEN_BILLED,
+  // 可灵:按秒计费(见下面 `klingCnyPerSecond`),不回传 token。
+  kling4: NOT_TOKEN_BILLED,
+  'kling4-omni': NOT_TOKEN_BILLED,
 }
 
 /**
@@ -89,6 +92,56 @@ export function unitPriceCnyPerSecond(model: SeedanceModelAlias, resolution: str
   const base = CNY_PER_SECOND[resolution.toLowerCase()]
   if (base === undefined) return null
   return model === 'wan3-prime' ? base * WAN3_PRIME_MULTIPLIER : base
+}
+
+/**
+ * 可灵 4.0 / 4.0 Omni 的基础单价:「无参考视频 720P」每秒 ¥1.2。
+ *
+ * **出处与口径**:生产 `/api/pricing`(2026-10-28 实拉)两个模型都是 `quota_type: 1`、
+ * `model_price: 1.20`;new-api #183 的计价是 `model_price × 档位倍数 × 计价秒数 × 分组倍率`。
+ * 这里不含分组倍率(用户所在分组可能不是 1),所以和万相那条一样是**估算,不等于账单**。
+ * 两档(4.0 / Omni)网关按同一张表计价,所以不分开写。
+ */
+const KLING_BASE_CNY_PER_SECOND = 1.2
+
+/** 无参考视频时各档位相对 720P 的倍数(#183 `klingResolutionRatios`)。480p 不是可灵的档。 */
+const KLING_RESOLUTION_MULTIPLIER: Record<string, number> = {
+  '720p': 1,
+  '1080p': 1.5,
+  '2k': 1.8,
+  '4k': 3,
+}
+
+export function isKlingModel(model: SeedanceModelAlias): boolean {
+  return model === 'kling4' || model === 'kling4-omni'
+}
+
+/** 可灵「无参考视频」的 ¥/秒。未知档位返回 null。 */
+export function klingCnyPerSecond(resolution: string): number | null {
+  const ratio = KLING_RESOLUTION_MULTIPLIER[resolution.toLowerCase()]
+  return ratio === undefined ? null : KLING_BASE_CNY_PER_SECOND * ratio
+}
+
+/**
+ * 按**所选时长**估一次可灵生成的费用(CNY)。算不出返回 null。
+ *
+ * 与万相不同:网关不回传实际出片秒数(`billed_seconds` 只在网关内部结算),只能拿所选时长当
+ * 出片秒数。可灵没有智能时长,所选时长就是请求里的 `duration`,出片通常与之相同。
+ *
+ * **带参考视频一律返回 null**:计价秒数 = max(输入 + 输出, 2×输出),而参考视频的时长这边
+ * 没有 —— 只算 2×输出会得出一个偏低的数却当总额显示。返回 null 让汇总把它记进「估不出」,
+ * 界面据此提示合计是下限。
+ */
+export function estimateKlingCostCny(
+  model: SeedanceModelAlias,
+  resolution: string,
+  durationSeconds: number | undefined,
+  hasVideoInput: boolean,
+): number | null {
+  if (!isKlingModel(model) || hasVideoInput) return null
+  if (typeof durationSeconds !== 'number' || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return null
+  const perSecond = klingCnyPerSecond(resolution)
+  return perSecond === null ? null : perSecond * durationSeconds
 }
 
 /** 单价($/1M tokens)。未知组合(如 fast/mini 配 1080p)返回 null。 */
@@ -171,6 +224,8 @@ export interface CostCardLike {
   completionTokens?: number
   /** 按秒计费的模型（万相）用它。与 completionTokens 互斥。 */
   billedSeconds?: number
+  /** 所选时长(秒)。只有可灵用得上:网关不回传实际出片秒数,只能按它估。 */
+  duration?: number
   status: string
 }
 
@@ -218,6 +273,21 @@ export function summarizeCostUsd<T extends CostCardLike>(
     // 「已出片但估不出价」,而它其实是算得出来的。
     if (hasUsableSeconds(card.billedSeconds)) {
       const cost = estimateCostCny(card.model, card.resolution, card.billedSeconds)
+      if (cost != null) {
+        cny += cost
+        counted += 1
+      } else {
+        unpriced += 1
+      }
+      continue
+    }
+    // 可灵:网关既不回传 token 也不回传出片秒数,只能按所选时长估。只算**出片成功**的 ——
+    // 失败任务网关会退款,草稿 / 进行中更没花钱。放在 token 判定之前,否则它必然落进下面
+    // 「出了片但估不出价」。
+    if (isKlingModel(card.model)) {
+      if (card.status !== 'succeeded') continue
+      // 先判模型再问 hasVideoInput,理由同下:草稿是热路径。
+      const cost = estimateKlingCostCny(card.model, card.resolution, card.duration, hasVideoInput(card))
       if (cost != null) {
         cny += cost
         counted += 1

@@ -49,7 +49,7 @@ import type {
 } from '../../../../types/videoWorkbench'
 import type { HistoryDataService } from '../history'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
-import { modeLimit } from './modes'
+import { MODE_LABELS, modeLimit } from './modes'
 import {
   ACTIVE_BOARD_KEY,
   ACTIVE_PROJECT_KEY,
@@ -70,6 +70,7 @@ import {
   type MaterialKind,
   buildCard,
   clampMaterials,
+  conformToModel,
   createDefaultBoard,
   createId,
   isActiveStatus,
@@ -742,8 +743,22 @@ export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: stri
   if (!caps.resolutions.includes(card.resolution)) {
     return { ok: false, reason: `${card.model} 不支持 ${card.resolution}，可用：${caps.resolutions.join(' / ')}` }
   }
-  if (card.duration !== -1 && (card.duration < caps.duration.min || card.duration > caps.duration.max)) {
-    return { ok: false, reason: `${card.model} 的时长支持 ${caps.duration.min}-${caps.duration.max} 秒或智能时长` }
+  // 模式按能力表判:可灵 4.0 没有「全能参考」(带参考图 / 参考视频的角色网关会回「需要 Omni」),
+  // 万相也只开四种。`modes` 为空的模型(深度捕捉)不进工作台,不在这里判。
+  if (caps.modes.length > 0 && !caps.modes.includes(card.mode)) {
+    return {
+      ok: false,
+      reason: `${card.model} 不支持「${MODE_LABELS[card.mode]}」模式，可用：${caps.modes.map((m) => MODE_LABELS[m]).join(' / ')}`,
+    }
+  }
+  if (card.duration === -1) {
+    // 「编辑视频」的 -1 是上游 taskMode=edit 的固定值,不是用户选的智能时长。
+    if (!caps.smartDuration && card.mode !== 'edit_video') {
+      return { ok: false, reason: `${card.model} 不支持智能时长，请选择 ${caps.duration.min}-${caps.duration.max} 秒` }
+    }
+  } else if (card.duration < caps.duration.min || card.duration > caps.duration.max) {
+    const smart = caps.smartDuration ? '或智能时长' : ''
+    return { ok: false, reason: `${card.model} 的时长支持 ${caps.duration.min}-${caps.duration.max} 秒${smart}` }
   }
   return { ok: true }
 }
@@ -1829,6 +1844,16 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           // 规格版本 +1:agent 手里那份带旧 rev 的 IR 后续就写不进这张卡了。
           // 只影响这一张 —— structureRevision 不动,别的卡照样可写。
           rev: (card.rev ?? 0) + 1,
+        }
+        // 换了模型:把新模型一定会拒的模式 / 智能时长就地收敛(见 conformToModel)。
+        // 同一个 patch 里显式给了的字段不动 —— 那是用户 / agent 的明确意图,错了由 canStart 说明。
+        if (patch.model !== undefined && patch.model !== card.model) {
+          const fit = conformToModel(updated)
+          updated = {
+            ...updated,
+            ...(patch.mode === undefined ? { mode: fit.mode } : {}),
+            ...(patch.duration === undefined ? { duration: fit.duration } : {}),
+          }
         }
         // 编辑视频锁死智能时长(见 lockDurationForMode)。收敛点放在合并之后、而不是
         // 塞进上面那个 `patch.duration` 分支:切模式时改的是 mode,固定秒数原封不动

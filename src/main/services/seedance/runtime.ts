@@ -83,6 +83,7 @@ import { createSeedanceGatewayTokenResolver } from '../seedanceGateway/credentia
 import type { SeedanceGatewayTokenSources } from '../seedanceGateway/credentials'
 import {
   createDepthTransport,
+  createKlingTransport,
   createSeedanceGatewayTransport,
   createSeedanceTransport,
   createWan3Transport,
@@ -99,6 +100,7 @@ import type {
   SeedanceAssetKindFilter,
   SeedanceAssetListQuery,
   SeedanceOfficialMaterialsQuery,
+  VideoResolution,
 } from '../../../types/seedance'
 
 /**
@@ -582,15 +584,18 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
 }
 
 /**
- * 深度捕捉(源视频变换)在「非 vvdance 一律先中转」之上再加一条 `noInline`:上游只吃
- * 可下载的公网地址,COS 中转失败时降级成 data URL 毫无意义 —— 只会把「COS 不通」这个
- * 真实原因,换成上游一句看不懂的 400。其它模型原样返回,行为不变。
+ * 上游只吃公网 http(s) 地址的模型(深度捕捉、可灵),在「非 vvdance 一律先中转」之上再加一条
+ * `noInline`:COS 中转失败时降级成 data URL 毫无意义 —— 只会把「COS 不通」这个真实原因,
+ * 换成上游一句看不懂的 400。其它模型原样返回,行为不变。
+ *
+ * 判据读能力表的 `publicUrlMediaOnly`,而不是 `sourceVideoTransform`:后者是「这不是生成而是
+ * 变换」的语义(它还会放开时长检查、锁画幅),可灵只想要前一半。
  */
 export function withSourceVideoRelay(
   model: CreateVideoTaskInput['model'],
   base: ResolveMediaOptions | undefined,
 ): ResolveMediaOptions | undefined {
-  return capabilitiesFor(model ?? '2.0').sourceVideoTransform
+  return capabilitiesFor(model ?? '2.0').publicUrlMediaOnly
     ? { ...base, alwaysRelay: true, noInline: true }
     : base
 }
@@ -830,6 +835,21 @@ export function initSeedanceRuntime(opts: {
   )
 
   /**
+   * 可灵 4.0 / 4.0 Omni —— 复用 Seedance 网关客户端(同一对提交 / 轮询端点、同一个结果地址位置),
+   * 但**不钉死计费模式**:与万相、深度捕捉一样同一条 transport 服务两种钱包,凭据与整份组头
+   * 每次调用现取(`resolveVideoBilling`),所以这里**不给** `authHeaders` —— 平台版 Seedance
+   * 那份构造期定死的组头会把自填 Key 的用户也贴上平台归属头。fetch 注入与 origin 解析的理由同上。
+   */
+  const klingTransport = createKlingTransport(
+    createSeedanceGatewayClient({
+      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      baseUrl: `${resolveGatewayOrigin()}/v1`,
+      onBilledExchange: notePlatformSpend,
+    }),
+    createSeedanceGatewayTokenResolver(gatewayTokenSources, resolveVideoBilling),
+  )
+
+  /**
    * 按模型 + 计费模式选上游。除了提交与轮询(taskManager 内部自己选),另外两条路
    * 也认 taskId —— **重启接管**与**按任务号重取过期地址** —— 它们此前写死了
    * Seedance:万相的任务在 Ark 那边查不到,前者会把一条还在跑、已付费的任务
@@ -842,6 +862,7 @@ export function initSeedanceRuntime(opts: {
         seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey),
         wan3: wan3Transport,
         depth: depthTransport,
+        kling: klingTransport,
         seedanceGateway: seedanceGatewayTransport,
       },
       model,
@@ -853,6 +874,7 @@ export function initSeedanceRuntime(opts: {
     getApiKey: getSeedanceApiKey,
     wan3Transport,
     depthTransport,
+    klingTransport,
     seedanceGatewayTransport,
     resolveBilling: resolveVideoBilling,
     // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
@@ -1042,16 +1064,14 @@ export function initSeedanceRuntime(opts: {
           prompt: String(payload?.prompt ?? ''),
           model,
           resolution:
-            (caps.resolutions.find((r) => r === payload?.resolution) as
-              | '480p'
-              | '720p'
-              | '1080p'
-              | undefined) ?? '720p',
+            (caps.resolutions.find((r) => r === payload?.resolution) as VideoResolution | undefined) ??
+            '720p',
           ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
           // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余按该模型的区间收敛。
+          // 只有 `smartDuration` 的模型认 -1 —— 可灵没有,网关会直接 400。
           duration: !Number.isFinite(durationRaw)
             ? 5
-            : durationRaw === -1
+            : durationRaw === -1 && caps.smartDuration
               ? -1
               : Math.min(caps.duration.max, Math.max(caps.duration.min, Math.round(durationRaw))),
           generateAudio: payload?.generateAudio !== false,
@@ -1061,8 +1081,8 @@ export function initSeedanceRuntime(opts: {
           ...(typeof payload?.mode === 'string' && (caps.modes as readonly string[]).includes(payload.mode)
             ? { mode: payload.mode as VideoWorkbenchMode }
             : {}),
-          // 文档/网页链接槽(仅万相)。原样带过去,由组包层解析与校验。
-          ...(typeof payload?.documentOrLink === 'string' && payload.documentOrLink
+          // 文档/网页链接槽(仅万相,能力表 `documentSlot`)。原样带过去,由组包层解析与校验。
+          ...(caps.documentSlot && typeof payload?.documentOrLink === 'string' && payload.documentOrLink
             ? { documentOrLink: payload.documentOrLink }
             : {}),
           // 首帧/尾帧(图生视频/首尾帧模式)与 seed/联网:工作台新增,缺省不出现。

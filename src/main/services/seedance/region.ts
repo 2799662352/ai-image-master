@@ -4,6 +4,7 @@
 import { capabilitiesFor } from '../../../types/seedance'
 import type { SeedanceModelAlias, SeedanceRegion } from '../../../types/seedance'
 import { DEPTH_UPSTREAM_MODEL_ID_BASE } from '../depth/model'
+import { KLING_4_OMNI_UPSTREAM_MODEL_ID, KLING_4_UPSTREAM_MODEL_ID } from '../kling/model'
 import { WAN3_PRIME_UPSTREAM_MODEL_ID, WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 export const SEEDANCE_REGION_BASE_URLS: Record<SeedanceRegion, string> = {
@@ -43,6 +44,9 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     // 纯粹是为了保住 `Record<VideoModelAlias, string>` 的穷尽性。
     wan3: WAN3_UPSTREAM_MODEL_ID,
     'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
+    // 可灵同样不分区域(走 Miau 网关,与 vvdance 的站点无关),登记仅为保住穷尽性。
+    kling4: KLING_4_UPSTREAM_MODEL_ID,
+    'kling4-omni': KLING_4_OMNI_UPSTREAM_MODEL_ID,
     // 深度捕捉同样不分区域,而且这里填的只是**前缀**:真正的上游 id 带分辨率后缀
     // (`rh-video-depth-480p`…),由 `depth/model.depthUpstreamModelId` 在提交时拼。
     // 登记仅为保住穷尽性 —— 别把这个值直接发出去。
@@ -55,6 +59,8 @@ export const SEEDANCE_MODEL_IDS_BY_REGION: Record<
     '2.5': 'doubao-seedance-2-5-260628',
     wan3: WAN3_UPSTREAM_MODEL_ID,
     'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
+    kling4: KLING_4_UPSTREAM_MODEL_ID,
+    'kling4-omni': KLING_4_OMNI_UPSTREAM_MODEL_ID,
     depth: DEPTH_UPSTREAM_MODEL_ID_BASE,
   },
 }
