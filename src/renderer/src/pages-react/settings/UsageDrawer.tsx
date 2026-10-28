@@ -79,6 +79,36 @@ function amountText(row: UsageLogRow): string {
  */
 export const MODEL_SUMMARY_VISIBLE = 5
 
+/*
+  「按模型汇总」列表的版面契约(展开其余模型后不得撑破抽屉、不得挤没下面的调用记录)。
+
+  病根:展开后的列表**没有上界**,几十行按内容高度原样撑开(62 个模型 ≈ 3400px);汇总区是
+  `shrink-0` 不肯让,下面的调用记录区是 `min-h-0 flex-1`,flex 在空间不够时只能把它压到 0 ——
+  面板被撑破、「收起」按钮和分页器掉到屏幕外、记录只剩 16px。
+
+  做法:
+  - 展开的列表自己是**有界的滚动区**,切换按钮留在滚动区外,随时点得到「收起」。
+    上界 `max-h-[clamp(8rem,calc(100dvh_-_31rem),36dvh)]`:
+      · 中间项 = 视口高度 − 抽屉里其余固定部分(标题 + 口径提醒 + 区间按钮 + 三张汇总卡 + 切换按钮
+        + 调用记录下限 12rem,真浏览器实测约 30.6rem,取 31rem),窗口矮时把空间让给下面的记录;
+      · 封顶 36dvh:窗口高时列表也不必无限长,多出来的高度归调用记录;
+      · 下限 8rem:窗口再矮也不会被压成一条缝(展开至少 6 行,下限不会比内容高)。
+    用 `dvh` 不用 `vh`/px,窗口高度变化(含缩放)时跟着走。
+  - **不靠 flex 收缩来腾地方**。试过让汇总区 `min-h-0` 去收缩:520px 高的真浏览器里它被压得比
+    子元素下限还小,内容溢出汇总区、盖到调用记录上(抽屉的 scrollHeight 不报溢出,光看数字发现不了)。
+    所以汇总区回到 `shrink-0`,它的高度因列表有界而有界。
+  - 调用记录区有高度下限 `min-h-[12rem]`,再紧也不会被挤成 0;
+  - 抽屉整体 `overflow-y-auto` 兜底:矮到连下限都放不下时整体可滚,而不是溢出视口;
+  - `overscroll-contain` 防止滚到头把背景一起带动;`scrollbar-gutter:stable` 预留滚动条位置,
+    出现滚动条时不横向抖动;
+  - 展开后滚动区可键盘聚焦并有名字(`tabIndex=0` + `role="region"` + `aria-label`),
+    键盘 / 读屏用户才能进去滚动(axe: scrollable-region-focusable)。收起时不是滚动区,不加。
+*/
+const MODEL_LIST_CLASS = 'space-y-1'
+const MODEL_LIST_EXPANDED_CLASS =
+  'space-y-1 overflow-y-auto overscroll-contain max-h-[clamp(8rem,calc(100dvh_-_31rem),36dvh)] [scrollbar-gutter:stable]'
+const MODEL_LIST_EXPANDED_A11Y = { tabIndex: 0, role: 'region', 'aria-label': '按模型汇总' } as const
+
 /** 花得多的排前面:折叠后露出来的必须是大头,否则折叠就是在藏重点。 */
 function sortedByCost(summary: readonly UsageModelSummary[]): UsageModelSummary[] {
   return [...summary].sort((a, b) => b.totalQuota - a.totalQuota)
@@ -167,7 +197,7 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
           onClick={onClose}
           className="absolute inset-0 bg-black/70"
         />
-        <aside className="relative flex h-full w-[620px] max-w-[95vw] flex-col border-l-2 border-zinc-700 bg-zinc-900">
+        <aside className="relative flex h-full w-[620px] max-w-[95vw] flex-col overflow-y-auto border-l-2 border-zinc-700 bg-zinc-900">
           {children}
         </aside>
       </div>,
@@ -261,7 +291,7 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
         ))}
       </div>
 
-      <div className="shrink-0 px-5 pt-3">
+      <div data-testid="usage-summary-section" className="shrink-0 px-5 pt-3">
         {usage.summaryError ? (
           <p
             data-testid="usage-summary-error"
@@ -301,7 +331,7 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
 
             {models.length > 0 && (
               <div className="mt-3 space-y-1">
-                <div id="usage-summary-models" className="space-y-1">
+                <div id="usage-summary-models" className={modelsExpanded ? MODEL_LIST_EXPANDED_CLASS : MODEL_LIST_CLASS} {...(modelsExpanded ? MODEL_LIST_EXPANDED_A11Y : {})}>
                 {visibleModels.map((s) => {
                   const share =
                     usage.totalQuota > 0 ? (Math.max(0, s.totalQuota) / usage.totalQuota) * 100 : 0
@@ -372,7 +402,7 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
         )}
       </div>
 
-      <div className="mt-3 flex min-h-0 flex-1 flex-col border-t-2 border-zinc-800">
+      <div data-testid="usage-logs-section" className="mt-3 flex min-h-[12rem] flex-1 flex-col border-t-2 border-zinc-800">
         <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-2">
           <span className="text-xs font-bold uppercase tracking-tight text-zinc-400">调用记录</span>
           <span className="flex items-center gap-2 text-xs tabular-nums text-zinc-500">
