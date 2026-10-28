@@ -2161,14 +2161,20 @@ export class ApiService {
     const site = this.apiSites[effectiveSiteKey]
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
+    const url = `${site?.baseURL}/v1/audio/speech`
 
-    if (!apiKey) {
+    // 登录后走平台余额的豁免,与 understand()/understandImage()/出图是同一条规矩:
+    // 计费来源是 platform 且请求打向 Miau 网关时,凭据由主进程注入器按 host 换上,
+    // 渲染层不需要(也拿不到)Key。没有这条豁免,已登录用户会在请求发出前就被
+    // 「请先设置 API Key」拦下 —— 图片能出、音频不能,两条计费链路对不上。
+    // 按**实际请求 URL** 判(与 applyAuthHeaders 同一判据),门与请求头不会各说各话。
+    if (!apiKey && !this.shouldUsePlatformBilling(url)) {
       return {
         success: false,
         error:
           effectiveSiteKey !== this.currentSite
-            ? `未配置「${site?.name || effectiveSiteKey}」站点的 API Key —— 音频生成经此站点提供，请到设置页为该站点填入 API Key 后重试。`
-            : '请先设置 API Key',
+            ? `未配置「${site?.name || effectiveSiteKey}」站点的 API Key —— 音频生成经此站点提供，请登录 Miau 账号走平台余额，或到设置页为该站点填入 API Key 后重试。`
+            : '请先设置 API Key（或登录 Miau 账号走平台余额）',
       }
     }
     if (!input || !input.trim()) {
@@ -2200,13 +2206,12 @@ export class ApiService {
     }
 
     try {
-      const url = `${site.baseURL}/v1/audio/speech`
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         // 必须带 Accept 才走 JSON 响应(只改 Content-Type 不行,见接入文档 §7)
         'Accept': 'application/json',
       }
-      this.applyAuthHeaders(headers, site, apiKey, url)
+      this.applyAuthHeaders(headers, site, apiKey ?? '', url)
 
       const response = await this.withRetry(
         async () => {

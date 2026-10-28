@@ -89,7 +89,11 @@ export function registerAudioTools(server: McpServer, router: ToolRouter): void 
         'audio. Single output ≤ ~120s; split long dialogue into multiple calls. The audio is generated, ' +
         'uploaded to cloud storage (COS) AND saved locally, then added to the app\'s 音频生成 (Audio) tab ' +
         'library where the user can play and download it — so just confirm briefly, never re-describe the ' +
-        'waveform. Billed by output seconds (~¥1/min).',
+        'waveform. Billed by output seconds (~¥1/min): when the user is logged in with the platform ' +
+        'billing source it is deducted from their Miau platform balance and NO API key is needed (same as ' +
+        'image / video); only a logged-out user needs a self-filled key. If it fails with an API-key ' +
+        'error, tell the user to log in / pick the platform balance — do not ask them to hunt for a ' +
+        'seed-audio key.',
       annotations: WRITE_ADDITIVE_REMOTE,
       inputSchema: z.object({
         input: z.string().min(1).describe(
