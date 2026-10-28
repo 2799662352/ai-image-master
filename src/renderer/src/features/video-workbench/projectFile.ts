@@ -25,6 +25,8 @@ import type {
   VideoWorkbenchProject,
 } from '../../../../types/videoWorkbench'
 import { MATERIAL_KINDS, type MaterialKind } from './cardSpec'
+import type { KlingMultiShot } from '../../../../types/klingMultiShot'
+import { coerceKlingMultiShot } from '../../../../types/klingMultiShot'
 
 export const PROJECT_FILE_FORMAT = 'catimation-workbench-project'
 export const PROJECT_FILE_VERSION = 1
@@ -64,6 +66,8 @@ export interface ProjectFileCard {
   webSearch: boolean
   draft?: boolean
   documentOrLink?: string
+  /** 分镜(仅可灵)。可选字段,旧版本读到会忽略;没有 = 单镜头。 */
+  multiShot?: KlingMultiShot
   referenceImages: ProjectFileMaterial[]
   referenceVideos: ProjectFileMaterial[]
   referenceAudios: ProjectFileMaterial[]
@@ -229,6 +233,7 @@ export function buildProjectFile(input: BuildProjectFileInput): BuildProjectFile
           webSearch: card.webSearch,
           ...(card.draft ? { draft: true } : {}),
           ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
+          ...(card.multiShot ? { multiShot: card.multiShot } : {}),
           referenceImages: materials('referenceImages'),
           referenceVideos: materials('referenceVideos'),
           referenceAudios: materials('referenceAudios'),
@@ -340,6 +345,8 @@ function parseCard(v: unknown, what: string): ProjectFileCard {
   if (!isRecord(v)) throw new InvalidProjectFile(`${what} 必须是对象`)
   const seed = optNum(v.seed, `${what}.seed`)
   const documentOrLink = optStr(v.documentOrLink, `${what}.documentOrLink`)
+  // 分镜按宽松解析:坏数据当没设置,而不是让整份工程文件打不开(它只是一张卡上的一个可选字段)。
+  const multiShot = coerceKlingMultiShot(v.multiShot)
   const summary = optStr(v.summary, `${what}.summary`)
   const result = parseResult(v.result, `${what}.result`)
   return {
@@ -354,6 +361,7 @@ function parseCard(v: unknown, what: string): ProjectFileCard {
     webSearch: v.webSearch !== false,
     ...(v.draft === true ? { draft: true } : {}),
     ...(documentOrLink ? { documentOrLink } : {}),
+    ...(multiShot ? { multiShot } : {}),
     referenceImages: parseMaterials(v.referenceImages, `${what}.referenceImages`),
     referenceVideos: parseMaterials(v.referenceVideos, `${what}.referenceVideos`),
     referenceAudios: parseMaterials(v.referenceAudios, `${what}.referenceAudios`),
@@ -480,6 +488,7 @@ export function planImport(file: WorkbenchProjectFile): ImportPlan {
           webSearch: c.webSearch,
           ...(c.draft ? { draft: true } : {}),
           ...(c.documentOrLink ? { documentOrLink: c.documentOrLink } : {}),
+          ...(c.multiShot ? { multiShot: c.multiShot } : {}),
           referenceImages: c.referenceImages.map((m) => ({ name: m.name, src: m.src })),
           referenceVideos: c.referenceVideos.map((m) => ({ name: m.name, src: m.src })),
           referenceAudios: c.referenceAudios.map((m) => ({ name: m.name, src: m.src })),

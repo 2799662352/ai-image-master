@@ -202,6 +202,7 @@ function requestOf(card: VideoWorkbenchCard): Record<string, unknown> {
     webSearch: card.webSearch === true,
     ...(card.seed !== undefined ? { seed: card.seed } : {}),
     ...(card.documentOrLink ? { documentOrLink: card.documentOrLink } : {}),
+    ...(card.multiShot ? { multiShot: card.multiShot } : {}),
     referenceImages: materialBriefs(card.referenceImages, card.submittedReferences?.images),
     referenceVideos: materialBriefs(card.referenceVideos, card.submittedReferences?.videos),
     referenceAudios: materialBriefs(card.referenceAudios, card.submittedReferences?.audios),

@@ -47,6 +47,8 @@ import {
 const zEnumOf = (values: readonly string[]) => z.enum(values as [string, ...string[]])
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
+import { coerceKlingMultiShot } from '../../../types/klingMultiShot'
+import { zMultiShot } from './klingMultiShotSchema'
 
 /** check_video_task 服务端长轮询窗口（须 < codex 工具超时，留足余量）。 */
 export const CHECK_LONG_POLL_MS = 25_000
@@ -394,6 +396,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         + 'finalize_video_draft with its taskId to get the 1080p final (within 7 days) — do NOT regenerate from '
         + 'scratch. Use it when the user wants to preview cheaply, or for expensive long takes.',
       ),
+      multiShot: zMultiShot(),
     }),
   }, async (params, ctx?: unknown) => {
     // 提交前按模型能力自查（4k/1080p 归属、时长区间、taskMode 前提、素材上限）。
@@ -407,22 +410,37 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       referenceVideos?: unknown[]
       referenceAudios?: unknown[]
       draft?: boolean
+      prompt?: string
+      multiShot?: unknown
     }
     if (p.draft && !supportsSeedanceDraft(p.model)) {
       return textResult(buildErrorBanner('generate_video', new Error('draft (样片) is Seedance "2.5" only — pass model "2.5".')))
     }
+    // 分镜:{type:'off'} / 没带 shots 的 customize 都归一成「没有」,以后各层只认归一后的形状。
+    // 但 customize 却没给镜头是明确的误用,不能悄悄退成单镜头(用户会拿到一条没分镜的片子)。
+    const multiShot = coerceKlingMultiShot(p.multiShot)
+    const rawType = (p.multiShot as { type?: unknown } | undefined)?.type
+    if (rawType === 'customize' && !multiShot) {
+      return textResult(buildErrorBanner('generate_video', new Error('multiShot.type "customize" needs a non-empty `shots` array.')))
+    }
     const errors = validateSeedanceRequest(p.model ?? '2.0', {
       resolution: p.draft ? SEEDANCE_DRAFT_RESOLUTION : p.resolution,
-      duration: p.duration,
+      // 分镜要和总时长对账:没传时长时运行时按 5 秒(taskManager.shapeDefaults),这里同口径,
+      // 否则自定义分镜会被说成「需要先确定视频总时长」。没有分镜时保持原样(undefined 不校验)。
+      duration: p.duration ?? (multiShot ? 5 : undefined),
       taskMode: p.taskMode,
       images: p.referenceImages?.length ?? 0,
       videos: p.referenceVideos?.length ?? 0,
       audios: p.referenceAudios?.length ?? 0,
+      multiShot,
+      prompt: p.prompt,
     })
     if (errors.length > 0) {
       return textResult(buildErrorBanner('generate_video', new Error(errors.join('；'))))
     }
-    return renderAndWait(router, 'generate_video', params, extractCodexThreadId(ctx))
+    // 把归一后的分镜写回去(没有就删掉这个键),主进程那一层不必再认 'off'。
+    const { multiShot: _raw, ...rest } = params as Record<string, unknown>
+    return renderAndWait(router, 'generate_video', multiShot ? { ...rest, multiShot } : rest, extractCodexThreadId(ctx))
   })
 
   server.registerTool('finalize_video_draft', {

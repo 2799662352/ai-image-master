@@ -37,7 +37,8 @@ import './video-workbench/workbench.css'
  * 必然漂移。
  */
 function isWorthStarting(card: VideoWorkbenchCard): boolean {
-  if (!card.prompt.trim()) return false
+  // 自定义分镜以各镜头描述为准,总提示词可以空(与 store 的 canStart 同一条口径)。
+  if (!card.prompt.trim() && card.multiShot?.type !== 'customize') return false
   return (
     card.status !== 'preparing'
     && card.status !== 'queued'

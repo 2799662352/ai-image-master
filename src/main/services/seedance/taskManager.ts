@@ -32,11 +32,21 @@ import {
   supportsSeedanceDraft,
   validateSeedanceRequest,
 } from './types'
+import { joinKlingShotPrompts } from '../../../types/klingMultiShot'
 import {
   createSeedanceTransport,
   transportFor,
   type VideoTransport,
 } from '../videoTransport'
+
+/**
+ * 任务状态里记的提示词。自定义分镜允许总提示词留空(以各镜头描述为准),此时记各镜头拼出来的那份 ——
+ * 与实际提交的顶层 prompt 同一份(见 `kling/request.ts` 的 `withShotPrompt`),任务详情不会显示成空白。
+ */
+function displayPromptOf(input: CreateVideoTaskInput): string {
+  if (input.prompt.trim() || input.multiShot?.type !== 'customize') return input.prompt
+  return joinKlingShotPrompts(input.multiShot.shots)
+}
 
 /** content[] 里某类素材的条数 —— 校验按真正会发出去的东西算，而不是入参字段。 */
 function countContent(
@@ -331,6 +341,9 @@ export class SeedanceTaskManager {
           images: countContent(content, 'image_url'),
           videos: countContent(content, 'video_url'),
           audios: countContent(content, 'audio_url'),
+          // 分镜:别的模型带着它会被明说「不支持」,而不是静默丢掉。
+          multiShot: input.multiShot ?? null,
+          prompt: input.prompt,
         })
     if (errors.length > 0) throw new Error(errors.join('；'))
 
@@ -355,7 +368,7 @@ export class SeedanceTaskManager {
       ...(params.source ? { source: params.source } : {}),
       billing,
       threadId,
-      prompt: input.prompt,
+      prompt: displayPromptOf(input),
       model,
       resolution,
       ratio,
@@ -390,7 +403,7 @@ export class SeedanceTaskManager {
       taskId: clientId,
       clientId,
       threadId,
-      prompt: input.prompt,
+      prompt: displayPromptOf(input),
       model,
       resolution: input.resolution ?? '720p',
       ...shapeDefaults(model, input),

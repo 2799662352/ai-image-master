@@ -345,6 +345,13 @@ Shot Card 里没有、需要你决定的:`model`(默认 `2.0`)、`resolution`(�
 > 本地文件 / https,不收人像库 `asset://`。按秒计费,2k / 4k / 30s 的卡先报价;上游账号并发
 > 约 5,**别一次启动一整板可灵卡**,分批跑。
 >
+> **可灵卡的分镜**:`multiShot` 是每张卡的内容(`add_tasks` / `update_task` / `apply` 的 IR 卡都能带,
+> **`set_spec` 批量规格不带**)。`{ type: "intelligence" }` = 只写总提示词让模型自己切镜头;
+> `{ type: "customize", shots: [{ prompt, duration }] }` = 自己分镜,**1–6 个镜头,每镜描述 ≤512 字、
+> 整数秒,各镜头秒数之和 = 卡片 `duration`**(此时总提示词可留空);`{ type: "off" }` 清回单镜头。
+> 换 model 或改 `duration` 时,没显式给分镜的自定义镜头会按新总时长自动补齐(按原比例缩放,尾差补在最后一镜);
+> 换成非可灵模型分镜会被丢弃。不加价。IR 里**没有** `multiShot` = 单镜头(`apply` 会把已有分镜清掉)。
+>
 > 万相 3.0 另有一个 Seedance 没有的入参:`documentOrLink` —— 一份文档或一个网页链接
 > 作参考(各限 1 个、二选一)。传裸 http(s) 地址即可,是文档还是链接由后缀自动判定。
 > 它与首帧/首尾帧互斥。Seedance 的卡片忽略这个字段。

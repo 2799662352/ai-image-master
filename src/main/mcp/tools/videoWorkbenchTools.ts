@@ -36,6 +36,7 @@ import {
   WORKBENCH_STATUS_PAGE_SIZE,
 } from '../../../types/videoWorkbench'
 import { MATERIAL_ROLE_DIRECTIVE, PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
+import { zMultiShot } from './klingMultiShotSchema'
 import { DESTRUCTIVE, READ_ONLY, WRITE_ADDITIVE, WRITE_ADDITIVE_REMOTE, WRITE_IDEMPOTENT } from './annotations'
 import {
   ALL_VIDEO_RATIOS,
@@ -139,6 +140,7 @@ const cardInputSchema = z.object({
     + 'and is the only model that accepts audio-only references.',
   ),
   documentOrLink: zDocumentOrLink(),
+  multiShot: zMultiShot(),
 })
 
 // ---------------------------------------------------------------------------
@@ -323,6 +325,10 @@ const cardSnapshotSchema = z.looseObject({
   seed: z.number().optional(),
   webSearch: z.boolean(),
   draft: z.boolean().optional().describe('样片 mode switch is on for this card.'),
+  multiShot: z.looseObject({
+    type: z.string(),
+    shots: z.array(z.object({ prompt: z.string(), duration: z.number() })).optional(),
+  }).optional().describe('Kling multi-shot setting, present only when set. Shot prompts are truncated to 120 chars.'),
   draftRun: z.boolean().optional().describe(
     'The current result is a SUCCEEDED 480p 样片 — call video_workbench_finalize_draft for the 1080p final '
     + 'instead of regenerating.',
@@ -534,6 +540,8 @@ const irCardSchema = z.looseObject({
   resolution: zResolution().optional(),
   ratio: zRatio().optional(),
   documentOrLink: zDocumentOrLink(),
+  // 分镜(可灵)。IR 是声明式快照:省略 = 单镜头;导出的 IR 里有它就原样带回来。
+  multiShot: zMultiShot(),
   // 同上:避开 anyOf
   duration: z.number().int().min(-1).max(30).optional().describe(
     'Seconds, or -1 = smart duration. Coerced to -1 when mode is edit_video (upstream takes nothing '
