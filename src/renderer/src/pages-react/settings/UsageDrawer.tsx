@@ -114,6 +114,14 @@ function sortedByCost(summary: readonly UsageModelSummary[]): UsageModelSummary[
   return [...summary].sort((a, b) => b.totalQuota - a.totalQuota)
 }
 
+/**
+ * 「消费合计」卡片的悬停说明。小字只放得下结论,例外写在这里。
+ * 文案和下面 `SummaryCard` 上方的注释是同一件事,改口径时两处一起改。
+ */
+const QUOTA_CARD_TITLE =
+  '视频等异步任务失败后,原消费记录会被改为「已取消」并计为 ¥0,所以这里已是扣除退款后的实付。' +
+  'Midjourney 和旧任务的独立「退款」行不在其中,以下方列表里的标记为准。'
+
 /** 本页退款汇总。**只对当前页成立** —— 列表是分页的,别把它当成时间范围内的总数。 */
 function pageRefunds(rows: readonly UsageLogRow[]): { count: number; quota: number } {
   let count = 0
@@ -131,16 +139,19 @@ function SummaryCard({
   label,
   value,
   sub,
+  title,
   accent,
 }: {
   testId: string
   label: string
   value: string
   sub?: string
+  /** 悬停说明:口径里一行小字放不下的例外。 */
+  title?: string
   accent?: boolean
 }) {
   return (
-    <div data-testid={testId} className="bg-zinc-800 border-2 border-zinc-700 px-3 py-2.5">
+    <div data-testid={testId} title={title} className="bg-zinc-800 border-2 border-zinc-700 px-3 py-2.5">
       <div className="text-[11px] leading-tight text-zinc-400">{label}</div>
       <div
         className={`mt-1 text-lg font-bold leading-none tabular-nums ${
@@ -303,15 +314,24 @@ export function UsageDrawer({ open, pool, onClose }: Props) {
           <>
             <div className="grid grid-cols-3 gap-2">
               {/*
-                标题是「消费合计（不含退款）」而不是「总费用」:汇总 SQL 带
-                `WHERE type = LogTypeConsume`,而明细的 where 没有 type 过滤 ——
-                一条退款会出现在下面的列表里、却不进这个数。
+                标题叫「消费合计」,小字写「失败任务退款已扣除」,悬停给出例外。
+                为什么这个数已经是扣除退款后的实付:汇总 SQL 是 `SUM(quota) … WHERE type = LogTypeConsume`,
+                而异步任务(视频等)失败时,网关**不另写退款行**,是把**原消费行**改成 cancelled、
+                `quota` 归 0(后端 `RefundTaskQuota` → `UpdateLogSettlement`)。那一行仍是 type=消费,
+                在 SUM 里按 0 计入,退回的钱已经不在这个数里。
+                例外:`type = 6` 的独立退款行(Midjourney、无 ConsumeLogId 的旧任务)不在 type=消费 的
+                范围内,**不会**被扣除 —— 悬停说明里写明了,列表里它们有「退款」标记。
+                (此前标题写「不含退款」,是只想到了 type=6 这一种,漏了原地取消这条主路径,
+                结果把「已经扣掉」写成了「没扣」。)
                 也**不**在这里拿当前页硬算净额:列表是分页的,算出来的净额只对当前页成立,
                 比毛额更误导。
+                注意旁边「请求次数」是 COUNT(*),已取消(已退款)的任务也算一次。
               */}
               <SummaryCard
                 testId="usage-summary-quota"
-                label="消费合计（不含退款）"
+                label="消费合计"
+                sub="失败任务退款已扣除"
+                title={QUOTA_CARD_TITLE}
                 value={`¥${formatQuotaCny(usage.totalQuota)}`}
                 accent
               />

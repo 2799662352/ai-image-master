@@ -7,7 +7,8 @@
 // 这里钉住的几条,每条都对应一个「看起来正常但是错的」失效模式:
 // - 不 portal 到 body → 塞在设置页里,被聊天面板的 stacking context 钳住 / 跟着
 //   `display:none` 的 tab 容器一起消失,表现是「点了没反应」;
-// - 汇总标题写成「总费用」→ 那个数不含退款,叫总费用是错的口径;
+// - 汇总标题写成「不含退款」→ 失败任务的退款其实已经在这个数里扣掉了(原消费行改 cancelled、
+//   quota 归 0),写「不含」是把「已扣」说成「没扣」;写「总费用」同样不准(独立退款行不在内);
 // - 错误态复用空态文案 → 用户区分不了「真没花钱」和「接口挂了」;
 // - producer 池不给说明条 → 用户以为看到的是这个池的账,其实是整个 project 的。
 
@@ -144,15 +145,29 @@ describe('UsageDrawer', () => {
   /**
    * 汇总口径。
    *
-   * 汇总 SQL 带 `WHERE type = LogTypeConsume`,明细的 where **没有** type 过滤 ——
-   * 一条退款会出现在列表里、却不进这个数。叫「总费用」是错的口径。
+   * 汇总 SQL 是 `SUM(quota) … WHERE type = LogTypeConsume`。异步任务失败时后端不另写退款行,
+   * 而是把原消费行改成 cancelled、quota 归 0 —— 它仍是「消费」类型,按 0 进 SUM,所以退回的
+   * 钱已经不在这个数里。此前标题写「不含退款」,把已扣除说成了没扣除。
+   * 例外是 `type = 6` 的独立退款行(Midjourney、旧任务):不在 SUM 里,悬停说明里要写明。
    */
-  it('汇总标题写「消费合计（不含退款）」,不写「总费用」', async () => {
+  it('汇总标题写「消费合计」+「失败任务退款已扣除」,不写「不含退款」也不写「总费用」', async () => {
     await open()
     await waitFor(() => expect(screen.getByTestId('usage-summary-quota')).toBeTruthy())
 
-    expect(screen.getByText('消费合计（不含退款）')).toBeTruthy()
+    const card = screen.getByTestId('usage-summary-quota')
+    expect(within(card).getByText('消费合计')).toBeTruthy()
+    expect(within(card).getByText('失败任务退款已扣除')).toBeTruthy()
+    expect(screen.queryByText(/不含退款/)).toBeNull()
     expect(screen.queryByText('总费用')).toBeNull()
+  })
+
+  it('悬停说明交代例外:独立退款行不在合计里', async () => {
+    await open()
+    await waitFor(() => expect(screen.getByTestId('usage-summary-quota')).toBeTruthy())
+
+    const hint = screen.getByTestId('usage-summary-quota').getAttribute('title') ?? ''
+    expect(hint).toContain('已取消')
+    expect(hint).toContain('独立')
   })
 
   it('汇总三个数字是分组数组 reduce 出来的', async () => {
