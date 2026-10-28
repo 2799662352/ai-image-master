@@ -4,6 +4,7 @@ import {
   SEEDANCE_MODEL_CAPABILITIES,
   capabilitiesFor,
   validateSeedanceRequest,
+  type VideoModelAlias,
 } from '../../../../types/seedance'
 
 /**
@@ -61,6 +62,8 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-mini',
       '2.5',
       'depth',
+      'kling4',
+      'kling4-omni',
       'wan3',
       'wan3-prime',
     ])
@@ -120,11 +123,105 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
     expect(capabilitiesFor('2.5').taskModes).toEqual(['edit', 'extend'])
   })
 
-  it('今天真正被模式白名单收窄的只有万相 3.0', () => {
+  it('被模式白名单收窄的是万相 3.0 与可灵', () => {
     for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
       expect(capabilitiesFor(alias).modes).toHaveLength(7)
     }
     expect(capabilitiesFor('wan3').modes).toHaveLength(4)
+    expect(capabilitiesFor('kling4').modes).toHaveLength(3)
+    expect(capabilitiesFor('kling4-omni').modes).toHaveLength(4)
+  })
+
+  // 这几个字段取代了散在 WorkbenchCard / cardSpec 里的「provider === 'miau'」「ratios 含
+  // adaptive」之类推断 —— 可灵也是 miau,但没有文档槽、没有联网搜索、默认比例是 16:9。
+  it('联网搜索只有 Seedance;文档槽只有万相', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
+      expect(capabilitiesFor(alias).webSearch).toBe(true)
+    }
+    for (const alias of ['wan3', 'wan3-prime', 'kling4', 'kling4-omni', 'depth'] as const) {
+      expect(capabilitiesFor(alias).webSearch).toBe(false)
+    }
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      expect(capabilitiesFor(alias).documentSlot).toBe(alias === 'wan3' || alias === 'wan3-prime')
+    }
+  })
+
+  it('智能时长(-1)只有 Seedance 与万相收', () => {
+    for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5', 'wan3', 'wan3-prime'] as const) {
+      expect(capabilitiesFor(alias).smartDuration).toBe(true)
+    }
+    expect(capabilitiesFor('kling4').smartDuration).toBe(false)
+    expect(capabilitiesFor('kling4-omni').smartDuration).toBe(false)
+  })
+})
+
+/**
+ * 可灵 4.0(`kling-v4-vod`)/ 4.0 Omni(`kling-v4-omni-vod`)—— 腾讯云 VOD AIGC,经 Miau
+ * 网关(渠道类型 76)。数字出自 new-api #183 / #184 与 sora-ui #294–#296。
+ */
+describe('可灵 4.0 能力', () => {
+  it('走 miau,3–30 秒,四档分辨率,没有 480p', () => {
+    for (const alias of ['kling4', 'kling4-omni'] as const) {
+      const caps = capabilitiesFor(alias)
+      expect(caps.provider).toBe('miau')
+      expect(caps.duration).toEqual({ min: 3, max: 30 })
+      expect(caps.resolutions).toEqual(['720p', '1080p', '2k', '4k'])
+      expect(caps.ratios).toEqual(['16:9', '9:16', '1:1', '21:9', 'adaptive'])
+      expect(caps.defaultRatio).toBe('16:9')
+      expect(caps.seedMax).toBe(0)
+      expect(caps.publicUrlMediaOnly).toBe(true)
+    }
+  })
+
+  it('4.0 只有文生 / 首帧 / 首尾帧,没有任何参考素材;Omni 加全能参考', () => {
+    const k4 = capabilitiesFor('kling4')
+    expect(k4.modes).toEqual(['text2video', 'first_frame', 'first_last_frame'])
+    expect([k4.maxImages, k4.maxVideos, k4.maxAudios]).toEqual([2, 0, 0])
+
+    const omni = capabilitiesFor('kling4-omni')
+    expect(omni.modes).toEqual(['text2video', 'first_frame', 'first_last_frame', 'multimodal_ref'])
+    expect([omni.maxImages, omni.maxVideos, omni.maxAudios]).toEqual([10, 5, 0])
+    expect(omni.maxMaterialsTotal).toBe(15)
+  })
+
+  it('时长 -1 被拦,并说清是「没有智能时长」', () => {
+    const errors = validateSeedanceRequest('kling4', { duration: -1 })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/不支持智能时长/)
+    expect(validateSeedanceRequest('kling4', { duration: 2 })[0]).toMatch(/3-30/)
+    expect(validateSeedanceRequest('kling4', { duration: 31 })[0]).toMatch(/3-30/)
+    expect(validateSeedanceRequest('kling4-omni', { duration: 3 })).toEqual([])
+    expect(validateSeedanceRequest('kling4-omni', { duration: 30 })).toEqual([])
+  })
+
+  it('分辨率:2k / 4k 放行,480p 拦下', () => {
+    expect(validateSeedanceRequest('kling4', { resolution: '2k' })).toEqual([])
+    expect(validateSeedanceRequest('kling4', { resolution: '4k' })).toEqual([])
+    expect(validateSeedanceRequest('kling4', { resolution: '480p' })[0]).toMatch(/480p/)
+  })
+
+  it('素材:4.0 不接参考视频 / 音频(说「不接受」,不说「最多 0 个」)', () => {
+    const video = validateSeedanceRequest('kling4', { videos: 1 })
+    expect(video).toHaveLength(1)
+    expect(video[0]).toMatch(/不接受参考视频.*Omni/)
+    expect(video[0]).not.toMatch(/最多 0/)
+    expect(validateSeedanceRequest('kling4', { audios: 1 })[0]).toMatch(/不接受参考音频/)
+    expect(validateSeedanceRequest('kling4', { images: 3 })[0]).toMatch(/2/)
+    expect(validateSeedanceRequest('kling4', { images: 2 })).toEqual([])
+  })
+
+  it('素材:Omni 图 10 / 视频 5 / 合计 15,音频一律不接', () => {
+    expect(validateSeedanceRequest('kling4-omni', { images: 10, videos: 5 })).toEqual([])
+    expect(validateSeedanceRequest('kling4-omni', { images: 11 })[0]).toMatch(/10/)
+    expect(validateSeedanceRequest('kling4-omni', { videos: 6 })[0]).toMatch(/5/)
+    expect(validateSeedanceRequest('kling4-omni', { audios: 1 })[0]).toMatch(/不接受参考音频/)
+  })
+
+  it('不带 taskMode / 擦字幕:可灵没有这两样', () => {
+    expect(validateSeedanceRequest('kling4', { taskMode: 'edit', videos: 1, duration: -1 })[0]).toMatch(
+      /不支持 taskMode/,
+    )
+    expect(validateSeedanceRequest('kling4', { subtitleErase: true })[0]).toMatch(/不支持擦除字幕/)
   })
 })
 

@@ -139,6 +139,11 @@ export interface SeedanceTaskManagerDeps {
    */
   depthTransport?: VideoTransport
   /**
+   * 可灵 4.0 / Omni 的传输层。缺省时提交可灵会**抛错**而不是回落 —— 回落到 Seedance 会把
+   * `kling-v4-*` 当 Ark 模型发出去,见 `transportFor`。
+   */
+  klingTransport?: VideoTransport
+  /**
    * 没有显式意向时，这一次算平台余额还是自填 Key。
    *
    * 注入而不是自己去读:判据是「主进程手上有没有平台影子 token」,读它要碰
@@ -240,6 +245,7 @@ export class SeedanceTaskManager {
         seedance: createSeedanceTransport(this.deps.client, this.deps.getApiKey),
         ...(this.deps.wan3Transport ? { wan3: this.deps.wan3Transport } : {}),
         ...(this.deps.depthTransport ? { depth: this.deps.depthTransport } : {}),
+        ...(this.deps.klingTransport ? { kling: this.deps.klingTransport } : {}),
         ...(this.deps.seedanceGatewayTransport
           ? { seedanceGateway: this.deps.seedanceGatewayTransport }
           : {}),

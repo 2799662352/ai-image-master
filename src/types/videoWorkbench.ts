@@ -16,6 +16,7 @@ import type {
   SeedanceTaskMode,
   SeedanceTaskStatus,
   VideoBillingSource,
+  VideoResolution,
 } from './seedance'
 import type { VideoWorkbenchMode } from './videoModes'
 
@@ -30,7 +31,7 @@ export type { VideoWorkbenchMode } from './videoModes'
 export interface VideoWorkbenchSpec {
   prompt: string
   model: SeedanceModelAlias
-  resolution: '480p' | '720p' | '1080p'
+  resolution: VideoResolution
   /** `adaptive` 仅万相有（它的官方默认值）；`21:9` 仅 Seedance 有。见能力表 `ratios`。 */
   ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   /** 视频时长（秒，4–15;-1 = 智能时长,模型自动决定,文档 8.1）。 */
@@ -379,7 +380,7 @@ export interface VideoWorkbenchCardInput {
   clientRef?: string
   prompt?: string
   model?: SeedanceModelAlias
-  resolution?: '480p' | '720p' | '1080p'
+  resolution?: VideoResolution
   ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration?: number
   generateAudio?: boolean
@@ -416,7 +417,7 @@ export type VideoWorkbenchInsertAnchor =
 export interface VideoWorkbenchVersionSpec {
   prompt: string
   model: SeedanceModelAlias
-  resolution: '480p' | '720p' | '1080p'
+  resolution: VideoResolution
   /** `adaptive` 仅万相有（它的官方默认值）；`21:9` 仅 Seedance 有。见能力表 `ratios`。 */
   ratio: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration: number
@@ -546,7 +547,7 @@ export interface WorkbenchIRCard {
   rev?: number
   prompt?: string
   model?: SeedanceModelAlias
-  resolution?: '480p' | '720p' | '1080p'
+  resolution?: VideoResolution
   ratio?: '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '21:9' | 'adaptive'
   duration?: number
   generateAudio?: boolean
@@ -687,7 +688,7 @@ export interface VideoWorkbenchSubmitPayload {
   clientId: string
   prompt: string
   model: SeedanceModelAlias
-  resolution: '480p' | '720p' | '1080p'
+  resolution: VideoResolution
   ratio: string
   duration: number
   generateAudio: boolean

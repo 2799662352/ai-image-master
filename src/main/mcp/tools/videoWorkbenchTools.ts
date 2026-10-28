@@ -83,11 +83,20 @@ const cardInputSchema = z.object({
     + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive". '
     + '"wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and input field; the only '
     + 'differences are the upstream model name and the price (≈1.33× wan3). Same modes, materials, '
-    + 'durations, resolutions, document slot and restrictions — treat it exactly like "wan3".',
+    + 'durations, resolutions, document slot and restrictions — treat it exactly like "wan3". '
+    + '"kling4" = 可灵 4.0: 3–30s (NO smart duration), 720p/1080p/2k/4k, modes text2video / first_frame / '
+    + 'first_last_frame ONLY (no reference images/videos, no multimodal_ref), no seed, no web search, '
+    + 'billed per second (¥, ×1/1.5/1.8/3 by resolution). "kling4-omni" = 可灵 4.0 Omni: same, plus mode '
+    + 'multimodal_ref with up to 10 images + 5 videos (≤15 total, videos combined ≤30s, NO audio refs). '
+    + 'Kling takes local files / https URLs (uploaded to a public link automatically) but NOT asset:// portrait '
+    + 'references. For reference images/videos use "kling4-omni".',
   ),
-  resolution: zResolution().optional().describe('Default 720p. 1080p requires model "2.0" or "wan3" (NOT "2.5").'),
+  resolution: zResolution().optional().describe(
+    'Default 720p. 1080p requires model "2.0", "wan3" or kling; "2k"/"4k" are kling-only (480p is NOT kling).',
+  ),
   ratio: zRatio().optional().describe(
-    'Aspect ratio. Default 16:9 (wan3 defaults to "adaptive"). "21:9" is Seedance-only; "adaptive" is wan3-only. '
+    'Aspect ratio. Default 16:9 (wan3 defaults to "adaptive"). "21:9" is Seedance/kling; "4:3"/"3:4" are not kling; '
+    + '"adaptive" is wan3/kling (kling: follows the first frame). '
     + 'Ignored for edit_video / extend_video on "2.5" (forced adaptive).',
   ),
   // 刻意用**朴素整数区间**而不是 union([literal(-1), int().min(4)])。
@@ -100,14 +109,15 @@ const cardInputSchema = z.object({
   // 代价是 0–3 这段在 schema 层放行了，由 validateSeedanceRequest 拦（它本来就要按
   // 模型分档校验 4–15 / 4–30，schema 这层从来就管不全）。
   duration: z.number().int().min(-1).max(30).optional().describe(
-    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" — or -1 = smart duration (model decides). '
+    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5", 3-30 for kling — or -1 = smart duration (model decides; '
+    + 'NOT accepted by kling). '
     + 'Default 5. (0-3 are not valid; they are rejected downstream with a model-aware message.) '
     + 'FORCED to -1 on mode edit_video: upstream taskMode="edit" accepts smart duration only, so the '
     + 'workbench COERCES instead of rejecting — the card reads -1 whatever you send, and the output '
     + 'length follows the video being edited. extend_video is NOT affected; its seconds are real.',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
-  webSearch: z.boolean().optional().describe('Enable web search for the render. Default true.'),
+  webSearch: z.boolean().optional().describe('Enable web search for the render. Default true. Seedance only (ignored by wan3 / kling).'),
   draft: z.boolean().optional().describe(
     '样片 mode — model "2.5" + platform balance only. true = the card renders a cheap 480p draft (billed as '
     + '480p) instead of the full render; once it succeeds, call video_workbench_finalize_draft to turn it into '
@@ -535,7 +545,8 @@ const irCardSchema = z.looseObject({
     'multimodal_ref', 'edit_video', 'extend_video',
   ]).optional().describe(
     'edit_video / extend_video need model "2.5" plus at least one reference video, and force '
-    + 'ratio adaptive; edit_video additionally forces duration -1.',
+    + 'ratio adaptive; edit_video additionally forces duration -1. Model "kling4" only has '
+    + 'text2video / first_frame / first_last_frame; "kling4-omni" adds multimodal_ref.',
   ),
   seed: z.number().int().min(0).max(4294967295).optional(),
   webSearch: z.boolean().optional(),
@@ -928,7 +939,8 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         + 'Switching to edit_video also resets duration to -1 (smart) — upstream takes nothing else there, '
         + 'so a sweep of "改成编辑视频 + 都 10 秒" lands as -1 and that is correct, not a dropped write. '
         + 'edit_video / extend_video additionally require model "2.5" and ≥1 reference video per card; '
-        + 'cards without one stay unstartable until the user attaches a video.',
+        + 'cards without one stay unstartable until the user attaches a video. '
+        + 'Model "kling4" has no multimodal_ref (kling4-omni does); switching a card to kling auto-picks a legal mode.',
       ),
     }),
     // 与 update_task 同档:换模型/模式时按新上限截断素材(2.5 → 2.0 会掉 21 张),

@@ -42,8 +42,24 @@ export const SEEDANCE_GATEWAY_QUERY_PATH = '/videos'
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
 export interface SeedanceGatewayClient {
-  createTask: (body: SeedanceGatewayCreateTaskBody, apiKey: string) => Promise<{ id: string }>
-  queryTask: (taskId: string, apiKey: string) => Promise<SeedanceGatewayTaskResult>
+  /**
+   * `auth` 给了就**整份替换**构造时那个 `authHeaders(apiKey)` 的结果。
+   *
+   * 这是给「同一条 transport 服务两种计费」的调用方用的(可灵,与万相 / 深度捕捉同类):
+   * 平台余额要整份归属头,自填 Key 只要 Authorization,而选哪一种要在**每次调用时**现取,
+   * 构造期定死的 `authHeaders` 做不到。平台专用的 Seedance 网关 transport 不传它,
+   * 行为与此前逐字节相同。
+   */
+  createTask: (
+    body: SeedanceGatewayCreateTaskBody,
+    apiKey: string,
+    auth?: Record<string, string>,
+  ) => Promise<{ id: string }>
+  queryTask: (
+    taskId: string,
+    apiKey: string,
+    auth?: Record<string, string>,
+  ) => Promise<SeedanceGatewayTaskResult>
 }
 
 export interface SeedanceGatewayClientOptions {
@@ -208,7 +224,7 @@ export function createSeedanceGatewayClient(
   const noteBilled = options.onBilledExchange ?? ((): void => {})
 
   return {
-    async createTask(body, apiKey) {
+    async createTask(body, apiKey, auth) {
       // 凭据校验放在重试外：它不会因为再试一次而变好。
       const key = requireKey(apiKey)
       // 视频提交**没有幂等键**,重复任务会跑完、计费、且 id 找不回。`retrySubmit`
@@ -218,7 +234,7 @@ export function createSeedanceGatewayClient(
           fetchImpl,
           `${baseUrl}${SEEDANCE_GATEWAY_CREATE_PATH}`,
           { method: 'POST', body: JSON.stringify(body) },
-          authHeaders(key),
+          auth ?? authHeaders(key),
           'create',
         )
         const nested = asRecord(json.data)
@@ -243,13 +259,13 @@ export function createSeedanceGatewayClient(
       }, options.retryOptions)
     },
 
-    async queryTask(taskId, apiKey) {
+    async queryTask(taskId, apiKey, auth) {
       const key = requireKey(apiKey)
       const json = await request(
         fetchImpl,
         `${baseUrl}${queryPath}/${encodeURIComponent(taskId)}`,
         { method: 'GET' },
-        authHeaders(key),
+        auth ?? authHeaders(key),
         'query',
       )
       const result = parseSeedanceGatewayTaskResult(json)

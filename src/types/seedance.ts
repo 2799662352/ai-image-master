@@ -53,7 +53,17 @@ export type VideoModelAlias =
   | '2.5'
   | 'wan3'
   | 'wan3-prime'
+  | 'kling4'
+  | 'kling4-omni'
   | 'depth'
+
+/**
+ * 工作台 / 提交载荷里分辨率字段的类型。能力表的 `resolutions` 是 `readonly string[]`
+ * (各模型各列各的),而载荷需要一个收窄的联合:原先写死 `'480p' | '720p' | '1080p'`,
+ * 与能力表早已分叉(2.0 有 4k、万相有 2k / 4k),靠到处 `as` 才编译得过。
+ * 可灵 4.0 把 `2k` 也带进来,趁机把联合补全成各模型档位的并集。
+ */
+export type VideoResolution = '480p' | '720p' | '1080p' | '2k' | '4k'
 
 /**
  * @deprecated 用 `VideoModelAlias`。保留这个名字只是为了让既有的十几处引用不必
@@ -87,8 +97,42 @@ export interface SeedanceModelCapabilities {
   /**
    * 随机种子上限（含）。Seedance 是 uint32，万相官方写明 [0, 2147483647]。
    * 差这一位的后果是：用户填了个大数，界面收下了，上游拒了。
+   *
+   * `0` = 这个模型**没有 seed 参数**（深度捕捉、可灵）：UI 不画种子输入框。
    */
   seedMax: number
+  /**
+   * 卡片没指定 / 指定的画幅不被支持时回落到哪个。
+   *
+   * 曾经由「ratios 里有没有 adaptive」推出来 —— 可灵也有 adaptive,但它的文生视频
+   * 没有素材可跟随,默认应当是确定的 16:9。写成数据,而不是再让一条启发式去猜。
+   */
+  defaultRatio: string
+  /**
+   * 是否接受 `duration: -1`（智能时长,模型自己决定输出长度）。
+   *
+   * Seedance 与万相都收;可灵只收 3–30 的整数,给 -1 会被网关当成「时长非法」拒掉。
+   * UI 据此决定下拉里画不画「✨ 智能」,切到不收的模型时把 -1 换成默认秒数。
+   */
+  smartDuration: boolean
+  /** 是否有「文档 / 网页链接」入参槽（仅万相 3.0）。曾经靠 `provider === 'miau'` 推,可灵也是 miau。 */
+  documentSlot: boolean
+  /**
+   * 参考素材必须是**公网 http(s) 直链**:不收 base64 内联、不收 `asset://` 素材库引用。
+   *
+   * 满足时组包前的素材解析会走「先中转 COS、中转失败就报错」那一路（见
+   * `withSourceVideoRelay`），而不是把中转失败降级成 data URL —— 降级之后上游只会回
+   * 一句看不懂的 400,把「COS 不通」这个真实原因盖掉。
+   */
+  publicUrlMediaOnly: boolean
+  /**
+   * 上游是否消费「联网搜索」开关(请求体 `tools: [{type:'web_search'}]`)。
+   *
+   * 只有 Seedance 经 vvdance / 平台网关会把它发出去;万相、可灵、深度捕捉的请求构造里
+   * 根本没有这个字段 —— 界面上摆着一个开关、打开了什么都不会发生,比没有更糟。
+   * UI 据此决定画不画「🌐 联网」。
+   */
+  webSearch: boolean
   /**
    * 这个模型开放哪几种生成模式。
    *
@@ -155,6 +199,22 @@ const WAN3_MODES: readonly VideoWorkbenchMode[] = [
 ] as const
 
 /**
+ * 可灵 4.0 / 4.0 Omni 的画幅（new-api #183 `klingRatio`：21:9 / 16:9 / 9:16 / 1:1 /
+ * adaptive,别的一律 400）。没有 4:3 / 3:4,与 Seedance 不同。
+ */
+const KLING_RATIOS: readonly string[] = ['16:9', '9:16', '1:1', '21:9', 'adaptive'] as const
+
+/** 可灵 4.0 只有文生 / 首帧 / 首尾帧 —— 没有参考图、参考视频（网关会回「需要 Omni」）。 */
+const KLING_MODES: readonly VideoWorkbenchMode[] = ['text2video', 'first_frame', 'first_last_frame'] as const
+
+/**
+ * Omni 在 4.0 之上多一个「全能参考」:参考图 + 参考视频。**没有**单独的「参考图」模式
+ * (与全能参考重复,万相同理),也没有编辑 / 延长视频 —— 网关的 `base_video` 编辑角色
+ * 桌面端还没接。
+ */
+const KLING_OMNI_MODES: readonly VideoWorkbenchMode[] = [...KLING_MODES, 'multimodal_ref'] as const
+
+/**
  * 各模型的上游约束 —— 「9/3/3」「4-15」这类数字的**唯一**出处。
  *
  * 此前它们散在 videoTools / videoWorkbenchTools / modes / cardSpec 至少五处,
@@ -181,6 +241,11 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: true,
     audioOnlyReference: false,
     sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: false,
+    webSearch: true,
   },
   '2.0-fast': {
     provider: 'vvdance',
@@ -199,6 +264,11 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: true,
     audioOnlyReference: false,
     sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: false,
+    webSearch: true,
   },
   '2.0-mini': {
     provider: 'vvdance',
@@ -215,6 +285,11 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     audioOnlyReference: false,
     sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: false,
+    webSearch: true,
   },
   '2.5': {
     provider: 'vvdance',
@@ -231,6 +306,11 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     audioOnlyReference: true,
     sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: false,
+    webSearch: true,
   },
   /**
    * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
@@ -263,6 +343,11 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     // 官方允许「只给参考音频」的组合。
     audioOnlyReference: true,
     sourceVideoTransform: false,
+    defaultRatio: 'adaptive',
+    smartDuration: true,
+    documentSlot: true,
+    publicUrlMediaOnly: false,
+    webSearch: false,
   },
   /**
    * 万相 3.0 Prime（`wan3.0-video-prime`）—— 同一家、同一套协议、同一枚 Miau Key，
@@ -290,6 +375,74 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     audioOnlyReference: true,
     taskModes: [],
+    sourceVideoTransform: false,
+    defaultRatio: 'adaptive',
+    smartDuration: true,
+    documentSlot: true,
+    publicUrlMediaOnly: false,
+    webSearch: false,
+  },
+  /**
+   * 可灵 4.0（`kling-v4-vod`）—— 腾讯云 VOD AIGC 的可灵,经 Miau 网关(渠道类型 76)。
+   *
+   * 数字出自网关契约(new-api #183 `relay/channel/task/tencentvod/kling.go`):
+   * 时长 3–30 整数(**没有智能时长**,给 -1 会被拒)、分辨率 720p / 1080p / 2k / 4k、
+   * 画幅 21:9 / 16:9 / 9:16 / 1:1 / adaptive。
+   *
+   * 4.0 只接 **文生 / 首帧 / 首尾帧**:没有参考图、参考视频(带 `reference_image` 角色会被
+   * 网关回「需要 kling-v4-omni-vod」),所以 `maxImages: 2` 只够首帧 + 尾帧,视频 / 音频 0。
+   * 没有 seed、联网搜索、擦字幕、样片;参考音频一律不收。
+   */
+  kling4: {
+    provider: 'miau',
+    ratios: KLING_RATIOS,
+    seedMax: 0,
+    defaultRatio: '16:9',
+    smartDuration: false,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
+    modes: KLING_MODES,
+    duration: { min: 3, max: 30 },
+    resolutions: ['720p', '1080p', '2k', '4k'],
+    maxImages: 2,
+    maxVideos: 0,
+    maxAudios: 0,
+    maxMaterialsTotal: 2,
+    taskModes: [],
+    subtitleErase: false,
+    audioOnlyReference: false,
+    sourceVideoTransform: false,
+  },
+  /**
+   * 可灵 4.0 Omni（`kling-v4-omni-vod`）—— 同一家、同一套协议,多了参考素材。
+   *
+   * 网关限制:参考图 ≤ 10、参考视频 ≤ 5、**文件 + 主体 + 音色合计 ≤ 15**;没有音频参考。
+   * `maxMaterialsTotal` 取 15 = 10 + 5 里能同时用上的最大值(即图视频合计 ≤ 15)。
+   * 参考视频的**总时长 ≤ 30 秒**网关不预检(上游才判),所以在 SKILL / MCP 说明里写明。
+   *
+   * 主体(subjects)与音色(voices)要先在腾讯云 VOD 里建好 id,桌面端没有建主体的入口,
+   * 这一版**不接**;首帧 / 首尾帧 Omni 也收。价格与 4.0 相同(网关 `ModelPrice` 同一行)。
+   */
+  'kling4-omni': {
+    provider: 'miau',
+    ratios: KLING_RATIOS,
+    seedMax: 0,
+    defaultRatio: '16:9',
+    smartDuration: false,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
+    modes: KLING_OMNI_MODES,
+    duration: { min: 3, max: 30 },
+    resolutions: ['720p', '1080p', '2k', '4k'],
+    maxImages: 10,
+    maxVideos: 5,
+    maxAudios: 0,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: false,
+    audioOnlyReference: false,
     sourceVideoTransform: false,
   },
   /**
@@ -324,6 +477,11 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     subtitleErase: false,
     audioOnlyReference: false,
     sourceVideoTransform: true,
+    defaultRatio: 'adaptive',
+    smartDuration: false,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
   },
 }
 
@@ -428,8 +586,17 @@ export function validateSeedanceRequest(
   if (duration !== undefined && duration !== -1 && !caps.sourceVideoTransform) {
     const { min, max } = caps.duration
     if (!Number.isInteger(duration) || duration < min || duration > max) {
-      errors.push(`模型 ${alias} 的时长支持 ${min}-${max} 秒或 -1，收到 ${duration}`)
+      errors.push(
+        caps.smartDuration
+          ? `模型 ${alias} 的时长支持 ${min}-${max} 秒或 -1，收到 ${duration}`
+          : `模型 ${alias} 的时长支持 ${min}-${max} 秒（不支持智能时长 -1），收到 ${duration}`,
+      )
     }
+  }
+  // -1 只对收它的模型放行。可灵给 -1 网关会回「时长非法」,而那一句里没有「这个模型没有
+  // 智能时长」的意思 —— 在本地说清楚。深度捕捉没有时长参数,不在此列。
+  if (duration === -1 && !caps.smartDuration && !caps.sourceVideoTransform) {
+    errors.push(`模型 ${alias} 不支持智能时长（-1），请指定 ${caps.duration.min}-${caps.duration.max} 秒`)
   }
 
   if (resolution && !caps.resolutions.includes(resolution)) {
@@ -456,9 +623,29 @@ export function validateSeedanceRequest(
     return errors
   }
 
-  if (images > caps.maxImages) errors.push(`参考图最多 ${caps.maxImages} 张，收到 ${images}`)
-  if (videos > caps.maxVideos) errors.push(`参考视频最多 ${caps.maxVideos} 段，收到 ${videos}`)
-  if (audios > caps.maxAudios) errors.push(`参考音频最多 ${caps.maxAudios} 段，收到 ${audios}`)
+  // 上限为 0 的类别说「不接受」而不是「最多 0 个」:可灵 4.0 没有参考视频、两款可灵都没有
+  // 参考音频,「参考音频最多 0 段」读起来像配额问题,而真相是这个模型根本没有这类入参。
+  if (images > caps.maxImages) {
+    errors.push(
+      caps.maxImages === 0
+        ? `模型 ${alias} 不接受参考图`
+        : `参考图最多 ${caps.maxImages} 张，收到 ${images}`,
+    )
+  }
+  if (videos > caps.maxVideos) {
+    errors.push(
+      caps.maxVideos === 0
+        ? `模型 ${alias} 不接受参考视频${alias === 'kling4' ? '（需要可灵 4.0 Omni）' : ''}`
+        : `参考视频最多 ${caps.maxVideos} 段，收到 ${videos}`,
+    )
+  }
+  if (audios > caps.maxAudios) {
+    errors.push(
+      caps.maxAudios === 0
+        ? `模型 ${alias} 不接受参考音频`
+        : `参考音频最多 ${caps.maxAudios} 段，收到 ${audios}`,
+    )
+  }
   if (images + videos + audios > caps.maxMaterialsTotal) {
     errors.push(`素材总数最多 ${caps.maxMaterialsTotal} 个`)
   }

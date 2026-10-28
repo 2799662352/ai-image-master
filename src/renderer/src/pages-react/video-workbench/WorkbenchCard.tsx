@@ -14,6 +14,7 @@ import type {
   SeedanceAssetItem,
   SeedanceAssetListResult,
   SeedanceModelAlias,
+  VideoResolution,
 } from '../../../../types/seedance'
 import { capabilitiesFor, supportsSeedanceDraft } from '../../../../types/seedance'
 import { useQuotaStore } from '../../stores/useQuotaStore'
@@ -39,8 +40,10 @@ import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-wo
 import {
   estimateCostCny,
   estimateCostUsd,
+  estimateKlingCostCny,
   formatCostCny,
   formatCostUsd,
+  isKlingModel,
 } from '../../features/video-workbench/pricing'
 import {
   mediaToken,
@@ -82,6 +85,9 @@ const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   // 标签先备着,免得开闸时又要回来补一处。
   wan3: '万相 3.0',
   'wan3-prime': '万相 3.0 Prime',
+  // 可灵走腾讯云 VOD,经 Miau 网关(渠道类型 76):4.0 文生 / 首帧 / 首尾帧,Omni 多参考图 + 参考视频。
+  kling4: '可灵 4.0',
+  'kling4-omni': '可灵 4.0 Omni',
   // 深度捕捉没有工作台模式,`useSeedanceModels` 不会把它放进下拉;这里只为穷尽性
   // (编译期保证新别名不漏标签)。
   depth: '深度捕捉',
@@ -104,10 +110,12 @@ const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-
  */
 function durationOptionsFor(model: SeedanceModelAlias, mode: VideoWorkbenchMode): number[] {
   if (mode === 'edit_video') return [-1]
-  const { min, max } = capabilitiesFor(model).duration
+  const caps = capabilitiesFor(model)
+  const { min, max } = caps.duration
   const secs: number[] = []
   for (let s = min; s <= max; s += 1) secs.push(s)
-  return [-1, ...secs]
+  // 可灵没有智能时长(-1 会被网关当「时长非法」拒),不画这个选项。
+  return caps.smartDuration ? [-1, ...secs] : secs
 }
 
 function getFilePathSafe(file: File): string {
@@ -950,7 +958,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           {card.duration === -1 ? '智能时长' : `${card.duration}s`}
           {card.generateAudio ? ' · 有声' : ''}
           {card.seed !== undefined ? ` · seed ${card.seed}` : ''}
-          {card.webSearch ? ' · 联网' : ''}
+          {card.webSearch && modelCaps.webSearch ? ' · 联网' : ''}
         </span>
         {/* 任务详情:只有提交过的卡才有东西可看 —— 草稿上这个入口只会打开一页空白。
             脚注那行 `task: …` 露的是网关号,用户找供应商对账要的「上游任务号」在这里。 */}
@@ -1069,7 +1077,11 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             className="bg-[#18181B] border border-[#3F3F46] text-[#FCE300] px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) => updateCard(card.id, { mode: e.target.value as VideoWorkbenchMode })}
           >
-            {WORKBENCH_MODES.map((m) => (
+            {/* 只列这个模型开放的模式(可灵 4.0 没有全能参考);当前值即使不在表里也保留,
+                否则 `<select>` 会渲染成空白、用户看不到卡上实际是什么。 */}
+            {WORKBENCH_MODES.filter(
+              (m) => modelCaps.modes.length === 0 || modelCaps.modes.includes(m.value) || m.value === card.mode,
+            ).map((m) => (
               <option key={m.value} value={m.value} title={m.description}>{m.label}</option>
             ))}
           </select>
@@ -1104,10 +1116,16 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                 (card.duration < caps.duration.min || card.duration > caps.duration.max)
                   ? Math.min(caps.duration.max, Math.max(caps.duration.min, card.duration))
                   : undefined
+              // 画幅同理:`<select>` 的 value 落在选项之外会渲染成空白(万相没有 21:9、可灵没有
+              // 4:3 / 3:4)。模式与智能时长的收敛由 store 的 updateCard 在换模型时统一做。
+              const ratio = caps.ratios.includes(card.ratio)
+                ? undefined
+                : (caps.defaultRatio as VideoWorkbenchCard['ratio'])
               updateCard(card.id, {
                 model,
                 ...(resolution ? { resolution } : {}),
                 ...(duration !== undefined ? { duration } : {}),
+                ...(ratio ? { ratio } : {}),
               })
             }}
           >
@@ -1123,7 +1141,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             title={draftOn ? '样片固定 480p;满意后在结果下方生成 1080P 成片' : undefined}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) =>
-              updateCard(card.id, { resolution: e.target.value as '480p' | '720p' | '1080p' })
+              updateCard(card.id, { resolution: e.target.value as VideoResolution })
             }
           >
             {modelCaps.resolutions.map((r) => (
@@ -1165,36 +1183,41 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             />
             配音/音效
           </label>
-          {/* seed:留空=随机(soraui 🎲 pill 的 InputNumber) */}
-          <label className="flex items-center gap-1 text-white/70 select-none" title="随机种子:留空=随机,固定后同参数可复现">
-            <span>🎲</span>
-            <input
-              type="number"
-              min={0}
-              max={modelCaps.seedMax}
-              step={1}
-              value={card.seed ?? ''}
-              disabled={busy}
-              placeholder="随机"
-              aria-label="随机种子"
-              className="w-24 bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60 [appearance:textfield]"
-              onChange={(e) => {
-                const raw = e.target.value.trim()
-                updateCard(card.id, { seed: raw === '' ? null : Number(raw) })
-              }}
-            />
-          </label>
-          {/* 联网搜索(soraui 🌐 Switch → 上游 tools: web_search) */}
-          <label className="flex items-center gap-1.5 text-white/70 cursor-pointer select-none" title="联网搜索增强:生成时允许上游检索网络信息">
-            <input
-              type="checkbox"
-              checked={card.webSearch}
-              disabled={busy}
-              className="accent-[#FCE300]"
-              onChange={(e) => updateCard(card.id, { webSearch: e.target.checked })}
-            />
-            🌐 联网
-          </label>
+          {/* seed:留空=随机(soraui 🎲 pill 的 InputNumber)。`seedMax: 0` = 这个模型没有 seed 参数(可灵) */}
+          {modelCaps.seedMax > 0 && (
+            <label className="flex items-center gap-1 text-white/70 select-none" title="随机种子:留空=随机,固定后同参数可复现">
+              <span>🎲</span>
+              <input
+                type="number"
+                min={0}
+                max={modelCaps.seedMax}
+                step={1}
+                value={card.seed ?? ''}
+                disabled={busy}
+                placeholder="随机"
+                aria-label="随机种子"
+                className="w-24 bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60 [appearance:textfield]"
+                onChange={(e) => {
+                  const raw = e.target.value.trim()
+                  updateCard(card.id, { seed: raw === '' ? null : Number(raw) })
+                }}
+              />
+            </label>
+          )}
+          {/* 联网搜索(soraui 🌐 Switch → 上游 tools: web_search)。只有 Seedance 会把它发出去,
+              万相 / 可灵的请求里没有这个字段,画一个不起作用的开关只会误导。 */}
+          {modelCaps.webSearch && (
+            <label className="flex items-center gap-1.5 text-white/70 cursor-pointer select-none" title="联网搜索增强:生成时允许上游检索网络信息">
+              <input
+                type="checkbox"
+                checked={card.webSearch}
+                disabled={busy}
+                className="accent-[#FCE300]"
+                onChange={(e) => updateCard(card.id, { webSearch: e.target.checked })}
+              />
+              🌐 联网
+            </label>
+          )}
           {/* 样片(Seedance 2.5 Draft):先出 480p 便宜看效果,满意再一键出 1080p 成片 */}
           {supportsSeedanceDraft(card.model) && (
             <label
@@ -1219,7 +1242,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
         {/* 文档 / 网页链接槽 —— 仅万相 3.0 有这个入参。
             没有 file/link 单选框:后缀判得比人准,多一个选择只会让人停下来想
             「我该选哪个」(判据见 shared/wan3Document)。 */}
-        {modelCaps.provider === 'miau' && (
+        {modelCaps.documentSlot && (
           <DocumentOrLinkSlot
             value={card.documentOrLink}
             busy={busy}
@@ -1350,6 +1373,17 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                   {(() => {
                     const cost = estimateCostCny(card.model, runResolution(card), card.billedSeconds)
                     return cost != null ? ` ≈ ${formatCostCny(cost)}` : ''
+                  })()}
+                </span>
+              )}
+              {/* 可灵:网关不回传出片秒数,只能按所选时长 × 刊例价估(带参考视频的计价秒数含输入时长,
+                  估不出,如实说明)。失败 / 取消的任务网关会退款,不显示。 */}
+              {isKlingModel(card.model) && card.status === 'succeeded' && (
+                <span title="可灵按秒计费,按所选时长 × 单价估算,不含分组倍率,以账单为准">
+                  {card.duration}s
+                  {(() => {
+                    const cost = estimateKlingCostCny(card.model, runResolution(card), card.duration, cardHasVideoInput(card))
+                    return cost != null ? ` ≈ ${formatCostCny(cost)}` : ' · 含参考视频,按输入+输出秒数计费'
                   })()}
                 </span>
               )}

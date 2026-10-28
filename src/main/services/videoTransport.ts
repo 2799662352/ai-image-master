@@ -23,6 +23,8 @@ import { toWan3ResolvedMedia, resolveVideoMode } from './wan3/fromContent'
 import { buildWan3CreateBody } from './wan3/request'
 import { asWan3Alias } from './wan3/model'
 import { depthUpstreamModelId, pickDepthSourceUrl } from './depth/model'
+import { asKlingAlias } from './kling/model'
+import { buildKlingCreateBody } from './kling/request'
 import { MediaKitApiError } from './mediaKit/client'
 import { SeedanceApiError } from './seedance/apiError'
 import { coerceDocumentOrLink } from '../../shared/wan3Document'
@@ -308,11 +310,61 @@ export function createSeedanceGatewayTransport(
   }
 }
 
+/**
+ * 可灵 4.0 / 4.0 Omni —— 经 Miau 网关的腾讯云 VOD 可灵渠道(new-api #183)。
+ *
+ * 客户端**复用** Seedance 网关那一个(`POST /video/generations` 提交、`GET /videos/{id}` 轮询):
+ * 网关对可灵收的信封与「平台余额下的 Seedance」同形(`metadata.content[]` + 重复的顶层
+ * `prompt`),结果地址也走同一个 `metadata.url`,响应解析一行都不用改。差别只有两处,
+ * 都收在这条 transport 里:
+ *
+ * - **组包**走 `kling/request`(本地先拦网关必拒的组合,理由见那边的文件头);
+ * - **凭据**不钉死 platform —— 与万相 / 深度捕捉一样**同一条 transport 服务两种钱包**
+ *   (自填 Miau Key 也能用),每次调用现取,头部整份交给客户端(`auth` 参数)。
+ *   用 `seedanceGateway` 那条 transport 做不到:它的解析器写死 `'platform'`。
+ *
+ * 取消接口未经证实,刻意不实现 —— 见文件头。
+ */
+export function createKlingTransport(
+  client: SeedanceGatewayClient,
+  resolveToken: () => ResolvedGatewayToken,
+): VideoTransport {
+  return {
+    requireApiKey() {
+      const { billing, token } = resolveToken()
+      if (!token.trim()) throw new Error(describeMissingGatewayToken(billing))
+    },
+    async createTask(ctx) {
+      // 先组包再取凭据:素材不对 / 时长不合法都不该走到打上游那一步。
+      // `async` 是为了让组包期的拒绝统一表现为 rejected promise,而不是同步抛出。
+      const body = buildKlingCreateBody({
+        // `asKlingAlias` 对非可灵直接抛 —— 静默兜底会变成「按可灵价扣费、跑别人的模型」。
+        model: asKlingAlias(ctx.model),
+        content: ctx.content,
+        ratio: ctx.ratio,
+        resolution: ctx.resolution,
+        duration: ctx.duration,
+        generateAudio: ctx.input.generateAudio,
+        promptFallback: ctx.input.prompt,
+      })
+      const resolved = resolveToken()
+      return client.createTask(body, resolved.token, gatewayAuthHeaders(resolved))
+    },
+    // 现取而不是构造时定死:用户中途切计费,下一次轮询就该记到新的归属上。
+    queryTask: (taskId) => {
+      const resolved = resolveToken()
+      return client.queryTask(taskId, resolved.token, gatewayAuthHeaders(resolved))
+    },
+  }
+}
+
 export interface VideoTransportRegistry {
   seedance: VideoTransport
   wan3?: VideoTransport
   /** 深度捕捉。没注册 = 抛错,**不回落**(见 `transportFor`)。 */
   depth?: VideoTransport
+  /** 可灵 4.0 / Omni。没注册 = 抛错,**不回落**(见 `transportFor`)。 */
+  kling?: VideoTransport
   /** 平台余额下的 Seedance。没注册 = 这条路还没接线，一切按老路走。 */
   seedanceGateway?: VideoTransport
 }
@@ -348,6 +400,9 @@ const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
   // Prime 与标准档共用整条万相链路,只有上游 slug 与单价不同。
   'wan3-prime': 'wan3',
   depth: 'depth',
+  // 可灵两档共用整条链路,只有上游 slug 不同(`kling/model.klingUpstreamModelId`)。
+  kling4: 'kling',
+  'kling4-omni': 'kling',
 }
 
 /**
@@ -382,6 +437,15 @@ export function transportFor(
       throw new Error('深度捕捉通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
     }
     return registry.depth
+  }
+  // 🚨 可灵**同样不能回落**,而且比深度捕捉更险:它与「平台版 Seedance」是同一个 host、同一类
+  // 凭据,回落到 `registry.seedance` 会把 `kling-v4-*` 当 Ark 模型发给 vvdance(用另一把钥匙),
+  // 被下面平台那条劫走则会换来一句看不出原因的网关 400。通道没注册是配置问题,要响亮。
+  if (key === 'kling') {
+    if (!registry.kling) {
+      throw new Error('可灵通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
+    }
+    return registry.kling
   }
   if (key === 'seedance' && options?.billing === 'platform') {
     // 🚨 **这一条不能回落。** 上面万相那条回落是良性的（同一个钱包、只是换个组包器），

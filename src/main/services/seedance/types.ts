@@ -4,7 +4,7 @@
 // 上游文档：seedance-openapi-ark-2026-06-12.md；设计稿：
 // docs/superpowers/specs/2026-06-12-seedance-video-mcp-design.md
 
-import type { SeedanceModelAlias, SeedanceTaskMode } from '../../../types/seedance'
+import type { SeedanceModelAlias, SeedanceTaskMode, VideoResolution } from '../../../types/seedance'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
 
@@ -86,7 +86,7 @@ export interface SeedanceCreateTaskBody {
 export interface CreateVideoTaskInput {
   prompt: string
   model?: SeedanceModelAlias
-  resolution?: '480p' | '720p' | '1080p'
+  resolution?: VideoResolution
   ratio?: string
   duration?: number
   generateAudio?: boolean

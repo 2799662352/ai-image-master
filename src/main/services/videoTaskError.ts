@@ -10,6 +10,7 @@
  * 且永远不会把上游原文丢掉。
  */
 
+import { translateKlingError } from './kling/errors'
 import { translateSeedanceTaskError } from './seedance/assets'
 import { translateWan3Error } from './wan3/errors'
 import { VIDEO_CREATE_TIMEOUT_MS, videoRequestTimeoutMessage } from './videoRequestTimeouts'
@@ -25,5 +26,9 @@ export function translateVideoTaskError(message: string): string {
   if (RAW_ABORT_PATTERN.test(message.trim())) {
     return videoRequestTimeoutMessage('create', VIDEO_CREATE_TIMEOUT_MS)
   }
+  // 可灵排在万相前面:万相那张表对所有视频错误都跑,而它的 `model_not_found` / 限流条目会把
+  // 可灵的同类错误翻成「万相 3.0 通道」。可灵只认带自己特征的原文,命中即止(不再叠一层万相的翻译)。
+  const kling = translateKlingError(message)
+  if (kling !== message) return kling
   return translateWan3Error(translateSeedanceTaskError(message))
 }

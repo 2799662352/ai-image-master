@@ -39,9 +39,61 @@ function clampToSupported<T extends string>(
   return value && supported.includes(value) ? value : fallback
 }
 
-/** 万相的官方默认画幅是 `adaptive`（跟随素材）；Seedance 家族是 16:9。 */
+/**
+ * 卡片没指定 / 指定的画幅不被支持时回落到哪个 —— 读能力表的 `defaultRatio`。
+ *
+ * 万相的官方默认是 `adaptive`（跟随素材）,Seedance 与可灵是 16:9。曾经靠「ratios 里有没有
+ * adaptive」推,可灵也有 adaptive(给了首帧才有东西可跟随),推出来的默认值就错了。
+ */
 function defaultRatioFor(model: SeedanceModelAlias): VideoWorkbenchSpec['ratio'] {
-  return capabilitiesFor(model).ratios.includes('adaptive') ? 'adaptive' : '16:9'
+  return capabilitiesFor(model).defaultRatio as VideoWorkbenchSpec['ratio']
+}
+
+/** 卡片时长的缺省秒数;智能时长(-1)在不收它的模型上也退回它。 */
+const DEFAULT_FIXED_DURATION = 5
+
+/**
+ * 没指定模式时,这个模型默认用哪个。
+ *
+ * 绝大多数模型默认「全能参考」;可灵 4.0 没有它(带参考图 / 参考视频的角色网关会回「需要
+ * Omni」),就按已有的参考图张数退到 文生 / 首帧 / 首尾帧。能力表 `modes` 为空的模型
+ * (深度捕捉,不进工作台)原样返回全能参考,与改动前一致。
+ */
+export function defaultModeFor(model: SeedanceModelAlias, referenceImageCount = 0): VideoWorkbenchMode {
+  const { modes } = capabilitiesFor(model)
+  if (modes.length === 0 || modes.includes('multimodal_ref')) return 'multimodal_ref'
+  const wanted: VideoWorkbenchMode =
+    referenceImageCount >= 2 ? 'first_last_frame' : referenceImageCount === 1 ? 'first_frame' : 'text2video'
+  return modes.includes(wanted) ? wanted : (modes[0] as VideoWorkbenchMode)
+}
+
+/**
+ * 换模型后,把**一定会被拒**的模式 / 时长就地收敛到新模型的合法值。
+ *
+ * 只管两件事,都是「不收敛就必然提交失败、且用户没做错任何事」的:
+ *   - 模式不在新模型的 `modes` 里(全能参考切到可灵 4.0)→ {@link defaultModeFor};
+ *   - 智能时长(-1)切到不收它的模型(可灵)→ 5 秒。「编辑视频」的锁定 -1 不算 —— 它是上游
+ *     `taskMode=edit` 的固定值,不是用户选的。
+ *
+ * **不**收敛越界秒数(30 → 15):那条有 `canStart` 的明文提示,悄悄改比报错更糟。
+ * 只在**换模型**时调用;用户在同一个模型上显式选的值,错了由 `canStart` 说明原因。
+ */
+export function conformToModel(spec: {
+  model: SeedanceModelAlias
+  mode: VideoWorkbenchMode
+  duration: number
+  referenceImages: readonly unknown[]
+}): { mode: VideoWorkbenchMode; duration: number } {
+  const caps = capabilitiesFor(spec.model)
+  const mode =
+    caps.modes.length === 0 || caps.modes.includes(spec.mode)
+      ? spec.mode
+      : defaultModeFor(spec.model, spec.referenceImages.length)
+  const duration =
+    spec.duration === -1 && !caps.smartDuration && mode !== 'edit_video'
+      ? DEFAULT_FIXED_DURATION
+      : spec.duration
+  return { mode, duration }
 }
 
 // 素材条数上限没有「与模型无关」的版本 —— 2.0 家族 9/3/3、2.5 是 30/10/10。
@@ -167,7 +219,11 @@ export function clampMaterials(
 export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpec {
   const seed = normalizeSeed(input.seed)
   const model = input.model ?? '2.0'
-  const mode = normalizeMode(input.mode)
+  // 没给模式才按模型能力选默认;给了就原样归一(给错的由 canStart 说明原因,别悄悄改成别的)。
+  const mode =
+    input.mode === undefined
+      ? defaultModeFor(model, (input.referenceImages ?? []).length)
+      : normalizeMode(input.mode)
   return {
     prompt: input.prompt ?? '',
     model,
@@ -177,7 +233,7 @@ export function normalizeSpec(input: VideoWorkbenchCardInput): VideoWorkbenchSpe
     // 画幅则必须收敛，因为它没有那层 canStart 检查，而且 `<select>` 的 value
     // 落在选项之外时会渲染成**空白** —— 用户看到的是一个没有值的下拉框。
     ratio: clampToSupported(input.ratio, capabilitiesFor(model).ratios, defaultRatioFor(model)),
-    duration: lockDurationForMode(mode, normalizeDuration(input.duration ?? 5, model)),
+    duration: lockDurationForMode(mode, normalizeDuration(input.duration ?? DEFAULT_FIXED_DURATION, model)),
     generateAudio: input.generateAudio !== false,
     mode,
     ...(seed !== undefined ? { seed } : {}),
