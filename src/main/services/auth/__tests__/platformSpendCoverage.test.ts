@@ -93,6 +93,15 @@ const EXEMPT: ReadonlyMap<string, Exemption> = new Map([
       delegatesTo: 'main/services/wan3/client.ts',
     },
   ],
+  [
+    'main/services/videoBadcase/ipc.ts',
+    {
+      why:
+        '视频「效果问题反馈」(火山 Case 平台)的上报 / 查询。网关契约(new-api #188 / #189)' +
+        '是 0 额度、不扣费,没有余额变化要刷新;需要平台凭据只是为了让网关认出是谁的任务。' +
+        '若网关将来对它计费,这条豁免要换成真的上报。',
+    },
+  ],
 ])
 
 /**

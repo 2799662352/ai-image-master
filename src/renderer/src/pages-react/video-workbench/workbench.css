@@ -705,3 +705,38 @@
 .vw-seg-body { padding: 10px 12px 12px; }
 .vw-seg-name { font-size: 13px; color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-seg-sub { font-size: 11px; color: #71717a; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* ---------- 任务详情里的「效果问题反馈」(火山 Case 平台) ---------- */
+.vw-bc-btn { height: 28px; padding: 0 14px; border: 1px solid #3f3f46; color: #e4e4e7; font-size: 12px; background: transparent; white-space: nowrap; cursor: pointer; }
+.vw-bc-btn:hover:not(:disabled) { border-color: #fce300; color: #fff; }
+.vw-bc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.vw-bc-btn-primary { border-color: transparent; background: #fce300; color: #000; font-weight: 700; }
+.vw-bc-btn-primary:hover:not(:disabled) { background: #ffe500; color: #000; box-shadow: 0 0 10px rgba(252, 227, 0, 0.3); }
+.vw-bc-btn-primary:disabled { background: #27272a; color: #71717a; }
+.vw-bc-note { font-size: 11px; color: #71717a; line-height: 1.6; }
+.vw-bc-label { font-size: 12px; font-weight: 600; color: #e4e4e7; margin: 12px 0 6px; }
+.vw-bc-req { color: #f87171; margin-left: 2px; }
+.vw-bc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vw-bc-chip { padding: 3px 10px; border: 1px solid #3f3f46; color: #a1a1aa; font-size: 11px; line-height: 16px; background: transparent; cursor: pointer; }
+.vw-bc-chip:hover:not(:disabled) { border-color: #fce300; color: #fff; }
+.vw-bc-chip:disabled { opacity: 0.55; cursor: not-allowed; }
+.vw-bc-chip-on { border-color: #fce300; color: #fce300; background: rgba(252, 227, 0, 0.08); font-weight: 700; }
+.vw-bc-input { width: 100%; box-sizing: border-box; padding: 6px 10px; background: #09090b; border: 1px solid #3f3f46; color: #fff; font-family: inherit; font-size: 12px; line-height: 1.5; }
+.vw-bc-input:focus { outline: none; border-color: #fce300; }
+.vw-bc-input:disabled { opacity: 0.6; }
+.vw-bc-textarea { min-height: 88px; resize: vertical; }
+.vw-bc-counter { margin-top: 2px; text-align: right; font-size: 11px; color: #71717a; }
+.vw-bc-card { padding: 8px 12px; background: #18181b; border: 1px solid #27272a; }
+.vw-bc-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 4px 12px; align-items: baseline; padding: 4px 0; font-size: 12px; color: #e4e4e7; }
+.vw-bc-row-label { font-size: 11px; color: #a1a1aa; }
+.vw-bc-row-value { min-width: 0; line-height: 1.6; word-break: break-all; user-select: text; }
+.vw-bc-pre { white-space: pre-wrap; }
+.vw-bc-badge { display: inline-block; padding: 0 8px; border: 1px solid #3f3f46; font-size: 11px; font-weight: 700; line-height: 18px; color: #a1a1aa; }
+.vw-bc-badge-processing { color: #fce300; border-color: #4a4300; }
+.vw-bc-badge-done { color: #22c55e; border-color: #1f3d2a; }
+.vw-bc-tag { display: inline-block; margin: 0 6px 4px 0; padding: 0 8px; background: #27272a; color: #d4d4d8; font-size: 11px; line-height: 18px; }
+.vw-bc-solution { margin-top: 8px; padding: 8px 12px; border: 1px solid #1f3d2a; background: rgba(34, 197, 94, 0.06); }
+.vw-bc-solution-title { margin-bottom: 4px; font-size: 12px; font-weight: 700; color: #22c55e; }
+.vw-bc-link { color: #fce300; text-decoration: underline; word-break: break-all; }
+.vw-bc-error { margin-top: 8px; padding: 6px 10px; border: 1px solid #4a1f1f; background: rgba(248, 113, 113, 0.08); font-size: 12px; line-height: 1.5; color: #f87171; }
+.vw-bc-notice { margin-bottom: 8px; padding: 6px 10px; border-left: 2px solid #fce300; background: #18181b; font-size: 12px; line-height: 1.5; color: #e4e4e7; }

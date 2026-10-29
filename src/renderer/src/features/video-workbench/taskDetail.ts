@@ -65,6 +65,12 @@ export interface TaskDetail {
    * `versions` 里那条存档,不是卡片当前结果。
    */
   view: { historical: boolean; seq: number | null; total: number }
+  /**
+   * 面板此刻展示的这一版「是什么」:给「效果反馈」之类要按任务身份决定入口的功能用。
+   * 与 `view` 同一个口径 —— 历史版本只在生成成功那一刻存档,所以状态恒为 `succeeded`;
+   * 计费来源存档里没有(`undefined`),模型取那一版自己 spec 里的,不是卡片现在的。
+   */
+  subject: { status: string; billing: VideoBillingSource | undefined; model: VideoModelAlias; taskId: string | undefined }
 }
 
 export interface TaskDetailOptions {
@@ -512,5 +518,8 @@ export function buildTaskDetail(card: VideoWorkbenchCard, opts: TaskDetailOption
     request,
     json: JSON.stringify(doc, null, 2),
     view,
+    subject: historical
+      ? { status: 'succeeded', billing: undefined, model: historical.spec.model, taskId: historical.taskId }
+      : { status: card.status, billing: card.billing, model: card.model, taskId: card.taskId },
   }
 }

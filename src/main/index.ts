@@ -47,6 +47,7 @@ import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-expl
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerProjectFileIpc } from './services/videoWorkbench/projectFileIpc'
+import { registerVideoBadcaseIpc } from './services/videoBadcase/ipc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
@@ -1304,6 +1305,7 @@ app.whenReady().then(async () => {
   installVoiceProtocol()
   registerFsIpc()
   registerProjectFileIpc(() => mainWindow)
+  registerVideoBadcaseIpc()
   registerAttachmentsTreeIpc(getPrisma)
   registerAttachmentsThumbIpc()
   // media:thumb — resized-JPEG hot-path IPC for chat/thumbnail render surfaces
