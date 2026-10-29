@@ -29,7 +29,7 @@ export class AuthError extends Error {
   }
 }
 
-export type BackendMethod = 'GET' | 'POST' | 'DELETE' | 'PATCH'
+export type BackendMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
 
 export interface BackendRequestOptions {
   /** JSON 体。与 `form` 互斥。 */

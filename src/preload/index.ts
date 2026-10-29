@@ -110,6 +110,14 @@ import type {
   VideoBadcaseReportResult,
 } from '../types/videoBadcase'
 import type {
+  WorkbenchBackupGetData,
+  WorkbenchBackupItem,
+  WorkbenchBackupPutData,
+  WorkbenchBackupPutInput,
+  WorkbenchBackupResult,
+  WorkbenchBackupVersion,
+} from '../types/workbenchBackup'
+import type {
   AppsListParams,
   AppsListResponse,
   ExternalAgentConfigDetectParams,
@@ -777,6 +785,17 @@ export interface ElectronAPI {
     badcase: {
       report: (input: VideoBadcaseReportInput) => Promise<VideoBadcaseReportResult>
       query: (taskId: string) => Promise<VideoBadcaseQueryResult>
+    }
+    /**
+     * 云备份:把剧的工程文件按平台账号(JWT)存到服务端私有桶,换机 / 清缓存后可取回。
+     * 返回 `{ ok, data } | { ok:false, code, message }`,不抛异常;不扣费。
+     */
+    cloudBackup: {
+      list: () => Promise<WorkbenchBackupResult<{ items: WorkbenchBackupItem[] }>>
+      put: (input: { dramaId: string } & WorkbenchBackupPutInput) => Promise<WorkbenchBackupResult<WorkbenchBackupPutData>>
+      get: (dramaId: string, version?: string) => Promise<WorkbenchBackupResult<WorkbenchBackupGetData>>
+      versions: (dramaId: string) => Promise<WorkbenchBackupResult<{ versions: WorkbenchBackupVersion[] }>>
+      remove: (dramaId: string) => Promise<WorkbenchBackupResult<{ removed: number }>>
     }
   }
   fs: {
@@ -1832,6 +1851,18 @@ const electronAPI: ElectronAPI = {
         safeInvoke<VideoBadcaseReportResult>('video-workbench:badcase-report', input),
       query: (taskId: string) =>
         safeInvoke<VideoBadcaseQueryResult>('video-workbench:badcase-query', taskId),
+    },
+    cloudBackup: {
+      list: () =>
+        safeInvoke<WorkbenchBackupResult<{ items: WorkbenchBackupItem[] }>>('workbench-backup:list'),
+      put: (input: { dramaId: string } & WorkbenchBackupPutInput) =>
+        safeInvoke<WorkbenchBackupResult<WorkbenchBackupPutData>>('workbench-backup:put', input),
+      get: (dramaId: string, version?: string) =>
+        safeInvoke<WorkbenchBackupResult<WorkbenchBackupGetData>>('workbench-backup:get', { dramaId, version }),
+      versions: (dramaId: string) =>
+        safeInvoke<WorkbenchBackupResult<{ versions: WorkbenchBackupVersion[] }>>('workbench-backup:versions', { dramaId }),
+      remove: (dramaId: string) =>
+        safeInvoke<WorkbenchBackupResult<{ removed: number }>>('workbench-backup:remove', { dramaId }),
     },
   },
 

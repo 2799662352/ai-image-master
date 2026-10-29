@@ -48,6 +48,7 @@ import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerProjectFileIpc } from './services/videoWorkbench/projectFileIpc'
 import { registerVideoBadcaseIpc } from './services/videoBadcase/ipc'
+import { registerWorkbenchBackupIpc } from './services/workbenchBackup/ipc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
@@ -1306,6 +1307,7 @@ app.whenReady().then(async () => {
   registerFsIpc()
   registerProjectFileIpc(() => mainWindow)
   registerVideoBadcaseIpc()
+  registerWorkbenchBackupIpc()
   registerAttachmentsTreeIpc(getPrisma)
   registerAttachmentsThumbIpc()
   // media:thumb — resized-JPEG hot-path IPC for chat/thumbnail render surfaces

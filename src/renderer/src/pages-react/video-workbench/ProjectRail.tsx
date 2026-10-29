@@ -16,6 +16,7 @@ import { useContextMenu } from './ContextMenu'
 import { CoverImage } from './CoverImage'
 import { SEGMENT_DRAG_MIME } from './ProjectOverview'
 import { RenameDialog } from './RenameDialog'
+import { useCloudBackupTone } from './useCloudBackup'
 import { projectMenuItems } from './workbenchMenus'
 
 function carriesSegment(e: DragEvent): boolean {
@@ -39,6 +40,8 @@ export interface ProjectRailProps {
   onRequestExport?: () => void
   /** 打开回收站(由页面挂 TrashDialog)。不传 = 不显示回收站入口。 */
   onRequestTrash?: () => void
+  /** 打开云备份面板(由页面挂 CloudBackupDialog)。不传 = 不显示入口(非桌面端)。 */
+  onRequestCloudBackup?: () => void
   /** 用户把一个 `*.catwb.json` 拖到了剧栏上:交回路径,由页面打开导入确认页。 */
   onDropProjectFile?: (path: string) => void
 }
@@ -58,7 +61,14 @@ function droppedProjectFilePath(e: DragEvent): string | null {
   return null
 }
 
-export function ProjectRail({ onRequestImport, onRequestExport, onRequestTrash, onDropProjectFile }: ProjectRailProps) {
+export function ProjectRail({
+  onRequestImport,
+  onRequestExport,
+  onRequestTrash,
+  onRequestCloudBackup,
+  onDropProjectFile,
+}: ProjectRailProps) {
+  const cloudTone = useCloudBackupTone()
   const projects = useVideoWorkbenchStore((s) => s.projects)
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
@@ -335,6 +345,18 @@ export function ProjectRail({ onRequestImport, onRequestExport, onRequestTrash, 
           >
             导出当前剧
           </button>
+          {onRequestCloudBackup && (
+            <button
+              type="button"
+              className="vw-ghost vw-rail-trash"
+              aria-label="云备份"
+              title="把每部剧按账号备份到云端,换电脑后可恢复"
+              onClick={onRequestCloudBackup}
+            >
+              {cloudTone && <span className={`vw-cloud-dot vw-cloud-dot-${cloudTone}`} aria-hidden="true" />}
+              云备份
+            </button>
+          )}
           {onRequestTrash && (
             <button
               type="button"
