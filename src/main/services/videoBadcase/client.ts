@@ -62,7 +62,7 @@ export interface VideoBadcaseClientOptions {
   baseUrl?: string
   /**
    * 这次请求的**完整**鉴权头;`null` = 没有平台凭据。每次调用现取(用户中途切池,下一次就记到新池上)。
-   * 生产上传 `gatewayPlatformHeaders(getActivePoolToken())`,它把 Authorization 与计费归属绑在一起。
+   * 生产上传「当前计费池令牌 + 平台组头函数」的结果(见同目录 `ipc.ts`),它把 Authorization 与计费归属绑在一起。
    */
   authHeaders: () => Record<string, string> | null
   timeoutMs?: number
