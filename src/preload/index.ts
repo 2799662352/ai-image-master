@@ -105,6 +105,11 @@ import type {
   VideoWorkbenchSubmitResult,
 } from '../types/videoWorkbench'
 import type {
+  VideoBadcaseQueryResult,
+  VideoBadcaseReportInput,
+  VideoBadcaseReportResult,
+} from '../types/videoBadcase'
+import type {
   AppsListParams,
   AppsListResponse,
   ExternalAgentConfigDetectParams,
@@ -764,6 +769,14 @@ export interface ElectronAPI {
         | { ok: true; path: string; text: string }
         | { ok: false; code: 'not-found' | 'not-project-file' | 'too-large' | 'io'; reason: string }
       >
+    }
+    /**
+     * 效果问题反馈(火山方舟 Case 平台,Seedance 2.x):上报与查询处理进度。
+     * 走网关、用主进程当前计费池的平台凭据,不扣费。`taskId` 是网关签发的 `task_…`。
+     */
+    badcase: {
+      report: (input: VideoBadcaseReportInput) => Promise<VideoBadcaseReportResult>
+      query: (taskId: string) => Promise<VideoBadcaseQueryResult>
     }
   }
   fs: {
@@ -1813,6 +1826,12 @@ const electronAPI: ElectronAPI = {
           | { ok: true; path: string; text: string }
           | { ok: false; code: 'not-found' | 'not-project-file' | 'too-large' | 'io'; reason: string }
         >('video-workbench:project-read', { path }),
+    },
+    badcase: {
+      report: (input: VideoBadcaseReportInput) =>
+        safeInvoke<VideoBadcaseReportResult>('video-workbench:badcase-report', input),
+      query: (taskId: string) =>
+        safeInvoke<VideoBadcaseQueryResult>('video-workbench:badcase-query', taskId),
     },
   },
 

@@ -333,6 +333,27 @@ describe('按版本查看(卡片切到 v1,面板就得是 v1 那一轮的事实)
     expect(field(d, 'upstreamTaskId').copy).toBeFalsy()
   })
 
+  it('subject:最新一版取卡片字段;历史版取存档(状态记已完成、计费没存所以是 undefined)', () => {
+    const latest = buildTaskDetail(two(), { index: 0, now: T0 })
+    expect(latest.subject).toEqual({ status: 'succeeded', billing: 'platform', model: '2.5', taskId: 't2' })
+
+    const old = buildTaskDetail(two(), { index: 0, now: T0, versionIdx: 0 })
+    expect(old.subject).toEqual({ status: 'succeeded', billing: undefined, model: '2.5', taskId: 't1' })
+
+    // 历史版本用自己 spec 里的模型,不是卡片当前的模型
+    const v1Wan: VideoWorkbenchVersion = { ...v1, spec: { ...v1.spec, model: 'wan3' } }
+    const mixed = buildTaskDetail(card({ ...two(), versions: [v1Wan, v2] }), { index: 0, now: T0, versionIdx: 0 })
+    expect(mixed.subject.model).toBe('wan3')
+  })
+
+  it('subject:没提交 / 没记任务号时 taskId 是 undefined', () => {
+    const fresh = buildTaskDetail(card({ status: 'idle' }), { index: 0, now: T0 })
+    expect(fresh.subject.taskId).toBeUndefined()
+    const noId: VideoWorkbenchVersion = { ...v1, taskId: undefined }
+    const old = buildTaskDetail(card({ ...two(), versions: [noId, v2] }), { index: 0, now: T0, versionIdx: 0 })
+    expect(old.subject.taskId).toBeUndefined()
+  })
+
   it('只有一版时不标 vN/N(没有可切的)', () => {
     const d = buildTaskDetail(card({ status: 'succeeded', taskId: 't1', versions: [v1] }), { index: 0, now: T0, versionIdx: 0 })
     expect(d.title).toBe('#01 · 任务详情')

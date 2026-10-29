@@ -12,7 +12,9 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import type { VideoWorkbenchCard } from '../../../../types/videoWorkbench'
+import { canReportVideoBadcase } from '../../../../types/videoBadcase'
 import { buildTaskDetail, type TaskDetailField } from '../../features/video-workbench/taskDetail'
+import { VideoBadcasePanel } from './VideoBadcasePanel'
 
 interface ShellBridge {
   shell?: { showItemInFolder?: (p: string) => unknown }
@@ -49,6 +51,9 @@ export function TaskDetailDialog({
     [card, index, now, versionIdx],
   )
   const requestJson = useMemo(() => JSON.stringify(detail.request, null, 2), [detail.request])
+  // 「效果反馈」只给展示中的这一版有资格的任务(已完成 + Seedance 2.x + 走网关);
+  // `subject` 已按版本取好身份,历史版本不会拿卡片当前的任务号去报。
+  const badcaseTaskId = canReportVideoBadcase(detail.subject) ? detail.subject.taskId!.trim() : null
 
   // 「已耗时」要走秒表:非终态每秒重算一次 now;终态用 updatedAt,不需要 tick。
   // 看的是历史版本时没有耗时行,也不 tick。
@@ -150,6 +155,13 @@ export function TaskDetailDialog({
             </div>
             <pre className="vw-detail-json" data-testid="vw-detail-request">{requestJson}</pre>
           </section>
+          {badcaseTaskId && (
+            <section className="vw-detail-section" data-testid="vw-detail-badcase">
+              <div className="vw-detail-section-title">效果问题反馈</div>
+              {/* key = 任务号:卡片切版本时整块重建,不会把上一版的表单 / 记录带到这一版 */}
+              <VideoBadcasePanel key={badcaseTaskId} taskId={badcaseTaskId} />
+            </section>
+          )}
         </div>
         <div className="vw-dialog-actions">
           <button type="button" className="vw-ghost" onClick={() => copy('all', detail.json)}>

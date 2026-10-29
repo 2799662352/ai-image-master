@@ -1,6 +1,6 @@
 // 「任务详情」面板:标识 / 时间 / 结果 / 请求参数 / 历史版本,每个 ID 与地址可一键
 // 复制,整份可复制成 JSON;本地成片可在文件夹中显示;Esc / 遮罩 / 关闭都能关。
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VideoWorkbenchCard, VideoWorkbenchVersion } from '../../../../../types/videoWorkbench'
 import { buildCard } from '../../../features/video-workbench/cardSpec'
@@ -137,5 +137,99 @@ describe('TaskDetailDialog', () => {
     // 点面板内部不算点遮罩
     fireEvent.mouseDown(screen.getByRole('dialog', { name: '#01 · 任务详情' }))
     expect(onClose).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('TaskDetailDialog · 效果问题反馈入口', () => {
+  const GATEWAY_TASK = 'task_aSOAy1wEN8qCafX5dvfoVoWal9PENatI'
+  const spec = {
+    prompt: 'p',
+    model: '2.5' as const,
+    resolution: '480p' as const,
+    ratio: '16:9' as const,
+    duration: 6,
+    generateAudio: true,
+    mode: 'multimodal_ref' as const,
+    webSearch: false,
+    referenceBrief: { images: [], videos: [], audios: [] },
+  }
+  const section = (): HTMLElement | null => screen.queryByTestId('vw-detail-badcase')
+
+  beforeEach(() => {
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = {
+      shell: { showItemInFolder },
+      videoWorkbench: { badcase: { report: vi.fn(), query: vi.fn(async () => ({ ok: true, record: null, rejection: null })) } },
+    }
+  })
+
+  it('已完成 + Seedance 2.x + 走网关:有「效果问题反馈」一区', () => {
+    render(<TaskDetailDialog card={card()} index={0} onClose={() => {}} />)
+    expect(section()).not.toBeNull()
+    expect(section()!.textContent).toContain('效果问题反馈')
+    expect(screen.getByRole('button', { name: '提交 / 查看反馈' })).toBeTruthy()
+  })
+
+  it('打开面板本身不会发请求', () => {
+    const query = vi.fn()
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = { videoWorkbench: { badcase: { report: vi.fn(), query } } }
+    render(<TaskDetailDialog card={card()} index={0} onClose={() => {}} />)
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it('没资格就整区不出现:未完成 / 失败 / 万相 / 可灵 / 自填 Key / 没提交', () => {
+    const ineligible: Array<Partial<VideoWorkbenchCard>> = [
+      { status: 'running' },
+      { status: 'failed' },
+      { status: 'cancelled' },
+      { model: 'wan3' },
+      { model: 'kling4' },
+      { billing: 'own-key' },
+      { taskId: undefined },
+      { taskId: 'cgt-20260903172200-5n7rt' },
+    ]
+    for (const patch of ineligible) {
+      const { unmount } = render(<TaskDetailDialog card={card(patch)} index={0} onClose={() => {}} />)
+      expect(section(), JSON.stringify(patch)).toBeNull()
+      unmount()
+    }
+  })
+
+  it('历史版本:按那一版自己的任务号 / 模型判断,不拿卡片当前的去报', async () => {
+    const query = vi.fn(async () => ({ ok: true as const, record: null, rejection: null }))
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = { videoWorkbench: { badcase: { report: vi.fn(), query } } }
+    const versions: VideoWorkbenchVersion[] = [
+      { id: 'v1', seq: 1, createdAt: Date.now() - 120_000, taskId: 'task_v1_old', upstreamTaskId: 'cgt-1', spec },
+      { id: 'v2', seq: 2, createdAt: Date.now() - 60_000, taskId: GATEWAY_TASK, upstreamTaskId: UPSTREAM, spec },
+    ]
+    render(<TaskDetailDialog card={card({ versions })} index={0} versionIdx={0} onClose={() => {}} />)
+    expect(section()).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '提交 / 查看反馈' }))
+    await waitFor(() => expect(query).toHaveBeenCalledWith('task_v1_old'))
+    expect(query).not.toHaveBeenCalledWith(GATEWAY_TASK)
+  })
+
+  it('历史版本没记任务号 / 记的不是网关号 / 那一版不是 Seedance 2.x:不出现', () => {
+    const mk = (v1: Partial<VideoWorkbenchVersion>): VideoWorkbenchVersion[] => [
+      { id: 'v1', seq: 1, createdAt: Date.now() - 120_000, upstreamTaskId: 'cgt-1', spec, taskId: 'task_v1', ...v1 },
+      { id: 'v2', seq: 2, createdAt: Date.now() - 60_000, taskId: GATEWAY_TASK, upstreamTaskId: UPSTREAM, spec },
+    ]
+    for (const v1 of [
+      { taskId: undefined },
+      { taskId: 'cgt-direct-1' },
+      { spec: { ...spec, model: 'wan3' as const } },
+    ] as Array<Partial<VideoWorkbenchVersion>>) {
+      const { unmount } = render(<TaskDetailDialog card={card({ versions: mk(v1) })} index={0} versionIdx={0} onClose={() => {}} />)
+      expect(section(), JSON.stringify(v1)).toBeNull()
+      unmount()
+    }
+  })
+
+  it('重新生成中的卡(最新一版进行中):即使旧版本有资格,看最新版也不出现', () => {
+    const versions: VideoWorkbenchVersion[] = [
+      { id: 'v1', seq: 1, createdAt: Date.now() - 120_000, taskId: 'task_v1', upstreamTaskId: 'cgt-1', spec },
+      { id: 'v2', seq: 2, createdAt: Date.now() - 60_000, taskId: GATEWAY_TASK, upstreamTaskId: UPSTREAM, spec },
+    ]
+    render(<TaskDetailDialog card={card({ versions, status: 'running' })} index={0} onClose={() => {}} />)
+    expect(section()).toBeNull()
   })
 })
