@@ -9,8 +9,10 @@
 // - 转存(transfer)针对**第三方外链**,目的是别把「这张图能不能用」押在对方服务器上,
 //   做法是**换掉 src**;
 // - 预传(preupload,本模块)针对**本地路径**,目的纯粹是省提交时的等待,做法是
-//   **另挂 uploadedUrl**、src 原样留着 —— 预传没跑完 / 跑挂了 / 重启后缓存没了,
+//   **另挂 uploadedUrl**、src 原样留着 —— 预传没跑完 / 跑挂了 / 缓存没通过体检,
 //   提交都照旧走主进程那条路。所以它是纯优化,不引入新的失败模式。
+//   (地址连同来源指纹会落库,重启后不必再传一遍;但用之前必须验过 ——
+//    见 materialUploadCache。)
 //
 // 用的是 `attachments.resolveRefMedia`(MCP 生图 `resolveRefImage` 的同源兄弟,白名单
 // 放宽到图片/视频/音频):给主进程一个**路径**,主进程从磁盘**流式**传 COS,整个文件
@@ -31,7 +33,15 @@
 
 import type { MaterialKind } from './cardSpec'
 
-type ResolveResult = { ok: true; url: string } | { ok: false; reason: string }
+/** 主进程在上传**开始前**取的本地文件指纹(取不到就没有这个字段)。 */
+export interface PreuploadFingerprint {
+  size: number
+  mtimeMs: number
+}
+
+type ResolveResult =
+  | { ok: true; url: string; fingerprint?: PreuploadFingerprint }
+  | { ok: false; reason: string }
 
 type PreuploadApi = {
   attachments?: {
@@ -72,7 +82,7 @@ export interface MaterialPreuploadTarget {
  */
 export type MaterialPreuploadOutcome =
   | { state: 'uploading' }
-  | { state: 'uploaded'; url: string }
+  | { state: 'uploaded'; url: string; fingerprint?: PreuploadFingerprint }
   | { state: 'failed'; reason: string }
 
 export type MaterialPreuploadApply = (
@@ -112,7 +122,11 @@ export function startMaterialPreupload(target: MaterialPreuploadTarget): void {
         apply?.(target, { state: 'failed', reason: 'COS 不可达,已降级为提交时上传' })
         return
       }
-      apply?.(target, { state: 'uploaded', url: result.url })
+      apply?.(target, {
+        state: 'uploaded',
+        url: result.url,
+        ...(result.fingerprint ? { fingerprint: result.fingerprint } : {}),
+      })
     })
     .catch((err: unknown) => {
       apply?.(target, { state: 'failed', reason: err instanceof Error ? err.message : String(err) })

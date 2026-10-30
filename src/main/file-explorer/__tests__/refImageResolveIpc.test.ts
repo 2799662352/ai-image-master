@@ -6,7 +6,10 @@
 // 文件**上传到公开 COS 桶**。所以白名单不是可选项 —— 用同一套 mediaPathValidation
 // 原语,并且额外只放行图片(参考图就是图片,没有理由放过 zip/pmx 这些)。
 
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
 const resolveMediaUrl = vi.fn()
 
@@ -137,5 +140,61 @@ describe('resolveRefMedia — 放宽到图片/视频/音频', () => {
     expect((await resolveRefImage('D:\\v\\clip.mp4')).ok).toBe(false)
     expect((await resolveRefImage('D:\\v\\voice.mp3')).ok).toBe(false)
     expect(resolveMediaUrl).not.toHaveBeenCalled()
+  })
+})
+
+// 预传结果要带上传那一刻的文件指纹,渲染端才能在重启后判断「这个缓存地址对应的还是不是
+// 现在这份文件」(见 materialUploadVerify)。
+describe('resolveRefMedia — 附带本地文件指纹', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'vw-fp-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('本地文件存在 → 回传 size + mtimeMs', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+    const f = path.join(dir, 'hero.png')
+    writeFileSync(f, Buffer.from('12345'))
+    const st = statSync(f)
+    resolveMediaUrl.mockResolvedValue('https://bucket/relayed.png')
+
+    expect(await resolveRefMedia(f)).toEqual({
+      ok: true,
+      url: 'https://bucket/relayed.png',
+      fingerprint: { size: 5, mtimeMs: st.mtimeMs },
+    })
+  })
+
+  it('指纹取在上传之前 —— 上传期间文件又被改了,记下的是旧值,下次体检就能发现', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+    const f = path.join(dir, 'hero.png')
+    writeFileSync(f, Buffer.from('12345'))
+    const before = statSync(f)
+    resolveMediaUrl.mockImplementation(async () => {
+      writeFileSync(f, Buffer.from('1234567890'))
+      const later = new Date(before.mtimeMs + 10_000)
+      utimesSync(f, later, later)
+      return 'https://bucket/relayed.png'
+    })
+
+    const out = await resolveRefMedia(f)
+    expect(out).toMatchObject({ ok: true, fingerprint: { size: 5, mtimeMs: before.mtimeMs } })
+  })
+
+  it('取不到指纹(文件不存在等)不影响上传结果 —— 只是不带 fingerprint 字段', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+    resolveMediaUrl.mockResolvedValue('https://bucket/relayed.png')
+
+    const out = await resolveRefMedia('D:\\definitely\\not\\here\\a.png')
+    expect(out).toEqual({ ok: true, url: 'https://bucket/relayed.png' })
+    expect(out).not.toHaveProperty('fingerprint')
+  })
+
+  it('http(s) / data: 直接透传时没有指纹', async () => {
+    const { resolveRefMedia } = await import('../refImageResolveIpc')
+    expect(await resolveRefMedia('https://cdn/x.png')).toEqual({ ok: true, url: 'https://cdn/x.png' })
   })
 })
