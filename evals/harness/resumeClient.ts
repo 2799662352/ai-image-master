@@ -26,7 +26,6 @@ import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import WebSocket from 'ws'
-import { seedApiyiMcpEntry } from '../../src/main/agent/apiyiMcpSeed'
 import { buildCodexLaunchArgs, type CodexProviderConfig } from '../../src/main/agent/codexLaunch'
 import { seedCinematographyKbMcpEntry } from '../../src/main/agent/cinematographyKbMcpSeed'
 
@@ -134,11 +133,6 @@ export async function prepareResumeCodexHome(
   resourceRoot: string,
 ): Promise<void> {
   const personalConfigToml = path.join(codexHome, 'config.toml')
-  await seedApiyiMcpEntry({
-    personalConfigToml,
-    entryPath: path.join(resourceRoot, 'apiyi-mcp', 'dist', 'index.js'),
-    command: process.execPath,
-  })
   await seedCinematographyKbMcpEntry({
     personalConfigToml,
     entryPath: path.join(resourceRoot, 'cinematography-kb-mcp', 'index.js'),

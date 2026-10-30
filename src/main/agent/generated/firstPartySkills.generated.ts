@@ -1444,8 +1444,7 @@ description: >-
   看懂/读 文档/PDF, or 上网查/搜一下/扒资料/最新消息. Also the model understand/review
   stage of the multimedia inspect→verify loop (不只审片): judge content here with
   understand_video / understand_audio, then hand technical QC + fixes back to the
-  ffmpeg-win skill. 视频/音频/图文理解以 qwen(omni)为主;apiyi 的 Gemini
-  (gemini-3.5-flash,禁传 2.5)只作深度复核的备选。
+  ffmpeg-win skill. 视频/音频/图文理解统一走 qwen(omni)。
 ---
 
 # CATIMATION Understand — video / audio / document / web via qwen
@@ -1565,15 +1564,6 @@ order is preserved and "第二张" in your question means the first extra entry.
 ### web_research { query, model? }
 Natural-language query; the tool sets \`enable_search\` so the answer incorporates
 live web results. Prefer this over guessing from stale memory; cite what you used.
-
-## apiyi-mcp(Gemini)只作深度复核的备选
-
-Video / audio / image understanding all run on qwen omni by default (cheap, and it
-hears). Reach for **apiyi-mcp \`generate_content\`** with \`gemini-3.5-flash\` only when
-the omni answer is not enough and you want an independent second read of a hard
-clip. Confirm the \`apiyi\` MCP is enabled first; **never pass \`gemini-2.x\`** (retired,
-markedly worse). Do not route audio to apiyi first any more — \`understand_audio\`
-is the primary path.
 
 ## Path B — delegate to a qwen subagent
 

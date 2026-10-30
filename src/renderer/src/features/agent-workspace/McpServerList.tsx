@@ -37,7 +37,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   }, [codexConfigError])
 
   // Split servers into "🎁 预装" (vendored by us into resources/, seeded into
-  // codex config on first boot — currently just apiyi-mcp) vs everything
+  // codex config on first boot — see APP_BUNDLED_MCP_NAMES) vs everything
   // else the user has added themselves. Stable order: bundled stays in the
   // order returned by buildServersFromConfig (alphabetical-ish), user list
   // is untouched so manual reordering in config.toml still shows through.

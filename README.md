@@ -53,6 +53,8 @@ pnpm build:win           # Windows 安装包
 
 ## 远程 apiyi 网关 / BYOK(可选)
 
+(桌面端内置的 apiyi MCP 已于 2026-10-30 移除,本节说的是**自己服务器上**独立部署的版本,不受影响。)
+
 如果想跨设备/多人共用 `apiyi-mcp-server` 的能力 —— 在自己的服务器上挂一个 HTTPS endpoint,
 **每个用户填自己的 apiyi key**(BYOK,Bring Your Own Key):
 
@@ -275,8 +277,22 @@ Pass 4: 一致性校验
 - **记忆模型**(`memories.extract_model` / `consolidation_model`)与会话自动起标题的模型:四个 DeepSeek 模型(火山两个 + 官方两个)**一律走火山标准版 `deepseek-v4-1-flash-261017`**(原为 `deepseek-flash`),在通道的 `memoriesModel` 里写一个固定值。
   - 为什么是一个值而不是按对话模型分路:记忆模型是启动 Codex 时写死的 `-c` 参数,而同一通道内切换模型不会重启 Codex,分路会让它停在启动那一刻的值上(切换后过期)。一个值就没有这个问题,也不需要映射表。
   - 通道默认对话模型不变,仍是 `deepseek-flash`。
-- **代价**:官方两个模型的用户也按火山标准版计费;同一时段它是 `deepseek-flash` 的 6.7 倍(单次记忆请求约 ¥0.0005 对 ¥0.00007),绝对值很小。
-- **未验证**:火山标准版还没有对生产网关跑过记忆请求(记忆请求失败是非致命的,只是白花一笔)。上线后看日志 `[thread-title] model=… ` 行与记忆产物确认能用。
+- **代价**:官方两个模型的用户也按火山标准版计费;同一时段它的单价是 `deepseek-flash` 的 6.7 倍(输入 ¥1 对 ¥0.15、输出 ¥4 对 ¥0.6,每百万 token,缓存命中的输入另有折扣)。**2026-10-30 按网关扣费日志实测(不是价格表推算)**:一次记忆提取(阶段 1,约 5 万输入 / 4 千输出 token)≈ ¥0.07;一次记忆合并(阶段 2,23 次请求、约 99 万输入 token 其中 97% 命中缓存、1.6 万输出)≈ ¥0.22;一次完整整理合计约 ¥0.3。按 6.7 倍推算,同样的工作用 `deepseek-flash` 约 ¥0.045(推算值,没有实测)。**此前文档里写的「单次记忆请求约 ¥0.0005 对 ¥0.00007、绝对值很小」是只按一条很小的请求估的,低估了阶段 2,以本条为准**。这些费用会出现在用量明细里;合并只在有新的提取结果时才跑,频率取决于用户开新会话的节奏。
+- **已验证(2026-10-30,对生产 Miau 网关,真实内置 Codex + 本机转发代理)**:`memories.extract_model` / `consolidation_model` = `deepseek-v4-1-flash-261017`,聊天模型 `deepseek-flash`。① 阶段 1(提取):`/v1/responses`、`stream=true`、`text.format=json_schema`、`reasoning.effort=low`、0 个工具,HTTP 200,返回合法结构化结果,`stage1_outputs` 落库、任务 `done`;② 阶段 2(合并):合并 agent 用同一个模型(`effort=medium`、9 个工具)连续 24 次请求,**全部 HTTP 200**,任务 `done`(耗时约 130 秒),写出 `MEMORY.md`(6.9 KB)、`memory_summary.md`(4.1 KB)、`raw_memories.md`(5.6 KB)、1 份 rollout 摘要和 1 个自动生成的技能,agent 最后一句是 "Phase 2 complete"。聊天轮(`deepseek-flash`)与记忆请求(火山标准版)走的是两个不同的模型,互不影响。
+- **没有覆盖到的**:① 只用一个很小的会话做样本(1 份 rollout、从空记忆库起步的 INIT 合并),没有测多份 rollout 的增量合并,也没有评估合并产出的质量(只确认写完了文件、任务状态 `done`);② 有一次运行里阶段 1 请求撞上一次瞬时 `fetch failed`(5 秒,本机到网关),Codex 自动重试后成功,没有查网络层原因;③ 验证脚本曾在第一个 Codex 被强杀后留下一条「合并任务 running、租约 1 小时」的记录,第二个进程 10 分钟内没有接手(清掉这条记录后正常跑完)——正常退出不会留下这条记录,但**用户强杀应用后的下一次启动是否同样 1 小时内合并不了,没有单独验证**。
+
+## apiyi (Gemini) MCP 已从应用移除(2026-10-30)
+
+桌面端不再内置、不再启动 apiyi 的 Gemini MCP(`apiyi-mcp-server`)。**API易作为 Codex 网关 / 出图站点(provider id `apiyi`、`APIYI_PRESET`、设置里的「API易」key)不受影响。**
+
+- **原因**:这条 MCP 早已对 agent 隐藏(`APIYI_MCP_EXPOSED=false`),能力与千问 omni 的 `understand_*` 工具重复;而它的休眠写法 `-c mcp_servers.apiyi.enabled=false` 在配置里没有 `[mcp_servers.apiyi]` 表时会凭空造出一张没有 transport 的表,Codex 直接以 `invalid transport in mcp_servers.apiyi` 起不来(例如全新的 `CODEX_HOME`)。
+- **主进程**:`codexLaunch.ts` 不再发任何 `mcp_servers.apiyi.*` / `apiyi` direct_only 项,`buildCodexLaunchArgs` 去掉 `apiyiKey` 选项;`AgentManager` / `CodexLocalBackend` / `codexProviders` 去掉 apiyi 密钥桥(`APIYI_MCP_PROVIDER_ID`);删除 `apiyiMcpLauncher.ts`、`apiyiMcpSeed.ts` 及其测试;启动时不再往 `~/.codex/config.toml` 写 `[mcp_servers.apiyi]`。`whichNode` / `resolveStdioNodeCommand`(「系统 node,否则 Electron-as-Node」)抽到 `src/main/agent/stdioNodeCommand.ts`,catimation 桥与运镜知识库共用。
+- **老用户配置自动清理**:`src/main/agent/legacyApiyiMcpCleanup.ts` 在 Codex 启动前,只在 `mcp_servers.apiyi` 的 `args[0]` 指向应用自带路径(以 `/apiyi-mcp/dist/index.js` 结尾)时删掉这一条;用户自己写的同名条目保留、TOML 解析失败不改写、没有可删内容不写盘、幂等。结果写日志 `[apiyi-mcp] legacy entry cleanup: removed|kept-user-entry|malformed`。
+- **渲染层**:去掉 `ApiService.syncApiyiKeyToMcp`(构造器 / 保存 key / MCP 页冷启动三处调用)与 `APIYI_MCP_PROVIDER_ID`;MCP 页「预装」分组机制保留,`APP_BUNDLED_MCP_NAMES` 现为空集;「已连接但无工具」提示去掉 apiyi 专属分支(只剩 Docker / 通用两条)。
+- **打包**:`electron-builder.yml` 去掉 `resources/apiyi-mcp` 两段 `extraResources`,`package.json` 去掉 `vendor:apiyi-mcp*` 脚本与 `build:vite` 里的前置 vendor 步骤,`.gitignore` 去掉对应条目,删除 `scripts/vendor-apiyi-mcp.mjs` / `.lock.json`。评测 harness 与 12 个冒烟 / 诊断脚本里写 `[mcp_servers.apiyi]` 惰性占位的代码一并去掉(运镜知识库那条保留)。
+- **技能**:`catimation-understand` 的「apiyi-mcp(Gemini)只作深度复核的备选」整节与 frontmatter 里的对应句子删除(已 `pnpm skills:gen`)。
+- **没有动的**:`deploy/apiyi-fastmcp`(自己服务器上跑的 BYOK 版,见上面「远程 apiyi 网关」一节)、用户 `~/.cursor/mcp.json` 里 Cursor 自己的 `apiyi` / `apiyi-remote`、已持久化在 provider store 里的 `apiKeys["apiyi-mcp"]`(不再被读取,是 API易 key 的一份重复拷贝)。
+- **测试**:新增 `legacyApiyiMcpCleanup.test.ts`(8 条)、`stdioNodeCommand.test.ts`、`codexLaunch.test.ts` 里「apiyi MCP 已移除」3 条、`McpServerCard.test.tsx` 里 docker / 通用空工具提示 2 条。
 
 ## 许可证
 

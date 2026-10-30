@@ -67,8 +67,8 @@ import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/see
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
 import { resolveWorkspacePaths } from './agent/codexConfigStore'
-import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'
-import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
+import { resolveStdioNodeCommand } from './agent/stdioNodeCommand'
+import { removeLegacyApiyiMcpEntry } from './agent/legacyApiyiMcpCleanup'
 import { getCinematographyKbMcpEntryPath } from './agent/cinematographyKbMcpLauncher'
 import { seedCinematographyKbMcpEntry } from './agent/cinematographyKbMcpSeed'
 
@@ -1140,10 +1140,10 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
           resourcesPath: process.resourcesPath,
         })
         if (fs.existsSync(bridgeEntry)) {
-          // Same node-vs-Electron-as-Node resolution the apiyi stdio server
-          // already uses (system `node` when on PATH, otherwise our own
+          // Node-vs-Electron-as-Node resolution shared by every app stdio server
+          // (system `node` when on PATH, otherwise our own
           // binary with ELECTRON_RUN_AS_NODE=1).
-          const resolved = await resolveApiyiCommand(process.execPath)
+          const resolved = await resolveStdioNodeCommand(process.execPath)
           catimationMcpLaunch.stdio = {
             command: resolved.command,
             args: [bridgeEntry],
@@ -1179,7 +1179,7 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
       // missing would replace a possibly-working on-disk entry with a certainly
       // broken one.
       if (fs.existsSync(kbEntry)) {
-        const resolved = await resolveApiyiCommand(process.execPath)
+        const resolved = await resolveStdioNodeCommand(process.execPath)
         cinematographyKbStdio = {
           command: resolved.command,
           args: [kbEntry],
@@ -1372,62 +1372,40 @@ app.whenReady().then(async () => {
 
   if (mainWindow) setSplitMainWindow(mainWindow)
   if (mainWindow) setEraseMainWindow(mainWindow)
+
+  // apiyi(Gemini)MCP 已从应用里移除。老版本每次启动都会把 `[mcp_servers.apiyi]`
+  // 强制写进用户的 ~/.codex/config.toml,指向应用自带、现在已不再打包的脚本。
+  // 必须赶在 initAgentRuntime 之前清掉,否则 codex 首次启动就会去拉这个不存在的
+  // 脚本,MCP 面板里闪一次失败。只清应用种的那条;用户自己写的同名条目、解析失败的
+  // 文件都不碰。尽力而为,失败只记日志。
+  try {
+    const legacyPaths = resolveWorkspacePaths({
+      home: app.getPath('home'),
+      cwd: process.cwd(),
+      userData: app.getPath('userData'),
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    const legacyResult = await removeLegacyApiyiMcpEntry({
+      personalConfigToml: legacyPaths.personalConfigToml,
+    })
+    if (legacyResult !== 'absent') {
+      console.log(`[apiyi-mcp] legacy entry cleanup: ${legacyResult}`)
+    }
+  } catch (err) {
+    console.warn('[apiyi-mcp] legacy entry cleanup failed:', err)
+  }
+
   if (mainWindow) {
     void initAgentRuntime(mainWindow).catch((error) => {
       console.error('[AgentRuntime] init failed:', error)
     })
   }
 
-  // First-boot seed: ensure mcp_servers.apiyi exists (disabled) in the
-  // user's personal codex config. Cheap (~5-50ms), idempotent, best-effort.
-  try {
-    const apiyiPaths = resolveWorkspacePaths({
-      home: app.getPath('home'),
-      cwd: process.cwd(),
-      userData: app.getPath('userData'),
-      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-    })
-    const apiyiEntry = getApiyiMcpEntryPath({
-      appPath: app.getAppPath(),
-      isPackaged: app.isPackaged,
-      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-    })
-    // -------------------------------------------------------------------
-    // v4.3.18: previously this site passed `nodeBin: process.execPath`,
-    // but SeedApiyiMcpInput was refactored in v4.3.16 to take
-    // `command` + `extraEnv?` — `nodeBin` is now silently ignored and
-    // `input.command` resolves to `undefined`. @iarna/toml.stringify
-    // skips undefined fields, so freshly-seeded toml entries had NO
-    // `command = "..."` line at all. codex 0.132's deserializer then
-    // sees `command = None && url = None` and aborts the entire config
-    // load with bare `"invalid transport"` (codex-rs/core/src/config/
-    // types.rs:124-155), wedging the MCP page for any user whose first
-    // boot landed on v4.3.16+.
-    //
-    // Fix: pick the right binary via `resolveApiyiCommand` (system
-    // `node` if on PATH, else Electron-as-Node with ELECTRON_RUN_AS_NODE
-    // in extraEnv) and forward both fields with their correct names.
-    // -------------------------------------------------------------------
-    const apiyiCmd = await resolveApiyiCommand(process.execPath)
-    // FORCE convergence: the apiyi entry is app-managed — every boot rewrites
-    // it to the canonical form (fresh command/args, env scaffold, enabled=true)
-    // regardless of user edits. See seedApiyiMcpEntry for the rationale.
-    const apiyiAction = await seedApiyiMcpEntry({
-      personalConfigToml: apiyiPaths.personalConfigToml,
-      entryPath: apiyiEntry,
-      command: apiyiCmd.command,
-      extraEnv: apiyiCmd.extraEnv,
-    })
-    console.log(`[apiyi-mcp] boot convergence: ${apiyiAction} (command=${apiyiCmd.command})`)
-  } catch (err) {
-    console.warn('[apiyi-mcp] seed failed:', err)
-  }
-
   // First-boot seed: ensure the first-party cinematography knowledge-base MCP
   // (mcp_servers.cinematography_kb) exists in the user's personal codex config.
   // Shares the maintainer's Bailian KB + key, so it works with zero setup.
   // Cheap, idempotent, best-effort. Reuses the same node-vs-Electron command
-  // resolution as apiyi/catimation stdio servers.
+  // resolution as the catimation stdio bridge.
   try {
     const kbPaths = resolveWorkspacePaths({
       home: app.getPath('home'),
@@ -1440,7 +1418,7 @@ app.whenReady().then(async () => {
       isPackaged: app.isPackaged,
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
     })
-    const kbCmd = await resolveApiyiCommand(process.execPath)
+    const kbCmd = await resolveStdioNodeCommand(process.execPath)
     const kbAction = await seedCinematographyKbMcpEntry({
       personalConfigToml: kbPaths.personalConfigToml,
       entryPath: kbEntry,

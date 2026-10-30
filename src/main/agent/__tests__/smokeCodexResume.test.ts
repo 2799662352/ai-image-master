@@ -98,11 +98,8 @@ describe('resume rollout persistence', () => {
         { command: string; args: string[]; enabled: boolean }
       >
     }
-    expect(config.mcp_servers.apiyi).toMatchObject({
-      command: process.execPath,
-      args: [path.join(resourceRoot, 'apiyi-mcp', 'dist', 'index.js')],
-      enabled: true,
-    })
+    // apiyi MCP 已移除:harness 不应再种它,启动参数里也不再有对应的叶子键。
+    expect(config.mcp_servers.apiyi).toBeUndefined()
     expect(config.mcp_servers.cinematography_kb).toMatchObject({
       command: process.execPath,
       args: [path.join(resourceRoot, 'cinematography-kb-mcp', 'index.js')],
