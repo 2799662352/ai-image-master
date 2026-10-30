@@ -14,11 +14,7 @@ import {
   type NewCustomProvider,
   type PersistedProvidersV2,
 } from './CodexProviderStore'
-import {
-  DEFAULT_CODEX_SESSION_CONFIG,
-  type CatimationMcpLaunchInfo,
-  type CodexProviderConfig,
-} from './codexLaunch'
+import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
@@ -4864,7 +4860,7 @@ export class AgentManager {
   }
 
   private threadTitleModel(channelId: string, conversationModel: string): ThreadTitleModel {
-    let channel: Pick<CodexProviderConfig, 'memoriesModel' | 'memoriesModelByModel'> | undefined
+    let channel: { memoriesModel?: string } | undefined
     try {
       channel = resolveProviderChannel(channelId, this.providerStore.loadSync().customProviders)
     } catch {

@@ -84,21 +84,6 @@ describe('resolveThreadTitleModel', () => {
       .toEqual({ model: 'qwen3.8-flash', effort: 'low' })
   })
 
-  it('lets a channel pin a different background model per conversation model', () => {
-    // 起标题是逐线程现算的,拿得到这一轮真实的对话模型,所以映射在这里是精确的。
-    const channel = {
-      memoriesModel: 'deepseek-flash',
-      memoriesModelByModel: { 'deepseek-v4-1-flash-economy-261017': 'deepseek-v4-1-flash-261017' },
-    }
-    expect(resolveThreadTitleModel(channel, 'deepseek-v4-1-flash-economy-261017'))
-      .toEqual({ model: 'deepseek-v4-1-flash-261017', effort: 'low' })
-    expect(resolveThreadTitleModel(channel, 'deepseek-v4-pro'))
-      .toEqual({ model: 'deepseek-flash', effort: 'low' })
-    // 原型链上的名字不是映射项。
-    expect(resolveThreadTitleModel(channel, 'constructor'))
-      .toEqual({ model: 'deepseek-flash', effort: 'low' })
-  })
-
   it('falls back to the conversation model at its default effort when the channel pins none', () => {
     expect(resolveThreadTitleModel({}, 'grok-4.6')).toEqual({ model: 'grok-4.6' })
     expect(resolveThreadTitleModel(undefined, 'claude-sonnet-5')).toEqual({ model: 'claude-sonnet-5' })

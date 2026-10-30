@@ -205,26 +205,23 @@ const DEEPSEEK_MIAU_MODELS = Object.freeze([
 ])
 
 /**
- * 记忆任务按「选中的对话模型属于哪一路供应商」分开(用户 2026-10-30 要求):
- * 选火山方舟的两个模型 → 记忆也走火山标准版 `deepseek-v4-1-flash-261017`;
- * 官方的 `deepseek-v4-pro` / `deepseek-flash` **不在表里**,继续用通道的
- * `memoriesModel`(`deepseek-flash`)。
+ * 这一组四个 DeepSeek 模型共用的记忆 / 会话起标题模型(用户 2026-10-30 拍板):
+ * 一律走火山标准版 `deepseek-v4-1-flash-261017`,不论对话选的是火山还是官方。
  *
- * 经济版(标准版的 8 折)的记忆同样落到标准版 —— 用户点名要求的,不是漏写。
+ * 为什么是「一个值」而不是「按对话模型分路」:记忆模型是启动 Codex 时写死的 `-c`
+ * 参数,而同通道内切换模型不会重启 Codex —— 分路会让记忆模型停在启动那一刻的值上
+ * (切换后过期)。只有一个值就不存在过期问题,也不用多一张映射表。
  *
- * ⚠️ **火山标准版还没有对生产网关跑过记忆请求**:记忆提取 / 合并要求输出符合
- * Codex 规定的产物格式,`/v1/responses` 的流式、reasoning 回放也都没验过。记忆请求
- * 失败是非致命的(只是每次起会话多一笔白花的请求),但这条映射上线前应当先用
- * 真实记忆请求对生产网关跑一次。
- *
- * 价格(2026-10-29 公开 `/api/pricing`):同一时段,标准版是 `deepseek-flash` 的
- * 6.7 倍(输入 1 vs 0.15、输出 4 vs 0.6);绝对值很小(一次记忆请求约 ¥0.0005)。
+ * 取舍(都是知情的):
+ * - 价格(2026-10-29 公开 `/api/pricing`):同一时段,标准版是 `deepseek-flash` 的
+ *   6.7 倍(输入 1 vs 0.15、输出 4 vs 0.6);绝对值很小(一次记忆请求约 ¥0.0005 vs
+ *   ¥0.00007)。官方两个模型的用户也要付这个价。
+ * - ⚠️ **火山标准版还没有对生产网关跑过记忆请求**:记忆提取 / 合并要求输出符合
+ *   Codex 规定的产物格式,`/v1/responses` 的流式、reasoning 回放也都没验过。记忆请求
+ *   失败是非致命的(只是每次起会话多一笔白花的请求),但上线后应当看一眼
+ *   `[thread-title] model=…` 日志与记忆产物,确认它真的能用。
  */
-const DEEPSEEK_VOLCANO_MEMORIES_MODEL = 'deepseek-v4-1-flash-261017'
-const DEEPSEEK_MEMORIES_MODEL_BY_MODEL: Readonly<Record<string, string>> = Object.freeze({
-  'deepseek-v4-1-flash-261017': DEEPSEEK_VOLCANO_MEMORIES_MODEL,
-  'deepseek-v4-1-flash-economy-261017': DEEPSEEK_VOLCANO_MEMORIES_MODEL,
-})
+const DEEPSEEK_MEMORIES_MODEL = 'deepseek-v4-1-flash-261017'
 
 /**
  * 与 `qwenChannel` 同构:同一个 Miau 端点在两个网关下各注册一次。
@@ -248,21 +245,18 @@ function deepseekMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelP
     baseUrl: MIAU_BASE_URL,
     envKey: 'MIAU_API_KEY',
     credentialId: 'qwen',
-    // 通道默认模型与记忆模型都是 `deepseek-flash`:整组里最便宜的一档,而且是
-    // 实测过的基准。默认值只对「没选过具体模型」的人生效,换它不会挪动任何已有选择。
+    // 通道默认对话模型仍是 `deepseek-flash`(整组里最便宜、实测过的基准)。默认值只对
+    // 「没选过具体模型」的人生效,换它不会挪动任何已有选择。
     model: 'deepseek-flash',
-    // 记忆任务钉死在便宜的那一档,不跟随选中的对话模型。理由与代价见
+    // 记忆任务钉死在一个固定模型上,不跟随选中的对话模型。理由与代价见
     // `qwenChannel` 里那段长注释(2026-08-31 真机撞过:选 Flash 聊天,
     // 记忆却跑在 max 上,¥2.14 vs ¥0.10,而 UI 上完全看不出这笔钱哪来的)。
     //
-    // 2026-10-19 生产扣费日志:量级相同的请求,`deepseek-flash` 扣 35 额度,
+    // 2026-10-30 起这个固定值是火山标准版 `deepseek-v4-1-flash-261017`(原为
+    // `deepseek-flash`)。价差与「还没实测」的警告见 `DEEPSEEK_MEMORIES_MODEL`。
+    // 2026-10-19 生产扣费日志留档:量级相同的请求,`deepseek-flash` 扣 35 额度,
     // 已撤下的 `deepseek-v4-flash-0731` 扣 354。
-    //
-    // 唯一的例外是下面的 `memoriesModelByModel`:选了火山方舟的模型,记忆走火山
-    // 标准版(理由、价差与「还没实测」的警告见 `DEEPSEEK_MEMORIES_MODEL_BY_MODEL`)。
-    // 官方两个模型不在表里,继续落到这里的 `deepseek-flash`。
-    memoriesModel: 'deepseek-flash',
-    memoriesModelByModel: DEEPSEEK_MEMORIES_MODEL_BY_MODEL,
+    memoriesModel: DEEPSEEK_MEMORIES_MODEL,
     allowedModels: DEEPSEEK_MIAU_MODELS,
     // DeepSeek 原生说 Responses,但 codex 把 MCP 工具包进 `{"type":"namespace"}`
     // (openai/codex#23186),而 DeepSeek 文档明说未知 tool 类型会被忽略 ——
