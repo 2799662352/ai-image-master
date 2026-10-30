@@ -303,8 +303,20 @@ Pass 4: 一致性校验
 - **生成页**:`ModelParamsPanel` 支持多行文本框(负面提示词)、角色提示词编辑器、「默认 N」占位符;值等于默认时清掉键,不把默认值当成「用户改过」存下来。NovelAI 不自动重试(`maxRetries: 0`),失败后由用户决定是否重来。
 - **MCP**:`generate_image` / `generate_images` 的 `modelParams` 现在是「悠船 ∪ NovelAI」的合并 schema(`modelParamsSchema.ts` 的 `buildChannelModelParamsSchema`,同名键 `seed` 定义一致),说明里写明各自只对自己的渠道生效、其它渠道忽略。为了压回 Codex 的 16384 字节工具 schema 预算(`toolSchemaBudget.test.ts`),同时把说明里重复的内容去掉:`generate_image` 接入后一度到 17845 字节,压到 16384 以内(余量不大,以后再加渠道要先看这条测试)。
 - **技能**:`catimation-image` 补 NovelAI 四条渠道与用法(点名 NovelAI / 动漫插画 / 多角色同框时选用),`commands/gen-image.md` 补渠道清单;skill 正文有 21500 字符的债务钉(只许缩不许涨),本次从 21490 压到 21447(顺手去掉了几处重复的「常见错误」条目和日期轶事)。`firstPartySkills.generated.ts` 已重新生成。
-- **没做 / 没验证**:① **没有对真实网关出过图**(要用户确认过的测试令牌,且每张约 ¥0.6);② 64 张风格封面选择器是二期;③ **插件市场(catimation-core 的 catimation-image)还没发布**,发布要用户点头;④ Codex 页「出图渠道」选择器改成两栏(PR2)还没做。
+- **没做 / 没验证**:① **没有对真实网关出过图**(要用户确认过的测试令牌,且每张约 ¥0.6);② 64 张风格封面选择器是二期;③ **插件市场(catimation-core 的 catimation-image)还没发布**,发布要用户点头;④ Codex 页「出图渠道」选择器的两栏改版见下一节(PR2)。
 - **测试**:新增 `imageModelParams.novelai` / `ApiService.novelai` / `imageTools.novelai` / `ModelParamsPanel.novelai` 四个测试文件;相关目录 217 个文件 2798 条全过,`typecheck:ci` 7 existing / 0 new,`audit:skill-arch` 0 违规,`test:skill-arch` 21/21,`skills:gen:check` parity。
+
+## Codex 页「出图渠道」改成两栏分区面板(2026-10-30,PR2)
+
+复刻 sora-ui 网页版「图像模型」下拉(ModelPanel)的结构与交互:左边分区栏 **最近使用 / 常用 / 备用渠道 / 更多模型·按系列**,右边是该分区的渠道(名称 + 一句话说明 + 价格量级)。只改 Codex 输入框下面的 `ImageChannelPicker`,`selectedImageChannel`、`IMAGE_CHANNELS`、MCP 枚举、默认渠道回落一律不动(默认仍是 `custom-imagemodel-gt` 腾讯 image2)。
+
+- **摆放表是桌面端自己的**(`features/agent-chat/imageChannelPlacement.ts`):常用 = Seedream 5.0 Pro / 腾讯 image2 / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Nano Banana 2.1 / 万相 2.7 pro(照用户点名的顺序);备用渠道 = 官转的 2.5 Flare / Sunburst(跟随各自的腾讯同款排序);更多按系列:GPT Image 系列 / Gemini 系列 / 阿里百炼 / 风格化(悠船 ×2 + NovelAI ×4)。表里没有的渠道进「更多 · 其他」,不会自己挤进常用;测试里有守卫:注册表每个渠道都必须显式摆放、表里不许有过期条目、备用渠道必须指向存在的常用渠道。
+- **交互**(`ImageChannelPanel.tsx`,逻辑对照网页版):打开时停在当前渠道所在分区并用圆点标出;分区可点击 / 悬停(约 90 ms 延迟,斜着划向右栏不误切)/ 键盘聚焦切换;键盘:分区栏 ↑↓ / Home / End,→ 进右栏;右栏 ↑↓ 移动、←→ 切分区、Enter 选择;Esc 收起并把焦点还给触发按钮;右栏 roving tabindex。面板宽度 < 440 px 时分区栏变成顶部横向标签。「选择」与「固定」是同一行里的两个兄弟按钮,所以右栏不用 listbox。触发按钮在选了备用 / 更多渠道时带小标签(官转 / 更多),避免误触后不自知。
+- **固定与最近使用**(`imageChannelPrefs.ts`,localStorage `catimation.agent.imageChannelPrefs.v1`):备用 / 更多里的渠道可「固定到常用」(常用总数 ≤ 10,满了按钮置灰并说明),已固定的常驻取消按钮;最近使用最多显示 3 个、不含常用里的。读出来的内容一律当不可信输入(逐项校验、去重、截断),坏 JSON 当没有;渠道下架后存着的 id 自动忽略。
+- **价格量级**:只给确认过口径的渠道填 —— 目前只有 NovelAI 四个「≈¥0.6/张」(网关按张计费 ¥0.6–0.65);其他渠道**不抄网页版的近 30 天均价**(口径不同,且与注册表里「与 image2 fast 同价」之类的描述对不上)。分区底部的提示只在该分区确有价格时出现。
+- **配色**:走桌面端 Codex 页的 zinc + fuchsia(CSS 变量 `--icp-*`),网页版的蓝色锚点换成 fuchsia;类名 `mrp-*` → `icp-*`。
+- **没做**:NEW 标签(桌面端没有「模型上新」通知)、「暂未开放」置灰(桌面端渠道清单是写死的精选子集,没有这个状态)、按账号分键(桌面端单机单用户,与 `selectedImageChannel` 一致)。
+- **测试**:新增 `ImageChannelPanel` / `imageChannelPlacement` / `imageChannelPrefs` 三个测试文件并重写 `ImageChannelPicker` 测试(共 53 条);变异检查 6 种(悬停延迟归零 / 选择不记最近 / 固定按钮处处可见 / 钉了不从备用移除 / 最近使用含常用 / 窄容器阈值)全被抓到;`features/agent-chat` + `shared` 138 文件 1536 条全过,`typecheck:ci` 7 existing / 0 new。**视觉**:把真实组件渲染出的 HTML + 项目自己的 Tailwind 编出的 CSS 放进内置浏览器看过三种状态(默认 / 选了 NovelAI / 窄容器),**没有在真实的 Electron 窗口里看过**,悬停时「固定」按钮的出现、真实输入框旁的弹出位置要真机再看一眼。
 
 ## 许可证
 
