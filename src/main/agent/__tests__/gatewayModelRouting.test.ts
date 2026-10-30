@@ -8,6 +8,7 @@ import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from '../gatewayModelRouting'
+import { memoriesModelOverrideFor } from '../codexLaunch'
 import { MIAU_BASE_URL } from '../../../shared/miau'
 
 describe('gatewayModelRouting', () => {
@@ -341,6 +342,29 @@ describe('gatewayModelRouting', () => {
       for (const gatewayId of ['apiyi', 'rightcode']) {
         expect(resolveProviderChannel(`${gatewayId}-deepseek-miau`).memoriesModel)
           .toBe('deepseek-flash')
+      }
+    })
+
+    it('火山方舟两个模型的记忆走火山标准版,官方两个仍走 deepseek-flash', () => {
+      // 用户 2026-10-30 要求:选火山模型 → 记忆也走火山 `deepseek-v4-1-flash-261017`;
+      // 选官方(v4-pro / flash)→ 记忆走官方 `deepseek-flash`。
+      // 经济版(8 折)的记忆同样落到标准版 —— 用户明确点名过,不是漏写。
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        const channel = resolveProviderChannel(`${gatewayId}-deepseek-miau`)
+        const memoriesFor = (chatModel: string): string | undefined =>
+          memoriesModelOverrideFor(channel, chatModel) ?? channel.memoriesModel
+        expect(memoriesFor('deepseek-v4-1-flash-261017'), gatewayId).toBe('deepseek-v4-1-flash-261017')
+        expect(memoriesFor('deepseek-v4-1-flash-economy-261017'), gatewayId).toBe('deepseek-v4-1-flash-261017')
+        expect(memoriesFor('deepseek-v4-pro'), gatewayId).toBe('deepseek-flash')
+        expect(memoriesFor('deepseek-flash'), gatewayId).toBe('deepseek-flash')
+
+        // 映射的键和值都必须是本通道选择器里真有的 slug:写错一个字,记忆请求每次
+        // 404、而用户在 UI 上看不到任何线索(与 `DEEPSEEK_MIAU_MODELS` 同一条纪律)。
+        const allowed = new Set(channel.allowedModels)
+        for (const [chatModel, memoryModel] of Object.entries(channel.memoriesModelByModel ?? {})) {
+          expect(allowed.has(chatModel), `${gatewayId} 映射键 ${chatModel}`).toBe(true)
+          expect(allowed.has(memoryModel), `${gatewayId} 映射值 ${memoryModel}`).toBe(true)
+        }
       }
     })
 

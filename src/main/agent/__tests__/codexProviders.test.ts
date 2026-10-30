@@ -123,10 +123,10 @@ describe('codexProviders', () => {
         credentialId: 'qwen',
         model: 'deepseek-flash',
         allowedModels: [
-          'deepseek-flash',
-          'deepseek-v4-pro',
           'deepseek-v4-1-flash-261017',
           'deepseek-v4-1-flash-economy-261017',
+          'deepseek-v4-pro',
+          'deepseek-flash',
         ],
         compatibilityPolicy: 'responses-namespace-bridge',
       })

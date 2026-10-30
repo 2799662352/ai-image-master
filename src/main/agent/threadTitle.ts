@@ -1,3 +1,4 @@
+import { memoriesModelOverrideFor, type CodexProviderConfig } from './codexLaunch'
 import type { ThreadStore } from './ThreadStore'
 import type { IAgentBackend } from './types'
 
@@ -97,10 +98,13 @@ export interface ThreadTitleModel {
  * low effort; the conversation-model fallback keeps its default effort.
  */
 export function resolveThreadTitleModel(
-  channel: { memoriesModel?: string } | undefined,
+  channel: Pick<CodexProviderConfig, 'memoriesModel' | 'memoriesModelByModel'> | undefined,
   conversationModel: string,
 ): ThreadTitleModel {
-  const pinned = channel?.memoriesModel?.trim()
+  // 逐线程现算,拿得到这一轮真实的对话模型,所以按模型的映射优先于通道默认值。
+  const pinned = (
+    memoriesModelOverrideFor(channel, conversationModel) ?? channel?.memoriesModel
+  )?.trim()
   return pinned ? { model: pinned, effort: 'low' } : { model: conversationModel }
 }
 

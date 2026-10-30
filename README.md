@@ -267,6 +267,18 @@ Pass 4: 一致性校验
 | 测试 | Vitest + Playwright |
 | 国际化 | 4 语言 (zh-CN/zh-TW/en/ru) |
 
+## Codex 页 DeepSeek (Miau) 通道:选择器次序与记忆模型
+
+2026-10-30 调整(`src/shared/modelSettings.ts`、`src/main/agent/gatewayModelRouting.ts`、`codexLaunch.ts`、`threadTitle.ts`):
+
+- **选择器次序**:DeepSeek 组按 `火山 V4.1 Flash` → `火山 V4.1 Flash 经济版` → `DeepSeek V4 Pro` → `DeepSeek Flash` 排列(火山在前,官方在后,`v4-pro` 先于 `flash`)。次序以 `CANONICAL_MODEL_SETTINGS_ROWS` 为准;通道默认模型仍是 `deepseek-flash`。
+- **记忆模型**(`memories.extract_model` / `consolidation_model`)与会话自动起标题的模型,按「选中的对话模型属于哪一路」分开:
+  - 选火山的两个模型(`deepseek-v4-1-flash-261017`、`deepseek-v4-1-flash-economy-261017`)→ `deepseek-v4-1-flash-261017`;
+  - 选官方的两个模型(`deepseek-v4-pro`、`deepseek-flash`)→ `deepseek-flash`。
+  - 实现:通道新增可选字段 `memoriesModelByModel`(键 = 对话模型 slug),查表用 `memoriesModelOverrideFor`;表里没有的模型回落到原来的 `memoriesModel`。
+- **已知限制**:记忆模型是启动 Codex 时写死的 `-c` 参数,只按**启动那一刻**选中的模型取值;同一通道内切换官方/火山不会重启 Codex,所以记忆模型要到下次重启才跟上。会话自动起标题是逐线程现算的,切换后立即生效。
+- **未验证**:火山标准版还没有对生产网关跑过记忆请求(记忆请求失败是非致命的,只是白花一笔);同一时段它是 `deepseek-flash` 的 6.7 倍价格(单次记忆请求约 ¥0.0005)。
+
 ## 许可证
 
 MIT License

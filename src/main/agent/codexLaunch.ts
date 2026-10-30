@@ -95,6 +95,24 @@ export interface CodexProviderConfig {
    */
   memoriesModel?: string
   /**
+   * Optional per-chat-model override of {@link memoriesModel}, keyed by the
+   * chat model slug (`model`). Looked up with {@link memoriesModelOverrideFor};
+   * a chat model that is not a key keeps using `memoriesModel`.
+   *
+   * Use it when ONE channel serves models from different upstream suppliers
+   * and memory side requests should stay with the supplier the user chose
+   * (DeepSeek (Miau): the Volcano Ark rows remember on the Volcano standard
+   * model, the official rows on `deepseek-flash`).
+   *
+   * ⚠️ Scope caveat: `memories.extract_model` / `consolidation_model` are
+   * process-wide `-c` launch flags, so at launch this is resolved against the
+   * chat model of THAT moment. Switching to another model on the same channel
+   * (same context window) does not restart codex, so the memory model keeps
+   * following the model of the last spawn until the next restart. Per-turn
+   * consumers — the thread title — see the real conversation model and are exact.
+   */
+  memoriesModelByModel?: Readonly<Record<string, string>>
+  /**
    * Optional per-channel kill switch for cross-session memory. When `false`,
    * `features.memories=false` is appended AFTER the session-config value so
    * Codex's last-wins `-c` precedence disables the subsystem for this channel
@@ -387,6 +405,25 @@ export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): 
   }
 }
 
+/**
+ * Looks `chatModel` up in a channel's {@link CodexProviderConfig.memoriesModelByModel}.
+ * Returns `undefined` when the channel declares no mapping or the chat model is
+ * not one of its own keys — the caller then falls back to `memoriesModel`.
+ *
+ * Own-property check on purpose: the chat model is a user-chosen string, and a
+ * plain `map[chatModel]` would hand back `Object.prototype` members for names
+ * like `constructor`.
+ */
+export function memoriesModelOverrideFor(
+  channel: Pick<CodexProviderConfig, 'memoriesModelByModel'> | undefined,
+  chatModel: string | undefined,
+): string | undefined {
+  const byModel = channel?.memoriesModelByModel
+  if (!byModel || !chatModel) return undefined
+  if (!Object.prototype.hasOwnProperty.call(byModel, chatModel)) return undefined
+  return byModel[chatModel]?.trim() || undefined
+}
+
 function serializeScalar(value: string | boolean | number): string {
   if (typeof value === 'string') return `"${value}"`
   return String(value)
@@ -451,7 +488,9 @@ export function appendProviderArgs(
   if (provider.supportsMemories === false) {
     args.push('-c', 'features.memories=false')
   } else {
-    const memoriesModel = provider.memoriesModel ?? provider.model
+    const memoriesModel = memoriesModelOverrideFor(provider, provider.model)
+      ?? provider.memoriesModel
+      ?? provider.model
     if (memoriesModel) {
       args.push(
         '-c', `memories.extract_model="${memoriesModel}"`,

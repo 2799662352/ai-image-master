@@ -177,11 +177,14 @@ const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
  *
  * 四个 slug 同走这一条通道,**调用方法完全一致**(同 baseUrl、同 Miau token、
  * 同 Responses 协议垫桥、同思考档位策略、同 1M 窗口)——这是产品的明确要求:
- *   - `deepseek-flash` / `deepseek-v4-pro`:Miau 上 DeepSeek 官方渠道(基准)。
  *   - `deepseek-v4-1-flash-261017` / `deepseek-v4-1-flash-economy-261017`:
  *     火山方舟的 V4.1 Flash 标准版 / 经济版(Miau 网页端「DeepSeek(火山引擎)」
  *     与「DeepSeek 经济版(火山引擎)」同款;new-api #185 上架、codex-gateway #58
  *     目录声明 1M 窗口 / 文本+图片输入)。
+ *   - `deepseek-v4-pro` / `deepseek-flash`:Miau 上 DeepSeek 官方渠道(基准)。
+ *
+ * 数组次序与选择器里的次序一致(火山在前,官方在后;`v4-pro` 先于 `flash`)——
+ * 选择器的真正次序由 `CANONICAL_MODEL_SETTINGS_ROWS` 决定,这里只是保持书写一致。
  *
  * 每个 slug 都应对着生产网关实测过才列进来 —— 列进来的 slug 若上游没有,选择器里
  * 看得见、点下去每轮 404,而错误里不会有一个字提到是模型名写错了(同一条纪律见
@@ -195,11 +198,33 @@ const QWEN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
  * 是另一路供应商,**刻意不列**:没有验过它们的计费与协议行为。
  */
 const DEEPSEEK_MIAU_MODELS = Object.freeze([
-  'deepseek-flash',
-  'deepseek-v4-pro',
   'deepseek-v4-1-flash-261017',
   'deepseek-v4-1-flash-economy-261017',
+  'deepseek-v4-pro',
+  'deepseek-flash',
 ])
+
+/**
+ * 记忆任务按「选中的对话模型属于哪一路供应商」分开(用户 2026-10-30 要求):
+ * 选火山方舟的两个模型 → 记忆也走火山标准版 `deepseek-v4-1-flash-261017`;
+ * 官方的 `deepseek-v4-pro` / `deepseek-flash` **不在表里**,继续用通道的
+ * `memoriesModel`(`deepseek-flash`)。
+ *
+ * 经济版(标准版的 8 折)的记忆同样落到标准版 —— 用户点名要求的,不是漏写。
+ *
+ * ⚠️ **火山标准版还没有对生产网关跑过记忆请求**:记忆提取 / 合并要求输出符合
+ * Codex 规定的产物格式,`/v1/responses` 的流式、reasoning 回放也都没验过。记忆请求
+ * 失败是非致命的(只是每次起会话多一笔白花的请求),但这条映射上线前应当先用
+ * 真实记忆请求对生产网关跑一次。
+ *
+ * 价格(2026-10-29 公开 `/api/pricing`):同一时段,标准版是 `deepseek-flash` 的
+ * 6.7 倍(输入 1 vs 0.15、输出 4 vs 0.6);绝对值很小(一次记忆请求约 ¥0.0005)。
+ */
+const DEEPSEEK_VOLCANO_MEMORIES_MODEL = 'deepseek-v4-1-flash-261017'
+const DEEPSEEK_MEMORIES_MODEL_BY_MODEL: Readonly<Record<string, string>> = Object.freeze({
+  'deepseek-v4-1-flash-261017': DEEPSEEK_VOLCANO_MEMORIES_MODEL,
+  'deepseek-v4-1-flash-economy-261017': DEEPSEEK_VOLCANO_MEMORIES_MODEL,
+})
 
 /**
  * 与 `qwenChannel` 同构:同一个 Miau 端点在两个网关下各注册一次。
@@ -232,7 +257,12 @@ function deepseekMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelP
     //
     // 2026-10-19 生产扣费日志:量级相同的请求,`deepseek-flash` 扣 35 额度,
     // 已撤下的 `deepseek-v4-flash-0731` 扣 354。
+    //
+    // 唯一的例外是下面的 `memoriesModelByModel`:选了火山方舟的模型,记忆走火山
+    // 标准版(理由、价差与「还没实测」的警告见 `DEEPSEEK_MEMORIES_MODEL_BY_MODEL`)。
+    // 官方两个模型不在表里,继续落到这里的 `deepseek-flash`。
     memoriesModel: 'deepseek-flash',
+    memoriesModelByModel: DEEPSEEK_MEMORIES_MODEL_BY_MODEL,
     allowedModels: DEEPSEEK_MIAU_MODELS,
     // DeepSeek 原生说 Responses,但 codex 把 MCP 工具包进 `{"type":"namespace"}`
     // (openai/codex#23186),而 DeepSeek 文档明说未知 tool 类型会被忽略 ——

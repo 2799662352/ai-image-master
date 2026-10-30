@@ -297,6 +297,37 @@ describe('buildCodexLaunchArgs', () => {
     expect(args.join(' ')).not.toContain('memories.extract_model="grok-4.5"')
   })
 
+  it('lets memoriesModelByModel pick the memory model from the chat model chosen at spawn', () => {
+    // DeepSeek (Miau):火山方舟的两个模型记忆跑在火山标准版上,官方渠道的模型
+    // 仍走通道默认的 memoriesModel。映射只看 spawn 那一刻的 `model`。
+    const channel = {
+      id: 'apiyi-deepseek-miau',
+      name: 'DeepSeek (Miau)',
+      baseUrl: 'https://miau.example/v1',
+      envKey: 'MIAU_API_KEY',
+      memoriesModel: 'deepseek-flash',
+      memoriesModelByModel: {
+        'deepseek-v4-1-flash-261017': 'deepseek-v4-1-flash-261017',
+        'deepseek-v4-1-flash-economy-261017': 'deepseek-v4-1-flash-261017',
+      },
+    }
+
+    const volcano = buildCodexLaunchArgs({
+      provider: { ...channel, model: 'deepseek-v4-1-flash-economy-261017' },
+    })
+    expect(pairs(volcano)).toContainEqual(['-c', 'model="deepseek-v4-1-flash-economy-261017"'])
+    expect(pairs(volcano)).toContainEqual(['-c', 'memories.extract_model="deepseek-v4-1-flash-261017"'])
+    expect(pairs(volcano)).toContainEqual(['-c', 'memories.consolidation_model="deepseek-v4-1-flash-261017"'])
+
+    const official = buildCodexLaunchArgs({ provider: { ...channel, model: 'deepseek-v4-pro' } })
+    expect(pairs(official)).toContainEqual(['-c', 'memories.extract_model="deepseek-flash"'])
+    expect(pairs(official)).toContainEqual(['-c', 'memories.consolidation_model="deepseek-flash"'])
+
+    // 映射表只认自己声明的键:原型链上的名字(`constructor` 等)不是映射项。
+    const inherited = buildCodexLaunchArgs({ provider: { ...channel, model: 'constructor' } })
+    expect(pairs(inherited)).toContainEqual(['-c', 'memories.extract_model="deepseek-flash"'])
+  })
+
   it('pins memories models from memoriesModel alone when the channel has no chat model pin', () => {
     // apiyi-standard style: no `-c model` (user picks per turn) but memory
     // side requests still deserve the smarter model instead of the gpt-5.4
