@@ -318,6 +318,15 @@ Pass 4: 一致性校验
 - **没做**:NEW 标签(桌面端没有「模型上新」通知)、「暂未开放」置灰(桌面端渠道清单是写死的精选子集,没有这个状态)、按账号分键(桌面端单机单用户,与 `selectedImageChannel` 一致)。
 - **测试**:新增 `ImageChannelPanel` / `imageChannelPlacement` / `imageChannelPrefs` 三个测试文件并重写 `ImageChannelPicker` 测试(共 53 条);变异检查 6 种(悬停延迟归零 / 选择不记最近 / 固定按钮处处可见 / 钉了不从备用移除 / 最近使用含常用 / 窄容器阈值)全被抓到;`features/agent-chat` + `shared` 138 文件 1536 条全过,`typecheck:ci` 7 existing / 0 new。**视觉**:把真实组件渲染出的 HTML + 项目自己的 Tailwind 编出的 CSS 放进内置浏览器看过三种状态(默认 / 选了 NovelAI / 窄容器),**没有在真实的 Electron 窗口里看过**,悬停时「固定」按钮的出现、真实输入框旁的弹出位置要真机再看一眼。
 
+## Codex 页输入框工具栏窄屏收起 + 弹层夹在输入框内(2026-10-30)
+
+真机反馈两件事:① 出图渠道 / 模型弹层右侧被面板边缘挡住;② 聊天面板缩窄后,工具栏的药丸被挤成多行、按钮看不见。要求:**药丸形状不变、可以省略文字、不丢任何按钮**,参考 Codex 官方的做法。
+
+- **做法:分级收起,不换形状**(`features/agent-chat/toolbarCompact.ts` + `MentionInput.tsx` 工具栏行)。名称先用省略号收短(纯 CSS:药丸 `min-w` + `shrink`,触发按钮 `w-full min-w-0`,文字 `truncate`,图标 / 徽标 / 箭头 `shrink-0`);行宽 ≤ 600 px(c1)收起出图渠道徽标、模型推理等级徽标和待机的「语音」字样;≤ 520 px(c2)协作模式只留图标 + 箭头(Default / Plan 文字收起);≤ 450 px(wrap)才允许整颗药丸换行,作为最后兜底。四颗主药丸(模型 / 出图渠道 / 协作模式 / 语音)统一 `h-[27px]`,收起文字不改变高度;协作模式和语音药丸 `shrink-0`,只靠收起文字让位。Agent 标签和右侧 Send 组都不收缩。
+- **为什么不用 CSS 容器查询**:`container-type` 会带来布局包含,让该元素成为层叠上下文和定位祖先,会把 `z-[40001]` 的弹层困在工具栏里。改成 `useToolbarCompact`(ResizeObserver + `useLayoutEffect` 量行宽)在行上设 `data-c1` / `data-c2` / `data-wrap`,子元素用 Tailwind 的 `group-data-[c1]/tb:hidden`(与视口断点 `sm:inline` 冲突的地方用结尾 `!` 的重要形式)。没有布局引擎(jsdom)时三个标志全为 false,行为与改动前一致。
+- **弹层夹在输入框内**:`popoverPlacement.ts`(纯函数 `computePopoverPlacement`)+ `usePopoverPlacement` 把弹层的 `left` / `width` 夹在所在 `form` 的范围内;出图渠道弹层最宽 540、模型弹层最宽 360;没有布局时回落到原来的 CSS 默认位置。
+- **验证**:新增 `toolbarCompact` / `popoverPlacement` / `MentionInput.toolbarCompact` 测试并更新 `ImageChannelPicker.placement`;**变异检查 10 种**(语音药丸去固定高度 / 模型名不 truncate / 推理徽标不收起 / 模型弹层不夹 / 渠道徽标不收缩 / 协作文字不收起 / 协作药丸可收缩 / 行默认换行 / c2 阈值改大 / 不再监听行宽)全部被抓到,其中「协作药丸可收缩」第一次漏过,补了一条契约后抓到。`features/agent-chat` + `features/voice` 139 文件 1392 条全过,`typecheck:ci` 7 existing / 0 new,`build:vite` 通过。**真浏览器验证**:把真实 `MentionInput` 渲染出的 DOM + 项目 Tailwind 编出的 CSS 放进内置浏览器,在 340–760 px 逐档量:无横向溢出、四颗药丸高度恒为 27 px、≥ 460 px 单行不丢任何按钮、≤ 450 px 整颗换行(两行药丸)。**没有在真实 Electron 窗口里看过**:harness 用的是系统字体,真实的 Exo 2 / 中文字体宽度略有不同,阈值(600 / 520 / 450)与 27 px 高度需要真机再确认一次。
+
 ## 许可证
 
 MIT License

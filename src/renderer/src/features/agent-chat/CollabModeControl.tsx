@@ -284,7 +284,7 @@ export function CollabModeControl({ disabled = false }: CollabModeControlProps) 
       : 'Plan 推理设置'
 
   return (
-    <div ref={rootRef} className="relative inline-flex" onBlur={handleRootBlur}>
+    <div ref={rootRef} className="relative inline-flex h-[27px] shrink-0" onBlur={handleRootBlur}>
       <button
         type="button"
         aria-label={isPlan ? '切换到 Default' : '切换到 Plan'}
@@ -295,7 +295,7 @@ export function CollabModeControl({ disabled = false }: CollabModeControlProps) 
           setOpen(false)
           void requestCollabMode(isPlan ? 'default' : 'plan')
         }}
-        className={`flex items-center gap-1 rounded-l-md rounded-r-none border px-2 py-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`flex items-center gap-1 whitespace-nowrap rounded-l-md rounded-r-none border px-2 py-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-50 ${
           isPlan
             ? 'border-fuchsia-400/50 bg-fuchsia-500/10 text-fuchsia-200 hover:border-fuchsia-300/70'
             : 'border-zinc-700/80 bg-zinc-900/70 text-zinc-400 hover:border-cyan-400/40 hover:text-cyan-100'
@@ -327,13 +327,14 @@ export function CollabModeControl({ disabled = false }: CollabModeControlProps) 
             )}
           </svg>
         )}
-        <span className="font-medium">{isPlan ? 'Plan' : 'Default'}</span>
+        {/* 窄到 c2 级只留图标(○ = Default,✦ = Plan);名称仍在 aria-label / title 里 */}
+        <span className="font-medium group-data-[c2]/tb:hidden">{isPlan ? 'Plan' : 'Default'}</span>
         {isPlan ? (
-          <span className="hidden text-[10px] opacity-75 sm:inline">
+          <span className="hidden text-[10px] opacity-75 sm:inline group-data-[c2]/tb:hidden!">
             · {EFFORT_LABELS[effectivePlanReasoningEffort]}
           </span>
         ) : null}
-        {pending ? <span className="text-[10px] opacity-70">切换中</span> : null}
+        {pending ? <span className="text-[10px] opacity-70 group-data-[c2]/tb:hidden">切换中</span> : null}
       </button>
 
       <button
