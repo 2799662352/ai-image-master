@@ -76,17 +76,12 @@ function connectRpc(url: string): Promise<RpcClient> {
 
 async function runSmoke(): Promise<void> {
   const codexHome = mkdtempSync(path.join(os.tmpdir(), 'smoke-per-thread-'))
-  // Launch args overlay leaves (enabled=false) onto these tables; without a
+  // Launch args overlay leaves onto this table; without a
   // seeded transport shape codex rejects the entry as "invalid transport".
   const node = JSON.stringify(process.execPath)
   writeFileSync(
     path.join(codexHome, 'config.toml'),
     [
-      '[mcp_servers.apiyi]',
-      `command = ${node}`,
-      'args = ["-e", "process.exit(0)"]',
-      'enabled = false',
-      '',
       '[mcp_servers.cinematography_kb]',
       `command = ${node}`,
       'args = ["-e", "process.exit(0)"]',

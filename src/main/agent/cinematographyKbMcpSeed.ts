@@ -40,8 +40,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * kept answering "healthy" because a `command` existed and it wasn't Python. So
  * node was handed a script that no longer existed, died before the handshake,
  * and codex reported `connection closed: initialize response` on every launch —
- * forever, since nothing ever re-checked. apiyi self-healed (it force-converges
- * every field each boot); this one had no such pass.
+ * forever, since nothing ever re-checked. (The since-removed apiyi seed
+ * force-converged every field each boot; this one had no such pass.)
  *
  * Transport is APP-MANAGED, so converging it is safe. `env` is NOT — it stays
  * user territory and is merged additively by the caller (a hand-typed key or a
@@ -97,7 +97,7 @@ export function mergeEnvWithScaffold(existingEnv: unknown): Record<string, strin
 
 /**
  * Boot-time convergence for `mcp_servers.cinematography_kb`. Idempotent and
- * best-effort; safe to call on every launch. Mirrors `seedApiyiMcpEntry`:
+ * best-effort; safe to call on every launch:
  *
  *  - 'seeded'     — entry absent → write ENABLED entry with the shared
  *    DASHSCOPE_API_KEY scaffold + Node command/args.

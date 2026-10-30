@@ -116,7 +116,7 @@ function shortenBinary(bin: string): string {
  * Short args (flags, image names like `mcp/test`) pass through unchanged.
  *
  * Examples:
- *   "D:\tecx\...\resources\apiyi-mcp\dist\index.js" → "index.js"
+ *   "D:\tecx\...\resources\cinematography-kb-mcp\index.js" → "index.js"
  *   "-i"                                            → "-i"
  *   "mcp/test"                                      → "mcp/test"
  *   "run"                                           → "run"
@@ -135,7 +135,7 @@ function shortenArg(arg: string): string {
 
 /**
  * Cursor-style condensed command display. Hides the long `node_modules/.pnpm/
- * electron@x.y.z/...` and `D:\tecx\...\resources\apiyi-mcp\dist\index.js`
+ * electron@x.y.z/...` and `D:\tecx\...\resources\cinematography-kb-mcp\index.js`
  * gunk that has zero value to a user reading the card; surfaces just
  * `<runtime> <script-basename> <…args>`. The full string is preserved in
  * the `title` attribute for hover-to-inspect, and the JSON editor (which
@@ -158,23 +158,12 @@ function formatCommandLine(server: McpServerCardData): { short: string; full: st
 
 /**
  * Render the "ready but tools=0" hint based on the actual server, not a
- * one-size-fits-all Docker message. apiyi (and any other app-bundled MCP
- * that needs an API key) usually hits this state when the key env var
- * is missing/empty — the child registers its tool handlers and then
- * exits at `initializeGenAI()`, leaving codex with an empty tool cache.
+ * one-size-fits-all Docker message.
  * Docker MCP Gateway hits this when Docker Desktop is not running.
  * Everything else falls back to a neutral "still handshaking, try
  * refreshing" message.
  */
 function getEmptyToolsHint(server: McpServerCardData): string {
-  // App-bundled apiyi-mcp-server: vendored into resources/apiyi-mcp/,
-  // launched as `<electron.exe-as-node> .../dist/index.js`. The entry is
-  // app-managed (force-seeded every boot: command/args/env scaffold all
-  // pre-filled, enabled=true, hand-edits do NOT survive a restart). The ONLY
-  // key source is 设置 → API易 — never the JSON editor.
-  if (server.isAppBundled && server.name === 'apiyi') {
-    return '已连接但未返回工具。请到「设置 → API易」填入你的 api.apiyi.com 密钥（sk- 开头，不能是空格）并保存，然后重启应用。此条目由应用托管，JSON 手动改动（含密钥）重启后会被恢复为默认值。'
-  }
   // Anything routed through docker (gateway or otherwise) — the original
   // hint is correct here.
   const cmd = (server.command ?? '').toLowerCase()

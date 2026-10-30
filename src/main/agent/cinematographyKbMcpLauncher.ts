@@ -14,7 +14,7 @@ export interface CinematographyKbMcpPathOptions {
  * Packaged: <resourcesPath>/cinematography-kb-mcp/index.js
  * Dev:      <appPath>/resources/cinematography-kb-mcp/index.js
  *
- * Unlike apiyi-mcp this server is ZERO-dependency (Node built-ins only), so
+ * This server is ZERO-dependency (Node built-ins only), so
  * there is no `dist/` build step and no `node_modules/` to vendor.
  */
 export function getCinematographyKbMcpEntryPath(options: CinematographyKbMcpPathOptions): string {
@@ -28,7 +28,7 @@ export function getCinematographyKbMcpEntryPath(options: CinematographyKbMcpPath
  * INTENTIONALLY EMPTY — the `DASHSCOPE_API_KEY` is NOT baked into the app / git
  * anymore (a DashScope key is not scoped to one KB; it can call any DashScope
  * API on the owner's account, so shipping it in source was a leak risk). We now
- * mirror the apiyi-mcp model: the key lives in 设置 → 运镜知识库, is kept in the
+ * keep the key in 设置 → 运镜知识库, store it in the
  * provider store under `cinematography-kb`, and is injected at codex spawn via
  * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` — never persisted to
  * `~/.codex/config.toml`.
@@ -68,8 +68,8 @@ export interface CinematographyKbMcpConfigEntryInput {
 
 /**
  * Build the TOML-serializable `mcp_servers.cinematography_kb` entry. `command`
- * comes from `resolveApiyiCommand` (system `node`, else Electron-as-Node) — the
- * same node-vs-electron decision the apiyi/catimation stdio servers use.
+ * comes from `resolveStdioNodeCommand` (system `node`, else Electron-as-Node) — the
+ * same node-vs-electron decision the catimation stdio server uses.
  */
 export function buildCinematographyKbMcpConfigEntry(
   input: CinematographyKbMcpConfigEntryInput,

@@ -1015,61 +1015,7 @@ describe('AgentManager transactional provider application', () => {
   })
 })
 
-// The renderer mirrors the 设置 → API易 key to the main process under the
-// dedicated `apiyi-mcp` slot. AgentManager keeps an in-memory copy (injected at
-// spawn via `-c mcp_servers.apiyi.env.APIYI_API_KEY`) and restarts codex ON
-// CHANGE so the new key takes effect immediately. The change-guard is critical:
-// the renderer re-pushes this key idempotently on every boot / MCP-page load, so
-// an unchanged push must NOT trigger a restart storm.
-describe('AgentManager apiyi-mcp key bridge', () => {
-  function makeRestartBackend() {
-    const restarts: unknown[] = []
-    const backend = Object.assign(makeStubBackend([]), {
-      async restartCodex(paths: unknown) {
-        restarts.push(paths)
-      },
-    })
-    return { backend, restarts }
-  }
-
-  it('persists the apiyi-mcp key under its dedicated slot and restarts codex only on change', async () => {
-    const { backend, restarts } = makeRestartBackend()
-    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
-
-    await mgr.setProviderApiKey('apiyi-mcp', 'sk-apiyi')
-    expect(restarts.length).toBe(1) // '' -> 'sk-apiyi' is a change
-
-    // Idempotent re-push (same key) must NOT restart.
-    await mgr.setProviderApiKey('apiyi-mcp', 'sk-apiyi')
-    expect(restarts.length).toBe(1)
-
-    const onDisk = JSON.parse(
-      await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
-    )
-    expect(onDisk.apiKeys['apiyi-mcp']).toBe('sk-apiyi')
-    // It must NOT have touched the codex gateway provider key (apiyi) or active id.
-    expect(onDisk.apiKeys.apiyi).toBeUndefined()
-    expect(onDisk.selectedGatewayId).toBe('apiyi')
-  })
-
-  it('a fresh manager preloads the persisted apiyi-mcp key so an idempotent re-push does not restart', async () => {
-    const first = new AgentManager({ userDataDir: tmpDir, backend: makeStubBackend([]) })
-    await first.setProviderApiKey('apiyi-mcp', 'sk-keep')
-
-    const { backend, restarts } = makeRestartBackend()
-    const second = new AgentManager({ userDataDir: tmpDir, backend })
-
-    // Same key as persisted at construction → cold-start re-push is a no-op.
-    await second.setProviderApiKey('apiyi-mcp', 'sk-keep')
-    expect(restarts.length).toBe(0)
-
-    // A rotated key DOES restart.
-    await second.setProviderApiKey('apiyi-mcp', 'sk-rotated')
-    expect(restarts.length).toBe(1)
-  })
-})
-
-// The cinematography-kb-mcp key bridge mirrors apiyi-mcp exactly: a dedicated
+// The cinematography-kb-mcp key bridge: a dedicated
 // key-only provider slot, injected at spawn via
 // `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY`, change-guarded so the
 // renderer's idempotent boot re-push never causes a restart storm.
@@ -1099,8 +1045,8 @@ describe('AgentManager cinematography-kb key bridge', () => {
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
     expect(onDisk.apiKeys['cinematography-kb']).toBe('sk-dashscope')
-    // It must NOT have touched the apiyi-mcp slot or the active id.
-    expect(onDisk.apiKeys['apiyi-mcp']).toBeUndefined()
+    // It must NOT have touched the codex gateway provider key (apiyi) or the active id.
+    expect(onDisk.apiKeys.apiyi).toBeUndefined()
     expect(onDisk.selectedGatewayId).toBe('apiyi')
   })
 

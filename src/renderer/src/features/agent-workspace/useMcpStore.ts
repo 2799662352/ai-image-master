@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { getApiService } from '../../services/api'
 
 export interface McpTool {
   name: string
@@ -45,15 +44,15 @@ export interface McpServerInfo {
 
 /**
  * MCP server names that ship with the desktop app and live under
- * `resources/<name>/` (vendored at build time by scripts/vendor-*.mjs).
- * These are seeded into the user's codex `config.toml` on first boot and
- * are functionally always present — the user can disable but not uninstall.
+ * `resources/<name>/`, are seeded into the user's codex `config.toml` on
+ * first boot and are functionally always present — the user can disable but
+ * not uninstall. They are grouped under "🎁 预装" on the MCP page.
  *
- * Kept as a Set so add cost is O(1) when more bundled MCPs land in future
- * releases (currently only apiyi-mcp-server for video / audio / PDF
- * understanding).
+ * Currently EMPTY: the only entry, the apiyi (Gemini) MCP, was removed from
+ * the app entirely. The mechanism (`isAppBundled` → "预装" group/badge) is
+ * kept so a future bundled MCP only needs its name added here.
  */
-export const APP_BUNDLED_MCP_NAMES: ReadonlySet<string> = new Set(['apiyi'])
+export const APP_BUNDLED_MCP_NAMES: ReadonlySet<string> = new Set<string>()
 
 export interface McpServerCard {
   name: string
@@ -485,20 +484,6 @@ export const useMcpStore = create<McpStore>((set, get) => ({
       codexConfigError,
       hasFetchedOnce: true,
     })
-
-    // Cold-start reliability hook for the bundled apiyi-mcp: once we've
-    // confirmed codex is up enough to read its config (no codexConfigError),
-    // mirror the app's already-configured apiyi key into mcp_servers.apiyi.env
-    // so the user never has to re-paste it. Best-effort, first successful
-    // fetch only; the construction microtask may have run before codex was
-    // ready, so this is the guaranteed-codex-up retry.
-    if (isFirstFetch && !codexConfigError) {
-      try {
-        void getApiService().syncApiyiKeyToMcp()
-      } catch {
-        /* best-effort; never block the MCP list on the apiyi key bridge */
-      }
-    }
 
     // Fire-and-forget tool sync. Updates servers when it eventually returns.
     // NOTE: When codexConfigError is set, this will also fail (codex has

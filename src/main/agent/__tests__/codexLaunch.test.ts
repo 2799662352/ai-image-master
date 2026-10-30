@@ -45,7 +45,7 @@ describe('buildCodexLaunchArgs', () => {
       // root cause of the `ask_user` "unsupported call: catimationaskuser"
       // failure. See codexLaunch.ts for the full source-level rationale.
       '-c', 'features.code_mode.enabled=false',
-      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "cinematography_kb", "mcp__cinematography_kb"]',
       // Native AGENTS.md (project-doc) alignment: bigger budget, pinned .git
       // root marker, and CLAUDE.md/GEMINI.md fallbacks. See codexLaunch.ts.
       '-c', 'project_doc_max_bytes=65536',
@@ -56,9 +56,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.memories=true',
       // Codex 0.152.0 made update_plan opt-in; PlanCard depends on it.
       '-c', 'tools.update_plan.enabled=true',
-      // No apiyi key configured (neither 设置/localStorage nor config.toml) →
-      // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
-      '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
     ])
   })
@@ -83,13 +80,12 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.unified_image_budget=true',
       '-c', 'features.compaction_image_budget=true',
       '-c', 'features.code_mode.enabled=false',
-      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "cinematography_kb", "mcp__cinematography_kb"]',
       '-c', 'project_doc_max_bytes=65536',
       '-c', 'project_root_markers=[".git"]',
       '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
       '-c', 'features.memories=true',
       '-c', 'tools.update_plan.enabled=true',
-      '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
     ])
     const listenIdx = args.indexOf('--listen')
@@ -112,7 +108,7 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs()
     expect(args).toContain('features.code_mode.enabled=false')
     expect(args).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "cinematography_kb", "mcp__cinematography_kb"]',
     )
     // It must be unconditional — present even with a custom provider/MCP wired.
     const withMcp = buildCodexLaunchArgs({
@@ -120,7 +116,7 @@ describe('buildCodexLaunchArgs', () => {
       catimationMcp: { port: 7842, token: 'deadbeef' },
     })
     expect(withMcp).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "cinematography_kb", "mcp__cinematography_kb"]',
     )
   })
 
@@ -557,7 +553,7 @@ describe('buildCodexLaunchArgs', () => {
   })
 
   it('carries ELECTRON_RUN_AS_NODE through stdio env for the packaged-app fallback', () => {
-    // When no system node exists, resolveApiyiCommand falls back to our own
+    // When no system node exists, resolveStdioNodeCommand falls back to our own
     // Electron binary + ELECTRON_RUN_AS_NODE=1; that env must reach codex's
     // spawn config or electron.exe boots in GUI mode and trashes stdio.
     const args = buildCodexLaunchArgs({
@@ -813,52 +809,39 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('custom.nested_limit=42')
   })
 
-  // apiyiKey is the catimation-style runtime secret injection: the single key
-  // the user saved in 设置 → API易 (the ONLY supported key source — the boot
-  // force-seed wipes any hand-typed config.toml key) is overlaid onto the
-  // seeded [mcp_servers.apiyi].env table via `-c` at spawn, NEVER written to
-  // config.toml.
-  // ⛔ 契约已变:apiyi(Gemini)整条通道不再对 agent 暴露,**即使设置里有 key**。
-  // 原判据是「有没有 key」而不是「key 能不能用」—— 失效的 key 会让服务器照常
-  // 起来、照常挂出工具,agent 撞三次才知道不行,比工具不存在更糟。而看图/看视频
-  // 已有 qwen 那条(还支持一次多张做跨图比较),重复能力只会让模型多一次试错。
-  it('即使给了 key 也不注入 apiyi(整条通道不暴露)', () => {
-    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.APIYI_API_KEY'))).toBe(false)
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.GEMINI_MODEL'))).toBe(false)
+  // apiyi(Gemini)MCP 已从应用里整体移除:不再往启动参数里注入任何
+  // `mcp_servers.apiyi.*`,direct_only 名单里也不再有它。
+  //
+  // 以前这里有一整组用例在钉「没 key 就休眠、有 key 也休眠」:休眠靠
+  // `-c mcp_servers.apiyi.enabled=false` 实现,而这个叶子键在配置里**没有**
+  // `[mcp_servers.apiyi]` 表时会凭空造出一张没有 transport 的表,codex 直接以
+  // `invalid transport in mcp_servers.apiyi` 起不来 —— 所以现在必须一条都不发。
+  describe('apiyi MCP 已移除', () => {
+    const apiyiFlags = (args: readonly string[]): string[] =>
+      args.filter((a) => a.includes('mcp_servers.apiyi') || a.includes('mcp__apiyi'))
+
+    it('默认启动参数里没有任何 apiyi 覆盖项(尤其不能有会造出空表的 enabled=false)', () => {
+      expect(apiyiFlags(buildCodexLaunchArgs())).toEqual([])
+    })
+
+    it('老调用方就算还塞着 apiyiKey,也不会被注入进任何参数(密钥不外泄)', () => {
+      const stale = { apiyiKey: 'sk-apiyi-stale-caller' } as unknown as Parameters<
+        typeof buildCodexLaunchArgs
+      >[0]
+      const args = buildCodexLaunchArgs(stale)
+      expect(apiyiFlags(args)).toEqual([])
+      expect(args.join(' ')).not.toContain('sk-apiyi-stale-caller')
+    })
+
+    it('direct_only_tool_namespaces 只剩 catimation 与 cinematography_kb', () => {
+      expect(buildCodexLaunchArgs()).toContain(
+        'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "cinematography_kb", "mcp__cinematography_kb"]',
+      )
+    })
   })
 
-  // FORCE mode: a key in 设置 must force-enable apiyi at runtime, overriding
-  // any stale `enabled = false` on disk (old seeds wrote that; users toggled
-  // the card off while debugging and stayed dead forever).
-  it('有 key 也走休眠分支:enabled=false,永不 enabled=true', () => {
-    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
-    expect(args).toContain('mcp_servers.apiyi.enabled=false')
-    expect(args).not.toContain('mcp_servers.apiyi.enabled=true')
-  })
-
-  // Reliability timeouts ride alongside the key (guarded so the seeded
-  // transport-carrying entry exists), mirroring catimation's tool_timeout_sec.
-  it.skip('injects apiyi startup/tool timeouts when apiyiKey is supplied（通道不暴露后不再注入）', () => {
-    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
-    // Generous 60s startup slack — the list side (90s budget + silent timeout
-    // degrade) is what keeps one slow server from blanking the whole panel, so
-    // apiyi's startup window need NOT be artificially shrunk.
-    expect(args).toContain('mcp_servers.apiyi.startup_timeout_sec=60')
-    expect(args).toContain('mcp_servers.apiyi.tool_timeout_sec=2000')
-  })
-
-  // apiyi tools must be promoted to DirectModelOnly so they're never deferred
-  // behind tool_search — this is why catimation always returns tools and apiyi
-  // (previously) sometimes did not. Unconditional (no key needed).
-  it('lists apiyi in direct_only_tool_namespaces unconditionally', () => {
-    expect(buildCodexLaunchArgs()).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
-    )
-  })
-
-  // cinematography_kb must ALSO be promoted to DirectModelOnly. Same deferral
-  // mechanism (codex 0.142.2 PR #29486) that hid ask_user/apiyi: the KB server
+  // cinematography_kb must be promoted to DirectModelOnly. Same deferral
+  // mechanism (codex 0.142.2 PR #29486) that hid ask_user: the KB server
   // seeds into config.toml and lists its 4 tools fine standalone, but a session
   // whose namespace is NOT in direct_only_tool_namespaces gets them deferred
   // behind tool_search, where discovery intermittently fails — observed as
@@ -872,33 +855,7 @@ describe('buildCodexLaunchArgs', () => {
     expect(flag).toContain('"mcp__cinematography_kb"')
   })
 
-  // No key in 设置 (the only key source) → keep apiyi DORMANT at launch so a
-  // keyless apiyi-mcp can't hang the agent's first turn (openai/codex#19556 —
-  // run_turn awaits list_all_tools, one stalled server gates the whole map up
-  // to startup_timeout). We emit EXACTLY `enabled=false` and nothing else.
-  it('keeps apiyi dormant (enabled=false, no env/timeout) when NO key is configured', () => {
-    const args = buildCodexLaunchArgs()
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.'))).toBe(false)
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.startup_timeout_sec'))).toBe(false)
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.tool_timeout_sec'))).toBe(false)
-    expect(args).toContain('mcp_servers.apiyi.enabled=false')
-  })
-
-  // A blank/whitespace key must be treated as "no key" — same dormant guard,
-  // never an env/timeout override.
-  it('treats a whitespace-only apiyiKey as no key → dormant guard', () => {
-    const args = buildCodexLaunchArgs({ apiyiKey: '   ' })
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.'))).toBe(false)
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.startup_timeout_sec'))).toBe(false)
-    expect(args).toContain('mcp_servers.apiyi.enabled=false')
-  })
-
-  // localStorage key present → inject the secret via `-c`, apply timeouts, and
-  // never emit the dormant guard.
-  // (原「有 key 就不休眠」那条已删:通道不暴露后语义整个反过来了,
-  //  新契约由上面「有 key 也走休眠分支」覆盖,留着只会是重复且相反的断言。)
-
-  // cinematography-kb-mcp key: same catimation-style runtime injection as apiyi —
+  // cinematography-kb-mcp key: catimation-style runtime injection —
   // the 设置 → 运镜知识库 key is overlaid onto the boot-seeded
   // [mcp_servers.cinematography_kb].env table via `-c` at spawn, NEVER written to
   // config.toml.
@@ -909,7 +866,7 @@ describe('buildCodexLaunchArgs', () => {
     )
   })
 
-  // Unlike apiyi, the KB server is NEVER disabled when keyless: `tools/list` is
+  // The KB server is NEVER disabled when keyless: `tools/list` is
   // static so the tool always appears; only the CALL reports the missing key. So
   // with no key we emit no secret/disable override; the non-secret production
   // DashVector endpoint is still pinned independently below.
@@ -944,8 +901,8 @@ describe('buildCodexLaunchArgs', () => {
       args.filter((a) => a.startsWith('mcp_servers.cinematography_kb.env.'))
 
     it('登录态下没配 KB key,就一把 key 都不注入 —— 不许拿 Miau / 平台 token 顶替', () => {
-      // 模拟「已登录 + 正在用 Miau 网关聊天 + apiyi MCP 也配了 key」的最丰满现场:
-      // 除了 KB 自己那两把,手头能拿到的凭据全都有。
+      // 模拟「已登录 + 正在用 Miau 网关聊天」的现场:
+      // 除了 KB 自己那两把,手头能拿到的凭据(Miau 网关令牌)都在。
       const args = buildCodexLaunchArgs({
         provider: {
           id: 'rightcode-qwen',
@@ -954,7 +911,6 @@ describe('buildCodexLaunchArgs', () => {
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.8-max',
         },
-        apiyiKey: 'sk-apiyi-should-not-leak-into-kb',
       })
 
       const kbEnv = kbEnvArgs(args)
@@ -964,8 +920,6 @@ describe('buildCodexLaunchArgs', () => {
       ])
       expect(kbEnv.join(' ')).not.toContain('DASHSCOPE_API_KEY')
       expect(kbEnv.join(' ')).not.toContain('DASHVECTOR_API_KEY')
-      // 手边那把 apiyi 的 key 也不许漏进 KB 的 env。
-      expect(kbEnv.join(' ')).not.toContain('sk-apiyi-should-not-leak-into-kb')
     })
 
     it('配了就必须原样是设置里那把,不被任何其它凭据覆盖', () => {
@@ -977,7 +931,6 @@ describe('buildCodexLaunchArgs', () => {
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.8-max',
         },
-        apiyiKey: 'sk-apiyi-other',
         cinematographyKbKey: 'sk-kb-from-settings',
         dashVectorKey: 'sk-dv-from-settings',
       })
@@ -985,7 +938,6 @@ describe('buildCodexLaunchArgs', () => {
       const kbEnv = kbEnvArgs(args).join(' ')
       expect(kbEnv).toContain('DASHSCOPE_API_KEY="sk-kb-from-settings"')
       expect(kbEnv).toContain('DASHVECTOR_API_KEY="sk-dv-from-settings"')
-      expect(kbEnv).not.toContain('sk-apiyi-other')
     })
 
     it('KB 的 env 里不许出现平台计费标记 —— 它不走网关,也就不该带计费归属', () => {

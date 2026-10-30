@@ -161,18 +161,8 @@ export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
 export const QWEN_UNDERSTAND_FLAGSHIP_MODEL = 'qwen3.8-max'
 
 /**
- * 把 apiyi-mcp 的 `APIYI_API_KEY` 推给主进程时使用的 provider-store 槽位 id。
- * 不是 codex 网关 provider——是「只存 key」的通道,镜像 qwen('qwen')存 Miau token
- * 的做法。用专属 id(`apiyi-mcp`,不是真正的网关 `apiyi`)把 MCP 密钥与 codex
- * 自己的 API易 网关 key 解耦。主进程在 spawn 时经 `-c mcp_servers.apiyi.env.
- * APIYI_API_KEY` 注入,运行时生效、绝不落 `config.toml`(catimation 同款)。
- * 必须与 main 端 `APIYI_MCP_PROVIDER_ID`(codexProviders.ts)保持一致。
- */
-export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp'
-
-/**
  * provider-store 槽位 id + localStorage 键,用于把 设置 → 运镜知识库 里填的
- * 阿里云百炼 `DASHSCOPE_API_KEY` 推给主进程。做法完全对齐 apiyi-mcp:key 存本地
+ * 阿里云百炼 `DASHSCOPE_API_KEY` 推给主进程。做法:key 存本地
  * (`localStorage[dashscope_api_key]`)+ 镜像到 provider store,主进程在 codex
  * spawn 时经 `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` 注入,
  * 运行时生效、绝不落 `config.toml`。必须与 main 端 `CINEMATOGRAPHY_KB_PROVIDER_ID`
@@ -1986,10 +1976,6 @@ export class ApiService {
     // a qwen understanding subagent works without re-saving the key. Deferred +
     // guarded so it never blocks construction or runs outside Electron.
     queueMicrotask(() => this.syncMiauTokenToMain())
-    // Same idea for apiyi-mcp: mirror the app's already-configured apiyi key
-    // into `mcp_servers.apiyi.env` so the bundled understanding MCP works
-    // without the user re-pasting the key into the MCP JSON editor.
-    queueMicrotask(() => void this.syncApiyiKeyToMcp())
     // Same idea for the cinematography-kb-mcp: mirror the 设置 → 运镜知识库 key
     // (localStorage) into `mcp_servers.cinematography_kb.env` so the bundled KB
     // server gets its `DASHSCOPE_API_KEY` at codex spawn.
@@ -4173,8 +4159,6 @@ export class ApiService {
       this.apiKey = key
       localStorage.setItem(`api_key_${this.currentSite}`, key)
       if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
-      if (this.currentSite === 'apiyi' || this.currentSite === 'b-apiyi')
-        void this.syncApiyiKeyToMcp()
       return true
     } catch {
       return false
@@ -4511,53 +4495,6 @@ export class ApiService {
   }
 
   /**
-   * Mirror the app's already-configured API易 key to the main process so the
-   * bundled apiyi-mcp server gets its `APIYI_API_KEY` injected at codex spawn —
-   * the user fills ONE key in 设置 → API易 and never touches the MCP JSON editor.
-   *
-   * Catimation-style runtime injection (NOT a config write): we push the key to
-   * the provider store under the dedicated id `apiyi-mcp` via
-   * `setProviderApiKey`. The main process keeps an in-memory copy and, at every
-   * codex (re)start, overlays it onto `[mcp_servers.apiyi].env.APIYI_API_KEY`
-   * with a `-c` flag. The secret therefore:
-   *   - is NEVER written to `~/.codex/config.toml` (the editor stays key-less),
-   *   - always reflects the current 设置 value (recomputed each spawn, no stale),
-   *   - is decoupled from codex's own API易 gateway provider key.
-   * Changing the key in 设置 triggers an immediate codex restart on the main
-   * side (the change-guard there makes idempotent re-pushes free), so the new
-   * key takes effect without an app reload. `GEMINI_MODEL` is intentionally NOT
-   * touched — it lives in the seed (default `gemini-3.5-flash`) so a user can
-   * still hand-switch to `gemini-3.1-pro-preview-thinking` in the editor.
-   *
-   * Source of truth = whichever apiyi-family key the user saved in 设置
-   * (`api易官方` → `api_key_apiyi`, `API易 B站` → `api_key_b-apiyi`, with the
-   * optional 图像理解 keys as fallback). Both apiyi.com endpoints accept the same
-   * `sk-` key. We push ONLY when a key is actually stored; with no apiyi key in
-   * 设置 we no-op (a user managing the key by hand in the editor is untouched).
-   *
-   * Best-effort: silently no-ops outside Electron / when the agent API is
-   * unavailable. Re-runs idempotently from the constructor, the save path, and
-   * the `useMcpStore` cold-start hook.
-   */
-  syncApiyiKeyToMcp(): void {
-    try {
-      const key =
-        this.getStoredApiKey('apiyi') ||
-        this.getStoredApiKey('b-apiyi') ||
-        this.getStoredVisionApiKey('apiyi') ||
-        this.getStoredVisionApiKey('b-apiyi') ||
-        ''
-      if (!key) return
-      const agent = getAgentApi()
-      if (agent?.setProviderApiKey) {
-        void agent.setProviderApiKey(APIYI_MCP_PROVIDER_ID, key)
-      }
-    } catch {
-      // best-effort; never block the app on the apiyi-mcp key bridge.
-    }
-  }
-
-  /**
    * Mirror the 设置 → 运镜知识库 DASHSCOPE key (stored in
    * `localStorage[dashscope_api_key]`) to the main process under the dedicated
    * `cinematography-kb` provider slot, so the bundled cinematography-kb-mcp
@@ -4609,8 +4546,6 @@ export class ApiService {
       localStorage.setItem(`vision_api_key_${this.currentSite}`, key)
       this.visionApiKey = key
       if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
-      if (this.currentSite === 'apiyi' || this.currentSite === 'b-apiyi')
-        void this.syncApiyiKeyToMcp()
       return true
     } catch {
       return false
