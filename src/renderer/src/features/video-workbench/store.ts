@@ -88,6 +88,16 @@ import {
 import { cardSummaryState, promptFingerprint } from './cardSummary'
 import { mountMaterialTransferHandler, startMaterialTransfer } from './materialTransfer'
 import { mountMaterialPreuploadHandler, startMaterialPreupload } from './materialPreupload'
+import {
+  collectUploadEntries,
+  forgetUploadAlive,
+  isUploadAlive,
+  markUploadAlive,
+  resetUploadCacheForTest,
+  verifyUploadEntries,
+  type UploadEntry,
+  type UploadVerdict,
+} from './materialUploadCache'
 import { exportWorkbenchIR, planApplyIR } from './workbenchIR'
 import { scopedView } from './threadScope'
 import { resetThreadObservationsForTest } from './threadObservation'
@@ -658,7 +668,19 @@ export function buildModeMedia(card: VideoWorkbenchCard): Pick<
 > {
   // 预传好的 COS 地址优先(见 materialPreupload):有就省掉主进程提交时的那次上传,
   // 没有就照旧交本地路径过去,由 buildContent → resolveMediaUrl 现传。
-  const submitSrc = (m: VideoWorkbenchMaterial): string => m.uploadedUrl ?? m.src
+  //
+  // **同一次提交里不让两个素材共用一个地址。** 上游按下标解析 `@参考N`(Seedance
+  // OpenAPI §2.3),两个下标指向同一个地址有可能被折叠成一个参考,后面的编号全体前移
+  // 且不报错。正常拖入时每个槽位各传各的、地址天然不同;但复制素材 / 撤销恢复之类的
+  // 路径可能把同一个地址带进同一张卡的两个槽位 —— 后出现的退回 `src`,由主进程现传
+  // 一份新的。`seen` 横跨三类素材:一个地址在整次提交里只出现一次。
+  const seen = new Set<string>()
+  const submitSrc = (m: VideoWorkbenchMaterial): string => {
+    if (!m.uploadedUrl) return m.src
+    if (seen.has(m.uploadedUrl)) return m.src
+    seen.add(m.uploadedUrl)
+    return m.uploadedUrl
+  }
   const images = card.referenceImages.map(submitSrc)
   const videos = card.referenceVideos.map(submitSrc)
   const audios = card.referenceAudios.map(submitSrc)
@@ -1163,8 +1185,9 @@ function scheduleIdle(fn: () => void): void {
  * | `applyIR` | **只对新建的卡发** | 写计划里含「仅位置变了」的卡(workbenchIR 的 placeExisting),整份扫一遍等于挪一次卡就把整板重传 |
  *
  * `undo`/`redo`/`hydrate` 都不经这些 action(自建写计划直接 set),天然不受影响:
- * 撤销恢复的是整份快照、连 uploadedUrl 一起回来;hydrate 读到的则一定没有这个
- * 字段(落库时被 `stripPreuploadUrls` 剥掉了)。
+ * 撤销恢复的是整份快照、连 uploadedUrl 一起回来;hydrate 读到的则是落库的
+ * `uploadedUrl` + `uploadedFrom`(`uploadState` 不落库),由 `reconcilePersistedUploads`
+ * 验过本地指纹后才重新打勾。
  */
 function startPreuploadsFor(
   cardId: string,
@@ -1172,6 +1195,9 @@ function startPreuploadsFor(
   materials: readonly VideoWorkbenchMaterial[],
 ): void {
   for (const material of materials) {
+    // 已经带着缓存地址的(重启后读回来的 / 撤销恢复的)不再重传 —— 地址对不对由
+    // 提交前的体检把关,不对就丢掉回落本地路径;这里再传一遍只是白白多一份对象。
+    if (material.uploadedUrl) continue
     startMaterialPreupload({ cardId, kind, originalSrc: material.src })
   }
 }
@@ -1589,6 +1615,12 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           }
         })
         writeActiveProject(activeProjectId)
+        // 读回来的预传地址验一遍本地指纹:通过的打勾继续用,不通过的丢掉回落本地路径。
+        // 不等它 —— 水合要尽快返回;验完才打勾,期间素材照常显示、照常可提交(提交前
+        // 还会再验一次)。
+        void reconcilePersistedUploads().catch((e) => {
+          console.warn('[VideoWorkbench] 预传地址体检失败(忽略,提交前会再验):', e)
+        })
         scheduleIdle(() => {
           const n = sweepInlineMaterials(get().cards)
           if (n > 0) console.info(`[VideoWorkbench] 补转存 ${n} 个内联图片素材`)
@@ -1952,8 +1984,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     // 扫的是 `updated.*` 而不是 `patch.*`:clampMaterials 与切模式后的截断都在
     // 落state 时发生,传 patch 会给已经被截掉的素材白发一次上传。
     //
-    // 这里不怕重复上传浪费:updateCard 是整份**替换**素材数组,替换时经过
-    // toMaterial 重建,旧的 uploadedUrl 本来就已经没了,不重传就只能等提交时再传。
+    // 这里不怕重复上传浪费:updateCard 是整份**替换**素材数组,patch 里给字符串的
+    // 项经过 toMaterial 重建,旧的 uploadedUrl 本来就已经没了,不重传就只能等提交时
+    // 再传;patch 里给整条素材对象、且带着缓存地址的,`startPreuploadsFor` 会直接跳过。
     //
     // 从 state 重新取而不是读 `updated`:后者在 `set` 回调里赋值,TS 的控制流分析
     // 看不见,在这里已被收窄成 `never`(同文件其余地方只把它整个当参数传出去,所以
@@ -2327,9 +2360,23 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     const selected = startOpts?.boardId ? [] : get().selectedCardIds
     const scope: string[] | undefined = ids ?? (selected.length > 0 ? selected : undefined)
     const wholeBoardId = startOpts?.boardId ?? get().activeBoardId
-    const targets = get().cards.filter((c) =>
-      scope ? scope.includes(c.id) : c.boardId === wholeBoardId,
-    )
+    const pickTargets = (): VideoWorkbenchCard[] =>
+      get().cards.filter((c) => (scope ? scope.includes(c.id) : c.boardId === wholeBoardId))
+    let targets = pickTargets()
+
+    // 提交前体检:素材上缓存的预传地址(重启后读回来的尤其)**用之前再确认一遍** ——
+    // 本地文件没被改过、云端对象还在;不通过就丢掉缓存、回落本地路径(由主进程现传)。
+    //
+    // **只有真带着缓存地址的卡才会走到这个 await。** 其余(绝大多数:https / 没预传 /
+    // 纯文本)不引入任何额外等待,卡片仍在本次调用的同步段里落 `preparing` —— 工作台
+    // 按钮的即时反馈、以及 MCP 那边的时序都与以前一致。走到这里时卡片还是 draft,
+    // 体检期间连点两次不会双提交:await 之后重新取目标、重新过 canStart 门,先到的那次
+    // 把卡落成 preparing,后到的会被「任务进行中」挡下。
+    const uploadCheckIds = targets.filter((c) => canStart(c).ok).map((c) => c.id)
+    if (collectUploadEntries(targets.filter((c) => uploadCheckIds.includes(c.id))).length > 0) {
+      await verifyUploadsBeforeSubmit(uploadCheckIds)
+      targets = pickTargets()
+    }
     if (scope) {
       for (const id of scope) {
         if (!targets.some((c) => c.id === id)) result.skipped.push({ cardId: id, reason: '卡片不存在' })
@@ -2835,9 +2882,17 @@ mountMaterialTransferHandler(({ cardId, kind, originalSrc }, cosUrl) => {
  *    手里的整板 IR 无谓地撞冲突(拖 9 张图就是 9 次),bump revision 会往撤销栈里
  *    塞一步「撤销一次后台上传」这种用户根本不认识的操作。`materialsEqual` 只比
  *    src+name,所以不带上它也不会让规格等值判断出错。
- * 3. **不落库。** `WorkbenchDb.put` 会剥掉这两个字段,写一趟纯属浪费 IO。
+ * 3. **成功那一拍落库(`uploadedUrl` + `uploadedFrom` 一起),进行态不落库。**
+ *    `uploadedUrl` 带着上传开始时的文件指纹(路径 + 大小 + 修改时间)存下来,重启后
+ *    素材不用退回「只剩本地路径、提交时再传一遍」;`uploadState` 是界面进行态,
+ *    `WorkbenchDb.put` 会剥掉,否则 `uploading` 落库后重启会永远转圈。
+ *    `uploading` / `failed` 两拍没有要存的东西,不写库。
+ *
+ * 匹配「还没有结论」时还要求 `uploadedUrl` 为空:库里读回来的素材已经带着地址,
+ * 用户再拖同一个文件进来,新那条才是该被标成「在传」的。
  */
 mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, outcome) => {
+  let persisted: VideoWorkbenchCard | undefined
   useVideoWorkbenchStore.setState((state) => {
     let hit = false
     const cards = state.cards.map((card) => {
@@ -2846,20 +2901,151 @@ mountMaterialPreuploadHandler(({ cardId, kind, originalSrc }, outcome) => {
       const index = list.findIndex(
         (m) => m.src === originalSrc
           && (outcome.state === 'uploading'
-            ? m.uploadState === undefined
+            ? m.uploadState === undefined && m.uploadedUrl === undefined
             : m.uploadState === 'uploading'),
       )
       if (index < 0) return card
       hit = true
       const next = [...list]
       next[index] = outcome.state === 'uploaded'
-        ? { ...next[index], uploadState: 'uploaded', uploadedUrl: outcome.url }
+        ? {
+            ...next[index],
+            uploadState: 'uploaded',
+            uploadedUrl: outcome.url,
+            // 指纹绑的是预传开始那一刻的路径;主进程没取到 size / mtime 时只记路径,
+            // 体检会因此判「验证不了」并丢掉这个缓存(宁可重传也不信一个没指纹的地址)。
+            uploadedFrom: {
+              src: originalSrc,
+              ...(outcome.fingerprint
+                ? { size: outcome.fingerprint.size, mtimeMs: outcome.fingerprint.mtimeMs }
+                : {}),
+              at: Date.now(),
+            },
+          }
         : { ...next[index], uploadState: outcome.state }
-      return { ...card, [kind]: next }
+      const updated = { ...card, [kind]: next }
+      if (outcome.state === 'uploaded') persisted = updated
+      return updated
     })
     return hit ? { cards } : {}
   })
+  if (outcome.state === 'uploaded' && persisted) {
+    // 刚传完 = 云端一定有,本会话内提交前不必再探。
+    markUploadAlive(outcome.url)
+    schedulePersist(persisted)
+  }
 })
+
+/**
+ * 重启后读回来的缓存地址,在水合完成后验一遍**本地指纹**(不探云端 —— 一板几百条素材
+ * 逐个 HEAD 太贵,云端留到提交前再探)。
+ *
+ * - 通过 → 打上 `uploaded`(界面才有那个勾),地址继续用;
+ * - 没通过 / 验不了(桥缺失、抛错、超时)→ 丢掉缓存地址与指纹,回到本地路径,并落库
+ *   (否则每次重启都要重判同一个已知作废的地址)。
+ *
+ * 只处理 `uploadState` 还没定的条目(= 刚读回来、还没有结论的);本会话刚预传的、
+ * 水合竞态里已经被别处处理过的都不碰。**不 bump rev / revision**:这是缓存状态不是
+ * 编排意图,理由同预传回填口。
+ */
+async function reconcilePersistedUploads(): Promise<void> {
+  const entries = collectUploadEntries(useVideoWorkbenchStore.getState().cards).filter(
+    (e) => e.uploadState === undefined,
+  )
+  if (entries.length === 0) return
+  const verdicts = await verifyUploadEntries(entries, { checkRemote: false })
+  applyUploadVerdicts(entries, verdicts, { markVerified: true })
+}
+
+/**
+ * 把体检结论写回 store。`verdicts` 为 `null`(验不了)时:
+ * - `unverifiedMeansDrop` 为真(缺省):一律丢弃;
+ * - 否则保留(提交前对「已知云端活着」的地址复核本地时用不到,留作显式开关)。
+ *
+ * 回写按「卡 id + 类别 + 下标 + 当时的地址」对号入座:体检是异步的,期间用户可能删 /
+ * 换了素材,对不上就静默跳过,绝不误改别的条目。
+ */
+function applyUploadVerdicts(
+  entries: readonly UploadEntry[],
+  verdicts: readonly UploadVerdict[] | null,
+  opts: { markVerified: boolean; unverifiedMeansDrop?: boolean },
+): void {
+  const dropUnverified = opts.unverifiedMeansDrop !== false
+  const decisions = entries.map((e, i) => ({
+    entry: e,
+    keep: verdicts ? verdicts[i].keep : !dropUnverified,
+  }))
+  const changedIds = new Set<string>()
+  useVideoWorkbenchStore.setState((state) => {
+    let touched = false
+    const cards = state.cards.map((card) => {
+      const mine = decisions.filter((d) => d.entry.cardId === card.id)
+      if (mine.length === 0) return card
+      let next: VideoWorkbenchCard = card
+      for (const { entry, keep } of mine) {
+        const list = next[entry.kind]
+        const cur = list[entry.index]
+        if (!cur || cur.src !== entry.src || cur.uploadedUrl !== entry.uploadedUrl) continue
+        if (keep) {
+          if (opts.markVerified && cur.uploadState === undefined) {
+            const copy = [...list]
+            copy[entry.index] = { ...cur, uploadState: 'uploaded' }
+            next = { ...next, [entry.kind]: copy }
+            touched = true
+          }
+          continue
+        }
+        const { uploadedUrl: _url, uploadedFrom: _from, uploadState: _state, ...rest } = cur
+        const copy = [...list]
+        copy[entry.index] = rest
+        next = { ...next, [entry.kind]: copy }
+        forgetUploadAlive(entry.uploadedUrl)
+        changedIds.add(card.id)
+        touched = true
+      }
+      return next
+    })
+    return touched ? { cards } : {}
+  })
+  // 丢弃要落库。(打勾不落库,不必写。)
+  if (changedIds.size > 0) {
+    for (const card of useVideoWorkbenchStore.getState().cards) {
+      if (changedIds.has(card.id)) schedulePersist(card)
+    }
+  }
+}
+
+/**
+ * 提交前体检:对要提交的卡上所有带缓存地址的素材,**用之前再确认一遍**。
+ *
+ * - 本会话还没确认过云端的(重启后读回来的):本地指纹 + HEAD 云端;
+ * - 本会话已确认云端活着的(刚预传好 / 上次提交探过):只复核本地指纹 ——
+ *   预传之后用户完全可能又改了那个文件,拿旧地址提交会静默带上旧内容;
+ * - 探到活着的记进本会话「已确认」,下次不再探。
+ *
+ * 验不了(桥缺失 / 抛错 / 超时):未确认云端的缓存丢掉(回落本地路径,慢但对),
+ * 已确认过的保留(那是本会话内亲眼验过的)。**无论如何都不拦提交。**
+ */
+async function verifyUploadsBeforeSubmit(cardIds: readonly string[]): Promise<void> {
+  const ids = new Set(cardIds)
+  const entries = collectUploadEntries(
+    useVideoWorkbenchStore.getState().cards.filter((c) => ids.has(c.id)),
+  )
+  if (entries.length === 0) return
+
+  const needRemote = entries.filter((e) => !isUploadAlive(e.uploadedUrl))
+  const localOnly = entries.filter((e) => isUploadAlive(e.uploadedUrl))
+  const [remoteVerdicts, localVerdicts] = await Promise.all([
+    verifyUploadEntries(needRemote, { checkRemote: true }),
+    verifyUploadEntries(localOnly, { checkRemote: false }),
+  ])
+
+  remoteVerdicts?.forEach((v, i) => {
+    if (v.keep && v.remote === 'alive') markUploadAlive(needRemote[i].uploadedUrl)
+  })
+  applyUploadVerdicts(needRemote, remoteVerdicts, { markVerified: true, unverifiedMeansDrop: true })
+  applyUploadVerdicts(localOnly, localVerdicts, { markVerified: false, unverifiedMeansDrop: false })
+}
 
 let taskUnsubscribe: (() => void) | null = null
 let taskMountCount = 0
@@ -2890,6 +3076,7 @@ export function mountWorkbenchTaskListener(): () => void {
 /** 测试用:重置模块级订阅/水合状态。 */
 export function resetWorkbenchStoreForTest(): void {
   resetThreadObservationsForTest()
+  resetUploadCacheForTest()
   hydrationPromise = null
   taskUnsubscribe = null
   taskMountCount = 0

@@ -460,6 +460,10 @@ const IPC_CHANNELS = {
     // upload happens while the user is still writing the prompt instead of
     // after they hit generate.
     RESOLVE_REF_MEDIA: 'media:resolve-ref-media',
+    // Health check for cached pre-upload URLs persisted on workbench materials:
+    // is the local file unchanged (size+mtime) and is the COS object still
+    // there (HEAD, own *.myqcloud.com only). See main/file-explorer/materialUploadVerify.ts.
+    VERIFY_UPLOADED_MATERIALS: 'media:verify-uploaded-materials',
     // PR-A hot-path: resized JPEG thumbnails. See main/file-explorer/mediaThumbIpc.ts
     // for the size/security envelope. Renderer calls this by default; falls
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
@@ -836,9 +840,33 @@ export interface ElectronAPI {
      * specifically want a URL must check the scheme and treat a data URL as a
      * miss.
      */
-    resolveRefMedia: (
-      p: string,
-    ) => Promise<{ ok: true; url: string } | { ok: false; reason: string }>
+    resolveRefMedia: (p: string) => Promise<
+      | { ok: true; url: string; fingerprint?: { size: number; mtimeMs: number } }
+      | { ok: false; reason: string }
+    >
+    /**
+     * Health check for pre-upload URLs persisted on workbench materials.
+     *
+     * Result is index-aligned with `items`. `keep:false` means "drop the cached
+     * URL and let submit re-upload from the local path" — it is the safe default
+     * whenever the local file changed or cannot be proven unchanged. With
+     * `checkRemote:false` only the local fingerprint is checked (cheap enough
+     * for the whole board at startup); `true` additionally HEADs the COS object.
+     */
+    verifyUploadedMaterials: (args: {
+      items: Array<{
+        src: string
+        uploadedUrl: string
+        uploadedFrom?: { src: string; size?: number; mtimeMs?: number }
+      }>
+      checkRemote: boolean
+    }) => Promise<
+      Array<{
+        keep: boolean
+        local: 'same' | 'changed' | 'missing' | 'unverifiable'
+        remote: 'alive' | 'dead' | 'unknown' | 'skipped'
+      }>
+    >
     /**
      * Resized-JPEG thumbnail hot path (PR-A of fix-codex-chat-image-attachment-lag).
      * Returns a small (~5–30 KB) JPEG sized so the longest edge is `size`
@@ -1913,10 +1941,18 @@ const electronAPI: ElectronAPI = {
         p,
       ),
     resolveRefMedia: (p: string) =>
-      safeInvoke<{ ok: true; url: string } | { ok: false; reason: string }>(
-        IPC_CHANNELS.ATTACHMENTS.RESOLVE_REF_MEDIA,
-        p,
-      ),
+      safeInvoke<
+        | { ok: true; url: string; fingerprint?: { size: number; mtimeMs: number } }
+        | { ok: false; reason: string }
+      >(IPC_CHANNELS.ATTACHMENTS.RESOLVE_REF_MEDIA, p),
+    verifyUploadedMaterials: (args) =>
+      safeInvoke<
+        Array<{
+          keep: boolean
+          local: 'same' | 'changed' | 'missing' | 'unverifiable'
+          remote: 'alive' | 'dead' | 'unknown' | 'skipped'
+        }>
+      >(IPC_CHANNELS.ATTACHMENTS.VERIFY_UPLOADED_MATERIALS, args),
     readMediaThumb: (args: { path: string; size?: number }) =>
       safeInvoke<
         | { ok: true; base64: string; mime: string; width?: number; height?: number }
