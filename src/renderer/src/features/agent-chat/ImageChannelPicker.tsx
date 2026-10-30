@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { IMAGE_CHANNELS, findImageChannel } from './imageChannels'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ImageChannelPanel } from './ImageChannelPanel'
+import { channelTriggerBadge, placeImageChannels } from './imageChannelPlacement'
 import { useAgentChatStore } from './store'
 
 interface ImageChannelPickerProps {
@@ -8,10 +9,15 @@ interface ImageChannelPickerProps {
 
 /**
  * Composer-footer dropdown that lets the user pick which image *channel* the
- * chat renders on (Flare / Sunburst / All 2.5 / Image2 / VIP / 腾讯 / Nano2 / Wan). The selection is authoritative:
- * every `generate_image` the agent runs uses it — the mirror of the GPT model
- * picker sitting right next to it. Options come straight from `IMAGE_CHANNELS`
- * so the list tracks the registry automatically.
+ * chat renders on (腾讯 image2 / 2.5 Flare / Sunburst / Seedream / Nano / 万相 / NovelAI …).
+ * The selection is the DEFAULT for every `generate_image` the agent runs — the mirror of
+ * the GPT model picker sitting right next to it (agent 显式传的合法 model 优先,见
+ * `AgentToolExecutor.resolveEffectiveImageChannel`)。
+ *
+ * 弹层是两栏「分区导航」面板(`ImageChannelPanel`,复刻 sora-ui 网页版的图像模型下拉):
+ * 左边 最近使用 / 常用 / 备用渠道 / 更多模型·按系列,右边是该分区的渠道。选项来自
+ * `IMAGE_CHANNELS`,摆放见 `imageChannelPlacement`;选择仍写进 `selectedImageChannel`,
+ * 对 store / MCP 没有任何改动。
  */
 export function ImageChannelPicker({ disabled }: ImageChannelPickerProps) {
   const selectedImageChannel = useAgentChatStore((state) => state.selectedImageChannel)
@@ -19,8 +25,11 @@ export function ImageChannelPicker({ disabled }: ImageChannelPickerProps) {
 
   const [isOpen, setIsOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
 
-  const selected = findImageChannel(selectedImageChannel) ?? IMAGE_CHANNELS[0]
+  const channels = useMemo(() => placeImageChannels(), [])
+  const selected = channels.find((c) => c.id === selectedImageChannel) ?? channels[0]
+  const badge = channelTriggerBadge(selected)
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -30,7 +39,10 @@ export function ImageChannelPicker({ disabled }: ImageChannelPickerProps) {
       }
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setIsOpen(false)
+      if (e.key !== 'Escape') return
+      setIsOpen(false)
+      // 焦点还在弹层里时,收起后把焦点还给触发按钮,键盘用户不会掉到页面顶部。
+      if (rootRef.current?.contains(document.activeElement)) triggerRef.current?.focus()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -48,14 +60,15 @@ export function ImageChannelPicker({ disabled }: ImageChannelPickerProps) {
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((v) => !v)}
         className="flex items-center gap-1.5 rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[11px] text-zinc-200 transition hover:border-fuchsia-400/40 hover:text-fuchsia-100 disabled:cursor-not-allowed disabled:opacity-50"
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-label={`出图渠道：${selected.fullLabel}`}
-        title={`出图渠道 · ${selected.fullLabel}`}
+        title={`出图渠道 · ${selected.fullLabel}（默认用它出图）`}
       >
         <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden className="opacity-80">
           <path
@@ -64,6 +77,11 @@ export function ImageChannelPicker({ disabled }: ImageChannelPickerProps) {
           />
         </svg>
         <span className="font-medium">{selected.label}</span>
+        {badge ? (
+          <span className="rounded bg-zinc-700/70 px-1 text-[9px] leading-[14px] text-zinc-300" data-testid="image-channel-trigger-badge">
+            {badge}
+          </span>
+        ) : null}
         <svg
           width="10"
           height="10"
@@ -77,52 +95,11 @@ export function ImageChannelPicker({ disabled }: ImageChannelPickerProps) {
 
       {isOpen ? (
         <div
-          role="listbox"
-          className="absolute bottom-full left-0 z-[40001] mb-2 w-[280px] overflow-hidden rounded-lg border border-fuchsia-400/25 bg-zinc-950/95 shadow-[0_24px_60px_rgba(0,0,0,0.6)] backdrop-blur"
+          role="dialog"
+          aria-label="出图渠道"
+          className="absolute bottom-full left-0 z-[40001] mb-2 w-[min(540px,calc(100vw-48px))] rounded-lg border border-fuchsia-400/25 bg-zinc-950/95 p-1.5 shadow-[0_24px_60px_rgba(0,0,0,0.6)] backdrop-blur"
         >
-          <div className="border-b border-zinc-800/80 px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-            出图渠道
-          </div>
-          <div className="max-h-[320px] overflow-y-auto py-1">
-            {IMAGE_CHANNELS.map((c) => {
-              const isActive = c.id === selectedImageChannel
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  role="option"
-                  aria-selected={isActive}
-                  onClick={() => handlePick(c.id)}
-                  className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition ${
-                    isActive
-                      ? 'bg-fuchsia-500/10 text-fuchsia-100'
-                      : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-fuchsia-100'
-                  }`}
-                  title={c.description}
-                >
-                  <span className="flex min-w-0 flex-col">
-                    <span className="truncate font-medium">{c.fullLabel}</span>
-                    <span className="truncate text-[10px] text-zinc-500">{c.description}</span>
-                  </span>
-                  {isActive ? (
-                    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden className="shrink-0">
-                      <path
-                        d="M2 6l3 3 5-6"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : null}
-                </button>
-              )
-            })}
-          </div>
-          <div className="border-t border-zinc-800/80 px-3 py-1.5 text-[10px] text-zinc-500">
-            选中的渠道决定 chat 出图用哪个模型
-          </div>
+          <ImageChannelPanel options={channels} selectedId={selected.id} onSelect={(c) => handlePick(c.id)} autoFocus />
         </div>
       ) : null}
     </div>

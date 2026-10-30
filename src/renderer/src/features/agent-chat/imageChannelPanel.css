@@ -1,0 +1,263 @@
+/* 出图渠道「分区导航」面板(ImageChannelPanel)。
+   结构与 sora-ui 网页版 ModelPanel 一一对应(类名 mrp-* → icp-*):左侧分区栏 + 右侧渠道列表,
+   右栏条目 = 粗体名称 + 灰色说明、8px 圆角、选中态着色。
+   配色走桌面端 Codex 页的 zinc + fuchsia(与旁边的模型选择器一致),网页版的蓝色锚点换成 fuchsia。
+   尺寸由宿主弹层决定:面板撑满宽度,高度取 --icp-height。 */
+.icp {
+  --icp-height: min(360px, calc(100vh - 200px));
+  --icp-fg: rgba(244, 244, 245, 0.82);
+  --icp-strong: rgba(250, 250, 250, 0.94);
+  --icp-muted: rgba(212, 212, 216, 0.5);
+  --icp-faint: rgba(212, 212, 216, 0.34);
+  --icp-hover: rgba(255, 255, 255, 0.06);
+  --icp-accent: #e879f9;
+  --icp-on-bg: rgba(217, 70, 239, 0.12);
+  --icp-on-hover: rgba(217, 70, 239, 0.2);
+  --icp-rail-bg: rgba(0, 0, 0, 0.28);
+  --icp-line: rgba(255, 255, 255, 0.07);
+
+  display: flex;
+  width: 100%;
+  height: var(--icp-height);
+  min-height: 0;
+  color: var(--icp-fg);
+  font-size: 13px;
+  text-align: left;
+}
+
+/* ── 分区栏 ── */
+.icp-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 0 0 148px;
+  min-width: 0;
+  padding: 4px;
+  margin-right: 6px;
+  border-radius: 8px;
+  background: var(--icp-rail-bg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.icp-rail::-webkit-scrollbar { display: none; }
+
+.icp-rail__label {
+  padding: 10px 8px 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: var(--icp-faint);
+  white-space: nowrap;
+}
+
+.icp-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icp-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.icp-tab:hover { background: var(--icp-hover); color: var(--icp-fg); }
+.icp-tab.is-on { background: rgba(255, 255, 255, 0.09); color: var(--icp-strong); font-weight: 600; }
+.icp-tab--sub { padding-left: 14px; }
+.icp-tab:focus-visible { outline: 2px solid var(--icp-accent); outline-offset: -2px; }
+
+.icp-tab__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.icp-tab__count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--icp-faint);
+  font-variant-numeric: tabular-nums;
+}
+.icp-tab__dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--icp-accent);
+  box-shadow: 0 0 6px var(--icp-accent);
+}
+
+/* ── 渠道列表 ── */
+.icp-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.icp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  min-width: 0;
+}
+.icp-head__title {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--icp-muted);
+}
+.icp-head__caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--icp-faint);
+}
+
+.icp-rows { display: flex; flex-direction: column; gap: 1px; }
+
+.icp-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: 8px;
+  transition: background 120ms ease;
+}
+.icp-row:hover { background: var(--icp-hover); }
+.icp-row.is-on { background: var(--icp-on-bg); }
+.icp-row.is-on:hover { background: var(--icp-on-hover); }
+
+.icp-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.icp-opt:focus-visible { outline: 2px solid var(--icp-accent); outline-offset: -2px; }
+
+.icp-opt__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.icp-opt__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.icp-row.is-on .icp-opt__name { color: var(--icp-accent); }
+.icp-opt__price {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--icp-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.icp-opt__desc {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--icp-muted);
+}
+
+.icp-chip {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* 固定按钮:悬停 / 聚焦到这一行时出现;已固定的常驻(点了能取消)。
+   叠在说明行右侧而不占一列,这样各分区的价格都右对齐在同一条线上。 */
+.icp-row--pinnable .icp-opt__desc { padding-right: 26px; }
+.icp-pin {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icp-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+.icp-row:hover .icp-pin,
+.icp-row:focus-within .icp-pin,
+.icp-row.is-pinned .icp-pin { opacity: 1; }
+.icp-pin:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); color: var(--icp-strong); }
+.icp-pin:disabled { cursor: not-allowed; }
+.icp-pin:focus-visible { opacity: 1; outline: 2px solid var(--icp-accent); outline-offset: -2px; }
+
+.icp-note {
+  margin-top: auto;
+  padding: 10px 10px 4px;
+  font-size: 10.5px;
+  color: var(--icp-faint);
+}
+
+/* ── 窄容器:分区栏变成顶部的横向标签,放不下就折行(不横向滚动,免得后面的系列被藏起来) ── */
+.icp--narrow { flex-direction: column; }
+.icp--narrow .icp-rail {
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 6px;
+  overflow: visible;
+}
+.icp--narrow .icp-tab { width: auto; flex-shrink: 0; min-height: 26px; }
+.icp--narrow .icp-tab--sub { padding-left: 8px; }
+.icp--narrow .icp-rail__label {
+  flex-shrink: 0;
+  padding: 0 4px 0 8px;
+  margin-left: 4px;
+  border-left: 1px solid var(--icp-line);
+}
+.icp--narrow .icp-head__caption { display: none; }
