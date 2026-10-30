@@ -54,6 +54,7 @@ export interface ImageChannel {
 /**
  * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×4(image2 / fast / 2.5 Flare / 2.5 Sunburst)
  * → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2(v8.2 快速 / 极速)
+ * → NovelAI ×4(V5 Full / V5 Curated / V4.5 Full / V4.5 Curated)
  * → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
  * 默认渠道是腾讯 image2 —— 顺序只影响显示,不改变回落目标。
  * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
@@ -153,6 +154,38 @@ export const IMAGE_CHANNELS = [
     label: '悠船极速',
     fullLabel: '悠船-v8.2-极速',
     description: '悠船 Midjourney V8.2 极速模式 — 同样一次生成 4 张、支持原生 2K 与参考图，出图更快，按次计费价高于快速档。',
+    miauOnly: true,
+  },
+  {
+    // NovelAI 经 TTAPI 聚合接入,Miau 网关渠道类型 77。四个模型按「每张图」固定价计费,`count`(1–4)
+    // 直接对应网关的 `n`,1K / 2K 同价。模型专属参数(角色提示词 / 负面词 / 采样器 / 图生图……)见
+    // `shared/imageModelParams` 的 `novelAiParamSpecs`,agent 可设、有默认值的带默认。
+    // 只有 V5 系列支持透明底;参考图只有「图生图」一种用法(氛围迁移 / 角色精准参考上游暂不可用)。
+    id: 'nai-diffusion-5-full',
+    label: 'NAI5 Full',
+    fullLabel: 'NovelAI V5 Full',
+    description: 'NovelAI V5 Full 动漫插画 — 支持角色提示词（最多 22 个）、图生图与透明底，一次最多 4 张，经 Miau 代理按张计费。',
+    miauOnly: true,
+  },
+  {
+    id: 'nai-diffusion-5-curated',
+    label: 'NAI5 Curated',
+    fullLabel: 'NovelAI V5 Curated',
+    description: 'NovelAI V5 Curated 动漫插画 — 能力同 V5 Full（角色提示词、图生图、透明底），一次最多 4 张，经 Miau 代理按张计费。',
+    miauOnly: true,
+  },
+  {
+    id: 'nai-diffusion-4-5-full',
+    label: 'NAI4.5 Full',
+    fullLabel: 'NovelAI V4.5 Full',
+    description: 'NovelAI V4.5 Full 动漫插画 — 支持角色提示词（最多 6 个）与图生图，不支持透明底，一次最多 4 张，经 Miau 代理按张计费。',
+    miauOnly: true,
+  },
+  {
+    id: 'nai-diffusion-4-5-curated',
+    label: 'NAI4.5 Curated',
+    fullLabel: 'NovelAI V4.5 Curated',
+    description: 'NovelAI V4.5 Curated 动漫插画 — 能力同 V4.5 Full（角色提示词、图生图，无透明底），一次最多 4 张，经 Miau 代理按张计费。',
     miauOnly: true,
   },
   {

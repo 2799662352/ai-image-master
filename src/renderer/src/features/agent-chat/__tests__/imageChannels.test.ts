@@ -17,7 +17,7 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×4 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×4 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
@@ -31,12 +31,28 @@ describe('imageChannels registry', () => {
       'qwen-image-3.0-pro',
       'youchuan-v8.2',
       'youchuan-v8.2-turbo',
+      'nai-diffusion-5-full',
+      'nai-diffusion-5-curated',
+      'nai-diffusion-4-5-full',
+      'nai-diffusion-4-5-curated',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-all',
       'gpt-image-2',
       'gpt-image-2-vip',
     ])
+  })
+
+  it('NovelAI 四个渠道都是网关代理的(Miau 专属)', () => {
+    for (const id of [
+      'nai-diffusion-5-full',
+      'nai-diffusion-5-curated',
+      'nai-diffusion-4-5-full',
+      'nai-diffusion-4-5-curated',
+    ]) {
+      expect(isMiauOnlyChannel(id), id).toBe(true)
+      expect(isSelectableImageChannel(id), id).toBe(true)
+    }
   })
 
   it('marks only the gateway-proxied channels as Miau-only', () => {

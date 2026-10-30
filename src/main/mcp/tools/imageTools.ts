@@ -7,7 +7,7 @@ import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './
 import { IMAGE_CHANNEL_IDS } from '../../../shared/imageChannels'
 import { IMAGE_PROMPT_BASE_DIRECTIVE } from './promptBaseDirective'
 import { READ_ONLY_REMOTE, WRITE_ADDITIVE_REMOTE } from './annotations'
-import { buildYouchuanModelParamsSchema } from './modelParamsSchema'
+import { buildChannelModelParamsSchema } from './modelParamsSchema'
 
 /** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
 interface BatchTaskResult {
@@ -339,8 +339,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (腾讯 / image2 fast / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Flare / Sunburst / All 2.5 / ' +
-      "Image2 / VIP / Nano2 / Nano2.1 / 万相 / 千问 / 悠船快速 / 悠船极速; default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
+      "composer picker (default 腾讯 image2) — OMIT this to honor the user's pick. Set it " +
       'ONLY when you have a concrete reason to ' +
       'override: pass "wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific ' +
       'channel the user explicitly asked for this turn (' +
@@ -351,8 +350,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'gpt-image-2-vip = OpenAI 官逆/vip — ONLY when the user names vip/官逆, do not pick it by default, ' +
       'custom-imagemodel-gt = 腾讯 image2 / TokenHub gtimage, ' +
       'custom-model-og-v2 = TokenHub og-image — 另一条腾讯渠道，更快(~20s)、便宜近 6 倍、可出多张, ' +
-      'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度可用; ' +
-      'same 2.5 abilities — transparentBackground / maskImage / xhigh,max — over the 腾讯 line), ' +
+      'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度; ' +
+      'same 2.5 abilities — transparentBackground / maskImage / xhigh,max), ' +
       'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
@@ -368,8 +367,11 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'pick it when the user asks for Midjourney / MJ / 悠船 / 悠船 v8; the two are the SAME model at ' +
       'two speeds (极速 is faster and costs more), each call returns 4 images billed ONCE with native 2K ' +
       'ON by default (×1.5), takes up to 20 http(s) reference images, and its extra knobs (chaos / ' +
-      'stylize / raw / style references …) go in `modelParams` — see that parameter). The ' +
-      'result reports the actual channel used in its `model` field.',
+      'stylize / raw / style references …) go in `modelParams` — see that parameter), ' +
+      'nai-diffusion-5-full / nai-diffusion-5-curated / nai-diffusion-4-5-full / nai-diffusion-4-5-curated = ' +
+      'NovelAI V5 / V4.5 (Full = 完整数据集, Curated = 精选集) — ONLY when the user asks for NovelAI / NAI / ' +
+      '动漫插画; billed PER IMAGE (`count` 1–4), at most ONE reference image. ' +
+      'The result reports the actual channel used in its `model` field.',
     )
 
   server.registerTool('generate_image', {
@@ -393,7 +395,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
       'INDEPENDENT variations of one prompt, use `count`>1 on model="qwen-image-3.0-pro" (1–6) or on ' +
       'the OpenAI 官转 channels gpt-image-2.5-flare / gpt-image-2.5-sunburst / gpt-image-2 and 腾讯 ' +
-      'custom-model-og-v2 / custom-model-og-v2.5-f / custom-model-og-v2.5-s (native `n`, 1–4, billed ' +
+      'custom-model-og-v2 / custom-model-og-v2.5-f / custom-model-og-v2.5-s and the four NovelAI ' +
+      'nai-diffusion-* channels (native `n`, 1–4, billed ' +
       'per image). Other channels ignore `count`; for ' +
       'unrelated images use generate_images. ' +
       'This tool ALSO does 图层分离 / layer splitting (turn one image into a base + transparent PNG ' +
@@ -423,8 +426,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'only when the user asks for fast/cheap/draft, 4K only for explicit print/ultra-detail. ' +
           'For `layerDecomposition` the tiers are DIFFERENT — only `auto` / `1K` / `1.5K` / `2K` ' +
           'are meaningful there, and `auto` is both the default and the right answer almost always ' +
-          '(it makes the output follow the input image\'s size and aspect ratio; a fixed tier ' +
-          'reprints the base layer at that tier so it no longer matches the image you asked to split). ' +
+          '(the output follows the input image\'s size and aspect ratio). ' +
           '`auto` / `1.5K` are split-only — on ordinary generation they fall back to the model default.',
         ),
       quality: z
@@ -443,7 +445,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'Render on a TRANSPARENT background (alpha PNG) — for 透明底 / 抠图 / 贴纸 / logo / 素材 / ' +
           '"no background" requests. Only honored by the GPT Image 2.5 channels: model="gpt-image-2.5-flare" / ' +
           '"gpt-image-2.5-sunburst" (OpenAI 官转) or "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 line, ' +
-          '平台额度) — pass one explicitly; every other channel ignores it ' +
+          '平台额度) or NovelAI "nai-diffusion-5-full" / "-5-curated" — pass one explicitly; ' +
+          'NovelAI V4.5 channels REJECT it; every other channel ignores it ' +
           'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
         ),
       count: z
@@ -460,9 +463,10 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
           'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
           '- model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" / "gpt-image-2" / ' +
-          '"custom-model-og-v2" / "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (up to 4): native ' +
-          'OpenAI `n` — ONE request returns count INDEPENDENT variations (text-to-image; the 腾讯 og ' +
-          'channels return 1 on edits). These channels are token-billed PER IMAGE, so ' +
+          '"custom-model-og-v2" / "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" / the NovelAI ' +
+          '"nai-diffusion-*" channels (up to 4): ' +
+          'ONE request returns count INDEPENDENT variations (text-to-image; the 腾讯 og ' +
+          'channels return 1 on edits). Billed PER IMAGE, so ' +
           'count=4 costs ~4× a single render — only go above 1 when the user wants options/variations.\n' +
           'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1 ' +
           '(the 悠船 channels always return exactly 4 per call, billed once, whatever `count` says). ' +
@@ -474,8 +478,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .optional()
         .describe(
           'Reference images for image-to-image / editing, as local file paths or data/http URLs. ' +
-          'Accepts MULTIPLE images — pass every relevant one (character + background, multiple ' +
-          'angles, subject + style ref), not just the first. ORDER IS IDENTITY: the Nth entry here is ' +
+          'Accepts MULTIPLE images — pass every relevant one, not just the first. ORDER IS IDENTITY: the Nth entry here is ' +
           '"reference image N" and the app keeps that order exactly (no dedupe, no silent drop). ' +
           'ONE ROLE LINE PER IMAGE — N references means N role lines in the prompt, matched by ordinal. ' +
           'People get a bound label ("Reference image 1 defines [char1]: <2-3 stable static features>."); ' +
@@ -525,7 +528,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'the user asks for a specific tier. The input image must be PNG or JPEG at 512px or larger; ' +
           'other formats (e.g. WebP) are transcoded automatically before the request goes out.',
         ),
-      modelParams: buildYouchuanModelParamsSchema(),
+      modelParams: buildChannelModelParamsSchema(),
     }).refine(
       // 空 prompt 只在图层拆分下合法 —— 上游把「缺席的 prompt」当作「自动全拆」，这是
       // 一句「图层分离」最想要的行为。普通生图的空 prompt 仍然拒绝(否则就是烧一张图的
@@ -662,7 +665,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'role. A batch is exactly where this goes wrong when skipped: the same character comes back ' +
           'with a different face on some of the images.',
         ),
-      modelParams: buildYouchuanModelParamsSchema(),
+      modelParams: buildChannelModelParamsSchema(),
     }),
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
