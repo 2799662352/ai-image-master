@@ -54,12 +54,12 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.8-omni-flash',
       'qwen3.8-max',
       'qwen3.8-flash',
-      // DeepSeek 组:只剩 Miau 的四行(可用平台余额)——官方渠道两个在前,
-      // 火山方舟的标准版 / 经济版在后。
-      'deepseek-flash',
-      'deepseek-v4-pro',
+      // DeepSeek 组:只剩 Miau 的四行(可用平台余额)——火山方舟的标准版 / 经济版
+      // 在前,官方渠道的 v4-pro / flash 在后(2026-10-30 产品要求调整次序)。
       'deepseek-v4-1-flash-261017',
       'deepseek-v4-1-flash-economy-261017',
+      'deepseek-v4-pro',
+      'deepseek-flash',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',

@@ -267,6 +267,17 @@ Pass 4: 一致性校验
 | 测试 | Vitest + Playwright |
 | 国际化 | 4 语言 (zh-CN/zh-TW/en/ru) |
 
+## Codex 页 DeepSeek (Miau) 通道:选择器次序与记忆模型
+
+2026-10-30 调整(`src/shared/modelSettings.ts`、`src/main/agent/gatewayModelRouting.ts`):
+
+- **选择器次序**:DeepSeek 组按 `火山 V4.1 Flash` → `火山 V4.1 Flash 经济版` → `DeepSeek V4 Pro` → `DeepSeek Flash` 排列(火山在前,官方在后,`v4-pro` 先于 `flash`)。次序以 `CANONICAL_MODEL_SETTINGS_ROWS` 为准;通道默认模型仍是 `deepseek-flash`。
+- **记忆模型**(`memories.extract_model` / `consolidation_model`)与会话自动起标题的模型:四个 DeepSeek 模型(火山两个 + 官方两个)**一律走火山标准版 `deepseek-v4-1-flash-261017`**(原为 `deepseek-flash`),在通道的 `memoriesModel` 里写一个固定值。
+  - 为什么是一个值而不是按对话模型分路:记忆模型是启动 Codex 时写死的 `-c` 参数,而同一通道内切换模型不会重启 Codex,分路会让它停在启动那一刻的值上(切换后过期)。一个值就没有这个问题,也不需要映射表。
+  - 通道默认对话模型不变,仍是 `deepseek-flash`。
+- **代价**:官方两个模型的用户也按火山标准版计费;同一时段它是 `deepseek-flash` 的 6.7 倍(单次记忆请求约 ¥0.0005 对 ¥0.00007),绝对值很小。
+- **未验证**:火山标准版还没有对生产网关跑过记忆请求(记忆请求失败是非致命的,只是白花一笔)。上线后看日志 `[thread-title] model=… ` 行与记忆产物确认能用。
+
 ## 许可证
 
 MIT License

@@ -123,16 +123,17 @@ describe('codexProviders', () => {
         credentialId: 'qwen',
         model: 'deepseek-flash',
         allowedModels: [
-          'deepseek-flash',
-          'deepseek-v4-pro',
           'deepseek-v4-1-flash-261017',
           'deepseek-v4-1-flash-economy-261017',
+          'deepseek-v4-pro',
+          'deepseek-flash',
         ],
         compatibilityPolicy: 'responses-namespace-bridge',
       })
       // 见 gatewayModelRouting 里那条注释:留空不等于「跟随对话模型」,而是跟随
       // **上次 spawn 那一刻**选中的模型 —— 那笔钱用户在 UI 上看不出来。
-      expect(deepseek.memoriesModel).toBe('deepseek-flash')
+      // 2026-10-30 起固定为火山标准版(原为 deepseek-flash),四个模型共用。
+      expect(deepseek.memoriesModel).toBe('deepseek-v4-1-flash-261017')
     }
 
     const apiyiGrok = resolveProviderChannel('apiyi-grok')
