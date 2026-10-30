@@ -294,6 +294,18 @@ Pass 4: 一致性校验
 - **没有动的**:`deploy/apiyi-fastmcp`(自己服务器上跑的 BYOK 版,见上面「远程 apiyi 网关」一节)、用户 `~/.cursor/mcp.json` 里 Cursor 自己的 `apiyi` / `apiyi-remote`、已持久化在 provider store 里的 `apiKeys["apiyi-mcp"]`(不再被读取,是 API易 key 的一份重复拷贝)。
 - **测试**:新增 `legacyApiyiMcpCleanup.test.ts`(8 条)、`stdioNodeCommand.test.ts`、`codexLaunch.test.ts` 里「apiyi MCP 已移除」3 条、`McpServerCard.test.tsx` 里 docker / 通用空工具提示 2 条。
 
+## NovelAI 四个模型接入(2026-10-30,PR1)
+
+对齐网关 new-api #174(渠道类型 77,TTAPI 聚合)与 sora-ui 的做法,桌面端新增四个出图渠道:`nai-diffusion-5-full` / `nai-diffusion-5-curated` / `nai-diffusion-4-5-full` / `nai-diffusion-4-5-curated`(V5 与 V4.5,各有 Full / Curated 两套数据集)。
+
+- **只经 Miau 网关**(`miauOnly`,出图时自动钉 Miau 站点)。按**每张图**固定价计费,`count` 1–4 直接对应网关的 `n`,1K / 2K 同价;新增厂商分组「NovelAI」。默认出图渠道不变。
+- **参数(`shared/imageModelParams.ts` 的 `novelAiParamSpecs`,生成页 / 批量页 / MCP 共用一张表)**:`dataset_mode`(anime / furry)、`negative_prompt`、`characters`(角色提示词,每个角色 prompt + uc + 位置 x / y;V5 ≤ 22、V4.5 ≤ 6)、`steps`、`scale`、`sampler`、`noise_schedule`、`seed`、`img2img_strength` / `img2img_noise`(仅带 1 张参考图时生效)。未设置 = 自动 / 默认;**越界一律拒绝而不是截断**(按张计费)。透明底(`transparentBackground`)只有 V5;参考图至多 1 张(图生图)。氛围迁移 / 角色精准参考上游暂不可用,不暴露。
+- **生成页**:`ModelParamsPanel` 支持多行文本框(负面提示词)、角色提示词编辑器、「默认 N」占位符;值等于默认时清掉键,不把默认值当成「用户改过」存下来。NovelAI 不自动重试(`maxRetries: 0`),失败后由用户决定是否重来。
+- **MCP**:`generate_image` / `generate_images` 的 `modelParams` 现在是「悠船 ∪ NovelAI」的合并 schema(`modelParamsSchema.ts` 的 `buildChannelModelParamsSchema`,同名键 `seed` 定义一致),说明里写明各自只对自己的渠道生效、其它渠道忽略。为了压回 Codex 的 16384 字节工具 schema 预算(`toolSchemaBudget.test.ts`),同时把说明里重复的内容去掉:`generate_image` 接入后一度到 17845 字节,压到 16384 以内(余量不大,以后再加渠道要先看这条测试)。
+- **技能**:`catimation-image` 补 NovelAI 四条渠道与用法(点名 NovelAI / 动漫插画 / 多角色同框时选用),`commands/gen-image.md` 补渠道清单;skill 正文有 21500 字符的债务钉(只许缩不许涨),本次从 21490 压到 21447(顺手去掉了几处重复的「常见错误」条目和日期轶事)。`firstPartySkills.generated.ts` 已重新生成。
+- **没做 / 没验证**:① **没有对真实网关出过图**(要用户确认过的测试令牌,且每张约 ¥0.6);② 64 张风格封面选择器是二期;③ **插件市场(catimation-core 的 catimation-image)还没发布**,发布要用户点头;④ Codex 页「出图渠道」选择器改成两栏(PR2)还没做。
+- **测试**:新增 `imageModelParams.novelai` / `ApiService.novelai` / `imageTools.novelai` / `ModelParamsPanel.novelai` 四个测试文件;相关目录 217 个文件 2798 条全过,`typecheck:ci` 7 existing / 0 new,`audit:skill-arch` 0 违规,`test:skill-arch` 21/21,`skills:gen:check` parity。
+
 ## 许可证
 
 MIT License

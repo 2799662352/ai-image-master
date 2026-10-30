@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import { registerImageTools } from '../imageTools'
 import { ImageTaskManager } from '../imageTaskRegistry'
-import { YOUCHUAN_V8_PARAM_SPECS } from '../../../../shared/imageModelParams'
+import { NOVELAI_V5_PARAM_SPECS, YOUCHUAN_V8_PARAM_SPECS } from '../../../../shared/imageModelParams'
 
 type Handler = (params: Record<string, unknown>) => Promise<{ content: Array<Record<string, unknown>> }>
 type Captured = {
@@ -183,12 +183,12 @@ describe('registerImageTools / generate_image schema', () => {
     }
     const withParams = (modelParams: unknown) => ({ prompt: 'x', model: 'youchuan-v8.2', modelParams })
 
-    it('schema 的键就是共享参数表的键(单一事实来源,加参数不会漏一边)', () => {
+    it('schema 的键就是共享参数表的键(悠船 + NovelAI 的并集;单一事实来源,加参数不会漏一边)', () => {
       const { single, batch } = schemas()
       for (const schema of [single, batch]) {
         const field = schema.shape.modelParams as { unwrap: () => { shape: Record<string, unknown> } }
         expect(Object.keys(field.unwrap().shape).sort()).toEqual(
-          YOUCHUAN_V8_PARAM_SPECS.map((s) => s.key).sort(),
+          [...new Set([...YOUCHUAN_V8_PARAM_SPECS, ...NOVELAI_V5_PARAM_SPECS].map((s) => s.key))].sort(),
         )
       }
     })

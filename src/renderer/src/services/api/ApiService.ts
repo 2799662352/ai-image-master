@@ -12,10 +12,17 @@ import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
 import type { ModelVendor } from './modelVendors'
 import {
+  NOVELAI_MAX_PROMPT_CHARS,
+  NOVELAI_MAX_REFERENCE_IMAGES,
+  NOVELAI_MODEL_IDS,
+  NOVELAI_RESOLUTION_MAP,
+  novelAiFamilyOfModel,
+  novelAiParamSpecsForModel,
   YOUCHUAN_MAX_REFERENCE_IMAGES,
   YOUCHUAN_MODEL_IDS,
   YOUCHUAN_V8_PARAM_SPECS,
   resolveModelParams,
+  type CharacterParamValue,
   type ModelParamSpec,
 } from '../../../../shared/imageModelParams'
 
@@ -903,6 +910,145 @@ function validateYouchuanRequest(options: {
   }
   if (hasNonHttpReference) {
     return '悠船只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。'
+  }
+  return null
+}
+
+/**
+ * NovelAI(经 TTAPI,网关渠道类型 77)四个模型。**形态与悠船相反**:是 OpenAI 兼容外壳,
+ * 比例 × 清晰度翻成 `size`,张数走 `n`,模型专属字段(角色提示词 / 负面词 / 采样参数 / 图生图)
+ * 平铺在顶层 —— 具体见 `buildNovelAiPayload`。
+ *
+ *  - **按张固定价计费**:网关按实际返回张数放大单价,1K 与 2K 同价,所以开原生数量轴(最多 4 张);
+ *  - 只有 V5 系列有透明底;V5 角色提示词最多 22 个、V4.5 最多 6 个;
+ *  - 参考图只有「图生图」一种用法(恰好 1 张、只收链接);氛围迁移 / 角色精准参考上游暂不可用,不开口子;
+ *  - **不自动重试 5xx**:按张计费,上游可能已经开跑,重试 = 多扣一次。失败由用户在界面上重试。
+ */
+const NOVELAI_IMAGE_MODELS: ReadonlySet<string> = new Set(NOVELAI_MODEL_IDS)
+
+/** NovelAI 支持的画幅:与 {@link NOVELAI_RESOLUTION_MAP} 的键一一对应(不含「自适应」,每个比例都对应确定的像素)。 */
+const NOVELAI_RATIOS: RatioOption[] = [
+  { key: '1:1', label: '方形 1:1', description: '常用' },
+  { key: '3:2', label: '横版 3:2', description: '经典' },
+  { key: '2:3', label: '竖版 2:3', description: '经典' },
+  { key: '4:3', label: '横版 4:3', description: '标准' },
+  { key: '3:4', label: '竖版 3:4', description: '标准' },
+  { key: '16:9', label: '横版 16:9', description: '宽屏' },
+  { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+]
+
+const NOVELAI_RESOLUTIONS: ResolutionOption[] = [
+  { key: '1K', label: '1K 标准', description: '约 100 万像素' },
+  { key: '2K', label: '2K 高清', description: '约 200 万像素' },
+]
+
+/**
+ * NovelAI 四个模型共用的配置骨架。V5 / V4.5 的差别只有参数表(角色数上限)与透明底能力位,
+ * 都由 `id` 推出,调用方只给文案。
+ */
+function novelAiModelConfig(id: string, copy: { name: string; displayName: string; isNew?: boolean }): ModelConfig {
+  const isV5 = novelAiFamilyOfModel(id) === 'v5'
+  return {
+    name: copy.name,
+    vendor: 'novelai',
+    displayName: copy.displayName,
+    // 不写 `time`:没有实测耗时,宁可不显示预计时间也不编一个。
+    isNew: copy.isNew ?? true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'image-generation',
+    sizeStrategy: 'resolution-map',
+    ratios: NOVELAI_RATIOS,
+    resolutions: NOVELAI_RESOLUTIONS,
+    defaultResolution: '1K',
+    resolutionMap: NOVELAI_RESOLUTION_MAP as Record<string, Record<string, string>>,
+    capabilities: {
+      multipleImages: true,
+      customSize: false,
+      referenceImage: true,
+      imageEdit: false,
+      maxOutputs: 4,
+      nativeBatch: true,
+      maxReferenceImages: NOVELAI_MAX_REFERENCE_IMAGES,
+      resolutionControl: true,
+      transparentBackgroundControl: isV5,
+      modelParams: novelAiParamSpecsForModel(id),
+    },
+  }
+}
+
+/** 通用 `negativePrompt` / `seed` 是 `negative_prompt` / `seed` 的别名;`modelParams` 里设了的优先。 */
+function mergeNovelAiInput(
+  modelParams: Record<string, unknown> | undefined,
+  negativePrompt: string | undefined,
+  seed: number | undefined,
+): Record<string, unknown> {
+  const input: Record<string, unknown> = { ...modelParams }
+  const unset = (v: unknown) => v === undefined || v === null || v === '' || (typeof v === 'string' && !v.trim())
+  if (unset(input.negative_prompt) && typeof negativePrompt === 'string' && negativePrompt.trim()) {
+    input.negative_prompt = negativePrompt
+  }
+  if (unset(input.seed) && typeof seed === 'number' && Number.isFinite(seed) && seed >= 0) {
+    input.seed = Math.floor(seed)
+  }
+  return input
+}
+
+/**
+ * 比例 × 清晰度 → `WxH`。缺省 / `auto` 比例落到 1:1(没有「自适应」:每档像素都是确定的);
+ * 不认识的比例 / 清晰度**拒绝而不是纠正** —— 按张计费,悄悄换成别的尺寸等于出了一张没要的图。
+ */
+function resolveNovelAiSize(ratio?: string, resolution?: string): { size: string } | { error: string } {
+  const ratioKey = !ratio || ratio === 'auto' ? '1:1' : ratio
+  const row = NOVELAI_RESOLUTION_MAP[ratioKey]
+  if (!row) {
+    return { error: `NovelAI 不支持画幅「${ratio}」，可选：${Object.keys(NOVELAI_RESOLUTION_MAP).join(' / ')}。` }
+  }
+  const resKey = (resolution || '1K').toUpperCase()
+  const size = row[resKey]
+  if (!size) {
+    return { error: `NovelAI 只支持 ${Object.keys(row).join(' / ')} 清晰度，当前是「${resolution}」。` }
+  }
+  return { size }
+}
+
+/**
+ * NovelAI 一次请求的事前校验:提示词 / 画幅 / 清晰度 / 透明底 / 参数 / 参考图。
+ * 返回中文错误(null = 通过);与悠船同样**在 `generateImage` 的 try 之外调用**,理由见
+ * {@link validateYouchuanRequest}。
+ */
+function validateNovelAiRequest(options: {
+  model: string
+  prompt: string
+  ratio?: string
+  resolution?: string
+  modelParams?: Record<string, unknown>
+  negativePrompt?: string
+  seed?: number
+  transparentBackground?: boolean
+  referenceCount: number
+  hasNonHttpReference: boolean
+  specs: readonly ModelParamSpec[]
+}): string | null {
+  const { model, prompt, ratio, resolution, modelParams, negativePrompt, seed, transparentBackground, referenceCount, hasNonHttpReference, specs } = options
+  if (!prompt || !prompt.trim()) return 'NovelAI 需要提示词，请先写下要画的内容。'
+  if (Array.from(prompt).length > NOVELAI_MAX_PROMPT_CHARS) {
+    return `NovelAI 提示词最长 ${NOVELAI_MAX_PROMPT_CHARS} 个字符，请精简后重试。`
+  }
+  const sized = resolveNovelAiSize(ratio, resolution)
+  if ('error' in sized) return sized.error
+  if (transparentBackground && novelAiFamilyOfModel(model) !== 'v5') {
+    return 'NovelAI V4.5 不支持透明背景，请改用 V5 系列，或关闭透明背景。'
+  }
+  const resolved = resolveModelParams(specs, mergeNovelAiInput(modelParams, negativePrompt, seed))
+  if (resolved.errors.length > 0) {
+    return `NovelAI 参数有误：${resolved.errors.join('；')}`
+  }
+  if (referenceCount > NOVELAI_MAX_REFERENCE_IMAGES) {
+    return `NovelAI 图生图只支持 ${NOVELAI_MAX_REFERENCE_IMAGES} 张参考图，当前传了 ${referenceCount} 张，请删减后重试。`
+  }
+  if (hasNonHttpReference) {
+    return 'NovelAI 只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。'
   }
   return null
 }
@@ -1839,6 +1985,23 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     displayName: '悠船 Midjourney V8.2 极速模式，一次生成 4 张，支持原生 2K 与参考图（经 Miau API 代理，按次计费，价格高于快速档）',
     time: '30s',
   }),
+  // NovelAI(经 TTAPI)。V5 / V4.5 各有 Full 与 Curated 两版,见 NOVELAI_IMAGE_MODELS。
+  'nai-diffusion-5-full': novelAiModelConfig('nai-diffusion-5-full', {
+    name: 'NovelAI V5 Full',
+    displayName: 'NovelAI V5 Full 动漫插画，支持角色提示词（最多 22 个）、图生图与透明背景，一次最多 4 张（经 Miau API 代理，按张计费）',
+  }),
+  'nai-diffusion-5-curated': novelAiModelConfig('nai-diffusion-5-curated', {
+    name: 'NovelAI V5 Curated',
+    displayName: 'NovelAI V5 Curated 动漫插画，能力同 V5 Full：角色提示词、图生图、透明背景，一次最多 4 张（经 Miau API 代理，按张计费）',
+  }),
+  'nai-diffusion-4-5-full': novelAiModelConfig('nai-diffusion-4-5-full', {
+    name: 'NovelAI V4.5 Full',
+    displayName: 'NovelAI V4.5 Full 动漫插画，支持角色提示词（最多 6 个）与图生图，不支持透明背景，一次最多 4 张（经 Miau API 代理，按张计费）',
+  }),
+  'nai-diffusion-4-5-curated': novelAiModelConfig('nai-diffusion-4-5-curated', {
+    name: 'NovelAI V4.5 Curated',
+    displayName: 'NovelAI V4.5 Curated 动漫插画，能力同 V4.5 Full：角色提示词、图生图，不支持透明背景，一次最多 4 张（经 Miau API 代理，按张计费）',
+  }),
   'sora_image': {
     name: 'Sora Image',
     vendor: 'openai',
@@ -1921,7 +2084,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
  * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
- * 千问 → 悠船(快速 → 极速)→ Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
+ * 千问 → 悠船(快速 → 极速)→ NovelAI(V5 Full → V5 Curated → V4.5 Full → V4.5 Curated)
+ * → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
  */
@@ -1937,6 +2101,10 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'qwen-image-3.0-pro',
   'youchuan-v8.2',
   'youchuan-v8.2-turbo',
+  'nai-diffusion-5-full',
+  'nai-diffusion-5-curated',
+  'nai-diffusion-4-5-full',
+  'nai-diffusion-4-5-curated',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-all',
@@ -2005,6 +2173,26 @@ export class ApiService {
       const invalid = validateYouchuanRequest({
         ratio,
         modelParams,
+        referenceCount: refSources.length,
+        hasNonHttpReference: normalizedRefs.some((s) => !s || !/^https?:\/\//i.test(s)),
+        specs: modelConfig.capabilities?.modelParams ?? [],
+      })
+      if (invalid) return { success: false, error: invalid }
+    }
+
+    // NovelAI 同样按张计费:提示词 / 画幅 / 清晰度 / 透明底 / 参数 / 参考图不合法一律出网前拒掉。
+    if (NOVELAI_IMAGE_MODELS.has(modelKey)) {
+      const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+      const normalizedRefs = refSources.map((s) => this.normalizeImageSource(s))
+      const invalid = validateNovelAiRequest({
+        model: modelKey,
+        prompt,
+        ratio,
+        resolution,
+        modelParams,
+        negativePrompt,
+        seed,
+        transparentBackground,
         referenceCount: refSources.length,
         hasNonHttpReference: normalizedRefs.some((s) => !s || !/^https?:\/\//i.test(s)),
         specs: modelConfig.capabilities?.modelParams ?? [],
@@ -2106,7 +2294,8 @@ export class ApiService {
         // 给 2 次重试(共 3 次尝试)+ 指数退避(2s、4s)，覆盖上游高峰期的短暂抖动。
         // 悠船例外:按次计费且上游可能已经开跑,5xx 后重试 = 多扣一次(一次还是 4 张的价),
         // 所以一次都不自动重试,失败交给用户在界面上点重试。
-        YOUCHUAN_IMAGE_MODELS.has(modelKey)
+        // NovelAI 同理:按张计费,上游可能已经开跑,重试 = 多扣一次。
+        YOUCHUAN_IMAGE_MODELS.has(modelKey) || NOVELAI_IMAGE_MODELS.has(modelKey)
           ? { maxRetries: 0 }
           : { maxRetries: 2, retryDelay: 2000 }
       )
@@ -2913,6 +3102,7 @@ export class ApiService {
       negativePrompt,
       seed,
       count,
+      transparentBackground,
       modelConfig,
       layerDecomposition,
       modelParams
@@ -3465,15 +3655,24 @@ export class ApiService {
     negativePrompt?: string
     seed?: number
     count?: number
+    transparentBackground?: boolean
     modelConfig: ModelConfig
     layerDecomposition?: boolean
     modelParams?: Record<string, unknown>
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, modelConfig, layerDecomposition, modelParams } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, transparentBackground, modelConfig, layerDecomposition, modelParams } = options
 
     // 悠船(Midjourney):自己的一套请求形态(顶层 aspect_ratio + 模型专属参数,无 size / n)
     if (YOUCHUAN_IMAGE_MODELS.has(model)) {
       return this.buildYouchuanPayload({ prompt, model, ratio, referenceImages, imageBase64, seed, modelConfig, modelParams })
+    }
+
+    // NovelAI(经 TTAPI):OpenAI 兼容外壳 + 顶层专属字段(size / n / character_prompts / 采样参数……)
+    if (NOVELAI_IMAGE_MODELS.has(model)) {
+      return this.buildNovelAiPayload({
+        prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count,
+        transparentBackground, modelConfig, modelParams,
+      })
     }
 
     // Gemini Native 格式
@@ -3577,6 +3776,102 @@ export class ApiService {
     }
 
     Object.assign(payload, resolved.values)
+    return payload
+  }
+
+  /**
+   * 构建 NovelAI(经 TTAPI,网关渠道类型 77)请求体。字段与网关 `relay/channel/ttapi/request.go`
+   * 读取的一一对应:
+   *
+   *  - `size`:`W×H` 由「比例 × 清晰度」查 {@link NOVELAI_RESOLUTION_MAP}(每边 64 的倍数);
+   *  - `n`:张数 1–4,网关按实际返回张数放大单价;
+   *  - `background: 'transparent'`:仅 V5,调用方要了才发(V4.5 在入口校验就被拒,这里再兜一层);
+   *  - `image`:图生图底图,**只收 http(s) 链接、恰好 1 张**(网关还收 base64,但「媒体一律传 URL」);
+   *  - `character_prompts`:`[{ prompt, uc?, center:{x,y} }]`,由界面 / agent 的 `characters` 翻来;
+   *  - `strength` / `noise`:**只在带底图时发**(网关对无底图带这两项直接 400),来自
+   *    `img2img_strength` / `img2img_noise`;
+   *  - 其余是 `modelParams` 里声明过的键(`dataset_mode` / `negative_prompt` / `steps` / `scale` /
+   *    `sampler` / `noise_schedule` / `seed`),默认值 + 用户值。
+   *
+   * 通用 `negativePrompt` / `seed` 参数分别是 `negative_prompt` / `seed` 的别名(`modelParams` 优先),
+   * 免得 agent 按通用参数传了却被静默忽略。**刻意不发**氛围迁移 / 角色精准参考:上游目前一律失败。
+   *
+   * 校验在 `generateImage` 入口做过(返回中文错误、不出网);这里再兜一层并**抛错**,因为这个方法
+   * 也被直接调用,带病外发 = 白扣一次钱。
+   */
+  private buildNovelAiPayload(options: {
+    prompt: string
+    model: string
+    ratio?: string
+    resolution?: string
+    referenceImages?: string[]
+    imageBase64?: string
+    negativePrompt?: string
+    seed?: number
+    count?: number
+    transparentBackground?: boolean
+    modelConfig: ModelConfig
+    modelParams?: Record<string, unknown>
+  }): Record<string, unknown> {
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, negativePrompt, seed, count, transparentBackground, modelConfig, modelParams } = options
+
+    const specs = modelConfig.capabilities?.modelParams ?? novelAiParamSpecsForModel(model)
+    const resolved = resolveModelParams(specs, mergeNovelAiInput(modelParams, negativePrompt, seed))
+    if (resolved.errors.length > 0) {
+      throw new Error(`NovelAI 参数有误：${resolved.errors.join('；')}`)
+    }
+
+    const sized = resolveNovelAiSize(ratio, resolution)
+    if ('error' in sized) throw new Error(sized.error)
+
+    const payload: Record<string, unknown> = {
+      model,
+      prompt,
+      size: sized.size,
+      n: this.resolveImagesApiCount(count, modelConfig),
+    }
+
+    if (transparentBackground) {
+      if (novelAiFamilyOfModel(model) !== 'v5') {
+        throw new Error('NovelAI V4.5 不支持透明背景，请改用 V5 系列，或关闭透明背景。')
+      }
+      payload.background = 'transparent'
+    }
+
+    const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+    if (refSources.length > NOVELAI_MAX_REFERENCE_IMAGES) {
+      throw new Error(`NovelAI 图生图只支持 ${NOVELAI_MAX_REFERENCE_IMAGES} 张参考图，当前传了 ${refSources.length} 张，请删减后重试。`)
+    }
+    const hasReference = refSources.length > 0
+    if (hasReference) {
+      const url = this.normalizeImageSource(refSources[0])
+      if (!url || !/^https?:\/\//i.test(url)) {
+        throw new Error('NovelAI 只接受 http/https 的参考图链接，不接受本地文件或 base64。请先把参考图上传成链接再试。')
+      }
+      payload.image = url
+    }
+
+    for (const [key, value] of Object.entries(resolved.values)) {
+      switch (key) {
+        case 'characters':
+          if (Array.isArray(value) && value.length > 0) {
+            payload.character_prompts = (value as CharacterParamValue[]).map((c) => ({
+              prompt: c.prompt,
+              ...(c.uc ? { uc: c.uc } : {}),
+              center: { x: c.x, y: c.y },
+            }))
+          }
+          break
+        case 'img2img_strength':
+          if (hasReference) payload.strength = value
+          break
+        case 'img2img_noise':
+          if (hasReference) payload.noise = value
+          break
+        default:
+          payload[key] = value
+      }
+    }
     return payload
   }
 

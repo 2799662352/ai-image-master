@@ -22,7 +22,21 @@
  * 这样「全部恢复自动」就是清空用户值,不需要知道每个参数的默认是多少。
  */
 
-export type ModelParamValue = boolean | number | string | string[]
+/**
+ * NovelAI 的「角色提示词」:每个角色一段提示词 + 画面位置。x / y 取 0–1
+ * (0 = 左 / 上,1 = 右 / 下,缺省 0.5 居中)。`enabled === false` 是界面上留着没删的草稿,
+ * 校验时直接丢弃,归一后的输出不再带 `enabled`。
+ */
+export interface CharacterParamValue {
+  prompt: string
+  /** 该角色的负面提示词,空则不出现。 */
+  uc?: string
+  x: number
+  y: number
+  enabled?: boolean
+}
+
+export type ModelParamValue = boolean | number | string | string[] | CharacterParamValue[]
 export type ModelParamValues = Record<string, ModelParamValue>
 
 export interface ModelParamOption {
@@ -34,7 +48,7 @@ export interface ModelParamSpec {
   /** 请求体字段名(原样外发),也是 `ModelParamValues` 的键。 */
   key: string
   label: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'urls'
+  type: 'switch' | 'select' | 'number' | 'text' | 'urls' | 'characters'
   description?: string
   /** 高级参数:界面折叠在「高级参数」里,默认不展开。 */
   advanced?: boolean
@@ -54,9 +68,11 @@ export interface ModelParamSpec {
   step?: number
   // text
   maxLength?: number
+  /** 界面用多行输入框(反向提示词这类长文本);不影响校验与外发。 */
+  multiline?: boolean
   /** 拒绝文本里出现 `--`:悠船的 `no` 会被拼进 `--no`,内嵌别的 `--flag` 能绕过版本 / 速度锁。 */
   forbidDashFlags?: boolean
-  // urls
+  // urls / characters
   maxItems?: number
 }
 
@@ -194,6 +210,190 @@ export function isYouchuanModel(id: unknown): boolean {
   return typeof id === 'string' && (YOUCHUAN_MODEL_IDS as readonly string[]).includes(id)
 }
 
+// ───────────────────────── NovelAI(经 TTAPI,网关渠道类型 77) ─────────────────────────
+
+/**
+ * NovelAI 四个模型,id 与网关模型名一致(`nai-diffusion-*`)。
+ *
+ * 网关把 `POST /v1/images/generations` 做成同步门面(提交 TTAPI → 轮询 → 返回 `data[].url`),
+ * **按「每张图」固定价计费**,`n`(1–4)按实际返回张数放大价格,1K 与 2K 同价,所以界面开原生数量轴
+ * (`nativeBatch`)。键名 / 范围 / 默认值对照 new-api #174 的 `relay/channel/ttapi/request.go`
+ * 与网页版 #277,逐项一致 —— 网关对越界值直接 400,桌面端在出网前先拒掉。
+ */
+export const NOVELAI_MODEL_IDS = [
+  'nai-diffusion-5-full',
+  'nai-diffusion-5-curated',
+  'nai-diffusion-4-5-full',
+  'nai-diffusion-4-5-curated',
+] as const
+
+export type NovelAiFamily = 'v5' | 'v45'
+
+export function isNovelAiModel(id: unknown): boolean {
+  return typeof id === 'string' && (NOVELAI_MODEL_IDS as readonly string[]).includes(id)
+}
+
+/** V5 / V4.5 两个系列:V5 支持透明底且角色提示词上限更高。不认识的 id 返回 null。 */
+export function novelAiFamilyOfModel(id: unknown): NovelAiFamily | null {
+  if (typeof id !== 'string') return null
+  if (id.startsWith('nai-diffusion-5-')) return 'v5'
+  if (id.startsWith('nai-diffusion-4-5-')) return 'v45'
+  return null
+}
+
+/** 提示词(含角色提示词之外的主提示词)上限,与网关一致。 */
+export const NOVELAI_MAX_PROMPT_CHARS = 4000
+/** 负面提示词上限,与网关一致。 */
+export const NOVELAI_MAX_NEGATIVE_PROMPT_CHARS = 2000
+/** 角色提示词条数上限:V5 22 / V4.5 6,与网关一致。 */
+export const NOVELAI_V5_MAX_CHARACTERS = 22
+export const NOVELAI_V45_MAX_CHARACTERS = 6
+/** 单个角色的提示词 / 负面提示词字数上限。 */
+export const NOVELAI_CHARACTER_PROMPT_MAX_CHARS = 2000
+export const NOVELAI_CHARACTER_UC_MAX_CHARS = 1000
+/**
+ * 参考图只有「图生图」一种用法,恒为 1 张。氛围迁移(vibe_transfer)与角色精准参考
+ * (character_reference)上游 TTAPI 目前一律失败(网关 #174 / 网页版 #277 都已禁用),
+ * 桌面端不开口子;上游恢复后在这里加 `reference_mode` 即可。
+ */
+export const NOVELAI_MAX_REFERENCE_IMAGES = 1
+
+/** 比例 × 清晰度 → 像素尺寸。每条边都是 64 的倍数(NovelAI 的硬约束),源头即 ASCII `x`。 */
+export const NOVELAI_RESOLUTION_MAP: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  '1:1': { '1K': '1024x1024', '2K': '1536x1536' },
+  '3:2': { '1K': '1216x832', '2K': '1856x1280' },
+  '2:3': { '1K': '832x1216', '2K': '1280x1856' },
+  '4:3': { '1K': '1152x896', '2K': '1728x1344' },
+  '3:4': { '1K': '896x1152', '2K': '1344x1728' },
+  '16:9': { '1K': '1344x768', '2K': '1920x1088' },
+  '9:16': { '1K': '768x1344', '2K': '1088x1920' },
+}
+
+/**
+ * NovelAI 参数表。每个系列一份(角色提示词上限不同),其余完全相同。
+ *
+ * 与悠船不同,这里**有**产品默认值(步数 23 / CFG 5 / 采样器 Euler Ancestral / 噪声调度 karras /
+ * 数据集 anime / 图生图强度 0.7),与网页版一致 —— 请求体总会带上它们,界面上的「自动」就是默认值。
+ * `img2img_strength` / `img2img_noise` 只在带参考图时外发(装配时翻成网关的 `image` / `strength` / `noise`)。
+ */
+export function novelAiParamSpecs(family: NovelAiFamily): readonly ModelParamSpec[] {
+  const maxCharacters = family === 'v5' ? NOVELAI_V5_MAX_CHARACTERS : NOVELAI_V45_MAX_CHARACTERS
+  return [
+    {
+      key: 'dataset_mode',
+      label: '数据集模式',
+      type: 'select',
+      valueType: 'string',
+      description: '兽人模式会在提示词最前面加 `fur dataset,`',
+      options: [
+        { key: 'anime', label: '动漫' },
+        { key: 'furry', label: '兽人' },
+      ],
+      defaultValue: 'anime',
+    },
+    {
+      key: 'negative_prompt',
+      label: '负面提示词',
+      type: 'text',
+      multiline: true,
+      maxLength: NOVELAI_MAX_NEGATIVE_PROMPT_CHARS,
+      description: '不希望出现的内容，用逗号分隔',
+    },
+    {
+      key: 'characters',
+      label: '角色提示词',
+      type: 'characters',
+      maxItems: maxCharacters,
+      description: `为画面里的每个角色单独写提示词并指定位置（x / y 取 0–1，0 为左 / 上，1 为右 / 下），最多 ${maxCharacters} 个`,
+    },
+    {
+      key: 'steps',
+      label: '采样步数',
+      type: 'number',
+      integer: true,
+      min: 1,
+      max: 50,
+      advanced: true,
+      defaultValue: 23,
+      description: '步数越多越精细但越慢（1–50）',
+    },
+    {
+      key: 'scale',
+      label: '提示词相关性 (CFG)',
+      type: 'number',
+      step: 0.1,
+      min: 0,
+      max: 10,
+      advanced: true,
+      defaultValue: 5,
+      description: '数值越高越贴近提示词（0–10）',
+    },
+    {
+      key: 'sampler',
+      label: '采样器',
+      type: 'select',
+      valueType: 'string',
+      advanced: true,
+      defaultValue: 'Euler Ancestral',
+      options: ['Euler Ancestral', 'Euler', 'DPM++ 2S Ancestral', 'DPM++ 2M SDE', 'DPM++ 2M', 'DPM++ SDE'].map(
+        (key) => ({ key, label: key }),
+      ),
+    },
+    {
+      key: 'noise_schedule',
+      label: '噪声调度',
+      type: 'select',
+      valueType: 'string',
+      advanced: true,
+      defaultValue: 'karras',
+      options: ['karras', 'exponential', 'polyexponential'].map((key) => ({ key, label: key })),
+    },
+    {
+      key: 'seed',
+      label: '随机种子',
+      type: 'number',
+      integer: true,
+      min: 0,
+      max: 4294967295,
+      advanced: true,
+      description: '固定种子可复现相近的构图（0–4294967295）',
+    },
+    {
+      key: 'img2img_strength',
+      label: '图生图强度',
+      type: 'number',
+      step: 0.05,
+      min: 0.01,
+      max: 0.99,
+      advanced: true,
+      defaultValue: 0.7,
+      description: '仅带参考图（图生图）时生效：越大越偏离参考图（0.01–0.99）',
+    },
+    {
+      key: 'img2img_noise',
+      label: '图生图噪声',
+      type: 'number',
+      step: 0.05,
+      min: 0,
+      max: 0.99,
+      advanced: true,
+      defaultValue: 0,
+      description: '仅带参考图（图生图）时生效：给参考图加的噪声（0–0.99）',
+    },
+  ]
+}
+
+export const NOVELAI_V5_PARAM_SPECS: readonly ModelParamSpec[] = novelAiParamSpecs('v5')
+export const NOVELAI_V45_PARAM_SPECS: readonly ModelParamSpec[] = novelAiParamSpecs('v45')
+
+/** 某个 NovelAI 模型对应的参数表;不是 NovelAI 返回空数组。 */
+export function novelAiParamSpecsForModel(id: unknown): readonly ModelParamSpec[] {
+  const family = novelAiFamilyOfModel(id)
+  if (family === 'v5') return NOVELAI_V5_PARAM_SPECS
+  if (family === 'v45') return NOVELAI_V45_PARAM_SPECS
+  return []
+}
+
 // ───────────────────────── 校验 / 默认值 ─────────────────────────
 
 /** 「没填」:undefined / null / 空串 / 空数组 / 全空白。这类值一律当作不设置,不是错误。 */
@@ -272,7 +472,72 @@ function validateOne(spec: ModelParamSpec, raw: unknown): { ok: true; value: Mod
       if (bad) return fail(`只接受 http/https 链接：${bad.slice(0, 80)}`)
       return { ok: true, value: list }
     }
+
+    case 'characters': {
+      const checked = coerceCharacters(spec, raw)
+      return typeof checked === 'string' ? fail(checked) : { ok: true, value: checked }
+    }
   }
+}
+
+const CHARACTER_DEFAULT_MAX_ITEMS = 22
+const CHARACTER_DEFAULT_POSITION = 0.5
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * 角色提示词列表归一。**返回字符串 = 错误原因**(由 `validateOne` 加上「角色提示词」前缀)。
+ *
+ * 错误里的序号 N 是**原始数组**的 1-based 下标(含被丢弃的草稿),这样用户在界面上数到第几个
+ * 角色,报错就指向第几个;条数上限则按丢弃草稿之后的数量算。
+ * 位置必须是真数字:字符串 "0.3" 在画面坐标里没有合理来源,宁可拒绝也不猜。
+ */
+function coerceCharacters(spec: ModelParamSpec, raw: unknown): CharacterParamValue[] | string {
+  if (!Array.isArray(raw)) return '必须是列表'
+  const out: CharacterParamValue[] = []
+  for (let index = 0; index < raw.length; index += 1) {
+    const item: unknown = raw[index]
+    const no = index + 1
+    if (!isPlainObject(item)) return `里的角色 ${no} 格式不正确`
+    if (item.enabled === false) continue
+
+    if (item.prompt !== undefined && item.prompt !== null && typeof item.prompt !== 'string') {
+      return `里角色 ${no} 的提示词必须是文本`
+    }
+    if (item.uc !== undefined && item.uc !== null && typeof item.uc !== 'string') {
+      return `里角色 ${no} 的负面提示词必须是文本`
+    }
+    const prompt = typeof item.prompt === 'string' ? item.prompt.trim() : ''
+    const uc = typeof item.uc === 'string' ? item.uc.trim() : ''
+    // 提示词和负面都没写:界面上新增后没填的空行,不算用户的输入。
+    if (!prompt && !uc) continue
+    // 只写了负面没写提示词:上游没法定位这是个什么角色,必须报错而不是悄悄丢掉。
+    if (!prompt) return `里角色 ${no} 的提示词不能为空`
+    if (Array.from(prompt).length > NOVELAI_CHARACTER_PROMPT_MAX_CHARS) {
+      return `里角色 ${no} 的提示词最长 ${NOVELAI_CHARACTER_PROMPT_MAX_CHARS} 个字符`
+    }
+    if (Array.from(uc).length > NOVELAI_CHARACTER_UC_MAX_CHARS) {
+      return `里角色 ${no} 的负面提示词最长 ${NOVELAI_CHARACTER_UC_MAX_CHARS} 个字符`
+    }
+
+    const position = (axis: 'x' | 'y'): number | null => {
+      const v = item[axis]
+      if (v === undefined || v === null) return CHARACTER_DEFAULT_POSITION
+      return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1 ? v : null
+    }
+    const x = position('x')
+    const y = position('y')
+    if (x === null) return `里角色 ${no} 的位置 x 必须是 0–1 之间的数字`
+    if (y === null) return `里角色 ${no} 的位置 y 必须是 0–1 之间的数字`
+
+    out.push({ prompt, ...(uc ? { uc } : {}), x, y })
+  }
+
+  const max = spec.maxItems ?? CHARACTER_DEFAULT_MAX_ITEMS
+  if (out.length > max) return `最多 ${max} 个，当前 ${out.length} 个`
+  return out
 }
 
 export interface ResolvedModelParams {

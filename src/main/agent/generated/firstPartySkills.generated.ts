@@ -197,9 +197,9 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      explicitly asks for print/ultra-detail/4K.
    - \`quality\` (optional): \`auto\`/\`low\`/\`medium\`/\`high\`; 2.5(官转 flare/sunburst 与
      腾讯 og-v2.5)另有 \`xhigh\`/\`max\`. Prefer \`high\` on 2.5 (\`auto\` drifts cost).
-   - \`transparentBackground\` (optional, **2.5 only**:官转 flare/sunburst 或腾讯
+   - \`transparentBackground\` (optional, **2.5 / NovelAI V5 only**:官转 flare/sunburst 或腾讯
      \`custom-model-og-v2.5-f\`/\`-s\`): \`true\` 出带 alpha 的透明底 PNG——用户要 透明底 / 贴纸 /
-     logo / 素材 / 「不要背景」时用,并显式传一条 2.5 的 \`model\`。其它渠道忽略此参数照常出
+     logo / 素材 / 「不要背景」时用,并显式传一条支持透明底的 \`model\`。其它渠道忽略此参数照常出
      不透明底;这不是图层分离(那是 \`layerDecomposition\`)。
    - \`maskImage\` (optional, **gpt-image-2 / 2.5 only**,2.5 含腾讯 og-v2.5): 局部重绘(inpainting /
      擦除)遮罩,本地路径或 URL。**带 alpha 的 PNG**,alpha=0 处 = 允许重绘;**尺寸须与
@@ -207,17 +207,17 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      \`maskImage\` + 显式 \`model\`;prompt 先写透明区域里的那一个改动,再列必须保留的部分——
      mask 是 prompt-guided,不是像素级硬约束。灯箱「擦除」会附 \`<原图名>.mask.png\`,即此参数,
      并点名用户当前选的那条 2.5;其它渠道没有 mask 字段,传了会被拒(不会静默重画整张)。
-   - \`modelParams\` (optional, **悠船 \`youchuan-*\` only**): 悠船专属旋钮(\`hd\` 原生 2K /
+   - \`modelParams\` (optional, **悠船 \`youchuan-*\` / NovelAI \`nai-diffusion-*\` only**,别家忽略): 悠船旋钮(\`hd\` 原生 2K /
      \`quality\` / \`chaos\` / \`stylize\` / \`raw\` / \`iw\` / \`sref\` / \`sw\` / \`seed\` / \`no\`)。**默认一个都
      别传**;只有用户明说「更疯 / 风格化拉高 / 关掉 2K / 固定 seed / 排除某元素」才设对应项。
-     越界值会被**拒绝**而不是截断(按次计费)。
+     越界值会被**拒绝**而不是截断(按次计费);NovelAI 的键见工具说明。
    - \`count\` (optional): number of images from THIS one prompt (default 1). Two
      different meanings, pick by what the user wants:
      - **consistent 组图 series** — \`model: 'wan2.7-image-pro'\` + \`count\` 2–12
        (same character/subject across frames, e.g. 同一只猫的四季).
      - **independent variations (原生多图)** — \`count\` 2–4 on the OpenAI 官转
        channels \`gpt-image-2.5-flare\` / \`gpt-image-2.5-sunburst\` / \`gpt-image-2\`
-       (and 腾讯 og-v2 / og-v2.5, 文生图), or 2–6 on \`qwen-image-3.0-pro\`. ONE
+       (and 腾讯 og-v2 / og-v2.5, 文生图; NovelAI 1–4), or 2–6 on \`qwen-image-3.0-pro\`. ONE
        request returns \`count\` variants of the same prompt (文生图与改图都行).
        官转按 token **每张**计费,\`count: 4\` ≈ 单张 4 倍 —— 用户要「几个方案挑一挑」
        时才加,别默认给多张。
@@ -249,11 +249,9 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 5. **交付优先,然后自检(deliver first, then QA)。**
    A \`✅ DONE\` return means the image is ALREADY rendered in the chat.
    - **第一步永远是交付**:先用一句话向用户确认(图已出 + 保存路径),**再**做任何
-     自检。用户看不到工具调用——先闷头质检再回话,在用户眼里就是「卡死」
-     (2026-07-14 实录教训)。
-   - **QA 要出声**:决定自检时,先对用户说一句「正在快速质检…」之类,再开始。
+     自检。用户看不到工具调用——先闷头质检再回话,在用户眼里就是「卡死」。
    - **看图上限**(上下文保护,与工具 banner 一致):主 agent 直接 \`view_image\` 最多
-     **5 张**——再多会注入数 MB base64 直接撑爆线程(2026-06-11 实录)。快速模式若
+     **5 张**——再多会注入数 MB base64 直接撑爆线程。快速模式若
      画面简单、无人物,可以只核对 DONE banner 不看图。
    - **超过 5 张别放弃看,改走 catimation-subagents**:并发调 \`understand_document\`
      (它就是看图那条路,走 qwen 返回**文本**,图不进主上下文),结论落成
@@ -273,10 +271,9 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      制片流程中是否满足 \`film-studio\` 的资产门。快速模式只查 ①–③。
    - 若任一项不达标:**先告诉用户**哪里不对、准备怎么改,再**带改进后的提示词重生成**
      (保留可用部分时把上一版回传为 \`referenceImages\` 做图生图),再复检。最多迭代
-     2–3 次即收敛——别在边角小瑕疵上死磕,每次重生成都花钱。重生成期间用户能看到
-     新的生成气泡,但你的说明让 ta 知道**为什么**在重来。
+     2–3 次即收敛——别在边角小瑕疵上死磕,每次重生成都花钱。
    - When it's good (or good enough), confirm briefly in the user's language and
-     cite the saved path(s). Don't over-narrate each pass.
+     cite the saved path(s).
    - You still do NOT need \`query_history\` to find an image you just generated,
      and do NOT shell out (\`dir\`/\`ls\`/\`where\`/\`find\`/\`Get-ChildItem\`) to hunt for
      the file — the path is already in the return; \`view_image\` that path directly.
@@ -285,7 +282,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 
 The \`model\` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
-VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / Seedream; default 腾讯 image2) — 各渠道共用
+VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / NovelAI / Seedream; default 腾讯 image2) — 各渠道共用
 ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-all\` 把尺寸
 写进 prompt). Omit \`model\` for ordinary requests. Set it only with a concrete reason:
 
@@ -313,8 +310,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
   参考图,这是它的强项), OR when the user wants **图层分离**(唯一支持的渠道,
   见「图层分离」一节). 注意:普通出图仅单图(\`count\` 无效)、分辨率只有 1K/2K
-  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。图层分离是例外——那一次会
-  返回 1 底图 + 最多 16 层。
+  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。
 - **\`custom-imagemodel-gt\` (腾讯 image2)** — pick when the user says 腾讯 / tencent /
   image2 腾讯. 快(~30s),网关已关水印。
 - **\`custom-model-og-v2\` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
@@ -336,6 +332,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
   \`quality\` 轴,原生 2K 等旋钮走 \`modelParams\`(\`hd\` 默认开、计费 ×1.5)。**提示词里别写
   \`--v\` / \`--turbo\` / \`--hd\` 这类参数**(网关会拒):版本与速度只由 \`model\` 决定,其余走 \`ratio\` / \`modelParams\`。
   不自动重试,失败后先告诉用户再重来。
+- **\`nai-diffusion-5-full\` / \`nai-diffusion-5-curated\` / \`nai-diffusion-4-5-full\` / \`nai-diffusion-4-5-curated\` (NovelAI V5 / V4.5)** — pick when the user says NovelAI / NAI / 动漫插画 / 多角色同框;只说 NovelAI 时用 \`nai-diffusion-5-full\`。一次出 \`count\` 张(1–4)、**按张计费**;\`referenceImages\` 至多 **1 张**(= 图生图,多给被拒);\`transparentBackground\` 仅 V5。角色提示词(\`modelParams.characters\`,V5 ≤22 个 / V4.5 ≤6 个)、负面词、采样器等旋钮见工具说明,**默认都别传**,越界被拒。
 - 以上渠道都接受 \`referenceImages\`(图生图 / 图像编辑)。
 
 ### 站点要求(已自动处理 — 无需手动切站点)
@@ -343,7 +340,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 四条腾讯渠道(\`custom-imagemodel-gt\` / \`custom-model-og-v2\` / \`custom-model-og-v2.5-f\` /
 \`custom-model-og-v2.5-s\`)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`
 (通义千问 Image 3.0 Pro)、\`youchuan-v8.2\` / \`youchuan-v8.2-turbo\`(悠船)和
-\`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)
+\`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)和四条 NovelAI
 **都只经 Miau API 代理提供**。
 出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
 里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
@@ -356,7 +353,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 
 用户没点名渠道就**省略 \`model\`**(交给 composer 选的渠道,默认腾讯 image2);只为具体
 理由设它(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、2.5 改图 →
-sunburst、MJ/悠船 → youchuan、或用户点名的渠道)。Never invent a model name.
+sunburst、MJ/悠船 → youchuan、二次元/多角色 → NovelAI、或用户点名的渠道)。Never invent a model name.
 
 ## Reference images — reuse the user's material (important)
 
@@ -410,8 +407,7 @@ Rules:
 **输入图有硬要求:png / jpeg,且不小于 512×512。** 不满足由上游判定并原话报错,
 我们不预先拦 —— 但用户给的是 webp / 小图时,先提醒一句比让他等一次失败的请求好。
 
-**计费按张,不是按次。** 一次拆分出 N 张就扣 N 张的钱(2026-08-24 实测:一张四元素
-海报拆出 4 张,上游 \`usage.generated_images = 4\`)。复杂图可能到 17 张——**先告诉用户
+**计费按张,不是按次。** 一次拆分出 N 张就扣 N 张的钱。复杂图可能到 17 张——**先告诉用户
 这一点再拆**,尤其是用户说「随便试试」的时候。结果在出图页收成**一张**卡片(角标
 「▤ N 层」),你不用额外操作。
 
@@ -426,11 +422,9 @@ Rules:
 三张锚图:3 次 vs 30 次,画面结果完全一样)。批量还自带 3 路并发,参考图也只按渠道要的
 形式编码一次。
 
-- If the user asks for N images (2–20), pass exactly N prompts to
+- If the user asks for N images (2–20; above 20, split into batches), pass exactly N prompts to
   \`generate_images.prompts\`.
 - For variations, write N distinct but related prompts so the outputs are not clones.
-- The tool accepts up to 20 prompts and uses bounded concurrency internally; for
-  more than 20 images, split them into batches.
 - After \`generate_images\` returns, confirm once and cite the saved \`paths\`; don't
   re-announce each image separately.
 
@@ -451,16 +445,11 @@ directory and give it a descriptive, ordered name — e.g.
 
 ## Common Mistakes
 
-- 用户给了图却忘传 \`referenceImages\`,改成从零文生图。
-- 多张图却逐个调 \`generate_image\`,而不是一次 \`generate_images\`。
 - 凭空编造 \`model\` 名;合法值只有上面「Choosing a model」列出的那些。用户没点名就
   省略 \`model\`(交给用户在 composer 选的渠道,默认腾讯 image2)。
 - 用户点名某渠道却不显式传 \`model\`。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
-- 图层分离时**给 \`layerDecomposition\` 却忘了同时指定 \`model\`** —— 会落到用户选的渠道上被拒。
-- 图层分离时**为了「填满参数」编一句 prompt** —— 空 prompt 才是自动全拆,编一句就变成
-  按那句话拆。
-- 拆分前没告诉用户**按张计费**(一次可能 17 张),用户以为是一次调用的钱。
+- 图层分离踩坑:忘了同时指定 \`model\`;为「填满参数」编 prompt;拆前没告知按张计费(见上节)。
 
 ## Notes
 
