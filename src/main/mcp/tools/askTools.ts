@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
+import { extractCodexThreadId } from './codexThreadMeta'
 
 /**
  * Canonical model-/renderer-facing name. The renderer (AgentToolExecutor) only
@@ -79,10 +80,16 @@ export function registerAskTools(server: McpServer, router: ToolRouter): void {
   // Every variant — canonical and aliases — runs the SAME handler, which always
   // delegates to the canonical renderer tool name so the renderer's switch
   // (`case 'ask_user'`) renders the card regardless of which name was called.
+  //
+  // The calling Codex thread id MUST be forwarded: it is how the renderer puts
+  // the card in the chat that ASKED. Omit it and the card lands in whichever
+  // chat the user happens to be viewing (a background thread's question popped
+  // up in the foreground one, where the user then had no idea whose it was).
   const handler = async (
     params: Record<string, unknown>,
+    ctx?: unknown,
   ): Promise<{ content: Array<{ type: 'text'; text: string }> }> => {
-    const answer = await router.call(ASK_USER_CANONICAL, params)
+    const answer = await router.call(ASK_USER_CANONICAL, params, extractCodexThreadId(ctx))
     return { content: [{ type: 'text', text: JSON.stringify(answer) }] }
   }
 
@@ -96,8 +103,9 @@ export function registerAskTools(server: McpServer, router: ToolRouter): void {
         'generate_image/view_image — NOT brainstorm-only. Use WHENEVER you\'d list 2+ ' +
         'options/方案/方向 or face a user decision (景别/风格/运镜/模型/下一步); prefer ' +
         'over a numbered text list. One question per card, all options in one (6–8 ok). ' +
-        'BLOCKS until pick/type/skip; returns ids+labels+free text. Tool name is exactly ' +
-        '"ask_user" (snake_case); common mis-spellings are also accepted.',
+        'BLOCKS until pick/type/skip; auto-skips after 5 min idle (timedOut:true = user ' +
+        'away, decide yourself). Returns ids+labels+free text. Name is exactly ' +
+        '"ask_user" (snake_case); mis-spellings also accepted.',
       inputSchema: askUserInputSchema,
     },
     handler,

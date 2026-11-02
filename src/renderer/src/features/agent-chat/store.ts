@@ -24,6 +24,7 @@ import type {
 import type { ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
 import type { PluginInstalledResponse } from '../../../../types/codexPlugins'
 import type { AgentReference } from '../../../../types/agent-reference'
+import { ASK_USER_AUTO_ADVANCE_MS, buildTimedOutChoiceAnswer } from './askUserTimeout'
 import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, FileChange, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
   dropSupersededStreamItemsInLastMessage,
@@ -934,6 +935,12 @@ interface AgentChatState extends ModelRoutingSlice {
     threadId?: string,
   ) => Promise<ChoiceAnswer>
   settleChoiceRequest: (requestId: string, answer: ChoiceAnswer) => void
+  /**
+   * The user is plainly still there (typing / ticking / moving over the card):
+   * push the 5-minute auto-skip deadline back a full window. No-op for an
+   * unknown or already-settled request.
+   */
+  touchChoiceRequest: (requestId: string) => void
 
   // ----- Per-thread chat scroll state -----
   /**
@@ -1165,9 +1172,65 @@ function expirePendingChoices(messages: Message[]): { messages: Message[]; ids: 
   return { messages: changed ? next : messages, ids }
 }
 
+/**
+ * One auto-skip timer per pending card (`requestId` → timer). Like the
+ * resolvers these are not serializable, so they live module-scoped. The timer
+ * is store-level, NOT component-level: a card in a background thread — or one
+ * scrolled out of a virtualized list — is not mounted, yet its agent is still
+ * blocked and must still be released.
+ */
+const choiceAutoTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function clearChoiceAutoTimer(requestId: string): void {
+  const timer = choiceAutoTimers.get(requestId)
+  if (timer === undefined) return
+  clearTimeout(timer)
+  choiceAutoTimers.delete(requestId)
+}
+
+/** (Re)arm the card's auto-skip: any earlier timer for the same card is replaced. */
+function armChoiceAutoTimer(requestId: string, onFire: () => void): void {
+  clearChoiceAutoTimer(requestId)
+  choiceAutoTimers.set(
+    requestId,
+    setTimeout(() => {
+      choiceAutoTimers.delete(requestId)
+      onFire()
+    }, ASK_USER_AUTO_ADVANCE_MS),
+  )
+}
+
+/**
+ * Apply `update` to the still-pending `choiceRequest` with `requestId`, in the
+ * active view or in whichever background thread slice holds it (the card may
+ * belong to a chat the user has since switched away from). Returns the partial
+ * state to `set`, or `{}` when nothing matched.
+ */
+function patchChoiceAnywhere(
+  s: { messages: Message[]; threadSlices: Record<string, ThreadSlice> },
+  requestId: string,
+  update: (item: ChoiceRequestItem) => ChoiceRequestItem,
+): { messages: Message[] } | { threadSlices: Record<string, ThreadSlice> } | Record<string, never> {
+  const inActive = mapChoiceItem(s.messages, requestId, update)
+  if (inActive !== s.messages) return { messages: inActive }
+  let touched = false
+  const slices: Record<string, ThreadSlice> = {}
+  for (const [tid, slice] of Object.entries(s.threadSlices)) {
+    const next = mapChoiceItem(slice.messages, requestId, update)
+    if (next !== slice.messages) {
+      touched = true
+      slices[tid] = { ...slice, messages: next }
+    } else {
+      slices[tid] = slice
+    }
+  }
+  return touched ? { threadSlices: slices } : {}
+}
+
 /** Resolve + drop the blocked `ask()` promises for the given requestIds. */
 function resolveAbandonedChoices(ids: string[]): void {
   for (const id of ids) {
+    clearChoiceAutoTimer(id)
     const resolve = choiceResolvers.get(id)
     if (resolve) {
       choiceResolvers.delete(id)
@@ -1873,48 +1936,46 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         allowFreeText: request.allowFreeText,
         allowSkip: request.allowSkip,
         status: 'pending',
+        autoAdvanceAt: now + ASK_USER_AUTO_ADVANCE_MS,
       }
       const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
       return patchThreadMessages(s, threadId, (msgs) => [...msgs, message])
+    })
+    // Nobody answered within the idle window: release the blocked agent with an
+    // explicit "user was away" skip instead of parking its turn for hours.
+    armChoiceAutoTimer(requestId, () => {
+      if (!choiceResolvers.has(requestId)) return
+      get().settleChoiceRequest(requestId, buildTimedOutChoiceAnswer())
     })
     return new Promise<ChoiceAnswer>((resolve) => {
       choiceResolvers.set(requestId, resolve)
     })
   },
   settleChoiceRequest: (requestId, answer) => {
-    set((s) => {
-      // Search the active view AND every background thread slice — the card may
-      // belong to a chat the user has since switched away from.
-      const inActive = mapChoiceItem(s.messages, requestId, (item) => ({
+    clearChoiceAutoTimer(requestId)
+    set((s) =>
+      patchChoiceAnywhere(s, requestId, (item) => ({
         ...item,
         status: 'answered',
         answer,
         endedAt: Date.now(),
-      }))
-      if (inActive !== s.messages) return { messages: inActive }
-      let touched = false
-      const slices: Record<string, ThreadSlice> = {}
-      for (const [tid, slice] of Object.entries(s.threadSlices)) {
-        const next = mapChoiceItem(slice.messages, requestId, (item) => ({
-          ...item,
-          status: 'answered',
-          answer,
-          endedAt: Date.now(),
-        }))
-        if (next !== slice.messages) {
-          touched = true
-          slices[tid] = { ...slice, messages: next }
-        } else {
-          slices[tid] = slice
-        }
-      }
-      return touched ? { threadSlices: slices } : {}
-    })
+      })),
+    )
     const resolve = choiceResolvers.get(requestId)
     if (resolve) {
       choiceResolvers.delete(requestId)
       resolve(answer)
     }
+  },
+  touchChoiceRequest: (requestId) => {
+    // No resolver = the card is already settled / abandoned: nothing left to extend.
+    if (!choiceResolvers.has(requestId)) return
+    const deadline = Date.now() + ASK_USER_AUTO_ADVANCE_MS
+    set((s) => patchChoiceAnywhere(s, requestId, (item) => ({ ...item, autoAdvanceAt: deadline })))
+    armChoiceAutoTimer(requestId, () => {
+      if (!choiceResolvers.has(requestId)) return
+      get().settleChoiceRequest(requestId, buildTimedOutChoiceAnswer())
+    })
   },
   nextPreview: () =>
     set((s) => {

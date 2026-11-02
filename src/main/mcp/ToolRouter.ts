@@ -22,6 +22,11 @@ const RENDERER_TOOL_TIMEOUT_MS = 2_000_000
 // (a clean, explicit error) always reaches the model before codex invents its
 // own timeout. When it does fire, the turn ends and the renderer store expires
 // the card (see store.ts turn-terminal expiry), so no zombie button remains.
+//
+// This is now only the BACKSTOP. The renderer store resolves an unanswered card
+// as a `timedOut` skip after 5 idle minutes (`askUserTimeout.ts`), so the agent
+// normally moves on long before this fires; the 6 hours still guards a renderer
+// that never answers at all.
 const ASK_USER_TOOL_TIMEOUT_MS = 21_600_000
 
 function rendererToolTimeoutMs(toolName: string): number {
@@ -127,6 +132,17 @@ export class ToolRouter {
     // chat. Undefined when there's no resolver or no mapping yet — the renderer
     // falls back to its active-thread capture.
     const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
+    if (codexThreadId && !threadId) {
+      // The caller said which thread it is, but we cannot map it to a chat (no
+      // resolver yet, or the thread is not registered). Falling back to the
+      // active chat is the only option — but it is exactly the path that
+      // delivers one chat's UI to another, so leave a trace instead of failing
+      // silently.
+      console.warn(
+        `[ToolRouter] ${toolName}: codex thread ${codexThreadId} has no DB mapping; ` +
+          'renderer will fall back to the ACTIVE chat',
+      )
+    }
     const request: AgentToolRequest = { id, toolName, params, ...(threadId ? { threadId } : {}) }
 
     return new Promise((resolve, reject) => {

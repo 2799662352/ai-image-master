@@ -1,6 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChoiceAnswer, ChoiceOption, ChoiceRequestItem } from '../../../../../types/agent-timeline'
 import { useAgentChatStore } from '../store'
+import {
+  ASK_USER_AUTO_ADVANCE_MS,
+  ASK_USER_TOUCH_THROTTLE_MS,
+  formatAutoAdvanceHint,
+} from '../askUserTimeout'
 
 /**
  * Interactive `ask_user` card: a standalone, clickable question rendered as its
@@ -12,10 +17,34 @@ import { useAgentChatStore } from '../store'
  */
 export function AskUserCard({ item }: { item: ChoiceRequestItem }) {
   const settle = useAgentChatStore((s) => s.settleChoiceRequest)
+  const touchRequest = useAgentChatStore((s) => s.touchChoiceRequest)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [freeText, setFreeText] = useState('')
 
   const answered = item.status === 'answered'
+  const deadline = answered ? undefined : item.autoAdvanceAt
+
+  // Tick once a second ONLY while a deadline is counting down on screen. The
+  // actual auto-skip is a store-level timer (it must fire even when this card
+  // is not mounted); this clock just keeps the hint text honest.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (deadline === undefined) return undefined
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [deadline])
+
+  // Any real interaction means the user is there: push the deadline back. The
+  // store write is throttled — pointer-move fires hundreds of times a second.
+  const lastTouchAt = useRef(0)
+  const touch = (): void => {
+    if (deadline === undefined) return
+    const at = Date.now()
+    if (at - lastTouchAt.current < ASK_USER_TOUCH_THROTTLE_MS) return
+    lastTouchAt.current = at
+    touchRequest(item.requestId)
+  }
 
   if (answered) {
     return <AnsweredSummary item={item} />
@@ -30,13 +59,15 @@ export function AskUserCard({ item }: { item: ChoiceRequestItem }) {
   const pickSingle = (option: ChoiceOption): void =>
     finish({ answered: true, skipped: false, selected: [option] })
 
-  const toggleMulti = (id: string): void =>
+  const toggleMulti = (id: string): void => {
+    touch()
     setChecked((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+  }
 
   const confirmMulti = (): void => {
     const selected = item.options.filter((o) => checked.has(o.id))
@@ -62,6 +93,10 @@ export function AskUserCard({ item }: { item: ChoiceRequestItem }) {
   return (
     <div
       data-testid="ask-user-card"
+      onPointerMove={touch}
+      onPointerDown={touch}
+      onKeyDown={touch}
+      onFocusCapture={touch}
       className="mb-1 rounded-lg border border-cyan-400/25 bg-zinc-900/50 px-3 py-3 shadow-[0_0_14px_rgba(34,211,238,0.08)]"
     >
       <div className="mb-2 flex items-center gap-2">
@@ -121,7 +156,10 @@ export function AskUserCard({ item }: { item: ChoiceRequestItem }) {
           <input
             type="text"
             value={freeText}
-            onChange={(e) => setFreeText(e.target.value)}
+            onChange={(e) => {
+              touch()
+              setFreeText(e.target.value)
+            }}
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return
               e.preventDefault()
@@ -167,7 +205,27 @@ export function AskUserCard({ item }: { item: ChoiceRequestItem }) {
           </button>
         )}
       </div>
+
+      {deadline !== undefined && <AutoAdvanceHint remainingMs={deadline - now} />}
     </div>
+  )
+}
+
+/**
+ * Quiet one-liner telling the user the card will not wait forever. Turns amber
+ * with a seconds countdown for the final minute, so the auto-skip never ambushes
+ * someone who was just reading slowly.
+ */
+function AutoAdvanceHint({ remainingMs }: { remainingMs: number }) {
+  const { text, urgent } = formatAutoAdvanceHint(remainingMs)
+  return (
+    <p
+      data-testid="ask-user-auto-advance-hint"
+      aria-live={urgent ? 'polite' : 'off'}
+      className={`mt-1.5 text-[10.5px] leading-snug ${urgent ? 'text-amber-300/90' : 'text-zinc-500'}`}
+    >
+      {text}
+    </p>
   )
 }
 
@@ -189,6 +247,23 @@ function AnsweredSummary({ item }: { item: ChoiceRequestItem }) {
         <p className="mb-1 text-[12px] leading-snug text-zinc-400">{item.question}</p>
         <p className="text-[12.5px] font-medium text-zinc-500">
           该提问已过期（本回合已结束）——直接在下方输入框回复即可继续。
+        </p>
+      </div>
+    )
+  }
+
+  // Nobody answered: the card released the agent on its own. Say so plainly —
+  // "已跳过" would claim the user chose to defer, which they did not.
+  if (answer?.timedOut) {
+    const minutes = Math.round(ASK_USER_AUTO_ADVANCE_MS / 60_000)
+    return (
+      <div
+        data-testid="ask-user-card-timed-out"
+        className="mb-1 rounded-lg border border-zinc-700/60 bg-zinc-900/40 px-3 py-2.5"
+      >
+        <p className="mb-1 text-[12px] leading-snug text-zinc-400">{item.question}</p>
+        <p className="text-[12.5px] font-medium text-zinc-500">
+          {minutes} 分钟内没有选择，已自动继续（由 AI 自行决定）。想改的话，直接在下方输入框告诉它即可。
         </p>
       </div>
     )
