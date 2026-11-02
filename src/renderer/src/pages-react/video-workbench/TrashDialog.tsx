@@ -6,6 +6,11 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { trashEntryName, type WorkbenchTrashEntry } from '../../features/video-workbench/trash'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import {
+  TRASH_RETENTION_DAYS,
+  readTrashRetentionSince,
+  trashDaysLeft,
+} from '../../features/video-workbench/trashRetention'
 import { useToastStore } from '../../stores/useToastStore'
 import { relativeTime } from './ProjectRail'
 
@@ -54,6 +59,9 @@ export function TrashDialog({ open, onClose }: { open: boolean; onClose: () => v
 
   if (!open) return null
 
+  const now = Date.now()
+  const since = readTrashRetentionSince(now)
+
   const arm = (key: string): void => {
     setConfirming(key)
     if (timer.current) clearTimeout(timer.current)
@@ -90,7 +98,7 @@ export function TrashDialog({ open, onClose }: { open: boolean; onClose: () => v
         <div className="vw-dialog-title">回收站</div>
         <div className="vw-dialog-body vw-trash-body">
           <p className="vw-dialog-note">
-            删除的剧和分段会先放在这里,连同里面的全部镜头。恢复后原样回来;彻底删除后无法找回。
+            删除的剧和分段会先放在这里,连同里面的全部镜头,{TRASH_RETENTION_DAYS} 天后自动彻底删除。恢复后原样回来;彻底删除后无法在本机找回(开着云备份的剧,云端还会再留 30 天,可在「云备份」里取回)。
           </p>
           {error && (
             <p className="vw-dialog-error" role="alert">
@@ -114,7 +122,7 @@ export function TrashDialog({ open, onClose }: { open: boolean; onClose: () => v
                         <span className="truncate" title={name}>{name}</span>
                       </div>
                       <div className="vw-trash-sub">
-                        {describe(entry, homeOf(entry))} · 删除于 {relativeTime(entry.deletedAt) || '刚刚'}
+                        {describe(entry, homeOf(entry))} · 删除于 {relativeTime(entry.deletedAt) || '刚刚'} · 还剩 {trashDaysLeft(entry, now, since)} 天
                       </div>
                     </div>
                     <div className="vw-trash-actions">

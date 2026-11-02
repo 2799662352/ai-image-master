@@ -17,6 +17,7 @@ import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/p
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
+import { CloudBackupDialog } from './video-workbench/CloudBackupDialog'
 import { ExportProjectDialog } from './video-workbench/ExportProjectDialog'
 import { ImportProjectDialog } from './video-workbench/ImportProjectDialog'
 import { ProjectOverview } from './video-workbench/ProjectOverview'
@@ -25,6 +26,7 @@ import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { TrashDialog } from './video-workbench/TrashDialog'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
+import { cloudBackupApi, useWorkbenchCloudBackup } from './video-workbench/useCloudBackup'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
 import './video-workbench/workbench.css'
 
@@ -54,6 +56,8 @@ export default function VideoWorkbenchPage() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [trashOpen, setTrashOpen] = useState(false)
+  const [backupOpen, setBackupOpen] = useState(false)
+  const cloudBackup = useWorkbenchCloudBackup()
   /** 待导入的工程文件路径;null = 导入对话框关闭。 */
   const [importPath, setImportPath] = useState<string | null>(null)
   const requestImport = async () => {
@@ -106,7 +110,12 @@ export default function VideoWorkbenchPage() {
   // 顺序要紧:先把监听挂上再对账,否则接管后立刻到达的广播没人接。
   useEffect(() => {
     const release = mountWorkbenchTaskListener()
-    void ensureHydrated().then(() => useVideoWorkbenchStore.getState().reconcileInFlight())
+    void ensureHydrated().then(() => {
+      const s = useVideoWorkbenchStore.getState()
+      // 回收站里躺满 30 天的清掉(云端有备份的剧,云端回收站再留 30 天)。放在对账前:先把盘面收拾干净。
+      s.purgeExpiredTrash()
+      return s.reconcileInFlight()
+    })
     return release
   }, [ensureHydrated])
 
@@ -182,6 +191,7 @@ export default function VideoWorkbenchPage() {
       <ExportProjectDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <ImportProjectDialog path={importPath} onClose={() => setImportPath(null)} />
       <TrashDialog open={trashOpen} onClose={() => setTrashOpen(false)} />
+      <CloudBackupDialog open={backupOpen} onClose={() => setBackupOpen(false)} onBackupNow={cloudBackup.runNow} onRevive={cloudBackup.revive} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">
@@ -189,6 +199,7 @@ export default function VideoWorkbenchPage() {
           onRequestExport={() => setExportOpen(true)}
           onRequestImport={() => void requestImport()}
           onRequestTrash={() => setTrashOpen(true)}
+          onRequestCloudBackup={cloudBackupApi() ? () => setBackupOpen(true) : undefined}
           onDropProjectFile={(p) => setImportPath(p)}
         />
         <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">

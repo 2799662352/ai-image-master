@@ -18,6 +18,7 @@ import { cancelPendingPersist } from './persistQueue'
 import type { ImportPlan } from './projectFile'
 import type { VideoWorkbenchState } from './store'
 import { markBoard, markProject, type WorkbenchTrashEntry } from './trash'
+import { expiredTrashIds, readTrashRetentionSince } from './trashRetention'
 import { getWorkbenchDb } from './WorkbenchDb'
 
 export type WorkbenchViewMode = 'overview' | 'board'
@@ -73,6 +74,11 @@ export interface ProjectsSlice {
   purgeFromTrash: (id: string) => boolean
   /** 清空回收站,返回清掉的条数。 */
   emptyTrash: () => number
+  /**
+   * 清掉在回收站里躺满保留期(30 天)的条目,返回清掉的条数。打开工作台、水合完成后调一次
+   * (见 trashRetention.ts:计时起点 / 时钟回拨保护)。和手动「彻底删除」走同一条路。
+   */
+  purgeExpiredTrash: (now?: number) => number
   /** Fork 一个分段:紧跟在原段后面,卡片深拷贝(生成中的重置为草稿)。返回新段 id。不切换视图。 */
   duplicateBoard: (id: string) => string | null
   /** 置顶的剧 / 分段 id。纯界面偏好:存 localStorage,不进库、不进撤销栈、不动版本号。 */
@@ -722,6 +728,14 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
     // 所以数的是清之前的条数,不是 purge 成功的次数。
     for (const id of ids) get().purgeFromTrash(id)
     return ids.length
+  },
+
+  purgeExpiredTrash: (now = Date.now()) => {
+    const ids = expiredTrashIds(get().trash, now, readTrashRetentionSince(now))
+    let purged = 0
+    // 删剧会连带清走它名下单独进回收站的分段条目,后面再 purge 就是 no-op(返回 false)
+    for (const id of ids) if (get().purgeFromTrash(id)) purged += 1
+    return purged
   },
 
   duplicateBoard: (id) => {
