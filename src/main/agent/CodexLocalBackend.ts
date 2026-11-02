@@ -266,15 +266,6 @@ export interface CodexLocalBackendOptions {
    */
   getGatewayChannelProviders?: () => readonly CodexProviderConfig[]
   /**
-   * Returns the user's apiyi-mcp key (设置 → API易) at spawn time, or undefined
-   * when none is configured. Forwarded to `buildCodexLaunchArgs` as
-   * {@link CodexLaunchOptions.apiyiKey} so the secret is injected via `-c`
-   * (`mcp_servers.apiyi.env.APIYI_API_KEY`) — never persisted to config.toml.
-   * Resolved fresh on every spawn; updates take effect on the next codex
-   * (re)start (AgentManager restarts on apiyi-mcp key change).
-   */
-  getApiyiKey?: () => string | undefined
-  /**
    * Returns the user's cinematography-kb-mcp key (设置 → 运镜知识库) at spawn
    * time, or undefined when none is configured. Forwarded to
    * `buildCodexLaunchArgs` as {@link CodexLaunchOptions.cinematographyKbKey} so
@@ -631,7 +622,6 @@ export class CodexLocalBackend implements IAgentBackend {
           ...(understandProvider ? [understandProvider] : []),
           ...gatewayChannelProviders,
         ],
-        apiyiKey: this.options.getApiyiKey?.(),
         cinematographyKbKey: this.options.getCinematographyKbKey?.(),
         dashVectorKey: this.options.getDashVectorKey?.(),
         cinematographyKbPlatformRelay: kbRelay

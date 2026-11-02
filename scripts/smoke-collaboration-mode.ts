@@ -181,14 +181,9 @@ function exitCodeFor(signal?: TerminationSignal): number {
 async function seedInertMcpTransports(codexHome: string): Promise<void> {
   // Production boot normally seeds these transports before Codex starts.
   // A fresh smoke home has no boot phase, while launch args still overlay
-  // leaves on both tables. Seed only disabled transport shape—never auth.
+  // leaves on this table. Seed only disabled transport shape—never auth.
   const node = JSON.stringify(process.execPath)
   const config = [
-    '[mcp_servers.apiyi]',
-    `command = ${node}`,
-    'args = ["-e", "process.exit(0)"]',
-    'enabled = false',
-    '',
     '[mcp_servers.cinematography_kb]',
     `command = ${node}`,
     'args = ["-e", "process.exit(0)"]',

@@ -20,7 +20,6 @@ import {
   DEFAULT_PROVIDER_ID,
   QWEN_UNDERSTAND_PROVIDER,
   QWEN_UNDERSTAND_PROVIDER_ID,
-  APIYI_MCP_PROVIDER_ID,
   CINEMATOGRAPHY_KB_PROVIDER_ID,
   DASHVECTOR_PROVIDER_ID,
   credentialIdForProvider,
@@ -410,22 +409,13 @@ export class AgentManager {
    */
   private miauToken = ''
   /**
-   * The bundled apiyi-mcp server's `APIYI_API_KEY`. Persisted in the provider
-   * store under apiKeys['apiyi-mcp'] (the renderer mirrors the 设置 → API易 key
-   * there via `setProviderApiKey('apiyi-mcp', …)`). Read at spawn by
-   * `getApiyiKey` and injected via `-c mcp_servers.apiyi.env.APIYI_API_KEY` —
-   * never written to config.toml. Changing it restarts codex so the new key
-   * takes effect immediately (the user-chosen behavior).
-   */
-  private apiyiMcpKey = ''
-  /**
    * The bundled cinematography-kb-mcp server's `DASHSCOPE_API_KEY`. Persisted in
    * the provider store under apiKeys['cinematography-kb'] (the renderer mirrors
    * the 设置 → 运镜知识库 key there via `setProviderApiKey('cinematography-kb', …)`).
    * Read at spawn by `getCinematographyKbKey` and injected via
    * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` — never written to
    * config.toml. Changing it restarts codex so the new key takes effect
-   * immediately (same behavior as {@link apiyiMcpKey}).
+   * immediately.
    */
   private cinematographyKbKey = ''
   /**
@@ -655,7 +645,6 @@ export class AgentManager {
     // 用户改完密钥那边还是旧值),所以由这里往下推一个读实时字段的闭包 ——
     // 推一次即可,`setProviderApiKey` 刷新 `miauToken` 后自动可见。
     setWan3TokenSource(() => this.miauToken)
-    this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
     const activeProvider = restoredProvider.provider
@@ -686,7 +675,6 @@ export class AgentManager {
         // siblings — channelsForGateway returns [] for them. The backend
         // filters out the active channel itself by id.
         getGatewayChannelProviders: () => channelsForGateway(this.activeGatewayId),
-        getApiyiKey: () => this.apiyiMcpKey || undefined,
         getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
         getDashVectorKey: () => this.dashVectorKey || undefined,
         cinematographyKbPlatformRelay: true,
@@ -1301,7 +1289,6 @@ export class AgentManager {
     const next = (key ?? '').trim()
     const isAuxiliaryProviderKey =
       id === QWEN_UNDERSTAND_PROVIDER_ID
-      || id === APIYI_MCP_PROVIDER_ID
       || id === CINEMATOGRAPHY_KB_PROVIDER_ID
       || id === DASHVECTOR_PROVIDER_ID
 
@@ -1335,29 +1322,13 @@ export class AgentManager {
     if (id === QWEN_UNDERSTAND_PROVIDER_ID) {
       this.miauToken = next
     }
-    // The renderer mirrors the 设置 → API易 key here (id='apiyi-mcp') so the
-    // bundled apiyi-mcp server gets its `APIYI_API_KEY` injected at spawn via
-    // `-c` (never written to config.toml). Restart codex ON CHANGE so the new
-    // key takes effect immediately — the behavior the user picked. The
-    // change-guard is essential: the renderer re-pushes this key idempotently
-    // on every app boot / MCP-page load (constructor + saveApiKey + useMcpStore
-    // cold-start hook), and restarting on each of those would be a restart
-    // storm. On boot the in-memory copy is preloaded from the provider store,
-    // so the first idempotent push is a no-op.
-    if (id === APIYI_MCP_PROVIDER_ID) {
-      const changed = next !== this.apiyiMcpKey
-      this.apiyiMcpKey = next
-      if (changed && next) {
-        await this.queueBackendRestart('apiyi-mcp key change')
-      }
-    }
     // The renderer mirrors the 设置 → 运镜知识库 key here (id='cinematography-kb')
     // so the bundled cinematography-kb-mcp server gets its `DASHSCOPE_API_KEY`
-    // injected at spawn via `-c` (never written to config.toml). Same
-    // change-guarded restart as apiyi-mcp above (the renderer re-pushes this key
-    // idempotently on boot / save, so restarting only on a real change avoids a
-    // restart storm; the constructor preloads the in-memory copy so the first
-    // idempotent re-push is a no-op).
+    // injected at spawn via `-c` (never written to config.toml). Restart codex ON
+    // CHANGE so the new key takes effect immediately. The change-guard is
+    // essential: the renderer re-pushes this key idempotently on boot / save, and
+    // restarting on each of those would be a restart storm; the constructor
+    // preloads the in-memory copy so the first idempotent re-push is a no-op.
     if (id === CINEMATOGRAPHY_KB_PROVIDER_ID) {
       const changed = next !== this.cinematographyKbKey
       this.cinematographyKbKey = next

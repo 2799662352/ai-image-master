@@ -17,7 +17,9 @@ const COS_B = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/ima
 const COS_VIDEO = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/a.mp4'
 const COS_AUDIO = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/a.mp3'
 
-type RefResult = { ok: true; url: string } | { ok: false; reason: string }
+type RefResult =
+  | { ok: true; url: string; fingerprint?: { size: number; mtimeMs: number } }
+  | { ok: false; reason: string }
 
 let resolveRefMedia: ReturnType<typeof vi.fn>
 /** 每次调用挂起的 resolver,测试自己决定谁先回来。 */
@@ -349,26 +351,84 @@ describe('本地参考图拖入即传', () => {
     expect(useStore.getState().cards.find((c) => c.id === cardId)!.rev).toBe(revBefore)
   })
 
-  it('uploadedUrl 不进 IndexedDB —— 重启后没有可能已失效的地址,回落本地路径重传', async () => {
+  // —— 落库(P1):重启后素材不再退回「只剩本地路径、提交时再传一遍」——
+
+  it('预传完成后 uploadedUrl + 指纹自动落库;src 仍是本地路径;uploadState 不落库', async () => {
     const { useVideoWorkbenchStore: useStore } = await loadStore()
     const db = await import('../WorkbenchDb')
     const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
     useStore.getState().addMaterials(cardId, 'referenceImages', [{ name: 'a', src: LOCAL_A }])
 
     await vi.waitFor(() => expect(deferred.length).toBe(1))
+    deferred[0]({ ok: true, url: COS_A, fingerprint: { size: 7, mtimeMs: 1234.5 } })
+
+    // 回填自己负责落库 —— 不手动 put。(防抖 500ms,所以放宽等待上限)
+    await vi.waitFor(
+      async () => {
+        const persisted = (await db.getWorkbenchDb().list()).find((c) => c.id === cardId)!
+        expect(persisted.referenceImages[0].uploadedUrl).toBe(COS_A)
+      },
+      { timeout: 4000 },
+    )
+
+    const persisted = (await db.getWorkbenchDb().list()).find((c) => c.id === cardId)!
+    const m = persisted.referenceImages[0]
+    expect(m.src).toBe(LOCAL_A)
+    expect(m.uploadedFrom).toMatchObject({ src: LOCAL_A, size: 7, mtimeMs: 1234.5 })
+    expect(typeof m.uploadedFrom?.at).toBe('number')
+    // 「在传」「打勾」是界面进行态:落进库里,重启后就会永远转圈 / 显示一个没验过的勾。
+    expect(m.uploadState).toBeUndefined()
+  })
+
+  it('主进程没给指纹(取不到)时仍记下来源路径,但不带 size / mtime —— 体检会判「验证不了」', async () => {
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+    useStore.getState().addMaterials(cardId, 'referenceImages', [{ name: 'a', src: LOCAL_A }])
+
+    await vi.waitFor(() => expect(deferred.length).toBe(1))
     deferred[0]({ ok: true, url: COS_A })
+
     await vi.waitFor(() => {
-      const card = useStore.getState().cards.find((c) => c.id === cardId)!
-      expect(card.referenceImages[0].uploadedUrl).toBe(COS_A)
+      const m = useStore.getState().cards.find((c) => c.id === cardId)!.referenceImages[0]
+      expect(m.uploadedUrl).toBe(COS_A)
+      expect(m.uploadedFrom?.src).toBe(LOCAL_A)
+      expect(m.uploadedFrom?.size).toBeUndefined()
+      expect(m.uploadedFrom?.mtimeMs).toBeUndefined()
+    })
+  })
+
+  it('本地路径没有被丢:src 原样,AI 经 IR 读到的素材仍是本地路径而不是云端地址', async () => {
+    // 用户的要求:预传地址只是提交时的加速缓存,**不能**顶替 src。AI(MCP / agent)读工作台
+    // 走 IR,看到的必须还是本地路径 —— 它要靠路径去认「这是哪张图」「拿去喂别的工具」。
+    const { useVideoWorkbenchStore: useStore } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x' }])
+    useStore.getState().addMaterials(cardId, 'referenceImages', [{ name: 'a', src: LOCAL_A }])
+
+    await vi.waitFor(() => expect(deferred.length).toBe(1))
+    deferred[0]({ ok: true, url: COS_A, fingerprint: { size: 7, mtimeMs: 1 } })
+    await vi.waitFor(() => {
+      expect(useStore.getState().cards.find((c) => c.id === cardId)!.referenceImages[0].uploadedUrl).toBe(COS_A)
     })
 
+    const ir = useStore.getState().exportIR()
+    const irCard = ir.boards.flatMap((b) => b.cards).find((c) => c.id === cardId)!
+    expect(irCard.referenceImages).toEqual([{ name: 'a', src: LOCAL_A }])
+    expect(JSON.stringify(ir)).not.toContain('myqcloud.com')
+  })
+
+  it('同一张卡里若出现重复的预传地址(复制素材之类),后出现的退回本地路径重传 —— 不让两个下标指向同一个地址', async () => {
+    const { useVideoWorkbenchStore: useStore, buildModeMedia } = await loadStore()
+    const [cardId] = useStore.getState().addCards([{ prompt: 'x', mode: 'reference_images' }])
+    const from = { src: LOCAL_A, size: 1, mtimeMs: 1, at: 1 }
+    useStore.getState().updateCard(cardId, {
+      referenceImages: [
+        { name: 'a', src: LOCAL_A, uploadedUrl: COS_A, uploadedFrom: from },
+        { name: 'a 副本', src: LOCAL_A, uploadedUrl: COS_A, uploadedFrom: from },
+        { name: 'b', src: LOCAL_B, uploadedUrl: COS_B, uploadedFrom: { ...from, src: LOCAL_B } },
+      ],
+    })
     const card = useStore.getState().cards.find((c) => c.id === cardId)!
-    const store = db.getWorkbenchDb()
-    await store.put(card)
-    const persisted = (await store.list()).find((c) => c.id === cardId)!
-    expect(persisted.referenceImages[0].src).toBe(LOCAL_A)
-    expect(persisted.referenceImages[0].uploadedUrl).toBeUndefined()
-    // uploadState 同样是会话内的:重启后不该显示一个上次会话的打勾。
-    expect(persisted.referenceImages[0].uploadState).toBeUndefined()
+
+    expect(buildModeMedia(card).referenceImages).toEqual([COS_A, LOCAL_A, COS_B])
   })
 })

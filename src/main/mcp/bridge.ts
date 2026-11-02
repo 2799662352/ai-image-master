@@ -203,8 +203,8 @@ export function startCatimationBridgeListener(
 }
 
 /**
- * Absolute path to the bridge entry script codex will spawn. Mirrors
- * `getApiyiMcpEntryPath` (same extraResources layout):
+ * Absolute path to the bridge entry script codex will spawn (extraResources
+ * layout, same as the other bundled stdio servers):
  *
  * Packaged: <resourcesPath>/catimation-bridge/index.js
  * Dev:      <appPath>/resources/catimation-bridge/index.js

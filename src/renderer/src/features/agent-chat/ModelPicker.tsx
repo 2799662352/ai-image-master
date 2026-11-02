@@ -29,6 +29,7 @@ import {
 import { findModel } from './models'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { useAgentChatStore } from './store'
+import { usePopoverPlacement } from './usePopoverPlacement'
 
 // XAI (Grok) renders above OPENAI by explicit user request — Grok is the
 // headline channel on these gateways, so it gets the top slot in the picker.
@@ -280,6 +281,8 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const [localSelectionPending, setModelSelectionPending] = useState(false)
   const modelSelectionPending = localSelectionPending || storeSelectionPending
   const rootRef = useRef<HTMLDivElement | null>(null)
+  // 弹层最宽 360,聊天面板更窄时整块夹在输入框内,不冲出右边界(见 usePopoverPlacement)。
+  const placement = usePopoverPlacement(rootRef, isOpen, 360)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
   const modelRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -442,7 +445,9 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   }
 
   return (
-    <div ref={rootRef} className="relative" onBlur={handleRootBlur}>
+    // 药丸宽度不够时只让名称用省略号收短(root 可收缩、有下限),形状 / 高度不变;
+    // 完整名称在 title / aria-label 里。min-w 下限保证至少还能认出名称开头。
+    <div ref={rootRef} className="relative min-w-[5rem]" onBlur={handleRootBlur}>
       <button
         ref={triggerRef}
         type="button"
@@ -451,15 +456,15 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
           if (isOpen) closePicker(true)
           else setIsOpen(true)
         }}
-        className="flex items-center gap-1.5 rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[11px] text-zinc-200 transition hover:border-cyan-400/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-[27px] w-full min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[11px] text-zinc-200 transition hover:border-cyan-400/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
         aria-label={`选择模型：${selected.label} · ${reasoningLabel}`}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         title={`${selected.label} · ${reasoningLabel}`}
       >
-        <span className="font-medium">{selected.label}</span>
+        <span className="min-w-0 truncate font-medium">{selected.label}</span>
         <span
-          className={`hidden rounded border px-1 text-[9px] uppercase tracking-wider sm:inline ${TIER_BADGE[selected.tier]}`}
+          className={`hidden shrink-0 rounded border px-1 text-[9px] uppercase tracking-wider sm:inline group-data-[c1]/tb:hidden! ${TIER_BADGE[selected.tier]}`}
         >
           {reasoningLabel}
         </span>
@@ -468,7 +473,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
           height="10"
           viewBox="0 0 12 12"
           aria-hidden
-          className={`opacity-70 transition ${isOpen ? 'rotate-180' : ''}`}
+          className={`shrink-0 opacity-70 transition ${isOpen ? 'rotate-180' : ''}`}
         >
           <path
             d="M2 4l4 4 4-4"
@@ -483,7 +488,8 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
 
       {isOpen ? (
         <div
-          className="absolute bottom-full left-0 z-[40001] mb-2 w-[360px] overflow-hidden rounded-lg border border-cyan-400/25 bg-zinc-950/95 shadow-[0_24px_60px_rgba(0,0,0,0.6)] backdrop-blur"
+          style={placement ? { left: placement.left, width: placement.width } : undefined}
+          className={`absolute bottom-full z-[40001] mb-2 overflow-hidden rounded-lg${placement ? '' : ' left-0 w-[360px]'} border border-cyan-400/25 bg-zinc-950/95 shadow-[0_24px_60px_rgba(0,0,0,0.6)] backdrop-blur`}
         >
           <div className="border-b border-zinc-800/80 p-2">
             <input

@@ -57,11 +57,6 @@ async function runSmoke(): Promise<void> {
   writeFileSync(
     path.join(smokeCodexHome, 'config.toml'),
     [
-      '[mcp_servers.apiyi]',
-      'command = "node"',
-      'args = []',
-      'enabled = false',
-      '',
       '[mcp_servers.cinematography_kb]',
       'command = "node"',
       'args = []',

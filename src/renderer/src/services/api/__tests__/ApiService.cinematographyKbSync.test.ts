@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
  * `setProviderApiKey('cinematography-kb', key)`. The main process keeps an
  * in-memory copy and injects it at codex spawn via
  * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` — the secret is NEVER
- * written to config.toml. Mirrors the apiyi-mcp bridge exactly.
+ * written to config.toml.
  */
 describe('ApiService.syncCinematographyKbKeyToMcp', () => {
   let setProviderApiKey: ReturnType<typeof vi.fn>

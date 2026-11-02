@@ -110,15 +110,15 @@ describe('model settings capabilities', () => {
     })
   })
 
-  it('DeepSeek 组只剩 Miau 的四行:官方渠道两个在前,火山方舟两个在后', () => {
+  it('DeepSeek 组只剩 Miau 的四行:火山方舟两个在前,官方渠道两个在后(v4-pro 先于 flash)', () => {
     const deepseekIds = CANONICAL_MODEL_SETTINGS_ROWS
       .map((row) => row.id)
       .filter((id) => id.startsWith('deepseek'))
     expect(deepseekIds).toEqual([
-      'deepseek-flash',
-      'deepseek-v4-pro',
       'deepseek-v4-1-flash-261017',
       'deepseek-v4-1-flash-economy-261017',
+      'deepseek-v4-pro',
+      'deepseek-flash',
     ])
     // 撤下的三行(0731 / 0813 / Right.Codes 直连的 flash)不能再出现在选择器里。
     for (const retired of ['deepseek-v4-flash-0731', 'deepseek-v4-pro-0813', 'deepseek-v4-flash']) {

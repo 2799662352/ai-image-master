@@ -64,7 +64,7 @@ async function startFakeCodexServer(options: FakeOptions = {}): Promise<FakeCode
           reply(msg.id, {
             config: {
               model: 'gpt-5.5',
-              mcp_servers: { catimation: { url: 'http://127.0.0.1:1/mcp' }, apiyi: { command: 'node' } },
+              mcp_servers: { catimation: { url: 'http://127.0.0.1:1/mcp' }, cinematography_kb: { command: 'node' } },
             },
             origins: {},
           })
@@ -222,7 +222,7 @@ describe('CodexProtocolClient.runTemporaryStructuredTurn', () => {
       web_search: 'disabled',
       default_permissions: ':read-only',
       'mcp_servers.catimation.enabled': false,
-      'mcp_servers.apiyi.enabled': false,
+      'mcp_servers.cinematography_kb.enabled': false,
     })
   })
 

@@ -308,7 +308,7 @@ export function VoiceControls({ disabled }: { disabled: boolean }) {
       ref={anchorRef}
       role="group"
       aria-label="语音"
-      className={`flex items-stretch overflow-hidden rounded-md border bg-zinc-900/70 text-[11px] ${border}`}
+      className={`flex h-[27px] shrink-0 items-stretch overflow-hidden whitespace-nowrap rounded-md border bg-zinc-900/70 text-[11px] ${border}`}
     >
       <button
         type="button"
@@ -326,7 +326,9 @@ export function VoiceControls({ disabled }: { disabled: boolean }) {
         ) : (
           <Mic size={11} aria-hidden className="opacity-80" />
         )}
-        <span className="font-medium">{micLabel}</span>
+        {/* 待机时的「语音」字样在工具条变窄(c1)后收起,只留麦克风图标(名称仍在 aria-label / title);
+            加载 / 听写 / 待发送这些状态文字是反馈,不收。 */}
+        <span className={`font-medium${micLabel === '语音' ? ' group-data-[c1]/tb:hidden' : ''}`}>{micLabel}</span>
         {asr.running && !pending ? (
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300" aria-hidden />
         ) : null}

@@ -165,23 +165,11 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   // DeepSeek 组:只剩 Miau 的四行(走 Miau 网关,可用平台余额结算)——
-  // 官方渠道的 flash / v4-pro 在前,火山方舟的标准版 / 经济版在后。
+  // 火山方舟的标准版 / 经济版在前,官方渠道的 v4-pro / flash 在后
+  // (2026-10-30 产品要求调整次序;选择器次序以本数组为准,见 gatewayModelCatalog
+  // 的 sortByCanonicalOrder)。
   // 带日期的 0731 / 0813 与 Right.Codes 直连的 `deepseek-v4-flash` 已撤下,
   // 老选择换成谁见 `RETIRED_MODEL_SUCCESSORS`;路由见 `DEEPSEEK_MIAU_MODELS`。
-  {
-    id: 'deepseek-flash',
-    displayName: 'DeepSeek Flash（Miau）',
-    tier: 'High',
-    description: 'DeepSeek Flash（Miau 网关，DeepSeek 官方渠道）。1M 上下文，能看图，最便宜的一档，可用平台余额结算。',
-    isDefault: false,
-  },
-  {
-    id: 'deepseek-v4-pro',
-    displayName: 'DeepSeek V4 Pro（Miau）',
-    tier: 'Extra High',
-    description: 'DeepSeek V4 Pro（Miau 网关，DeepSeek 官方渠道）。1M 上下文，旗舰档，长任务与编码，可用平台余额结算；不能看图。',
-    isDefault: false,
-  },
   {
     id: 'deepseek-v4-1-flash-261017',
     displayName: 'DeepSeek V4.1 Flash（火山引擎）',
@@ -194,6 +182,20 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     displayName: 'DeepSeek V4.1 Flash 经济版（火山引擎）',
     tier: 'High',
     description: 'DeepSeek V4.1 Flash 经济版（火山引擎方舟，经 Miau 网关；网页端「DeepSeek 经济版(火山引擎)」同款）。模型同上，价格约为标准版的 8 折，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-v4-pro',
+    displayName: 'DeepSeek V4 Pro（Miau）',
+    tier: 'Extra High',
+    description: 'DeepSeek V4 Pro（Miau 网关，DeepSeek 官方渠道）。1M 上下文，旗舰档，长任务与编码，可用平台余额结算；不能看图。',
+    isDefault: false,
+  },
+  {
+    id: 'deepseek-flash',
+    displayName: 'DeepSeek Flash（Miau）',
+    tier: 'High',
+    description: 'DeepSeek Flash（Miau 网关，DeepSeek 官方渠道）。1M 上下文，能看图，最便宜的一档，可用平台余额结算。',
     isDefault: false,
   },
   {

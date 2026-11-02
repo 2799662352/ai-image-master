@@ -260,29 +260,11 @@ export interface CodexLaunchOptions {
    */
   catimationMcp?: CatimationMcpLaunchInfo
   /**
-   * The user's apiyi-mcp API key (the single key saved in 设置 → API易). When
-   * present we overlay it onto the seeded `[mcp_servers.apiyi].env` table via
-   * `-c mcp_servers.apiyi.env.APIYI_API_KEY=...` at spawn — the SAME
-   * runtime-injection model as {@link catimationMcp}: the secret stays in
-   * lockstep with 设置, is NEVER written to `~/.codex/config.toml`, and so the
-   * MCP JSON editor never shows it or asks the user to re-paste it.
-   *
-   * The boot seed (`seedApiyiMcpEntry`) force-writes the canonical entry
-   * (command/args/base_url/model/timeouts, `enabled = true`) on every boot;
-   * this `-c` only overlays the leaf secret (dotted `-c` merges, so the
-   * seeded siblings survive).
-   *
-   * This is the ONLY supported key source. A key hand-typed into the MCP JSON
-   * editor does not survive the next boot (the force-seed wipes it), so the
-   * launch policy no longer consults config.toml for a key.
-   */
-  apiyiKey?: string
-  /**
    * The user's cinematography-kb-mcp key (设置 → 运镜知识库 → the Alibaba Bailian
    * `DASHSCOPE_API_KEY`). When present we overlay it onto the seeded
    * `[mcp_servers.cinematography_kb].env` table via
    * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY=...` at spawn — the
-   * SAME runtime-injection model as {@link apiyiKey}: the secret stays in
+   * SAME runtime-injection model as {@link catimationMcp}: the secret stays in
    * lockstep with 设置, is NEVER written to `~/.codex/config.toml`, and so the
    * MCP JSON editor never shows it or asks the user to re-paste it.
    *
@@ -314,7 +296,7 @@ export interface CodexLaunchOptions {
   cinematographyKbPlatformRelay?: { url: string; token: string }
   /**
    * Freshly-resolved stdio transport for the bundled cinematography-kb-mcp:
-   * `command` from `resolveApiyiCommand` (system node, else Electron-as-Node)
+   * `command` from `resolveStdioNodeCommand` (system node, else Electron-as-Node)
    * and `args[0]` = this build's `resources/cinematography-kb-mcp/index.js`.
    *
    * WHY THIS EXISTS — the boot seed alone was not enough. It writes the
@@ -324,9 +306,8 @@ export interface CodexLaunchOptions {
    * skipped forever. Field case 2026-08-16: a user moved the app from
    * `D:\懒人猫平台\…` to `…\AppData\Local\Programs\…`; node was handed a script
    * that no longer existed, died instantly, and codex reported
-   * `connection closed: initialize response`. apiyi survived (its seed
-   * force-converges every field each boot) and so did catimation (it is never
-   * persisted — recomputed per spawn). This option gives cinematography_kb the
+   * `connection closed: initialize response`. catimation was unaffected (it is
+   * never persisted — recomputed per spawn). This option gives cinematography_kb the
    * catimation property: `-c` lands on the SessionFlags layer, which wins over
    * config.toml, so a stale on-disk entry can no longer break an in-app session.
    *
@@ -613,7 +594,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '-c', 'features.compaction_image_budget=true',
     // Keep first-party MCP tools directly visible instead of deferring them behind tool_search.
     '-c', 'features.code_mode.enabled=false',
-    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
+    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "cinematography_kb", "mcp__cinematography_kb"]',
     // ─────────────────────────────────────────────────────────────────────────
     // Native AGENTS.md (project-doc) alignment. The engine already loads
     // AGENTS.md by walking from the `.git` project root down to the thread cwd
@@ -770,84 +751,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push('-c', 'skills.config=[{ name = "imagegen", enabled = false }]')
   }
 
-  // apiyi-mcp launch policy — FORCE mode. The 设置 → API易 key is the ONLY
-  // key source (the boot force-seed wipes any hand-typed config.toml key),
-  // giving two mutually-exclusive outcomes:
+  // apiyi(Gemini)MCP 已整体移除:这里不再注入任何 `mcp_servers.apiyi.*`。
   //
-  //   A) key in 设置 → API易 (localStorage → `apiyiKey`): overlay the secret at
-  //      runtime via a dotted `-c` (mirrors the catimation pattern) — never
-  //      touches config.toml. ALSO force `enabled=true` so a stale
-  //      `enabled = false` on disk (old seeds wrote that; users toggled cards
-  //      off while debugging) can never keep a keyed apiyi dead. + the
-  //      reliability timeouts below.
-  //   C) NO key: keep apiyi DORMANT at launch (`enabled=false`). A keyless
-  //      apiyi-mcp registers its tool handlers then dies at
-  //      `initializeGenAI()`, and codex's `run_turn` awaits `list_all_tools()`
-  //      where ONE stalled server gates the whole map until startup_timeout —
-  //      so a keyless+enabled apiyi would hang the agent's FIRST TURN for the
-  //      full 60s window (openai/codex#19556, #21318; #29321 "skip not-ready
-  //      optional servers" is still only a proposal). The boot seed keeps
-  //      enabled:true so the card shows apiyi ready-to-go; this `-c` override
-  //      keeps it from actually spawning until a key exists. The moment the
-  //      user adds a key in 设置 + restarts, (A) enables it.
+  // ⚠️ 别再往启动参数里加「休眠」式的 `-c mcp_servers.<name>.enabled=false`:
+  // 叶子键在配置里没有对应 `[mcp_servers.<name>]` 表时,codex 会凭空造出一张没有
+  // transport 的表并以 `invalid transport in mcp_servers.<name>` 直接起不来
+  // (2026-10 在干净的临时 CODEX_HOME 里复现过)。以前能用,只是因为启动时的
+  // 强制种子先把整张表写进了用户的 config.toml。
   //
-  // ⛔ apiyi(Gemini)整条通道当前**不对 agent 暴露**。
-  //
-  // 直接原因:那枚 key 已失效,上游一律回 "Invalid token"。而这里的启用判据是
-  // 「有没有 key」而不是「key 能不能用」—— 失效的 key 与有效的 key 在启动那一刻
-  // 长得一模一样,于是服务器照常起来、照常把工具挂出去,agent 看见一个「能看图」
-  // 的工具就去用,连撞三次才知道不行。这比工具不存在更糟:不存在时它会直接走
-  // 正确的那条路。
-  //
-  // 根本原因是能力重复:看图/看视频我们已经有 qwen 那条(understand_document /
-  // understand_video,`file_urls` 还能一次看多张做跨图比较),再挂一个同能力的
-  // Gemini 只是让模型多一个选项、多一次试错 —— 与 codex 官方「只暴露一个规范化
-  // 能力,别让模型面对互相竞争的工具」是同一个道理(openai/codex#34956)。
-  //
-  // 要恢复:把这里改回 true,并确认设置里的 API易 key 有效。整条通道的 seed /
-  // 超时 / 命令解析都原样保留,只是不注入、不启用,所以改一行就能回来。
-  const APIYI_MCP_EXPOSED = false
-
-  // The force-seed (`seedApiyiMcpEntry`) guarantees the entry's canonical
-  // transport (`command`/`args`) at boot, so every `-c` below only sets a leaf
-  // onto an existing entry — we never synthesize a command-less
-  // `[mcp_servers.apiyi]` that codex would reject as "invalid transport".
-  const apiyiKey = APIYI_MCP_EXPOSED ? options?.apiyiKey?.trim() : ''
-  if (apiyiKey) {
-    // (A) Overlay the leaf secret; dotted `-c` merges over the boot-seeded env
-    // (base_url / model / other timeouts survive). Force-enable regardless of
-    // what the on-disk entry says — key present means apiyi MUST run.
-    args.push(
-      '-c', `mcp_servers.apiyi.env.APIYI_API_KEY=${quote(apiyiKey)}`,
-      '-c', 'mcp_servers.apiyi.enabled=true',
-    )
-    // (A) Reliability timeouts — the OTHER half of "why catimation always
-    // returns tools and apiyi sometimes doesn't". apiyi-mcp is a real external
-    // `node index.js` process (not catimation's in-process bridge), so:
-    //   • startup_timeout_sec=60 — a cold node boot + MCP `initialize`
-    //     handshake can intermittently blow codex's default startup window
-    //     (DEFAULT_STARTUP_TIMEOUT, ~10s), leaving the server in the "异"
-    //     (errored) state with ZERO tools listed. 60s of slack makes the
-    //     listing reliable. This deliberately does NOT shrink to fit the
-    //     tool-list RPC budget — a single slow server must never dictate
-    //     apiyi's startup window. Instead the LIST side is made resilient:
-    //     `CodexProtocolClient.listMcpServers` runs on its own 90s budget
-    //     (> this 60s, see MCP_LIST_TIMEOUT_MS) and a list timeout degrades
-    //     SILENTLY (status keeps arriving via `mcp_status_updated`
-    //     notifications), so one slow server can't blank the whole panel.
-    //   • tool_timeout_sec=2000 — per tool CALL (not startup); understanding
-    //     jobs (video/音频/PDF via Gemini) routinely run minutes; apiyi-mcp's
-    //     own GEMINI_TIMEOUT is 1800000ms (30min), so codex must wait at least
-    //     that long or it aborts mid-flight. 2000s > 1800s, matching
-    //     catimation. (Safe — does not affect the startup/list path above.)
-    args.push(
-      '-c', 'mcp_servers.apiyi.startup_timeout_sec=60',
-      '-c', 'mcp_servers.apiyi.tool_timeout_sec=2000',
-    )
-  } else {
-    // (C) No key in 设置 → dormant, see rationale above.
-    args.push('-c', 'mcp_servers.apiyi.enabled=false')
-  }
+  // 老版本留在用户 ~/.codex/config.toml 里的那条 `[mcp_servers.apiyi]` 由
+  // `legacyApiyiMcpCleanup.removeLegacyApiyiMcpEntry` 在启动时清掉。
 
   // cinematography-kb-mcp TRANSPORT overlay — the catimation treatment.
   //
@@ -875,7 +788,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   }
 
   // cinematography-kb-mcp key overlay (设置 → 运镜知识库). Dotted `-c` merges the
-  // leaf secret over the boot-seeded (possibly empty) env. Unlike apiyi we do
+  // leaf secret over the boot-seeded (possibly empty) env. We do
   // NOT gate the server on the key: `tools/list` is static so the tool always
   // appears; a keyless CALL just returns a "DASHSCOPE_API_KEY is not set"
   // message. So we only overlay when a key exists and never disable otherwise.

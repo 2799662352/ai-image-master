@@ -53,6 +53,8 @@ pnpm build:win           # Windows 安装包
 
 ## 远程 apiyi 网关 / BYOK(可选)
 
+(桌面端内置的 apiyi MCP 已于 2026-10-30 移除,本节说的是**自己服务器上**独立部署的版本,不受影响。)
+
 如果想跨设备/多人共用 `apiyi-mcp-server` 的能力 —— 在自己的服务器上挂一个 HTTPS endpoint,
 **每个用户填自己的 apiyi key**(BYOK,Bring Your Own Key):
 
@@ -266,6 +268,64 @@ Pass 4: 一致性校验
 | 存储 | Cloudflare R2 |
 | 测试 | Vitest + Playwright |
 | 国际化 | 4 语言 (zh-CN/zh-TW/en/ru) |
+
+## Codex 页 DeepSeek (Miau) 通道:选择器次序与记忆模型
+
+2026-10-30 调整(`src/shared/modelSettings.ts`、`src/main/agent/gatewayModelRouting.ts`):
+
+- **选择器次序**:DeepSeek 组按 `火山 V4.1 Flash` → `火山 V4.1 Flash 经济版` → `DeepSeek V4 Pro` → `DeepSeek Flash` 排列(火山在前,官方在后,`v4-pro` 先于 `flash`)。次序以 `CANONICAL_MODEL_SETTINGS_ROWS` 为准;通道默认模型仍是 `deepseek-flash`。
+- **记忆模型**(`memories.extract_model` / `consolidation_model`)与会话自动起标题的模型:四个 DeepSeek 模型(火山两个 + 官方两个)**一律走火山标准版 `deepseek-v4-1-flash-261017`**(原为 `deepseek-flash`),在通道的 `memoriesModel` 里写一个固定值。
+  - 为什么是一个值而不是按对话模型分路:记忆模型是启动 Codex 时写死的 `-c` 参数,而同一通道内切换模型不会重启 Codex,分路会让它停在启动那一刻的值上(切换后过期)。一个值就没有这个问题,也不需要映射表。
+  - 通道默认对话模型不变,仍是 `deepseek-flash`。
+- **代价**:官方两个模型的用户也按火山标准版计费;同一时段它的单价是 `deepseek-flash` 的 6.7 倍(输入 ¥1 对 ¥0.15、输出 ¥4 对 ¥0.6,每百万 token,缓存命中的输入另有折扣)。**2026-10-30 按网关扣费日志实测(不是价格表推算)**:一次记忆提取(阶段 1,约 5 万输入 / 4 千输出 token)≈ ¥0.07;一次记忆合并(阶段 2,23 次请求、约 99 万输入 token 其中 97% 命中缓存、1.6 万输出)≈ ¥0.22;一次完整整理合计约 ¥0.3。按 6.7 倍推算,同样的工作用 `deepseek-flash` 约 ¥0.045(推算值,没有实测)。**此前文档里写的「单次记忆请求约 ¥0.0005 对 ¥0.00007、绝对值很小」是只按一条很小的请求估的,低估了阶段 2,以本条为准**。这些费用会出现在用量明细里;合并只在有新的提取结果时才跑,频率取决于用户开新会话的节奏。
+- **已验证(2026-10-30,对生产 Miau 网关,真实内置 Codex + 本机转发代理)**:`memories.extract_model` / `consolidation_model` = `deepseek-v4-1-flash-261017`,聊天模型 `deepseek-flash`。① 阶段 1(提取):`/v1/responses`、`stream=true`、`text.format=json_schema`、`reasoning.effort=low`、0 个工具,HTTP 200,返回合法结构化结果,`stage1_outputs` 落库、任务 `done`;② 阶段 2(合并):合并 agent 用同一个模型(`effort=medium`、9 个工具)连续 24 次请求,**全部 HTTP 200**,任务 `done`(耗时约 130 秒),写出 `MEMORY.md`(6.9 KB)、`memory_summary.md`(4.1 KB)、`raw_memories.md`(5.6 KB)、1 份 rollout 摘要和 1 个自动生成的技能,agent 最后一句是 "Phase 2 complete"。聊天轮(`deepseek-flash`)与记忆请求(火山标准版)走的是两个不同的模型,互不影响。
+- **没有覆盖到的**:① 只用一个很小的会话做样本(1 份 rollout、从空记忆库起步的 INIT 合并),没有测多份 rollout 的增量合并,也没有评估合并产出的质量(只确认写完了文件、任务状态 `done`);② 有一次运行里阶段 1 请求撞上一次瞬时 `fetch failed`(5 秒,本机到网关),Codex 自动重试后成功,没有查网络层原因;③ 验证脚本曾在第一个 Codex 被强杀后留下一条「合并任务 running、租约 1 小时」的记录,第二个进程 10 分钟内没有接手(清掉这条记录后正常跑完)——正常退出不会留下这条记录,但**用户强杀应用后的下一次启动是否同样 1 小时内合并不了,没有单独验证**。
+
+## apiyi (Gemini) MCP 已从应用移除(2026-10-30)
+
+桌面端不再内置、不再启动 apiyi 的 Gemini MCP(`apiyi-mcp-server`)。**API易作为 Codex 网关 / 出图站点(provider id `apiyi`、`APIYI_PRESET`、设置里的「API易」key)不受影响。**
+
+- **原因**:这条 MCP 早已对 agent 隐藏(`APIYI_MCP_EXPOSED=false`),能力与千问 omni 的 `understand_*` 工具重复;而它的休眠写法 `-c mcp_servers.apiyi.enabled=false` 在配置里没有 `[mcp_servers.apiyi]` 表时会凭空造出一张没有 transport 的表,Codex 直接以 `invalid transport in mcp_servers.apiyi` 起不来(例如全新的 `CODEX_HOME`)。
+- **主进程**:`codexLaunch.ts` 不再发任何 `mcp_servers.apiyi.*` / `apiyi` direct_only 项,`buildCodexLaunchArgs` 去掉 `apiyiKey` 选项;`AgentManager` / `CodexLocalBackend` / `codexProviders` 去掉 apiyi 密钥桥(`APIYI_MCP_PROVIDER_ID`);删除 `apiyiMcpLauncher.ts`、`apiyiMcpSeed.ts` 及其测试;启动时不再往 `~/.codex/config.toml` 写 `[mcp_servers.apiyi]`。`whichNode` / `resolveStdioNodeCommand`(「系统 node,否则 Electron-as-Node」)抽到 `src/main/agent/stdioNodeCommand.ts`,catimation 桥与运镜知识库共用。
+- **老用户配置自动清理**:`src/main/agent/legacyApiyiMcpCleanup.ts` 在 Codex 启动前,只在 `mcp_servers.apiyi` 的 `args[0]` 指向应用自带路径(以 `/apiyi-mcp/dist/index.js` 结尾)时删掉这一条;用户自己写的同名条目保留、TOML 解析失败不改写、没有可删内容不写盘、幂等。结果写日志 `[apiyi-mcp] legacy entry cleanup: removed|kept-user-entry|malformed`。
+- **渲染层**:去掉 `ApiService.syncApiyiKeyToMcp`(构造器 / 保存 key / MCP 页冷启动三处调用)与 `APIYI_MCP_PROVIDER_ID`;MCP 页「预装」分组机制保留,`APP_BUNDLED_MCP_NAMES` 现为空集;「已连接但无工具」提示去掉 apiyi 专属分支(只剩 Docker / 通用两条)。
+- **打包**:`electron-builder.yml` 去掉 `resources/apiyi-mcp` 两段 `extraResources`,`package.json` 去掉 `vendor:apiyi-mcp*` 脚本与 `build:vite` 里的前置 vendor 步骤,`.gitignore` 去掉对应条目,删除 `scripts/vendor-apiyi-mcp.mjs` / `.lock.json`。评测 harness 与 12 个冒烟 / 诊断脚本里写 `[mcp_servers.apiyi]` 惰性占位的代码一并去掉(运镜知识库那条保留)。
+- **技能**:`catimation-understand` 的「apiyi-mcp(Gemini)只作深度复核的备选」整节与 frontmatter 里的对应句子删除(已 `pnpm skills:gen`)。
+- **没有动的**:`deploy/apiyi-fastmcp`(自己服务器上跑的 BYOK 版,见上面「远程 apiyi 网关」一节)、用户 `~/.cursor/mcp.json` 里 Cursor 自己的 `apiyi` / `apiyi-remote`、已持久化在 provider store 里的 `apiKeys["apiyi-mcp"]`(不再被读取,是 API易 key 的一份重复拷贝)。
+- **测试**:新增 `legacyApiyiMcpCleanup.test.ts`(8 条)、`stdioNodeCommand.test.ts`、`codexLaunch.test.ts` 里「apiyi MCP 已移除」3 条、`McpServerCard.test.tsx` 里 docker / 通用空工具提示 2 条。
+
+## NovelAI 四个模型接入(2026-10-30,PR1)
+
+对齐网关 new-api #174(渠道类型 77,TTAPI 聚合)与 sora-ui 的做法,桌面端新增四个出图渠道:`nai-diffusion-5-full` / `nai-diffusion-5-curated` / `nai-diffusion-4-5-full` / `nai-diffusion-4-5-curated`(V5 与 V4.5,各有 Full / Curated 两套数据集)。
+
+- **只经 Miau 网关**(`miauOnly`,出图时自动钉 Miau 站点)。按**每张图**固定价计费,`count` 1–4 直接对应网关的 `n`,1K / 2K 同价;新增厂商分组「NovelAI」。默认出图渠道不变。
+- **参数(`shared/imageModelParams.ts` 的 `novelAiParamSpecs`,生成页 / 批量页 / MCP 共用一张表)**:`dataset_mode`(anime / furry)、`negative_prompt`、`characters`(角色提示词,每个角色 prompt + uc + 位置 x / y;V5 ≤ 22、V4.5 ≤ 6)、`steps`、`scale`、`sampler`、`noise_schedule`、`seed`、`img2img_strength` / `img2img_noise`(仅带 1 张参考图时生效)。未设置 = 自动 / 默认;**越界一律拒绝而不是截断**(按张计费)。透明底(`transparentBackground`)只有 V5;参考图至多 1 张(图生图)。氛围迁移 / 角色精准参考上游暂不可用,不暴露。
+- **生成页**:`ModelParamsPanel` 支持多行文本框(负面提示词)、角色提示词编辑器、「默认 N」占位符;值等于默认时清掉键,不把默认值当成「用户改过」存下来。NovelAI 不自动重试(`maxRetries: 0`),失败后由用户决定是否重来。
+- **MCP**:`generate_image` / `generate_images` 的 `modelParams` 现在是「悠船 ∪ NovelAI」的合并 schema(`modelParamsSchema.ts` 的 `buildChannelModelParamsSchema`,同名键 `seed` 定义一致),说明里写明各自只对自己的渠道生效、其它渠道忽略。为了压回 Codex 的 16384 字节工具 schema 预算(`toolSchemaBudget.test.ts`),同时把说明里重复的内容去掉:`generate_image` 接入后一度到 17845 字节,压到 16384 以内(余量不大,以后再加渠道要先看这条测试)。
+- **技能**:`catimation-image` 补 NovelAI 四条渠道与用法(点名 NovelAI / 动漫插画 / 多角色同框时选用),`commands/gen-image.md` 补渠道清单;skill 正文有 21500 字符的债务钉(只许缩不许涨),本次从 21490 压到 21447(顺手去掉了几处重复的「常见错误」条目和日期轶事)。`firstPartySkills.generated.ts` 已重新生成。
+- **没做 / 没验证**:① **没有对真实网关出过图**(要用户确认过的测试令牌,且每张约 ¥0.6);② 64 张风格封面选择器是二期;③ **插件市场(catimation-core 的 catimation-image)还没发布**,发布要用户点头;④ Codex 页「出图渠道」选择器的两栏改版见下一节(PR2)。
+- **测试**:新增 `imageModelParams.novelai` / `ApiService.novelai` / `imageTools.novelai` / `ModelParamsPanel.novelai` 四个测试文件;相关目录 217 个文件 2798 条全过,`typecheck:ci` 7 existing / 0 new,`audit:skill-arch` 0 违规,`test:skill-arch` 21/21,`skills:gen:check` parity。
+
+## Codex 页「出图渠道」改成两栏分区面板(2026-10-30,PR2)
+
+复刻 sora-ui 网页版「图像模型」下拉(ModelPanel)的结构与交互:左边分区栏 **最近使用 / 常用 / 备用渠道 / 更多模型·按系列**,右边是该分区的渠道(名称 + 一句话说明 + 价格量级)。只改 Codex 输入框下面的 `ImageChannelPicker`,`selectedImageChannel`、`IMAGE_CHANNELS`、MCP 枚举、默认渠道回落一律不动(默认仍是 `custom-imagemodel-gt` 腾讯 image2)。
+
+- **摆放表是桌面端自己的**(`features/agent-chat/imageChannelPlacement.ts`):常用 = Seedream 5.0 Pro / 腾讯 image2 / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Nano Banana 2.1 / 万相 2.7 pro(照用户点名的顺序);备用渠道 = 官转的 2.5 Flare / Sunburst(跟随各自的腾讯同款排序);更多按系列:GPT Image 系列 / Gemini 系列 / 阿里百炼 / 风格化(悠船 ×2 + NovelAI ×4)。表里没有的渠道进「更多 · 其他」,不会自己挤进常用;测试里有守卫:注册表每个渠道都必须显式摆放、表里不许有过期条目、备用渠道必须指向存在的常用渠道。
+- **交互**(`ImageChannelPanel.tsx`,逻辑对照网页版):打开时停在当前渠道所在分区并用圆点标出;分区可点击 / 悬停(约 90 ms 延迟,斜着划向右栏不误切)/ 键盘聚焦切换;键盘:分区栏 ↑↓ / Home / End,→ 进右栏;右栏 ↑↓ 移动、←→ 切分区、Enter 选择;Esc 收起并把焦点还给触发按钮;右栏 roving tabindex。面板宽度 < 440 px 时分区栏变成顶部横向标签。「选择」与「固定」是同一行里的两个兄弟按钮,所以右栏不用 listbox。触发按钮在选了备用 / 更多渠道时带小标签(官转 / 更多),避免误触后不自知。
+- **固定与最近使用**(`imageChannelPrefs.ts`,localStorage `catimation.agent.imageChannelPrefs.v1`):备用 / 更多里的渠道可「固定到常用」(常用总数 ≤ 10,满了按钮置灰并说明),已固定的常驻取消按钮;最近使用最多显示 3 个、不含常用里的。读出来的内容一律当不可信输入(逐项校验、去重、截断),坏 JSON 当没有;渠道下架后存着的 id 自动忽略。
+- **价格量级**:只给确认过口径的渠道填 —— 目前只有 NovelAI 四个「≈¥0.6/张」(网关按张计费 ¥0.6–0.65);其他渠道**不抄网页版的近 30 天均价**(口径不同,且与注册表里「与 image2 fast 同价」之类的描述对不上)。分区底部的提示只在该分区确有价格时出现。
+- **配色**:走桌面端 Codex 页的 zinc + fuchsia(CSS 变量 `--icp-*`),网页版的蓝色锚点换成 fuchsia;类名 `mrp-*` → `icp-*`。
+- **没做**:NEW 标签(桌面端没有「模型上新」通知)、「暂未开放」置灰(桌面端渠道清单是写死的精选子集,没有这个状态)、按账号分键(桌面端单机单用户,与 `selectedImageChannel` 一致)。
+- **测试**:新增 `ImageChannelPanel` / `imageChannelPlacement` / `imageChannelPrefs` 三个测试文件并重写 `ImageChannelPicker` 测试(共 53 条);变异检查 6 种(悬停延迟归零 / 选择不记最近 / 固定按钮处处可见 / 钉了不从备用移除 / 最近使用含常用 / 窄容器阈值)全被抓到;`features/agent-chat` + `shared` 138 文件 1536 条全过,`typecheck:ci` 7 existing / 0 new。**视觉**:把真实组件渲染出的 HTML + 项目自己的 Tailwind 编出的 CSS 放进内置浏览器看过三种状态(默认 / 选了 NovelAI / 窄容器),**没有在真实的 Electron 窗口里看过**,悬停时「固定」按钮的出现、真实输入框旁的弹出位置要真机再看一眼。
+
+## Codex 页输入框工具栏窄屏收起 + 弹层夹在输入框内(2026-10-30)
+
+真机反馈两件事:① 出图渠道 / 模型弹层右侧被面板边缘挡住;② 聊天面板缩窄后,工具栏的药丸被挤成多行、按钮看不见。要求:**药丸形状不变、可以省略文字、不丢任何按钮**,参考 Codex 官方的做法。
+
+- **做法:分级收起,不换形状**(`features/agent-chat/toolbarCompact.ts` + `MentionInput.tsx` 工具栏行)。名称先用省略号收短(纯 CSS:药丸 `min-w` + `shrink`,触发按钮 `w-full min-w-0`,文字 `truncate`,图标 / 徽标 / 箭头 `shrink-0`);行宽 ≤ 600 px(c1)收起出图渠道徽标、模型推理等级徽标和待机的「语音」字样;≤ 520 px(c2)协作模式只留图标 + 箭头(Default / Plan 文字收起);≤ 450 px(wrap)才允许整颗药丸换行,作为最后兜底。四颗主药丸(模型 / 出图渠道 / 协作模式 / 语音)统一 `h-[27px]`,收起文字不改变高度;协作模式和语音药丸 `shrink-0`,只靠收起文字让位。Agent 标签和右侧 Send 组都不收缩。
+- **为什么不用 CSS 容器查询**:`container-type` 会带来布局包含,让该元素成为层叠上下文和定位祖先,会把 `z-[40001]` 的弹层困在工具栏里。改成 `useToolbarCompact`(ResizeObserver + `useLayoutEffect` 量行宽)在行上设 `data-c1` / `data-c2` / `data-wrap`,子元素用 Tailwind 的 `group-data-[c1]/tb:hidden`(与视口断点 `sm:inline` 冲突的地方用结尾 `!` 的重要形式)。没有布局引擎(jsdom)时三个标志全为 false,行为与改动前一致。
+- **弹层夹在输入框内**:`popoverPlacement.ts`(纯函数 `computePopoverPlacement`)+ `usePopoverPlacement` 把弹层的 `left` / `width` 夹在所在 `form` 的范围内;出图渠道弹层最宽 540、模型弹层最宽 360;没有布局时回落到原来的 CSS 默认位置。
+- **验证**:新增 `toolbarCompact` / `popoverPlacement` / `MentionInput.toolbarCompact` 测试并更新 `ImageChannelPicker.placement`;**变异检查 10 种**(语音药丸去固定高度 / 模型名不 truncate / 推理徽标不收起 / 模型弹层不夹 / 渠道徽标不收缩 / 协作文字不收起 / 协作药丸可收缩 / 行默认换行 / c2 阈值改大 / 不再监听行宽)全部被抓到,其中「协作药丸可收缩」第一次漏过,补了一条契约后抓到。`features/agent-chat` + `features/voice` 139 文件 1392 条全过,`typecheck:ci` 7 existing / 0 new,`build:vite` 通过。**真浏览器验证**:把真实 `MentionInput` 渲染出的 DOM + 项目 Tailwind 编出的 CSS 放进内置浏览器,在 340–760 px 逐档量:无横向溢出、四颗药丸高度恒为 27 px、≥ 460 px 单行不丢任何按钮、≤ 450 px 整颗换行(两行药丸)。**没有在真实 Electron 窗口里看过**:harness 用的是系统字体,真实的 Exo 2 / 中文字体宽度略有不同,阈值(600 / 520 / 450)与 27 px 高度需要真机再确认一次。
 
 ## 许可证
 

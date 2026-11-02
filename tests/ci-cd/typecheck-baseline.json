@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "generatedAt": "2026-08-28T03:18:35.325Z",
-  "expiresAt": "2026-10-31",
+  "expiresAt": "2026-12-31",
   "diagnostics": [
     {
       "file": "src/main/services/smartErase/index.ts",

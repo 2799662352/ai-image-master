@@ -954,7 +954,7 @@ describe('AgentManager model-selection turn admission', () => {
     })
     await restartStarted.promise
     // Passes the entry-time poison check, then waits behind the selection.
-    const auxKeyWrite = manager.setProviderApiKey('apiyi-mcp', 'aux-key-race')
+    const auxKeyWrite = manager.setProviderApiKey('cinematography-kb', 'aux-key-race')
     releaseRestart.resolve()
 
     await expect(poisoningSelection).resolves.toMatchObject({
@@ -967,7 +967,7 @@ describe('AgentManager model-selection turn admission', () => {
     )
     expect(restartCalls).toBe(restartsAfterPoison)
     const providers = await manager.getProvidersSnapshot()
-    expect(providers.apiKeys['apiyi-mcp']).toBeUndefined()
+    expect(providers.apiKeys['cinematography-kb']).toBeUndefined()
   })
 
   it('keeps poison when the refreshed recovery catalog drops the saved model', async () => {

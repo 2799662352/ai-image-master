@@ -5,6 +5,7 @@ import type { AgentReference } from '../../../../types/agent-reference'
 import { CollabModeControl } from './CollabModeControl'
 import { ModelPicker } from './ModelPicker'
 import { ImageChannelPicker } from './ImageChannelPicker'
+import { useToolbarCompact } from './toolbarCompact'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore, type PluginMentionCandidate } from './store'
@@ -499,6 +500,8 @@ export function MentionInput() {
   const workspaceTree = useFileExplorerStore((state) => state.workspaceTree)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const toolbarCompact = useToolbarCompact(toolbarRef)
   const [skillPopup, setSkillPopup] = useState<{ start: number; query: string } | null>(null)
   const [skillHighlight, setSkillHighlight] = useState(0)
   const [filePopup, setFilePopup] = useState<{ start: number; query: string } | null>(null)
@@ -1802,10 +1805,17 @@ export function MentionInput() {
           textareaRef.current?.focus()
         }}
       />
-      <div className="mt-1.5 flex items-center gap-1.5">
+      <div
+        ref={toolbarRef}
+        data-toolbar-row=""
+        data-c1={toolbarCompact.c1 ? '' : undefined}
+        data-c2={toolbarCompact.c2 ? '' : undefined}
+        data-wrap={toolbarCompact.wrap ? '' : undefined}
+        className="group/tb mt-1.5 flex min-w-0 items-center gap-x-1.5 gap-y-1.5 data-[wrap]:flex-wrap"
+      >
         <span
           className={
-            'inline-flex items-center gap-1 rounded border bg-zinc-900/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] transition-colors duration-200 ' +
+            'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border bg-zinc-900/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] transition-colors duration-200 ' +
             (isRunning
               ? 'border-cyan-300/60 text-cyan-200'
               : isEditing
@@ -1826,42 +1836,45 @@ export function MentionInput() {
         <ImageChannelPicker disabled={isRunning || modelSelectionPending} />
         <PetPickerButton />
         {isEditing ? null : <VoiceControls disabled={isRunning || modelSelectionPending} />}
-        <div className="flex-1" />
-        {isEditing ? (
+        {/* 右侧动作组靠 ml-auto 贴右且不收缩;分级收纳见 toolbarCompact.ts:
+            先省文字(省略号 → 纯图标),只有极窄时药丸才整颗换行,按钮不丢、形状不变。 */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {isEditing ? (
+            <button
+              className="rounded-lg border border-zinc-700/80 px-2.5 py-1.5 text-[12px] text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+              onClick={() => cancelEditMessage()}
+              type="button"
+            >
+              Cancel
+            </button>
+          ) : null}
           <button
-            className="rounded-lg border border-zinc-700/80 px-2.5 py-1.5 text-[12px] text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-            onClick={() => cancelEditMessage()}
-            type="button"
+            className="rounded-lg bg-cyan-300 px-3 py-1.5 text-[12px] font-semibold text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            disabled={
+              modelSelectionPending
+              || (input.trim().length === 0 && attachments.length === 0)
+            }
+            title={
+              modelSelectionPending
+                ? '正在切换模型通道…'
+                : isRunning && !isEditing
+                  ? '插话:把这条追加到当前运行的回合(turn/steer)'
+                  : undefined
+            }
+            type="submit"
           >
-            Cancel
+            {isEditing ? 'Save & Submit' : isRunning ? 'Steer' : 'Send'}
           </button>
-        ) : null}
-        <button
-          className="rounded-lg bg-cyan-300 px-3 py-1.5 text-[12px] font-semibold text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-          disabled={
-            modelSelectionPending
-            || (input.trim().length === 0 && attachments.length === 0)
-          }
-          title={
-            modelSelectionPending
-              ? '正在切换模型通道…'
-              : isRunning && !isEditing
-                ? '插话:把这条追加到当前运行的回合(turn/steer)'
-                : undefined
-          }
-          type="submit"
-        >
-          {isEditing ? 'Save & Submit' : isRunning ? 'Steer' : 'Send'}
-        </button>
-        {isRunning && !isEditing ? (
-          <button
-            className="rounded-lg border border-red-400/30 px-2.5 py-1.5 text-[12px] text-red-200 hover:bg-red-500/10"
-            onClick={() => void cancel()}
-            type="button"
-          >
-            Stop
-          </button>
-        ) : null}
+          {isRunning && !isEditing ? (
+            <button
+              className="rounded-lg border border-red-400/30 px-2.5 py-1.5 text-[12px] text-red-200 hover:bg-red-500/10"
+              onClick={() => void cancel()}
+              type="button"
+            >
+              Stop
+            </button>
+          ) : null}
+        </div>
       </div>
     </form>
   )
