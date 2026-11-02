@@ -32,9 +32,11 @@ import {
   serializeDocumentOrLink,
 } from '../../../../shared/wan3Document'
 import type {
+  VideoWorkbenchBoard,
   VideoWorkbenchCard,
   VideoWorkbenchMaterial,
   VideoWorkbenchMode,
+  VideoWorkbenchProject,
 } from '../../../../types/videoWorkbench'
 import { WORKBENCH_MODES, getModeSpec, modeLimit } from '../../features/video-workbench/modes'
 import {
@@ -69,11 +71,70 @@ import { TaskDetailDialog } from './TaskDetailDialog'
 import { VersionSwitcher } from './VersionSwitcher'
 import { isActiveStatus } from '../../features/video-workbench/cardSpec'
 import { cardHasVideoInput, canStart, useVideoWorkbenchStore } from '../../features/video-workbench/store'
-import { parseFileDrop, serializeWorkbenchCardDrag } from '../../features/file-explorer/dragHelpers'
+import {
+  parseFileDrop,
+  serializeWorkbenchCardDrag,
+  type WorkbenchCardDragItem,
+  type WorkbenchCardDragVersion,
+} from '../../features/file-explorer/dragHelpers'
 import { materialsFromPaths } from '../../features/video-workbench/pathMaterials'
 import { useSeedanceModels } from '../../features/video-workbench/useSeedanceModels'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
+/** 拖进聊天栏的载荷里,每一版产物带的提示词最多多少字(整份提示词在卡自己的 spec 里)。 */
+const DRAG_VERSION_PROMPT_MAX = 300
+
+/**
+ * 历次产物 → 拖拽载荷里的版本摘要。只带地址与够认出「这一版怎么出的」的几个字段,
+ * **不带素材、不带整份规格**(同 spec.referenceBrief 的纪律)。
+ */
+function dragVersionsOf(card: VideoWorkbenchCard): { versions?: WorkbenchCardDragVersion[] } {
+  if (!card.versions || card.versions.length === 0) return {}
+  return {
+    versions: card.versions.map((v) => ({
+      seq: v.seq,
+      createdAt: v.createdAt,
+      ...(v.localPath ? { localPath: v.localPath } : {}),
+      ...(v.remoteUrl ? { remoteUrl: v.remoteUrl } : {}),
+      ...(v.videoUrl ? { videoUrl: v.videoUrl } : {}),
+      prompt:
+        v.spec.prompt.length > DRAG_VERSION_PROMPT_MAX
+          ? `${v.spec.prompt.slice(0, DRAG_VERSION_PROMPT_MAX)}…`
+          : v.spec.prompt,
+      model: v.spec.model,
+      resolution: v.spec.resolution,
+      duration: v.spec.duration,
+    })),
+  }
+}
+
+/**
+ * 卡片的「现状」字段:所在项目 / 分段、任务号、实际种子、时间。全是**结果不是意图**
+ * (与 spec 分开),都直接取自卡片和当前 store,不用新查询。缺的字段不写(不写 `undefined`
+ * 键,载荷更小,聊天栏也按缺席降级)。
+ *
+ * 卡片本身没有 completedAt:已完成卡当前这一版的出片时间 = `versions` 末项的 createdAt。
+ */
+function dragStateOf(
+  card: VideoWorkbenchCard,
+  ctx: { boards: VideoWorkbenchBoard[]; projects: VideoWorkbenchProject[]; activeBoardId: string },
+): Partial<WorkbenchCardDragItem> {
+  const board = ctx.boards.find((b) => b.id === (card.boardId ?? ctx.activeBoardId))
+  const project = board ? ctx.projects.find((p) => p.id === board.projectId) : undefined
+  const latest =
+    card.status === 'succeeded' && card.versions && card.versions.length > 0
+      ? card.versions[card.versions.length - 1]
+      : undefined
+  return {
+    ...(project?.name ? { projectName: project.name } : {}),
+    ...(board?.name ? { boardName: board.name } : {}),
+    ...(card.taskId ? { taskId: card.taskId } : {}),
+    ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
+    ...(typeof card.actualSeed === 'number' ? { actualSeed: card.actualSeed } : {}),
+    createdAt: card.createdAt,
+    ...(latest ? { completedAt: latest.createdAt } : {}),
+  }
+}
 /** 文件栏(FileExplorerPanel)内部拖拽的词表 —— 只有路径,没有 dataTransfer.files。 */
 const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
 
@@ -847,7 +908,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           'hover:bg-white/[0.04] transition-colors',
           selected ? 'bg-[#FCE300]/[0.07]' : '',
         ].join(' ')}
-        title="拖动:页内排序 / 拖进聊天栏交给模型(还没出片就递这张卡的规格说明);单击选中(Ctrl 加选 · Shift 选区间)"
+        title="拖动:页内排序 / 拖进聊天栏交给模型(卡片清单 + 产物);单击选中(Ctrl 加选 · Shift 选区间)"
         draggable
         onDragStart={(e) => {
           // 从行内按钮(删除等)起手不该变成拖卡
@@ -863,7 +924,8 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           const before = useVideoWorkbenchStore.getState()
           if (!before.selectedCardIds.includes(card.id)) before.selectCard(card.id)
           // 同步选区之后再读一次,别把「换选区前」的快照和「换之后」的混着用
-          const { cards, selectedCardIds } = useVideoWorkbenchStore.getState()
+          const { cards, selectedCardIds, boards, projects, activeBoardId } =
+            useVideoWorkbenchStore.getState()
           const dragged = selectedCardIds
             .map((id) => cards.find((c) => c.id === id))
             .filter((c): c is VideoWorkbenchCard => Boolean(c))
@@ -873,8 +935,9 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           //
           // 三级地址全带上(localPath → remoteUrl → videoUrl),和播放器的降级顺序
           // 一致:只带 localPath 会把「本地被 7 天清理扫掉、云端还在」的卡误报成
-          // 「还没有生成结果」。还没有产物的卡则带上规格摘要,聊天栏据此合成一份
-          // 说明递给模型 —— 素材只记名字,data: URL 不进载荷。
+          // 「还没有生成结果」。**每张卡都带规格摘要 + 历次版本 + 现状(任务号 / 实际
+          // 种子 / 时间 / 所在项目)**,聊天栏据此把所选的卡合成一份「卡片清单」(任何
+          // 状态都有),先挂清单、再挂产物 —— 素材只记名字,data: URL 不进载荷。
           serializeWorkbenchCardDrag(
             e.dataTransfer,
             dragged.map((c) => ({
@@ -900,6 +963,8 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                   audios: c.referenceAudios.map((m) => m.name),
                 },
               },
+              ...dragVersionsOf(c),
+              ...dragStateOf(c, { boards, projects, activeBoardId }),
             })),
           )
 

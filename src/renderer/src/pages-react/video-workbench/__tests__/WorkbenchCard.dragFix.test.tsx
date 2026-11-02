@@ -136,6 +136,177 @@ describe('数据丢失守卫:卡片载荷绝不能伪装成「可移动的工作
     expect(dataTransfer.getData(CARD_DRAG_MIME)).toBe(ids[0])
   })
 
+  it('有历次产物的卡把版本摘要带进载荷:地址 + 提示词(截断)+ 规格,不带素材', () => {
+    // 完成卡的说明书「产物」段据此列版本。载荷只装摘要:一张重生成过几十次的卡,
+    // 不能让每次拖拽都拖着几十份整提示词走。
+    const ids = seedAndRender(1)
+    const longPrompt = '长'.repeat(1000)
+    const spec = {
+      prompt: longPrompt,
+      model: '2.0' as const,
+      resolution: '720p' as const,
+      ratio: '16:9' as const,
+      duration: 5,
+      generateAudio: true,
+      mode: 'multimodal_ref' as const,
+      webSearch: false,
+      referenceBrief: { images: ['猫.png'], videos: [], audios: [] },
+    }
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === ids[0]
+          ? {
+              ...c,
+              status: 'succeeded' as const,
+              versions: [
+                { id: 'v-1', seq: 1, createdAt: 1_700_000_000_000, remoteUrl: 'https://cos.example.com/v1.mp4', spec },
+                { id: 'v-2', seq: 2, createdAt: 1_700_000_100_000, localPath: 'C:/u/v2.mp4', spec },
+              ],
+            }
+          : c,
+      ),
+    }))
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(), { dataTransfer })
+
+    const payload = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect(payload[0].versions).toHaveLength(2)
+    expect(payload[0].versions[0]).toMatchObject({
+      seq: 1,
+      remoteUrl: 'https://cos.example.com/v1.mp4',
+      model: '2.0',
+      resolution: '720p',
+      duration: 5,
+    })
+    expect(payload[0].versions[1]).toMatchObject({ seq: 2, localPath: 'C:/u/v2.mp4' })
+    // 提示词截到 300 字(+省略号),不是 1000 字整段。
+    expect(payload[0].versions[0].prompt.length).toBeLessThanOrEqual(301)
+    // 版本里不带素材(连名字都不带 —— 那是当前 spec 的事)。
+    expect(payload[0].versions[0].referenceBrief).toBeUndefined()
+    expect(payload[0].versions[0].spec).toBeUndefined()
+  })
+
+  it('没有版本的卡不写 versions 字段(载荷保持老形状)', () => {
+    seedAndRender(1)
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(), { dataTransfer })
+    const payload = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect('versions' in payload[0]).toBe(false)
+  })
+
+  it('现状字段进载荷:所在项目 / 分段、任务号、上游任务号、实际种子、创建 / 完成时间', () => {
+    // 清单要写「这张卡现在什么状态、出自哪一轮」:这些全是结果不是意图,直接取自卡片和 store,
+    // 拖拽时不发任何新查询。completedAt 取已完成卡当前版本(versions 末项)的出片时间。
+    const ids = seedAndRender(1)
+    const spec = {
+      prompt: 'p0',
+      model: '2.0' as const,
+      resolution: '720p' as const,
+      ratio: '16:9' as const,
+      duration: 5,
+      generateAudio: true,
+      mode: 'multimodal_ref' as const,
+      webSearch: false,
+      referenceBrief: { images: [], videos: [], audios: [] },
+    }
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === ids[0]
+          ? {
+              ...c,
+              status: 'succeeded' as const,
+              createdAt: 1_700_000_000_000,
+              taskId: 'task_abc123',
+              upstreamTaskId: 'cgt-2026-xyz',
+              actualSeed: 4242,
+              versions: [
+                { id: 'v-1', seq: 1, createdAt: 1_700_000_050_000, remoteUrl: 'https://cos.example.com/v1.mp4', spec },
+                { id: 'v-2', seq: 2, createdAt: 1_700_000_100_000, remoteUrl: 'https://cos.example.com/v2.mp4', spec },
+              ],
+            }
+          : c,
+      ),
+    }))
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(), { dataTransfer })
+
+    const [item] = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect(item).toMatchObject({
+      taskId: 'task_abc123',
+      upstreamTaskId: 'cgt-2026-xyz',
+      actualSeed: 4242,
+      createdAt: 1_700_000_000_000,
+      completedAt: 1_700_000_100_000,
+    })
+    // 项目 / 分段名取自当前 store 里这张卡所在的那一页,不是写死的。
+    const state = useVideoWorkbenchStore.getState()
+    const board = state.boards.find((b) => b.id === (state.cards[0].boardId ?? state.activeBoardId))
+    const project = state.projects.find((p) => p.id === board?.projectId)
+    if (project?.name) expect(item.projectName).toBe(project.name)
+    if (board?.name) expect(item.boardName).toBe(board.name)
+  })
+
+  it('没出过结果的卡:没有 completedAt / 任务号 / 种子,键根本不出现(不写 undefined)', () => {
+    seedAndRender(1)
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(), { dataTransfer })
+    const [item] = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    for (const key of ['taskId', 'upstreamTaskId', 'actualSeed', 'completedAt']) {
+      expect(key in item).toBe(false)
+    }
+    expect(typeof item.createdAt).toBe('number')
+  })
+
+  it('失败的卡不带 completedAt —— 版本存档末项是上一轮的成品,不是这一轮的完成时间', () => {
+    const ids = seedAndRender(1)
+    const spec = {
+      prompt: 'p0',
+      model: '2.0' as const,
+      resolution: '720p' as const,
+      ratio: '16:9' as const,
+      duration: 5,
+      generateAudio: true,
+      mode: 'multimodal_ref' as const,
+      webSearch: false,
+      referenceBrief: { images: [], videos: [], audios: [] },
+    }
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === ids[0]
+          ? {
+              ...c,
+              status: 'failed' as const,
+              error: '上游超时',
+              versions: [{ id: 'v-1', seq: 1, createdAt: 1_700_000_050_000, remoteUrl: 'https://cos.example.com/v1.mp4', spec }],
+            }
+          : c,
+      ),
+    }))
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(), { dataTransfer })
+    const [item] = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect('completedAt' in item).toBe(false)
+    expect(item.versions).toHaveLength(1)
+  })
+
+  it('多选拖拽:载荷里每张卡各带各的现状字段', () => {
+    const ids = seedAndRender(2)
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === ids[0]
+          ? { ...c, taskId: 'task_one' }
+          : c.id === ids[1]
+            ? { ...c, taskId: 'task_two' }
+            : c,
+      ),
+      selectedCardIds: ids,
+    }))
+    const dataTransfer = fakeDataTransfer()
+    fireEvent.dragStart(header(0), { dataTransfer })
+    const payload = JSON.parse(dataTransfer.getData(WORKBENCH_CARD_MIME))
+    expect(payload.map((p: { taskId: string }) => p.taskId).sort()).toEqual(['task_one', 'task_two'])
+  })
+
   it('素材只带名字,不把 data: URL 拖进载荷 —— 否则一次拖拽拖着几十 MB base64 走', () => {
     const ids = seedAndRender(1)
     const dataURL = `data:image/png;base64,${'A'.repeat(2048)}`
