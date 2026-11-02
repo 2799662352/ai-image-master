@@ -118,10 +118,18 @@ export interface ExportTargets {
   pending: ExportPendingItem[]
 }
 
-/** 素材导出时用哪个地址;拿不到 https 返回 null(= 待上传)。 */
+/**
+ * 素材导出时用哪个地址;拿不到 https 返回 null(= 待上传)。
+ *
+ * 优先级:src 本身是 https → asset:// 的 previewUrl → **本地路径预传拿到的 `uploadedUrl`**。
+ * 最后这条是云备份漏掉图片 / 视频 / 音频的病根:拖进工作台的本地文件 `src` 永远是本地路径,
+ * 云端地址挂在 `uploadedUrl` 上(#394 起还会落库),这里不认它,备份就把这些素材当成
+ * 「只在本机」整条丢掉。`uploadedUrl` 只收 https(预传侧已拦掉 data: 降级,这里再守一道)。
+ */
 function exportableSrc(m: VideoWorkbenchMaterial): string | null {
   if (isHttpsUrl(m.src)) return m.src
   if (m.src.startsWith('asset://') && m.previewUrl && isHttpsUrl(m.previewUrl)) return m.previewUrl
+  if (typeof m.uploadedUrl === 'string' && isHttpsUrl(m.uploadedUrl)) return m.uploadedUrl
   return null
 }
 
