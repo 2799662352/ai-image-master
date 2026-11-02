@@ -271,12 +271,19 @@ export interface ChoiceOption {
  * - `skipped`: user pressed the skip/default button (`answered` is false).
  * - `selected`: chosen options (0 for skip, 1 for single, 0..n for multi).
  * - `freeText`: optional free-text the user typed.
+ * - `timedOut`: nobody answered — the card auto-skipped after the idle window.
+ *   `skipped` is also true, but this is NOT the user deferring to the agent: it
+ *   means the user was probably away, so the agent should proceed on its own
+ *   judgment and may ask again if the decision really matters.
+ * - `note`: plain-language explanation for the model, set with `timedOut`.
  */
 export interface ChoiceAnswer {
   answered: boolean
   skipped: boolean
   freeText?: string
   selected: ChoiceOption[]
+  timedOut?: boolean
+  note?: string
 }
 
 /**
@@ -306,6 +313,12 @@ export interface ChoiceRequestItem extends BaseItem {
    * clickable-but-dead button.
    */
   expired?: boolean
+  /**
+   * Epoch ms at which an UNANSWERED card auto-skips (`timedOut`). Pushed back
+   * on every user interaction. Absent on cards persisted before the feature,
+   * which then show no countdown.
+   */
+  autoAdvanceAt?: number
 }
 
 export type TimelineItem =

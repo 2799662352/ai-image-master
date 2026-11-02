@@ -36,6 +36,43 @@ describe('ToolRouter', () => {
     expect(request.threadId).toBeUndefined()
   })
 
+  describe('unresolved codex thread id (renderer falls back to the ACTIVE chat)', () => {
+    // The fallback is the exact path that put one chat's option card into the
+    // chat the user was looking at. It still has to exist (no mapping yet during
+    // a thread's first moments), but it must never be silent.
+    it('warns when a codex id was supplied but has no DB mapping', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
+        router.setThreadIdResolver(() => undefined)
+
+        void router.call('ask_user', { question: 'q' }, 'unmapped-codex-id')
+
+        expect(warn).toHaveBeenCalledTimes(1)
+        const text = warn.mock.calls[0].map(String).join(' ')
+        expect(text).toContain('ask_user')
+        expect(text).toContain('unmapped-codex-id')
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    it('stays quiet when the id maps, or when no id was supplied at all', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
+        router.setThreadIdResolver((id) => (id === 'known' ? 'db-1' : undefined))
+
+        void router.call('ask_user', { question: 'q' }, 'known')
+        void router.call('ask_user', { question: 'q' })
+
+        expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    })
+  })
+
   describe('renderer tool timeouts', () => {
     it('a regular renderer tool still times out at the ~33-min ceiling', async () => {
       vi.useFakeTimers()
