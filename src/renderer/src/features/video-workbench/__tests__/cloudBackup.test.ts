@@ -90,6 +90,50 @@ describe('prepareBackup', () => {
     expect(exported.result).toEqual({ status: 'draft' })
   })
 
+  it('本地素材已预传(带 https 的 uploadedUrl):图片 / 视频 / 音频都带着云端地址进副本,不算「只在本机」,本地路径不外泄', () => {
+    const relay = (n: string, ext: string) => `https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/media-relay/2026/11/02/${n}.${ext}`
+    const c = card('b1', 'A', {
+      draft: false,
+      referenceImages: [
+        { name: '_marshals.png', src: 'C:\\Users\\me\\Downloads\\_marshals.png', uploadedUrl: relay('c5827ab189ea1b5b', 'png') },
+        { name: '_faces.png', src: 'C:\\Users\\me\\Downloads\\_faces.png', uploadedUrl: relay('6b77eaabd2cbf382', 'png') },
+      ],
+      referenceVideos: [{ name: 'clip.mp4', src: 'D:\\clips\\clip.mp4', uploadedUrl: relay('aaaa1111bbbb2222', 'mp4') }],
+      referenceAudios: [{ name: 'bgm.mp3', src: 'D:\\audio\\bgm.mp3', uploadedUrl: relay('cccc3333dddd4444', 'mp3') }],
+    })
+    const out = prepareBackup(project('p1'), [board('b1', 'p1')], [c], app, 0)
+    expect(out).not.toBeNull()
+    expect(out!.localOnly).toBe(0)
+    const exported = out!.file.boards[0].cards[0]
+    expect(exported.referenceImages.map((m) => m.src)).toEqual([relay('c5827ab189ea1b5b', 'png'), relay('6b77eaabd2cbf382', 'png')])
+    expect(exported.referenceVideos.map((m) => m.src)).toEqual([relay('aaaa1111bbbb2222', 'mp4')])
+    expect(exported.referenceAudios.map((m) => m.src)).toEqual([relay('cccc3333dddd4444', 'mp3')])
+    // 名字照带;本地路径一个字都不进云端副本。
+    expect(exported.referenceImages.map((m) => m.name)).toEqual(['_marshals.png', '_faces.png'])
+    expect(JSON.stringify(out!.file)).not.toContain('Downloads')
+    expect(JSON.stringify(out!.file)).not.toContain('uploadedUrl')
+  })
+
+  it('uploadedUrl 不是 https(内联 data: / 空串)不算数:照旧当「只在本机」', () => {
+    const c = card('b1', 'A', {
+      referenceImages: [
+        { name: 'inline.png', src: 'D:\\pics\\inline.png', uploadedUrl: 'data:image/png;base64,AAAA' },
+        { name: 'empty.png', src: 'D:\\pics\\empty.png', uploadedUrl: '' },
+      ],
+    })
+    const out = prepareBackup(project('p1'), [board('b1', 'p1')], [c], app, 0)
+    expect(out!.localOnly).toBe(2)
+    expect(out!.file.boards[0].cards[0].referenceImages).toEqual([])
+  })
+
+  it('src 本身是 https 时仍以 src 为准(不被 uploadedUrl 抢走)', () => {
+    const c = card('b1', 'A', {
+      referenceImages: [{ name: 'a.png', src: 'https://cos/a.png', uploadedUrl: 'https://cos/other.png' }],
+    })
+    const out = prepareBackup(project('p1'), [board('b1', 'p1')], [c], app, 0)
+    expect(out!.file.boards[0].cards[0].referenceImages.map((m) => m.src)).toEqual(['https://cos/a.png'])
+  })
+
   it('activityAt 取剧自身与各卡片更新时间的最大值;别的剧的卡不算', () => {
     const mine = { ...card('b1', 'A'), updatedAt: 500 }
     const other = { ...card('b2', 'B'), updatedAt: 9999 }

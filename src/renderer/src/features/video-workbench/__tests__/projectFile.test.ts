@@ -62,6 +62,40 @@ describe('collectExportTargets', () => {
   })
 })
 
+describe('预传过的本地素材(uploadedUrl)', () => {
+  const relay = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/media-relay/2026/11/02/c5827ab189ea1b5b.png'
+  const withUploaded = () => [
+    buildCard({
+      prompt: '草稿',
+      referenceImages: [{ name: 'local.png', src: 'D:\\pics\\local.png', uploadedUrl: relay }],
+      referenceVideos: [{ name: 'clip.mp4', src: 'C:\\clips\\clip.mp4', uploadedUrl: 'https://cos.example/clip.mp4' }],
+      referenceAudios: [{ name: 'a.mp3', src: 'C:\\audio\\a.mp3', uploadedUrl: 'https://cos.example/a.mp3' }],
+    } as never, 0, 'b1'),
+  ]
+
+  it('已有 https 的 uploadedUrl 就不算待上传(导出不会把同一个文件再传一遍)', () => {
+    const t = collectExportTargets(boards.filter((b) => b.projectId === 'p1'), withUploaded())
+    expect(t.materials).toBe(3)
+    expect(t.pending).toEqual([])
+  })
+
+  it('导出取 uploadedUrl、不取本地路径;没带 uploadedUrl 的本地素材仍然拒绝', () => {
+    const own = boards.filter((b) => b.projectId === 'p1')
+    const ok = buildProjectFile({ project, boards: own, cards: withUploaded(), app, now: NOW, resolve: () => null })
+    expect(ok.ok).toBe(true)
+    if (!ok.ok) return
+    const card = ok.file.boards[0].cards[0]
+    expect(card.referenceImages).toEqual([{ name: 'local.png', src: relay }])
+    expect(card.referenceVideos).toEqual([{ name: 'clip.mp4', src: 'https://cos.example/clip.mp4' }])
+    expect(card.referenceAudios).toEqual([{ name: 'a.mp3', src: 'https://cos.example/a.mp3' }])
+    expect(JSON.stringify(ok.file)).not.toContain('D:\\\\pics')
+
+    const bare = [buildCard({ prompt: 'x', referenceImages: [{ name: 'b.png', src: 'D:\\pics\\b.png' }] }, 0, 'b1')]
+    const bad = buildProjectFile({ project, boards: own, cards: bare, app, now: NOW, resolve: () => null })
+    expect(bad.ok).toBe(false)
+  })
+})
+
 describe('buildProjectFile / parseProjectFile 往返', () => {
   const resolve = (src: string) => {
     if (src === 'D:\\pics\\local.png') return 'https://cos.example/local.png'

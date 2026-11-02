@@ -15,9 +15,8 @@ const S = () => useVideoWorkbenchStore.getState()
 const write = vi.fn(async (path: string, _json: string) => ({ ok: true as const, path }))
 const pickSavePath = vi.fn(async () => ({ path: 'E:\\else\\追车戏.catwb.json' }))
 type ResolveResult = { ok: true; url: string } | { ok: false; reason: string }
-const resolveRefMedia = vi.fn(
-  async (p: string): Promise<ResolveResult> => ({ ok: true, url: `https://cos/${p.split(/[\\/]/).pop()}` }),
-)
+const defaultResolve = async (p: string): Promise<ResolveResult> => ({ ok: true, url: `https://cos/${p.split(/[\\/]/).pop()}` })
+const resolveRefMedia = vi.fn(defaultResolve)
 const showItemInFolder = vi.fn()
 
 beforeEach(() => {
@@ -27,7 +26,9 @@ beforeEach(() => {
   resetWorkbenchDbForTest()
   write.mockClear()
   pickSavePath.mockClear()
-  resolveRefMedia.mockClear()
+  // reset 而不是 clear:上一条用例留下的 once 队列 / 实现不能漏进下一条(预传也走这个 mock)。
+  resolveRefMedia.mockReset()
+  resolveRefMedia.mockImplementation(defaultResolve)
   showItemInFolder.mockClear()
   ;(window as unknown as { electronAPI: unknown }).electronAPI = {
     videoWorkbench: {
@@ -80,9 +81,11 @@ describe('ExportProjectDialog', () => {
   })
 
   it('上传失败 → 留在页上给原因,按钮变「重试导出」,不写文件', async () => {
+    // 拖进来就预传(addCards 即发):预传若成功,素材已带 uploadedUrl、导出不会再传 ——
+    // 所以「上传失败」要从预传那一步就是失败的,模拟整段离线。
+    resolveRefMedia.mockResolvedValue({ ok: false, reason: 'offline' })
     S().addProject('追车戏')
     S().addCards([{ prompt: 'a', referenceImages: ['D:\\pics\\local.png'] }])
-    resolveRefMedia.mockResolvedValueOnce({ ok: false, reason: 'offline' })
     render(<ExportProjectDialog open onClose={() => {}} />)
     await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain('CATIMATION 工程'))
     fireEvent.click(screen.getByRole('button', { name: '导出' }))
@@ -92,12 +95,13 @@ describe('ExportProjectDialog', () => {
   })
 
   it('本地文件找不到 → 列出缺失、给「跳过缺失素材并导出」;跳过后成功并注明跳过数', async () => {
-    S().addProject('追车戏')
-    S().addCards([{ prompt: 'a', referenceImages: ['Q:\\old\\gone.png', 'D:\\pics\\ok.png'] }])
+    // mock 要在 addCards 之前装好:预传也走它,gone.png 预传失败才会留到导出时再被发现缺失。
     resolveRefMedia.mockImplementation(async (p: string): Promise<ResolveResult> =>
       p.endsWith('gone.png')
         ? { ok: false, reason: `referenceMedia: cannot read local file "${p}" — pass an existing path, data: URL, or https URL.` }
         : { ok: true, url: 'https://cos/ok.png' })
+    S().addProject('追车戏')
+    S().addCards([{ prompt: 'a', referenceImages: ['Q:\\old\\gone.png', 'D:\\pics\\ok.png'] }])
     render(<ExportProjectDialog open onClose={() => {}} />)
     await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain('CATIMATION 工程'))
     fireEvent.click(screen.getByRole('button', { name: '导出' }))
