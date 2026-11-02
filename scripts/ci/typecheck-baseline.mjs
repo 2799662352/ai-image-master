@@ -157,7 +157,11 @@ function runCli() {
       //   - StorageBridge × 2：两份 `HistoryItem` 打架，要先定权威那份住在哪；
       //   - deepagents × 1：包未声明未安装，而它的 peer 依赖要跨 6 个包升 LangChain 生态。
       // 两个月后再复审一次,那时上面三个决定应该已经有答案。
-      expiresAt: '2026-10-31',
+      //
+      // 2026-10-31 → 2026-12-31（2026-11-02 复审,记录见
+      // `docs/superpowers/specs/2026-11-02-typecheck-baseline-review.md`）:
+      // 仍是同样的 7 条、零新增,三个决定都还没人拍,所以只续期不清债。
+      expiresAt: '2026-12-31',
       diagnostics: baselineEntriesFromDiagnostics(diagnostics),
     }
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`)
