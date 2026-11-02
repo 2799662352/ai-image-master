@@ -52,28 +52,34 @@ export function assignDefaultProject(
 // 无限膨胀」也基本不成立了:本地文件存真实路径、外链转存成 COS https 地址,
 // 只有粘贴进来的合成 File 才留 data:。真要控库体积,按字节算,别按卡片数砍。
 
-/** 素材三类的字段名 —— 剥 uploadedUrl 时逐类扫。 */
+/** 素材三类的字段名 —— 剥 uploadState 时逐类扫。 */
 const MATERIAL_FIELDS = ['referenceImages', 'referenceVideos', 'referenceAudios'] as const
 
 /**
- * 落库前剥掉素材上的 `uploadedUrl`(本地图预传拿到的 COS 地址)。
+ * 落库前剥掉素材上的 `uploadState`(预传的界面进行态:uploading / uploaded / failed)。
  *
- * 那是**会话内缓存**,存下来弊大于利:仓库里没有任何地方声明或配置过 COS 桶的
- * 生命周期规则,所以一个几周前 mint 的地址是死是活无从判断,而卡片会在库里一直
- * 躺到用户自己删(卡片总量已无上限)。真拿一个死链去提交,失败后重试还是同一个
- * 死链,这张卡就永久废了。剥掉之后重启即回到原本的行为:提交时主进程从本地路径
- * 流式上传。
+ * **`uploadedUrl` 与 `uploadedFrom`(预传拿到的 COS 地址 + 上传时的本地文件指纹)现在
+ * 是持久化的**:重启后素材不再退回「只剩本地路径、提交时再传一遍」。早先把它们一起
+ * 剥掉的理由是「COS 桶的生命周期不明,一个几周前的地址是死是活无从判断」—— 桶没有
+ * 生命周期规则也没开版本控制(2026-10-30 实测),而「判断地址还能不能用」改由读回
+ * 来之后的体检负责:本地文件指纹(大小 / 修改时间)对得上、提交前再 HEAD 一次云端,
+ * 任何一项不过就丢掉缓存、回落本地路径(见 `store.reconcilePersistedUploads` /
+ * `verifyUploadsBeforeSubmit`),所以读到一个死链最坏也只是回到旧行为(现传),
+ * 不会再出现「死链提交 → 重试还是死链 → 这张卡永久废了」。
+ *
+ * `uploadState` 仍然不能落库:`uploading` 写进库,重启后没有任何东西会把它翻回去,
+ * 素材上的转圈会永远转下去;打勾的状态由体检通过后重新推出来。
  *
  * 没有可剥的就原样返回 —— 提交草稿是逐字符防抖落库的,不该每次都复制一遍卡片。
  */
-function stripPreuploadUrls(card: VideoWorkbenchCard): VideoWorkbenchCard {
+function stripPreuploadProgress(card: VideoWorkbenchCard): VideoWorkbenchCard {
   const dirty = MATERIAL_FIELDS.filter((field) =>
-    card[field]?.some((m) => m.uploadedUrl !== undefined || m.uploadState !== undefined),
+    card[field]?.some((m) => m.uploadState !== undefined),
   )
   if (dirty.length === 0) return card
   const next = { ...card }
   for (const field of dirty) {
-    next[field] = card[field].map(({ uploadedUrl: _url, uploadState: _state, ...rest }) => rest)
+    next[field] = card[field].map(({ uploadState: _state, ...rest }) => rest)
   }
   return next
 }
@@ -154,7 +160,7 @@ export class WorkbenchDb {
   }
 
   async put(card: VideoWorkbenchCard): Promise<void> {
-    const record = stripPreuploadUrls(card)
+    const record = stripPreuploadProgress(card)
     const db = await this.openDb()
     if (!db) {
       this.memory.set(record.id, record)

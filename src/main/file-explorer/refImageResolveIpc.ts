@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
   hasTraversalSegment,
@@ -8,6 +9,7 @@ import {
   mimeFromExt,
 } from './mediaPathValidation'
 import { resolveMediaUrl } from '../services/seedance/mediaResolve'
+import { registerMaterialUploadVerifyIpc } from './materialUploadVerify'
 
 /**
  * `media:resolve-ref-image` — 把一张参考图换成可提交上游的 URL。
@@ -40,8 +42,17 @@ import { resolveMediaUrl } from '../services/seedance/mediaResolve'
  * 到图片/视频/音频,给视频工作台的「拖入即传」用。两个入口分开是为了让默认最窄。
  */
 
+/**
+ * 上传那一刻的本地文件指纹。渲染端把它和预传地址一起存进素材,重启后拿它判断
+ * 「这个缓存地址对应的还是不是磁盘上现在这份文件」(见 `materialUploadVerify`)。
+ */
+export interface RefFileFingerprint {
+  size: number
+  mtimeMs: number
+}
+
 export type ResolveRefImageResult =
-  | { ok: true; url: string }
+  | { ok: true; url: string; fingerprint?: RefFileFingerprint }
   | { ok: false; reason: string }
 
 /**
@@ -58,6 +69,15 @@ type RefMediaFamily = 'image' | 'av'
 function isAllowedFamily(mime: string, family: RefMediaFamily): boolean {
   if (isImageMime(mime)) return true
   return family === 'av' && (isVideoMime(mime) || isAudioMime(mime))
+}
+
+async function statFingerprint(src: string): Promise<RefFileFingerprint | undefined> {
+  try {
+    const st = await fs.stat(src)
+    return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : undefined
+  } catch {
+    return undefined
+  }
 }
 
 async function resolveRef(
@@ -83,12 +103,18 @@ async function resolveRef(
     return { ok: false, reason: `not a whitelisted ${kind} path: ${path.basename(src)}` }
   }
 
+  // 指纹必须**先于**上传取:上传一个大视频要好几分钟,期间文件若又被改了,记下的
+  // 应该是上传开始时的值 —— 这样下次体检才对得上「地址指向的是旧内容」。
+  // 取不到(文件不存在 / 无权限)不影响上传本身,只是这次回的结果不带指纹,
+  // 渲染端据此把缓存当「验证不了」处理(丢掉,提交时现传)。
+  const fingerprint = await statFingerprint(src)
+
   try {
     // 两个入口的调用方都只收 https(预传丢弃 data URL,工程导出拒绝 data URL),
     // 所以中转失败就直接报真实原因,不降级 —— 降级出的 data URL 只会被丢掉,
     // 而原因(STS 不通 / 票据过期 / 网络)就此消失在 console.warn 里。
     const url = await resolveMediaUrl(src, label, mime, { alwaysRelay: true, noInline: true })
-    return { ok: true, url }
+    return { ok: true, url, ...(fingerprint ? { fingerprint } : {}) }
   } catch (err) {
     // 绝不让异常穿过 IPC 边界:渲染层拿到 ok:false 会按策略降级回内联 data URL,
     // 而一个 rejected invoke 只会变成一句没有上下文的报错。
@@ -117,4 +143,6 @@ export function resolveRefMedia(rawPath: string): Promise<ResolveRefImageResult>
 export function registerRefImageResolveIpc(): void {
   ipcMain.handle('media:resolve-ref-image', (_event, rawPath: string) => resolveRefImage(rawPath))
   ipcMain.handle('media:resolve-ref-media', (_event, rawPath: string) => resolveRefMedia(rawPath))
+  // 预传地址落库后的配套体检(重启后用之前确认本地文件没变、云端对象还在)。
+  registerMaterialUploadVerifyIpc()
 }
