@@ -288,6 +288,12 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
   // GPT-6 family: same 272K default / 872K max as GPT-5.6 in the 0.159.2
   // bundled models.json.
   ['gpt-6.1-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
+  // GPT-6.1 Terra (rust-v0.165.0 / v0.166.0 bundled models.json): the first
+  // GPT-6 model whose default window is 500K, not 272K (max is still 872K).
+  // Leaving it out would fall to the unknown-model default and — because the
+  // launch pin compares against the native window — silently pin it DOWN to
+  // that smaller default.
+  ['gpt-6.1-terra', { defaultWindow: 500_000, allowExperimental1M: true }],
   ['gpt-6-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-6-luna', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-6-astra', { defaultWindow: 272_000, allowExperimental1M: true }],
@@ -665,6 +671,7 @@ export function modelAutoCompactTokenLimit(contextWindow: number): number {
  */
 const CODEX_NATIVE_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
   ['gpt-6.1-sol', 272_000],
+  ['gpt-6.1-terra', 500_000],
   ['gpt-6-sol', 272_000],
   ['gpt-6-luna', 272_000],
   ['gpt-6-astra', 272_000],

@@ -345,6 +345,8 @@ describe('model settings capabilities', () => {
   it.each([
     ['grok-4.5', GROK_CONTEXT_WINDOW],
     ['gpt-6.1-sol', 272_000],
+    // 0.165/0.166 bundled models.json: Terra's default window is 500K, not 272K.
+    ['gpt-6.1-terra', 500_000],
     ['gpt-6-sol', 272_000],
     ['gpt-6-luna', 272_000],
     ['gpt-6-astra', 272_000],
@@ -376,6 +378,7 @@ describe('model settings capabilities', () => {
 
   it.each([
     ['gpt-6.1-sol', 272_000],
+    ['gpt-6.1-terra', 500_000],
     ['gpt-6-sol', 272_000],
     ['gpt-6-luna', 272_000],
     ['gpt-6-astra', 272_000],
@@ -445,6 +448,7 @@ describe('model settings capabilities', () => {
 describe('model context pin', () => {
   it.each([
     ['gpt-6.1-sol', 272_000],
+    ['gpt-6.1-terra', 500_000],
     ['gpt-6-sol', 272_000],
     ['gpt-6-luna', 272_000],
     ['gpt-6-astra', 272_000],
