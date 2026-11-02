@@ -156,10 +156,21 @@ function getWindowsHelperBinaries(target: string): Array<{ assetName: string; fi
  * falls back to the bundled `codex-windows-sandbox-setup.exe`
  * (windows-sandbox-rs/src/provisioning_client.rs, rust-v0.159.2). Our NSIS
  * installer registers no services, so shipping the binary would change nothing.
+ *
+ * `codex-exec-server` (0.166+, rust-v0.166.0 #57837) is the standalone executor
+ * for remote / multi-environment deployments (`--listen ws://` / `--remote URL`
+ * / `forward`). It is the same entry point as `codex.exe exec-server`, which the
+ * bundled binary keeps (the upstream README: "the library backing `codex
+ * exec-server` and the standalone `codex-exec-server` executable"). Nothing in a
+ * local app-server session resolves it as a sibling — we only run local threads
+ * and never configure `environments.toml` — so a missing copy is not a runtime
+ * "cannot find file". If we ever offer remote environments, point the launch
+ * command at `codex.exe exec-server` rather than shipping a second copy.
  */
 const INTENTIONALLY_UNBUNDLED_CODEX_BINARIES = [
   'codex-app-server',
   'codex-windows-sandbox-service',
+  'codex-exec-server',
 ] as const
 
 /**
