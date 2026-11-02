@@ -28,21 +28,29 @@ vi.mock('../../auth/httpJson', () => ({
 import { WORKBENCH_BACKUP_IPC, registerWorkbenchBackupIpc } from '../ipc'
 import type { WorkbenchBackupClient } from '../client'
 
+const CLIENT_METHODS = [
+  'list',
+  'put',
+  'get',
+  'versions',
+  'remove',
+  'trashList',
+  'trashGet',
+  'trashRestore',
+  'trashConfirm',
+  'trashPurge',
+] as const
+
 function fakeClient() {
   const ok = async () => ({ ok: true as const, data: {} })
-  return {
-    list: vi.fn(ok),
-    put: vi.fn(ok),
-    get: vi.fn(ok),
-    versions: vi.fn(ok),
-    remove: vi.fn(ok),
-  } as unknown as WorkbenchBackupClient & Record<'list' | 'put' | 'get' | 'versions' | 'remove', ReturnType<typeof vi.fn>>
+  return Object.fromEntries(CLIENT_METHODS.map((m) => [m, vi.fn(ok)])) as unknown as WorkbenchBackupClient &
+    Record<(typeof CLIENT_METHODS)[number], ReturnType<typeof vi.fn>>
 }
 
 describe('registerWorkbenchBackupIpc', () => {
   beforeEach(() => handlers.clear())
 
-  it('注册五个通道', () => {
+  it('注册全部通道', () => {
     registerWorkbenchBackupIpc(fakeClient())
     expect([...handlers.keys()].sort()).toEqual(Object.values(WORKBENCH_BACKUP_IPC).sort())
   })
@@ -75,6 +83,47 @@ describe('registerWorkbenchBackupIpc', () => {
     expect(client.versions).toHaveBeenCalledWith('d1')
     await handlers.get(WORKBENCH_BACKUP_IPC.REMOVE)!({}, null)
     expect(client.remove).toHaveBeenCalledWith('')
+  })
+
+  it('put:只有明确的 revive:true 才转发,别的真值一律当没有', async () => {
+    const client = fakeClient()
+    registerWorkbenchBackupIpc(client)
+    const file = { format: 'x' }
+    await handlers.get(WORKBENCH_BACKUP_IPC.PUT)!({}, { dramaId: 'd1', name: 'A', clientUpdatedAt: 1, file, revive: true })
+    expect(client.put).toHaveBeenLastCalledWith('d1', { name: 'A', clientUpdatedAt: 1, file, revive: true })
+    await handlers.get(WORKBENCH_BACKUP_IPC.PUT)!({}, { dramaId: 'd1', name: 'A', clientUpdatedAt: 1, file, revive: 'yes' })
+    expect(client.put).toHaveBeenLastCalledWith('d1', { name: 'A', clientUpdatedAt: 1, file })
+  })
+
+  it('remove:permanent 只认 true;默认是移入云端回收站', async () => {
+    const client = fakeClient()
+    registerWorkbenchBackupIpc(client)
+    await handlers.get(WORKBENCH_BACKUP_IPC.REMOVE)!({}, { dramaId: 'd1' })
+    expect(client.remove).toHaveBeenLastCalledWith('d1')
+    await handlers.get(WORKBENCH_BACKUP_IPC.REMOVE)!({}, { dramaId: 'd1', permanent: 1 })
+    expect(client.remove).toHaveBeenLastCalledWith('d1')
+    await handlers.get(WORKBENCH_BACKUP_IPC.REMOVE)!({}, { dramaId: 'd1', permanent: true })
+    expect(client.remove).toHaveBeenLastCalledWith('d1', { permanent: true })
+  })
+
+  it('回收站通道:把 trashId(与版本)交给 client;缺省给空串让 client 去拒', async () => {
+    const client = fakeClient()
+    registerWorkbenchBackupIpc(client)
+    const id = 'd1@1700000000000'
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_LIST)!({})
+    expect(client.trashList).toHaveBeenCalledTimes(1)
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_GET)!({}, { trashId: id, version: '0000000000001-aaaaaaaa' })
+    expect(client.trashGet).toHaveBeenLastCalledWith(id, '0000000000001-aaaaaaaa')
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_GET)!({}, { trashId: id })
+    expect(client.trashGet).toHaveBeenLastCalledWith(id, undefined)
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_RESTORE)!({}, { trashId: id })
+    expect(client.trashRestore).toHaveBeenCalledWith(id)
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_CONFIRM)!({}, { trashId: id })
+    expect(client.trashConfirm).toHaveBeenCalledWith(id)
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_PURGE)!({}, { trashId: id })
+    expect(client.trashPurge).toHaveBeenCalledWith(id)
+    await handlers.get(WORKBENCH_BACKUP_IPC.TRASH_PURGE)!({}, null)
+    expect(client.trashPurge).toHaveBeenLastCalledWith('')
   })
 
   it('preload 里手写的通道名与这里的常量一致', () => {

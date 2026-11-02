@@ -36,7 +36,7 @@ function fakeTimers() {
 }
 
 const ok = (over: Partial<BackupPassResult> = {}): BackupPassResult => ({
-  uploaded: 1, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: null, ...over,
+  uploaded: 1, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: null, trashedRemote: 0, trashConflicts: [], ...over,
 })
 
 async function settle(): Promise<void> {

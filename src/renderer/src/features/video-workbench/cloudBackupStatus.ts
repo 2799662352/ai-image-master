@@ -42,7 +42,11 @@ export function describeBackupError(code: WorkbenchBackupErrorCode | 'CORRUPT', 
     case 'NETWORK':
       return '网络不通,请稍后重试。'
     case 'NOT_FOUND':
-      return '云端没有这份备份(可能已被删除)。'
+      return '云端没有这份备份(可能已被删除或已过期)。'
+    case 'TRASHED':
+      return '这部剧在云端回收站里(别的设备删除了它)。'
+    case 'EXISTS':
+      return '云端已经有同一部剧的备份,没有覆盖它。'
     default:
       return message || '操作失败,请稍后重试。'
   }
@@ -85,6 +89,16 @@ export function describeBackupStatus(i: BackupStatusInput): BackupStatusLine {
         return { tone: 'error', text: `云端剧数已达上限(${WORKBENCH_BACKUP_MAX_DRAMAS} 部),「${f.name}」没有备份。${more}` }
       default:
         return { tone: 'error', text: `「${f.name}」备份失败:${f.message}${more}` }
+    }
+  }
+
+  if (last && last.trashConflicts.length > 0) {
+    const c = last.trashConflicts[0]
+    const more = last.trashConflicts.length > 1 ? `(另有 ${last.trashConflicts.length - 1} 部同样情况)` : ''
+    const who = c.deviceName ? `「${c.deviceName}」` : '另一台设备'
+    return {
+      tone: 'warn',
+      text: `「${c.name}」已在${who}上删除,云端副本在回收站里,这台电脑上的改动没有继续备份。在「云备份」里选「继续备份」可重新备份它。${more}`,
     }
   }
 

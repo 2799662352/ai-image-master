@@ -110,7 +110,12 @@ export default function VideoWorkbenchPage() {
   // 顺序要紧:先把监听挂上再对账,否则接管后立刻到达的广播没人接。
   useEffect(() => {
     const release = mountWorkbenchTaskListener()
-    void ensureHydrated().then(() => useVideoWorkbenchStore.getState().reconcileInFlight())
+    void ensureHydrated().then(() => {
+      const s = useVideoWorkbenchStore.getState()
+      // 回收站里躺满 30 天的清掉(云端有备份的剧,云端回收站再留 30 天)。放在对账前:先把盘面收拾干净。
+      s.purgeExpiredTrash()
+      return s.reconcileInFlight()
+    })
     return release
   }, [ensureHydrated])
 
@@ -186,7 +191,7 @@ export default function VideoWorkbenchPage() {
       <ExportProjectDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <ImportProjectDialog path={importPath} onClose={() => setImportPath(null)} />
       <TrashDialog open={trashOpen} onClose={() => setTrashOpen(false)} />
-      <CloudBackupDialog open={backupOpen} onClose={() => setBackupOpen(false)} onBackupNow={cloudBackup.runNow} />
+      <CloudBackupDialog open={backupOpen} onClose={() => setBackupOpen(false)} onBackupNow={cloudBackup.runNow} onRevive={cloudBackup.revive} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">

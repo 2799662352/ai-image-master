@@ -4,7 +4,7 @@ import type { BackupPassResult } from '../cloudBackup'
 import { describeBackupStatus, type BackupStatusInput } from '../cloudBackupStatus'
 
 const result = (over: Partial<BackupPassResult> = {}): BackupPassResult => ({
-  uploaded: 0, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: null, ...over,
+  uploaded: 0, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: null, trashedRemote: 0, trashConflicts: [], ...over,
 })
 
 const base: BackupStatusInput = {
@@ -41,6 +41,20 @@ describe('describeBackupStatus', () => {
     expect(tooLarge.text).toContain('另有 1 部')
     expect(line({ last: result({ failures: [{ dramaId: 'a', name: 'A', code: 'TOO_MANY', message: '' }] }) }).text).toContain('300')
     expect(line({ last: result({ failures: [{ dramaId: 'a', name: 'A', code: 'INVALID', message: '格式不对' }] }) }).text).toContain('格式不对')
+  })
+
+  it('别的设备删了这部剧:点名设备与剧,说明没继续备份并给出路;失败比它更要紧时先报失败', () => {
+    const conflict = { dramaId: 'a', name: '夜行', trashId: 'a@1', deletedAt: 1, purgeAfter: 2, deviceName: '办公室-PC' }
+    const l = line({ last: result({ trashConflicts: [conflict] }) })
+    expect(l.tone).toBe('warn')
+    expect(l.text).toContain('「夜行」')
+    expect(l.text).toContain('「办公室-PC」')
+    expect(l.text).toContain('继续备份')
+    expect(line({ last: result({ trashConflicts: [{ ...conflict, deviceName: undefined }, conflict] }) }).text).toMatch(/另一台设备.*另有 1 部/)
+    const withFailure = line({
+      last: result({ trashConflicts: [conflict], failures: [{ dramaId: 'b', name: 'B', code: 'INVALID', message: '格式不对' }] }),
+    })
+    expect(withFailure.tone).toBe('error')
   })
 
   it('开关关了:说明是关的(优先于「有改动稍后备份」)', () => {

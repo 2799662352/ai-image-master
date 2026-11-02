@@ -114,7 +114,9 @@ import type {
   WorkbenchBackupItem,
   WorkbenchBackupPutData,
   WorkbenchBackupPutInput,
+  WorkbenchBackupRemoveData,
   WorkbenchBackupResult,
+  WorkbenchBackupTrashItem,
   WorkbenchBackupVersion,
 } from '../types/workbenchBackup'
 import type {
@@ -795,7 +797,14 @@ export interface ElectronAPI {
       put: (input: { dramaId: string } & WorkbenchBackupPutInput) => Promise<WorkbenchBackupResult<WorkbenchBackupPutData>>
       get: (dramaId: string, version?: string) => Promise<WorkbenchBackupResult<WorkbenchBackupGetData>>
       versions: (dramaId: string) => Promise<WorkbenchBackupResult<{ versions: WorkbenchBackupVersion[] }>>
-      remove: (dramaId: string) => Promise<WorkbenchBackupResult<{ removed: number }>>
+      /** 默认移入云端回收站(最长保留 60 天);`permanent` = 立即硬删。 */
+      remove: (dramaId: string, opts?: { permanent?: boolean }) => Promise<WorkbenchBackupResult<WorkbenchBackupRemoveData>>
+      /** 云端回收站:列出 / 取回内容 / 恢复回云端 / 通知「本地已彻底删除」(云端保留期收紧为 30 天)/ 立即永久删除。 */
+      trashList: () => Promise<WorkbenchBackupResult<{ items: WorkbenchBackupTrashItem[] }>>
+      trashGet: (trashId: string, version?: string) => Promise<WorkbenchBackupResult<WorkbenchBackupGetData>>
+      trashRestore: (trashId: string) => Promise<WorkbenchBackupResult<{ dramaId: string; version: string }>>
+      trashConfirm: (trashId: string) => Promise<WorkbenchBackupResult<{ purgeAfter: number }>>
+      trashPurge: (trashId: string) => Promise<WorkbenchBackupResult<{ removed: number }>>
     }
   }
   fs: {
@@ -1861,8 +1870,21 @@ const electronAPI: ElectronAPI = {
         safeInvoke<WorkbenchBackupResult<WorkbenchBackupGetData>>('workbench-backup:get', { dramaId, version }),
       versions: (dramaId: string) =>
         safeInvoke<WorkbenchBackupResult<{ versions: WorkbenchBackupVersion[] }>>('workbench-backup:versions', { dramaId }),
-      remove: (dramaId: string) =>
-        safeInvoke<WorkbenchBackupResult<{ removed: number }>>('workbench-backup:remove', { dramaId }),
+      remove: (dramaId: string, opts?: { permanent?: boolean }) =>
+        safeInvoke<WorkbenchBackupResult<WorkbenchBackupRemoveData>>('workbench-backup:remove', {
+          dramaId,
+          permanent: opts?.permanent === true,
+        }),
+      trashList: () =>
+        safeInvoke<WorkbenchBackupResult<{ items: WorkbenchBackupTrashItem[] }>>('workbench-backup:trash-list'),
+      trashGet: (trashId: string, version?: string) =>
+        safeInvoke<WorkbenchBackupResult<WorkbenchBackupGetData>>('workbench-backup:trash-get', { trashId, version }),
+      trashRestore: (trashId: string) =>
+        safeInvoke<WorkbenchBackupResult<{ dramaId: string; version: string }>>('workbench-backup:trash-restore', { trashId }),
+      trashConfirm: (trashId: string) =>
+        safeInvoke<WorkbenchBackupResult<{ purgeAfter: number }>>('workbench-backup:trash-confirm', { trashId }),
+      trashPurge: (trashId: string) =>
+        safeInvoke<WorkbenchBackupResult<{ removed: number }>>('workbench-backup:trash-purge', { trashId }),
     },
   },
 

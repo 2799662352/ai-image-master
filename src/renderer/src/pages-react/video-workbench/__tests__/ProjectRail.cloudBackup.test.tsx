@@ -60,13 +60,15 @@ describe('ProjectRail 云备份入口', () => {
 
     useCloudBackupStore.setState({
       running: false,
-      last: { uploaded: 1, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: null },
+      last: { uploaded: 1, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: null, trashedRemote: 0, trashConflicts: [] },
     })
     rerender(<ProjectRail onRequestCloudBackup={() => {}} />)
     expect(dotOf()?.className).toContain('vw-cloud-dot-ok')
 
     useCloudBackupStore.setState({
-      last: { uploaded: 0, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: 'NOT_CONFIGURED' },
+      last: {
+        uploaded: 0, unchanged: 0, empty: 0, localOnly: 0, failures: [], stopped: 'NOT_CONFIGURED', trashedRemote: 0, trashConflicts: [],
+      },
     })
     rerender(<ProjectRail onRequestCloudBackup={() => {}} />)
     expect(dotOf()?.className).toContain('vw-cloud-dot-warn')

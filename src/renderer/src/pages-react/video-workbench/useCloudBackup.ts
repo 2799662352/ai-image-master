@@ -7,14 +7,19 @@ import { useEffect, useRef } from 'react'
 import { useAuthStore } from '../../stores/useAuthStore'
 import {
   createBackupSyncState,
+  reviveBackup,
   runBackupPass,
+  settlePurgedProjects,
   type BackupPassResult,
   type CloudBackupBridge,
+  type PurgedProject,
+  type ReviveBackupResult,
 } from '../../features/video-workbench/cloudBackup'
 import { createBackupScheduler, type BackupScheduler } from '../../features/video-workbench/cloudBackupScheduler'
 import { useCloudBackupStore } from '../../features/video-workbench/cloudBackupStore'
 import { describeBackupStatus } from '../../features/video-workbench/cloudBackupStatus'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
+import { trashEntryName, type WorkbenchTrashEntry } from '../../features/video-workbench/trash'
 
 const APP_NAME = 'CATIMATION-Cyberpunk Master'
 
@@ -30,6 +35,29 @@ function bridge(): BackupBridge | undefined {
 /** 云备份通道;非 Electron 宿主 = undefined。 */
 export function cloudBackupApi(): CloudBackupBridge | undefined {
   return bridge()?.videoWorkbench?.cloudBackup
+}
+
+/** 回收站里的「剧」条目 → 备份快照要用的「已删除的剧」(分段条目不参与:云端只按整部剧存)。 */
+export function trashedProjectsOf(trash: readonly WorkbenchTrashEntry[]): { id: string; name: string; deletedAt: number }[] {
+  return trash
+    .filter((e) => e.kind === 'project')
+    .map((e) => ({ id: e.id, name: trashEntryName(e), deletedAt: e.deletedAt }))
+}
+
+/**
+ * 两次回收站之间「被彻底删除」的剧:上一份里有、这一份里没有,**而且也不在活着的剧里**
+ * (恢复 / 撤销删除是从回收站挪回了剧栏,不是彻底删除)。
+ */
+export function purgedProjectsBetween(
+  prevTrash: readonly WorkbenchTrashEntry[],
+  nextTrash: readonly WorkbenchTrashEntry[],
+  liveProjectIds: ReadonlySet<string>,
+  purgedAt: number,
+): PurgedProject[] {
+  const still = new Set(nextTrash.map((e) => e.id))
+  return prevTrash
+    .filter((e) => e.kind === 'project' && !still.has(e.id) && !liveProjectIds.has(e.id))
+    .map((e) => ({ id: e.id, name: trashEntryName(e), deletedAt: e.deletedAt, purgedAt }))
 }
 
 export type CloudBackupTone = 'ok' | 'busy' | 'warn' | 'off'
@@ -52,7 +80,11 @@ export function useCloudBackupTone(): CloudBackupTone | null {
   return line.tone === 'warn' || line.tone === 'error' ? 'warn' : 'off'
 }
 
-export function useWorkbenchCloudBackup(): { runNow: () => Promise<BackupPassResult | null> } {
+export function useWorkbenchCloudBackup(): {
+  runNow: () => Promise<BackupPassResult | null>
+  /** 把云端回收站里躺着的某部剧「继续备份」(明确同意复活);成功后顺手跑一轮刷新状态。 */
+  revive: (dramaId: string) => Promise<ReviveBackupResult | null>
+} {
   const authenticated = useAuthStore((s) => s.authenticated)
   const username = useAuthStore((s) => s.username)
   const schedulerRef = useRef<BackupScheduler | null>(null)
@@ -77,7 +109,12 @@ export function useWorkbenchCloudBackup(): { runNow: () => Promise<BackupPassRes
         const s = useVideoWorkbenchStore.getState()
         return runBackupPass({
           api,
-          snapshot: { projects: s.projects, boards: s.boards, cards: s.cards },
+          snapshot: {
+            projects: s.projects,
+            boards: s.boards,
+            cards: s.cards,
+            trashedProjects: trashedProjectsOf(s.trash),
+          },
           state: syncRef.current,
           app: appRef.current,
         })
@@ -93,7 +130,17 @@ export function useWorkbenchCloudBackup(): { runNow: () => Promise<BackupPassRes
 
     const unsubscribe = useVideoWorkbenchStore.subscribe((s, prev) => {
       if (!s.hydrated) return
-      if (s.projects !== prev.projects || s.boards !== prev.boards || s.cards !== prev.cards) scheduler.notify()
+      if (s.projects !== prev.projects || s.boards !== prev.boards || s.cards !== prev.cards || s.trash !== prev.trash) {
+        scheduler.notify()
+      }
+      // 本地彻底删除(手动清空 / 30 天到期)→ 告诉云端「这部剧不会再回来」,让它的回收站副本按更短的期限清。
+      // 水合前后的那一次整体替换不算(prev 还没水合 = 回收站是从空变成库里的内容)。
+      if (s.trash !== prev.trash && prev.hydrated) {
+        const purged = purgedProjectsBetween(prev.trash, s.trash, new Set(s.projects.map((p) => p.id)), Date.now())
+        if (purged.length > 0 && authedRef.current && status().enabled) {
+          void settlePurgedProjects(api, syncRef.current, purged).catch(() => undefined)
+        }
+      }
     })
     // 进页面(或刚恢复完)就排一轮:内容没变的话这一轮只是一次 list + 本地指纹比对。
     void useVideoWorkbenchStore.getState().ensureHydrated().then(() => scheduler.notify())
@@ -120,6 +167,20 @@ export function useWorkbenchCloudBackup(): { runNow: () => Promise<BackupPassRes
     runNow: async () => {
       const scheduler = schedulerRef.current
       return scheduler ? scheduler.runNow() : null
+    },
+    revive: async (dramaId) => {
+      const api = cloudBackupApi()
+      if (!api || !authedRef.current) return null
+      const s = useVideoWorkbenchStore.getState()
+      const result = await reviveBackup({
+        api,
+        snapshot: { projects: s.projects, boards: s.boards, cards: s.cards },
+        state: syncRef.current,
+        app: appRef.current,
+        dramaId,
+      })
+      if (result.ok) await schedulerRef.current?.runNow()
+      return result
     },
   }
 }
