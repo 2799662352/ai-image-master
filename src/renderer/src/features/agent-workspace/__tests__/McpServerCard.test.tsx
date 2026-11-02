@@ -248,7 +248,7 @@ describe('McpServerCard', () => {
           command:
             'D:\\tecx\\text\\temp-ai-image-master-source\\node_modules\\.pnpm\\electron@41.6.1\\node_modules\\electron\\dist\\electron.exe',
           args: [
-            'D:\\tecx\\text\\temp-ai-image-master-source\\resources\\apiyi-mcp\\dist\\index.js',
+            'D:\\tecx\\text\\temp-ai-image-master-source\\resources\\cinematography-kb-mcp\\index.js',
           ],
         })}
         onEdit={vi.fn()}
@@ -262,7 +262,7 @@ describe('McpServerCard', () => {
     expect(shortLine).toBeTruthy()
     // Full path stays in `title` so hover still reveals it
     expect(shortLine.getAttribute('title')).toContain('electron.exe')
-    expect(shortLine.getAttribute('title')).toContain('apiyi-mcp\\dist\\index.js')
+    expect(shortLine.getAttribute('title')).toContain('cinematography-kb-mcp\\index.js')
   })
 
   // Short native commands (docker run -i mcp/test) MUST pass through
@@ -284,7 +284,7 @@ describe('McpServerCard', () => {
   it('shows a "预装" badge for app-bundled MCPs', () => {
     render(
       <McpServerCard
-        server={makeServer({ name: 'apiyi', isAppBundled: true })}
+        server={makeServer({ name: 'cinematography_kb', isAppBundled: true })}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onToggle={vi.fn()}
@@ -342,14 +342,15 @@ describe('McpServerCard', () => {
     expect(screen.getByText(/v1\.4\.0/)).toBeTruthy()
   })
 
-  it('apiyi (bundled) gets the api-key hint instead of the Docker MCP Gateway hint', () => {
+  // apiyi 预装 MCP 已移除,「已连接但没有工具」的提示只剩两条:docker 系 / 通用。
+  it('a non-docker server with no tools gets the neutral hint, not the Docker one', () => {
     render(
       <McpServerCard
         server={makeServer({
-          name: 'apiyi',
+          name: 'cinematography_kb',
           isAppBundled: true,
           command: 'node',
-          args: ['/path/to/apiyi-mcp/dist/index.js'],
+          args: ['/path/to/cinematography-kb-mcp/index.js'],
           status: 'ready',
           tools: [],
         })}
@@ -359,15 +360,27 @@ describe('McpServerCard', () => {
         onLogin={vi.fn()}
       />,
     )
-    // FORCE-设置-only key policy: the hint must point to 设置 → API易 (the
-    // single supported key source), warn that JSON hand-edits do not survive
-    // a restart (the boot force-seed rewrites the entry), and still flag the
-    // whitespace-key trap (apiyi-mcp accepts " " as truthy, then Google GenAI
-    // rejects it). It must NOT instruct editing env.APIYI_API_KEY anymore.
-    expect(screen.getByText(/设置 → API易/)).toBeTruthy()
-    expect(screen.getByText(/不能是空格/)).toBeTruthy()
-    expect(screen.queryByText(/env\.APIYI_API_KEY/)).toBeNull()
-    expect(screen.queryByText(/视频理解 API Key/)).toBeNull()
+    expect(screen.getByText(/可能仍在初始化或子进程已退出/)).toBeTruthy()
     expect(screen.queryByText(/Docker Desktop/)).toBeNull()
+    expect(screen.queryByText(/API易/)).toBeNull()
+  })
+
+  it('a docker-routed server with no tools still gets the Docker MCP Gateway hint', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          name: 'docker-gateway',
+          command: 'docker',
+          args: ['mcp', 'gateway', 'run'],
+          status: 'ready',
+          tools: [],
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/Docker Desktop/)).toBeTruthy()
   })
 })

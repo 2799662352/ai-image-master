@@ -71,11 +71,6 @@ docs/codex-app-server.ts
 .worktrees/
 release-log.txt
 
-# Vendored apiyi-mcp-server artifacts — produced by scripts/vendor-apiyi-mcp.mjs.
-# The lockfile (scripts/vendor-apiyi-mcp.lock.json) IS tracked; the build
-# output is not.
-/resources/apiyi-mcp/
-
 # Runtime-generated 3D / video assets and local scratch — NEVER version these.
 # director-assets/models holds tens of multi-MB .gltf files that bloat the repo
 # and break `git push` (connection resets on huge packs).

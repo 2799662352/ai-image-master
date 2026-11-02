@@ -9,7 +9,7 @@
  *   - professional caption examples (camera/motion/scene/spatial/subject)
  *   - critique-correction pairs
  *
- * Transport: JSON-RPC 2.0 over stdio (same convention as apiyi-mcp / the
+ * Transport: JSON-RPC 2.0 over stdio (same convention as the
  * catimation bridge). Pure Node built-ins only (node:https / node:readline) so
  * it runs under system `node` OR Electron-as-Node (ELECTRON_RUN_AS_NODE=1) with
  * no node_modules to vendor.

@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.9.23",
+  "version": "4.9.24",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -31,9 +31,7 @@
     "typecheck:baseline:refresh": "node scripts/ci/typecheck-baseline.mjs --write",
     "build:pglite-worker": "node scripts/build-pglite-worker.mjs",
     "verify:pglite-cap": "node scripts/verify-pglite-cap.mjs",
-    "vendor:apiyi-mcp": "node scripts/vendor-apiyi-mcp.mjs",
-    "vendor:apiyi-mcp:update": "node scripts/vendor-apiyi-mcp.mjs --update-ref",
-    "build:vite": "pnpm run vendor:apiyi-mcp && electron-vite build && node scripts/build-pglite-worker.mjs",
+    "build:vite": "electron-vite build && node scripts/build-pglite-worker.mjs",
     "build": "pnpm run build:vite && electron-builder",
     "build:win": "pnpm run build:vite && electron-builder --win",
     "build:win64": "pnpm run build:vite && electron-builder --win --x64",

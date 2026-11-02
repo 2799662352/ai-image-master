@@ -10,7 +10,7 @@
  * Midjourney、OpenAI、Flux;没标厂商的模型落到「其他」组最后。
  */
 
-export type ModelVendor = 'bytedance' | 'tencent' | 'google' | 'alibaba' | 'midjourney' | 'openai' | 'bfl'
+export type ModelVendor = 'bytedance' | 'tencent' | 'google' | 'alibaba' | 'midjourney' | 'novelai' | 'openai' | 'bfl'
 
 export interface ModelVendorMeta {
   name: string
@@ -26,8 +26,10 @@ export const MODEL_VENDORS: Record<ModelVendor | typeof OTHER_VENDOR_KEY, ModelV
   alibaba: { name: '阿里', order: 4 },
   // 悠船是 Midjourney 的官方合作伙伴:用户认的是 Midjourney 这个名字,不是「悠船」。
   midjourney: { name: 'Midjourney', order: 5 },
-  openai: { name: 'OpenAI', order: 6 },
-  bfl: { name: 'Flux', order: 7 },
+  // NovelAI 经 TTAPI 聚合接入,用户认的是 NovelAI 这个名字。紧跟 Midjourney:两家都是「风格化」出图。
+  novelai: { name: 'NovelAI', order: 6 },
+  openai: { name: 'OpenAI', order: 7 },
+  bfl: { name: 'Flux', order: 8 },
   other: { name: '其他', order: 99 },
 }
 

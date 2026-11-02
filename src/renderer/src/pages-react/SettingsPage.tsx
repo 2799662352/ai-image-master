@@ -308,7 +308,7 @@ function maskKey(key: string): string {
 }
 
 /**
- * 设置 → 运镜知识库 DASHSCOPE key. Mirrors apiyi-mcp's runtime-injection model:
+ * 设置 → 运镜知识库 DASHSCOPE key. Runtime-injection model:
  * the key is stored in localStorage (so it survives reload + shows a "已配置"
  * hint) AND pushed to the main process via `setProviderApiKey('cinematography-kb',
  * …)`, which injects it at codex spawn via

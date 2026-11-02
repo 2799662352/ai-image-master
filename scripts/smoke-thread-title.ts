@@ -150,11 +150,6 @@ async function seedCodexHome(codexHome: string): Promise<{ agentsMarker?: string
   const realHome = path.join(os.homedir(), '.codex')
   const node = JSON.stringify(process.execPath)
   await writeFile(path.join(codexHome, 'config.toml'), [
-    '[mcp_servers.apiyi]',
-    `command = ${node}`,
-    'args = ["-e", "process.exit(0)"]',
-    'enabled = false',
-    '',
     '[mcp_servers.cinematography_kb]',
     `command = ${node}`,
     'args = ["-e", "process.exit(0)"]',

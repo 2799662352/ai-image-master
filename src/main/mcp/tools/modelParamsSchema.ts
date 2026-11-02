@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  NOVELAI_V5_PARAM_SPECS,
   YOUCHUAN_V8_PARAM_SPECS,
   type ModelParamSpec,
 } from '../../../shared/imageModelParams'
@@ -41,7 +42,9 @@ function specToZod(spec: ModelParamSpec): z.ZodType {
       if (typeof spec.min === 'number') n = n.min(spec.min)
       if (typeof spec.max === 'number') n = n.max(spec.max)
       const range =
-        typeof spec.min === 'number' && typeof spec.max === 'number' ? ` (${spec.min}–${spec.max})` : ''
+        typeof spec.min === 'number' && typeof spec.max === 'number' && !desc.includes(`${spec.min}–${spec.max}`)
+          ? ` (${spec.min}–${spec.max})`
+          : ''
       return n.describe(`${desc}${range}`)
     }
 
@@ -54,7 +57,21 @@ function specToZod(spec: ModelParamSpec): z.ZodType {
     case 'urls': {
       let a = z.array(z.string())
       if (typeof spec.maxItems === 'number') a = a.max(spec.maxItems)
-      return a.describe(`${desc}. http/https URLs only`)
+      return a.describe(/https?/i.test(desc) ? desc : `${desc}. http/https URLs only`)
+    }
+
+    case 'characters': {
+      // 每个角色:提示词必填(留空的草稿行是界面概念,agent 不该传),位置缺省居中。
+      // 键名与网关 `character_prompts` 的 {prompt, uc, center:{x,y}} 对应,装配在 ApiService。
+      const character = z.strictObject({
+        prompt: z.string().min(1).max(2000),
+        uc: z.string().max(1000).optional().describe('Avoid list for THIS character'),
+        x: z.number().min(0).max(1).optional().describe('0 = left … 1 = right (default 0.5)'),
+        y: z.number().min(0).max(1).optional().describe('0 = top … 1 = bottom (default 0.5)'),
+      })
+      let a = z.array(character)
+      if (typeof spec.maxItems === 'number') a = a.max(spec.maxItems)
+      return a.describe(desc)
     }
   }
 }
@@ -96,4 +113,54 @@ export const YOUCHUAN_MODEL_PARAMS_INTRO =
 /** generate_image / generate_images 共用的悠船 `modelParams` schema。 */
 export function buildYouchuanModelParamsSchema() {
   return buildModelParamsSchema(YOUCHUAN_V8_PARAM_SPECS, YOUCHUAN_MODEL_PARAMS_INTRO)
+}
+
+/**
+ * NovelAI 的 `modelParams` 说明。与悠船相反,这里的默认值**已经是产品默认**(23 步 / CFG 5 /
+ * Euler Ancestral / karras / anime),不设就是它们 —— 所以同样「用户明确要求才设」,
+ * 但不必担心「默认缺失」。
+ */
+export const NOVELAI_MODEL_PARAMS_INTRO =
+  'Options for the NovelAI channels ONLY — model="nai-diffusion-5-full" | "nai-diffusion-5-curated" | ' +
+  '"nai-diffusion-4-5-full" | "nai-diffusion-4-5-curated". Every key is optional and already has a sensible ' +
+  'default — set a key ONLY when the user asks for that effect: 兽人/furry → dataset_mode:"furry"; 不要某元素 → ' +
+  'negative_prompt; 画面里有 N 个角色、要各自描述并放在指定位置 → `characters` (at most 22 on V5, 6 on ' +
+  'V4.5; keep the shared scene description in `prompt`); 图生图 → exactly ONE http(s) image in ' +
+  '`referenceImages` plus `img2img_strength` / `img2img_noise` (both ignored without a reference). Size ' +
+  'comes from `ratio` (1:1 / 3:2 / 2:3 / 4:3 / 3:4 / 16:9 / 9:16; "auto" = 1:1) and `resolution` ("1K" / ' +
+  '"2K", same price); `count` 1–4 is billed PER IMAGE. Out-of-range values are REJECTED (never clamped).'
+
+/**
+ * 合并多份参数表(同键取第一份)。悠船与 NovelAI 只有 `seed` 重名,且定义一致;若将来出现
+ * 同名不同义的键,`imageTools.test.ts` 的「合并后键 = 两份参数表的并集」守卫不会拦它,
+ * 所以重名只许是同义 —— 新增重名键前先改成带前缀的键。
+ */
+function mergeParamSpecs(...tables: ReadonlyArray<readonly ModelParamSpec[]>): ModelParamSpec[] {
+  const seen = new Set<string>()
+  const merged: ModelParamSpec[] = []
+  for (const table of tables) {
+    for (const spec of table) {
+      if (seen.has(spec.key)) continue
+      seen.add(spec.key)
+      merged.push(spec)
+    }
+  }
+  return merged
+}
+
+/** 全部「渠道专属参数」键的并集:悠船 + NovelAI(V5 表,角色上限取较大的 22,V4.5 的 6 由 ApiService 校验)。 */
+export const ALL_CHANNEL_PARAM_SPECS: readonly ModelParamSpec[] = mergeParamSpecs(
+  YOUCHUAN_V8_PARAM_SPECS,
+  NOVELAI_V5_PARAM_SPECS,
+)
+
+export const ALL_CHANNEL_MODEL_PARAMS_INTRO =
+  'Options for TWO channel families — pass only the keys of the channel you are rendering on; each part ' +
+  'below is IGNORED by every other channel. ' +
+  `\n\n[悠船 / Midjourney] ${YOUCHUAN_MODEL_PARAMS_INTRO}` +
+  `\n\n[NovelAI] ${NOVELAI_MODEL_PARAMS_INTRO}`
+
+/** generate_image / generate_images 共用的 `modelParams` schema(悠船 + NovelAI)。 */
+export function buildChannelModelParamsSchema() {
+  return buildModelParamsSchema(ALL_CHANNEL_PARAM_SPECS, ALL_CHANNEL_MODEL_PARAMS_INTRO)
 }
