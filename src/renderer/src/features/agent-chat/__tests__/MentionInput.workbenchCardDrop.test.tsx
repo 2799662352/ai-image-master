@@ -1,9 +1,12 @@
-// 工作台卡片拖进聊天栏。这条分支此前一条测试都没有 —— 既没钉住「已出片能成」,
-// 也没钉住「未出片只弹提示」,所以两处行为改动都无处落脚。
+// 工作台卡片拖进聊天栏。每张卡递两样东西:**清单**(Markdown 附件,任何状态都有)+
+// 产物(本地 mp4 / 耐久 URL)。清单先挂、产物后挂;多张卡合成**一份**清单。
 //
-// 这次改的是后者:未出片不再只弹一句提示,而是把这张卡的规格说明合成一份 Markdown
-// 附件递过去;同时修掉一个误判 —— 只看 localPath 会把「本地 mp4 被 7 天清理扫走、
-// COS 上还在」的卡说成「还没有生成结果」,而播放器那边照样放得出来。
+// 演变:最早未出片只弹一句提示;后来改成未出片才合成说明书,出片的卡只递产物 ——
+// 于是完成卡永远没有说明书,提示词 / 规格 / 版本这些「怎么生成的」信息丢了,换机器
+// 或本地 mp4 被 7 天清理后就复现不了。再后来每张卡一份清单,但附件上限 20,10 张完成卡
+// 各挂「视频 + 清单」正好占满 —— 现在多卡合并成一份、只占 1 个位置。同时:只看 localPath
+// 会把「本地 mp4 被 7 天清理扫走、COS 上还在」的卡说成「还没有生成结果」,而播放器那边
+// 照样放得出来;localPath 在卡上、文件却已被清理时,也要接着退到云端地址。
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -149,28 +152,82 @@ describe('还没有产物的卡:递一份规格说明,而不是只弹提示', ()
   })
 })
 
-describe('已出片的卡:本地 mp4 仍然走附件 + 引用(回归守卫)', () => {
-  it('按路径附件,并留下一条引用', async () => {
+describe('已出片的卡:清单在前,本地 mp4 走附件 + 引用', () => {
+  it('清单先挂、mp4 后挂,并留下一条引用', async () => {
     await drop([draftCard({ status: 'succeeded', localPath: 'C:/u/agent/uploads/a.mp4' })])
 
     const attachments = useAgentChatStore.getState().attachments
-    expect(attachments).toHaveLength(1)
-    expect(attachments[0]).toMatchObject({ name: 'a.mp4', mime: 'video/mp4', path: 'C:/u/agent/uploads/a.mp4' })
-    expect(attachments[0].buffer).toBeUndefined()
+    expect(attachments.map((a) => a.name)).toEqual(['workbench-card-card-012.md', 'a.mp4'])
+    expect(attachments[1]).toMatchObject({ name: 'a.mp4', mime: 'video/mp4', path: 'C:/u/agent/uploads/a.mp4' })
+    expect(attachments[1].buffer).toBeUndefined()
     // 卡片产物躺在 uploads 里,主进程 mapReferencesToInputItems 的白名单认这个目录,
     // 所以这一路可以放心双写(外部 OS 拖放刻意不写引用,原因见 externalDrop 那份测试)。
+    // 说明书不写引用(它要等主进程落盘才有路径),所以引用仍然只有 mp4 那一条。
     expect(useAgentChatStore.getState().pendingReferences).toHaveLength(1)
+    expect(useAgentChatStore.getState().error).toBeUndefined()
+  })
+
+  it('完成卡的清单说清「怎么生成的」+ 现状(任务号 / 种子)+ 产物在哪 + 有哪几版', async () => {
+    // 这是这次改动要解决的原问题:完成卡以前只有 mp4,永远没有清单,
+    // 提示词 / 规格 / 版本这些「怎么生成的」信息丢了。
+    await drop([
+      draftCard({
+        status: 'succeeded',
+        localPath: 'C:/u/agent/uploads/a.mp4',
+        remoteUrl: 'https://bucket.cos.ap-guangzhou.myqcloud.com/videos/a.mp4',
+        taskId: 'task_abc123',
+        upstreamTaskId: 'cgt-2026-xyz',
+        actualSeed: 4242,
+        projectName: '赛博猫',
+        boardName: '分段 1',
+        versions: [
+          { seq: 1, remoteUrl: 'https://bucket.cos.ap-guangzhou.myqcloud.com/videos/v1.mp4', prompt: '旧提示词' },
+          { seq: 2, localPath: 'C:/u/agent/uploads/a.mp4', prompt: '赛博朋克猫在雨夜霓虹里回头' },
+        ],
+      }),
+    ])
+
+    const attachments = useAgentChatStore.getState().attachments
+    const doc = new TextDecoder().decode(new Uint8Array(attachments[0].buffer!))
+    expect(doc).toContain('状态:成功(当前 v2)')
+    expect(doc).toContain('赛博朋克猫在雨夜霓虹里回头')
+    expect(doc).toContain('seedance-2.0-pro · 1080p · 16:9 · 5s')
+    expect(doc).toContain('- 项目:赛博猫')
+    expect(doc).toContain('- 分段:分段 1')
+    expect(doc).toContain('- 请求种子:随机')
+    expect(doc).toContain('- 实际种子:4242')
+    expect(doc).toContain('- 任务号(网关):`task_abc123`')
+    expect(doc).toContain('- 上游任务号:`cgt-2026-xyz`')
+    expect(doc).toContain('- 本地文件:C:/u/agent/uploads/a.mp4')
+    expect(doc).toContain('- 云端地址(永久):https://bucket.cos.ap-guangzhou.myqcloud.com/videos/a.mp4')
+    expect(doc).toContain('## 历史版本(共 2 版)')
+    expect(doc).toContain('提示词:旧提示词')
+  })
+
+  it('本地 mp4 读不出时清单照样出 —— 媒体失败不牵连清单(旧版 continue 会连清单一起丢)', async () => {
+    const stat = (window as unknown as { electronAPI: { fs: { stat: ReturnType<typeof vi.fn> } } }).electronAPI.fs.stat
+    stat.mockResolvedValueOnce({ ok: false })
+
+    await drop([draftCard({ status: 'succeeded', localPath: 'C:/u/agent/uploads/gone.mp4' })])
+
+    const names = useAgentChatStore.getState().attachments.map((a) => a.name)
+    expect(names).toEqual(['workbench-card-card-012.md'])
+    expect(useAgentChatStore.getState().error).toContain('gone.mp4')
   })
 })
 
 describe('本地被 7 天清理扫掉、云端还在:不再误报「还没有生成结果」', () => {
-  it('remoteUrl 进输入框,不合成规格说明', async () => {
+  it('remoteUrl 进输入框,说明书照样配', async () => {
     const url = 'https://bucket.cos.ap-guangzhou.myqcloud.com/videos/a.mp4'
     await drop([draftCard({ status: 'succeeded', remoteUrl: url })])
 
     expect(useAgentChatStore.getState().input).toContain(url)
-    // 这张卡是有产物的,合成一份「还没有产物」的说明就是在撒谎。
-    expect(useAgentChatStore.getState().attachments).toEqual([])
+    // 产物走 URL(进输入框),说明书照样作为附件递过去,且不再自称「还没有产物」。
+    const attachments = useAgentChatStore.getState().attachments
+    expect(attachments.map((a) => a.name)).toEqual(['workbench-card-card-012.md'])
+    const doc = new TextDecoder().decode(new Uint8Array(attachments[0].buffer!))
+    expect(doc).toContain(url)
+    expect(doc).not.toContain('还没有产物')
     expect(useAgentChatStore.getState().error).toBeUndefined()
   })
 
@@ -183,8 +240,33 @@ describe('本地被 7 天清理扫掉、云端还在:不再误报「还没有生
       }),
     ])
 
-    expect(useAgentChatStore.getState().attachments[0].path).toBe('C:/u/agent/uploads/a.mp4')
+    expect(useAgentChatStore.getState().attachments[1].path).toBe('C:/u/agent/uploads/a.mp4')
     expect(useAgentChatStore.getState().input).toBe('')
+  })
+
+  it('localPath 在载荷里但文件已被清理:接着退到云端地址,不是直接放弃', async () => {
+    // 卡片对 7 天清理是隐形的:localPath 还写在卡上,磁盘上已经没了。
+    // 旧行为是读不出就 skip + continue,云端明明还在却什么产物都没递。
+    const url = 'https://bucket.cos.ap-guangzhou.myqcloud.com/videos/a.mp4'
+    const stat = (window as unknown as { electronAPI: { fs: { stat: ReturnType<typeof vi.fn> } } }).electronAPI.fs.stat
+    stat.mockResolvedValueOnce({ ok: false })
+
+    await drop([draftCard({ status: 'succeeded', localPath: 'C:/u/agent/uploads/gone.mp4', remoteUrl: url })])
+
+    expect(useAgentChatStore.getState().input).toContain(url)
+    expect(useAgentChatStore.getState().attachments.map((a) => a.name)).toEqual(['workbench-card-card-012.md'])
+    // 有云端兜底就不吓用户:没有「已跳过」。
+    expect(useAgentChatStore.getState().error).toBeUndefined()
+  })
+
+  it('本地读不出、也没有任何耐久地址:如实报「已跳过」,说明书仍然递过去', async () => {
+    const stat = (window as unknown as { electronAPI: { fs: { stat: ReturnType<typeof vi.fn> } } }).electronAPI.fs.stat
+    stat.mockResolvedValueOnce({ ok: false })
+
+    await drop([draftCard({ status: 'succeeded', localPath: 'C:/u/agent/uploads/gone.mp4' })])
+
+    expect(useAgentChatStore.getState().error).toContain('gone.mp4')
+    expect(useAgentChatStore.getState().attachments.map((a) => a.name)).toEqual(['workbench-card-card-012.md'])
   })
 
   it('只剩上游临时地址时也认(最后一级兜底)', async () => {
@@ -204,15 +286,123 @@ describe('本地被 7 天清理扫掉、云端还在:不再误报「还没有生
   })
 })
 
-describe('混着拖', () => {
-  it('出片的走 mp4、没出片的走说明,一张都不落下', async () => {
+function names(): string[] {
+  return useAgentChatStore.getState().attachments.map((a) => a.name)
+}
+
+function decodeAttachment(index: number): string {
+  const buffer = useAgentChatStore.getState().attachments[index].buffer
+  return new TextDecoder().decode(new Uint8Array(buffer!))
+}
+
+/** n 张已完成卡,各带本地 mp4(以及可选的云端地址)。 */
+function doneCards(n: number, withRemote: boolean): WorkbenchCardDragItem[] {
+  return Array.from({ length: n }, (_, i) => {
+    const id = `card-${String(i).padStart(2, '0')}-abcdef`
+    return draftCard({
+      cardId: id,
+      status: 'succeeded',
+      localPath: `C:/u/agent/uploads/${i}.mp4`,
+      ...(withRemote ? { remoteUrl: `https://cos.example.com/${i}.mp4` } : {}),
+    })
+  })
+}
+
+describe('混着拖:多张卡合成一份清单', () => {
+  it('出片的 = 清单 + mp4、没出片的 = 只在清单里;清单只有 1 份,一张都不落下', async () => {
     await drop([
       draftCard({ cardId: 'done', status: 'succeeded', localPath: 'C:/u/agent/uploads/a.mp4' }),
       draftCard({ cardId: 'draft-1' }),
     ])
 
-    const attachments = useAgentChatStore.getState().attachments
-    expect(attachments.map((a) => a.name)).toEqual(['a.mp4', 'workbench-card-draft-1.md'])
+    // 不再是每张卡一份(workbench-card-done.md + workbench-card-draft-1.md):
+    // 一份合并清单,md 在前、媒体在后。
+    expect(names()).toEqual(['workbench-cards-2.md', 'a.mp4'])
+    const doc = decodeAttachment(0)
+    expect(doc).toContain('# 视频工作台卡片(共 2 张)')
+    expect(doc).toContain('## 卡片 done')
+    expect(doc).toContain('## 卡片 draft-1')
+    expect(doc).toContain('状态:草稿')
     expect(useAgentChatStore.getState().error).toBeUndefined()
+  })
+
+  it('单卡拖拽仍然是单卡清单(不叫 workbench-cards-1)', async () => {
+    await drop([draftCard()])
+    expect(names()).toEqual(['workbench-card-card-012.md'])
+    expect(decodeAttachment(0)).not.toContain('## 卡片 ')
+  })
+
+  it('合并清单里每张卡的小节挂在「## 卡片 <id>」之下(### 级),互不串味', async () => {
+    const a = draftCard({ cardId: 'aaa', status: 'failed', error: '审核未通过' })
+    a.spec!.prompt = '提示词甲'
+    const b = draftCard({ cardId: 'bbb' })
+    b.spec!.prompt = '提示词乙'
+    await drop([a, b])
+
+    const doc = decodeAttachment(0)
+    const ia = doc.indexOf('## 卡片 aaa')
+    const ib = doc.indexOf('## 卡片 bbb')
+    expect(ia).toBeGreaterThan(-1)
+    expect(ib).toBeGreaterThan(ia)
+    expect(doc.slice(ia, ib)).toContain('提示词甲')
+    expect(doc.slice(ia, ib)).toContain('审核未通过')
+    expect(doc.slice(ia, ib)).not.toContain('提示词乙')
+    expect(doc.slice(ib)).toContain('提示词乙')
+    expect(doc).toContain('### 提示词')
+    expect(doc).not.toMatch(/^## 提示词$/m)
+  })
+})
+
+describe('附件名额(MAX_ATTACHMENTS = 20):清单永远占得到位置', () => {
+  it('9 张完成卡:1 份合并清单 + 9 个 mp4 = 10,不报跳过', async () => {
+    await drop(doneCards(9, false))
+    expect(useAgentChatStore.getState().attachments).toHaveLength(10)
+    expect(names()[0]).toBe('workbench-cards-9.md')
+    expect(useAgentChatStore.getState().error).toBeUndefined()
+  })
+
+  it('10 张完成卡各带视频:旧版每卡一份清单会正好占满 20,现在 11 个就够', async () => {
+    await drop(doneCards(10, false))
+    expect(useAgentChatStore.getState().attachments).toHaveLength(11)
+    expect(useAgentChatStore.getState().error).toBeUndefined()
+  })
+
+  it('25 张卡且都有云端地址:清单 + 19 个 mp4 占满,余下 6 张退成输入框里的 URL,不丢', async () => {
+    await drop(doneCards(25, true))
+
+    const list = names()
+    expect(list).toHaveLength(20)
+    expect(list[0]).toBe('workbench-cards-25.md')
+    const input = useAgentChatStore.getState().input
+    // 第 19..24 张(下标)没挂上视频,退成云端 URL
+    for (let i = 19; i < 25; i += 1) expect(input).toContain(`https://cos.example.com/${i}.mp4`)
+    for (let i = 0; i < 19; i += 1) expect(input).not.toContain(`https://cos.example.com/${i}.mp4`)
+    expect(useAgentChatStore.getState().error).toBeUndefined()
+  })
+
+  it('25 张卡只有本地 mp4:清单仍在,放不下的 6 个如实报在「已跳过」里', async () => {
+    await drop(doneCards(25, false))
+
+    expect(names()[0]).toBe('workbench-cards-25.md')
+    expect(useAgentChatStore.getState().attachments).toHaveLength(20)
+    expect(useAgentChatStore.getState().error).toContain('已跳过 6 个')
+    expect(useAgentChatStore.getState().error).toContain('24.mp4')
+  })
+
+  it('附件栏本来就满了:清单挂不上也如实报,产物照常走 URL 兜底', async () => {
+    useAgentChatStore.setState({
+      attachments: Array.from({ length: 20 }, (_, i) => ({
+        name: `old-${i}.txt`,
+        mime: 'text/plain',
+        size: 1,
+        buffer: new ArrayBuffer(1),
+      })),
+    } as never)
+
+    await drop([draftCard({ status: 'succeeded', remoteUrl: 'https://cos.example.com/a.mp4' })])
+
+    expect(useAgentChatStore.getState().attachments).toHaveLength(20)
+    expect(useAgentChatStore.getState().error).toContain('workbench-card-card-012.md')
+    expect(useAgentChatStore.getState().input).toContain('https://cos.example.com/a.mp4')
   })
 })

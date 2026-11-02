@@ -90,12 +90,48 @@ export interface WorkbenchCardDragItem {
   remoteUrl?: string
   /** 上游临时结果地址(有效期未知,最后兜底)。 */
   videoUrl?: string
-  /** 卡片状态机当前值 —— 还没有产物时,说明里据此写清「为什么还没有」。 */
+  /** 卡片状态机当前值 —— 说明书据此写清卡现在在哪一步,还没有产物时说明「为什么还没有」。 */
   status?: string
   /** 终态失败时上游/本地的错误原文。 */
   error?: string
-  /** 意图快照。还没有产物时,聊天栏据此合成一份规格说明递给模型。 */
+  /** 意图快照。聊天栏据此为**每张卡**合成一份说明书(任何状态都有,不只是没产物的卡)。 */
   spec?: WorkbenchCardDragSpec
+  /**
+   * 历次成功产物(追加序,末项 = 当前结果)。清单的「历史版本」段据此列版本。
+   * 只带地址和够认出「这一版是怎么出的」的几个字段,**不带素材、不带整份规格**。
+   */
+  versions?: WorkbenchCardDragVersion[]
+  /** 所属项目 / 分段的名字(当前工作台里这张卡所在的那一页)。清单里让模型知道这张卡属于哪部剧。 */
+  projectName?: string
+  boardName?: string
+  /** 网关签发的任务号,对账和续查用。**结果不是意图**,与 spec 分开。 */
+  taskId?: string
+  /** 网关之后那一跳的任务号(火山 `cgt-…` 等),找供应商对账认的是它。 */
+  upstreamTaskId?: string
+  /** 上游回传的实际种子。与 `spec.seed`(请求种子,undefined = 随机)分开写:随机请求时它才是复现的钥匙。 */
+  actualSeed?: number
+  /** 卡片创建时间(ms)。 */
+  createdAt?: number
+  /**
+   * 当前这一版的出片时间(ms)。卡片本身没有 completedAt 字段 —— 取已完成卡当前版本的
+   * `versions[末项].createdAt`;没有版本存档的老卡缺席。
+   */
+  completedAt?: number
+}
+
+/** 一版产物的摘要。字段都来自 `VideoWorkbenchVersion`,但用裸 string,理由同 {@link WorkbenchCardDragSpec}。 */
+export interface WorkbenchCardDragVersion {
+  /** 卡内序号,从 1 起。 */
+  seq: number
+  createdAt?: number
+  localPath?: string
+  remoteUrl?: string
+  videoUrl?: string
+  /** 产出这一版时的提示词(载荷里已截断,说明书里再截一次)。 */
+  prompt?: string
+  model?: string
+  resolution?: string
+  duration?: number
 }
 
 /**

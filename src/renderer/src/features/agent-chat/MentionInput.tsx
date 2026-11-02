@@ -16,8 +16,12 @@ import {
   parseQuoteDrop,
   parseWorkbenchCardDrop,
 } from '../file-explorer/dragHelpers'
-import type { WorkbenchCardDragItem } from '../file-explorer/dragHelpers'
-import { buildWorkbenchCardDoc, workbenchCardDocName } from './workbenchCardDoc'
+import {
+  buildWorkbenchCardDoc,
+  buildWorkbenchCardsDoc,
+  workbenchCardDocName,
+  workbenchCardsDocName,
+} from './workbenchCardDoc'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
@@ -933,23 +937,23 @@ export function MentionInput() {
   }
 
   /**
-   * 还没有产物的工作台卡片:合成一份规格说明当附件递过去。
+   * 工作台卡片的清单:合成一份 Markdown 当附件递过去(任何状态的卡都配)。
    *
-   * 走 buffer 而不是 path,因为磁盘上确实没有这张卡的任何文件(`AgentAttachmentInput`
+   * 走 buffer 而不是 path,因为磁盘上确实没有这份文档(`AgentAttachmentInput`
    * 要求 path/buffer 二选一)。不 push reference —— reference 只认 localPath/url,
    * 这份文档要等主进程落盘后才有路径。
    */
-  function attachWorkbenchCardDoc(item: WorkbenchCardDragItem): string | null {
+  function attachWorkbenchCardDoc(name: string, markdown: string): string | null {
     const current = useAgentChatStore.getState().attachments
     if (current.length >= MAX_ATTACHMENTS) return `已达 ${MAX_ATTACHMENTS} 个上限`
-    const bytes = new TextEncoder().encode(buildWorkbenchCardDoc(item))
+    const bytes = new TextEncoder().encode(markdown)
     // 一份说明只有几 KB,这两道闸门是为了「一次拖几十张卡」的极端情况,顺带与
     // attachFiles 的记账口径保持一致。
     if (bytes.byteLength > MAX_BUFFER_ATTACHMENT_BYTES) return '超过单文件 100MB'
     const totalBytes = current.reduce((sum, attachment) => sum + attachment.size, 0)
     if (totalBytes + bytes.byteLength > MAX_TOTAL_ATTACHMENT_BYTES) return '超过总量 4GB'
     addAttachment({
-      name: workbenchCardDocName(item),
+      name,
       mime: 'text/markdown',
       size: bytes.byteLength,
       buffer: bytes.buffer as ArrayBuffer,
@@ -1093,30 +1097,54 @@ export function MentionInput() {
     // 真的 fs.move 掉 mp4。这里显式认领。
     const droppedCards = parseWorkbenchCardDrop(event.dataTransfer)
     if (droppedCards.length > 0) {
-      // 每张卡按「产物存活性」逐级降级,与播放器同一顺序:
+      // 每张卡递两样东西:**清单** + **产物**。清单**先挂**、产物后挂:
+      //   - 模型先拿到规格和提示词,再看视频;
+      //   - 清单永远占得到位置 —— 附件上限 20,10 张完成卡各挂「视频 + 清单」就正好占满,
+      //     所以多张卡合成**一份**清单(`## 卡片 <id>` 分段),只占 1 个位置;位置不够时
+      //     先丢的是产物附件(有云端地址就退成写进输入框的 URL),不是清单。
+      //   - 产物挂载失败(本地 mp4 被清理 / 超限 / 读不出)只影响产物那一级,**绝不**
+      //     牵连清单:清单与产物是两件事,不是「二选一」。
+      //
+      // 产物按存活性逐级降级,与播放器同一顺序:
       //   1. 本地 mp4 还在 → 附件 + 引用(路径在 uploads 白名单内,引用过得了主进程那道门)
       //   2. 只剩耐久地址 → 把 URL 写进输入框。**视频 URL 走不了 reference**:
       //      mapReferencesToInputItems 只把 image/audio 的 url 变成输入项,视频 URL
       //      会被静默丢掉,模型压根看不见 —— 那样等于假装递了东西。
-      //   3. 真没有产物 → 合成一份规格说明当附件(见 workbenchCardDoc)。
+      //   3. 都没有 → 不递产物(草稿 / 渲染中 / 失败 / 地址全失效)。
       // 第 2 级存在的理由:本地 mp4 会被 7 天清理扫掉,而卡片对那个清理是隐形的。
-      // 早先只看 localPath,于是这种卡被误报成「还没有生成结果」,可播放器还放得出来。
+      // 所以第 1 级读不出来(文件已被清理)时**接着试第 2 级**,不是直接放弃。
+      //
+      // 清单(见 workbenchCardDoc)**每张卡都配**,不看状态、不看有没有产物:
+      // 产物只说明「生成了什么」,清单说明「怎么生成的」。早先只给没产物的卡配,
+      // 于是完成的卡拖进来只有一个 mp4 / URL,换机器或本地被清理后就复现不了。
       const skipped: string[] = []
       const durableUrls: string[] = []
+      const [firstCard] = droppedCards
+      const single = droppedCards.length === 1
+      const docName = single ? workbenchCardDocName(firstCard) : workbenchCardsDocName(droppedCards.length)
+      const docReason = attachWorkbenchCardDoc(
+        docName,
+        single ? buildWorkbenchCardDoc(firstCard) : buildWorkbenchCardsDoc(droppedCards),
+      )
+      if (docReason) skipped.push(`${docName}(${docReason})`)
       for (const item of droppedCards) {
+        let artifactAttached = false
+        let localFailure: string | null = null
         if (item.localPath) {
           const name = item.localPath.split(/[\\/]/).pop() ?? item.localPath
           const reason = await attachFileByPath(item.localPath, name)
-          if (reason) skipped.push(`${name}(${reason})`)
-          continue
+          if (reason) localFailure = `${name}(${reason})`
+          else artifactAttached = true
         }
-        const durable = item.remoteUrl ?? item.videoUrl
-        if (durable) {
-          durableUrls.push(durable)
-          continue
+        if (!artifactAttached) {
+          const durable = item.remoteUrl ?? item.videoUrl
+          if (durable) {
+            durableUrls.push(durable)
+            artifactAttached = true
+          }
         }
-        const reason = attachWorkbenchCardDoc(item)
-        if (reason) skipped.push(`${workbenchCardDocName(item)}(${reason})`)
+        // 本地读不出、也没有耐久地址,才算真的丢了产物;有地址兜底就不吓用户。
+        if (!artifactAttached && localFailure) skipped.push(localFailure)
       }
       // 循环里逐张 appendInput 会各自基于同一份过期的 input 快照,只剩最后一条。
       if (durableUrls.length > 0) appendInput(durableUrls.join('\n'))
