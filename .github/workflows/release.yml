@@ -38,7 +38,7 @@ jobs:
       channel: ${{ steps.resolve.outputs.channel }}
     steps:
       - name: Checkout repository history
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
       - name: Resolve and validate release SHA
@@ -61,7 +61,7 @@ jobs:
       published_versions: ${{ steps.status.outputs.published_versions }}
     steps:
       - name: Checkout release SHA
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.validate.outputs.release_sha }}
       - name: Setup pnpm
@@ -120,7 +120,7 @@ jobs:
       artifact_name: ${{ steps.discover.outputs.artifact_name }}
     steps:
       - name: Checkout release SHA
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.validate.outputs.release_sha }}
       - name: Setup pnpm
@@ -173,7 +173,7 @@ jobs:
       artifact_name: ${{ steps.canonical-name.outputs.name }}
     steps:
       - name: Checkout release SHA
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.validate.outputs.release_sha }}
       - name: Setup pnpm
@@ -336,7 +336,7 @@ jobs:
       promote_outcome: ${{ steps.promote.outcome }}
     steps:
       - name: Checkout release control plane
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
       - name: Setup pnpm
@@ -454,7 +454,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout summary renderer
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
       - name: Setup Node.js
