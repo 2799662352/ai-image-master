@@ -28,6 +28,7 @@ import type {
 } from '../../../../types/videoWorkbench'
 import type { VideoBillingSource, VideoModelAlias } from '../../../../types/seedance'
 import { getModeSpec } from './modes'
+import { runResolution } from './seedanceDraft'
 
 export interface TaskDetailField {
   key: string
@@ -198,8 +199,8 @@ function requestOf(card: VideoWorkbenchCard): Record<string, unknown> {
     model: card.model,
     mode: card.mode,
     modeLabel: getModeSpec(card.mode).label,
-    // 样片固定 480p、成片固定 1080p —— 写实际发出去的那档,不写卡片上的设置。
-    resolution: card.fromDraftTaskId ? '1080p' : card.draftRun ? '480p' : card.resolution,
+    // 样片固定 480p、成片是所选档位(1080p / 4k)—— 写实际发出去的那档,不写卡片上的设置。
+    resolution: runResolution(card),
     ...(card.draftRun ? { draft: true } : {}),
     ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     ratio: card.ratio,

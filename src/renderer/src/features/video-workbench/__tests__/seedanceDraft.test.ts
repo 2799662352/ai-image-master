@@ -1,9 +1,11 @@
-// 工作台样片规则:开关何时生效、提交分辨率、「生成 1080P 成片」何时可点。
+// 工作台样片规则:开关何时生效、提交分辨率、「生成 1080P / 4K 成片」何时可点。
 
 import { describe, expect, it } from 'vitest'
 import { SEEDANCE_DRAFT_TTL_MS } from '../../../../../types/seedance'
 import {
   draftFinalAvailability,
+  draftFinalLabel,
+  draftFinalResolutionOf,
   draftToggleAvailability,
   effectiveDraft,
   runResolution,
@@ -33,9 +35,31 @@ describe('样片开关', () => {
     expect(runResolution({ fromDraftTaskId: 'task_x', resolution: '720p' })).toBe('1080p')
     expect(runResolution({ resolution: '720p' })).toBe('720p')
   })
+
+  it('样片升 4K 的那一轮实际分辨率是 4k;旧卡没有这个字段 = 1080p', () => {
+    expect(runResolution({ fromDraftTaskId: 'task_x', draftFinalResolution: '4k', resolution: '720p' })).toBe('4k')
+    expect(runResolution({ fromDraftTaskId: 'task_x', draftFinalResolution: '1080p', resolution: '720p' })).toBe('1080p')
+    // 不是成片的卡,哪怕残留了这个字段也不能影响分辨率(样片 / 普通卡不看它)
+    expect(runResolution({ draftRun: true, draftFinalResolution: '4k', resolution: '720p' })).toBe('480p')
+    expect(runResolution({ draftFinalResolution: '4k', resolution: '720p' })).toBe('720p')
+  })
 })
 
-describe('生成 1080P 成片', () => {
+describe('成片分辨率的取值', () => {
+  it('认得 1080p / 4k;缺省与不认识的一律 1080p', () => {
+    expect(draftFinalResolutionOf({ draftFinalResolution: '4k' })).toBe('4k')
+    expect(draftFinalResolutionOf({ draftFinalResolution: '1080p' })).toBe('1080p')
+    expect(draftFinalResolutionOf({})).toBe('1080p')
+    expect(draftFinalResolutionOf({ draftFinalResolution: '720p' as never })).toBe('1080p')
+  })
+
+  it('成片选项的名字:大写 P、4K', () => {
+    expect(draftFinalLabel('1080p')).toBe('1080P')
+    expect(draftFinalLabel('4k')).toBe('4K')
+  })
+})
+
+describe('生成 1080P / 4K 成片', () => {
   const now = 1_800_000_000_000
   const draft = { draftRun: true, status: 'succeeded' as const, taskId: 'task_x', startedAt: now - 1000 }
 

@@ -13,6 +13,7 @@ import {
   useVideoWorkbenchStore,
 } from '../../../features/video-workbench/store'
 import { resetWorkbenchDbForTest } from '../../../features/video-workbench/WorkbenchDb'
+import { useQuotaStore } from '../../../stores/useQuotaStore'
 import VideoWorkbenchPage from '../../VideoWorkbenchPage'
 
 function mockSubmit() {
@@ -92,6 +93,25 @@ describe('批量生成二次确认', () => {
     fireEvent.click(await screen.findByRole('button', { name: /确认生成 1 张/ }))
 
     await waitFor(() => expect(screen.queryByRole('button', { name: /确认生成/ })).toBeNull())
+  })
+
+  it('整批里有 4K:其余照常提交,4K 那张不提交、弹出 4K 的二次确认', async () => {
+    const submit = mockSubmit()
+    useQuotaStore.setState({ billingSource: 'platform' })
+    act(() => {
+      useVideoWorkbenchStore.getState().addCards([
+        { prompt: '猫', model: '2.0', resolution: '1080p' },
+        { prompt: '狗', model: '2.0', resolution: '4k' },
+      ] as never)
+    })
+    render(<VideoWorkbenchPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /全部生成/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /确认生成 2 张/ }))
+
+    expect(await screen.findByTestId('vw-uhd-dialog')).toBeTruthy()
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect((submit.mock.calls[0] as unknown[])[0]).toMatchObject({ resolution: '1080p' })
   })
 })
 

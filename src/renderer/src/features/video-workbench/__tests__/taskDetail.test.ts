@@ -71,6 +71,20 @@ describe('标识区', () => {
   })
 })
 
+describe('样片 / 成片的请求参数写实际发出去的分辨率', () => {
+  it('样片 480p;成片 1080p(旧卡没有选档字段);样片升 4K 写 4k', () => {
+    const base = { status: 'succeeded' as const, taskId: 'task_x', billing: 'platform' as const, resolution: '720p' as const }
+    expect(buildTaskDetail(card({ ...base, draftRun: true }), { index: 0 }).request).toMatchObject({ resolution: '480p', draft: true })
+    expect(buildTaskDetail(card({ ...base, fromDraftTaskId: 'task_d' }), { index: 0 }).request).toMatchObject({
+      resolution: '1080p',
+      fromDraftTaskId: 'task_d',
+    })
+    expect(
+      buildTaskDetail(card({ ...base, fromDraftTaskId: 'task_d', draftFinalResolution: '4k' }), { index: 0 }).request,
+    ).toMatchObject({ resolution: '4k', fromDraftTaskId: 'task_d' })
+  })
+})
+
 describe('请求参数', () => {
   it('记规格与素材;素材只记名字与 https/本地地址,data: 字节绝不进文档', () => {
     const d = buildTaskDetail(

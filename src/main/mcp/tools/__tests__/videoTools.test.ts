@@ -73,6 +73,70 @@ describe('registerVideoTools / schemas', () => {
     )
   })
 
+  describe('4K 只能由用户本人二次确认,AI 的调用一律挡下', () => {
+    it('generate_video 要 4K(任何模型)→ 不调主进程,回执写明要用户确认', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      for (const model of ['2.0', '2.5']) {
+        const res = await tools.find((t) => t.name === 'generate_video')!.handler(
+          { prompt: 'x', model, resolution: '4k' },
+          undefined,
+        )
+        const text = JSON.stringify(res)
+        expect(text, model).toContain('二次确认')
+        expect(text, model).toContain('用户')
+      }
+      expect(router.call).not.toHaveBeenCalled()
+    })
+
+    it('大小写 / 空白变体绕不过去(zod 之外的直接调用也不会被转发)', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      for (const resolution of [' 4K ', '4K', ' 4k']) {
+        await tools.find((t) => t.name === 'generate_video')!.handler(
+          { prompt: 'x', model: '2.0', resolution },
+          undefined,
+        )
+      }
+      expect(router.call).not.toHaveBeenCalled()
+    })
+
+    it('样片固定 480p,不受影响', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      router.call.mockResolvedValue({ taskId: 'task_d', status: 'queued' })
+      await tools.find((t) => t.name === 'generate_video')!.handler(
+        { prompt: 'x', model: '2.5', draft: true, resolution: '4k' },
+        undefined,
+      )
+      expect(router.call).toHaveBeenCalled()
+    })
+
+    it('finalize_video_draft 没有任何分辨率参数 —— AI 只能出默认的 1080p 成片', () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const shape = (tools.find((t) => t.name === 'finalize_video_draft')!.config.inputSchema as unknown as {
+        shape: Record<string, unknown>
+      }).shape
+      expect(Object.keys(shape)).toEqual(['taskId'])
+    })
+
+    it('finalize_video_draft 即使被塞了 finalResolution 也不转发给主进程', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      router.call.mockResolvedValue({ taskId: 'task_final', status: 'queued' })
+      await tools.find((t) => t.name === 'finalize_video_draft')!.handler(
+        { taskId: 'task_draft', finalResolution: '4k', resolution: '4k' },
+        undefined,
+      )
+      expect(router.call).toHaveBeenCalledWith(
+        'generate_video',
+        { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: 'task_draft' },
+        undefined,
+      )
+    })
+  })
+
   it('generate_video 的 draft 只给 2.5', async () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)

@@ -4,7 +4,12 @@
 // 上游文档：seedance-openapi-ark-2026-06-12.md；设计稿：
 // docs/superpowers/specs/2026-06-12-seedance-video-mcp-design.md
 
-import type { SeedanceModelAlias, SeedanceTaskMode, VideoResolution } from '../../../types/seedance'
+import type {
+  SeedanceDraftFinalResolution,
+  SeedanceModelAlias,
+  SeedanceTaskMode,
+  VideoResolution,
+} from '../../../types/seedance'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import type { KlingMultiShot } from '../../../types/klingMultiShot'
 import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
@@ -25,11 +30,16 @@ export type {
 } from '../../../types/seedance'
 
 export {
+  AGENT_UHD_REFUSAL,
+  agentUhdRefusal,
   SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_FINAL_RESOLUTIONS,
   SEEDANCE_DRAFT_RESOLUTION,
   SEEDANCE_DRAFT_TTL_MS,
   SEEDANCE_MODEL_CAPABILITIES,
   capabilitiesFor,
+  coerceDraftFinalResolution,
+  resolutionsFor,
   seedanceDraftExpired,
   supportsSeedanceDraft,
   validateSeedanceRequest,
@@ -138,4 +148,9 @@ export interface CreateVideoTaskInput {
    * 提示词 / 素材 / 时长 / 比例 / seed / 音频一律沿用样片,请求里不能再带。
    */
   fromDraftTaskId?: string
+  /**
+   * 成片分辨率(只在 `fromDraftTaskId` 存在时有意义):`1080p`(缺省)或 `4k` —— 样片升 4K。
+   * 与样片的 480p 无关,样片之后想出多高的清晰度由这里决定。
+   */
+  finalResolution?: SeedanceDraftFinalResolution
 }

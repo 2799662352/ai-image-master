@@ -69,9 +69,10 @@ describe('canStart 按模型能力判定', () => {
     expect(tooLong.reason).toMatch(/4-15/)
   })
 
-  it('1080p 仍然只有 2.0,2.5 也不行', () => {
+  it('1080p:2.0 都行;2.5 只有平台余额开放,自填 Key 不行', () => {
     expect(canStart(buildCard({ prompt: 'x', model: '2.0', resolution: '1080p' }, 0)).ok).toBe(true)
-    expect(canStart(buildCard({ prompt: 'x', model: '2.5', resolution: '1080p' }, 0)).ok).toBe(false)
+    expect(canStart(buildCard({ prompt: 'x', model: '2.5', resolution: '1080p' }, 0), 'own-key').ok).toBe(false)
+    expect(canStart(buildCard({ prompt: 'x', model: '2.5', resolution: '1080p' }, 0), 'platform').ok).toBe(true)
   })
 
   it('2.5 的编辑/延长必须带参考视频', () => {

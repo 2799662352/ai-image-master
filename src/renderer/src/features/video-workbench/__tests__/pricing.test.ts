@@ -20,6 +20,16 @@ describe('unitPriceUsd(文档 9.2 价格表)', () => {
     expect(unitPriceUsd('2.0', '1080p', true)).toBe(4.7)
   })
 
+  it('没有价目的档位一律 null,不拿标准档顶替(2.5 的 1080p / 4k、2.0 的 4k)', () => {
+    // 2.5 平台余额新开了 1080p / 4k,但价目表(文档 9.2)里 2.5 只有标准档。
+    // 拿 720p 的单价去估 4K,得出的是一个看似精确的错数 —— 宁可不显示。
+    expect(unitPriceUsd('2.5', '720p', false)).toBe(10.7)
+    expect(unitPriceUsd('2.5', '1080p', false)).toBeNull()
+    expect(unitPriceUsd('2.5', '4k', false)).toBeNull()
+    expect(unitPriceUsd('2.0', '4k', false)).toBeNull()
+    expect(unitPriceUsd('2.0', '2k', true)).toBeNull()
+  })
+
   it('fast/mini 只有标准档;1080p 返回 null', () => {
     expect(unitPriceUsd('2.0-fast', '720p', false)).toBe(5.6)
     expect(unitPriceUsd('2.0-fast', '720p', true)).toBe(3.3)
@@ -185,6 +195,24 @@ describe('summarizeCostUsd(跨卡汇总)', () => {
     const s = summarizeCostUsd([card({ status: 'failed' })], noVideo)
     expect(s.counted).toBe(1)
     expect(s.usd).toBeCloseTo(0.056, 6)
+  })
+
+  it('样片升 4K 的成片按 4k 估(价目表没有 → unpriced),不套卡片上 720p 的标准价', () => {
+    const s = summarizeCostUsd(
+      [card({ model: '2.5', resolution: '720p', fromDraftTaskId: 'task_d', draftFinalResolution: '4k' })],
+      noVideo,
+    )
+    expect(s.usd).toBe(0)
+    expect(s.counted).toBe(0)
+    expect(s.unpriced).toBe(1)
+  })
+
+  it('样片(480p)仍按标准档估,与卡片设置的分辨率无关', () => {
+    const s = summarizeCostUsd([card({ model: '2.5', resolution: '4k', draftRun: true })], noVideo)
+    expect(s.counted).toBe(1)
+    expect(s.unpriced).toBe(0)
+    // 10000 tokens × $10.7/M(2.5 无视频标准档)
+    expect(s.usd).toBeCloseTo(0.107, 6)
   })
 
   it('空列表返回全零', () => {

@@ -93,7 +93,10 @@ const cardInputSchema = z.object({
     + 'references. For reference images/videos use "kling4-omni".',
   ),
   resolution: zResolution().optional().describe(
-    'Default 720p. 1080p requires model "2.0", "wan3" or kling; "2k"/"4k" are kling-only (480p is NOT kling).',
+    'Default 720p. 1080p requires model "2.0", "wan3", kling, or "2.5" on platform balance; "2k" is kling-only '
+    + '(480p is NOT kling). "4k" cards can be filled in but are NEVER started by you: 4K is far more expensive, so '
+    + 'autoStart / video_workbench_start HOLD them (skipped, code UHD_CONFIRM_REQUIRED) until the USER clicks 「生成」 '
+    + 'on the card and confirms twice in a dialog — you cannot confirm for them. Tell the user instead of retrying.',
   ),
   ratio: zRatio().optional().describe(
     'Aspect ratio. Default 16:9 (wan3 defaults to "adaptive"). "21:9" is Seedance/kling; "4:3"/"3:4" are not kling; '
@@ -389,7 +392,13 @@ const statusCardSchema = cardSnapshotSchema.partial({
 
 const startResultShape = {
   started: z.array(z.string()),
-  skipped: z.array(z.object({ cardId: z.string(), reason: z.string() })),
+  skipped: z.array(z.object({
+    cardId: z.string(),
+    reason: z.string(),
+    code: z.string().optional().describe(
+      'UHD_CONFIRM_REQUIRED = 4K 卡,只能由用户本人在工作台里点「生成」并确认两次,你不能代为确认,也不要重试。',
+    ),
+  })),
   blocked: z.boolean().optional().describe(
     'true = 用户在工作台关闭了「允许 AI 自动生成」,整批一张都没提交。不要重试,'
     + '请用户自己点「全部生成」或让他打开那个开关。',
@@ -1201,7 +1210,9 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'pushed a 「[视频工作台] 批次渲染完成」 summary listing successes, failures and output paths. ' +
       'The user watches live progress on the workbench page meanwhile. ' +
       'The user can switch off 「允许 AI 自动生成」 in the workbench; then this call starts NOTHING and ' +
-      'comes back with blocked:true — do not retry, ask them to click 「全部生成」 themselves.',
+      'comes back with blocked:true — do not retry, ask them to click 「全部生成」 themselves. ' +
+      '4K cards are never started by this call: they come back in `skipped` with code UHD_CONFIRM_REQUIRED ' +
+      '(the user must click 「生成」 on the card and confirm twice) — the rest of the batch still starts; tell the user which ones are waiting.',
     inputSchema: z.object({
       cardIds: z.array(z.string()).optional().describe('Cards to start. Omit = all startable cards on the active board.'),
       includeSucceeded: z.boolean().optional().describe(
@@ -1238,7 +1249,8 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
   server.registerTool('video_workbench_finalize_draft', {
     description:
       'Turn workbench cards whose current result is a SUCCEEDED 480p 样片 (draftRun:true in status) into the ' +
-      '1080p FINAL. Upstream reuses each draft\'s prompt, materials, duration, ratio, seed and audio — nothing ' +
+      '1080p FINAL (always 1080p — a 4K final is user-only: the user clicks 「生成 4K 成片」 on the card and ' +
+      'confirms twice; there is no parameter for it and you cannot confirm for them). Upstream reuses each draft\'s prompt, materials, duration, ratio, seed and audio — nothing ' +
       'can be changed (to change something, edit the card and render a new draft). The final becomes a new ' +
       'version on the same card; the draft stays in its version history. Seedance 2.5 on platform balance only, ' +
       'within 7 days of the draft, billed at the 1080p rate. Fire-and-forget like video_workbench_start: returns ' +

@@ -49,4 +49,27 @@ describe('由样片生成成片', () => {
       },
     })
   })
+
+  it('指定 4k:样片升 4K,metadata 里仍只有 draft_task + resolution', () => {
+    const body = buildSeedanceGatewayFinalFromDraftBody({
+      model: 'doubao-seedance-2-5',
+      draftTaskId: 'task_abc',
+      prompt: '雨夜奔跑',
+      resolution: '4k',
+    })
+    expect(body.metadata).toEqual({
+      content: [{ type: 'draft_task', draft_task: { id: 'task_abc' } }],
+      resolution: '4k',
+    })
+  })
+
+  it('不认识的分辨率退回 1080p —— 不把载荷里的任意字符串写进上游请求', () => {
+    const body = buildSeedanceGatewayFinalFromDraftBody({
+      model: 'doubao-seedance-2-5',
+      draftTaskId: 'task_abc',
+      prompt: 'x',
+      resolution: '8k' as never,
+    })
+    expect(body.metadata.resolution).toBe('1080p')
+  })
 })

@@ -31,6 +31,7 @@ import type {
 } from '../../services/seedance/types'
 import {
   SEEDANCE_DRAFT_RESOLUTION,
+  agentUhdRefusal,
   supportsSeedanceDraft,
   validateSeedanceRequest,
 } from '../../services/seedance/types'
@@ -338,10 +339,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'parameters appended at the end.',
       ),
       model: zEnumOf(ALL_VIDEO_MODEL_ALIASES).optional().describe(
-        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive". "wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and every input field — same modes, same 10/5/5 materials, same 2–30s, same 480P/720P/1080P, same document/web-link slot, same restrictions. The ONLY differences are the upstream model name and the price (≈1.33× wan3, i.e. ¥0.4/0.8/1.6 per second). Pick it when the user asks for the higher tier; otherwise "wan3". "kling4" = 可灵 4.0 (Kling via Miau gateway): 3–30s whole seconds (NO smart duration, duration -1 is rejected), 720p/1080p/2k/4k, ratios 16:9/9:16/1:1/21:9/adaptive, text-to-video / firstFrame / firstFrame+lastFrame ONLY — it takes NO referenceImages, referenceVideos or audio; no seed, no web search, no portrait library (asset:// rejected; local files and https URLs are uploaded to a public link automatically); billed PER SECOND through the platform balance (¥1.2/s at 720p, ×1.5 at 1080p, ×1.8 at 2k, ×3 at 4k; failed tasks are refunded). "kling4-omni" = 可灵 4.0 Omni: everything "kling4" does, PLUS 全能参考 with up to 10 referenceImages + 5 referenceVideos (≤15 files in total, reference videos ≤30s combined) — still NO audio references; priced like "kling4" (a reference video raises the billed seconds to input+output, so it costs more). Pick Kling when the user asks for 可灵/Kling, a 2k/4k output, or 30s single-shot; the shared upstream account allows only ~5 Kling tasks at once — extra ones fail with a concurrency error (refunded), so do not queue a big Kling batch in one go. "depth" = 深度捕捉: NOT a generator but a ONE-SOURCE-VIDEO transform that outputs a grayscale depth video (near = bright, far = dark), useful as a motion/structure reference for a later generation. Pass the source ONLY via referenceVideos with exactly 1 item (local path or https URL; local files over 100 MB are rejected up front — compress with ffmpeg-win first; longer/larger sources than a few seconds are untested); no images, audio, firstFrame/lastFrame or taskMode. resolution is accepted (480p/720p/1080p) but every tier produces the SAME output at the SAME price — leave the default. Billed a flat per-call fee through the platform balance or Miau key (¥0.5 at time of writing, NOT per second). duration, ratio and generateAudio are ignored — output length and framing follow the source. The schema still requires a prompt: send a short label such as "深度捕捉"; it is not sent upstream.',
+        'Video model alias. Seedance upstream ID follows settings region: GLOBAL→dreamina-*, CN→doubao-*. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). "2.5" for long takes (up to 30s), 30/10/10 materials, and edit/extend of an existing video — but it caps at 720p on a self-filled Key (platform balance also offers 1080p) and cannot erase subtitles. "2.0-fast" when the user explicitly wants fast/cheap/draft; "2.0-mini" cheapest tier (480p/720p only). "wan3" = 阿里万相 3.0 (All-in-One, different upstream): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, accepts one document/web-link reference, and is billed PER SECOND (¥0.3/0.6/1.2 per second by resolution) instead of per token. wan3 does NOT support 21:9, edit/extend, subtitle erase, or the portrait library — its references must be plain media, and its default ratio is "adaptive". "wan3-prime" = 万相 3.0 Prime: IDENTICAL to "wan3" in every capability and every input field — same modes, same 10/5/5 materials, same 2–30s, same 480P/720P/1080P, same document/web-link slot, same restrictions. The ONLY differences are the upstream model name and the price (≈1.33× wan3, i.e. ¥0.4/0.8/1.6 per second). Pick it when the user asks for the higher tier; otherwise "wan3". "kling4" = 可灵 4.0 (Kling via Miau gateway): 3–30s whole seconds (NO smart duration, duration -1 is rejected), 720p/1080p/2k/4k, ratios 16:9/9:16/1:1/21:9/adaptive, text-to-video / firstFrame / firstFrame+lastFrame ONLY — it takes NO referenceImages, referenceVideos or audio; no seed, no web search, no portrait library (asset:// rejected; local files and https URLs are uploaded to a public link automatically); billed PER SECOND through the platform balance (¥1.2/s at 720p, ×1.5 at 1080p, ×1.8 at 2k, ×3 at 4k; failed tasks are refunded). "kling4-omni" = 可灵 4.0 Omni: everything "kling4" does, PLUS 全能参考 with up to 10 referenceImages + 5 referenceVideos (≤15 files in total, reference videos ≤30s combined) — still NO audio references; priced like "kling4" (a reference video raises the billed seconds to input+output, so it costs more). Pick Kling when the user asks for 可灵/Kling, a 2k/4k output, or 30s single-shot; the shared upstream account allows only ~5 Kling tasks at once — extra ones fail with a concurrency error (refunded), so do not queue a big Kling batch in one go. "depth" = 深度捕捉: NOT a generator but a ONE-SOURCE-VIDEO transform that outputs a grayscale depth video (near = bright, far = dark), useful as a motion/structure reference for a later generation. Pass the source ONLY via referenceVideos with exactly 1 item (local path or https URL; local files over 100 MB are rejected up front — compress with ffmpeg-win first; longer/larger sources than a few seconds are untested); no images, audio, firstFrame/lastFrame or taskMode. resolution is accepted (480p/720p/1080p) but every tier produces the SAME output at the SAME price — leave the default. Billed a flat per-call fee through the platform balance or Miau key (¥0.5 at time of writing, NOT per second). duration, ratio and generateAudio are ignored — output length and framing follow the source. The schema still requires a prompt: send a short label such as "深度捕捉"; it is not sent upstream.',
       ),
       resolution: zEnumOf(ALL_VIDEO_RESOLUTIONS).optional().describe(
-        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0", "wan3" or Kling (NOT "2.5"); 4k works with "2.0" and Kling; 2k is Kling-only (Kling has no 480p). "depth" accepts 480p / 720p / 1080p but all three give the same result and price.',
+        'Output resolution. Default 720p. 480p = cheapest draft; 1080p works with model "2.0", "wan3", Kling, or "2.5" on platform balance; 2k is Kling-only (Kling has no 480p). Do NOT pass "4k": 4K costs far more and must be confirmed twice by the USER in the video workbench UI — this tool refuses it, so tell the user to create the 4K card there instead. "depth" accepts 480p / 720p / 1080p but all three give the same result and price.',
       ),
       ratio: zEnumOf(ALL_VIDEO_RATIOS).optional().describe(
         'Aspect ratio. Default 16:9. "21:9" is Seedance/Kling; "adaptive" is wan3 and Kling (wan3\'s default; Kling follows the first frame); "4:3"/"3:4" are not Kling. Ignored (forced adaptive) when taskMode is set.',
@@ -394,7 +395,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'Seedance "2.5" + platform balance ONLY. true = render a cheap 480p 样片 (draft preview, billed as normal '
         + '480p) to check composition/motion first. Resolution is forced to 480p. If the user likes it, call '
         + 'finalize_video_draft with its taskId to get the 1080p final (within 7 days) — do NOT regenerate from '
-        + 'scratch. Use it when the user wants to preview cheaply, or for expensive long takes.',
+        + 'scratch. Use it when the user wants to preview cheaply, or for expensive long takes. '
+        + '(The user can instead upgrade a draft to 4K by clicking "生成 4K 成片" in the workbench and confirming twice; you cannot.)',
       ),
       multiShot: zMultiShot(),
     }),
@@ -412,6 +414,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       draft?: boolean
       prompt?: string
       multiShot?: unknown
+      finalResolution?: unknown
     }
     if (p.draft && !supportsSeedanceDraft(p.model)) {
       return textResult(buildErrorBanner('generate_video', new Error('draft (样片) is Seedance "2.5" only — pass model "2.5".')))
@@ -438,6 +441,13 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
     if (errors.length > 0) {
       return textResult(buildErrorBanner('generate_video', new Error(errors.join('；'))))
     }
+    // 4K 只有用户本人能在工作台里二次确认 —— AI 的调用到这里就挡下,什么都不提交。
+    // 放在能力校验之后:模型本来就不支持 4K 时(如深度捕捉)要说真正的原因,别说成「要用户确认」。
+    // (主进程 `generate_video` 入口还有同一道闸;这里是为了让模型第一时间拿到清楚的回执。)
+    const uhdRefusal = agentUhdRefusal(p)
+    if (uhdRefusal) {
+      return textResult(buildErrorBanner('generate_video', new Error(uhdRefusal)))
+    }
     // 把归一后的分镜写回去(没有就删掉这个键),主进程那一层不必再认 'off'。
     const { multiShot: _raw, ...rest } = params as Record<string, unknown>
     return renderAndWait(router, 'generate_video', multiShot ? { ...rest, multiShot } : rest, extractCodexThreadId(ctx))
@@ -449,7 +459,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'video. Pass ONLY the draft\'s taskId: upstream reuses the draft\'s prompt, references, duration, ratio, ' +
       'seed and audio setting — they cannot be changed or resent (to change anything, make a new draft). ' +
       'Works within 7 days of the draft, on platform balance only, and must run under the same billing pool ' +
-      'that made the draft. Billed at the 1080p rate. Blocks and reports like generate_video.',
+      'that made the draft. Always 1080p: a 4K final needs the USER to click "生成 4K 成片" in the workbench and ' +
+      'confirm twice — there is no parameter for it and you cannot confirm on their behalf. Blocks and reports like generate_video.',
     annotations: WRITE_ADDITIVE_REMOTE,
     inputSchema: z.object({
       taskId: z.string().min(1).describe('taskId of the SUCCEEDED draft — the task_… id generate_video returned.'),
