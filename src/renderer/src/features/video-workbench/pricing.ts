@@ -1,7 +1,8 @@
 // Seedance 视频生成计费估算 —— 文档 9.2 官方价格表(2026-07-22 口径)。
 // 费用 = completion_tokens / 1_000_000 × 单价;单价按 模型 × 分辨率档 × 是否含视频输入。
 
-import type { SeedanceModelAlias } from '../../../../types/seedance'
+import type { SeedanceDraftFinalResolution, SeedanceModelAlias } from '../../../../types/seedance'
+import { runResolution } from './seedanceDraft'
 
 /**
  * 按 token 计费的模型不适用时的标记。
@@ -32,7 +33,8 @@ const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   '2.0-mini': {
     standard: { noVideo: 3.5, withVideo: 2.1 },
   },
-  // 2.5 没有 fhd 档（它只支持 480p/720p，文档 2.2.1），所以只填 standard。
+  // 2.5 没有 fhd 档（自填 Key 直连只支持 480p/720p，文档 2.2.1；平台余额新开的 1080p / 4k
+  // 价目表里没有，估价一律返回 null、汇总记「估不出」），所以只填 standard。
   // 注意它的价差方向和 2.0 家族不同：不含视频比 2.0 更贵、含视频反而更便宜
   // （文档 9.2：$10.70 / $6.40，对 2.0 的 $7.0 / $4.3）。
   '2.5': {
@@ -144,7 +146,11 @@ export function estimateKlingCostCny(
   return perSecond === null ? null : perSecond * durationSeconds
 }
 
-/** 单价($/1M tokens)。未知组合(如 fast/mini 配 1080p)返回 null。 */
+/**
+ * 单价($/1M tokens)。未知组合返回 null —— 如 fast/mini 配 1080p、2.5 配 1080p / 4k、2.0 配 4k:
+ * 价目表(文档 9.2)只有「480p/720p 标准」与「1080p(仅 2.0)」两档,**别的档位一律不拿标准档顶替**。
+ * (4K 之前这里是 `resolution === '1080p' ? fhd : standard`,4k 会悄悄按 720p 的价估,偏低且看起来很精确。)
+ */
 export function unitPriceUsd(
   model: SeedanceModelAlias,
   resolution: string,
@@ -152,7 +158,8 @@ export function unitPriceUsd(
 ): number | null {
   const entry = PRICE_TABLE[model]
   if (!entry || entry === NOT_TOKEN_BILLED) return null
-  const tier = resolution === '1080p' ? entry.fhd : entry.standard
+  const res = resolution.toLowerCase()
+  const tier = res === '480p' || res === '720p' ? entry.standard : res === '1080p' ? entry.fhd : undefined
   if (!tier) return null
   return hasVideoInput ? tier.withVideo : tier.noVideo
 }
@@ -227,6 +234,13 @@ export interface CostCardLike {
   /** 所选时长(秒)。只有可灵用得上:网关不回传实际出片秒数,只能按它估。 */
   duration?: number
   status: string
+  /**
+   * 样片 / 成片标记(与 `VideoWorkbenchCard` 同名同义)。估价看的是**这一轮实际出片的分辨率**
+   * (样片 480p、成片 1080p / 4k),不是卡片上设置的那一档 —— 见 `runResolution`。
+   */
+  draftRun?: boolean
+  fromDraftTaskId?: string
+  draftFinalResolution?: SeedanceDraftFinalResolution
 }
 
 export interface WorkbenchCostSummary {
@@ -304,7 +318,7 @@ export function summarizeCostUsd<T extends CostCardLike>(
       if (card.status === 'succeeded' || typeof card.completionTokens === 'number') unpriced += 1
       continue
     }
-    const cost = estimateCostUsd(card.model, card.resolution, hasVideoInput(card), card.completionTokens)
+    const cost = estimateCostUsd(card.model, runResolution(card), hasVideoInput(card), card.completionTokens)
     if (cost != null) {
       usd += cost
       counted += 1

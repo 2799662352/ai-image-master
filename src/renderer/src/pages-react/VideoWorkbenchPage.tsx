@@ -14,6 +14,7 @@ import {
   useVideoWorkbenchStore,
 } from '../features/video-workbench/store'
 import { formatCostParts, summarizeCostUsd } from '../features/video-workbench/pricing'
+import { askUhdConfirmIfHeld } from '../features/video-workbench/uhdConfirm'
 import type { VideoWorkbenchCard } from '../../../types/videoWorkbench'
 import { BoardTabs } from './video-workbench/BoardTabs'
 import { CardGap } from './video-workbench/CardGap'
@@ -25,6 +26,7 @@ import { ProjectRail } from './video-workbench/ProjectRail'
 import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
 import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { TrashDialog } from './video-workbench/TrashDialog'
+import { UhdConfirmDialog } from './video-workbench/UhdConfirmDialog'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
 import { cloudBackupApi, useWorkbenchCloudBackup } from './video-workbench/useCloudBackup'
 import { WorkbenchCard } from './video-workbench/WorkbenchCard'
@@ -191,6 +193,8 @@ export default function VideoWorkbenchPage() {
       <ExportProjectDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <ImportProjectDialog path={importPath} onClose={() => setImportPath(null)} />
       <TrashDialog open={trashOpen} onClose={() => setTrashOpen(false)} />
+      {/* 4K 二次确认:所有「生成」入口(卡片按钮 / 整页批量 / 样片升 4K)被 4K 闸拦下后都由它收口 */}
+      <UhdConfirmDialog />
       <CloudBackupDialog open={backupOpen} onClose={() => setBackupOpen(false)} onBackupNow={cloudBackup.runNow} onRevive={cloudBackup.revive} />
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
@@ -295,7 +299,9 @@ export default function VideoWorkbenchPage() {
                 className="text-xs border border-[#FCE300] bg-[#FCE300]/20 text-[#FCE300] font-bold px-3 py-2 transition-colors"
                 onClick={() => {
                   disarmConfirm()
-                  void startCards()
+                  // 批里的 4K 卡会被 store 的闸挡下、不在这一击里提交:其余照常开跑,
+                  // 被挡的那几张弹出 4K 二次确认(用户走完两步才提交)。
+                  void startCards().then((res) => askUhdConfirmIfHeld('start', res))
                 }}
               >
                 ⚡ 确认生成 {batchStartCount} 张

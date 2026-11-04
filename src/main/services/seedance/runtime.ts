@@ -54,7 +54,13 @@ import type {
   SeedanceTaskMode,
   VideoBillingSource,
 } from './types'
-import { capabilitiesFor, isSeedanceModelAvailable } from './types'
+import {
+  agentUhdRefusal,
+  capabilitiesFor,
+  coerceDraftFinalResolution,
+  isSeedanceModelAvailable,
+  resolutionsFor,
+} from './types'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import { coerceKlingMultiShot } from '../../../types/klingMultiShot'
 import {
@@ -948,6 +954,11 @@ export function initSeedanceRuntime(opts: {
 
   router.registerMain('generate_video', async (params, threadId) => {
     const input = params as unknown as CreateVideoTaskInput
+    // 4K 只能由用户本人在视频工作台里二次确认(渲染层弹窗)。这个入口只有 MCP 工具(= AI)会走,
+    // 所以在做任何事之前(连「准备中」气泡都不要)直接拒掉 —— videoTools 里有同一道闸给模型清楚的回执,
+    // 这里是第二道:不管上游调用方怎么拼参数,AI 都没有路径提交 4K。
+    const uhdRefusal = agentUhdRefusal(input)
+    if (uhdRefusal) throw new Error(uhdRefusal)
     // 关键：在任何 COS 中转 / 人像库导入 / createTask 之前，先广播一张「准备中」
     // 卡片。批量并发时每条任务都能瞬间出气泡，不再被前置大图上传压住（根因修复）。
     const clientId = taskManager.announcePreparing({ input, threadId })
@@ -1060,13 +1071,18 @@ export function initSeedanceRuntime(opts: {
           prompt: String(payload?.prompt ?? '').trim() || '由样片生成成片',
           model,
           fromDraftTaskId,
+          // 样片升 4K:载荷来自渲染端,收窄成 1080p / 4k 之一(缺省与认不出的一律 1080p)。
+          finalResolution: coerceDraftFinalResolution(payload?.finalResolution),
         }
       : {
           prompt: String(payload?.prompt ?? ''),
           model,
+          // 按计费来源收窄:2.5 的 1080p / 4k 只有平台余额有,自填 Key 选了会被收回 720p
+          // (渲染端的下拉本来就不给,这是对不可信载荷的兜底)。
           resolution:
-            (caps.resolutions.find((r) => r === payload?.resolution) as VideoResolution | undefined) ??
-            '720p',
+            (resolutionsFor(model, billing).find((r) => r === payload?.resolution) as
+              | VideoResolution
+              | undefined) ?? '720p',
           ratio: typeof payload?.ratio === 'string' ? payload.ratio : '16:9',
           // -1 = 智能时长(文档 8.1:模型自动决定输出时长);其余按该模型的区间收敛。
           // 只有 `smartDuration` 的模型认 -1 —— 可灵没有,网关会直接 400。

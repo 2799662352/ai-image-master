@@ -278,12 +278,13 @@ export function createSeedanceGatewayTransport(
     createTask(ctx) {
       const model = resolveSeedanceModelId(ctx.model, GATEWAY_MODEL_REGION)
       if (ctx.input.fromDraftTaskId) {
-        // 由样片出成片:整份 metadata 只有 draft_task + 1080p,其余一律沿用样片。
+        // 由样片出成片:整份 metadata 只有 draft_task + 成片分辨率(1080p / 4k),其余一律沿用样片。
         return client.createTask(
           buildSeedanceGatewayFinalFromDraftBody({
             model,
             draftTaskId: ctx.input.fromDraftTaskId,
             prompt: ctx.input.prompt,
+            resolution: ctx.input.finalResolution,
           }),
           resolveToken().token,
         )

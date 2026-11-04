@@ -29,7 +29,11 @@
  * 平台人像库的 `asset://<id>` 引用**正是它存在的理由**，拦掉等于把整个功能拦掉。
  */
 
-import { SEEDANCE_DRAFT_FINAL_RESOLUTION, SEEDANCE_DRAFT_RESOLUTION } from '../../../types/seedance'
+import {
+  SEEDANCE_DRAFT_RESOLUTION,
+  coerceDraftFinalResolution,
+  type SeedanceDraftFinalResolution,
+} from '../../../types/seedance'
 import type { SeedanceContentItem } from '../seedance/types'
 
 export interface SeedanceGatewayGenerateBody {
@@ -52,7 +56,8 @@ export interface SeedanceGatewayGenerateBody {
 
 /**
  * 由样片生成成片。`metadata` **整份**只有这两样(new-api #111 / #113):
- * `content` 只含一条 `draft_task`(样片在网关的公开任务号),分辨率固定 1080p。
+ * `content` 只含一条 `draft_task`(样片在网关的公开任务号),外加成片分辨率(1080p 或 4k,
+ * 缺省 1080p;网关按这个值估价并原样透传)。
  * 提示词 / 素材 / 时长 / 比例 / seed / generate_audio 方舟沿用样片,再带任何一样都会被拒。
  */
 export interface SeedanceGatewayFinalFromDraftBody {
@@ -61,7 +66,7 @@ export interface SeedanceGatewayFinalFromDraftBody {
   prompt: string
   metadata: {
     content: [{ type: 'draft_task'; draft_task: { id: string } }]
-    resolution: typeof SEEDANCE_DRAFT_FINAL_RESOLUTION
+    resolution: SeedanceDraftFinalResolution
   }
 }
 
@@ -134,13 +139,15 @@ export function buildSeedanceGatewayFinalFromDraftBody(input: {
   model: string
   draftTaskId: string
   prompt?: string
+  /** 成片分辨率,缺省 1080p;不在 1080p / 4k 内的值回落 1080p(不把任意字符串写进上游请求)。 */
+  resolution?: SeedanceDraftFinalResolution
 }): SeedanceGatewayFinalFromDraftBody {
   return {
     model: input.model,
     prompt: input.prompt ?? '',
     metadata: {
       content: [{ type: 'draft_task', draft_task: { id: input.draftTaskId } }],
-      resolution: SEEDANCE_DRAFT_FINAL_RESOLUTION,
+      resolution: coerceDraftFinalResolution(input.resolution),
     },
   }
 }

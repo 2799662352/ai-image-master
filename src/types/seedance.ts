@@ -167,6 +167,15 @@ export interface SeedanceModelCapabilities {
    * 由它的请求组包在最后一刻转换 —— 不把大小写差异漏进 UI。
    */
   resolutions: readonly string[]
+  /**
+   * 平台余额(Miau 网关 → 方舟)下的分辨率白名单;缺省 = 与 `resolutions` 相同。
+   *
+   * 存在是因为同一个别名两条路的上限不一样:自填 Key 直连 vvdance,文档 2.2.1 写明 2.5 只有
+   * 480p / 720p;走网关则是方舟本身,2.5 支持 1080p,网关也已放开 4K(样片升 4K 与普通 4K 同一
+   * 套计价)。不拆开的话,要么自填 Key 用户在下拉里选到上游会 400 的档位,要么平台用户永远选不到。
+   * 读取一律走 `resolutionsFor(alias, billing)`,别直接读这个字段。
+   */
+  platformResolutions?: readonly string[]
   maxImages: number
   maxVideos: number
   maxAudios: number
@@ -311,6 +320,8 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     modes: ALL_VIDEO_WORKBENCH_MODES,
     duration: { min: 4, max: 30 },
     resolutions: ['480p', '720p'],
+    // 自填 Key(vvdance)只有 480p / 720p;平台余额走网关 → 方舟,多开 1080p 与 4k。
+    platformResolutions: ['480p', '720p', '1080p', '4k'],
     maxImages: 30,
     maxVideos: 10,
     maxAudios: 10,
@@ -508,6 +519,21 @@ export function capabilitiesFor(alias: SeedanceModelAlias): SeedanceModelCapabil
   return SEEDANCE_MODEL_CAPABILITIES[alias]
 }
 
+/**
+ * 这个模型在当前计费来源下可选的分辨率。
+ *
+ * `billing` 缺省 = 宽松口径(取平台余额那一份):MCP 的预检、IR 往返这类拿不到计费来源的地方
+ * 不该误拦合法请求,真正按来源把关的是 `taskManager.submit`(它持有已落锤的 billing)。
+ * 只有明确是自填 Key 才收窄到直连能出的那几档。
+ */
+export function resolutionsFor(
+  alias: SeedanceModelAlias,
+  billing: VideoBillingSource | undefined,
+): readonly string[] {
+  const caps = capabilitiesFor(alias)
+  return billing === 'own-key' ? caps.resolutions : (caps.platformResolutions ?? caps.resolutions)
+}
+
 function unionOf(pick: (caps: SeedanceModelCapabilities) => readonly string[]): readonly string[] {
   return [...new Set(Object.values(SEEDANCE_MODEL_CAPABILITIES).flatMap(pick))]
 }
@@ -535,7 +561,10 @@ export const WORKBENCH_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = ALL_VID
   (alias) => SEEDANCE_MODEL_CAPABILITIES[alias].modes.length > 0,
 )
 
-export const ALL_VIDEO_RESOLUTIONS: readonly string[] = unionOf((caps) => caps.resolutions)
+export const ALL_VIDEO_RESOLUTIONS: readonly string[] = unionOf((caps) => [
+  ...caps.resolutions,
+  ...(caps.platformResolutions ?? []),
+])
 
 /** 含万相的 `adaptive` 与 Seedance 的 `21:9` —— 谁支持谁由能力表 `ratios` 说了算。 */
 export const ALL_VIDEO_RATIOS: readonly string[] = unionOf((caps) => caps.ratios)
@@ -552,6 +581,11 @@ export interface SeedanceRequestShape {
   multiShot?: KlingMultiShot | null
   /** 卡片 / 请求的总提示词:智能分镜靠它切镜头,校验要判「是否为空」,所以随请求带上。 */
   prompt?: string
+  /**
+   * 这一次的钱从哪出。决定 2.5 的分辨率口径(见 `resolutionsFor`);不带 = 宽松口径,
+   * 由持有真实计费来源的调用方(taskManager)带上才严格。
+   */
+  billing?: VideoBillingSource
 }
 
 /**
@@ -572,7 +606,53 @@ export interface SeedanceRequestShape {
  * 查样片并锁它的渠道(new-api #111 / #113),自填 Key 的直连没有这套能力。
  */
 export const SEEDANCE_DRAFT_RESOLUTION = '480p'
+/** 成片缺省分辨率。老卡片 / 老载荷没有 `finalResolution` 时一律按它,行为与加 4K 之前完全一致。 */
 export const SEEDANCE_DRAFT_FINAL_RESOLUTION = '1080p'
+/**
+ * 成片可选的分辨率:样片(480p)之后既可以出 1080p,也可以升 4K。
+ *
+ * 4K 是同一条「draft_task + resolution」请求,只是 `metadata.resolution` 换成 `4k` —— 网关按这个
+ * 值估价并原样透传给方舟。4K 单价以网关价目为准(见 new-api #194),桌面端不估价。
+ */
+export const SEEDANCE_DRAFT_FINAL_RESOLUTIONS = ['1080p', '4k'] as const
+export type SeedanceDraftFinalResolution = (typeof SEEDANCE_DRAFT_FINAL_RESOLUTIONS)[number]
+
+/**
+ * 把不可信的值收成合法的成片分辨率(渲染端载荷 / MCP 参数 / 旧存档)。
+ * 大小写与首尾空白容错;认不出的一律回落 1080p,而不是把任意字符串写进上游请求。
+ */
+export function coerceDraftFinalResolution(raw: unknown): SeedanceDraftFinalResolution {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  return (SEEDANCE_DRAFT_FINAL_RESOLUTIONS as readonly string[]).includes(value)
+    ? (value as SeedanceDraftFinalResolution)
+    : SEEDANCE_DRAFT_FINAL_RESOLUTION
+}
+/**
+ * agent(MCP)被拒绝提交 4K 时给它的话。4K 比 1080p 贵得多且不可撤销,所以「生成」要由用户本人在
+ * 视频工作台里点、并在弹窗里二次确认 —— AI 没有这个权限,也没有任何参数能替用户确认。
+ * 措辞是写给模型看的:让它转告用户,而不是自己改成 1080p 凑数或反复重试。
+ */
+export const AGENT_UHD_REFUSAL =
+  '4K 生成需要用户本人在视频工作台里二次确认,AI 不能代为确认,所以这次没有提交。'
+  + '请告诉用户:在视频工作台那张卡片上选 4K 并点「生成」(样片升 4K 点「生成 4K 成片」),在弹窗里确认两次。'
+  + '你可以先用 video_workbench_add_tasks 把 4K 卡片填好(不要自动开始)。不要自己改成 1080p,也不要反复重试。'
+
+/**
+ * agent 这次请求是不是在要 4K(普通请求的 `resolution` 或成片的 `finalResolution`);是就返回
+ * `AGENT_UHD_REFUSAL`,否则 null。大小写 / 空白容错 —— 否则 `"4K "` 就能绕过去。
+ * 样片(`draft`)固定 480p,请求里残留的 4k 不算。只管 4K,别的分辨率是否合法仍由各自的校验负责。
+ */
+export function agentUhdRefusal(input: {
+  resolution?: unknown
+  finalResolution?: unknown
+  draft?: unknown
+}): string | null {
+  const is4k = (v: unknown): boolean => typeof v === 'string' && v.trim().toLowerCase() === '4k'
+  if (is4k(input.finalResolution)) return AGENT_UHD_REFUSAL
+  if (input.draft !== true && is4k(input.resolution)) return AGENT_UHD_REFUSAL
+  return null
+}
+
 export const SEEDANCE_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export function supportsSeedanceDraft(alias: VideoModelAlias | undefined): boolean {
@@ -631,9 +711,10 @@ export function validateSeedanceRequest(
     }
   }
 
-  if (resolution && !caps.resolutions.includes(resolution)) {
+  const allowedResolutions = resolutionsFor(alias, request.billing)
+  if (resolution && !allowedResolutions.includes(resolution)) {
     errors.push(
-      `模型 ${alias} 不支持分辨率 ${resolution}，可用：${caps.resolutions.join(' / ')}`,
+      `模型 ${alias} 不支持分辨率 ${resolution}，可用：${allowedResolutions.join(' / ')}`,
     )
   }
 

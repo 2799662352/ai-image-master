@@ -364,8 +364,8 @@ describe('validateSeedanceRequest', () => {
     ).toEqual([])
   })
 
-  it('挡下 2.5 的 4k —— 不然要等上游 400 才知道', () => {
-    const errors = validateSeedanceRequest('2.5', { duration: 5, resolution: '4k' })
+  it('自填 Key 挡下 2.5 的 4k —— 不然要等上游 400 才知道(平台余额放行,见 seedanceResolutions.test)', () => {
+    const errors = validateSeedanceRequest('2.5', { duration: 5, resolution: '4k', billing: 'own-key' })
     expect(errors).toHaveLength(1)
     expect(errors[0]).toMatch(/4k/)
   })

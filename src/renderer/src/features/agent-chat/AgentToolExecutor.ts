@@ -920,7 +920,9 @@ export class AgentToolExecutor {
             workbench: workbenchSummary(),
           }
         }
-        const result = await store.finalizeDrafts(ids)
+        // AI 只能出 1080p 成片:分辨率与「4K 已二次确认」标记都显式写死,不从任何参数里取。
+        // 4K 成片只有用户在工作台点「生成 4K 成片」、弹窗里确认两次才会提交。
+        const result = await store.finalizeDrafts(ids, '1080p', { uhdConfirmed: false })
         registerAgentBatch(result.started, threadId)
         return { ...result, workbench: workbenchSummary() }
       }

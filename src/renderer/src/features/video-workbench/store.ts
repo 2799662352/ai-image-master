@@ -20,13 +20,11 @@ import type {
   SeedanceCancelResult,
   SeedanceTaskMode,
   SeedanceTaskUpdate,
+  VideoBillingSource,
 } from '../../../../types/seedance'
-import {
-  capabilitiesFor,
-  SEEDANCE_DRAFT_FINAL_RESOLUTION,
-  SEEDANCE_DRAFT_RESOLUTION,
-} from '../../../../types/seedance'
-import { draftFinalAvailability, effectiveDraft, submitResolution } from './seedanceDraft'
+import { capabilitiesFor, coerceDraftFinalResolution, resolutionsFor } from '../../../../types/seedance'
+import type { SeedanceDraftFinalResolution } from '../../../../types/seedance'
+import { draftFinalAvailability, effectiveDraft, runResolution, submitResolution } from './seedanceDraft'
 import type { KlingMultiShot } from '../../../../types/klingMultiShot'
 import { coerceKlingMultiShot, validateKlingMultiShot } from '../../../../types/klingMultiShot'
 import { DEFAULT_PROJECT_ID, WORKBENCH_BOARD_SUMMARY_MAX } from '../../../../types/videoWorkbench'
@@ -191,11 +189,13 @@ export interface WorkbenchCardSnapshot {
   multiShot?: KlingMultiShot
   /**
    * 当前结果是一条成功的 480p 样片 —— agent 据此知道可以调 video_workbench_finalize_draft
-   * 出 1080p 成片,而不是从头再生成一次。
+   * 出 1080p / 4K 成片,而不是从头再生成一次。
    */
   draftRun?: boolean
-  /** 当前结果是由样片生成的 1080p 成片:来源样片任务号。 */
+  /** 当前结果是由样片生成的成片:来源样片任务号。 */
   fromDraftTaskId?: string
+  /** 成片的分辨率(1080p 或 4k;只在 fromDraftTaskId 存在时出现,旧成片没有 = 1080p)。 */
+  draftFinalResolution?: SeedanceDraftFinalResolution
   referenceCounts: { images: number; videos: number; audios: number }
   /** 紧凑素材清单(每类本就有 9/3/3 上限,只列名字)。 */
   references: {
@@ -251,7 +251,12 @@ export function snapshotCard(card: VideoWorkbenchCard): WorkbenchCardSnapshot {
     ...(card.draft ? { draft: true } : {}),
     ...(card.multiShot ? { multiShot: briefMultiShot(card.multiShot) } : {}),
     ...(card.draftRun ? { draftRun: true } : {}),
-    ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
+    ...(card.fromDraftTaskId
+      ? {
+          fromDraftTaskId: card.fromDraftTaskId,
+          draftFinalResolution: coerceDraftFinalResolution(card.draftFinalResolution),
+        }
+      : {}),
     referenceCounts: {
       images: card.referenceImages.length,
       videos: card.referenceVideos.length,
@@ -448,11 +453,31 @@ export interface StartScopeOptions {
    * 界面上用户自己点「全部生成」不传它,行为不变。
    */
   skipUpToDate?: boolean
+  /**
+   * 用户已经在「4K 二次确认」弹窗里走完两步。**只有界面弹窗的最后一步会传 true。**
+   * 没有它,store 一律不提交 4K(见 `UHD_CONFIRM_REQUIRED`);agent 入口会无视这个字段。
+   */
+  uhdConfirmed?: boolean
 }
+
+/** 因为 4K 还没经用户二次确认而被拦下的 skipped.code —— 界面据此接着弹确认窗。 */
+export const UHD_CONFIRM_REQUIRED = 'UHD_CONFIRM_REQUIRED'
+
+/**
+ * 4K 比 1080p 贵得多且不可撤销,所以「生成」必须由用户本人在工作台里点两次确认。
+ * 这句话也是 agent 看到的原因,措辞要让它转告用户、而不是自己想办法绕。
+ */
+export const UHD_CONFIRM_REASON =
+  '4K 生成需要用户本人在视频工作台里二次确认(AI 不能代为确认):请在这张卡片上点「生成」,并在弹窗里确认两次'
 
 export interface StartResult {
   started: string[]
-  skipped: Array<{ cardId: string; reason: string }>
+  skipped: Array<{
+    cardId: string
+    reason: string
+    /** 机器可读的原因(目前只有 `UHD_CONFIRM_REQUIRED`);没有就是普通原因,只看 reason。 */
+    code?: string
+  }>
   /** 因为「已出片且没改过」被整页启动跳过的张数(只在 > 0 时出现;不逐张列进 skipped,免得一整页灌进回包)。 */
   skippedSucceeded?: number
   /**
@@ -624,7 +649,12 @@ export interface VideoWorkbenchState extends ProjectsSlice {
    * 由样片生成 1080p 成片(Seedance 2.5 Draft)。只接受当前结果是成功样片、7 天内、
    * 平台余额的卡;成片作为同一张卡的新一轮,样片那一版留在 versions 里。
    */
-  finalizeDrafts: (ids: string[]) => Promise<StartResult>
+  /** 样片 → 成片。`resolution` 缺省 = 1080p;`'4k'` = 样片升 4K(同一个样片任务号,只换分辨率)。 */
+  finalizeDrafts: (
+    ids: string[],
+    resolution?: SeedanceDraftFinalResolution,
+    opts?: { uhdConfirmed?: boolean },
+  ) => Promise<StartResult>
   /**
    * 取消/放弃进行中的卡片。返回每张卡的计费口径 —— 上游只允许取消 queued
    * (不计费),running 无法取消(照样扣费),UI 据此写文案。
@@ -760,8 +790,16 @@ export function taskModeForCard(card: VideoWorkbenchCard): SeedanceTaskMode | un
   return wanted && modes.includes(wanted) ? wanted : undefined
 }
 
-/** 卡片当前是否允许(重新)提交生成。 */
-export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: string } {
+/**
+ * 卡片当前是否允许(重新)提交生成。
+ *
+ * `billing`:这一次的钱从哪出。有的档位只在平台余额下开放(2.5 的 1080p / 4K,自填 Key 直连只到 720p),
+ * 不传 = 按平台口径放宽,让主进程 `validateSeedanceRequest` 用真实来源再把一道关。
+ */
+export function canStart(
+  card: VideoWorkbenchCard,
+  billing?: VideoBillingSource,
+): { ok: boolean; reason?: string } {
   // 自定义分镜以各镜头的描述为准,总提示词可以留空(组包时拼一份);智能分镜靠总提示词切镜头,所以仍要它。
   if (!card.prompt.trim() && card.multiShot?.type !== 'customize') return { ok: false, reason: '提示词为空' }
   if (card.status === 'preparing' || card.status === 'queued' || card.status === 'running') {
@@ -780,9 +818,13 @@ export function canStart(card: VideoWorkbenchCard): { ok: boolean; reason?: stri
   if (taskMode && (media.referenceVideos?.length ?? 0) === 0) {
     return { ok: false, reason: `${card.mode === 'edit_video' ? '编辑' : '延长'}视频必须带至少一段参考视频` }
   }
-  // 分辨率/时长按该模型的能力表判 —— 1080p 仅 2.0，2.5 只到 720p 但能到 30 秒。
-  if (!caps.resolutions.includes(card.resolution)) {
-    return { ok: false, reason: `${card.model} 不支持 ${card.resolution}，可用：${caps.resolutions.join(' / ')}` }
+  // 分辨率/时长按该模型的能力表判 —— 2.5 自填 Key 只到 720p(能到 30 秒),平台余额另有 1080p / 4K。
+  const resolutions = resolutionsFor(card.model, billing)
+  if (!resolutions.includes(card.resolution)) {
+    return {
+      ok: false,
+      reason: `${card.model} ${billing === 'own-key' ? '自填 Key 下' : ''}不支持 ${card.resolution}，可用：${resolutions.join(' / ')}`,
+    }
   }
   // 模式按能力表判:可灵 4.0 没有「全能参考」(带参考图 / 参考视频的角色网关会回「需要 Omni」),
   // 万相也只开四种。`modes` 为空的模型(深度捕捉)不进工作台,不在这里判。
@@ -842,6 +884,8 @@ const CLEARED_RUN_RESULT = {
   billedSeconds: undefined,
   historyRecorded: undefined,
   cancelRequested: undefined,
+  // 上一轮是 4K 成片的话,这一轮(普通生成 / 再出一次成片)不能继承它。
+  draftFinalResolution: undefined,
 } as const
 
 /**
@@ -966,12 +1010,8 @@ export function versionSpecOf(card: VideoWorkbenchCard): VideoWorkbenchVersionSp
   return {
     prompt: card.prompt,
     model: card.model,
-    // 样片 / 成片的分辨率不看卡片设置:前者固定 480p,后者固定 1080p。
-    resolution: card.fromDraftTaskId
-      ? SEEDANCE_DRAFT_FINAL_RESOLUTION
-      : card.draftRun
-        ? SEEDANCE_DRAFT_RESOLUTION
-        : card.resolution,
+    // 样片 / 成片的分辨率不看卡片设置:前者固定 480p,后者是所选档位(1080p 或 4k,旧成片 = 1080p)。
+    resolution: runResolution(card),
     ...(card.draftRun ? { draft: true } : {}),
     ...(card.fromDraftTaskId ? { fromDraftTaskId: card.fromDraftTaskId } : {}),
     ratio: card.ratio,
@@ -2323,7 +2363,18 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
   },
 
   startCardsFromAgent: async (ids, opts) => {
-    if (get().agentAutoStart) return get().startCards(ids, opts)
+    if (get().agentAutoStart) {
+      // 4K 的二次确认只有用户本人能做:无论调用方在 opts 里塞了什么,这里一律抹成 false。
+      const result = await get().startCards(ids, { ...opts, uhdConfirmed: false })
+      const uhdHeld = result.skipped.filter((s) => s.code === UHD_CONFIRM_REQUIRED).length
+      if (uhdHeld === 0) return result
+      return {
+        ...result,
+        hint:
+          `${uhdHeld} 张 4K 卡没有提交:4K 比 1080p 贵得多,必须由用户本人在视频工作台里点「生成」并确认两次,AI 不能代为确认。`
+          + '卡片已经填好了 —— 请告诉用户去工作台点那几张卡的「生成」。不要反复重试,也不要改成 1080p 凑数。',
+      }
+    }
     // 拦下时**不碰卡片状态** —— 留一张假的 preparing 比不启动更糟:用户会等一个
     // 永远不来的结果。卡片保持原样,agent 拿着 hint 去请用户自己按。
     return {
@@ -2372,7 +2423,9 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     // 按钮的即时反馈、以及 MCP 那边的时序都与以前一致。走到这里时卡片还是 draft,
     // 体检期间连点两次不会双提交:await 之后重新取目标、重新过 canStart 门,先到的那次
     // 把卡落成 preparing,后到的会被「任务进行中」挡下。
-    const uploadCheckIds = targets.filter((c) => canStart(c).ok).map((c) => c.id)
+    const uploadCheckIds = targets
+      .filter((c) => canStart(c, useQuotaStore.getState().billingSource).ok)
+      .map((c) => c.id)
     if (collectUploadEntries(targets.filter((c) => uploadCheckIds.includes(c.id))).length > 0) {
       await verifyUploadsBeforeSubmit(uploadCheckIds)
       targets = pickTargets()
@@ -2391,12 +2444,23 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
         skippedSucceeded += 1
         continue
       }
-      const gate = canStart(card)
+      // 带上计费来源:2.5 的 1080p / 4K 只在平台余额下开放,选了又切回自填 Key 要在这里说清楚,
+      // 别等素材中转完才被主进程拒。
+      const gate = canStart(card, useQuotaStore.getState().billingSource)
       if (!gate.ok) {
         // 整页全量启动时 draft 空卡静默跳过;显式指名(id / 选中)才报原因
         if (scope || gate.reason !== '提示词为空') {
           result.skipped.push({ cardId: card.id, reason: gate.reason! })
         }
+        continue
+      }
+
+      // 4K 闸:这一轮真正发出去的是 4k,就必须有用户在弹窗里走完两步的标记。
+      // 放在 canStart 之后(别的原因优先报)、任何状态改动之前 —— 被拦的卡原样不动,
+      // 不留一张假的 preparing;样片固定 480p,不算 4K。
+      const sendsDraft = effectiveDraft(card) && useQuotaStore.getState().billingSource === 'platform'
+      if (!startOpts?.uhdConfirmed && (sendsDraft ? submitResolution(card) : card.resolution) === '4k') {
+        result.skipped.push({ cardId: card.id, reason: UHD_CONFIRM_REASON, code: UHD_CONFIRM_REQUIRED })
         continue
       }
 
@@ -2426,6 +2490,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             // 这一轮出不出样片,由提交那一刻的开关 + 模型 + 计费定下(见 seedanceDraft)。
             draftRun: effectiveDraft(c) && billing === 'platform' ? true : undefined,
             fromDraftTaskId: undefined,
+            draftFinalResolution: undefined,
             taskId: undefined,
             upstreamTaskId: undefined,
             submittedReferences: undefined,
@@ -2494,7 +2559,12 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     return result
   },
 
-  finalizeDrafts: async (ids) => {
+  finalizeDrafts: async (ids, resolution, finalizeOpts) => {
+    // 入口收窄:缺省与不认识的一律 1080p。选 4K 是用户明说的,不能被默认值悄悄吞掉。
+    const finalResolution = coerceDraftFinalResolution(resolution)
+    // 4K 成片与普通 4K 同一道闸:只有界面弹窗走完两步才带 uhdConfirmed。agent 的入口
+    // (AgentToolExecutor)既不传分辨率也不传这个标记,所以它永远只能出 1080p。
+    const needsUhdConfirm = finalResolution === '4k' && !finalizeOpts?.uhdConfirmed
     const api = getApi()?.videoWorkbench
     const result: StartResult = { started: [], skipped: [] }
     if (!api?.submit) {
@@ -2520,6 +2590,10 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
         result.skipped.push({ cardId: id, reason: gate.reason })
         continue
       }
+      if (needsUhdConfirm) {
+        result.skipped.push({ cardId: id, reason: UHD_CONFIRM_REASON, code: UHD_CONFIRM_REQUIRED })
+        continue
+      }
       const draftTaskId = card.taskId!
       const clientId = `wb-${card.id}-${Date.now()}`
       let submitted: VideoWorkbenchCard | null = null
@@ -2535,6 +2609,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             billing,
             draftRun: undefined,
             fromDraftTaskId: draftTaskId,
+            draftFinalResolution: finalResolution,
             startedAt: Date.now(),
             updatedAt: Date.now(),
           }
@@ -2549,7 +2624,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
         // 只进网关日志;方舟沿用样片的提示词,不会拿它重新生成。
         prompt: card.prompt.trim(),
         model: card.model,
-        resolution: SEEDANCE_DRAFT_FINAL_RESOLUTION,
+        resolution: finalResolution,
+        finalResolution,
         ratio: card.ratio,
         duration: card.duration,
         generateAudio: card.generateAudio,

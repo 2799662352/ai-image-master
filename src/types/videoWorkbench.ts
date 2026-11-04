@@ -10,6 +10,7 @@
 //   AgentToolExecutor，直接操作同一个 zustand store —— 人与 AI 操作同一页面。
 
 import type {
+  SeedanceDraftFinalResolution,
   SeedanceModelAlias,
   SeedancePersistence,
   SeedanceReferenceUrls,
@@ -356,11 +357,16 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
   billing?: VideoBillingSource
   /**
    * 这一轮出的是 480p 样片(提交时开着样片模式)。**是结果不是意图**,每轮提交刷新:
-   * 卡上的「生成 1080P 成片」只看它,不看 spec 里的开关 —— 开关可能在出片后被关掉。
+   * 卡上的「生成 1080P / 4K 成片」只看它,不看 spec 里的开关 —— 开关可能在出片后被关掉。
    */
   draftRun?: boolean
-  /** 这一轮是由样片生成的 1080p 成片:来源样片的任务号。每轮提交刷新。 */
+  /** 这一轮是由样片生成的成片:来源样片的任务号。每轮提交刷新。 */
   fromDraftTaskId?: string
+  /**
+   * 成片的分辨率(只在 `fromDraftTaskId` 存在时有意义):`1080p` 或 `4k`。缺省 = 1080p
+   * (4K 之前出的成片都是 1080p,旧卡不带这个字段)。每轮提交刷新。
+   */
+  draftFinalResolution?: SeedanceDraftFinalResolution
   /** succeeded 时上游临时结果地址（有效期未知，兜底播放源）。 */
   videoUrl?: string
   /** 落盘后的本地 mp4 绝对路径（权威结果）。 */
@@ -459,7 +465,7 @@ export interface VideoWorkbenchVersionSpec {
   referenceBrief: { images: string[]; videos: string[]; audios: string[] }
   /** 这一版是 480p 样片。 */
   draft?: boolean
-  /** 这一版是由样片(该任务号)生成的 1080p 成片。 */
+  /** 这一版是由样片(该任务号)生成的成片,分辨率就是本条 `resolution`(1080p 或 4k)。 */
   fromDraftTaskId?: string
 }
 
@@ -784,10 +790,12 @@ export interface VideoWorkbenchSubmitPayload {
   /** Seedance 2.5 样片:出 480p 预览。仅平台余额。 */
   draft?: boolean
   /**
-   * 由样片生成 1080p 成片:样片的任务号。给了它,主进程只认这一样 ——
+   * 由样片生成成片:样片的任务号。给了它,主进程只认这一样 ——
    * 提示词只进日志,素材 / 时长 / 比例 / seed / 音频一律沿用样片。
    */
   fromDraftTaskId?: string
+  /** 成片分辨率,只在 `fromDraftTaskId` 存在时有意义:`1080p`(缺省)或 `4k`。 */
+  finalResolution?: SeedanceDraftFinalResolution
 }
 
 /** `video-workbench:submit` 返回（成功 = 已创建上游任务，轮询在主进程后台跑）。 */

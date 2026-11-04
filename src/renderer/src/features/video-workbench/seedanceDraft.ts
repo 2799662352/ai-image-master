@@ -1,16 +1,16 @@
 // Seedance 2.5 Draft 样片模式 · 工作台规则(与 sora-ui `utils/seedanceDraft.ts` 同口径)。
 //
-// 样片:480p 预览,按普通 480p 计费;满意后在卡上「生成 1080P 成片」—— 方舟沿用样片的
-// 提示词、参考素材、seed、比例、时长与音频开关,只能出 1080p。样片从创建起 7 天内有效。
-// 桌面端只在平台余额(经网关)开放,见 types/seedance 的 supportsSeedanceDraft。
+// 样片:480p 预览,按普通 480p 计费;满意后在卡上「生成 1080P 成片」或「生成 4K 成片」——
+// 方舟沿用样片的提示词、参考素材、seed、比例、时长与音频开关,只换分辨率(1080p / 4k)。
+// 样片从创建起 7 天内有效。桌面端只在平台余额(经网关)开放,见 types/seedance 的 supportsSeedanceDraft。
 
 import {
-  SEEDANCE_DRAFT_FINAL_RESOLUTION,
   SEEDANCE_DRAFT_RESOLUTION,
+  coerceDraftFinalResolution,
   seedanceDraftExpired,
   supportsSeedanceDraft,
 } from '../../../../types/seedance'
-import type { VideoBillingSource } from '../../../../types/seedance'
+import type { SeedanceDraftFinalResolution, VideoBillingSource } from '../../../../types/seedance'
 import type { VideoWorkbenchCard, VideoWorkbenchSpec } from '../../../../types/videoWorkbench'
 
 /** 这张卡这次提交会不会出样片:开关开着 + 模型是 2.5。换到别的模型时开关保留但不生效。 */
@@ -25,14 +25,29 @@ export function submitResolution(
   return effectiveDraft(spec) ? SEEDANCE_DRAFT_RESOLUTION : spec.resolution
 }
 
+/** 成片分辨率:认 1080p / 4k,缺省(4K 之前出的旧成片没有这个字段)与不认识的一律 1080p。 */
+export function draftFinalResolutionOf(card: { draftFinalResolution?: unknown }): SeedanceDraftFinalResolution {
+  return coerceDraftFinalResolution(card.draftFinalResolution)
+}
+
+/** 成片档位在界面上的叫法(按钮 / 提示):`1080P`、`4K`。 */
+export function draftFinalLabel(resolution: SeedanceDraftFinalResolution): string {
+  return resolution === '4k' ? '4K' : '1080P'
+}
+
 /**
- * 这一轮**实际出片**的分辨率(计费估算 / 展示用):样片 480p、成片 1080p,其余照卡片设置。
+ * 这一轮**实际出片**的分辨率(计费估算 / 展示用):样片 480p、成片按所选档位(1080p / 4k),
+ * 其余照卡片设置。
  * 与 submitResolution 的区别:这里看的是已经提交的那一轮,不是开关现在的状态。
  */
-export function runResolution(
-  card: Pick<VideoWorkbenchCard, 'draftRun' | 'fromDraftTaskId' | 'resolution'>,
-): VideoWorkbenchSpec['resolution'] {
-  if (card.fromDraftTaskId) return SEEDANCE_DRAFT_FINAL_RESOLUTION
+export function runResolution<R extends string>(card: {
+  draftRun?: boolean
+  fromDraftTaskId?: string
+  /** 卡片上设置的分辨率(只有普通卡会用到)。 */
+  resolution: R
+  draftFinalResolution?: SeedanceDraftFinalResolution
+}): R | typeof SEEDANCE_DRAFT_RESOLUTION | SeedanceDraftFinalResolution {
+  if (card.fromDraftTaskId) return draftFinalResolutionOf(card)
   if (card.draftRun) return SEEDANCE_DRAFT_RESOLUTION
   return card.resolution
 }
@@ -53,7 +68,7 @@ export type DraftFinalAvailability =
   | { show: true; enabled: false; reason: string }
 
 /**
- * 卡上「生成 1080P 成片」按钮:只在这一轮是**成功的样片**时出现;超过 7 天或当前
+ * 卡上「生成 1080P / 4K 成片」按钮:只在这一轮是**成功的样片**时出现;超过 7 天或当前
  * 不是平台余额时置灰并说明原因(网关只认同一账号、同一计费池里生成的样片)。
  */
 export function draftFinalAvailability(

@@ -27,6 +27,7 @@ import type {
 } from './types'
 import {
   SEEDANCE_DRAFT_FINAL_RESOLUTION,
+  SEEDANCE_DRAFT_FINAL_RESOLUTIONS,
   SEEDANCE_DRAFT_RESOLUTION,
   capabilitiesFor,
   supportsSeedanceDraft,
@@ -321,8 +322,14 @@ export class SeedanceTaskManager {
       throw new Error('由样片生成成片时不能再带参考素材 —— 方舟沿用样片的素材,重传会被拒')
     }
 
+    // 成片分辨率只认 1080p / 4k:这一层拒绝而不是悄悄改成 1080p —— 用户点的是 4K,
+    // 却按 1080p 出片计费,比报错更糟。(渲染端 / MCP 的不可信输入在入口已收窄过一次。)
+    const finalResolution = input.finalResolution ?? SEEDANCE_DRAFT_FINAL_RESOLUTION
+    if (isFinalFromDraft && !SEEDANCE_DRAFT_FINAL_RESOLUTIONS.includes(finalResolution)) {
+      throw new Error(`成片分辨率只能是 ${SEEDANCE_DRAFT_FINAL_RESOLUTIONS.join(' / ')}`)
+    }
     const resolution = isFinalFromDraft
-      ? SEEDANCE_DRAFT_FINAL_RESOLUTION
+      ? finalResolution
       : input.draft
         ? SEEDANCE_DRAFT_RESOLUTION
         : (input.resolution ?? '720p')
@@ -331,10 +338,12 @@ export class SeedanceTaskManager {
 
     // 提交前按模型能力自查。上游对 4k 配 2.5、30 秒配 2.0、edit 不带视频都会 400,
     // 但那时用户已经等过一次网络往返、看到的是一张失败卡片。
-    // 成片不查:它的规格全部沿用样片,而 1080p 恰恰是 2.5 平时不开放、只有成片才有的一档。
+    // 成片不查:它的规格全部沿用样片,分辨率只有 1080p / 4k 两档,上面已单独校验过。
+    // 带上 billing:2.5 的 1080p / 4k 只在平台余额(网关 → 方舟)开放,自填 Key 直连仍只有 480p / 720p。
     const errors = isFinalFromDraft
       ? []
       : validateSeedanceRequest(model, {
+          billing,
           duration,
           resolution,
           taskMode,

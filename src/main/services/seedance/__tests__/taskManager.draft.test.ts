@@ -74,6 +74,51 @@ describe('taskManager × 样片 / 成片', () => {
     expect(state.draft).toBeUndefined()
   })
 
+  it('成片 4K:finalResolution 决定请求分辨率与任务状态', async () => {
+    const gw = makeGateway()
+    const state = await manager(gw).submit({
+      input: { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: 'task_draft', finalResolution: '4k' },
+      content: TEXT,
+      billing: 'platform',
+    })
+    expect(gw.createTask.mock.calls[0][0].resolution).toBe('4k')
+    expect(gw.createTask.mock.calls[0][0].input.finalResolution).toBe('4k')
+    expect(state).toMatchObject({ fromDraftTaskId: 'task_draft', resolution: '4k' })
+  })
+
+  it('成片分辨率不在 1080p / 4k 之内 → 拒绝,上游不碰', async () => {
+    const gw = makeGateway()
+    await expect(
+      manager(gw).submit({
+        input: { prompt: 'x', model: '2.5', fromDraftTaskId: 'task_draft', finalResolution: '720p' as never },
+        content: TEXT,
+        billing: 'platform',
+      }),
+    ).rejects.toThrow('1080p')
+    expect(gw.createTask).not.toHaveBeenCalled()
+  })
+
+  it('2.5 普通提交:平台余额可以选 1080p / 4k;自填 Key 仍被拒', async () => {
+    const gw = makeGateway()
+    for (const resolution of ['1080p', '4k'] as const) {
+      const state = await manager(gw).submit({
+        input: { prompt: '雨夜奔跑', model: '2.5', resolution },
+        content: TEXT,
+        billing: 'platform',
+      })
+      expect(state.resolution).toBe(resolution)
+    }
+    const client = makeClient()
+    await expect(
+      manager(makeGateway(), client).submit({
+        input: { prompt: '雨夜奔跑', model: '2.5', resolution: '4k' },
+        content: TEXT,
+        billing: 'own-key',
+      }),
+    ).rejects.toThrow('480p / 720p')
+    expect(client.createTask).not.toHaveBeenCalled()
+  })
+
   it('自填 Key 下拒绝样片 / 成片,上游一次都不碰', async () => {
     const client = makeClient()
     const gw = makeGateway()

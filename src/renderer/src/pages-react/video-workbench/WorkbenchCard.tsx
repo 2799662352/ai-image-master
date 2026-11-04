@@ -16,7 +16,8 @@ import type {
   SeedanceModelAlias,
   VideoResolution,
 } from '../../../../types/seedance'
-import { capabilitiesFor, supportsSeedanceDraft } from '../../../../types/seedance'
+import { capabilitiesFor, resolutionsFor, supportsSeedanceDraft } from '../../../../types/seedance'
+import { askUhdConfirmIfHeld } from '../../features/video-workbench/uhdConfirm'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import {
   draftFinalAvailability,
@@ -138,7 +139,7 @@ function dragStateOf(
 /** 文件栏(FileExplorerPanel)内部拖拽的词表 —— 只有路径,没有 dataTransfer.files。 */
 const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
 
-const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
+export const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   '2.5': 'Seedance 2.5',
   '2.0': 'Seedance 2.0 满血',
   '2.0-fast': 'Seedance 2.0 Fast',
@@ -423,6 +424,8 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   // 拿不到就退回 2.0 家族——少一个选项好过摆一个提交必被拒的选项。
   const availableModels = useSeedanceModels()
   const modelCaps = capabilitiesFor(card.model)
+  // 可选分辨率按计费来源算:2.5 自填 Key 只有 480p/720p,平台余额还有 1080p / 4k。
+  const modelResolutions = resolutionsFor(card.model, billingSource)
   // 样片:开关只在 2.5 + 平台余额下生效;不满足时开关置灰并说明原因,提交也照常出正片。
   const draftToggle = draftToggleAvailability(card.model, billingSource)
   const draftOn = effectiveDraft(card) && draftToggle.available
@@ -1174,7 +1177,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
               // 换档可能让当前分辨率/时长越界(1080p 只有 2.0 满血有;2.5 上限 30s
               // 而 2.0 家族 15s)。就地收敛到新模型的合法值,别把越界值留到提交时
               // 才被上游或 validateSeedanceRequest 拒。
-              const resolution = caps.resolutions.includes(card.resolution)
+              const resolution = resolutionsFor(model, billingSource).includes(card.resolution)
                 ? undefined
                 : ('720p' as const)
               const duration =
@@ -1204,14 +1207,14 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
             // 样片固定 480p:显示实际要发的那一档并锁住;关掉样片后回到卡片原来的设置。
             value={draftOn ? submitResolution(card) : card.resolution}
             disabled={busy || draftOn}
-            title={draftOn ? '样片固定 480p;满意后在结果下方生成 1080P 成片' : undefined}
+            title={draftOn ? '样片固定 480p;满意后在结果下方生成 1080P 或 4K 成片' : undefined}
             className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
             onChange={(e) =>
               updateCard(card.id, { resolution: e.target.value as VideoResolution })
             }
           >
-            {modelCaps.resolutions.map((r) => (
-              <option key={r} value={r}>{r}</option>
+            {modelResolutions.map((r) => (
+              <option key={r} value={r}>{r === '4k' ? '4k(需二次确认)' : r}</option>
             ))}
           </select>
           <select
@@ -1471,7 +1474,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
         {/* 操作行(启动约束与 store.canStart 同源:空提示词/音频单独作参考/1080p 档位) */}
         <div className="flex items-center gap-2">
           {!busy && (() => {
-            const gate = canStart(card)
+            const gate = canStart(card, billingSource)
             return (
               <>
                 <button
@@ -1479,7 +1482,15 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                   className={`${card.status === 'draft' ? 'vw-generate-btn' : ''} bg-[#FCE300] text-black text-sm font-bold px-4 py-2 hover:opacity-85 active:scale-95 transition-all disabled:opacity-40 disabled:animate-none`}
                   disabled={!gate.ok}
                   title={gate.ok ? undefined : gate.reason}
-                  onClick={() => void startCards([card.id])}
+                  onClick={() => {
+                    // 4K 卡会被 store 的闸拦下(skipped + UHD_CONFIRM_REQUIRED),这里接着弹二次确认;
+                    // 1080p 及以下照旧一键提交。
+                    void startCards([card.id]).then((res) => {
+                      if (askUhdConfirmIfHeld('start', res)) return
+                      const skip = res.skipped[0]
+                      if (skip) useToastStore.getState().addToast({ type: 'warning', message: skip.reason })
+                    })
+                  }}
                 >
                   {card.status === 'failed'
                     ? '↻ 重试'
@@ -1501,13 +1512,35 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                       ? '用这条样片生成 1080P 成片:沿用样片的提示词、素材、时长、比例、seed 与音频,按 1080p 计费'
                       : draftFinal.reason}
                     onClick={() => {
-                      void finalizeDrafts([card.id]).then((res) => {
+                      void finalizeDrafts([card.id], '1080p').then((res) => {
                         const skip = res.skipped[0]
                         if (skip) useToastStore.getState().addToast({ type: 'warning', message: skip.reason })
                       })
                     }}
                   >
                     ⤴ 生成 1080P 成片
+                  </button>
+                )}
+                {/* 样片升 4K:同一条样片,只是成片分辨率换成 4K。贵得多且不可撤销 →
+                    store 先拦下,这里弹两步确认,用户走完才真提交。 */}
+                {draftFinal.show && (
+                  <button
+                    type="button"
+                    data-testid="vw-draft-finalize-4k"
+                    className="border border-[#FCE300]/60 text-[#FCE300] text-sm font-bold px-3 py-2 hover:bg-[#FCE300]/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={!draftFinal.enabled}
+                    title={draftFinal.enabled
+                      ? '用这条样片生成 4K 成片:沿用样片的一切,只升到 4K。4K 贵得多、提交后无法撤销,需要二次确认'
+                      : draftFinal.reason}
+                    onClick={() => {
+                      void finalizeDrafts([card.id], '4k').then((res) => {
+                        if (askUhdConfirmIfHeld('finalize', res)) return
+                        const skip = res.skipped[0]
+                        if (skip) useToastStore.getState().addToast({ type: 'warning', message: skip.reason })
+                      })
+                    }}
+                  >
+                    ⤴ 生成 4K 成片
                   </button>
                 )}
               </>
