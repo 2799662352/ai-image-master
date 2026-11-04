@@ -23,3 +23,9 @@ tailwind.js linguist-vendored
 # Mark generated files
 dist/** linguist-generated
 out/** linguist-generated
+
+# Third-party plugins are vendored byte-for-byte (nai5-prompting is GPL-3.0-only,
+# its SOURCE.json pins per-module sha256). Never let autocrlf rewrite them, on
+# add or on checkout, otherwise the published zip would differ from upstream.
+resources/plugins/novelai-nai5/** -text
+resources/plugins/novelai-assistant/** -text

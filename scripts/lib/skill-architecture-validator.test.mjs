@@ -9,6 +9,7 @@ import {
   extractFirstPartySkillsFromTypeScript,
   formatDiagnostics,
   parseSkillMarkdown,
+  THIRD_PARTY_PLUGINS,
   validateArchitecture,
 } from './skill-architecture-validator.mjs'
 
@@ -304,6 +305,95 @@ test('enforces the skill body length budget and the shrink-only debt ratchet', (
   const grown = run(260, 'legacy-giant', { 'legacy-giant': 200 })
   assert.equal(grown.length, 1)
   assert.match(grown[0].message, /above its debt pin 200/)
+})
+
+// 第三方原样上架的插件(nai5-prompting 是 GPL、novelai-assistant 是 MIT)不是我们写的,
+// 也不能为了过审计去改它们 —— 改了就不再是上游原样、更新不了。所以这三道「我们自己的
+// 编排纪律」(正文限长 / 引用环 / 引用条数)对它们不适用;但「它会不会冒充生成入口」、
+// description 的长度与宽触发词仍然查,因为那是会影响我们自己路由的。
+function thirdPartyRun(pathPrefix, extraOptions = {}) {
+  const long = '汉'.repeat(150)
+  return validateArchitecture(
+    {
+      skills: [
+        {
+          path: `${pathPrefix}/alpha/SKILL.md`,
+          content: skill('alpha', 'Alpha helper.', `Needs \`beta\` and \`gamma\`. ${long}`),
+        },
+        {
+          path: `${pathPrefix}/beta/SKILL.md`,
+          content: skill('beta', 'Beta helper.', 'Back to `alpha`.'),
+        },
+        { path: `${pathPrefix}/gamma/SKILL.md`, content: skill('gamma', 'Gamma helper.') },
+      ],
+      hooks: [],
+      firstParty: { sourceExists: true, generatedExists: true, sourceSkills: [], generatedSkills: [] },
+    },
+    { maxSkillBodyChars: 100, ...extraOptions },
+  )
+}
+
+test('third-party plugins are exempt from body length, cycles and fanout (and only they)', () => {
+  const exemptCodes = ['SKILL_BODY_TOO_LONG', 'DEPENDENCY_CYCLE', 'BUDGET_FANOUT_EXCEEDED']
+  const codes = (diagnostics) => diagnostics.map((item) => item.code)
+
+  // 对照:自家插件同样的内容,三道闸都要响。
+  const own = codes(thirdPartyRun('resources/plugins/own-plugin/skills'))
+  for (const code of exemptCodes) assert.ok(own.includes(code), `own plugin should trip ${code}`)
+
+  // 名单里的第三方插件:三道闸全部不报。
+  const exempt = codes(
+    thirdPartyRun('resources/plugins/novelai-nai5/skills', {
+      thirdPartyPlugins: ['novelai-nai5'],
+      // 把 fast 档上限压到 1 的现状下,alpha 引用了 2 个仍然不报。
+    }),
+  )
+  for (const code of exemptCodes) assert.ok(!exempt.includes(code), `third-party should not trip ${code}`)
+})
+
+test('third-party exemption is matched on the plugin directory, not on a name prefix or other roots', () => {
+  const options = { thirdPartyPlugins: ['novelai-nai5'] }
+  const trips = (pathPrefix) =>
+    thirdPartyRun(pathPrefix, options).some((item) => item.code === 'SKILL_BODY_TOO_LONG')
+
+  assert.equal(trips('resources/plugins/novelai-nai5/skills'), false)
+  // 名字只是前缀相同 / 顶层镜像 / codex 镜像 / 别的插件:一律不享受豁免。
+  assert.equal(trips('resources/plugins/novelai-nai5-extra/skills'), true)
+  assert.equal(trips('resources/plugins/other/skills'), true)
+  assert.equal(trips('skills'), true)
+  assert.equal(trips('resources/codex-skills'), true)
+  // 路径里「碰巧」出现同名目录也不行:必须正好是 resources/plugins/<名>/skills/ 开头。
+  assert.equal(trips('skills/novelai-nai5/skills'), true)
+  assert.equal(trips('resources/codex-skills/novelai-nai5/skills'), true)
+  assert.equal(trips('vendor/resources/plugins/novelai-nai5/skills'), true)
+})
+
+test('third-party skills still answer to description limits and the entry-ownership rule', () => {
+  const diagnostics = validateArchitecture(
+    {
+      skills: [
+        {
+          path: 'resources/plugins/novelai-nai5/skills/greedy/SKILL.md',
+          content: skill('greedy', 'Use whenever the user wants to generate any image.', '正文'),
+        },
+        {
+          path: 'resources/plugins/novelai-nai5/skills/wordy/SKILL.md',
+          content: skill('wordy', 'x'.repeat(600), '正文'),
+        },
+      ],
+      hooks: [],
+      firstParty: { sourceExists: true, generatedExists: true, sourceSkills: [], generatedSkills: [] },
+    },
+    { thirdPartyPlugins: ['novelai-nai5'] },
+  )
+  const codes = diagnostics.map((item) => item.code)
+
+  assert.ok(codes.includes('IMPLICIT_GENERATION_ENTRY_COLLISION'))
+  assert.ok(codes.includes('DESCRIPTION_TOO_LONG'))
+})
+
+test('the shipped third-party list is exactly the two reviewed packages', () => {
+  assert.deepEqual([...THIRD_PARTY_PLUGINS].sort(), ['novelai-assistant', 'novelai-nai5'])
 })
 
 test('reports missing first-party source/generated inputs and content parity drift', () => {

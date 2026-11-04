@@ -12,6 +12,8 @@
  *  - 四级预算:fast≤1、standard≤3、pro≤6 个下游引用,studio 仅 film-studio 持有;
  *  - 正文限长(SKILL_BODY_TOO_LONG):单份 SKILL.md 正文 ≤ 20k 字符,超出的按任务拆进
  *    references/*.md;历史超标者钉在 SKILL_BODY_DEBT 棘轮里只许缩不许涨;
+ *  - 第三方原样上架的插件(THIRD_PARTY_PLUGINS)不适用正文限长 / 引用环 / 引用条数,
+ *    但 description 与入口冲突仍然检查;
  *  - 首方 Skill(resources/first-party-skills)与生成物
  *    (src/main/agent/generated/firstPartySkills.generated.ts)内容必须一致;
  *  - 同名 Skill 的插件源 / codex 镜像 / 顶层兼容副本 / 内联副本内容必须一致。
@@ -43,6 +45,21 @@ export const SKILL_BODY_DEBT = Object.freeze({
   'codex-research-grounded-prompting': 24500,
   'catimation-image': 21500,
 })
+
+/**
+ * 第三方原样上架的插件(目录名,位于 resources/plugins/<name>/)。
+ *
+ * 这些包不是我们写的:nai5-prompting(GPL-3.0-only,11 个技能)与 novelai-assistant
+ * (MIT,单个 100 KB 级 SKILL.md)。为了过我们自己的编排纪律去改它们,就不再是上游原样,
+ * 也就跟不上上游更新、还可能违反 GPL 对「已修改版本」的标注要求。所以对它们:
+ *  - 不查「正文限长 / 依赖环 / 引用条数」—— 这三条约束的是**我们自己的**入口 → 叶子编排,
+ *    第三方包内部互相引用不经过我们的入口,也不会被我们的入口按名字加载;
+ *  - 仍查 description 长度与宽触发词、模型名单尾巴,以及「冒充生成入口」—— 这些会直接
+ *    影响我们自己的路由,上游写得不合规就应该在上架时被拦下来。
+ * 只按「插件目录」匹配(resources/plugins/<name>/skills/),名字前缀相同、顶层镜像、
+ * codex 镜像都不享受豁免。**不要往这个表里加自家插件。**
+ */
+export const THIRD_PARTY_PLUGINS = Object.freeze(['novelai-nai5', 'novelai-assistant'])
 
 const BUDGET_LIMITS = Object.freeze({
   fast: 1,
@@ -310,6 +327,12 @@ export function validateArchitecture(snapshot, options = {}) {
   }
   const knownNames = new Set(byName.keys())
 
+  const thirdPartyPlugins = new Set(opts.thirdPartyPlugins ?? THIRD_PARTY_PLUGINS)
+  const isThirdParty = (canonical) => {
+    const match = /^resources\/plugins\/([^/]+)\/skills\//.exec(toPosix(canonical.path))
+    return match !== null && thirdPartyPlugins.has(match[1])
+  }
+
   // 1. 唯一隐式生成入口
   for (const name of [...knownNames].sort()) {
     const canonical = canonicalOf(name)
@@ -362,6 +385,7 @@ export function validateArchitecture(snapshot, options = {}) {
   const bodyDebt = opts.skillBodyDebt ?? SKILL_BODY_DEBT
   for (const name of [...knownNames].sort()) {
     const canonical = canonicalOf(name)
+    if (isThirdParty(canonical)) continue
     const bodyLength = canonical.body.length
     const pinned = bodyDebt[name]
     const limit = pinned ?? opts.maxSkillBodyChars
@@ -379,7 +403,10 @@ export function validateArchitecture(snapshot, options = {}) {
   // 3. 依赖方向:DAG + craft 不得强制回调 orchestrator/router
   const edges = new Map()
   for (const name of knownNames) {
-    edges.set(name, referencedSkillNames(canonicalOf(name), knownNames))
+    const canonical = canonicalOf(name)
+    // 第三方包内部的互相引用不进我们的引用图(见 THIRD_PARTY_PLUGINS):没有出边,
+    // 就不可能成环、也不占引用条数;别的技能引用它们仍然是普通的入边。
+    edges.set(name, isThirdParty(canonical) ? new Set() : referencedSkillNames(canonical, knownNames))
   }
   for (const route of detectCycles([...knownNames], edges)) {
     report(
