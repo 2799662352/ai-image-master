@@ -1,0 +1,22 @@
+{
+  "name": "novelai-assistant",
+  "displayName": "NovelAI 提示词助手",
+  "description": "NovelAI V5 通用提示词专家,附 Danbooru 标签表与画师串(第三方,MIT)。",
+  "version": "1.0.0",
+  "author": {
+    "name": "歌靡Abyss",
+    "url": "https://github.com/2332239652"
+  },
+  "homepage": "https://github.com/2332239652/novelai-assistant",
+  "repository": "https://github.com/2799662352/novelai-assistant",
+  "license": "MIT",
+  "keywords": [
+    "novelai",
+    "nai-v5",
+    "prompt",
+    "danbooru",
+    "artist-tags",
+    "third-party"
+  ],
+  "skills": "./skills/"
+}

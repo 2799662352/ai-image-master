@@ -65,6 +65,26 @@
         "name": "CATIMATION",
         "url": "https://github.com/zuozuoliang999"
       }
+    },
+    {
+      "name": "novelai-nai5",
+      "description": "NovelAI V5 提示词方法(第三方 nai5-prompting,GPL-3.0-only,原样收录):构思、场景、构图、服装、美术设计、漫画 / 四格分镜与成稿、看图反推、通用写法与精确改词,另含原创角色与服装设计,共 11 个技能。",
+      "version": "1.2.8",
+      "source": "./novelai-nai5",
+      "author": {
+        "name": "Miint-Sunny",
+        "url": "https://github.com/Miint-Sunny"
+      }
+    },
+    {
+      "name": "novelai-assistant",
+      "description": "NovelAI 提示词专家(第三方 novelai-assistant,MIT,原样收录):V5 / V4.5 / V4 / NAI3 全模型,自然语言场景 + 角色框分工 + 少量标签锚定,附 Danbooru 标签表、画师串与大量提示词模板。",
+      "version": "1.0.0",
+      "source": "./novelai-assistant",
+      "author": {
+        "name": "歌靡Abyss",
+        "url": "https://github.com/2332239652"
+      }
     }
   ]
 }

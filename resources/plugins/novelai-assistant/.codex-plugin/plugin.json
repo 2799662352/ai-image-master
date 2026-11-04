@@ -1,0 +1,38 @@
+{
+  "name": "novelai-assistant",
+  "version": "1.0.0",
+  "description": "NovelAI 提示词专家(第三方 novelai-assistant,MIT),V5 通用。",
+  "author": {
+    "name": "歌靡Abyss",
+    "url": "https://github.com/2332239652"
+  },
+  "homepage": "https://github.com/2332239652/novelai-assistant",
+  "repository": "https://github.com/2799662352/novelai-assistant",
+  "license": "MIT",
+  "keywords": [
+    "novelai",
+    "nai-v5",
+    "prompt",
+    "danbooru",
+    "artist-tags",
+    "third-party"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NovelAI 提示词助手",
+    "shortDescription": "NovelAI V5 通用提示词专家,附 Danbooru 标签表与画师串",
+    "longDescription": "第三方项目 novelai-assistant(歌靡Abyss,MIT),收录的是本团队 fork 的版本,与上游的差别只有「V5 通用」的措辞调整,词表与其余资源未动。覆盖 V5 / V4.5 / V4 / NAI3:自然语言场景描述 + 角色框分工 + 少量标签锚定、整页漫画直出、中英日文文字渲染、原生透明背景,并附 Danbooru Top Tags / Tag Aliases / 中英对照 / 全角色表、画师串与场景模板。SKILL.md 体量较大(约 100 KB),安装后按需读取随包资源。",
+    "developerName": "歌靡Abyss",
+    "category": "Creative",
+    "capabilities": [
+      "Read"
+    ],
+    "defaultPrompt": [
+      "帮我写一条 NovelAI V5 提示词:黄昏的天台,两个角色并肩坐着。",
+      "给我推荐几串适合厚涂风格的画师串。"
+    ],
+    "websiteURL": "https://github.com/2332239652/novelai-assistant",
+    "brandColor": "#8B5CF6",
+    "screenshots": []
+  }
+}

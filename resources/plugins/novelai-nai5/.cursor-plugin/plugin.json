@@ -1,0 +1,24 @@
+{
+  "name": "novelai-nai5",
+  "displayName": "NovelAI V5 提示词(nai5-prompting)",
+  "description": "NovelAI V5 提示词方法,11 个按职责拆分的技能(第三方,GPL-3.0-only)。",
+  "version": "1.2.8",
+  "author": {
+    "name": "Miint-Sunny",
+    "url": "https://github.com/Miint-Sunny"
+  },
+  "homepage": "https://github.com/Miint-Sunny/nai5-prompting",
+  "repository": "https://github.com/Miint-Sunny/nai5-prompting",
+  "license": "GPL-3.0-only",
+  "keywords": [
+    "novelai",
+    "nai5",
+    "prompt",
+    "illustration",
+    "comic",
+    "storyboard",
+    "character-design",
+    "third-party"
+  ],
+  "skills": "./skills/"
+}

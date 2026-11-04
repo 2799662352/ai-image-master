@@ -1,0 +1,40 @@
+{
+  "name": "novelai-nai5",
+  "version": "1.2.8",
+  "description": "NovelAI V5 提示词方法(第三方 nai5-prompting,GPL-3.0-only),11 个技能。",
+  "author": {
+    "name": "Miint-Sunny",
+    "url": "https://github.com/Miint-Sunny"
+  },
+  "homepage": "https://github.com/Miint-Sunny/nai5-prompting",
+  "repository": "https://github.com/Miint-Sunny/nai5-prompting",
+  "license": "GPL-3.0-only",
+  "keywords": [
+    "novelai",
+    "nai5",
+    "prompt",
+    "illustration",
+    "comic",
+    "storyboard",
+    "character-design",
+    "third-party"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NovelAI V5 提示词(nai5-prompting)",
+    "shortDescription": "NovelAI V5 提示词方法,11 个按职责拆分的技能",
+    "longDescription": "第三方项目 nai5-prompting 的拆分版,原样收录、不做改动:nai5-ideas(构思)、nai5-scene-design(场景)、nai5-illustration-composition(构图)、nai5-art-direction(美术指导)、nai5-costume-writing / oc-costume-design(服装)、oc-character-design(原创角色)、nai5-comic-storyboard / nai5-comic-writing(漫画与四格的分镜与成稿)、nai5-reverse-prompt(看图反推提示词)、nai5-writing(通用写法与精确改词)。执行时按需读取各技能下的参考资料。许可 GPL-3.0-only,版权归 Miint-Sunny,随包的 LICENSE / NOTICE 需一并保留。",
+    "developerName": "Miint-Sunny",
+    "category": "Creative",
+    "capabilities": [
+      "Read"
+    ],
+    "defaultPrompt": [
+      "帮我构思一张 NovelAI V5 的插画,主题是雨夜的便利店。",
+      "我发你一张图,帮我反推成可以直接用的 NovelAI V5 提示词。"
+    ],
+    "websiteURL": "https://github.com/Miint-Sunny/nai5-prompting",
+    "brandColor": "#8B5CF6",
+    "screenshots": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "novelai-nai5",
+  "description": "NovelAI V5 提示词方法(第三方 nai5-prompting,GPL-3.0-only):构思、场景、构图、服装、美术设计、漫画 / 四格分镜与成稿、看图反推、通用写法与精确改词,另含原创角色与服装设计,共 11 个技能。",
+  "version": "1.2.8",
+  "author": {
+    "name": "Miint-Sunny",
+    "url": "https://github.com/Miint-Sunny"
+  },
+  "homepage": "https://github.com/Miint-Sunny/nai5-prompting",
+  "repository": "https://github.com/Miint-Sunny/nai5-prompting",
+  "license": "GPL-3.0-only",
+  "keywords": [
+    "novelai",
+    "nai5",
+    "prompt",
+    "illustration",
+    "comic",
+    "storyboard",
+    "character-design",
+    "third-party"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "version": "v1.2.8",
+  "role": "writing",
+  "skill": "nai5-comic-writing",
+  "requires": [
+    "nai5-writing"
+  ],
+  "modules": {
+    "writing-comics": {
+      "path": "方法/写法/comics.md",
+      "sha256": "71f4ba12a6a2b67c0a943ccd8dadd311be4770174d479c1408f62f1f9a13afbd"
+    },
+    "writing-comic-examples": {
+      "path": "方法/写法/comic-examples.md",
+      "sha256": "d24189ae74502d6cce4ce8e42774bbc7d4038f5ee2115c00043e3fd7d15e95d5"
+    }
+  },
+  "entry": {
+    "path": "工具/职责拆分/入口/nai5-comic-writing.md",
+    "sha256": "91b858fa613f08c1df1c7ccbcf08913006dec5d3ab3aa1e7998d19bd589d3662"
+  }
+}

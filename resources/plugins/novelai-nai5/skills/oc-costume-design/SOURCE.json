@@ -1,0 +1,24 @@
+{
+  "version": "v1.2.8",
+  "role": "ideation",
+  "skill": "oc-costume-design",
+  "requires": [],
+  "modules": {
+    "ideation-costume": {
+      "path": "方法/构思/costume.md",
+      "sha256": "c7453a04ca09f646587c05ab8c1fc44bbd8b976d3633596c2d2616e01d0acc64"
+    },
+    "ideation-sources": {
+      "path": "方法/构思/sources.md",
+      "sha256": "8cb2b6be620a1de9fc73510aec65e798d1f889edde007f779719dc701d24a9b2"
+    },
+    "ideation-background": {
+      "path": "方法/构思/background.md",
+      "sha256": "bf7ab33c6587dbc104bbb9e595a7b0347f4204ce0cd030bef5c706803cd547a2"
+    }
+  },
+  "entry": {
+    "path": "工具/职责拆分/入口/oc-costume-design.md",
+    "sha256": "b84235d9f07b541838c35b577fdd6a1bb704e4ca16e1c7f7fe1eb28e8f51206c"
+  }
+}
