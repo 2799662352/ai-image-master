@@ -634,18 +634,165 @@ async function embedQuery(text) {
   return { success: true, vector: embeddings[0].embedding }
 }
 
+// --- Sakuga tag filtering ----------------------------------------------------
+// DashVector's `like` is PREFIX-ONLY ('abc%'; official FAQ: "filter 仅支持文本前缀匹配").
+// A contains pattern such as user_tags like '%smears%' parses, matches NOTHING and comes
+// back as an EMPTY result with code 0 and no error -- indistinguishable from "the tag is
+// not in the dataset". Unknown field names behave the same way (schema-free collection,
+// no pre-validation). user_tags is one space-separated string, so a prefix match cannot
+// express "has tag X" either.
+// Fix: lift tag `like` clauses out of the upstream filter and match them locally,
+// token-exact, over an inflated pool of semantically recalled candidates.
+const SAKUGA_TAG_SCAN_TOPK = 100
+const SAKUGA_DEFAULT_TOPK = 10
+const SAKUGA_MAX_TOPK = 50
+const SAKUGA_TAG_LIKE_CLAUSE = /^(user_tags|anime_tags)\s+(not\s+)?like\s+(['"])(.*)\3$/i
+
+/** Pure: the caller-visible top_k (default 10, max 50). */
+function sakugaRequestedTopK(raw) {
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), SAKUGA_MAX_TOPK) : SAKUGA_DEFAULT_TOPK
+}
+
+/**
+ * Pure: split a flat `a and b and c` filter into clauses, ignoring keywords inside
+ * quotes. Returns null when the expression is not a flat AND chain (`or`, parentheses
+ * or unbalanced quotes) -- those are never rewritten.
+ */
+function splitFilterClauses(expr) {
+  const clauses = []
+  let cur = ''
+  let quote = ''
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (quote) {
+      cur += ch
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      cur += ch
+      continue
+    }
+    if (ch === '(' || ch === ')') return null
+    if (/\s/.test(ch)) {
+      const m = expr.slice(i).match(/^\s+(and|or)\s+/i)
+      if (m) {
+        if (m[1].toLowerCase() === 'or') return null
+        clauses.push(cur)
+        cur = ''
+        i += m[0].length - 1
+        continue
+      }
+    }
+    cur += ch
+  }
+  if (quote) return null
+  clauses.push(cur)
+  return clauses.map((c) => c.trim()).filter(Boolean)
+}
+
+/**
+ * Pure: take `user_tags|anime_tags [not] like '<pattern>'` clauses out of a filter.
+ * `%` is stripped and the rest is split into lowercase tokens (tags are space-separated
+ * and may contain `_`, which is therefore NOT a wildcard here).
+ * Returns { filter: what is still sent upstream, clauses: [{field, tags, negate}],
+ * sawLike: a `like` that is still in the upstream filter }.
+ */
+function splitSakugaTagFilter(filter) {
+  const raw = String(filter == null ? '' : filter).trim()
+  const hasLike = /\blike\b/i.test(raw)
+  const untouched = { filter: raw, clauses: [], sawLike: hasLike }
+  if (!raw || !hasLike) return untouched
+  const parts = splitFilterClauses(raw)
+  if (!parts) return untouched
+  const kept = []
+  const clauses = []
+  for (const part of parts) {
+    const m = part.match(SAKUGA_TAG_LIKE_CLAUSE)
+    if (!m) {
+      kept.push(part)
+      continue
+    }
+    const tags = [
+      ...new Set(
+        m[4]
+          .replace(/%/g, ' ')
+          .split(/[\s,]+/)
+          .filter(Boolean)
+          .map((t) => t.toLowerCase()),
+      ),
+    ]
+    // like '%' (or '%%') matches every non-null value: nothing to enforce.
+    if (tags.length) clauses.push({ field: m[1].toLowerCase(), tags, negate: Boolean(m[2]) })
+  }
+  return {
+    filter: kept.join(' and '),
+    clauses,
+    sawLike: kept.some((c) => /\blike\b/i.test(c)),
+  }
+}
+
+/** Pure: does one hit satisfy every local tag clause (token-exact, case-insensitive)? */
+function hitMatchesTags(hit, clauses) {
+  const f = isObject(hit) && isObject(hit.fields) ? hit.fields : {}
+  const cache = {}
+  const tokensOf = (field) => {
+    if (!cache[field]) {
+      cache[field] = new Set(
+        String(f[field] == null ? '' : f[field])
+          .toLowerCase()
+          .split(/[\s,]+/)
+          .filter(Boolean),
+      )
+    }
+    return cache[field]
+  }
+  return (Array.isArray(clauses) ? clauses : []).every((c) => {
+    const has = c.tags.every((t) => tokensOf(c.field).has(t))
+    return c.negate ? !has : has
+  })
+}
+
+/** Pure: "user_tags has smears; anime_tags has no 1girl" for result messages. */
+function describeTagClauses(clauses) {
+  return clauses
+    .map((c) => `${c.field} ${c.negate ? 'lacks' : 'has'} ${c.tags.join(' + ')}`)
+    .join('; ')
+}
+
 /** Pure: assemble the DashVector query request body. */
-function buildSakugaQueryBody(vector, args) {
+function buildSakugaQueryBody(vector, args, opts) {
   const a = isObject(args) ? args : {}
-  const topkRaw = Number(a.top_k)
+  const o = isObject(opts) ? opts : {}
+  const requested = sakugaRequestedTopK(a.top_k)
+  const scan = Number(o.scanTopK)
   const body = {
     vector,
-    topk: Number.isFinite(topkRaw) && topkRaw > 0 ? Math.min(Math.floor(topkRaw), 50) : 10,
+    topk: Number.isFinite(scan) && scan > requested ? Math.floor(scan) : requested,
     include_vector: false,
     output_fields: SAKUGA_OUTPUT_FIELDS,
   }
   if (a.filter) body.filter = String(a.filter)
   return body
+}
+
+/**
+ * Pure: turn the tool arguments into { body, tagFilter, requestedTopK }.
+ * Tag `like` clauses never reach DashVector; when there are any, the candidate pool is
+ * inflated so the local filter has something to choose from.
+ */
+function planSakugaQuery(vector, args) {
+  const a = isObject(args) ? args : {}
+  const tagFilter = splitSakugaTagFilter(a.filter)
+  const hasLocal = tagFilter.clauses.length > 0
+  const body = buildSakugaQueryBody(
+    vector,
+    hasLocal ? { ...a, filter: tagFilter.filter } : a,
+    hasLocal ? { scanTopK: SAKUGA_TAG_SCAN_TOPK } : undefined,
+  )
+  return { body, tagFilter, requestedTopK: sakugaRequestedTopK(a.top_k) }
 }
 
 /** Pure: render DashVector hits into a compact, agent-friendly text block. */
@@ -706,11 +853,49 @@ function formatSakugaHits(payload) {
 }
 
 /** Pure: a DashVector query answer → tool result (shared by both routes). */
-function sakugaResult(payload) {
+function sakugaResult(payload, opts) {
   if (isObject(payload) && payload.code !== undefined && payload.code !== 0) {
     return { success: false, error: `DashVector code ${payload.code}`, detail: String(payload.message || '').slice(0, 500) }
   }
-  return { success: true, text: formatSakugaHits(payload) }
+  const o = isObject(opts) ? opts : {}
+  const clauses = Array.isArray(o.clauses) ? o.clauses : []
+  const all = isObject(payload) && Array.isArray(payload.output) ? payload.output : []
+  if (clauses.length && all.length) {
+    const limit = Number.isFinite(o.requestedTopK) && o.requestedTopK > 0 ? Math.floor(o.requestedTopK) : SAKUGA_DEFAULT_TOPK
+    const want = describeTagClauses(clauses)
+    const hits = all.filter((h) => hitMatchesTags(h, clauses)).slice(0, limit)
+    if (!hits.length) {
+      return {
+        success: true,
+        text:
+          `(no match: none of the ${all.length} semantically recalled candidates satisfy [${want}]. ` +
+          'This means "not in this candidate batch", NOT "not in the dataset": DashVector\'s LIKE is ' +
+          'prefix-only, so tag filtering runs locally over the recalled candidates instead of ' +
+          'scanning all 1.1M rows. Rephrase the query closer to the technique, or drop the ' +
+          'filter and read the rows.)',
+      }
+    }
+    return {
+      success: true,
+      text:
+        formatSakugaHits({ output: hits }) +
+        `\n\n[tag filter] checked ${all.length} recalled candidates, kept ${hits.length} where ${want}. ` +
+        'Matching is exact per tag (not substring) and ran locally, because DashVector\'s LIKE is prefix-only.',
+    }
+  }
+  const text = formatSakugaHits(payload)
+  if (text === '(no results)' && o.sawLike) {
+    return {
+      success: true,
+      text:
+        '(no results) -- CAUTION: this filter still contains a LIKE that DashVector evaluates as ' +
+        'PREFIX-ONLY (\'abc%\'). A pattern with a leading % ("%abc%") parses, matches nothing and ' +
+        'raises no error, so an empty result does NOT prove the value is absent from the dataset. ' +
+        'user_tags / anime_tags LIKE is handled locally by this tool (flat AND chains only); ' +
+        'for anything else drop the LIKE and verify by reading rows from an unfiltered query.',
+    }
+  }
+  return { success: true, text }
 }
 
 /** Embed query → DashVector semantic search over the sakuga42m collection. */
@@ -732,12 +917,14 @@ async function querySakuga(args) {
       error: `Query embedding has ${embedded.vector.length} dimensions; ${SAKUGA_COLLECTION} expects ${SAKUGA_EMBED_DIM}.`,
     }
   }
-  const body = buildSakugaQueryBody(embedded.vector, args)
+  const { body, tagFilter, requestedTopK } = planSakugaQuery(embedded.vector, args)
+  const answer = (payload) =>
+    sakugaResult(payload, { clauses: tagFilter.clauses, sawLike: tagFilter.sawLike, requestedTopK })
   let fallbackReason = null
   if (relay) {
     const res = await relayPost(relay, '/vector/query', { model: PLATFORM_SAKUGA_MODEL, ...body })
     fallbackReason = platformUnavailableReason(res)
-    if (!fallbackReason) return isHttpOk(res) ? sakugaResult(parseJsonOrNull(res.body)) : platformFailure(res)
+    if (!fallbackReason) return isHttpOk(res) ? answer(parseJsonOrNull(res.body)) : platformFailure(res)
   }
   if (missing) return noCredentialError(fallbackReason, missing)
   const res = await postJson(
@@ -747,7 +934,7 @@ async function querySakuga(args) {
     body,
   )
   if (!res.success) return res
-  return sakugaResult(res.payload)
+  return answer(res.payload)
 }
 
 // --- Sakuga clip search: Bailian AV KB + DashVector metadata join ----------
@@ -943,9 +1130,12 @@ const ALL_TOOLS = [
       'studio / source-work attribution, 6-dimension taxonomy (filming/composition/' +
       'time/venue/media/character), quality scores and source URLs with timecodes. ' +
       'Each hit is returned with tags classified into technique terms, animation staff ' +
-      '(作画人员), studio, source work and characters. Supports DashVector filter ' +
-      "expressions over fields like aesthetic_score/dynamic_score/user_tags, e.g. " +
-      '"aesthetic_score > 0.7 and user_tags like \'%smears%\'". Use ' +
+      '(作画人员), studio, source work and characters. Optional `filter`: numeric ' +
+      'predicates (aesthetic_score / dynamic_score) run upstream; user_tags / anime_tags ' +
+      'LIKE is applied locally over the semantically recalled candidates. An empty result ' +
+      'never proves a tag or value is absent from the dataset -- put names (animator, ' +
+      'studio, work) in the query text and read the attribution columns instead of ' +
+      'filtering. Use ' +
       'search_cinematography_kb for concepts/specs/how-to; use this tool when you need ' +
       'real example clips (descriptions + source links) of a technique or motion.\n' +
       'Technique tags are sakugabooru vocabulary — carry them into prompts VERBATIM ' +
@@ -962,7 +1152,11 @@ const ALL_TOOLS = [
         filter: {
           type: 'string',
           description:
-            "Optional DashVector filter, e.g. \"aesthetic_score > 0.7 and dynamic_score > 0.6\".",
+            'Optional filter, a flat chain joined by "and". Numeric: "aesthetic_score > 0.7 and dynamic_score > 0.6" ' +
+            "(runs upstream). Tags: \"user_tags like '%smears%'\" is matched locally, token-exact, over the " +
+            'recalled candidates (so it narrows the semantic hits, it does not scan the whole dataset); ' +
+            'the two kinds mix. Never use like on any other field: DashVector LIKE is prefix-only, ' +
+            'a leading % matches nothing and raises no error. No "or" / parentheses for tag clauses.',
         },
         top_k: {
           type: 'integer',
@@ -1144,6 +1338,11 @@ module.exports = {
   embedQuery,
   querySakuga,
   buildSakugaQueryBody,
+  planSakugaQuery,
+  splitSakugaTagFilter,
+  hitMatchesTags,
+  sakugaResult,
+  SAKUGA_TAG_SCAN_TOPK,
   formatSakugaHits,
   parseAvNode,
   formatClipHit,
