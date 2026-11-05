@@ -71,11 +71,11 @@ describe('cinematography-kb-mcp sakuga tool', () => {
   it('buildSakugaQueryBody assembles topk/filter/output_fields', () => {
     const body = mcp.buildSakugaQueryBody([0.1, 0.2], {
       top_k: 5,
-      filter: "aesthetic_score > 0.7 and user_tags like '%smears%'",
+      filter: 'aesthetic_score > 0.7 and dynamic_score > 0.6',
     })
     expect(body.vector).toEqual([0.1, 0.2])
     expect(body.topk).toBe(5)
-    expect(body.filter).toBe("aesthetic_score > 0.7 and user_tags like '%smears%'")
+    expect(body.filter).toBe('aesthetic_score > 0.7 and dynamic_score > 0.6')
     expect(body.include_vector).toBe(false)
     expect(body.output_fields).toContain('text_description')
     expect(body.output_fields).toContain('url_link')
