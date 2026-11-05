@@ -13,6 +13,14 @@
  *      whenever a new Codex stable lands; humans can also run
  *      `pnpm codex:fetch:latest` locally to do the same thing in one shot.
  *
+ *   3. `CODEX_BUMP_TO_TAG=<rust-v tag>` — deliberate, human-driven bump to one
+ *      explicit tag, pre-releases included (`rust-v0.168.0-alpha.3`). Records
+ *      the verified asset digests and rewrites `package.json` + the lock exactly
+ *      like `--latest` does. `--latest` itself never picks a pre-release, and
+ *      refuses to DOWNGRADE a pin that is newer than the latest stable, so the
+ *      daily `codex-auto-update.yml` does not open a revert PR against a
+ *      pre-release pin.
+ *
  * Why not "always latest at build time": the binary is the runtime; a moving
  * dependency means same git SHA can run different Codex behaviours on
  * different days, which breaks bisect/rollback. We pin in package.json and let
@@ -30,6 +38,7 @@ import {
   verifyRuntimeAssetBytes,
   writeRuntimeAssetComponent,
 } from './runtime-asset-integrity.mjs'
+import { compareCodexVersions, versionFromRustTag } from './codex-version.mjs'
 
 type GitHubReleaseAsset = {
   name: string
@@ -54,6 +63,7 @@ const RUST_TAG_PATTERN = /^rust-v(\d+\.\d+\.\d+)$/
 
 const argv = new Set(process.argv.slice(2))
 const requestedLatest = argv.has('--latest') || process.env.CODEX_CLI_VERSION === 'latest'
+const bumpToTag = process.env.CODEX_BUMP_TO_TAG?.trim() || ''
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'), '..')
 const packageJsonPath = path.join(projectRoot, 'package.json')
@@ -264,16 +274,64 @@ async function fetchJson<T>(url: string): Promise<T> {
   return await response.json() as T
 }
 
-async function fetchBytes(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    headers: getGitHubHeaders(),
-  })
+const DOWNLOAD_ATTEMPTS = 3
+// 连续这么久没有收到任何字节就判定连接已死(代理抖动时 fetch 会无限挂着)。
+const DOWNLOAD_IDLE_MS = 60_000
 
-  if (!response.ok) {
-    throw new Error(`Asset download failed: ${response.status} ${response.statusText} (${url})`)
+async function fetchBytesOnce(url: string): Promise<Buffer> {
+  const controller = new AbortController()
+  let idleTimer: NodeJS.Timeout | undefined
+  const armIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => controller.abort(new Error(`no data for ${DOWNLOAD_IDLE_MS / 1000}s`)), DOWNLOAD_IDLE_MS)
   }
 
-  return Buffer.from(await response.arrayBuffer())
+  armIdle()
+  try {
+    const response = await fetch(url, {
+      headers: getGitHubHeaders(),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Asset download failed: ${response.status} ${response.statusText} (${url})`)
+    }
+    if (!response.body) {
+      throw new Error(`Asset download returned no body (${url})`)
+    }
+
+    const chunks: Buffer[] = []
+    let received = 0
+    let lastLogged = 0
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      armIdle()
+      chunks.push(Buffer.from(chunk))
+      received += chunk.byteLength
+      if (received - lastLogged >= 32 * 1024 * 1024) {
+        lastLogged = received
+        console.log(`  … ${path.basename(new URL(url).pathname)}: ${(received / 1048576).toFixed(0)} MB`)
+      }
+    }
+    return Buffer.concat(chunks)
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer)
+  }
+}
+
+async function fetchBytes(url: string): Promise<Buffer> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetchBytesOnce(url)
+    } catch (error) {
+      lastError = error
+      const message = error instanceof Error ? error.message : String(error)
+      // 4xx(除限流)重试没有意义,直接抛。
+      if (/Asset download failed: 4(?!29)\d\d /.test(message)) throw error
+      console.warn(`Download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed: ${message}`)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 type PackageManifest = { codexCliVersion?: string; [key: string]: unknown }
@@ -308,10 +366,15 @@ async function resolvePinnedVersion(): Promise<string> {
   return manifest.codexCliVersion
 }
 
-async function fetchReleaseByTag(version: string): Promise<{ release: GitHubRelease; tag: string }> {
-  const tags = releaseTag
-    ? [releaseTag]
-    : [`rust-v${version}`, `v${version}`, version]
+async function fetchReleaseByTag(
+  version: string,
+  explicitTag?: string,
+): Promise<{ release: GitHubRelease; tag: string }> {
+  const tags = explicitTag
+    ? [explicitTag]
+    : releaseTag
+      ? [releaseTag]
+      : [`rust-v${version}`, `v${version}`, version]
 
   let lastError: unknown
   for (const tag of tags) {
@@ -488,10 +551,43 @@ async function main(): Promise<void> {
   let isLatestBump = false
   const recordedTargets: Record<string, Record<string, string>> = {}
 
-  if (requestedLatest) {
+  if (bumpToTag) {
+    if (requestedLatest) {
+      throw new Error('CODEX_BUMP_TO_TAG and --latest are mutually exclusive; pick one.')
+    }
+    const targetVersion = versionFromRustTag(bumpToTag)
+    if (!targetVersion) {
+      throw new Error(
+        `CODEX_BUMP_TO_TAG must look like rust-v<major>.<minor>.<patch>[-prerelease], got "${bumpToTag}".`,
+      )
+    }
+    const pinned = await resolvePinnedVersion()
+    const result = await fetchReleaseByTag(targetVersion, bumpToTag)
+    release = result.release
+    tag = result.tag
+    resolvedVersion = targetVersion
+    if (targetVersion === pinned) {
+      console.log(`Codex CLI is already pinned at ${pinned}; re-fetching binaries only.`)
+    } else {
+      console.log(`Bumping Codex CLI: ${pinned} → ${targetVersion} (tag ${tag}, explicit).`)
+      isLatestBump = true
+    }
+  } else if (requestedLatest) {
     const pinned = await resolvePinnedVersion()
     const latest = await fetchLatestStableRustRelease()
-    if (latest.version === pinned) {
+    if (compareCodexVersions(pinned, latest.version) === 1) {
+      // The pin is newer than anything stable (a deliberately pinned pre-release
+      // such as 0.168.0-alpha.3 while 0.166.0 is the latest stable). "Bumping" to
+      // the latest stable would be a downgrade, and the daily workflow would turn
+      // that into a revert PR. Keep the pin; re-fetch its binaries from its own tag.
+      console.log(
+        `Codex CLI pin ${pinned} is newer than the latest stable rust-v${latest.version}; keeping the pin.`,
+      )
+      const result = await fetchReleaseByTag(pinned)
+      release = result.release
+      tag = result.tag
+      resolvedVersion = pinned
+    } else if (latest.version === pinned) {
       console.log(`Codex CLI is already up to date at ${pinned} (latest stable rust-v${latest.version}).`)
       // Still re-fetch binaries so a fresh clone can populate `resources/codex/`
       // — but skip the write-back since nothing changed.
