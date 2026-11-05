@@ -39,6 +39,13 @@ test('parseVersion: 没有版本号就是 null，绝不瞎猜', () => {
   assert.equal(parseVersion(null), null)
 })
 
+test('parseVersion: 预发布 pin 要能和二进制自报的版本对上（0.168.0-alpha.3 不能被截成 0.168.0）', () => {
+  // 截断的后果:ensure-codex 每次 dev 都判「resources 与 pin 不一致」,丢缓存重下 350MB,
+  // 下完又因「报告成功但版本不对」抛错。
+  assert.equal(parseVersion('codex-cli 0.168.0-alpha.3'), '0.168.0-alpha.3')
+  assert.equal(parseVersion('codex-cli 0.167.0-alpha.3.1\n'), '0.167.0-alpha.3.1')
+})
+
 test('parseVersion: 两段数字不算版本号（别把 0.149 认成 0.149.0）', () => {
   assert.equal(parseVersion('codex-cli 0.149'), null)
 })
@@ -71,7 +78,7 @@ test('probeVersion: 对真实 codex 二进制能读出版本（有就测，没�
     return
   }
   const version = probeVersion(real)
-  assert.match(String(version), /^\d+\.\d+\.\d+$/)
+  assert.match(String(version), /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?$/)
 })
 
 test('pinnedFetchSpawn: 必须带 shell —— Windows 上 pnpm 是 .cmd，不带就 EINVAL 起不来', () => {

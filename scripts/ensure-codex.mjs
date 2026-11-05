@@ -63,6 +63,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { parseCodexVersion } from './codex-version.mjs'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
 const target = `${process.platform}-${process.arch}`
@@ -94,8 +95,9 @@ function pinnedVersion() {
  * should not silently turn every checkout into "unknown version".
  */
 export function parseVersion(output) {
-  const match = /(\d+\.\d+\.\d+)/.exec(String(output ?? ''))
-  return match ? match[1] : null
+  // 认预发布后缀(`0.168.0-alpha.3`):pin 可以是预发布版本,二进制也如实自报,
+  // 只取前三段会让「resources 与 pin 不一致」永远成立。逻辑在 codex-version.mjs。
+  return parseCodexVersion(output)
 }
 
 /**
