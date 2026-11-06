@@ -647,11 +647,12 @@ describe.each(['custom-model-og-v2.5-f', 'custom-model-og-v2.5-s'])('ApiService 
 })
 
 /**
- * mask 只放行 MASK_INPAINT_MODELS:同一条腾讯 JSON 协议上的 og-v2(gpt-image-2 上游)
- * 与 gt(image2)**不**收 mask —— 没实测过、灯箱擦除也只绑 2.5。传了要在发请求前失败,
- * 而不是让上游按整图重绘。
+ * 同一条 og-image 渠道上的 GPT Image 2.6 Flare / Sunburst(`custom-model-og-v2.6-f` / `-s`,
+ * 2026-11 上架,与 sora-ui #323 / sora-ui-backend #176 对齐)。线上协议与 2.5 相同,
+ * 所以请求形态逐项对照 2.5;**不同的只有两点**:价格(同档位 token 约 2.5 的 4.16 倍,
+ * 不写「同价」、不设耗时)与 mask(线上没验证过,不进 MASK_INPAINT_MODELS,见下一个 describe)。
  */
-describe('ApiService mask 门:腾讯 og-v2 / image2 仍早失败', () => {
+describe.each(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'])('ApiService %s(腾讯 2.6)', (id) => {
   beforeEach(() => {
     vi.resetModules()
   })
@@ -659,7 +660,122 @@ describe('ApiService mask 门:腾讯 og-v2 / image2 仍早失败', () => {
     vi.restoreAllMocks()
   })
 
-  it.each(['custom-model-og-v2', 'custom-imagemodel-gt'])('%s 带 maskImage 直接拒,不发请求', async (id) => {
+  async function makeService() {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    ;(service as any).apiKey = 'test-key'
+    return service
+  }
+
+  const site = { authType: 'bearer' } as any
+
+  function captureFetch() {
+    const captured: { url: string; init?: RequestInit } = { url: '' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      captured.url = url
+      captured.init = init
+      return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    return captured
+  }
+
+  it('注册为腾讯厂商、钉 Miau 站点;能力与 2.5 一致,但不写「同价」也不编耗时', async () => {
+    const service = await makeService()
+    const { MIAU_SITE_KEY } = await import('../ApiService')
+    const cfg = service.getModelConfig(id)!
+    expect(cfg.vendor).toBe('tencent')
+    expect(cfg.requiredSiteKey).toBe(MIAU_SITE_KEY)
+    expect(cfg.qualities?.map((q) => q.key)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(cfg.defaultQuality).toBe('high')
+    for (const q of cfg.qualities ?? []) expect(q.description).not.toMatch(/\$/)
+    expect(cfg.capabilities).toMatchObject({
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      qualityControl: true,
+      transparentBackgroundControl: true,
+    })
+    // 价格口径:比 2.5 贵,不能照抄 2.5 的「与 image2 fast 同价」;耗时没量过,不给 time。
+    expect(cfg.displayName).not.toContain('同价')
+    expect(cfg.displayName).toContain('比 2.5 贵')
+    expect(cfg.time).toBeUndefined()
+  })
+
+  it('文生图:钉 id 走 /generations,size + xhigh 透传、原生 n、关水印、透明底外发 background', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '一只猫',
+      model: id,
+      ratio: '16:9',
+      resolution: '2K',
+      quality: 'xhigh',
+      transparentBackground: true,
+      count: 3,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toBe(cfg.baseURL)
+    expect(JSON.parse(captured.init!.body as string)).toMatchObject({
+      model: id,
+      size: '2048x1152',
+      quality: 'xhigh',
+      n: 3,
+      background: 'transparent',
+      output_format: 'png',
+      extra_body: { logo_add: 0 },
+    })
+  })
+
+  it('改图:走腾讯 JSON images:[{image_url}](不是 multipart),n 固定 1,没有 mask 字段', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig(id)!
+    const captured = captureFetch()
+
+    await (service as any).makeApiRequest({
+      prompt: '换成蓝色',
+      model: id,
+      ratio: '1:1',
+      resolution: '1K',
+      quality: 'high',
+      referenceImages: ['https://cos.example.com/a.png'],
+      count: 2,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(captured.url).toBe(cfg.editURL)
+    expect(captured.init!.headers).toMatchObject({ 'Content-Type': 'application/json' })
+    const body = JSON.parse(captured.init!.body as string)
+    expect(body.images).toEqual([{ image_url: 'https://cos.example.com/a.png' }])
+    expect(body).toMatchObject({ model: id, quality: 'high', n: 1, extra_body: { logo_add: 0 } })
+    expect(body).not.toHaveProperty('mask')
+  })
+})
+
+/**
+ * mask 只放行 MASK_INPAINT_MODELS:同一条腾讯 JSON 协议上的 og-v2(gpt-image-2 上游)、
+ * gt(image2)与 2.6 两条**不**收 mask —— 没实测过、灯箱擦除也只绑 2.5。传了要在发请求前失败,
+ * 而不是让上游按整图重绘。
+ */
+describe('ApiService mask 门:腾讯 og-v2 / image2 / 2.6 仍早失败', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each(['custom-model-og-v2', 'custom-imagemodel-gt', 'custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'])('%s 带 maskImage 直接拒,不发请求', async (id) => {
     const { ApiService, MASK_INPAINT_MODELS } = await import('../ApiService')
     expect(MASK_INPAINT_MODELS.has(id)).toBe(false)
     const service = new ApiService()

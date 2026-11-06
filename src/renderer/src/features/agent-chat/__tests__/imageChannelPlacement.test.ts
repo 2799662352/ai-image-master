@@ -71,6 +71,17 @@ describe('摆放表守卫', () => {
     expect(nai.every((o) => o.placement.priceHint === '≈¥0.6/张')).toBe(true)
   })
 
+  it('腾讯 2.6 两条在「更多 · GPT Image 系列」,不进常用、不写价格量级(同档位比 2.5 贵约 4 倍,没有确认过的口径)', () => {
+    const layout = arrangeChannelMenu(placeImageChannels())
+    const group = layout.moreGroups.find((g) => g.label === 'GPT Image 系列')
+    expect(group).toBeTruthy()
+    const v26 = group!.options.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
+    expect(ids(v26)).toEqual(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'])
+    expect(v26.every((o) => o.placement.priceHint === undefined)).toBe(true)
+    expect(v26.every((o) => /比 2\.5 贵/.test(o.placement.hint ?? ''))).toBe(true)
+    expect(ids(layout.featured).some((id) => id.startsWith('custom-model-og-v2.6-'))).toBe(false)
+  })
+
   it('官转的 2.5 Flare / Sunburst 是备用渠道,跟随各自的腾讯同款排序', () => {
     const layout = arrangeChannelMenu(placeImageChannels())
     expect(ids(layout.backup)).toEqual(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])

@@ -52,7 +52,7 @@ export interface ImageChannel {
 }
 
 /**
- * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×4(image2 / fast / 2.5 Flare / 2.5 Sunburst)
+ * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×6(image2 / fast / 2.5 Flare / 2.5 Sunburst / 2.6 Flare / 2.6 Sunburst)
  * → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2(v8.2 快速 / 极速)
  * → NovelAI ×4(V5 Full / V5 Curated / V4.5 Full / V4.5 Curated)
  * → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
@@ -101,6 +101,26 @@ export const IMAGE_CHANNELS = [
     label: '腾讯Sunburst',
     fullLabel: '腾讯 GPT Image 2.5 Sunburst',
     description: '经 Miau 代理 — 2.5 Sunburst 走腾讯渠道，画质 / 改图精度优先 ~40s，与 image2 fast 同价、可走平台额度，五档清晰度、一次 1–4 张。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    // 同一条 og-image 渠道上的 GPT Image 2.6 Flare / Sunburst(2026-11 上架,网关渠道 21,
+    // 与 sora-ui #323 / sora-ui-backend #176 同步)。线上协议与 2.5 一致(参考图、透明底、
+    // `auto` 清晰度、`b64_json`、自定义尺寸),**但价格不能照抄 2.5**:网关倍率虽同为 5,
+    // 同档位 token 约为 2.5 的 4.16 倍(实测 1024² low:2.6 = 16620 / 2.5 = 3997),单张更贵,
+    // 所以描述不写「同价」、也不是默认渠道。mask / 擦除、xhigh / max、透明底、带参考图的
+    // 编辑在线上没验证过,mask 与灯箱擦除因此不收(同 og-v2 的先例)。
+    id: 'custom-model-og-v2.6-f',
+    label: '腾讯2.6 Flare',
+    fullLabel: '腾讯 GPT Image 2.6 Flare',
+    description: '经 Miau 代理 — 2.6 Flare 走腾讯渠道，速度优先，可走平台额度，一次 1–4 张。同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵，日常出图优先用 2.5。后台渠道 TokenHub og-image。',
+    miauOnly: true,
+  },
+  {
+    id: 'custom-model-og-v2.6-s',
+    label: '腾讯2.6 Sunburst',
+    fullLabel: '腾讯 GPT Image 2.6 Sunburst',
+    description: '经 Miau 代理 — 2.6 Sunburst 走腾讯渠道，画质 / 改图精度优先，可走平台额度，一次 1–4 张。同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵，日常出图优先用 2.5。后台渠道 TokenHub og-image。',
     miauOnly: true,
   },
   {

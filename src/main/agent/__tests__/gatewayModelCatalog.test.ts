@@ -126,6 +126,54 @@ describe('buildGatewayModelCatalog', () => {
       .toEqual({ status: 'unauthorized', reason: '当前 Key 未开通' })
   })
 
+  describe('策展隐藏(pickerHidden)只藏在选择器里,不是下架', () => {
+    const HIDDEN_SLUGS = ['qwen3.7-plus-dashscope', 'qwen3.7-max-dashscope']
+
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      for (const dynamicSource of ['codex', 'fallback'] as const) {
+        it(`${gatewayId} / ${dynamicSource}:Qwen 3.7 两档 hidden=true,行与路由、可用性仍在`, () => {
+          const catalog = buildGatewayModelCatalog({
+            gatewayId,
+            dynamicSource,
+            dynamicModels: [dynamicModel('gpt-5.5')],
+            hasCredential: () => true,
+            availabilityByModel: new Map(),
+          })
+
+          for (const slug of HIDDEN_SLUGS) {
+            const row = catalog.models.find((model) => model.id === slug)
+            expect(row, slug).toBeDefined()
+            expect(row?.hidden, slug).toBe(true)
+            expect(row?.availability, slug).toEqual({ status: 'available' })
+            expect(row?.route, slug).toMatchObject({ family: 'qwen' })
+          }
+          // 同一家的 3.8 一代、以及别家的行不受影响。
+          for (const slug of ['qwen3.8-max', 'qwen3.8-flash', 'qwen3.8-omni-flash', 'gpt-5.5']) {
+            expect(catalog.models.find((model) => model.id === slug)?.hidden, slug).toBe(false)
+          }
+        })
+      }
+    }
+
+    it('Codex model/list 动态行里的 3.7 同样被藏,上游自己标的 hidden 也照旧', () => {
+      const catalog = buildGatewayModelCatalog({
+        gatewayId: 'apiyi',
+        dynamicSource: 'codex',
+        dynamicModels: [
+          dynamicModel('gpt-5.5'),
+          dynamicModel('qwen3.7-max-dashscope'),
+          dynamicModel('gpt-5.4', { hidden: true }),
+        ],
+        hasCredential: () => true,
+        availabilityByModel: new Map(),
+      })
+
+      expect(catalog.models.find((model) => model.id === 'qwen3.7-max-dashscope')?.hidden).toBe(true)
+      expect(catalog.models.find((model) => model.id === 'gpt-5.4')?.hidden).toBe(true)
+      expect(catalog.models.find((model) => model.id === 'gpt-5.5')?.hidden).toBe(false)
+    })
+  })
+
   it('deduplicates the same model id and keeps dynamic display fields', () => {
     const catalog = buildGatewayModelCatalog({
       gatewayId: 'rightcode',

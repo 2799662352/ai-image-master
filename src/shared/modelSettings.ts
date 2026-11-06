@@ -46,6 +46,12 @@ export interface CanonicalModelSettingsRow {
   tier: CanonicalModelTier
   description: string
   isDefault: boolean
+  /**
+   * 只从模型选择器的列表里藏起来，**不是下架**：路由、可用性、能力表照旧，老会话 /
+   * 已持久化的选择仍然能发请求、还能在选择器顶部看到「当前选中」。要真正撤下用
+   * `RETIRED_MODEL_SUCCESSORS`（把老选择换成接替者）。
+   */
+  pickerHidden?: boolean
 }
 
 /**
@@ -135,6 +141,8 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     tier: 'Medium',
     description: '通义千问 3.7 Plus（Miau 网关）。日常够用且便宜;理解类默认档已交给 3.8 Omni Flash,本档并行保留。',
     isDefault: false,
+    // 2026-11-06 用户要求在 Codex 页模型选择器里藏掉 3.7 两档(3.8 一代已接任)。
+    pickerHidden: true,
   },
   {
     id: 'qwen3.7-max-dashscope',
@@ -142,6 +150,7 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     tier: 'High',
     description: '通义千问 3.7 Max（Miau 网关）。比 Plus 更强，长文与复杂推理用它。',
     isDefault: false,
+    pickerHidden: true,
   },
   {
     id: 'qwen3.8-omni-flash',
@@ -453,6 +462,16 @@ const RETIRED_MODEL_SUCCESSORS: ReadonlyMap<string, string> = new Map([
 /** 撤下模型的接替者;没撤下或不认识的返回 `undefined`(调用方保持原样)。 */
 export function successorForRetiredModel(modelId: string): string | undefined {
   return RETIRED_MODEL_SUCCESSORS.get(modelId)
+}
+
+/**
+ * 这个模型是否被策展成「选择器里不列出」(`pickerHidden`)。
+ * 只影响列表可见性;路由 / 可用性 / 能力不受影响,不认识的 slug 返回 false。
+ */
+export function isPickerHiddenModel(modelId: string): boolean {
+  return CANONICAL_MODEL_SETTINGS_ROWS.some(
+    (row) => row.id === modelId && row.pickerHidden === true,
+  )
 }
 
 const LEGACY_SELECTIONS: ReadonlyMap<

@@ -152,7 +152,8 @@ export function renumberComments(comments: ReadonlyArray<ImageComment>): ImageCo
  * 擦除(mask 局部重绘)绑定 GPT Image 2.5:目前只有 2.5 家族有这个能力,分两条线 ——
  * apiyi 官转(flare / sunburst)与腾讯 og-image(og-v2.5-f / -s,走平台额度)。
  * 与 `ApiService.MASK_INPAINT_MODELS` 的交集就是这四个;gpt-image-2 / vip 虽也吃 mask,
- * 但灯箱刻意不派给它们(用户拍板「擦除绑 2.5」)。
+ * 但灯箱刻意不派给它们(用户拍板「擦除绑 2.5」)。腾讯 2.6(og-v2.6-f / -s)同理不在内:
+ * 它的 mask 在线上没验证过,选了 2.6 再擦除会回落到官转 sunburst。
  */
 export const ERASE_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-sunburst',
