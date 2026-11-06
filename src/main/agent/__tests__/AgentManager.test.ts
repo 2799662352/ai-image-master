@@ -263,6 +263,7 @@ describe('AgentManager persisted Gateway/model startup routing', () => {
       'rightcode-claude',
       'rightcode-qwen',
       'rightcode-deepseek-miau',
+      'rightcode-grok-miau',
     ])
   })
 
