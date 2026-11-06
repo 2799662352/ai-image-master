@@ -700,9 +700,10 @@ describe.each(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'])('ApiService 
       qualityControl: true,
       transparentBackgroundControl: true,
     })
-    // 价格口径:比 2.5 贵,不能照抄 2.5 的「与 image2 fast 同价」;耗时没量过,不给 time。
+    // 价格口径:不能照抄 2.5 的「与 image2 fast 同价」;用户 2026-11-06 明确要求界面里
+    // 「不用提示贵」,所以也不写价格警示;耗时没量过,不给 time。
     expect(cfg.displayName).not.toContain('同价')
-    expect(cfg.displayName).toContain('比 2.5 贵')
+    expect(cfg.displayName).not.toContain('贵')
     expect(cfg.time).toBeUndefined()
   })
 

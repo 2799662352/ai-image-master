@@ -50,24 +50,27 @@ const more = (group: string, hint: string, priceHint?: string): ChannelPlacement
 const NOVELAI_PRICE_HINT = '≈¥0.6/张'
 
 /**
- * 常用 = 用户 2026-10-30 点名的六个(顺序也照他的);备用渠道 = 常用里腾讯 2.5 两条的官转同款;
+ * 常用 = 用户 2026-10-30 点名的六个(顺序也照他的)+ 2026-11-06 起的默认渠道腾讯 2.6 Sunburst
+ * (占第二位,即原默认 image2 的位置;image2 顺延);备用渠道 = 常用里腾讯 2.5 两条的官转同款;
  * 其余按系列归到「更多」,NovelAI 与悠船一起放「风格化」。
  */
 export const IMAGE_CHANNEL_PLACEMENT: Readonly<Record<string, ChannelPlacement>> = {
   'doubao-seedream-5-0-pro-260628': featured(1, '火山豆包，多图融合，最多 10 张参考图'),
-  'custom-imagemodel-gt': featured(2, '未手动选择时的默认渠道，约 30 秒，稳定'),
-  'custom-model-og-v2.5-f': featured(3, '速度优先，文生图主力，一次 1–4 张'),
-  'custom-model-og-v2.5-s': featured(4, '画质 / 改图精度优先，一次 1–4 张'),
-  'gemini-nano-banana-2.1': featured(5, '图中文字、多轮改图一致性更好'),
-  'wan2.7-image-pro': featured(6, '阿里万相，超清 / 组图'),
+  'custom-model-og-v2.6-s': featured(2, '未手动选择时的默认渠道，画质 / 改图精度优先，一次 1–4 张'),
+  'custom-imagemodel-gt': featured(3, '约 30 秒，稳定'),
+  'custom-model-og-v2.5-f': featured(4, '速度优先，文生图主力，一次 1–4 张'),
+  'custom-model-og-v2.5-s': featured(5, '画质 / 改图精度优先，一次 1–4 张'),
+  'gemini-nano-banana-2.1': featured(6, '图中文字、多轮改图一致性更好'),
+  'wan2.7-image-pro': featured(7, '阿里万相，超清 / 组图'),
 
   'gpt-image-2.5-flare': backup('custom-model-og-v2.5-f', '官转', 'OpenAI 官转同款，按 token 计费，可出透明底'),
   'gpt-image-2.5-sunburst': backup('custom-model-og-v2.5-s', '官转', 'OpenAI 官转同款，更锐、改图更稳，可出透明底'),
 
   'custom-model-og-v2': more('GPT Image 系列', '约 20 秒，比 image2 便宜近 6 倍，可出多张'),
-  // 2.6 不写 priceHint:同档位 token 约为 2.5 的 4.16 倍,不能照抄 2.5 的价格口径(只有确认过的才给量级)。
-  'custom-model-og-v2.6-f': more('GPT Image 系列', '腾讯 2.6 Flare，速度优先，一次 1–4 张；比 2.5 贵'),
-  'custom-model-og-v2.6-s': more('GPT Image 系列', '腾讯 2.6 Sunburst，画质 / 改图精度优先，一次 1–4 张；比 2.5 贵'),
+  // 2.6(含上面常用里的 Sunburst)不写 priceHint:同档位 token 约为 2.5 的 4.16 倍,不能照抄
+  // 2.5 的价格口径(只有确认过的才给量级)。用户 2026-11-06 明确要求界面里「不用提示贵」,
+  // 所以 hint 里也不写价格警示 —— 有测试守着,别又加回来。
+  'custom-model-og-v2.6-f': more('GPT Image 系列', '腾讯 2.6 Flare，速度优先，一次 1–4 张'),
   'gpt-image-2.5-all': more('GPT Image 系列', 'ChatGPT 网页逆向，约 60 秒，尺寸写进提示词'),
   'gpt-image-2': more('GPT Image 系列', '上一代官转，已被 2.5 同价取代'),
   'gpt-image-2-vip': more('GPT Image 系列', '官逆稳定，仅点名 VIP 时用'),

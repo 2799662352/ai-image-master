@@ -1393,7 +1393,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'custom-model-og-v2.6-f': {
     name: '腾讯 Image 2.6 Flare',
     vendor: 'tencent',
-    displayName: 'GPT Image 2.6 Flare 走腾讯渠道·速度优先，可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张；同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵（后台渠道 TokenHub og-image / custom-model-og-v2.6-f，经 Miau API 代理）',
+    displayName: 'GPT Image 2.6 Flare 走腾讯渠道·速度优先，可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.6-f，经 Miau API 代理）',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
@@ -1425,7 +1425,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'custom-model-og-v2.6-s': {
     name: '腾讯 Image 2.6 Sunburst',
     vendor: 'tencent',
-    displayName: 'GPT Image 2.6 Sunburst 走腾讯渠道·画质与改图精度优先，可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张；同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵（后台渠道 TokenHub og-image / custom-model-og-v2.6-s，经 Miau API 代理）',
+    displayName: 'GPT Image 2.6 Sunburst 走腾讯渠道·画质与改图精度优先，可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.6-s，经 Miau API 代理）',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',

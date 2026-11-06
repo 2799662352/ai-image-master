@@ -12,9 +12,10 @@ import {
 } from '../imageChannels'
 
 describe('imageChannels registry', () => {
-  it('defaults to 腾讯 image2', () => {
-    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-imagemodel-gt')
+  it('defaults to 腾讯 GPT Image 2.6 Sunburst (product decision 2026-11-06)', () => {
+    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-model-og-v2.6-s')
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
+    expect(isMiauOnlyChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBe(true)
   })
 
   it('lists channels in the requested order: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
@@ -25,7 +26,7 @@ describe('imageChannels registry', () => {
       // 同一条 og-image 渠道上的 2.5 Flare / Sunburst,紧挨着 image2 fast 摆
       'custom-model-og-v2.5-f',
       'custom-model-og-v2.5-s',
-      // 2.6 Flare / Sunburst 紧跟 2.5(同一条渠道,价格更高、不是默认)
+      // 2.6 Flare / Sunburst 紧跟 2.5(同一条渠道,价格更高;Sunburst 是默认渠道)
       'custom-model-og-v2.6-f',
       'custom-model-og-v2.6-s',
       'gemini-3.1-flash-image',

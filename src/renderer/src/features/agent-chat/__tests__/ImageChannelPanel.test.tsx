@@ -185,7 +185,7 @@ describe('ImageChannelPanel · 键盘', () => {
   it('右栏 ↑↓ 在渠道间移动并停在边界;←→ 切到上 / 下一个分区并聚焦首项', () => {
     renderPanel('custom-imagemodel-gt')
     const first = option('doubao-seedream-5-0-pro-260628')!
-    const second = option('custom-imagemodel-gt')!
+    const second = option('custom-model-og-v2.6-s')!
     first.focus()
     fireEvent.keyDown(first, { key: 'ArrowDown' })
     expect(document.activeElement).toBe(second)
