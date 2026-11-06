@@ -157,7 +157,12 @@ function conservativeFallbackRows(
   const rows: AgentModelSettingsEntry[] = []
   for (const row of CANONICAL_MODEL_SETTINGS_ROWS) {
     const route = tryEntryRoute(gatewayId, routeSource, row.id)
-    if (route) rows.push(conservativeEntry(gatewayId, route, row))
+    if (route) {
+      rows.push({
+        ...conservativeEntry(gatewayId, route, row),
+        hidden: row.pickerHidden === true,
+      })
+    }
   }
   return rows
 }
@@ -290,22 +295,38 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
 
   const gatewayId = catalog?.gatewayId ?? DEFAULT_GATEWAY_ID
   const routeSource = catalog ? 'model-catalog' : 'builtin'
-  const baseRows = useMemo(
-    () => (
-      catalog
-        ? catalog.models
-        : conservativeFallbackRows(gatewayId, routeSource)
-    ).filter((row) => !row.hidden).map(pickerModel),
+  const allRows = useMemo(
+    () => catalog
+      ? catalog.models
+      : conservativeFallbackRows(gatewayId, routeSource),
     [catalog, gatewayId, routeSource],
   )
-  const selectedKnown = baseRows.find((model) => model.id === selectedModelId)
+  const baseRows = useMemo(
+    () => allRows.filter((row) => !row.hidden).map(pickerModel),
+    [allRows],
+  )
+  const selectedVisible = baseRows.find((model) => model.id === selectedModelId)
+  // 被藏起来(`hidden`)但仍在目录里的模型,例如策展隐藏的 Qwen 3.7:已持久化的选择
+  // 还是它时,照目录里的真实能力 / 路由显示(而不是「能力未确认」的占位),并钉在
+  // 列表顶部让用户看得见当前选了什么;换走以后它就不再出现。
+  const selectedHiddenRow = useMemo(
+    () => selectedVisible
+      ? undefined
+      : allRows.find((row) => row.hidden && row.id === selectedModelId),
+    [allRows, selectedModelId, selectedVisible],
+  )
+  const selectedKnown = useMemo(
+    () => selectedVisible
+      ?? (selectedHiddenRow ? pickerModel(selectedHiddenRow) : undefined),
+    [selectedHiddenRow, selectedVisible],
+  )
   const selected = useMemo(
     () => selectedKnown ?? unknownModel(selectedModelId, gatewayId, routeSource),
     [gatewayId, routeSource, selectedKnown, selectedModelId],
   )
   const availableModels = useMemo(
-    () => selectedKnown ? baseRows : [selected, ...baseRows],
-    [baseRows, selected, selectedKnown],
+    () => selectedVisible ? baseRows : [selected, ...baseRows],
+    [baseRows, selected, selectedVisible],
   )
   const reasoningEffort = modelReasoningEffortByModel[selectedModelId]
     ?? (
