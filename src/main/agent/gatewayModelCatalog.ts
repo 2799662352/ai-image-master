@@ -9,6 +9,7 @@ import type {
 import { credentialIdForProvider, type ProviderPreset } from './codexProviders'
 import {
   CANONICAL_MODEL_SETTINGS_ROWS,
+  isPickerHiddenModel,
   mergeModelSettingsCapabilities,
   type ModelSettingsCapabilities,
 } from '../../shared/modelSettings'
@@ -222,7 +223,9 @@ export function buildGatewayModelCatalog(
       id: row.id,
       displayName: row.displayName,
       description: row.description,
-      hidden: row.hidden,
+      // 上游自己标 hidden 的照旧;我们策展要藏的(`pickerHidden`)也只藏在列表里,
+      // 行本身仍在目录里,路由 / 可用性 / 能力都不受影响。
+      hidden: row.hidden || isPickerHiddenModel(row.id),
       isDefault: row.isDefault,
       family: route.family,
       route,
@@ -253,7 +256,7 @@ export function buildGatewayModelCatalog(
       id: modelId,
       displayName,
       description,
-      hidden: false,
+      hidden: isPickerHiddenModel(modelId),
       isDefault: false,
       family: route.family,
       route,
