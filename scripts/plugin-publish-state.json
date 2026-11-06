@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T10:51:48.174Z",
+  "generatedAt": "2026-11-06T12:54:53.173Z",
   "plugins": {
     "catimation-director": {
       "sig": "ed9297e1ee569776844a277ff24675ca6570fc7c3542d5b1d4a0b3a3f66c84fc",
@@ -22,8 +22,8 @@
       "version": "1.0.47"
     },
     "catimation-core": {
-      "sig": "9e9262fcd3b67a53e73b605c874214800b3b1407568dd757620ebd11561a5255",
-      "version": "1.0.35"
+      "sig": "f9661ee75f3ac509d9f62addb86a21c2013af660fe949f3837269ffe80e7c970",
+      "version": "1.0.36"
     },
     "novelai-nai5": {
       "sig": "84dcad3123438f5f3f0844f8e77df65847f4df812368250f457f36a567088bd0",
