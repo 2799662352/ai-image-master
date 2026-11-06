@@ -45,15 +45,26 @@ describe('摆放表守卫', () => {
     }
   })
 
-  it('默认渠道在常用里(默认值没变:腾讯 image2)', () => {
-    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-imagemodel-gt')
+  it('默认渠道在常用里(2026-11-06 起是腾讯 GPT Image 2.6 Sunburst,产品要求)', () => {
+    expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-model-og-v2.6-s')
     expect(resolveChannelPlacement(DEFAULT_IMAGE_CHANNEL_ID).tier).toBe('featured')
+    // 提示要讲明它是默认渠道;价格警示不写(用户 2026-11-06:界面里「不用提示贵」)
+    const hint = resolveChannelPlacement(DEFAULT_IMAGE_CHANNEL_ID).hint ?? ''
+    expect(hint).toMatch(/默认渠道/)
+    expect(hint).not.toMatch(/贵/)
   })
 
-  it('用户点名的六个常用渠道按他给的顺序排在最前', () => {
+  it('原默认渠道腾讯 image2 仍在常用里,但不再自称默认', () => {
+    const placement = resolveChannelPlacement('custom-imagemodel-gt')
+    expect(placement.tier).toBe('featured')
+    expect(placement.hint ?? '').not.toMatch(/默认渠道/)
+  })
+
+  it('常用渠道里默认渠道排第二,其余按用户 2026-10-30 点名的顺序', () => {
     const layout = arrangeChannelMenu(placeImageChannels())
     expect(ids(layout.featured)).toEqual([
       'doubao-seedream-5-0-pro-260628',
+      'custom-model-og-v2.6-s',
       'custom-imagemodel-gt',
       'custom-model-og-v2.5-f',
       'custom-model-og-v2.5-s',
@@ -71,15 +82,18 @@ describe('摆放表守卫', () => {
     expect(nai.every((o) => o.placement.priceHint === '≈¥0.6/张')).toBe(true)
   })
 
-  it('腾讯 2.6 两条在「更多 · GPT Image 系列」,不进常用、不写价格量级(同档位比 2.5 贵约 4 倍,没有确认过的口径)', () => {
+  it('腾讯 2.6:Sunburst 是默认(常用),Flare 在「更多 · GPT Image 系列」;都不写价格量级(没有确认过的口径),也不写「贵」之类的价格警示', () => {
     const layout = arrangeChannelMenu(placeImageChannels())
     const group = layout.moreGroups.find((g) => g.label === 'GPT Image 系列')
     expect(group).toBeTruthy()
-    const v26 = group!.options.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
-    expect(ids(v26)).toEqual(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'])
-    expect(v26.every((o) => o.placement.priceHint === undefined)).toBe(true)
-    expect(v26.every((o) => /比 2\.5 贵/.test(o.placement.hint ?? ''))).toBe(true)
-    expect(ids(layout.featured).some((id) => id.startsWith('custom-model-og-v2.6-'))).toBe(false)
+    const moreV26 = group!.options.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
+    expect(ids(moreV26)).toEqual(['custom-model-og-v2.6-f'])
+    const featuredV26 = layout.featured.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
+    expect(ids(featuredV26)).toEqual(['custom-model-og-v2.6-s'])
+    const both = [...featuredV26, ...moreV26]
+    expect(both).toHaveLength(2)
+    expect(both.every((o) => o.placement.priceHint === undefined)).toBe(true)
+    expect(both.every((o) => !/贵/.test(o.placement.hint ?? '') && !/贵/.test(o.description))).toBe(true)
   })
 
   it('官转的 2.5 Flare / Sunburst 是备用渠道,跟随各自的腾讯同款排序', () => {
