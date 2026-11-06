@@ -92,6 +92,36 @@ describe('model settings capabilities', () => {
     })
   })
 
+  describe('Grok 4.7 (Miau)', () => {
+    it('is a canonical row listed ahead of the older Grok rows', () => {
+      const ids = CANONICAL_MODEL_SETTINGS_ROWS.map((row) => row.id)
+      expect(CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'grok-4.7'))
+        .toMatchObject({ id: 'grok-4.7', displayName: 'Grok 4.7', tier: 'Extra High', isDefault: false })
+      expect(ids.indexOf('grok-4.7')).toBeGreaterThan(-1)
+      expect(ids.indexOf('grok-4.7')).toBeLessThan(ids.indexOf('grok-4.6'))
+    })
+
+    it.each([
+      ['apiyi', 'apiyi-grok-miau'],
+      ['rightcode', 'rightcode-grok-miau'],
+    ])('uses the documented 500K and the verified effort set on %s/%s', (gatewayId, channelId) => {
+      expect(defaultContextWindowForModel('grok-4.7', gatewayId, channelId)).toBe(GROK_CONTEXT_WINDOW)
+      expect(modelContextOptions('grok-4.7', gatewayId, channelId)).toEqual([
+        { value: GROK_CONTEXT_WINDOW, experimental: false },
+      ])
+      expect(
+        mergeModelSettingsCapabilities({ model: 'grok-4.7', gatewayId, channelId }),
+      ).toMatchObject({
+        defaultContextWindow: GROK_CONTEXT_WINDOW,
+        defaultReasoningEffort: 'high',
+        // xhigh answers 200 on apiyi's /responses but has not been sent through
+        // Miau's channel yet; `max` and `none` are refused upstream. Promote
+        // xhigh only after one live call through the gateway.
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
+      })
+    })
+  })
+
   it('publishes the two Volcengine Ark DeepSeek-V4.1-Flash rows (standard + economy)', () => {
     const standard = CANONICAL_MODEL_SETTINGS_ROWS
       .find((row) => row.id === 'deepseek-v4-1-flash-261017')

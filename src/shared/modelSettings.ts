@@ -13,7 +13,7 @@ export type ModelReasoningEffort = 'auto' | ConcreteModelReasoningEffort
 
 export const UNKNOWN_MODEL_CONTEXT_WINDOW = 200_000
 export const EXPERIMENTAL_CONTEXT_WINDOW = 1_000_000
-/** xAI documents 500K for the whole Grok 4.x line (4.5 and 4.6 alike). */
+/** xAI documents 500K for the whole Grok 4.x line (4.5, 4.6 and 4.7 alike). */
 export const GROK_CONTEXT_WINDOW = 500_000
 /**
  * DeepSeek documents 1M as the default across all official V4 services
@@ -208,6 +208,13 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
   },
   {
+    id: 'grok-4.7',
+    displayName: 'Grok 4.7',
+    tier: 'Extra High',
+    description: 'Newest xAI flagship (Miau gateway): coding, tool calling and long-running agents. Text and image input, 500K context; can be billed from platform balance.',
+    isDefault: false,
+  },
+  {
     id: 'grok-4.6',
     displayName: 'Grok 4.6',
     tier: 'Extra High',
@@ -271,6 +278,13 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     allowExperimental1M: false,
   }],
   ['grok-4.6', {
+    defaultWindow: GROK_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  // Grok 4.7: apiyi's launch notes (docs.apiyi.com/news/grok-4-7-launch) state
+  // 500K, same as the rest of the 4.x line. Documented figure, not yet checked
+  // against an over-length refusal on the Miau gateway.
+  ['grok-4.7', {
     defaultWindow: GROK_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
@@ -398,6 +412,15 @@ const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> 
   ['apiyi:apiyi-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.5', GROK_REASONING],
   ['rightcode:rightcode-grok:grok-4.6', GROK_REASONING],
+  // Grok 4.7 on Miau (key = gateway:channel:model, one entry per gateway).
+  // 2026-11-06 probe against apiyi's `/v1/responses` (the upstream this model is
+  // sold from): low / medium / high / xhigh / minimal all answer 200; `max` is
+  // refused 400 "Invalid reasoning effort" and `none` 400 "does not support".
+  // Only the three levels already exercised through our gateways are offered —
+  // `xhigh` works upstream but has not been sent through Miau's channel, and an
+  // effort the gateway rejects is a failed turn. Promote it after one live call.
+  ['apiyi:apiyi-grok-miau:grok-4.7', GROK_REASONING],
+  ['rightcode:rightcode-grok-miau:grok-4.7', GROK_REASONING],
   // DeepSeek 只剩 Miau 这一条通道。思考档位来自 DeepSeek V4 的官方文档,
   // 四个模型复用同一份策略 —— 火山方舟两个与 deepseek-flash「调用方法一致」。
   // 两个网关各注册一次 —— 键是 网关:通道:模型 三段。

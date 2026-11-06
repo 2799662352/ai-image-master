@@ -232,6 +232,7 @@ describe('gatewayModelRouting', () => {
       'apiyi-claude',
       'apiyi-qwen',
       'apiyi-deepseek-miau',
+      'apiyi-grok-miau',
     ])
   })
 
@@ -266,6 +267,57 @@ describe('gatewayModelRouting', () => {
       source: 'builtin',
       gatewayId: 'rightcodes',
     }, 'grok-4.5')).toThrow('Unknown Codex gateway "rightcodes"')
+  })
+
+  describe('Miau 上的 Grok 4.7', () => {
+    it('grok-4.7 在两个网关下都落各自的 Miau 通道', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        expect(resolveGatewayModelRoute(gatewayId, 'grok-4.7'), gatewayId).toEqual({
+          gatewayId,
+          channelId: `${gatewayId}-grok-miau`,
+          modelId: 'grok-4.7',
+          family: 'xai',
+        })
+      }
+    })
+
+    it('旧 Grok 的路由不变:4.5 / 4.6 仍走各网关自己的 grok 通道', () => {
+      expect(resolveGatewayModelRoute('apiyi', 'grok-4.5').channelId).toBe('apiyi-grok')
+      expect(resolveGatewayModelRoute('rightcode', 'grok-4.5').channelId).toBe('rightcode-grok')
+      expect(resolveGatewayModelRoute('rightcode', 'grok-4.6').channelId).toBe('rightcode-grok')
+      // 网关自家的 grok 通道不认 4.7:它们的端点没验过这个 slug,放进去等于
+      // 选择器有一行、每轮却 404。
+      expect(resolveProviderChannel('apiyi-grok').allowedModels).not.toContain('grok-4.7')
+      expect(resolveProviderChannel('rightcode-grok').allowedModels).not.toContain('grok-4.7')
+    })
+
+    it('打 Miau、复用 Miau token 槽位,因此自动吃平台余额', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        const channel = resolveProviderChannel(`${gatewayId}-grok-miau`)
+        expect(channel.baseUrl).toBe(MIAU_BASE_URL)
+        expect(channel.credentialId).toBe('qwen')
+        expect(channel.model).toBe('grok-4.7')
+        expect(channel.allowedModels).toEqual(['grok-4.7'])
+      }
+    })
+
+    it('走 namespace 桥 —— 不桥则 MCP 工具被网关静默丢弃', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        expect(resolveProviderChannel(`${gatewayId}-grok-miau`).compatibilityPolicy)
+          .toBe('responses-namespace-bridge')
+      }
+    })
+
+    it('记忆 / 起标题钉在便宜的固定模型上,不跟随 Grok 4.7', () => {
+      // 不钉就回落到「上次 spawn 时选中的模型」= grok-4.7($2 / $6 每百万 token),
+      // 记忆整合一遍约 100 万 input token,用户看到一笔解释不了的消费。
+      // 模型取 Qwen 通道早就在生产上跑着的 qwen3.8-flash(同一个 Miau 端点、同一枚 token)。
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        const channel = resolveProviderChannel(`${gatewayId}-grok-miau`)
+        expect(channel.memoriesModel, gatewayId).toBe('qwen3.8-flash')
+        expect(channel, gatewayId).not.toHaveProperty('memoriesModelByModel')
+      }
+    })
   })
 
   describe('Miau 上的 DeepSeek', () => {

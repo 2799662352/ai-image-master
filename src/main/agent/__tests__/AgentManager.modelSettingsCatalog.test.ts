@@ -162,8 +162,10 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'deepseek-v4-1-flash-economy-261017' }),
           expect.objectContaining({ id: 'deepseek-v4-pro' }),
           expect.objectContaining({ id: 'deepseek-flash' }),
+          // Grok 4.7 走 Miau（两个网关都挂了同一条 grok-miau 渠道）；
           // No 4.6 here on purpose: it is declared on the Right.Codes Grok
           // channel only, so the API Yi catalog stays one row shorter.
+          expect.objectContaining({ id: 'grok-4.7' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),
@@ -230,6 +232,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'deepseek-v4-1-flash-economy-261017' }),
           expect.objectContaining({ id: 'deepseek-v4-pro' }),
           expect.objectContaining({ id: 'deepseek-flash' }),
+          expect.objectContaining({ id: 'grok-4.7' }),
           expect.objectContaining({ id: 'grok-4.6' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
@@ -359,6 +362,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
             id: 'deepseek-flash',
             route: expect.objectContaining({ channelId: 'rightcode-deepseek-miau' }),
           }),
+          // Grok 4.7 在 Miau 上（可吃平台余额），4.6 / 4.5 仍走 Right.Codes。
+          expect.objectContaining({
+            id: 'grok-4.7',
+            route: expect.objectContaining({ channelId: 'rightcode-grok-miau' }),
+          }),
           expect.objectContaining({
             id: 'grok-4.6',
             route: expect.objectContaining({ channelId: 'rightcode-grok' }),
@@ -417,6 +425,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       'deepseek-v4-1-flash-economy-261017',
       'deepseek-v4-pro',
       'deepseek-flash',
+      'grok-4.7',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -459,6 +468,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
           expect.objectContaining({ id: 'deepseek-flash' }),
           // No 4.6 here on purpose: it is declared on the Right.Codes Grok
           // channel only, so the API Yi catalog stays one row shorter.
+          // Grok 4.7 走 Miau，两个网关目录里都有。
+          expect.objectContaining({ id: 'grok-4.7' }),
           expect.objectContaining({ id: 'grok-4.5' }),
           expect.objectContaining({ id: 'claude-sonnet-5' }),
           expect.objectContaining({ id: 'claude-opus-5' }),

@@ -270,6 +270,58 @@ const DEEPSEEK_MIAU_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
   deepseekMiauChannel('rightcode'),
 ])
 
+/**
+ * Miau 上的 Grok(目前只有 4.7)。与 `deepseekMiauChannel` 同构:同一个 Miau 端点在
+ * 两个网关下各注册一次,复用 `credentialId: 'qwen'`(那个槽位存的是 **Miau token**),
+ * baseUrl 指向 Miau 因此平台余额自动生效。
+ *
+ * 为什么 grok-4.7 不并进各网关自家的 grok 通道(`apiyi-grok` / `rightcode-grok`):
+ * 那两条通道是 apiyi / Right.Codes 的端点,上面没人验过 4.7 这个 slug;而 4.7 是
+ * 用户在 Miau 生产网关上开的渠道(`grok-4.7`,上游 apiyi 的 Responses 实测可用)。
+ * 路由按 slug **精确命中优先**,所以 4.7 落这里、4.5 / 4.6 仍落原通道,互不影响。
+ *
+ * 只列 Miau **确认存在**的 slug:网关没配渠道时选择器里这一行会让每一轮 404,
+ * 所以 PR 合并前要用公开的 `/api/pricing` 核对一次(与 `DEEPSEEK_MIAU_MODELS` 同一条纪律)。
+ */
+const GROK_MIAU_MODELS = Object.freeze(['grok-4.7'])
+
+/**
+ * Grok 通道的记忆 / 会话起标题模型。
+ *
+ * 不钉的话它回落到「上次 spawn 那一刻选中的模型」= grok-4.7(官方 $2 / $6 每百万
+ * token)。记忆整合是个完整 agent(2026-10-30 生产日志:一遍约 100 万 input token),
+ * 让它跑在旗舰模型上是一笔用户解释不了的消费。
+ *
+ * 取 Qwen 通道早就在生产上跑着的 `qwen3.8-flash`:同一个 Miau 端点、同一枚 token、
+ * 同一座 namespace 桥,不引入任何新的调用路径。**还没对 Grok 通道实际跑过记忆请求**
+ * (跑在桥后面这点与 Qwen 通道一致);记忆请求失败是非致命的。
+ */
+const GROK_MIAU_MEMORIES_MODEL = 'qwen3.8-flash'
+
+function grokMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
+  return Object.freeze({
+    id: `${gatewayId}-grok-miau`,
+    gatewayId,
+    name: 'Grok (Miau)',
+    // ⚠️ 必须是生产常量,不能在这个文件里做环境覆盖 —— 理由见 `qwenChannel`。
+    baseUrl: MIAU_BASE_URL,
+    envKey: 'MIAU_API_KEY',
+    credentialId: 'qwen',
+    model: 'grok-4.7',
+    memoriesModel: GROK_MIAU_MEMORIES_MODEL,
+    allowedModels: GROK_MIAU_MODELS,
+    // xAI 后端:codex 回放 reasoning 历史时带 `content: null`,xAI 的 ModelInput 会
+    // 每隔一轮 422;MCP 工具被包成 `{"type":"namespace"}` 也会被上游静默丢弃。
+    // 两者都要桥(`resolveCompatibilityBridge` 对 xai 族本来也会强制桥,这里写明)。
+    compatibilityPolicy: 'responses-namespace-bridge',
+  })
+}
+
+const GROK_MIAU_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
+  grokMiauChannel('apiyi'),
+  grokMiauChannel('rightcode'),
+])
+
 const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'apiyi',
@@ -277,7 +329,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'API易 Responses 网关',
     credentialId: 'apiyi',
     defaultChannelId: 'apiyi-standard',
-    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen', 'apiyi-deepseek-miau'],
+    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen', 'apiyi-deepseek-miau', 'apiyi-grok-miau'],
   }),
   Object.freeze({
     id: 'rightcode',
@@ -285,7 +337,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'Right.Codes Codex 与 Grok 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen', 'rightcode-grok-miau'],
   }),
 ])
 
@@ -460,6 +512,7 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
   }),
   ...QWEN_CHANNELS,
   ...DEEPSEEK_MIAU_CHANNELS,
+  ...GROK_MIAU_CHANNELS,
 ])
 
 /** Maps a model slug to its provider family for channel routing. */
