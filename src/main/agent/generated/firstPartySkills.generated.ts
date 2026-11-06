@@ -201,12 +201,13 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      \`custom-model-og-v2.5/2.6-f\`/\`-s\`): \`true\` 出带 alpha 的透明底 PNG——用户要 透明底 / 贴纸 /
      logo / 素材 / 「不要背景」时用,并显式传一条支持透明底的 \`model\`。其它渠道忽略此参数照常出
      不透明底;这不是图层分离(那是 \`layerDecomposition\`)。
-   - \`maskImage\` (optional, **gpt-image-2 / 2.5 only**,2.5 含腾讯 og-v2.5): 局部重绘(inpainting /
+   - \`maskImage\` (optional, **gpt-image-2 / 2.5 / 腾讯 2.6 only**,含腾讯 og-v2.5 / og-v2.6): 局部重绘(inpainting /
      擦除)遮罩,本地路径或 URL。**带 alpha 的 PNG**,alpha=0 处 = 允许重绘;**尺寸须与
      \`referenceImages[0]\` 一致**(只作用于第一张),<4MB。用法:\`referenceImages: [原图]\` +
      \`maskImage\` + 显式 \`model\`;prompt 先写透明区域里的那一个改动,再列必须保留的部分——
      mask 是 prompt-guided,不是像素级硬约束。灯箱「擦除」会附 \`<原图名>.mask.png\`,即此参数,
-     并点名用户当前选的那条 2.5;其它渠道没有 mask 字段,传了会被拒(不会静默重画整张)。
+     并点名用户当前选的那条渠道(官转 2.5 / 腾讯 2.5 / 腾讯 2.6);其它渠道没有 mask 字段,传了会被拒
+     (不会静默重画整张)。
    - \`modelParams\` (optional, **悠船 \`youchuan-*\` / NovelAI \`nai-diffusion-*\` only**,别家忽略): 悠船旋钮(\`hd\` 原生 2K /
      \`quality\` / \`chaos\` / \`stylize\` / \`raw\` / \`iw\` / \`sref\` / \`sw\` / \`seed\` / \`no\`)。**默认一个都
      别传**;只有用户明说「更疯 / 风格化拉高 / 关掉 2K / 固定 seed / 排除某元素」才设对应项。
@@ -318,7 +319,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
   腾讯 flare / 腾讯 sunburst, or wants 2.5 但走平台额度. 与官转同模型、不同线:og 协议、
   五档 quality 默认 high、\`count\` 1–4(文生图);\`transparentBackground\` **同样支持**。
   2.5 与 image2 fast 同价且 \`maskImage\` 同样支持(别为透明底或擦除跳回官转);**2.6 同档位
-  token 约 2.5 的 4 倍、更贵、没有 \`maskImage\`**——用户没点名 2.6 就用 2.5。
+  token 约 2.5 的 4 倍、更贵**,\`maskImage\` 同样支持(擦除也一次做对、别无谓重试)——用户没点名 2.6 就用 2.5。
 - **\`qwen-image-3.0-pro\` (阿里通义千问 Image 3.0 Pro)** — pick when the user says
   千问 / qwen / qwen image. 一次可出 1–6 张,参考图最多 3 张(传更多会被**拒绝**,
   不是截断——需要最多 10 张时改用 Seedream 5.0 Pro)。上游可能改写请求尺寸,

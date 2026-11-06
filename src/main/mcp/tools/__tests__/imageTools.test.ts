@@ -144,6 +144,20 @@ describe('registerImageTools / generate_image schema', () => {
     expect(desc).toMatch(/referenceImages/)
   })
 
+  // 腾讯 2.6 的 mask 于 2026-11-06 实测可用(见 ApiService.MASK_INPAINT_MODELS):工具说明必须点名它,
+  // 且 `model` 说明里不能再留「2.6 没有 maskImage」,否则 agent 会照字面跳回别的渠道。
+  it('documents that 腾讯 2.6 supports maskImage (and costs more) in both maskImage and model descriptions', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    const maskDesc = (single.shape.maskImage as { description?: string }).description ?? ''
+    expect(maskDesc).toContain('custom-model-og-v2.6-f|s')
+    const modelDesc = (single.shape.model as { description?: string }).description ?? ''
+    expect(modelDesc).toContain('custom-model-og-v2.6-f / -s')
+    expect(modelDesc).toMatch(/~4x 2\.5 tokens; same abilities/)
+    expect(modelDesc).not.toMatch(/no maskImage/i)
+  })
+
   it('accepts the selectable model channels (vip / image2 官方 / 腾讯 / 万相 / nano2 / seedream 5.0 pro) and rejects others', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
