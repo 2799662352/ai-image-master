@@ -187,7 +187,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
    - \`model\` (optional): rendering channel **override**. **Omit it** to honor the
-     user's channel picker in the chat composer (default 腾讯 image2). Only set it when you
+     user's channel picker in the chat composer (default 腾讯 2.6-s). Only set it when you
      have a concrete reason — a consistent 组图 series (→ \`wan2.7-image-pro\`) or a
      channel the user explicitly names this turn (see "Choosing a model" below).
    - \`ratio\` (optional): aspect ratio, e.g. \`1:1\`, \`16:9\`, \`9:16\`, \`4:3\`, \`3:2\`.
@@ -281,7 +281,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 
 The \`model\` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
-VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / NovelAI / Seedream; default 腾讯 image2) — 各渠道共用
+VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / NovelAI / Seedream; default 腾讯 2.6-s) — 各渠道共用
 ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-all\` 把尺寸
 写进 prompt). Omit \`model\` for ordinary requests. Set it only with a concrete reason:
 
@@ -319,7 +319,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
   腾讯 flare / 腾讯 sunburst, or wants 2.5 但走平台额度. 与官转同模型、不同线:og 协议、
   五档 quality 默认 high、\`count\` 1–4(文生图);\`transparentBackground\` **同样支持**。
   2.5 与 image2 fast 同价且 \`maskImage\` 同样支持(别为透明底或擦除跳回官转);**2.6 同档位
-  token 约 2.5 的 4 倍、更贵**,\`maskImage\` 同样支持(擦除也一次做对、别无谓重试)——用户没点名 2.6 就用 2.5。
+  token 约 2.5 的 4 倍、更贵**,\`maskImage\` 同样支持(擦除也一次做对、别无谓重试)。默认渠道是 2.6-s,别擅自降到 2.5。
 - **\`qwen-image-3.0-pro\` (阿里通义千问 Image 3.0 Pro)** — pick when the user says
   千问 / qwen / qwen image. 一次可出 1–6 张,参考图最多 3 张(传更多会被**拒绝**,
   不是截断——需要最多 10 张时改用 Seedream 5.0 Pro)。上游可能改写请求尺寸,
@@ -350,7 +350,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - 其余渠道(官转 2.5 / -all / vip / gpt-image-2 / Nano2 / Nano2.1)跟随当前站点(不钉 Miau):
   选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
 
-用户没点名渠道就**省略 \`model\`**(交给 composer 选的渠道,默认腾讯 image2);只为具体
+用户没点名渠道就**省略 \`model\`**(交给 composer 选的渠道,默认腾讯 2.6-s);只为具体
 理由设它(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、2.5 改图 →
 sunburst、MJ/悠船 → youchuan、二次元/多角色 → NovelAI、或用户点名的渠道)。Never invent a model name.
 
@@ -445,7 +445,7 @@ directory and give it a descriptive, ordered name — e.g.
 ## Common Mistakes
 
 - 凭空编造 \`model\` 名;合法值只有上面「Choosing a model」列出的那些。用户没点名就
-  省略 \`model\`(交给用户在 composer 选的渠道,默认腾讯 image2)。
+  省略 \`model\`(交给用户在 composer 选的渠道,默认腾讯 2.6-s)。
 - 用户点名某渠道却不显式传 \`model\`。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
 - 图层分离踩坑:忘了同时指定 \`model\`;为「填满参数」编 prompt;拆前没告知按张计费(见上节)。

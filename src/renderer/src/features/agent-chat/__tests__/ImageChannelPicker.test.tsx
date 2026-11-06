@@ -32,13 +32,14 @@ describe('ImageChannelPicker', () => {
     expect(screen.queryByTestId('image-channel-trigger-badge')).toBeNull()
   })
 
-  it('点开是两栏分区面板,停在当前渠道所在的「常用」,列出常用六个', () => {
+  it('点开是两栏分区面板,停在当前渠道所在的「常用」,列出常用七个(默认的腾讯 2.6 Sunburst 排第二)', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(trigger())
     expect(screen.getByRole('dialog', { name: '出图渠道' })).toBeTruthy()
     expect(tab(/^常用/).getAttribute('aria-selected')).toBe('true')
     expect(visibleIds()).toEqual([
       'doubao-seedream-5-0-pro-260628',
+      'custom-model-og-v2.6-s',
       'custom-imagemodel-gt',
       'custom-model-og-v2.5-f',
       'custom-model-og-v2.5-s',
@@ -83,13 +84,14 @@ describe('ImageChannelPicker', () => {
     expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('更多')
   })
 
-  it('腾讯 2.6 两个在「更多模型 · GPT Image 系列」,选中后写进 store、触发按钮标「更多」', () => {
+  it('腾讯 2.6 Flare 在「更多模型 · GPT Image 系列」(Sunburst 是默认、在常用里),选中 Flare 后写进 store、触发按钮标「更多」', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(trigger())
     fireEvent.click(tab(/GPT Image 系列/))
-    expect(visibleIds()).toEqual(expect.arrayContaining(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s']))
-    fireEvent.click(option('custom-model-og-v2.6-s')!)
-    expect(useAgentChatStore.getState().selectedImageChannel).toBe('custom-model-og-v2.6-s')
+    expect(visibleIds()).toContain('custom-model-og-v2.6-f')
+    expect(visibleIds()).not.toContain('custom-model-og-v2.6-s')
+    fireEvent.click(option('custom-model-og-v2.6-f')!)
+    expect(useAgentChatStore.getState().selectedImageChannel).toBe('custom-model-og-v2.6-f')
     expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('更多')
   })
 

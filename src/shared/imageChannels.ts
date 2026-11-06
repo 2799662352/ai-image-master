@@ -56,7 +56,7 @@ export interface ImageChannel {
  * → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2(v8.2 快速 / 极速)
  * → NovelAI ×4(V5 Full / V5 Curated / V4.5 Full / V4.5 Curated)
  * → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
- * 默认渠道是腾讯 image2 —— 顺序只影响显示,不改变回落目标。
+ * 默认渠道是腾讯 2.6 Sunburst(`DEFAULT_IMAGE_CHANNEL_ID`)—— 顺序只影响显示,不改变回落目标。
  * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
  */
 export const IMAGE_CHANNELS = [
@@ -108,19 +108,20 @@ export const IMAGE_CHANNELS = [
     // 与 sora-ui #323 / sora-ui-backend #176 同步)。线上协议与 2.5 一致(参考图、透明底、
     // `auto` 清晰度、`b64_json`、自定义尺寸),**但价格不能照抄 2.5**:网关倍率虽同为 5,
     // 同档位 token 约为 2.5 的 4.16 倍(实测 1024² low:2.6 = 16620 / 2.5 = 3997),单张更贵,
-    // 所以描述不写「同价」、也不是默认渠道。mask / 擦除、xhigh / max、透明底、带参考图的
-    // 编辑在线上没验证过,mask 与灯箱擦除因此不收(同 og-v2 的先例)。
+    // 所以描述不写「同价」。其中 Sunburst 自 2026-11-06 起是默认渠道(产品要求,见
+    // `DEFAULT_IMAGE_CHANNEL_ID`),Flare 仍是普通可选渠道。mask / 灯箱擦除已随 #422 开放
+    // (只对 Flare 做过真实调用);xhigh / max、透明底、带参考图的编辑在线上没验证过。
     id: 'custom-model-og-v2.6-f',
     label: '腾讯2.6 Flare',
     fullLabel: '腾讯 GPT Image 2.6 Flare',
-    description: '经 Miau 代理 — 2.6 Flare 走腾讯渠道，速度优先，可走平台额度，一次 1–4 张。同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵，日常出图优先用 2.5。后台渠道 TokenHub og-image。',
+    description: '经 Miau 代理 — 2.6 Flare 走腾讯渠道，速度优先，可走平台额度，一次 1–4 张。后台渠道 TokenHub og-image。',
     miauOnly: true,
   },
   {
     id: 'custom-model-og-v2.6-s',
     label: '腾讯2.6 Sunburst',
     fullLabel: '腾讯 GPT Image 2.6 Sunburst',
-    description: '经 Miau 代理 — 2.6 Sunburst 走腾讯渠道，画质 / 改图精度优先，可走平台额度，一次 1–4 张。同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵，日常出图优先用 2.5。后台渠道 TokenHub og-image。',
+    description: '经 Miau 代理 — 2.6 Sunburst 走腾讯渠道，画质 / 改图精度优先，可走平台额度，一次 1–4 张；未手动选择渠道时的默认渠道。后台渠道 TokenHub og-image。',
     miauOnly: true,
   },
   {
@@ -255,12 +256,15 @@ export const IMAGE_CHANNELS = [
  * 用户没选(或存的值已失效)时的默认渠道。
  *
  * 2026-09-01 由 `gpt-image-2-vip` 改为腾讯 image2(产品要求)。
+ * 2026-11-06 再由腾讯 image2 改为腾讯 GPT Image 2.6 Sunburst(产品要求)。注意它按
+ * token 计费,同档位约为 2.5 的 4 倍 —— 这是产品拍板的取舍,不是疏忽。已经手动选过、
+ * 且存的值仍合法的用户不受影响。
  *
  * 这个常量的影响面比它看起来大:所有**从没手动选过渠道**的用户都落在这里,
  * 而且 `resolveImageChannel` 把任何认不出的值(过期的本地存储、agent 传来的
  * 野值)也回落到它。所以改它等于改绝大多数人的实际出图渠道与成本。
  */
-export const DEFAULT_IMAGE_CHANNEL_ID = 'custom-imagemodel-gt'
+export const DEFAULT_IMAGE_CHANNEL_ID = 'custom-model-og-v2.6-s'
 
 /**
  * 渠道 id 的字面量联合 —— 供 MCP 的参数类型使用。
