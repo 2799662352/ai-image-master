@@ -58,6 +58,9 @@ describe('codexProviders', () => {
       // Right.Codes 自家的 `rightcode-deepseek` 已撤下，DeepSeek 只剩这一条。
       'apiyi-deepseek-miau',
       'rightcode-deepseek-miau',
+      // Miau 上的 Grok 4.7,同样两个网关各一次;4.5 / 4.6 仍在各自网关的 grok 通道。
+      'apiyi-grok-miau',
+      'rightcode-grok-miau',
     ])
 
     const claude = resolveProviderChannel('rightcode-claude')
@@ -136,6 +139,18 @@ describe('codexProviders', () => {
       expect(deepseek.memoriesModel).toBe('deepseek-v4-1-flash-261017')
     }
 
+    // Grok 4.7 只挂在 Miau:同一枚 Miau token、同一座 namespace 桥,模型钉死一个。
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      expect(resolveProviderChannel(`${gatewayId}-grok-miau`)).toMatchObject({
+        name: 'Grok (Miau)',
+        envKey: 'MIAU_API_KEY',
+        credentialId: 'qwen',
+        model: 'grok-4.7',
+        allowedModels: ['grok-4.7'],
+        compatibilityPolicy: 'responses-namespace-bridge',
+      })
+    }
+
     const apiyiGrok = resolveProviderChannel('apiyi-grok')
     expect(apiyiGrok).toMatchObject({
       name: 'API Yi Grok',
@@ -161,6 +176,7 @@ describe('codexProviders', () => {
       'rightcode-claude',
       'rightcode-qwen',
       'rightcode-deepseek-miau',
+      'rightcode-grok-miau',
     ])
   })
 

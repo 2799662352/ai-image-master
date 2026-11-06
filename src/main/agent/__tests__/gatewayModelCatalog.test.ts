@@ -60,6 +60,8 @@ describe('buildGatewayModelCatalog', () => {
       'deepseek-v4-1-flash-economy-261017',
       'deepseek-v4-pro',
       'deepseek-flash',
+      // Grok 4.7 在 Miau 上,排在 Grok 组最前;4.6 / 4.5 仍是 Right.Codes 自家通道。
+      'grok-4.7',
       'grok-4.6',
       'grok-4.5',
       'claude-sonnet-5',
@@ -71,6 +73,8 @@ describe('buildGatewayModelCatalog', () => {
       expect(catalog.models.find((model) => model.id === grok)?.route)
         .toMatchObject({ channelId: 'rightcode-grok', family: 'xai' })
     }
+    expect(catalog.models.find((model) => model.id === 'grok-4.7')?.route)
+      .toMatchObject({ channelId: 'rightcode-grok-miau', family: 'xai' })
     for (const slug of [
       'deepseek-flash',
       'deepseek-v4-pro',
@@ -327,6 +331,8 @@ describe('buildGatewayModelCatalog', () => {
       'deepseek-v4-pro',
       'gpt-5.5',
       'grok-4.5',
+      // Miau 上的 Grok 4.7 同样两个网关都挂(同一枚 Miau token)。
+      'grok-4.7',
       'qwen3.7-max-dashscope',
       'qwen3.7-plus-dashscope',
       'qwen3.8-flash',
