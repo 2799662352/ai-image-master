@@ -1085,10 +1085,15 @@ const GPT_IMAGE_SIZE_QUALITY_MODELS: ReadonlySet<string> = new Set([
 /**
  * 支持 mask 局部重绘(inpainting)的渠道。两种线格式:
  *  - OpenAI Images multipart(官转 / vip):`mask` 是一个带 alpha 的 PNG 文件;
- *  - 腾讯 og-image JSON(og-v2.5-f / -s):`mask: { image_url }`,URL 或 base64。
+ *  - 腾讯 og-image JSON(og-v2.5-f / -s、og-v2.6-f / -s):`mask: { image_url }`,URL 或 base64。
  * 不在这里的渠道(-all / 腾讯 image2 / og-v2 / 万相 / nano)没有 mask 位,传了要早失败,
  * 静默丢掉会把「只擦一角」变成「整张重画」。og-v2 上游是 gpt-image-2、网关同样透传 mask,
- * 但没实测过,不收 —— 灯箱擦除也只绑 2.5。
+ * 但没实测过,不收。
+ *
+ * 腾讯 2.6 的依据(2026-11-06 真实调用,生产网关 `custom-model-og-v2.6-f`,1024² low):
+ * 合成图 + 只在星星处挖透明洞的 alpha 遮罩 → 200,遮罩外每通道平均差 1.61(差 >40 的像素
+ * 0.06%),遮罩内黄色像素 16278 → 0,周围渐变自然补全。只测了 -f 一条;-s 与它同一渠道、
+ * 同一适配器(网关 tokenhubog 不挑模型),按同一条协议放行,**没单独对 -s 发过请求**。
  */
 export const MASK_INPAINT_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2',
@@ -1097,6 +1102,8 @@ export const MASK_INPAINT_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-sunburst',
   'custom-model-og-v2.5-f',
   'custom-model-og-v2.5-s',
+  'custom-model-og-v2.6-f',
+  'custom-model-og-v2.6-s',
 ])
 
 // gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
@@ -1382,7 +1389,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   // sora-ui-backend #176 的 BFF 清单同样「与 2.5 一致」):参考图、透明底、五档清晰度、
   // 原生多图 1-4 张。**价格不照抄 2.5**:同档位 token 约为 2.5 的 4.16 倍(1024² low 实测
   // 16620 对 3997),所以文案不写「同价」,也不设 `time`(没量过耗时,不编数字)。
-  // mask / 灯箱擦除没收:线上没验证过(沿用 og-v2 的先例),见 MASK_INPAINT_MODELS。
+  // mask / 灯箱擦除:2026-11-06 对 -f 实测可用,已进 MASK_INPAINT_MODELS(依据见那里)。
   'custom-model-og-v2.6-f': {
     name: '腾讯 Image 2.6 Flare',
     vendor: 'tencent',
@@ -3056,11 +3063,11 @@ export class ApiService {
   }): Promise<Response> {
     const { prompt, model, ratio, resolution, quality, transparentBackground, referenceImages, imageBase64, maskImage, negativePrompt, seed, count, modelConfig, site, apiKey, signal, layerDecomposition, modelParams } = options
 
-    // 遮罩只在 MASK_INPAINT_MODELS 里有位置(官转 multipart 文件 / 腾讯 og-v2.5 JSON 字段);
+    // 遮罩只在 MASK_INPAINT_MODELS 里有位置(官转 multipart 文件 / 腾讯 og-v2.5、og-v2.6 JSON 字段);
     // 别的路径拿到它就是调用方搞错了渠道,静默丢掉会把「只擦一角」变成「整张重画」,所以一律早失败。
     if (maskImage) {
       if (!MASK_INPAINT_MODELS.has(model)) {
-        throw new Error(`${modelConfig.name || model} 不支持 mask 遮罩局部重绘，请改用 gpt-image-2 / 2.5 flare / 2.5 sunburst / 腾讯 2.5(custom-model-og-v2.5-f / -s)`)
+        throw new Error(`${modelConfig.name || model} 不支持 mask 遮罩局部重绘，请改用 gpt-image-2 / 2.5 flare / 2.5 sunburst / 腾讯 2.5 或 2.6(custom-model-og-v2.5-f / -s、custom-model-og-v2.6-f / -s)`)
       }
       const hasReference = !!imageBase64 || (referenceImages?.length ?? 0) > 0
       if (!hasReference) {

@@ -353,7 +353,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度; ' +
       'same 2.5 abilities — transparentBackground / maskImage / xhigh,max), ' +
       'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
-      'custom-model-og-v2.6-f / -s = 腾讯 2.6 Flare / Sunburst (~4x 2.5 tokens; no maskImage), ' +
+      'custom-model-og-v2.6-f / -s = 腾讯 2.6 Flare / Sunburst (~4x 2.5 tokens; same abilities), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
       'multi-turn edit consistency), 1K/2K/4K only, ' +
@@ -504,7 +504,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'have EXACTLY the same pixel dimensions as the first `referenceImages` entry (the mask applies ' +
           'to image[0] only), under 4MB. REQUIRES `referenceImages` with the original image first. Only ' +
           'honored by model="gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst" (OpenAI 官转) or ' +
-          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 2.5 line, 平台额度) — pass one explicitly; ' +
+          '"custom-model-og-v2.5-f|s" / "custom-model-og-v2.6-f|s" (腾讯 2.5 / 2.6, 平台额度) — pass one explicitly; ' +
           '-all / 腾讯 image2 & image2 fast / 万相 / nano reject it up front rather than repainting the whole ' +
           'image. Masking is prompt-guided, not pixel-exact: the prompt must name the ONE change inside ' +
           'the transparent region first, then list everything that must stay unchanged (composition, ' +

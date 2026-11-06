@@ -107,19 +107,25 @@ describe('annotation colours', () => {
 })
 
 /**
- * 擦除绑定 2.5,但「哪条 2.5」跟随用户 composer 里选的渠道:官转 flare / sunburst 或
- * 腾讯 og-v2.5-f / -s 都直接用;其它渠道(没有 mask)回落官转 sunburst。
+ * 擦除跟随用户 composer 里选的渠道:官转 2.5 flare / sunburst、腾讯 og-v2.5-f / -s、
+ * 腾讯 og-v2.6-f / -s(2026-11-06 实测过 mask)都直接用;其它渠道(没有 mask)回落官转 sunburst。
  */
 describe('resolveEraseModel', () => {
-  it('keeps the picked channel when it is one of the four 2.5 lines', () => {
-    for (const id of ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'custom-model-og-v2.5-s', 'custom-model-og-v2.5-f']) {
+  it('keeps the picked channel when it is one of the six mask-capable lines (官转 2.5 / 腾讯 2.5 / 腾讯 2.6)', () => {
+    for (const id of [
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2.5-flare',
+      'custom-model-og-v2.5-s',
+      'custom-model-og-v2.5-f',
+      'custom-model-og-v2.6-s',
+      'custom-model-og-v2.6-f',
+    ]) {
       expect(resolveEraseModel(id)).toBe(id)
     }
   })
 
   it('falls back to 官转 sunburst for channels without mask, junk, or nothing picked', () => {
-    // 腾讯 2.6 的 mask 没验证过,擦除不绑它:选了 2.6 再擦除也回落官转 sunburst。
-    for (const id of ['custom-imagemodel-gt', 'custom-model-og-v2', 'custom-model-og-v2.6-f', 'custom-model-og-v2.6-s', 'wan2.7-image-pro', 'gpt-image-2', 'gpt-image-2-vip', '', undefined, 42]) {
+    for (const id of ['custom-imagemodel-gt', 'custom-model-og-v2', 'wan2.7-image-pro', 'gpt-image-2', 'gpt-image-2-vip', '', undefined, 42]) {
       expect(resolveEraseModel(id)).toBe(DEFAULT_ERASE_MODEL)
     }
     expect(DEFAULT_ERASE_MODEL).toBe('gpt-image-2.5-sunburst')
@@ -129,8 +135,9 @@ describe('resolveEraseModel', () => {
   // 用户看到的是「擦除失败」而不是一张图。两份集合分住两层,用这条钉住不漂。
   it('every erase model is accepted by the ApiService mask gate', () => {
     for (const id of ERASE_MODELS) expect(MASK_INPAINT_MODELS.has(id), id).toBe(true)
-    // 反向不成立是刻意的:gpt-image-2 / vip 吃 mask,但擦除只绑 2.5。
+    // 反向不成立是刻意的:gpt-image-2 / vip 吃 mask,但擦除不派给它们。
     expect(ERASE_MODELS.has('gpt-image-2')).toBe(false)
+    expect(ERASE_MODELS.has('gpt-image-2-vip')).toBe(false)
   })
 })
 
@@ -191,6 +198,23 @@ describe('buildImageFeedbackInstruction', () => {
     })
     expect(text).toContain('model=custom-model-og-v2.5-s')
     expect(text).not.toContain('gpt-image-2.5-sunburst')
+    expect(text).toMatch(/别换成别的渠道/)
+  })
+
+  // 2.6 同档位 token 约 2.5 的 4 倍:指令点名用户选的 2.6,**不能**把它说成「2.5 渠道」,
+  // 也要让 agent 知道比 2.5 贵,免得它「顺手」换成别的渠道或多重试几遍。
+  it('names the user-picked 腾讯 2.6 channel without calling it a 2.5 line, and flags the higher price', () => {
+    const text = buildImageFeedbackInstruction({
+      imageName: 'a.png',
+      comments: [],
+      strokes: strokes(['erase']),
+      maskName: 'a.mask.png',
+      eraseModel: 'custom-model-og-v2.6-f',
+    })
+    expect(text).toContain('model=custom-model-og-v2.6-f')
+    expect(text).not.toContain('gpt-image-2.5-sunburst')
+    expect(text).not.toContain('2.5 渠道')
+    expect(text).toMatch(/比 2\.5 贵/)
     expect(text).toMatch(/别换成别的渠道/)
   })
 
