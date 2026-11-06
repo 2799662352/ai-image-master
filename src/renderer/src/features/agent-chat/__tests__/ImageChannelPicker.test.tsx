@@ -83,6 +83,16 @@ describe('ImageChannelPicker', () => {
     expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('更多')
   })
 
+  it('腾讯 2.6 两个在「更多模型 · GPT Image 系列」,选中后写进 store、触发按钮标「更多」', () => {
+    render(<ImageChannelPicker />)
+    fireEvent.click(trigger())
+    fireEvent.click(tab(/GPT Image 系列/))
+    expect(visibleIds()).toEqual(expect.arrayContaining(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s']))
+    fireEvent.click(option('custom-model-og-v2.6-s')!)
+    expect(useAgentChatStore.getState().selectedImageChannel).toBe('custom-model-og-v2.6-s')
+    expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('更多')
+  })
+
   it('再次打开时停在上次所选渠道的分区,并出现「最近使用」', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(trigger())

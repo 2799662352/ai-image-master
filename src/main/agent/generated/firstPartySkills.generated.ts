@@ -196,9 +196,9 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      only when the user asks for fast/cheap/draft; use \`4K\` only when the user
      explicitly asks for print/ultra-detail/4K.
    - \`quality\` (optional): \`auto\`/\`low\`/\`medium\`/\`high\`; 2.5(官转 flare/sunburst 与
-     腾讯 og-v2.5)另有 \`xhigh\`/\`max\`. Prefer \`high\` on 2.5 (\`auto\` drifts cost).
+     腾讯 og-v2.5/2.6)另有 \`xhigh\`/\`max\`. Prefer \`high\` on 2.5 (\`auto\` drifts cost).
    - \`transparentBackground\` (optional, **2.5 / NovelAI V5 only**:官转 flare/sunburst 或腾讯
-     \`custom-model-og-v2.5-f\`/\`-s\`): \`true\` 出带 alpha 的透明底 PNG——用户要 透明底 / 贴纸 /
+     \`custom-model-og-v2.5/2.6-f\`/\`-s\`): \`true\` 出带 alpha 的透明底 PNG——用户要 透明底 / 贴纸 /
      logo / 素材 / 「不要背景」时用,并显式传一条支持透明底的 \`model\`。其它渠道忽略此参数照常出
      不透明底;这不是图层分离(那是 \`layerDecomposition\`)。
    - \`maskImage\` (optional, **gpt-image-2 / 2.5 only**,2.5 含腾讯 og-v2.5): 局部重绘(inpainting /
@@ -217,7 +217,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
        (same character/subject across frames, e.g. 同一只猫的四季).
      - **independent variations (原生多图)** — \`count\` 2–4 on the OpenAI 官转
        channels \`gpt-image-2.5-flare\` / \`gpt-image-2.5-sunburst\` / \`gpt-image-2\`
-       (and 腾讯 og-v2 / og-v2.5, 文生图; NovelAI 1–4), or 2–6 on \`qwen-image-3.0-pro\`. ONE
+       (and 腾讯 og-v2 / og-v2.5 / og-v2.6, 文生图; NovelAI 1–4), or 2–6 on \`qwen-image-3.0-pro\`. ONE
        request returns \`count\` variants of the same prompt (文生图与改图都行).
        官转按 token **每张**计费,\`count: 4\` ≈ 单张 4 倍 —— 用户要「几个方案挑一挑」
        时才加,别默认给多张。
@@ -272,8 +272,6 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
    - 若任一项不达标:**先告诉用户**哪里不对、准备怎么改,再**带改进后的提示词重生成**
      (保留可用部分时把上一版回传为 \`referenceImages\` 做图生图),再复检。最多迭代
      2–3 次即收敛——别在边角小瑕疵上死磕,每次重生成都花钱。
-   - When it's good (or good enough), confirm briefly in the user's language and
-     cite the saved path(s).
    - You still do NOT need \`query_history\` to find an image you just generated,
      and do NOT shell out (\`dir\`/\`ls\`/\`where\`/\`find\`/\`Get-ChildItem\`) to hunt for
      the file — the path is already in the return; \`view_image\` that path directly.
@@ -291,7 +289,6 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - **\`gpt-image-2.5-all\`** — all / 网页逆向 / $0.03. 尺寸写进 prompt,不发 size/quality.
 - **\`gpt-image-2-vip\`** — 仅用户说 官逆/vip 时. 不要当默认,也不要编 2.5 vip 渠道.
 - **\`gpt-image-2\`** — 仅用户点名旧官转/gpt-image-2. 日常改用 flare/sunburst.
-  三条官转(flare / sunburst / gpt-image-2)都支持原生多图 \`count\` 1–4(独立变体,按张计费)。
 - **\`wan2.7-image-pro\` (阿里万相 2.7 pro)** — pick when the user says 万相 /
   wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
   series** (e.g. "同一只猫的四季组图，前后一致"). For a 组图 series, call
@@ -316,11 +313,12 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - **\`custom-model-og-v2\` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
   image2 fast / og. 与腾讯 image2 **能力相同**,但更快(~20s)、价格约 1/6、且能一次
   出多张。用户没有特别偏好而只是想省钱或求快时,这条优先于 \`custom-imagemodel-gt\`。
-- **\`custom-model-og-v2.5-f\` / \`custom-model-og-v2.5-s\` (腾讯 2.5 Flare / Sunburst)**
-  — pick when the user says 腾讯 2.5 / 腾讯 flare / 腾讯 sunburst, or wants 2.5 但走
-  平台额度. 与官转同模型、不同线:og 协议、与 image2 fast 同价、五档 quality 默认
-  high、\`count\` 1–4(文生图);\`transparentBackground\` / \`maskImage\` **同样支持**——
-  用户选了腾讯线就别为透明底或擦除跳回官转。
+- **\`custom-model-og-v2.5-f\` / \`custom-model-og-v2.5-s\` (腾讯 2.5 Flare / Sunburst)** 与
+  **\`custom-model-og-v2.6-f\` / \`custom-model-og-v2.6-s\` (腾讯 2.6)** — pick when the user says 腾讯 2.5 / 2.6 /
+  腾讯 flare / 腾讯 sunburst, or wants 2.5 但走平台额度. 与官转同模型、不同线:og 协议、
+  五档 quality 默认 high、\`count\` 1–4(文生图);\`transparentBackground\` **同样支持**。
+  2.5 与 image2 fast 同价且 \`maskImage\` 同样支持(别为透明底或擦除跳回官转);**2.6 同档位
+  token 约 2.5 的 4 倍、更贵、没有 \`maskImage\`**——用户没点名 2.6 就用 2.5。
 - **\`qwen-image-3.0-pro\` (阿里通义千问 Image 3.0 Pro)** — pick when the user says
   千问 / qwen / qwen image. 一次可出 1–6 张,参考图最多 3 张(传更多会被**拒绝**,
   不是截断——需要最多 10 张时改用 Seedream 5.0 Pro)。上游可能改写请求尺寸,
@@ -337,8 +335,8 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 
 ### 站点要求(已自动处理 — 无需手动切站点)
 
-四条腾讯渠道(\`custom-imagemodel-gt\` / \`custom-model-og-v2\` / \`custom-model-og-v2.5-f\` /
-\`custom-model-og-v2.5-s\`)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`
+六条腾讯渠道(\`custom-imagemodel-gt\` / \`custom-model-og-v2\` / \`custom-model-og-v2.5-f|s\` /
+\`custom-model-og-v2.6-f|s\`)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`
 (通义千问 Image 3.0 Pro)、\`youchuan-v8.2\` / \`youchuan-v8.2-turbo\`(悠船)和
 \`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)和四条 NovelAI
 **都只经 Miau API 代理提供**。

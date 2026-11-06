@@ -65,6 +65,9 @@ export const IMAGE_CHANNEL_PLACEMENT: Readonly<Record<string, ChannelPlacement>>
   'gpt-image-2.5-sunburst': backup('custom-model-og-v2.5-s', '官转', 'OpenAI 官转同款，更锐、改图更稳，可出透明底'),
 
   'custom-model-og-v2': more('GPT Image 系列', '约 20 秒，比 image2 便宜近 6 倍，可出多张'),
+  // 2.6 不写 priceHint:同档位 token 约为 2.5 的 4.16 倍,不能照抄 2.5 的价格口径(只有确认过的才给量级)。
+  'custom-model-og-v2.6-f': more('GPT Image 系列', '腾讯 2.6 Flare，速度优先，一次 1–4 张；比 2.5 贵'),
+  'custom-model-og-v2.6-s': more('GPT Image 系列', '腾讯 2.6 Sunburst，画质 / 改图精度优先，一次 1–4 张；比 2.5 贵'),
   'gpt-image-2.5-all': more('GPT Image 系列', 'ChatGPT 网页逆向，约 60 秒，尺寸写进提示词'),
   'gpt-image-2': more('GPT Image 系列', '上一代官转，已被 2.5 同价取代'),
   'gpt-image-2-vip': more('GPT Image 系列', '官逆稳定，仅点名 VIP 时用'),
