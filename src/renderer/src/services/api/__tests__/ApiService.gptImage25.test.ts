@@ -118,6 +118,9 @@ describe('ApiService.gpt-image-2.5 quality 解析', () => {
     // 清晰度梯子跟着上游模型走,不跟渠道:腾讯线上的 2.5 也吃 xhigh / max。
     expect(resolve('xhigh', 'custom-model-og-v2.5-f')).toBe('xhigh')
     expect(resolve('max', 'custom-model-og-v2.5-s')).toBe('max')
+    // 腾讯 2.6 同一把梯子(与 2.5 同协议;xhigh / max 在线上没单独验证过,这里只钉我们发什么)。
+    expect(resolve('xhigh', 'custom-model-og-v2.6-f')).toBe('xhigh')
+    expect(resolve('max', 'custom-model-og-v2.6-s')).toBe('max')
     expect(resolve('xhigh', 'gpt-image-2')).toBeUndefined()
     expect(resolve('max', 'custom-model-og-v2')).toBeUndefined()
     expect(resolve('max', 'gpt-image-2-vip')).toBeUndefined()

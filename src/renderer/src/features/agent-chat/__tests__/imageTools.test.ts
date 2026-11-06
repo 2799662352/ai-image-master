@@ -118,7 +118,8 @@ describe('resolveEraseModel', () => {
   })
 
   it('falls back to 官转 sunburst for channels without mask, junk, or nothing picked', () => {
-    for (const id of ['custom-imagemodel-gt', 'custom-model-og-v2', 'wan2.7-image-pro', 'gpt-image-2', 'gpt-image-2-vip', '', undefined, 42]) {
+    // 腾讯 2.6 的 mask 没验证过,擦除不绑它:选了 2.6 再擦除也回落官转 sunburst。
+    for (const id of ['custom-imagemodel-gt', 'custom-model-og-v2', 'custom-model-og-v2.6-f', 'custom-model-og-v2.6-s', 'wan2.7-image-pro', 'gpt-image-2', 'gpt-image-2-vip', '', undefined, 42]) {
       expect(resolveEraseModel(id)).toBe(DEFAULT_ERASE_MODEL)
     }
     expect(DEFAULT_ERASE_MODEL).toBe('gpt-image-2.5-sunburst')

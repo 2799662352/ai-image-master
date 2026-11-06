@@ -353,6 +353,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (og-image, same price as og-v2, 平台额度; ' +
       'same 2.5 abilities — transparentBackground / maskImage / xhigh,max), ' +
       'custom-model-og-v2.5-s = 腾讯渠道上的 GPT Image 2.5 Sunburst (og-image, 画质/改图优先; same abilities), ' +
+      'custom-model-og-v2.6-f / -s = 腾讯 2.6 Flare / Sunburst (~4x 2.5 tokens; no maskImage), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
       'multi-turn edit consistency), 1K/2K/4K only, ' +
@@ -395,7 +396,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
       'INDEPENDENT variations of one prompt, use `count`>1 on model="qwen-image-3.0-pro" (1–6) or on ' +
       'the OpenAI 官转 channels gpt-image-2.5-flare / gpt-image-2.5-sunburst / gpt-image-2 and 腾讯 ' +
-      'custom-model-og-v2 / custom-model-og-v2.5-f / custom-model-og-v2.5-s and the four NovelAI ' +
+      'custom-model-og-v2 / og-v2.5-f|s / og-v2.6-f|s and the four NovelAI ' +
       'nai-diffusion-* channels (native `n`, 1–4, billed ' +
       'per image). Other channels ignore `count`; for ' +
       'unrelated images use generate_images. ' +
@@ -435,7 +436,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .describe(
           'Rendering quality. Prefer "high" for GPT Image 2.5 (≈ old medium token cost). ' +
           '"xhigh"/"max" are 2.5-only (text/print) — accepted on gpt-image-2.5-flare / -sunburst and the ' +
-          '腾讯 custom-model-og-v2.5-f / -s; other channels drop them. "auto" lets the model decide but ' +
+          '腾讯 og-v2.5-f|s / og-v2.6-f|s; other channels drop them. "auto" lets the model decide but ' +
           'drifts cost on 2.5.',
         ),
       transparentBackground: z
@@ -444,8 +445,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .describe(
           'Render on a TRANSPARENT background (alpha PNG) — for 透明底 / 抠图 / 贴纸 / logo / 素材 / ' +
           '"no background" requests. Only honored by the GPT Image 2.5 channels: model="gpt-image-2.5-flare" / ' +
-          '"gpt-image-2.5-sunburst" (OpenAI 官转) or "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" (腾讯 line, ' +
-          '平台额度) or NovelAI "nai-diffusion-5-full" / "-5-curated" — pass one explicitly; ' +
+          '"gpt-image-2.5-sunburst" (OpenAI 官转) or "custom-model-og-v2.5-f|s" / ' +
+          '"custom-model-og-v2.6-f|s" (腾讯) or NovelAI "nai-diffusion-5-full" / "-5-curated" — pass one explicitly; ' +
           'NovelAI V4.5 channels REJECT it; every other channel ignores it ' +
           'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
         ),
@@ -463,7 +464,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
           'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
           '- model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" / "gpt-image-2" / ' +
-          '"custom-model-og-v2" / "custom-model-og-v2.5-f" / "custom-model-og-v2.5-s" / the NovelAI ' +
+          '"custom-model-og-v2" / "custom-model-og-v2.5/2.6-f|s" / the NovelAI ' +
           '"nai-diffusion-*" channels (up to 4): ' +
           'ONE request returns count INDEPENDENT variations (text-to-image; the 腾讯 og ' +
           'channels return 1 on edits). Billed PER IMAGE, so ' +
@@ -645,14 +646,14 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       quality: z
         .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
         .optional()
-        .describe('Rendering quality shared by all images. Prefer "high" for GPT Image 2.5; xhigh/max are 2.5-only (official flare/sunburst and 腾讯 og-v2.5-f/-s).'),
+        .describe('Rendering quality shared by all images. Prefer "high" for GPT Image 2.5; xhigh/max are 2.5-only (official flare/sunburst and 腾讯 og-v2.5-f/-s, og-v2.6-f/-s).'),
       transparentBackground: z
         .boolean()
         .optional()
         .describe(
           'Transparent (alpha PNG) background shared by all images — 透明底 / 贴纸 / 素材 sets. Only ' +
           'honored on the GPT Image 2.5 channels (model="gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" or 腾讯 ' +
-          '"custom-model-og-v2.5-f" / "custom-model-og-v2.5-s"); other channels ignore it.',
+          '"custom-model-og-v2.5-f|s" / "custom-model-og-v2.6-f|s"); other channels ignore it.',
         ),
       referenceImages: z
         .array(z.string())

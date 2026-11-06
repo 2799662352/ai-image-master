@@ -17,7 +17,7 @@ describe('imageChannels registry', () => {
     expect(findImageChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBeDefined()
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×4 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
@@ -25,6 +25,9 @@ describe('imageChannels registry', () => {
       // 同一条 og-image 渠道上的 2.5 Flare / Sunburst,紧挨着 image2 fast 摆
       'custom-model-og-v2.5-f',
       'custom-model-og-v2.5-s',
+      // 2.6 Flare / Sunburst 紧跟 2.5(同一条渠道,价格更高、不是默认)
+      'custom-model-og-v2.6-f',
+      'custom-model-og-v2.6-s',
       'gemini-3.1-flash-image',
       'gemini-nano-banana-2.1',
       'wan2.7-image-pro',
@@ -61,6 +64,8 @@ describe('imageChannels registry', () => {
     expect(isMiauOnlyChannel('custom-imagemodel-gt')).toBe(true)
     expect(isMiauOnlyChannel('custom-model-og-v2.5-f')).toBe(true)
     expect(isMiauOnlyChannel('custom-model-og-v2.5-s')).toBe(true)
+    expect(isMiauOnlyChannel('custom-model-og-v2.6-f')).toBe(true)
+    expect(isMiauOnlyChannel('custom-model-og-v2.6-s')).toBe(true)
     expect(isMiauOnlyChannel('wan2.7-image-pro')).toBe(true)
     expect(isMiauOnlyChannel('doubao-seedream-5-0-pro-260628')).toBe(true)
     expect(isMiauOnlyChannel('gpt-image-2.5-flare')).toBe(false)

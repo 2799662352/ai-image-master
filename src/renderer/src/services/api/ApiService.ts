@@ -790,6 +790,10 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
  *                                  `mask:{image_url}`(URL 或 base64),`background` 两个
  *                                  端点都原样透传(用户 2026-09-15 实测透明底 / 擦除均可)。
  *                                  所以 mask 在这两条上是 **JSON 字段**,不是 multipart 文件。
+ *  - `custom-model-og-v2.6-f` / `custom-model-og-v2.6-s` —— 同一条 og-image 渠道上的
+ *                                  GPT Image 2.6 Flare / Sunburst(网关渠道 21,倍率同为 5,
+ *                                  但同档位 token 约为 2.5 的 4.16 倍)。线上协议与 2.5 相同,
+ *                                  与 sora-ui #323 / sora-ui-backend #176 对齐。
  *
  * 收进一个集合只是因为**线上协议**恰好相同:关水印要发腾讯私有的
  * `extra_body.logo_add:0`(官转 / vip 那些 OpenAI 兼容端点不能外发这个),
@@ -806,6 +810,8 @@ const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
   'custom-model-og-v2',
   'custom-model-og-v2.5-f',
   'custom-model-og-v2.5-s',
+  'custom-model-og-v2.6-f',
+  'custom-model-og-v2.6-s',
 ])
 
 /**
@@ -1063,6 +1069,9 @@ const GPT_IMAGE_25_QUALITY_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-sunburst',
   'custom-model-og-v2.5-f',
   'custom-model-og-v2.5-s',
+  // 2.6 与 2.5 同一把梯子(文档口径,BFF 清单同样按 2.5 处理);xhigh / max 在线上没单独验证过。
+  'custom-model-og-v2.6-f',
+  'custom-model-og-v2.6-s',
 ])
 
 /** 发 size + quality 的 Images 模型。*-all 不在内(尺寸写进 prompt,回 b64_json)。 */
@@ -1340,6 +1349,76 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     vendor: 'tencent',
     displayName: '40s出图，GPT Image 2.5 Sunburst 走腾讯渠道·画质与改图精度优先，与 image2 fast 同价（比官转便宜）且可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张（后台渠道 TokenHub og-image / custom-model-og-v2.5-s，经 Miau API 代理）',
     time: '40s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  // ── 腾讯 og-image 上的 GPT Image 2.6(2026-11 上架,生产 / 测试网关都有,倍率 5)────────
+  // 与 2.5 同一条 TokenHub og-image 渠道、同一套线上协议,配置逐项对齐 2.5(sora-ui #323 /
+  // sora-ui-backend #176 的 BFF 清单同样「与 2.5 一致」):参考图、透明底、五档清晰度、
+  // 原生多图 1-4 张。**价格不照抄 2.5**:同档位 token 约为 2.5 的 4.16 倍(1024² low 实测
+  // 16620 对 3997),所以文案不写「同价」,也不设 `time`(没量过耗时,不编数字)。
+  // mask / 灯箱擦除没收:线上没验证过(沿用 og-v2 的先例),见 MASK_INPAINT_MODELS。
+  'custom-model-og-v2.6-f': {
+    name: '腾讯 Image 2.6 Flare',
+    vendor: 'tencent',
+    displayName: 'GPT Image 2.6 Flare 走腾讯渠道·速度优先，可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张；同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵（后台渠道 TokenHub og-image / custom-model-og-v2.6-f，经 Miau API 代理）',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  'custom-model-og-v2.6-s': {
+    name: '腾讯 Image 2.6 Sunburst',
+    vendor: 'tencent',
+    displayName: 'GPT Image 2.6 Sunburst 走腾讯渠道·画质与改图精度优先，可走平台额度，文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度五档，原生多图 1-4 张；同档位 token 约为 2.5 的 4 倍，单张比 2.5 贵（后台渠道 TokenHub og-image / custom-model-og-v2.6-s，经 Miau API 代理）',
     isNew: true,
     baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
     editURL: 'https://miauapi.13797248455.xyz/v1/images/edits',
@@ -2083,7 +2162,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 
 /**
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
- * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
+ * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst → 2.6 Flare → 2.6 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
  * 千问 → 悠船(快速 → 极速)→ NovelAI(V5 Full → V5 Curated → V4.5 Full → V4.5 Curated)
  * → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
@@ -2095,6 +2174,8 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'custom-model-og-v2',
   'custom-model-og-v2.5-f',
   'custom-model-og-v2.5-s',
+  'custom-model-og-v2.6-f',
+  'custom-model-og-v2.6-s',
   'gemini-3.1-flash-image',
   'gemini-nano-banana-2.1',
   'wan2.7-image-pro',

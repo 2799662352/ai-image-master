@@ -63,8 +63,15 @@ describe('deriveImageParamControls', () => {
     expect(deriveImageParamControls(null).supportsTransparentBackground).toBe(false)
   })
 
-  it('2.5 四条(官转 flare/sunburst + 腾讯 og-v2.5-f/-s)都有透明底轴 —— 腾讯线的 background 由网关原样透传', () => {
-    for (const id of ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'custom-model-og-v2.5-f', 'custom-model-og-v2.5-s']) {
+  it('2.5 四条(官转 flare/sunburst + 腾讯 og-v2.5-f/-s)与腾讯 2.6 两条都有透明底轴 —— 腾讯线的 background 由网关原样透传', () => {
+    for (const id of [
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'custom-model-og-v2.5-f',
+      'custom-model-og-v2.5-s',
+      'custom-model-og-v2.6-f',
+      'custom-model-og-v2.6-s',
+    ]) {
       expect(deriveImageParamControls(configOf(id)).supportsTransparentBackground, id).toBe(true)
     }
   })
@@ -97,6 +104,8 @@ describe('deriveImageParamControls', () => {
     'custom-model-og-v2',
     'custom-model-og-v2.5-f',
     'custom-model-og-v2.5-s',
+    'custom-model-og-v2.6-f',
+    'custom-model-og-v2.6-s',
   ])(
     '%s 的数量轴是 1-4 原生多图(nativeBatch)',
     (id) => {
