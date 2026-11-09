@@ -5,6 +5,7 @@ import {
   IMAGE_CHANNEL_PLACEMENT,
   MAX_FEATURED_TOTAL,
   MAX_RECENT_SHOWN,
+  SERIES_ORDER,
   arrangeChannelMenu,
   channelTriggerBadge,
   placeImageChannels,
@@ -34,15 +35,24 @@ describe('摆放表守卫', () => {
     }
   })
 
-  it('常用渠道的 order 唯一、更多渠道都有分组', () => {
+  it('常用渠道的 order 唯一', () => {
     const orders = Object.values(IMAGE_CHANNEL_PLACEMENT)
       .filter((p) => p.tier === 'featured')
       .map((p) => p.order)
     expect(orders.every((o) => typeof o === 'number')).toBe(true)
     expect(new Set(orders).size).toBe(orders.length)
+  })
+
+  it('每个渠道都写了所属系列 —— 常用 / 备用也不例外(「按系列」要完整,用户 2026-11-09 要求)', () => {
     for (const [id, placement] of Object.entries(IMAGE_CHANNEL_PLACEMENT)) {
-      if (placement.tier === 'more') expect(placement.group, `${id} 缺分组`).toBeTruthy()
+      expect(placement.group, `${id}(${placement.tier})缺系列`).toBeTruthy()
     }
+  })
+
+  it('系列名都登记在 SERIES_ORDER 里(新增系列要决定它在左栏的位置)', () => {
+    const groups = new Set(Object.values(IMAGE_CHANNEL_PLACEMENT).map((p) => p.group))
+    const unknown = [...groups].filter((g) => !SERIES_ORDER.includes(g as string))
+    expect(unknown).toEqual([])
   })
 
   it('默认渠道在常用里(2026-11-06 起是腾讯 GPT Image 2.6 Sunburst,产品要求)', () => {
@@ -73,27 +83,42 @@ describe('摆放表守卫', () => {
     ])
   })
 
-  it('NovelAI 四个都在「更多 · 风格化」,并带按张计费的价格量级', () => {
+  it('NovelAI 四个都在「按系列 · 风格化」,并带按张计费的价格量级', () => {
     const layout = arrangeChannelMenu(placeImageChannels())
-    const style = layout.moreGroups.find((g) => g.label === '风格化')
+    const style = layout.seriesGroups.find((g) => g.label === '风格化')
     expect(style).toBeTruthy()
     const nai = style!.options.filter((o) => o.id.startsWith('nai-diffusion-'))
     expect(nai).toHaveLength(4)
     expect(nai.every((o) => o.placement.priceHint === '≈¥0.6/张')).toBe(true)
   })
 
-  it('腾讯 2.6:Sunburst 是默认(常用),Flare 在「更多 · GPT Image 系列」;都不写价格量级(没有确认过的口径),也不写「贵」之类的价格警示', () => {
+  it('腾讯 2.6:Sunburst 是默认(常用)、Flare 只在系列里,但两个都在「按系列 · GPT Image 系列」;都不写价格量级(没有确认过的口径),也不写「贵」之类的价格警示', () => {
     const layout = arrangeChannelMenu(placeImageChannels())
-    const group = layout.moreGroups.find((g) => g.label === 'GPT Image 系列')
+    const group = layout.seriesGroups.find((g) => g.label === 'GPT Image 系列')
     expect(group).toBeTruthy()
-    const moreV26 = group!.options.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
-    expect(ids(moreV26)).toEqual(['custom-model-og-v2.6-f'])
+    const seriesV26 = group!.options.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
+    expect(ids(seriesV26)).toEqual(['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'])
     const featuredV26 = layout.featured.filter((o) => o.id.startsWith('custom-model-og-v2.6-'))
     expect(ids(featuredV26)).toEqual(['custom-model-og-v2.6-s'])
-    const both = [...featuredV26, ...moreV26]
-    expect(both).toHaveLength(2)
-    expect(both.every((o) => o.placement.priceHint === undefined)).toBe(true)
-    expect(both.every((o) => !/贵/.test(o.placement.hint ?? '') && !/贵/.test(o.description))).toBe(true)
+    expect(seriesV26.every((o) => o.placement.priceHint === undefined)).toBe(true)
+    expect(seriesV26.every((o) => !/贵/.test(o.placement.hint ?? '') && !/贵/.test(o.description))).toBe(true)
+  })
+
+  it('用户 2026-11-09 点名的:Nano Banana 2.1 在 Gemini 系列;腾讯 2.6 Sunburst / 2.5 / image2 与官转 2.5 都在 GPT Image 系列', () => {
+    const layout = arrangeChannelMenu(placeImageChannels())
+    const series = (label: string) => ids(layout.seriesGroups.find((g) => g.label === label)?.options ?? [])
+    expect(series('Gemini 系列')).toEqual(['gemini-3.1-flash-image', 'gemini-nano-banana-2.1'])
+    expect(series('GPT Image 系列')).toEqual(
+      expect.arrayContaining([
+        'custom-model-og-v2.6-s',
+        'custom-model-og-v2.6-f',
+        'custom-model-og-v2.5-f',
+        'custom-model-og-v2.5-s',
+        'custom-imagemodel-gt',
+        'gpt-image-2.5-flare',
+        'gpt-image-2.5-sunburst',
+      ]),
+    )
   })
 
   it('官转的 2.5 Flare / Sunburst 是备用渠道,跟随各自的腾讯同款排序', () => {
@@ -112,7 +137,7 @@ describe('摆放表守卫', () => {
 describe('arrangeChannelMenu', () => {
   const placed = placeImageChannels()
 
-  it('摆放表之外的渠道进「更多 · 其他」,不会挤进常用', () => {
+  it('摆放表之外的渠道进「按系列 · 其他」,不会挤进常用', () => {
     const extra: PlacedImageChannel = {
       id: 'brand-new-channel',
       label: 'New',
@@ -123,17 +148,34 @@ describe('arrangeChannelMenu', () => {
     }
     const layout = arrangeChannelMenu([...placed, extra])
     expect(layout.featured.some((o) => o.id === extra.id)).toBe(false)
-    expect(layout.moreGroups.at(-1)?.label).toBe('其他')
-    expect(ids(layout.moreGroups.at(-1)!.options)).toEqual([extra.id])
+    expect(layout.seriesGroups.at(-1)?.label).toBe('其他')
+    expect(ids(layout.seriesGroups.at(-1)!.options)).toEqual([extra.id])
   })
 
-  it('用户钉的渠道追加到常用末尾,并从备用 / 更多里拿走', () => {
+  it('表外的新系列排在已登记系列之后、「其他」之前', () => {
+    const mk = (id: string, group?: string): PlacedImageChannel => ({
+      id,
+      label: id,
+      fullLabel: id,
+      description: 'x',
+      miauOnly: false,
+      placement: group ? { tier: 'more', group } : FALLBACK_PLACEMENT,
+    })
+    const layout = arrangeChannelMenu([mk('orphan'), mk('new-a', '某新系列'), ...placed])
+    const labels = layout.seriesGroups.map((g) => g.label)
+    expect(labels.slice(0, SERIES_ORDER.length)).toEqual([...SERIES_ORDER])
+    expect(labels.slice(SERIES_ORDER.length)).toEqual(['某新系列', '其他'])
+  })
+
+  it('用户钉的渠道追加到常用末尾,并从备用里拿走,但仍在自己的系列里', () => {
     const layout = arrangeChannelMenu(placed, { pinnedIds: ['nai-diffusion-5-full', 'gpt-image-2.5-flare'] })
     expect(ids(layout.featured).slice(-2)).toEqual(['nai-diffusion-5-full', 'gpt-image-2.5-flare'])
     expect(layout.pinnedIds).toEqual(['nai-diffusion-5-full', 'gpt-image-2.5-flare'])
     expect(ids(layout.backup)).toEqual(['gpt-image-2.5-sunburst'])
-    const style = layout.moreGroups.find((g) => g.label === '风格化')!
-    expect(ids(style.options)).not.toContain('nai-diffusion-5-full')
+    const style = layout.seriesGroups.find((g) => g.label === '风格化')!
+    expect(ids(style.options)).toContain('nai-diffusion-5-full')
+    const gpt = layout.seriesGroups.find((g) => g.label === 'GPT Image 系列')!
+    expect(ids(gpt.options)).toContain('gpt-image-2.5-flare')
   })
 
   it('钉的 id 在清单里不存在 / 重复 / 已是常用:忽略', () => {
@@ -159,10 +201,16 @@ describe('arrangeChannelMenu', () => {
     expect(layout.recent).toHaveLength(MAX_RECENT_SHOWN)
   })
 
-  it('更多的分组按首次出现的顺序,组内保持注册表顺序', () => {
+  it('系列按 SERIES_ORDER 的固定顺序,组内保持注册表顺序', () => {
     const layout = arrangeChannelMenu(placed)
-    expect(layout.moreGroups.map((g) => g.label)).toEqual(['GPT Image 系列', 'Gemini 系列', '阿里百炼', '风格化'])
-    const style = layout.moreGroups.find((g) => g.label === '风格化')!
+    expect(layout.seriesGroups.map((g) => g.label)).toEqual([
+      'GPT Image 系列',
+      'Gemini 系列',
+      '火山豆包',
+      '阿里百炼',
+      '风格化',
+    ])
+    const style = layout.seriesGroups.find((g) => g.label === '风格化')!
     expect(ids(style.options)).toEqual([
       'youchuan-v8.2',
       'youchuan-v8.2-turbo',
@@ -173,10 +221,14 @@ describe('arrangeChannelMenu', () => {
     ])
   })
 
-  it('每个渠道恰好出现在一个分区里(最近使用只是副本,不算)', () => {
-    const layout = arrangeChannelMenu(placed, { pinnedIds: ['nai-diffusion-5-full'] })
-    const all = [...ids(layout.featured), ...ids(layout.backup), ...layout.moreGroups.flatMap((g) => ids(g.options))]
-    expect(all.sort()).toEqual(ids(placed).sort())
+  it('按系列恰好列出全部渠道各一次(不论常用 / 备用 / 被钉);常用、备用里的渠道都能在系列里找到', () => {
+    const layout = arrangeChannelMenu(placed, { pinnedIds: ['nai-diffusion-5-full', 'gpt-image-2.5-flare'] })
+    const inSeries = layout.seriesGroups.flatMap((g) => ids(g.options))
+    expect([...inSeries].sort()).toEqual(ids(placed).sort())
+    for (const option of [...layout.featured, ...layout.backup]) {
+      const home = layout.seriesGroups.find((g) => g.label === option.placement.group)
+      expect(ids(home?.options ?? []), `${option.id} 不在自己的系列里`).toContain(option.id)
+    }
   })
 })
 

@@ -5,11 +5,13 @@
  *   │ 最近使用  1 │ 常用 · 常用渠道，稳定、日常出图首选   │
  *   │ 常用   •  6 │ Seedream 5.0 Pro                     │
  *   │ 备用渠道  2 │ 火山豆包，多图融合……                 │
- *   │ 更多模型    │ …                                    │
+ *   │ 全部模型    │ …                                    │
  *   │   风格化   6│                                      │
  *   └─────────────┴──────────────────────────────────────┘
  *
- * - 分区由 `arrangeChannelMenu` 排好;打开时停在当前渠道所在的分区,圆点标出当前渠道在哪个分区。
+ * - 分区由 `arrangeChannelMenu` 排好;打开时停在当前渠道所在的分区,圆点标出当前渠道在哪些分区。
+ * - 「全部模型」下按系列列出**所有**渠道:常用 / 备用只是多一个快捷入口,渠道不会从它的系列里消失
+ *   (所以同一个渠道可以同时出现在「常用」和它的系列里,圆点也会在两处都亮)。
  * - 悬停(短延迟,斜着划向右栏不会误切)、点击、键盘聚焦都会切换分区。
  * - 键盘:分区栏 ↑↓ 切换、→ 进入右栏;右栏 ↑↓ 移动、←→ 切到上 / 下一个分区、Enter 选择;Esc 由宿主弹层处理。
  * - 面板窄于 NARROW_WIDTH 时分区栏变成顶部一排横向标签。
@@ -57,7 +59,7 @@ const SECTION_CAPTION: Record<SectionKind, string> = {
   recent: '最近选过、不在常用里的渠道',
   featured: '常用渠道，稳定、日常出图首选',
   backup: '常用渠道在其他线路的同款，主线路排队或出错时再用',
-  more: '用得少的渠道，按系列归类',
+  more: '全部渠道，按系列归类（常用 / 备用只是多一个入口）',
 }
 
 export interface ImageChannelPanelProps {
@@ -101,7 +103,7 @@ export function ImageChannelPanel({
     if (layout.backup.length) {
       list.push({ key: 'backup', kind: 'backup', label: '备用渠道', caption: SECTION_CAPTION.backup, options: layout.backup })
     }
-    for (const group of layout.moreGroups) {
+    for (const group of layout.seriesGroups) {
       list.push({ key: `more:${group.key}`, kind: 'more', label: group.label, caption: SECTION_CAPTION.more, options: group.options })
     }
     return list
@@ -160,6 +162,8 @@ export function ImageChannelPanel({
   const tabId = (key: string) => `${uid}-tab-${key}`
   const panelId = `${uid}-panel`
   const pinnedSet = new Set(layout.pinnedIds)
+  // 团队常用(摆放表里的)不给「固定」按钮:系列页里它们也会出现,要和常用区保持一致。
+  const teamFeaturedSet = new Set(layout.featured.filter((o) => !pinnedSet.has(o.id)).map((o) => o.id))
   const hasPriceHint = active.options.some((option) => option.placement.priceHint)
   const rovingId = active.options.some((o) => o.id === focusId)
     ? focusId
@@ -241,7 +245,7 @@ export function ImageChannelPanel({
             <Fragment key={section.key}>
               {firstMore ? (
                 <div className="icp-rail__label" role="presentation">
-                  更多模型
+                  全部模型
                 </div>
               ) : null}
               <button
@@ -278,7 +282,7 @@ export function ImageChannelPanel({
 
       <div className="icp-list" role="tabpanel" id={panelId} aria-labelledby={tabId(active.key)} onPointerEnter={cancelHover}>
         <div className="icp-head">
-          <span className="icp-head__title">{active.kind === 'more' ? `更多模型 · ${active.label}` : active.label}</span>
+          <span className="icp-head__title">{active.kind === 'more' ? `全部模型 · ${active.label}` : active.label}</span>
           <span className="icp-head__caption">{active.caption}</span>
         </div>
         <div className="icp-rows">
@@ -290,7 +294,11 @@ export function ImageChannelPanel({
                 option={option}
                 selected={option.id === selectedId}
                 pinned={pinned}
-                pinnable={active.kind === 'backup' || active.kind === 'more' || (active.kind === 'featured' && pinned)}
+                pinnable={
+                  active.kind === 'backup' ||
+                  (active.kind === 'more' && !teamFeaturedSet.has(option.id)) ||
+                  (active.kind === 'featured' && pinned)
+                }
                 canPinMore={layout.canPinMore}
                 focusable={option.id === rovingId}
                 onFocus={() => setFocusId(option.id)}

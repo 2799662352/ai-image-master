@@ -72,7 +72,7 @@ describe('ImageChannelPicker', () => {
     expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('官转')
   })
 
-  it('NovelAI 四个在「更多模型 · 风格化」,选中后触发按钮标「更多」', () => {
+  it('NovelAI 四个在「全部模型 · 风格化」,选中后触发按钮标「更多」', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(trigger())
     fireEvent.click(tab(/风格化/))
@@ -84,15 +84,25 @@ describe('ImageChannelPicker', () => {
     expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('更多')
   })
 
-  it('腾讯 2.6 Flare 在「更多模型 · GPT Image 系列」(Sunburst 是默认、在常用里),选中 Flare 后写进 store、触发按钮标「更多」', () => {
+  it('腾讯 2.6 的两个渠道都在「全部模型 · GPT Image 系列」(Sunburst 同时也是常用里的默认),选 Flare 触发按钮标「更多」', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(trigger())
     fireEvent.click(tab(/GPT Image 系列/))
     expect(visibleIds()).toContain('custom-model-og-v2.6-f')
-    expect(visibleIds()).not.toContain('custom-model-og-v2.6-s')
+    expect(visibleIds()).toContain('custom-model-og-v2.6-s')
     fireEvent.click(option('custom-model-og-v2.6-f')!)
     expect(useAgentChatStore.getState().selectedImageChannel).toBe('custom-model-og-v2.6-f')
     expect(screen.getByTestId('image-channel-trigger-badge').textContent).toBe('更多')
+  })
+
+  it('在系列里选常用渠道(Nano Banana 2.1 在 Gemini 系列):照样写进 store,触发按钮不出小标签', () => {
+    render(<ImageChannelPicker />)
+    fireEvent.click(trigger())
+    fireEvent.click(tab(/Gemini 系列/))
+    expect(visibleIds()).toEqual(['gemini-3.1-flash-image', 'gemini-nano-banana-2.1'])
+    fireEvent.click(option('gemini-nano-banana-2.1')!)
+    expect(useAgentChatStore.getState().selectedImageChannel).toBe('gemini-nano-banana-2.1')
+    expect(screen.queryByTestId('image-channel-trigger-badge')).toBeNull()
   })
 
   it('再次打开时停在上次所选渠道的分区,并出现「最近使用」', () => {

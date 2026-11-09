@@ -27,11 +27,61 @@ afterEach(() => {
 })
 
 describe('ImageChannelPanel · 分区与停靠', () => {
-  it('分区栏:常用 / 备用渠道 / 更多模型下的各系列(没用过时没有「最近使用」)', () => {
+  it('分区栏:常用 / 备用渠道 / 全部模型下的各系列(没用过时没有「最近使用」)', () => {
     renderPanel('custom-imagemodel-gt')
     const names = screen.getAllByRole('tab').map((t) => t.querySelector('.icp-tab__name')?.textContent)
-    expect(names).toEqual(['常用', '备用渠道', 'GPT Image 系列', 'Gemini 系列', '阿里百炼', '风格化'])
-    expect(screen.getByText('更多模型')).toBeTruthy()
+    expect(names).toEqual(['常用', '备用渠道', 'GPT Image 系列', 'Gemini 系列', '火山豆包', '阿里百炼', '风格化'])
+    expect(screen.getByText('全部模型')).toBeTruthy()
+  })
+
+  it('按系列是完整的:常用 / 备用里的渠道在自己的系列里也有(Nano Banana 2.1 在 Gemini、腾讯 2.6 / 2.5 与官转在 GPT Image)', () => {
+    renderPanel('custom-imagemodel-gt')
+
+    fireEvent.click(tab(/^GPT Image 系列/))
+    expect(visibleIds()).toEqual([
+      'custom-imagemodel-gt',
+      'custom-model-og-v2',
+      'custom-model-og-v2.5-f',
+      'custom-model-og-v2.5-s',
+      'custom-model-og-v2.6-f',
+      'custom-model-og-v2.6-s',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2.5-all',
+      'gpt-image-2',
+      'gpt-image-2-vip',
+    ])
+
+    fireEvent.click(tab(/^Gemini 系列/))
+    expect(visibleIds()).toEqual(['gemini-3.1-flash-image', 'gemini-nano-banana-2.1'])
+
+    fireEvent.click(tab(/^火山豆包/))
+    expect(visibleIds()).toEqual(['doubao-seedream-5-0-pro-260628'])
+
+    fireEvent.click(tab(/^阿里百炼/))
+    expect(visibleIds()).toEqual(['wan2.7-image-pro', 'qwen-image-3.0-pro'])
+  })
+
+  it('每个渠道至少出现在一个系列里,系列合计正好等于全部渠道(常用 / 备用只是额外入口)', () => {
+    renderPanel('custom-imagemodel-gt')
+    const seen: string[] = []
+    for (const t of screen.getAllByRole('tab')) {
+      const name = t.querySelector('.icp-tab__name')?.textContent ?? ''
+      if (['常用', '备用渠道', '最近使用'].includes(name)) continue
+      fireEvent.click(t)
+      seen.push(...(visibleIds() as string[]))
+    }
+    expect([...seen].sort()).toEqual(channels.map((c) => c.id).sort())
+  })
+
+  it('选中常用里的渠道:常用和它的系列两处都亮圆点,打开时停在常用', () => {
+    renderPanel('gemini-nano-banana-2.1')
+    expect(tab(/^常用/).getAttribute('aria-selected')).toBe('true')
+    expect(within(tab(/^常用/)).getByTestId('image-channel-current-dot')).toBeTruthy()
+    expect(within(tab(/^Gemini 系列/)).getByTestId('image-channel-current-dot')).toBeTruthy()
+    expect(document.querySelectorAll('[data-testid="image-channel-current-dot"]')).toHaveLength(2)
+    fireEvent.click(tab(/^Gemini 系列/))
+    expect(option('gemini-nano-banana-2.1')?.getAttribute('aria-current')).toBe('true')
   })
 
   it('打开时停在当前渠道所在的分区,并用圆点标出', () => {
@@ -54,7 +104,7 @@ describe('ImageChannelPanel · 分区与停靠', () => {
     expect(visibleIds()).toEqual(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
     expect(screen.getByRole('tabpanel').textContent).toContain('备用渠道')
     fireEvent.click(tab(/风格化/))
-    expect(screen.getByRole('tabpanel').textContent).toContain('更多模型 · 风格化')
+    expect(screen.getByRole('tabpanel').textContent).toContain('全部模型 · 风格化')
     expect(visibleIds()).toHaveLength(6)
   })
 
@@ -117,26 +167,36 @@ describe('ImageChannelPanel · 选择与偏好', () => {
     expect(visibleIds()).toEqual(['nai-diffusion-5-curated'])
   })
 
-  it('固定:更多里的渠道能钉进常用,钉过的在常用里出现且常驻取消按钮', () => {
+  it('固定:系列里的渠道能钉进常用;钉过的在常用里出现且常驻取消按钮,在自己的系列里也还在', () => {
     renderPanel('custom-imagemodel-gt')
     fireEvent.click(tab(/风格化/))
     fireEvent.click(screen.getByRole('button', { name: '固定到常用：NovelAI V5 Full' }))
     expect(useImageChannelPrefsStore.getState().pinned).toEqual(['nai-diffusion-5-full'])
-    // 它离开了「风格化」,进了「常用」
-    expect(visibleIds()).not.toContain('nai-diffusion-5-full')
+    // 钉到常用只是多一个入口:它仍在「风格化」里,按钮变成「取消固定」
+    expect(visibleIds()).toContain('nai-diffusion-5-full')
+    expect(screen.getByRole('button', { name: '取消固定：NovelAI V5 Full' }).getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(tab(/^常用/))
     expect(visibleIds()).toContain('nai-diffusion-5-full')
     expect(screen.getByRole('button', { name: '取消固定：NovelAI V5 Full' }).getAttribute('aria-pressed')).toBe('true')
-    // 团队常用不给「固定」按钮
+    // 团队常用不给「固定」按钮(常用区里没有,系列里也没有)
     expect(screen.queryByRole('button', { name: /固定到常用：腾讯 image2/ })).toBeNull()
+    fireEvent.click(tab(/^GPT Image 系列/))
+    expect(option('custom-imagemodel-gt')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /固定到常用：腾讯 image2$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /固定到常用：腾讯 GPT Image 2\.6 Sunburst/ })).toBeNull()
+    // 系列里不是团队常用的(如 2.6 Flare、官转)仍可钉
+    expect(screen.getByRole('button', { name: '固定到常用：腾讯 GPT Image 2.6 Flare' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '固定到常用：GPT Image 2.5 Flare' })).toBeTruthy()
   })
 
-  it('取消固定后回到原来的分区', () => {
+  it('取消固定:从常用里拿掉,系列里一直都在', () => {
     useImageChannelPrefsStore.getState().togglePin('nai-diffusion-5-full')
     renderPanel('custom-imagemodel-gt')
     fireEvent.click(screen.getByRole('button', { name: '取消固定：NovelAI V5 Full' }))
+    expect(visibleIds()).not.toContain('nai-diffusion-5-full')
     fireEvent.click(tab(/风格化/))
     expect(visibleIds()).toContain('nai-diffusion-5-full')
+    expect(screen.getByRole('button', { name: '固定到常用：NovelAI V5 Full' })).toBeTruthy()
   })
 
   it('常用满 10 个后,「固定」按钮置灰并说明原因', () => {

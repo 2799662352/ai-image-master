@@ -16,7 +16,7 @@ interface ImageChannelPickerProps {
  * `AgentToolExecutor.resolveEffectiveImageChannel`)。
  *
  * 弹层是两栏「分区导航」面板(`ImageChannelPanel`,复刻 sora-ui 网页版的图像模型下拉):
- * 左边 最近使用 / 常用 / 备用渠道 / 更多模型·按系列,右边是该分区的渠道。选项来自
+ * 左边 最近使用 / 常用 / 备用渠道 / 全部模型·按系列,右边是该分区的渠道。选项来自
  * `IMAGE_CHANNELS`,摆放见 `imageChannelPlacement`;选择仍写进 `selectedImageChannel`,
  * 对 store / MCP 没有任何改动。
  */
