@@ -127,6 +127,32 @@ describe('initStartupScreen', () => {
       expect(engine.createStartupScreen).toHaveBeenCalledTimes(1)
     })
 
+    it('默认每次启动都播:4.9.34 留下的「今天已播」存档(没写 mode)也照播', async () => {
+      const storage = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ lastPlayedDay: '2026-11-09' }) })
+      const { engine, loadEngine } = start({ storage })
+      await flush()
+      expect(loadEngine).toHaveBeenCalledTimes(1)
+      expect(engine.createStartupScreen).toHaveBeenCalledTimes(1)
+    })
+
+    it('默认:看完(或跳过)后再启动一次、同一天里还是播;存档里没有被写进 mode', async () => {
+      const storage = memoryStorage()
+      const first = start({ storage })
+      await flush()
+      first.engine.calls[0].onFinish?.({ skipped: false })
+      first.host.dispose()
+      expect(JSON.parse(storage.dump()[STARTUP_STORAGE_KEY])).toEqual({ lastPlayedDay: '2026-11-09' })
+
+      const second = start({ storage })
+      await flush()
+      expect(second.engine.createStartupScreen).toHaveBeenCalledTimes(1)
+      second.engine.calls[0].onFinish?.({ skipped: true })
+
+      const third = start({ storage })
+      await flush()
+      expect(third.engine.createStartupScreen).toHaveBeenCalledTimes(1)
+    })
+
     it('mode=off 永远不播,mode=always 每次都播', async () => {
       const off = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'off', lastPlayedDay: null }) })
       const a = start({ storage: off })

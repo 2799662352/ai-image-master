@@ -145,9 +145,11 @@ Cat-ih-MAY-shun. No leading silence, no music.
 
 ## 验证
 
-1. 把文件放进目录,在设置之外手动触发一次完整版:开发者工具里执行
-   `localStorage.setItem('catimation.startup.v1', JSON.stringify({ mode: 'always' }))`,
-   刷新页面。看完后改回 `daily`(或直接 `localStorage.removeItem('catimation.startup.v1')`)。
+1. 把文件放进目录,重启应用即可看完整版(默认每次启动都播,dev 下强制每次播)。
+   想临时不播:开发者工具里执行
+   `localStorage.setItem('catimation.startup.v1', JSON.stringify({ mode: 'off' }))`;
+   想改成每天一次用 `mode: 'daily'`;恢复默认就
+   `localStorage.removeItem('catimation.startup.v1')`。
 2. 听 6 句是否都出声、顺序对、音量接近;第 1、2 步要点击才会往下走。
 3. 缺的句子会静音、动画照常走;想确认哪一句没加载,看网络面板里 `audio/startup/line-N.mp3`
    是不是 404。单句加载最多等 3 秒,等不到就放弃那一句。
