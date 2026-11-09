@@ -308,7 +308,7 @@ Pass 4: 一致性校验
 
 ## Codex 页「出图渠道」改成两栏分区面板(2026-10-30,PR2)
 
-复刻 sora-ui 网页版「图像模型」下拉(ModelPanel)的结构与交互:左边分区栏 **最近使用 / 常用 / 备用渠道 / 更多模型·按系列**,右边是该分区的渠道(名称 + 一句话说明 + 价格量级)。只改 Codex 输入框下面的 `ImageChannelPicker`,`selectedImageChannel`、`IMAGE_CHANNELS`、MCP 枚举、默认渠道回落一律不动(默认仍是 `custom-imagemodel-gt` 腾讯 image2)。
+复刻 sora-ui 网页版「图像模型」下拉(ModelPanel)的结构与交互:左边分区栏 **最近使用 / 常用 / 备用渠道 / 全部模型·按系列**,右边是该分区的渠道(名称 + 一句话说明 + 价格量级)。「按系列」**完整列出所有渠道**(GPT Image / Gemini / 火山豆包 / 阿里百炼 / 风格化),常用、备用只是多一个快捷入口,渠道不会因为进了常用就从它的系列里消失。只改 Codex 输入框下面的 `ImageChannelPicker`,`selectedImageChannel`、`IMAGE_CHANNELS`、MCP 枚举、默认渠道回落一律不动(默认渠道是 `custom-model-og-v2.6-s` 腾讯 GPT Image 2.6 Sunburst,见 `DEFAULT_IMAGE_CHANNEL_ID`)。
 
 - **摆放表是桌面端自己的**(`features/agent-chat/imageChannelPlacement.ts`):常用 = Seedream 5.0 Pro / 腾讯 image2 / 腾讯 2.5 Flare / 腾讯 2.5 Sunburst / Nano Banana 2.1 / 万相 2.7 pro(照用户点名的顺序);备用渠道 = 官转的 2.5 Flare / Sunburst(跟随各自的腾讯同款排序);更多按系列:GPT Image 系列 / Gemini 系列 / 阿里百炼 / 风格化(悠船 ×2 + NovelAI ×4)。表里没有的渠道进「更多 · 其他」,不会自己挤进常用;测试里有守卫:注册表每个渠道都必须显式摆放、表里不许有过期条目、备用渠道必须指向存在的常用渠道。
 - **交互**(`ImageChannelPanel.tsx`,逻辑对照网页版):打开时停在当前渠道所在分区并用圆点标出;分区可点击 / 悬停(约 90 ms 延迟,斜着划向右栏不误切)/ 键盘聚焦切换;键盘:分区栏 ↑↓ / Home / End,→ 进右栏;右栏 ↑↓ 移动、←→ 切分区、Enter 选择;Esc 收起并把焦点还给触发按钮;右栏 roving tabindex。面板宽度 < 440 px 时分区栏变成顶部横向标签。「选择」与「固定」是同一行里的两个兄弟按钮,所以右栏不用 listbox。触发按钮在选了备用 / 更多渠道时带小标签(官转 / 更多),避免误触后不自知。
