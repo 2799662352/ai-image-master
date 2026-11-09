@@ -5,7 +5,8 @@
  *  1. **揭幕加载页**:应用初始化完成(`appReady`)就把 `#pageLoader` / `#mainContent` 揭开,
  *     最长等 15 秒。与动画无关 —— 动画盖在最上层(z-index 远高于加载页),
  *     应用在它下面先就绪,动画一播完就直接落进可用的界面,不会再多等一个「进入」按钮。
- *  2. **今天要不要播动画**:每天第一次启动播完整版(存档见 startupGate),其余启动不加载引擎。
+ *  2. **要不要播动画**:默认每次启动都播完整版(存档里手写 `daily` / `off` 可改成每天一次 / 不播,
+ *     见 startupGate);不播的启动不加载引擎。
  *
  * 登录:动画里没有任何输入框。游客点第 1 / 2 步的按钮 = **立刻**发起已有的网页登录
  * (系统浏览器 + 回环授权,走 useAuthStore.startLogin),并且**停在原地等结果**:
@@ -88,7 +89,7 @@ export interface StartupHostDeps {
   /** appReady 迟迟不来时的揭幕封顶(默认 15 s) */
   revealTimeoutMs?: number
   /**
-   * 存档里没有(合法的)mode 时用什么。默认 'daily'(每天第一次)。
+   * 存档里没有(合法的)mode 时用什么。默认 'always'(每次启动都播)。
    * 存档里明确写过的 mode 优先于它。
    */
   defaultMode?: StartupMode
