@@ -5,7 +5,7 @@
  * 只验证宿主对它的调用与对 DOM / 存档 / 登录态的副作用。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { initStartupScreen } from '../index'
+import { friendlyLoginError, initStartupScreen } from '../index'
 import type { AuthPort, AuthSnapshot, StartupHostDeps } from '../index'
 import type { StartupEngineModule, StartupEngineOptions, StartupScreenHandle } from '../engineTypes'
 import { STARTUP_STORAGE_KEY } from '../startupGate'
@@ -27,6 +27,8 @@ function fakeEngine() {
     dispose: vi.fn(),
     setIdentity: vi.fn(),
     setAuthenticated: vi.fn(),
+    setLoginState: vi.fn(),
+    setLoginRequired: vi.fn(),
     isFinished: vi.fn(() => false)
   }
   const calls: StartupEngineOptions[] = []
@@ -40,6 +42,10 @@ function fakeEngine() {
 function fakeAuth(initial: Partial<AuthSnapshot> = {}) {
   let state: AuthSnapshot = { authenticated: false, username: null, displayName: null, pending: false, ...initial }
   const listeners = new Set<(s: AuthSnapshot) => void>()
+  const push = (next: Partial<AuthSnapshot>): void => {
+    state = { ...state, ...next }
+    for (const l of [...listeners]) l(state)
+  }
   const port: AuthPort = {
     getState: () => state,
     subscribe: (cb) => {
@@ -47,16 +53,15 @@ function fakeAuth(initial: Partial<AuthSnapshot> = {}) {
       return () => void listeners.delete(cb)
     },
     hydrate: vi.fn(async () => undefined),
-    startLogin: vi.fn(async () => undefined)
+    startLogin: vi.fn(async () => undefined),
+    // 默认的退出:登录 store 推回「未登录」
+    logout: vi.fn(async () => {
+      push({ authenticated: false, username: null, displayName: null })
+    }),
+    cancelLogin: vi.fn(async () => undefined),
+    dismissLogin: vi.fn()
   }
-  return {
-    port,
-    listeners,
-    push(next: Partial<AuthSnapshot>) {
-      state = { ...state, ...next }
-      for (const l of [...listeners]) l(state)
-    }
-  }
+  return { port, listeners, push }
 }
 
 const NOW = new Date(2026, 10, 9, 10, 0, 0)
@@ -322,13 +327,26 @@ describe('initStartupScreen', () => {
       expect(engine.createStartupScreen).toHaveBeenCalledTimes(1)
     })
 
+    // ── 点主按钮 = 立刻发起网页登录,停在原地等结果 ──────────────────────────
     // 登录与否的判据是「登录 store 此刻的真实状态」,与设置页「登录」按钮同一套
     // (`!authenticated` → startLogin),**不是**引擎事件里镜像来的 `authenticated`:
     // 那份在水合完成前恒为 null,点早了就静默什么都不发生(「网页登录你得跳转呀」)。
-    it('第 1 步点「网页登录」:游客 → 发起网页登录一次', async () => {
+    const states = (e: ReturnType<typeof fakeEngine>) =>
+      vi.mocked(e.handle.setLoginState).mock.calls.map((c) => c[0])
+
+    it('第 1 步点「网页登录」:游客 → 立刻发起网页登录一次,按钮进入「等待」', async () => {
       const { engine, auth } = start()
       await flush()
       engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
+      expect(states(engine)[0]).toBe('waiting')
+    })
+
+    it('第 2 步(游客重新登录)同样发起网页登录', async () => {
+      const { engine, auth } = start()
+      await flush()
+      engine.calls[0].onAction?.({ action: 'confirm', authenticated: false })
       await flush()
       expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
     })
@@ -350,7 +368,7 @@ describe('initStartupScreen', () => {
       expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
     })
 
-    it('点得比水合还早、而水合出来发现已登录:不发起登录', async () => {
+    it('点得比水合还早、而水合出来发现已登录:不发起登录,直接把「已登录」交给引擎放行', async () => {
       const auth = fakeAuth()
       let release!: () => void
       vi.mocked(auth.port.hydrate).mockImplementation(
@@ -363,15 +381,18 @@ describe('initStartupScreen', () => {
       release()
       await flush()
       expect(auth.port.startLogin).not.toHaveBeenCalled()
+      expect(engine.handle.setAuthenticated).toHaveBeenLastCalledWith(true)
+      expect(states(engine)).not.toContain('waiting')
     })
 
-    it('引擎事件说是游客、但 store 已经是登录态:以 store 为准,不发起登录', async () => {
+    it('引擎事件说是游客、但 store 已经是登录态:以 store 为准,不发起登录,同步已登录让引擎放行', async () => {
       const { engine, auth } = start()
       await flush()
       auth.push({ authenticated: true, displayName: 'Trinity' })
       engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
       await flush()
       expect(auth.port.startLogin).not.toHaveBeenCalled()
+      expect(engine.handle.setAuthenticated).toHaveBeenLastCalledWith(true)
     })
 
     it('已登录点第 1 步:不发起登录', async () => {
@@ -383,21 +404,154 @@ describe('initStartupScreen', () => {
       expect(auth.port.startLogin).not.toHaveBeenCalled()
     })
 
-    it('第 2 步(确认身份)从不触发登录', async () => {
-      const { engine, auth } = start()
-      await flush()
-      engine.calls[0].onAction?.({ action: 'confirm', authenticated: false })
-      await flush()
-      expect(auth.port.startLogin).not.toHaveBeenCalled()
-    })
-
-    it('登录已经在进行(pending)时不重复发起', async () => {
+    it('登录已经在进行(pending):接管等待,不重复拉浏览器', async () => {
       const auth = fakeAuth({ pending: true })
       const { engine } = start({ auth: auth.port })
       await flush()
       engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
       await flush()
       expect(auth.port.startLogin).not.toHaveBeenCalled()
+      expect(states(engine)).toEqual(['waiting'])
+    })
+
+    it('接管的登录随后失败:store 推 error → 按钮显示原因', async () => {
+      const auth = fakeAuth({ pending: true })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      auth.push({ pending: false, error: '用户拒绝了授权' })
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('error', '用户拒绝了授权')
+    })
+
+    it('store 推来的错误带 IPC 包装 / 网络栈名:同样友好化,不把技术名露在按钮上', async () => {
+      const auth = fakeAuth({ pending: true })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      auth.push({
+        pending: false,
+        error: "Error invoking remote method 'auth:start-login': Error: net::ERR_CONNECTION_CLOSED"
+      })
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith(
+        'error',
+        '无法连接登录服务，请检查网络或代理后重试'
+      )
+    })
+
+    it('startLogin 还没返回时 store 推来「既没 pending 也没 error」:不当作被取消,不回 idle;随后 pending 到了继续等', async () => {
+      const auth = fakeAuth()
+      let finish!: () => void
+      vi.mocked(auth.port.startLogin).mockImplementation(
+        () => new Promise<undefined>((res) => { finish = () => res(undefined) })
+      )
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      auth.push({ displayName: '路人' }) // 与登录无关的 store 更新
+      expect(states(engine)).not.toContain('idle')
+      auth.push({ pending: true })
+      finish()
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('waiting')
+      expect(states(engine)).not.toContain('error')
+      expect(states(engine)).not.toContain('idle')
+    })
+
+    it('进行中的登录被取消(pending 消失且没有错误):回到可点,可以再点一次', async () => {
+      const auth = fakeAuth({ pending: true })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      auth.push({ pending: false })
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('idle')
+    })
+
+    it('发起后 store 推 pending → 保持等待;随后登录成功 → 交给引擎放行,不再报错', async () => {
+      const auth = fakeAuth()
+      vi.mocked(auth.port.startLogin).mockImplementation(async () => {
+        auth.push({ pending: true })
+      })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('waiting')
+      auth.push({ pending: false, authenticated: true, displayName: 'Morpheus' })
+      expect(engine.handle.setAuthenticated).toHaveBeenLastCalledWith(true)
+      expect(states(engine)).not.toContain('error')
+      expect(states(engine)).not.toContain('idle')
+    })
+
+    it('没点过动画里的按钮:store 里别处(设置页等)的登录状态变化不推进引擎闸门', async () => {
+      const { engine, auth } = start()
+      await flush()
+      auth.push({ pending: true })
+      auth.push({ pending: false, error: '别处的登录失败' })
+      expect(engine.handle.setLoginState).not.toHaveBeenCalled()
+    })
+
+    it('startLogin 抛错(网络):按钮显示网络提示,不崩;再点一次重新发起', async () => {
+      const auth = fakeAuth()
+      vi.mocked(auth.port.startLogin).mockRejectedValueOnce(
+        new Error("Error invoking remote method 'auth:start-login': Error: net::ERR_CONNECTION_CLOSED")
+      )
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith(
+        'error',
+        '无法连接登录服务，请检查网络或代理后重试'
+      )
+      expect(warn).toHaveBeenCalled()
+      // 重试:这次成功拉起
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(auth.port.startLogin).toHaveBeenCalledTimes(2)
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('error', '当前环境无法发起网页登录')
+      warn.mockRestore()
+    })
+
+    it('startLogin 同步抛错也走错误提示', async () => {
+      const auth = fakeAuth()
+      vi.mocked(auth.port.startLogin).mockImplementation(() => {
+        throw new Error('sync boom')
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('error', 'sync boom')
+      expect(warn).toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('startLogin 期间 store 就带回了失败原因:显示那条原因,不会再被覆盖成「无法发起」', async () => {
+      const auth = fakeAuth()
+      vi.mocked(auth.port.startLogin).mockImplementation(async () => {
+        auth.push({ error: '授权服务暂时不可用' })
+      })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('error', '授权服务暂时不可用')
+      expect(states(engine).filter((s) => s === 'error')).toHaveLength(1)
+    })
+
+    it('startLogin 返回了但什么都没发生(没 pending、没 error、没登录):提示当前环境无法发起', async () => {
+      const { engine, auth } = start()
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('error', '当前环境无法发起网页登录')
     })
 
     it('水合失败(没有 Electron preload):仍按 store 当前状态处理,不吞掉点击', async () => {
@@ -427,35 +581,151 @@ describe('initStartupScreen', () => {
       expect(auth.port.startLogin).not.toHaveBeenCalled()
     })
 
-    it('startLogin 抛错被吞掉,动画不受影响', async () => {
-      const auth = fakeAuth()
-      vi.mocked(auth.port.startLogin).mockRejectedValue(new Error('ipc down'))
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-      const { engine } = start({ auth: auth.port })
-      await flush()
-      expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
-      await flush()
-      expect(warn).toHaveBeenCalled()
-      warn.mockRestore()
-    })
-
-    it('startLogin 同步抛错也被吞掉', async () => {
-      const auth = fakeAuth()
-      vi.mocked(auth.port.startLogin).mockImplementation(() => { throw new Error('sync boom') })
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-      const { engine } = start({ auth: auth.port })
-      await flush()
-      expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
-      await flush()
-      expect(warn).toHaveBeenCalled()
-      warn.mockRestore()
-    })
-
-    it('没有 auth 端口(取不到登录模块):照常开播,点按钮也不抛', async () => {
+    it('没有 auth 端口(取不到登录模块):照常开播,告诉引擎「没有登录能力」别拦人,点按钮也不抛', async () => {
       const { engine } = start({ auth: null })
       await flush()
       expect(engine.createStartupScreen).toHaveBeenCalledTimes(1)
+      expect(engine.handle.setLoginRequired).toHaveBeenCalledWith(false)
       expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
+    })
+
+    // ── 第 2 步「退出登录」 ───────────────────────────────────────────────
+    it('退出登录:调 logout;成功后把「未登录」交给引擎并回到可点,不自动拉浏览器', async () => {
+      const auth = fakeAuth({ authenticated: true, displayName: 'Trinity' })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'logout', authenticated: true })
+      await flush()
+      expect(auth.port.logout).toHaveBeenCalledTimes(1)
+      expect(engine.handle.setAuthenticated).toHaveBeenLastCalledWith(false)
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('idle')
+      expect(auth.port.startLogin).not.toHaveBeenCalled()
+    })
+
+    it('退出登录之后再点「网页登录验证身份」:才发起登录(换账号)', async () => {
+      const auth = fakeAuth({ authenticated: true, displayName: 'Trinity' })
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'logout', authenticated: true })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'confirm', authenticated: false })
+      await flush()
+      expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
+    })
+
+    it('退出登录失败:提示原因、不回 idle(引擎里按钮保持可再点),不崩', async () => {
+      const auth = fakeAuth({ authenticated: true, displayName: 'Trinity' })
+      vi.mocked(auth.port.logout!).mockRejectedValue(new Error('ipc down'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      expect(() => engine.calls[0].onAction?.({ action: 'logout', authenticated: true })).not.toThrow()
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('error', '退出登录失败，请重试')
+      expect(engine.handle.setAuthenticated).not.toHaveBeenCalledWith(false)
+      warn.mockRestore()
+    })
+
+    it('端口没有 logout 能力:不能让界面卡在「正在退出…」,回到可点', async () => {
+      const auth = fakeAuth({ authenticated: true, displayName: 'Trinity' })
+      delete auth.port.logout
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'logout', authenticated: true })
+      await flush()
+      expect(engine.handle.setLoginState).toHaveBeenLastCalledWith('idle')
+    })
+
+    // ── 跳过登录 / Esc / SKIP:顺手收拾进行中的登录 ───────────────────────────
+    describe('跳过时收拾登录', () => {
+      it('点过登录、浏览器正在等:跳过 → 取消进行中的登录', async () => {
+        const auth = fakeAuth({ pending: true })
+        const { engine } = start({ auth: auth.port })
+        await flush()
+        engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+        await flush()
+        engine.calls[0].onFinish?.({ skipped: true })
+        expect(auth.port.cancelLogin).toHaveBeenCalledTimes(1)
+        expect(auth.port.dismissLogin).not.toHaveBeenCalled()
+      })
+
+      it('点过登录、失败提示还在:跳过 → 清掉提示,不发取消', async () => {
+        const auth = fakeAuth({ pending: true })
+        const { engine } = start({ auth: auth.port })
+        await flush()
+        engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+        await flush()
+        auth.push({ pending: false, error: '失败了' })
+        engine.calls[0].onFinish?.({ skipped: true })
+        expect(auth.port.dismissLogin).toHaveBeenCalledTimes(1)
+        expect(auth.port.cancelLogin).not.toHaveBeenCalled()
+      })
+
+      it('根本没点过登录:跳过不碰 store(哪怕别处正在登录)', async () => {
+        const { engine, auth } = start()
+        await flush()
+        auth.push({ pending: true })
+        engine.calls[0].onFinish?.({ skipped: true })
+        expect(auth.port.cancelLogin).not.toHaveBeenCalled()
+        expect(auth.port.dismissLogin).not.toHaveBeenCalled()
+      })
+
+      it('正常播完(没跳过):不取消、不清提示', async () => {
+        const auth = fakeAuth({ pending: true })
+        const { engine } = start({ auth: auth.port })
+        await flush()
+        engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+        await flush()
+        engine.calls[0].onFinish?.({ skipped: false })
+        expect(auth.port.cancelLogin).not.toHaveBeenCalled()
+        expect(auth.port.dismissLogin).not.toHaveBeenCalled()
+      })
+
+      it('取消登录抛错:吞掉,不影响收尾', async () => {
+        const auth = fakeAuth({ pending: true })
+        vi.mocked(auth.port.cancelLogin!).mockRejectedValue(new Error('ipc down'))
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const { engine } = start({ auth: auth.port })
+        await flush()
+        engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+        await flush()
+        expect(() => engine.calls[0].onFinish?.({ skipped: true })).not.toThrow()
+        await flush()
+        expect(warn).toHaveBeenCalled()
+        warn.mockRestore()
+      })
+    })
+  })
+
+  describe('friendlyLoginError', () => {
+    it('IPC 包装 + 网络栈错误 → 一句网络提示,不露技术名', () => {
+      expect(
+        friendlyLoginError("Error invoking remote method 'auth:start-login': Error: net::ERR_CONNECTION_CLOSED")
+      ).toBe('无法连接登录服务，请检查网络或代理后重试')
+    })
+
+    it('常见网络错误关键词都归到网络提示', () => {
+      for (const raw of ['connect ECONNREFUSED 127.0.0.1:1', 'getaddrinfo ENOTFOUND x', 'fetch failed', 'socket hang up', 'ETIMEDOUT', 'TLS handshake timeout']) {
+        expect(friendlyLoginError(raw)).toBe('无法连接登录服务，请检查网络或代理后重试')
+      }
+    })
+
+    it('主进程映射过的中文原因原样保留(去掉 IPC / Error 前缀)', () => {
+      expect(friendlyLoginError("Error invoking remote method 'auth:start-login': Error: 用户拒绝了授权")).toBe('用户拒绝了授权')
+      expect(friendlyLoginError('用户拒绝了授权')).toBe('用户拒绝了授权')
+    })
+
+    it('Error 对象取 message;空 / 非字符串 → 通用提示', () => {
+      expect(friendlyLoginError(new Error('授权码已过期'))).toBe('授权码已过期')
+      for (const raw of ['', '   ', null, undefined, 42, {}]) {
+        expect(friendlyLoginError(raw)).toBe('登录没有完成，请重试')
+      }
+    })
+
+    it('折叠空白;超过 60 字截断加省略号', () => {
+      expect(friendlyLoginError('a\n\n b\t c')).toBe('a b c')
+      const long = friendlyLoginError('长'.repeat(100))
+      expect(long).toBe(`${'长'.repeat(60)}…`)
     })
   })
 

@@ -5,8 +5,19 @@
  * 宿主只通过这里声明的窄接口和它说话。
  */
 
-/** 第 1 / 2 步等待用户确认时的动作种类 */
-export type StartupActionKind = 'grant' | 'confirm'
+/**
+ * 用户在第 1 / 2 步交给宿主的动作:
+ *  - grant / confirm:点了主按钮。引擎在没登录时**不放行**,宿主要立刻拉起网页登录;
+ *  - logout:第 2 步(身份确认)点了「退出登录」。
+ */
+export type StartupActionKind = 'grant' | 'confirm' | 'logout'
+
+/**
+ * 登录闸门的状态,由宿主经 setLoginState 推进:
+ *  idle 可点 / checking 在确认登录状态 / waiting 浏览器登录已拉起、等授权 /
+ *  error 这一轮没成(带原因,再点一次重试) / leaving 正在退出登录
+ */
+export type StartupLoginState = 'idle' | 'checking' | 'waiting' | 'error' | 'leaving'
 
 export interface StartupActionEvent {
   action: StartupActionKind
@@ -38,6 +49,11 @@ export interface StartupEngineConfig {
   accessLevel?: string
   /** true 已登录 / false 游客 / null 未知(水合前) */
   authenticated?: boolean | null
+  /**
+   * 没登录是否不放行(默认 true):游客点主按钮只会拉起网页登录并停在原地,
+   * 唯一的出口是登录成功或显式「跳过」。宿主没有登录能力时才该关掉。
+   */
+  requireLogin?: boolean
   accent?: string
   /** 左侧品牌块下方的小字,如 `REV 4.9.33 · DESKTOP` */
   revision?: string
@@ -76,8 +92,15 @@ export interface StartupScreenHandle {
   dispose(): void
   /** 更新「欢迎 XXX」与身份卡上的名字;身份编号由引擎按名字重新推导 */
   setIdentity(name: string): void
-  /** 登录态水合出来 / 变化时调用;影响第 1 步按钮是不是「网页登录」 */
+  /**
+   * 登录态水合出来 / 变化时调用:影响按钮字样、身份卡、「退出 / 跳过登录」;
+   * 变成已登录时,点过主按钮在等登录的这一步当场放行
+   */
   setAuthenticated(authenticated: boolean): void
+  /** 推进登录闸门;message 只在 error 时显示(一行纯文本) */
+  setLoginState(state: StartupLoginState, message?: string): void
+  /** 宿主没有登录能力:别拦人,已点过主按钮的这一步当场放行 */
+  setLoginRequired(required: boolean): void
   isFinished(): boolean
 }
 

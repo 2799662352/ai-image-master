@@ -66,6 +66,7 @@ function build(options) {
     identityId: '',
     accessLevel: '3',
     authenticated: null,        // null=还不知道 / true=已登录 / false=访客
+    requireLogin: true,         // true=没登录就不放行（只能登录或显式「跳过」）；宿主没有登录能力时关掉
     revision: 'DESKTOP',
     brand1: 'CATIMATION',
     brand2: 'AI IMAGE · VIDEO STUDIO',
@@ -162,14 +163,17 @@ function build(options) {
     }
   ]
 
-  /** 名字只留一行、去控制字符、≤48 字；空串当没有。 */
-  function cleanName(v) {
+  /** 一行文本：去控制字符、折叠空白、截到 max 字；空串当没有。 */
+  function cleanText(v, max) {
     return String(v == null ? '' : v)
       .replace(/[\u0000-\u001f\u007f]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 48)
+      .slice(0, max)
   }
+
+  /** 名字只留一行、去控制字符、≤48 字；空串当没有。 */
+  function cleanName(v) { return cleanText(v, 48) }
 
   /** 代号取名字里的字母数字；纯中文名字取不到时退回 OPERATOR。 */
   function deriveId(name) {
@@ -190,6 +194,7 @@ function build(options) {
     out.identity = cleanName(out.identity) || DEFAULTS.identity
     out.identityId = String(out.identityId || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || deriveId(out.identity)
     out.authenticated = out.authenticated === true ? true : (out.authenticated === false ? false : null)
+    out.requireLogin = out.requireLogin !== false
     return out
   }
 
@@ -410,6 +415,10 @@ function build(options) {
         '<span class="dsu-btn-zh"></span><span class="dsu-btn-en"></span>' +
       '</button>' +
       '<div class="dsu-hint"></div>' +
+      '<div class="dsu-subact">' +
+        '<button class="dsu-link dsu-logout" type="button" hidden></button>' +
+        '<button class="dsu-link dsu-skiplogin" type="button" hidden></button>' +
+      '</div>' +
     '</div>' +
     '<div class="dsu-frame">' +
       '<i class="dsu-corner dsu-c-tl"></i><i class="dsu-corner dsu-c-tr"></i>' +
@@ -477,6 +486,8 @@ function build(options) {
   ui.btnZh = q('.dsu-btn-zh')
   ui.btnEn = q('.dsu-btn-en')
   ui.hint = q('.dsu-hint')
+  ui.logout = q('.dsu-logout')
+  ui.skipLogin = q('.dsu-skiplogin')
   ui.skip = q('.dsu-skip')
   ui.foot = q('.dsu-foot')
   ui.footText = q('.dsu-foot span')
@@ -632,10 +643,28 @@ function build(options) {
     })
   }
 
-  /** 把「用户点了第 1 / 2 步的按钮」交给宿主（第 1 步游客 = 网页登录）。跳过 / 自动放行不走这里。 */
+  /** 把「用户点了第 1 / 2 步的按钮 / 退出登录」交给宿主（游客点按钮 = 立刻拉起网页登录）。跳过 / 自动放行不走这里。 */
   function emitAction(kind) {
     if (typeof options.onAction !== 'function') return
     try { options.onAction({ action: kind, authenticated: C.authenticated }) } catch (err) { /* 宿主出错不许拖垮时间线 */ }
+  }
+
+  /* 登录闸门（第 1、2 步）：没登录就不放行，只能登录成功或显式「跳过」。
+       idle     还没人点 / 回到可点状态
+       checking 用户点了，宿主在确认登录状态
+       waiting  浏览器登录已拉起，等授权结果
+       error    这一轮没成（loginMessage 是给人看的原因），再点一次重试
+       leaving  第 2 步点了「退出登录」，等宿主收尾
+     状态全由宿主经 setLoginState 推进；引擎自己只在用户点击时进 checking。 */
+  var loginState = 'idle'
+  var loginMessage = ''
+  /** 这一步里用户点过「继续」没有。登录成功只放行点过的人，没点过的还得自己点一下确认。 */
+  var gateAttempted = false
+  var gateRelease = null
+
+  function inSubAction(e) {
+    var t = e && e.target
+    return !!(t && typeof t.closest === 'function' && t.closest('.dsu-subact'))
   }
 
   function waitAction(step) {
@@ -644,7 +673,7 @@ function build(options) {
       /* 等用户操作期间不上弦：正在犹豫的人不该被看门狗踢出去 */
       disarmStall()
       var done = false
-      /* user === true 才是人点的；releaseAll（跳过 / 揭幕）调用时没有参数 */
+      /* user === true 才是人点的、且已登录的放行；releaseAll（跳过 / 揭幕）和登录成功的放行没有参数 */
       function fin(user) {
         if (done) return
         done = true
@@ -653,18 +682,43 @@ function build(options) {
         if (user === true) emitAction(step.action)
         resolve()
       }
-      function onKey(e) {
-        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); fin(true) }
+      function attempt() {
+        if (done) return
+        /* 正在退出登录：此刻点「继续」会拿着即将失效的身份往下走，一律先等宿主收尾 */
+        if (loginState === 'leaving') return
+        /* 已登录（或宿主根本没有登录能力）：照旧一点就走 */
+        if (C.authenticated === true || C.requireLogin === false) return fin(true)
+        /* 没登录：不放行。通知宿主立刻拉起网页登录，停在这一步等结果；
+           等待中重复点击 / 回车不再重复发起 */
+        if (loginState === 'checking' || loginState === 'waiting') return
+        gateAttempted = true
+        setLoginState('checking')
+        emitAction(step.action)
       }
-      function onClick(e) { e.preventDefault(); fin(true) }
+      function onKey(e) {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          /* 焦点在「退出登录 / 跳过登录」上：让按钮自己处理，别被当成主按钮 */
+          if (inSubAction(e)) return
+          e.preventDefault()
+          attempt()
+        }
+      }
+      function onClick(e) {
+        if (inSubAction(e)) return
+        e.preventDefault()
+        attempt()
+      }
       function cleanup() {
-        ui.btn.removeEventListener('click', onClick)
         ui.action.removeEventListener('click', onClick)
         document.removeEventListener('keydown', onKey)
+        gateRelease = null
+        gateAttempted = false
         var i = waiters.indexOf(fin)
         if (i >= 0) waiters.splice(i, 1)
       }
-      ui.btn.addEventListener('click', onClick)
+      /* 登录成功 / 宿主确认无需登录：只放行点过按钮的人 */
+      gateRelease = function () { if (gateAttempted) fin() }
+      /* 按钮在 .dsu-action 里，点击会冒泡上来：只挂外层一处，别让一次点击触发两遍 */
       ui.action.addEventListener('click', onClick)
       document.addEventListener('keydown', onKey)
       waiters.push(fin)
@@ -1356,20 +1410,42 @@ function build(options) {
   /** 当前正在等用户确认的那一步（没有 = null） */
   var actionStep = null
 
-  /** 第 1 步：游客点它就是「网页登录」（宿主收到 onAction 后拉起浏览器登录），全程不输密码。 */
+  var ERROR_FALLBACK = '登录没有完成，请重试'
+
+  /** 第 1、2 步的按钮文案：游客点它就是「网页登录」（宿主收到 onAction 后立刻拉起浏览器），全程不输密码；
+      等待 / 出错 / 退出中各有自己的字样。hint 是静态 HTML；text 是带外部内容的纯文本（走 textContent）。 */
   function labelsFor(step) {
-    if (step.action === 'grant' && C.authenticated === false) {
-      return {
-        zh: '网页登录授权',
-        en: 'SIGN IN VIA WEB',
-        hint: '点击或按 <kbd>Enter</kbd> 在浏览器中登录 · 无需输入密码 · <kbd>Esc</kbd> 跳过'
-      }
-    }
-    return {
+    var guest = C.authenticated === false
+    var l = {
       zh: step.btnZh,
       en: step.btnEn,
-      hint: '按 <kbd>Enter</kbd> / <kbd>Space</kbd>，或点击按钮继续'
+      hint: '按 <kbd>Enter</kbd> / <kbd>Space</kbd>，或点击按钮继续',
+      text: null
     }
+    if (guest) {
+      l.zh = step.action === 'confirm' ? '网页登录验证身份' : '网页登录授权'
+      l.en = step.action === 'confirm' ? 'SIGN IN TO VERIFY' : 'SIGN IN VIA WEB'
+      l.hint = '点击或按 <kbd>Enter</kbd> 在浏览器中登录 · 无需输入密码 · <kbd>Esc</kbd> 跳过'
+    }
+    if (loginState === 'checking') {
+      l.zh = '正在确认登录状态…'
+      l.en = 'CHECKING SESSION'
+      l.hint = '请稍候 · <kbd>Esc</kbd> 跳过'
+    } else if (loginState === 'waiting') {
+      l.zh = '等待浏览器登录…'
+      l.en = 'WAITING FOR BROWSER'
+      l.hint = '请在刚打开的浏览器里完成授权，完成后自动继续 · <kbd>Esc</kbd> 跳过'
+    } else if (loginState === 'error') {
+      var msg = loginMessage || ERROR_FALLBACK
+      if (C.authenticated !== true) {
+        l.zh = '重新登录'
+        l.en = 'TRY AGAIN'
+        l.text = msg + ' · 点击重试 · Esc 跳过'
+      } else {
+        l.text = msg
+      }
+    }
+    return l
   }
 
   function paintActionLabels() {
@@ -1377,14 +1453,33 @@ function build(options) {
     var l = labelsFor(actionStep)
     ui.btnZh.textContent = l.zh
     ui.btnEn.textContent = l.en
-    ui.hint.innerHTML = l.hint   /* 只来自上面的静态文案，不含任何用户数据 */
+    if (l.text != null) ui.hint.textContent = l.text
+    else ui.hint.innerHTML = l.hint   /* 只来自上面的静态文案，不含任何用户数据 */
+    var busy = loginState === 'checking' || loginState === 'waiting' || loginState === 'leaving'
+    ui.btn.classList.toggle('dsu-wait', busy)
+    ui.btn.setAttribute('aria-busy', busy ? 'true' : 'false')
+    ui.hint.classList.toggle('dsu-err', loginState === 'error')
+    /* 没登录的人随时能显式跳过；已登录的人在身份确认这一步可以退出重来 */
+    ui.skipLogin.textContent = '跳过登录 · SKIP'
+    ui.skipLogin.hidden = !(C.authenticated !== true && C.requireLogin !== false && C.allowSkip)
+    ui.logout.textContent = loginState === 'leaving' ? '正在退出…' : '退出登录 · 切换账号'
+    ui.logout.disabled = loginState === 'leaving'
+    ui.logout.hidden = !(actionStep.action === 'confirm' && C.authenticated === true)
+  }
+
+  /** 宿主推进登录闸门的状态（见 loginState 注释）。message 只在 error 时用，按一行纯文本显示。 */
+  function setLoginState(state, message) {
+    var s = (state === 'checking' || state === 'waiting' || state === 'error' || state === 'leaving') ? state : 'idle'
+    loginState = s
+    loginMessage = s === 'error' ? cleanText(message, 80) : ''
+    paintActionLabels()
   }
 
   function paintCard() {
     ui.card.innerHTML = ''
     /* 纯中文标签 + 数字/名称，去掉英文双写与主机行，别堆信息 */
     var rows = [
-      ['身份名称', C.identity, true],
+      ['身份名称', C.authenticated === false ? '未登录' : C.identity, true],
       ['身份编号', C.identityId, false],
       ['权限等级', C.accessLevel, false]
     ]
@@ -1398,6 +1493,8 @@ function build(options) {
 
   function showAction(step) {
     actionStep = step
+    loginState = 'idle'
+    loginMessage = ''
     paintActionLabels()
     ui.card.hidden = step.action !== 'confirm'
     if (step.action === 'confirm') paintCard()
@@ -1407,6 +1504,8 @@ function build(options) {
 
   function hideAction() {
     actionStep = null
+    loginState = 'idle'
+    loginMessage = ''
     ui.action.classList.remove('dsu-in')
     ui.btn.classList.remove('dsu-pulse')
   }
@@ -1526,6 +1625,23 @@ function build(options) {
     ui.skip.hidden = true
   }
 
+  /* 「跳过登录」：和右上角 SKIP / Esc 同一条出口（不登录直接进应用）。
+     stopPropagation：别让这一下被外层 .dsu-action 当成「继续」。 */
+  ui.skipLogin.addEventListener('click', function (e) {
+    e.stopPropagation()
+    e.preventDefault()
+    requestSkip()
+  })
+  /* 「退出登录」（身份确认那一步）：只通知宿主去退出；之后宿主推回 authenticated=false，
+     按钮自动变成「网页登录验证身份」，用户再点一下就是重新网页登录。 */
+  ui.logout.addEventListener('click', function (e) {
+    e.stopPropagation()
+    e.preventDefault()
+    if (finished || !actionStep || loginState === 'leaving') return
+    setLoginState('leaving')
+    emitAction('logout')
+  })
+
   /* 锁滚动，动画期间不露出下面的应用 */
   document.documentElement.classList.add('dsu-lock')
   document.documentElement.style.overflow = 'hidden'
@@ -1545,10 +1661,21 @@ function build(options) {
       C.identityId = deriveId(C.identity)
       paintIdentity()
     },
-    /** 登录态变化：只影响第 1 步按钮是不是「网页登录」。 */
+    /** 登录态变化：按钮字样、身份卡、「退出 / 跳过登录」随之变；
+        变成已登录时，如果用户已经点过「继续」在等登录，这一步当场放行。 */
     setAuthenticated: function (value) {
       C.authenticated = value === true ? true : (value === false ? false : null)
+      if (ui.card && !ui.card.hidden) paintCard()
       paintActionLabels()
+      if (C.authenticated === true && gateRelease) gateRelease()
+    },
+    /** 推进登录闸门：'idle' | 'checking' | 'waiting' | 'error'(+message) | 'leaving'。 */
+    setLoginState: setLoginState,
+    /** 宿主没有登录能力（没有登录端口 / 非 Electron）：别拦人，已点过「继续」的当场放行。 */
+    setLoginRequired: function (value) {
+      C.requireLogin = value !== false
+      paintActionLabels()
+      if (!C.requireLogin && gateRelease) gateRelease()
     },
     isFinished: function () { return finished }
   }

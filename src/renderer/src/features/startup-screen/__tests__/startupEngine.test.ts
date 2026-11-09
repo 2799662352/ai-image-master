@@ -237,7 +237,7 @@ describe('createStartupScreen 引擎', () => {
 
   describe('完整时间线(要点击)', () => {
     it('第 1、2 步各点一次,走到终幕,onFinish / onDone 各一次,根节点摘除、滚动解锁', async () => {
-      const { onAction, onFinish, onDone } = start()
+      const { onAction, onFinish, onDone } = start({ config: { authenticated: true } })
       await toGrant()
       await confirmCurrent()
       await toGrant() // 第 2 步
@@ -262,7 +262,7 @@ describe('createStartupScreen 引擎', () => {
     })
 
     it('终幕有「欢迎 + 名字」,猫头和品牌字都出现在终幕版式里', async () => {
-      const { onFinish } = start({ config: { identity: '小猫' } })
+      const { onFinish } = start({ config: { identity: '小猫', authenticated: true } })
       await toGrant()
       await confirmCurrent()
       await toGrant()
@@ -275,7 +275,7 @@ describe('createStartupScreen 引擎', () => {
     })
 
     it('第 1 步卡片只在第 2 步(身份确认)才出现,且列出身份名称', async () => {
-      start({ config: { identity: '小猫' } })
+      start({ config: { identity: '小猫', authenticated: true } })
       await toGrant()
       expect(q('.dsu-card').hidden).toBe(true)
       await confirmCurrent()
@@ -356,6 +356,7 @@ describe('createStartupScreen 引擎', () => {
     it('宿主的 onAction 抛错不拖垮时间线', async () => {
       const onFinish = vi.fn()
       start({
+        config: { authenticated: true },
         onAction: () => {
           throw new Error('宿主出错')
         },
@@ -375,6 +376,349 @@ describe('createStartupScreen 引擎', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       expect(onFinish).toHaveBeenCalledWith({ skipped: true })
       expect(onAction).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('登录闸门(没登录就不放行)', () => {
+    const btnZh = (): string => q('.dsu-btn-zh').textContent ?? ''
+    const hint = (): string => q('.dsu-hint').textContent ?? ''
+    const actions = (onAction: { mock: { calls: Array<[StartupActionEvent]> } }): string[] =>
+      onAction.mock.calls.map((c) => c[0].action)
+
+    /** 游客点第 1 步主按钮,返回句柄与宿主回调 */
+    async function guestClicksGrant(over: Partial<StartupEngineOptions> = {}) {
+      const ctx = start({ config: { authenticated: false }, ...over })
+      await toGrant()
+      q('.dsu-btn').click()
+      return ctx
+    }
+
+    it('游客点主按钮:立刻通知宿主去登录,但不放行 —— 停在原地,等多久都不被看门狗踢走', async () => {
+      const { onAction, onFinish } = await guestClicksGrant()
+      expect(actions(onAction)).toEqual(['grant'])
+      expect(btnZh()).toBe('正在确认登录状态…')
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(actionShown()).toBe(true)
+      expect(onFinish).not.toHaveBeenCalled()
+      expect(q('.dsu-card').hidden).toBe(true) // 没进第 2 步
+    })
+
+    it('登录态未知(null)的人点主按钮同样不放行(宿主还没水合出结果)', async () => {
+      const { onAction, onFinish } = start()
+      await toGrant()
+      q('.dsu-btn').click()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(actions(onAction)).toEqual(['grant'])
+      expect(actionShown()).toBe(true)
+      expect(onFinish).not.toHaveBeenCalled()
+    })
+
+    it('宿主推到 waiting:按钮显示等浏览器、标忙碌;等待中连点 / 回车 / 空格都不再重复通知宿主', async () => {
+      const { handle: h, onAction } = await guestClicksGrant()
+      h.setLoginState('waiting')
+      expect(btnZh()).toBe('等待浏览器登录…')
+      expect(q('.dsu-btn').getAttribute('aria-busy')).toBe('true')
+      expect(q('.dsu-btn').classList.contains('dsu-wait')).toBe(true)
+      q('.dsu-btn').click()
+      q('.dsu-action').click()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+      expect(actions(onAction)).toEqual(['grant'])
+    })
+
+    it('登录成功(setAuthenticated(true)):点过按钮的这一步当场放行,且放行本身不再通知宿主', async () => {
+      const { handle: h, onAction } = await guestClicksGrant()
+      h.setLoginState('waiting')
+      h.setAuthenticated(true)
+      await advanceUntil(() => !actionShown())
+      await toGrant() // 第 2 步
+      expect(q('.dsu-card').hidden).toBe(false)
+      // 闸门状态不带到下一步:第 2 步是干净的「确认身份」
+      expect(btnZh()).toBe('确认身份')
+      expect(q('.dsu-btn').getAttribute('aria-busy')).toBe('false')
+      expect(actions(onAction)).toEqual(['grant'])
+    })
+
+    it('没点过按钮时别处登录成功了:不替人放行,按钮变回「授予访问权限」,点一下才走', async () => {
+      const { handle: h, onAction, onFinish } = start({ config: { authenticated: false } })
+      await toGrant()
+      h.setAuthenticated(true)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(actionShown()).toBe(true)
+      expect(btnZh()).toBe('授予访问权限')
+      expect(onFinish).not.toHaveBeenCalled()
+      q('.dsu-btn').click()
+      expect(actions(onAction)).toEqual(['grant'])
+      await advanceUntil(() => !actionShown())
+    })
+
+    it('出错:按钮变「重新登录」,原因显示在提示行(带出错样式);再点一次重新通知宿主', async () => {
+      const { handle: h, onAction } = await guestClicksGrant()
+      h.setLoginState('error', '无法连接登录服务，请检查网络或代理后重试')
+      expect(btnZh()).toBe('重新登录')
+      expect(hint()).toContain('无法连接登录服务，请检查网络或代理后重试')
+      expect(hint()).toContain('Esc')
+      expect(q('.dsu-hint').classList.contains('dsu-err')).toBe(true)
+      expect(q('.dsu-btn').classList.contains('dsu-wait')).toBe(false)
+      q('.dsu-btn').click()
+      expect(actions(onAction)).toEqual(['grant', 'grant'])
+      expect(btnZh()).toBe('正在确认登录状态…')
+      expect(q('.dsu-hint').classList.contains('dsu-err')).toBe(false)
+    })
+
+    it('错误原因只当文字:HTML 不成节点、控制字符折成空格、超长截到 80 字;没给原因用兜底句', async () => {
+      const { handle: h } = await guestClicksGrant()
+      h.setLoginState('error', '<img src=x onerror=alert(1)>')
+      expect(q('.dsu-hint').querySelectorAll('img')).toHaveLength(0)
+      expect(hint()).toContain('<img')
+      h.setLoginState('error', 'A\nB\tC')
+      expect(hint()).toContain('A B C')
+      h.setLoginState('error', '长'.repeat(200))
+      expect(hint()).toContain('长'.repeat(80))
+      expect(hint()).not.toContain('长'.repeat(81))
+      h.setLoginState('error')
+      expect(hint()).toContain('登录没有完成，请重试')
+    })
+
+    it('未知的状态值按 idle 处理(回到可点);下一步不继承上一步的状态', async () => {
+      const { handle: h } = await guestClicksGrant()
+      h.setLoginState('waiting')
+      h.setLoginState('bogus' as never)
+      expect(btnZh()).toBe('网页登录授权')
+      expect(q('.dsu-btn').getAttribute('aria-busy')).toBe('false')
+    })
+
+    it('已登录的人:点一下就走,不经过闸门', async () => {
+      const { onAction } = start({ config: { authenticated: true } })
+      await toGrant()
+      q('.dsu-btn').click()
+      expect(actions(onAction)).toEqual(['grant'])
+      await advanceUntil(() => !actionShown())
+    })
+
+    it('第 1 步靠登录成功放行后,「点过按钮」不带进第 2 步:store 重复推一次已登录,不会替人确认身份', async () => {
+      const { handle: h, onAction, onFinish } = await guestClicksGrant()
+      h.setLoginState('waiting')
+      h.setAuthenticated(true)
+      await advanceUntil(() => !actionShown())
+      await toGrant() // 第 2 步:身份确认
+      expect(q('.dsu-card').hidden).toBe(false)
+      h.setAuthenticated(true) // 登录 store 常会重复推同一份状态(刷新令牌 / 改名)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(actionShown()).toBe(true)
+      expect(q('.dsu-card').hidden).toBe(false)
+      expect(onFinish).not.toHaveBeenCalled()
+      expect(actions(onAction)).toEqual(['grant'])
+      // 用户自己点了才确认
+      q('.dsu-btn').click()
+      expect(actions(onAction)).toEqual(['grant', 'confirm'])
+    })
+
+    describe('宿主没有登录能力(setLoginRequired(false) / requireLogin:false)', () => {
+      it('已点过按钮卡在闸门上的人当场放行', async () => {
+        const { handle: h } = await guestClicksGrant()
+        h.setLoginRequired(false)
+        await advanceUntil(() => !actionShown())
+      })
+
+      it('之后游客点主按钮也直接放行,不再等登录', async () => {
+        const { handle: h, onAction } = start({ config: { authenticated: false } })
+        h.setLoginRequired(false)
+        await toGrant()
+        q('.dsu-btn').click()
+        expect(actions(onAction)).toEqual(['grant'])
+        await advanceUntil(() => !actionShown())
+      })
+
+      it('配置里 requireLogin:false:游客一点就走;没有「跳过登录」(没东西可跳)', async () => {
+        const { onAction } = start({ config: { authenticated: false, requireLogin: false } })
+        await toGrant()
+        expect(q('.dsu-skiplogin').hidden).toBe(true)
+        q('.dsu-btn').click()
+        expect(actions(onAction)).toEqual(['grant'])
+        await advanceUntil(() => !actionShown())
+      })
+
+      it('没点过按钮的人不被替放行', async () => {
+        const { handle: h, onFinish } = start({ config: { authenticated: false } })
+        await toGrant()
+        h.setLoginRequired(false)
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(actionShown()).toBe(true)
+        expect(onFinish).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('「跳过登录」', () => {
+      it('游客 / 登录态未知的人看得到;已登录的人看不到', async () => {
+        const guest = start({ config: { authenticated: false } })
+        await toGrant()
+        expect(q('.dsu-skiplogin').hidden).toBe(false)
+        expect(q('.dsu-skiplogin').textContent).toContain('跳过登录')
+        guest.handle.setAuthenticated(true)
+        expect(q('.dsu-skiplogin').hidden).toBe(true)
+      })
+
+      it('allowSkip:false 时没有任何跳过出口(含跳过登录)', async () => {
+        start({ config: { authenticated: false, allowSkip: false } })
+        await toGrant()
+        expect(q('.dsu-skiplogin').hidden).toBe(true)
+      })
+
+      it('点它:跳过动画直接进应用(onFinish skipped),不通知宿主去登录', async () => {
+        const { onAction, onFinish } = start({ config: { authenticated: false } })
+        await toGrant()
+        q('.dsu-skiplogin').click()
+        expect(onFinish).toHaveBeenCalledWith({ skipped: true })
+        expect(onAction).not.toHaveBeenCalled()
+      })
+
+      it('等登录的过程中也能点它放弃', async () => {
+        const { handle: h, onFinish } = await guestClicksGrant()
+        h.setLoginState('waiting')
+        q('.dsu-skiplogin').click()
+        expect(onFinish).toHaveBeenCalledTimes(1)
+        expect(onFinish).toHaveBeenCalledWith({ skipped: true })
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(root()).toBeNull()
+      })
+
+      it('出错之后也能点它放弃', async () => {
+        const { handle: h, onFinish } = await guestClicksGrant()
+        h.setLoginState('error', '登录失败')
+        q('.dsu-skiplogin').click()
+        expect(onFinish).toHaveBeenCalledWith({ skipped: true })
+      })
+
+      it('Esc / 右上角 SKIP 与它是同一个出口(闸门上也一样)', async () => {
+        const a = await guestClicksGrant()
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        expect(a.onFinish).toHaveBeenCalledWith({ skipped: true })
+        a.handle.dispose()
+        document.body.innerHTML = '<div id="app">应用本体</div>'
+        const b = await guestClicksGrant()
+        q('.dsu-skip').click()
+        expect(b.onFinish).toHaveBeenCalledWith({ skipped: true })
+      })
+
+      it('点在「跳过登录 / 退出登录」所在容器的空隙上:不算主按钮,不通知宿主、也不放行', async () => {
+        const { onAction, onFinish } = start({ config: { authenticated: false } })
+        await toGrant()
+        q('.dsu-subact').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await vi.advanceTimersByTimeAsync(2_000)
+        expect(onAction).not.toHaveBeenCalled()
+        expect(onFinish).not.toHaveBeenCalled()
+        expect(actionShown()).toBe(true)
+      })
+
+      it('焦点在它上面按 Enter / 空格:只触发它自己,不会被当成主按钮去登录', async () => {
+        const { onAction } = start({ config: { authenticated: false } })
+        await toGrant()
+        const link = q('.dsu-skiplogin')
+        link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        link.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+        expect(onAction).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('「退出登录」(第 2 步身份确认)', () => {
+      /** 已登录的人走到第 2 步 */
+      async function atConfirm(over: Partial<StartupEngineOptions> = {}) {
+        const ctx = start({ config: { authenticated: true, identity: '小猫' }, ...over })
+        await toGrant()
+        await confirmCurrent()
+        await toGrant()
+        return ctx
+      }
+
+      it('只在第 2 步且已登录时出现;第 1 步、游客都没有', async () => {
+        const ctx = start({ config: { authenticated: true } })
+        await toGrant()
+        expect(q('.dsu-logout').hidden).toBe(true) // 第 1 步
+        await confirmCurrent()
+        await toGrant()
+        expect(q('.dsu-logout').hidden).toBe(false)
+        expect(q('.dsu-logout').textContent).toContain('退出登录')
+        ctx.handle.setAuthenticated(false)
+        expect(q('.dsu-logout').hidden).toBe(true)
+      })
+
+      it('点它:通知宿主 logout,进入「正在退出…」(禁用、主按钮暂不响应)', async () => {
+        const { onAction } = await atConfirm()
+        q('.dsu-logout').click()
+        expect(onAction).toHaveBeenLastCalledWith({ action: 'logout', authenticated: true })
+        expect(q('.dsu-logout').textContent).toContain('正在退出')
+        expect((q('.dsu-logout') as HTMLButtonElement).disabled).toBe(true)
+        const before = onAction.mock.calls.length
+        q('.dsu-btn').click()
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        expect(onAction.mock.calls.length).toBe(before)
+        expect(actionShown()).toBe(true)
+      })
+
+      it('正在退出时再来一次 click(合成事件绕过 disabled)也不重复通知宿主', async () => {
+        const { onAction } = await atConfirm()
+        q('.dsu-logout').click()
+        q('.dsu-logout').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        expect(actions(onAction)).toEqual(['grant', 'logout'])
+      })
+
+      it('点在容器空隙上不算确认身份(不放行、不退出)', async () => {
+        const { onAction, onFinish } = await atConfirm()
+        q('.dsu-subact').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await vi.advanceTimersByTimeAsync(2_000)
+        expect(actions(onAction)).toEqual(['grant'])
+        expect(onFinish).not.toHaveBeenCalled()
+        expect(actionShown()).toBe(true)
+      })
+
+      it('点它不会被外层当成「确认身份」(不放行)', async () => {
+        const { onAction, onFinish } = await atConfirm()
+        q('.dsu-logout').click()
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(actions(onAction)).toEqual(['grant', 'logout'])
+        expect(actionShown()).toBe(true)
+        expect(onFinish).not.toHaveBeenCalled()
+      })
+
+      it('宿主退出成功(推回未登录):按钮变回「网页登录验证身份」,身份卡写「未登录」,可以重新网页登录', async () => {
+        const { handle: h, onAction } = await atConfirm()
+        q('.dsu-logout').click()
+        h.setAuthenticated(false)
+        h.setLoginState('idle')
+        expect(btnZh()).toBe('网页登录验证身份')
+        expect(q('.dsu-card').textContent).toContain('未登录')
+        expect(q('.dsu-logout').hidden).toBe(true)
+        expect(q('.dsu-skiplogin').hidden).toBe(false)
+        // 再点主按钮 = 重新网页登录(第 2 步的 action 是 confirm),且不放行
+        q('.dsu-btn').click()
+        expect(onAction).toHaveBeenLastCalledWith({ action: 'confirm', authenticated: false })
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(actionShown()).toBe(true)
+        // 登录成功才放行,进到后面的自动步骤
+        h.setAuthenticated(true)
+        await advanceUntil(() => !actionShown())
+        expect(actions(onAction)).toEqual(['grant', 'logout', 'confirm'])
+      })
+
+      it('退出失败(宿主推 error):提示原因,「退出登录」重新可点,人还是已登录', async () => {
+        const { handle: h, onAction } = await atConfirm()
+        q('.dsu-logout').click()
+        h.setLoginState('error', '退出登录失败，请重试')
+        expect(hint()).toContain('退出登录失败，请重试')
+        expect((q('.dsu-logout') as HTMLButtonElement).disabled).toBe(false)
+        expect(btnZh()).toBe('确认身份')
+        q('.dsu-logout').click()
+        expect(actions(onAction)).toEqual(['grant', 'logout', 'logout'])
+      })
+
+      it('焦点在它上面按 Enter / 空格:不会被当成主按钮确认身份', async () => {
+        const { onAction } = await atConfirm()
+        const before = onAction.mock.calls.length
+        q('.dsu-logout').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        expect(onAction.mock.calls.length).toBe(before)
+        expect(actionShown()).toBe(true)
+      })
     })
   })
 
@@ -416,14 +760,16 @@ describe('createStartupScreen 引擎', () => {
       expect(q('.dsu-btn-zh').textContent).toBe('授予访问权限')
     })
 
-    it('登录是在第 1 步之后完成的:第 2 步用的是已登录文案', async () => {
+    it('登录是在第 1 步放行之后完成的:第 2 步用的是已登录文案', async () => {
+      // 游客点了第 1 步 → 登录成功才放行;放行后第 2 步按已登录处理
       const { handle: h } = start({ config: { authenticated: false } })
       await toGrant()
-      await confirmCurrent()
+      q('.dsu-btn').click()
       h.setAuthenticated(true)
+      await advanceUntil(() => !actionShown())
       await toGrant()
-      // 第 2 步的文案本来就不分游客 / 登录
-      expect(q('.dsu-btn-zh').textContent).not.toBe('网页登录授权')
+      expect(q('.dsu-btn-zh').textContent).toBe('确认身份')
+      expect(q('.dsu-btn-zh').textContent).not.toBe('网页登录验证身份')
     })
   })
 
@@ -463,7 +809,7 @@ describe('createStartupScreen 引擎', () => {
     })
 
     it('身份卡正亮着时换人:卡片当场重画', async () => {
-      const { handle: h } = start({ config: { identity: '旧名' } })
+      const { handle: h } = start({ config: { identity: '旧名', authenticated: true } })
       await toGrant()
       await confirmCurrent()
       await toGrant()
@@ -747,6 +1093,7 @@ describe('createStartupScreen 引擎', () => {
       const made = new Map<string, ReturnType<typeof makeFakeAudio>>()
       start({
         assetBase: base,
+        config: { authenticated: true },
         createAudio: (url) => {
           const a = makeFakeAudio({ duration: 8 })
           made.set(url, a)

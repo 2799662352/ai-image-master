@@ -570,6 +570,42 @@
   letter-spacing: 0.06em;
 }
 
+/* 登录闸门：等待浏览器授权时按钮不再脉冲、不可再点；出错时提示换成警示色 */
+.dsu-btn.dsu-wait { animation: none; cursor: progress; opacity: 0.72; }
+.dsu-btn.dsu-wait:hover::before { transform: translateX(-101%); }
+.dsu-btn.dsu-wait:hover { color: var(--dsu-ink); }
+.dsu-btn.dsu-wait:hover .dsu-btn-en { color: var(--dsu-ink); opacity: 0.62; }
+.dsu-hint.dsu-err { color: var(--dsu-accent, #ff7500); }
+
+/* 次级动作：跳过登录 / 退出登录。刻意做成无框文字链，别和主按钮抢视线 */
+.dsu-subact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  min-height: 24px;
+}
+.dsu-link {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 3px 2px;
+  color: var(--dsu-muted);
+  font-family: var(--dsu-zh);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  transition: color 200ms ease, border-color 200ms ease;
+}
+.dsu-link:hover:not(:disabled),
+.dsu-link:focus-visible {
+  color: var(--dsu-ink);
+  border-bottom-color: var(--dsu-hair);
+  outline: none;
+}
+.dsu-link:disabled { cursor: progress; opacity: 0.6; }
+.dsu-link[hidden] { display: none; }
+
 /* 身份卡（第二步）：纯中文标签 + 数字，去掉了英文双写与竖排表头，尽量干净 */
 .dsu-card {
   display: flex;

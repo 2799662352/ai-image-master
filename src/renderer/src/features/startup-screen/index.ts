@@ -7,9 +7,11 @@
  *     应用在它下面先就绪,动画一播完就直接落进可用的界面,不会再多等一个「进入」按钮。
  *  2. **今天要不要播动画**:每天第一次启动播完整版(存档见 startupGate),其余启动不加载引擎。
  *
- * 登录:动画里没有任何输入框。游客在第 1 步点按钮 = 发起**已有的网页登录**
- * (系统浏览器 + 回环授权,走 useAuthStore.startLogin),动画本身不等登录结果,
- * 登录成功后 auth 状态推送进来,引擎再把名字 / 按钮文案补上。
+ * 登录:动画里没有任何输入框。游客点第 1 / 2 步的按钮 = **立刻**发起已有的网页登录
+ * (系统浏览器 + 回环授权,走 useAuthStore.startLogin),并且**停在原地等结果**:
+ * 登录成功才放行;失败(网络 / 超时 / 被拒)在按钮上显示原因、点一下重试;
+ * 唯一不登录的出口是显式「跳过登录」(Esc / 右上角 SKIP 同样算,此时顺手取消进行中的登录)。
+ * 身份确认那一步(已登录)有「退出登录」:退出后按钮变回网页登录,由用户再点一下重新登录。
  *
  * 引擎(engine.js,约 1.7k 行)和样式只在「今天要播」时才动态加载。
  */
@@ -31,6 +33,8 @@ export interface AuthSnapshot {
   displayName?: string | null
   /** 网页登录已在进行中(等浏览器回调) */
   pending?: boolean
+  /** 上一次网页登录失败的原因(原文,可能带 IPC / 网络栈的技术前缀) */
+  error?: string | null
 }
 
 export interface AuthPort {
@@ -38,8 +42,39 @@ export interface AuthPort {
   subscribe(listener: (state: AuthSnapshot) => void): () => void
   /** 向主进程取一次最新登录态,并保证后续状态推送已订阅 */
   hydrate(): Promise<void>
-  /** 发起网页登录(系统浏览器),不会等用户完成 */
+  /** 发起网页登录(系统浏览器),返回时浏览器已拉起,不会等用户完成 */
   startLogin(): Promise<void>
+  /** 退出登录;完成后登录态推送会变成未登录 */
+  logout?(): Promise<void>
+  /** 取消进行中的网页登录 */
+  cancelLogin?(): Promise<void>
+  /** 清掉登录失败的提示(不发 IPC) */
+  dismissLogin?(): void
+}
+
+const GENERIC_LOGIN_ERROR = '登录没有完成，请重试'
+const NETWORK_LOGIN_ERROR = '无法连接登录服务，请检查网络或代理后重试'
+const UNAVAILABLE_LOGIN_ERROR = '当前环境无法发起网页登录'
+const LOGOUT_ERROR = '退出登录失败，请重试'
+
+/**
+ * 把登录失败的原文换成给人看的一句话。
+ * `useAuthStore.startLogin` 把 IPC 的 reject 原样塞进 error
+ * (形如「Error invoking remote method 'auth:start-login': Error: net::ERR_CONNECTION_CLOSED」),
+ * 直接显示就是一串技术栈;主进程自己映射过的中文原因则原样保留。
+ */
+export function friendlyLoginError(raw: unknown): string {
+  const text = raw instanceof Error ? raw.message : typeof raw === 'string' ? raw : ''
+  const cleaned = text
+    .replace(/^Error invoking remote method '[^']*':\s*/i, '')
+    .replace(/^\w*Error:\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!cleaned) return GENERIC_LOGIN_ERROR
+  if (/net::|\bERR_[A-Z_]{3,}|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up|handshake/i.test(cleaned)) {
+    return NETWORK_LOGIN_ERROR
+  }
+  return cleaned.length > 60 ? `${cleaned.slice(0, 60)}…` : cleaned
 }
 
 export interface StartupHostDeps {
@@ -103,8 +138,15 @@ function toSnapshot(s: {
   username: string | null
   displayName: string | null
   pending: boolean
+  error: string | null
 }): AuthSnapshot {
-  return { authenticated: s.authenticated, username: s.username, displayName: s.displayName, pending: s.pending }
+  return {
+    authenticated: s.authenticated,
+    username: s.username,
+    displayName: s.displayName,
+    pending: s.pending,
+    error: s.error
+  }
 }
 
 /** 默认的登录端口:懒加载应用里现成的 useAuthStore(与登录覆盖层共用同一份状态) */
@@ -118,7 +160,10 @@ async function loadStoreAuthPort(): Promise<AuthPort | null> {
         useAuthStore.getState().ensureSubscriptions()
         await useAuthStore.getState().hydrate()
       },
-      startLogin: () => useAuthStore.getState().startLogin()
+      startLogin: () => useAuthStore.getState().startLogin(),
+      logout: () => useAuthStore.getState().logout(),
+      cancelLogin: () => useAuthStore.getState().cancelLogin(),
+      dismissLogin: () => useAuthStore.getState().dismissLogin()
     }
   } catch (err) {
     console.warn('[startup-screen] 取不到登录模块,动画里不提供网页登录入口:', err)
@@ -182,6 +227,40 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
     }
   }
 
+  /**
+   * 本轮用户点击已经发起(或接管)了一次网页登录。只有这时,登录 store 里
+   * pending / error 的变化才会推进引擎的登录闸门;平时 store 里别处(设置页等)的登录状态与动画无关。
+   */
+  let loginActive = false
+  /** `startLogin()` 调用还没返回(此刻 store 里「既没 pending 也没 error」不代表被取消) */
+  let loginStarting = false
+  /** 动画里点过登录:跳过时据此决定要不要顺手取消 / 清掉提示 */
+  let loginTouched = false
+
+  /** store 里的登录状态 → 引擎按钮上的「等待 / 出错 / 回到可点」 */
+  const syncLoginState = (s: AuthSnapshot): void => {
+    if (!handle || !loginActive) return
+    if (s.authenticated) {
+      // 引擎的 setAuthenticated(true) 已经把这一步放行,闸门状态随 hideAction 复位
+      loginActive = false
+      return
+    }
+    if (s.pending) {
+      handle.setLoginState('waiting')
+      return
+    }
+    if (s.error) {
+      loginActive = false
+      handle.setLoginState('error', friendlyLoginError(s.error))
+      return
+    }
+    if (!loginStarting) {
+      // 进行中的登录被取消了:回到可点,用户可以再点一次
+      loginActive = false
+      handle.setLoginState('idle')
+    }
+  }
+
   const applyAuth = (s: AuthSnapshot): void => {
     if (!handle) return
     handle.setAuthenticated(s.authenticated)
@@ -194,11 +273,17 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
       // 游客:缓存里的名字属于上一个登录的人,不能再当「欢迎 XXX」显示
       handle.setIdentity(FALLBACK_IDENTITY)
     }
+    syncLoginState(s)
   }
 
   const wireAuth = async (): Promise<void> => {
     const port = deps.auth !== undefined ? deps.auth : await loadStoreAuthPort()
-    if (!port || disposed || !handle) return
+    if (disposed || !handle) return
+    if (!port) {
+      // 没有登录能力(登录模块加载失败 / 显式传 null):没法登录就别拦人
+      handle.setLoginRequired(false)
+      return
+    }
     authPort = port
     unsubscribeAuth = port.subscribe(applyAuth)
     try {
@@ -216,30 +301,106 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
   let authReady: Promise<void> = Promise.resolve()
 
   /**
-   * 第 1 步的主动点击 → 与设置页「登录」按钮同一套判据:**看登录 store 此刻的真实状态**,
-   * 没登录且没有进行中的登录流程就 `startLogin()`(主进程那边负责打开系统浏览器)。
+   * 用户点了主按钮(第 1 / 2 步)→ 与设置页「登录」按钮同一套判据:**看登录 store 此刻的真实状态**。
+   *   · 已登录            → 同步给引擎,它把这一步放行;
+   *   · 已有进行中的登录   → 接管等待(不重复拉浏览器);
+   *   · 否则 `startLogin()`(主进程打开系统浏览器),引擎停在原地等 store 推回「已登录」。
+   * 失败(抛错 / 没拉起来 / store 里带 error)一律回到按钮上的错误提示,点一下重试。
    *
-   * 不看引擎事件里镜像来的 `authenticated`:那份在水合完成前恒为 null,点得比水合早就
-   * 静默什么都不发生;也不会等登录结果 —— 动画照常往下走,授权完成后登录覆盖层自己收尾。
+   * 不看引擎事件里镜像来的 `authenticated`:那份在水合完成前恒为 null。
    */
-  const startLoginIfGuest = async (): Promise<void> => {
+  const runLogin = async (): Promise<void> => {
     await authReady
-    if (disposed) return
+    if (disposed || !handle) return
+    const port = authPort
+    if (!port) {
+      // 水合期间发现没有登录能力:别把人卡在这儿
+      handle.setLoginRequired(false)
+      return
+    }
+    const before = port.getState()
+    if (before.authenticated) {
+      applyAuth(before)
+      return
+    }
+    loginTouched = true
+    loginActive = true
+    handle.setLoginState('waiting')
+    if (before.pending) return // 接管已有的登录:等 store 推送结果
+    loginStarting = true
+    try {
+      await port.startLogin()
+    } catch (err) {
+      loginStarting = false
+      loginActive = false
+      console.warn('[startup-screen] 发起网页登录失败:', err)
+      handle?.setLoginState('error', friendlyLoginError(err))
+      return
+    }
+    loginStarting = false
+    if (disposed || !handle || !loginActive) return
+    const after = port.getState()
+    if (after.authenticated || after.pending || after.error) {
+      applyAuth(after)
+    } else {
+      // 调用返回了,浏览器却没拉起来(没有登录 IPC / 被无声吞掉)
+      loginActive = false
+      handle.setLoginState('error', UNAVAILABLE_LOGIN_ERROR)
+    }
+  }
+
+  /**
+   * 第 2 步(身份确认)的「退出登录」。只退出,不自动拉浏览器:
+   * 按钮变回「网页登录验证身份」,用户再点一下重新登录(想换账号的人得先能看清自己已经退了)。
+   */
+  const runLogout = async (): Promise<void> => {
+    await authReady
+    if (disposed || !handle) return
+    const port = authPort
+    if (!port?.logout) {
+      handle.setLoginState('idle')
+      return
+    }
+    loginActive = false
+    try {
+      await port.logout()
+    } catch (err) {
+      console.warn('[startup-screen] 退出登录失败:', err)
+      handle?.setLoginState('error', LOGOUT_ERROR)
+      return
+    }
+    if (disposed || !handle) return
+    applyAuth(port.getState())
+    handle.setLoginState('idle')
+  }
+
+  /** 用户选择跳过:正在等的登录没必要留着(浏览器回调之后弹登录覆盖层很突兀),失败提示也一并清掉 */
+  const abandonLogin = (): void => {
+    if (!loginTouched) return
+    loginTouched = false
+    loginActive = false
     const port = authPort
     if (!port) return
     try {
       const s = port.getState()
-      if (s.authenticated || s.pending) return
-      await port.startLogin()
+      if (s.pending) {
+        void port.cancelLogin?.().catch((err: unknown) => {
+          console.warn('[startup-screen] 取消网页登录失败:', err)
+        })
+      } else if (s.error) {
+        port.dismissLogin?.()
+      }
     } catch (err) {
-      console.warn('[startup-screen] 发起网页登录失败:', err)
+      console.warn('[startup-screen] 收尾登录状态失败:', err)
     }
   }
 
   const onAction = (e: StartupActionEvent): void => {
-    // 只有第 1 步(授权)的点击会走到登录;第 2 步(确认身份)从不触发
-    if (e.action !== 'grant') return
-    void startLoginIfGuest()
+    if (e.action === 'logout') {
+      void runLogout()
+      return
+    }
+    void runLogin()
   }
 
   const play = async (): Promise<void> => {
@@ -261,9 +422,10 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
         authenticated: null
       },
       onAction,
-      onFinish: () => {
+      onFinish: (evt) => {
         // 跳过也算播过;播到一半被杀不会走到这里,下次启动重播
         markPlayed(storage, now())
+        if (evt?.skipped) abandonLogin()
       },
       onDone: () => {
         dropAuth()
