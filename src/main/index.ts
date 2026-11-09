@@ -42,6 +42,13 @@ import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/c
 import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
 import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
 import { renameWithRetry } from './utils/atomicFile'
+import {
+  mimeFromUrl,
+  mimeTypeToExtension,
+  readImageHead,
+  resolveFetchedImageMime,
+  sniffImageMime,
+} from './utils/imageMime'
 import { saveAudioHistoryFile, readAudioHistoryFile, deleteAudioHistoryFile } from './services/audioHistoryFiles'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
@@ -1767,18 +1774,6 @@ function generateImageHistoryKey(mimeType: string): string {
   return `image-history/${yyyy}/${mm}/${dd}/${id}.${ext}`
 }
 
-function mimeTypeToExtension(mime: string): string {
-  switch (mime) {
-    case 'image/png': return 'png'
-    case 'image/jpeg': case 'image/jpg': return 'jpg'
-    case 'image/webp': return 'webp'
-    case 'image/gif': return 'gif'
-    case 'image/avif': return 'avif'
-    case 'image/heic': return 'heic'
-    default: return 'bin'
-  }
-}
-
 /**
  * IPC base64 → Buffer 输入硬上限 (round-5 安全加固)。
  *
@@ -1856,16 +1851,6 @@ async function enqueueUpload(
   } finally {
     release()
   }
-}
-
-function mimeFromUrl(url: string, fallback = 'image/png'): string {
-  const lower = url.split('?')[0]?.toLowerCase() ?? ''
-  if (lower.endsWith('.png')) return 'image/png'
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
-  if (lower.endsWith('.webp')) return 'image/webp'
-  if (lower.endsWith('.gif')) return 'image/gif'
-  if (lower.endsWith('.avif')) return 'image/avif'
-  return fallback
 }
 
 ipcMain.handle(
@@ -2062,7 +2047,11 @@ ipcMain.handle(
               broadcastUploadResult({ requestId, success: false, error: buffered.error })
               return
             }
-            const fallbackMime = hintMime || buffered.contentType || mimeFromUrl(sourceUrl)
+            const fallbackMime = resolveFetchedImageMime(
+              buffered.contentType,
+              hintMime && hintMime.startsWith('image/') ? hintMime : mimeFromUrl(sourceUrl),
+              buffered.body,
+            )
             const fallbackKey = generateImageHistoryKey(fallbackMime)
             const fallbackUrl = await uploadBufferToBucket({
               bucket: IMAGE_HISTORY_BUCKET,
@@ -2083,8 +2072,16 @@ ipcMain.handle(
           }
 
           localPath = fetched.path
-          const actual = fetched.contentType?.split(';')[0]?.trim()
-          if (actual && actual.startsWith('image/') && actual !== mimeType) {
+          // 响应头是 image/* 就信头;头缺失 / octet-stream(apiyi 的无扩展名链接常见)
+          // 才看文件头字节 —— 否则 SVG / GIF 会被当 .png 落盘并以 image/png 上传。
+          const actual = resolveFetchedImageMime(
+            fetched.contentType,
+            mimeType,
+            fetched.contentType?.split(';')[0]?.trim().toLowerCase().startsWith('image/')
+              ? new Uint8Array(0)
+              : await readImageHead(fetched.path),
+          )
+          if (actual !== mimeType) {
             mimeType = actual
             const corrected = generatedImagePath(requestId, mimeType)
             await renameWithRetry(fetched.path, corrected)
@@ -2249,7 +2246,7 @@ ipcMain.handle(
         return { success: false, error: 'empty body after fetch' }
       }
       if (!mimeType.startsWith('image/')) {
-        mimeType = mimeFromUrl(sourceUrl)
+        mimeType = sniffImageMime(body) ?? mimeFromUrl(sourceUrl)
       }
 
       const key = generateImageHistoryKey(mimeType)

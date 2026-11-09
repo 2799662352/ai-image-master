@@ -848,12 +848,15 @@ describe('ApiService mask 门:腾讯 og-v2 / image2 仍早失败', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('MASK_INPAINT_MODELS 正好是官转 / vip / 2.5 四条 + 腾讯 2.5 两条 + 腾讯 2.6 两条', async () => {
+  it('MASK_INPAINT_MODELS 正好是 gpt-image-2 / vip + 官转 2.5 / 2.6 各两条 + 腾讯 2.5 两条 + 腾讯 2.6 两条', async () => {
     const { MASK_INPAINT_MODELS } = await import('../ApiService')
     expect([...MASK_INPAINT_MODELS].sort()).toEqual(
       [
         'gpt-image-2',
         'gpt-image-2-vip',
+        // apiyi 官转 2.6:2026-11-09 flare / sunburst 各实测一次 mask 擦除(见 MASK_INPAINT_MODELS 注释)
+        'gpt-image-2.6-flare',
+        'gpt-image-2.6-sunburst',
         'gpt-image-2.5-flare',
         'gpt-image-2.5-sunburst',
         'custom-model-og-v2.5-f',

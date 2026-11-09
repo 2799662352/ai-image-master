@@ -55,7 +55,7 @@ export interface ImageChannel {
  * 顺序按产品要求:Seedream 5.0 Pro → 腾讯 ×6(image2 / fast / 2.5 Flare / 2.5 Sunburst / 2.6 Flare / 2.6 Sunburst)
  * → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2(v8.2 快速 / 极速)
  * → NovelAI ×4(V5 Full / V5 Curated / V4.5 Full / V4.5 Curated)
- * → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
+ * → Image 2.6 官转(flare / sunburst) → Image 2.5 官转(flare / sunburst / all) → Image2 官方 → VIP。
  * 默认渠道是腾讯 2.6 Sunburst(`DEFAULT_IMAGE_CHANNEL_ID`)—— 顺序只影响显示,不改变回落目标。
  * 不收 `gpt-image-2.5-vip`(不稳定,用户明确不接)。
  */
@@ -208,6 +208,31 @@ export const IMAGE_CHANNELS = [
     fullLabel: 'NovelAI V4.5 Curated',
     description: 'NovelAI V4.5 Curated 动漫插画 — 能力同 V4.5 Full（角色提示词、图生图，无透明底），一次最多 4 张，经 Miau 代理按张计费。',
     miauOnly: true,
+  },
+  {
+    // apiyi 官转的 GPT Image 2.6(2026-11-04 发布;Miau 后台已接 apiyi 渠道,2026-11-09 实测可用)。
+    // 与上面腾讯 og-image 的 2.6 是同一个模型、不同的线:这两条走 OpenAI 官方协议
+    // (`b.apiyi.com` / Miau 网关),按 token 计费。token 量与腾讯 2.6 同一把梯子
+    // (1024²:low 824 / medium 1449 / high 1758);对 2.5 官转(约 200 / 439 / 1756)
+    // 只有 high 档接近,low / medium 更高 —— 所以档位说明里不放 2.5 的美元价。
+    // 实测(Miau 网关):文生图 / n=2 / 透明底 / 改图 + mask 擦除可用,结果是 `url`(不是 b64,
+    // 且没有扩展名,落盘后缀要靠响应头 / 文件头判断)。new-api #197 之后 GIF(frame_count /
+    // frame_duration_ms)与 SVG(svg.model)不开透传也能到上游,GIF 帧数 / 时长实测生效、SVG 出
+    // 合法矢量;SVG 写手模型的费用上游不回传(只按出图 token 计费)。
+    // **不承诺**:complexity(上游静默忽略,测不出是否生效)、markup(实测不生效,原因未明)。
+    // 见 `shared/imageModelParams` 的 `GPT_IMAGE_26_PARAM_SPECS` 与 `ApiService` 里 2.6 官转配置处。
+    id: 'gpt-image-2.6-flare',
+    label: '2.6 Flare',
+    fullLabel: 'GPT Image 2.6 Flare',
+    description: 'OpenAI 官转 2.6·速度优先 — 按 token 计费，一次 1–4 张；可走平台额度（Miau 接 apiyi）。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2.6-sunburst',
+    label: '2.6 Sunburst',
+    fullLabel: 'GPT Image 2.6 Sunburst',
+    description: 'OpenAI 官转 2.6·画质优先 — 复杂布局 / 精细文字 / 精确改图，按 token 计费，一次 1–4 张；可走平台额度（Miau 接 apiyi）。',
+    miauOnly: false,
   },
   {
     id: 'gpt-image-2.5-flare',

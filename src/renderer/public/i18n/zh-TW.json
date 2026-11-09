@@ -1259,6 +1259,14 @@
       "name": "SeeDream 4.5",
       "displayName": "15s出圖，即夢海外版seedream-4-5-251128，超清生圖編輯，支援2K/4K解析度，支援URL與Base64輸出, $0.045/張"
     },
+    "gpt-image-2.6-flare": {
+      "name": "GPT Image 2.6 Flare",
+      "displayName": "OpenAI 官轉 2.6·速度優先，可走平台額度，按 token 計費，文生圖首選"
+    },
+    "gpt-image-2.6-sunburst": {
+      "name": "GPT Image 2.6 Sunburst",
+      "displayName": "OpenAI 官轉 2.6·畫質優先，可走平台額度，複雜版面/精細文字/精確改圖，按 token 計費"
+    },
     "gpt-image-2.5-flare": {
       "name": "GPT Image 2.5 Flare",
       "displayName": "20s，OpenAI 官轉·速度優先，畫質≈gpt-image-2 但快一半，按 token 計費，文生圖首選"

@@ -34,8 +34,12 @@ const DEFAULT_THUMB_SIZE = 512
 /**
  * 数据万象只认图片;对其它对象它不报错而是原样吐回整个文件。按 key 的扩展名把
  * 非图片挡在外面 —— 没有扩展名的 key(少见)按图片放行,交给 ignore-error。
+ *
+ * `svg` 也在里面:它是矢量文本,不是万象基础图片处理的输入格式(`cosThumbRules` 也不给它下
+ * 持久化规则)。GPT Image 2.6 官转的 SVG 输出就是这类对象 —— 读侧直接用原图地址,
+ * 浏览器自己缩放,不去试一个必然落空的缩略图候选。
  */
-const NON_IMAGE_KEY = /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|m4a|aac|ogg|flac|pdf|zip|json|ya?ml|txt|md|csv|bin)$/i
+const NON_IMAGE_KEY = /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|m4a|aac|ogg|flac|pdf|zip|json|ya?ml|txt|md|csv|bin|svg)$/i
 
 function isImageObjectKey(url: string): boolean {
   const path = url.split(/[?#]/, 1)[0]

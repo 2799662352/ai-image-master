@@ -85,14 +85,18 @@ export const IMAGE_CHANNEL_PLACEMENT: Readonly<Record<string, ChannelPlacement>>
   'gemini-nano-banana-2.1': featured(6, GEMINI_SERIES, '图中文字、多轮改图一致性更好'),
   'wan2.7-image-pro': featured(7, ALIBABA_SERIES, '阿里万相，超清 / 组图'),
 
+  // 2.6 官转:Sunburst 是常用里默认渠道(腾讯 2.6 Sunburst)的官转同款,进备用;Flare 的腾讯同款
+  // (og-v2.6-f)不在常用里,没有可指的 backupOf,只在「按系列」里。
+  'gpt-image-2.6-sunburst': backup('custom-model-og-v2.6-s', '官转', GPT_SERIES, 'OpenAI 官转同款，画质 / 改图精度优先，可出透明底'),
   'gpt-image-2.5-flare': backup('custom-model-og-v2.5-f', '官转', GPT_SERIES, 'OpenAI 官转同款，按 token 计费，可出透明底'),
   'gpt-image-2.5-sunburst': backup('custom-model-og-v2.5-s', '官转', GPT_SERIES, 'OpenAI 官转同款，更锐、改图更稳，可出透明底'),
 
   'custom-model-og-v2': more(GPT_SERIES, '约 20 秒，比 image2 便宜近 6 倍，可出多张'),
-  // 2.6(含上面常用里的 Sunburst)不写 priceHint:同档位 token 约为 2.5 的 4.16 倍,不能照抄
-  // 2.5 的价格口径(只有确认过的才给量级)。用户 2026-11-06 明确要求界面里「不用提示贵」,
+  // 2.6(含上面常用里的 Sunburst)不写 priceHint:low 档 token 约为 2.5 的 4.16 倍(high 档接近),
+  // 不能照抄 2.5 的价格口径(只有确认过的才给量级)。用户 2026-11-06 明确要求界面里「不用提示贵」,
   // 所以 hint 里也不写价格警示 —— 有测试守着,别又加回来。
   'custom-model-og-v2.6-f': more(GPT_SERIES, '腾讯 2.6 Flare，速度优先，一次 1–4 张'),
+  'gpt-image-2.6-flare': more(GPT_SERIES, 'OpenAI 官转 2.6 Flare，速度优先，一次 1–4 张，可出透明底'),
   'gpt-image-2.5-all': more(GPT_SERIES, 'ChatGPT 网页逆向，约 60 秒，尺寸写进提示词'),
   'gpt-image-2': more(GPT_SERIES, '上一代官转，已被 2.5 同价取代'),
   'gpt-image-2-vip': more(GPT_SERIES, '官逆稳定，仅点名 VIP 时用'),
