@@ -2,37 +2,21 @@
 import { test, expect } from './fixtures/electron'
 
 /**
- * 辅助函数：跳过 Intro 视频（如果存在）
- * 尝试多种方式跳过加载界面
+ * 辅助函数：跳过启动开场动画（如果存在）
+ * 全新用户数据目录下每次都会播完整版（每天首次启动才播）；Esc / 右下角「跳过」都能结束它。
  */
 async function skipIntroIfPresent(page: import('@playwright/test').Page): Promise<void> {
   // 方法1: 点击跳过按钮
-  const skipBtn = page.locator('#skipIntroBtn')
+  const skipBtn = page.locator('#cat-startup-root .dsu-skip')
   if (await skipBtn.count() > 0 && await skipBtn.isVisible()) {
     await skipBtn.click().catch(() => {})
     await page.waitForTimeout(500)
     return
   }
-  
-  // 方法2: 点击进入按钮
-  const enterBtn = page.locator('#enterBtn')
-  if (await enterBtn.count() > 0 && await enterBtn.isVisible()) {
-    await enterBtn.click().catch(() => {})
-    await page.waitForTimeout(500)
-    return
-  }
-  
-  // 方法3: 按 Escape 键跳过
+
+  // 方法2: 按 Escape 键跳过（跳过按钮还没出现、或已经没有开场时无害）
   await page.keyboard.press('Escape').catch(() => {})
   await page.waitForTimeout(300)
-  
-  // 方法4: 调用 skipIntro 函数（如果存在）
-  await page.evaluate(() => {
-    const w = window as any
-    if (w.introVideoController?.skipIntro) {
-      w.introVideoController.skipIntro()
-    }
-  }).catch(() => {})
 }
 
 /**
