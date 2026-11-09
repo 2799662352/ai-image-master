@@ -17,23 +17,6 @@
             align-items: center;
             justify-content: center;
         }
-        .loader-content {
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            gap: 1rem;
-        }
-        .loader-spinner {
-            width: 48px;
-            height: 48px;
-            border: 3px solid rgba(252, 227, 0, 0.2);
-            border-top-color: #FCE300;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .loader-text { color: #FCE300; font-size: 1.25rem; font-weight: bold; }
-        .loader-subtitle { color: rgba(255,255,255,0.5); font-size: 0.875rem; }
         .main-content { display: none; }
         /* 加载完成后显示主内容 */
         .main-content.loaded { display: block !important; }
@@ -223,76 +206,6 @@
             visibility: hidden;
         }
         
-        /* 加载中的转圈(开场动画之外的所有启动都用它) */
-        .loader-content {
-            text-align: center;
-            color: white;
-            z-index: 5;
-            display: none;
-        }
-        
-        .loader-content.active {
-            display: block;
-        }
-        
-        .loader-spinner {
-            width: 60px;
-            height: 60px;
-            border: 3px solid rgba(252, 227, 0, 0.2);
-            border-top: 3px solid #FCE300;
-            border-right: 3px solid #00FFFF;
-            border-radius: 0;
-            animation: spinCyber 1s linear infinite;
-            margin: 0 auto 24px;
-            box-shadow: 0 0 20px rgba(252, 227, 0, 0.3);
-        }
-        
-        .loader-text {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            color: #FCE300;
-            text-shadow: 0 0 10px #FCE300;
-            letter-spacing: 4px;
-        }
-        
-        .loader-subtitle {
-            font-family: 'Exo 2', sans-serif;
-            font-size: 14px;
-            opacity: 0.8;
-            margin-bottom: 20px;
-            color: #00FFFF;
-            letter-spacing: 2px;
-        }
-        
-        .loader-progress {
-            width: 300px;
-            height: 3px;
-            background: rgba(252, 227, 0, 0.2);
-            border-radius: 0;
-            overflow: hidden;
-            margin: 0 auto;
-        }
-        
-        .loader-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #00FFFF, #FCE300, #FF00FF);
-            width: 0%;
-            animation: loadProgress 2s ease-in-out infinite;
-            box-shadow: 0 0 10px #FCE300;
-        }
-        
-        @keyframes loadProgress {
-            0% { width: 0%; }
-            50% { width: 70%; }
-            100% { width: 100%; }
-        }
-        
-        @keyframes spinCyber {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
         
         /* 渐进式显示动画 */
         .animate-fade-in {
@@ -598,18 +511,9 @@
     -->
 </head>
 <body class="min-h-screen gradient-bg">
-    <!-- 加载页:只放转圈。开场动画由 features/startup-screen 在其上方叠加,
+    <!-- 加载页:只是一层深色底,不放任何文字 / 转圈(开场动画由 features/startup-screen 在其上方叠加)。
          应用就绪后由它统一揭幕(给 #pageLoader / #mainContent 加 loaded) -->
-    <div class="page-loader" id="pageLoader">
-        <div class="loader-content active" id="fallbackLoader">
-            <div class="loader-spinner"></div>
-            <div class="loader-text" data-i18n="common.appName">CATIMATION-Cyberpunk Master</div>
-            <div class="loader-subtitle" data-i18n="common.loading">LOADING NIGHT CITY...</div>
-            <div class="loader-progress">
-                <div class="loader-progress-bar"></div>
-            </div>
-        </div>
-    </div>
+    <div class="page-loader" id="pageLoader"></div>
 
         <!-- 主要内容 -->
     <div class="main-content" id="mainContent">

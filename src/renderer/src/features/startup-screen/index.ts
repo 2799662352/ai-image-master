@@ -19,7 +19,7 @@ import type {
   StartupEngineOptions,
   StartupScreenHandle
 } from './engineTypes'
-import { markPlayed, readPrefs, shouldPlay, type StorageLike } from './startupGate'
+import { markPlayed, readPrefs, shouldPlay, type StartupMode, type StorageLike } from './startupGate'
 import { FALLBACK_IDENTITY, pickIdentityName, readCachedIdentity, writeCachedIdentity } from './startupIdentity'
 
 export type { StartupEngineModule } from './engineTypes'
@@ -53,6 +53,16 @@ export interface StartupHostDeps {
   assetBase?: string
   /** appReady 迟迟不来时的揭幕封顶(默认 15 s) */
   revealTimeoutMs?: number
+  /**
+   * 存档里没有(合法的)mode 时用什么。默认 'daily'(每天第一次)。
+   * 存档里明确写过的 mode 优先于它。
+   */
+  defaultMode?: StartupMode
+  /**
+   * 调试用:压过存档里的一切(含 off、旧版本写进去的 daily),每次启动都按它走。
+   * 不会写回存档,所以去掉这个参数就立刻恢复成存档 / 默认的行为。
+   */
+  forceMode?: StartupMode
 }
 
 export interface StartupHost {
@@ -202,19 +212,34 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
     applyAuth(port.getState())
   }
 
-  const onAction = (e: StartupActionEvent): void => {
-    // 只有游客在第 1 步的主动点击才发起登录;第 2 步、已登录、状态未知都不动
-    if (e.action !== 'grant' || e.authenticated !== false) return
+  /** 水合收尾(成功、失败、没有登录模块都算收尾);点击要等它,才知道此刻是不是游客 */
+  let authReady: Promise<void> = Promise.resolve()
+
+  /**
+   * 第 1 步的主动点击 → 与设置页「登录」按钮同一套判据:**看登录 store 此刻的真实状态**,
+   * 没登录且没有进行中的登录流程就 `startLogin()`(主进程那边负责打开系统浏览器)。
+   *
+   * 不看引擎事件里镜像来的 `authenticated`:那份在水合完成前恒为 null,点得比水合早就
+   * 静默什么都不发生;也不会等登录结果 —— 动画照常往下走,授权完成后登录覆盖层自己收尾。
+   */
+  const startLoginIfGuest = async (): Promise<void> => {
+    await authReady
+    if (disposed) return
     const port = authPort
     if (!port) return
     try {
-      if (port.getState().pending) return
-      void Promise.resolve(port.startLogin()).catch((err: unknown) => {
-        console.warn('[startup-screen] 发起网页登录失败:', err)
-      })
+      const s = port.getState()
+      if (s.authenticated || s.pending) return
+      await port.startLogin()
     } catch (err) {
       console.warn('[startup-screen] 发起网页登录失败:', err)
     }
+  }
+
+  const onAction = (e: StartupActionEvent): void => {
+    // 只有第 1 步(授权)的点击会走到登录;第 2 步(确认身份)从不触发
+    if (e.action !== 'grant') return
+    void startLoginIfGuest()
   }
 
   const play = async (): Promise<void> => {
@@ -252,10 +277,12 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
       console.warn('[startup-screen] 启动动画创建失败:', err)
       return
     }
-    void wireAuth()
+    authReady = wireAuth().catch((err: unknown) => {
+      console.warn('[startup-screen] 登录态接线失败:', err)
+    })
   }
 
-  if (shouldPlay(readPrefs(storage), now())) {
+  if (shouldPlay(readPrefs(storage, deps.defaultMode, deps.forceMode), now())) {
     void play()
   }
 

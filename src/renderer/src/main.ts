@@ -94,7 +94,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 启动开场动画 + 揭幕。必须最先挂上:它要监听后面 bootstrap 发出的 appReady。
   // 失败只记日志,不能挡住应用启动(揭幕有 15 秒兜底)。
   try {
-    initStartupScreen()
+    // 调试阶段(pnpm dev)每次启动都播,方便反复看;安装包仍是每天第一次。
+    // forceMode 压过 localStorage 里的存档(含旧版本写进去的 daily),且不写回存档。
+    initStartupScreen(import.meta.env.DEV ? { forceMode: 'always' } : {})
   } catch (error) {
     console.warn('[main.ts] 启动开场初始化失败,直接进入应用:', error)
   }

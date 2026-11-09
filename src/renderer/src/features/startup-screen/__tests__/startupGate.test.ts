@@ -39,6 +39,33 @@ describe('readPrefs', () => {
     expect(readPrefs(memoryStorage())).toEqual({ mode: 'daily', lastPlayedDay: null })
   })
 
+  it('没有存档时用调用方给的默认 mode;存档里明确写过的 mode 优先于默认', () => {
+    expect(readPrefs(memoryStorage(), 'always')).toEqual({ mode: 'always', lastPlayedDay: null })
+    const off = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'off' }) })
+    expect(readPrefs(off, 'always').mode).toBe('off')
+    // 存档只有日期、没写 mode(markPlayed 的产物)→ 仍用默认
+    const dayOnly = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ lastPlayedDay: '2026-11-08' }) })
+    expect(readPrefs(dayOnly, 'always')).toEqual({ mode: 'always', lastPlayedDay: '2026-11-08' })
+    // 不合法的 mode 一样回落到默认
+    const bad = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'sometimes' }) })
+    expect(readPrefs(bad, 'always').mode).toBe('always')
+    // 取不到 storage 时也用默认
+    expect(readPrefs(undefined, 'always').mode).toBe('always')
+  })
+
+  it('forceMode 压过存档里的一切:daily 今天播过、off、脏数据都照样按它走;日期仍照读', () => {
+    const playedToday = memoryStorage({
+      [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'daily', lastPlayedDay: '2026-11-09' }),
+    })
+    expect(readPrefs(playedToday, 'daily', 'always')).toEqual({ mode: 'always', lastPlayedDay: '2026-11-09' })
+    const off = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'off' }) })
+    expect(readPrefs(off, 'daily', 'always').mode).toBe('always')
+    expect(readPrefs(memoryStorage({ [STARTUP_STORAGE_KEY]: '{{坏' }), 'daily', 'always').mode).toBe('always')
+    expect(readPrefs(undefined, 'daily', 'always').mode).toBe('always')
+    // 不传 forceMode 时行为不变
+    expect(readPrefs(playedToday, 'daily', undefined).mode).toBe('daily')
+  })
+
   it('读出合法存档', () => {
     const s = memoryStorage({
       [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'always', lastPlayedDay: '2026-11-08' }),
@@ -142,10 +169,26 @@ describe('markPlayed', () => {
     expect(JSON.parse(s.data[STARTUP_STORAGE_KEY])).toEqual({ mode: 'always', lastPlayedDay: '2026-11-09' })
   })
 
-  it('没有存档时按默认 mode 写', () => {
+  it('没有存档时只写日期,不把默认 mode 固化进存档', () => {
     const s = memoryStorage()
     markPlayed(s, at('2026-11-09T09:00:00'))
-    expect(JSON.parse(s.data[STARTUP_STORAGE_KEY])).toEqual({ mode: 'daily', lastPlayedDay: '2026-11-09' })
+    expect(JSON.parse(s.data[STARTUP_STORAGE_KEY])).toEqual({ lastPlayedDay: '2026-11-09' })
+  })
+
+  it('存档里的 mode 不合法时也不固化(当作没写过)', () => {
+    const s = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'sometimes' }) })
+    markPlayed(s, at('2026-11-09T09:00:00'))
+    expect(JSON.parse(s.data[STARTUP_STORAGE_KEY])).toEqual({ lastPlayedDay: '2026-11-09' })
+  })
+
+  it('调试默认 always:播完后下次启动仍然要播(默认不会被存档固化成 daily)', () => {
+    const s = memoryStorage()
+    const now = at('2026-11-09T09:00:00')
+    expect(shouldPlay(readPrefs(s, 'always'), now)).toBe(true)
+    markPlayed(s, now)
+    expect(shouldPlay(readPrefs(s, 'always'), now)).toBe(true)
+    // 同一份存档按正式版默认读,当天不再播
+    expect(shouldPlay(readPrefs(s), now)).toBe(false)
   })
 
   it('写入后 readPrefs + shouldPlay 当天返回 false(闭环)', () => {

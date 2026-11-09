@@ -986,6 +986,53 @@ describe('auth IPC 编排', () => {
     expect(results).toEqual([])
   })
 
+  // **实机撞到(启动画面点「网页登录授权」):** 渲染层 `Error invoking remote method
+  // 'auth:start-login': TypeError: Cannot read properties of null (reading 'listener')`。
+  // `openExternal` 是个 await —— 浏览器已经打开了,这期间用户在渲染层按 Esc / 点取消
+  // (登录覆盖层的 Esc 就是 cancelLogin),`clearPending()` 把模块级 `pending` 置空,
+  // 之后 `detachWaitAndClaim(getWindow, pending)` 读到的就是 null。
+  // 取消不是错误:应当照常返回(浏览器确实打开过),不能把一个裸 TypeError 甩给渲染层 ——
+  // 渲染层会把它原样当文案、盖一块「错误」覆盖层。
+  it('openExternal 期间被取消:正常返回,不抛 TypeError,也不再挂等码', async () => {
+    startPairing.mockResolvedValue(OK_START)
+    listener.waitForCode.mockReturnValue(new Promise(() => {}))
+    openExternal.mockImplementationOnce(async () => {
+      await call('auth:cancel-login')
+    })
+    await register()
+
+    const r = await call('auth:start-login')
+    await flush()
+
+    expect(r).toEqual({ authorizeUrl: OK_START.authorizeUrl, expiresIn: 300 })
+    // 监听器已被取消关掉,不该再去挂一个对着已关端口的等码。
+    expect(listener.waitForCode).not.toHaveBeenCalled()
+    expect(sent.filter((s) => s.channel === 'auth:login-result')).toEqual([])
+    // 取消之后没有 pending:submit-code 必须报错。
+    await expect(call('auth:submit-code', 'x')).rejects.toThrow()
+  })
+
+  // 同一道缝的另一种打法:await 期间又来了一次 start-login(双击 / 重试)。
+  // 第二轮拥有 pending,第一轮不该再替它挂等码,更不该抛。
+  it('openExternal 期间被新一轮 start-login 顶掉:前一轮正常返回,只有新一轮挂等码', async () => {
+    startPairing.mockResolvedValue(OK_START)
+    listener.waitForCode.mockReturnValue(new Promise(() => {}))
+    let second: Promise<unknown> | undefined
+    openExternal.mockImplementationOnce(async () => {
+      second = call('auth:start-login') as Promise<unknown>
+      await second
+    })
+    await register()
+
+    const first = await call('auth:start-login')
+    await flush()
+
+    expect(first).toEqual({ authorizeUrl: OK_START.authorizeUrl, expiresIn: 300 })
+    await expect(second).resolves.toEqual({ authorizeUrl: OK_START.authorizeUrl, expiresIn: 300 })
+    expect(listener.waitForCode).toHaveBeenCalledTimes(1)
+    expect(sent.filter((s) => s.channel === 'auth:login-result')).toEqual([])
+  })
+
   it('重复 start-login 先关掉上一个监听器,不泄漏端口', async () => {
     startPairing.mockResolvedValue(OK_START)
     listener.waitForCode.mockReturnValue(new Promise(() => {}))

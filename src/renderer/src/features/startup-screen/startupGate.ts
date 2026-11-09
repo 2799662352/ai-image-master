@@ -1,7 +1,10 @@
 /**
  * 启动动画「今天要不要播」的判定。
  *
- * 规则(用户拍板):每天第一次启动播完整版,当天其余启动直接进入。
+ * 规则(用户拍板):正式版每天第一次启动播完整版,当天其余启动直接进入。
+ * 调试阶段(`pnpm dev`)由宿主传入 `defaultMode: 'always'` 每次都播;**默认值只在存档里没有
+ * 合法 `mode` 时生效,且 `markPlayed` 永远不会把它冻进存档** —— 否则开发版跑一次就把「每天一次」
+ * 写死,之后再改默认也不会重播。存档里显式写了 `mode` 的(手改 / 旧版本写过的)始终优先。
  * - 「一天」按**本地日历日期**算,不是 UTC —— 上游原实现用 `toISOString().slice(0,10)`,
  *   在 UTC+8 的机器上凌晨 0–8 点会算成「前一天」,于是 00:30 播过之后 08:01 又被当成新的一天再播一次。
  * - 存档是不可信输入(用户可手改 localStorage、版本升级可能换结构),读出来一律清洗。
@@ -24,7 +27,8 @@ export interface StorageLike {
   setItem(key: string, value: string): void
 }
 
-const DEFAULT_PREFS: StartupPrefs = { mode: 'daily', lastPlayedDay: null }
+/** 正式版默认:每天第一次启动播完整版 */
+export const DEFAULT_MODE: StartupMode = 'daily'
 
 const MODES: readonly StartupMode[] = ['daily', 'always', 'off']
 
@@ -48,28 +52,50 @@ function isValidDay(v: unknown): v is string {
   return probe.getFullYear() === y && probe.getMonth() === mo - 1 && probe.getDate() === d
 }
 
-export function readPrefs(storage: StorageLike | undefined): StartupPrefs {
-  if (!storage) return { ...DEFAULT_PREFS }
+/** 存档里**明确写过**的内容:mode 没写 / 不合法 = null(默认值不属于存档) */
+interface StoredPrefs {
+  mode: StartupMode | null
+  lastPlayedDay: string | null
+}
+
+const EMPTY_STORED: StoredPrefs = { mode: null, lastPlayedDay: null }
+
+function readStored(storage: StorageLike | undefined): StoredPrefs {
+  if (!storage) return { ...EMPTY_STORED }
   let raw: string | null
   try {
     raw = storage.getItem(STARTUP_STORAGE_KEY)
   } catch {
-    return { ...DEFAULT_PREFS }
+    return { ...EMPTY_STORED }
   }
-  if (!raw) return { ...DEFAULT_PREFS }
+  if (!raw) return { ...EMPTY_STORED }
 
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
-    return { ...DEFAULT_PREFS }
+    return { ...EMPTY_STORED }
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...DEFAULT_PREFS }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...EMPTY_STORED }
 
   const rec = parsed as Record<string, unknown>
-  const mode = MODES.includes(rec.mode as StartupMode) ? (rec.mode as StartupMode) : DEFAULT_PREFS.mode
+  const mode = MODES.includes(rec.mode as StartupMode) ? (rec.mode as StartupMode) : null
   const lastPlayedDay = isValidDay(rec.lastPlayedDay) ? rec.lastPlayedDay : null
   return { mode, lastPlayedDay }
+}
+
+/**
+ * @param defaultMode 存档里没有(合法的)mode 时用它,默认 'daily'。
+ * @param forceMode 给了就**压过存档里的一切**(包括 off / 旧版本写进去的 daily),只用于
+ *   调试版「每次启动都过一遍」。它只影响这一次读取,不会写回存档。
+ */
+export function readPrefs(
+  storage: StorageLike | undefined,
+  defaultMode: StartupMode = DEFAULT_MODE,
+  forceMode?: StartupMode
+): StartupPrefs {
+  const stored = readStored(storage)
+  return { mode: forceMode ?? stored.mode ?? defaultMode, lastPlayedDay: stored.lastPlayedDay }
 }
 
 export function shouldPlay(prefs: StartupPrefs, now: Date): boolean {
@@ -83,8 +109,12 @@ export function shouldPlay(prefs: StartupPrefs, now: Date): boolean {
 export function markPlayed(storage: StorageLike | undefined, now: Date): void {
   if (!storage) return
   try {
-    const prefs = readPrefs(storage)
-    const next: StartupPrefs = { mode: prefs.mode, lastPlayedDay: localDay(now) }
+    // 只把存档里明确写过的 mode 带回去:默认值(正式版 daily / 调试版 always)不能被固化进存档,
+    // 否则第一次播完就把「默认」变成了「用户选的」,之后再改默认也不生效。
+    const stored = readStored(storage)
+    const next = stored.mode
+      ? { mode: stored.mode, lastPlayedDay: localDay(now) }
+      : { lastPlayedDay: localDay(now) }
     storage.setItem(STARTUP_STORAGE_KEY, JSON.stringify(next))
   } catch {
     // 存不了档就算了:最坏是当天再播一次

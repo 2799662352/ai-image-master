@@ -135,6 +135,23 @@ describe('initStartupScreen', () => {
       expect(b.engine.createStartupScreen).toHaveBeenCalledTimes(1)
     })
 
+    it('forceMode=always(调试版):存档说「今天播过 / off」也照播,且不把 always 写进存档', async () => {
+      const playedToday = memoryStorage({
+        [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'daily', lastPlayedDay: '2026-11-09' }),
+      })
+      const a = start({ storage: playedToday, forceMode: 'always' })
+      await flush()
+      expect(a.engine.createStartupScreen).toHaveBeenCalledTimes(1)
+      a.engine.calls[0].onFinish?.({ skipped: false })
+      // 存档仍是用户 / 旧版本留下的样子,没被强制值污染
+      expect(JSON.parse(playedToday.dump()[STARTUP_STORAGE_KEY])).toEqual({ mode: 'daily', lastPlayedDay: '2026-11-09' })
+
+      const off = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'off', lastPlayedDay: null }) })
+      const b = start({ storage: off, forceMode: 'always' })
+      await flush()
+      expect(b.engine.createStartupScreen).toHaveBeenCalledTimes(1)
+    })
+
     it('开播时不记「已播」;播完(onFinish)才记,且保留 mode', async () => {
       const storage = memoryStorage({ [STARTUP_STORAGE_KEY]: JSON.stringify({ mode: 'daily', lastPlayedDay: '2026-11-01' }) })
       const { engine } = start({ storage })
@@ -305,17 +322,64 @@ describe('initStartupScreen', () => {
       expect(engine.createStartupScreen).toHaveBeenCalledTimes(1)
     })
 
+    // 登录与否的判据是「登录 store 此刻的真实状态」,与设置页「登录」按钮同一套
+    // (`!authenticated` → startLogin),**不是**引擎事件里镜像来的 `authenticated`:
+    // 那份在水合完成前恒为 null,点早了就静默什么都不发生(「网页登录你得跳转呀」)。
     it('第 1 步点「网页登录」:游客 → 发起网页登录一次', async () => {
       const { engine, auth } = start()
       await flush()
       engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
       expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
     })
 
-    it('已登录点第 1 步:不发起登录', async () => {
+    it('点得比水合还早(引擎里登录态还是未知 null):等水合完成,按 store 真实状态发起登录', async () => {
+      const auth = fakeAuth()
+      let release!: () => void
+      vi.mocked(auth.port.hydrate).mockImplementation(
+        () => new Promise<undefined>((res) => { release = () => res(undefined) })
+      )
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: null })
+      await flush()
+      // 水合没回来之前不能凭空判断是不是游客
+      expect(auth.port.startLogin).not.toHaveBeenCalled()
+      release()
+      await flush()
+      expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
+    })
+
+    it('点得比水合还早、而水合出来发现已登录:不发起登录', async () => {
+      const auth = fakeAuth()
+      let release!: () => void
+      vi.mocked(auth.port.hydrate).mockImplementation(
+        () => new Promise<undefined>((res) => { release = () => res(undefined) })
+      )
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: null })
+      auth.push({ authenticated: true, displayName: 'Trinity' })
+      release()
+      await flush()
+      expect(auth.port.startLogin).not.toHaveBeenCalled()
+    })
+
+    it('引擎事件说是游客、但 store 已经是登录态:以 store 为准,不发起登录', async () => {
       const { engine, auth } = start()
       await flush()
+      auth.push({ authenticated: true, displayName: 'Trinity' })
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(auth.port.startLogin).not.toHaveBeenCalled()
+    })
+
+    it('已登录点第 1 步:不发起登录', async () => {
+      const auth = fakeAuth({ authenticated: true, displayName: 'Trinity' })
+      const { engine } = start({ auth: auth.port })
+      await flush()
       engine.calls[0].onAction?.({ action: 'grant', authenticated: true })
+      await flush()
       expect(auth.port.startLogin).not.toHaveBeenCalled()
     })
 
@@ -323,6 +387,7 @@ describe('initStartupScreen', () => {
       const { engine, auth } = start()
       await flush()
       engine.calls[0].onAction?.({ action: 'confirm', authenticated: false })
+      await flush()
       expect(auth.port.startLogin).not.toHaveBeenCalled()
     })
 
@@ -331,6 +396,34 @@ describe('initStartupScreen', () => {
       const { engine } = start({ auth: auth.port })
       await flush()
       engine.calls[0].onAction?.({ action: 'grant', authenticated: false })
+      await flush()
+      expect(auth.port.startLogin).not.toHaveBeenCalled()
+    })
+
+    it('水合失败(没有 Electron preload):仍按 store 当前状态处理,不吞掉点击', async () => {
+      const auth = fakeAuth()
+      vi.mocked(auth.port.hydrate).mockRejectedValue(new Error('no ipc'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: null })
+      await flush()
+      expect(auth.port.startLogin).toHaveBeenCalledTimes(1)
+      warn.mockRestore()
+    })
+
+    it('等水合期间动画被销毁:点击作废,不再发起登录', async () => {
+      const auth = fakeAuth()
+      let release!: () => void
+      vi.mocked(auth.port.hydrate).mockImplementation(
+        () => new Promise<undefined>((res) => { release = () => res(undefined) })
+      )
+      const { host, engine } = start({ auth: auth.port })
+      await flush()
+      engine.calls[0].onAction?.({ action: 'grant', authenticated: null })
+      host.dispose()
+      release()
+      await flush()
       expect(auth.port.startLogin).not.toHaveBeenCalled()
     })
 
@@ -342,6 +435,19 @@ describe('initStartupScreen', () => {
       await flush()
       expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
       await flush()
+      expect(warn).toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('startLogin 同步抛错也被吞掉', async () => {
+      const auth = fakeAuth()
+      vi.mocked(auth.port.startLogin).mockImplementation(() => { throw new Error('sync boom') })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const { engine } = start({ auth: auth.port })
+      await flush()
+      expect(() => engine.calls[0].onAction?.({ action: 'grant', authenticated: false })).not.toThrow()
+      await flush()
+      expect(warn).toHaveBeenCalled()
       warn.mockRestore()
     })
 

@@ -475,14 +475,20 @@ export function registerAuthIpc(getWindow: () => BrowserWindow | null): () => vo
 
       assertAuthorizeOrigin(pairing.authorizeUrl)
 
-      pending = {
+      // 本轮自己的记录,别在 await 之后再去读模块级 `pending`:
+      // `openExternal` 期间用户可能按了取消 / 又点了一次登录,`clearPending()` 会把
+      // `pending` 置空或换成新一轮的(实机撞到 `reading 'listener'` 的 TypeError)。
+      const active: PendingLogin = {
         pairingId: pairing.pairingId,
         codeVerifier,
         listener,
       }
+      pending = active
 
       await shell.openExternal(pairing.authorizeUrl)
-      detachWaitAndClaim(getWindow, pending)
+      // 被取消 / 被顶掉时,`clearPending()` 已经关了这个监听器,再挂等码只会白白
+      // 拿到一个 cancelled。取消不是错误,照常返回(浏览器确实已经打开过)。
+      if (pending === active) detachWaitAndClaim(getWindow, active)
 
       return { authorizeUrl: pairing.authorizeUrl, expiresIn: pairing.expiresIn }
     } catch (err) {
