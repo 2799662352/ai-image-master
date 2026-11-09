@@ -1122,6 +1122,14 @@
       "name": "SeeDream 4.5",
       "displayName": "15s generation, SeeDream overseas version seedream-4-5-251128, ultra-clear generation and editing, supports 2K/4K resolution, URL and Base64 output, $0.045/image"
     },
+    "gpt-image-2.6-flare": {
+      "name": "GPT Image 2.6 Flare",
+      "displayName": "Official OpenAI transfer 2.6 — speed-first, can use platform credits, billed per token, text-to-image default"
+    },
+    "gpt-image-2.6-sunburst": {
+      "name": "GPT Image 2.6 Sunburst",
+      "displayName": "Official OpenAI transfer 2.6 — quality-first, can use platform credits, complex layouts / fine text / precise edits, billed per token"
+    },
     "gpt-image-2.5-flare": {
       "name": "GPT Image 2.5 Flare",
       "displayName": "20s, official OpenAI transfer — speed-first, ~half the latency of gpt-image-2 at the same price, text-to-image default"

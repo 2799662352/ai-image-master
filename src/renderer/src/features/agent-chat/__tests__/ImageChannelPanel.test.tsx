@@ -45,6 +45,8 @@ describe('ImageChannelPanel · 分区与停靠', () => {
       'custom-model-og-v2.5-s',
       'custom-model-og-v2.6-f',
       'custom-model-og-v2.6-s',
+      'gpt-image-2.6-flare',
+      'gpt-image-2.6-sunburst',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-all',
@@ -101,7 +103,8 @@ describe('ImageChannelPanel · 分区与停靠', () => {
   it('点分区切换右栏;右栏标题与说明跟着变', () => {
     renderPanel('custom-imagemodel-gt')
     fireEvent.click(tab(/备用渠道/))
-    expect(visibleIds()).toEqual(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
+    // 备用 = 常用里腾讯渠道的官转同款,按常用顺序排:默认渠道腾讯 2.6-s 在第二位,它的官转排最前。
+    expect(visibleIds()).toEqual(['gpt-image-2.6-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
     expect(screen.getByRole('tabpanel').textContent).toContain('备用渠道')
     fireEvent.click(tab(/风格化/))
     expect(screen.getByRole('tabpanel').textContent).toContain('全部模型 · 风格化')
@@ -255,8 +258,8 @@ describe('ImageChannelPanel · 键盘', () => {
 
     fireEvent.keyDown(first, { key: 'ArrowRight' })
     expect(tab(/备用渠道/).getAttribute('aria-selected')).toBe('true')
-    expect(document.activeElement).toBe(option('gpt-image-2.5-flare'))
-    fireEvent.keyDown(option('gpt-image-2.5-flare')!, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(option('gpt-image-2.6-sunburst'))
+    fireEvent.keyDown(option('gpt-image-2.6-sunburst')!, { key: 'ArrowLeft' })
     expect(tab(/^常用/).getAttribute('aria-selected')).toBe('true')
   })
 

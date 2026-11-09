@@ -59,11 +59,11 @@ describe('ImageChannelPicker', () => {
     expect([...seen].sort()).toEqual(IMAGE_CHANNELS.map((c) => c.id).sort())
   })
 
-  it('官转的 2.5 Flare / Sunburst 在「备用渠道」里,选中后写进 store 并收起', () => {
+  it('官转的 2.6 Sunburst / 2.5 Flare / Sunburst 在「备用渠道」里,选中后写进 store 并收起', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(trigger())
     fireEvent.click(tab(/备用渠道/))
-    expect(visibleIds()).toEqual(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
+    expect(visibleIds()).toEqual(['gpt-image-2.6-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
     fireEvent.click(option('gpt-image-2.5-sunburst')!)
 
     expect(useAgentChatStore.getState().selectedImageChannel).toBe('gpt-image-2.5-sunburst')

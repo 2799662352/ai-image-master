@@ -150,15 +150,18 @@ export function renumberComments(comments: ReadonlyArray<ImageComment>): ImageCo
  */
 /**
  * 擦除(mask 局部重绘)可用的渠道:GPT Image 2.5 / 2.6 家族,分两条线 ——
- * apiyi 官转(2.5 flare / sunburst)与腾讯 og-image(og-v2.5-f / -s、og-v2.6-f / -s,走平台额度)。
- * 与 `ApiService.MASK_INPAINT_MODELS` 的交集就是这六个;gpt-image-2 / vip 虽也吃 mask,
+ * apiyi 官转(2.5 / 2.6 各 flare / sunburst)与腾讯 og-image(og-v2.5-f / -s、og-v2.6-f / -s,走平台额度)。
+ * 与 `ApiService.MASK_INPAINT_MODELS` 的交集就是这八个;gpt-image-2 / vip 虽也吃 mask,
  * 但灯箱刻意不派给它们(用户拍板「擦除绑 2.5」)。
- * 腾讯 2.6 于 2026-11-06 经真实调用验证 mask 可用(依据见 MASK_INPAINT_MODELS),用户选了 2.6
- * 就按 2.6 擦;2.6 同档位 token 约 2.5 的 4 倍,指令里会明说。
+ * 腾讯 2.6 于 2026-11-06、apiyi 官转 2.6 于 2026-11-09 经真实调用验证 mask 可用(依据见
+ * MASK_INPAINT_MODELS),用户选了 2.6 就按 2.6 擦。2.6 的 low 档 token 约 2.5 的 4 倍,
+ * high 档接近(1758 / 1756),所以指令里不写「贵」,只提醒一次做对。
  */
 export const ERASE_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-flare',
+  'gpt-image-2.6-sunburst',
+  'gpt-image-2.6-flare',
   'custom-model-og-v2.5-s',
   'custom-model-og-v2.5-f',
   'custom-model-og-v2.6-s',
@@ -215,14 +218,14 @@ export function buildImageFeedbackInstruction(input: {
   if (eraseCount && input.maskName) {
     // 与 OpenAI /v1/images/edits `mask` 契约一致:带 alpha 的 PNG,alpha=0 = 可重绘;尺寸同原图;
     // 只作用于 image[0];官方口径 prompt-guided —— 提示词先写唯一改动,再列保留项。
-    // 擦除渠道见 ERASE_MODELS:用户当前选的是哪条(官转 2.5 / 腾讯 2.5 / 腾讯 2.6)就点名哪条,
+    // 擦除渠道见 ERASE_MODELS:用户当前选的是哪条(官转 2.5 / 官转 2.6 / 腾讯 2.5 / 腾讯 2.6)就点名哪条,
     // 别的渠道回落官转 sunburst。2.6 要明说比 2.5 贵,别让 agent 当成 2.5 随手重试。
     const eraseModel = input.eraseModel ?? DEFAULT_ERASE_MODEL
     const modelHint =
       eraseModel === DEFAULT_ERASE_MODEL
         ? '画质优先;赶时间可用 gpt-image-2.5-flare'
-        : /^custom-model-og-v2\.6-/.test(eraseModel)
-          ? '用户当前选中的腾讯 2.6 渠道,同样支持 mask;同档位比 2.5 贵约 4 倍,一次做对、别无谓重试;别换成别的渠道'
+        : /^(custom-model-og-v2\.6-|gpt-image-2\.6-)/.test(eraseModel)
+          ? '用户当前选中的 2.6 渠道,同样支持 mask;一次做对、别无谓重试;别换成别的渠道'
           : '用户当前选中的 2.5 渠道,同样支持 mask;别换成别的渠道'
     lines.push(
       `擦除(局部重绘):附件 ${input.maskName} 是 alpha 遮罩(透明区域 = 要重绘,尺寸与原图一致)。` +

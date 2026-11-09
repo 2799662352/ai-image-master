@@ -144,18 +144,31 @@ describe('registerImageTools / generate_image schema', () => {
     expect(desc).toMatch(/referenceImages/)
   })
 
-  // 腾讯 2.6 的 mask 于 2026-11-06 实测可用(见 ApiService.MASK_INPAINT_MODELS):工具说明必须点名它,
-  // 且 `model` 说明里不能再留「2.6 没有 maskImage」,否则 agent 会照字面跳回别的渠道。
-  it('documents that 腾讯 2.6 supports maskImage (and costs more) in both maskImage and model descriptions', () => {
+  // 腾讯 2.6 的 mask 于 2026-11-06、apiyi 官转 2.6 于 2026-11-09 实测可用(见 ApiService.MASK_INPAINT_MODELS):
+  // 工具说明必须点名它们,且 `model` 说明里不能再留「2.6 没有 maskImage」,否则 agent 会照字面跳回别的渠道。
+  // 为了压在 Codex 的 16 KB schema 预算内,2.5 / 2.6 两代用大括号简写(`{2.5,2.6}`),这里钉住简写。
+  it('documents that 2.6 (腾讯 and 官转) supports maskImage in both maskImage and model descriptions', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
     const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
     const maskDesc = (single.shape.maskImage as { description?: string }).description ?? ''
-    expect(maskDesc).toContain('custom-model-og-v2.6-f|s')
+    expect(maskDesc).toContain('gpt-image-{2.5,2.6}-{flare,sunburst}')
+    expect(maskDesc).toContain('custom-model-og-v{2.5,2.6}-{f,s}')
     const modelDesc = (single.shape.model as { description?: string }).description ?? ''
     expect(modelDesc).toContain('custom-model-og-v2.6-f / -s')
     expect(modelDesc).toMatch(/~4x 2\.5 tokens; same abilities/)
+    expect(modelDesc).toContain('gpt-image-2.6-flare / -sunburst')
     expect(modelDesc).not.toMatch(/no maskImage/i)
+  })
+
+  // apiyi 官转 2.6(2026-11-09 接入):选择器与 MCP 同源,agent 必须能传这两个 id。
+  it('accepts the apiyi 官转 2.6 channels as `model` overrides', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const single = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    for (const model of ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']) {
+      expect(single.safeParse({ prompt: 'x', model, transparentBackground: true, quality: 'xhigh' }).success, model).toBe(true)
+    }
   })
 
   it('accepts the selectable model channels (vip / image2 官方 / 腾讯 / 万相 / nano2 / seedream 5.0 pro) and rejects others', () => {

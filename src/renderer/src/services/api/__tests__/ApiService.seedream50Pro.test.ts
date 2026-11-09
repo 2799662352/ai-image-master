@@ -31,9 +31,9 @@ describe('ApiService Seedream 5.0 Pro model config', () => {
     expect(cfg.defaultParams?.stream).toBeUndefined()
   })
 
-  it('orders the model dropdown: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2 → NovelAI ×4 → Image 2.5 → Image2 → VIP, rest untouched after', () => {
+  it('orders the model dropdown: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → 万相 → 千问 → 悠船 ×2 → NovelAI ×4 → Image 2.6 官转 ×2 → Image 2.5 → Image2 → VIP, rest untouched after', () => {
     const keys = Object.keys(service.getAllModels())
-    expect(keys.slice(0, 22)).toEqual([
+    expect(keys.slice(0, 24)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       // 六个腾讯模型相邻摆放,便于对比选择。它们是**不同的模型、不同的渠道**
       // (定价也不同),旧那条不会因为新增而下掉 —— 这里同时钉住「都在」。
@@ -53,6 +53,8 @@ describe('ApiService Seedream 5.0 Pro model config', () => {
       'nai-diffusion-5-curated',
       'nai-diffusion-4-5-full',
       'nai-diffusion-4-5-curated',
+      'gpt-image-2.6-flare',
+      'gpt-image-2.6-sunburst',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-all',

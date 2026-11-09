@@ -815,7 +815,7 @@ const TENCENT_IMAGE_MODELS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * OpenAI Images API 家族(generations / edits)。含 2.5 官转、按张计费的 -all,
+ * OpenAI Images API 家族(generations / edits)。含 2.6 / 2.5 官转、按张计费的 -all,
  * 以及旧 id `gpt-image-2-all`(generateImage 会先走 alias,这里再兜一层)。
  * 不收 `gpt-image-2.5-vip` —— 用户明确不接不稳定的 vip 模式。
  */
@@ -823,6 +823,8 @@ const GPT_IMAGES_API_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2',
   'gpt-image-2-vip',
   'gpt-image-2-all',
+  'gpt-image-2.6-flare',
+  'gpt-image-2.6-sunburst',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-all',
@@ -1060,11 +1062,13 @@ function validateNovelAiRequest(options: {
 }
 
 /**
- * 上游是 GPT Image 2.5 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
- * 含 apiyi 官转两条与腾讯 og-image 上的两条 —— 后者只是换了条线到同一个模型,
- * 清晰度梯子是模型的,不是渠道的。
+ * 上游是 GPT Image 2.5 / 2.6 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
+ * 含 apiyi 官转(2.5 两条、2.6 两条)与腾讯 og-image 上的各两条 —— 后者只是换了条线
+ * 到同一个模型,清晰度梯子是模型的,不是渠道的。
  */
 const GPT_IMAGE_25_QUALITY_MODELS: ReadonlySet<string> = new Set([
+  'gpt-image-2.6-flare',
+  'gpt-image-2.6-sunburst',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'custom-model-og-v2.5-f',
@@ -1078,6 +1082,8 @@ const GPT_IMAGE_25_QUALITY_MODELS: ReadonlySet<string> = new Set([
 const GPT_IMAGE_SIZE_QUALITY_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2',
   'gpt-image-2-vip',
+  'gpt-image-2.6-flare',
+  'gpt-image-2.6-sunburst',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
 ])
@@ -1094,10 +1100,16 @@ const GPT_IMAGE_SIZE_QUALITY_MODELS: ReadonlySet<string> = new Set([
  * 合成图 + 只在星星处挖透明洞的 alpha 遮罩 → 200,遮罩外每通道平均差 1.61(差 >40 的像素
  * 0.06%),遮罩内黄色像素 16278 → 0,周围渐变自然补全。只测了 -f 一条;-s 与它同一渠道、
  * 同一适配器(网关 tokenhubog 不挑模型),按同一条协议放行,**没单独对 -s 发过请求**。
+ *
+ * apiyi 官转 2.6 的依据(2026-11-09 真实调用,生产网关,multipart `/v1/images/edits`,
+ * 同一张合成图 + 同一个遮罩,1024² low):**flare 与 sunburst 各发了一次**,都 200,
+ * 黄色星星像素 16278 → 0,遮罩外每通道平均差 flare 1.70 / sunburst 2.17。
  */
 export const MASK_INPAINT_MODELS: ReadonlySet<string> = new Set([
   'gpt-image-2',
   'gpt-image-2-vip',
+  'gpt-image-2.6-flare',
+  'gpt-image-2.6-sunburst',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'custom-model-og-v2.5-f',
@@ -1167,6 +1179,15 @@ const TENCENT_IMAGE_25_QUALITIES: QualityOption[] = GPT_IMAGE_25_QUALITIES.map((
   ...q,
   description: q.description?.replace(/\s*\$[\d.]+$/, ''),
 }))
+
+/**
+ * apiyi 官转 2.6 的清晰度梯子:档位同 2.5,但**不带美元价**。上面 `GPT_IMAGE_25_QUALITIES`
+ * 的 `$0.006 … $0.211` 是按 2.5 的 token 量折的;2.6 同档位 token 不一样
+ * (2026-11-09 实测 1024²:low 824 / medium 1449 / high 1758,2.5 约 200 / 439 / 1756,
+ * 只有 high 档接近),照抄美元数会让用户按 2.5 的价估 2.6 的账。「=2代中 · 推荐」这类
+ * 档位对照仍成立(2.6 high 1758 ≈ gpt-image-2 medium 1756)。
+ */
+const GPT_IMAGE_26_QUALITIES: QualityOption[] = TENCENT_IMAGE_25_QUALITIES
 
 const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
   '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
@@ -1436,6 +1457,75 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     resolutions: GPT_IMAGE_2_RESOLUTIONS,
     defaultResolution: '2K',
     qualities: TENCENT_IMAGE_25_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  // ── GPT Image 2.6 官转(apiyi 直连,Miau 上同名渠道接 apiyi,可走平台额度)────────
+  // 与 2.5 官转同端点、同 size 体系、同清晰度梯子,请求分支完全共用(见上面几个 Set)。
+  // 2026-11-09 经 Miau 网关实测(1024²):文生图 / n=2 原生多图 / 透明底(返回 RGBA,
+  // 四角 alpha=0)/ 改图 + mask 擦除(黄星 16278→0 像素)在 flare 与 sunburst 上都成立。
+  // 2.6 的 complexity / SVG / GIF 帧参数 / markup 图层:网关不转发,没法用,这里不声明、
+  // 不开控件(依据与解锁路径见 .cursorrules)。xhigh / max 按文档放行,没单独实测。
+  // 不钉 requiredSiteKey:跟随当前站点,apiyi / Miau Key 都能打。
+  'gpt-image-2.6-flare': {
+    name: 'GPT Image 2.6 Flare',
+    vendor: 'openai',
+    displayName: 'OpenAI 官转 2.6·速度优先，可走平台额度，按token计费，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，文生图/图片编辑/遮罩擦除，原生多图 1-4 张',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_26_QUALITIES,
+    defaultQuality: 'high',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 4,
+      nativeBatch: true,
+      resolutionControl: true,
+      qualityControl: true,
+      transparentBackgroundControl: true
+    }
+  },
+  'gpt-image-2.6-sunburst': {
+    name: 'GPT Image 2.6 Sunburst',
+    vendor: 'openai',
+    displayName: 'OpenAI 官转 2.6·画质优先，可走平台额度，复杂布局/精细文字/精确改图，按token计费，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，遮罩擦除，原生多图 1-4 张',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_26_QUALITIES,
     defaultQuality: 'high',
     resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
     defaultParams: {
@@ -2171,7 +2261,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
  * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
  * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst → 2.6 Flare → 2.6 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
  * 千问 → 悠船(快速 → 极速)→ NovelAI(V5 Full → V5 Curated → V4.5 Full → V4.5 Curated)
- * → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
+ * → Image 2.6 官转 → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
  * DEFAULT_MODELS 原有相对顺序排在其后。经典页下拉 / 对比页等所有消费
  * `getAllModels()` 的地方都吃对象键序,这里是唯一调序点。
  */
@@ -2193,6 +2283,8 @@ const MODEL_DISPLAY_ORDER: readonly string[] = [
   'nai-diffusion-5-curated',
   'nai-diffusion-4-5-full',
   'nai-diffusion-4-5-curated',
+  'gpt-image-2.6-flare',
+  'gpt-image-2.6-sunburst',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-all',

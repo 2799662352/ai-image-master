@@ -18,7 +18,7 @@ describe('imageChannels registry', () => {
     expect(isMiauOnlyChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBe(true)
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.6 官转 ×2 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
       'custom-imagemodel-gt',
@@ -39,6 +39,9 @@ describe('imageChannels registry', () => {
       'nai-diffusion-5-curated',
       'nai-diffusion-4-5-full',
       'nai-diffusion-4-5-curated',
+      // apiyi 官转 2.6(2026-11-09 接入),排在 2.5 官转之前
+      'gpt-image-2.6-flare',
+      'gpt-image-2.6-sunburst',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-all',

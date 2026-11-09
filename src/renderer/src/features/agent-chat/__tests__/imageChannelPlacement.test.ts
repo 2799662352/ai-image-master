@@ -115,16 +115,31 @@ describe('摆放表守卫', () => {
         'custom-model-og-v2.5-f',
         'custom-model-og-v2.5-s',
         'custom-imagemodel-gt',
+        'gpt-image-2.6-flare',
+        'gpt-image-2.6-sunburst',
         'gpt-image-2.5-flare',
         'gpt-image-2.5-sunburst',
       ]),
     )
   })
 
-  it('官转的 2.5 Flare / Sunburst 是备用渠道,跟随各自的腾讯同款排序', () => {
+  it('官转的 2.6 Sunburst / 2.5 Flare / Sunburst 是备用渠道,跟随各自的腾讯同款排序', () => {
     const layout = arrangeChannelMenu(placeImageChannels())
-    expect(ids(layout.backup)).toEqual(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
+    // 默认渠道腾讯 2.6-s 在常用第二位,它的官转同款排在 2.5 两条之前。
+    expect(ids(layout.backup)).toEqual(['gpt-image-2.6-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])
     expect(layout.backup.every((o) => o.placement.channelLabel === '官转')).toBe(true)
+  })
+
+  // 2.6 Flare(官转)的腾讯同款 og-v2.6-f 不在常用里,没有可指的 backupOf —— 只在「按系列」里出现,
+  // 不能为了「凑齐」把它硬塞进备用(备用必须指向常用里的渠道,守卫钉着)。
+  it('官转 2.6 Flare 只在 GPT Image 系列里,不在常用 / 备用', () => {
+    const layout = arrangeChannelMenu(placeImageChannels())
+    expect(ids(layout.featured)).not.toContain('gpt-image-2.6-flare')
+    expect(ids(layout.backup)).not.toContain('gpt-image-2.6-flare')
+    const gpt = layout.seriesGroups.find((g) => g.label === 'GPT Image 系列')!
+    expect(ids(gpt.options)).toContain('gpt-image-2.6-flare')
+    const hint = placeImageChannels().find((o) => o.id === 'gpt-image-2.6-flare')!.placement.hint ?? ''
+    expect(hint).not.toMatch(/贵/)
   })
 
   it('placeImageChannels 不改注册表顺序、也不污染入参', () => {
@@ -171,7 +186,7 @@ describe('arrangeChannelMenu', () => {
     const layout = arrangeChannelMenu(placed, { pinnedIds: ['nai-diffusion-5-full', 'gpt-image-2.5-flare'] })
     expect(ids(layout.featured).slice(-2)).toEqual(['nai-diffusion-5-full', 'gpt-image-2.5-flare'])
     expect(layout.pinnedIds).toEqual(['nai-diffusion-5-full', 'gpt-image-2.5-flare'])
-    expect(ids(layout.backup)).toEqual(['gpt-image-2.5-sunburst'])
+    expect(ids(layout.backup)).toEqual(['gpt-image-2.6-sunburst', 'gpt-image-2.5-sunburst'])
     const style = layout.seriesGroups.find((g) => g.label === '风格化')!
     expect(ids(style.options)).toContain('nai-diffusion-5-full')
     const gpt = layout.seriesGroups.find((g) => g.label === 'GPT Image 系列')!

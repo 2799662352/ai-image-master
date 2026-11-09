@@ -107,14 +107,17 @@ describe('annotation colours', () => {
 })
 
 /**
- * 擦除跟随用户 composer 里选的渠道:官转 2.5 flare / sunburst、腾讯 og-v2.5-f / -s、
- * 腾讯 og-v2.6-f / -s(2026-11-06 实测过 mask)都直接用;其它渠道(没有 mask)回落官转 sunburst。
+ * 擦除跟随用户 composer 里选的渠道:官转 2.5 flare / sunburst、官转 2.6 flare / sunburst
+ * (2026-11-09 实测过 mask)、腾讯 og-v2.5-f / -s、腾讯 og-v2.6-f / -s(2026-11-06 实测过 mask)
+ * 都直接用;其它渠道(没有 mask)回落官转 sunburst。
  */
 describe('resolveEraseModel', () => {
-  it('keeps the picked channel when it is one of the six mask-capable lines (官转 2.5 / 腾讯 2.5 / 腾讯 2.6)', () => {
+  it('keeps the picked channel when it is one of the eight mask-capable lines (官转 2.5 / 官转 2.6 / 腾讯 2.5 / 腾讯 2.6)', () => {
     for (const id of [
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-flare',
+      'gpt-image-2.6-sunburst',
+      'gpt-image-2.6-flare',
       'custom-model-og-v2.5-s',
       'custom-model-og-v2.5-f',
       'custom-model-og-v2.6-s',
@@ -201,20 +204,26 @@ describe('buildImageFeedbackInstruction', () => {
     expect(text).toMatch(/别换成别的渠道/)
   })
 
-  // 2.6 同档位 token 约 2.5 的 4 倍:指令点名用户选的 2.6,**不能**把它说成「2.5 渠道」,
-  // 也要让 agent 知道比 2.5 贵,免得它「顺手」换成别的渠道或多重试几遍。
-  it('names the user-picked 腾讯 2.6 channel without calling it a 2.5 line, and flags the higher price', () => {
+  // 指令点名用户选的 2.6,**不能**把它说成「2.5 渠道」,也要让 agent 一次做对、别「顺手」换渠道或多重试几遍。
+  // 不写「比 2.5 贵约 4 倍」:2.6 只有 low 档约 4 倍,high 档与 2.5 几乎一样(1758 / 1756 token),
+  // 那句话对默认的 high 是错的,用户也明确要求界面里「不用提示贵」。
+  it.each([
+    ['腾讯 2.6', 'custom-model-og-v2.6-f'],
+    ['apiyi 官转 2.6 Flare', 'gpt-image-2.6-flare'],
+    ['apiyi 官转 2.6 Sunburst', 'gpt-image-2.6-sunburst'],
+  ])('names the user-picked %s channel without calling it a 2.5 line', (_label, eraseModel) => {
     const text = buildImageFeedbackInstruction({
       imageName: 'a.png',
       comments: [],
       strokes: strokes(['erase']),
       maskName: 'a.mask.png',
-      eraseModel: 'custom-model-og-v2.6-f',
+      eraseModel,
     })
-    expect(text).toContain('model=custom-model-og-v2.6-f')
+    expect(text).toContain(`model=${eraseModel}`)
     expect(text).not.toContain('gpt-image-2.5-sunburst')
     expect(text).not.toContain('2.5 渠道')
-    expect(text).toMatch(/比 2\.5 贵/)
+    expect(text).not.toMatch(/贵/)
+    expect(text).toMatch(/一次做对/)
     expect(text).toMatch(/别换成别的渠道/)
   })
 
