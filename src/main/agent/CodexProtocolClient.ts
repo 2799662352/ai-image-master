@@ -1106,10 +1106,15 @@ export class CodexProtocolClient {
     // (beyond the primary cwd, which the engine auto-loads) into a per-thread
     // `developer_instructions` override. Computed here so runtime folder
     // switches take effect on the next new thread. `undefined` → field omitted.
-    const developerInstructions = buildExtraRootsDeveloperInstructions(
+    const extraRootsInstructions = buildExtraRootsDeveloperInstructions(
       input.cwd,
       sessionConfig.writableRoots,
     )
+    // The channel note comes first: it is short and corrects how the model
+    // reads its own setup, while the extra-roots block can be very long.
+    const developerInstructions = [input.channelIdentityNote?.trim(), extraRootsInstructions]
+      .filter((part): part is string => Boolean(part))
+      .join('\n\n') || undefined
     // Per-thread routing (Plan B): `modelProvider` pins the new thread to a
     // registered provider table; the thread-scoped context keys pin only this
     // thread's window (unlike the process-wide `-c model_context_window`).

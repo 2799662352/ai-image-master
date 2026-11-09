@@ -45,7 +45,22 @@ async function createPlanBHarness(options: {
   hasInFlightWork?: () => boolean
   hasInFlightWorkForThread?: (codexThreadId: string) => boolean
   persistedCodexThreadId?: string | null
+  /** Miau channels borrow the historical `qwen` credential slot; catalog availability is fixed at construction. */
+  miauKey?: boolean
 } = {}): Promise<PlanBHarness> {
+  if (options.miauKey) {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: 'rightcode',
+        selectedModelId: 'gpt-5.5',
+        apiKeys: { rightcode: 'sk-test', qwen: 'miau-key' },
+        customProviders: [],
+      }),
+      'utf8',
+    )
+  }
   let epoch = 1
   const restartCodex = vi.fn(async () => {
     epoch += 1
@@ -371,5 +386,52 @@ describe('AgentManager Plan B per-thread provider routing', () => {
       model: 'grok-4.5',
       modelProvider: 'apiyi-grok',
     })
+  })
+
+  it('tells a new thread on the Miau DeepSeek channel what it really runs on', async () => {
+    const harness = await createPlanBHarness({ miauKey: true })
+    await harness.manager.setProviderApiKey('qwen', 'miau-key')
+
+    await harness.manager.sendMessage({
+      content: 'search something',
+      attachments: [],
+      model: 'deepseek-v4-1-flash-261017',
+    })
+
+    expect(harness.sentInputs).toHaveLength(1)
+    expect(harness.sentInputs[0].modelProvider).toBe(`${harness.gatewayId()}-deepseek-miau`)
+    const note = harness.sentInputs[0].channelIdentityNote
+    expect(note).toContain('Miau')
+    expect(note).toContain('`rightcode`')
+    expect(note).toContain('web_search')
+  })
+
+  it('drops the web-search paragraph once the user turned web search off', async () => {
+    const harness = await createPlanBHarness({ miauKey: true })
+    await harness.manager.setProviderApiKey('qwen', 'miau-key')
+    await harness.manager.setSessionConfigPatch({ webSearch: 'disabled' })
+
+    await harness.manager.sendMessage({
+      content: 'offline please',
+      attachments: [],
+      model: 'deepseek-v4-1-flash-261017',
+    })
+
+    const note = harness.sentInputs[0].channelIdentityNote
+    // The identity correction still applies; only the search claim goes away.
+    expect(note).toContain('`rightcode`')
+    expect(note).not.toContain('web_search')
+  })
+
+  it('adds no channel note on a channel that is really Right.Codes / API Yi', async () => {
+    const harness = await createPlanBHarness()
+
+    await harness.manager.sendMessage({
+      content: 'plain gpt conversation',
+      attachments: [],
+    })
+
+    expect(harness.sentInputs).toHaveLength(1)
+    expect(harness.sentInputs[0]).not.toHaveProperty('channelIdentityNote')
   })
 })

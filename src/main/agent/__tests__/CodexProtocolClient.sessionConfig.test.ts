@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type WebSocket from 'ws'
@@ -215,5 +218,75 @@ describe('CodexProtocolClient session config', () => {
     expect(threadStart?.params).not.toHaveProperty('modelProvider')
     expect(threadStart?.params.config).not.toHaveProperty('model_context_window')
     expect(threadStart?.params.config).not.toHaveProperty('model_auto_compact_token_limit')
+    expect(threadStart?.params.config).not.toHaveProperty('developer_instructions')
+  })
+
+  it('rides the channel identity note on thread/start as developer_instructions', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+    })
+    await client.start()
+
+    for await (const _event of client.send(undefined, {
+      ...input,
+      channelIdentityNote: 'NOTE-FROM-CHANNEL',
+    })) {
+      // Drain the turn.
+    }
+
+    const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+    expect(threadStart?.params.config.developer_instructions).toBe('NOTE-FROM-CHANNEL')
+  })
+
+  it('puts the channel note before the extra-roots AGENTS.md block instead of replacing it', async () => {
+    const extra = await mkdtemp(path.join(tmpdir(), 'channel-note-extra-'))
+    try {
+      await writeFile(path.join(extra, 'AGENTS.md'), 'EXTRA-REPO-RULES', 'utf8')
+      server = await startFakeCodexServer()
+      client = new CodexProtocolClient({
+        url: server.url,
+        clientInfo: { name: 'catimation-test', version: '0.0.0' },
+        sessionConfig: {
+          sandboxMode: 'workspace-write',
+          approvalPolicy: 'on-request',
+          webSearch: 'live',
+          writableRoots: ['D:/repo', extra],
+        },
+      })
+      await client.start()
+
+      for await (const _event of client.send(undefined, {
+        ...input,
+        channelIdentityNote: 'NOTE-FROM-CHANNEL',
+      })) {
+        // Drain the turn.
+      }
+
+      const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+      const dev = String(threadStart?.params.config.developer_instructions)
+      expect(dev).toContain('NOTE-FROM-CHANNEL')
+      expect(dev).toContain('EXTRA-REPO-RULES')
+      expect(dev.indexOf('NOTE-FROM-CHANNEL')).toBeLessThan(dev.indexOf('EXTRA-REPO-RULES'))
+    } finally {
+      await rm(extra, { recursive: true, force: true })
+    }
+  })
+
+  it('an empty channel note adds nothing', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+    })
+    await client.start()
+
+    for await (const _event of client.send(undefined, { ...input, channelIdentityNote: '   ' })) {
+      // Drain the turn.
+    }
+
+    const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+    expect(threadStart?.params.config).not.toHaveProperty('developer_instructions')
   })
 })

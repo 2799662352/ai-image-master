@@ -93,6 +93,14 @@ export interface AgentInput extends AgentSendMessagePayload {
     modelContextWindow: number
     modelAutoCompactTokenLimit: number
   } | null
+  /**
+   * Channel identity note for a NEW thread (`thread/start`): rides
+   * `config.developer_instructions`, ahead of any extra-roots AGENTS.md block.
+   * Set only for Miau-routed channels so the model stops blaming the
+   * `rightcode` gateway-group id for Miau-side behaviour (see
+   * `channelIdentity.ts`). Omitted / blank = nothing added.
+   */
+  channelIdentityNote?: string
   items: Array<
     | { type: 'text'; text: string }
     | { type: 'localImage'; path: string }
