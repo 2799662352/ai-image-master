@@ -27,6 +27,7 @@ import {
   resolveActiveProvider,
   type ProviderPreset,
 } from './codexProviders'
+import { buildChannelIdentityInstructions } from './channelIdentity'
 import { buildGatewayModelCatalog } from './gatewayModelCatalog'
 import {
   channelsForGateway,
@@ -3634,6 +3635,15 @@ export class AgentManager {
       )
     }
 
+    // Miau-routed channels sit under the `apiyi` / `rightcode` gateway-group
+    // names, so a model reading its own config blames Right.Codes. Tell the new
+    // thread what it actually runs on (see channelIdentity.ts). Like the pin
+    // above this is only consumed by `thread/start`; spread-omit otherwise.
+    const channelIdentityNote = this.channelIdentityNoteFor(
+      selectionRoute?.channelId ?? this.channelController.currentChannelId(),
+    )
+    if (channelIdentityNote) input.channelIdentityNote = channelIdentityNote
+
     if (!payload.threadId) {
       this.pendingThreadTitles.set(thread.id, {
         threadId: thread.id,
@@ -4838,6 +4848,16 @@ export class AgentManager {
       channel = undefined
     }
     return resolveThreadTitleModel(channel, conversationModel)
+  }
+
+  /** `undefined` for non-Miau channels, unknown ids, or anything that fails to resolve. */
+  private channelIdentityNoteFor(channelId: string): string | undefined {
+    try {
+      const channel = resolveProviderChannel(channelId, this.providerStore.loadSync().customProviders)
+      return buildChannelIdentityInstructions(channel, { webSearch: this.sessionConfig.webSearch })
+    } catch {
+      return undefined
+    }
   }
 
   /** Runs in parallel with the main turn; at most once per new thread. */
