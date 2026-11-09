@@ -86,17 +86,46 @@
 .dsu-status.dsu-in .dsu-ch,
 .dsu-sub-en.dsu-in .dsu-ch { opacity: 1; transform: none; }
 
-/* 品牌猫头：白色剪影 PNG。浅色底板上压成墨色；深色主题与黑幕保持白色。
-   不用 CSS mask：file:// 下 mask-image 引用本地文件会被 Chromium 拦掉。 */
+/* 品牌猫头：内联 SVG（轮廓见 catMark.js），颜色跟 currentColor 走——
+   浅色底板上是墨色，深色主题随 --dsu-ink，黑幕固定白色。
+   两层：.dsu-mark-fill 是实心面（evenodd 挖出耳内和双眼），.dsu-mark-line 是同一组轮廓的描边，
+   只在「一笔画成」动画里出现（上游鲸鱼图标的手法：描边 stroke-dashoffset 走完，再落墨成面）。
+   静止态 = 实心面、描边不可见，所以动画被跳过 / 不支持时也是完整的猫头。 */
 .dsu-mark {
   display: block;
   height: auto;
-  -webkit-user-drag: none;
+  aspect-ratio: 174 / 160;
+  overflow: visible;
+  color: var(--dsu-ink);
 }
-.dsu-logo .dsu-mark,
-.dsu-w3 .dsu-mark { filter: brightness(0); }
-.dsu-dark .dsu-logo .dsu-mark,
-.dsu-dark .dsu-w3 .dsu-mark { filter: none; }
+.dsu-black .dsu-mark { color: #fff; }
+.dsu-mark .dsu-mark-fill { fill: currentColor; fill-rule: evenodd; }
+.dsu-mark .dsu-mark-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1 2;   /* pathLength=1：一段实线 + 两倍空隙，起止点不会留下圆头小点 */
+  stroke-dashoffset: 1.02;
+  opacity: 0;
+}
+/* 时间全由 JS（drawMark）按当前速度写成变量：--dsu-draw-ms 描边用时，
+   --dsu-ink-delay / --dsu-ink-ms 落墨（实心面淡入），--dsu-fade-delay / --dsu-fade-ms 描边收掉。 */
+.dsu-mark.dsu-draw .dsu-mark-fill {
+  animation: dsu-mark-ink var(--dsu-ink-ms, 600ms) ease-out var(--dsu-ink-delay, 1100ms) backwards;
+}
+.dsu-mark.dsu-draw .dsu-mark-line {
+  animation:
+    dsu-mark-trace var(--dsu-draw-ms, 1400ms) cubic-bezier(0.55, 0.06, 0.24, 1) both,
+    dsu-mark-fade var(--dsu-fade-ms, 560ms) ease var(--dsu-fade-delay, 1400ms) forwards;
+}
+@keyframes dsu-mark-trace {
+  from { opacity: 1; stroke-dashoffset: 1.02; }
+  to { opacity: 1; stroke-dashoffset: 0; }
+}
+@keyframes dsu-mark-ink { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dsu-mark-fade { to { opacity: 0; } }
 
 /* 深色主题：同一套版式，换成暗底板 */
 #cat-startup-root.dsu-dark {
@@ -675,6 +704,22 @@
   letter-spacing: 0.12em;
   text-indent: 0.12em;
 }
+/* 品牌条入场：像字幕条一样从左往右「印」出来，字距从宽收紧到定位（与第一幕 CATIMATION 的收紧同一手法）。
+   fill-mode 用 backwards：动画结束后不留 clip-path，色散副本位移出框时才不会被裁。
+   letter-spacing 和 text-indent 一起走，过程中文字才始终居中。 */
+.dsu-welcome.dsu-in .dsu-w2 {
+  animation:
+    dsu-box-print calc(620ms / var(--dsu-speed, 1)) cubic-bezier(0.7, 0, 0.2, 1) calc(120ms / var(--dsu-speed, 1)) backwards,
+    dsu-box-track calc(980ms / var(--dsu-speed, 1)) cubic-bezier(0.2, 0.7, 0.2, 1) calc(120ms / var(--dsu-speed, 1)) backwards;
+}
+@keyframes dsu-box-print {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes dsu-box-track {
+  from { letter-spacing: 0.34em; text-indent: 0.34em; }
+  to { letter-spacing: 0.12em; text-indent: 0.12em; }
+}
 .dsu-w3 {
   margin-top: 30px;
   display: flex;
@@ -831,10 +876,8 @@
   transition: color 260ms ease, text-shadow 260ms ease;
 }
 #cat-startup-root.dsu-peak .dsu-w3 .dsu-mark {
-  filter: brightness(0) drop-shadow(0 0 10px rgba(41, 113, 184, 0.45));
-}
-#cat-startup-root.dsu-dark.dsu-peak .dsu-w3 .dsu-mark {
   filter: drop-shadow(0 0 10px rgba(41, 113, 184, 0.45));
+  transition: filter 260ms ease;
 }
 #cat-startup-root.dsu-peak .dsu-grain { opacity: 0.11; }
 

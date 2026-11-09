@@ -7,6 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStartupScreen } from '../engine.js'
+import { CAT_MARK_CONTOURS, CAT_MARK_VIEWBOX } from '../catMark.js'
 import type {
   StartupActionEvent,
   StartupAudioLike,
@@ -15,7 +16,6 @@ import type {
 } from '../engineTypes'
 
 const ROOT = '#cat-startup-root'
-const MARK = 'file:///app/images/logo.png'
 
 /** 推进假时间,直到条件成立(最多 maxMs)。条件始终不成立就抛,免得测试静默空转。 */
 async function advanceUntil(pred: () => boolean, maxMs = 120_000, stepMs = 50): Promise<void> {
@@ -158,8 +158,9 @@ describe('createStartupScreen 引擎', () => {
     const onFinish = vi.fn()
     const onDone = vi.fn()
     handle = createStartupScreen({
-      markUrl: MARK,
       // 不给 assetBase:没有语音素材 = 静音,时间线不等任何加载
+      // 界面音效素材默认「缺失」:台词素材的请求计数不被音效混进来;要测真素材的用例自己覆盖
+      createSfxAudio: () => makeFakeAudio({ fail: true }) as unknown as StartupAudioLike,
       onAction,
       onFinish,
       onDone,
@@ -189,10 +190,12 @@ describe('createStartupScreen 引擎', () => {
       expect(root()).not.toBeNull()
       expect(document.documentElement.classList.contains('dsu-lock')).toBe(true)
       expect(document.documentElement.style.overflow).toBe('hidden')
-      // 黑幕 / 中央标识 / 终幕三处都是应用自己的猫头 <img>
-      const marks = [...(root()!.querySelectorAll<HTMLImageElement>('img.dsu-mark'))]
+      // 黑幕 / 中央标识 / 终幕三处都是应用自己的猫头(内联 SVG)
+      const marks = [...root()!.querySelectorAll('svg.dsu-mark')]
       expect(marks).toHaveLength(3)
-      for (const m of marks) expect(m.getAttribute('src')).toBe(MARK)
+      expect(q('.dsu-black .dsu-mark')).toBeTruthy()
+      expect(q('.dsu-logo .dsu-mark')).toBeTruthy()
+      expect(q('.dsu-w3 .dsu-mark')).toBeTruthy()
       expect(q('.dsu-black-en').textContent).toBe('CATIMATION')
       expect(q('.dsu-black-sub').textContent).toBe('CYBERPUNK MASTER')
     })
@@ -211,10 +214,49 @@ describe('createStartupScreen 引擎', () => {
       expect(root()!.querySelector('input, textarea, [contenteditable], [type=password]')).toBeNull()
     })
 
-    it('没给 markUrl:猫头退成空占位,不出破图,时间线照常搭得起来', () => {
-      start({ markUrl: undefined })
+    it('猫头是内联 SVG:没有任何图片 / 外链请求,不会出破图', () => {
+      start()
       expect(root()!.querySelectorAll('img')).toHaveLength(0)
-      expect(root()!.querySelectorAll('span.dsu-mark')).toHaveLength(3)
+      expect(root()!.querySelectorAll('[src], [href], image, use')).toHaveLength(0)
+    })
+
+    it('猫头结构:一层实心面(evenodd 挖镂空)+ 每条轮廓一条描边,装饰性、不可聚焦', () => {
+      start()
+      for (const m of root()!.querySelectorAll('svg.dsu-mark')) {
+        expect(m.getAttribute('viewBox')).toBe(CAT_MARK_VIEWBOX)
+        expect(m.getAttribute('aria-hidden')).toBe('true')
+        expect(m.getAttribute('focusable')).toBe('false')
+        const fill = m.querySelectorAll('path.dsu-mark-fill')
+        expect(fill).toHaveLength(1)
+        // 实心面把全部轮廓并成一条路径,镂空才挖得出来
+        expect(fill[0].getAttribute('d')).toBe(CAT_MARK_CONTOURS.join(' '))
+        const lines = [...m.querySelectorAll('path.dsu-mark-line')]
+        expect(lines.map((p) => p.getAttribute('d'))).toEqual(CAT_MARK_CONTOURS)
+        // pathLength=1:长短不同的轮廓才会同时走完
+        for (const p of lines) expect(p.getAttribute('pathLength')).toBe('1')
+        // 静止态没有触发过动画
+        expect(m.classList.contains('dsu-draw')).toBe(false)
+      }
+    })
+
+    it('猫头轮廓数据:四条闭合轮廓,点都落在画布内,第 0 条是最大的外轮廓', () => {
+      expect(CAT_MARK_CONTOURS).toHaveLength(4)
+      const [, , vw, vh] = CAT_MARK_VIEWBOX.split(' ').map(Number)
+      const areas = CAT_MARK_CONTOURS.map((d) => {
+        expect(d).toMatch(/^M[\d. L]+Z$/)
+        const nums = d.slice(1, -1).split('L').map((p) => p.trim().split(' ').map(Number))
+        for (const [x, y] of nums) {
+          expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true)
+          expect(x).toBeGreaterThanOrEqual(0)
+          expect(x).toBeLessThanOrEqual(vw)
+          expect(y).toBeGreaterThanOrEqual(0)
+          expect(y).toBeLessThanOrEqual(vh)
+        }
+        const xs = nums.map((p) => p[0])
+        const ys = nums.map((p) => p[1])
+        return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))
+      })
+      expect(Math.max(...areas)).toBe(areas[0])
     })
 
     it('页面上留着上一个实例的残骸:只剩一个根节点', () => {
@@ -270,7 +312,48 @@ describe('createStartupScreen 引擎', () => {
       await advanceUntil(() => !!root()?.querySelector('.dsu-welcome.dsu-in'))
       expect(q('.dsu-w4').textContent).toBe('欢迎 小猫 访问')
       expect(q('.dsu-w2').textContent).toBe('CATIMATION')
-      expect(q('.dsu-w3 img.dsu-mark').getAttribute('src')).toBe(MARK)
+      expect(q('.dsu-w3 svg.dsu-mark')).toBeTruthy()
+      await advanceUntil(() => onFinish.mock.calls.length > 0)
+    })
+
+    it('第二幕标识亮起时猫头开始一笔画成;时间按当前速度折算成变量', async () => {
+      start({ config: { authenticated: true, speed: 2 } })
+      const mark = q('.dsu-logo .dsu-mark')
+      expect(mark.classList.contains('dsu-draw')).toBe(false)
+      // 标识在第三步(「接收访问需求」)才亮起,前两步要点掉
+      await toGrant()
+      await confirmCurrent()
+      await toGrant()
+      await confirmCurrent()
+      await advanceUntil(() => q('.dsu-logo').classList.contains('dsu-in'))
+      expect(mark.classList.contains('dsu-draw')).toBe(true)
+      // 基准 1300ms,speed=2 → 650ms;落墨 / 收线按比例跟着走
+      expect(mark.style.getPropertyValue('--dsu-draw-ms')).toBe('650ms')
+      expect(mark.style.getPropertyValue('--dsu-ink-delay')).toBe('507ms')
+      expect(mark.style.getPropertyValue('--dsu-ink-ms')).toBe('273ms')
+      expect(mark.style.getPropertyValue('--dsu-fade-delay')).toBe('650ms')
+      expect(mark.style.getPropertyValue('--dsu-fade-ms')).toBe('260ms')
+      // 终幕那个这时还没动
+      expect(q('.dsu-w3 .dsu-mark').classList.contains('dsu-draw')).toBe(false)
+    })
+
+    it('终幕猫头在欢迎文案亮起的同一刻开始一笔画成,并早于光晕炸开收完', async () => {
+      const { onFinish } = start({ config: { identity: '小猫', authenticated: true } })
+      await toGrant()
+      await confirmCurrent()
+      await toGrant()
+      await confirmCurrent()
+      const w3mark = q('.dsu-w3 .dsu-mark')
+      expect(w3mark.classList.contains('dsu-draw')).toBe(false)
+      await advanceUntil(() => !!root()?.querySelector('.dsu-welcome.dsu-in'))
+      expect(w3mark.classList.contains('dsu-draw')).toBe(true)
+      expect(w3mark.style.getPropertyValue('--dsu-draw-ms')).toBe('750ms')
+      // 描边 + 落墨 + 收线的总长必须落在「欢迎亮起 → 光晕炸开」的 1.06 秒之内
+      const ms = (v: string): number => Number.parseInt(w3mark.style.getPropertyValue(v), 10)
+      expect(ms('--dsu-fade-delay') + ms('--dsu-fade-ms')).toBeLessThanOrEqual(1060)
+      expect(ms('--dsu-ink-delay') + ms('--dsu-ink-ms')).toBeLessThanOrEqual(ms('--dsu-fade-delay') + ms('--dsu-fade-ms'))
+      // 光晕还没炸开(dsu-peak 在欢迎亮起 1.06 秒后才加)
+      expect(root()!.classList.contains('dsu-peak')).toBe(false)
       await advanceUntil(() => onFinish.mock.calls.length > 0)
     })
 
@@ -1180,6 +1263,144 @@ describe('createStartupScreen 引擎', () => {
         delete (window as { speechSynthesis?: unknown }).speechSynthesis
         delete (window as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance
       }
+    })
+  })
+
+  describe('界面音效素材(真「哒」优先,缺了回落合成,绝不静音)', () => {
+    const base = 'file:///app/audio/startup/'
+    const STEP_HZ = 880
+
+    type Fake = ReturnType<typeof makeFakeAudio>
+
+    /** 跑完整条时间线,收集音效素材的请求 / 播放和合成音频率 */
+    async function runWith(
+      sfxFactory: (url: string, made: Map<string, Fake>) => Fake,
+      over: Partial<StartupEngineOptions> = {}
+    ) {
+      const ac = installFakeAudioContext()
+      const made = new Map<string, Fake>()
+      const urls: string[] = []
+      try {
+        const { config: extraConfig, ...rest } = over
+        const { onFinish } = start({
+          assetBase: base,
+          ...rest,
+          config: { requireInteraction: false, voice: false, ...(extraConfig ?? {}) },
+          createSfxAudio: (url) => {
+            urls.push(url)
+            const a = sfxFactory(url, made)
+            made.set(url, a)
+            return a as unknown as StartupAudioLike
+          }
+        })
+        await advanceUntil(() => onFinish.mock.calls.length > 0)
+        return { freqs: [...ac.freqs], made, urls }
+      } finally {
+        handle?.dispose()
+        handle = null
+        ac.restore()
+      }
+    }
+
+    it('素材就绪:两个「哒」都被请求并播放,合成的那几声(步进 880 Hz)不再响', async () => {
+      const ok = await runWith(() => makeFakeAudio({ duration: 0.1 }))
+      expect([...new Set(ok.urls)].sort()).toEqual([`${base}sfx-tick.mp3`, `${base}sfx-ticks-run.mp3`])
+      expect(ok.made.get(`${base}sfx-tick.mp3`)!.play).toHaveBeenCalled()
+      expect(ok.made.get(`${base}sfx-ticks-run.mp3`)!.play).toHaveBeenCalled()
+      // 对照组:素材缺失时同一条时间线会合成步进音,所以「没有 880」是真的被素材取代了
+      const miss = await runWith(() => makeFakeAudio({ fail: true }))
+      expect(miss.freqs).toContain(STEP_HZ)
+      expect(ok.freqs).not.toContain(STEP_HZ)
+      expect(ok.freqs.length).toBeLessThan(miss.freqs.length)
+    })
+
+    it('素材加载失败:一次素材都不播,回落合成音(声音还在),时间线照走', async () => {
+      const miss = await runWith(() => makeFakeAudio({ fail: true }))
+      for (const a of miss.made.values()) expect(a.play).not.toHaveBeenCalled()
+      expect(miss.freqs).toContain(STEP_HZ)
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('动画异常'))).toBe(false)
+    })
+
+    it('素材还没加载完就用到了:当次回落合成音,不等、不丢', async () => {
+      const slow = (): Fake => {
+        const a = makeFakeAudio({ duration: 0.1 })
+        a.load.mockImplementation(() => undefined) // 永远不触发 loadedmetadata
+        return a
+      }
+      const r = await runWith(slow)
+      for (const a of r.made.values()) expect(a.play).not.toHaveBeenCalled()
+      expect(r.freqs).toContain(STEP_HZ)
+    })
+
+    it('播放被浏览器拒绝(play() reject):回落合成音,和素材缺失时一样响', async () => {
+      const miss = await runWith(() => makeFakeAudio({ fail: true }))
+      const rej = await runWith(() => makeFakeAudio({ duration: 0.1, rejectPlay: true }))
+      expect(rej.made.get(`${base}sfx-tick.mp3`)!.play).toHaveBeenCalled()
+      expect(rej.freqs).toContain(STEP_HZ)
+      expect(rej.freqs.length).toBe(miss.freqs.length)
+    })
+
+    it("sfx:'synth':不请求任何音效素材,全部现场合成", async () => {
+      const r = await runWith(() => makeFakeAudio({ duration: 0.1 }), { config: { sfx: 'synth' } })
+      expect(r.urls).toHaveLength(0)
+      expect(r.freqs).toContain(STEP_HZ)
+    })
+
+    it('sound:false:不请求音效素材,也不合成任何界面音', async () => {
+      const r = await runWith(() => makeFakeAudio({ duration: 0.1 }), { config: { sound: false } })
+      expect(r.urls).toHaveLength(0)
+      expect(r.freqs).not.toContain(STEP_HZ)
+    })
+
+    it('没有素材目录(assetBase 为空):不请求任何音效素材', async () => {
+      const r = await runWith(() => makeFakeAudio({ duration: 0.1 }), { assetBase: '' })
+      expect(r.urls).toHaveLength(0)
+      expect(r.freqs).toContain(STEP_HZ)
+    })
+
+    it('音量 = 增益 × soundVolume × 2(封顶 1):tickRun 默认 0.5,soundVolume 0.25 时 0.25', async () => {
+      const def = await runWith(() => makeFakeAudio({ duration: 0.1 }))
+      expect(def.made.get(`${base}sfx-ticks-run.mp3`)!.volume).toBeCloseTo(0.5, 5)
+      const low = await runWith(() => makeFakeAudio({ duration: 0.1 }), { config: { soundVolume: 0.25 } })
+      expect(low.made.get(`${base}sfx-ticks-run.mp3`)!.volume).toBeCloseTo(0.25, 5)
+      const loud = await runWith(() => makeFakeAudio({ duration: 0.1 }), { config: { soundVolume: 1 } })
+      for (const a of loud.made.values()) expect(a.volume).toBeLessThanOrEqual(1)
+    })
+
+    it('每次播放都从头开始(连续「哒」不会半截)', async () => {
+      // 假音频每次 play 之后把播放头推到 0.07,模拟「上一声还没放完」;
+      // 记下每次 play 被调用那一刻的播放头,第二次起必须已经回到 0。
+      const seen: number[] = []
+      const r = await runWith(() => {
+        const a = makeFakeAudio({ duration: 0.1 })
+        const basePlay = a.play
+        a.play = vi.fn(() => {
+          seen.push(a.currentTime)
+          a.currentTime = 0.07
+          return basePlay()
+        }) as unknown as typeof a.play
+        return a
+      })
+      const tick = r.made.get(`${base}sfx-tick.mp3`)!
+      expect(tick.play.mock.calls.length).toBeGreaterThan(1)
+      expect(seen.length).toBeGreaterThan(1)
+      for (const t of seen) expect(t).toBe(0)
+    })
+
+    it('跳过时正在响的音效素材也被停掉', async () => {
+      const made = new Map<string, Fake>()
+      const { handle: h } = start({
+        assetBase: base,
+        config: { requireInteraction: false, voice: false },
+        createSfxAudio: (url) => {
+          const a = makeFakeAudio({ duration: 5, neverEnds: true })
+          made.set(url, a)
+          return a as unknown as StartupAudioLike
+        }
+      })
+      await advanceUntil(() => [...made.values()].some((a) => a.play.mock.calls.length > 0))
+      h.skip()
+      expect([...made.values()].some((a) => a.pause.mock.calls.length > 0)).toBe(true)
     })
   })
 

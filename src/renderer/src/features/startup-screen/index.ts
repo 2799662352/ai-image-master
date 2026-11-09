@@ -84,7 +84,6 @@ export interface StartupHostDeps {
   loadEngine?: () => Promise<StartupEngineModule>
   /** 不传 = 懒加载应用里的 useAuthStore;传 null = 没有登录能力 */
   auth?: AuthPort | null
-  markUrl?: string
   assetBase?: string
   /** appReady 迟迟不来时的揭幕封顶(默认 15 s) */
   revealTimeoutMs?: number
@@ -107,7 +106,6 @@ export interface StartupHost {
 const REVEAL_CAP_MS = 15_000
 /** 与 index.html 里 `.page-loader.loaded` 的 opacity 过渡匹配,之后摘掉节点 */
 const LOADER_REMOVE_MS = 800
-const MARK_PATH = 'images/logo.png'
 const AUDIO_DIR = 'audio/startup/'
 
 function resolveAsset(rel: string): string {
@@ -414,7 +412,6 @@ export function initStartupScreen(deps: StartupHostDeps = {}): StartupHost {
     if (disposed) return
 
     const options: StartupEngineOptions = {
-      markUrl: deps.markUrl ?? resolveAsset(MARK_PATH),
       assetBase: deps.assetBase ?? resolveAsset(AUDIO_DIR),
       config: {
         identity: readCachedIdentity(storage) ?? FALLBACK_IDENTITY,

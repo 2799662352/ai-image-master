@@ -36,9 +36,15 @@ export interface StartupEngineConfig {
   /** 第 1、2 步是否真的等用户点击;false 时自动往下走 */
   requireInteraction?: boolean
   allowSkip?: boolean
-  /** 界面合成音效(WebAudio) */
+  /** 界面音效总开关 */
   sound?: boolean
   soundVolume?: number
+  /**
+   * 界面音效来源(默认 'audio'):
+   * 'audio' = 优先播素材目录里的 sfx-tick / sfx-ticks-run(「哒」),没加载好或播不出就回落合成音;
+   * 'synth' = 一律现场合成(WebAudio),不请求任何音效文件。
+   */
+  sfx?: 'audio' | 'synth'
   /** 语音播报总开关(素材缺失时静音) */
   voice?: boolean
   voiceVolume?: number
@@ -76,14 +82,14 @@ export interface StartupEngineOptions {
   config?: StartupEngineConfig
   /** 语音素材目录(以 / 结尾),里面放 line-1.mp3 … line-6.mp3 */
   assetBase?: string
-  /** 品牌标识图(白色剪影 PNG / SVG)的地址 */
-  markUrl?: string
   onAction?: (e: StartupActionEvent) => void
   /** 用户即将看到应用的那一刻(含被跳过);宿主在这里记「今天播过了」 */
   onFinish?: (e: StartupFinishEvent) => void
   /** 淡出完成、根节点已摘除 */
   onDone?: (e: StartupFinishEvent) => void
   createAudio?: (url: string) => StartupAudioLike
+  /** 界面音效素材(sfx-*.mp3)用的工厂;不给就复用 createAudio。测试里分开注入,免得音效请求混进台词请求的计数 */
+  createSfxAudio?: (url: string) => StartupAudioLike
 }
 
 export interface StartupScreenHandle {

@@ -5,7 +5,8 @@
  * 移植自 dsh-startup-screen（MIT，Copyright (c) 2026 沈宏宏），许可全文见同目录
  * THIRD_PARTY_NOTICE.md。与上游的区别：
  *   - 导出 createStartupScreen()，不再依赖 window.__DSH_* 全局与宿主路由；
- *   - 标识换成 CATIMATION 猫头（<img>，白色剪影），品牌文案换成本应用的；
+ *   - 标识换成 CATIMATION 猫头（内联 SVG，轮廓见 catMark.js；终幕和第二幕标识有「一笔画成」动画），
+ *     品牌文案换成本应用的；
  *   - 真声素材走 HTMLAudio（file:// 下 fetch 会被 Chromium 拦截），缺素材 = 静音；
  *   - 身份与登录态由宿主注入（setIdentity / setAuthenticated）；界面里没有任何密码输入，
  *     第 1 步在未登录时的点击只会经 onAction 通知宿主去走网页登录；
@@ -19,6 +20,8 @@
  *   交互    第 1、2 步等待用户确认（按钮 / Enter / 空格 / 点击），Esc 或右上角可跳过
  *   终幕    WELCOME TO / [品牌] / 标识，色散故障后揭幕
  * ========================================================================== */
+import { CAT_MARK_VIEWBOX, CAT_MARK_CONTOURS } from './catMark.js'
+
 export function createStartupScreen(options) {
   try {
     return build(options || {})
@@ -49,7 +52,7 @@ function build(options) {
     speed: 1,
     requireInteraction: true,   // 第 1、2 步等待用户确认（改成 false = 整段自动播）
     allowSkip: true,
-    sound: true,                // 界面音效（WebAudio 合成，无音频文件）
+    sound: true,                // 界面音效（真素材优先，缺了回落 WebAudio 合成）
     soundVolume: 0.5,
     voice: true,                // 播报真声素材（缺素材 = 静音）
     voiceSource: 'asset',       // asset=真声素材 / tts=全部浏览器合成
@@ -61,7 +64,7 @@ function build(options) {
     voiceName: '',
     voiceRate: 0.88,
     voicePitch: 0.85,
-    sfx: 'synth',               // 界面音效一律现场合成
+    sfx: 'audio',               // audio=优先用真素材「哒」(sfx-tick / sfx-ticks-run),缺了回落合成;synth=一律现场合成
     identity: '创作者',          // 由宿主 setIdentity() 换成登录用户的名字
     identityId: '',
     accessLevel: '3',
@@ -203,8 +206,6 @@ function build(options) {
   /** 路径 = 素材目录 + 相对名；assetBase 为空时没有素材。 */
   var assetBase = typeof options.assetBase === 'string' ? options.assetBase : ''
   if (assetBase && assetBase.charAt(assetBase.length - 1) !== '/') assetBase += '/'
-  var markUrl = typeof options.markUrl === 'string' ? options.markUrl : ''
-
   /** 上游靠全局代际号让“重播”后的旧时间线失效；这里每个实例独立，永远不会过期。 */
   function stale() { return false }
   function noop() {}
@@ -274,16 +275,45 @@ function build(options) {
     return n
   }
 
-  /** CATIMATION 猫头：<img>（file:// 下 CSS mask / fetch 都被拦，<img> 没问题）。无地址时给空占位。 */
+  var SVG_NS = 'http://www.w3.org/2000/svg'
+
+  function svgEl(tag, attrs) {
+    var n = document.createElementNS(SVG_NS, tag)
+    for (var k in attrs) n.setAttribute(k, attrs[k])
+    return n
+  }
+
+  /** CATIMATION 猫头：内联 SVG（不发任何请求，file:// 下也没有 mask / fetch 被拦的问题）。
+      两层：实心面（evenodd 挖出耳内与双眼）+ 同一组轮廓的描边。描边平时不可见，
+      drawMark() 给它跑「一笔画成」；每条轮廓 pathLength=1，所以长短不同的轮廓会同时走完。 */
   function markEl(cls) {
-    if (!markUrl) return el('span', cls)
-    var img = document.createElement('img')
-    img.className = cls || ''
-    img.src = markUrl
-    img.alt = ''
-    img.draggable = false
-    img.setAttribute('aria-hidden', 'true')
-    return img
+    var svg = svgEl('svg', {
+      class: cls || '',
+      viewBox: CAT_MARK_VIEWBOX,
+      'aria-hidden': 'true',
+      focusable: 'false'
+    })
+    svg.appendChild(svgEl('path', { class: 'dsu-mark-fill', d: CAT_MARK_CONTOURS.join(' ') }))
+    for (var i = 0; i < CAT_MARK_CONTOURS.length; i++) {
+      svg.appendChild(svgEl('path', { class: 'dsu-mark-line', d: CAT_MARK_CONTOURS[i], pathLength: '1' }))
+    }
+    return svg
+  }
+
+  /** 猫头「一笔画成」：沿轮廓描边走完 → 落墨成面 → 描边收掉。
+      动画本身是 CSS（见 .dsu-mark.dsu-draw），这里只按当前速度把时间写成变量再触发；
+      不支持动画（jsdom / 老内核）时猫头就是静止的实心面，不挡任何流程。 */
+  function drawMark(mark, traceMs) {
+    if (!mark) return
+    var s = mark.style
+    s.setProperty('--dsu-draw-ms', ms(traceMs) + 'ms')
+    s.setProperty('--dsu-ink-delay', ms(Math.round(traceMs * 0.78)) + 'ms')
+    s.setProperty('--dsu-ink-ms', ms(Math.round(traceMs * 0.42)) + 'ms')
+    s.setProperty('--dsu-fade-delay', ms(traceMs) + 'ms')
+    s.setProperty('--dsu-fade-ms', ms(Math.round(traceMs * 0.4)) + 'ms')
+    mark.classList.remove('dsu-draw')
+    void mark.getBoundingClientRect()   /* 重播时让动画从头开始 */
+    mark.classList.add('dsu-draw')
   }
 
   /** 逐字渐显：比逐字截断更稳（居中排版不会因为字宽变化而抖动） */
@@ -952,10 +982,64 @@ function build(options) {
       })
     }
 
+    /* 界面音效素材（「哒」）：同样走 HTMLAudio，没加载好 / 播不出就回落现场合成，绝不静音也不抛错。
+       C.sfx === 'synth'、界面音效关闭、没有素材目录时一律不碰素材。 */
+    var sfxEls = {}
+
+    function sfxEnabled() { return C.sfx !== 'synth' && !!C.sound && !!assetBase }
+
+    function newSfx(url) {
+      if (typeof options.createSfxAudio === 'function') return options.createSfxAudio(url)
+      return newAudio(url)
+    }
+
+    function ensureSfx(name) {
+      if (!sfxEnabled()) return false
+      var known = sfxEls[name]
+      if (known) return known.ok
+      var rec = { el: null, ok: false }
+      sfxEls[name] = rec
+      var a = null
+      try { a = newSfx(assetUrl(name)) } catch (e) { return false }
+      if (!a) return false
+      rec.el = a
+      function onMeta() { if (isFinite(a.duration) && a.duration > 0) rec.ok = true }
+      function onFail() { rec.ok = false; rec.el = null }
+      try {
+        a.addEventListener('loadedmetadata', onMeta)
+        a.addEventListener('canplaythrough', onMeta)
+        a.addEventListener('error', onFail)
+        if (a.readyState >= 1) onMeta()
+        if (typeof a.load === 'function') a.load()
+      } catch (e) { onFail() }
+      return rec.ok
+    }
+
+    /** 优先播素材；素材没就绪 / 播放被拒就跑 fallback（合成音）。 */
+    function sfx(name, gain, fallback) {
+      var fell = false
+      function fall() { if (fell) return; fell = true; try { fallback() } catch (e) { /* noop */ } }
+      if (!sfxEnabled()) { fall(); return }
+      ensureSfx(name)
+      var rec = sfxEls[name]
+      var a = rec && rec.ok && rec.el
+      if (!a) { fall(); return }
+      try {
+        a.volume = Math.min(1, (gain == null ? 0.5 : gain) * clamp01(C.soundVolume, 0, 1) * 2)
+        try { a.currentTime = 0 } catch (e) { /* noop */ }
+        var p = a.play()
+        if (p && typeof p.then === 'function') p.then(null, fall)
+      } catch (e) { fall() }
+    }
+
     function stopVoices() {
       for (var k in voiceEls) {
         var a = voiceEls[k] && voiceEls[k].el
         if (a) { try { a.pause() } catch (e) { /* noop */ } }
+      }
+      for (var s in sfxEls) {
+        var b = sfxEls[s] && sfxEls[s].el
+        if (b) { try { b.pause() } catch (e) { /* noop */ } }
       }
     }
 
@@ -964,11 +1048,16 @@ function build(options) {
       ensureAsset: ensureAsset,
       playAssetAndWait: playAssetAndWait,
       stopVoices: stopVoices,
-      /* 文字渐显 / 阶段推进 / 按钮确认 —— 全部现场合成，不带任何音频文件 */
-      tick: function () { tone(1760, 0.035, 'square', 0.022) },
-      confirm: function () { tone(660, 0.09, 'triangle', 0.07); tone(990, 0.17, 'triangle', 0.055, 0.085) },
-      tickRun: function () { for (var i = 0; i < 6; i++) tone(1760 + (i % 3) * 220, 0.03, 'square', 0.016, i * 0.09) },
-      step: function () { tone(880, 0.05, 'sine', 0.05); tone(1320, 0.07, 'sine', 0.028, 0.045) },
+      ensureSfx: ensureSfx,
+      /* 文字渐显 / 阶段推进 / 按钮确认：真素材「哒」优先（增益沿用上游 0.45 / 0.85 / 0.6 / 0.5），缺了回落合成 */
+      tick: function () { sfx('sfx-tick', 0.45, function () { tone(1760, 0.035, 'square', 0.022) }) },
+      confirm: function () {
+        sfx('sfx-tick', 0.85, function () { tone(660, 0.09, 'triangle', 0.07); tone(990, 0.17, 'triangle', 0.055, 0.085) })
+      },
+      tickRun: function () {
+        sfx('sfx-ticks-run', 0.5, function () { for (var i = 0; i < 6; i++) tone(1760 + (i % 3) * 220, 0.03, 'square', 0.016, i * 0.09) })
+      },
+      step: function () { sfx('sfx-tick', 0.6, function () { tone(880, 0.05, 'sine', 0.05); tone(1320, 0.07, 'sine', 0.028, 0.045) }) },
       hover: function () { tone(2200, 0.02, 'sine', 0.018) },
       sweep: function () { noise(0.75, 0.035) },
       /* 念台词之前的两声轻提示 */
@@ -1232,6 +1321,10 @@ function build(options) {
     for (var i = 0; i < STEPS.length; i++) if (STEPS[i].audio) audio.ensureAsset(STEPS[i].audio)
     audio.ensureAsset('line-6')   /* 终幕欢迎语 */
   })()
+  ;(function preloadSfx() {
+    audio.ensureSfx('sfx-tick')
+    audio.ensureSfx('sfx-ticks-run')
+  })()
   ;(function wireSound() {
     if (voice.supported && (C.ttsFallback === true || C.voiceSource === 'tts')) {
       voice.load()
@@ -1394,16 +1487,8 @@ function build(options) {
   function assembleLogo() {
     ui.logo.classList.add('dsu-in')
     ui.dots.hidden = false
-    var mark = ui.logo.querySelector('.dsu-mark')
-    /* 猫头从左往右"扫"出来；Web Animations 不可用（jsdom / 老内核）就直接显示 */
-    if (mark && typeof mark.animate === 'function') {
-      try {
-        mark.animate(
-          [{ clipPath: 'inset(0 100% 0 0)', opacity: 0.25 }, { clipPath: 'inset(0 0 0 0)', opacity: 1 }],
-          { duration: ms(1100), easing: 'cubic-bezier(.55,.06,.24,1)', fill: 'forwards' }
-        )
-      } catch (err) { /* noop */ }
-    }
+    /* 猫头一笔画成：沿轮廓描边走完再落墨（上游鲸鱼图标同一手法） */
+    drawMark(ui.logo.querySelector('.dsu-mark'), 1300)
     return wait(300)
   }
 
@@ -1535,6 +1620,9 @@ function build(options) {
     return wait(360)
       .then(function () {
         ui.welcome.classList.add('dsu-in')
+        /* 终幕猫头也一笔画成：描边 + 落墨在光晕炸开之前（约 1.06 秒内）收完，
+           光晕打在已经成形的标识上 */
+        drawMark(ui.w3.querySelector('.dsu-mark'), 750)
         ui.idline.classList.remove('dsu-in')
         /* 欢迎文案亮起的同一刻开口 —— 早于画面会让人以为「话没说完画面就跳了」 */
         welcome = voice.line(null, null, 'line-6')

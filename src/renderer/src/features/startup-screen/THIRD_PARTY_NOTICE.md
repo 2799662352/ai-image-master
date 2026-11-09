@@ -18,19 +18,30 @@
   the animation waits for the result; a visible "skip login" link and Esc are the only explicit bypass.
   Step 2 (identity confirm) has a "log out" link that signs the user out so they can sign in again.
 
-## Audio - TEMPORARY placeholders, replace before a public release
+## Audio - voice lines
 
-`public/audio/startup/line-1.mp3` to `line-6.mp3` are the **upstream project's own voice files**, copied in so the
-animation has sound for now (the maintainer will replace them with their own recordings):
+`public/audio/startup/line-1.mp3` to `line-6.mp3` are **not** the upstream project's recordings. They are cut from
+the audio track of a video supplied by the app owner (`down111load.mp4`, one continuous ~20 s read of the six steps,
+closing line "Identity verified. Welcome to CATIMATION."). The track was split at its silent gaps, trimmed,
+loudness-normalized (about -17 LUFS) and encoded to mono 24 kHz mp3. **No pitch shift.** The six lines share one
+voice because they come from one continuous read.
 
-- `line-1` to `line-5` are clips cut from the upstream author's source video (the upstream README says they
-  come from a voice track the author supplied). The upstream MIT license covers the **code**; it does not
-  clearly grant rights to this recorded voice.
-- `line-6` is the upstream author's self-made closing line; an earlier variant was cloned with XTTS-v2,
-  whose model license (CPML) is non-commercial.
+- Provenance of that video and the terms of whatever tool generated its voice are **not verified here**: the owner
+  must confirm the audio may be redistributed inside the product before a public release.
+- The upstream MIT license covers the **code** only; none of the upstream voice recordings are shipped any more.
 
-Same-name files can simply overwrite these; no code change is needed. The upstream UI sound effects
-(`sfx-tick*.mp3`) are **not** included - the engine synthesizes its own.
+Same-name files can simply overwrite these; no code change is needed.
+
+## Audio - interface sound effects
+
+`public/audio/startup/sfx-tick.mp3` (a 20 ms single tick) and `sfx-ticks-run.mp3` (ten ticks, 45 ms apart) are the
+**upstream project's** UI sound effects, copied unchanged. The engine plays them for step / confirm / hex-run and
+falls back to its own synthesized tones when a file is missing or cannot play (`sfx: 'synth'` skips the files
+altogether).
+
+- The upstream MIT license (text below) covers the repository's **code**; it does not explicitly mention these two
+  audio files, so their redistribution terms are **not verified**. They are tiny and trivially replaceable: delete
+  them (the engine falls back to synthesized tones) or overwrite them with our own.
 - Removed the DeepSeek Harness host layer: `~/.dsh` config, `dsh-app:` checks, titlebar-overlay sync,
   replay / self-injection, skip mode and the 9 s fallback.
 

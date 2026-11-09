@@ -97,7 +97,6 @@ describe('initStartupScreen', () => {
       now: () => NOW,
       loadEngine,
       auth: auth.port,
-      markUrl: 'file:///app/images/logo.png',
       assetBase: 'file:///app/audio/startup/',
       ...over
     })
@@ -262,12 +261,12 @@ describe('initStartupScreen', () => {
   })
 
   describe('传给引擎的参数', () => {
-    it('带上 logo 与音频地址,身份用缓存名占位,登录态未知(null)', async () => {
+    it('带上音频地址(猫头是内联矢量,不再传图片地址),身份用缓存名占位,登录态未知(null)', async () => {
       const storage = memoryStorage({ [IDENTITY_STORAGE_KEY]: 'Neo' })
       const { engine } = start({ storage })
       await flush()
       const o = engine.calls[0]
-      expect(o.markUrl).toBe('file:///app/images/logo.png')
+      expect(o).not.toHaveProperty('markUrl')
       expect(o.assetBase).toBe('file:///app/audio/startup/')
       expect(o.config?.identity).toBe('Neo')
       // 水合前不知道是不是游客,所以不能显示「网页登录」按钮文案
