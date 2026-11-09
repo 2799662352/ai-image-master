@@ -49,8 +49,8 @@ import { initServiceBridge, isServiceBridgeReady } from './services/ServiceBridg
 // V16.4 - 导入 AppBootstrap (替代 app.js)
 import { getAppBootstrap, initAppBootstrapGlobal } from './core/AppBootstrap'
 
-// V16.1.2 - 导入 IntroVideoController (替代 index.html 内联脚本)
-import { initIntroVideo } from './features/intro-video'
+// 启动开场动画(每天首次启动播完整版,Esc 可跳过;同时负责应用就绪后的揭幕)
+import { initStartupScreen } from './features/startup-screen'
 import { mountAgentChatRuntime } from './features/agent-chat'
 
 console.log('🚀 CATIMATION-Cyberpunk Master 渲染进程启动')
@@ -91,14 +91,12 @@ async function initializeServices(): Promise<void> {
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('📄 DOM 加载完成')
   
-  // V16.1.2 - 初始化 Cyberpunk Intro 视频控制器
-  // 注意: 当使用 electron-vite 单入口时，此控制器会自动启动
-  // 如果使用根目录 index.html，内联脚本仍然会工作（过渡期）
+  // 启动开场动画 + 揭幕。必须最先挂上:它要监听后面 bootstrap 发出的 appReady。
+  // 失败只记日志,不能挡住应用启动(揭幕有 15 秒兜底)。
   try {
-    initIntroVideo()
-    console.log('[main.ts] 🎬 IntroVideoController 已初始化')
+    initStartupScreen()
   } catch (error) {
-    console.warn('[main.ts] IntroVideoController 初始化跳过 (可能不在 intro 页面):', error)
+    console.warn('[main.ts] 启动开场初始化失败,直接进入应用:', error)
   }
   
   // 初始化 TypeScript 服务

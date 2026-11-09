@@ -111,17 +111,9 @@ export type {
   NetworkDiagnosticsConfig
 } from './error-handler'
 
-// V16.1.2 - Intro Video Controller
-export {
-  IntroVideoController,
-  getIntroVideoController,
-  initIntroVideo,
-  resetIntroVideoController
-} from './intro-video'
-export type {
-  IntroVideoConfig,
-  IntroVideoState
-} from './intro-video'
+// 启动开场动画(替代原 Intro 视频)
+export { initStartupScreen } from './startup-screen'
+export type { StartupHost, StartupHostDeps } from './startup-screen'
 
 // V16.2 A1 - Performance Monitor
 export {

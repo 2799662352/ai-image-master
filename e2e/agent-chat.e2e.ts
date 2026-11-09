@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures/electron'
 
 async function skipIntroIfPresent(page: import('@playwright/test').Page): Promise<void> {
-  const skipButton = page.locator('#skipIntroBtn')
+  const skipButton = page.locator('#cat-startup-root .dsu-skip')
   if (await skipButton.count() > 0 && await skipButton.isVisible()) {
     await skipButton.click().catch(() => {})
     return

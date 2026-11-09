@@ -7,9 +7,10 @@ videos/intro.mp4
 ```
 
 改片只需替换这个文件(保持文件名),`index.html` 里的 `<source>` 指的就是它。
-**注意有两份**:`src/renderer/public/videos/`(当前 Vite 渲染端)和仓库根的
-`videos/`(老 vanilla shell 的 index.html 引用),换片时两边一起换,否则两个宿主
-会放不同的片子。
+**⚠️ 当前的 Vite 渲染端已不再使用这段视频**:启动开场换成了
+`src/renderer/src/features/startup-screen/` 里的动画(`src/renderer/public/videos/`
+随之删除)。这里只剩老 vanilla shell(仓库根 `index.html`)还在引用,下面的说明
+只对它有效。
 
 ## 时长是唯一硬约束
 
