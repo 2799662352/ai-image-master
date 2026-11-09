@@ -187,29 +187,56 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
   })
 
-  describe('GIF / SVG 输出只有 GPT Image 2.6 官转支持', () => {
-    it('agent 要 GIF 但渠道不是 2.6(这里是默认渠道)→ 明确报错并点名可用型号,不发请求、不留「生成中」气泡', async () => {
+  describe('GIF / SVG 输出只有 GPT Image 2.6(apiyi 官转 / 腾讯)支持', () => {
+    it('agent 要 GIF 但渠道不是 2.6(用户选了 2.5 官转)→ 明确报错并点名四个可用型号,不发请求、不留「生成中」气泡', async () => {
       const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
       registerFakes(api, makeHistory())
+      setChannel('gpt-image-2.5-flare')
 
-      await expect(
-        callGenerate({ prompt: 'a spinning cat', modelParams: { output_format: 'gif', frame_count: 8 } }),
-      ).rejects.toThrow(/gpt-image-2\.6-flare.*gpt-image-2\.6-sunburst/)
+      const rejection = callGenerate({ prompt: 'a spinning cat', modelParams: { output_format: 'gif', frame_count: 8 } })
+      await expect(rejection).rejects.toThrow(/gpt-image-2\.6-flare.*gpt-image-2\.6-sunburst.*custom-model-og-v2\.6-f.*custom-model-og-v2\.6-s/)
 
       expect(api.generateImage).not.toHaveBeenCalled()
       expect(useAgentChatStore.getState().messages).toHaveLength(0)
     })
 
-    it('SVG 同样被拒(只带 svg_model 也算)', async () => {
+    it('SVG 同样被拒(只带 svg_model / svg_effort 也算)', async () => {
       const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: [] })) }
       registerFakes(api, makeHistory())
+      setChannel('gpt-image-2-vip')
 
       await expect(callGenerate({ prompt: 'logo', modelParams: { output_format: 'svg' } })).rejects.toThrow(/GIF \/ SVG/)
       await expect(callGenerate({ prompt: 'logo', modelParams: { svg_model: 'gpt-4.1-mini' } })).rejects.toThrow(/GIF \/ SVG/)
+      await expect(callGenerate({ prompt: 'logo', modelParams: { svg_effort: 'low' } })).rejects.toThrow(/GIF \/ SVG/)
       expect(api.generateImage).not.toHaveBeenCalled()
     })
 
-    it('agent 显式指定 2.6 型号 → 放行,modelParams 原样交给 ApiService', async () => {
+    it('默认渠道(腾讯 2.6-s)现在就能出 GIF:不点名型号也放行,modelParams 原样交给 ApiService', async () => {
+      const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/a.gif'] })) }
+      registerFakes(api, makeHistory())
+
+      await callGenerate({ prompt: 'a spinning cat', modelParams: { output_format: 'gif', frame_count: 8, frame_duration_ms: 100 } })
+
+      expect(api.generateImage).toHaveBeenCalledTimes(1)
+      const sent = api.generateImage.mock.calls[0][0]
+      expect(sent.model).toBe('custom-model-og-v2.6-s')
+      expect(sent.modelParams).toEqual({ output_format: 'gif', frame_count: 8, frame_duration_ms: 100 })
+    })
+
+    it('腾讯 2.6 的 SVG 用 svg_effort;误用 apiyi 的 svg_model → 拒绝并指向 svg_effort,不发请求', async () => {
+      const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/a.svg'] })) }
+      registerFakes(api, makeHistory())
+
+      await callGenerate({ prompt: 'logo', model: 'custom-model-og-v2.6-f', modelParams: { output_format: 'svg', svg_effort: 'none' } })
+      expect(api.generateImage.mock.calls[0][0].modelParams).toEqual({ output_format: 'svg', svg_effort: 'none' })
+
+      await expect(
+        callGenerate({ prompt: 'logo', model: 'custom-model-og-v2.6-f', modelParams: { output_format: 'svg', svg_model: 'gpt-6-luna' } }),
+      ).rejects.toThrow(/svg_effort/)
+      expect(api.generateImage).toHaveBeenCalledTimes(1)
+    })
+
+    it('agent 显式指定 2.6 官转型号 → 放行,modelParams 原样交给 ApiService;给 svg_effort 则被拒并指向 svg_model', async () => {
       const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/gif;base64,R0lGODlh'] })) }
       registerFakes(api, makeHistory())
 
@@ -223,6 +250,11 @@ describe('AgentToolExecutor.generateImage', () => {
       const sent = api.generateImage.mock.calls[0][0]
       expect(sent.model).toBe('gpt-image-2.6-flare')
       expect(sent.modelParams).toEqual({ output_format: 'gif', frame_count: 8, frame_duration_ms: 100 })
+
+      await expect(
+        callGenerate({ prompt: 'logo', model: 'gpt-image-2.6-flare', modelParams: { output_format: 'svg', svg_effort: 'low' } }),
+      ).rejects.toThrow(/svg_model/)
+      expect(api.generateImage).toHaveBeenCalledTimes(1)
     })
 
     it('用户已选 2.6 渠道、agent 没点名型号 → 同样放行', async () => {
@@ -246,7 +278,6 @@ describe('AgentToolExecutor.generateImage', () => {
       expect(api.generateImage).toHaveBeenCalledTimes(3)
     })
   })
-
   it('honors the user channel when the agent omits model (picker is the default)', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())

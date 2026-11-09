@@ -7,6 +7,7 @@ import {
   mimeFromUrl,
   mimeTypeToExtension,
   readImageHead,
+  resolveDownloadedMediaMime,
   resolveFetchedImageMime,
   sniffImageMime,
 } from '../imageMime'
@@ -95,13 +96,26 @@ describe('readImageHead:流式落盘后只读开头,不把整张图读进内存'
   })
 })
 
-describe('resolveFetchedImageMime:响应头可信就信头,不可信才看字节', () => {
+describe('resolveFetchedImageMime:文件头字节认得出就以字节为准,认不出才信头', () => {
   const SVG = text('<svg xmlns="http://www.w3.org/2000/svg"/>')
 
-  it('头是 image/* → 以头为准(含大小写与 ;charset),哪怕字节另有说法', () => {
-    expect(resolveFetchedImageMime('image/gif', 'image/png', PNG)).toBe('image/gif')
-    expect(resolveFetchedImageMime('Image/WebP; charset=binary', 'image/png', PNG)).toBe('image/webp')
+  it('头与字节一致 → 照常(含大小写与 ;charset)', () => {
+    expect(resolveFetchedImageMime('image/gif', 'image/png', GIF89)).toBe('image/gif')
+    expect(resolveFetchedImageMime('Image/WebP; charset=binary', 'image/png', WEBP)).toBe('image/webp')
     expect(resolveFetchedImageMime('image/svg+xml', 'image/png', SVG)).toBe('image/svg+xml')
+    expect(resolveFetchedImageMime('image/png', 'image/png', PNG)).toBe('image/png')
+  })
+
+  it('头说 image/png、字节是 GIF / SVG → 以字节为准(apiyi 把 GIF 存成 .png 键、回 image/png 的真实场景)', () => {
+    expect(resolveFetchedImageMime('image/png', 'image/png', GIF89)).toBe('image/gif')
+    expect(resolveFetchedImageMime('image/png', 'image/png', GIF87)).toBe('image/gif')
+    expect(resolveFetchedImageMime('image/png', 'image/png', SVG)).toBe('image/svg+xml')
+    expect(resolveFetchedImageMime('image/jpeg', 'image/png', WEBP)).toBe('image/webp')
+  })
+
+  it('头是 image/*、字节认不出(avif / heic 等嗅探表外的格式)→ 仍信头,不被「认不出」带偏', () => {
+    expect(resolveFetchedImageMime('image/avif', 'image/png', text('\x00\x00\x00\x1cftypavif'))).toBe('image/avif')
+    expect(resolveFetchedImageMime('image/heic', 'image/png', new Uint8Array(0))).toBe('image/heic')
   })
 
   it('头缺失 / octet-stream / 非图片 → 看字节:认得出就用(extension-less 的 apiyi 链就是这个场景)', () => {
@@ -114,5 +128,46 @@ describe('resolveFetchedImageMime:响应头可信就信头,不可信才看字节
   it('头不可信且字节也认不出 → 保持调用方的猜测,不凭空改', () => {
     expect(resolveFetchedImageMime(undefined, 'image/jpeg', text('hello'))).toBe('image/jpeg')
     expect(resolveFetchedImageMime('application/octet-stream', 'image/png', new Uint8Array(0))).toBe('image/png')
+  })
+})
+
+// attachments:save-from-url(agent 出图落到 uploads 的那条):下载下来的字节定类型。
+// 2026-11-09 用户让 agent「出一张 gif」,落盘文件是 `<hash>.png`(内容却是 GIF89a 16 帧):
+// apiyi 的 GIF 经网关落在 `.png` 键下并回 `Content-Type: image/png`,这条路径只信头 → 后缀错了,
+// 播放器 / 另存为都按静图处理。字节魔数比头可靠,与 cos:enqueue-upload-from-url 同一规则。
+describe('resolveDownloadedMediaMime:图片魔数优先于响应头 / URL 后缀', () => {
+  const SVG = text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+  const MP4 = Uint8Array.from([0, 0, 0, 0x18, ...text('ftypmp42')])
+
+  it('GIF 被标成 image/png(apiyi 的 .png 键)→ image/gif,落盘后缀因此是 .gif', () => {
+    expect(resolveDownloadedMediaMime('image/png', GIF89)).toBe('image/gif')
+    expect(resolveDownloadedMediaMime('image/png', GIF87)).toBe('image/gif')
+    expect(mimeTypeToExtension(resolveDownloadedMediaMime('image/png', GIF89)!)).toBe('gif')
+  })
+
+  it('SVG 被标成 image/png → image/svg+xml;JPEG / WebP 同理以字节为准', () => {
+    expect(resolveDownloadedMediaMime('image/png', SVG)).toBe('image/svg+xml')
+    expect(resolveDownloadedMediaMime('image/png', JPEG)).toBe('image/jpeg')
+    expect(resolveDownloadedMediaMime('image/jpeg', WEBP)).toBe('image/webp')
+  })
+
+  it('头本来就对 → 不变', () => {
+    expect(resolveDownloadedMediaMime('image/png', PNG)).toBe('image/png')
+    expect(resolveDownloadedMediaMime('image/gif', GIF89)).toBe('image/gif')
+  })
+
+  it('无后缀 URL + octet-stream(头 / URL 都认不出 = null)但字节是图 → 认得出,不再被当成「不是图片」拒掉', () => {
+    expect(resolveDownloadedMediaMime(null, GIF89)).toBe('image/gif')
+    expect(resolveDownloadedMediaMime(null, PNG)).toBe('image/png')
+  })
+
+  it('视频 / 嗅探表外的图片(avif 等)→ 保持头 / URL 给的类型,不被误改', () => {
+    expect(resolveDownloadedMediaMime('video/mp4', MP4)).toBe('video/mp4')
+    expect(resolveDownloadedMediaMime('image/avif', bytes(0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70))).toBe('image/avif')
+  })
+
+  it('字节认不出、头 / URL 也认不出 = null(调用方照旧拒绝非媒体文件)', () => {
+    expect(resolveDownloadedMediaMime(null, text('<html>404</html>'))).toBeNull()
+    expect(resolveDownloadedMediaMime(null, new Uint8Array(0))).toBeNull()
   })
 })

@@ -212,7 +212,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
      \`quality\` / \`chaos\` / \`stylize\` / \`raw\` / \`iw\` / \`sref\` / \`sw\` / \`seed\` / \`no\`)。**默认一个都
      别传**;只有用户明说「更疯 / 风格化拉高 / 关掉 2K / 固定 seed / 排除某元素」才设对应项。
      越界值会被**拒绝**而不是截断(按次计费);NovelAI 的键见工具说明。
-     GIF / SVG(\`output_format\` 等,见工具说明)仅 \`gpt-image-2.6-flare|sunburst\` 能出,文生图一张,别家被拒。
+     GIF / SVG(\`output_format\` 等,型号见工具说明)仅 2.6 官转与腾讯 2.6 能出,文生图一张,别家被拒。
    - \`count\` (optional): number of images from THIS one prompt (default 1). Two
      different meanings, pick by what the user wants:
      - **consistent 组图 series** — \`model: 'wan2.7-image-pro'\` + \`count\` 2–12

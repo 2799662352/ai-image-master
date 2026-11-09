@@ -2,10 +2,11 @@
  * 生成图落盘 / 上传时的类型判定(纯函数,可单测;`index.ts` 引 electron 没法直接测)。
  *
  * 为什么要认 GIF / SVG:GPT Image 2.6 官转能出 GIF 动图与 SVG 矢量图,而 apiyi 回的是一条
- * **没有扩展名**的 URL(形如 `…/response_images/17137/2026/11/09/241`),响应头也不一定带
- * 对的 `Content-Type`。只靠「头 → URL 后缀 → png」这条链,SVG 会被当成 `.png` 落盘并以
- * `image/png` 上传 —— 浏览器对标成 png 的 SVG 不渲染,历史里就是一张裂图。所以头不可信时
- * 要看文件头字节。
+ * **没有扩展名**的 URL(形如 `…/response_images/17137/2026/11/09/241`;后来也见过带 `.png`
+ * 键的),响应头不一定带对的 `Content-Type`,甚至会把 GIF 标成 `image/png`。只靠「头 →
+ * URL 后缀 → png」这条链,SVG / GIF 会被当成 `.png` 落盘并以 `image/png` 上传 —— 浏览器对
+ * 标成 png 的 SVG 不渲染,历史里就是一张裂图;GIF 则落成 `.png`、缩略图 / 另存为都不对。
+ * 所以以文件头字节为准,头只在字节认不出时才作数。
  */
 
 import fsp from 'node:fs/promises'
@@ -80,10 +81,26 @@ export async function readImageHead(filePath: string): Promise<Uint8Array> {
 }
 
 /**
+ * `attachments:save-from-url`(agent 出图落到 uploads)下载完字节后定最终 mime。
+ *
+ * `fromHeaderOrUrl` 是调用方按「响应头 → URL 后缀」得到的类型(两者都认不出 = null,
+ * 视频也走这条)。**图片魔数优先**:apiyi 的 GIF 存在 `….png` 键下并回 `image/png`
+ * (2026-11-09 实测),只信头就会落成 `<hash>.png`,播放器按静图处理;SVG 同理。
+ * 字节认不出(视频、avif / heic 等嗅探表外的格式)→ 保持 `fromHeaderOrUrl`,
+ * 它也是 null 就是 null —— 调用方照旧拒绝「不是图片 / 视频」的下载。
+ */
+export function resolveDownloadedMediaMime(fromHeaderOrUrl: string | null, head: Uint8Array): string | null {
+  return sniffImageMime(head) ?? fromHeaderOrUrl
+}
+
+/**
  * 抓回一张远端图之后,定它的最终 mime。
  *
- * - 响应头是 `image/*` → 信头(与旧行为一致,GIF / WebP 照常被头纠正);
- * - 头缺失 / `application/octet-stream` / 非图片 → 看文件头字节,认得出就用,认不出保持 `current`
+ * - 文件头字节认得出(png / jpeg / gif / webp / svg)→ **以字节为准**,不管响应头怎么说:
+ *   apiyi 把 GIF 存在 `….png` 键下并回 `Content-Type: image/png`(2026-11-09 实测),
+ *   魔数比服务器头可靠;
+ * - 字节认不出(avif / heic 等嗅探表外的格式,或没给字节)→ 响应头是 `image/*` 就信头;
+ * - 头也缺失 / `application/octet-stream` / 非图片 → 保持 `current`
  *   (调用方按 hint 或 URL 后缀猜的那个)。
  */
 export function resolveFetchedImageMime(
@@ -91,7 +108,9 @@ export function resolveFetchedImageMime(
   current: string,
   head: Uint8Array,
 ): string {
+  const sniffed = sniffImageMime(head)
+  if (sniffed) return sniffed
   const actual = headerContentType?.split(';')[0]?.trim().toLowerCase()
   if (actual && actual.startsWith('image/')) return actual
-  return sniffImageMime(head) ?? current
+  return current
 }

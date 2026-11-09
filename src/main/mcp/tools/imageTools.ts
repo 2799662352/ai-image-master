@@ -347,7 +347,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'channel the user explicitly asked for this turn (' +
       'gpt-image-2.5-flare = OpenAI 官转·速度优先 / 文生图首选, ' +
       'gpt-image-2.5-sunburst = OpenAI 官转·画质优先 / 改图首选, ' +
-      'gpt-image-2.6-flare / -sunburst = those two on GPT Image 2.6 (平台额度; the ONLY channels for GIF / SVG), ' +
+      'gpt-image-2.6-flare / -sunburst = those two on GPT Image 2.6 (平台额度), ' +
       'gpt-image-2.5-all = ChatGPT 网页逆向 $0.03/张 (size in prompt), ' +
       'gpt-image-2 = 上一代 Image2 官方 (superseded by 2.5), ' +
       'gpt-image-2-vip = OpenAI 官逆/vip — ONLY when the user names vip/官逆, do not pick it by default, ' +
@@ -356,7 +356,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'custom-model-og-v2.5-f = 腾讯渠道上的 GPT Image 2.5 Flare (same price as og-v2, 平台额度; ' +
       'transparentBackground / maskImage / xhigh,max), ' +
       'custom-model-og-v2.5-s = its 画质/改图优先 twin (Sunburst), ' +
-      'custom-model-og-v2.6-f / -s = 腾讯 2.6 Flare / Sunburst (~4x 2.5 tokens; same abilities), ' +
+      'custom-model-og-v2.6-f / -s = 腾讯 2.6 Flare / Sunburst (~4x 2.5 tokens; same abilities; GIF / SVG), ' +
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
       'multi-turn edit consistency), 1K/2K/4K only, ' +

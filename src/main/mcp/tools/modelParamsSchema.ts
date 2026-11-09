@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   GPT_IMAGE_26_PARAM_SPECS,
+  TENCENT_IMAGE_26_PARAM_SPECS,
   NOVELAI_V5_PARAM_SPECS,
   YOUCHUAN_V8_PARAM_SPECS,
   type ModelParamSpec,
@@ -149,18 +150,20 @@ function mergeParamSpecs(...tables: ReadonlyArray<readonly ModelParamSpec[]>): M
 }
 
 /**
- * GPT Image 2.6 官转(apiyi,flare / sunburst)的 GIF / SVG 说明。只有这一对型号认这些键;
- * 别的渠道上 agent 传了会在 `AgentToolExecutor` 入口被明确拒绝(带可用型号),不会悄悄回一张 PNG。
+ * GPT Image 2.6 的 GIF / SVG 说明:apiyi 官转(flare / sunburst,写手选项 `svg_model`)与
+ * 腾讯(og-v2.6-f / -s,写手选项 `svg_effort`)两个家族认这些键;别的渠道、或串了写手键,agent 传了
+ * 会在 `AgentToolExecutor` 入口被明确拒绝(带可用型号 / 正确的键),不会悄悄回一张 PNG。
  */
 export const GPT_IMAGE_26_MODEL_PARAMS_INTRO =
-  'GIF / SVG output, model="gpt-image-2.6-flare" | "-sunburst" ONLY (other models REJECT these keys). ' +
-  'Text-to-image, count 1, no referenceImages / mask / transparentBackground. Unset = normal PNG.'
+  'GIF / SVG ONLY on gpt-image-2.6-flare|-sunburst (svg_model) and custom-model-og-v2.6-f|-s ' +
+  '(svg_effort); other models REJECT these keys. Text-to-image only, count 1 (no references / mask).'
 
-/** 全部「渠道专属参数」键的并集:悠船 + NovelAI(V5 表,角色上限取较大的 22,V4.5 的 6 由 ApiService 校验)+ GPT Image 2.6 的 GIF / SVG。 */
+/** 全部「渠道专属参数」键的并集:悠船 + NovelAI(V5 表,角色上限取较大的 22,V4.5 的 6 由 ApiService 校验)+ 2.6 的 GIF / SVG(两个家族,共用的三项同一份对象,按键去重)。 */
 export const ALL_CHANNEL_PARAM_SPECS: readonly ModelParamSpec[] = mergeParamSpecs(
   YOUCHUAN_V8_PARAM_SPECS,
   NOVELAI_V5_PARAM_SPECS,
   GPT_IMAGE_26_PARAM_SPECS,
+  TENCENT_IMAGE_26_PARAM_SPECS,
 )
 
 export const ALL_CHANNEL_MODEL_PARAMS_INTRO =

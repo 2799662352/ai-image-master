@@ -1537,10 +1537,11 @@ export class AgentToolExecutor {
       ? LAYER_DECOMPOSITION_CHANNEL
       : resolveEffectiveImageChannel(params.model)
 
-    // GIF / SVG 输出目前只有 GPT Image 2.6 官转(flare / sunburst)支持。agent 在别的渠道上要
-    // 动图 / 矢量图,ApiService 会照「只发当前模型声明过的键」静默丢掉(界面里残留的旧参数不能
-    // 报错),agent 就只会拿到一张普通 PNG 还以为成功了 —— 所以在 agent 入口明确拒绝并点名型号,
-    // 趁还没建「生成中」气泡、没发请求。
+    // GIF / SVG 输出只有 GPT Image 2.6 支持:apiyi 官转(flare / sunburst)与腾讯(og-v2.6-f / -s,
+    // 也是默认渠道)。agent 在别的渠道上要动图 / 矢量图,或串了两家不同的写手键(svg_model /
+    // svg_effort),ApiService 会照「只发当前模型声明过的键」静默丢掉(界面里残留的旧参数不能
+    // 报错),agent 就只会拿到一张普通 PNG / 默认写手还以为成功了 —— 所以在 agent 入口明确拒绝并
+    // 点名型号 / 正确的键,趁还没建「生成中」气泡、没发请求。
     const unsupportedMotion = gifSvgUnsupportedReason(model, params.modelParams)
     if (unsupportedMotion) throw new Error(unsupportedMotion)
 
