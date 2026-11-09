@@ -43,9 +43,11 @@ import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
 import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
 import { renameWithRetry } from './utils/atomicFile'
 import {
+  IMAGE_SNIFF_BYTES,
   mimeFromUrl,
   mimeTypeToExtension,
   readImageHead,
+  resolveDownloadedMediaMime,
   resolveFetchedImageMime,
   sniffImageMime,
 } from './utils/imageMime'
@@ -1077,7 +1079,12 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
             return { ok: false, reason: 'attachments:save-from-url: remote file too large' }
           }
           const headerMime = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
-          const mime = resolveMediaMime(headerMime, url)
+          // 图片魔数优先于响应头 / URL 后缀:apiyi 的 GIF 落在 `.png` 键下并回 `image/png`,
+          // 只信头会把动图存成 `<hash>.png`(agent 拿到的路径后缀就是错的)。
+          const mime = resolveDownloadedMediaMime(
+            resolveMediaMime(headerMime, url),
+            new Uint8Array(arrayBuffer, 0, Math.min(arrayBuffer.byteLength, IMAGE_SNIFF_BYTES)),
+          )
           if (!mime) {
             return {
               ok: false,
@@ -2013,6 +2020,8 @@ ipcMain.handle(
             broadcastUploadResult({ requestId, success: false, error: 'empty body after decode' })
             return
           }
+          // data: 头里的 mime 也不一定对(`data:image/png` 装着 GIF 字节),字节认得出以字节为准。
+          mimeType = resolveFetchedImageMime(mimeType, mimeType, body)
           // 先落本地盘再推 COS —— 临时签名的模型直出 URL 几小时就过期,
           // 这份本地副本保证"生成过的图永远找得回来"。
           localPath = await saveGeneratedImageLocally(requestId, body, mimeType)
@@ -2072,14 +2081,13 @@ ipcMain.handle(
           }
 
           localPath = fetched.path
-          // 响应头是 image/* 就信头;头缺失 / octet-stream(apiyi 的无扩展名链接常见)
-          // 才看文件头字节 —— 否则 SVG / GIF 会被当 .png 落盘并以 image/png 上传。
+          // 文件头字节认得出就以字节为准,认不出才信响应头 —— apiyi 把 GIF 存成 .png 键、
+          // 回 `Content-Type: image/png`(2026-11-09 实测),只信头就会 .png 落盘并以
+          // image/png 上传;SVG 同理。所以不管头怎么说都要读开头 1 KB。
           const actual = resolveFetchedImageMime(
             fetched.contentType,
             mimeType,
-            fetched.contentType?.split(';')[0]?.trim().toLowerCase().startsWith('image/')
-              ? new Uint8Array(0)
-              : await readImageHead(fetched.path),
+            await readImageHead(fetched.path),
           )
           if (actual !== mimeType) {
             mimeType = actual

@@ -397,34 +397,116 @@ export function novelAiParamSpecsForModel(id: unknown): readonly ModelParamSpec[
 // ───────────────────────── GPT Image 2.6(apiyi 官转) ─────────────────────────
 
 /**
- * apiyi 官转的 2.6 两条(flare / sunburst)。腾讯 `custom-model-og-v2.6-*` 不在此列:
- * 它的 SVG 写手合同(`svg.model` + `svg.reasoning.effort`)与 GIF 尺寸上限(1024² × 2 帧就 400)
- * 都不同,没有实测前不开,否则 agent 在默认渠道要 GIF 会悄悄拿到 PNG 还不知道为什么。
+ * apiyi 官转的 2.6 两条(flare / sunburst)。腾讯的 2.6 两条见 `TENCENT_IMAGE_26_MODEL_IDS`:
+ * 同一个上游模型、同一条拼图规则,但 SVG 写手合同不同(`svg.model` 固定 + `reasoning.effort`),
+ * GIF 每帧上限也不同(费用随拼图面积走),所以是另一个「家族」,不混进这张表。
  */
 export const GPT_IMAGE_26_MODEL_IDS = ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'] as const
+
+/**
+ * 腾讯 TokenHub og-image 上的 2.6 两条(默认渠道 `-s` 就在这里)。
+ * 2026-11-09 经 Miau 生产网关实测:GIF / SVG 都能出,结果是带真实后缀(`.gif` / `.svg`)与
+ * 正确 Content-Type 的 URL;与 sora-ui #324 / sora-ui-backend #177(画布)同一份合同。
+ */
+export const TENCENT_IMAGE_26_MODEL_IDS = ['custom-model-og-v2.6-f', 'custom-model-og-v2.6-s'] as const
+
+/** 能出 GIF / SVG 的两个家族:apiyi 官转(`svg_model`)与腾讯(`svg_effort`)。 */
+export type GifSvgFamily = 'apiyi' | 'tokenhub'
+
+export function isTencentImage26Model(id: unknown): boolean {
+  return typeof id === 'string' && (TENCENT_IMAGE_26_MODEL_IDS as readonly string[]).includes(id)
+}
+
+/** 模型属于哪个 GIF / SVG 家族;不能出 GIF / SVG 的模型返回 null。 */
+export function gifSvgFamilyOf(id: unknown): GifSvgFamily | null {
+  if (isGptImage26Model(id)) return 'apiyi'
+  if (isTencentImage26Model(id)) return 'tokenhub'
+  return null
+}
+
+/**
+ * GIF 帧数上限。apiyi 文档写的是 2–64,**2026-11-09 实测上游只认 2–16**:超过 16 时报 400,
+ * 或者**静默丢掉整份 GIF 配置**(17 / 32 / 64 帧的请求回来的是默认的 9 帧 / 200 ms,而且照常收费)。
+ */
+export const GIF_MAX_FRAME_COUNT = 16
+/** 不填帧数时上游的默认帧数。 */
+const GIF_DEFAULT_FRAME_COUNT = 9
+/** 拼图总像素预算 = 3840 × 2160(实测:恰好等于预算放行,多一点就 400)。 */
+export const GIF_SHEET_MAX_PIXELS = 3840 * 2160
+/**
+ * 每帧最长边的上限,按家族:
+ * - apiyi 960:拼图最长边 ≤ 3840,4 列 × 960 恰好顶满(实测的最大值);
+ * - 腾讯 512:同一条拼图规则(2 帧 960² ✓、16 帧 720² ✓),但**费用随拼图面积走**,默认画质
+ *   (high)下 512² 9 帧 ≈ ¥0.51,960 上限要贵 4–5 倍,所以与画布(sora-ui #324)一致取 512。
+ */
+export const GIF_FRAME_LONG_EDGE: Record<GifSvgFamily, number> = { apiyi: 960, tokenhub: 512 }
+
+/**
+ * GIF 的「每帧尺寸」:把 App 按 1K / 2K / 4K 档(1280² 起)给的尺寸收进上游的拼图预算。
+ *
+ * 上游把所有帧拼成一张 sprite sheet 再编码(2026-11-09 实测):≤ 8 帧按 4×2(或 2×4)、
+ * 9 帧 3×3、16 帧 4×4;整张拼图要 ≤ 3840 × 2160 像素且最长边 ≤ 3840。所以 2 帧 1280² 就是
+ * 400「No supported sheet fits 2 GIF frames…」。实测方图每帧:2 / 4 帧 960 ✓ 1024 ✗;
+ * 9 帧 960 ✓ 1024 ✗;16 帧 640 ✓。10–15 帧的网格没逐个验,按 16 格(最保守)算。
+ *
+ * 规则:比例不变、向下取 16 的倍数、不放大、最长边 ≤ `longEdgeCap`(apiyi 960 / 腾讯 512,
+ * 见 `GIF_FRAME_LONG_EDGE`)、拼图像素不超预算。不传上限 = apiyi 的 960。
+ * 没有尺寸(比例 auto)/ 认不出时当 1024² 方图 —— 不能留给上游自己挑(它默认的 1024² 也超)。
+ */
+export function gifSafeSize(
+  size: string | undefined,
+  frameCount: number | undefined,
+  longEdgeCap: number = GIF_FRAME_LONG_EDGE.apiyi,
+): string {
+  const frames =
+    typeof frameCount === 'number' && Number.isFinite(frameCount) && frameCount >= 1
+      ? Math.round(frameCount)
+      : GIF_DEFAULT_FRAME_COUNT
+  const cells = frames <= 8 ? 8 : frames === 9 ? 9 : 16
+  const parsed = typeof size === 'string' ? /^(\d+)\s*[x×]\s*(\d+)$/i.exec(size.trim()) : null
+  const w0 = parsed ? Number(parsed[1]) : 1024
+  const h0 = parsed ? Number(parsed[2]) : 1024
+  if (!(w0 > 0 && h0 > 0)) return gifSafeSize(undefined, frameCount, longEdgeCap)
+  const scale = Math.min(
+    1,
+    longEdgeCap / Math.max(w0, h0),
+    Math.sqrt(GIF_SHEET_MAX_PIXELS / cells / (w0 * h0)),
+  )
+  // +1e-6:960 / 2880 这类除出来的浮点误差不能让整除的边多掉一格(959.9999… → 944)。
+  const snap = (v: number) => Math.max(16, Math.floor((v * scale + 1e-6) / 16) * 16)
+  return `${snap(w0)}x${snap(h0)}`
+}
 
 export function isGptImage26Model(id: unknown): boolean {
   return typeof id === 'string' && (GPT_IMAGE_26_MODEL_IDS as readonly string[]).includes(id)
 }
 
-/** SVG 必须带写手模型(上游文档要求);用户没挑时用实测过的这个(最快 ≈ 18 s,便宜)。 */
+/** apiyi:SVG 必须带写手模型(上游文档要求);用户没挑时用实测过的这个(最快 ≈ 18 s,便宜)。 */
 export const GPT_IMAGE_26_DEFAULT_SVG_MODEL = 'gpt-4.1-mini'
 
 /**
- * 2.6 的 GIF / SVG 输出。三条硬规则都来自 apiyi 文档,**不静默纠正**(按 token 计费,
- * 悄悄改成别的格式出一张图用户还要付钱):
- * - GIF 才有帧数 / 每帧时长(PNG / SVG 上带了上游会报错或悄悄忽略);
- * - SVG 才有写手模型,且必须带;
- * - GIF / SVG 都只走文生图、一次一张(这部分在 `ApiService` 的请求校验里,需要数量 / 参考图上下文)。
- *
- * 费用提示:SVG 的写手模型费用上游没有回传(响应里看不到 `svg_usage`),网关只按出图 token 收费。
+ * 腾讯:SVG 写手固定 `gpt-5.4-mini`(与画布同口径,实测 low 推理 ≈ ¥0.24、27 s)。
+ * **别换成 apiyi 的 `gpt-4.1-mini`**:它在腾讯上也能出图,但同样的 1K / low 实测 ≈ ¥0.80,
+ * 是这条的 3.4 倍(费用随写手模型的 token 走)。
  */
-export const GPT_IMAGE_26_PARAM_SPECS: readonly ModelParamSpec[] = [
+export const TENCENT_IMAGE_26_SVG_MODEL = 'gpt-5.4-mini'
+/** 腾讯 SVG 推理强度的默认档(上游文档示例也用 low)。 */
+export const TENCENT_IMAGE_26_DEFAULT_SVG_EFFORT = 'low'
+
+/**
+ * 两家共用的三项(界面 / MCP 引用同一份对象,不会各说各话)。
+ * 三条硬规则都来自上游文档 + 实测,**不静默纠正**(按 token 计费,悄悄改成别的格式出一张图
+ * 用户还要付钱):
+ * - GIF 才有帧数 / 每帧时长(PNG / SVG 上带了上游会报错或悄悄忽略);
+ * - SVG 才有写手选项(apiyi 选写手模型,腾讯选推理强度);
+ * - GIF / SVG 都只走文生图、一次一张(这部分在 `ApiService` 的请求校验里,需要数量 / 参考图上下文)。
+ */
+const GIF_SVG_COMMON_SPECS: readonly ModelParamSpec[] = [
   {
     key: 'output_format',
     label: '输出格式',
     type: 'select',
-    description: '不设置 = 普通 PNG。GIF 动图 / SVG 矢量图:只能文生图、一次一张',
+    description: '不设 = PNG;GIF / SVG 仅文生图、单张',
     options: [
       { key: 'png', label: 'PNG(默认)' },
       { key: 'gif', label: 'GIF 动图' },
@@ -435,33 +517,61 @@ export const GPT_IMAGE_26_PARAM_SPECS: readonly ModelParamSpec[] = [
     key: 'frame_count',
     label: 'GIF 帧数',
     type: 'number',
-    description: '仅 GIF:2–64,不填 = 9 帧。尺寸按每一帧算,太大会被上游拒,建议 1K',
+    description: '仅 GIF:2–16,不填 = 9 帧。画幅自动收小,不随 1K–4K 档',
     advanced: true,
     min: 2,
-    max: 64,
+    max: GIF_MAX_FRAME_COUNT,
     integer: true,
   },
   {
     key: 'frame_duration_ms',
     label: 'GIF 每帧时长(毫秒)',
     type: 'number',
-    description: '仅 GIF:20–2000,按 10 取整,不填 = 200',
+    description: '仅 GIF:20–2000(按 10),不填 = 200',
     advanced: true,
     min: 20,
     max: 2000,
     integer: true,
     step: 10,
   },
+]
+
+/**
+ * apiyi 官转 2.6(flare / sunburst)的 GIF / SVG 参数表。
+ * 费用提示:SVG 的写手模型费用上游没有回传(响应里看不到 `svg_usage`),网关只按出图 token 收费。
+ */
+export const GPT_IMAGE_26_PARAM_SPECS: readonly ModelParamSpec[] = [
+  ...GIF_SVG_COMMON_SPECS,
   {
     key: 'svg_model',
     label: 'SVG 写手模型',
     type: 'select',
-    description: '仅 SVG:写矢量代码的文本模型,其费用上游不回传、可能不计入扣费',
+    description: '仅 SVG(apiyi):写手模型',
     advanced: true,
     options: [
       { key: GPT_IMAGE_26_DEFAULT_SVG_MODEL, label: 'gpt-4.1-mini(默认,快)' },
       { key: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
       { key: 'gpt-6-luna', label: 'gpt-6-luna' },
+    ],
+  },
+]
+
+/**
+ * 腾讯 2.6(custom-model-og-v2.6-f / -s)的 GIF / SVG 参数表。
+ * 不开 JPEG / complexity:前者与透明底互斥、要在编辑路径上再接一遍输出格式;后者上游实测
+ * 对 token 与画面都没有可见影响(sora-ui-backend #177 同结论),没有可验证的效果就不开。
+ */
+export const TENCENT_IMAGE_26_PARAM_SPECS: readonly ModelParamSpec[] = [
+  ...GIF_SVG_COMMON_SPECS,
+  {
+    key: 'svg_effort',
+    label: 'SVG 推理强度',
+    type: 'select',
+    description: '仅 SVG(腾讯):none 最快 / low 默认,更高档不开放',
+    advanced: true,
+    options: [
+      { key: 'none', label: 'none(最快,细节较少)' },
+      { key: TENCENT_IMAGE_26_DEFAULT_SVG_EFFORT, label: 'low(默认)' },
     ],
   },
 ]
@@ -473,16 +583,29 @@ export const GPT_IMAGE_26_PARAM_SPECS: readonly ModelParamSpec[] = [
  * (用户看不见也清不掉,不该为它们报错),对 agent 是坑:它明确要了动图,却悄悄拿到一张 PNG。
  * 所以只在 agent 入口调用:返回中文原因(含可用的模型 id,方便它自己改正),null = 放行。
  * `output_format: 'png'` / 没设 / 别的模型的别的参数都放行。
+ *
+ * 写手选项两家不同(apiyi `svg_model` / 腾讯 `svg_effort`):串了键同样会被丢掉,
+ * agent 以为选了写手 / 推理强度,其实没生效 —— 所以也在这里拒绝并指向正确的键。
  */
 export function gifSvgUnsupportedReason(model: unknown, modelParams: unknown): string | null {
-  if (isGptImage26Model(model)) return null
   if (!modelParams || typeof modelParams !== 'object') return null
   const raw = modelParams as Record<string, unknown>
   const isSet = (v: unknown) => v !== undefined && v !== null && v !== ''
+  const family = gifSvgFamilyOf(model)
+
+  if (family === 'tokenhub' && isSet(raw.svg_model)) {
+    return '腾讯 2.6 的 SVG 写手固定为 gpt-5.4-mini,不认 svg_model:要调推理强度请用 svg_effort(none / low),否则去掉 svg_model。'
+  }
+  if (family === 'apiyi' && isSet(raw.svg_effort)) {
+    return 'apiyi 官转 2.6 的 SVG 用 svg_model 选写手模型,不认 svg_effort:请改用 svg_model,或去掉 svg_effort。'
+  }
+  if (family) return null
+
   const wantsMotionOrVector = raw.output_format === 'gif' || raw.output_format === 'svg'
-  const hasOnlyKey = ['frame_count', 'frame_duration_ms', 'svg_model'].some((k) => isSet(raw[k]))
+  const hasOnlyKey = ['frame_count', 'frame_duration_ms', 'svg_model', 'svg_effort'].some((k) => isSet(raw[k]))
   if (!wantsMotionOrVector && !hasOnlyKey) return null
-  return `GIF / SVG 输出目前只有 GPT Image 2.6 官转支持：请把 model 设为 ${GPT_IMAGE_26_MODEL_IDS.join(' 或 ')}（当前模型 ${String(model ?? '默认渠道')} 不支持，不改的话只会得到普通 PNG）。`
+  const ids = [...GPT_IMAGE_26_MODEL_IDS, ...TENCENT_IMAGE_26_MODEL_IDS].join(' 或 ')
+  return `GIF / SVG 输出目前只有 GPT Image 2.6(apiyi 官转与腾讯渠道)支持：请把 model 设为 ${ids}（当前模型 ${String(model ?? '默认渠道')} 不支持，不改的话只会得到普通 PNG）。`
 }
 
 export type GptImage26Output = 'png' | 'gif' | 'svg'
@@ -494,11 +617,14 @@ export function gptImage26OutputOf(values: ModelParamValues | undefined): GptIma
 }
 
 /**
- * 平铺的参数值 → 请求体里要**额外**铺的字段(嵌套形状只在这里翻译一次)。
+ * 平铺的参数值 → 请求体里要**额外**铺的字段(嵌套形状只在这里翻译一次,按家族):
+ * - apiyi:`svg: { model }`;
+ * - 腾讯:`svg: { model: 'gpt-5.4-mini', reasoning: { effort } }`。
  * 返回 `{error}` 时调用方必须拒绝,不要带病外发。
  */
-export function resolveGptImage26Fields(
+export function resolveGifSvgFields(
   values: ModelParamValues,
+  family: GifSvgFamily,
 ): { fields: Record<string, unknown> } | { error: string } {
   const format = gptImage26OutputOf(values)
   const has = (key: string) => values[key] !== undefined && values[key] !== null
@@ -506,8 +632,9 @@ export function resolveGptImage26Fields(
   if (format !== 'gif' && (has('frame_count') || has('frame_duration_ms'))) {
     return { error: '「GIF 帧数 / 每帧时长」只在输出格式为 GIF 时可用,请把输出格式改成 GIF,或清掉这两项' }
   }
-  if (format !== 'svg' && has('svg_model')) {
-    return { error: '「SVG 写手模型」只在输出格式为 SVG 时可用,请把输出格式改成 SVG,或清掉这一项' }
+  const svgOnly = family === 'tokenhub' ? { key: 'svg_effort', label: 'SVG 推理强度' } : { key: 'svg_model', label: 'SVG 写手模型' }
+  if (format !== 'svg' && has(svgOnly.key)) {
+    return { error: `「${svgOnly.label}」只在输出格式为 SVG 时可用,请把输出格式改成 SVG,或清掉这一项` }
   }
 
   if (format === 'gif') {
@@ -517,10 +644,21 @@ export function resolveGptImage26Fields(
     return { fields }
   }
   if (format === 'svg') {
+    if (family === 'tokenhub') {
+      const effort = typeof values.svg_effort === 'string' ? values.svg_effort : TENCENT_IMAGE_26_DEFAULT_SVG_EFFORT
+      return { fields: { output_format: 'svg', svg: { model: TENCENT_IMAGE_26_SVG_MODEL, reasoning: { effort } } } }
+    }
     const model = typeof values.svg_model === 'string' ? values.svg_model : GPT_IMAGE_26_DEFAULT_SVG_MODEL
     return { fields: { output_format: 'svg', svg: { model } } }
   }
   return { fields: {} }
+}
+
+/** apiyi 家族的 `resolveGifSvgFields`(保留旧名,已有调用方不变)。 */
+export function resolveGptImage26Fields(
+  values: ModelParamValues,
+): { fields: Record<string, unknown> } | { error: string } {
+  return resolveGifSvgFields(values, 'apiyi')
 }
 
 // ───────────────────────── 校验 / 默认值 ─────────────────────────

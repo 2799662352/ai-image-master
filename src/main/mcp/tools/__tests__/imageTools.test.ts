@@ -4,6 +4,7 @@ import { registerImageTools } from '../imageTools'
 import { ImageTaskManager } from '../imageTaskRegistry'
 import {
   GPT_IMAGE_26_PARAM_SPECS,
+  TENCENT_IMAGE_26_PARAM_SPECS,
   NOVELAI_V5_PARAM_SPECS,
   YOUCHUAN_V8_PARAM_SPECS,
 } from '../../../../shared/imageModelParams'
@@ -214,21 +215,48 @@ describe('registerImageTools / generate_image schema', () => {
     }
     const withParams = (modelParams: unknown) => ({ prompt: 'x', model: 'youchuan-v8.2', modelParams })
 
-    it('schema 的键就是共享参数表的键(悠船 + NovelAI + GPT Image 2.6 GIF/SVG 的并集;单一事实来源,加参数不会漏一边)', () => {
+    it('schema 的键就是共享参数表的键(悠船 + NovelAI + 2.6 官转 + 腾讯 2.6 GIF/SVG 的并集;单一事实来源,加参数不会漏一边)', () => {
       const { single, batch } = schemas()
       for (const schema of [single, batch]) {
         const field = schema.shape.modelParams as { unwrap: () => { shape: Record<string, unknown> } }
         expect(Object.keys(field.unwrap().shape).sort()).toEqual(
           [
             ...new Set(
-              [...YOUCHUAN_V8_PARAM_SPECS, ...NOVELAI_V5_PARAM_SPECS, ...GPT_IMAGE_26_PARAM_SPECS].map((s) => s.key),
+              [
+                ...YOUCHUAN_V8_PARAM_SPECS,
+                ...NOVELAI_V5_PARAM_SPECS,
+                ...GPT_IMAGE_26_PARAM_SPECS,
+                ...TENCENT_IMAGE_26_PARAM_SPECS,
+              ].map((s) => s.key),
             ),
           ].sort(),
         )
       }
     })
 
-    it('GIF / SVG 参数:单张与批量都收,说明点名只有 2.6 官转可用,越界 / 未知值被拒', () => {
+    it('腾讯 2.6 的 SVG 推理强度:单张与批量都收 none / low,越界被拒;说明点名腾讯两条型号与 svg_effort', () => {
+      const { single, batch } = schemas()
+      for (const schema of [single, batch]) {
+        const body = (modelParams: unknown) =>
+          'prompts' in schema.shape
+            ? { prompts: ['a', 'b'], model: 'custom-model-og-v2.6-s', modelParams }
+            : { prompt: 'x', model: 'custom-model-og-v2.6-s', modelParams }
+        expect(schema.safeParse(body({ output_format: 'svg', svg_effort: 'none' })).success).toBe(true)
+        expect(schema.safeParse(body({ output_format: 'svg', svg_effort: 'low' })).success).toBe(true)
+        expect(schema.safeParse(body({ output_format: 'svg', svg_effort: 'medium' })).success).toBe(false)
+        expect(schema.safeParse(body({ output_format: 'gif', frame_count: 8, frame_duration_ms: 100 })).success).toBe(true)
+      }
+      const desc = (single.shape.modelParams as { description?: string }).description ?? ''
+      expect(desc).toContain('custom-model-og-v2.6-f')
+      expect(desc).toContain('svg_effort')
+      expect(desc).toContain('svg_model')
+      const modelDesc = (single.shape.model as { description?: string }).description ?? ''
+      // GIF / SVG 不再是 apiyi 两条的「唯一通道」:腾讯 2.6 也能出。
+      expect(modelDesc).not.toMatch(/the ONLY channels for GIF/)
+      expect(modelDesc).toMatch(/same abilities; GIF \/ SVG/)
+    })
+
+    it('GIF / SVG 参数:单张与批量都收,说明点名只有 2.6(官转 / 腾讯)可用,越界 / 未知值被拒', () => {
       const { single, batch } = schemas()
       const ok = { output_format: 'gif', frame_count: 8, frame_duration_ms: 100 }
       const withModel = (modelParams: unknown) => ({ prompt: 'x', model: 'gpt-image-2.6-flare', modelParams })
@@ -239,7 +267,8 @@ describe('registerImageTools / generate_image schema', () => {
         expect(schema.safeParse(body({ output_format: 'svg', svg_model: 'gpt-4.1-mini' })).success).toBe(true)
         expect(schema.safeParse(body({ output_format: 'webm' })).success).toBe(false)
         expect(schema.safeParse(body({ frame_count: 1 })).success).toBe(false)
-        expect(schema.safeParse(body({ frame_count: 65 })).success).toBe(false)
+        expect(schema.safeParse(body({ frame_count: 17 })).success).toBe(false)
+        expect(schema.safeParse(body({ frame_count: 16 })).success).toBe(true)
         expect(schema.safeParse(body({ frame_duration_ms: 10 })).success).toBe(false)
         expect(schema.safeParse(body({ svg_model: 'made-up-writer' })).success).toBe(false)
       }
