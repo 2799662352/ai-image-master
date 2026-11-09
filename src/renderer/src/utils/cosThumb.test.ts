@@ -95,6 +95,16 @@ describe('appendCosThumb', () => {
     expect(appendCosThumb(bare)).toContain('?imageMogr2/')
   })
 
+  it('SVG 矢量图不加万象缩略参数,也不反推持久化缩略图对象(万象不处理 SVG)', () => {
+    const svg = 'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/2026/11/09/abcdef0123456789.svg'
+    expect(appendCosThumb(svg)).toBe(svg)
+    expect(persistedCosThumbUrl(svg)).toBeUndefined()
+    // GIF 仍走缩略图(取静态首帧),灯箱看原图动画
+    const gif = svg.replace(/\.svg$/, '.gif')
+    expect(appendCosThumb(gif)).toContain('?imageMogr2/')
+    expect(persistedCosThumbUrl(gif)).toBe(gif.replace(/\.gif$/, '.thumb512.webp'))
+  })
+
   it('does not double-process a URL that already carries a query', () => {
     const already = `${COS}?imageMogr2/thumbnail/100x100`
     expect(appendCosThumb(already)).toBe(already)

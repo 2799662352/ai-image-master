@@ -394,6 +394,135 @@ export function novelAiParamSpecsForModel(id: unknown): readonly ModelParamSpec[
   return []
 }
 
+// ───────────────────────── GPT Image 2.6(apiyi 官转) ─────────────────────────
+
+/**
+ * apiyi 官转的 2.6 两条(flare / sunburst)。腾讯 `custom-model-og-v2.6-*` 不在此列:
+ * 它的 SVG 写手合同(`svg.model` + `svg.reasoning.effort`)与 GIF 尺寸上限(1024² × 2 帧就 400)
+ * 都不同,没有实测前不开,否则 agent 在默认渠道要 GIF 会悄悄拿到 PNG 还不知道为什么。
+ */
+export const GPT_IMAGE_26_MODEL_IDS = ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'] as const
+
+export function isGptImage26Model(id: unknown): boolean {
+  return typeof id === 'string' && (GPT_IMAGE_26_MODEL_IDS as readonly string[]).includes(id)
+}
+
+/** SVG 必须带写手模型(上游文档要求);用户没挑时用实测过的这个(最快 ≈ 18 s,便宜)。 */
+export const GPT_IMAGE_26_DEFAULT_SVG_MODEL = 'gpt-4.1-mini'
+
+/**
+ * 2.6 的 GIF / SVG 输出。三条硬规则都来自 apiyi 文档,**不静默纠正**(按 token 计费,
+ * 悄悄改成别的格式出一张图用户还要付钱):
+ * - GIF 才有帧数 / 每帧时长(PNG / SVG 上带了上游会报错或悄悄忽略);
+ * - SVG 才有写手模型,且必须带;
+ * - GIF / SVG 都只走文生图、一次一张(这部分在 `ApiService` 的请求校验里,需要数量 / 参考图上下文)。
+ *
+ * 费用提示:SVG 的写手模型费用上游没有回传(响应里看不到 `svg_usage`),网关只按出图 token 收费。
+ */
+export const GPT_IMAGE_26_PARAM_SPECS: readonly ModelParamSpec[] = [
+  {
+    key: 'output_format',
+    label: '输出格式',
+    type: 'select',
+    description: '不设置 = 普通 PNG。GIF 动图 / SVG 矢量图:只能文生图、一次一张',
+    options: [
+      { key: 'png', label: 'PNG(默认)' },
+      { key: 'gif', label: 'GIF 动图' },
+      { key: 'svg', label: 'SVG 矢量' },
+    ],
+  },
+  {
+    key: 'frame_count',
+    label: 'GIF 帧数',
+    type: 'number',
+    description: '仅 GIF:2–64,不填 = 9 帧。尺寸按每一帧算,太大会被上游拒,建议 1K',
+    advanced: true,
+    min: 2,
+    max: 64,
+    integer: true,
+  },
+  {
+    key: 'frame_duration_ms',
+    label: 'GIF 每帧时长(毫秒)',
+    type: 'number',
+    description: '仅 GIF:20–2000,按 10 取整,不填 = 200',
+    advanced: true,
+    min: 20,
+    max: 2000,
+    integer: true,
+    step: 10,
+  },
+  {
+    key: 'svg_model',
+    label: 'SVG 写手模型',
+    type: 'select',
+    description: '仅 SVG:写矢量代码的文本模型,其费用上游不回传、可能不计入扣费',
+    advanced: true,
+    options: [
+      { key: GPT_IMAGE_26_DEFAULT_SVG_MODEL, label: 'gpt-4.1-mini(默认,快)' },
+      { key: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
+      { key: 'gpt-6-luna', label: 'gpt-6-luna' },
+    ],
+  },
+]
+
+/**
+ * agent / MCP 显式要 GIF / SVG(或只给了 GIF / SVG 专属参数),但落在了不支持的模型上。
+ *
+ * `ApiService` 对没声明这些键的模型会静默丢掉 `modelParams` —— 对「生成页里残留的旧值」是对的
+ * (用户看不见也清不掉,不该为它们报错),对 agent 是坑:它明确要了动图,却悄悄拿到一张 PNG。
+ * 所以只在 agent 入口调用:返回中文原因(含可用的模型 id,方便它自己改正),null = 放行。
+ * `output_format: 'png'` / 没设 / 别的模型的别的参数都放行。
+ */
+export function gifSvgUnsupportedReason(model: unknown, modelParams: unknown): string | null {
+  if (isGptImage26Model(model)) return null
+  if (!modelParams || typeof modelParams !== 'object') return null
+  const raw = modelParams as Record<string, unknown>
+  const isSet = (v: unknown) => v !== undefined && v !== null && v !== ''
+  const wantsMotionOrVector = raw.output_format === 'gif' || raw.output_format === 'svg'
+  const hasOnlyKey = ['frame_count', 'frame_duration_ms', 'svg_model'].some((k) => isSet(raw[k]))
+  if (!wantsMotionOrVector && !hasOnlyKey) return null
+  return `GIF / SVG 输出目前只有 GPT Image 2.6 官转支持：请把 model 设为 ${GPT_IMAGE_26_MODEL_IDS.join(' 或 ')}（当前模型 ${String(model ?? '默认渠道')} 不支持，不改的话只会得到普通 PNG）。`
+}
+
+export type GptImage26Output = 'png' | 'gif' | 'svg'
+
+/** 已通过 `resolveModelParams` 的值里,这次请求要的输出格式。没设 = png。 */
+export function gptImage26OutputOf(values: ModelParamValues | undefined): GptImage26Output {
+  const f = values?.output_format
+  return f === 'gif' || f === 'svg' ? f : 'png'
+}
+
+/**
+ * 平铺的参数值 → 请求体里要**额外**铺的字段(嵌套形状只在这里翻译一次)。
+ * 返回 `{error}` 时调用方必须拒绝,不要带病外发。
+ */
+export function resolveGptImage26Fields(
+  values: ModelParamValues,
+): { fields: Record<string, unknown> } | { error: string } {
+  const format = gptImage26OutputOf(values)
+  const has = (key: string) => values[key] !== undefined && values[key] !== null
+
+  if (format !== 'gif' && (has('frame_count') || has('frame_duration_ms'))) {
+    return { error: '「GIF 帧数 / 每帧时长」只在输出格式为 GIF 时可用,请把输出格式改成 GIF,或清掉这两项' }
+  }
+  if (format !== 'svg' && has('svg_model')) {
+    return { error: '「SVG 写手模型」只在输出格式为 SVG 时可用,请把输出格式改成 SVG,或清掉这一项' }
+  }
+
+  if (format === 'gif') {
+    const fields: Record<string, unknown> = { output_format: 'gif' }
+    if (has('frame_count')) fields.frame_count = values.frame_count
+    if (has('frame_duration_ms')) fields.frame_duration_ms = values.frame_duration_ms
+    return { fields }
+  }
+  if (format === 'svg') {
+    const model = typeof values.svg_model === 'string' ? values.svg_model : GPT_IMAGE_26_DEFAULT_SVG_MODEL
+    return { fields: { output_format: 'svg', svg: { model } } }
+  }
+  return { fields: {} }
+}
+
 // ───────────────────────── 校验 / 默认值 ─────────────────────────
 
 /** 「没填」:undefined / null / 空串 / 空数组 / 全空白。这类值一律当作不设置,不是错误。 */

@@ -11,6 +11,7 @@ import {
   isSelectableImageChannel,
   resolveImageChannel,
 } from './imageChannels'
+import { gifSvgUnsupportedReason } from '../../../../shared/imageModelParams'
 import { recordCodexArtifact } from './codexArtifactPersistence'
 import { buildLightArtifacts } from './buildLightArtifacts'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
@@ -1535,6 +1536,13 @@ export class AgentToolExecutor {
     const model = params.layerDecomposition
       ? LAYER_DECOMPOSITION_CHANNEL
       : resolveEffectiveImageChannel(params.model)
+
+    // GIF / SVG 输出目前只有 GPT Image 2.6 官转(flare / sunburst)支持。agent 在别的渠道上要
+    // 动图 / 矢量图,ApiService 会照「只发当前模型声明过的键」静默丢掉(界面里残留的旧参数不能
+    // 报错),agent 就只会拿到一张普通 PNG 还以为成功了 —— 所以在 agent 入口明确拒绝并点名型号,
+    // 趁还没建「生成中」气泡、没发请求。
+    const unsupportedMotion = gifSvgUnsupportedReason(model, params.modelParams)
+    if (unsupportedMotion) throw new Error(unsupportedMotion)
 
     // Resolve reference images BEFORE showing the in-progress bubble. Codex
     // passes uploads-dir file PATHS (e.g. `C:\...\agent\uploads\<hash>.jpg`),

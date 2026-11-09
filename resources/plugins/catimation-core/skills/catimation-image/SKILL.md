@@ -169,7 +169,7 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
    - `model` (optional): rendering channel **override**. **Omit it** to honor the
      user's channel picker in the chat composer (default 腾讯 2.6-s). Only set it when you
      have a concrete reason — a consistent 组图 series (→ `wan2.7-image-pro`) or a
-     channel the user explicitly names this turn (see "Choosing a model" below).
+     channel the user explicitly names this turn.
    - `ratio` (optional): aspect ratio, e.g. `1:1`, `16:9`, `9:16`, `4:3`, `3:2`.
      Omit or `auto` lets the model decide.
    - `resolution` (optional): clarity tier — prefer `2K` by default. Use `1K`
@@ -192,6 +192,7 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
      `quality` / `chaos` / `stylize` / `raw` / `iw` / `sref` / `sw` / `seed` / `no`)。**默认一个都
      别传**;只有用户明说「更疯 / 风格化拉高 / 关掉 2K / 固定 seed / 排除某元素」才设对应项。
      越界值会被**拒绝**而不是截断(按次计费);NovelAI 的键见工具说明。
+     GIF / SVG(`output_format` 等,见工具说明)仅 `gpt-image-2.6-flare|sunburst` 能出,文生图一张,别家被拒。
    - `count` (optional): number of images from THIS one prompt (default 1). Two
      different meanings, pick by what the user wants:
      - **consistent 组图 series** — `model: 'wan2.7-image-pro'` + `count` 2–12
@@ -309,9 +310,9 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-al
   **一次固定出 4 张、只计一次费**(`count` 无效);用户没说要快就用快速。`ratio` 支持 auto 与
   任意 W:H;最多 20 张 http(s) 参考图(本地图自动上传,不收 base64);没有 `resolution` /
   `quality` 轴,原生 2K 等旋钮走 `modelParams`(`hd` 默认开、计费 ×1.5)。**提示词里别写
-  `--v` / `--turbo` / `--hd` 这类参数**(网关会拒):版本与速度只由 `model` 决定,其余走 `ratio` / `modelParams`。
+  `--v` / `--turbo` / `--hd` 这类参数**(网关会拒):版本与速度只由 `model` 决定。
   不自动重试,失败后先告诉用户再重来。
-- **`nai-diffusion-5-full` / `nai-diffusion-5-curated` / `nai-diffusion-4-5-full` / `nai-diffusion-4-5-curated` (NovelAI V5 / V4.5)** — pick when the user says NovelAI / NAI / 动漫插画 / 多角色同框;只说 NovelAI 时用 `nai-diffusion-5-full`。一次出 `count` 张(1–4)、**按张计费**;`referenceImages` 至多 **1 张**(= 图生图,多给被拒);`transparentBackground` 仅 V5。角色提示词(`modelParams.characters`,V5 ≤22 个 / V4.5 ≤6 个)、负面词、采样器等旋钮见工具说明,**默认都别传**,越界被拒。
+- **`nai-diffusion-5-full` / `nai-diffusion-5-curated` / `nai-diffusion-4-5-full` / `nai-diffusion-4-5-curated` (NovelAI V5 / V4.5)** — pick when the user says NovelAI / NAI / 动漫插画 / 多角色同框;只说 NovelAI 时用 `nai-diffusion-5-full`。一次出 `count` 张(1–4)、**按张计费**;`referenceImages` 至多 **1 张**(= 图生图,多给被拒);`transparentBackground` 仅 V5。角色提示词(`modelParams.characters`)、负面词、采样器等旋钮见工具说明,**默认都别传**,越界被拒。
 - 以上渠道都接受 `referenceImages`(图生图 / 图像编辑)。
 
 ### 站点要求(已自动处理 — 无需手动切站点)
@@ -326,7 +327,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-al
 
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
-  站点填入 Key 即可,无需切换当前站点。
+  站点填入 Key 即可。
 - 其余渠道(官转 2.5/2.6 / -all / vip / gpt-image-2 / Nano2 / Nano2.1)跟随当前站点(不钉 Miau):
   选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
 

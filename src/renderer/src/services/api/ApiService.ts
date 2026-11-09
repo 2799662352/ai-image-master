@@ -12,6 +12,10 @@ import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
 import type { ModelVendor } from './modelVendors'
 import {
+  GPT_IMAGE_26_PARAM_SPECS,
+  gptImage26OutputOf,
+  isGptImage26Model,
+  resolveGptImage26Fields,
   NOVELAI_MAX_PROMPT_CHARS,
   NOVELAI_MAX_REFERENCE_IMAGES,
   NOVELAI_MODEL_IDS,
@@ -1062,6 +1066,45 @@ function validateNovelAiRequest(options: {
 }
 
 /**
+ * apiyi 官转 2.6 的 GIF / SVG 输出事前校验(返回中文错误,null = 通过;在 `generateImage` 的 try 之外调用)。
+ *
+ * 拒绝的都是「上游会悄悄降级或白扣费」的组合,**不纠正后照发**:
+ * - 数量 > 1 / 参考图 / 遮罩 / 透明底:GIF、SVG 只走文生图、一次一张(文档),带上要么被忽略要么 400;
+ * - 帧参数与格式不符、参数越界(见 `resolveGptImage26Fields` / `resolveModelParams`)。
+ *
+ * 别的模型这里一律放行:生成页 / 批量页的参数表不按模型分桶(切走后残留的值用户看不见也清不掉),
+ * 契约是「外发时只取当前模型声明过的键」。agent 显式要 GIF / SVG 却落在别的模型上的情形,
+ * 由 `gifSvgUnsupportedReason`(AgentToolExecutor 入口)拦,免得悄悄拿到普通 PNG。
+ */
+function validateGptImage26Request(options: {
+  model: string
+  modelParams?: Record<string, unknown>
+  specs: readonly ModelParamSpec[]
+  count: number
+  referenceCount: number
+  hasMask: boolean
+  transparentBackground?: boolean
+}): string | null {
+  const { model, modelParams, specs, count, referenceCount, hasMask, transparentBackground } = options
+
+  if (!isGptImage26Model(model)) return null
+
+  const resolved = resolveModelParams(specs, modelParams)
+  if (resolved.errors.length > 0) return `GPT Image 2.6 参数有误：${resolved.errors.join('；')}`
+  const fields = resolveGptImage26Fields(resolved.values)
+  if ('error' in fields) return fields.error
+
+  const format = gptImage26OutputOf(resolved.values)
+  if (format === 'png') return null
+
+  const label = format === 'gif' ? 'GIF 动图' : 'SVG 矢量图'
+  if (count > 1) return `${label}一次只能出 1 张，请把数量改成 1。`
+  if (referenceCount > 0 || hasMask) return `${label}只支持文生图，不能带参考图或遮罩，请去掉参考图后重试。`
+  if (transparentBackground) return `${label}不能同时开透明背景，请关闭透明背景后重试。`
+  return null
+}
+
+/**
  * 上游是 GPT Image 2.5 / 2.6 Flare / Sunburst 的渠道:quality 多 xhigh / max 两档。
  * 含 apiyi 官转(2.5 两条、2.6 两条)与腾讯 og-image 上的各两条 —— 后者只是换了条线
  * 到同一个模型,清晰度梯子是模型的,不是渠道的。
@@ -1479,13 +1522,15 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   // 与 2.5 官转同端点、同 size 体系、同清晰度梯子,请求分支完全共用(见上面几个 Set)。
   // 2026-11-09 经 Miau 网关实测(1024²):文生图 / n=2 原生多图 / 透明底(返回 RGBA,
   // 四角 alpha=0)/ 改图 + mask 擦除(黄星 16278→0 像素)在 flare 与 sunburst 上都成立。
-  // 2.6 的 complexity / SVG / GIF 帧参数 / markup 图层:网关不转发,没法用,这里不声明、
-  // 不开控件(依据与解锁路径见 .cursorrules)。xhigh / max 按文档放行,没单独实测。
+  // GIF / SVG 输出(2026-11-09 实测:GIF 真 2 帧 / 100 ms,SVG 返回合法矢量;new-api #197 起不开
+  // 透传也能转发)经 `modelParams` 暴露,只在这两条上声明(腾讯 2.6 的写手模型契约不同,没验证)。
+  // complexity(上游不校验,生效与否测不出)与 markup 图层(经 apiyi 实测不生效)仍不声明、
+  // 不开控件(依据见 .cursorrules)。xhigh / max 按文档放行,没单独实测。
   // 不钉 requiredSiteKey:跟随当前站点,apiyi / Miau Key 都能打。
   'gpt-image-2.6-flare': {
     name: 'GPT Image 2.6 Flare',
     vendor: 'openai',
-    displayName: 'OpenAI 官转 2.6·速度优先，可走平台额度，按token计费，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，文生图/图片编辑/遮罩擦除，原生多图 1-4 张',
+    displayName: 'OpenAI 官转 2.6·速度优先，可走平台额度，按token计费，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，文生图/图片编辑/遮罩擦除，原生多图 1-4 张，可出 GIF 动图 / SVG 矢量图',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
@@ -1510,13 +1555,15 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       nativeBatch: true,
       resolutionControl: true,
       qualityControl: true,
-      transparentBackgroundControl: true
+      transparentBackgroundControl: true,
+      // GIF 动图 / SVG 矢量图输出(只文生图、一次一张);见 shared/imageModelParams
+      modelParams: GPT_IMAGE_26_PARAM_SPECS
     }
   },
   'gpt-image-2.6-sunburst': {
     name: 'GPT Image 2.6 Sunburst',
     vendor: 'openai',
-    displayName: 'OpenAI 官转 2.6·画质优先，可走平台额度，复杂布局/精细文字/精确改图，按token计费，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，遮罩擦除，原生多图 1-4 张',
+    displayName: 'OpenAI 官转 2.6·画质优先，可走平台额度，复杂布局/精细文字/精确改图，按token计费，比例×分辨率(1K/2K/4K)×清晰度五档，可出透明底 PNG，遮罩擦除，原生多图 1-4 张，可出 GIF 动图 / SVG 矢量图',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
@@ -1541,7 +1588,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       nativeBatch: true,
       resolutionControl: true,
       qualityControl: true,
-      transparentBackgroundControl: true
+      transparentBackgroundControl: true,
+      modelParams: GPT_IMAGE_26_PARAM_SPECS
     }
   },
   // ── GPT Image 2.5 家族(2026-09-08 发布,apiyi 2026-09-14 上架)────────────────
@@ -2380,6 +2428,22 @@ export class ApiService {
       if (invalid) return { success: false, error: invalid }
     }
 
+    // GPT Image 2.6 官转的 GIF / SVG:数量 / 参考图 / 遮罩 / 透明底 / 参数越界在出网前拒掉。
+    // 动图与矢量图按 token 计费且上游可能已开跑,拒绝比「纠正后照发」安全。
+    if (isGptImage26Model(modelKey)) {
+      const refSources = imageBase64 ? [imageBase64] : (referenceImages ?? [])
+      const invalid = validateGptImage26Request({
+        model: modelKey,
+        modelParams,
+        specs: modelConfig.capabilities?.modelParams ?? [],
+        count,
+        referenceCount: refSources.length,
+        hasMask: !!maskImage,
+        transparentBackground,
+      })
+      if (invalid) return { success: false, error: invalid }
+    }
+
     // 解析「本次请求的有效站点 + 令牌」，优先级：
     //   ① 调用方显式 siteKey（codex 出图等，最高优先级，可覆盖模型声明）
     //   ② 模型声明的 requiredSiteKey —— 只经某一家网关提供的渠道。不钉的话
@@ -2475,7 +2539,10 @@ export class ApiService {
         // 悠船例外:按次计费且上游可能已经开跑,5xx 后重试 = 多扣一次(一次还是 4 张的价),
         // 所以一次都不自动重试,失败交给用户在界面上点重试。
         // NovelAI 同理:按张计费,上游可能已经开跑,重试 = 多扣一次。
-        YOUCHUAN_IMAGE_MODELS.has(modelKey) || NOVELAI_IMAGE_MODELS.has(modelKey)
+        // 2.6 官转的 GIF / SVG 同理(一次要几十秒、写手模型另算,5xx 后重试 = 再来一遍整套)。
+        YOUCHUAN_IMAGE_MODELS.has(modelKey) ||
+        NOVELAI_IMAGE_MODELS.has(modelKey) ||
+        this.isGptImage26MotionOrVector(modelConfig, modelKey, modelParams)
           ? { maxRetries: 0 }
           : { maxRetries: 2, retryDelay: 2000 }
       )
@@ -3225,6 +3292,16 @@ export class ApiService {
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
         const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality, background, n)
+        // GPT Image 2.6 官转的 GIF / SVG:output_format 覆盖默认 png,并带帧参数 / 嵌套 svg.model。
+        // GIF / SVG 只支持 n=1、不带 background(validateGptImage26Request 已在出网前拒掉冲突组合,
+        // 这里再删一次 n / background 是防御:校验与组装之间谁也不该把它们漏出去)。
+        const motionOrVector = this.resolveGptImage26Extra(modelConfig, model, modelParams)
+        if (motionOrVector) {
+          const record = body as Record<string, unknown>
+          delete record.n
+          delete record.background
+          Object.assign(record, motionOrVector)
+        }
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         this.applyAuthHeaders(headers, site, apiKey, genUrl)
@@ -3415,6 +3492,34 @@ export class ApiService {
       body: formData,
       signal: fetchSignal,
     })
+  }
+
+  /**
+   * GPT Image 2.6 官转本次请求要的是 GIF / SVG 吗?(只看声明过的键 —— 别的模型、没声明参数表的
+   * 一律否,与「外发时只取当前模型声明过的键」的契约一致。)
+   */
+  private isGptImage26MotionOrVector(
+    modelConfig: { capabilities?: unknown } | null | undefined,
+    model: string,
+    modelParams: Record<string, unknown> | undefined,
+  ): boolean {
+    if (!isGptImage26Model(model)) return false
+    const specs = (modelConfig?.capabilities as { modelParams?: readonly ModelParamSpec[] } | undefined)?.modelParams
+    if (!specs || specs.length === 0) return false
+    const resolved = resolveModelParams(specs, modelParams)
+    return resolved.errors.length === 0 && gptImage26OutputOf(resolved.values) !== 'png'
+  }
+
+  /** GIF / SVG 的外发字段(`output_format` + 帧参数 / 嵌套 `svg.model`);PNG 或不适用 = null。 */
+  private resolveGptImage26Extra(
+    modelConfig: { capabilities?: unknown } | null | undefined,
+    model: string,
+    modelParams: Record<string, unknown> | undefined,
+  ): Record<string, unknown> | null {
+    if (!this.isGptImage26MotionOrVector(modelConfig, model, modelParams)) return null
+    const specs = (modelConfig?.capabilities as { modelParams?: readonly ModelParamSpec[] } | undefined)?.modelParams ?? []
+    const fields = resolveGptImage26Fields(resolveModelParams(specs, modelParams).values)
+    return 'fields' in fields && Object.keys(fields.fields).length > 0 ? fields.fields : null
   }
 
   /**
@@ -5405,7 +5510,18 @@ function normalizeExtractedImageSource(value: string): string {
   if (!trimmed) return ''
   if (/^https?:\/\//i.test(trimmed)) return trimmed
   if (trimmed.toLowerCase().startsWith('data:image/')) return trimmed
-  return `data:image/png;base64,${trimmed}`
+  return `data:${sniffBareBase64ImageMime(trimmed)};base64,${trimmed}`
+}
+
+/**
+ * 裸 base64 的图片类型。一直默认标 png,对 GIF / SVG 是错的:SVG 标成 png 浏览器根本不渲染,
+ * GIF 标成 png 落盘后缀也不对(主进程按 data URL 的 mime 选后缀)。只认这两种有明确魔数的 ——
+ * GIF 头 `GIF8` → `R0lGOD`,SVG 的 `<svg` / `<?xml` → `PHN2Zy` / `PD94bWw`;其余照旧当 png。
+ */
+function sniffBareBase64ImageMime(base64: string): string {
+  if (base64.startsWith('R0lGOD')) return 'image/gif'
+  if (base64.startsWith('PHN2Zy') || base64.startsWith('PD94bWw')) return 'image/svg+xml'
+  return 'image/png'
 }
 
 function extractImagesFromDashScopeOutput(output: unknown, sink: string[], seen: Set<string>): void {

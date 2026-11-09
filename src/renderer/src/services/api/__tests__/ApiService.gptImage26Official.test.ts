@@ -6,8 +6,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
  * 与 2.5 官转同端点、同 30 档 size、同清晰度梯子,请求分支完全共用;这里钉住的是
  * 2026-11-09 经 Miau 网关**实测过**的那部分:文生图、n=2 原生多图、透明底、改图 + mask 擦除。
  *
- * 没做的也要钉住,免得以后有人顺手"补全":complexity / SVG / GIF 帧参数 / markup 图层
- * 在网关上没有被转发(网关适配器只认固定字段),发过去只会被丢掉,所以请求体里**不能**出现它们。
+ * 没做的也要钉住,免得以后有人顺手"补全":complexity / markup 图层没有可验证的效果
+ * (complexity 上游静默忽略;markup 经 apiyi 不生效),**默认请求**里不能出现它们。
+ * GIF / SVG 与帧参数是显式开关,只在用户 / agent 要求时才发,见 `ApiService.gptImage26Output.test.ts`。
  */
 
 const IDS = ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'] as const
@@ -73,13 +74,16 @@ describe('ApiService.gpt-image-2.6 官转 config', () => {
     expect(cfg?.requiredSiteKey).toBeUndefined()
   })
 
-  it('does not declare 2.6-only features the gateway drops (complexity / svg / gif / markup)', async () => {
+  // GIF / SVG(2026-11-09 实测可用,new-api #197 上线后不开透传也转发)已开,见
+  // `ApiService.gptImage26Output.test.ts`。complexity(上游静默忽略,效果测不出)与 markup
+  // (经 apiyi 不生效)仍不声明 —— 没有可验证的效果就不给用户一个看起来能用的开关。
+  it('still does not declare complexity / markup (no verifiable effect through apiyi)', async () => {
     const { ApiService } = await import('../ApiService')
     const service = new ApiService()
     for (const id of IDS) {
       const cfg = service.getModelConfig(id)!
       expect(cfg.defaultParams).toEqual({ output_format: 'png' })
-      expect(JSON.stringify(cfg)).not.toMatch(/complexity|svg|frame_count|frame_duration|markup/i)
+      expect(JSON.stringify(cfg)).not.toMatch(/complexity|markup/i)
     }
   })
 

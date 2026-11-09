@@ -69,6 +69,8 @@ function mimeFromPath(filePath: string): string {
       return 'image/webp'
     case '.gif':
       return 'image/gif'
+    case '.svg':
+      return 'image/svg+xml'
     default:
       return 'image/png'
   }
@@ -345,7 +347,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'channel the user explicitly asked for this turn (' +
       'gpt-image-2.5-flare = OpenAI 官转·速度优先 / 文生图首选, ' +
       'gpt-image-2.5-sunburst = OpenAI 官转·画质优先 / 改图首选, ' +
-      'gpt-image-2.6-flare / -sunburst = those two on GPT Image 2.6 (平台额度), ' +
+      'gpt-image-2.6-flare / -sunburst = those two on GPT Image 2.6 (平台额度; the ONLY channels for GIF / SVG), ' +
       'gpt-image-2.5-all = ChatGPT 网页逆向 $0.03/张 (size in prompt), ' +
       'gpt-image-2 = 上一代 Image2 官方 (superseded by 2.5), ' +
       'gpt-image-2-vip = OpenAI 官逆/vip — ONLY when the user names vip/官逆, do not pick it by default, ' +
@@ -367,9 +369,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'dropped by the gateway — put quality requirements in the positive prompt, ' +
       'youchuan-v8.2 = 悠船 Midjourney V8.2 快速 / youchuan-v8.2-turbo = 悠船 Midjourney V8.2 极速 — ' +
       'pick it when the user asks for Midjourney / MJ / 悠船 / 悠船 v8; the two are the SAME model at ' +
-      'two speeds (极速 is faster and costs more), each call returns 4 images billed ONCE with native 2K ' +
-      'ON by default (×1.5), takes up to 20 http(s) reference images, and its extra knobs (chaos / ' +
-      'stylize / raw / style references …) go in `modelParams` — see that parameter), ' +
+      'two speeds (极速 is faster and costs more), takes up to 20 http(s) reference images, extra ' +
+      'knobs go in `modelParams`), ' +
       'nai-diffusion-5-full / nai-diffusion-5-curated / nai-diffusion-4-5-full / nai-diffusion-4-5-curated = ' +
       'NovelAI V5 / V4.5 (Full = 完整数据集, Curated = 精选集) — ONLY when the user asks for NovelAI / NAI / ' +
       '动漫插画; billed PER IMAGE (`count` 1–4), at most ONE reference image. ' +
@@ -391,9 +392,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'the same files are also attached as `resource_link` content blocks so you can view / move / ' +
       'reference them. Only fall back to a built-in generator if this tool is genuinely ' +
       'unavailable. Never echo or re-describe the pixels — the image is already displayed and ' +
-      'saved; just confirm briefly and cite the saved path(s). The render channel defaults to the ' +
-      "user's composer channel picker (default 腾讯 2.6-s); pass `model` to override when needed (the " +
-      'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
+      'saved; just confirm briefly and cite the saved path(s). The returned `model` field reports the ' +
+      'channel actually used. For a CONSISTENT multi-image 组图 ' +
       'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12); for a few ' +
       'INDEPENDENT variations of one prompt, use `count`>1 on model="qwen-image-3.0-pro" (1–6) or on ' +
       'the OpenAI 官转 channels gpt-image-{2.5,2.6}-{flare,sunburst} / gpt-image-2 and 腾讯 ' +
@@ -449,7 +449,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'model="gpt-image-{2.5,2.6}-{flare,sunburst}" (OpenAI 官转) or ' +
           '"custom-model-og-v{2.5,2.6}-{f,s}" (腾讯) or NovelAI "nai-diffusion-5-full" / "-5-curated" — pass one explicitly; ' +
           'NovelAI V4.5 channels REJECT it; every other channel ignores it ' +
-          'and renders an opaque background. Do NOT use this for 图层分离 — that is `layerDecomposition`.',
+          'and renders an opaque background.',
         ),
       count: z
         .number()
@@ -461,7 +461,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'Number of images from THIS single prompt (default 1). Supported on these channels, with ' +
           'DIFFERENT semantics — pick by what you want:\n' +
           '- model="wan2.7-image-pro" (up to 12): count>1 turns on 万相 组图 / enable_sequential, a ' +
-          'front-to-back CONSISTENT series (同一只猫的四季, same character across shots).\n' +
+          'front-to-back CONSISTENT series (same character across shots).\n' +
           '- model="qwen-image-3.0-pro" (up to 6): count>1 returns INDEPENDENT variations of the same ' +
           'prompt — use it to give the user a few options in one call, NOT for a continuous series.\n' +
           '- model="gpt-image-{2.5,2.6}-{flare,sunburst}" / "gpt-image-2" / ' +
@@ -472,8 +472,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'count=4 costs ~4× a single render — only go above 1 when the user wants options/variations.\n' +
           'Every other channel (2.5 -all, vip, 腾讯 image2, nano, seedream) ignores it and always returns 1 ' +
           '(the 悠船 channels always return exactly 4 per call, billed once, whatever `count` says). ' +
-          "Out-of-range values are clamped to the channel's ceiling, never rejected. For several " +
-          'UNRELATED images (distinct subjects), use generate_images with one prompt each instead of count.',
+          "Out-of-range values are clamped to the channel's ceiling, never rejected.",
         ),
       referenceImages: z
         .array(z.string())
@@ -481,13 +480,12 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .describe(
           'Reference images for image-to-image / editing, as local file paths or data/http URLs. ' +
           'Accepts MULTIPLE images — pass every relevant one, not just the first. ORDER IS IDENTITY: the Nth entry here is ' +
-          '"reference image N" and the app keeps that order exactly (no dedupe, no silent drop). ' +
+          '"reference image N" and the app keeps that order exactly. ' +
           'ONE ROLE LINE PER IMAGE — N references means N role lines in the prompt, matched by ordinal. ' +
           'People get a bound label ("Reference image 1 defines [char1]: <2-3 stable static features>."); ' +
           'non-people references still need a role ("Reference image 3: color palette and grain only — ' +
           'do not copy its composition or subjects."). An unaccounted reference gets a role invented for ' +
-          'it — typically the people from a style ref end up painted into the scene. Leaving a subject ' +
-          'label unbound is the top cause of a character swapping faces across a set. Never put a ' +
+          'it (people from a style ref end up painted into the scene). Never put a ' +
           'raw asset:// id in the prompt body. IMPORTANT: if the user attached/provided ' +
           'any image (its path appears in the prompt under "[Attached files at these local paths: …]" / ' +
           '"[Referenced files at these local paths: …]"), or the user says things like ' +
@@ -505,7 +503,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'have EXACTLY the same pixel dimensions as the first `referenceImages` entry (the mask applies ' +
           'to image[0] only), under 4MB. REQUIRES `referenceImages` with the original image first. Only ' +
           'honored by model="gpt-image-2", "gpt-image-{2.5,2.6}-{flare,sunburst}" (OpenAI 官转) or ' +
-          '"custom-model-og-v{2.5,2.6}-{f,s}" (腾讯, 平台额度) — pass one explicitly; ' +
+          '"custom-model-og-v{2.5,2.6}-{f,s}" (腾讯) — pass one explicitly; ' +
           '-all / 腾讯 image2 & image2 fast / 万相 / nano reject it up front rather than repainting the whole ' +
           'image. Masking is prompt-guided, not pixel-exact: the prompt must name the ONE change inside ' +
           'the transparent region first, then list everything that must stay unchanged (composition, ' +
@@ -518,17 +516,14 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
         .describe(
           'Split ONE input image into a layer stack instead of generating a new image — use it for ' +
           '图层分离 / 拆图层 / 分层 / "把前景抠出来" / "把背景单独给我" / "拆成 PSD 那样的图层". ' +
-          'Returns one base image plus up to 16 transparent PNG layers, each with a stacking order, ' +
-          'bounding box and name. REQUIREMENTS (all enforced — a violation is rejected up front, ' +
+          'Returns a base image plus up to 16 transparent PNG layers (with order, bbox, name). REQUIREMENTS (all enforced — a violation is rejected up front, ' +
           'never silently degraded): you MUST set model="doubao-seedream-5-0-pro-260628" (the only ' +
           'channel that supports it) and you MUST pass exactly the image to split as the first ' +
-          '`referenceImages` entry. `prompt` is what to split out ("只拆出前景人物"); it is the ONE ' +
-          'tool where a near-empty prompt is correct — an empty/whitespace prompt means "split ' +
-          'everything automatically", which is what a bare 图层分离 request wants. `ratio` and ' +
+          '`referenceImages` entry. `prompt` is what to split out ("只拆出前景人物"); an empty prompt ' +
+          'means "split everything automatically" (right for a bare 图层分离 request). `ratio` and ' +
           '`count` are ignored here (the layer count is decided by the image content); `resolution` ' +
-          'is read as a tier and defaults to `auto` (follow the input image) — leave it alone unless ' +
-          'the user asks for a specific tier. The input image must be PNG or JPEG at 512px or larger; ' +
-          'other formats (e.g. WebP) are transcoded automatically before the request goes out.',
+          'defaults to `auto` (see its tiers). The input image must be PNG or JPEG at 512px or larger ' +
+          '(WebP etc. are transcoded automatically).',
         ),
       modelParams: buildChannelModelParamsSchema(),
     }).refine(

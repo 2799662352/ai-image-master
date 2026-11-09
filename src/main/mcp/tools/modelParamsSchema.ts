@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  GPT_IMAGE_26_PARAM_SPECS,
   NOVELAI_V5_PARAM_SPECS,
   YOUCHUAN_V8_PARAM_SPECS,
   type ModelParamSpec,
@@ -98,17 +99,16 @@ export function buildModelParamsSchema(
  * 所以文案把「默认别设、用户明确要求才设」放在最前面。
  */
 export const YOUCHUAN_MODEL_PARAMS_INTRO =
-  'Model-specific options for the 悠船 (Midjourney) channels ONLY — model="youchuan-v8.2" (快速) or ' +
-  '"youchuan-v8.2-turbo" (极速); IGNORED by every other channel. LEAVE THIS OUT in normal use: every key ' +
-  'is optional and an unset key is decided by the model itself (Midjourney\'s defaults are already ' +
-  'tuned). Set a key ONLY when the user explicitly asks for that effect — e.g. 更疯狂/更有创意 → chaos, ' +
-  '更艺术/更强风格 → stylize, 更克制/更贴近描述 → low stylize, 原始/少加工 → raw:true, 按这张图的画风 → ' +
-  'sref (+ sw), 不要某元素 → no. Each generate call returns 4 images and is billed ONCE. ' +
-  '`hd` (native 2K, default ON, billed ×1.5) is the only key with a default — pass hd:false only when the ' +
-  'user asks for a cheaper / draft render. Out-of-range values are REJECTED (never clamped) with the ' +
-  'reason, so fix the value instead of retrying unchanged. Version and speed come from `model`, never ' +
-  'from the prompt: do NOT write --v / --turbo / --fast inside the prompt or `no`. Resolution tiers ' +
-  '(`resolution`) and `count` do not apply — use `hd` instead.'
+  'Options for the 悠船 (Midjourney) channels ONLY — model="youchuan-v8.2" (快速) or ' +
+  '"youchuan-v8.2-turbo" (极速). LEAVE THIS OUT in normal use: every key is optional and an unset key ' +
+  'is decided by the model itself (Midjourney\'s defaults are already tuned). Set a key ONLY when the ' +
+  'user explicitly asks for that effect — e.g. 更疯狂 → chaos, 更艺术/更克制 → high/low stylize, ' +
+  '原始/少加工 → raw:true, 按这张图的画风 → sref (+ sw), 不要某元素 → ' +
+  'no. Each generate call returns 4 images and is billed ONCE. `hd` (native 2K, default ON, billed ×1.5) ' +
+  'is the only key with a default — pass hd:false only when the user asks for a cheaper / draft render. ' +
+  'Out-of-range values are REJECTED (never clamped) with the reason, so fix the value instead of ' +
+  'retrying unchanged. Version and speed come from `model`: do NOT write --v / --turbo / --fast inside ' +
+  'the prompt or `no`. `resolution` and `count` do not apply — use `hd` instead.'
 
 /** generate_image / generate_images 共用的悠船 `modelParams` schema。 */
 export function buildYouchuanModelParamsSchema() {
@@ -121,8 +121,8 @@ export function buildYouchuanModelParamsSchema() {
  * 但不必担心「默认缺失」。
  */
 export const NOVELAI_MODEL_PARAMS_INTRO =
-  'Options for the NovelAI channels ONLY — model="nai-diffusion-5-full" | "nai-diffusion-5-curated" | ' +
-  '"nai-diffusion-4-5-full" | "nai-diffusion-4-5-curated". Every key is optional and already has a sensible ' +
+  'Options for the NovelAI channels ONLY — model="nai-diffusion-5-full" | "-5-curated" | "-4-5-full" | ' +
+  '"-4-5-curated". Every key is optional and already has a sensible ' +
   'default — set a key ONLY when the user asks for that effect: 兽人/furry → dataset_mode:"furry"; 不要某元素 → ' +
   'negative_prompt; 画面里有 N 个角色、要各自描述并放在指定位置 → `characters` (at most 22 on V5, 6 on ' +
   'V4.5; keep the shared scene description in `prompt`); 图生图 → exactly ONE http(s) image in ' +
@@ -148,17 +148,27 @@ function mergeParamSpecs(...tables: ReadonlyArray<readonly ModelParamSpec[]>): M
   return merged
 }
 
-/** 全部「渠道专属参数」键的并集:悠船 + NovelAI(V5 表,角色上限取较大的 22,V4.5 的 6 由 ApiService 校验)。 */
+/**
+ * GPT Image 2.6 官转(apiyi,flare / sunburst)的 GIF / SVG 说明。只有这一对型号认这些键;
+ * 别的渠道上 agent 传了会在 `AgentToolExecutor` 入口被明确拒绝(带可用型号),不会悄悄回一张 PNG。
+ */
+export const GPT_IMAGE_26_MODEL_PARAMS_INTRO =
+  'GIF / SVG output, model="gpt-image-2.6-flare" | "-sunburst" ONLY (other models REJECT these keys). ' +
+  'Text-to-image, count 1, no referenceImages / mask / transparentBackground. Unset = normal PNG.'
+
+/** 全部「渠道专属参数」键的并集:悠船 + NovelAI(V5 表,角色上限取较大的 22,V4.5 的 6 由 ApiService 校验)+ GPT Image 2.6 的 GIF / SVG。 */
 export const ALL_CHANNEL_PARAM_SPECS: readonly ModelParamSpec[] = mergeParamSpecs(
   YOUCHUAN_V8_PARAM_SPECS,
   NOVELAI_V5_PARAM_SPECS,
+  GPT_IMAGE_26_PARAM_SPECS,
 )
 
 export const ALL_CHANNEL_MODEL_PARAMS_INTRO =
-  'Options for TWO channel families — pass only the keys of the channel you are rendering on; each part ' +
+  'Options for THREE channel families — pass only the keys of the channel you are rendering on; each part ' +
   'below is IGNORED by every other channel. ' +
   `\n\n[悠船 / Midjourney] ${YOUCHUAN_MODEL_PARAMS_INTRO}` +
-  `\n\n[NovelAI] ${NOVELAI_MODEL_PARAMS_INTRO}`
+  `\n\n[NovelAI] ${NOVELAI_MODEL_PARAMS_INTRO}` +
+  `\n\n[GPT Image 2.6] ${GPT_IMAGE_26_MODEL_PARAMS_INTRO}`
 
 /** generate_image / generate_images 共用的 `modelParams` schema(悠船 + NovelAI)。 */
 export function buildChannelModelParamsSchema() {

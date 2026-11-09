@@ -215,9 +215,12 @@ export const IMAGE_CHANNELS = [
     // (`b.apiyi.com` / Miau 网关),按 token 计费。token 量与腾讯 2.6 同一把梯子
     // (1024²:low 824 / medium 1449 / high 1758);对 2.5 官转(约 200 / 439 / 1756)
     // 只有 high 档接近,low / medium 更高 —— 所以档位说明里不放 2.5 的美元价。
-    // 实测(Miau 网关):文生图 / n=2 / 透明底 / 改图 + mask 擦除可用,结果是 `url`(不是 b64);
-    // `output_format: gif` 能出但帧数 / 时长被网关丢掉(固定回默认 9 帧);complexity / SVG /
-    // markup 都没有经网关透传,所以这里**不承诺** —— 见 `ApiService` 里 2.6 官转配置处的说明。
+    // 实测(Miau 网关):文生图 / n=2 / 透明底 / 改图 + mask 擦除可用,结果是 `url`(不是 b64,
+    // 且没有扩展名,落盘后缀要靠响应头 / 文件头判断)。new-api #197 之后 GIF(frame_count /
+    // frame_duration_ms)与 SVG(svg.model)不开透传也能到上游,GIF 帧数 / 时长实测生效、SVG 出
+    // 合法矢量;SVG 写手模型的费用上游不回传(只按出图 token 计费)。
+    // **不承诺**:complexity(上游静默忽略,测不出是否生效)、markup(实测不生效,原因未明)。
+    // 见 `shared/imageModelParams` 的 `GPT_IMAGE_26_PARAM_SPECS` 与 `ApiService` 里 2.6 官转配置处。
     id: 'gpt-image-2.6-flare',
     label: '2.6 Flare',
     fullLabel: 'GPT Image 2.6 Flare',

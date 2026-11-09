@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import { registerImageTools } from '../imageTools'
 import { ImageTaskManager } from '../imageTaskRegistry'
-import { NOVELAI_V5_PARAM_SPECS, YOUCHUAN_V8_PARAM_SPECS } from '../../../../shared/imageModelParams'
+import {
+  GPT_IMAGE_26_PARAM_SPECS,
+  NOVELAI_V5_PARAM_SPECS,
+  YOUCHUAN_V8_PARAM_SPECS,
+} from '../../../../shared/imageModelParams'
 
 type Handler = (params: Record<string, unknown>) => Promise<{ content: Array<Record<string, unknown>> }>
 type Captured = {
@@ -210,14 +214,39 @@ describe('registerImageTools / generate_image schema', () => {
     }
     const withParams = (modelParams: unknown) => ({ prompt: 'x', model: 'youchuan-v8.2', modelParams })
 
-    it('schema 的键就是共享参数表的键(悠船 + NovelAI 的并集;单一事实来源,加参数不会漏一边)', () => {
+    it('schema 的键就是共享参数表的键(悠船 + NovelAI + GPT Image 2.6 GIF/SVG 的并集;单一事实来源,加参数不会漏一边)', () => {
       const { single, batch } = schemas()
       for (const schema of [single, batch]) {
         const field = schema.shape.modelParams as { unwrap: () => { shape: Record<string, unknown> } }
         expect(Object.keys(field.unwrap().shape).sort()).toEqual(
-          [...new Set([...YOUCHUAN_V8_PARAM_SPECS, ...NOVELAI_V5_PARAM_SPECS].map((s) => s.key))].sort(),
+          [
+            ...new Set(
+              [...YOUCHUAN_V8_PARAM_SPECS, ...NOVELAI_V5_PARAM_SPECS, ...GPT_IMAGE_26_PARAM_SPECS].map((s) => s.key),
+            ),
+          ].sort(),
         )
       }
+    })
+
+    it('GIF / SVG 参数:单张与批量都收,说明点名只有 2.6 官转可用,越界 / 未知值被拒', () => {
+      const { single, batch } = schemas()
+      const ok = { output_format: 'gif', frame_count: 8, frame_duration_ms: 100 }
+      const withModel = (modelParams: unknown) => ({ prompt: 'x', model: 'gpt-image-2.6-flare', modelParams })
+      for (const schema of [single, batch]) {
+        const body = (modelParams: unknown) =>
+          'prompts' in schema.shape ? { prompts: ['a', 'b'], model: 'gpt-image-2.6-flare', modelParams } : withModel(modelParams)
+        expect(schema.safeParse(body(ok)).success).toBe(true)
+        expect(schema.safeParse(body({ output_format: 'svg', svg_model: 'gpt-4.1-mini' })).success).toBe(true)
+        expect(schema.safeParse(body({ output_format: 'webm' })).success).toBe(false)
+        expect(schema.safeParse(body({ frame_count: 1 })).success).toBe(false)
+        expect(schema.safeParse(body({ frame_count: 65 })).success).toBe(false)
+        expect(schema.safeParse(body({ frame_duration_ms: 10 })).success).toBe(false)
+        expect(schema.safeParse(body({ svg_model: 'made-up-writer' })).success).toBe(false)
+      }
+      const desc = (single.shape.modelParams as { description?: string }).description ?? ''
+      expect(desc).toMatch(/GIF \/ SVG/)
+      expect(desc).toContain('gpt-image-2.6-flare')
+      expect(desc).toMatch(/other models REJECT/)
     })
 
     it('不传 / 传空对象都合法 —— 默认一个都不用设', () => {
@@ -474,6 +503,27 @@ describe('generate_image (kick + budget + DONE/handoff)', () => {
     expect(link!.uri).toContain('deadbeef.png')
     expect(link!.name).toBe('deadbeef.png')
     expect(link!.mimeType).toBe('image/png')
+  })
+
+  it('resource_link 的 mimeType 跟着落盘后缀走:GIF 动图 / SVG 矢量图不再被标成 image/png', async () => {
+    const cases: Array<[string, string]> = [
+      ['C:\\u\\agent\\uploads\\a.gif', 'image/gif'],
+      ['C:\\u\\agent\\uploads\\a.svg', 'image/svg+xml'],
+      ['C:\\u\\agent\\uploads\\a.SVG', 'image/svg+xml'],
+      ['C:\\u\\agent\\uploads\\a.webp', 'image/webp'],
+      ['C:\\u\\agent\\uploads\\a.png', 'image/png'],
+    ]
+    for (const [winPath, expected] of cases) {
+      const { tools, server, manager } = captureAsync()
+      const router = autoRouter(manager, () => ({
+        status: 'succeeded',
+        result: { ok: true, count: 1, model: 'gpt-image-2.6-flare', historyId: 1, paths: [winPath] },
+      }))
+      registerImageTools(server, router as any, { manager, blockingBudgetMs: 5_000 })
+      const { content } = await getHandler(tools, 'generate_image')({ prompt: 'a cat' })
+      const link = content.find((c) => c.type === 'resource_link')
+      expect(link?.mimeType, winPath).toBe(expected)
+    }
   })
 
   it('text banner names the saved folder, lists paths, and forbids history/fs hunts', async () => {
