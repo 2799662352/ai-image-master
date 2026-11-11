@@ -237,8 +237,9 @@ export function createDepthTransport(
  * 一个其实可用的档位永久关掉，而且关得悄无声息；猜错的另一个方向只是提交时拿一句
  * `model_not_found`。
  *
- * seed / 联网搜索 / taskMode 网关不转发（`buildVideoRequest` 里一个都没有，传了也是被丢掉），
- * 所以这条路不带它们。
+ * seed / 联网搜索走 `metadata.seed` / `metadata.tools`(网关的方舟适配器把 metadata 整份解进上游
+ * 请求体,`doubao/adaptor.go` 的 `requestPayload`)。由样片出成片那一支**不带**:方舟沿用样片的
+ * seed,再传会被拒。`taskMode` 是 vvdance 私有字段,网关没有对等物,仍然不带。
  */
 export function createSeedanceGatewayTransport(
   client: SeedanceGatewayClient,
@@ -275,6 +276,9 @@ export function createSeedanceGatewayTransport(
         // content 里没有 text 条目时才用得上；正常链路 buildContent 一定放了一条。
         promptFallback: ctx.input.prompt,
         ...(ctx.input.draft ? { draft: true } : {}),
+        // seed / 联网搜索:放进 metadata,网关的方舟适配器会解进上游请求体。
+        ...(typeof ctx.input.seed === 'number' ? { seed: ctx.input.seed } : {}),
+        ...(ctx.input.webSearch ? { webSearch: true } : {}),
       })
       return client.createTask(body, resolveToken().token)
     },

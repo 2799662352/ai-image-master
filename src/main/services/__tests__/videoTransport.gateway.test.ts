@@ -166,18 +166,29 @@ describe('createSeedanceGatewayTransport 组包', () => {
     expect(JSON.stringify(body)).toContain('asset://portrait-7')
   })
 
-  it('seed / web_search / taskMode 不外泄（网关侧没有对等物,传了也是被丢掉）', async () => {
-    const client = gatewayClient()
-    await createSeedanceGatewayTransport(client, platformToken).createTask(
-      ctx({
-        input: { prompt: 'p', seed: 42, webSearch: true },
-        taskMode: 'extend',
-      }),
-    )
+  // seed / 联网搜索走 metadata(网关的方舟适配器把 metadata 解进上游请求体)。
+  // 两条钱包(平台 / 自填 Key)共用同一个组包函数,这里各验一遍,防止只接了其中一条。
+  it('seed / webSearch 进 metadata —— 平台与自填 Key 两条通道都带', async () => {
+    for (const [name, token] of [
+      ['platform', platformToken],
+      ['own-key', ownKeyToken],
+    ] as const) {
+      const client = gatewayClient()
+      await createSeedanceGatewayTransport(client, token).createTask(
+        ctx({ input: { prompt: 'p', seed: 42, webSearch: true } }),
+      )
+      // 按键名查而不是按子串查：模型 id 本身就含 "seed"（doubao-**seed**ance-…）。
+      const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+      expect(Object.keys(body).sort(), name).toEqual(['metadata', 'model', 'prompt'])
+      expect(body.metadata.seed, name).toBe(42)
+      expect(body.metadata.tools, name).toEqual([{ type: 'web_search' }])
+    }
+  })
 
-    // 按键名查而不是按子串查：模型 id 本身就含 "seed"（doubao-**seed**ance-…）。
+  it('没填 seed、没开联网 → metadata 里就是原来那五个键', async () => {
+    const client = gatewayClient()
+    await createSeedanceGatewayTransport(client, platformToken).createTask(ctx())
     const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
-    expect(Object.keys(body).sort()).toEqual(['metadata', 'model', 'prompt'])
     expect(Object.keys(body.metadata).sort()).toEqual([
       'content',
       'duration',
@@ -185,6 +196,23 @@ describe('createSeedanceGatewayTransport 组包', () => {
       'ratio',
       'resolution',
     ])
+  })
+
+  it('taskMode 不外泄 —— 它是 vvdance 私有字段,网关没有对等物', async () => {
+    const client = gatewayClient()
+    await createSeedanceGatewayTransport(client, platformToken).createTask(ctx({ taskMode: 'extend' }))
+    const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+    expect(JSON.stringify(body)).not.toContain('taskMode')
+    expect(JSON.stringify(body)).not.toContain('task_mode')
+  })
+
+  it('由样片出成片:seed / 联网不重传(方舟沿用样片,再带会被拒)', async () => {
+    const client = gatewayClient()
+    await createSeedanceGatewayTransport(client, platformToken).createTask(
+      ctx({ input: { prompt: 'p', fromDraftTaskId: 'task_draft', seed: 42, webSearch: true } }),
+    )
+    const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+    expect(Object.keys(body.metadata).sort()).toEqual(['content', 'resolution'])
   })
 
   it('generateAudio 显式 false 透传', async () => {

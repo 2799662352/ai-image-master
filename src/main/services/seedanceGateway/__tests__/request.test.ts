@@ -222,13 +222,51 @@ describe('content[] 直通', () => {
   })
 })
 
-describe('vvdance 专属字段不外泄', () => {
-  it('信封里没有 seed / tools / taskMode —— 网关侧没有对等物', () => {
+// seed / 联网搜索:网关的方舟适配器把 `metadata` 整份解进上游请求体(`doubao/adaptor.go` 的
+// `requestPayload` 有 `seed` 与 `tools`),所以这两样要放进 `metadata` 带过去。
+// 以前这里断言「不外泄」是因为误以为网关没有对等物 —— 结果是用户在工作台勾了联网 / 填了 seed,
+// 请求里却一个字都没有,而界面照常显示「已启用」。
+describe('seed / 联网搜索 经 metadata 带给网关', () => {
+  it('没给就一个字都不出现(不给上游任何「默认值」的机会)', () => {
     const body = buildSeedanceGatewayCreateBody({ model: 'm', content: content() })
-    const json = JSON.stringify(body)
-    for (const forbidden of ['seed', 'tools', 'taskMode', 'web_search']) {
-      expect(json).not.toContain(forbidden)
+    expect(body.metadata).not.toHaveProperty('seed')
+    expect(body.metadata).not.toHaveProperty('tools')
+  })
+
+  it('seed 进 metadata.seed,不在顶层', () => {
+    const body = buildSeedanceGatewayCreateBody({ model: 'm', content: content(), seed: 42 })
+    expect(body.metadata.seed).toBe(42)
+    expect(body).not.toHaveProperty('seed')
+  })
+
+  it('seed 为 0 也是合法种子,不能被当成「没给」', () => {
+    const body = buildSeedanceGatewayCreateBody({ model: 'm', content: content(), seed: 0 })
+    expect(body.metadata.seed).toBe(0)
+  })
+
+  it('seed 取整;不是有限数就当没给', () => {
+    expect(buildSeedanceGatewayCreateBody({ model: 'm', content: content(), seed: 41.6 }).metadata.seed).toBe(42)
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const body = buildSeedanceGatewayCreateBody({ model: 'm', content: content(), seed: bad })
+      expect(body.metadata).not.toHaveProperty('seed')
     }
+  })
+
+  it('webSearch:true → metadata.tools = [{ type: "web_search" }]', () => {
+    const body = buildSeedanceGatewayCreateBody({ model: 'm', content: content(), webSearch: true })
+    expect(body.metadata.tools).toEqual([{ type: 'web_search' }])
+    expect(body).not.toHaveProperty('tools')
+  })
+
+  it('webSearch:false / 缺省 → 不出现 tools', () => {
+    expect(buildSeedanceGatewayCreateBody({ model: 'm', content: content(), webSearch: false }).metadata).not.toHaveProperty('tools')
+    expect(buildSeedanceGatewayCreateBody({ model: 'm', content: content() }).metadata).not.toHaveProperty('tools')
+  })
+
+  it('taskMode 仍然不外泄 —— 它是 vvdance 私有字段,网关没有对等物', () => {
+    const body = buildSeedanceGatewayCreateBody({ model: 'm', content: content(), seed: 1, webSearch: true })
+    const json = JSON.stringify(body)
+    expect(json).not.toContain('taskMode')
   })
 
   it('顶层只有 model / prompt / metadata 三个键', () => {

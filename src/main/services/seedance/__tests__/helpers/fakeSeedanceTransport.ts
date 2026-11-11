@@ -5,8 +5,9 @@
 // —— 提交 / 轮询 / 取消 / 落盘 / 重启接管 —— 不关心信封长什么样,所以这里用一个只记录调用的
 // 假上游,形状沿用以前的直连客户端(createTask / queryTask / deleteTask),让既有断言原样成立。
 //
-// ⚠️ 这是**测试替身**,不是生产代码的镜像:它不带 seed / 联网搜索 / generate_audio 之类
-// 网关根本不转发的字段,别在这里加回去。
+// ⚠️ 这是**测试替身**,不是生产代码的镜像:它不带 seed / 联网搜索 / generate_audio 这些字段。
+// 生产里 seed / 联网搜索走 `metadata.seed` / `metadata.tools`,由
+// `seedanceGateway/__tests__/request.test.ts` 与 `videoTransport.gateway.test.ts` 把关,别在这里加回去。
 
 import type { VideoTransport } from '../../../videoTransport'
 import type { SeedanceQueryResult } from '../../client'
