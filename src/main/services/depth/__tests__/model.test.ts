@@ -6,7 +6,7 @@ import {
   depthUpstreamModelId,
   pickDepthSourceUrl,
 } from '../model'
-import { SEEDANCE_MODEL_IDS_BY_REGION } from '../../seedance/region'
+import { SEEDANCE_MODEL_IDS } from '../../seedance/modelIds'
 
 const MB = 1024 * 1024
 const statOf = (size: number | null) => ({ statSize: vi.fn(async () => size) })
@@ -27,11 +27,9 @@ describe('depthUpstreamModelId', () => {
     expect(() => depthUpstreamModelId('')).toThrow()
   })
 
-  it('区域表里 depth 登记的只是前缀,不是能直接发的模型 id', () => {
-    // 那两张表要的是穷尽性;真正的 id 必须带分辨率后缀。别让前缀被当成 id 发出去。
-    for (const region of ['global', 'cn'] as const) {
-      expect(SEEDANCE_MODEL_IDS_BY_REGION[region].depth).toBe(DEPTH_UPSTREAM_MODEL_ID_BASE)
-    }
+  it('模型表里 depth 登记的只是前缀,不是能直接发的模型 id', () => {
+    // 那张表要的是穷尽性;真正的 id 必须带分辨率后缀。别让前缀被当成 id 发出去。
+    expect(SEEDANCE_MODEL_IDS.depth).toBe(DEPTH_UPSTREAM_MODEL_ID_BASE)
     expect(DEPTH_UPSTREAM_MODEL_ID_BASE).not.toBe(depthUpstreamModelId('480p'))
   })
 })

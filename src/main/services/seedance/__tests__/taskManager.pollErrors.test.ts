@@ -11,9 +11,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
 import { SeedanceApiError } from '../client'
-import type { SeedanceClient, SeedanceQueryResult } from '../client'
+import type { SeedanceQueryResult } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type { CreateVideoTaskInput, SeedanceTaskUpdate } from '../types'
-import { setSeedanceRegionMemory } from '../region'
 
 const INPUT: CreateVideoTaskInput = { prompt: '一只猫在雨里跳舞' }
 
@@ -23,7 +23,7 @@ const SUCCEEDED: SeedanceQueryResult = {
   content: { video_url: 'https://upstream/v.mp4' },
 }
 
-function makeClient(queryTask: SeedanceClient['queryTask']): SeedanceClient {
+function makeClient(queryTask: FakeSeedanceClient['queryTask']): FakeSeedanceClient {
   return {
     createTask: vi.fn(async () => ({ id: 'task-1' })),
     queryTask,
@@ -33,7 +33,7 @@ function makeClient(queryTask: SeedanceClient['queryTask']): SeedanceClient {
 }
 
 /** 每次都抛同一个上游错误。 */
-function alwaysFails(status: number, message: string, retryAfterMs?: number): SeedanceClient['queryTask'] {
+function alwaysFails(status: number, message: string, retryAfterMs?: number): FakeSeedanceClient['queryTask'] {
   return vi.fn(async () => {
     throw new SeedanceApiError(message, status, retryAfterMs)
   })
@@ -45,18 +45,15 @@ describe('SeedanceTaskManager 轮询失败分类', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     broadcasts = []
-    setSeedanceRegionMemory('global')
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    setSeedanceRegionMemory('global')
   })
 
-  function makeManager(client: SeedanceClient) {
+  function makeManager(client: FakeSeedanceClient) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo: vi.fn(async () => ({ localPath: 'D:/save/v.mp4' })),
       broadcast: (u) => broadcasts.push(u),
       // 退避抖动固定为 0，让等待时长在用例里可精确断言。

@@ -24,7 +24,6 @@ import { ImportProjectDialog } from './video-workbench/ImportProjectDialog'
 import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
 import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
-import { RegionSwitch } from './video-workbench/RegionSwitch'
 import { TrashDialog } from './video-workbench/TrashDialog'
 import { UhdConfirmDialog } from './video-workbench/UhdConfirmDialog'
 import { UndoRedoButtons } from './video-workbench/UndoRedoButtons'
@@ -254,8 +253,6 @@ export default function VideoWorkbenchPage() {
           <div className="ml-auto flex items-center gap-2">
             {/* 撤销/重做:一步 = 一次编排改动,agent 的整板 applyIR 也算一步 */}
             <UndoRedoButtons />
-            {/* 海外/国内站点切换:与设置页共享同一份 region 配置,提交按此路由 */}
-            <RegionSwitch />
             {/* 人像库入库总闸:只管生成时把参考图登记进人像库(上传不再顺带) */}
             <button
               type="button"

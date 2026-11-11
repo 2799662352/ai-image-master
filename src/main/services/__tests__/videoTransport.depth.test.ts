@@ -12,7 +12,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createDepthTransport,
-  createSeedanceTransport,
+  createSeedanceGatewayTransport,
   transportFor,
   type VideoSubmitContext,
 } from '../videoTransport'
@@ -61,14 +61,13 @@ const platform = (token = 'shadow-tok') => () => ({ billing: 'platform' as const
 const ownKey = (token = 'miau-key') => () => ({ billing: 'own-key' as const, token })
 
 function seedanceTransport() {
-  return createSeedanceTransport(
+  // 自填 Key 那条 Seedance 通道(缺省计费落在它上)。
+  return createSeedanceGatewayTransport(
     {
-      createTask: vi.fn(async () => ({ id: 'ark' })),
-      queryTask: vi.fn(async () => ({ id: 'ark', status: 'running' as const })),
-      downloadVideo: vi.fn(async () => 'x.mp4'),
-      deleteTask: vi.fn(async () => {}),
+      createTask: vi.fn(async () => ({ id: 'gw' })),
+      queryTask: vi.fn(async () => ({ id: 'gw', status: 'running' as const })),
     },
-    () => 'ark-key',
+    () => ({ billing: 'own-key' as const, token: 'miau-key' }),
   )
 }
 
@@ -76,7 +75,7 @@ describe('transportFor(depth)', () => {
   it('depth 走 depth 通道,与计费模式无关', () => {
     const seedance = seedanceTransport()
     const depth = createDepthTransport(mediaKit(), platform())
-    const registry = { seedance, depth }
+    const registry = { seedanceOwnKey: seedance, depth }
 
     expect(transportFor(registry, 'depth')).toBe(depth)
     // 平台余额也不能被「Seedance 平台通道」劫走:请求体形状完全不同。
@@ -88,19 +87,19 @@ describe('transportFor(depth)', () => {
    * 🧬 变异点:改成 `registry.depth ?? registry.seedance`(照抄万相那条回落),必红。
    *
    * 万相回落是良性的(同一个钱包、只换组包器);这里不是 —— 回落到 Seedance 意味着把源视频
-   * 当 Ark 的 content[] 发给 vvdance,而且扣的是另一把钥匙。通道没注册是配置问题,要响亮。
+   * 当 Seedance 的 content[] 发出去,而且可能扣的是另一个钱包。通道没注册是配置问题,要响亮。
    */
   it('depth 通道没注册时抛错,绝不回落到 Seedance', () => {
     const seedance = seedanceTransport()
-    expect(() => transportFor({ seedance }, 'depth')).toThrow(/深度捕捉/)
-    expect(() => transportFor({ seedance }, 'depth', { billing: 'platform' })).toThrow(/深度捕捉/)
+    expect(() => transportFor({ seedanceOwnKey: seedance }, 'depth')).toThrow(/深度捕捉/)
+    expect(() => transportFor({ seedanceOwnKey: seedance }, 'depth', { billing: 'platform' })).toThrow(/深度捕捉/)
   })
 
   it('不影响其它别名的分派', () => {
     const seedance = seedanceTransport()
     const depth = createDepthTransport(mediaKit(), platform())
-    expect(transportFor({ seedance, depth }, '2.0')).toBe(seedance)
-    expect(transportFor({ seedance, depth }, undefined)).toBe(seedance)
+    expect(transportFor({ seedanceOwnKey: seedance, depth }, '2.0')).toBe(seedance)
+    expect(transportFor({ seedanceOwnKey: seedance, depth }, undefined)).toBe(seedance)
   })
 })
 

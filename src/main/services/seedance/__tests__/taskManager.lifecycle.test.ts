@@ -8,13 +8,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
-import type { SeedanceClient, SeedanceQueryResult } from '../client'
+import type { SeedanceQueryResult } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type { CreateVideoTaskInput, SeedanceTaskUpdate } from '../types'
-import { setSeedanceRegionMemory } from '../region'
 
 const INPUT: CreateVideoTaskInput = { prompt: '一只猫在雨里跳舞' }
 
-function makeClient(statuses: SeedanceQueryResult[]): SeedanceClient {
+function makeClient(statuses: SeedanceQueryResult[]): FakeSeedanceClient {
   let i = 0
   return {
     createTask: vi.fn(async () => ({ id: 'task-1' })),
@@ -32,18 +32,15 @@ describe('SeedanceTaskManager 生命周期', () => {
     vi.useFakeTimers()
     broadcasts = []
     persistVideo = vi.fn(async () => ({ localPath: 'D:/save/video.mp4', remoteUrl: 'https://cos/v.mp4' }))
-    setSeedanceRegionMemory('global')
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    setSeedanceRegionMemory('global')
   })
 
-  function makeManager(client: SeedanceClient) {
+  function makeManager(client: FakeSeedanceClient) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo,
       broadcast: (u) => broadcasts.push(u),
     })

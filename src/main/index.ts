@@ -1376,7 +1376,7 @@ app.whenReady().then(async () => {
     () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
   )
 
-  // 平台人像库(走平台余额那条路)。与上面 vvdance 那套人像库并存,两边素材互不可见。
+  // 平台人像库(走平台余额那条路;自填 Miau Key 模式没有人像库)。
   //
   // 同样必须在 createWindow 之前:人像库页面挂载即调 list(),晚注册会被
   // 「No handler registered」reject,页面钉死在空状态。这一层没有启动副作用、

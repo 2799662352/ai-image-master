@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentToolExecutor, patchPromptText } from '../AgentToolExecutor'
 import { useTabStore } from '../../../stores/useTabStore'
+import { useQuotaStore } from '../../../stores/useQuotaStore'
 import { resetAssetPreviewCacheForTest } from '../../video-workbench/assetPreview'
 import {
   resetWorkbenchStoreForTest,
@@ -44,7 +45,28 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as any).electronAPI
+  useQuotaStore.setState({ billingSource: 'own-key', selectedPool: null })
 })
+
+/**
+ * 平台余额下的人像库(素材库)桥。asset:// 的预览地址只能从它查回来:
+ * 自填 Miau Key 没有人像库,那边一律「解析不到」。
+ */
+function mockPlatformLibrary(items: Array<{ Id: string; Name: string; AssetType: string; URL: string }>) {
+  const list = vi.fn(async (_scope: unknown) => ({
+    ok: true as const,
+    data: {
+      Items: items.map((i) => ({ Status: 'Active', ...i })),
+      TotalCount: items.length,
+      HiddenCount: 0,
+      Truncated: false,
+    },
+  }))
+  const resolve = vi.fn(async (_scope: unknown, _id: string) => ({ ok: true as const, data: null }))
+  ;(window as any).electronAPI = { portraitLibrary: { list, resolve } }
+  useQuotaStore.setState({ billingSource: 'platform', selectedPool: { projectId: 42, producerProjectId: null } })
+  return { list, resolve }
+}
 
 describe('AgentToolExecutor.video_workbench_*', () => {
   it('add_tasks:批量填卡进 store(页面同源可见)并默认切到工作台 tab', async () => {
@@ -123,17 +145,11 @@ describe('AgentToolExecutor.video_workbench_*', () => {
   })
 
   it('add_tasks:asset:// 引用带上人像库 previewUrl(缩略图直接有图),跨任务只查一次 list', async () => {
-    const listAssets = vi.fn(async () => ({
-      items: [
-        { id: 'a1', kind: 'image', name: '主角立绘', assetId: 'a1', assetUrl: 'asset://a1', previewUrl: 'https://cdn/a1.jpg' },
-        { id: 'a2', kind: 'audio', name: '配乐', assetId: 'a2', assetUrl: 'asset://a2', previewUrl: 'https://cdn/a2.jpg' },
-      ],
-      total: 2,
-      page: 1,
-      pageSize: 50,
-      totalPages: 1,
-    }))
-    ;(window as any).electronAPI = { seedance: { listAssets } }
+    // 非 COS 域名的地址不会被拼缩略图参数,previewUrl 就是原地址。音频没有图片缩略图,只补名字。
+    const { list } = mockPlatformLibrary([
+      { Id: 'a1', Name: '主角立绘', AssetType: 'Image', URL: 'https://cdn/a1.jpg' },
+      { Id: 'a2', Name: '配乐', AssetType: 'Audio', URL: 'https://cdn/a2.mp3' },
+    ])
     const { cardIds } = await callTool('video_workbench_add_tasks', {
       tasks: [
         { prompt: '第一镜', referenceImages: ['asset://a1', 'D:\\local.png'] },
@@ -141,7 +157,7 @@ describe('AgentToolExecutor.video_workbench_*', () => {
       ],
       navigate: false,
     })
-    expect(listAssets).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledTimes(1)
     const cards = useVideoWorkbenchStore.getState().cards
     const first = cards.find((c) => c.id === cardIds[0])!
     expect(first.referenceImages[0]).toEqual({
@@ -156,15 +172,14 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(second.referenceAudios[0]).toEqual({
       name: '配乐',
       src: 'asset://a2',
-      previewUrl: 'https://cdn/a2.jpg',
     })
   })
 
   it('add_tasks:人像库不可用时 asset:// 保持原样(文件名占位,不阻断写卡)', async () => {
-    const listAssets = vi.fn(async () => {
-      throw new Error('no secret')
+    const { list } = mockPlatformLibrary([])
+    list.mockImplementation(async () => {
+      throw new Error('boom')
     })
-    ;(window as any).electronAPI = { seedance: { listAssets } }
     const { cardIds } = await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '镜头', referenceImages: ['asset://ghost'] }],
       navigate: false,
@@ -174,17 +189,24 @@ describe('AgentToolExecutor.video_workbench_*', () => {
     expect(card.referenceImages[0].previewUrl).toBeUndefined()
   })
 
+  it('add_tasks:自填 Miau Key 没有人像库,asset:// 保持原样且不查任何库', async () => {
+    const { list, resolve } = mockPlatformLibrary([
+      { Id: 'a1', Name: '主角立绘', AssetType: 'Image', URL: 'https://cdn/a1.jpg' },
+    ])
+    useQuotaStore.setState({ billingSource: 'own-key', selectedPool: null })
+    const { cardIds } = await callTool('video_workbench_add_tasks', {
+      tasks: [{ prompt: '镜头', referenceImages: ['asset://a1'] }],
+      navigate: false,
+    })
+    const card = useVideoWorkbenchStore.getState().cards.find((c) => c.id === cardIds[0])!
+    expect(card.referenceImages[0]).toMatchObject({ src: 'asset://a1' })
+    expect(card.referenceImages[0].previewUrl).toBeUndefined()
+    expect(list).not.toHaveBeenCalled()
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
   it('update_task:补挂 asset:// 素材同样带 previewUrl', async () => {
-    const listAssets = vi.fn(async () => ({
-      items: [
-        { id: 'a9', kind: 'image', name: '场景图', assetId: 'a9', assetUrl: 'asset://a9', previewUrl: 'https://cdn/a9.jpg' },
-      ],
-      total: 1,
-      page: 1,
-      pageSize: 50,
-      totalPages: 1,
-    }))
-    ;(window as any).electronAPI = { seedance: { listAssets } }
+    mockPlatformLibrary([{ Id: 'a9', Name: '场景图', AssetType: 'Image', URL: 'https://cdn/a9.jpg' }])
     const { cardIds } = await callTool('video_workbench_add_tasks', {
       tasks: [{ prompt: '待补素材' }],
       navigate: false,

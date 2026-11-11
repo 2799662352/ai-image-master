@@ -3,8 +3,8 @@
 // 三件事各自都会**静默**出错,而且事后从桌面端一件也查不出来:
 //
 // 1. 调用方的意向没走到 `transportFor` —— 用户点的是平台余额,扣的是他自己的
-//    vvdance key;
-// 2. 平台通道缺席时悄悄回落 vvdance 直连 —— 同一种失效,只是换个成因;
+//    Miau Key;
+// 2. 平台通道缺席时悄悄回落自填 Key 通道 —— 同一种失效,只是换个成因;
 // 3. 提交走平台、轮询走自填 —— 一个 shadow 账号建的任务换一枚 token 去查,上游
 //    回「任务不存在」,而卡片会把它报成「生成失败」,用户以为片子没出来。
 //
@@ -12,14 +12,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
-import type { SeedanceClient, SeedanceQueryResult } from '../client'
+import type { SeedanceQueryResult } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type { CreateVideoTaskInput, SeedanceTaskUpdate, VideoBillingSource } from '../types'
 import type { VideoTransport } from '../../videoTransport'
-import { setSeedanceRegionMemory } from '../region'
 
 const INPUT: CreateVideoTaskInput = { prompt: '一只猫在雨里跳舞' }
 
-function makeClient(statuses: SeedanceQueryResult[]): SeedanceClient {
+function makeClient(statuses: SeedanceQueryResult[]): FakeSeedanceClient {
   let i = 0
   return {
     createTask: vi.fn(async () => ({ id: 'task-1' })),
@@ -51,24 +51,21 @@ describe('taskManager × 计费模式', () => {
     vi.useFakeTimers()
     broadcasts = []
     persistVideo = vi.fn(async () => ({ localPath: 'D:/save/v.mp4', remoteUrl: 'https://cos/v.mp4' }))
-    setSeedanceRegionMemory('global')
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    setSeedanceRegionMemory('global')
   })
 
   function makeManager(
-    client: SeedanceClient,
+    client: FakeSeedanceClient,
     extra: {
       seedanceGatewayTransport?: VideoTransport
       resolveBilling?: (prefer?: VideoBillingSource) => VideoBillingSource
     } = {},
   ) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo,
       broadcast: (u) => broadcasts.push(u),
       ...extra,
@@ -76,9 +73,9 @@ describe('taskManager × 计费模式', () => {
   }
 
   // 🧬 变异靶心 1:意向的最后一段。把 `submit` 里传给 `this.transport(...)` 的
-  // billing 删掉(或写死 undefined),这一条必红 —— 症状是 vvdance 直连被调用。
+  // billing 删掉(或写死 undefined),这一条必红 —— 症状是自填 Key 通道被调用。
   describe('提交:意向决定走哪条上游', () => {
-    it('billing=platform 时走网关,vvdance 直连一次都不碰', async () => {
+    it('billing=platform 时走平台通道,自填 Key 通道一次都不碰', async () => {
       const client = makeClient([])
       const gateway = makeGatewayTransport()
       const mgr = makeManager(client, { seedanceGatewayTransport: gateway })
@@ -106,7 +103,7 @@ describe('taskManager × 计费模式', () => {
       mgr.dispose()
     })
 
-    it('billing=own-key 与不传意向都走 vvdance 直连 —— 线上行为一个字节不变', async () => {
+    it('billing=own-key 与不传意向都走自填 Key 通道', async () => {
       for (const billing of [undefined, 'own-key' as const]) {
         const client = makeClient([])
         const gateway = makeGatewayTransport()
@@ -138,9 +135,9 @@ describe('taskManager × 计费模式', () => {
     })
   })
 
-  // 🧬 变异靶心 2:把 `transportFor` 那条 throw 改回「回落 registry.seedance」,
-  // 这一条必红 —— 症状是用户以为花平台余额、实际扣自己的 vvdance key。
-  describe('平台模式下永远不会落到 vvdance 直连', () => {
+  // 🧬 变异靶心 2:把 `transportFor` 那条 throw 改回「回落 registry.seedanceOwnKey」,
+  // 这一条必红 —— 症状是用户以为花平台余额、实际扣自己的 Miau Key。
+  describe('平台模式下永远不会落到自填 Key 通道', () => {
     it('平台通道没注册时抛错,不悄悄改走自填 Key', async () => {
       const client = makeClient([])
       const mgr = makeManager(client) // 刻意不注入 seedanceGatewayTransport
@@ -157,7 +154,7 @@ describe('taskManager × 计费模式', () => {
   // 症状最阴:提交成功、上游在跑,而轮询拿错 token 问,回一句「任务不存在」,
   // 卡片报「生成失败」—— 片子其实好好的,钱也已经花了。
   describe('轮询与取消:与提交同一条 transport', () => {
-    it('平台任务的轮询走网关,不去问 vvdance', async () => {
+    it('平台任务的轮询走平台通道,不去问自填 Key 通道', async () => {
       const client = makeClient([{ id: 'task-1', status: 'running' }])
       const gateway = makeGatewayTransport([
         { id: 'gw-1', status: 'succeeded', content: { video_url: 'https://cdn/v.mp4' } },
@@ -181,7 +178,7 @@ describe('taskManager × 计费模式', () => {
       await mgr.submit({ input: INPUT, content: [], billing: 'platform' })
       const res = await mgr.cancel('gw-1')
 
-      // vvdance 的 deleteTask 有实现,拿它去删一个网关任务只会删错东西/白删。
+      // 测试替身里自填 Key 那条有 deleteTask,拿它去删一个平台任务只会删错东西/白删。
       expect(client.deleteTask).not.toHaveBeenCalled()
       expect(res).toMatchObject({ ok: true, billed: true })
       expect(res.reason).toMatch(/不支持取消/)

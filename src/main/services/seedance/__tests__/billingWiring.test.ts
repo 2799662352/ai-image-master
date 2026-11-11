@@ -3,12 +3,12 @@
 // 这一段在 runtime.ts 里,而 runtime.ts 顶层就 import electron、并在
 // initSeedanceRuntime 里注册十几个 IPC handler —— 要真跑起来得先搭十来个 mock。
 // 所以照本仓既有做法用源码断言把接线钉死(同 portraitLibraryGuard.test.ts,
-// 那边守的是「两个提交入口都问过 usesSeedanceAssetLibrary」,同一类问题)。
+// 那边守的是「两个提交入口都问过 usesPlatformAssetLibrary」,同一类问题)。
 //
 // 这一层单独护栏的理由:两端都有真行为测试(渲染端 store 把 billingSource 放进
 // 载荷、taskManager 按 billing 选 transport),唯独中间这一段只要有人手滑删掉,
 // 两端的测试**全都照样是绿的**,而线上表现是「用户点了平台余额,扣的是他自己
-// 的 vvdance key」—— 不报错、事后查不出来。
+// 的 Miau Key」—— 不报错、事后查不出来。
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -25,18 +25,21 @@ function handlerBody(channel: string, until: string): string {
   return runtimeSource.slice(start, end)
 }
 
-describe('平台余额通道必须被注册', () => {
-  it('transportFor 的 registry 里有 seedanceGateway', () => {
-    // 缺席时 transportFor 会抛「平台余额通道未就绪」—— 那是给配置问题准备的
-    // 兜底,不该是接线之后的常态。
+describe('Seedance 的两条通道(平台余额 / 自填 Key)必须都被注册', () => {
+  it('transportFor 的 registry 里有 seedanceGateway 与 seedanceOwnKey', () => {
+    // 缺席时 transportFor 会抛「通道未就绪」—— 那是给配置问题准备的
+    // 兜底,不该是接线之后的常态。vvdance 直连删除后,自填 Key 也得有这条路,
+    // 否则每个自填 Key 的 Seedance 提交都会撞上它。
     expect(runtimeSource).toContain('seedanceGateway: seedanceGatewayTransport')
+    expect(runtimeSource).toContain('seedanceOwnKey: seedanceOwnKeyTransport')
   })
 
-  it('taskManager 也拿到了平台通道与兜底判据', () => {
+  it('taskManager 也拿到了两条通道与兜底判据', () => {
     // 提交与轮询走的是 taskManager 自己那份 registry,与 transportOf 那份是
     // 两处 —— 只接一处的话「工作台能提交但重启接管走错路」这种半接线状态
     // 完全看不出来。
     expect(runtimeSource).toContain('seedanceGatewayTransport,')
+    expect(runtimeSource).toContain('seedanceOwnKeyTransport,')
     expect(runtimeSource).toContain('resolveBilling: resolveVideoBilling,')
   })
 
@@ -47,6 +50,21 @@ describe('平台余额通道必须被注册', () => {
     expect(runtimeSource).toMatch(
       /createSeedanceGatewayTokenResolver\(\s*gatewayTokenSources,\s*(\/\/[^\n]*\n\s*)*\(\) => 'platform',/,
     )
+  })
+
+  it('自填 Key 那条同样钉死在 own-key,而且不带平台归属头', () => {
+    // 反方向同样致命:用户以为在花自己的 Key、实际在扣组织的钱 —— 平台那枚影子 token
+    // 一旦被兜底选中,钱记到组织头上,而且事后从桌面端根本查不出来。
+    expect(runtimeSource).toMatch(
+      /createSeedanceGatewayTokenResolver\(\s*gatewayTokenSources,\s*(\/\/[^\n]*\n\s*)*\(\) => 'own-key',/,
+    )
+    // 自填 Key 的客户端构造块里不许出现 gatewayPlatformHeaders:贴了平台归属头,
+    // 用户自己的花费会被记到平台账上。
+    const start = runtimeSource.indexOf('const seedanceOwnKeyTransport = createSeedanceGatewayTransport(')
+    expect(start, '找不到自填 Key 的 Seedance transport').toBeGreaterThan(-1)
+    const end = runtimeSource.indexOf('/**', start)
+    const block = runtimeSource.slice(start, end > start ? end : start + 1200)
+    expect(block).not.toContain('gatewayPlatformHeaders')
   })
 })
 
@@ -64,7 +82,7 @@ describe('意向一路走到 transportFor', () => {
 
   it('对账与重取地址:每一次 transportOf 都带计费模式', () => {
     // transportOf 的第二个参数缺省时 transportFor 会按自填 Key 选路。一条平台
-    // 任务因此会被拿 vvdance key 去问,回一句「任务不存在」——重启对账把它错杀成
+    // 任务因此会被拿自填 Key 去问,回一句「任务不存在」——重启对账把它错杀成
     // 失败卡片,「重新保存」则永远失败。
     const calls = runtimeSource.match(/transportOf\([^)]*\)/g) ?? []
     expect(calls.length).toBeGreaterThan(0)

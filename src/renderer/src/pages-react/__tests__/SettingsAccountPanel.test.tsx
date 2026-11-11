@@ -1,7 +1,7 @@
 // 设置页的账号分区。
 //
 // 单独成 `settings/AccountSection.tsx` 而不是写在 SettingsPage 里,是为了能单测:
-// SettingsPage 一挂载就要拉 API 站点、Codex provider、Seedance 与腾讯云三套 IPC,
+// SettingsPage 一挂载就要拉 API 站点、Codex provider 与腾讯云三套 IPC,
 // 把它整页搬进 jsdom 只会测到一堆 mock。分区自己只依赖 auth 桥。
 //
 // 最值得测的是 sessionOnly 那条提示:safeStorage 不可用(典型是 Linux 没有系统

@@ -5,7 +5,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createSeedanceTransport,
+  createSeedanceGatewayTransport,
   createWan3Transport,
   transportFor,
   type VideoSubmitContext,
@@ -46,13 +46,16 @@ function ctx(over: Partial<VideoSubmitContext> = {}): VideoSubmitContext {
   }
 }
 
-function seedanceClient() {
+function gatewayClient() {
   return {
-    createTask: vi.fn(async () => ({ id: 'ark-1' })),
-    queryTask: vi.fn(async () => ({ id: 'ark-1', status: 'running' as const })),
-    downloadVideo: vi.fn(async () => 'x.mp4'),
-    deleteTask: vi.fn(async () => {}),
+    createTask: vi.fn(async () => ({ id: 'gw-1' })),
+    queryTask: vi.fn(async () => ({ id: 'gw-1', status: 'running' as const })),
   }
+}
+
+/** 一条 Seedance 通道替身(经网关;钱包由 transportFor 按任务的计费模式选,这里不关心)。 */
+function seedanceTransport(billing: 'own-key' | 'platform' = 'own-key') {
+  return createSeedanceGatewayTransport(gatewayClient(), () => ({ billing, token: 'tok' }))
 }
 
 function wan3Client() {
@@ -74,67 +77,79 @@ function ownKey(token: string) {
 }
 
 describe('transportFor', () => {
-  it('按模型的 provider 选路', () => {
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'ark-key')
+  it('按模型选路:Seedance 家族走 Seedance 通道,万相走万相', () => {
+    const seedanceOwnKey = seedanceTransport()
     const wan3 = createWan3Transport(wan3Client(), ownKey('miau-key'))
-    const registry = { seedance, wan3 }
+    const registry = { seedanceOwnKey, wan3 }
 
-    expect(transportFor(registry, '2.0')).toBe(seedance)
-    expect(transportFor(registry, '2.5')).toBe(seedance)
+    expect(transportFor(registry, '2.0')).toBe(seedanceOwnKey)
+    expect(transportFor(registry, '2.5')).toBe(seedanceOwnKey)
     expect(transportFor(registry, 'wan3')).toBe(wan3)
   })
 
-  it('没注册万相时回落 Seedance —— 老调用方按老路走,不抛错', () => {
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
-    expect(transportFor({ seedance }, 'wan3')).toBe(seedance)
+  /**
+   * 🧬 变异点:把万相那条改回 `registry.wan3 ?? registry.seedanceOwnKey`,必红。
+   *
+   * 以前这里会回落到 Seedance(那时它们是同一个钱包、只换组包器)。现在 Seedance 的请求体是
+   * `metadata.content[]`、万相是 `metadata.input.media[]`,回落只会换来一句看不出原因的网关 400。
+   * 通道没注册是配置问题,要响亮。
+   */
+  it('万相通道没注册时抛错,绝不回落到 Seedance', () => {
+    const seedanceOwnKey = seedanceTransport()
+    expect(() => transportFor({ seedanceOwnKey }, 'wan3')).toThrow(/万相/)
   })
 
   it('模型缺省按 2.0', () => {
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
-    expect(transportFor({ seedance }, undefined)).toBe(seedance)
+    const seedanceOwnKey = seedanceTransport()
+    expect(transportFor({ seedanceOwnKey }, undefined)).toBe(seedanceOwnKey)
   })
 
   it('认不出的别名按 Seedance 走,不抛错', () => {
     // 持久化里的旧别名、手改过的载荷都可能落到这里。抛错会让一条已经在上游
-    // 跑着的任务彻底失去跟踪 —— 按老路问一次至少还有救。
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+    // 跑着的任务彻底失去跟踪 —— 按它提交时的钱包问一次至少还有救。
+    const seedanceOwnKey = seedanceTransport()
     const wan3 = createWan3Transport(wan3Client(), ownKey('k'))
-    expect(transportFor({ seedance, wan3 }, 'bogus-model')).toBe(seedance)
+    expect(transportFor({ seedanceOwnKey, wan3 }, 'bogus-model')).toBe(seedanceOwnKey)
   })
 
   /**
-   * 🧬 变异点:把这条改回 `&& registry.seedanceGateway` 的静默回落,必红。
+   * 🧬 变异点:把平台没注册时的 throw 改成回落到 `registry.seedanceOwnKey`,必红。
    *
-   * 这是**不能回落**的那一类。同一个提交里的 `seedanceGateway/credentials.ts` 已经
-   * 立过规矩:「刻意不回落到自填 Key:静默回落 = 用户以为在花平台余额、实际在花自己的钱」。
-   * 而分派这一侧原先做的正是那件事 —— 平台通道没注册就把人送去 vvdance 直连,
-   * 用户的 vvdance key 被扣,而他以为花的是平台余额。
-   *
-   * 今天还够不着(registry 尚未接线,那条回落是给「只注入 seedance 的老测试」用的),
-   * 但接线的那一刻它就活了。抛错是对的:平台通道没就绪是**配置问题**,
-   * 不是「换一条计费路继续跑」的理由。
+   * 这是**不能回落**的那一类。`seedanceGateway/credentials.ts` 已经立过规矩:
+   * 「刻意不回落到自填 Key:静默回落 = 用户以为在花平台余额、实际在花自己的钱」。
+   * 平台通道没就绪是**配置问题**,不是「换一条计费路继续跑」的理由。
    */
   it('要平台余额但通道没注册时抛错,绝不悄悄改走自填 Key 那条路', () => {
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
+    const seedanceOwnKey = seedanceTransport()
 
-    expect(() => transportFor({ seedance }, '2.0', { billing: 'platform' })).toThrow(/平台余额/)
-    // 反面:没要平台余额的照常回落,老调用方不受影响。
-    expect(transportFor({ seedance }, '2.0')).toBe(seedance)
-    expect(transportFor({ seedance }, '2.0', { billing: 'own-key' })).toBe(seedance)
+    expect(() => transportFor({ seedanceOwnKey }, '2.0', { billing: 'platform' })).toThrow(/平台余额/)
+    // 反面:没要平台余额的照常走自填 Key。
+    expect(transportFor({ seedanceOwnKey }, '2.0')).toBe(seedanceOwnKey)
+    expect(transportFor({ seedanceOwnKey }, '2.0', { billing: 'own-key' })).toBe(seedanceOwnKey)
+  })
+
+  /**
+   * 反方向同样致命:自填 Key 通道没注册时回落到平台那条,用户以为花的是自己的 Key、
+   * 实际扣的是组织的钱 —— 而且不报任何错、事后从桌面端根本查不出来。
+   */
+  it('要自填 Key 但通道没注册时抛错,绝不悄悄改扣平台余额', () => {
+    const seedanceGateway = seedanceTransport('platform')
+    expect(() => transportFor({ seedanceGateway }, '2.0')).toThrow(/自填 Key/)
+    expect(() => transportFor({ seedanceGateway }, '2.0', { billing: 'own-key' })).toThrow(/自填 Key/)
   })
 
   it('平台通道注册了就走它', () => {
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
-    const seedanceGateway = createSeedanceTransport(seedanceClient(), () => 'gw')
+    const seedanceOwnKey = seedanceTransport()
+    const seedanceGateway = seedanceTransport('platform')
 
-    expect(transportFor({ seedance, seedanceGateway }, '2.0', { billing: 'platform' })).toBe(
+    expect(transportFor({ seedanceOwnKey, seedanceGateway }, '2.0', { billing: 'platform' })).toBe(
       seedanceGateway,
     )
     // 万相不受计费模式影响:它是另一套请求体,劫走只会换来一句没头没脑的 400。
     const wan3 = createWan3Transport(wan3Client(), ownKey('k'))
-    expect(transportFor({ seedance, seedanceGateway, wan3 }, 'wan3', { billing: 'platform' })).toBe(
-      wan3,
-    )
+    expect(
+      transportFor({ seedanceOwnKey, seedanceGateway, wan3 }, 'wan3', { billing: 'platform' }),
+    ).toBe(wan3)
   })
 })
 
@@ -144,51 +159,15 @@ describe('translateVideoTaskError（两家翻译表汇合）', () => {
   })
 
   it('Seedance 的码走 Seedance 表', () => {
-    expect(translateVideoTaskError('LOCAL_ASSET_NOT_FOUND asset://abc')).toMatch(/素材/)
+    expect(
+      translateVideoTaskError('InputImageSensitiveContentDetected.PrivacyInformation content[1]'),
+    ).toMatch(/真人/)
   })
 
   it('两家都不认的原样返回 —— 串联不能把原文吃掉', () => {
     // 两个翻译器都遵守「认不出原样返回」,所以顺序串联是安全的。
     const raw = 'SomeUnknownUpstreamCode: 上游新加的'
     expect(translateVideoTaskError(raw)).toBe(raw)
-  })
-})
-
-describe('Seedance transport', () => {
-  it('组 Ark 请求体并带 Ark 密钥', async () => {
-    const client = seedanceClient()
-    await createSeedanceTransport(client, () => 'ark-key').createTask(ctx())
-
-    const [body, key] = client.createTask.mock.calls[0] as [Record<string, unknown>, string]
-    expect(key).toBe('ark-key')
-    expect(body).toMatchObject({ ratio: '16:9', resolution: '720p', duration: 5, generate_audio: true })
-    expect(body.content).toEqual(ctx().content)
-  })
-
-  it('seed / 联网 / taskMode 不给就完全不出现', async () => {
-    const client = seedanceClient()
-    await createSeedanceTransport(client, () => 'k').createTask(ctx())
-    const body = client.createTask.mock.calls[0][0] as Record<string, unknown>
-    for (const key of ['seed', 'tools', 'taskMode']) {
-      expect(Object.hasOwn(body, key)).toBe(false)
-    }
-  })
-
-  it('给了就带上', async () => {
-    const client = seedanceClient()
-    await createSeedanceTransport(client, () => 'k').createTask(
-      ctx({ input: { prompt: 'p', seed: 7.4, webSearch: true }, model: '2.5', taskMode: 'extend' }),
-    )
-    const body = client.createTask.mock.calls[0][0] as Record<string, unknown>
-    expect(body.seed).toBe(7)
-    expect(body.tools).toEqual([{ type: 'web_search' }])
-    expect(body.taskMode).toBe('extend')
-  })
-
-  it('取消走上游 DELETE', async () => {
-    const client = seedanceClient()
-    await createSeedanceTransport(client, () => 'k').deleteTask?.('t-1')
-    expect(client.deleteTask).toHaveBeenCalledWith('t-1', 'k')
   })
 })
 

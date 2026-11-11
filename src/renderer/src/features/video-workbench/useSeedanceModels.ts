@@ -1,58 +1,16 @@
-// 「当前站点能提交哪些 Seedance 档位」——工作台卡片的模型下拉数据源。
+// 「工作台能选哪些视频模型」——工作台卡片的模型下拉数据源。
 //
-// 为什么不在渲染端直接枚举 `SEEDANCE_MODEL_CAPABILITIES` 的键:能力表描述的是
-// 「这个档位的规格」,不是「这个站点现在能不能提交」。国内 2.5 就走过这条路
-// (`SEEDANCE_CN_2_5_ENABLED`,2026-08-12 已开,`SEEDANCE_CN_25=0` 随时能关回去);
-// 枚举能力表会摆出一个注定被上游拒的选项 —— 那比少摆一个更糟,用户点了才发现不能用。
+// 视频生成只剩 Miau 网关这一条上游(vvdance 直连与「海外 / 国内」站点已删除),
+// 所以可选档位不再随站点变化,也不再向主进程查询:就是能力表里开放了工作台模式的那些别名
+// (`WORKBENCH_VIDEO_MODEL_ALIASES`)。深度捕捉(`depth`)没有工作台模式,只能经
+// `generate_video` 提交,因此不会出现在这里。
 //
-// 站点切换(RegionSwitch / 设置页)经 `seedance:config-changed` 广播,这里跟着变,
-// 与 RegionSwitch 是同一份主进程状态,不会漂移。
+// 仍保留成 hook 而不是让调用方直接 import 常量:以后下拉要按账号 / 灰度收窄时只改这一处,
+// 卡片不用动。
 
-import { useEffect, useState } from 'react'
-import type { SeedanceKeyState, SeedanceModelAlias } from '../../../../types/seedance'
-
-/** preload 桥缺失 / 旧主进程没报 models 时的兜底:保守只给 2.0 家族。 */
-export const FALLBACK_SEEDANCE_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
-
-interface SeedanceConfigApi {
-  getConfig?: () => Promise<SeedanceKeyState>
-  onConfigChanged?: (cb: (state: SeedanceKeyState) => void) => () => void
-}
-
-function getSeedanceApi(): SeedanceConfigApi | undefined {
-  return (window as Window & { electronAPI?: { seedance?: SeedanceConfigApi } }).electronAPI?.seedance
-}
-
-function pick(state: SeedanceKeyState | undefined): readonly SeedanceModelAlias[] | null {
-  const list = state?.models
-  return Array.isArray(list) && list.length > 0 ? list : null
-}
+import type { SeedanceModelAlias } from '../../../../types/seedance'
+import { WORKBENCH_VIDEO_MODEL_ALIASES } from '../../../../types/seedance'
 
 export function useSeedanceModels(): readonly SeedanceModelAlias[] {
-  const [models, setModels] = useState<readonly SeedanceModelAlias[]>(FALLBACK_SEEDANCE_MODELS)
-
-  useEffect(() => {
-    const api = getSeedanceApi()
-    if (!api?.getConfig) return
-    let mounted = true
-    void api
-      .getConfig()
-      .then((state) => {
-        const next = pick(state)
-        if (mounted && next) setModels(next)
-      })
-      .catch(() => {
-        // 拉取失败保持兜底档位,不把工作台卡成空下拉。
-      })
-    const unsub = api.onConfigChanged?.((state) => {
-      const next = pick(state)
-      if (mounted && next) setModels(next)
-    })
-    return () => {
-      mounted = false
-      unsub?.()
-    }
-  }, [])
-
-  return models
+  return WORKBENCH_VIDEO_MODEL_ALIASES
 }

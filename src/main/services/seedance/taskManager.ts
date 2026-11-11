@@ -12,11 +12,9 @@
 import { randomUUID } from 'node:crypto'
 
 import { SeedanceApiError } from './client'
-import type { SeedanceClient } from './client'
 import type {
   CreateVideoTaskInput,
   SeedanceCancelResult,
-  SeedanceCreateTaskBody,
   SeedanceContentItem,
   SeedanceModelAlias,
   SeedanceReferenceUrls,
@@ -35,7 +33,6 @@ import {
 } from './types'
 import { joinKlingShotPrompts } from '../../../types/klingMultiShot'
 import {
-  createSeedanceTransport,
   transportFor,
   type VideoTransport,
 } from '../videoTransport'
@@ -132,26 +129,29 @@ const RETENTION_MS = 30 * 60_000
 const PERSIST_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const
 
 export interface SeedanceTaskManagerDeps {
-  client: SeedanceClient
-  getApiKey: () => string
   /**
-   * 万相（Miau）的传输层。缺省时万相模型会回落到 Seedance 那条路 —— 只有还没
-   * 接线的调用方（老测试）会走到，见 `transportFor`。
+   * 万相（Miau）的传输层。缺省时提交万相会**抛错**而不是回落 —— 万相与 Seedance 的请求体
+   * 形状完全不同，回落只会换来一句看不出原因的网关 400，见 `transportFor`。
    */
   wan3Transport?: VideoTransport
   /**
-   * 平台余额下的 Seedance（经 Miau 网关）。缺省时按平台余额提交会**抛错**而不是
+   * 平台余额下的 Seedance（经 Miau 网关，影子 token + 归属头）。缺省时按平台余额提交会**抛错**而不是
    * 回落 —— 见 `transportFor` 里那条不能回落的分支。
    */
   seedanceGatewayTransport?: VideoTransport
   /**
+   * 自填 Miau Key 下的 Seedance（经 Miau 网关，只带 Authorization）。缺省时按自填 Key 提交会
+   * **抛错**而不是回落 —— 回落到平台那条等于悄悄扣了另一个钱包，见 `transportFor`。
+   */
+  seedanceOwnKeyTransport?: VideoTransport
+  /**
    * 深度捕捉(`depth`)的传输层。缺省时提交深度捕捉会**抛错**而不是回落 —— 回落到
-   * Seedance 会把源视频当 Ark 的 content[] 发出去,见 `transportFor`。
+   * Seedance 会把源视频当 content[] 发出去,见 `transportFor`。
    */
   depthTransport?: VideoTransport
   /**
    * 可灵 4.0 / Omni 的传输层。缺省时提交可灵会**抛错**而不是回落 —— 回落到 Seedance 会把
-   * `kling-v4-*` 当 Ark 模型发出去,见 `transportFor`。
+   * `kling-v4-*` 当 Seedance 模型发出去,见 `transportFor`。
    */
   klingTransport?: VideoTransport
   /**
@@ -225,7 +225,7 @@ export interface AdoptParams {
   createdAt?: number
   /**
    * 原提交时的计费模式。**接管必须带**：重启后恢复的轮询要打回同一条上游，
-   * 缺了它一条平台任务会被拿 vvdance key 去查，回一句「任务不存在」。
+   * 缺了它一条平台任务会被拿自填 Key 去查，回一句「任务不存在」。
    * 缺省 = 自填 Key（接网关之前建的任务都是这样）。
    */
   billing?: VideoBillingSource
@@ -253,12 +253,14 @@ export class SeedanceTaskManager {
   ): VideoTransport {
     return transportFor(
       {
-        seedance: createSeedanceTransport(this.deps.client, this.deps.getApiKey),
         ...(this.deps.wan3Transport ? { wan3: this.deps.wan3Transport } : {}),
         ...(this.deps.depthTransport ? { depth: this.deps.depthTransport } : {}),
         ...(this.deps.klingTransport ? { kling: this.deps.klingTransport } : {}),
         ...(this.deps.seedanceGatewayTransport
           ? { seedanceGateway: this.deps.seedanceGatewayTransport }
+          : {}),
+        ...(this.deps.seedanceOwnKeyTransport
+          ? { seedanceOwnKey: this.deps.seedanceOwnKeyTransport }
           : {}),
       },
       model,
@@ -307,16 +309,16 @@ export class SeedanceTaskManager {
     // 意向只在这里落一次锤,之后整条任务的生命周期都用这个值 —— 用户中途切了
     // 计费来源不该让一条已经在上游跑着的任务换一条路去轮询。
     const billing = this.billingFor(params.billing)
-    // 密钥检查交给这条路自己的 transport —— 只配了 Miau 密钥的用户生成万相时,
-    // 不该被要求去配一个用不到的火山密钥。
+    // 密钥检查交给这条路自己的 transport —— 缺凭据时各条通道报自己的那一句人话
+    // (去选计费池 / 去填 Miau Key),不会指错路。
     this.transport(model, billing).requireApiKey()
 
     // 样片 / 成片只在平台余额这条路上有(网关按「本人 + 已成功」查样片、锁渠道);
-    // 自填 Key 的直连与万相都没有,提前说清楚,别让上游回一句看不懂的参数错误。
+    // 自填 Key 与万相都没有,提前说清楚,别让上游回一句看不懂的参数错误。
     const isFinalFromDraft = Boolean(input.fromDraftTaskId)
     if (input.draft || isFinalFromDraft) {
       if (!supportsSeedanceDraft(model)) throw new Error('样片模式只有 Seedance 2.5 支持')
-      if (billing !== 'platform') throw new Error('样片模式只在平台余额下可用(自填 Key 的直连不支持)')
+      if (billing !== 'platform') throw new Error('样片模式只在平台余额下可用(自填 Key 不支持)')
     }
     if (isFinalFromDraft && content.some((item) => item.type !== 'text')) {
       throw new Error('由样片生成成片时不能再带参考素材 —— 方舟沿用样片的素材,重传会被拒')
@@ -339,7 +341,7 @@ export class SeedanceTaskManager {
     // 提交前按模型能力自查。上游对 4k 配 2.5、30 秒配 2.0、edit 不带视频都会 400,
     // 但那时用户已经等过一次网络往返、看到的是一张失败卡片。
     // 成片不查:它的规格全部沿用样片,分辨率只有 1080p / 4k 两档,上面已单独校验过。
-    // 带上 billing:2.5 的 1080p / 4k 只在平台余额(网关 → 方舟)开放,自填 Key 直连仍只有 480p / 720p。
+    // 带上 billing:2.5 的 1080p / 4k 只在平台余额(网关 → 方舟)开放,自填 Key 仍只有 480p / 720p(保守取值,网关侧对个人 Key 的档位没有实测)。
     const errors = isFinalFromDraft
       ? []
       : validateSeedanceRequest(model, {
@@ -360,7 +362,7 @@ export class SeedanceTaskManager {
     // 比例、再让 UI 显示一个与成片不符的值，不如提交时就写成真实生效的那个。
     const ratio = taskMode ? 'adaptive' : defaultRatio
 
-    // 组包归传输层 —— 两家 provider 的请求体毫无共同点,这里只交出已解析的事实。
+    // 组包归传输层 —— 各家 provider 的请求体毫无共同点,这里只交出已解析的事实。
     const { id } = await this.transport(model, billing).createTask({
       input,
       content,
@@ -496,8 +498,8 @@ export class SeedanceTaskManager {
 
     let billed = true
     let reason: string | undefined
-    // 建任务时用的哪条路，取消就问哪条路 —— 网关那条没有取消接口，拿 vvdance 的
-    // deleteTask 去删一个网关任务只会白删，然后把「其实还在计费」报成「已取消」。
+    // 建任务时用的哪条路，取消就问哪条路 —— 网关那条没有取消接口，所以 Seedance 目前一律走下面
+    // 「该模型不支持取消」的如实回报，而不是发一个没验证过的 DELETE、再把「其实还在计费」报成「已取消」。
     const deleteTask = this.transport(task.model, task.billing).deleteTask
     if (task.status === 'queued' && !deleteTask) {
       // 该 provider 没有验证过的取消接口。发一个没把握的请求、再把它的失败报成

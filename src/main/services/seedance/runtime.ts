@@ -15,22 +15,6 @@ import { reconcileInFlightTasks } from './adoption'
 import { coerceVideoBillingSource, createVideoBillingResolver } from './billing'
 import { seedanceClient } from './client'
 import {
-  getSeedanceApiKey,
-  getSeedanceApiSecret,
-  getSeedanceKeyState,
-  setSeedanceCredentials,
-} from './credentials'
-import {
-  deleteSeedanceAssets,
-  getSeedanceAssetCapacity,
-  importSeedanceAsset,
-  listSeedanceAssets,
-  listSeedanceOfficialMaterials,
-  translateSeedanceTaskError,
-  verifyContentAssetReferences,
-  withLocalThumbs,
-} from './assets'
-import {
   getPortraitOverlay,
   mutatePortraitOverlay,
   onPortraitOverlayChange,
@@ -66,7 +50,6 @@ import { coerceKlingMultiShot } from '../../../types/klingMultiShot'
 import {
   upstreamAcceptsInlineMedia,
   usesPlatformAssetLibrary,
-  usesSeedanceAssetLibrary,
 } from './assetLibraryPolicy'
 import { verifyPlatformAssetReferences } from './platformAssetGuard'
 import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../auth/gatewayToken'
@@ -92,23 +75,13 @@ import {
   createDepthTransport,
   createKlingTransport,
   createSeedanceGatewayTransport,
-  createSeedanceTransport,
   createWan3Transport,
   transportFor,
 } from '../videoTransport'
 import { createMediaKitClient } from '../mediaKit/client'
 import { checkDepthInput } from '../depth/model'
 import { translateVideoTaskError } from '../videoTaskError'
-import type {
-  PortraitOverlayMutation,
-  PortraitOverlayState,
-  SeedanceAssetImportInput,
-  SeedanceAssetItem,
-  SeedanceAssetKindFilter,
-  SeedanceAssetListQuery,
-  SeedanceOfficialMaterialsQuery,
-  VideoResolution,
-} from '../../../types/seedance'
+import type { PortraitOverlayMutation, VideoResolution } from '../../../types/seedance'
 
 /**
  * download_portrait_asset 的自定超时。必须 < codex 默认 tool_timeout_sec(60s),
@@ -145,34 +118,6 @@ function inferAssetKind(src: string, explicit?: string): 'image' | 'video' | 'au
   return 'image'
 }
 
-interface EnrichedAsset {
-  assetId: string
-  assetUrl: string
-  name: string
-  kind: string
-  sourceUrl?: string
-  group?: string
-  hidden: boolean
-}
-
-/**
- * 给素材附加叠加层信息(自定义名 / 分组 / 隐藏),供 list 工具返回给 agent。
- * 传入 overlay 快照(而非每项重读),保证一次 list 内一致且省开销;字段保持
- * 精简(codex 默认把工具输出截断到 ~10K tokens,冗余字段会挤掉真正有用的项)。
- */
-function enrichWithOverlay(asset: SeedanceAssetItem, overlay: PortraitOverlayState): EnrichedAsset {
-  const ov = overlay.entries[asset.assetId]
-  return {
-    assetId: asset.assetId,
-    assetUrl: asset.assetUrl,
-    name: ov?.name || asset.name,
-    kind: String(asset.kind),
-    sourceUrl: asset.sourceUrl,
-    group: ov?.group,
-    hidden: !!ov?.hidden,
-  }
-}
-
 /**
  * 「默认上传人像库」总闸 —— 渲染端工具栏那个药丸的当前值。
  *
@@ -190,82 +135,6 @@ export function setAutoImportPortraitEnabled(enabled: boolean): void {
 }
 
 /**
- * 把本次用到的图片素材登记进人像库（人像分类 image_people），供后续复用与浏览。
- * 上游按内容 hash 去重，同图始终落到同一条记录。
- *
- * **人像库入库唯一自动路径**(卡片上传不再顺带)。受「默认上传人像库」开关管:
- * 关着时整个函数直接返回。调用方传入开关值(工作台从提交载荷取、agent 路从
- * 上面那份镜像取);默认开。
- *
- * ## 为什么改成**提交之前**跑(2026-08-31)
- *
- * 原先在提交之后后台跑,理由是「上游导入异步,真 assetId 要等数秒,而生成本来
- * 就吃 https 直传,让卡片停在准备中等这串往返,等到的只是同一次生成,纯亏」。
- *
- * 那个权衡漏了一种图:**真人参考图**。上游对直传的 https 图做真人检测,撞上
- * `InputImageSensitiveContentDetected.PrivacyInformation` 直接拒绝整次生成;而
- * 已登记的 `asset://` 引用不走这道检测。对这类图,那几秒不是「纯亏」,而是**能不能
- * 出片**的分水岭 —— 而原顺序下入库永远发生在失败之后,救不了当次。
- *
- * 所以现在返回「原 URL → asset:// 」的映射,由调用方在提交前改写 content。
- *
- * 🚨 **改写只能对 Seedance 系做。** 万相不认识素材库,`requireHttpUrl` 见到
- * `asset://` 会直接抛「万相 3.0 不支持人像库素材」—— 按计费而不是按模型来判的话,
- * 平台模式下每一次万相生成都会挂。分派见调用点的 `acceptsAssetRefs`。
- *
- * 全程吞异常:登记失败**照发原 URL**(用户选定的行为)。真人图仍会被上游拒,
- * 但至少不比改动之前更差,也不会因为库出问题就发不出生成。
- */
-async function importImagesToPortraitLibrary(
-  content: SeedanceContentItem[],
-  visible: boolean,
-): Promise<Map<string, string>> {
-  const rewrites = new Map<string, string>()
-  const apiKey = getSeedanceApiKey()
-  const apiSecret = getSeedanceApiSecret()
-  if (!apiKey || !apiSecret) return rewrites
-  // 图片 + 视频 + 音频(2026-09-22 起):参考视频里的真人脸同样撞
-  // `InputVideoSensitiveContentDetected.PrivacyInformation`,走库登记是同一条过审路;
-  // 音频不涉及真人检测,收进来是为了三种素材同一形态、登记后可跨镜复用(用户拍板)。
-  const media = collectDirectMediaRefs(content)
-  // 并发:参考素材最多个位数,而串行会让每个的 pending→ready 等待逐个累加。
-  await Promise.all(
-    media.map(async (item) => {
-      try {
-        const raw = item.url
-        const mime = /^data:([^;,]+)/i.exec(raw)?.[1]
-        // 上游素材接口对 url 长度有硬限制(`400 url is too long`),data: 一律
-        // 先走 COS 中转(历史图片上传链路)换 https URL,再转存到素材库。
-        const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
-        const { asset } = await importSeedanceAsset(
-          {
-            kind: item.kind,
-            ...(item.kind === 'image' ? { imageCategory: 'image_people' as const } : {}),
-            url,
-            name: libraryAssetName(item),
-            ...(mime ? { mimeType: mime } : {}),
-          },
-          { apiKey, apiSecret },
-          // 视频 / 音频导入要转码,比图片慢得多;默认 ~9s 的二次解析窗口经常等不到 ready,
-          // 结果是白登记一次、当次仍裸 URL 直传。放宽到约 25s,图片仍用默认。
-          item.kind === 'image' ? undefined : { resolveBackoffMs: MEDIA_ASSET_RESOLVE_BACKOFF_MS },
-        )
-        if (item.kind === 'image') rememberAssetThumb(asset, url)
-        // 只在拿到**真** assetId 时才改写。导入是异步的,pending 那一刻只有内部行 id ——
-        // 拿它拼 `asset://` 会得到一个上游解析不了的引用,把「图没过审」换成
-        // 「素材不存在」,同样发不出去而且更难查。宁可这次直传原 URL。
-        const ref = asset.assetUrl || (asset.assetId ? `asset://${asset.assetId}` : '')
-        if (ref) rewrites.set(raw, ref)
-        if (!visible) hideFromLibrary(asset)
-      } catch (e) {
-        console.warn('[seedance] portrait-library import failed (generation unaffected):', e)
-      }
-    }),
-  )
-  return rewrites
-}
-
-/**
  * 当前计费池 → 平台素材库的作用域。取**主进程的 `activePool`**:提交用的 token 就来自它,
  * 素材登记 / 核验 / 列表必须与它同源,跨池的 asset 读不出来(见 `auth/gatewayToken.ts`)。
  */
@@ -278,7 +147,7 @@ function activePlatformScope(): PlatformAssetScope | null {
   }
 }
 
-type AgentAssetLibrary = 'platform' | 'own-key'
+type AgentAssetLibrary = 'platform'
 
 /**
  * agent 的素材库工具(list / add_to_portrait_library)落在哪个库 —— 与视频提交用
@@ -296,11 +165,11 @@ function platformAssetKind(a: PlatformAsset): 'image' | 'video' | 'audio' {
 }
 
 /**
- * 平台素材库给 agent 的一页。形状与 vvdance 那条对齐(items / total / page / hasMore),
- * agent 不用区分;多带一个 `library` 让它知道自己看的是哪个库。
+ * 平台素材库给 agent 的一页(items / total / page / hasMore),
+ * `library` 字段标明看的是哪个库。
  *
  * 平台列表接口一次回全量(不分页、不按名字查),所以筛选与分页都在这里做。
- * 分组是 vvdance 人像库的本地叠加层,平台库没有这个概念 —— 带了 group 就如实说明。
+ * 分组是本地叠加层的概念,平台库没有 —— 带了 group 就如实说明。
  */
 async function listPlatformLibraryForAgent(
   p: { query?: string; kind?: string; group?: string; includeHidden?: boolean },
@@ -350,9 +219,6 @@ async function listPlatformLibraryForAgent(
   }
 }
 
-/** 视频 / 音频素材导入后二次解析 assetId 的重试节奏(首次立即查,累计约 25s)。 */
-const MEDIA_ASSET_RESOLVE_BACKOFF_MS: readonly number[] = [0, 1000, 2000, 4000, 6000, 6000, 6000]
-
 /** 平台库的 assetType(大小写敏感,见 platformAssets 的说明)。 */
 const PLATFORM_ASSET_TYPE_BY_KIND: Readonly<Record<DirectMediaKind, PlatformAssetType>> = {
   image: 'Image',
@@ -361,13 +227,10 @@ const PLATFORM_ASSET_TYPE_BY_KIND: Readonly<Record<DirectMediaKind, PlatformAsse
 }
 
 /**
- * 上面那条的**平台余额版**。同一件事,换一个库。
+ * 把本次提交用到的参考图 / 视频 / 音频登记进**平台素材库**(平台余额下才有这个库)。
  *
- * 为什么必须有它:`usesSeedanceAssetLibrary` 在平台模式下返回 false,把
- * `verifyContentAssetReferences` 与 `importImagesToPortraitLibrary` **一起**关掉了。
- * 关前者是必须的(拿 vvdance 凭据去校验平台 asset id 会硬拦下整次提交);
- * 关后者是过度 —— 结果是平台用户生成用的参考图不会自动成为可复用的 `asset://`
- * 锚点,下次跨镜锁同一张脸得手动再传一次,而 vvdance 用户有这个自动化。
+ * 登记有两个用处:① 过审 —— 真人图 / 视频只有以 `asset://` 引用提交才不被上游的真人检测拦下;
+ * ② 复用 —— 参考图自动成为可复用的锚点,下次跨镜锁同一张脸不必再手动传一次。
  *
  * 池取**主进程的 `activePool`**,不是渲染层递来的:提交用的 token 就来自它,
  * 两者不同源的话素材会登记进一个与计费池不同的组,而跨池的 asset 读不出来。
@@ -377,7 +240,7 @@ const PLATFORM_ASSET_TYPE_BY_KIND: Readonly<Record<DirectMediaKind, PlatformAsse
  * 落盘绑定),否则同一张脸出现在几个镜头里就会在上游留下几份真实副本 ——
  * 占配额、占列表分页预算,而配额只有显式 purge 才回收。
  *
- * 与上面那条一样全程吞异常、在提交之后后台跑。`ensureAsset` 等不到就绪时会抛
+ * 全程吞异常、登记失败照发原 URL;在提交**之前**跑(理由见 `materializeAssetRefs`)。`ensureAsset` 等不到就绪时会抛
  * `ASSET_NOT_READY`,这里当没发生:登记本身已经落库了,只是还没 Active,
  * 下一次引用它时会自愈。
  */
@@ -388,7 +251,7 @@ async function importImagesToPlatformLibrary(
   const rewrites = new Map<string, string>()
   const scope = activePlatformScope()
   if (!scope) return rewrites
-  // 图片 + 视频 + 音频,与 vvdance 那条同一套挑选规则(见 assetRefRewrite)。
+  // 图片 + 视频 + 音频的挑选规则见 assetRefRewrite。
   const media = collectDirectMediaRefs(content)
   await Promise.all(
     media.map(async (item) => {
@@ -397,7 +260,7 @@ async function importImagesToPlatformLibrary(
         // 平台库只收公网 URL(上游火山要能自己去拉),data: 一律先过 COS 换永久链。
         const url = raw.startsWith('data:') ? await relayDataUrlToCos(raw) : raw
         // `ensureAsset` 内部已经轮询到就绪才返回(不就绪抛 ASSET_NOT_READY),
-        // 所以拿到 assetId 就一定是可引用的 —— 不需要像 vvdance 那条那样再判 pending。
+        // 所以拿到 assetId 就一定是可引用的 —— 不需要再判 pending。
         // `assetType` 大小写敏感且拼错会被后端静默降级成 Image(见 platformAssets),
         // 视频 / 音频必须显式给对应类型,否则会被当成图片登记。
         const assetId = await ensureAsset(
@@ -448,7 +311,7 @@ async function importImagesToPlatformLibrary(
  *
  * ## 失败照发
  *
- * 两条入库函数都吞异常、只回它们成功登记的那部分映射。没登记上的图保持原 URL
+ * 入库函数吞异常、只回它成功登记的那部分映射。没登记上的图保持原 URL
  * 直传:真人图仍会被上游拒,但不比改动之前更差,也不会因为素材库抖动就发不出生成。
  */
 async function materializeAssetRefs(
@@ -464,9 +327,10 @@ async function materializeAssetRefs(
   // 🚨 **登记不受「默认上传人像库」开关管。** 它是过审的前提(真人图只有走
   // `asset://` 才不被上游的真人检测拦下),不该由一个讲「要不要进库」的开关决定
   // 生成能不能成。开关只决定登记完之后**要不要在库里看得见**(软删,可恢复)。
-  const rewrites = usesSeedanceAssetLibrary(model, billing)
-    ? await importImagesToPortraitLibrary(content, visibleInLibrary)
-    : billing === 'platform'
+  // 只有平台余额有素材库;自填 Miau Key 没有登录态、也就没有 JWT,这一步整个跳过,
+  // 参考素材照旧以 https URL 直传。
+  const rewrites =
+    billing === 'platform'
       ? await importImagesToPlatformLibrary(content, visibleInLibrary)
       : new Map<string, string>()
 
@@ -474,51 +338,6 @@ async function materializeAssetRefs(
   // 逐项回填(图片 + 视频),**保持数组顺序**:上游按 content[] 的下标解析提示词里的
   // 「图片1 / 视频1」,顺序一乱,生成的内容就跟用户想的不是一回事,而且不报任何错。
   return applyAssetRewrites(content, rewrites)
-}
-
-/**
- * 记住素材的缩略图地址 —— 上游只对**带字节**导入(data: URL)生成 `previewUrl`;
- * 走远程 URL 导入的它不下载,`sizeBytes` 恒 0、`previewUrl` 恒 null(2026-08-03
- * 实测)。而 >512KB 必须走 COS(否则 `400 url is too long`),所以大图在人像库里
- * 只能靠这份我们自己传上去的地址显示。
- *
- * 行 id 与真 assetId 两个键都写:导入是异步的,返回那刻往往只有行 id,而列表里
- * 两者都在 —— 页面按哪个查都命中。data: 不入库(overlay 是明文 JSON,塞进去会
- * 把它撑成几 MB),那种情况上游本来就会给 previewUrl。
- */
-/**
- * 「默认上传人像库」关着时,把刚登记的素材在库里隐藏起来(vvdance 侧)。
- *
- * ## 为什么是隐藏而不是不登记
- *
- * 登记现在是**过审的前提**,不再是顺带的复用优化:上游对直传的 https 图做真人
- * 检测,只有 `asset://` 引用能绕开。所以「不登记」= 真人图必被拒 —— 那不该由一个
- * 讲「要不要进库」的开关来决定生成能不能成。
- *
- * 于是开关收窄成它字面本来的意思:**要不要在人像库里看得见**。登记照做,只是关着
- * 时立刻标隐藏(软删,用户可在库里恢复)。
- *
- * 隐藏失败只打日志:最坏是它出现在列表里,素材本身完全可用,不该因此影响生成。
- */
-function hideFromLibrary(asset: SeedanceAssetItem): void {
-  const assetIds = [...new Set([asset.assetId, asset.id].filter((id): id is string => !!id))]
-  if (assetIds.length === 0) return
-  try {
-    mutatePortraitOverlay({ op: 'setHidden', assetIds, hidden: true })
-  } catch (e) {
-    console.warn('[seedance] 隐藏素材失败(素材仍可用):', e)
-  }
-}
-
-function rememberAssetThumb(asset: SeedanceAssetItem, thumbUrl: string): void {
-  if (!/^https?:/i.test(thumbUrl)) return
-  const assetIds = [...new Set([asset.assetId, asset.id].filter((id): id is string => !!id))]
-  if (assetIds.length === 0) return
-  try {
-    mutatePortraitOverlay({ op: 'setThumb', assetIds, thumbUrl })
-  } catch (e) {
-    console.warn('[seedance] 记录本地缩略图失败(不影响导入):', e)
-  }
 }
 
 /**
@@ -591,7 +410,7 @@ async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceConten
 }
 
 /**
- * 上游只吃公网 http(s) 地址的模型(深度捕捉、可灵),在「非 vvdance 一律先中转」之上再加一条
+ * 上游只吃公网 http(s) 地址的模型(深度捕捉、可灵),在「非 Seedance 一律先中转」之上再加一条
  * `noInline`:COS 中转失败时降级成 data URL 毫无意义 —— 只会把「COS 不通」这个真实原因,
  * 换成上游一句看不懂的 400。其它模型原样返回,行为不变。
  *
@@ -616,13 +435,13 @@ export interface SeedanceRuntime {
 }
 
 /**
- * 注册「渲染端面向」的 Seedance IPC —— 人像库的 配置 / 素材 / 叠加层。
+ * 注册「渲染端面向」的 Seedance IPC —— 人像库叠加层(改名 / 分组 / 隐藏)与「默认上传人像库」开关镜像。
  *
- * 这些 handler 只依赖独立的 credentials / assets / overlay 模块,**不依赖** MCP
+ * 这些 handler 只依赖独立的 overlay 模块,**不依赖** MCP
  * router 或 TaskManager,因此必须在窗口开始加载**之前**注册。否则人像库页面
- * 挂载时的 `getConfig()` / `listAssets()` 会与延迟执行的 `initSeedanceRuntime()`
+ * 挂载时的 `getOverlay()` 会与延迟执行的 `initSeedanceRuntime()`
  * (它要等 `await startCatimationMcpServer` 之后才跑)发生竞态,以
- * "No handler registered for 'seedance:get-config'" reject,页面随即被钉死在
+ * "No handler registered for 'seedance:overlay-get'" reject,页面随即被钉死在
  * 「人像库未就绪」,只能整页刷新才恢复。与 index.ts 里 agent IPC「在
  * createWindow 之前注册」的处理同理。
  *
@@ -638,90 +457,6 @@ export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | nul
   ipcMain.on('video-workbench:set-auto-import-portrait', (_event, enabled: unknown) => {
     setAutoImportPortraitEnabled(enabled === true)
   })
-
-  // ============ 设置(API Key / Secret) ============
-  ipcMain.removeHandler('seedance:get-config')
-  ipcMain.handle('seedance:get-config', () => getSeedanceKeyState())
-  ipcMain.removeHandler('seedance:set-config')
-  ipcMain.handle(
-    'seedance:set-config',
-    (
-      _event,
-      args: { apiKey?: unknown; apiSecret?: unknown; region?: unknown },
-    ) => {
-      const region =
-        args?.region === 'global' || args?.region === 'cn' ? args.region : undefined
-      try {
-        setSeedanceCredentials({
-          apiKey: typeof args?.apiKey === 'string' ? args.apiKey : undefined,
-          apiSecret: typeof args?.apiSecret === 'string' ? args.apiSecret : undefined,
-          region,
-        })
-      } catch (e) {
-        // 防御：写入失败（fs/safeStorage 异常等）不让渲染端只看到笼统的
-        // 「接口不可用」——细节进主进程日志，仍返回当前 keyState 供 UI 对账。
-        console.error('[seedance] set-config failed:', e)
-      }
-      const state = getSeedanceKeyState()
-      // 配置（尤其站点 region）可能同时被设置页和「生成视频」工作台修改——
-      // 两边各自缓存 keyState 会漂移。广播变更让所有已挂载的消费者即时对齐
-      // （工作台页 mount-once 只切 display,不会靠 remount 重新拉取）。
-      const win = getWindow()
-      if (win && !win.isDestroyed()) {
-        try {
-          win.webContents.send('seedance:config-changed', state)
-        } catch (e) {
-          console.warn('[seedance] config-changed broadcast failed:', e)
-        }
-      }
-      return state
-    },
-  )
-
-  // ============ 素材库（人像库） ============
-  const assetCreds = () => ({ apiKey: getSeedanceApiKey(), apiSecret: getSeedanceApiSecret() })
-  ipcMain.removeHandler('seedance:assets-list')
-  ipcMain.handle('seedance:assets-list', async (_event, query: SeedanceAssetListQuery) =>
-    withLocalThumbs(
-      await listSeedanceAssets(query ?? {}, assetCreds()),
-      getPortraitOverlay().entries,
-    ),
-  )
-  ipcMain.removeHandler('seedance:assets-import')
-  ipcMain.handle('seedance:assets-import', async (_event, input: SeedanceAssetImportInput) => {
-    // 人像库页面上传的两条来源:
-    // - data: URL(剪贴板/网页拖拽的合成 File)先中转 COS 拿 https URL,避开上游
-    //   `url is too long` 限制,同时比直传 base64 快得多;
-    // - 本地路径(系统拖拽/文件选择器,渲染端优先传这个)走 resolveMediaUrl,
-    //   即分片流式上传 —— 整个文件不进 Buffer,所以不需要体积闸门。
-    const raw = input?.url ?? ''
-    const url = !raw
-      ? raw // 让 importSeedanceAsset 出它自己那句「缺 url」,别在这儿变成读文件失败
-      : raw.startsWith('data:')
-        ? await relayDataUrlToCos(raw)
-        : /^(https?:|asset:)/i.test(raw)
-          ? raw
-          : await resolveMediaUrl(raw, 'assets-import.url', input?.mimeType)
-    const result = await importSeedanceAsset({ ...input, url }, assetCreds())
-    // 走 COS 的(>512KB,即绝大多数图片)上游不会生成 previewUrl,自留一份地址
-    // 当缩略图;内联 data: 的上游自己会给,rememberAssetThumb 内部已跳过。
-    rememberAssetThumb(result.asset, url)
-    return result
-  })
-  ipcMain.removeHandler('seedance:assets-capacity')
-  ipcMain.handle('seedance:assets-capacity', () => getSeedanceAssetCapacity(assetCreds()))
-  ipcMain.removeHandler('seedance:assets-delete')
-  ipcMain.handle('seedance:assets-delete', (_event, args: { assetIds?: unknown }) => {
-    const ids = Array.isArray(args?.assetIds)
-      ? args.assetIds.filter((x): x is string => typeof x === 'string')
-      : []
-    return deleteSeedanceAssets(ids, assetCreds())
-  })
-  // 官方素材库（文档 5,只读):工作台素材选择器的「官方素材/虚拟人像」tab。
-  ipcMain.removeHandler('seedance:official-materials')
-  ipcMain.handle('seedance:official-materials', (_event, query: SeedanceOfficialMaterialsQuery) =>
-    listSeedanceOfficialMaterials(query ?? {}, assetCreds()),
-  )
 
   // ============ 叠加层(改名/分组/隐藏)IPC + 广播 ============
   // 主进程是单一真相源:渲染端 UI 与 MCP agent 共享同一份。任何变更都广播给
@@ -792,13 +527,14 @@ export function initSeedanceRuntime(opts: {
   )
 
   /**
-   * 平台余额下的 Seedance —— 与 vvdance 直连**平行**的第三条路。fetch 同样注入,
-   * 理由与万相一致(顶层 import electron 会让客户端在 Electron 之外加载不了)。
+   * Seedance —— 经 Miau 网关,**两条**按钱包钉死的 transport(为什么不像万相 / 可灵那样一条现取,
+   * 见 `videoTransport.createSeedanceGatewayTransport`)。fetch 注入的理由同万相
+   * (顶层 import electron 会让客户端在 Electron 之外加载不了)。
    *
-   * 取 token 的意向**钉死成 platform**:能走到这条 transport 就说明分派已经判定
-   * 「这一次花平台余额」。再让它按「手上有什么用什么」兜底的话,影子 token 一旦
-   * 恰好取不到就会静默换成用户自填的 Miau Key —— 那正是 credentials.ts 明令禁止
-   * 的跨模式回落。钉死之后那种情况会在 requireApiKey 抛出「请先选择计费池」。
+   * 平台余额那条:取 token 的意向**钉死成 platform** —— 能走到这条 transport 就说明分派已经判定
+   * 「这一次花平台余额」。再让它按「手上有什么用什么」兜底的话,影子 token 一旦恰好取不到就会静默
+   * 换成用户自填的 Miau Key,那正是 credentials.ts 明令禁止的跨模式回落。钉死之后那种情况会在
+   * requireApiKey 抛出「请先选择计费池」。
    */
   const seedanceGatewayTransport = createSeedanceGatewayTransport(
     createSeedanceGatewayClient({
@@ -814,8 +550,7 @@ export function initSeedanceRuntime(opts: {
       // 上游按请求头认归属,而这个函数刻意不给只取 Authorization 的入口。
       authHeaders: gatewayPlatformHeaders,
       // 这条 transport 是**平台余额专用**的(下面那个 resolver 写死 `'platform'`),
-      // 所以它的每一次计费往返都该让余额跟着刷新。自填 Key 走的是 wan3 /
-      // seedance 直连那两条,不经过这里。
+      // 所以它的每一次计费往返都该让余额跟着刷新。
       onBilledExchange: notePlatformSpend,
     }),
     createSeedanceGatewayTokenResolver(
@@ -824,6 +559,27 @@ export function initSeedanceRuntime(opts: {
     ),
   )
 
+  /**
+   * 自填 Miau Key 下的 Seedance —— 同一个网关、同一对端点,凭据换成用户自己的 Key。
+   *
+   * 意向同样**钉死**(`'own-key'`):一条平台任务轮询时不会被换成这把 Key 去查,反之亦然。
+   * 客户端**不给** `authHeaders` —— 默认只带 `Authorization: Bearer <Key>`,不贴平台归属头
+   * (贴了等于把用户自己的花费记到平台账上)。也不挂 `onBilledExchange`:这条路花的是用户自己的钱,
+   * 平台余额不会变,没有什么需要刷新。
+   *
+   * ⚠️ 网关侧对个人 Key 提交 Seedance 的分组 / 渠道权限**尚未对着真网关证实**,见
+   * `createSeedanceGatewayTransport` 的文档。
+   */
+  const seedanceOwnKeyTransport = createSeedanceGatewayTransport(
+    createSeedanceGatewayClient({
+      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      baseUrl: `${resolveGatewayOrigin()}/v1`,
+    }),
+    createSeedanceGatewayTokenResolver(
+      gatewayTokenSources,
+      () => 'own-key',
+    ),
+  )
   /**
    * 深度捕捉(`depth`)—— 经 Miau 网关的腾讯云点播深度估计通道,与万相一样**不问计费模式**:
    * 同一条 transport 服务两种钱包,凭据按每次调用现取(`resolveVideoBilling`),
@@ -866,23 +622,22 @@ export function initSeedanceRuntime(opts: {
   const transportOf = (model: string | undefined, billing: VideoBillingSource | undefined) =>
     transportFor(
       {
-        seedance: createSeedanceTransport(seedanceClient, getSeedanceApiKey),
         wan3: wan3Transport,
         depth: depthTransport,
         kling: klingTransport,
         seedanceGateway: seedanceGatewayTransport,
+        seedanceOwnKey: seedanceOwnKeyTransport,
       },
       model,
       { ...(billing ? { billing } : {}) },
     )
 
   const taskManager = new SeedanceTaskManager({
-    client: seedanceClient,
-    getApiKey: getSeedanceApiKey,
     wan3Transport,
     depthTransport,
     klingTransport,
     seedanceGatewayTransport,
+    seedanceOwnKeyTransport,
     resolveBilling: resolveVideoBilling,
     // 轮询失败原先完全没翻译 —— 而它恰恰是上游错误最常出现的地方
     // （提交只走一次，轮询要走几十次）。
@@ -981,20 +736,14 @@ export function initSeedanceRuntime(opts: {
       const content = await buildContent(input)
       // agent 这条路没有渲染层、拿不到用户的意向,所以在这里用与 taskManager 同一个
       // resolver 落一次锤。**必须在这里落而不是交给 submit 内部兜底** —— 下面的素材库
-      // 守卫要用同一个结论;各判各的会长出「按平台余额提交、却拿 vvdance 凭据校验」
+      // 守卫要用同一个结论;各判各的会长出「按平台余额提交、却去别的池里校验素材」
       // 这种组合,而它的表现是一句关于素材不存在的中文错误,根因完全看不出来。
       // 那个 resolver 自身的已知缺口写在 seedanceGateway/credentials.ts。
       const billing = resolveVideoBilling()
-      // 提交前防线:asset:// 引用在当前站点必须真实存在(素材按「海外/国内」
-      // 站点隔离,导入后切站点必然 NOT_FOUND)——确认缺失时用中文报错拦下。
-      // 只对 vvdance 直连那条路做:万相不认识素材库、平台余额用的是另一个池,
-      // 理由见 usesSeedanceAssetLibrary。
-      if (usesSeedanceAssetLibrary(input.model, billing)) {
-        await verifyContentAssetReferences(content, {
-          apiKey: getSeedanceApiKey(),
-          apiSecret: getSeedanceApiSecret(),
-        })
-      } else if (usesPlatformAssetLibrary(input.model, billing)) {
+      // 提交前防线:asset:// 引用必须真实存在于当前计费池的素材库(池之间不互通),
+      // 确认缺失时用中文报错拦下。只对平台余额下的 Seedance 做:万相不认识素材库,
+      // 自填 Key 没有素材库。
+      if (usesPlatformAssetLibrary(input.model, billing)) {
         // 平台余额:卡上的 asset:// 必须在当前计费池的素材库里。否则上游先建任务、
         // 跑到取素材才回「asset not found」—— 见 platformAssetGuard。
         const scope = activePlatformScope()
@@ -1123,14 +872,9 @@ export function initSeedanceRuntime(opts: {
       // `validateSeedanceRequest` 说明白。
       if (!input.prompt.trim() && input.multiShot?.type !== 'customize') throw new Error('提示词不能为空')
       const content = await buildContent(input)
-      // 同上:只有 vvdance 直连那条路才碰它的素材库 / 人像库。见 usesSeedanceAssetLibrary。
-      // `billing` 缺省(旧渲染层的载荷没有这个字段)时按自填 Key 处理,行为不变。
-      if (usesSeedanceAssetLibrary(input.model, billing)) {
-        await verifyContentAssetReferences(content, {
-          apiKey: getSeedanceApiKey(),
-          apiSecret: getSeedanceApiSecret(),
-        })
-      } else if (usesPlatformAssetLibrary(input.model, billing)) {
+      // 同上:只有平台余额下的 Seedance 才碰素材库。
+      // `billing` 缺省(旧渲染层的载荷没有这个字段)时按自填 Key 处理。
+      if (usesPlatformAssetLibrary(input.model, billing)) {
         const scope = activePlatformScope()
         if (scope) await verifyPlatformAssetReferences(content, scope, getPlatformAsset)
       }
@@ -1195,12 +939,9 @@ export function initSeedanceRuntime(opts: {
     return task ? { found: true, task } : { found: false }
   })
 
-  // 素材库（人像库）凭证 —— MCP 工具(list/add/download/edit_portrait_library)用它取
-  // Key/Secret。渲染端面向的 IPC(seedance:get-config / set-config / assets-* /
-  // overlay-*)已改为在窗口加载前由 `registerSeedanceRendererIpc()` 注册(见上),
-  // 避免人像库页面挂载时调用比本函数(要等 `await startCatimationMcpServer` 之后
+  // 渲染端面向的 IPC(seedance:overlay-* 等)已改为在窗口加载前由 `registerSeedanceRendererIpc()`
+  // 注册(见上),避免人像库页面挂载时调用比本函数(要等 `await startCatimationMcpServer` 之后
   // 才执行)更早而 reject,把页面永久钉死在「人像库未就绪」。
-  const assetCreds = () => ({ apiKey: getSeedanceApiKey(), apiSecret: getSeedanceApiSecret() })
 
   // ============ MCP agent 人像库工具(自主上传/搜索/整理/下载) ============
   /** 把素材源(本地路径/data:/http/asset:)上传到人像库。 */
@@ -1235,29 +976,9 @@ export function initSeedanceRuntime(opts: {
       )
       return { duplicated, assetId, assetUrl: `asset://${assetId}`, name, kind, library: 'platform' }
     }
-    const url = await resolveMediaUrl(source, 'add_to_portrait_library.source')
-    const mime = /^data:([^;,]+)/i.exec(url)?.[1]
-    const { duplicated, asset } = await importSeedanceAsset(
-      {
-        kind,
-        url,
-        ...(params.name ? { name: params.name } : {}),
-        ...(kind === 'image' ? { imageCategory: params.imageCategory ?? 'image_people' } : {}),
-        ...(mime ? { mimeType: mime } : {}),
-      },
-      assetCreds(),
-    )
-    // 按网址导入的素材上游不出缩略图(previewUrl 恒 null),人像库页面上传那条路会自己
-    // 记一份地址,这条以前漏了 —— agent 存进去的图在工作台上永远没缩略图。
-    if (kind === 'image') rememberAssetThumb(asset, url)
-    return {
-      duplicated,
-      assetId: asset.assetId,
-      assetUrl: asset.assetUrl,
-      name: asset.name,
-      kind: String(asset.kind),
-      library: 'own-key',
-    }
+    // 没有平台素材库(未登录 / 自填 Miau Key 模式)。素材库依赖平台登录态,如实说,
+    // 而不是悄悄存到别处 —— 否则 agent 以为存好了,生成时却引用不到。
+    throw new Error('add_to_portrait_library: 人像库只在登录并使用平台余额时可用(自填 Miau Key 模式没有人像库)。')
   }
 
   /**
@@ -1359,76 +1080,17 @@ export function initSeedanceRuntime(opts: {
     const pageSize = p.pageSize && p.pageSize > 0 ? Math.min(p.pageSize, 50) : 12
     const platformScope = agentPlatformScope()
     if (platformScope) return listPlatformLibraryForAgent(p, page, pageSize, platformScope)
-    const overlay = getPortraitOverlay()
-    const baseQuery = {
-      ...(p.query ? { q: p.query } : {}),
-      ...(p.kind ? { kind: p.kind as SeedanceAssetKindFilter } : {}),
-    }
-
-    // 分组是「本地叠加层」元数据,上游素材接口不认识它 —— 不能把分页委托给
-    // 上游(上游分页只会返回某一页全部素材,本地再筛分组就会漏掉其它页里的
-    // 同组素材)。所以 group 筛选走有界扫描:从叠加层先拿到该组的目标 assetId
-    // 集合(为空直接返回),再扫上游若干页凑齐这些 id 的详情,然后本地分页。
-    // 扫描设页数上限 + 时间预算(< codex 60s 工具超时),凑齐即停。
-    if (p.group) {
-      const targetIds = new Set(
-        Object.keys(overlay.entries).filter((id) => overlay.entries[id]?.group === p.group),
-      )
-      if (targetIds.size === 0) {
-        return { items: [], total: 0, page: 1, totalPages: 1, hasMore: false, groups: overlay.groups }
-      }
-      const SCAN_PAGE_SIZE = 50
-      const MAX_SCAN_PAGES = 30
-      const deadline = Date.now() + 40_000
-      const matched: SeedanceAssetItem[] = []
-      const seen = new Set<string>()
-      let scanCapped = false
-      for (let pg = 1; pg <= MAX_SCAN_PAGES; pg++) {
-        const res = await listSeedanceAssets({ page: pg, pageSize: SCAN_PAGE_SIZE, ...baseQuery }, assetCreds())
-        for (const it of res.items) {
-          if (targetIds.has(it.assetId) && !seen.has(it.assetId)) {
-            seen.add(it.assetId)
-            matched.push(it)
-          }
-        }
-        if (seen.size >= targetIds.size) break
-        if (pg >= (res.totalPages || 1)) break
-        if (pg >= MAX_SCAN_PAGES || Date.now() > deadline) {
-          scanCapped = true
-          break
-        }
-      }
-      let enriched = matched.map((a) => enrichWithOverlay(a, overlay))
-      if (!p.includeHidden) enriched = enriched.filter((it) => !it.hidden)
-      const total = enriched.length
-      const totalPages = Math.max(1, Math.ceil(total / pageSize))
-      const safePage = Math.min(page, totalPages)
-      const start = (safePage - 1) * pageSize
-      return {
-        library: 'own-key' satisfies AgentAssetLibrary,
-        items: enriched.slice(start, start + pageSize),
-        total,
-        page: safePage,
-        totalPages,
-        hasMore: safePage < totalPages,
-        scanCapped,
-        groups: overlay.groups,
-      }
-    }
-
-    // 常见路径(无分组筛选):直接信任上游分页,仅在本页过滤隐藏(软删项极少,
-    // 计数略有偏差可接受,换取大库下每次只取一页的低开销)。
-    const result = await listSeedanceAssets({ page, pageSize, ...baseQuery }, assetCreds())
-    let enriched = result.items.map((a) => enrichWithOverlay(a, overlay))
-    if (!p.includeHidden) enriched = enriched.filter((it) => !it.hidden)
+    // 没有平台素材库(未登录 / 自填 Miau Key 模式)。回一个空页并说明原因,别抛错 ——
+    // agent 看到的是「这里没有库」而不是「工具坏了」,不会拿同样的参数重试。
     return {
-      library: 'own-key' satisfies AgentAssetLibrary,
-      items: enriched,
-      total: result.total,
-      page: result.page,
-      totalPages: result.totalPages,
-      hasMore: result.page < result.totalPages,
-      groups: overlay.groups,
+      library: 'none',
+      items: [],
+      total: 0,
+      page: 1,
+      totalPages: 1,
+      hasMore: false,
+      groups: [],
+      note: '人像库只在登录并使用平台余额时可用;当前是自填 Miau Key 模式,没有人像库。',
     }
   })
 

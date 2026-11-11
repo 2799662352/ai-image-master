@@ -561,6 +561,17 @@ export const WORKBENCH_VIDEO_MODEL_ALIASES: readonly VideoModelAlias[] = ALL_VID
   (alias) => SEEDANCE_MODEL_CAPABILITIES[alias].modes.length > 0,
 )
 
+/**
+ * 这个别名能不能在「生成视频」工作台 / `generate_video` 里被选中。
+ *
+ * 以前按站点(海外 / 国内)和灰度开关算,是因为两个站点的模型目录不同;vvdance 直连
+ * 删除后只剩 Miau 网关一份目录,答案就只取决于能力表里有没有开放工作台模式。
+ * 对认不出的值(`undefined`、持久化里的旧别名)返回 false,而不是抛错。
+ */
+export function isSeedanceModelAvailable(alias: unknown): alias is VideoModelAlias {
+  return typeof alias === 'string' && (WORKBENCH_VIDEO_MODEL_ALIASES as readonly string[]).includes(alias)
+}
+
 export const ALL_VIDEO_RESOLUTIONS: readonly string[] = unionOf((caps) => [
   ...caps.resolutions,
   ...(caps.platformResolutions ?? []),
@@ -766,9 +777,6 @@ export function validateSeedanceRequest(
   return errors
 }
 
-/** VVDance 站点：海外 GLOBAL（默认）/ 国内。决定 Base URL 与上游模型 ID 前缀。 */
-export type SeedanceRegion = 'global' | 'cn'
-
 /**
  * 这一次生成的钱从哪出。
  *
@@ -881,60 +889,6 @@ export interface SeedanceTaskState {
 
 export type SeedanceTaskUpdate = SeedanceTaskState
 
-/** 设置页展示用的 Key 状态（绝不回传明文 Key）。 */
-export interface SeedanceKeyState {
-  hasKey: boolean
-  /** 形如 `sk-1a****`。 */
-  keyMasked?: string
-  source: 'store' | 'env' | 'none'
-  /** 素材库（人像库）接口需要 API Secret 做 HMAC 签名。 */
-  hasSecret: boolean
-  secretMasked?: string
-  /** 当前站点预设（env `SEEDANCE_BASE_URL` 可覆盖实际 Base，不改此字段）。 */
-  region: SeedanceRegion
-  /**
-   * 当前站点**真正能提交**的模型档位，由主进程按 region + 灰度开关算出。
-   *
-   * 渲染端别自己枚举 `SEEDANCE_MODEL_CAPABILITIES` 的键去填下拉框：能力表说的是
-   * 「这个档位的规格」，不是「这个站点现在能不能提交」。国内 2.5 就走过这条路
-   * （`SEEDANCE_CN_2_5_ENABLED`，2026-08-12 已开，但 `SEEDANCE_CN_25=0` 随时能关回去）。
-   * 摆一个注定被上游拒的选项，比少摆一个更糟。
-   */
-  models: readonly SeedanceModelAlias[]
-}
-
-// ==================== 素材库（人像库） ====================
-// 上游 /api/open/v1/local-assets 协议；图片可标记 image_people（人像）。
-
-export type SeedanceAssetKind = 'image' | 'video' | 'audio'
-
-/** 列表接口的 kind 过滤项（上游原样）。 */
-export type SeedanceAssetKindFilter =
-  | 'all'
-  | 'image_people'
-  | 'image_environment'
-  | 'video'
-  | 'audio'
-  | 'text'
-
-export interface SeedanceAssetItem {
-  id: string
-  kind: SeedanceAssetKind | string
-  imageCategory?: 'image_people' | 'image_environment'
-  name: string
-  /** 后台缩略图预览地址（仅展示用）。 */
-  previewUrl?: string
-  sourceUrl?: string
-  /** 完整 `asset://...`，创建任务时直接引用。 */
-  assetUrl: string
-  assetId: string
-  mimeType?: string
-  sizeBytes?: number
-  status?: string
-  createdAt?: string
-  updatedAt?: string
-}
-
 /**
  * 人像库「本地叠加层」—— 上游素材接口只有 列表/导入,没有改名/删除/分组。
  * 这层在主进程持久化(单一真相源),按 assetId 索引,渲染端 UI 与 MCP agent
@@ -978,104 +932,3 @@ export type PortraitOverlayMutation =
    * 两者都在 —— 两个键都存,页面按哪个查都命中。
    */
   | { op: 'setThumb'; assetIds: string[]; thumbUrl: string }
-
-/** 素材额度摘要（列表 summary 与 GET /local-assets/capacity 同形）。 */
-export interface SeedanceAssetCapacity {
-  used: number
-  limit: number
-  remaining: number
-}
-
-export interface SeedanceAssetListResult {
-  items: SeedanceAssetItem[]
-  total: number
-  page: number
-  pageSize: number
-  totalPages: number
-  summary?: SeedanceAssetCapacity
-}
-
-/** 批量删除返回里的单条删除确认（文档 4.2.4）。 */
-export interface SeedanceAssetDeleteItem {
-  assetId: string
-  name: string
-  deletedAt: string
-}
-
-/** DELETE /local-assets 的返回（文档 4.2.4）。 */
-export interface SeedanceAssetDeleteResult {
-  deletedCount: number
-  items: SeedanceAssetDeleteItem[]
-  summary?: SeedanceAssetCapacity
-}
-
-export interface SeedanceAssetListQuery {
-  page?: number
-  pageSize?: number
-  q?: string
-  kind?: SeedanceAssetKindFilter
-}
-
-export interface SeedanceAssetImportInput {
-  kind: SeedanceAssetKind
-  /** 远程 https URL 或 data: URL。 */
-  url: string
-  name?: string
-  mimeType?: string
-  imageCategory?: 'image_people' | 'image_environment'
-}
-
-export interface SeedanceAssetImportResult {
-  duplicated: boolean
-  asset: SeedanceAssetItem
-  /**
-   * assetUrl 是否可用于创建任务的 `asset://` 引用。
-   * 上游导入响应有时只回内部行 id(dla-xxx,不可引用,提交会 400
-   * LOCAL_ASSET_NOT_FOUND)且 list 二次解析也可能找不到真 assetId——
-   * 此时为 false,调用方应保留 https 直传而非替换成 asset:// 引用。
-   * 主进程实现总会填;类型上可选是为了不破坏渲染层测试 mock。
-   */
-  referenceable?: boolean
-}
-
-// ==================== 官方素材库（文档 5） ====================
-// GET /api/open/v1/official-materials —— 平台内置官方图片/视频/音频/虚拟人像。
-// 只读列表,不写入开发者素材库;引用时直接用返回的 assetUrl（https）。
-
-export interface SeedanceOfficialMaterialItem {
-  id: string
-  /** image / video / audio / virtual_portrait。 */
-  kind: string
-  name: string
-  previewUrl?: string
-  sourceUrl?: string
-  /** 创建任务时直接作为素材 url（https,非 asset://）。 */
-  assetUrl?: string
-  assetId?: string | null
-  mediaType?: string | null
-  tab?: string | null
-  category?: string | null
-  description?: string | null
-  gender?: string | null
-  age?: number | null
-  sourceKind?: string
-}
-
-export interface SeedanceOfficialMaterialsQuery {
-  /** materials（普通官方素材,默认）或 avatars（虚拟人像）。 */
-  library?: 'materials' | 'avatars'
-  page?: number
-  pageSize?: number
-  q?: string
-  kind?: string
-  gender?: string
-  country?: string
-}
-
-export interface SeedanceOfficialMaterialsResult {
-  items: SeedanceOfficialMaterialItem[]
-  total: number
-  page: number
-  pageSize: number
-  totalPages: number
-}

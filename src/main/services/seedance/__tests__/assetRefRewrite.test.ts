@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { applyAssetRewrites, collectDirectMediaRefs, libraryAssetName } from '../assetRefRewrite'
-import { translateSeedanceTaskError } from '../assets'
+import { translateSeedanceTaskError } from '../taskErrors'
 import type { SeedanceContentItem } from '../types'
 
 const content: SeedanceContentItem[] = [

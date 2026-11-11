@@ -8,8 +8,8 @@
  *
  * 两个方向的代价不对称:
  *
- * - 猜成 `own-key`(= 没带)最多退回接入网关之前的老行为 —— vvdance 直连,
- *   缺凭据时报一句「请先填写火山密钥」,是用户自己能解决的错。
+ * - 猜成 `own-key`(= 没带)最多是走自填 Miau Key 那条路,
+ *   缺凭据时报一句「请先填写 Miau Key」,是用户自己能解决的错。
  * - 猜成 `platform` 会让一条本该走自填 Key 的任务拿影子 token 提交,钱记到
  *   组织头上。这种错**不报任何错**,而且事后从桌面端根本查不出来。
  *
@@ -45,8 +45,8 @@ export function coerceVideoBillingSource(raw: unknown): VideoBillingSource | und
  *   `generate_video` 留的,它拿不到用户的意向。
  *
  * 注意 `prefer === 'platform'` 而影子 token 取不到时它**仍然返回 platform**:
- * 让路由落到网关、由 `requireApiKey` 抛一句「请先选择计费池」,而不是悄悄退回
- * vvdance 直连去扣用户自己的火山密钥。
+ * 让路由落到平台那条 transport、由 `requireApiKey` 抛一句「请先选择计费池」,而不是悄悄退回
+ * 自填 Key 去扣用户自己的钱。
  */
 export function createVideoBillingResolver(
   sources: SeedanceGatewayTokenSources,

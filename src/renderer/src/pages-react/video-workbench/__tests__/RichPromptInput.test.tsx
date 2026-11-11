@@ -3,7 +3,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SeedanceAssetItem } from '../../../../../types/seedance'
+import type { PortraitAssetItem } from '../../../features/portrait-library/portraitLibraryShared'
 import {
   RichPromptInput,
   extractPlainText,
@@ -88,7 +88,7 @@ describe('RichPromptInput @ 建议', () => {
   })
 
   it('人像库建议:选中先 onPickAsset 回填素材,再按返回序号插 token', async () => {
-    const asset: SeedanceAssetItem = {
+    const asset: PortraitAssetItem = {
       id: 'row1',
       kind: 'image',
       name: '赛博猫',
@@ -135,7 +135,7 @@ describe('@ 建议分组(本页素材 / 人像库)', () => {
     material: { name: '别卡的图.png', src: 'data:image/png;base64,OTHER' },
     thumbSrc: 'data:image/png;base64,OTHER',
   }
-  const ASSET: SeedanceAssetItem = {
+  const ASSET: PortraitAssetItem = {
     id: 'row1',
     kind: 'image',
     name: '赛博猫',

@@ -1,12 +1,12 @@
-// 「从人像库选择」弹窗在**平台计费**模式下的分支。
+// 「从人像库选择」弹窗在**平台计费**模式下的行为(人像库只存在于这一侧)。
 //
-// 自填 Key 那条路的行为在 `PortraitPickerModal.test.tsx` 里,那份一条没动 ——
-// 两边的素材互不可见,混在一起测就分不清是哪条路坏了。
+// 自填 Miau Key 模式没有人像库,弹窗只给一句提示 —— 那条路在
+// `PortraitPickerModal.test.tsx` 里,两边分开测,免得分不清是哪条路坏了。
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PortraitAsset } from '../../../../../types/portraitApi'
-import type { SeedanceAssetItem } from '../../../../../types/seedance'
+import type { PortraitAssetItem } from '../../../features/portrait-library/portraitLibraryShared'
 import { useToastStore } from '../../../stores/useToastStore'
 import { __resetQuotaStoreForTesting, useQuotaStore } from '../../../stores/useQuotaStore'
 import { PortraitPickerModal } from '../PortraitPickerModal'
@@ -24,7 +24,6 @@ function mockBridges(items: PortraitAsset[]) {
   const list = vi.fn(async (_scope: unknown, _options?: unknown) =>
     okEnvelope({ Items: items, TotalCount: items.length, HiddenCount: 0, Truncated: false }),
   )
-  const listAssets = vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 60, totalPages: 1 }))
   const bridge = {
     list,
     poll: vi.fn(() => new Promise(() => {}) as never),
@@ -35,17 +34,9 @@ function mockBridges(items: PortraitAsset[]) {
       okEnvelope({ Id: 'new-1', URL: `${COS}/new.png`, PreviewUrl: `${COS}/new.png`, cosUrl: `${COS}/new.png` }),
     ),
   }
-  ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
-    portraitLibrary: bridge,
-    seedance: {
-      listAssets,
-      listOfficialMaterials: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 60, totalPages: 1 })),
-      getOverlay: vi.fn(async () => ({ entries: {}, groups: [] })),
-      mutateOverlay: vi.fn(async () => ({ entries: {}, groups: [] })),
-      onOverlayChanged: vi.fn(() => () => {}),
-    },
-  }
-  return { ...bridge, listAssets }
+  // 只挂 portraitLibrary 桥 —— 弹窗不该再依赖 `electronAPI.seedance` 里的任何东西。
+  ;(window as unknown as { electronAPI?: unknown }).electronAPI = { portraitLibrary: bridge }
+  return bridge
 }
 
 function pngFile(name: string, size: number): File {
@@ -74,24 +65,73 @@ afterEach(() => {
 })
 
 describe('PortraitPickerModal(平台计费)', () => {
-  it('走 portraitLibrary.list,一次都不碰 vvdance', async () => {
+  it('走 portraitLibrary.list(按计费池)', async () => {
     const b = mockBridges([asset({ Id: 'a1', Name: '赛博猫' })])
     render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
 
     await waitFor(() => expect(b.list).toHaveBeenCalled())
     expect(b.list.mock.calls[0]![0]).toEqual({ projectId: 42, producerProjectId: 7 })
-    expect(b.listAssets).not.toHaveBeenCalled()
     expect(await screen.findByTitle(/赛博猫/)).toBeTruthy()
   })
 
-  // 官方素材 / 虚拟人像走的是 vvdance 的另一个接口,要 seedance 的 HMAC 凭据;
-  // 平台模式下的用户可能压根没配过,点进去只会拿到一条看不懂的错误。
-  it('不显示官方素材 / 虚拟人像 tab —— 那两条要 seedance 凭据', async () => {
+  // 官方素材 / 虚拟人像是 vvdance 的另一个素材接口,随 vvdance 直连一起删除了;
+  // 「人像 / 场景」的区分上游本来就没有。tab 只剩 全部 / 图片 / 视频 / 音频。
+  it('类型 tab 只有 全部 / 图片 / 视频 / 音频,没有官方素材 / 虚拟人像 / 人像 / 场景', async () => {
     mockBridges([asset({ Id: 'a1', Name: '赛博猫' })])
     render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
     await screen.findByTitle(/赛博猫/)
+    for (const name of ['全部', '🖼 图片', '🎞 视频', '🎵 音频']) {
+      expect(screen.getByRole('button', { name })).toBeTruthy()
+    }
     expect(screen.queryByRole('button', { name: /官方素材/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /虚拟人像/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /人像$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /场景/ })).toBeNull()
+  })
+
+  it('点类型 tab 按素材类型过滤', async () => {
+    mockBridges([
+      asset({ Id: 'a1', Name: '赛博猫' }),
+      asset({ Id: 'v1', Name: '一段视频', AssetType: 'Video' }),
+    ])
+    render(<PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />)
+    await screen.findByTitle(/赛博猫/)
+    expect(screen.getByTitle(/一段视频/)).toBeTruthy()
+
+    await act(async () => {
+      screen.getByRole('button', { name: '🎞 视频' }).click()
+    })
+    expect(screen.queryByTitle(/赛博猫/)).toBeNull()
+    expect(screen.getByTitle(/一段视频/)).toBeTruthy()
+
+    await act(async () => {
+      screen.getByRole('button', { name: '🖼 图片' }).click()
+    })
+    expect(screen.getByTitle(/赛博猫/)).toBeTruthy()
+    expect(screen.queryByTitle(/一段视频/)).toBeNull()
+  })
+
+  it('挂到 document.body 而不是调用方的子树里', async () => {
+    mockBridges([asset({ Id: 'a1', Name: '赛博猫' })])
+    // 模拟真实挂载点:弹窗是从卡片内部渲染的,而卡片有可能带 transform/contain。
+    // `position: fixed` 遇到这些祖先会改成相对祖先定位,弹窗被裁进卡片框 ——
+    // portal 到 body 是唯一能免疫的做法。
+    const { container } = render(
+      <div style={{ transform: 'translateZ(0)' }}>
+        <PortraitPickerModal open onClose={() => {}} onConfirm={() => {}} />
+      </div>,
+    )
+
+    const panel = await screen.findByTestId('vw-portrait-picker')
+    expect(container.contains(panel)).toBe(false)
+    expect(panel.parentElement).toBe(document.body)
+  })
+
+  it('open=false 不渲染,也不拉列表', async () => {
+    const b = mockBridges([asset({ Id: 'a1', Name: '赛博猫' })])
+    render(<PortraitPickerModal open={false} onClose={() => {}} onConfirm={() => {}} />)
+    expect(screen.queryByTestId('vw-portrait-picker')).toBeNull()
+    expect(b.list).not.toHaveBeenCalled()
   })
 
   it('已移出素材库的不出现在选择器里', async () => {
@@ -139,7 +179,7 @@ describe('PortraitPickerModal(平台计费)', () => {
       screen.getByRole('button', { name: /使用选中素材/ }).click()
     })
 
-    const assets = onConfirm.mock.calls[0]![0] as SeedanceAssetItem[]
+    const assets = onConfirm.mock.calls[0]![0] as PortraitAssetItem[]
     expect(assets.map((a) => a.assetUrl).sort()).toEqual(['asset://a1', 'asset://v1'])
     expect(assets.find((a) => a.assetId === 'v1')?.kind).toBe('video')
     expect(onClose).toHaveBeenCalled()

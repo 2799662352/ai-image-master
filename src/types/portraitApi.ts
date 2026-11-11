@@ -159,8 +159,7 @@ export interface PortraitPatch {
 }
 
 /**
- * 渲染层可用的人像库能力(平台计费模式)。自填 Key 模式走的是另一条 vvdance 链路,
- * 两边的素材互不可见。
+ * 渲染层可用的人像库能力(平台计费模式)。自填 Miau Key 模式没有人像库。
  *
  * 一律回 `{ ok, data } | { ok: false, error }` 信封 —— 主进程刻意不裸抛,裸抛经 IPC 会被
  * 包成 "Error invoking remote method '…'",error code 全部丢失。而 UI 必须按 code 分支:

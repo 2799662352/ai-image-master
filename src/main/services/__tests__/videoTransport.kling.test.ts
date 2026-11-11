@@ -2,7 +2,7 @@
 //
 // 钉住四件事:
 //   1. 分派:alias 是 kling4 / kling4-omni 就走可灵通道,与计费模式无关;**没注册绝不回落**
-//      (回落到 Seedance 会把可灵的 `kling-v4-*` 当 Ark 模型发给 vvdance,或被平台版 Seedance
+//      (回落到 Seedance 会把可灵的 `kling-v4-*` 当 Seedance 模型发出去,或被平台版 Seedance
 //      网关路劫走 —— 后者扣的是平台余额,而且请求体里的模型名对不上);
 //   2. 组包:模型 id 随档位走、素材原样透传、本地先拦网关必拒的组合;
 //   3. 凭据:同一条 transport 服务两种钱包,每次调用现取;平台余额整份组头,自填 Key 只带 Authorization;
@@ -12,7 +12,6 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createKlingTransport,
   createSeedanceGatewayTransport,
-  createSeedanceTransport,
   transportFor,
   type VideoSubmitContext,
 } from '../videoTransport'
@@ -60,14 +59,13 @@ const platform = (token = 'shadow-tok') => () => ({ billing: 'platform' as const
 const ownKey = (token = 'miau-key') => () => ({ billing: 'own-key' as const, token })
 
 function seedanceTransport() {
-  return createSeedanceTransport(
+  // 自填 Key 那条 Seedance 通道(缺省计费落在它上)。
+  return createSeedanceGatewayTransport(
     {
-      createTask: vi.fn(async () => ({ id: 'ark' })),
-      queryTask: vi.fn(async () => ({ id: 'ark', status: 'running' as const })),
-      downloadVideo: vi.fn(async () => 'x.mp4'),
-      deleteTask: vi.fn(async () => {}),
+      createTask: vi.fn(async () => ({ id: 'gw' })),
+      queryTask: vi.fn(async () => ({ id: 'gw', status: 'running' as const })),
     },
-    () => 'ark-key',
+    () => ({ billing: 'own-key' as const, token: 'miau-key' }),
   )
 }
 
@@ -76,7 +74,7 @@ describe('transportFor(kling)', () => {
     const seedance = seedanceTransport()
     const kling = createKlingTransport(gatewayClient(), platform())
     const seedanceGateway = createSeedanceGatewayTransport(gatewayClient(), platform())
-    const registry = { seedance, kling, seedanceGateway }
+    const registry = { seedanceOwnKey: seedance, kling, seedanceGateway }
 
     for (const alias of ['kling4', 'kling4-omni']) {
       expect(transportFor(registry, alias)).toBe(kling)
@@ -89,15 +87,15 @@ describe('transportFor(kling)', () => {
   /** 🧬 变异点:改成 `registry.kling ?? registry.seedance`(照抄万相那条回落),必红。 */
   it('可灵通道没注册时抛错,绝不回落到 Seedance', () => {
     const seedance = seedanceTransport()
-    expect(() => transportFor({ seedance }, 'kling4')).toThrow(/可灵/)
-    expect(() => transportFor({ seedance }, 'kling4-omni', { billing: 'platform' })).toThrow(/可灵/)
+    expect(() => transportFor({ seedanceOwnKey: seedance }, 'kling4')).toThrow(/可灵/)
+    expect(() => transportFor({ seedanceOwnKey: seedance }, 'kling4-omni', { billing: 'platform' })).toThrow(/可灵/)
   })
 
   it('不影响其它别名的分派', () => {
     const seedance = seedanceTransport()
     const kling = createKlingTransport(gatewayClient(), platform())
-    expect(transportFor({ seedance, kling }, '2.5')).toBe(seedance)
-    expect(transportFor({ seedance, kling }, undefined)).toBe(seedance)
+    expect(transportFor({ seedanceOwnKey: seedance, kling }, '2.5')).toBe(seedance)
+    expect(transportFor({ seedanceOwnKey: seedance, kling }, undefined)).toBe(seedance)
   })
 })
 

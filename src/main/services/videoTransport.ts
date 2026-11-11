@@ -3,7 +3,7 @@
  *
  * ## 为什么要这层
  *
- * `SeedanceTaskManager` 有三个地方要碰上游：提交、轮询、取消。两家 provider 的
+ * `SeedanceTaskManager` 有三个地方要碰上游：提交、轮询、取消。各家 provider 的
  * 请求体毫无共同点（Ark 的 `content[]` vs 万相的 `metadata.input.media[]`），
  * 密钥也各来各的。如果在这三处各写一个 `if (provider === 'miau')`，第三家 provider
  * 进来时就是六个分支，而「万相不走人像库」这类保证会散在各处靠人记
@@ -41,20 +41,19 @@ import type {
   GatewayBillingSource,
   ResolvedGatewayToken,
 } from './seedanceGateway/credentials'
-import type { SeedanceClient, SeedanceQueryResult } from './seedance/client'
+import type { SeedanceQueryResult } from './seedance/client'
 import type {
   CreateVideoTaskInput,
   SeedanceContentItem,
-  SeedanceCreateTaskBody,
   SeedanceTaskMode,
 } from './seedance/types'
-import { resolveSeedanceModelId } from './seedance/types'
+import { resolveSeedanceModelId } from './seedance/modelIds'
 import type { VideoModelAlias } from '../../types/seedance'
 
 /** 提交一次生成所需的全部已解析信息。收敛与校验由 taskManager 在上游做完。 */
 export interface VideoSubmitContext {
   input: CreateVideoTaskInput
-  /** 已解析好的素材（URL 都已就绪）。两家 provider 各自从中取用。 */
+  /** 已解析好的素材（URL 都已就绪）。各家 provider 各自从中取用。 */
   content: SeedanceContentItem[]
   model: VideoModelAlias
   resolution: string
@@ -67,8 +66,8 @@ export interface VideoTransport {
   /**
    * 密钥没配好就抛，由各家报**自己**的错。
    *
-   * 这条必须归 transport：只配了 Miau 密钥的用户去生成万相，原先会撞上
-   * `SEEDANCE_KEY_MISSING` —— 让他去配一个这条路根本用不到的火山密钥。
+   * 这条必须归 transport：缺密钥时由各条通道报**自己**那一句人话（去选计费池 / 去填 Miau Key），
+   * 不能让用户被一句别的通道的错误指去配一个这条路根本用不到的凭据。
    */
   requireApiKey: () => void
   createTask: (ctx: VideoSubmitContext) => Promise<{ id: string }>
@@ -85,43 +84,12 @@ function promptFrom(ctx: VideoSubmitContext): string {
   return ctx.input.prompt
 }
 
-export function createSeedanceTransport(
-  client: SeedanceClient,
-  getApiKey: () => string,
-): VideoTransport {
-  return {
-    requireApiKey() {
-      // 保留原样的哨兵字符串:上层已有针对它的翻译与提示。
-      if (!getApiKey()) throw new Error('SEEDANCE_KEY_MISSING')
-    },
-    createTask(ctx) {
-      const body: SeedanceCreateTaskBody = {
-        model: resolveSeedanceModelId(ctx.model),
-        content: ctx.content,
-        ratio: ctx.ratio,
-        resolution: ctx.resolution,
-        duration: ctx.duration,
-        generate_audio: ctx.input.generateAudio ?? true,
-        // seed / 联网搜索 / taskMode:spread-omit,不传时字段完全不出现(兼容旧上游)。
-        ...(typeof ctx.input.seed === 'number' && Number.isFinite(ctx.input.seed)
-          ? { seed: Math.round(ctx.input.seed) }
-          : {}),
-        ...(ctx.input.webSearch ? { tools: [{ type: 'web_search' as const }] } : {}),
-        ...(ctx.taskMode ? { taskMode: ctx.taskMode } : {}),
-      }
-      return client.createTask(body, getApiKey())
-    },
-    queryTask: (taskId) => client.queryTask(taskId, getApiKey()),
-    deleteTask: (taskId) => client.deleteTask(taskId, getApiKey()),
-  }
-}
-
 /**
- * 万相**同一条 transport 服务两种计费** —— 与 Seedance 那边不同(那条是平台专用,
- * resolver 写死 `'platform'`)。
+ * 万相**同一条 transport 服务两种计费** —— 与 Seedance 那边不同(那边是两条 transport,各自
+ * 把 resolver 钉死在 `'platform'` / `'own-key'`,理由见 `createSeedanceGatewayTransport`)。
  *
  * 为什么不能靠改道解决:`transportFor` 里万相那条 `if` 刻意排在计费判断之前,因为
- * 万相和平台版 Seedance 打的是同一个 host、用的是同一类凭据,但请求体形状完全不同
+ * 万相和 Seedance 打的是同一个 host、用的是同一类凭据,但请求体形状完全不同
  * (`metadata.input.media[]` vs `metadata.content[]`)—— 把万相劫到网关 transport 上
  * 只会换来一句 400,里面不会有任何一个字提到路由错了。所以**换凭据,不换 transport**。
  *
@@ -236,35 +204,41 @@ export function createDepthTransport(
 }
 
 /**
- * 平台余额模式下 Seedance 提交给网关时用的模型 id 口径。
+ * 经 Miau 网关提交 Seedance —— 现在也是 Seedance **唯一**的一条路。
  *
- * **不跟 vvdance 的 region 设置走。** 网关目录里没有 `dreamina-*`（那是 vvdance
- * 海外站直连时代的 id），平台模式本身也没有 region 概念——走平台余额的用户不该
- * 关心机房在哪。跟着 global region 走的话，海外站用户一提交就是一句
- * `model_not_found`，而他完全想不到那是「站点设置」造成的。
+ * 以前它与 vvdance 直连并列,只服务平台余额。vvdance 直连删除之后,自填 Miau Key 的用户也得有地方
+ * 出 Seedance,所以同一个函数现在造**两条**实例(见 `seedance/runtime.ts`):一条钉死平台余额
+ * (客户端带整份归属头 `gatewayPlatformHeaders`、解析器写死 `'platform'`),一条钉死自填 Miau Key
+ * (客户端只带 `Authorization`、解析器写死 `'own-key'`)。
+ *
+ * **为什么不像可灵 / 万相那样「一条 transport 现取两种钱包」**:那种写法让轮询跟着**当下**的计费模式走。
+ * 万相 / 可灵接受这个取舍,但 Seedance 以前的两条路都是按**任务**钉死的(平台任务永远用影子 token
+ * 去查,直连任务永远用直连 Key 去查)。用户提交后切计费模式,「现取」会拿另一把钥匙去查同一个 taskId,
+ * 上游只回一句「任务不存在」—— 卡片报生成失败,而片子其实在跑、钱也已经花了。所以这里保持按任务钉死,
+ * 由 `transportFor` 按任务提交时落锤的 `billing` 选哪一条。
+ *
+ * 信封只有两处与别家不同(`metadata` 包裹 + 一个重复的顶层 `prompt`);`ctx.content` 原样透传,
+ * 素材解析那一整套一行都不用动。
+ *
+ * `resolveToken` 回的是 token 与 billing 一对而不只是字符串：缺席时要报哪一句
+ * 人话取决于哪种模式（「去选计费池」还是「去填 Miau Key」），补救动作完全不同。
+ *
+ * ## ⚠️ 自填 Miau Key 能不能在网关提交 Seedance —— 尚未对着真网关证实
+ *
+ * 平台余额那一支是跑通的;自填 Key 这一支在代码上与可灵(已跑通)走同一个客户端、同一对端点,
+ * 但**网关侧对个人 Key 的分组 / 渠道权限没有实测过**。猜错的结果是提交时拿到一句
+ * `model_not_found` 之类的网关错误 —— 响亮、指名道姓、一分钱不花。验证过后把结论和日期写在这里。
  *
  * ## ⚠️ 网关目录里到底有哪几个 doubao-seedance-* —— 尚未证实（待烟测）
  *
  * 四个别名（`2.0` / `2.0-fast` / `2.0-mini` / `2.5`）现在都会被路由到网关。
  * 「网关侧没有 `-mini` 的对等物」这个说法**唯一的依据是参考实现只列了三个模型**
- * ——那不等于网关目录里没有第四个。
+ * ——那不等于网关目录里没有第四个。所以这里刻意**不加排除名单**：一份猜出来的名单会把
+ * 一个其实可用的档位永久关掉，而且关得悄无声息；猜错的另一个方向只是提交时拿一句
+ * `model_not_found`。
  *
- * 所以这里刻意**不加排除名单**：一份猜出来的名单会把一个其实可用的档位永久关掉，
- * 而且关得悄无声息；猜错的另一个方向只是提交时拿一句 `model_not_found` ——
- * 响亮、指名道姓、一分钱不花。拿真网关跑一次就能定，定了把结论和日期写在这里。
- * 在那之前不要凭参考实现反推。（同 `seedanceGateway/client.ts` 里轮询路径那条
- * 待办，都归在计划的 Task 6 烟测。）
- */
-const GATEWAY_MODEL_REGION = 'cn' as const
-
-/**
- * 经 Miau 网关提交 Seedance —— 与 vvdance 直连**平行**的第三条路。
- *
- * 与 `createSeedanceTransport` 的差异只有信封（`metadata` 包裹 + 一个重复的顶层
- * `prompt`）和凭据；`ctx.content` 原样透传，素材解析那一整套一行都不用动。
- *
- * `resolveToken` 回的是 token 与 billing 一对而不只是字符串：缺席时要报哪一句
- * 人话取决于哪种模式（「去选计费池」还是「去填 Miau Key」），补救动作完全不同。
+ * seed / 联网搜索 / taskMode 网关不转发（`buildVideoRequest` 里一个都没有，传了也是被丢掉），
+ * 所以这条路不带它们。
  */
 export function createSeedanceGatewayTransport(
   client: SeedanceGatewayClient,
@@ -273,10 +247,10 @@ export function createSeedanceGatewayTransport(
   return {
     requireApiKey() {
       const { billing, token } = resolveToken()
-      if (!token) throw new Error(describeMissingGatewayToken(billing))
+      if (!token.trim()) throw new Error(describeMissingGatewayToken(billing))
     },
     createTask(ctx) {
-      const model = resolveSeedanceModelId(ctx.model, GATEWAY_MODEL_REGION)
+      const model = resolveSeedanceModelId(ctx.model)
       if (ctx.input.fromDraftTaskId) {
         // 由样片出成片:整份 metadata 只有 draft_task + 成片分辨率(1080p / 4k),其余一律沿用样片。
         return client.createTask(
@@ -302,8 +276,6 @@ export function createSeedanceGatewayTransport(
         promptFallback: ctx.input.prompt,
         ...(ctx.input.draft ? { draft: true } : {}),
       })
-      // seed / web_search / taskMode 刻意不带：网关侧 `buildVideoRequest` 里一个
-      // 都没有，传了也是被丢掉。要用这几样就得留在 vvdance 直连那条路上。
       return client.createTask(body, resolveToken().token)
     },
     queryTask: (taskId) => client.queryTask(taskId, resolveToken().token),
@@ -362,37 +334,45 @@ export function createKlingTransport(
 }
 
 export interface VideoTransportRegistry {
-  seedance: VideoTransport
+  /**
+   * Seedance·平台余额(经 Miau 网关,影子 token + 整份归属头)。没注册 = 抛错,**不回落**。
+   */
+  seedanceGateway?: VideoTransport
+  /**
+   * Seedance·自填 Miau Key(经 Miau 网关,只带 `Authorization`)。没注册 = 抛错,**不回落**。
+   */
+  seedanceOwnKey?: VideoTransport
+  /** 万相 3.0。没注册 = 抛错,**不回落**(见 `transportFor`)。 */
   wan3?: VideoTransport
   /** 深度捕捉。没注册 = 抛错,**不回落**(见 `transportFor`)。 */
   depth?: VideoTransport
   /** 可灵 4.0 / Omni。没注册 = 抛错,**不回落**(见 `transportFor`)。 */
   kling?: VideoTransport
-  /** 平台余额下的 Seedance。没注册 = 这条路还没接线，一切按老路走。 */
-  seedanceGateway?: VideoTransport
 }
 
 export interface VideoRouteOptions {
   /**
-   * 这一次生成的钱从哪出。缺省 = 自填 Key，与接入网关之前的行为逐字节相同。
+   * 这一次生成的钱从哪出。缺省 = 自填 Miau Key。
    *
    * 由调用方给而不是在这里读全局状态：`billingSource` 是渲染层状态，主进程侧
    * 的镜像（`auth/gatewayToken` 的 activePool）在极端情况下会与它不一致，
    * 见 `seedanceGateway/credentials.ts` 的「已知缺口」。
+   *
+   * 只对 Seedance 有分叉作用(平台 / 自填 Key 两条 transport);万相 / 可灵 / 深度捕捉
+   * 的 transport 自己按调用现取凭据。
    */
   billing?: GatewayBillingSource
 }
 
-type VideoTransportKey = keyof VideoTransportRegistry
+type VideoTransportKey = 'seedance' | 'wan3' | 'depth' | 'kling'
 
 /**
  * 每个别名的**默认**上游。`Record<VideoModelAlias, …>` 的穷尽性就是护栏：
  * 加一个模型别名而忘了在这里决定它走哪条路，编译当场报错，而不是等到运行时
  * 悄悄落进 Seedance 分支。
  *
- * 这里刻意**按别名**而不是按 `capabilities.provider` 分派：`wan3` 与「平台余额
- * 下的 Seedance」都是 `miau`、同一个 host、同一类凭据，provider 这个维度已经
- * 分不开它们了。
+ * 这里刻意**按别名**而不是按 `capabilities.provider` 分派：`wan3` 与 Seedance
+ * 都打同一个 Miau 网关、用同一类凭据，provider 这个维度已经分不开它们了。
  */
 const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
   '2.0': 'seedance',
@@ -411,56 +391,53 @@ const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
 /**
  * 按模型 + 计费模式选 transport。**全仓唯一按上游分叉的地方。**
  *
- * 没注册的 transport 一律回落到 Seedance 直连：这只会发生在还没接线的调用方
- * （老测试只注入 seedance），让它按老路走比抛错安全。
+ * 认不出的别名（持久化里的旧值、手改过的载荷）按 Seedance 处理:与其抛错让一条已经在上游
+ * 跑着的任务失去跟踪,不如按它提交时的计费模式问一次。
+ *
+ * 🚨 **所有通道都不回落。** 它们打的是同一个网关,但请求体形状各不相同
+ * (万相 `metadata.input.media[]`、Seedance / 可灵 `metadata.content[]`),回落只会换来一句
+ * 看不出原因的网关 400。Seedance 的两条更险:平台与自填 Key 回落到对方,意味着扣的是另一个钱包 ——
+ * 用户以为花的是平台余额、实际花的是自己的 Key(或反过来),而且不报任何错。
+ * 通道没注册是配置问题,要响亮。
  */
 export function transportFor(
   registry: VideoTransportRegistry,
   model: string | undefined,
   options?: VideoRouteOptions,
 ): VideoTransport {
-  // 认不出的别名（持久化里的旧值、手改过的载荷）走**老路** —— 与其抛错让一条
-  // 已经在上游跑着的任务失去跟踪，不如按 vvdance 直连问一次。所以这里是
-  // `undefined` 而不是 `'seedance'`：它连平台余额那个改道都不参与。
-  const key: VideoTransportKey | undefined =
+  const key: VideoTransportKey =
     model && model in DEFAULT_TRANSPORT_BY_ALIAS
       ? DEFAULT_TRANSPORT_BY_ALIAS[model as VideoModelAlias]
-      : undefined
+      : 'seedance'
 
-  // 🚨 别名先判、计费模式后判。反过来写（「platform → seedanceGateway」）会把
-  // 万相一起劫走：它同样是 miau、同样打这个网关，但请求体形状完全不同
-  // （`metadata.input.media[]` vs `metadata.content[]`），上游只会回一句 400，
-  // 里面不会有任何一个字提到路由错了。
-  if (key === 'wan3') return registry.wan3 ?? registry.seedance
-  // 🚨 深度捕捉**不能回落**(与上面万相那条回落不同)。万相回落是良性的:同一个钱包、
-  // 只是换个组包器;深度回落到 Seedance 意味着把源视频当 Ark 的 content[] 发给 vvdance,
-  // 扣的还是另一把钥匙,而错误里不会有任何一个字提到路由错了。通道没注册是配置问题。
+  if (key === 'wan3') {
+    if (!registry.wan3) {
+      throw new Error('万相通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
+    }
+    return registry.wan3
+  }
   if (key === 'depth') {
     if (!registry.depth) {
       throw new Error('深度捕捉通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
     }
     return registry.depth
   }
-  // 🚨 可灵**同样不能回落**,而且比深度捕捉更险:它与「平台版 Seedance」是同一个 host、同一类
-  // 凭据,回落到 `registry.seedance` 会把 `kling-v4-*` 当 Ark 模型发给 vvdance(用另一把钥匙),
-  // 被下面平台那条劫走则会换来一句看不出原因的网关 400。通道没注册是配置问题,要响亮。
   if (key === 'kling') {
     if (!registry.kling) {
       throw new Error('可灵通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
     }
     return registry.kling
   }
-  if (key === 'seedance' && options?.billing === 'platform') {
-    // 🚨 **这一条不能回落。** 上面万相那条回落是良性的（同一个钱包、只是换个组包器），
-    // 这一条不是：回落到 `registry.seedance` 意味着扣的是用户自己的 vvdance key，
-    // 而他以为花的是平台余额。`seedanceGateway/credentials.ts` 已经为同一件事立过规矩
+  if (options?.billing === 'platform') {
+    // `seedanceGateway/credentials.ts` 已经为同一件事立过规矩
     // （「静默回落 = 用户以为在花平台余额、实际在花自己的钱」），分派这一侧要一致。
-    //
-    // 平台通道没就绪是**配置问题**，不是「换一条计费路继续跑」的理由。
     if (!registry.seedanceGateway) {
       throw new Error('平台余额通道未就绪，无法按平台余额提交。请改用自填 Key，或稍后重试。')
     }
     return registry.seedanceGateway
   }
-  return registry.seedance
+  if (!registry.seedanceOwnKey) {
+    throw new Error('自填 Key 通道未就绪，无法提交。请重启应用后重试；若仍失败请反馈给开发者。')
+  }
+  return registry.seedanceOwnKey
 }
