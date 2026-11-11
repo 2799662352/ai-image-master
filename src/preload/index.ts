@@ -84,17 +84,7 @@ import type {
 import type {
   PortraitOverlayMutation,
   PortraitOverlayState,
-  SeedanceAssetCapacity,
-  SeedanceAssetDeleteResult,
-  SeedanceAssetImportInput,
-  SeedanceAssetImportResult,
-  SeedanceAssetListQuery,
-  SeedanceAssetListResult,
   SeedanceCancelResult,
-  SeedanceKeyState,
-  SeedanceOfficialMaterialsQuery,
-  SeedanceOfficialMaterialsResult,
-  SeedanceRegion,
   SeedanceTaskUpdate,
   VideoBillingSource,
 } from '../types/seedance'
@@ -602,8 +592,8 @@ export interface ElectronAPI {
   // Codex Agent。契约在 `src/types/agentApi.ts`,渲染层同吃一份 ——
   // 各 Section 手写 duck-type 子集的时代结束于此。
   agent: AgentApi
-  // 平台人像库(走平台余额那条路)。与上面 `seedance.*` 那套 vvdance 人像库**并存**,
-  // 两边素材互不可见 —— 上游是两个不同的资产池,`asset://` 不通用。
+  // 平台人像库(走平台余额那条路;自填 Miau Key 模式没有人像库)。素材本身都在这里,
+  // `seedance.*` 只剩任务回流与本地叠加层(改名 / 分组 / 隐藏)。
   portraitLibrary: PortraitLibraryApi
   auth: {
     getState: () => Promise<AuthState>
@@ -723,28 +713,10 @@ export interface ElectronAPI {
       ) => void,
     ) => () => void
   }
-  // Seedance 视频生成（codex `generate_video` 工具）。Key 走主进程
-  // safeStorage，渲染端只见 masked 状态；任务进度经 `seedance:task-update`
-  // 推送驱动聊天气泡。
+  // Seedance 视频生成（codex `generate_video` 工具）。经 Miau 网关提交(平台余额 /
+  // 自填 Miau Key),任务进度经 `seedance:task-update` 推送驱动聊天气泡。
   seedance: {
-    getConfig: () => Promise<SeedanceKeyState>
-    setConfig: (config: {
-      apiKey?: string
-      apiSecret?: string
-      region?: SeedanceRegion
-    }) => Promise<SeedanceKeyState>
-    /** 配置变更广播（设置页 / 工作台任一处改动，全端对齐 region 等状态）。 */
-    onConfigChanged: (cb: (state: SeedanceKeyState) => void) => () => void
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
-    /** 素材库（人像库）：列表 / 导入 / 额度 / 批量删除。需要 API Secret。 */
-    listAssets: (query: SeedanceAssetListQuery) => Promise<SeedanceAssetListResult>
-    importAsset: (input: SeedanceAssetImportInput) => Promise<SeedanceAssetImportResult>
-    getAssetCapacity: () => Promise<SeedanceAssetCapacity>
-    deleteAssets: (assetIds: string[]) => Promise<SeedanceAssetDeleteResult>
-    /** 官方素材库（平台内置图片/视频/音频/虚拟人像,只读,文档 5）。 */
-    listOfficialMaterials: (
-      query: SeedanceOfficialMaterialsQuery,
-    ) => Promise<SeedanceOfficialMaterialsResult>
     /** 人像库本地叠加层（改名/分组/隐藏）：主进程单一真相源，与 MCP agent 共享。 */
     getOverlay: () => Promise<PortraitOverlayState>
     mutateOverlay: (mutation: PortraitOverlayMutation) => Promise<PortraitOverlayState>
@@ -1813,28 +1785,11 @@ const electronAPI: ElectronAPI = {
 
   // ============ Seedance 视频生成 ============
   seedance: {
-    getConfig: () => safeInvoke<SeedanceKeyState>('seedance:get-config'),
-    setConfig: (config: { apiKey?: string; apiSecret?: string; region?: SeedanceRegion }) =>
-      safeInvoke<SeedanceKeyState>('seedance:set-config', config),
-    onConfigChanged: (cb: (state: SeedanceKeyState) => void) => {
-      const handler = (_evt: IpcRendererEvent, data: SeedanceKeyState): void => cb(data)
-      ipcRenderer.on('seedance:config-changed', handler)
-      return () => ipcRenderer.removeListener('seedance:config-changed', handler)
-    },
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => {
       const handler = (_evt: IpcRendererEvent, data: SeedanceTaskUpdate): void => cb(data)
       ipcRenderer.on('seedance:task-update', handler)
       return () => ipcRenderer.removeListener('seedance:task-update', handler)
     },
-    listAssets: (query: SeedanceAssetListQuery) =>
-      safeInvoke<SeedanceAssetListResult>('seedance:assets-list', query),
-    importAsset: (input: SeedanceAssetImportInput) =>
-      safeInvoke<SeedanceAssetImportResult>('seedance:assets-import', input),
-    getAssetCapacity: () => safeInvoke<SeedanceAssetCapacity>('seedance:assets-capacity'),
-    deleteAssets: (assetIds: string[]) =>
-      safeInvoke<SeedanceAssetDeleteResult>('seedance:assets-delete', { assetIds }),
-    listOfficialMaterials: (query: SeedanceOfficialMaterialsQuery) =>
-      safeInvoke<SeedanceOfficialMaterialsResult>('seedance:official-materials', query),
     getOverlay: () => safeInvoke<PortraitOverlayState>('seedance:overlay-get'),
     mutateOverlay: (mutation: PortraitOverlayMutation) =>
       safeInvoke<PortraitOverlayState>('seedance:overlay-mutate', mutation),

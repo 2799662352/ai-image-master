@@ -11,7 +11,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
-import type { SeedanceClient, SeedanceQueryResult } from '../client'
+import type { SeedanceQueryResult } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type {
   CreateVideoTaskInput,
   SeedanceContentItem,
@@ -19,7 +20,6 @@ import type {
   VideoBillingSource,
 } from '../types'
 import type { VideoTransport } from '../../videoTransport'
-import { setSeedanceRegionMemory } from '../region'
 
 const SOURCE = 'https://cos.example/relay/src.mp4'
 const OUT = 'https://rh.example/out/depth.mp4'
@@ -35,7 +35,7 @@ const CONTENT: SeedanceContentItem[] = [
   { type: 'video_url', role: 'reference_video', video_url: { url: SOURCE } },
 ]
 
-function makeClient(): SeedanceClient {
+function makeClient(): FakeSeedanceClient {
   return {
     createTask: vi.fn(async () => ({ id: 'ark-should-not-be-used' })),
     queryTask: vi.fn(async () => ({ id: 'x', status: 'running' as const })),
@@ -61,15 +61,13 @@ describe('taskManager × depth', () => {
     vi.useFakeTimers()
     broadcasts = []
     persistVideo = vi.fn(async () => ({ localPath: 'D:/save/depth.mp4', remoteUrl: 'https://cos/d.mp4' }))
-    setSeedanceRegionMemory('global')
   })
   afterEach(() => {
     vi.useRealTimers()
-    setSeedanceRegionMemory('global')
   })
 
   function makeManager(
-    client: SeedanceClient,
+    client: FakeSeedanceClient,
     depthTransport: VideoTransport | undefined,
     extra: {
       seedanceGatewayTransport?: VideoTransport
@@ -77,8 +75,7 @@ describe('taskManager × depth', () => {
     } = {},
   ) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo,
       broadcast: (u) => broadcasts.push(u),
       ...(depthTransport ? { depthTransport } : {}),

@@ -33,7 +33,7 @@ export interface ReconcileDeps {
    * 错杀成失败卡片。
    *
    * 带 `billing` 是同一个理由的第二层:平台余额那条任务是按计费池签发的影子
-   * token 建的,拿用户自填的 vvdance key 去问同样只会拿回「任务不存在」。
+   * token 建的,拿用户自填的 Miau Key 去问同样只会拿回「任务不存在」。
    */
   probe: (
     taskId: string,

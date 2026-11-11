@@ -90,9 +90,12 @@ need permission to add, search, organize, or download on the user's behalf.
   `pageSize` to dump everything (large results get truncated and waste context).
 - Always `list_portrait_library` to obtain `assetId` / `sourceUrl` before any
   `edit_portrait_library` or `download_portrait_asset` call — do not guess ids.
-- All four tools need the Seedance **API Key AND API Secret** configured
-  (Settings → Seedance; the library interface is HMAC-signed). If missing, the
-  tool tells you to ask the user to set them — relay that and stop.
+- The library exists **only on platform balance** (the user is logged in and
+  generating on 平台余额; it is the 素材库 of the active billing pool). With the
+  user's own Miau key there is NO portrait library: `list_portrait_library`
+  returns an empty page with a note and `add_to_portrait_library` fails. Relay
+  that to the user (switch to 平台余额 to use the library) instead of retrying.
+  `asset://` ids are not interchangeable between billing pools.
 - Renaming / grouping / hiding is a local organizing layer shared with the UI;
   it never deletes upstream data (hide is reversible via `unhide`).
 
@@ -103,4 +106,4 @@ need permission to add, search, organize, or download on the user's behalf.
 - 凭空猜 `assetId` / `sourceUrl`;必须先 `list_portrait_library` 查到再用。
 - 漏 `list` 直接 `edit_portrait_library` / `download_portrait_asset`。
 - 调高 `pageSize` 一次性 dump 整库(结果会被截断、浪费上下文),应先用 `query`/`kind`/`group` 收窄再翻页。
-- 缺 API Key/Secret 仍硬调;缺失时转告用户去设置并停下。
+- 自填 Miau Key 模式下仍硬调入库(那边没有人像库);转告用户切到平台余额再用,别反复重试。

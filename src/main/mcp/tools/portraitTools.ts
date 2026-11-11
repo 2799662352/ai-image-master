@@ -1,6 +1,6 @@
 // 人像库(素材库)MCP 工具 —— 让 agent 自主管理人像库:上传、搜索、下载、
 // 改名/分组/隐藏整理。底层主进程 handler 见 services/seedance/runtime.ts:
-//  - list/add/download 走上游 Seedance 素材接口(真实服务端能力);
+//  - list/add 走平台素材库(只有平台余额下才有;自填 Miau Key 没有人像库);download 只是按 URL 下载;
 //  - edit(改名/分组/隐藏)走主进程「叠加层」单一真相源,与人像库 UI 共享。
 //
 // banner 约定与 imageTools/videoTools 一致:短文本 + 结尾 machine-readable JSON 行。
@@ -16,13 +16,6 @@ function textResult(text: string): { content: Array<{ type: 'text'; text: string
 
 function errorBanner(tool: string, error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error)
-  if (msg.includes('Secret') || msg.includes('SEEDANCE_KEY_MISSING')) {
-    return [
-      `❌ ${tool} — Seedance 素材库未就绪(需要 API Key + API Secret)。`,
-      '提示用户打开 设置页 → 「Seedance 视频生成」填入 API Key 与 API Secret(素材库接口要签名),再重试。',
-      JSON.stringify({ ok: false, error: msg }),
-    ].join('\n')
-  }
   return [`❌ ${tool} failed: ${msg}`, JSON.stringify({ ok: false, error: msg })].join('\n')
 }
 
@@ -36,19 +29,19 @@ interface ListItem {
   hidden: boolean
 }
 
-/** 结果来自哪个库:平台余额 → 当前计费池的平台素材库;自填 Key → 自己的人像库。 */
-type AssetLibrary = 'platform' | 'own-key'
+/** 结果来自哪个库:平台余额 → 当前计费池的平台素材库;自填 Miau Key → 没有库(`none`)。 */
+type AssetLibrary = 'platform' | 'none'
 
 const LIBRARY_LABEL: Record<AssetLibrary, string> = {
   platform: '平台素材库(当前计费池)',
-  'own-key': '人像库(自填 Key)',
+  none: '人像库(自填 Miau Key 模式没有人像库)',
 }
 
 /** 两个库的 asset:// 不通用 —— 这句要进工具描述,agent 才不会拿别处查到的 id 来用。 */
 const LIBRARY_NOTE =
-  'The library FOLLOWS THE USER\'S CURRENT BILLING: on platform balance it is the platform 素材库 of the ' +
-  'active billing pool; with the user\'s own key it is their own portrait library. asset:// ids are NOT ' +
-  'interchangeable between the two (or between billing pools) — an id taken from elsewhere fails at ' +
+  'The library exists ONLY on platform balance: it is the platform 素材库 of the active billing pool. ' +
+  'With the user\'s own Miau key there is no portrait library (list returns an empty page with a note, add ' +
+  'fails). asset:// ids are NOT interchangeable between billing pools — an id taken from elsewhere fails at ' +
   'generation with "asset … is not found". Always use ids returned by these tools in the current session.'
 
 interface ListResult {
@@ -107,7 +100,7 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
     async (params) => {
       try {
         const res = (await router.call('list_portrait_library', params)) as ListResult
-        const libLabel = LIBRARY_LABEL[res.library ?? 'own-key']
+        const libLabel = LIBRARY_LABEL[res.library ?? 'platform']
         const extra = {
           ...(res.library ? { library: res.library } : {}),
           ...(res.note ? { note: res.note } : {}),
@@ -116,7 +109,9 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         if (res.items.length === 0) {
           return textResult(
             [
-              `📭 ${libLabel}为空(或当前筛选无结果)。`,
+              res.library === 'none'
+                ? `ℹ️ ${libLabel}。${res.note ?? ''}`
+                : `📭 ${libLabel}为空(或当前筛选无结果)。`,
               JSON.stringify({ ok: true, count: 0, total: res.total, groups: res.groups, ...extra }),
             ].join('\n'),
           )
@@ -186,7 +181,7 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
           kind: string
           library?: AssetLibrary
         }
-        const libLabel = LIBRARY_LABEL[res.library ?? 'own-key']
+        const libLabel = LIBRARY_LABEL[res.library ?? 'platform']
         return textResult(
           [
             `✅ add_to_portrait_library DONE — ${res.duplicated ? '已存在(去重复用)' : '已上传'}到${libLabel} 「${res.name}」[${res.kind}]。`,

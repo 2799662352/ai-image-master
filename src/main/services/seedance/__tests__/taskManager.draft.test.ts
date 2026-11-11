@@ -2,17 +2,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
-import type { SeedanceClient } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type { SeedanceContentItem, SeedanceTaskUpdate } from '../types'
 import type { VideoSubmitContext, VideoTransport } from '../../videoTransport'
-import { setSeedanceRegionMemory } from '../region'
 import { translateVideoTaskError } from '../../videoTaskError'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' } }))
 
 const TEXT: SeedanceContentItem[] = [{ type: 'text', text: '雨夜奔跑' }]
 
-function makeClient(): SeedanceClient {
+function makeClient(): FakeSeedanceClient {
   return {
     createTask: vi.fn(async () => ({ id: 'direct-1' })),
     queryTask: vi.fn(async () => ({ id: 'direct-1', status: 'running' as const })),
@@ -35,7 +34,6 @@ describe('taskManager × 样片 / 成片', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     broadcasts = []
-    setSeedanceRegionMemory('global')
   })
   afterEach(() => {
     vi.useRealTimers()
@@ -43,8 +41,7 @@ describe('taskManager × 样片 / 成片', () => {
 
   function manager(gateway: VideoTransport, client = makeClient()) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo: vi.fn(async () => ({ localPath: 'D:/v.mp4' })),
       broadcast: (u) => broadcasts.push(u),
       seedanceGatewayTransport: gateway,

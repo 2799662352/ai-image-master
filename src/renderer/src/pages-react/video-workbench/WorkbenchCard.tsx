@@ -10,12 +10,8 @@
 //   succeeded(内联 <video> 播放) / failed(错误+重试)。
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
-import type {
-  SeedanceAssetItem,
-  SeedanceAssetListResult,
-  SeedanceModelAlias,
-  VideoResolution,
-} from '../../../../types/seedance'
+import type { SeedanceModelAlias, VideoResolution } from '../../../../types/seedance'
+import type { PortraitAssetItem } from '../../features/portrait-library/portraitLibraryShared'
 import { capabilitiesFor, resolutionsFor, supportsSeedanceDraft } from '../../../../types/seedance'
 import { askUhdConfirmIfHeld } from '../../features/video-workbench/uhdConfirm'
 import { useQuotaStore } from '../../stores/useQuotaStore'
@@ -250,7 +246,7 @@ function classifyFiles(files: File[]): { images: File[]; videos: File[]; audios:
 }
 
 /** 人像库素材项 → 工作台素材(展示名 + asset:// 源 + 预览地址)。 */
-function assetToMaterial(asset: SeedanceAssetItem): VideoWorkbenchMaterial {
+function assetToMaterial(asset: PortraitAssetItem): VideoWorkbenchMaterial {
   return {
     name: asset.name || asset.assetId,
     src: asset.assetUrl || `asset://${asset.assetId}`,
@@ -258,7 +254,7 @@ function assetToMaterial(asset: SeedanceAssetItem): VideoWorkbenchMaterial {
   }
 }
 
-function assetKind(asset: SeedanceAssetItem): MediaTokenKind {
+function assetKind(asset: PortraitAssetItem): MediaTokenKind {
   const k = String(asset.kind)
   return k === 'video' ? 'video' : k === 'audio' ? 'audio' : 'image'
 }
@@ -420,8 +416,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
 
   const busy = card.status === 'preparing' || card.status === 'queued' || card.status === 'running'
 
-  // 可选档位由主进程按站点算(国内 2.5 挂着灰度),渲染端不自己枚举能力表。
-  // 拿不到就退回 2.0 家族——少一个选项好过摆一个提交必被拒的选项。
+  // 可选档位 = 能力表里开放了工作台模式的模型(见 useSeedanceModels),不在渲染端自己枚举能力表。
   const availableModels = useSeedanceModels()
   const modelCaps = capabilitiesFor(card.model)
   // 可选分辨率按计费来源算:2.5 自填 Key 只有 480p/720p,平台余额还有 1080p / 4k。
@@ -638,39 +633,6 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
     return refs
   }, [card.referenceImages, card.referenceVideos, card.referenceAudios, thumbSrcs])
 
-  /** @ 建议选中人像库素材:入卡片素材并返回 token 序号(超限返回 null)。 */
-  const handlePickAsset = useCallback(
-    (asset: SeedanceAssetItem): { kind: MediaTokenKind; index1: number } | null => {
-      const kind = assetKind(asset)
-      const field = KIND_TO_FIELD[kind]
-      const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
-      if (!current) return null
-      const list = current[field]
-      if (list.length >= modeLimit(current.mode, kind, current.model)) return null
-      // 已在素材里(同 asset:// 源)则直接复用其序号,不重复添加
-      const material = assetToMaterial(asset)
-      const existing = list.findIndex((m) => m.src === material.src)
-      if (existing >= 0) return { kind, index1: existing + 1 }
-      addMaterials(card.id, field, [material])
-      return { kind, index1: list.length + 1 }
-    },
-    [card.id, addMaterials],
-  )
-
-  /** @ 建议的人像库远程搜索。 */
-  const searchAssets = useCallback(async (q: string): Promise<SeedanceAssetItem[]> => {
-    const api = (window as unknown as {
-      electronAPI?: { seedance?: { listAssets?: (query: object) => Promise<SeedanceAssetListResult> } }
-    }).electronAPI?.seedance
-    if (!api?.listAssets) return []
-    try {
-      const result = await api.listAssets({ page: 1, pageSize: 8, kind: 'all', ...(q ? { q } : {}) })
-      return result.items ?? []
-    } catch {
-      return []
-    }
-  }, [])
-
   /** 删除素材:同步删掉提示词里的 token 并把同类后续序号 -1(soraui removeMedia)。 */
   const handleRemoveMaterial = useCallback(
     (kind: MediaTokenKind, index: number) => {
@@ -752,7 +714,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const [urlInputOpen, setUrlInputOpen] = useState(false)
   const [urlDraft, setUrlDraft] = useState('')
   const handlePortraitConfirm = useCallback(
-    (assets: SeedanceAssetItem[]) => {
+    (assets: PortraitAssetItem[]) => {
       const grouped: Record<MediaTokenKind, VideoWorkbenchMaterial[]> = { image: [], video: [], audio: [] }
       for (const asset of assets) grouped[assetKind(asset)].push(assetToMaterial(asset))
       const current = useVideoWorkbenchStore.getState().cards.find((c) => c.id === card.id)
@@ -1130,8 +1092,6 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
           placeholder="描述你想要的视频:镜头语言 / 台词 / 风格;输入 @ 引用素材(图片1 / 视频1 / 音频1)…"
           mediaRefs={mediaRefs}
           onChange={(v) => updateCard(card.id, { prompt: v })}
-          onPickAsset={handlePickAsset}
-          searchAssets={searchAssets}
           getPageMaterials={getPageMaterials}
           onPickMaterial={handlePickMaterial}
         />

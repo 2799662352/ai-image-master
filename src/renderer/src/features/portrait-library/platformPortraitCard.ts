@@ -21,9 +21,9 @@ export type PortraitCardStatus = 'Active' | 'Failed' | 'Processing'
 /**
  * 网格里的一张卡。
  *
- * 与 vvdance 的 `SeedanceAssetItem` **刻意保持形状独立**:两边的字段名、缺省语义、
- * 甚至「有没有异步处理态」都不同,硬凑一个共用类型只能取交集,而交集里恰好没有
- * `status` / `hidden` —— 那正是本次要做的两条硬约束所依赖的字段。
+ * 与递给视频工作台的 `PortraitAssetItem`(`portraitLibraryShared.ts`)**刻意保持形状独立**:
+ * 后者是最小形状,里面恰好没有 `status` / `hidden` —— 而这两个字段正是两条硬约束
+ * (灰掉非 Active、过滤已移出素材库)所依赖的,所以转换只发生在「确认」那一个出口。
  */
 export interface PortraitCard {
   /** React key 与多选字典的键。平台侧 `Id` 必非空(主进程 `hasId` 已过滤)。 */

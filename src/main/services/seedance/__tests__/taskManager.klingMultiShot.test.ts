@@ -2,10 +2,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
-import type { SeedanceClient } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type { SeedanceContentItem, SeedanceTaskUpdate } from '../types'
 import type { VideoSubmitContext, VideoTransport } from '../../videoTransport'
-import { setSeedanceRegionMemory } from '../region'
 import { joinKlingShotPrompts } from '../../../../types/klingMultiShot'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' } }))
@@ -16,7 +15,7 @@ const SHOTS = [
   { prompt: '特写:雨滴落在水洼里', duration: 3 },
 ]
 
-function makeClient(): SeedanceClient {
+function makeClient(): FakeSeedanceClient {
   return {
     createTask: vi.fn(async () => ({ id: 'direct-1' })),
     queryTask: vi.fn(async () => ({ id: 'direct-1', status: 'running' as const })),
@@ -39,7 +38,6 @@ describe('taskManager × 可灵分镜', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     broadcasts = []
-    setSeedanceRegionMemory('global')
   })
   afterEach(() => {
     vi.useRealTimers()
@@ -47,8 +45,7 @@ describe('taskManager × 可灵分镜', () => {
 
   function manager(kling: VideoTransport, client = makeClient()) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo: vi.fn(async () => ({ localPath: 'D:/v.mp4' })),
       broadcast: (u) => broadcasts.push(u),
       klingTransport: kling,

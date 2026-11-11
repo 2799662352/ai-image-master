@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SeedanceTaskManager } from '../taskManager'
-import type { SeedanceClient, SeedanceQueryResult } from '../client'
+import type { SeedanceQueryResult } from '../client'
+import { fakeOwnKeyDeps, type FakeSeedanceClient } from './helpers/fakeSeedanceTransport'
 import type { CreateVideoTaskInput, SeedanceTaskUpdate } from '../types'
-import { setSeedanceRegionMemory } from '../region'
 
 const INPUT: CreateVideoTaskInput = { prompt: '一只猫在雨里跳舞' }
 
-function makeClient(statuses: SeedanceQueryResult[]): SeedanceClient {
+function makeClient(statuses: SeedanceQueryResult[]): FakeSeedanceClient {
   let i = 0
   return {
     createTask: vi.fn(async () => ({ id: 'task-1' })),
@@ -24,18 +24,15 @@ describe('SeedanceTaskManager', () => {
     vi.useFakeTimers()
     broadcasts = []
     persistVideo = vi.fn(async () => ({ localPath: 'D:/save/video.mp4', remoteUrl: 'https://cos/v.mp4' }))
-    setSeedanceRegionMemory('global')
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    setSeedanceRegionMemory('global')
   })
 
-  function makeManager(client: SeedanceClient) {
+  function makeManager(client: FakeSeedanceClient) {
     return new SeedanceTaskManager({
-      client,
-      getApiKey: () => 'sk-test',
+      ...fakeOwnKeyDeps(client),
       persistVideo,
       broadcast: (u) => broadcasts.push(u),
     })
@@ -51,15 +48,14 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
-  it('submit 按 region 选择上游模型 ID（默认 global=dreamina）', async () => {
+  it('submit 按别名解析网关上游模型 ID(doubao-*)', async () => {
     const client = makeClient([{ id: 'task-1', status: 'running' }])
     const mgr = makeManager(client)
     await mgr.submit({ input: { ...INPUT, model: '2.0' }, content: [] })
     expect(client.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'dreamina-seedance-2-0-260128' }),
+      expect.objectContaining({ model: 'doubao-seedance-2-0-260128' }),
       'sk-test',
     )
-    setSeedanceRegionMemory('cn')
     await mgr.submit({ input: { ...INPUT, model: '2.0-fast' }, content: [] })
     expect(client.createTask).toHaveBeenLastCalledWith(
       expect.objectContaining({ model: 'doubao-seedance-2-0-fast-260128' }),
@@ -73,7 +69,7 @@ describe('SeedanceTaskManager', () => {
     const mgr = makeManager(client)
     await mgr.submit({ input: { ...INPUT, model: '2.0-mini', duration: -1 }, content: [] })
     expect(client.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'dreamina-seedance-2-0-mini-260615', duration: -1 }),
+      expect.objectContaining({ model: 'doubao-seedance-2-0-mini-260615', duration: -1 }),
       'sk-test',
     )
     mgr.dispose()
@@ -84,7 +80,7 @@ describe('SeedanceTaskManager', () => {
     const mgr = makeManager(client)
     await mgr.submit({ input: { ...INPUT, model: '2.5', duration: 30 }, content: [] })
     expect(client.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'dreamina-seedance-2-5-260628', duration: 30 }),
+      expect.objectContaining({ model: 'doubao-seedance-2-5-260628', duration: 30 }),
       'sk-test',
     )
     mgr.dispose()
@@ -102,15 +98,6 @@ describe('SeedanceTaskManager', () => {
       expect.objectContaining({ taskMode: 'extend', ratio: 'adaptive' }),
       'sk-test',
     )
-    mgr.dispose()
-  })
-
-  it('不传 taskMode 时请求体里完全没有这个字段（兼容旧上游）', async () => {
-    const client = makeClient([{ id: 'task-1', status: 'running' }])
-    const mgr = makeManager(client)
-    await mgr.submit({ input: { ...INPUT, model: '2.0' }, content: [] })
-    const body = (client.createTask as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]
-    expect(Object.hasOwn(body as object, 'taskMode')).toBe(false)
     mgr.dispose()
   })
 
@@ -255,16 +242,17 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
-  it('无 API Key 时 submit 报 SEEDANCE_KEY_MISSING', async () => {
+  it('没填 Miau Key 时 submit 报「未配置 Miau 密钥」,且不打上游', async () => {
+    const client = makeClient([])
     const mgr = new SeedanceTaskManager({
-      client: makeClient([]),
-      getApiKey: () => '',
+      ...fakeOwnKeyDeps(client, ''),
       persistVideo,
       broadcast: () => {},
     })
     await expect(
       mgr.submit({ input: INPUT, content: [] }),
-    ).rejects.toThrow('SEEDANCE_KEY_MISSING')
+    ).rejects.toThrow('未配置 Miau 密钥')
+    expect(client.createTask).not.toHaveBeenCalled()
   })
 
   it('queued→running→succeeded 全流程：落盘成功后 persistence done + localPath', async () => {

@@ -12,19 +12,16 @@ import type {
 } from '../../../types/seedance'
 import type { VideoWorkbenchMode } from '../../../types/videoModes'
 import type { KlingMultiShot } from '../../../types/klingMultiShot'
-import { SEEDANCE_MODEL_IDS_BY_REGION } from './region'
 
 export type {
   SeedanceTaskStatus,
   SeedancePersistence,
   SeedanceModelAlias,
   SeedanceModelCapabilities,
-  SeedanceRegion,
   SeedanceTaskMode,
   SeedanceReferenceUrls,
   SeedanceTaskState,
   SeedanceTaskUpdate,
-  SeedanceKeyState,
   SeedanceCancelResult,
   VideoBillingSource,
 } from '../../../types/seedance'
@@ -43,23 +40,10 @@ export {
   seedanceDraftExpired,
   supportsSeedanceDraft,
   validateSeedanceRequest,
+  isSeedanceModelAvailable,
 } from '../../../types/seedance'
 
-export {
-  getSeedanceRegion,
-  isSeedanceModelAvailable,
-  listSeedanceModelAliases,
-  resolveSeedanceModelId,
-  SEEDANCE_CN_2_5_ENABLED,
-  SEEDANCE_MODEL_IDS_BY_REGION,
-} from './region'
-
-/**
- * 默认（海外 GLOBAL）上游模型 ID。提交任务请用 `resolveSeedanceModelId(alias)`，
- * 以跟随设置页当前 region（cn → doubao-*）。
- */
-export const SEEDANCE_MODEL_IDS: Record<SeedanceModelAlias, string> =
-  SEEDANCE_MODEL_IDS_BY_REGION.global
+export { SEEDANCE_MODEL_IDS, resolveSeedanceModelId } from './modelIds'
 
 /** 创建任务的 content[] 条目（仅建模我们会发出的形态）。 */
 export type SeedanceContentItem =
@@ -73,25 +57,6 @@ export type SeedanceContentItem =
     }
   | { type: 'video_url'; role?: 'reference_video'; video_url: { url: string }; assetId?: string }
   | { type: 'audio_url'; role?: 'reference_audio'; audio_url: { url: string }; assetId?: string }
-
-/** 发给上游创建接口的请求体。 */
-export interface SeedanceCreateTaskBody {
-  model: string
-  content: SeedanceContentItem[]
-  ratio: string
-  resolution: string
-  duration: number
-  generate_audio: boolean
-  /** 随机种子（soraui relay 同款字段;缺省=上游随机）。 */
-  seed?: number
-  /** 联网搜索增强（Seedance 2.0;soraui relay: webSearch → tools）。 */
-  tools?: Array<{ type: 'web_search' }>
-  /**
-   * 编辑 / 延长已有视频（仅 Seedance 2.5，文档 4.9）。缺省时字段完全不出现
-   * —— 2.0 家族的上游不认这个键。
-   */
-  taskMode?: SeedanceTaskMode
-}
 
 /** generate_video main handler 的入参（videoTools zod 校验后的形状）。 */
 export interface CreateVideoTaskInput {

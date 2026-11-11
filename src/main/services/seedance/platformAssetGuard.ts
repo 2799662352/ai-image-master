@@ -1,7 +1,7 @@
 // 平台余额提交前的 `asset://` 核验。
 //
-// 素材库按「账户 + 计费池」隔离:在 vvdance 自填 Key 的人像库里登记的素材、或登记在
-// 另一个计费池里的素材,拿到当前池去提交,上游不会在创建时拒绝,而是先建任务、跑到
+// 素材库按「账户 + 计费池」隔离:登记在另一个计费池里的素材(或早年 vvdance 自填 Key
+// 人像库里的素材),拿到当前池去提交,上游不会在创建时拒绝,而是先建任务、跑到
 // 取素材那一步才回 `The specified asset asset-… is not found`(2026-09-24 用户实机)。
 // 那时已经排过一次队,用户看到的还是一段英文 JSON。
 //
@@ -11,10 +11,26 @@
 //   - 其余(网络断、5xx、还在处理中)→ 放行交给上游,核验是防线不是闸门。
 
 import type { PlatformAsset, PlatformAssetScope } from '../portraitLibrary/platformAssets'
-import { extractAssetReferenceIds } from './assets'
 import type { SeedanceContentItem } from './types'
 
 export type GetPlatformAsset = (assetId: string, scope: PlatformAssetScope) => Promise<PlatformAsset>
+
+/** 从 content[] 里收集 asset:// 引用的 id（去重）。 */
+export function extractAssetReferenceIds(content: SeedanceContentItem[]): string[] {
+  const ids = new Set<string>()
+  for (const item of content) {
+    const url =
+      item.type === 'image_url'
+        ? item.image_url.url
+        : item.type === 'video_url'
+          ? item.video_url.url
+          : item.type === 'audio_url'
+            ? item.audio_url.url
+            : null
+    if (url?.startsWith('asset://')) ids.add(url.slice('asset://'.length))
+  }
+  return [...ids]
+}
 
 function isGone(e: unknown): boolean {
   const status = (e as { status?: unknown })?.status
@@ -26,7 +42,7 @@ export function missingPlatformAssetsMessage(missing: string[], failed: string[]
   if (missing.length > 0) {
     parts.push(
       `当前计费池的素材库里找不到:${missing.map((id) => `asset://${id}`).join('、')}。` +
-        '素材库按账户和计费池隔离 —— 这些素材多半登记在自填 Key 的人像库或另一个计费池里,也可能已被彻底删除。',
+        '素材库按账户和计费池隔离 —— 这些素材多半登记在另一个计费池里,也可能已被彻底删除。',
     )
   }
   if (failed.length > 0) {

@@ -51,6 +51,13 @@ export interface SeedanceGatewayGenerateBody {
     generate_audio: boolean
     /** Seedance 2.5 样片:网关原样透传给方舟。只在样片请求里出现。 */
     draft?: true
+    /**
+     * 随机种子。网关的方舟适配器把 `metadata` 整份解进上游请求体(`requestPayload.Seed`),
+     * 所以放这里而不是顶层。没填就不出现。
+     */
+    seed?: number
+    /** 联网搜索:`[{ type: 'web_search' }]`,同样由适配器的 `requestPayload.Tools` 接走。 */
+    tools?: { type: 'web_search' }[]
   }
 }
 
@@ -85,6 +92,10 @@ export interface SeedanceGatewayRequestInput {
   promptFallback?: string
   /** Seedance 2.5 样片:带 `draft: true`,分辨率强制 480p(方舟只收这一档)。 */
   draft?: boolean
+  /** 随机种子。有限数才带(取整);0 是合法种子,所以判据是「是不是有限数」而不是「真不真」。 */
+  seed?: number
+  /** 联网搜索增强。只有 `true` 才带 `tools`,`false` / 缺省一个字都不出现。 */
+  webSearch?: boolean
 }
 
 /**
@@ -131,6 +142,10 @@ export function buildSeedanceGatewayCreateBody(
         : (input.resolution ?? SEEDANCE_GATEWAY_DEFAULTS.resolution),
       generate_audio: input.generateAudio ?? SEEDANCE_GATEWAY_DEFAULTS.generateAudio,
       ...(input.draft ? { draft: true as const } : {}),
+      ...(typeof input.seed === 'number' && Number.isFinite(input.seed)
+        ? { seed: Math.round(input.seed) }
+        : {}),
+      ...(input.webSearch === true ? { tools: [{ type: 'web_search' as const }] } : {}),
     },
   }
 }

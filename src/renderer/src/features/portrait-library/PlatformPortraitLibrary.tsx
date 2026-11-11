@@ -1,19 +1,17 @@
-// 人像库页在**平台计费**模式下的主体。自填 Key 模式仍走 vvdance 那条老路
-// (`PortraitLibraryPage` 里的 `SeedancePortraitLibrary`),两边的素材互不可见。
+// 人像库页在**平台计费**模式下的主体 —— 人像库只存在于这一侧。自填 Miau Key 模式没有
+// 人像库,`PortraitLibraryPage` 在那边只显示一张提示卡片。
 //
-// ── 为什么是两个组件而不是一个归一过的 ────────────────────────────────────────
+// ── 为什么用自己的卡片形状(`PortraitCard`),不向别的素材形状归一 ────────────────
 //
-// 两套数据的**交集里恰好没有** `Status` 与 `Hidden` —— 而本次三条硬约束里有两条
-// 就架在这两个字段上。硬凑一个共用类型只有两条出路:要么取交集(把约束依赖的字段
-// 丢掉),要么给 vvdance 侧合成一个 `Status: 'Active'` —— 那是**假的**,
+// 平台素材带 `Status`(Active / Failed / Processing)与 `Hidden`,而本页的硬约束就架在
+// 这两个字段上:「Hidden 只在展示层过滤」「非 Active 不过滤只灰掉」。归一到一个更小的
+// 共用形状会把约束依赖的字段丢掉;反过来给别处合成一个 `Status: 'Active'` 则是**假的**,
 // `platformAssets.test.ts:136` 已经为同一件事立过规矩:不凭空合成状态。
 //
-// 何况两边不同的不只是字段名,是**动作**:vvdance 的分组/改名/隐藏是纯本地叠加层
-// (`usePortraitLibraryOverlay`,离线可用、不释放任何东西),平台侧则是服务端的
-// hide/patch/purge,还牵着配额。归一了数据也归一不了动作,结果是每个按钮里都要
-// 再分一次叉 —— 那比在顶上分一次叉更难读,也更容易把两条语义拌在一起。
+// 这一侧的动作是服务端的 hide/patch/purge,还牵着配额,不是纯本地操作。
 //
-// 分成两个组件,分叉就只有 `PortraitLibraryPage` 顶上那一处。
+// 历史:这里曾与另一个走 vvdance 素材库(纯本地叠加层做分组/改名/隐藏)的组件并列,
+// 分叉在 `PortraitLibraryPage` 顶上;vvdance 直连删除后只剩这一个。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PortraitScopeRef } from '../../../../types/portraitApi'

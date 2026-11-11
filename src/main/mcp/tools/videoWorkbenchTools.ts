@@ -350,7 +350,7 @@ const cardSnapshotSchema = z.looseObject({
   upstreamTaskId: z.string().optional().describe(
     "The provider's own task id one hop behind the gateway (Volcengine Ark `cgt-…` / DashScope uuid). "
     + 'This is the id the provider recognises when the user asks them to look into a task — quote THIS '
-    + 'one, not taskId. Absent for direct (own-key) submissions, where taskId already is the provider id.',
+    + 'one, not taskId. Absent until the first status poll has learned it.',
   ),
   error: z.string().optional(),
   localPath: z.string().optional(),

@@ -18,8 +18,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { SeedanceAssetItem } from '../../../../types/seedance'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
+import type { PortraitAssetItem } from '../../features/portrait-library/portraitLibraryShared'
 import {
   applyTokenAtCursor,
   detectAtTrigger,
@@ -57,7 +57,7 @@ interface SuggestionItem {
    * token);asset = 人像库素材(先入素材再插 token)。
    */
   source: 'existing' | 'material' | 'asset'
-  asset?: SeedanceAssetItem
+  asset?: PortraitAssetItem
   pageMaterial?: PageMaterialRef
 }
 
@@ -71,9 +71,9 @@ interface RichPromptInputProps {
    * 人像库建议被选中:父组件把素材加入卡片并返回其 token 序号
    * (1 起;返回 null 表示入库失败/超限,不插 token)。
    */
-  onPickAsset?: (asset: SeedanceAssetItem) => { kind: MediaTokenKind; index1: number } | null
+  onPickAsset?: (asset: PortraitAssetItem) => { kind: MediaTokenKind; index1: number } | null
   /** 搜索人像库(建议弹层「人像库」分组数据源);未提供则不出该分组。 */
-  searchAssets?: (q: string) => Promise<SeedanceAssetItem[]>
+  searchAssets?: (q: string) => Promise<PortraitAssetItem[]>
   /** 弹层打开时取页面其他卡片素材(「本页素材」分组的跨卡条目)。 */
   getPageMaterials?: () => PageMaterialRef[]
   /** 跨卡素材被选中:入本卡素材并返回 token 序号(超限返回 null)。 */
@@ -248,7 +248,7 @@ export function RichPromptInput({
   const [popupOpen, setPopupOpen] = useState(false)
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 })
   const [selectedIdx, setSelectedIdx] = useState(0)
-  const [assetHits, setAssetHits] = useState<SeedanceAssetItem[]>([])
+  const [assetHits, setAssetHits] = useState<PortraitAssetItem[]>([])
   const [pageHits, setPageHits] = useState<PageMaterialRef[]>([])
   const [prefix, setPrefix] = useState('')
   const cursorRef = useRef(0)

@@ -7,7 +7,6 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createSeedanceTransport,
   createSeedanceGatewayTransport,
   createWan3Transport,
   transportFor,
@@ -34,15 +33,6 @@ function ctx(over: Partial<VideoSubmitContext> = {}): VideoSubmitContext {
   }
 }
 
-function seedanceClient() {
-  return {
-    createTask: vi.fn(async () => ({ id: 'ark-1' })),
-    queryTask: vi.fn(async () => ({ id: 'ark-1', status: 'running' as const })),
-    downloadVideo: vi.fn(async () => 'x.mp4'),
-    deleteTask: vi.fn(async () => {}),
-  }
-}
-
 function wan3Client() {
   return {
     createTask: vi.fn(async () => ({ id: 'task_gw' })),
@@ -58,25 +48,26 @@ function gatewayClient() {
 }
 
 const platformToken = (): ResolvedGatewayToken => ({ billing: 'platform', token: 'shadow-1' })
+const ownKeyToken = (): ResolvedGatewayToken => ({ billing: 'own-key', token: 'miau-key-1' })
 
 function registry() {
   return {
-    seedance: createSeedanceTransport(seedanceClient(), () => 'ark-key'),
+    seedanceOwnKey: createSeedanceGatewayTransport(gatewayClient(), ownKeyToken),
     wan3: createWan3Transport(wan3Client(), () => 'miau-key'),
     seedanceGateway: createSeedanceGatewayTransport(gatewayClient(), platformToken),
   }
 }
 
-describe('分派：三条路不再有歧义', () => {
-  it('自填 Key（缺省）下 Seedance 家族仍走 vvdance 直连 —— 线上行为一个字节不变', () => {
+describe('分派：Seedance 两条钱包 + 万相,互不混淆', () => {
+  it('自填 Key（缺省）下 Seedance 家族走自填 Key 那条网关通道', () => {
     const r = registry()
     for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
-      expect(transportFor(r, alias), alias).toBe(r.seedance)
-      expect(transportFor(r, alias, { billing: 'own-key' }), alias).toBe(r.seedance)
+      expect(transportFor(r, alias), alias).toBe(r.seedanceOwnKey)
+      expect(transportFor(r, alias, { billing: 'own-key' }), alias).toBe(r.seedanceOwnKey)
     }
   })
 
-  it('平台余额下 Seedance 家族改走网关', () => {
+  it('平台余额下 Seedance 家族走平台那条网关通道', () => {
     const r = registry()
     for (const alias of ['2.0', '2.0-fast', '2.0-mini', '2.5'] as const) {
       expect(transportFor(r, alias, { billing: 'platform' }), alias).toBe(r.seedanceGateway)
@@ -94,21 +85,28 @@ describe('分派：三条路不再有歧义', () => {
     expect(transportFor(r, 'wan3', { billing: 'own-key' })).toBe(r.wan3)
   })
 
-  // 这条曾经断言「回落 vvdance 直连」,是接线之前的口径。`11351683` 把它改成抛错:
-  // 回落意味着扣用户自己的 vvdance key,而他以为花的是平台余额 —— 与
-  // `seedanceGateway/credentials.ts` 立的「绝不跨模式回落」是同一条规矩。
-  // 完整的变异说明在 videoTransport.test.ts「要平台余额但通道没注册时抛错」。
-  it('网关 transport 没注册时抛错 —— 平台余额绝不悄悄改走自填 Key', () => {
-    const seedance = createSeedanceTransport(seedanceClient(), () => 'k')
-    expect(() => transportFor({ seedance }, '2.0', { billing: 'platform' })).toThrow(/平台余额/)
-    // 反面:没要平台余额的照常走老路,老调用方不受影响。
-    expect(transportFor({ seedance }, '2.0')).toBe(seedance)
+  // 回落意味着扣的是另一个钱包 —— 与 `seedanceGateway/credentials.ts` 立的「绝不跨模式回落」
+  // 是同一条规矩,两个方向都要守。完整的变异说明在 videoTransport.test.ts。
+  it('平台通道没注册时抛错 —— 平台余额绝不悄悄改走自填 Key', () => {
+    const seedanceOwnKey = createSeedanceGatewayTransport(gatewayClient(), ownKeyToken)
+    expect(() => transportFor({ seedanceOwnKey }, '2.0', { billing: 'platform' })).toThrow(/平台余额/)
+    // 反面:没要平台余额的照常走自填 Key。
+    expect(transportFor({ seedanceOwnKey }, '2.0')).toBe(seedanceOwnKey)
   })
 
-  it('认不出的别名即便在平台余额下也按 Seedance 直连走', () => {
+  it('自填 Key 通道没注册时抛错 —— 自填 Key 绝不悄悄改扣平台余额', () => {
+    const seedanceGateway = createSeedanceGatewayTransport(gatewayClient(), platformToken)
+    expect(() => transportFor({ seedanceGateway }, '2.0')).toThrow(/自填 Key/)
+    expect(() => transportFor({ seedanceGateway }, '2.0', { billing: 'own-key' })).toThrow(/自填 Key/)
+    expect(transportFor({ seedanceGateway }, '2.0', { billing: 'platform' })).toBe(seedanceGateway)
+  })
+
+  it('认不出的别名按提交时的计费模式走 Seedance 通道', () => {
     const r = registry()
-    expect(transportFor(r, 'bogus-model', { billing: 'platform' })).toBe(r.seedance)
-    expect(transportFor(r, undefined, { billing: 'platform' })).toBe(r.seedance)
+    expect(transportFor(r, 'bogus-model', { billing: 'platform' })).toBe(r.seedanceGateway)
+    expect(transportFor(r, 'bogus-model')).toBe(r.seedanceOwnKey)
+    expect(transportFor(r, undefined, { billing: 'platform' })).toBe(r.seedanceGateway)
+    expect(transportFor(r, undefined)).toBe(r.seedanceOwnKey)
   })
 })
 
@@ -140,9 +138,9 @@ describe('createSeedanceGatewayTransport 组包', () => {
     expect(body.prompt).not.toBe('一只橘猫（归一化之前）')
   })
 
-  it('模型 id 钉死 doubao-*,不跟 vvdance 的 region 设置走', async () => {
-    // 平台模式没有 region 概念(网关目录里根本没有 dreamina-*)。跟着 global
-    // region 走会提交 dreamina-seedance-2-0-260128 然后拿一句 model_not_found。
+  it('模型 id 钉死 doubao-*', async () => {
+    // 网关目录里只有 doubao-*(没有 dreamina-*)。提交 dreamina-seedance-2-0-260128
+    // 只会拿到一句 model_not_found。
     const client = gatewayClient()
     await createSeedanceGatewayTransport(client, platformToken).createTask(ctx({ model: '2.0' }))
     expect((client.createTask.mock.calls[0] as [Record<string, any>, string])[0].model).toBe(
@@ -168,18 +166,29 @@ describe('createSeedanceGatewayTransport 组包', () => {
     expect(JSON.stringify(body)).toContain('asset://portrait-7')
   })
 
-  it('vvdance 专属能力不外泄（seed / web_search / taskMode 网关侧没有对等物）', async () => {
-    const client = gatewayClient()
-    await createSeedanceGatewayTransport(client, platformToken).createTask(
-      ctx({
-        input: { prompt: 'p', seed: 42, webSearch: true },
-        taskMode: 'extend',
-      }),
-    )
+  // seed / 联网搜索走 metadata(网关的方舟适配器把 metadata 解进上游请求体)。
+  // 两条钱包(平台 / 自填 Key)共用同一个组包函数,这里各验一遍,防止只接了其中一条。
+  it('seed / webSearch 进 metadata —— 平台与自填 Key 两条通道都带', async () => {
+    for (const [name, token] of [
+      ['platform', platformToken],
+      ['own-key', ownKeyToken],
+    ] as const) {
+      const client = gatewayClient()
+      await createSeedanceGatewayTransport(client, token).createTask(
+        ctx({ input: { prompt: 'p', seed: 42, webSearch: true } }),
+      )
+      // 按键名查而不是按子串查：模型 id 本身就含 "seed"（doubao-**seed**ance-…）。
+      const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+      expect(Object.keys(body).sort(), name).toEqual(['metadata', 'model', 'prompt'])
+      expect(body.metadata.seed, name).toBe(42)
+      expect(body.metadata.tools, name).toEqual([{ type: 'web_search' }])
+    }
+  })
 
-    // 按键名查而不是按子串查：模型 id 本身就含 "seed"（doubao-**seed**ance-…）。
+  it('没填 seed、没开联网 → metadata 里就是原来那五个键', async () => {
+    const client = gatewayClient()
+    await createSeedanceGatewayTransport(client, platformToken).createTask(ctx())
     const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
-    expect(Object.keys(body).sort()).toEqual(['metadata', 'model', 'prompt'])
     expect(Object.keys(body.metadata).sort()).toEqual([
       'content',
       'duration',
@@ -187,6 +196,23 @@ describe('createSeedanceGatewayTransport 组包', () => {
       'ratio',
       'resolution',
     ])
+  })
+
+  it('taskMode 不外泄 —— 它是 vvdance 私有字段,网关没有对等物', async () => {
+    const client = gatewayClient()
+    await createSeedanceGatewayTransport(client, platformToken).createTask(ctx({ taskMode: 'extend' }))
+    const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+    expect(JSON.stringify(body)).not.toContain('taskMode')
+    expect(JSON.stringify(body)).not.toContain('task_mode')
+  })
+
+  it('由样片出成片:seed / 联网不重传(方舟沿用样片,再带会被拒)', async () => {
+    const client = gatewayClient()
+    await createSeedanceGatewayTransport(client, platformToken).createTask(
+      ctx({ input: { prompt: 'p', fromDraftTaskId: 'task_draft', seed: 42, webSearch: true } }),
+    )
+    const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+    expect(Object.keys(body.metadata).sort()).toEqual(['content', 'resolution'])
   })
 
   it('generateAudio 显式 false 透传', async () => {
@@ -232,6 +258,23 @@ describe('createSeedanceGatewayTransport 凭据', () => {
 
     expect((client.createTask.mock.calls[0] as [unknown, string])[1]).toBe('shadow-a')
     expect((client.createTask.mock.calls[1] as [unknown, string])[1]).toBe('shadow-b')
+  })
+})
+
+describe('两条通道各自钉死一个钱包', () => {
+  it('自填 Key 那条提交与轮询用的都是自填 Key,不是影子 token', async () => {
+    const client = gatewayClient()
+    const t = createSeedanceGatewayTransport(client, ownKeyToken)
+    await t.createTask(ctx())
+    await t.queryTask('gw-1')
+    expect((client.createTask.mock.calls[0] as [unknown, string])[1]).toBe('miau-key-1')
+    expect(client.queryTask).toHaveBeenCalledWith('gw-1', 'miau-key-1')
+  })
+
+  it('自填 Key 那条缺凭据时报「填 Miau Key」而不是「选计费池」', () => {
+    const t = createSeedanceGatewayTransport(gatewayClient(), () => ({ billing: 'own-key', token: '  ' }))
+    expect(() => t.requireApiKey()).toThrow(/Miau/)
+    expect(() => t.requireApiKey()).not.toThrow(/计费池/)
   })
 })
 

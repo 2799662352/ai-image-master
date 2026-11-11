@@ -355,14 +355,6 @@ describe('registerVideoTools / schemas', () => {
     expect(text).toContain('OutputVideoSensitive')
   })
 
-  it('generate_video handler maps SEEDANCE_KEY_MISSING to settings guidance', async () => {
-    const { tools, server, router } = capture()
-    router.call.mockRejectedValueOnce(new Error('SEEDANCE_KEY_MISSING'))
-    registerVideoTools(server, router)
-    const res = await tools[0].handler({ prompt: 'x' })
-    expect((res.content[0] as { text: string }).text).toContain('Seedance 视频生成')
-  })
-
   it('check_video_task succeeded with localPath attaches a video resource_link', async () => {
     const task = makeTask({ status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4', videoUrl: 'https://cdn/v.mp4' })
     const { tools, server, router } = capture({ found: true, task })

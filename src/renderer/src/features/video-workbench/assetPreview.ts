@@ -4,10 +4,9 @@
 // `asset://<assetId>` 素材时,渲染端无法直连该协议出缩略图 —— 必须从素材所在
 // 的库里查回 https 预览地址展示。
 //
-// **查哪个库跟着计费走**,与主进程提交时用的库一致:
-//   - 平台余额 → 「素材库」(portraitLibrary.list / resolve,按当前计费池);
-//   - 自填 Key → vvdance 人像库(seedance.listAssets)。
-// 以前只查后者,平台用户的素材库素材永远查不到,预览弹窗只能说「没有可预览地址」。
+// **只有平台余额下有库**:「素材库」(portraitLibrary.list / resolve,按当前计费池)。
+// 自填 Miau Key 模式没有人像库(vvdance 直连与它的素材库已删除),所以那边的 asset://
+// 预览一律按「解析不到」处理 —— 不发请求,也不缓存。
 //
 // 两个消费方:
 //   1. MCP 写入侧(AgentToolExecutor):写卡前 `enrichAssetReferences` 把
@@ -23,7 +22,6 @@
 //     素材库列表里没有的再按 id 单查(有并发与数量上限)。
 
 import type { PortraitAsset, PortraitLibraryApi, PortraitScopeRef } from '../../../../types/portraitApi'
-import type { SeedanceAssetListResult } from '../../../../types/seedance'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { portraitCardsFromPlatform } from '../portrait-library/platformPortraitCard'
@@ -36,8 +34,6 @@ export interface AssetPreviewEntry {
   sourceUrl?: string
 }
 
-const SCAN_PAGE_SIZE = 50
-const SCAN_MAX_PAGES = 10
 /** 查不到的 id 多久后允许重查。 */
 export const MISS_TTL_MS = 60_000
 /** 素材库列表里没有的 id,单查的并发与总数上限(一张卡最多 50 个素材)。 */
@@ -50,16 +46,7 @@ const cache = new Map<string, CacheSlot>()
 /** 每个库一个全量扫描 in-flight(并发调用合流成一轮)。 */
 const scanInflight = new Map<string, Promise<Map<string, AssetPreviewEntry>>>()
 
-interface SeedanceListApi {
-  listAssets?: (query: {
-    page?: number
-    pageSize?: number
-    kind?: string
-  }) => Promise<SeedanceAssetListResult>
-}
-
 interface ElectronApis {
-  seedance?: SeedanceListApi
   portraitLibrary?: Pick<PortraitLibraryApi, 'list' | 'resolve'>
 }
 
@@ -67,20 +54,22 @@ function electronApis(): ElectronApis | undefined {
   return (globalThis as unknown as { electronAPI?: ElectronApis }).electronAPI
 }
 
-type Library = { key: string; kind: 'vvdance' } | { key: string; kind: 'platform'; scope: PortraitScopeRef }
+type Library = { key: string; scope: PortraitScopeRef }
 
-/** 当前计费对应的库。平台余额但还没选池时退回 vvdance(与主进程分派一致)。 */
-function currentLibrary(): Library {
+/**
+ * 当前计费对应的库。只有「平台余额 + 已选计费池」才有库;自填 Miau Key 模式、
+ * 或平台余额但还没选池,都返回 null —— 没有地方可查,调用方按「解析不到」处理。
+ */
+function currentLibrary(): Library | null {
   const { billingSource, selectedPool } = useQuotaStore.getState()
   if (billingSource === 'platform' && selectedPool) {
     const pp = selectedPool.producerProjectId
     return {
       key: `platform:${selectedPool.projectId}:${pp ?? ''}`,
-      kind: 'platform',
       scope: { projectId: selectedPool.projectId, producerProjectId: pp },
     }
   }
-  return { key: 'vvdance', kind: 'vvdance' }
+  return null
 }
 
 function slotKey(lib: Library, assetId: string): string {
@@ -92,34 +81,6 @@ export function extractAssetId(src: string): string | null {
   if (!src.startsWith('asset://')) return null
   const id = src.slice('asset://'.length)
   return id.length > 0 ? id : null
-}
-
-async function scanVvdance(): Promise<Map<string, AssetPreviewEntry>> {
-  const out = new Map<string, AssetPreviewEntry>()
-  const api = electronApis()?.seedance
-  if (!api?.listAssets) return out
-  let page = 1
-  for (;;) {
-    let res: SeedanceAssetListResult
-    try {
-      res = await api.listAssets({ page, pageSize: SCAN_PAGE_SIZE, kind: 'all' })
-    } catch {
-      break
-    }
-    const items = res.items ?? []
-    for (const item of items) {
-      if (!item.assetId) continue
-      out.set(item.assetId, {
-        ...(item.previewUrl ? { previewUrl: item.previewUrl } : {}),
-        ...(item.name ? { name: item.name } : {}),
-        ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
-      })
-    }
-    const totalPages = Math.min(res.totalPages ?? 1, SCAN_MAX_PAGES)
-    if (items.length === 0 || page >= totalPages) break
-    page += 1
-  }
-  return out
 }
 
 /**
@@ -177,7 +138,7 @@ async function resolvePlatformIds(
 function scanLibrary(lib: Library): Promise<Map<string, AssetPreviewEntry>> {
   const running = scanInflight.get(lib.key)
   if (running) return running
-  const task = (lib.kind === 'platform' ? scanPlatform(lib.scope) : scanVvdance())
+  const task = scanPlatform(lib.scope)
     .catch(() => new Map<string, AssetPreviewEntry>())
     .finally(() => scanInflight.delete(lib.key))
   scanInflight.set(lib.key, task)
@@ -196,7 +157,10 @@ function readSlot(lib: Library, assetId: string, now = Date.now()): AssetPreview
  * null = 刚查过没有(先保持占位);entry = 命中。
  */
 export function getCachedAssetPreview(assetId: string): AssetPreviewEntry | null | undefined {
-  return readSlot(currentLibrary(), assetId)
+  const lib = currentLibrary()
+  // 没有库(自填 Key / 还没选池)= 永远解析不到。必须回 null 而不是 undefined:
+  // undefined 会让缩略图 / 预览弹窗一直转圈并反复触发解析。
+  return lib ? readSlot(lib, assetId) : null
 }
 
 /**
@@ -207,14 +171,14 @@ export async function resolveAssetPreviews(
   assetIds: string[],
 ): Promise<Map<string, AssetPreviewEntry>> {
   const lib = currentLibrary()
+  // 没有库:不发请求、不写缓存(以后启用平台余额 / 选了池就能正常解析)。
+  if (!lib) return new Map()
   const unique = [...new Set(assetIds)]
   const unknown = unique.filter((id) => readSlot(lib, id) === undefined)
   if (unknown.length > 0) {
     const found = new Map(await scanLibrary(lib))
-    if (lib.kind === 'platform') {
-      const rest = unknown.filter((id) => !found.has(id))
-      for (const [id, entry] of await resolvePlatformIds(lib.scope, rest)) found.set(id, entry)
-    }
+    const rest = unknown.filter((id) => !found.has(id))
+    for (const [id, entry] of await resolvePlatformIds(lib.scope, rest)) found.set(id, entry)
     for (const [id, entry] of found) cache.set(slotKey(lib, id), { entry })
     const now = Date.now()
     for (const id of unknown) {
