@@ -354,14 +354,14 @@ export class AgentToolExecutor {
       // and write the understanding result back as a canvas note.
       case 'get_selected_canvas_video':
       case 'add_canvas_note':
-        return this.callCanvas(toolName, params)
+        return this.callCanvas(toolName, params, threadId)
       case 'director_open':
       case 'director_scene':
       case 'director_snapshot':
       case 'director_capture':
       case 'director_record':
       case 'director_exec':
-        return this.callDirector(toolName, params)
+        return this.callDirector(toolName, params, threadId)
       case 'understand_video':
       case 'understand_audio':
       case 'understand_document':
@@ -1434,16 +1434,28 @@ export class AgentToolExecutor {
 
   /**
    * 导演台工具:全部交给 directorBridge(挂载即注册的 DirectorStageHandle)。
-   * 统一注入当前活跃聊天线程 —— capture/record/scene(export_pose_clip_glb)
+   * 统一注入**发起这次调用的聊天线程** —— capture/record/scene(export_pose_clip_glb)
    * 都会把导出文件落盘为线程附件(FK on threadId);没有线程时 bridge 返回
    * 结构化错误而不是丢文件。其余 action 忽略该字段,注入无副作用。
+   *
+   * 线程来源与 ask_user / generate_image 一致:优先用主进程按 Codex `_meta` 反查出的
+   * 发起线程(`requestThreadId`),缺失(老 codex / 手动调用)才回退到此刻的活动线程。
+   * 以前这里直接取活动线程:后台对话的 agent 导出的文件会记到用户正在看的另一个对话头上。
    */
-  private async callDirector(toolName: string, params: Record<string, unknown>): Promise<unknown> {
-    const threadId = useAgentChatStore.getState().threadId
+  private async callDirector(
+    toolName: string,
+    params: Record<string, unknown>,
+    requestThreadId?: string,
+  ): Promise<unknown> {
+    const threadId = requestThreadId ?? useAgentChatStore.getState().threadId
     return directorBridge.handle(toolName, { ...params, threadId })
   }
 
-  private async callCanvas(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+  private async callCanvas(
+    toolName: string,
+    params: Record<string, unknown>,
+    requestThreadId?: string,
+  ): Promise<unknown> {
     if (toolName === 'canvas_open') {
       // Open the Canvas surface directly in the Codex page's center display
       // (file-explorer viewer) so the tldraw editor mounts, then wait for it to
@@ -1474,13 +1486,19 @@ export class AgentToolExecutor {
       toolName === 'canvas_focus_region'
     ) {
       // These persist an exported file as a thread-scoped attachment (FK on
-      // threadId), so hand the bridge the active chat thread; without it the
+      // threadId), so hand the bridge the REQUESTING chat thread; without it the
       // image export is dropped (canvas_snapshot) / omitted (get_canvas_image) /
       // the get_canvas_video materialize fallback can't save a copy /
       // save_snapshot returns no imagePath. canvas_focus_region needs it too:
       // the agent's VIRTUAL viewport is keyed per thread so the next
       // canvas_snapshot (same thread) tiers around it.
-      const threadId = useAgentChatStore.getState().threadId
+      //
+      // Requesting thread first (reverse-mapped from Codex `_meta` in main), the
+      // active thread only when that is missing — same rule as ask_user /
+      // generate_image. Using the active thread unconditionally filed a
+      // background chat's exports under whichever chat the user was looking at,
+      // and made two chats share one virtual viewport.
+      const threadId = requestThreadId ?? useAgentChatStore.getState().threadId
       return canvasBridge.handle(toolName, { ...params, threadId })
     }
     return canvasBridge.handle(toolName, params)
