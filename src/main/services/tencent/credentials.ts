@@ -1,9 +1,25 @@
 // src/main/services/tencent/credentials.ts
+//
+// ## safeStorage 异步迁移(Electron 45 弃用、46 删除同步接口)
+//
+// 本模块的读取(`getCredentials()` / `getCredentialState()`)被 COS / MPS 客户端、智能去字幕、
+// 分镜等**同步**调用,所以不把它们改成 async:启动时 `await initCredentials()` 把盘上的凭据
+// 解进内存,此后同步读缓存;只有 `setCredentials()` 是异步的。同一套约束与理由见
+// `src/main/services/auth/credentials.ts` 的头注释(先等 `isAsyncEncryptionAvailable()`、
+// `decryptStringAsync` 返回 `{ result, shouldReEncrypt }`、加解密整体 try/catch 降级、
+// 原子写盘),这里不重复。
+//
+// 与 auth 那份不同的两点:
+//   - 没有「登出」,所以不需要代际守卫;`setCredentials()` 的合并(`getCredentials()` + patch)
+//     放进串行队列里现算,并发调用时与同步版「逐个合并」的结果一致。
+//   - 还有一次性的旧版 electron-store 迁移(`migrateLegacyOnce`),现在发生在预热阶段。
 
 import { app, safeStorage } from 'electron'
 import fs from 'fs'
+import fsp from 'node:fs/promises'
 import path from 'path'
 import Store from 'electron-store'
+import { writeFileAtomic } from '../../utils/writeFileAtomic'
 import type { Credentials, CredentialState } from './types'
 
 type InvalidateCallback = () => void
@@ -43,6 +59,18 @@ let legacyStoreInstance: any = null
 let cached: Resolved | null = null
 let migrationAttempted = false
 let inMemoryFallback: Credentials | null = null
+// undefined = 尚未预热(`initCredentials()` 还没跑完);null = 读过,但盘上没有。
+let stored: Credentials | null | undefined = undefined
+/** 磁盘操作的串行队列。永远不 reject(每个任务自己兜住异常),所以链不会断。 */
+let diskQueue: Promise<unknown> = Promise.resolve()
+let initPromise: Promise<void> | null = null
+let warnedBeforeInit = false
+
+function enqueueDisk<T>(task: () => Promise<T>): Promise<T> {
+  const run = diskQueue.then(task)
+  diskQueue = run.catch(() => undefined)
+  return run
+}
 
 function getLegacyStore() {
   if (!legacyStoreInstance) {
@@ -60,25 +88,52 @@ function safeStorageBinPath(): string {
   return path.join(app.getPath('userData'), SAFE_STORAGE_FILENAME)
 }
 
-function readFromSafeStorage(): Credentials | null {
+/** 判不出来就当不可用:宁可降级到内存,不可在不确定时落盘。 */
+async function encryptionAvailable(): Promise<boolean> {
   try {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    const p = safeStorageBinPath()
-    if (!fs.existsSync(p)) return null
-    const buf = fs.readFileSync(p) as Buffer
-    const json = safeStorage.decryptString(buf)
-    return { ...DEFAULTS, ...JSON.parse(json) }
-  } catch (e) {
-    console.warn('[tencent/credentials] safeStorage read failed:', e)
-    return null
+    return await safeStorage.isAsyncEncryptionAvailable()
+  } catch {
+    return false
   }
 }
 
-function writeToSafeStorage(creds: Credentials): boolean {
+interface DiskRead {
+  creds: Credentials | null
+  shouldReEncrypt: boolean
+}
+
+const NOTHING_ON_DISK: DiskRead = { creds: null, shouldReEncrypt: false }
+
+async function readFromSafeStorage(): Promise<DiskRead> {
   try {
-    if (!safeStorage.isEncryptionAvailable()) return false
-    const buf = safeStorage.encryptString(JSON.stringify(creds))
-    fs.writeFileSync(safeStorageBinPath(), buf)
+    if (!(await encryptionAvailable())) return NOTHING_ON_DISK
+    let buf: Buffer
+    try {
+      buf = await fsp.readFile(safeStorageBinPath())
+    } catch (e) {
+      // 从没存过:正常情况,不是错误,也不值得打日志。
+      if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return NOTHING_ON_DISK
+      throw e
+    }
+    // 异步版返回 `{ result, shouldReEncrypt }`,**不是字符串**:直接 `JSON.parse` 它会被
+    // stringify 成 "[object Object]" 而抛 SyntaxError,再被下面的 catch 吞掉 ——
+    // 表现为「存了但重启后永远读不回来」,一个错都不报。
+    const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(buf)
+    return { creds: { ...DEFAULTS, ...JSON.parse(result) }, shouldReEncrypt }
+  } catch (e) {
+    console.warn('[tencent/credentials] safeStorage read failed:', e)
+    return NOTHING_ON_DISK
+  }
+}
+
+/** 返回「是否真的写进了盘」;false = 调用方应降级到内存。 */
+async function writeToSafeStorage(creds: Credentials): Promise<boolean> {
+  try {
+    if (!(await encryptionAvailable())) return false
+    const buf = await safeStorage.encryptStringAsync(JSON.stringify(creds))
+    // 覆盖写 + 原子落位:写到一半崩溃不会留下截断的凭据文件;最终失败会抛,
+    // 由下面的 catch 如实降级到内存(而不是假装写成功、盘上留着旧密钥)。
+    await writeFileAtomic(safeStorageBinPath(), buf)
     return true
   } catch (e) {
     console.warn('[tencent/credentials] safeStorage write failed:', e)
@@ -118,14 +173,14 @@ function clearLegacyStore(): void {
   }
 }
 
-function migrateLegacyOnce(): Credentials | null {
+async function migrateLegacyOnce(): Promise<Credentials | null> {
   if (migrationAttempted) return null
   const legacy = readFromLegacyStore()
   if (!legacy) {
     migrationAttempted = true // nothing to migrate; don't keep retrying
     return null
   }
-  if (writeToSafeStorage(legacy)) {
+  if (await writeToSafeStorage(legacy)) {
     clearLegacyStore()
     migrationAttempted = true
     console.log('[tencent/credentials] migrated from electron-store -> safeStorage')
@@ -161,27 +216,62 @@ function resolve(): Resolved {
     }
   }
 
-  let stored = readFromSafeStorage()
-  if (!stored) stored = migrateLegacyOnce()
+  // 盘上的值来自预热(`initCredentials()`)时解进内存的 `stored`,这里不再读盘。
+  const s = stored ?? null
 
   const creds: Credentials = {
-    secretId:  (stored?.secretId)  || process.env.COS_SECRET_ID  || BUILTIN.secretId  || '',
-    secretKey: (stored?.secretKey) || process.env.COS_SECRET_KEY || BUILTIN.secretKey || '',
-    bucket:    (stored?.bucket)    || process.env.COS_BUCKET     || process.env.COS_BUCKET_NAME || BUILTIN.bucket || '',
-    region:    (stored?.region)    || process.env.COS_REGION     || BUILTIN.region    || DEFAULTS.region,
+    secretId:  (s?.secretId)  || process.env.COS_SECRET_ID  || BUILTIN.secretId  || '',
+    secretKey: (s?.secretKey) || process.env.COS_SECRET_KEY || BUILTIN.secretKey || '',
+    bucket:    (s?.bucket)    || process.env.COS_BUCKET     || process.env.COS_BUCKET_NAME || BUILTIN.bucket || '',
+    region:    (s?.region)    || process.env.COS_REGION     || BUILTIN.region    || DEFAULTS.region,
   }
 
   let source: CredentialState['credentialSource'] = 'none'
-  if (stored?.secretId) source = 'store'
+  if (s?.secretId) source = 'store'
   else if (process.env.COS_SECRET_ID) source = 'env'
   else if (BUILTIN.secretId) source = 'builtin'
 
   return { creds, source }
 }
 
+/**
+ * 预热之前调用 = 启动顺序错了(没 `await initCredentials()`)。同步解不了密,只能按
+ * 「盘上没有」(env / 内置 / 内存降级)解析,**且不缓存**这个结果 —— 否则预热完成后
+ * 还会一直读到不含盘上凭据的旧视图。打一次警告并顺手补一次预热。
+ */
 function getResolved(): Resolved {
+  if (stored === undefined) {
+    if (!warnedBeforeInit) {
+      warnedBeforeInit = true
+      console.warn('[tencent/credentials] credentials read before initCredentials() finished; using env/builtin only')
+    }
+    void initCredentials()
+    return resolve()
+  }
   if (!cached) cached = resolve()
   return cached
+}
+
+async function hydrate(): Promise<void> {
+  const fromDisk = await readFromSafeStorage()
+  let value = fromDisk.creds
+  if (!value) value = await migrateLegacyOnce()
+  stored = value
+  cached = null
+  if (value && fromDisk.shouldReEncrypt) {
+    // 尽力而为,不阻塞启动:`writeToSafeStorage` 自己兜住所有异常,失败时旧密文照样能解。
+    // 官方做法是把**已解出的明文**重新加密(而不是再解密一次)。
+    void enqueueDisk(() => writeToSafeStorage(value))
+  }
+}
+
+/**
+ * 启动时调用一次(`app.whenReady()` 之后、创建窗口之前),把盘上的凭据解进内存,
+ * 并完成一次性的旧版 electron-store 迁移。幂等,且永不 reject —— 读不出来就是「盘上没有」。
+ */
+export function initCredentials(): Promise<void> {
+  if (!initPromise) initPromise = hydrate()
+  return initPromise
 }
 
 export function getCredentials(): Credentials {
@@ -205,18 +295,24 @@ export function getCredentialState(): CredentialState {
   }
 }
 
-export function setCredentials(patch: Partial<Credentials>): void {
-  const current = getCredentials()
-  const next: Credentials = { ...current, ...patch }
+export async function setCredentials(patch: Partial<Credentials>): Promise<void> {
+  // 先等预热:否则 `getCredentials()` 看不到盘上已有的值,合并出来的 `next` 会把它们
+  // 用 env / 内置值覆盖掉再写回盘。
+  await initCredentials()
+  await enqueueDisk(async () => {
+    // 合并必须在队列里现算:并发调用时,后一个要基于前一个**已生效**的结果合并,
+    // 与同步版「一个接一个」的语义一致;在队列外算会让两个 patch 互相覆盖。
+    const next: Credentials = { ...getCredentials(), ...patch }
 
-  const written = writeToSafeStorage(next)
-  if (!written) {
-    inMemoryFallback = next
-    console.warn('[tencent/credentials] safeStorage unavailable; using in-memory fallback')
-  } else {
-    inMemoryFallback = null
-  }
-
-  cached = null
+    const written = await writeToSafeStorage(next)
+    if (!written) {
+      inMemoryFallback = next
+      console.warn('[tencent/credentials] safeStorage unavailable; using in-memory fallback')
+    } else {
+      inMemoryFallback = null
+      stored = next
+    }
+    cached = null
+  })
   invalidateCallbacks.forEach((cb) => cb())
 }

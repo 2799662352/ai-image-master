@@ -388,13 +388,14 @@ export function setEraseDefaultsFromUI(config: EraseConfig) {
   return { success: true }
 }
 
-export function setEraseCredentialsFromUI(creds: {
+export async function setEraseCredentialsFromUI(creds: {
   secretId: string
   secretKey: string
   bucket: string
   region: string
 }) {
-  setCredentials(creds)
+  // 必须 await:落盘是异步的,不等的话 UI 会在凭据写进盘之前就收到 success。
+  await setCredentials(creds)
   return { success: true }
 }
 

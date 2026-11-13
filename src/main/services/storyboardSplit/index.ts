@@ -158,8 +158,9 @@ export function getConfig() {
   }
 }
 
-export function setCredentialsFromUI(creds: { secretId: string; secretKey: string; bucket: string; region: string }) {
-  setCredentials(creds)
+export async function setCredentialsFromUI(creds: { secretId: string; secretKey: string; bucket: string; region: string }) {
+  // 必须 await:落盘是异步的,不等的话 UI 会在凭据写进盘之前就收到 success。
+  await setCredentials(creds)
   return { success: true }
 }
 

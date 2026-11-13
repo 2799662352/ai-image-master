@@ -71,6 +71,8 @@ import type { McpRuntime } from './mcp/server'
 import { wireRendererLifecycle } from './mcp/rendererLifecycle'
 import { imageTaskManager } from './mcp/tools/imageTaskRegistry'
 import { registerAuthIpc } from './services/auth/ipc'
+import { initCredential as initAuthCredential } from './services/auth/credentials'
+import { initCredentials as initTencentCredentials } from './services/tencent/credentials'
 import { allowAuthBaseUrlOverride } from './services/auth/authBaseUrl'
 import { registerPortraitLibraryIpc } from './services/portraitLibrary/ipc'
 import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
@@ -1345,6 +1347,15 @@ app.whenReady().then(async () => {
   await ensureDirectories()
 
   console.log(`[Performance] Paths initialized: ${Date.now() - startTime}ms`)
+
+  // 把盘上加密的凭据(平台登录态 / 腾讯 COS 密钥)解进内存。
+  //
+  // 为什么在这里、且必须 await:Electron 46 删除了同步的 safeStorage 接口,只剩异步解密;
+  // 而 `getCredential()` / `getCredentials()` 是被**同步**调用的(请求头、COS 客户端……),
+  // 所以改成「启动时异步预热一次,此后同步读缓存」。预热之前读到的只会是「没有凭证」,
+  // 渲染进程一加载就会去问登录态 —— 所以必须赶在 `createWindow()` 之前完成。
+  // 两个都不会 reject(读不出来就是「没有凭证」),不需要 try/catch。
+  await Promise.all([initAuthCredential(), initTencentCredentials()])
 
   // Register agent IPC handlers BEFORE the window starts loading so the
   // renderer's mount-time calls (e.g. `agent:list-threads`) always hit a

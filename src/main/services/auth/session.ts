@@ -110,7 +110,10 @@ export async function claimPairing(
   // 逐字段校验类型,写进一条 `displayName: undefined` 的凭证,**下次启动**读出来会被判成
   // 「无凭证」—— 用户看到的是「登录成功了,但重启后又忘了我」,而写入侧一切正常。
   // 用 `||` 而不是 `??`:`''` 也要兜底。
-  setCredential({
+  //
+  // 必须 `await`:落盘是异步的。不等的话,调用方会在凭据写进盘之前就广播「已登录」,
+  // 此时关掉应用,凭据就丢了 —— 又是「登录成功了,但重启后又忘了我」。
+  await setCredential({
     token: requireString(data.token, 'token', status),
     userId: requireString(user.id, 'user.id', status),
     username,
@@ -726,6 +729,9 @@ export async function probeLiveness(): Promise<void> {
  * 它截断,token 原样留在盘上。
  */
 export async function logout(): Promise<void> {
-  clearCredential()
-  await clearGatewayTokens()
+  // 两个清理**同时启动**再一起等:`clearCredential()` 的内存清空是同步的(调用一返回
+  // `getCredential()` 就已是 null),`clearGatewayTokens()` 紧接着开始 —— 与它还是同步版时
+  // 的先后一致;不能写成先 await 前者的删盘再清后者,那会让永不过期的网关 token 多活一段。
+  // 用 `Promise.all` 还有一个好处:任何一边抛错都不会让另一边根本没执行。
+  await Promise.all([clearCredential(), clearGatewayTokens()])
 }
