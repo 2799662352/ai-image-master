@@ -141,6 +141,15 @@ export interface AgentSendMessagePayload {
   collaborationModeKind?: 'plan' | 'default'
   /** Plan-only effort preference; Auto resolves against Codex's Plan preset. */
   planReasoningEffort?: PlanReasoningEffort
+  /**
+   * Renderer-generated id of the optimistic user bubble for this send. A
+   * brand-new chat has no thread id until main creates it, so the renderer has
+   * nothing else to recognise "its own" `thread_created` by — main stamps this
+   * id onto that event (`thread_created.clientMessageId`) and the renderer
+   * adopts the new thread only when the id matches a bubble in its active view.
+   * Optional: absent for legacy callers, which keep the old adoption rule.
+   */
+  clientMessageId?: string
 }
 
 /**
@@ -841,7 +850,16 @@ export interface AgentNotice {
 }
 
 export type AgentStreamEvent =
-  | (AgentStreamEventBase & { type: 'thread_created' })
+  | (AgentStreamEventBase & {
+      type: 'thread_created'
+      /**
+       * Echo of `AgentSendMessagePayload.clientMessageId` of the send that
+       * created this thread, so the renderer can bind the thread to the right
+       * unsaved chat even when several are in flight. Absent when the send
+       * carried none (and for any thread_created not produced by a send).
+       */
+      clientMessageId?: string
+    })
   | (AgentStreamEventBase & { type: 'item_started'; itemId: string; itemType: TimelineItem['type']; payload: Record<string, unknown> })
   | (AgentStreamEventBase & { type: 'item_delta'; itemId: string; itemType: TimelineItem['type']; patch: ItemDeltaPatch })
   | (AgentStreamEventBase & { type: 'item_completed'; itemId: string; itemType: TimelineItem['type']; final: Record<string, unknown> })

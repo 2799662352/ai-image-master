@@ -3188,6 +3188,7 @@ export class AgentManager {
       input,
       collaborationModeOwner,
       markAdmitted,
+      payload.clientMessageId,
     ).catch((error: unknown) => {
       // Never leave the shared lifecycle tail wedged if thread hydration or
       // another pre-send step fails before backend.send can be admitted.
@@ -4873,6 +4874,8 @@ export class AgentManager {
     input: AgentInput,
     collaborationModeOwner?: CollaborationCapabilityOwner,
     onTurnAdmitted?: () => void,
+    /** Renderer's id for the optimistic bubble of the send that started this loop. */
+    clientMessageId?: string,
   ): Promise<void> {
     let canRetryPoisonedThread = true
     let currentInput = input
@@ -4990,7 +4993,18 @@ export class AgentManager {
           // Renderer's chat store filters events by its DB threadId. Always rewrite
           // so codex-side UUIDs never leak into the UI layer. Out-of-band variants
           // (mcp_*, skills_changed, notice) carry no threadId — forward untouched.
-          this.emitEvent('threadId' in event ? { ...event, threadId: dbThreadId } : event)
+          if (event.type === 'thread_created') {
+            // 一个还没有 id 的新对话,渲染端除了「谁的 thread_created」没有别的办法
+            // 认领它;不盖这个章,多个新对话同时在途时会认领错(上一个任务出现在
+            // 下一个任务里)。事件来自本次 send 自己的 thread/start 响应,归属是确定的。
+            this.emitEvent({
+              ...event,
+              threadId: dbThreadId,
+              ...(clientMessageId ? { clientMessageId } : {}),
+            })
+          } else {
+            this.emitEvent('threadId' in event ? { ...event, threadId: dbThreadId } : event)
+          }
 
           assistantItems = applyAssistantEvent(assistantItems, event)
 

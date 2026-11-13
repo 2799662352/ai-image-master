@@ -30,6 +30,20 @@ function deferSend(): { resolve: (r: SendResult) => void; reject: (e: Error) => 
   return { resolve: (r) => resolve(r), reject: (e) => reject(e) }
 }
 
+/** 给「下一次 sendMessage 调用」单独配一个手动放行的闸;连配两个就是两次发送各自独立。 */
+function gateNextSend(): { resolve: (r: SendResult) => void; reject: (e: Error) => void } {
+  let resolve!: (r: SendResult) => void
+  let reject!: (e: Error) => void
+  sendMessage.mockImplementationOnce(
+    () =>
+      new Promise<SendResult>((res, rej) => {
+        resolve = res
+        reject = rej
+      }),
+  )
+  return { resolve: (r) => resolve(r), reject: (e) => reject(e) }
+}
+
 function textMsg(id: string, content: string): Message {
   return {
     id,
@@ -266,5 +280,82 @@ describe('send():IPC 在途时用户切走,返回后不能把活动线程抢回�
     // 已有对话的失败气泡保留快照,用户回到 A 后能点「重试」。
     expect(Object.keys(state().failedSendSnapshots)).toEqual([aMsgs[0].id])
     expect(state().runningByThread.A).toBeUndefined()
+  })
+})
+
+// 单靠「当前没有 threadId 且在跑」认领 thread_created 是启发式:第一个新对话还没拿到 id 时
+// 用户点了「新对话」又发了第二个,第一个的 thread_created 会被第二个认领。
+// 主进程现在把发起该 send 的 clientMessageId 盖在 thread_created 上,渲染端按 id 认领。
+describe('新对话按 clientMessageId 认领自己的 thread_created', () => {
+  const sentIds = (): string[] =>
+    sendMessage.mock.calls.map((c) => (c[0] as { clientMessageId?: string }).clientMessageId ?? '')
+
+  it('send() 把乐观气泡的 id 作为 clientMessageId 发给主进程', async () => {
+    const gate = gateNextSend()
+
+    const sending = state().send()
+    await Promise.resolve()
+    const bubble = state().messages[state().messages.length - 1]
+    expect(bubble.role).toBe('user')
+    expect(sentIds()).toEqual([bubble.id])
+
+    gate.resolve({ threadId: 'X' })
+    await sending
+  })
+
+  it('两个新对话先后在途:第一个的 thread_created 不会被第二个认领,各归各的', async () => {
+    const gate1 = gateNextSend()
+    const gate2 = gateNextSend()
+
+    const sending1 = state().send()
+    await Promise.resolve()
+    state().newThread() // 第一个还没拿到 id,用户开了第二个新对话
+    useAgentChatStore.setState({ input: 'second chat' })
+    const sending2 = state().send()
+    await Promise.resolve()
+    const [id1, id2] = sentIds()
+    expect(id1).not.toBe(id2)
+
+    // 第一个新对话的 thread_created 先到:当前视图是第二个,不能认领。
+    state().applyEvent({ type: 'thread_created', threadId: 'X1', clientMessageId: id1 } as never)
+    expect(state().threadId).toBeUndefined()
+    expect(state().messages.map((m) => m.id)).toEqual([id2])
+
+    // 第二个自己的 thread_created 才认领。
+    state().applyEvent({ type: 'thread_created', threadId: 'X2', clientMessageId: id2 } as never)
+    expect(state().threadId).toBe('X2')
+
+    gate1.resolve({ threadId: 'X1' })
+    gate2.resolve({ threadId: 'X2' })
+    await Promise.all([sending1, sending2])
+
+    // 第二个仍是活动对话,列表里只有它自己的气泡;第一个的气泡补进了 X1 自己的分片。
+    expect(state().threadId).toBe('X2')
+    expect(state().messages.map((m) => m.id)).toEqual([id2])
+    expect(state().threadSlices.X1?.messages.map((m) => m.id)).toEqual([id1])
+    expect(state().runningByThread.X1).toBe(true)
+    expect(state().runningByThread.X2).toBe(true)
+  })
+
+  it('带 id 且气泡就在当前视图里 → 认领;没带 id(旧调用方)→ 沿用「在跑就认领」', async () => {
+    const gate = gateNextSend()
+    const sending = state().send()
+    await Promise.resolve()
+    const [id] = sentIds()
+    state().applyEvent({ type: 'thread_created', threadId: 'X', clientMessageId: id } as never)
+    expect(state().threadId).toBe('X')
+    gate.resolve({ threadId: 'X' })
+    await sending
+
+    // 旧规则:没有 clientMessageId,视图在跑、没有 threadId。
+    useAgentChatStore.setState({ threadId: undefined, messages: [], isRunning: true })
+    state().applyEvent({ type: 'thread_created', threadId: 'LEGACY' } as never)
+    expect(state().threadId).toBe('LEGACY')
+  })
+
+  it('带 id 但气泡不在当前视图里 → 即使视图在跑也不认领', () => {
+    useAgentChatStore.setState({ threadId: undefined, messages: [textMsg('mine', 'x')], isRunning: true })
+    state().applyEvent({ type: 'thread_created', threadId: 'OTHERS', clientMessageId: 'not-mine' } as never)
+    expect(state().threadId).toBeUndefined()
   })
 })
