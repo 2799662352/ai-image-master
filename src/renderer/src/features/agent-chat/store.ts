@@ -2839,6 +2839,13 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         planReasoningEffort: selectEffectivePlanReasoningEffort(state),
       })
       const wasNewThread = state.threadId == null
+      // sendMessage 要等主进程「受理」回合(全局串行的准入队列、新对话的 thread/start、
+      // 附件落盘)才返回,期间用户完全可以点去别的对话。乐观气泡还在当前视图里 =
+      // 用户仍停在发送方;不在 = 已经离开(switchThread / newThread 把视图换掉了)。
+      // 离开之后绝不能再把活动线程抢回发送方 —— 屏幕上是别的对话的消息列表,
+      // 抢回 threadId 会让发送方此后所有事件、出图气泡都写进用户正在看的那个对话。
+      // 返回后到最后一次 set 之间没有 await,这个判定全程一致。
+      const onSenderView = get().messages.some((m) => m.id === userMsg.id)
       // Only a new-thread send proves this id belongs to a new lifecycle.
       // A late response from an existing thread deleted in-flight must not.
       if (wasNewThread) clearDeletedThreadTombstone(result.threadId)
@@ -2847,7 +2854,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           current.collabModeCompatibilityByThread[result.threadId] ?? 'immediate'
         const collaborationError = current.collaborationErrorByThread[result.threadId]
         const base = {
-          threadId: result.threadId,
+          // 活动视图相关的字段只在用户还停在发送方时才写;按线程分桶的字段照常写。
+          ...(onSenderView ? { threadId: result.threadId } : {}),
           runningByThread: { ...current.runningByThread, [result.threadId]: true },
           // Per-thread model mirror (Plan B): this send just ran (and, for a
           // new thread, bound) the resolved model on this conversation.
@@ -2861,8 +2869,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
                   ...current.collabModeCompatibilityByThread,
                   [result.threadId]: compatibility,
                 },
-                collabModeCompatibility: compatibility,
-                collaborationError,
+                ...(onSenderView
+                  ? { collabModeCompatibility: compatibility, collaborationError }
+                  : {}),
               }
             : {}),
         }
@@ -2882,7 +2891,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           delete nextPending[result.threadId]
           return {
             ...base,
-            collabModeKind: current.collabModeByThread[result.threadId],
+            ...(onSenderView
+              ? { collabModeKind: current.collabModeByThread[result.threadId] }
+              : {}),
             collabModeNextTurnByThread: nextTurn,
             collabModePendingByThread: nextPending,
           }
@@ -2925,55 +2936,70 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
             : undefined
         // Also settle the delivery indicator: main admitted the turn, so the
         // bubble flips from "发送中" to "已送达" in the same pass.
-        set((current) => ({
-          messages: current.messages.map((m) =>
-            m.id === userMsg.id
-              ? {
-                  ...m,
-                  sendState: 'sent' as const,
-                  ...(canonicalItems ? { items: canonicalItems } : {}),
-                  // Backfill the persisted row id so a later edit-and-resend
-                  // can hand the context-branch API a real DB row id.
-                  ...(result.userMessageId ? { dbRowId: result.userMessageId } : {}),
-                }
-              : m,
-          ),
-        }))
+        const settle = (m: Message): Message =>
+          m.id === userMsg.id
+            ? {
+                ...m,
+                sendState: 'sent' as const,
+                ...(canonicalItems ? { items: canonicalItems } : {}),
+                // Backfill the persisted row id so a later edit-and-resend
+                // can hand the context-branch API a real DB row id.
+                ...(result.userMessageId ? { dbRowId: result.userMessageId } : {}),
+              }
+            : m
+        set((current) => {
+          if (onSenderView) return { messages: current.messages.map(settle) }
+          // 用户已离开:气泡在发送方自己的后台分片里(已有对话被 switchThread 存进去的)。
+          const slice = current.threadSlices[result.threadId]
+          if (slice?.messages.some((m) => m.id === userMsg.id)) {
+            return {
+              threadSlices: {
+                ...current.threadSlices,
+                [result.threadId]: { ...slice, messages: slice.messages.map(settle) },
+              },
+            }
+          }
+          if (!wasNewThread) return {}
+          // 没有 threadId 的新对话:用户一离开,视图就被整个丢掉(没 id 没法存分片),
+          // 乐观气泡也跟着没了;而事件流从不生成用户消息,发送方分片里只有助手侧内容。
+          // 不补种的话,之后从侧栏点开这个对话会看到一段没有提问的回答。
+          const base = slice ?? { ...EMPTY_THREAD_SLICE, isRunning: true }
+          return {
+            threadSlices: {
+              ...current.threadSlices,
+              [result.threadId]: { ...base, messages: [settle(userMsg), ...base.messages] },
+            },
+          }
+        })
       }
       // PHASE-1-INVARIANT: pendingReferences are renderer-only chips. Do not
       // add them to AgentSendMessagePayload until the Phase 2 payload contract lands.
-      get().clearPendingReferences()
+      if (onSenderView) {
+        get().clearPendingReferences()
+      } else {
+        // 输入框是全局的:用户可能已经在另一个对话里往里加了新的引用,不能整个清空,
+        // 只摘掉这次随消息发出去的那几个。
+        set((current) => ({
+          pendingReferences: current.pendingReferences.filter((r) => !references.includes(r)),
+        }))
+      }
       void useFileExplorerStore.getState().refreshAttachmentsTree().catch(() => undefined)
     } catch (error) {
       // Cursor-style failure UX (batch 3-A): the bubble STAYS in the timeline
       // marked failed (red badge + 重试), instead of silently vanishing with
       // the text dumped back into the composer. The exact composer state is
       // snapshotted so retry replays it through the full send() pipeline.
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      // 同成功分支:IPC 在途时用户可能已经切去别的对话。那时活动视图属于另一个对话,
+      // 失败只能记在发送方自己的分片里,不能把别人的 isRunning / error / 消息列表改掉。
+      const onSenderView = get().messages.some((m) => m.id === userMsg.id)
       set((current) => {
         const runningByThread = { ...current.runningByThread }
         if (state.threadId) delete runningByThread[state.threadId]
-        return {
-          isRunning: false,
-          error: error instanceof Error ? error.message : String(error),
-          // The reference chips now belong to the failed bubble's snapshot;
-          // leaving them in the composer would double-attach them if the user
-          // typed a fresh message before retrying.
-          pendingReferences: [],
-          messages: current.messages.map((m) =>
-            m.id === userMsg.id ? { ...m, sendState: 'failed' as const } : m,
-          ),
-          failedSendSnapshots: {
-            ...current.failedSendSnapshots,
-            [userMsg.id]: {
-              content,
-              attachments,
-              references: state.pendingReferences,
-              canvasContext,
-            },
-          },
-          // 这一车没发出去，工作台通知退回队首等下一趟。它跟 canvasContext 不同，
-          // 不进 failedSendSnapshot —— 通知的生命周期独立于「用户是否点重试」。
-          ...(workbenchNotices.length > 0 && state.threadId
+        // 这一车没发出去，工作台通知退回队首等下一趟。它跟 canvasContext 不同，
+        // 不进 failedSendSnapshot —— 通知的生命周期独立于「用户是否点重试」。
+        const requeuedNotices =
+          workbenchNotices.length > 0 && state.threadId
             ? {
                 pendingWorkbenchNoticesByThread: {
                   ...current.pendingWorkbenchNoticesByThread,
@@ -2983,10 +3009,66 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
                   ],
                 },
               }
-            : {}),
+            : {}
+        const snapshot = {
+          content,
+          attachments,
+          references: state.pendingReferences,
+          canvasContext,
+        }
+        const markFailed = (m: Message): Message =>
+          m.id === userMsg.id ? { ...m, sendState: 'failed' as const } : m
+        if (!onSenderView) {
+          // 输入框是全局的:只摘掉这次发出去的引用,不动用户在别处新加的。
+          const pendingReferences = current.pendingReferences.filter(
+            (r) => !references.includes(r),
+          )
+          const slice = state.threadId ? current.threadSlices[state.threadId] : undefined
+          // 已有对话:气泡在自己的分片里,标失败 + 保留快照,用户回去能点「重试」。
+          // 新对话:没有 threadId、气泡早已随视图丢弃,没有可重试的气泡,不留快照
+          // (快照里有附件缓冲区,没人会来取就是内存泄漏);失败改走下面的提示。
+          if (state.threadId && slice) {
+            return {
+              pendingReferences,
+              threadSlices: {
+                ...current.threadSlices,
+                [state.threadId]: {
+                  ...slice,
+                  isRunning: false,
+                  error: errorMessage,
+                  messages: slice.messages.map(markFailed),
+                },
+              },
+              failedSendSnapshots: { ...current.failedSendSnapshots, [userMsg.id]: snapshot },
+              ...requeuedNotices,
+              runningByThread,
+            }
+          }
+          return { pendingReferences, ...requeuedNotices, runningByThread }
+        }
+        return {
+          isRunning: false,
+          error: errorMessage,
+          // The reference chips now belong to the failed bubble's snapshot;
+          // leaving them in the composer would double-attach them if the user
+          // typed a fresh message before retrying.
+          pendingReferences: [],
+          messages: current.messages.map(markFailed),
+          failedSendSnapshots: { ...current.failedSendSnapshots, [userMsg.id]: snapshot },
+          ...requeuedNotices,
           runningByThread,
         }
       })
+      if (!onSenderView && !state.threadId) {
+        // 离开的是一个还没拿到 id 的新对话:屏上没有它的气泡,也不该把错误挂到
+        // 用户正在看的另一个对话上 —— 用一条全局提示告知。
+        get().pushNotice({
+          id: `send-failed-${userMsg.id}`,
+          kind: 'configWarning',
+          level: 'warning',
+          message: `刚才在新对话里发的消息没有发出去:${errorMessage}`,
+        })
+      }
     }
   },
   retryFailedMessage: async (messageId) => {
