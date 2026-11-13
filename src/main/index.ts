@@ -1,5 +1,5 @@
 // src/main/index.ts - Electron 主进程 (TypeScript)
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard, ClipboardItem, nativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { randomBytes } from 'node:crypto'
@@ -42,6 +42,7 @@ import { uploadBufferToBucket, uploadStreamToBucket } from './services/tencent/c
 import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
 import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
 import { renameWithRetry } from './utils/atomicFile'
+import { writeImageToClipboard, writeTextToClipboard } from './utils/clipboardWrite'
 import {
   IMAGE_SNIFF_BYTES,
   mimeFromUrl,
@@ -819,7 +820,7 @@ function createWindow(): void {
         menuTemplate.push({
           label: '复制图片地址',
           click: () => {
-            clipboard.writeText(directUrl)
+            writeTextToClipboard(directUrl, { clipboard })
           }
         })
         menuTemplate.push({ type: 'separator' })
@@ -855,7 +856,7 @@ function createWindow(): void {
           {
             label: '复制路径',
             click: () => {
-              clipboard.writeText(link.osPath)
+              writeTextToClipboard(link.osPath, { clipboard })
             }
           },
           { type: 'separator' }
@@ -865,7 +866,7 @@ function createWindow(): void {
           {
             label: '复制链接',
             click: () => {
-              clipboard.writeText(link.url)
+              writeTextToClipboard(link.url, { clipboard })
             }
           },
           {
@@ -2287,7 +2288,8 @@ ipcMain.handle('shell:copy-image', async (_event, uri: string) => {
     if (img.isEmpty()) {
       return { success: false, error: 'unable to load image' }
     }
-    clipboard.writeImage(img)
+    // Electron 44 起 clipboard.writeImage 已移除,走 ClipboardItem(见 utils/clipboardWrite.ts)
+    await writeImageToClipboard(img, { clipboard, ClipboardItem })
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) }
