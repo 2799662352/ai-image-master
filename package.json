@@ -10,6 +10,9 @@
   "ffmpegBuildTag": "8.1.1",
   "packageManager": "pnpm@10.12.4",
   "pnpm": {
+    "overrides": {
+      "@electron/rebuild>node-abi": "^4.35.0"
+    },
     "onlyBuiltDependencies": [
       "@parcel/watcher",
       "@prisma/engines",
@@ -188,7 +191,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.0.18",
-    "electron": "^43.2.0",
+    "electron": "^45.3.2",
     "electron-builder": "^26.4.0",
     "electron-vite": "^5.0.0",
     "esbuild": "^0.28.0",
