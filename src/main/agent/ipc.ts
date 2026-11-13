@@ -663,6 +663,9 @@ function validateAgentTurnPayload(
       `${label} reasoningEffort must be a supported concrete model effort`,
     )
   }
+  if (input.clientMessageId !== undefined && typeof input.clientMessageId !== 'string') {
+    throw new Error(`${label} clientMessageId must be a string`)
+  }
   return value as AgentSendMessagePayload
 }
 

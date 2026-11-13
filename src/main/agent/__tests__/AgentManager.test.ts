@@ -1365,6 +1365,69 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     for (const e of events) expect(e.threadId).toBe('cm-db-id-2')
   })
 
+  it('stamps the forwarded thread_created with the sends clientMessageId (and no other event)', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-cid' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'message_delta', threadId: CODEX_UUID, turnId: 't1', delta: 'hello' },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [], clientMessageId: 'bubble-1' })
+    await flushMicrotasks(20)
+
+    const created = events.find((e) => e.type === 'thread_created')
+    expect(created).toMatchObject({ threadId: 'cm-db-id-cid', clientMessageId: 'bubble-1' })
+    for (const e of events) {
+      if (e.type !== 'thread_created') expect('clientMessageId' in e).toBe(false)
+    }
+  })
+
+  it('adds no clientMessageId to thread_created when the send carries none (legacy callers)', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-nocid' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await flushMicrotasks(20)
+
+    const created = events.find((e) => e.type === 'thread_created')
+    expect(created).toBeDefined()
+    expect('clientMessageId' in (created as object)).toBe(false)
+  })
+
   it('on a second sendMessage with same DB threadId, passes the cached codex UUID to backend.send', async () => {
     const events: AgentStreamEvent[] = []
     const fakeStore = {

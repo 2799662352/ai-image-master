@@ -2826,6 +2826,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       if (!sendMessage) throw new Error('Electron agent API is unavailable')
       const result = await sendMessage({
         threadId: state.threadId,
+        // 新对话认领自己的 thread_created 用:主进程把它原样盖在该事件上。
+        clientMessageId: userMsg.id,
         content: [...(canvasContext ? [canvasContext] : []), ...workbenchNotices, content]
           .filter((part) => part.length > 0)
           .join('\n\n'),
@@ -3822,11 +3824,23 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // Keying on `isRunning` alone (the previous logic) let a concurrently
     // running background thread's deltas get adopted into the new chat — i.e.
     // "上一个任务出现在下一个任务里". `thread_created` is the unambiguous signal.
+    //
+    // 但「当前没有 threadId 且在跑」仍不足以证明这条 thread_created 是我的:两个新对话
+    // 先后在途时(第一个点了「新对话」后又发了第二个),第一个的 thread_created 会被
+    // 第二个认领。主进程把发起这次 send 的 clientMessageId 盖在该事件上,带 id 时
+    // 只有「那个气泡就在当前视图里」的新对话才认领;没带 id(旧调用方)保持原规则。
+    const createdForSend = event.type === 'thread_created' ? event.clientMessageId : undefined
     const activeThreadId = get().threadId
     let isActive: boolean
     if (activeThreadId != null) {
       isActive = evtId === activeThreadId
-    } else if (event.type === 'thread_created' && get().isRunning && evtId != null) {
+    } else if (
+      event.type === 'thread_created' &&
+      evtId != null &&
+      (createdForSend !== undefined
+        ? get().messages.some((m) => m.id === createdForSend)
+        : get().isRunning)
+    ) {
       set({ threadId: evtId, runningByThread: { ...get().runningByThread, [evtId]: true } })
       isActive = true
     } else {
