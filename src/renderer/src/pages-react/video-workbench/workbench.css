@@ -586,6 +586,17 @@
 .vw-rail-row:hover .vw-rail-more, .vw-rail-more:focus-visible { opacity: 1; }
 .vw-rail-more:hover { color: #fff; border-color: #fce300; }
 .vw-rail-row:hover .vw-rail-time { opacity: 0; }
+/* 拖动调整剧的顺序:左侧 10px 的把手(正好落在行内边距里,不挤封面),悬停才出现;
+   被拖的行变暗,放下位置用黄色插入线(2px,画在行的上沿 / 下沿,不占布局)。 */
+.vw-rail-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; width: 10px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: 0; color: #71717a; cursor: grab; opacity: 0; transition: opacity .1s; }
+.vw-rail-grip::before { content: ''; width: 6px; height: 14px; background: radial-gradient(circle at 1px 1px, currentColor 1px, transparent 1.2px) 0 0 / 4px 4px; }
+.vw-rail-row:hover .vw-rail-grip, .vw-rail-grip:focus-visible { opacity: 1; }
+.vw-rail-grip:hover, .vw-rail-grip:focus-visible { color: #fce300; }
+.vw-rail-grip:active { cursor: grabbing; }
+.vw-rail-row-dragging { opacity: 0.4; }
+.vw-rail-drop-before::before, .vw-rail-drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.5); pointer-events: none; z-index: 2; }
+.vw-rail-drop-before::before { top: -1px; }
+.vw-rail-drop-after::after { bottom: -1px; }
 .vw-cloud-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #52525b; }
 .vw-cloud-dot-ok { background: #22c55e; }
 .vw-cloud-dot-busy { background: #fce300; }
