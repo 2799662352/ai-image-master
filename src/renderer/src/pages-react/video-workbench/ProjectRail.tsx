@@ -2,11 +2,11 @@
 // 黄点 = 有卡生成中,红点 = 有失败。当前剧黄色左条。可折叠到 48px 只留封面。
 // 视觉只用 workbench.css 的 .vw-rail-* 类与既有 token。
 //
-// 导入/导出两颗按钮本期只占位(disabled + title「即将推出」),真正的流程在
-// 「工程文件导入/导出」那份计划里接进来 —— 不做假实现。
+// 底部一行等分的四个入口:导入工程 / 导出当前剧 / 云备份 / 回收站(后两个由页面传回调才出现)。
+// 导入、导出工程的入口只在这里有一份,剧总览头部不再重复放。
 
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Cloud, Download, Trash2, Upload } from 'lucide-react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
 import { pinnedFirstBy } from '../../features/video-workbench/projects'
@@ -96,6 +96,9 @@ export function ProjectRail({
   useEffect(() => {
     if (editingId) nameInputRef.current?.focus()
   }, [editingId])
+
+  // 底部入口的列数 = 实际渲染的按钮数(云备份只在桌面端有、回收站要页面接了才有)
+  const footCols = 2 + (onRequestCloudBackup ? 1 : 0) + (onRequestTrash ? 1 : 0)
 
   const needle = query.trim().toLowerCase()
   const rows = pinnedFirstBy(
@@ -326,47 +329,63 @@ export function ProjectRail({
         </button>
       )}
       {!collapsed && (
-        <div className="vw-rail-foot">
+        // 底部入口按剧栏宽度等分成一排(列数 = 按钮数)。导入/导出只在这里有一份 ——
+        // 剧总览头部原来还有一份重复的,已删。
+        <div className="vw-rail-foot" style={{ ['--vw-foot-cols' as string]: footCols }}>
           <button
             type="button"
-            className="vw-ghost"
+            className="vw-ghost vw-rail-act"
+            aria-label="导入工程"
             disabled={!onRequestImport}
             title={onRequestImport ? '导入 .catwb.json 工程文件(也可以直接拖到这里)' : '导入工程(当前环境不可用)'}
             onClick={onRequestImport}
           >
-            导入工程
+            <Upload size={15} aria-hidden="true" />
+            导入
           </button>
           <button
             type="button"
-            className="vw-ghost"
+            className="vw-ghost vw-rail-act"
+            aria-label="导出当前剧"
             disabled={!onRequestExport}
             title={onRequestExport ? '把当前剧导出为 .catwb.json 工程文件' : '导出工程(当前环境不可用)'}
             onClick={onRequestExport}
           >
-            导出当前剧
+            <Download size={15} aria-hidden="true" />
+            导出
           </button>
           {onRequestCloudBackup && (
             <button
               type="button"
-              className="vw-ghost vw-rail-trash"
+              className="vw-ghost vw-rail-act"
               aria-label="云备份"
               title="把每部剧按账号备份到云端,换电脑后可恢复"
               onClick={onRequestCloudBackup}
             >
               {cloudTone && <span className={`vw-cloud-dot vw-cloud-dot-${cloudTone}`} aria-hidden="true" />}
+              <Cloud size={15} aria-hidden="true" />
               云备份
             </button>
           )}
           {onRequestTrash && (
             <button
               type="button"
-              className="vw-ghost vw-rail-trash"
+              className="vw-ghost vw-rail-act"
               aria-label="回收站"
-              title="查看已删除的剧和分段:可恢复,或确认后彻底删除"
+              title={
+                trashCount > 0
+                  ? `回收站(${trashCount}):查看已删除的剧和分段,可恢复,或确认后彻底删除`
+                  : '查看已删除的剧和分段:可恢复,或确认后彻底删除'
+              }
               onClick={onRequestTrash}
             >
-              <Trash2 size={12} aria-hidden="true" />
-              回收站{trashCount > 0 ? ` (${trashCount})` : ''}
+              {trashCount > 0 && (
+                <span className="vw-rail-badge" aria-hidden="true">
+                  {trashCount}
+                </span>
+              )}
+              <Trash2 size={15} aria-hidden="true" />
+              回收站
             </button>
           )}
         </div>
