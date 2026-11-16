@@ -500,6 +500,11 @@
 
 /* ---------- 剧栏(ProjectRail):剧 / 分段两层的左栏 ---------- */
 .vw-rail { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #3f3f46; background: #111113; }
+/* 剧栏所在的左列(RailColumn):外层 stretch 铺满整页高度,只管深色背景和分隔线;内层 sticky、高度由 RailColumn 按视口算 */
+.vw-rail-col { position: relative; flex: none; align-self: stretch; background: #111113; }
+.vw-rail-col::after { content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: #3f3f46; pointer-events: none; }
+.vw-rail-sticky { position: sticky; top: 12px; height: calc(100vh - 24px); }
+.vw-rail-sticky > .vw-rail { height: 100%; border-right: 0; }
 .vw-rail-fileover { outline: 1px dashed #fce300; outline-offset: -1px; background: #141410; }
 .vw-rail-collapsed { width: 48px; }
 .vw-rail-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px 8px; }
@@ -535,7 +540,8 @@
 .vw-dot-yellow::before { background: #fce300; }
 .vw-dot-red { color: #f87171; }
 .vw-dot-red::before { background: #f87171; }
-.vw-rail-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; border-top: 1px solid #3f3f46; }
+/* 底部入口:按剧栏宽度等分(列数 = 按钮数,由 --vw-foot-cols 给);剧栏本身是一屏高,所以这一排永远在屏幕里 */
+.vw-rail-foot { display: grid; grid-template-columns: repeat(var(--vw-foot-cols, 4), minmax(0, 1fr)); gap: 6px; padding: 10px; border-top: 1px solid #3f3f46; flex: none; }
 .vw-ghost { height: 28px; border: 1px solid #3f3f46; color: #e4e4e7; font-size: 11px; background: transparent; }
 .vw-ghost:hover:not(:disabled) { border-color: #fce300; color: #fff; }
 .vw-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -584,7 +590,9 @@
 .vw-cloud-dot-ok { background: #22c55e; }
 .vw-cloud-dot-busy { background: #fce300; }
 .vw-cloud-dot-warn { background: #f87171; }
-.vw-rail-foot .vw-rail-trash { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.vw-rail-act { position: relative; height: 44px; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px; line-height: 1; }
+.vw-rail-act .vw-cloud-dot { position: absolute; top: 5px; right: 5px; }
+.vw-rail-badge { position: absolute; top: 3px; right: 4px; font-family: 'Orbitron', 'Exo 2', sans-serif; font-size: 9px; line-height: 1; color: #a1a1aa; }
 .vw-rail-trash-mini { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 8px auto; border: 1px solid #3f3f46; color: #a1a1aa; background: transparent; }
 .vw-rail-trash-mini:hover { border-color: #fce300; color: #fff; }
 

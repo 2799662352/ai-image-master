@@ -15,12 +15,8 @@ import { boardMenuItems, projectMenuItems, trashProjectWithToast } from './workb
 /** 分段卡拖拽的 dataTransfer 类型;剧栏按它认「这是一个分段」。 */
 export const SEGMENT_DRAG_MIME = 'application/x-catimation-segment'
 
-export interface ProjectOverviewProps {
-  onRequestImport?: () => void
-  onRequestExport?: () => void
-}
-
-export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOverviewProps = {}) {
+// 导入 / 导出工程的入口只在剧栏底部(ProjectRail),这里不再放一份重复的。
+export function ProjectOverview() {
   const project = useVideoWorkbenchStore((s) => s.projects.find((p) => p.id === s.activeProjectId))
   const boards = useVideoWorkbenchStore((s) => s.boards)
   const cards = useVideoWorkbenchStore((s) => s.cards)
@@ -112,16 +108,6 @@ export function ProjectOverview({ onRequestImport, onRequestExport }: ProjectOve
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-none pt-1">
-          {onRequestImport && (
-            <button type="button" className="vw-ghost" aria-label="导入工程" onClick={onRequestImport}>
-              导入工程
-            </button>
-          )}
-          {onRequestExport && (
-            <button type="button" className="vw-ghost" aria-label="导出工程" onClick={onRequestExport}>
-              导出工程
-            </button>
-          )}
           {resumeBoard && (
             <button
               type="button"

@@ -23,6 +23,7 @@ import { ExportProjectDialog } from './video-workbench/ExportProjectDialog'
 import { ImportProjectDialog } from './video-workbench/ImportProjectDialog'
 import { ProjectOverview } from './video-workbench/ProjectOverview'
 import { ProjectRail } from './video-workbench/ProjectRail'
+import { RailColumn } from './video-workbench/RailColumn'
 import { ProjectSearchPalette } from './video-workbench/ProjectSearchPalette'
 import { TrashDialog } from './video-workbench/TrashDialog'
 import { UhdConfirmDialog } from './video-workbench/UhdConfirmDialog'
@@ -182,7 +183,9 @@ export default function VideoWorkbenchPage() {
   )
 
   return (
-    <div className="bg-[#09090B] border border-[#3F3F46] relative overflow-hidden min-h-[70vh]">
+    // overflow-clip 而不是 overflow-hidden:同样裁掉下面那个装饰大数字,但不会把这个盒子变成
+    // 滚动容器 —— 否则里面 position:sticky 的剧栏会粘在一个永远不滚的祖先里,等于没粘(实机量过)。
+    <div className="bg-[#09090B] border border-[#3F3F46] relative overflow-clip min-h-[70vh]">
       {/* 装饰性背景数字(与其他面板一致的 Kinetic Typography) */}
       <div className="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">
         07
@@ -198,19 +201,19 @@ export default function VideoWorkbenchPage() {
 
       {/* 两栏:左侧剧栏常驻,右侧是当前剧的内容区 */}
       <div className="relative z-10 flex min-h-[70vh]">
-        <ProjectRail
-          onRequestExport={() => setExportOpen(true)}
-          onRequestImport={() => void requestImport()}
-          onRequestTrash={() => setTrashOpen(true)}
-          onRequestCloudBackup={cloudBackupApi() ? () => setBackupOpen(true) : undefined}
-          onDropProjectFile={(p) => setImportPath(p)}
-        />
-        <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
-        {viewMode === 'overview' ? (
-          <ProjectOverview
+        {/* 剧栏固定成「一屏高」:右侧内容再长,列表也在栏里自己滚、底部入口始终在屏幕里(见 RailColumn) */}
+        <RailColumn>
+          <ProjectRail
             onRequestExport={() => setExportOpen(true)}
             onRequestImport={() => void requestImport()}
+            onRequestTrash={() => setTrashOpen(true)}
+            onRequestCloudBackup={cloudBackupApi() ? () => setBackupOpen(true) : undefined}
+            onDropProjectFile={(p) => setImportPath(p)}
           />
+        </RailColumn>
+        <div className="flex-1 min-w-0 p-4 md:p-6 space-y-4">
+        {viewMode === 'overview' ? (
+          <ProjectOverview />
         ) : (
         <>
         {/*
