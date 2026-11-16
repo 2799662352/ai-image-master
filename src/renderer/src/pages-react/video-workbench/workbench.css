@@ -500,10 +500,11 @@
 
 /* ---------- 剧栏(ProjectRail):剧 / 分段两层的左栏 ---------- */
 .vw-rail { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #3f3f46; background: #111113; }
-/* 剧栏所在的左列(RailColumn):外层 stretch 铺满整页高度,只管深色背景和分隔线;内层 sticky、高度由 RailColumn 按「窗口高度 + 本列文档位置」算成固定值(与滚动无关,滚动时不变) */
-.vw-rail-col { position: relative; flex: none; align-self: stretch; background: #111113; }
+/* 剧栏所在的左列(RailColumn):外层 stretch 铺满整页高度,只管深色背景和分隔线;内层 sticky、高度 = 整个视口 − 上下各 12px(保底 360px),只由窗口高度决定、与滚动无关,纯 CSS。
+   本列 min-height 取同一个值:右侧内容短时,本列也要至少装得下剧栏,否则剧栏溢出本列被页面根的 overflow-clip 裁掉、底部够不着。 */
+.vw-rail-col { --vw-rail-h: max(360px, calc(100vh - 24px)); position: relative; flex: none; align-self: stretch; min-height: var(--vw-rail-h); background: #111113; }
 .vw-rail-col::after { content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: #3f3f46; pointer-events: none; }
-.vw-rail-sticky { position: sticky; top: 12px; height: calc(100vh - 24px); }
+.vw-rail-sticky { position: sticky; top: 12px; height: var(--vw-rail-h); }
 .vw-rail-sticky > .vw-rail { height: 100%; border-right: 0; }
 .vw-rail-fileover { outline: 1px dashed #fce300; outline-offset: -1px; background: #141410; }
 .vw-rail-collapsed { width: 48px; }
@@ -540,8 +541,9 @@
 .vw-dot-yellow::before { background: #fce300; }
 .vw-dot-red { color: #f87171; }
 .vw-dot-red::before { background: #f87171; }
-/* 底部入口:按剧栏宽度等分(列数 = 按钮数,由 --vw-foot-cols 给);剧栏本身是一屏高,所以这一排永远在屏幕里 */
-.vw-rail-foot { display: grid; grid-template-columns: repeat(var(--vw-foot-cols, 4), minmax(0, 1fr)); gap: 6px; padding: 10px; border-top: 1px solid #3f3f46; flex: none; }
+/* 底部入口:按剧栏宽度等分(列数 = 按钮数,由 --vw-foot-cols 给)。
+   剧栏是一屏高,页面在最顶上时它的底边在视口之外(顶栏占了 ~285px);sticky + bottom 让这一排在剧栏粘住之前也贴在视口底边(此时盖住列表最下面一截,往下滚就还原),粘住之后刚好回到剧栏底边 —— 所以这一排永远在屏幕里 */
+.vw-rail-foot { position: sticky; bottom: 12px; z-index: 1; background: #111113; display: grid; grid-template-columns: repeat(var(--vw-foot-cols, 4), minmax(0, 1fr)); gap: 6px; padding: 10px; border-top: 1px solid #3f3f46; flex: none; }
 .vw-ghost { height: 28px; border: 1px solid #3f3f46; color: #e4e4e7; font-size: 11px; background: transparent; }
 .vw-ghost:hover:not(:disabled) { border-color: #fce300; color: #fff; }
 .vw-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
