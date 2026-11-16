@@ -322,10 +322,10 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
   const ratioSchema = z
     .enum(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5'])
     .optional()
-    .describe(
-      'Aspect ratio. Supported values match the UI dropdown exactly: ' +
-      'auto, 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5.',
-    )
+    // 取值清单不再在描述里重复一遍:`.enum([...])` 已经把同一份列表写进了 JSON Schema 的 `enum`,
+    // 描述里再抄一次只是白占 ~70 字节 —— 而 generate_image 的 schema 预算(16384)只剩几十字节
+    // 余量,接新渠道(Seedream 5.5)时就是被这一处的重复腾出的位置。
+    .describe('Aspect ratio — exactly the UI dropdown values.')
 
   // Optional channel OVERRIDE. Default = the channel the user picked in the chat
   // composer（默认腾讯 2.6 Sunburst）. Omit to honor the
@@ -360,8 +360,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'gemini-3.1-flash-image = Nano Banana 2, ' +
       'gemini-nano-banana-2.1 = Nano Banana 2.1 — upgraded Nano2 (better quality / in-image text / ' +
       'multi-turn edit consistency), 1K/2K/4K only, ' +
-      'doubao-seedream-5-0-pro-260628 = 火山豆包 Seedream 5.0 Pro — 即梦/seedream/豆包, strong ' +
-      'multi-reference fusion up to 10 reference images, 1K/2K only, single image per call, ' +
+      'doubao-seedream-5-0-pro-260628 / doubao-seedream-5-5-261028 = 火山豆包 Seedream 5.0 Pro / 5.5 — ' +
+      '即梦/seedream/豆包, strong multi-reference fusion (Pro: up to 10 reference images), ' +
+      '1K/2K only, single image per call, ' +
       'qwen-image-3.0-pro = 阿里通义千问 Image 3.0 Pro — 千问/qwen image; takes at most 3 reference ' +
       'images (passing more is REJECTED, not trimmed — pick Seedream 5.0 Pro if you need up to 10); ' +
       'upstream may REWRITE the ' +
@@ -402,7 +403,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'per image). Other channels ignore `count`; for ' +
       'unrelated images use generate_images. ' +
       'This tool ALSO does 图层分离 / layer splitting (turn one image into a base + transparent PNG ' +
-      'layers) — set `layerDecomposition: true` with model="doubao-seedream-5-0-pro-260628"; see that ' +
+      'layers) — set `layerDecomposition: true` with a Seedream model (5.0 Pro default, or 5.5); see that ' +
       'parameter for the rules. ' +
       'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
       'returns ✅ DONE if the image finishes that fast; otherwise it returns ⏳ STILL RUNNING with a ' +
@@ -517,8 +518,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
           'Split ONE input image into a layer stack instead of generating a new image — use it for ' +
           '图层分离 / 拆图层 / 分层 / "把前景抠出来" / "把背景单独给我" / "拆成 PSD 那样的图层". ' +
           'Returns a base image plus up to 16 transparent PNG layers (with order, bbox, name). REQUIREMENTS (all enforced — a violation is rejected up front, ' +
-          'never silently degraded): you MUST set model="doubao-seedream-5-0-pro-260628" (the only ' +
-          'channel that supports it) and you MUST pass exactly the image to split as the first ' +
+          'never silently degraded): model must be a Seedream channel (5.0 Pro default; 5.5 if the ' +
+          'user asks) and you MUST pass exactly the image to split as the first ' +
           '`referenceImages` entry. `prompt` is what to split out ("只拆出前景人物"); an empty prompt ' +
           'means "split everything automatically" (right for a bare 图层分离 request). `ratio` and ' +
           '`count` are ignored here (the layer count is decided by the image content); `resolution` ' +

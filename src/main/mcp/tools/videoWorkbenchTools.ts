@@ -78,7 +78,8 @@ const cardInputSchema = z.object({
   prompt: z.string().optional().describe('Video description (shot language / dialogue / -- style params).'),
   model: zModelAlias().optional().describe(
     'Video model. Default "2.0" (full quality); "2.5" for长镜头 up to 30s, 30/10/10 materials and edit/extend '
-    + '(but caps at 720p); "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only). '
+    + '(but caps at 720p); "2.5-flash" = 2.5 Flash, same 4–30s and edit/extend as "2.5" but ONLY 480p/720p, '
+    + 'NO draft, 10/5/5 materials, cheaper; "2.0-fast" cheaper draft; "2.0-mini" cheapest (480p/720p only). '
     + '"wan3" = 阿里万相 3.0 (All-in-One): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, '
     + 'accepts one document or web link as reference, billed per second (¥) instead of per token. '
     + 'wan3 has NO 21:9 and NO edit/extend; its default ratio is "adaptive". '
@@ -93,7 +94,7 @@ const cardInputSchema = z.object({
     + 'references. For reference images/videos use "kling4-omni".',
   ),
   resolution: zResolution().optional().describe(
-    'Default 720p. 1080p requires model "2.0", "wan3", kling, or "2.5" on platform balance; "2k" is kling-only '
+    'Default 720p. 1080p requires model "2.0", "wan3", kling, or "2.5" on platform balance ("2.5-flash" is 480p/720p only); "2k" is kling-only '
     + '(480p is NOT kling). "4k" cards can be filled in but are NEVER started by you: 4K is far more expensive, so '
     + 'autoStart / video_workbench_start HOLD them (skipped, code UHD_CONFIRM_REQUIRED) until the USER clicks 「生成」 '
     + 'on the card and confirms twice in a dialog — you cannot confirm for them. Tell the user instead of retrying.',
@@ -101,7 +102,7 @@ const cardInputSchema = z.object({
   ratio: zRatio().optional().describe(
     'Aspect ratio. Default 16:9 (wan3 defaults to "adaptive"). "21:9" is Seedance/kling; "4:3"/"3:4" are not kling; '
     + '"adaptive" is wan3/kling (kling: follows the first frame). '
-    + 'Ignored for edit_video / extend_video on "2.5" (forced adaptive).',
+    + 'Ignored for edit_video / extend_video on "2.5" / "2.5-flash" (forced adaptive).',
   ),
   // 刻意用**朴素整数区间**而不是 union([literal(-1), int().min(4)])。
   //
@@ -113,7 +114,7 @@ const cardInputSchema = z.object({
   // 代价是 0–3 这段在 schema 层放行了，由 validateSeedanceRequest 拦（它本来就要按
   // 模型分档校验 4–15 / 4–30，schema 这层从来就管不全）。
   duration: z.number().int().min(-1).max(30).optional().describe(
-    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5", 3-30 for kling — or -1 = smart duration (model decides; '
+    'Seconds — 4-15 for the 2.0 family, 4-30 for "2.5" / "2.5-flash", 3-30 for kling — or -1 = smart duration (model decides; '
     + 'NOT accepted by kling). '
     + 'Default 5. (0-3 are not valid; they are rejected downstream with a model-aware message.) '
     + 'FORCED to -1 on mode edit_video: upstream taskMode="edit" accepts smart duration only, so the '
@@ -123,24 +124,24 @@ const cardInputSchema = z.object({
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
   webSearch: z.boolean().optional().describe('Enable web search for the render. Default true. Seedance only (ignored by wan3 / kling).'),
   draft: z.boolean().optional().describe(
-    '样片 mode — model "2.5" + platform balance only. true = the card renders a cheap 480p draft (billed as '
+    '样片 mode — model "2.5" (NOT "2.5-flash") + platform balance only. true = the card renders a cheap 480p draft (billed as '
     + '480p) instead of the full render; once it succeeds, call video_workbench_finalize_draft to turn it into '
     + 'the 1080p final (valid 7 days, reuses the draft\'s prompt/materials/duration/ratio/seed/audio). Default false.',
   ),
   referenceImages: z.array(z.string()).max(30).optional().describe(
-    'Up to 9 reference images (30 with model "2.5"): local path / https URL / asset://assetId (portrait library) / data: URL. '
+    'Up to 9 reference images (30 with model "2.5", 10 with "2.5-flash"): local path / https URL / asset://assetId (portrait library) / data: URL. '
     + 'LOOK BEFORE YOU WRITE: view_image ONE representative reference first and write the prompt from what '
     + 'you actually see (subject, framing, palette, wardrobe) — a prompt inferred from the filename '
     + 'contradicts the picture, and the model follows the picture. This does NOT conflict with the rule '
     + 'against batch-opening generated OUTPUTS: those the user is already looking at, this is your INPUT.',
   ),
   referenceVideos: z.array(z.string()).max(10).optional().describe(
-    'Up to 3 reference videos, combined ≤15s — model "2.5" raises this to 10 videos combined ≤30s. '
+    'Up to 3 reference videos, combined ≤15s — model "2.5" raises this to 10 videos combined ≤30s ("2.5-flash": 5). '
     + 'Required for mode edit_video / extend_video.',
   ),
   referenceAudios: z.array(z.string()).max(10).optional().describe(
-    'Up to 3 reference audios, combined ≤15s — model "2.5" raises this to 10 audios combined ≤30s '
-    + 'and is the only model that accepts audio-only references.',
+    'Up to 3 reference audios, combined ≤15s — model "2.5" raises this to 10 audios combined ≤30s ("2.5-flash": 5) '
+    + 'and both "2.5" and "2.5-flash" accept audio-only references.',
   ),
   documentOrLink: zDocumentOrLink(),
   multiShot: zMultiShot(),
@@ -561,7 +562,7 @@ const irCardSchema = z.looseObject({
     'text2video', 'first_frame', 'first_last_frame', 'reference_images',
     'multimodal_ref', 'edit_video', 'extend_video',
   ]).optional().describe(
-    'edit_video / extend_video need model "2.5" plus at least one reference video, and force '
+    'edit_video / extend_video need model "2.5" or "2.5-flash" plus at least one reference video, and force '
     + 'ratio adaptive; edit_video additionally forces duration -1. Model "kling4" only has '
     + 'text2video / first_frame / first_last_frame; "kling4-omni" adds multimodal_ref.',
   ),
@@ -807,7 +808,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       `${PROMPT_BASE_DIRECTIVE} ${MATERIAL_ROLE_DIRECTIVE} ` +
       'Per card the material caps are identical too: referenceImages ≤9, referenceVideos ≤3 and ' +
       'referenceAudios ≤3, each type ≤15s in total — model "2.5" raises all three to 30/10/10 with ' +
-      '≤30s in total. ' +
+      '≤30s in total ("2.5-flash": 10/5/5). ' +
       'Add one or more video task cards to the 「生成视频」 workbench page (the scroll-style concurrent ' +
       'video workbench the user sees). Cards land in THIS CONVERSATION\'S project (the one you chose with ' +
       'video_workbench_switch_project / video_workbench_create_project — several conversations can fill ' +
@@ -955,7 +956,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
         'Workbench mode. Changing it re-checks material caps and may TRUNCATE materials that no longer fit. '
         + 'Switching to edit_video also resets duration to -1 (smart) — upstream takes nothing else there, '
         + 'so a sweep of "改成编辑视频 + 都 10 秒" lands as -1 and that is correct, not a dropped write. '
-        + 'edit_video / extend_video additionally require model "2.5" and ≥1 reference video per card; '
+        + 'edit_video / extend_video additionally require model "2.5" or "2.5-flash" and ≥1 reference video per card; '
         + 'cards without one stay unstartable until the user attaches a video. '
         + 'Model "kling4" has no multimodal_ref (kling4-omni does); switching a card to kling auto-picks a legal mode.',
       ),
@@ -1019,7 +1020,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       'moved on, you get { ok:false, conflict, card } back with NO write — look at the card, decide again, ' +
       'retry with expectedRev = its current rev; if the same card conflicts twice in a row, stop and ask the user. ' +
       'Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each ' +
-      'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total. ' +
+      'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total ("2.5-flash": 10/5/5). ' +
       'ON AN edit_video CARD, when the user says WHERE to change something and words are not enough ' +
       '("把左边第二个人的外套换掉"), stop writing prose and tell them to click 「✎ 高级编辑」 on that card: ' +
       'it opens the reference video, lets them circle / arrow / label a frame, and drops the annotated ' +
@@ -1495,7 +1496,7 @@ export function registerVideoWorkbenchTools(server: McpServer, router: ToolRoute
       + 'old one. Always start from a fresh export and keep the fields you are not changing.\n'
       + '• `id` present = edit that existing card/board; `id` omitted = create a new one; unknown id = error.\n'
       + '• Material caps per card: referenceImages ≤9, referenceVideos ≤3 and referenceAudios ≤3, each '
-      + 'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total.\n'
+      + 'type ≤15s in total — model "2.5" raises all three to 30/10/10 with ≤30s in total ("2.5-flash": 10/5/5).\n'
       + `• ${PROMPT_BASE_DIRECTIVE}\n`
       + `• ${MATERIAL_ROLE_DIRECTIVE}\n`
       + '• Array order is the order: reordering cards means reordering the array (there is no order field).\n'

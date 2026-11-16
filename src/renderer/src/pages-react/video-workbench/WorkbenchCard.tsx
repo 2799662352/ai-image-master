@@ -137,6 +137,7 @@ const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
 
 export const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
   '2.5': 'Seedance 2.5',
+  '2.5-flash': 'Seedance 2.5 Flash',
   '2.0': 'Seedance 2.0 满血',
   '2.0-fast': 'Seedance 2.0 Fast',
   '2.0-mini': 'Seedance 2.0 Mini(最省)',
@@ -728,13 +729,15 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
     [card.id, card.mode, addMaterials],
   )
 
-  // ---- 高级编辑(仅 2.5 的「编辑视频」)----
+  // ---- 高级编辑(仅收 `edit` taskMode 的模型:2.5 / 2.5 Flash 的「编辑视频」)----
   // 它解决的是「改哪儿说不清楚」:在参考视频的某一帧上圈一下、标个号,把这张带
   // 标注的图当参考图发出去,比任何措辞都准。入口只在**真能用**时出现:换模型/
   // 换模式/没视频素材时按钮消失,而不是点了才报错。
   const [aveOpen, setAveOpen] = useState(false)
   const editableVideo = card.referenceVideos[0]
-  const canAdvancedEdit = card.model === '2.5' && card.mode === 'edit_video' && editableVideo !== undefined
+  // 按能力表判而不是写死 `=== '2.5'`:Flash 与 2.5 同样收 `edit`,写死就会让 Flash 卡片平白少一个入口。
+  const canAdvancedEdit =
+    capabilitiesFor(card.model).taskModes.includes('edit') && card.mode === 'edit_video' && editableVideo !== undefined
   /**
    * 抽帧源**刻意保留 blob:**,不要跟着播放那几处改成 `toStreamableUri`。
    *

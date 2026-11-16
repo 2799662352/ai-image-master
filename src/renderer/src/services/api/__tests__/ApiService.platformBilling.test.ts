@@ -361,7 +361,7 @@ describe('平台余额 × 模型可用性', () => {
     const { evaluatePlatformBillingEligibility, internals } = await load()
     const gateway = internals.apiSites['antigravity']
 
-    for (const key of [...GOOGLE_NATIVE_MODELS, 'doubao-seedream-5-0-pro-260628']) {
+    for (const key of [...GOOGLE_NATIVE_MODELS, 'doubao-seedream-5-0-pro-260628', 'doubao-seedream-5-5-261028']) {
       const verdict = evaluatePlatformBillingEligibility(
         internals.models[key] as never,
         gateway as never,

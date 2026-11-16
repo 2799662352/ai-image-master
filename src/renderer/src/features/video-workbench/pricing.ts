@@ -40,6 +40,13 @@ const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   '2.5': {
     standard: { noVideo: 10.7, withVideo: 6.4 },
   },
+  // 2.5 Flash:官方单价 ¥46 / 百万 token(不含视频输入)、¥28(含视频输入),480p / 720p 同价
+  // (Miau 网关接入说明 2026-11-16 §2.3),恰好与 2.0 满血同价 —— 所以这里照 2.0 的美元口径填
+  // (¥46 ≈ $7.0、¥28 ≈ $4.3)。没有 fhd 档:Flash 没有 1080p。
+  // 这和上面各行一样是**估算**,不是账单:网关按 `ModelRatio` 结算,以网关扣费为准。
+  '2.5-flash': {
+    standard: { noVideo: 7.0, withVideo: 4.3 },
+  },
   // 按秒计费，走 CNY_PER_SECOND 那条路，不在这张表里出价。
   wan3: NOT_TOKEN_BILLED,
   'wan3-prime': NOT_TOKEN_BILLED,

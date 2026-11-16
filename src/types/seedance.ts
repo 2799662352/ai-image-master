@@ -53,6 +53,7 @@ export type VideoModelAlias =
   | '2.0-fast'
   | '2.0-mini'
   | '2.5'
+  | '2.5-flash'
   | 'wan3'
   | 'wan3-prime'
   | 'kling4'
@@ -326,6 +327,44 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     maxVideos: 10,
     maxAudios: 10,
     maxMaterialsTotal: 50,
+    taskModes: ['edit', 'extend'],
+    subtitleErase: false,
+    audioOnlyReference: true,
+    sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: false,
+    webSearch: true,
+    multiShot: false,
+  },
+  /**
+   * Seedance 2.5 Flash(`doubao-seedance-2-5-flash-261115`,方舟 2026-11-15 开放)。
+   *
+   * 数字出自 Miau 网关接入说明(2026-11-16)第 2.1 节,转述方舟「使用前必读」能力表:
+   * 与 2.5 **只差四处** —— 分辨率只有 480p / 720p(传 1080p / 2k / 4k 上游直接报错)、
+   * 不支持样片、参考素材上限 10 图 / 5 视频 / 5 音频、(单价更低,见 pricing.ts)。时长
+   * 4–30 秒、任务类型(edit / extend)、纯音频参考都与 2.5 一致。
+   *
+   * 没有 `platformResolutions`:Flash 不分自填 Key / 平台余额两套口径,两条路都是 480p / 720p。
+   *
+   * ⚠️ 这几项**照 2.5 填、没有单独验证**:`webSearch`(接入说明的差异表没把它列为不同,
+   * 网关也是整份透传 `metadata.tools`)、`smartDuration`(edit 任务要 -1,Flash 既然收 edit
+   * 就得收 -1)、edit / extend 的 `taskMode` 在 Flash 上是否被上游接受(接入说明原话
+   * 「Flash 本身没有单独验证」)。真机核实后若不同,只改这张表里对应的字段。
+   * 总数 `maxMaterialsTotal` 取 20 = 10+5+5(三类各自打满;官方没有单独的总数上限)。
+   */
+  '2.5-flash': {
+    provider: 'vvdance',
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
+    duration: { min: 4, max: 30 },
+    resolutions: ['480p', '720p'],
+    maxImages: 10,
+    maxVideos: 5,
+    maxAudios: 5,
+    maxMaterialsTotal: 20,
     taskModes: ['edit', 'extend'],
     subtitleErase: false,
     audioOnlyReference: true,
@@ -687,7 +726,11 @@ export function validateSeedanceRequest(
   const audios = request.audios ?? 0
 
   if (taskMode && !caps.taskModes.includes(taskMode)) {
-    errors.push(`模型 ${alias} 不支持 taskMode="${taskMode}"，仅 Seedance 2.5 支持 edit / extend`)
+    // 「谁支持」从能力表派生:这句话曾写死「仅 Seedance 2.5」,加 Flash 时就成了错话。
+    const taskModeAliases = (Object.keys(SEEDANCE_MODEL_CAPABILITIES) as SeedanceModelAlias[])
+      .filter((candidate) => SEEDANCE_MODEL_CAPABILITIES[candidate].taskModes.length > 0)
+      .join(' / ')
+    errors.push(`模型 ${alias} 不支持 taskMode="${taskMode}"，仅 ${taskModeAliases} 支持 edit / extend`)
   } else if (taskMode) {
     // 两个模式都以视频为编辑对象，没有视频就无从编辑/延长。
     if (videos < 1) errors.push(`taskMode="${taskMode}" 必须至少带一段视频参考`)

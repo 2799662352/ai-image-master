@@ -283,8 +283,7 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
 The \`model\` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
 VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / NovelAI / Seedream; default 腾讯 2.6-s) — 各渠道共用
-ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-all\` 把尺寸
-写进 prompt). Omit \`model\` for ordinary requests. Set it only with a concrete reason:
+ratio × resolution × quality(例外见各条). Omit \`model\` for ordinary requests. Set it only with a concrete reason:
 
 - **\`gpt-image-2.5-flare\`** — flare / 速度优先 / 2.5 文生图 / 透明底. ~20s,同价取代 gpt-image-2; quality 默认 high,另有 xhigh/max; 支持 \`transparentBackground\`(2.5 家族独有,含下面腾讯两条).
 - **\`gpt-image-2.5-sunburst\`** — sunburst / 画质优先 / 2.5 改图 / 透明底. ~40s,同价更锐; 也支持 \`transparentBackground\`.
@@ -308,9 +307,10 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 - **\`doubao-seedream-5-0-pro-260628\` (火山豆包 Seedream 5.0 Pro)** — pick when the
   user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
-  参考图,这是它的强项), OR when the user wants **图层分离**(唯一支持的渠道,
+  参考图,这是它的强项), OR when the user wants **图层分离**(缺省用它,
   见「图层分离」一节). 注意:普通出图仅单图(\`count\` 无效)、分辨率只有 1K/2K
-  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。
+  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。**\`doubao-seedream-5-5-261028\`
+  (Seedream 5.5)** 只在用户点名 5.5 时用,限制同上,也能图层分离,参考图上限没验证过。
 - **\`custom-imagemodel-gt\` (腾讯 image2)** — pick when the user says 腾讯 / tencent /
   image2 腾讯. 快(~30s),网关已关水印。
 - **\`custom-model-og-v2\` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
@@ -340,7 +340,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
 六条腾讯渠道(\`custom-imagemodel-gt\` / \`custom-model-og-v2\` / \`custom-model-og-v2.5-f\` /
 \`custom-model-og-v2.5-s\` / \`custom-model-og-v2.6-f\` / \`custom-model-og-v2.6-s\`)、\`wan2.7-image-pro\`(阿里万相 2.7 pro)、\`qwen-image-3.0-pro\`
 (通义千问 Image 3.0 Pro)、\`youchuan-v8.2\` / \`youchuan-v8.2-turbo\`(悠船)和
-\`doubao-seedream-5-0-pro-260628\`(Seedream 5.0 Pro)和四条 NovelAI
+\`doubao-seedream-5-0-pro-260628\` / \`-5-5-261028\`(Seedream 5.0 Pro / 5.5)和四条 NovelAI
 **都只经 Miau API 代理提供**。
 出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
 里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
@@ -349,10 +349,10 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; \`gpt-image-2.5-a
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可。
 - 其余渠道(官转 2.5/2.6 / -all / vip / gpt-image-2 / Nano2 / Nano2.1)跟随当前站点(不钉 Miau):
-  选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
+  选 Miau 可走平台额度,选 apiyi 走 Key。
 
-只为具体理由设 \`model\`(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、2.5 改图 →
-sunburst、MJ/悠船 → youchuan、二次元/多角色 → NovelAI、或用户点名的渠道)。Never invent a model name.
+只为具体理由设 \`model\`(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、改图 → sunburst、
+MJ/悠船 → youchuan、二次元/多角色 → NovelAI、或用户点名的渠道)。Never invent a model name.
 
 ## Reference images — reuse the user's material (important)
 
@@ -390,8 +390,8 @@ Rules:
 
 四条硬约束,**全部由工具前置校验**——违反会返回明确错误,不会静默出一张普通图:
 
-1. **必须 \`model: 'doubao-seedream-5-0-pro-260628'\`** —— 只有这一个渠道支持。
-   省略 \`model\` 会落到用户 composer 选的渠道上,那边不支持,请求会被拒。
+1. **\`model\` 只能是 Seedream**:默认 \`'doubao-seedream-5-0-pro-260628'\`;用户点名 5.5 才用
+   \`'doubao-seedream-5-5-261028'\`(计费没核对过)。别的渠道会被拒。
 2. **必须且只能给一张待拆的图**,放在 \`referenceImages[0]\`。没有输入图会被拒
    (否则就退化成一次普通文生图)。
 3. **\`prompt\` 可以为空串** —— 这是全仓唯一一个空 prompt 才正确的地方。空 = 自动全拆
@@ -448,7 +448,7 @@ directory and give it a descriptive, ordered name — e.g.
   省略 \`model\`(交给用户在 composer 选的渠道,默认腾讯 2.6-s)。
 - 用户点名某渠道却不显式传 \`model\`。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
-- 图层分离踩坑:忘了同时指定 \`model\`;为「填满参数」编 prompt;拆前没告知按张计费(见上节)。
+- 图层分离踩坑:没指定 \`model\`;为填满参数编 prompt;拆前没告知按张计费。
 
 ## Notes
 
@@ -514,14 +514,15 @@ qa_completed / generation_attempts\`):有专属素材夹(见「角色片 / 多�
 > 在路由表里平起平坐,「同级」说的是地位,不是要同时塞进上下文 —— 每个视频任务都
 > 全量读一遍是纯浪费,而且套模板本来就只能套一套。
 >
-> - model 是 \`2.5\`(**默认**,模型未知时也按它)→ 载 \`sd25-pe\`
+> - model 是 \`2.5\`(**默认**,模型未知时也按它)或 \`2.5-flash\` → 载 \`sd25-pe\`
 > - model 明确是 2.0 家族(\`2.0\` / \`2.0-fast\` / \`2.0-mini\`)→ 载 \`sd2-pe\`
 > - model 是 \`wan3\`(万相 3.0)→ 载 \`wan3-cinematic-30s\`
 > - model 是 \`kling4\` / \`kling4-omni\`(可灵 4.0)→ **没有专属底座,三个都不载**:直接写自然语言提示词,
 >   覆盖主体 / 动作 / 镜头 / 光线 / 声音;复杂或多镜才按路径 B 载 cinematic-prompt-format。
 >   别套 Seedance 的八大要素公式和万相的六段时间轴 —— 那是别家的语法。
 >
-> 之所以默认 2.5:它是唯一支持 \`taskMode\` 编辑 / 延长、30 秒时长和 50 份素材的档位。
+> 之所以默认 2.5:它是 \`taskMode\` 编辑 / 延长、30 秒时长、50 份素材和样片的全能档
+> (\`2.5-flash\` 同样能编辑 / 延长、30 秒,但只到 720p、没有样片、素材 10/5/5)。
 > 只在真要写 2.0 的八大要素公式时才去读那一份。三个都不占技法名额。
 >
 > 万相那条底座另带两个**按题材**的专项叶子(产品 TVC、情绪对白戏),由底座自己按需
@@ -594,6 +595,7 @@ cinematic-prompt-format。路径 B 条件优先于生成/编辑/延长/组合等
 
 **Default mode = 全能参考 (omni-reference)** — use it unless told otherwise.
 Caps 按 model:**2.5** = 图 30 / 视频 10 / 音频 10(合计 50),视频、音频各自合计 ≤30s;
+**2.5-flash** = 图 10 / 视频 5 / 音频 5(只有 480p / 720p,没有样片);
 **2.0 家族** = 图 9 / 视频 3 / 音频 3,视频、音频各自合计 ≤15s;**wan3** = 10 / 5 / 5;
 **kling4** = 只有文生 / 首帧 / 首尾帧(图 ≤2,**没有**参考图 / 参考视频 / 音频),要参考素材就换
 **kling4-omni** = 图 10 / 视频 5(合计 ≤15,视频合计 ≤30s)/ 音频 0。
@@ -785,9 +787,9 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
 1. Turn the request into one clear video prompt(subject, action, camera 运镜/景别,
    scene, lighting, mood;dialogue 与 \`--style\` 可后置)。
 2. **规格确认(spec_confirmed)**:用户没说规格时,发一张 \`ask_user\` 卡确认
-   分辨率(\`480p\` 草稿 / **\`720p\` 默认** / \`1080p\`)、时长(**2.5 为 4–30s,2.0 家族 4–15s**,
+   分辨率(\`480p\` 草稿 / **\`720p\` 默认** / \`1080p\`)、时长(**2.5 / 2.5-flash 为 4–30s,2.0 家族 4–15s**,
    默认 5)、比例(\`16:9\` / \`9:16\` / \`4:3\` / \`3:4\` / \`1:1\` / \`21:9\`),推荐默认项。
-   **不要静默升 1080p**;1080p 仅 \`2.0\`(与 wan3、可灵),\`2.5\` 只到 720p —— 用户要 1080p 就意味着
+   **不要静默升 1080p**;1080p 仅 \`2.0\`(与 wan3、可灵),\`2.5\` / \`2.5-flash\` 只到 720p —— 用户要 1080p 就意味着
    model 改 \`2.0\`、底座改 \`sd2-pe\`;用户已给规格或本会话已确认过就跳过。
    **可灵(kling4 / kling4-omni)规格不同**:时长 **3–30s 整数,没有智能时长**(给 -1 会被拒);
    分辨率 \`720p\` / \`1080p\` / \`2k\` / \`4k\`(**没有 480p**);比例 \`16:9\` / \`9:16\` / \`1:1\` / \`21:9\` / \`adaptive\`
@@ -801,17 +803,18 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
    = 自己分镜,**1–6 个镜头,每镜描述 ≤512 字、时长是整数秒,各镜头秒数之和必须等于 \`duration\`**,
    这时总 \`prompt\` 可留空(以各镜描述为准)。分镜不加价,仍按总秒数计费。其它模型传 \`multiShot\` 会被拒;
    时长对不上、镜头描述为空 / 超长,工具会当场说明,按提示改就行,别反复重试。
-   **例外:2.5 样片 → 1080p 成片**(平台余额才有):\`generate_video\` 带 \`draft: true\` 先出
+   **例外:2.5 样片 → 1080p 成片**(平台余额才有;\`2.5-flash\` 没有样片):\`generate_video\` 带 \`draft: true\` 先出
    480p 样片(按 480p 计费)看构图和动作;用户满意就 \`finalize_video_draft({ taskId })\` 出
    1080p 成片 —— 方舟沿用样片的提示词、素材、时长、比例、seed 与音频,改不了也不用重传,
    样片 7 天内有效。长镜头、贵的片子、用户说「先看看效果」时推荐走这条;要改内容就重出样片。
 3. Call \`generate_video\`:\`prompt\`(必填)、\`model\`(**显式传,且与你载的底座一致**:
    STEP 0 默认 \`2.5\` → 传 \`"2.5"\`;要 1080p / 4k 或用户点名满血画质 → \`"2.0"\` 并改载 \`sd2-pe\`;
-   用户明确要快/便宜才 \`"2.0-fast"\`。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
+   用户明确要快/便宜才 \`"2.0-fast"\`;用户点名 Flash、或要 2.5 的编辑 / 延长而不需要 1080p /
+   样片又想省钱,才 \`"2.5-flash"\`(**别给它 1080p 或 draft**,素材 10/5/5)。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
    模板写的提示词就会被送去 2.0 渲染)、\`resolution\` / \`ratio\` / \`duration\`、
    \`referenceImages\`(**用户给过的图必须传**;支持 \`asset://assetId\`)、
    \`referenceVideos\` / \`referenceAudios\`(上限按 model,见「模式与素材规则」)、或显式要求时的
-   \`firstFrame\` / \`lastFrame\`;2.5 的编辑 / 延长走 \`taskMode\`(\`edit\` / \`extend\`),不靠提示词措辞。
+   \`firstFrame\` / \`lastFrame\`;2.5 / 2.5-flash 的编辑 / 延长走 \`taskMode\`(\`edit\` / \`extend\`),不靠提示词措辞。
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
 5. Read the result banner:

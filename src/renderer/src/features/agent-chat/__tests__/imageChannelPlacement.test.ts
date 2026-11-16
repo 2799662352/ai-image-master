@@ -55,6 +55,16 @@ describe('摆放表守卫', () => {
     expect(unknown).toEqual([])
   })
 
+  it('Seedream 5.5 在「更多」里、与 5.0 Pro 同属火山豆包系列(没挤进常用 —— 2026-11-16 接入)', () => {
+    const placement = resolveChannelPlacement('doubao-seedream-5-5-261028')
+    expect(placement.tier).toBe('more')
+    expect(placement.group).toBe(resolveChannelPlacement('doubao-seedream-5-0-pro-260628').group)
+    // 5.0 Pro 仍在常用,没被 5.5 顶掉
+    expect(resolveChannelPlacement('doubao-seedream-5-0-pro-260628').tier).toBe('featured')
+    const layout = arrangeChannelMenu(placeImageChannels())
+    expect(ids(layout.featured)).not.toContain('doubao-seedream-5-5-261028')
+  })
+
   it('默认渠道在常用里(2026-11-06 起是腾讯 GPT Image 2.6 Sunburst,产品要求)', () => {
     expect(DEFAULT_IMAGE_CHANNEL_ID).toBe('custom-model-og-v2.6-s')
     expect(resolveChannelPlacement(DEFAULT_IMAGE_CHANNEL_ID).tier).toBe('featured')

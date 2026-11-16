@@ -383,6 +383,7 @@ const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
   '2.0-fast': 'seedance',
   '2.0-mini': 'seedance',
   '2.5': 'seedance',
+  '2.5-flash': 'seedance',
   wan3: 'wan3',
   // Prime 与标准档共用整条万相链路,只有上游 slug 与单价不同。
   'wan3-prime': 'wan3',

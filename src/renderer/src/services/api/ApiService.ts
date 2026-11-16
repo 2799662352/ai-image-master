@@ -476,7 +476,7 @@ export interface GenerateImageParams {
    */
   siteKey?: string
   /**
-   * 图层拆分模式（仅 capabilities.layerDecomposition 的模型，如 Seedream 5.0 Pro）。
+   * 图层拆分模式（仅 capabilities.layerDecomposition 的模型：Seedream 5.0 Pro / 5.5）。
    *
    * 开启时必须带且仅带一张输入图（referenceImages[0] 或 imageBase64）；`prompt` 可为空
    * 串——空即「自动全拆」，非空则按提示词指定要拆出什么。ratio / count 在此模式下不生效
@@ -2126,6 +2126,76 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       layerDecomposition: true
     }
   },
+  // Seedream 5.5(2026-11-16 接入,Miau 网关接入说明 §3)。
+  // 网关的请求转换按 `seedream-5` 前缀匹配 5.x,5.5 与 5.0 Pro 走同一套 —— 所以请求形状、
+  // 参考图写法(顶层 `image` / `images`)、defaultParams 都照 5.0 Pro。图层拆分 5.5 也有
+  // (用户 2026-11-16 亲测),所以 capabilities 里同样开 `layerDecomposition`。
+  // 注意模型名:火山控制台页面 URL 里只有 `doubao-seedream-5-5`,可调用的 ID 带 `-261028` 后缀。
+  //
+  // ⚠️ 没有逐项验证的两处,别当成已验:
+  //   1. `resolutionMap` 照 5.0 Pro 的像素表抄(接入说明只实测过 1K 1:1 = 1024×1024、约 14 s),
+  //      其余比例 / 2K 的像素是否都被 5.5 接受没单独跑过;各档都落在网关分档计费的两档内
+  //      (≤2.61M 像素 = 低档、≤4.63M = 高档;1K 最大约 1.06M、2K 最大 2048×2048 ≈ 4.19M),不会算到界外。
+  //   2. 不设 `capabilities.maxReferenceImages`:接入说明没给 5.5 的参考图上限,不拿 5.0 Pro 的
+  //      10 张顶替(设了会在本地替上游拒绝一个可能合法的请求),超限交给上游说话。
+  'doubao-seedream-5-5-261028': {
+    name: 'Seedream 5.5',
+    vendor: 'bytedance',
+    displayName: '15s出图，火山豆包 Seedream 5.5，文生图/图生图/多图参考，1K/2K分辨率，仅单图（经 Miau API 代理，OpenAI 兼容端点）',
+    time: '15s',
+    isNew: true,
+    baseURL: 'https://miauapi.13797248455.xyz/v1/images/generations',
+    requiredSiteKey: MIAU_SITE_KEY,
+    apiType: 'image-generation',
+    sizeStrategy: 'seedream',
+    ratios: [
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' }
+    ],
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '快速出图' },
+      { key: '2K', label: '2K 高清', description: '标准分辨率' }
+    ],
+    defaultResolution: '2K',
+    resolutionMap: {
+      '1:1':  { '1K': '1024x1024', '2K': '2048x2048' },
+      '2:3':  { '1K': '848x1264',  '2K': '1664x2496' },
+      '3:2':  { '1K': '1264x848',  '2K': '2496x1664' },
+      '3:4':  { '1K': '896x1200',  '2K': '1728x2304' },
+      '4:3':  { '1K': '1200x896',  '2K': '2304x1728' },
+      '4:5':  { '1K': '928x1152',  '2K': '1792x2240' },
+      '5:4':  { '1K': '1152x928',  '2K': '2240x1792' },
+      '9:16': { '1K': '768x1376',  '2K': '1440x2560' },
+      '16:9': { '1K': '1376x768',  '2K': '2560x1440' },
+      '21:9': { '1K': '1584x672',  '2K': '3024x1296' }
+    },
+    // 网关丢弃 n / stream / tools / sequential_image_generation(每次只出 1 张),从源头就不发;
+    // watermark 不传时网关默认补 false,显式写上求明确。
+    defaultParams: {
+      response_format: 'url',
+      watermark: false
+    },
+    responseFormats: ['url', 'b64_json'],
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true,
+      // 图层拆分:用户实测 5.5 也支持,同一 images/generations 端点靠 layer_decomposition 开关区分。
+      // ⚠️ 5.5 上拆分的**计费**接入说明没写(只写了 5.0 Pro 的 ¥0.15 / ¥0.30),没核对过。
+      layerDecomposition: true
+    }
+  },
   'qwen-image-3.0-pro': {
     name: '通义千问 Image 3.0 Pro',
     vendor: 'alibaba',
@@ -2318,7 +2388,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
 }
 
 /**
- * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上,
+ * 模型选择器的展示顺序(2026-07-20 用户指定):Seedream 5.0 Pro 最上(2026-11-16 起 5.5 紧随其后),
  * 其次 腾讯(image2 → fast → 2.5 Flare → 2.5 Sunburst → 2.6 Flare → 2.6 Sunburst)→ Nano2 → Nano2.1 → 万相 2.7 pro →
  * 千问 → 悠船(快速 → 极速)→ NovelAI(V5 Full → V5 Curated → V4.5 Full → V4.5 Curated)
  * → Image 2.6 官转 → Image 2.5 官转 → Image2 官方 → VIP;未列出的模型保持
@@ -2327,6 +2397,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
  */
 const MODEL_DISPLAY_ORDER: readonly string[] = [
   'doubao-seedream-5-0-pro-260628',
+  // 同系列紧跟 5.0 Pro(2026-11-16 接入 5.5)。
+  'doubao-seedream-5-5-261028',
   'custom-imagemodel-gt',
   'custom-model-og-v2',
   'custom-model-og-v2.5-f',
@@ -2501,9 +2573,14 @@ export class ApiService {
     // 就变成一次普通文生图。两种情况都会成功返回一张图,用户只会疑惑「拆分怎么没生效」。
     if (layerDecomposition) {
       if (!modelConfig.capabilities?.layerDecomposition) {
+        // 「请切换到谁」从能力位派生(5.0 Pro 与 5.5 都有),别写死某一个 —— 这句话曾只点名 5.0 Pro。
+        const splitCapable = Object.values(this.models)
+          .filter((m) => m.capabilities?.layerDecomposition)
+          .map((m) => m.name)
+          .join(' / ')
         return {
           success: false,
-          error: `${modelConfig.displayName || modelKey} 不支持图层拆分，请切换到 Seedream 5.0 Pro 后重试。`,
+          error: `${modelConfig.displayName || modelKey} 不支持图层拆分，请切换到 ${splitCapable} 后重试。`,
         }
       }
       const hasInputImage = !!imageBase64 || (referenceImages?.length ?? 0) > 0
@@ -4458,7 +4535,7 @@ export class ApiService {
   }
 
   /**
-   * 构建图层拆分请求体（Ark `layer_decomposition`，当前仅 Seedream 5.0 Pro）。
+   * 构建图层拆分请求体（Ark `layer_decomposition`，Seedream 5.0 Pro / 5.5）。
    *
    * 挂在与普通生图相同的 images/generations 端点上，靠这个开关区分：带开关回
    * 1 张底图 + 最多 16 张透明 PNG 图层（逐项带 z_index / bounding_box / name /
@@ -4618,6 +4695,10 @@ export class ApiService {
           ? '账户额度不足，请充值后重试'
           : '请求过于频繁，请稍后重试'; break
         case 500: friendlyMsg = '服务端内部错误，请稍后重试'; break
+        // 524 = 前置代理(EdgeOne)等不到上游响应而断开连接,**上游请求本身通常仍在后台跑完并计费**
+        // (Miau 网关接入说明 §3.4:Seedream 慢图、大图 / 多参考图可能遇到)。给一句话而不是裸
+        // 「API 错误: 524」+ 一段 HTML,并明确提醒别马上重试 —— 重试会重复扣费。
+        case 524: friendlyMsg = '网关等待上游出图超时断开了连接，上游可能仍在后台出图并已计费，请先在用量记录里确认，不要立刻重试'; break
         default: friendlyMsg = apiMsg || `API 错误: ${response.status}`
       }
       // 把真实细节附在友好提示后面：优先结构化 apiMsg，否则原始 body 片段。

@@ -68,6 +68,16 @@ export const IMAGE_CHANNELS = [
     miauOnly: true,
   },
   {
+    // 2026-11-16 接入(网关渠道:生产 14 / 测试 15,请求转换与 5.0 Pro 同一套)。
+    // 描述里**不写参考图上限、不写价格**:接入说明没给 5.5 的参考图上限(别拿 5.0 Pro 的 10 张顶替),
+    // 分档计费(1K / 2K / 每张参考图)在生产服还没确认上线,写了就是一句可能不对的话。
+    id: 'doubao-seedream-5-5-261028',
+    label: 'SD5.5',
+    fullLabel: 'Seedream 5.5',
+    description: '火山豆包 Seedream 5.5 — 文生图 / 参考图，1K/2K 单图，经 Miau 代理。',
+    miauOnly: true,
+  },
+  {
     id: 'custom-imagemodel-gt',
     label: '腾讯',
     fullLabel: '腾讯 image2',
@@ -354,4 +364,33 @@ export function isMiauOnlyChannel(id: string): boolean {
  */
 export function resolveImageChannel(candidate: unknown): string {
   return isSelectableImageChannel(candidate) ? candidate : DEFAULT_IMAGE_CHANNEL_ID
+}
+
+/**
+ * 能做图层拆分(`layerDecomposition`)的渠道。**第一个是缺省**。
+ *
+ * 5.0 Pro 一直有;5.5 也有(用户 2026-11-16 亲测)。必须与 `ApiService.DEFAULT_MODELS` 里
+ * `capabilities.layerDecomposition` 的集合一致 —— 有守卫测试钉着(`imageChannels.test.ts`),
+ * 漏一边的后果是 agent 指定了 5.5 却被悄悄钉回 5.0 Pro,或反过来撞上 ApiService 的能力守卫。
+ */
+export const LAYER_SPLIT_CHANNEL_IDS: readonly ImageChannelId[] = [
+  'doubao-seedream-5-0-pro-260628',
+  'doubao-seedream-5-5-261028',
+]
+
+/** 拆分请求没指定(或指了个做不了拆分的)渠道时的缺省 = 5.0 Pro(计费口径已知的那个)。 */
+export const DEFAULT_LAYER_SPLIT_CHANNEL_ID: ImageChannelId = LAYER_SPLIT_CHANNEL_IDS[0]
+
+/**
+ * 拆分请求该用哪个渠道:agent **显式**传了能拆分的渠道就听它的,否则钉缺省。
+ *
+ * 刻意**不跟随用户在输入框选的渠道**(普通出图的第二优先级):拆分请求省略 `model` 时落到用户选的
+ * 渠道,多半是个做不了拆分的(撞上 ApiService 的能力守卫、把「你没写 model」变成失败的 tool call);
+ * 就算用户选的恰好是 5.5,5.5 上拆分的计费接入说明没写、没核对过,不替用户悄悄换到它。
+ */
+export function resolveLayerSplitChannel(agentRequested: unknown): string {
+  return typeof agentRequested === 'string' &&
+    (LAYER_SPLIT_CHANNEL_IDS as readonly string[]).includes(agentRequested)
+    ? agentRequested
+    : DEFAULT_LAYER_SPLIT_CHANNEL_ID
 }

@@ -61,6 +61,7 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-fast',
       '2.0-mini',
       '2.5',
+      '2.5-flash',
       'depth',
       'kling4',
       'kling4-omni',

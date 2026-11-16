@@ -240,6 +240,50 @@ describe('registerVideoTools / schemas', () => {
     expect(router.call).toHaveBeenCalled()
   })
 
+  // Seedance 2.5 Flash(2026-11-16):走同一个工具,数字按能力表(4-30 秒、480p/720p、10/5/5、无样片)。
+  describe('model "2.5-flash"', () => {
+    it('在 model 枚举里(模型表加了别名,MCP 的 zod 枚举自动跟上)', () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const schema = tools[0].config.inputSchema as unknown as { safeParse: (v: unknown) => { success: boolean } }
+      expect(schema.safeParse({ prompt: 'x', model: '2.5-flash' }).success).toBe(true)
+      expect(schema.safeParse({ prompt: 'x', model: '2.5-turbo' }).success).toBe(false)
+    })
+
+    it('30 秒 720p 放行并把 model 原样交给主进程', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      await tools[0].handler({ prompt: 'x', model: '2.5-flash', duration: 30, resolution: '720p' })
+      const [name, params] = router.call.mock.calls[0]
+      expect(name).toBe('generate_video')
+      expect(params).toMatchObject({ model: '2.5-flash', duration: 30, resolution: '720p' })
+    })
+
+    it('1080p 被拦下(2.5 平台余额才有 1080p,Flash 没有),不调主进程', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({ prompt: 'x', model: '2.5-flash', resolution: '1080p' })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('480p / 720p')
+    })
+
+    it('样片(draft)被拒,而不是静默当普通生成发出去', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({ prompt: 'x', model: '2.5-flash', draft: true })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('样片')
+    })
+
+    it('edit 同样必须带参考视频', async () => {
+      const { tools, server, router } = capture()
+      registerVideoTools(server, router)
+      const res = await tools[0].handler({ prompt: 'x', model: '2.5-flash', taskMode: 'edit', duration: -1 })
+      expect(router.call).not.toHaveBeenCalled()
+      expect((res.content[0] as { text: string }).text).toContain('视频')
+    })
+  })
+
   it('generate_video handler rejects taskMode without a reference video', async () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)

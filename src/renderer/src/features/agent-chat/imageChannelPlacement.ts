@@ -101,6 +101,9 @@ export const IMAGE_CHANNEL_PLACEMENT: Readonly<Record<string, ChannelPlacement>>
   'gpt-image-2': more(GPT_SERIES, '上一代官转，已被 2.5 同价取代'),
   'gpt-image-2-vip': more(GPT_SERIES, '官逆稳定，仅点名 VIP 时用'),
   'gemini-3.1-flash-image': more(GEMINI_SERIES, 'Nano Banana 2，快，多比例 4K'),
+  // 5.5 先放「更多」:新渠道不自己挤进常用(见文件头);不写 priceHint —— 分档计费(1K ¥0.13 / 2K ¥0.23)
+  // 生产服还没确认上线,「只给确认过口径的渠道填」。
+  'doubao-seedream-5-5-261028': more(DOUBAO_SERIES, '火山豆包 Seedream 5.5，1K/2K 单图，支持参考图'),
   'qwen-image-3.0-pro': more(ALIBABA_SERIES, '通义千问同步出图，一次 1–6 张，参考图最多 3 张'),
   'youchuan-v8.2': more(STYLE_SERIES, '悠船 Midjourney V8.2 快速，一次 4 张，支持参考图'),
   'youchuan-v8.2-turbo': more(STYLE_SERIES, '悠船 Midjourney V8.2 极速，出图更快，价格更高'),

@@ -86,6 +86,53 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  it('submit 支持 2.5 Flash:带日期后缀的网关 ID + 30 秒 + 720p', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({ input: { ...INPUT, model: '2.5-flash', duration: 30, resolution: '720p' }, content: [] })
+    expect(client.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'doubao-seedance-2-5-flash-261115', duration: 30, resolution: '720p' }),
+      'sk-test',
+    )
+    mgr.dispose()
+  })
+
+  it('2.5 Flash 的 taskMode 与 2.5 同规则:透传并强制 adaptive', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await mgr.submit({
+      input: { ...INPUT, model: '2.5-flash', taskMode: 'extend', duration: 20, ratio: '16:9' },
+      content: [{ type: 'video_url', video_url: { url: 'https://x/v.mp4' } }],
+    })
+    expect(client.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'doubao-seedance-2-5-flash-261115', taskMode: 'extend', ratio: 'adaptive' }),
+      'sk-test',
+    )
+    mgr.dispose()
+  })
+
+  it('2.5 Flash 提交前拦下 1080p / 样片 / 超 10 张图,不打上游', async () => {
+    const client = makeClient([{ id: 'task-1', status: 'running' }])
+    const mgr = makeManager(client)
+    await expect(
+      mgr.submit({ input: { ...INPUT, model: '2.5-flash', resolution: '1080p' }, content: [] }),
+    ).rejects.toThrow(/480p \/ 720p/)
+    // 样片只有 2.5:Flash 带 draft 要被拒,而不是静默当普通生成发出去(那会按 Flash 价扣费)。
+    await expect(
+      mgr.submit({ input: { ...INPUT, model: '2.5-flash', draft: true }, content: [] }),
+    ).rejects.toThrow(/样片/)
+    const eleven = Array.from({ length: 11 }, (_, i) => ({
+      type: 'image_url' as const,
+      image_url: { url: `https://x/${i}.png` },
+      role: 'reference_image' as const,
+    }))
+    await expect(
+      mgr.submit({ input: { ...INPUT, model: '2.5-flash' }, content: eleven }),
+    ).rejects.toThrow(/10/)
+    expect(client.createTask).not.toHaveBeenCalled()
+    mgr.dispose()
+  })
+
   it('taskMode 透传并强制 adaptive 比例（文档 4.9）', async () => {
     const client = makeClient([{ id: 'task-1', status: 'running' }])
     const mgr = makeManager(client)
