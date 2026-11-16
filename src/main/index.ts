@@ -3,7 +3,6 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, cli
 import * as path from 'path'
 import * as fs from 'fs'
 import { randomBytes } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance, AutoUpdater } from './updater'
 import { resolveMainWindowShortcut } from './keyboardShortcuts'
 import { classifyContextMenuLink } from './contextMenuLink'
@@ -43,6 +42,7 @@ import { imageHistoryPicOperations } from './services/tencent/cosThumbRules'
 import { fetchImageBytes, fetchImageToFile } from './utils/fetchImageBytes'
 import { renameWithRetry } from './utils/atomicFile'
 import { writeImageToClipboard, writeTextToClipboard } from './utils/clipboardWrite'
+import { copyImageUri, saveImageUri } from './utils/imageUriSource'
 import {
   IMAGE_SNIFF_BYTES,
   mimeFromUrl,
@@ -2292,16 +2292,18 @@ ipcMain.handle(
 )
 
 // Shell helpers (clipboard / save dialog) — used by the Codex Agent Lightbox.
+// 地址形态(file:// / local-file:// / https / data: / 裸路径)的解析与取字节在
+// utils/imageUriSource.ts —— 之前这里只认 file:// 和裸路径,渲染端传 local-file:// 或
+// https 时直接 ENOENT,缩略图的「下载」点了没反应。
 ipcMain.handle('shell:copy-image', async (_event, uri: string) => {
   try {
-    const filePath = uri.startsWith('file://') ? fileURLToPath(uri) : uri
-    const img = nativeImage.createFromPath(filePath)
-    if (img.isEmpty()) {
-      return { success: false, error: 'unable to load image' }
-    }
-    // Electron 44 起 clipboard.writeImage 已移除,走 ClipboardItem(见 utils/clipboardWrite.ts)
-    await writeImageToClipboard(img, { clipboard, ClipboardItem })
-    return { success: true }
+    return await copyImageUri(uri, {
+      fetch: (url) => net.fetch(url),
+      createFromPath: (p) => nativeImage.createFromPath(p),
+      createFromBuffer: (b) => nativeImage.createFromBuffer(b),
+      // Electron 44 起 clipboard.writeImage 已移除,走 ClipboardItem(见 utils/clipboardWrite.ts)
+      writeImage: (img) => writeImageToClipboard(img, { clipboard, ClipboardItem }),
+    })
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
@@ -2309,16 +2311,16 @@ ipcMain.handle('shell:copy-image', async (_event, uri: string) => {
 
 ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggestedName: string }) => {
   try {
-    const { uri, suggestedName } = payload
-    const filePath = uri.startsWith('file://') ? fileURLToPath(uri) : uri
-    const result = await dialog.showSaveDialog({
-      defaultPath: suggestedName || path.basename(filePath),
+    return await saveImageUri(payload?.uri, payload?.suggestedName, {
+      fetch: (url) => net.fetch(url),
+      pickSavePath: async (defaultName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+        return result.canceled || !result.filePath ? null : result.filePath
+      },
+      copyFile: (from, to) => fs.promises.copyFile(from, to),
+      writeFile: (to, bytes) => fs.promises.writeFile(to, bytes),
+      basename: (p) => path.basename(p),
     })
-    if (result.canceled || !result.filePath) {
-      return { success: true, canceled: true }
-    }
-    await fs.promises.copyFile(filePath, result.filePath)
-    return { success: true, path: result.filePath }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
