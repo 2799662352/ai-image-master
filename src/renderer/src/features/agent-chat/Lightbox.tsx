@@ -4,6 +4,7 @@ import { classifyMediaKind } from '../../components/shared/media/MediaThumbnail'
 import { useResolvedMediaSrc } from '../../components/shared/media/useResolvedMediaSrc'
 import { toRenderableUri } from '../file-explorer/uri'
 import { useAgentChatStore } from './store'
+import { LightboxImageActions } from './ImageHoverActions'
 import {
   ANNOTATION_COLORS,
   RESIZE_PRESETS,
@@ -317,14 +318,17 @@ export function Lightbox(): JSX.Element | null {
         <span>
           {preview.index + 1} / {totalCount} · {current.name}
         </span>
-        <button
-          type="button"
-          onClick={closePreview}
-          className="text-zinc-400 hover:text-white text-xl"
-          aria-label="Close preview"
-        >
-          ✕
-        </button>
+        <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <LightboxImageActions uri={current.uri} name={current.name} isImage={isImage} />
+          <button
+            type="button"
+            onClick={closePreview}
+            className="text-zinc-400 hover:text-white text-xl"
+            aria-label="Close preview"
+          >
+            ✕
+          </button>
+        </span>
       </div>
 
       {isImage ? (

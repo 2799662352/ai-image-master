@@ -9,22 +9,14 @@ import { parseFileCitation, type FileCitation } from '../../../../shared/fileCit
 import { rawFromChatPathHref, remarkChatPaths } from './chatPathLinkify'
 import { usePathExists } from './usePathExists'
 import type { AttachmentRef } from '../../../../types/agent-timeline'
+import { MarkdownImage, mimeFromHref } from './MarkdownImage'
 
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  avif: 'image/avif',
-  bmp: 'image/bmp',
-  svg: 'image/svg+xml',
-}
-
-function mimeFromHref(href: string): string {
-  const ext = href.split(/[?#]/)[0].split('.').pop()?.toLowerCase() ?? ''
-  return IMAGE_MIME_BY_EXT[ext] ?? 'image/png'
-}
+/**
+ * 内联 `data:image/*;base64` 允许通过(`<img>` 里不执行脚本)。**不含 svg** ——
+ * svg 里可以带内联样式 / 外链,宁可不显示。默认清洗器会把 `data:` 整条抹掉,
+ * 图就变成什么都没有。
+ */
+const SAFE_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,[a-z0-9+/=\s]+$/i
 
 /**
  * react-markdown's default URL sanitizer strips every non-http(s) scheme,
@@ -38,6 +30,7 @@ function mimeFromHref(href: string): string {
 function chatUrlTransform(url: string): string {
   // 我们自己的哨兵(remarkChatPaths 造的),默认清洗器不认识它的 scheme。
   if (rawFromChatPathHref(url) !== null) return url
+  if (SAFE_DATA_IMAGE.test(url)) return url
   if (parseFileCitation(url, { workspaceRoot: currentWorkspaceRoot() })) return url
   return defaultUrlTransform(url)
 }
@@ -166,6 +159,8 @@ function MarkdownContentImpl({ source }: { source: string }) {
           </a>
         )
       },
+      // 正文里嵌的图:点击进灯箱、悬停可复制/下载,和聊天里其它缩略图一致。
+      img: ({ src, alt }) => <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />,
       h1: ({ children }) => (
         <div className="mt-3 text-[15px] font-semibold text-zinc-50">{children}</div>
       ),

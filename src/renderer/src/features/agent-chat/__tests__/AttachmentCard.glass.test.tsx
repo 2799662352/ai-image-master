@@ -23,13 +23,15 @@ vi.mock('../cards/alphaProbe', () => ({
 }))
 
 const saveAs = vi.fn(async () => ({ success: true }))
+const copyImage = vi.fn(async (_uri: string) => ({ success: true }))
 
 beforeEach(() => {
   Object.defineProperty(window, 'electronAPI', {
-    value: { shell: { saveAs } },
+    value: { shell: { saveAs, copyImage } },
     configurable: true,
   })
   saveAs.mockClear()
+  copyImage.mockClear()
   useFileExplorerStore.setState({ openReference: vi.fn(async () => undefined) } as never)
   useAgentChatStore.setState({ openPreview: vi.fn() } as never)
 })
@@ -56,6 +58,13 @@ describe('AttachmentCard — glass buttons + transparent PNG (D5)', () => {
     fireEvent.click(screen.getByRole('button', { name: '下载 night.jpg' }))
     await waitFor(() => expect(saveAs).toHaveBeenCalledWith('local-file:///D:/r/night.jpg', 'night.jpg'))
     // 下载不进灯箱
+    expect(useAgentChatStore.getState().openPreview).not.toHaveBeenCalled()
+  })
+
+  it('复制 copies the original through shell.copyImage (no 编辑 / lightbox side effect)', async () => {
+    render(<AttachmentCard item={item([PHOTO])} />)
+    fireEvent.click(screen.getByRole('button', { name: '复制 night.jpg' }))
+    await waitFor(() => expect(copyImage).toHaveBeenCalledWith('local-file:///D:/r/night.jpg'))
     expect(useAgentChatStore.getState().openPreview).not.toHaveBeenCalled()
   })
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import type { MediaThumbnailKind } from '../../../components/shared/media/MediaThumbnail'
 import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
+import { ImageHoverActions } from '../ImageHoverActions'
 import { probeImageAlpha } from './alphaProbe'
 
 interface MediaTileProps {
@@ -43,12 +44,6 @@ export function MediaTile(props: MediaTileProps): JSX.Element {
       cancelled = true
     }
   }, [props.src, props.mime, props.kind])
-
-  const download = (): void => {
-    const shell = (window as Window & { electronAPI?: { shell?: { saveAs?: (uri: string, name: string) => Promise<unknown> } } })
-      .electronAPI?.shell
-    void shell?.saveAs?.(props.uri, props.name)
-  }
 
   return (
     <div
@@ -108,20 +103,8 @@ export function MediaTile(props: MediaTileProps): JSX.Element {
         </svg>
         编辑
       </button>
-      <button
-        type="button"
-        aria-label={`下载 ${props.name}`}
-        title="另存为…"
-        onClick={(e) => {
-          e.stopPropagation()
-          download()
-        }}
-        className="glassbtn absolute bottom-1 right-1 inline-flex h-5 w-5 items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-        </svg>
-      </button>
+      {/* 复制 + 下载:图片才有「复制」;视频只留下载(主进程复制按图片解码)。 */}
+      <ImageHoverActions uri={props.uri} name={props.name} canCopy={props.kind === 'image'} />
     </div>
   )
 }
