@@ -43,6 +43,8 @@ export interface ProjectsSlice {
   renameProject: (id: string, name: string) => boolean
   /** 整体重排,必须给出全集(同 reorderCards)。 */
   reorderProjects: (ids: string[]) => boolean
+  /** 整体重排一部剧里的分段,必须给出这部剧的全部分段 id(同 reorderProjects);别的剧的分段不受影响。 */
+  reorderBoards: (projectId: string, ids: string[]) => boolean
   switchProject: (id: string) => void
   openOverview: () => void
   /** 打开某个分段;不属于当前剧则连剧一起切。 */
@@ -381,6 +383,27 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
     set((s) => ({ projects: next, revision: s.revision + 1, structureRevision: s.structureRevision + 1 }))
     const db = getWorkbenchDb()
     for (const p of next) void db.putProject(p).catch(() => {})
+    return true
+  },
+
+  reorderBoards: (projectId, ids) => {
+    const own = get()
+      .boards.filter((b) => b.projectId === projectId)
+      .sort((a, b) => a.order - b.order)
+    if (own.length === 0 || ids.length !== own.length || new Set(ids).size !== ids.length) return false
+    const byId = new Map(own.map((b) => [b.id, b]))
+    if (!ids.every((id) => byId.has(id))) return false
+    if (ids.every((id, i) => own[i].id === id)) return true
+    // 只有 order 真变了的分段才换新对象、才写库
+    const reordered = compactOrders(ids.map((id) => byId.get(id)!))
+    const changed = new Map(reordered.filter((b) => b !== byId.get(b.id)).map((b) => [b.id, b]))
+    set((s) => ({
+      boards: s.boards.map((b) => changed.get(b.id) ?? b),
+      revision: s.revision + 1,
+      structureRevision: s.structureRevision + 1,
+    }))
+    const db = getWorkbenchDb()
+    for (const b of changed.values()) void db.putBoard(b).catch(() => {})
     return true
   },
 

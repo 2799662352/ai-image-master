@@ -197,17 +197,37 @@ describe('BoardTabs', () => {
     expect(screen.queryByRole('button', { name: /删除页/ })).toBeNull()
   })
 
-  it('右键页签弹出菜单:重命名 / 置顶 / Fork / 删除', () => {
+  it('右键页签弹出菜单:重命名 / 置顶 / 前移 / 后移 / Fork / 删除', () => {
     useVideoWorkbenchStore.getState().addBoard('第二页')
     render(<BoardTabs />)
 
     fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent ?? '')
-    expect(items).toHaveLength(4)
+    expect(items).toHaveLength(6)
     expect(items[0]).toContain('重命名')
     expect(items[1]).toContain('置顶')
-    expect(items[2]).toContain('Fork')
-    expect(items[3]).toContain('删除')
+    expect(items[2]).toContain('前移')
+    expect(items[3]).toContain('后移')
+    expect(items[4]).toContain('Fork')
+    expect(items[5]).toContain('删除')
+  })
+
+  it('右键 → 后移一格 / 前移一格:页签顺序跟着变;头一个的「前移」、末一个的「后移」禁用', () => {
+    const S = () => useVideoWorkbenchStore.getState()
+    S().addBoard('第二页')
+    render(<BoardTabs />)
+    const order = () => S().boards.slice().sort((a, b) => a.order - b.order).map((b) => b.name)
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    expect((screen.getByRole('menuitem', { name: /前移/ }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('menuitem', { name: /后移/ }))
+    expect(order()).toEqual(['第二页', '页面 1'])
+    expect(screen.getAllByRole('tab').map((el) => el.textContent ?? '')[0]).toContain('第二页')
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /页面 1/ }))
+    expect((screen.getByRole('menuitem', { name: /后移/ }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('menuitem', { name: /前移/ }))
+    expect(order()).toEqual(['页面 1', '第二页'])
   })
 
   it('右键 → 重命名 进入行内编辑', () => {

@@ -2,6 +2,7 @@
 // 三个入口(剧栏行、总览分段卡、分段页签)共用,保证文案和规则只有一份。
 // 状态在「右键那一刻」读取,所以菜单里的置顶/取消置顶、可否删除永远是最新的。
 
+import { pinnedFirstBy, planReorder } from '../../features/video-workbench/projects'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 import { useToastStore } from '../../stores/useToastStore'
 import type { ContextMenuItem } from './ContextMenu'
@@ -89,7 +90,18 @@ export function boardMenuItems(
   const s = store()
   const board = s.boards.find((b) => b.id === boardId)
   const pinned = s.pinnedBoardIds.includes(boardId)
-  const only = board ? s.boards.filter((b) => b.projectId === board.projectId).length <= 1 : true
+  const own = board ? s.boards.filter((b) => b.projectId === board.projectId) : []
+  const only = board ? own.length <= 1 : true
+  // 前移 / 后移:拖动之外的键盘 / 右键通路。按「显示顺序」找邻居(置顶的显示在最前),
+  // 但新顺序交给 planReorder 按存储顺序算 —— 和拖动同一口径,跨置顶边界的挪法它会拒绝。
+  const ids = own.sort((a, b) => a.order - b.order).map((b) => b.id)
+  const shown = pinnedFirstBy(ids, s.pinnedBoardIds, (id) => id)
+  const at = shown.indexOf(boardId)
+  const prevId = at > 0 ? shown[at - 1] : undefined
+  const nextId = at >= 0 ? shown[at + 1] : undefined
+  const movePrev = prevId ? planReorder(ids, s.pinnedBoardIds, boardId, prevId, 'before') : null
+  const moveNext = nextId ? planReorder(ids, s.pinnedBoardIds, boardId, nextId, 'after') : null
+  const pinBoundary = '置顶的分段始终排在最前面,不能和未置顶的互换位置'
   return [
     ...(opts.onOpen ? [{ id: 'open', label: '打开', onSelect: opts.onOpen }] : []),
     { id: 'rename', label: '重命名', onSelect: opts.onRename },
@@ -98,6 +110,26 @@ export function boardMenuItems(
       label: pinned ? '取消置顶' : '置顶',
       hint: pinned ? 'Unpin' : 'Pin',
       onSelect: () => store().setBoardPinned(boardId, !pinned),
+    },
+    {
+      id: 'move-prev',
+      label: '前移一格',
+      hint: '←',
+      disabled: !movePrev,
+      disabledReason: prevId ? pinBoundary : '已经是第一个',
+      onSelect: () => {
+        if (board && movePrev) store().reorderBoards(board.projectId, movePrev)
+      },
+    },
+    {
+      id: 'move-next',
+      label: '后移一格',
+      hint: '→',
+      disabled: !moveNext,
+      disabledReason: nextId ? pinBoundary : '已经是最后一个',
+      onSelect: () => {
+        if (board && moveNext) store().reorderBoards(board.projectId, moveNext)
+      },
     },
     { id: 'fork', label: 'Fork', hint: '创建副本', onSelect: () => void forkBoardWithToast(boardId) },
     {

@@ -1,5 +1,5 @@
 // 剧总览网格里的一张分段卡:封面 · 序号 · 时长 · 状态角标 · 名 · 镜/花费 · 三色条。
-// 整张卡是一个按钮(点进分段页);可拖(拖到剧栏 = 移到别的剧,Task 7 接投放端)。
+// 整张卡是一个按钮(点进分段页);可拖(拖到剧栏 = 移到别的剧;拖到别的卡上 = 调整顺序,投放端在 ProjectOverview)。
 // 右键(或右上角悬停出现的「⋯」)弹出分段菜单:重命名 / 置顶 / Fork / 删除。
 // 卡本体是 <button>,「⋯」不能嵌在里面(按钮里嵌按钮不合规范),所以与它并列、包在一个定位容器里。
 
@@ -17,14 +17,48 @@ export interface SegmentCardProps {
   pinned?: boolean
   onOpen: () => void
   onDragStart?: (e: DragEvent<HTMLButtonElement>) => void
+  onDragEnd?: (e: DragEvent<HTMLButtonElement>) => void
+  /** 别的分段卡正拖在这张卡上空 / 在这里放下(调整顺序;不传 = 不接收)。挂在外层容器上,卡内任何位置都算。 */
+  onDragOver?: (e: DragEvent<HTMLDivElement>) => void
+  onDrop?: (e: DragEvent<HTMLDivElement>) => void
+  /** 这张卡正被拖着(变暗)。 */
+  dragging?: boolean
+  /** 插入线画在这张卡的左 / 右侧(2px 黄线,画在列间距里,不占布局)。 */
+  dropMark?: 'before' | 'after' | null
   /** 右键卡片 / 点「⋯」:交给页面打开菜单(不传 = 没有菜单,卡片行为与以前完全一致)。 */
   onMenu?: (e: MouseEvent) => void
 }
 
-export function SegmentCard({ board, stats, cover, index, pinned, onOpen, onDragStart, onMenu }: SegmentCardProps) {
+export function SegmentCard({
+  board,
+  stats,
+  cover,
+  index,
+  pinned,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
+  dragging,
+  dropMark,
+  onMenu,
+}: SegmentCardProps) {
   const cost = formatCostParts(stats.cost.usd, stats.cost.cny)
   return (
-    <div className="vw-seg-wrap" onContextMenu={onMenu}>
+    <div
+      className={[
+        'vw-seg-wrap',
+        dragging && 'vw-seg-dragging',
+        dropMark === 'before' && 'vw-seg-drop-before',
+        dropMark === 'after' && 'vw-seg-drop-after',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      onContextMenu={onMenu}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       <button
         type="button"
         className="vw-seg"
@@ -32,6 +66,7 @@ export function SegmentCard({ board, stats, cover, index, pinned, onOpen, onDrag
         onClick={onOpen}
         draggable={Boolean(onDragStart)}
         onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
       >
         <div className="vw-seg-cover">
           <CoverImage src={cover} fallback={<span className="vw-seg-play" aria-hidden="true">▷</span>} />
