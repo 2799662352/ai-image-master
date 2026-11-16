@@ -244,7 +244,9 @@ export function planRestore(
   const removeProjectIds = source.projects.filter((p) => !finalProjectIds.has(p.id)).map((p) => p.id)
   const projectsToPersist = finalProjects.filter((p) => {
     const cur = curProjectById.get(p.id)
-    return !cur || cur.name !== p.name || cur.order !== p.order || cur.legacy !== p.legacy
+    // group 也算「变了」:只改分组(拖进 / 移出 / 重命名 / 解散)时 name、order 都不动,
+    // 漏了它,撤销会被判成 noop —— 弹掉栈顶却什么都没还原。
+    return !cur || cur.name !== p.name || cur.order !== p.order || cur.legacy !== p.legacy || cur.group !== p.group
   })
   const activeProjectId = finalProjectIds.has(snapshot.activeProjectId)
     ? snapshot.activeProjectId

@@ -25,6 +25,7 @@ import type {
   VideoWorkbenchProject,
 } from '../../../../types/videoWorkbench'
 import { MATERIAL_KINDS, type MaterialKind } from './cardSpec'
+import { normalizeGroupName } from './projectGroups'
 import type { KlingMultiShot } from '../../../../types/klingMultiShot'
 import { coerceKlingMultiShot } from '../../../../types/klingMultiShot'
 
@@ -86,7 +87,12 @@ export interface WorkbenchProjectFile {
   formatVersion: number
   app: { name: string; version: string }
   exportedAt: string
-  project: { name: string; createdAt: number; updatedAt: number; summary?: string }
+  /**
+   * `group` = 导出那一刻这部剧所在的分组名(没分组就不写这个键,所以没用过分组的剧导出的文件和
+   * 以前**逐字节一样**,云备份的指纹不变)。同名即同组:导入 / 云端恢复时按这个名字并入本机同名分组。
+   * 加字段是纯增量,`formatVersion` 不动;旧客户端读到会当未知字段忽略。
+   */
+  project: { name: string; createdAt: number; updatedAt: number; summary?: string; group?: string }
   boards: ProjectFileBoard[]
 }
 
@@ -251,6 +257,7 @@ export function buildProjectFile(input: BuildProjectFileInput): BuildProjectFile
       })
     return { name: board.name, ...(board.summary ? { summary: board.summary } : {}), cards }
   })
+  const groupName = normalizeGroupName(input.project.group)
   if (missing.length > 0) {
     return { ok: false, reason: `${missing.length} 个素材没有云端地址,无法导出:${missing.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}` }
   }
@@ -266,6 +273,7 @@ export function buildProjectFile(input: BuildProjectFileInput): BuildProjectFile
         createdAt: input.project.createdAt,
         updatedAt: input.project.updatedAt,
         ...(input.project.summary ? { summary: input.project.summary } : {}),
+        ...(groupName ? { group: groupName } : {}),
       },
       boards,
     },
@@ -412,11 +420,14 @@ export function parseProjectFile(text: string): ParseProjectFileResult {
     const exportedAt = str(raw.exportedAt, 'exportedAt')
     if (!isRecord(raw.project)) throw new InvalidProjectFile('project 必须是对象')
     const projectSummary = optStr(raw.project.summary, 'project.summary')
+    // 分组名按宽松解析:不是字符串 / 空 / 过长都当没分组(或截断),不让一个装饰性字段把整份文件拒掉
+    const projectGroup = normalizeGroupName(raw.project.group)
     const project = {
       name: str(raw.project.name, 'project.name'),
       createdAt: num(raw.project.createdAt, 'project.createdAt'),
       updatedAt: num(raw.project.updatedAt, 'project.updatedAt'),
       ...(projectSummary ? { summary: projectSummary } : {}),
+      ...(projectGroup ? { group: projectGroup } : {}),
     }
     const boards = arr(raw.boards, 'boards').map((b, i): ProjectFileBoard => {
       if (!isRecord(b)) throw new InvalidProjectFile(`boards[${i}] 必须是对象`)

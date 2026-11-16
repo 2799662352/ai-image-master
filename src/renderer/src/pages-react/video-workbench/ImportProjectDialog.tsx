@@ -62,7 +62,7 @@ export function ImportProjectDialog({ path, onClose }: ImportProjectDialogProps)
   const run = () => {
     if (!loaded?.ok) return
     const finalName = uniqueProjectName(name, projects.map((p) => p.name))
-    importProject(planImport(loaded.file), finalName, loaded.file.project.summary)
+    importProject(planImport(loaded.file), finalName, loaded.file.project.summary, loaded.file.project.group)
     useToastStore.getState().addToast({
       type: 'success',
       message: `已导入「${finalName}」· ${loaded.summary.segments} 段 ${loaded.summary.cards} 镜`,
@@ -103,6 +103,11 @@ export function ImportProjectDialog({ path, onClose }: ImportProjectDialogProps)
               <div className="vw-dialog-line text-[#a1a1aa]">
                 {loaded.summary.segments} 段 · {loaded.summary.cards} 镜 · {loaded.summary.materials} 个素材
               </div>
+              {loaded.file.project.group && (
+                <div className="vw-dialog-line text-[#a1a1aa]">
+                  导出时在分组「{loaded.file.project.group}」,导入后自动归入本机同名分组(没有就新建)
+                </div>
+              )}
               <p className="vw-dialog-note">
                 导出于 {formatExportedAt(loaded.summary.exportedAt)} · 客户端 {loaded.summary.appVersion || '未知'}
                 ;素材与成片按云端地址引用,排队/生成中的卡片会重置为待生成。

@@ -30,7 +30,7 @@ const rowNames = () =>
   screen.getAllByRole('button', { name: /切换到剧/ }).map((el) => el.getAttribute('aria-label')?.replace('切换到剧 ', ''))
 
 describe('ProjectRail 右键菜单', () => {
-  it('右键剧行:重命名 / 置顶 / Fork / 删除;删除带「移入回收站」说明', () => {
+  it('右键剧行:重命名 / 置顶 / 移到分组… / Fork / 删除;删除带「移入回收站」说明', () => {
     S().addProject('追车戏')
     render(<ProjectRail />)
     fireEvent.contextMenu(screen.getByRole('button', { name: '切换到剧 追车戏' }))
@@ -38,17 +38,18 @@ describe('ProjectRail 右键菜单', () => {
     expect(items.map((i) => i.textContent)).toEqual([
       expect.stringContaining('重命名'),
       expect.stringContaining('置顶'),
+      expect.stringContaining('移到分组…'),
       expect.stringContaining('Fork'),
       expect.stringContaining('删除'),
     ])
-    expect(items[3].textContent).toContain('移入回收站')
+    expect(items[4].textContent).toContain('移入回收站')
   })
 
   it('悬停出现的「⋯」与右键是同一份菜单', () => {
     render(<ProjectRail />)
     fireEvent.click(screen.getByRole('button', { name: '剧菜单 默认项目' }))
     expect(screen.getByRole('menu')).toBeTruthy()
-    expect(screen.getAllByRole('menuitem')).toHaveLength(4)
+    expect(screen.getAllByRole('menuitem')).toHaveLength(5)
   })
 
   it('重命名:展开态走就地输入框', () => {

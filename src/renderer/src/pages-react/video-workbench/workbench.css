@@ -597,6 +597,34 @@
 .vw-rail-drop-before::before, .vw-rail-drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.5); pointer-events: none; z-index: 2; }
 .vw-rail-drop-before::before { top: -1px; }
 .vw-rail-drop-after::after { bottom: -1px; }
+/* 分组(文件夹):标题行 + 缩进的成员。设计规范只允许黄色作强调,所以分组不靠颜色区分,
+   靠折叠箭头 / 文件夹图标 / 成员的缩进和左侧细线。标题上的把手、⋯ 与剧行同一套(悬停才出现)。 */
+.vw-rail-addgroup { width: 28px; height: 28px; flex: none; display: flex; align-items: center; justify-content: center; border: 1px solid #3f3f46; color: #a1a1aa; background: transparent; }
+.vw-rail-addgroup:hover { border-color: #fce300; color: #fff; }
+.vw-rail-group { position: relative; }
+.vw-rail-group-dragging { opacity: 0.4; }
+.vw-rail-ghd { position: relative; display: flex; align-items: center; height: 30px; border-left: 2px solid transparent; }
+.vw-rail-ghd:hover { background: #18181b; }
+.vw-rail-gbtn { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 6px; padding: 0 28px 0 12px; text-align: left; background: transparent; color: #a1a1aa; font-size: 11px; }
+.vw-rail-gname { min-width: 0; font-size: 11px; font-weight: 700; color: #e4e4e7; letter-spacing: 0.02em; }
+.vw-rail-gcount { flex: none; padding: 0 5px; font-size: 10px; line-height: 14px; color: #71717a; border: 1px solid #3f3f46; }
+.vw-rail-gagg { margin-left: auto; flex: none; font-size: 10px; color: #52525b; }
+.vw-rail-ghd:hover .vw-rail-gagg { opacity: 0; }
+.vw-rail-ghd .vw-rail-more { top: 5px; }
+.vw-rail-ghd:hover .vw-rail-more, .vw-rail-ghd:hover .vw-rail-grip { opacity: 1; }
+.vw-rail-ghd-drop { outline: 1px dashed #fce300; outline-offset: -1px; background: rgba(252, 227, 0, 0.07); }
+.vw-rail-ghd-drop .vw-rail-gbtn, .vw-rail-ghd-drop .vw-rail-gname { color: #fce300; }
+.vw-rail-kids { margin-left: 12px; border-left: 1px solid #27272a; }
+/* 列表底部的一条空白:拖到这里 = 移出分组并排到最后;亮起时画一条黄线 */
+.vw-rail-tail { position: relative; height: 28px; }
+.vw-rail-tail-on::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.5); pointer-events: none; }
+/* 「移到分组…」对话框里的已有分组列表 */
+.vw-grouppick-list { list-style: none; margin: 0 0 10px; padding: 0; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.vw-grouppick-item { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px; text-align: left; color: #e4e4e7; background: #18181b; border: 1px solid #27272a; }
+.vw-grouppick-item:hover:not(:disabled) { border-color: #fce300; color: #fff; }
+.vw-grouppick-item:disabled { opacity: 0.55; cursor: default; }
+.vw-grouppick-item > .truncate { min-width: 0; flex: 1; }
+.vw-grouppick-cur { flex: none; font-size: 10px; color: #71717a; }
 .vw-cloud-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #52525b; }
 .vw-cloud-dot-ok { background: #22c55e; }
 .vw-cloud-dot-busy { background: #fce300; }
