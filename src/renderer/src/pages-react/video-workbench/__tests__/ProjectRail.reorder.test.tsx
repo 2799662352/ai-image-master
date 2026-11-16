@@ -1,4 +1,4 @@
-// 剧栏拖拽排序:拖行左侧的把手,黄色插入线标出放下位置;置顶组不可跨;↑↓ 键也能挪。
+// 剧栏拖拽排序:直接拖整行(左侧点阵只是提示和键盘入口),黄色插入线标出放下位置;置顶组不可跨;↑↓ 键也能挪。
 // jsdom 没有真正的拖放,这里用 fireEvent + 假 dataTransfer 驱动 React 的 drag 事件。
 import { act, cleanup, createEvent, fireEvent as rtlFireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -260,5 +260,85 @@ describe('ProjectRail 键盘排序', () => {
     fireEvent.keyDown(grip('默认项目'), { key: 'ArrowUp' })
     expect(S().revision).toBe(revision)
     expect(storedOrder()).toEqual(['默认项目', '追车戏', '夜景'])
+  })
+})
+
+// 整行直接拖:用户不必找到左边那个 10px 的点阵,抓住行里任何地方(名字、封面、统计)都能起拖。
+describe('ProjectRail 整行直接拖动', () => {
+  const rowButton = (name: string) => screen.getByRole('button', { name: `切换到剧 ${name}` })
+
+  it('行本身 draggable;搜索过滤 / 折叠态不可拖;改名中只有被改名的那一行不可拖', () => {
+    render(<ProjectRail />)
+    for (const n of ['默认项目', '追车戏', '夜景']) expect(rowOf(n).getAttribute('draggable')).toBe('true')
+
+    // 双击行按钮进入改名:这一行的输入框要能拖选文字,不能被整行拖动抢走;别的行不受影响
+    fireEvent.doubleClick(rowButton('追车戏'))
+    expect(screen.getByRole('textbox', { name: '剧名' })).toBeTruthy()
+    expect(rowOf('追车戏').getAttribute('draggable')).toBe('false')
+    expect(rowOf('夜景').getAttribute('draggable')).toBe('true')
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '剧名' }), { key: 'Escape' })
+    expect(rowOf('追车戏').getAttribute('draggable')).toBe('true')
+
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索剧' }), { target: { value: '追车' } })
+    expect(rowOf('追车戏').getAttribute('draggable')).toBe('false')
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索剧' }), { target: { value: '' } })
+    act(() => S().setRailCollapsed(true))
+    expect(rowOf('追车戏').getAttribute('draggable')).toBe('false')
+  })
+
+  it('抓行里的名字区域(行按钮)直接拖:同样起拖,拖影是整行,放下后重排', () => {
+    render(<ProjectRail />)
+    const dt = makeDt()
+    // dragstart 从行按钮发起、冒泡到行 —— 浏览器里就是「抓着名字拖」
+    fireEvent.dragStart(rowButton('默认项目'), { dataTransfer: dt })
+    expect(dt.getData(PROJECT_DRAG_MIME)).toBe('project-default')
+    expect((dt.setDragImage.mock.calls[0] as unknown[])[0]).toBe(rowOf('默认项目'))
+
+    expect(fireEvent.dragOver(rowOf('夜景'), { dataTransfer: dt, clientY: LOWER })).toBe(false)
+    expect(rowOf('夜景').className).toContain('vw-rail-drop-after')
+    fireEvent.drop(rowOf('夜景'), { dataTransfer: dt, clientY: LOWER })
+    expect(storedOrder()).toEqual(['追车戏', '夜景', '默认项目'])
+  })
+
+  it('抓左边的点阵拖,和抓整行是同一件事,而且只起一次拖(不会因为冒泡认领两遍)', () => {
+    render(<ProjectRail />)
+    const dt = makeDt()
+    fireEvent.dragStart(grip('追车戏'), { dataTransfer: dt })
+    expect(dt.setDragImage).toHaveBeenCalledTimes(1)
+    expect(dt.getData(PROJECT_DRAG_MIME)).toBe(S().projects.find((p) => p.name === '追车戏')!.id)
+  })
+
+  it('行不可拖时(搜索中)冒上来的 dragstart 不被认领:不写 dataTransfer、不换拖影、没有变暗', async () => {
+    render(<ProjectRail />)
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索剧' }), { target: { value: '追车' } })
+    const dt = makeDt()
+    fireEvent.dragStart(rowButton('追车戏'), { dataTransfer: dt })
+    expect(dt.types).toEqual([])
+    expect(dt.setDragImage).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(rowOf('追车戏').className).not.toContain('vw-rail-row-dragging')
+    // 这时就算有残留的 drop 也不会改顺序
+    fireEvent.drop(rowOf('追车戏'), { dataTransfer: dt, clientY: LOWER })
+    expect(storedOrder()).toEqual(['默认项目', '追车戏', '夜景'])
+  })
+
+  it('正在改名的那一行:在输入框里拖选文字(冒上来的 dragstart)不会变成拖整行', async () => {
+    render(<ProjectRail />)
+    fireEvent.doubleClick(rowButton('夜景'))
+    const input = screen.getByRole('textbox', { name: '剧名' })
+    const dt = makeDt()
+    fireEvent.dragStart(input, { dataTransfer: dt })
+    expect(dt.types).toEqual([])
+    expect(dt.setDragImage).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(rowOf('夜景').className).not.toContain('vw-rail-row-dragging')
+  })
+
+  it('点行仍然切剧、双击仍然改名:整行可拖不抢这两个手势', () => {
+    render(<ProjectRail />)
+    fireEvent.click(rowButton('夜景'))
+    expect(S().activeProjectId).toBe(S().projects.find((p) => p.name === '夜景')!.id)
+    fireEvent.doubleClick(rowButton('追车戏'))
+    expect(screen.getByRole('textbox', { name: '剧名' })).toBeTruthy()
   })
 })

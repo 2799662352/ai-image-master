@@ -1,5 +1,5 @@
 // 剧栏:列出全部剧、当前剧标记、统计文案、切剧、新建即改名、状态点、折叠。
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACTIVE_PROJECT_KEY, RAIL_COLLAPSED_KEY } from '../../../features/video-workbench/projects'
 import {
@@ -92,7 +92,12 @@ describe('ProjectRail', () => {
     fireEvent.drop(screen.getByRole('button', { name: '切换到剧 目标剧' }), { dataTransfer: dt(seg) })
     expect(S().boards.find((b) => b.id === seg)!.projectId).toBe(p2)
 
-    const seg2 = S().addBoard('再搬一段')
+    // 在已渲染的剧栏之外改 store 要包 act:否则 dragEnter 用的还是上一次渲染的处理函数
+    // (此时当前剧只剩 1 段 → 「新建一部剧并移入」框按规则不出现)
+    let seg2 = ''
+    act(() => {
+      seg2 = S().addBoard('再搬一段')
+    })
     fireEvent.dragEnter(screen.getByRole('list'), { dataTransfer: dt(seg2) })
     fireEvent.drop(screen.getByRole('button', { name: '放到这里:新建一部剧并移入' }), { dataTransfer: dt(seg2) })
     expect(S().projects).toHaveLength(3)

@@ -584,3 +584,72 @@ describe('键盘排序', () => {
     expect(shape()).toBe('[G:追车戏,夜景] 默认项目 第四部')
   })
 })
+
+// 直接拖:不必找左边的点阵 —— 抓分组标题的任何地方(折叠箭头、名字、计数)就能拖整个分组;
+// 组内成员行和未分组的行一样整行可拖。
+describe('直接拖:分组标题与组内成员', () => {
+  it('非空分组的标题 draggable;搜索中 / 折叠到 48px 时没有标题、行也不可拖', () => {
+    withGroup()
+    render(<ProjectRail />)
+    expect(headerOf('G').getAttribute('draggable')).toBe('true')
+    expect(rowOf('追车戏').getAttribute('draggable')).toBe('true')
+    // 搜索 → 平铺、没有标题,行也不可拖
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索剧' }), { target: { value: '景' } })
+    expect(document.querySelector('.vw-rail-ghd')).toBeNull()
+    expect(rowOf('夜景').getAttribute('draggable')).toBe('false')
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索剧' }), { target: { value: '' } })
+    act(() => S().setRailCollapsed(true))
+    expect(document.querySelector('.vw-rail-ghd')).toBeNull()
+    expect(rowOf('夜景').getAttribute('draggable')).toBe('false')
+  })
+
+  it('空分组的标题不可拖(没有成员可挪)', () => {
+    act(() => void S().createEmptyGroup('外传'))
+    render(<ProjectRail />)
+    expect(headerOf('外传').getAttribute('draggable')).toBe('false')
+  })
+
+  it('抓标题上的名字按钮拖:起拖的是整个分组,拖影是整个分组块,放下后整块挪位', async () => {
+    withGroup()
+    render(<ProjectRail />)
+    const dt = makeDt()
+    fireEvent.dragStart(screen.getByRole('button', { name: /^(折叠|展开)分组 G/ }), { dataTransfer: dt })
+    expect(dt.getData(GROUP_DRAG_MIME)).toBe('G')
+    expect(dt.types).not.toContain(PROJECT_DRAG_MIME)
+    expect((dt.setDragImage.mock.calls[0] as unknown[])[0]).toBe(blockOf('G'))
+    await waitFor(() => expect(blockOf('G').className).toContain('vw-rail-group-dragging'))
+    fireEvent.drop(rowOf('第四部'), { dataTransfer: dt, clientY: LOWER })
+    expect(shape()).toBe('默认项目 第四部 [G:追车戏,夜景]')
+  })
+
+  it('抓左边的点阵拖分组:只起一次拖(冒泡到标题,不会认领两遍)', () => {
+    withGroup()
+    render(<ProjectRail />)
+    const dt = makeDt()
+    fireEvent.dragStart(groupGrip('G'), { dataTransfer: dt })
+    expect(dt.setDragImage).toHaveBeenCalledTimes(1)
+    expect(dt.getData(GROUP_DRAG_MIME)).toBe('G')
+  })
+
+  it('组内成员行整行可拖:抓名字起拖的是这部剧(不是整个分组),可以拖出分组', () => {
+    withGroup()
+    render(<ProjectRail />)
+    expect(rowOf('追车戏').getAttribute('draggable')).toBe('true')
+    const dt = makeDt()
+    fireEvent.dragStart(screen.getByRole('button', { name: '切换到剧 追车戏' }), { dataTransfer: dt })
+    expect(dt.getData(PROJECT_DRAG_MIME)).toBe(idOf('追车戏'))
+    expect(dt.types).not.toContain(GROUP_DRAG_MIME)
+    // 放到未分组的「第四部」下半 = 移出分组、排到它后面
+    fireEvent.dragOver(rowOf('第四部'), { dataTransfer: dt, clientY: LOWER })
+    fireEvent.drop(rowOf('第四部'), { dataTransfer: dt, clientY: LOWER })
+    expect(storedOrder()).not.toContain('追车戏:G')
+    expect(S().projects.find((p) => p.name === '追车戏')!.group).toBeUndefined()
+  })
+
+  it('点标题仍是折叠 / 展开:标题可拖不抢这个手势', () => {
+    withGroup()
+    render(<ProjectRail />)
+    fireEvent.click(screen.getByRole('button', { name: '折叠分组 G' }))
+    expect(screen.getByRole('button', { name: '展开分组 G' })).toBeTruthy()
+  })
+})

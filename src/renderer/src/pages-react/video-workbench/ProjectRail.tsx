@@ -47,9 +47,9 @@ function carriesSegment(e: DragEvent): boolean {
   return Array.from(e.dataTransfer.types ?? []).includes(SEGMENT_DRAG_MIME)
 }
 
-/** 拖剧行左侧的把手调整剧的顺序时,dataTransfer 里放剧 id 用的类型(和分段卡的 SEGMENT_DRAG_MIME 互不相干)。 */
+/** 直接拖剧行调整剧的顺序时,dataTransfer 里放剧 id 用的类型(和分段卡的 SEGMENT_DRAG_MIME 互不相干)。 */
 export const PROJECT_DRAG_MIME = 'application/x-catimation-project'
-/** 拖分组标题上的把手挪整个分组时,dataTransfer 里放分组名用的类型。 */
+/** 直接拖分组标题挪整个分组时,dataTransfer 里放分组名用的类型。 */
 export const GROUP_DRAG_MIME = 'application/x-catimation-group'
 
 function carriesProject(e: DragEvent): boolean {
@@ -147,9 +147,11 @@ export function ProjectRail({
   const [query, setQuery] = useState('')
   /** 有分段卡正拖在剧栏上空:顶部露出「新建一部剧并移入」的投放框。 */
   const [dragOver, setDragOver] = useState(false)
+  /** 分段卡正拖在哪部剧的行上(那一行亮虚线框 + 「移入此剧」);null = 没有可放的行。 */
+  const [segmentTargetId, setSegmentTargetId] = useState<string | null>(null)
   /** 有系统文件正拖在剧栏上空(工程文件导入)。 */
   const [fileOver, setFileOver] = useState(false)
-  // 拖剧行 / 分组标题的把手调整顺序:真正被拖的 id / 分组名放 ref(dragover / drop 同步要读),
+  // 直接拖剧行 / 分组标题调整顺序:真正被拖的 id / 分组名放 ref(dragover / drop 同步要读),
   // 变暗只是视觉,延后一拍再 setState(见 startProjectDrag)。同一时刻只会有一个在拖。
   const draggingProjectRef = useRef<string | null>(null)
   const draggingGroupRef = useRef<string | null>(null)
@@ -171,6 +173,24 @@ export function ProjectRail({
     if (editingId) nameInputRef.current?.focus()
   }, [editingId])
 
+  // 分段卡的拖动在剧栏之外结束(松在不能放的地方 / Esc 取消)时,剧栏收不到 drop,也不一定收到 dragleave:
+  // 高亮和顶部投放框会卡在那儿。dragend(来自被拖的卡,冒泡到 window)与 drop(冒泡阶段,在行 / 投放框自己的
+  // 处理器之后)都是「这一趟结束了」的信号。
+  const segmentDragLive = segmentTargetId !== null || dragOver
+  useEffect(() => {
+    if (!segmentDragLive) return
+    const finish = () => {
+      setSegmentTargetId(null)
+      setDragOver(false)
+    }
+    window.addEventListener('dragend', finish)
+    window.addEventListener('drop', finish)
+    return () => {
+      window.removeEventListener('dragend', finish)
+      window.removeEventListener('drop', finish)
+    }
+  }, [segmentDragLive])
+
   // 底部入口的列数 = 实际渲染的按钮数(云备份只在桌面端有、回收站要页面接了才有)
   const footCols = 2 + (onRequestCloudBackup ? 1 : 0) + (onRequestTrash ? 1 : 0)
 
@@ -178,7 +198,7 @@ export function ProjectRail({
   /** 当前存储顺序(不含置顶 / 分组的显示重排)。所有摆放计划都在它上面算。 */
   const sorted = projects.slice().sort((a, b) => a.order - b.order)
   const statsById = new Map(sorted.map((p) => [p.id, summarizeProject(p.id, boards, cards)] as const))
-  // 搜索过滤时列表只是子集、折叠态没有把手也没有地方放分组标题:这两种情况不显示分组结构,也不开放排序
+  // 搜索过滤时列表只是子集、折叠态只剩 48px 的封面条也没有地方放分组标题:这两种情况不显示分组结构,也不开放排序
   // (子集里的「前后」没有明确含义)。
   const grouped = !collapsed && !needle
   const canReorder = grouped
@@ -205,10 +225,13 @@ export function ProjectRail({
       if (stillDragging()) apply()
     }, 0)
   }
-  const startProjectDrag = (e: DragEvent<HTMLButtonElement>, id: string) => {
+  const startProjectDrag = (e: DragEvent<HTMLElement>, id: string) => {
+    // 行本身不可拖时(搜索 / 折叠 / 正在改名),冒到这里的 dragstart 是行内别的东西起的
+    // (比如在改名框里拖选的文字):别认领,让浏览器按它自己的默认来。
+    if (!canReorder || editingId === id) return
     e.dataTransfer.setData(PROJECT_DRAG_MIME, id)
     e.dataTransfer.effectAllowed = 'move'
-    // 拖影用整行,不是那个 10px 的把手
+    // 拖影用整行(从行内哪里抓起,拖影就以哪里为锚点)
     const row = e.currentTarget.closest<HTMLElement>('.vw-rail-row')
     if (row && typeof e.dataTransfer.setDragImage === 'function') {
       const r = row.getBoundingClientRect()
@@ -217,7 +240,7 @@ export function ProjectRail({
     draggingProjectRef.current = id
     dimLater(() => setDraggingProjectId(id), () => draggingProjectRef.current === id)
   }
-  const startGroupDrag = (e: DragEvent<HTMLButtonElement>, name: string) => {
+  const startGroupDrag = (e: DragEvent<HTMLElement>, name: string) => {
     e.dataTransfer.setData(GROUP_DRAG_MIME, name)
     e.dataTransfer.effectAllowed = 'move'
     // 拖影用整个分组块(标题 + 成员)
@@ -300,6 +323,33 @@ export function ProjectRail({
     if (plan) arrangeProjects(plan)
   }
 
+  // ---- 把分段卡拖到剧栏:搬进别的剧 ----
+  // 分段卡只出现在总览里,总览显示的就是当前剧 → 被拖的分段属于 activeProjectId。能搬走的条件与
+  // moveBoardToProject 一致:目标不是它自己所在的剧,且源剧搬走后至少还剩一段(每部剧至少一段)。
+  // dragover 里读不到 dataTransfer 的内容,只能靠这两条判断。
+  const canMoveSegmentOut = boards.filter((b) => b.projectId === activeProjectId).length >= 2
+  /** 分段卡经过某部剧的行:能放 → 那一行亮虚线框并接收;不能放 → 光标禁止,不亮。 */
+  const handleSegmentOver = (e: DragEvent<HTMLElement>, projectId: string) => {
+    if (!canMoveSegmentOut || projectId === activeProjectId) {
+      e.dataTransfer.dropEffect = 'none'
+      // 不能让列表级的 preventDefault 把它放行
+      e.stopPropagation()
+      if (segmentTargetId !== null) setSegmentTargetId(null)
+      return
+    }
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (segmentTargetId !== projectId) setSegmentTargetId(projectId)
+  }
+  const handleSegmentDrop = (e: DragEvent<HTMLElement>, projectId: string) => {
+    const boardId = e.dataTransfer.getData(SEGMENT_DRAG_MIME)
+    if (!boardId) return
+    e.preventDefault()
+    setSegmentTargetId(null)
+    setDragOver(false)
+    moveBoardToProject(boardId, projectId)
+  }
+
   const beginRename = (id: string, current: string) => {
     setEditingId(id)
     setDraft(current)
@@ -331,6 +381,7 @@ export function ProjectRail({
     const cost = formatCostParts(t.cost.usd, t.cost.cny)
     const pinned = pinnedProjectIds.includes(project.id)
     const mark = dropMark?.kind === 'row' && dropMark.id === project.id ? dropMark.place : null
+    const segmentTarget = segmentTargetId === project.id
     return (
       <div
         key={project.id}
@@ -339,14 +390,33 @@ export function ProjectRail({
           'vw-rail-row',
           isActive && 'vw-rail-row-active',
           draggingProjectId === project.id && 'vw-rail-row-dragging',
+          segmentTarget && 'vw-rail-row-segdrop',
           mark === 'before' && 'vw-rail-drop-before',
           mark === 'after' && 'vw-rail-drop-after',
         ]
           .filter(Boolean)
           .join(' ')}
+        // 整行都是拖动手柄:点按、双击改名、右键、分段卡投放都不受影响(浏览器要挪过几像素才起拖)。
+        // 改名输入框打开时关掉 —— 否则在输入框里拖选文字会变成拖整行。
+        draggable={canReorder && editingId !== project.id}
+        onDragStart={(e) => startProjectDrag(e, project.id)}
+        onDragEnd={endRailDrag}
         onContextMenu={(e) => openMenu(e, project.id, project.name)}
-        onDragOver={(e) => handleRailDragOver(e, { kind: 'row', id: project.id, place: placeOf(e) }, inGroup)}
-        onDrop={(e) => handleRailDrop(e, { kind: 'row', id: project.id, place: placeOf(e) }, inGroup)}
+        // 分段卡(搬进这部剧)与剧 / 分组(调顺序)是两种拖动,各走各的;放在行上而不是行按钮上,
+        // 这样经过行里的点阵、「⋯」时也算在这一行上。
+        onDragOver={(e) =>
+          carriesSegment(e)
+            ? handleSegmentOver(e, project.id)
+            : handleRailDragOver(e, { kind: 'row', id: project.id, place: placeOf(e) }, inGroup)
+        }
+        onDragLeave={(e) => {
+          if (segmentTarget && !e.currentTarget.contains(e.relatedTarget as Node | null)) setSegmentTargetId(null)
+        }}
+        onDrop={(e) =>
+          carriesSegment(e)
+            ? handleSegmentDrop(e, project.id)
+            : handleRailDrop(e, { kind: 'row', id: project.id, place: placeOf(e) }, inGroup)
+        }
       >
         <button
           type="button"
@@ -356,16 +426,6 @@ export function ProjectRail({
           title={collapsed ? `${project.name}${pinned ? '(已置顶)' : ''}` : undefined}
           onClick={() => switchProject(project.id)}
           onDoubleClick={() => !collapsed && beginRename(project.id, project.name)}
-          onDragOver={(e) => {
-            if (carriesSegment(e)) e.preventDefault()
-          }}
-          onDrop={(e) => {
-            const boardId = e.dataTransfer.getData(SEGMENT_DRAG_MIME)
-            if (!boardId) return
-            e.preventDefault()
-            setDragOver(false)
-            moveBoardToProject(boardId, project.id)
-          }}
         >
           {collapsed && pinned && <span className="vw-pin-dot" aria-hidden="true" />}
           <div className="vw-rail-cover" aria-hidden="true">
@@ -419,16 +479,20 @@ export function ProjectRail({
           )}
           {!collapsed && <div className="vw-rail-time">{relativeTime(t.lastActivityAt)}</div>}
         </button>
-        {/* 左侧把手:拖它调整剧的顺序(整行不可拖,免得和点击 / 双击改名 / 分段投放抢手势) */}
+        {/* 分段卡拖到这一行上:告诉用户「放下就搬进这部剧」(折叠态没有地方放字,只剩虚线框) */}
+        {segmentTarget && !collapsed && (
+          <span className="vw-rail-segtip" aria-hidden="true">
+            移入此剧
+          </span>
+        )}
+        {/* 左侧的点阵:告诉你「这行能拖」,同时是键盘入口(Tab 聚焦后 ↑ ↓ 挪一格)。
+            鼠标拖动不必抓它 —— 整行都能拖,拖这里等于拖整行(冒泡到行的 dragstart)。 */}
         {canReorder && (
           <button
             type="button"
             className="vw-rail-grip"
-            draggable
             aria-label={`拖动调整 ${project.name} 的位置`}
-            title="拖动调整顺序(可拖进分组),或聚焦后按 ↑ ↓;置顶的剧始终排在最上面"
-            onDragStart={(e) => startProjectDrag(e, project.id)}
-            onDragEnd={endRailDrag}
+            title="整行都可以拖动调整顺序(可拖进分组),或聚焦后按 ↑ ↓;置顶的剧始终排在最上面"
             onKeyDown={(e) => nudge(e, { kind: 'project', id: project.id })}
           />
         )}
@@ -479,12 +543,17 @@ export function ProjectRail({
       >
         <div
           className={['vw-rail-ghd', mark === 'into' && 'vw-rail-ghd-drop'].filter(Boolean).join(' ')}
+          // 整个标题都能抓起来拖(空分组没有成员可挪,不开放);点标题仍是折叠 / 展开
+          draggable={canReorder && !group.empty}
+          onDragStart={(e) => startGroupDrag(e, name)}
+          onDragEnd={endRailDrag}
           onContextMenu={(e) => openGroupMenu(e, group)}
           onDragOver={(e) => {
             // 分段卡不能放在分组标题上(它要放进某一部剧):明确显示禁止,而不是让列表级的 preventDefault 误放行
             if (carriesSegment(e)) {
               e.dataTransfer.dropEffect = 'none'
               e.stopPropagation()
+              if (segmentTargetId !== null) setSegmentTargetId(null)
               return
             }
             handleRailDragOver(e, { kind: 'group', name, zone: zoneOfHeader(e, group.empty) }, true)
@@ -513,11 +582,8 @@ export function ProjectRail({
             <button
               type="button"
               className="vw-rail-grip"
-              draggable
               aria-label={`拖动调整分组 ${name} 的位置`}
-              title="拖动整个分组,或聚焦后按 ↑ ↓"
-              onDragStart={(e) => startGroupDrag(e, name)}
-              onDragEnd={endRailDrag}
+              title="拖动整个分组标题,或聚焦后按 ↑ ↓"
               onKeyDown={(e) => nudge(e, { kind: 'group', name })}
             />
           )}
@@ -604,13 +670,20 @@ export function ProjectRail({
         className="vw-rail-list"
         role="list"
         onDragEnter={(e) => {
-          if (carriesSegment(e)) {
+          // 源剧只剩一段时搬不走:既没有能放的行,也不露出「新建一部剧并移入」(放了只会白白多出一部空剧)
+          if (carriesSegment(e) && canMoveSegmentOut) {
             e.preventDefault()
             setDragOver(true)
           }
         }}
         onDragOver={(e) => {
-          if (carriesSegment(e)) e.preventDefault()
+          if (carriesSegment(e)) {
+            // 行自己的处理器已经管过了(能放的亮、不能放的禁止并拦下冒泡);走到这里的要么是能放的行,
+            // 要么是行外(空白 / 投放框)—— 行外没有行该亮着
+            if (!(e.target as Element | null)?.closest?.('.vw-rail-row') && segmentTargetId !== null) setSegmentTargetId(null)
+            if (canMoveSegmentOut) e.preventDefault()
+            else e.dataTransfer.dropEffect = 'none'
+          }
           // 列表自己(不是某一行)上空 = 行与行之外的空白:移出分组并排到最后
           else if (grouped && e.target === e.currentTarget) handleRailDragOver(e, { kind: 'tail' })
         }}
@@ -622,6 +695,7 @@ export function ProjectRail({
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
             setDragOver(false)
             setDropMark(null)
+            setSegmentTargetId(null)
           }
         }}
       >
