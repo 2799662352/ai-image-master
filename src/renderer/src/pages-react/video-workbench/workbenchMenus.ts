@@ -57,10 +57,18 @@ export function forkBoardWithToast(id: string): string | null {
   return copy
 }
 
-export function projectMenuItems(projectId: string, opts: { onRename: () => void }): ContextMenuItem[] {
+export function projectMenuItems(
+  projectId: string,
+  opts: {
+    onRename: () => void
+    /** 给了才出现「移到分组…」(剧栏有对话框可弹);总览头部的菜单不传,保持原样。 */
+    onMoveToGroup?: () => void
+  },
+): ContextMenuItem[] {
   const s = store()
   const pinned = s.pinnedProjectIds.includes(projectId)
   const only = s.projects.length <= 1
+  const group = s.projects.find((p) => p.id === projectId)?.group
   return [
     { id: 'rename', label: '重命名', onSelect: opts.onRename },
     {
@@ -69,6 +77,21 @@ export function projectMenuItems(projectId: string, opts: { onRename: () => void
       hint: pinned ? 'Unpin' : 'Pin',
       onSelect: () => store().setProjectPinned(projectId, !pinned),
     },
+    ...(opts.onMoveToGroup
+      ? [
+          { id: 'move-group', label: '移到分组…', onSelect: opts.onMoveToGroup },
+          ...(group
+            ? [
+                {
+                  id: 'ungroup',
+                  label: '移出分组',
+                  hint: group,
+                  onSelect: () => void store().assignProjectGroup(projectId, null),
+                },
+              ]
+            : []),
+        ]
+      : []),
     { id: 'fork', label: 'Fork', hint: '创建副本', onSelect: () => void forkProjectWithToast(projectId) },
     {
       id: 'delete',
@@ -79,6 +102,21 @@ export function projectMenuItems(projectId: string, opts: { onRename: () => void
       disabled: only,
       disabledReason: '至少保留一部剧',
       onSelect: () => void trashProjectWithToast(projectId),
+    },
+  ]
+}
+
+/** 分组标题的右键菜单:重命名 / 解散。空分组(还没放进任何剧)没有东西可「解散」,改叫「删除分组」。 */
+export function groupMenuItems(name: string, opts: { empty: boolean; onRename: () => void }): ContextMenuItem[] {
+  return [
+    { id: 'rename-group', label: '重命名', onSelect: opts.onRename },
+    {
+      id: 'dissolve-group',
+      label: opts.empty ? '删除分组' : '解散分组',
+      hint: opts.empty ? '它还是空的' : '剧回到未分组',
+      danger: opts.empty,
+      separatorBefore: true,
+      onSelect: () => void store().dissolveGroup(name),
     },
   ]
 }

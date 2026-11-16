@@ -83,6 +83,32 @@ describe('ImportProjectDialog', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('文件里带分组名 → 导入的剧自动并入本机同名分组(排在组内最后);不带分组名的仍是未分组', async () => {
+    const g = S().addProject('旧剧')
+    S().assignProjectGroup(g, '外传')
+    read.mockImplementationOnce(async (path: string) => ({
+      ok: true,
+      path,
+      text: fileText({ project: { name: '追车戏', createdAt: 1, updatedAt: 2, group: '外传' } }),
+    }))
+    const { unmount } = render(<ImportProjectDialog path="D:\\带分组.catwb.json" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '导入工程' }).textContent).toContain('2 段 · 3 镜'))
+    // 确认页先说清楚:会自动归组(别让它悄悄发生)
+    expect(screen.getByRole('dialog', { name: '导入工程' }).textContent).toContain('导出时在分组「外传」')
+    fireEvent.click(screen.getByRole('button', { name: '导入为新剧' }))
+    const created = S().projects.find((p) => p.name === '追车戏')!
+    expect(created.group).toBe('外传')
+    expect(S().projects.filter((p) => p.group === '外传').map((p) => p.name)).toEqual(['旧剧', '追车戏'])
+    unmount()
+
+    render(<ImportProjectDialog path="D:\\无分组.catwb.json" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '导入工程' }).textContent).toContain('2 段 · 3 镜'))
+    expect(screen.getByRole('dialog', { name: '导入工程' }).textContent).not.toContain('导出时在分组')
+    fireEvent.click(screen.getByRole('button', { name: '导入为新剧' }))
+    const plain = S().projects.find((p) => p.name === '追车戏 (2)')!
+    expect('group' in plain).toBe(false)
+  })
+
   it('高版本文件 → 红字原因、按钮禁用;读失败同样', async () => {
     read.mockImplementationOnce(async (path: string) => ({
       ok: true, path, text: fileText({ formatVersion: PROJECT_FILE_VERSION + 1 }),

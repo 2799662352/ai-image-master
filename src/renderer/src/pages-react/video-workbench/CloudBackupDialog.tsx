@@ -156,7 +156,7 @@ export function CloudBackupDialog({ open, onClose, onBackupNow, onRevive }: Clou
       r.file.project.name,
       useVideoWorkbenchStore.getState().projects.map((p) => p.name),
     )
-    importProject(planImport(r.file), name, r.file.project.summary)
+    importProject(planImport(r.file), name, r.file.project.summary, r.file.project.group)
     addToast({
       type: 'success',
       message: `已从${verb}恢复「${name}」· ${r.summary.segments} 段 ${r.summary.cards} 镜`,

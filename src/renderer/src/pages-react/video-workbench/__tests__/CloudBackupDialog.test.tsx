@@ -141,6 +141,19 @@ describe('CloudBackupDialog', () => {
     expect(useToastStore.getState().toasts.some((t) => t.message.includes('已从云端恢复「追车戏 (2)」'))).toBe(true)
   })
 
+  it('恢复为新剧:云端副本带分组名 → 并入本机同名分组;没带的仍是未分组', async () => {
+    const mate = S().addProject('旧剧')
+    S().assignProjectGroup(mate, '外传')
+    const grouped = { ...cloudFile(), project: { ...cloudFile().project, group: '外传' } }
+    get.mockResolvedValueOnce({ ok: true, data: { file: grouped, version: 'v1' } })
+    const onClose = vi.fn()
+    render(<CloudBackupDialog open onClose={onClose} onBackupNow={noop} />)
+    fireEvent.click(await screen.findByRole('button', { name: '恢复「追车戏」为新剧' }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(S().projects.find((p) => p.name === '追车戏')!.group).toBe('外传')
+    expect(S().projects.filter((p) => p.group === '外传').map((p) => p.name)).toEqual(['旧剧', '追车戏'])
+  })
+
   it('恢复失败(云端副本损坏 / 已被删):给原因、不新增剧、面板不关', async () => {
     get.mockResolvedValueOnce({ ok: true, data: { file: { format: 'x', boards: [] }, version: 'v1' } })
     const onClose = vi.fn()

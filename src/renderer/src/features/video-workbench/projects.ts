@@ -15,6 +15,14 @@ import {
 } from '../../../../types/videoWorkbench'
 import { buildCard, createId, isActiveStatus } from './cardSpec'
 import { cancelPendingPersist } from './persistQueue'
+import {
+  applyArrangement,
+  normalizeGroupName,
+  planAssignGroup,
+  planDissolveGroup,
+  planRenameGroup,
+  type ArrangePlan,
+} from './projectGroups'
 import type { ImportPlan } from './projectFile'
 import type { VideoWorkbenchState } from './store'
 import { markBoard, markProject, type WorkbenchTrashEntry } from './trash'
@@ -43,6 +51,28 @@ export interface ProjectsSlice {
   renameProject: (id: string, name: string) => boolean
   /** 整体重排,必须给出全集(同 reorderCards)。 */
   reorderProjects: (ids: string[]) => boolean
+  /**
+   * 剧栏里一次摆放(拖动 / 菜单 / 键盘):按 `ArrangePlan` 一次改顺序 + 分组,**一步撤销、一次落库**
+   * (只写 order 或 group 真变了的剧)。计划必须是全集、分组名必须是规整过的非空名;不合法 → false。
+   * 摆完没有任何变化 → true 且不 bump revision。分组本身没有记录,见 VideoWorkbenchProject.group。
+   */
+  arrangeProjects: (plan: ArrangePlan) => boolean
+  /** 把剧移进某个分组(`null` = 移出)。进已有分组排到组内最后;新名字 = 原位成组。返回是否合法(没变化也算合法)。 */
+  assignProjectGroup: (id: string, group: string | null) => boolean
+  /** 重命名分组;新名已存在 = 并入。本机暂存的空分组也能改。名字无效 → false。 */
+  renameGroup: (from: string, to: string) => boolean
+  /** 解散分组:成员回到未分组、位置不动;空分组则直接删掉。 */
+  dissolveGroup: (name: string) => boolean
+  /**
+   * 本机暂存的空分组(用户点 ⊞ 新建、还没放进任何剧)。**纯界面偏好**:存 localStorage,不进库、
+   * 不进撤销栈、不进备份 —— 第一部剧放进来之后,分组才真正存在于剧的 `group` 字段里。
+   */
+  emptyGroups: string[]
+  /** 新建一个空分组;名字无效 / 已有同名分组 → 返回原因。 */
+  createEmptyGroup: (name: string) => { ok: true; name: string } | { ok: false; reason: string }
+  /** 折叠中的分组名。同 emptyGroups,纯界面偏好。 */
+  collapsedGroups: string[]
+  toggleGroupCollapsed: (name: string) => void
   /** 整体重排一部剧里的分段,必须给出这部剧的全部分段 id(同 reorderProjects);别的剧的分段不受影响。 */
   reorderBoards: (projectId: string, ids: string[]) => boolean
   switchProject: (id: string) => void
@@ -91,8 +121,10 @@ export interface ProjectsSlice {
   /**
    * 工程文件 → 一部**新**剧(全新 id;已完成/失败保留状态与云端地址,其余草稿),
    * 切过去停在总览。返回新剧 id。零分段的文件补一段「分段 1」。
+   * `group`(工程文件里的 `project.group`):规整后写在新剧上 = 自动并入本机同名分组,没有就新成一组;
+   * 它是**那部剧此刻所在的分组**,不是对分组本身的描述,所以不会改动本机已有分组的任何东西。
    */
-  importProject: (plan: ImportPlan, name: string, summary?: string) => string
+  importProject: (plan: ImportPlan, name: string, summary?: string, group?: string) => string
   /** agent 写的一行剧摘要;空串清除。不动 revision / structureRevision(见 setBoardSummary)。 */
   setProjectSummary: (id: string, summary: string) => boolean
   dismissLegacyNotice: (id: string) => void
@@ -168,6 +200,35 @@ export function readPins(): StoredPins {
 function writePins(pins: StoredPins): void {
   try {
     globalThis.localStorage?.setItem(PINS_KEY, JSON.stringify(pins))
+  } catch {
+    // 仅内存生效
+  }
+}
+
+/** 分组的两份本机界面偏好:本机暂存的空分组、折叠中的分组(都是分组名列表)。 */
+export const EMPTY_GROUPS_KEY = 'vw-groups-empty'
+export const COLLAPSED_GROUPS_KEY = 'vw-groups-collapsed'
+
+export function readGroupNames(key: string): string[] {
+  try {
+    const raw = globalThis.localStorage?.getItem(key)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const out: string[] = []
+    for (const v of parsed) {
+      const n = normalizeGroupName(v)
+      if (n && !out.includes(n)) out.push(n)
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function writeGroupNames(key: string, names: readonly string[]): void {
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(names))
   } catch {
     // 仅内存生效
   }
@@ -312,6 +373,8 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
   trash: [],
   pinnedProjectIds: readPins().projects,
   pinnedBoardIds: readPins().boards,
+  emptyGroups: readGroupNames(EMPTY_GROUPS_KEY),
+  collapsedGroups: readGroupNames(COLLAPSED_GROUPS_KEY),
 
   addProject: (name, opts) => {
     const activate = opts?.activate !== false
@@ -384,6 +447,120 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
     const db = getWorkbenchDb()
     for (const p of next) void db.putProject(p).catch(() => {})
     return true
+  },
+
+  arrangeProjects: (plan) => {
+    const cur = [...get().projects].sort((a, b) => a.order - b.order)
+    if (plan.ids.length !== cur.length || new Set(plan.ids).size !== plan.ids.length) return false
+    const byId = new Map(cur.map((p) => [p.id, p]))
+    if (!plan.ids.every((id) => byId.has(id))) return false
+    const groups: Record<string, string | null> = {}
+    for (const [id, g] of Object.entries(plan.groups)) {
+      if (!byId.has(id)) return false
+      if (g === null) {
+        groups[id] = null
+        continue
+      }
+      // 分组名必须是规整过的:不在这里悄悄改写,免得计划和落地对不上
+      if (normalizeGroupName(g) !== g) return false
+      groups[id] = g
+    }
+    const arranged = compactOrders(applyArrangement(cur, { ids: plan.ids, groups }))
+    // 只有 order 或 group 真变了的剧才换新对象、才写库
+    const changed = arranged.filter((p) => p !== byId.get(p.id))
+    if (changed.length === 0) return true
+    // 本机暂存的空分组一旦有了成员,就不再是「暂存」了
+    const used = new Set(arranged.flatMap((p) => (p.group ? [p.group] : [])))
+    const prevEmpty = get().emptyGroups
+    const nextEmpty = prevEmpty.filter((n) => !used.has(n))
+    const emptyChanged = nextEmpty.length !== prevEmpty.length
+    set((s) => ({
+      projects: arranged,
+      ...(emptyChanged ? { emptyGroups: nextEmpty } : {}),
+      revision: s.revision + 1,
+      structureRevision: s.structureRevision + 1,
+    }))
+    if (emptyChanged) writeGroupNames(EMPTY_GROUPS_KEY, nextEmpty)
+    const db = getWorkbenchDb()
+    for (const p of changed) void db.putProject(p).catch(() => {})
+    return true
+  },
+
+  assignProjectGroup: (id, group) => {
+    const name = group === null ? null : (normalizeGroupName(group) ?? undefined)
+    if (name === undefined) return false
+    const items = [...get().projects].sort((a, b) => a.order - b.order)
+    if (!items.some((p) => p.id === id)) return false
+    const plan = planAssignGroup(items, get().pinnedProjectIds, id, name)
+    return plan ? get().arrangeProjects(plan) : true
+  },
+
+  renameGroup: (from, to) => {
+    const next = normalizeGroupName(to)
+    if (!next) return false
+    const items = [...get().projects].sort((a, b) => a.order - b.order)
+    if (items.some((p) => p.group === from)) {
+      const plan = planRenameGroup(items, get().pinnedProjectIds, from, next)
+      if (plan && !get().arrangeProjects(plan)) return false
+    } else if (get().emptyGroups.includes(from)) {
+      if (next === from) return true
+      const { emptyGroups } = get()
+      // 改成一个已经存在的名字 = 并入它(空分组没有成员,并入就是它自己消失)
+      const exists = items.some((p) => p.group === next) || emptyGroups.includes(next)
+      const nextEmpty = exists ? emptyGroups.filter((n) => n !== from) : emptyGroups.map((n) => (n === from ? next : n))
+      set({ emptyGroups: nextEmpty })
+      writeGroupNames(EMPTY_GROUPS_KEY, nextEmpty)
+    } else {
+      return false
+    }
+    // 折叠状态跟着名字走
+    const { collapsedGroups } = get()
+    if (next !== from && collapsedGroups.includes(from)) {
+      const moved = collapsedGroups.filter((n) => n !== from)
+      if (!moved.includes(next)) moved.push(next)
+      set({ collapsedGroups: moved })
+      writeGroupNames(COLLAPSED_GROUPS_KEY, moved)
+    }
+    return true
+  },
+
+  dissolveGroup: (name) => {
+    const items = [...get().projects].sort((a, b) => a.order - b.order)
+    if (items.some((p) => p.group === name)) {
+      const plan = planDissolveGroup(items, get().pinnedProjectIds, name)
+      if (plan && !get().arrangeProjects(plan)) return false
+    } else if (get().emptyGroups.includes(name)) {
+      const nextEmpty = get().emptyGroups.filter((n) => n !== name)
+      set({ emptyGroups: nextEmpty })
+      writeGroupNames(EMPTY_GROUPS_KEY, nextEmpty)
+    } else {
+      return false
+    }
+    const { collapsedGroups } = get()
+    if (collapsedGroups.includes(name)) {
+      const nextCollapsed = collapsedGroups.filter((n) => n !== name)
+      set({ collapsedGroups: nextCollapsed })
+      writeGroupNames(COLLAPSED_GROUPS_KEY, nextCollapsed)
+    }
+    return true
+  },
+
+  createEmptyGroup: (name) => {
+    const n = normalizeGroupName(name)
+    if (!n) return { ok: false, reason: '分组名不能为空' }
+    const { projects, emptyGroups } = get()
+    if (projects.some((p) => p.group === n) || emptyGroups.includes(n)) return { ok: false, reason: '已有同名分组' }
+    const next = [...emptyGroups, n]
+    set({ emptyGroups: next })
+    writeGroupNames(EMPTY_GROUPS_KEY, next)
+    return { ok: true, name: n }
+  },
+
+  toggleGroupCollapsed: (name) => {
+    const { collapsedGroups } = get()
+    const next = collapsedGroups.includes(name) ? collapsedGroups.filter((n) => n !== name) : [...collapsedGroups, name]
+    set({ collapsedGroups: next })
+    writeGroupNames(COLLAPSED_GROUPS_KEY, next)
   },
 
   reorderBoards: (projectId, ids) => {
@@ -518,10 +695,12 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
     return project.id
   },
 
-  importProject: (plan, name, summary) => {
+  importProject: (plan, name, summary, group) => {
     const now = Date.now()
-    const { projects } = get()
+    const { projects, emptyGroups } = get()
     const trimmedSummary = summary?.trim().slice(0, WORKBENCH_PROJECT_SUMMARY_MAX)
+    // 文件里带分组名 → 自动并入本机同名分组(没有就新成一组);order 排在最后 = 组内最后一部
+    const groupName = normalizeGroupName(group)
     const project: VideoWorkbenchProject = {
       id: createId(),
       name: name.trim() || '导入的剧',
@@ -529,7 +708,9 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
       createdAt: now,
       updatedAt: now,
       ...(trimmedSummary ? { summary: trimmedSummary } : {}),
+      ...(groupName ? { group: groupName } : {}),
     }
+    const nextEmpty = groupName && emptyGroups.includes(groupName) ? emptyGroups.filter((n) => n !== groupName) : emptyGroups
     const newBoards: VideoWorkbenchBoard[] = []
     const newCards: VideoWorkbenchCard[] = []
     plan.boards.forEach((b, order) => {
@@ -559,9 +740,11 @@ export const createProjectsSlice: StateCreator<VideoWorkbenchState, [], [], Proj
       viewByProject: { ...s.viewByProject, [project.id]: { mode: 'overview' } },
       selectedCardIds: [],
       selectionAnchorId: undefined,
+      ...(nextEmpty !== emptyGroups ? { emptyGroups: nextEmpty } : {}),
       revision: s.revision + 1,
       structureRevision: s.structureRevision + 1,
     }))
+    if (nextEmpty !== emptyGroups) writeGroupNames(EMPTY_GROUPS_KEY, nextEmpty)
     writeActiveProject(project.id)
     const db = getWorkbenchDb()
     void db.putProject(project).catch(() => {})

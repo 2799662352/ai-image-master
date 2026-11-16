@@ -481,4 +481,71 @@ describe('planRestore · 剧', () => {
     expect(plan.next!.boards.find((b) => b.id === 'b2')!.projectId).toBe('p1')
     expect(plan.persist!.boards.map((b) => b.id)).toEqual(['b2'])
   })
+
+  describe('只改分组(name / order 都没动)也是一次可撤销的变化', () => {
+    const grouped = (id: string, order: number, group?: string) => ({
+      ...project(id, order),
+      ...(group ? { group } : {}),
+    })
+    const snap = (projects: ReturnType<typeof grouped>[]): WorkbenchIntent => ({
+      projects,
+      activeProjectId: 'p1',
+      boards: [board('b1', 'p1', 0)],
+      cards: [],
+      activeBoardId: 'b1',
+    })
+
+    it('拖进分组之后撤销:快照里没有 group → 不是 noop,剧进 persist,state 里的 group 被去掉', () => {
+      const src = source({
+        projects: [grouped('p1', 0, '外传')],
+        boards: [board('b1', 'p1', 0)],
+        revision: 3,
+        structureRevision: 3,
+      })
+      const plan = planRestore(src, snap([grouped('p1', 0)]))
+      expect(plan.result.ok).toBe(true)
+      expect(plan.result.noop).toBe(false)
+      expect(plan.result.revision).toBe(4)
+      expect(plan.next!.projects[0]).not.toHaveProperty('group')
+      expect(plan.persist!.projects.map((p) => p.id)).toEqual(['p1'])
+      expect(plan.persist!.projects[0]).not.toHaveProperty('group')
+    })
+
+    it('解散 / 移出之后撤销:快照里有 group → 写回', () => {
+      const src = source({
+        projects: [grouped('p1', 0)],
+        boards: [board('b1', 'p1', 0)],
+        revision: 3,
+        structureRevision: 3,
+      })
+      const plan = planRestore(src, snap([grouped('p1', 0, '外传')]))
+      expect(plan.result.noop).toBe(false)
+      expect(plan.next!.projects[0].group).toBe('外传')
+      expect(plan.persist!.projects.map((p) => p.group)).toEqual(['外传'])
+    })
+
+    it('分组重命名之后撤销:名字不同的 group 进 persist', () => {
+      const src = source({
+        projects: [grouped('p1', 0, '新名')],
+        boards: [board('b1', 'p1', 0)],
+        revision: 3,
+        structureRevision: 3,
+      })
+      const plan = planRestore(src, snap([grouped('p1', 0, '旧名')]))
+      expect(plan.result.noop).toBe(false)
+      expect(plan.persist!.projects.map((p) => p.group)).toEqual(['旧名'])
+    })
+
+    it('分组也没变 → 仍然是 noop,不白写库', () => {
+      const src = source({
+        projects: [grouped('p1', 0, '外传')],
+        boards: [board('b1', 'p1', 0)],
+        revision: 3,
+        structureRevision: 3,
+      })
+      const plan = planRestore(src, snap([grouped('p1', 0, '外传')]))
+      expect(plan.result.noop).toBe(true)
+      expect(plan.persist).toBeUndefined()
+    })
+  })
 })

@@ -128,6 +128,9 @@ export const WORKBENCH_BOARD_SUMMARY_MAX = 60
  */
 export const WORKBENCH_PROJECT_SUMMARY_MAX = 60
 
+/** 剧分组名上限(剧栏只有 220px 宽,再长也只会被省略号吃掉)。 */
+export const WORKBENCH_PROJECT_GROUP_MAX = 24
+
 /**
  * 卡片摘要上限。比页摘要更短 —— 页摘要一页一条,卡片摘要是**一页里每张卡一条**,
  * 二十张卡就是二十条,长度直接乘以卡数。40 字够写「主角跳车 · 夜外 · 追兵逼近」
@@ -253,6 +256,14 @@ export interface VideoWorkbenchProject {
    * 改名后清除。不影响任何数据语义。
    */
   legacy?: true
+  /**
+   * 所属分组名(剧栏里的「文件夹」);没有 = 未分组。**分组没有独立记录,只是这个字段**:
+   * 同名即同组,一个分组存在当且仅当至少有一部剧带着它。所以不新建 object store、不升库版本
+   * (理由同 `deletedAt`),旧版本客户端打开带这个字段的库也不会坏(它只是原样读写)。
+   * 分组名随剧进撤销栈、回收站、工程文件(`project.group`)和云备份;剧栏里的先后顺序不另存,
+   * 由组内剧的 `order` 推出(见 `projectGroups.ts`)。
+   */
+  group?: string
   /**
    * 移入回收站的时刻。**只存在于 IndexedDB 的记录上** —— 内存里的 `projects` 只放
    * 活着的剧,被删的剧(连同它的分段和卡片)在 store 的 `trash` 里。水合时按这个字段
