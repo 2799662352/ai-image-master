@@ -54,7 +54,9 @@ export function parseImageUri(uri: unknown, platform: NodeJS.Platform = process.
 
   if (/^file:\/\//i.test(uri)) {
     try {
-      return { ok: true, source: { kind: 'path', path: fileURLToPath(uri) } }
+      // 必须显式指定 windows:fileURLToPath 默认按「当前跑在哪个系统」解析,
+      // `file:///C:/a` 在 Linux 上会得到 `/C:/a`(CI 就是 Linux),而这里的 platform 是注入的。
+      return { ok: true, source: { kind: 'path', path: fileURLToPath(uri, { windows: platform === 'win32' }) } }
     } catch {
       return { ok: false, error: '本地图片路径不合法' }
     }
