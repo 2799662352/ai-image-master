@@ -500,7 +500,7 @@
 
 /* ---------- 剧栏(ProjectRail):剧 / 分段两层的左栏 ---------- */
 .vw-rail { width: 220px; flex: none; display: flex; flex-direction: column; border-right: 1px solid #3f3f46; background: #111113; }
-/* 剧栏所在的左列(RailColumn):外层 stretch 铺满整页高度,只管深色背景和分隔线;内层 sticky、高度由 RailColumn 按视口算 */
+/* 剧栏所在的左列(RailColumn):外层 stretch 铺满整页高度,只管深色背景和分隔线;内层 sticky、高度由 RailColumn 按「窗口高度 + 本列文档位置」算成固定值(与滚动无关,滚动时不变) */
 .vw-rail-col { position: relative; flex: none; align-self: stretch; background: #111113; }
 .vw-rail-col::after { content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: #3f3f46; pointer-events: none; }
 .vw-rail-sticky { position: sticky; top: 12px; height: calc(100vh - 24px); }
@@ -586,7 +586,8 @@
 .vw-rail-row:hover .vw-rail-more, .vw-rail-more:focus-visible { opacity: 1; }
 .vw-rail-more:hover { color: #fff; border-color: #fce300; }
 .vw-rail-row:hover .vw-rail-time { opacity: 0; }
-/* 拖动调整剧的顺序:左侧 10px 的把手(正好落在行内边距里,不挤封面),悬停才出现;
+/* 拖动调整剧的顺序:整行都能直接拖(行本身 draggable);左侧 10px 的点阵(正好落在行内边距里,不挤封面)
+   悬停才出现,只是「这行能拖」的提示和键盘入口,拖它等于拖整行。
    被拖的行变暗,放下位置用黄色插入线(2px,画在行的上沿 / 下沿,不占布局)。 */
 .vw-rail-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; width: 10px; padding: 0; display: flex; align-items: center; justify-content: center; background: transparent; border: 0; color: #71717a; cursor: grab; opacity: 0; transition: opacity .1s; }
 .vw-rail-grip::before { content: ''; width: 6px; height: 14px; background: radial-gradient(circle at 1px 1px, currentColor 1px, transparent 1.2px) 0 0 / 4px 4px; }
@@ -594,6 +595,15 @@
 .vw-rail-grip:hover, .vw-rail-grip:focus-visible { color: #fce300; }
 .vw-rail-grip:active { cursor: grabbing; }
 .vw-rail-row-dragging { opacity: 0.4; }
+/* 把分段卡拖到某部剧的行上:黄色虚线框 + 右上角「移入此剧」(与分组标题的「放进分组」、顶部投放框同一套语言)。
+   虚线用 outline 画,不占布局;右上角的相对时间让位给提示。 */
+.vw-rail-row-segdrop { outline: 1px dashed #fce300; outline-offset: -1px; background: rgba(252, 227, 0, 0.07); }
+.vw-rail-row-segdrop .vw-rail-name { color: #fce300; }
+.vw-rail-row-segdrop .vw-rail-time { opacity: 0; }
+/* 指针停在行上时「⋯」和拖动点阵会浮出来(:hover),正好压在提示的位置 —— 这一刻让位。选择器写到 :hover 一样重,才压得过上面的显示规则 */
+.vw-rail-row.vw-rail-row-segdrop .vw-rail-more, .vw-rail-row.vw-rail-row-segdrop:hover .vw-rail-more,
+.vw-rail-row.vw-rail-row-segdrop .vw-rail-grip, .vw-rail-row.vw-rail-row-segdrop:hover .vw-rail-grip { opacity: 0; }
+.vw-rail-segtip { position: absolute; top: 8px; right: 8px; z-index: 1; font-size: 10px; line-height: 1.2; letter-spacing: 0.04em; color: #fce300; pointer-events: none; }
 .vw-rail-drop-before::before, .vw-rail-drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.5); pointer-events: none; z-index: 2; }
 .vw-rail-drop-before::before { top: -1px; }
 .vw-rail-drop-after::after { bottom: -1px; }
