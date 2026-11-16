@@ -186,6 +186,47 @@ export function pinnedFirst<T extends { id: string }>(items: readonly T[], pinne
   return pinnedFirstBy(items, pinnedIds, (it) => it.id)
 }
 
+export type DropPlace = 'before' | 'after'
+
+/** 把 dragId 挪到 targetId 的前面 / 后面。两者相同、或有一个不在 ids 里 → null。 */
+export function moveIdNear(
+  ids: readonly string[],
+  dragId: string,
+  targetId: string,
+  place: DropPlace,
+): string[] | null {
+  if (dragId === targetId || !ids.includes(dragId) || !ids.includes(targetId)) return null
+  const rest = ids.filter((id) => id !== dragId)
+  const at = rest.indexOf(targetId)
+  rest.splice(place === 'before' ? at : at + 1, 0, dragId)
+  return rest
+}
+
+/**
+ * 拖拽排序:把 dragId 放到 targetId 的前面 / 后面,返回新的**全量**顺序(给 `reorderProjects` /
+ * `reorderBoards` 这类要整组 id 的接口);不该动就返回 null。
+ *
+ * - 置顶的永远排在不置顶的前面(显示顺序 = pinnedFirstBy(存储顺序)),所以**不允许跨组**:
+ *   想放到最上面,先置顶。
+ * - 在**存储顺序**(ids)上挪,不是在显示顺序上:另一组的相对位置原样不动,取消置顶后各回各位。
+ * - 挪完显示顺序没变(放到自己旁边、本来就相邻)也返回 null,调用方不必 bump revision、重写库。
+ */
+export function planReorder(
+  ids: readonly string[],
+  pinnedIds: readonly string[],
+  dragId: string,
+  targetId: string,
+  place: DropPlace,
+): string[] | null {
+  const pinned = new Set(pinnedIds)
+  if (pinned.has(dragId) !== pinned.has(targetId)) return null
+  const next = moveIdNear(ids, dragId, targetId, place)
+  if (!next) return null
+  const shownNow = pinnedFirstBy(ids, pinnedIds, (id) => id)
+  const shownNext = pinnedFirstBy(next, pinnedIds, (id) => id)
+  return shownNext.every((id, i) => id === shownNow[i]) ? null : next
+}
+
 /** 「X 副本」,已被占用则「X 副本 2」「X 副本 3」…… */
 export function copyName(name: string, taken: Iterable<string>): string {
   const used = new Set(taken)
