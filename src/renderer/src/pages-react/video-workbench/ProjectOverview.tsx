@@ -1,9 +1,9 @@
 // 剧总览:面包屑 · 剧名(就地改名)· 汇总芯片 · 操作 · 分段网格。进入一部剧默认到这里。
 // 数字全部来自 projectStats(与剧栏、MCP status 同一口径)。
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { formatCostParts } from '../../features/video-workbench/pricing'
-import { pinnedFirstBy } from '../../features/video-workbench/projects'
+import { pinnedFirstBy, planReorder, type DropPlace } from '../../features/video-workbench/projects'
 import { formatDuration, summarizeProject } from '../../features/video-workbench/projectStats'
 import { useVideoWorkbenchStore } from '../../features/video-workbench/store'
 import { useContextMenu } from './ContextMenu'
@@ -23,6 +23,7 @@ export function ProjectOverview() {
   const activeBoardId = useVideoWorkbenchStore((s) => s.activeBoardId)
   const openBoard = useVideoWorkbenchStore((s) => s.openBoard)
   const addBoard = useVideoWorkbenchStore((s) => s.addBoard)
+  const reorderBoards = useVideoWorkbenchStore((s) => s.reorderBoards)
   const renameProject = useVideoWorkbenchStore((s) => s.renameProject)
   const renameBoard = useVideoWorkbenchStore((s) => s.renameBoard)
   const pinnedProjectIds = useVideoWorkbenchStore((s) => s.pinnedProjectIds)
@@ -38,6 +39,37 @@ export function ProjectOverview() {
   useEffect(() => {
     if (editing) inputRef.current?.focus()
   }, [editing])
+
+  // 拖分段卡:放在剧栏某一行 = 移到那部剧(剧栏处理),放在网格里别的卡上 = 调整顺序(这里处理)。
+  // 被拖的 id 放 ref(dragover / drop 要同步读);变暗只是视觉,延后一拍再 setState ——
+  // 浏览器在 dragstart 处理完之后才截拖影,React 会在处理器返回时同步刷 DOM,立刻变暗的话拖影也是暗的。
+  const draggingBoardRef = useRef<string | null>(null)
+  const [draggingBoardId, setDraggingBoardId] = useState<string | null>(null)
+  const dimTimerRef = useRef<number | null>(null)
+  /** 插入线:画在哪张卡的左侧 / 右侧。 */
+  const [dropMark, setDropMark] = useState<{ id: string; place: DropPlace } | null>(null)
+  const endBoardDrag = () => {
+    draggingBoardRef.current = null
+    if (dimTimerRef.current !== null) {
+      window.clearTimeout(dimTimerRef.current)
+      dimTimerRef.current = null
+    }
+    setDraggingBoardId(null)
+    setDropMark(null)
+  }
+  useEffect(
+    () => () => {
+      if (dimTimerRef.current !== null) window.clearTimeout(dimTimerRef.current)
+    },
+    [],
+  )
+  // 卡被拖到剧栏移走后,源卡随之卸载,浏览器不会再给它发 dragend —— 这里兜底清掉残留状态,
+  // 否则这个分段以后再回到本剧时会一直是暗的。
+  const draggedStillHere =
+    draggingBoardId === null || boards.some((b) => b.id === draggingBoardId && b.projectId === project?.id)
+  useEffect(() => {
+    if (!draggedStillHere) endBoardDrag()
+  }, [draggedStillHere])
 
   if (!project) return null
   const stats = summarizeProject(project.id, boards, cards)
@@ -59,6 +91,53 @@ export function ProjectOverview() {
   // 序号按剧内原顺序编(01、02…),置顶只改显示位置 —— 否则置顶一下序号就乱了。
   const numbered = stats.segments.map((s, index) => ({ ...s, index }))
   const shown = pinnedFirstBy(numbered, pinnedBoardIds, (s) => s.board.id)
+
+  // ── 拖动排序 ──
+  // 顺序以「存储顺序」(board.order)为准,置顶只是显示时挪到最前;planReorder 按这个口径算出新的完整顺序,
+  // 跨置顶 / 非置顶的放法或放完显示不变的返回 null —— 那就不接收(光标显示禁止、不画插入线)。
+  const orderedBoardIds = stats.segments.map(({ board }) => board.id)
+  const startBoardDrag = (e: DragEvent<HTMLButtonElement>, boardId: string) => {
+    e.dataTransfer.setData(SEGMENT_DRAG_MIME, boardId)
+    e.dataTransfer.effectAllowed = 'move'
+    draggingBoardRef.current = boardId
+    if (dimTimerRef.current !== null) window.clearTimeout(dimTimerRef.current)
+    dimTimerRef.current = window.setTimeout(() => {
+      dimTimerRef.current = null
+      if (draggingBoardRef.current === boardId) setDraggingBoardId(boardId)
+    }, 0)
+  }
+  /** 指针落在卡的左半 = 插到它前面,右半 = 插到它后面。网格是横向铺的,所以看 X。 */
+  const placeOf = (e: DragEvent<HTMLElement>): DropPlace => {
+    const r = e.currentTarget.getBoundingClientRect()
+    return e.clientX < r.left + r.width / 2 ? 'before' : 'after'
+  }
+  /** 这次拖拽能不能当成「分段排序」:必须是我们自己发起的分段拖拽,且放完显示顺序真的变。 */
+  const planDrop = (e: DragEvent<HTMLElement>, targetId: string, place: DropPlace): string[] | null => {
+    const dragId = draggingBoardRef.current
+    if (!dragId || !e.dataTransfer.types.includes(SEGMENT_DRAG_MIME)) return null
+    return planReorder(orderedBoardIds, pinnedBoardIds, dragId, targetId, place)
+  }
+  const acceptOver = (e: DragEvent<HTMLElement>, targetId: string, place: DropPlace): boolean => {
+    if (!planDrop(e, targetId, place)) {
+      // 不接收:不 preventDefault(浏览器默认就是禁止放下),并把残留的插入线收掉
+      e.dataTransfer.dropEffect = 'none'
+      setDropMark((m) => (m === null ? m : null))
+      return false
+    }
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDropMark((m) => (m && m.id === targetId && m.place === place ? m : { id: targetId, place }))
+    return true
+  }
+  const commitDrop = (e: DragEvent<HTMLElement>, targetId: string, place: DropPlace) => {
+    const next = planDrop(e, targetId, place)
+    if (!next) return
+    e.preventDefault()
+    reorderBoards(project.id, next)
+    endBoardDrag()
+  }
+  // 「新建分段」格:拖到它上面 = 放到最后(显示上的最后一张之后),网格里它就在末尾,符合直觉
+  const lastShownId = shown[shown.length - 1]?.board.id
 
   return (
     <section className="space-y-4" aria-label="剧总览">
@@ -135,9 +214,15 @@ export function ProjectOverview() {
         </div>
       </div>
       <div className="text-[11px] text-[#71717a]">
-        点分段卡进入编辑镜头;右键分段卡可重命名 / 置顶 / Fork / 删除;拖分段卡到左侧剧栏可移到别的剧;换剧点左侧剧栏。
+        点分段卡进入编辑镜头;右键分段卡可重命名 / 置顶 / Fork / 删除;拖分段卡到别的卡上可调整顺序,拖到左侧剧栏可移到别的剧;换剧点左侧剧栏。
       </div>
-      <div className="vw-seg-grid">
+      <div
+        className="vw-seg-grid"
+        onDragLeave={(e) => {
+          // 指针移出整个网格才收插入线(在卡与卡之间穿过时会连续触发 leave/enter,不能每次都收)
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropMark(null)
+        }}
+      >
         {shown.map(({ board, stats: s, cover, index }) => (
           <SegmentCard
             key={board.id}
@@ -156,10 +241,12 @@ export function ProjectOverview() {
                 }),
               )
             }
-            onDragStart={(e) => {
-              e.dataTransfer.setData(SEGMENT_DRAG_MIME, board.id)
-              e.dataTransfer.effectAllowed = 'move'
-            }}
+            onDragStart={(e) => startBoardDrag(e, board.id)}
+            onDragEnd={endBoardDrag}
+            onDragOver={(e) => acceptOver(e, board.id, placeOf(e))}
+            onDrop={(e) => commitDrop(e, board.id, placeOf(e))}
+            dragging={draggingBoardId === board.id}
+            dropMark={dropMark?.id === board.id ? dropMark.place : null}
           />
         ))}
         <button
@@ -167,6 +254,12 @@ export function ProjectOverview() {
           className="vw-seg vw-seg-new"
           onClick={() => addBoard()}
           aria-label="新建分段(网格)"
+          onDragOver={(e) => {
+            if (lastShownId) acceptOver(e, lastShownId, 'after')
+          }}
+          onDrop={(e) => {
+            if (lastShownId) commitDrop(e, lastShownId, 'after')
+          }}
         >
           <span className="text-3xl">+</span>
           <span className="text-[12px] mt-2">新建分段</span>

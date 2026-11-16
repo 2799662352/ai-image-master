@@ -39,7 +39,7 @@ function seed() {
 }
 
 describe('ProjectOverview 分段卡菜单', () => {
-  it('右键分段卡:打开 / 重命名 / 置顶 / Fork / 删除', () => {
+  it('右键分段卡:打开 / 重命名 / 置顶 / 前移 / 后移 / Fork / 删除', () => {
     seed()
     render(<ProjectOverview />)
     fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 隧道' }))
@@ -47,6 +47,8 @@ describe('ProjectOverview 分段卡菜单', () => {
       expect.stringContaining('打开'),
       expect.stringContaining('重命名'),
       expect.stringContaining('置顶'),
+      expect.stringContaining('前移'),
+      expect.stringContaining('后移'),
       expect.stringContaining('Fork'),
       expect.stringContaining('删除'),
     ])
@@ -58,7 +60,7 @@ describe('ProjectOverview 分段卡菜单', () => {
     const more = screen.getByRole('button', { name: '分段菜单 隧道' })
     expect(more.closest('button.vw-seg')).toBeNull()
     fireEvent.click(more)
-    expect(screen.getAllByRole('menuitem')).toHaveLength(5)
+    expect(screen.getAllByRole('menuitem')).toHaveLength(7)
     // 点「⋯」不会顺带把卡片打开
     expect(S().viewByProject[S().activeProjectId]?.mode).toBe('overview')
   })
@@ -115,6 +117,55 @@ describe('ProjectOverview 分段卡菜单', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 天台' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /取消置顶/ }))
     expect(cardNames()).toEqual(['分段 1', '隧道', '天台'])
+  })
+
+  it('前移一格 / 后移一格:拖动之外的右键通路,顺序即时更新;头一张「前移」、末一张「后移」禁用并说明原因', () => {
+    seed()
+    render(<ProjectOverview />)
+    const item = (name: RegExp) => screen.getByRole('menuitem', { name }) as HTMLButtonElement
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 隧道' }))
+    fireEvent.click(item(/前移/))
+    expect(cardNames()).toEqual(['隧道', '分段 1', '天台'])
+
+    // 现在隧道在最前:前移禁用
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 隧道' }))
+    expect(item(/前移/).disabled).toBe(true)
+    expect(item(/前移/).title).toBe('已经是第一个')
+    fireEvent.mouseDown(window)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 天台' }))
+    expect(item(/后移/).disabled).toBe(true)
+    expect(item(/后移/).title).toBe('已经是最后一个')
+    fireEvent.click(item(/前移/))
+    expect(cardNames()).toEqual(['隧道', '天台', '分段 1'])
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 隧道' }))
+    fireEvent.click(item(/后移/))
+    expect(cardNames()).toEqual(['天台', '隧道', '分段 1'])
+  })
+
+  it('前移 / 后移不跨置顶边界:置顶的排在最前,与未置顶的邻居互换会被禁用并说明原因', () => {
+    seed()
+    S().setBoardPinned(S().boards.find((b) => b.name === '隧道')!.id, true)
+    render(<ProjectOverview />)
+    expect(cardNames()).toEqual(['隧道', '分段 1', '天台'])
+    const item = (name: RegExp) => screen.getByRole('menuitem', { name }) as HTMLButtonElement
+
+    // 未置顶的「分段 1」紧跟在置顶的「隧道」后面:前移会换到置顶组里去
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 分段 1' }))
+    expect(item(/前移/).disabled).toBe(true)
+    expect(item(/前移/).title).toContain('置顶')
+    expect(item(/后移/).disabled).toBe(false)
+    fireEvent.mouseDown(window)
+
+    // 置顶的「隧道」后面是未置顶的:后移同理
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开分段 隧道' }))
+    expect(item(/后移/).disabled).toBe(true)
+    expect(item(/后移/).title).toContain('置顶')
+    fireEvent.mouseDown(window)
+    // 菜单没有动过顺序
+    expect(cardNames()).toEqual(['隧道', '分段 1', '天台'])
   })
 
   it('Fork:紧跟原段生成「副本」', () => {

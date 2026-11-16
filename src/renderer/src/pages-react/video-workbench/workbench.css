@@ -611,6 +611,11 @@
 .vw-seg-wrap { position: relative; min-width: 0; }
 .vw-seg-more { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; font-size: 15px; line-height: 1; color: #e4e4e7; background: rgba(0, 0, 0, 0.72); border: 1px solid #3f3f46; opacity: 0; transition: opacity .1s; z-index: 1; }
 .vw-seg-wrap:hover .vw-seg-more, .vw-seg-more:focus-visible { opacity: 1; }
+/* 拖动排序:被拖的卡变暗;插入线是 2px 竖线,画在列间距(16px)正中,不占布局 */
+.vw-seg-dragging { opacity: 0.4; }
+.vw-seg-drop-before::before, .vw-seg-drop-after::after { content: ''; position: absolute; top: 0; bottom: 0; width: 2px; background: #fce300; box-shadow: 0 0 6px rgba(252, 227, 0, 0.5); pointer-events: none; z-index: 2; }
+.vw-seg-drop-before::before { left: -9px; }
+.vw-seg-drop-after::after { right: -9px; }
 .vw-seg-more:hover { color: #fce300; border-color: #fce300; }
 .vw-seg-pin { position: absolute; top: 10px; left: 42px; background: rgba(0, 0, 0, 0.7); padding: 3px 4px; z-index: 1; pointer-events: none; }
 
