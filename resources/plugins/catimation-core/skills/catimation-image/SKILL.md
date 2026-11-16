@@ -263,8 +263,7 @@ catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
 The `model` param is an **optional override**. By default (omit it) generation runs
 on the channel the **user picked in the chat composer** (Flare / Sunburst / All 2.5 /
 VIP / Image2 / 腾讯 / Nano2 / Nano2.1 / 万相 / 千问 / 悠船 / NovelAI / Seedream; default 腾讯 2.6-s) — 各渠道共用
-ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-all` 把尺寸
-写进 prompt). Omit `model` for ordinary requests. Set it only with a concrete reason:
+ratio × resolution × quality(例外见各条). Omit `model` for ordinary requests. Set it only with a concrete reason:
 
 - **`gpt-image-2.5-flare`** — flare / 速度优先 / 2.5 文生图 / 透明底. ~20s,同价取代 gpt-image-2; quality 默认 high,另有 xhigh/max; 支持 `transparentBackground`(2.5 家族独有,含下面腾讯两条).
 - **`gpt-image-2.5-sunburst`** — sunburst / 画质优先 / 2.5 改图 / 透明底. ~40s,同价更锐; 也支持 `transparentBackground`.
@@ -288,9 +287,10 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-al
 - **`doubao-seedream-5-0-pro-260628` (火山豆包 Seedream 5.0 Pro)** — pick when the
   user says seedream / 即梦 / 豆包 / seedream 5 / sd5, OR when the request is a
   **multi-reference fusion**(把多张参考图的角色+场景+风格融进一张图,最多 10 张
-  参考图,这是它的强项), OR when the user wants **图层分离**(唯一支持的渠道,
+  参考图,这是它的强项), OR when the user wants **图层分离**(缺省用它,
   见「图层分离」一节). 注意:普通出图仅单图(`count` 无效)、分辨率只有 1K/2K
-  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。
+  (无 4K)、无 quality 轴;要 4K 或组图时换别的渠道。**`doubao-seedream-5-5-261028`
+  (Seedream 5.5)** 只在用户点名 5.5 时用,限制同上,也能图层分离,参考图上限没验证过。
 - **`custom-imagemodel-gt` (腾讯 image2)** — pick when the user says 腾讯 / tencent /
   image2 腾讯. 快(~30s),网关已关水印。
 - **`custom-model-og-v2` (腾讯 image2 fast)** — pick when the user says 便宜 / 快 /
@@ -320,7 +320,7 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-al
 六条腾讯渠道(`custom-imagemodel-gt` / `custom-model-og-v2` / `custom-model-og-v2.5-f` /
 `custom-model-og-v2.5-s` / `custom-model-og-v2.6-f` / `custom-model-og-v2.6-s`)、`wan2.7-image-pro`(阿里万相 2.7 pro)、`qwen-image-3.0-pro`
 (通义千问 Image 3.0 Pro)、`youchuan-v8.2` / `youchuan-v8.2-turbo`(悠船)和
-`doubao-seedream-5-0-pro-260628`(Seedream 5.0 Pro)和四条 NovelAI
+`doubao-seedream-5-0-pro-260628` / `-5-5-261028`(Seedream 5.0 Pro / 5.5)和四条 NovelAI
 **都只经 Miau API 代理提供**。
 出图时应用会**自动把这些渠道的请求固定走 Miau API 站点**(无论用户当前在「API 设置」
 里选了哪个站点),所以你**不需要**让用户手动切站点——直接调用即可。
@@ -329,10 +329,10 @@ ratio × resolution × quality(Seedream 仅 1K/2K 无 quality; `gpt-image-2.5-al
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可。
 - 其余渠道(官转 2.5/2.6 / -all / vip / gpt-image-2 / Nano2 / Nano2.1)跟随当前站点(不钉 Miau):
-  选 Miau 可走平台额度,选 apiyi 走 Key。不要编 2.5 vip 渠道。
+  选 Miau 可走平台额度,选 apiyi 走 Key。
 
-只为具体理由设 `model`(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、2.5 改图 →
-sunburst、MJ/悠船 → youchuan、二次元/多角色 → NovelAI、或用户点名的渠道)。Never invent a model name.
+只为具体理由设 `model`(组图 → 万相、多参考图融合 → Seedream、2.5 文生图 → flare、改图 → sunburst、
+MJ/悠船 → youchuan、二次元/多角色 → NovelAI、或用户点名的渠道)。Never invent a model name.
 
 ## Reference images — reuse the user's material (important)
 
@@ -370,8 +370,8 @@ Rules:
 
 四条硬约束,**全部由工具前置校验**——违反会返回明确错误,不会静默出一张普通图:
 
-1. **必须 `model: 'doubao-seedream-5-0-pro-260628'`** —— 只有这一个渠道支持。
-   省略 `model` 会落到用户 composer 选的渠道上,那边不支持,请求会被拒。
+1. **`model` 只能是 Seedream**:默认 `'doubao-seedream-5-0-pro-260628'`;用户点名 5.5 才用
+   `'doubao-seedream-5-5-261028'`(计费没核对过)。别的渠道会被拒。
 2. **必须且只能给一张待拆的图**,放在 `referenceImages[0]`。没有输入图会被拒
    (否则就退化成一次普通文生图)。
 3. **`prompt` 可以为空串** —— 这是全仓唯一一个空 prompt 才正确的地方。空 = 自动全拆
@@ -428,7 +428,7 @@ directory and give it a descriptive, ordered name — e.g.
   省略 `model`(交给用户在 composer 选的渠道,默认腾讯 2.6-s)。
 - 用户点名某渠道却不显式传 `model`。
 - 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
-- 图层分离踩坑:忘了同时指定 `model`;为「填满参数」编 prompt;拆前没告知按张计费(见上节)。
+- 图层分离踩坑:没指定 `model`;为填满参数编 prompt;拆前没告知按张计费。
 
 ## Notes
 

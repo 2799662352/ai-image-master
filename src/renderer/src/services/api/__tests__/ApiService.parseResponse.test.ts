@@ -59,6 +59,19 @@ describe('ApiService.parseResponse robustness', () => {
     expect(result.error).toContain('rate limited by edge')
   })
 
+  it('HTTP 524(前置代理等不到上游)→ 说清「上游可能已出图并计费、别立刻重试」,并保留原始片段', async () => {
+    const service = await makeService()
+    const resp = new Response('<html>A timeout occurred (524)</html>', { status: 524, headers: { 'Content-Type': 'text/html' } })
+    const result = await (service as any).parseResponse(resp, cfg)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('不要立刻重试')
+    expect(result.error).toContain('计费')
+    expect(result.error).toContain('HTTP 524')
+    expect(result.error).toContain('A timeout occurred')
+    // 与裸「API 错误: 524」区分开(没有 case 524 时落到 default 分支的措辞)
+    expect(result.error).not.toContain('API 错误: 524')
+  })
+
   it('OK JSON without images → includes raw body snippet for diagnosis', async () => {
     const service = await makeService()
     const resp = new Response(JSON.stringify({ weird: 'shape', no: 'images' }), {

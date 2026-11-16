@@ -42,6 +42,15 @@ describe('高级编辑入口门槛', () => {
     expect(await screen.findByTestId('vw-advanced-edit-open')).toBeTruthy()
   })
 
+  it('2.5 Flash 同样支持编辑视频 → 出现入口(门槛读能力表,不是写死 2.5)', async () => {
+    renderCardWith({
+      model: '2.5-flash',
+      mode: 'edit_video',
+      referenceVideos: [{ name: 'a.mp4', src: 'https://cdn/a.mp4' }],
+    })
+    expect(await screen.findByTestId('vw-advanced-edit-open')).toBeTruthy()
+  })
+
   it('模型不是 2.5 → 不出现(edit_video 本来就只有 2.5 支持)', async () => {
     renderCardWith({
       model: '2.0',

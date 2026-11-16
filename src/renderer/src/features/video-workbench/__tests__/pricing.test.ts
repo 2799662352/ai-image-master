@@ -30,6 +30,18 @@ describe('unitPriceUsd(文档 9.2 价格表)', () => {
     expect(unitPriceUsd('2.0', '2k', true)).toBeNull()
   })
 
+  it('2.5 Flash:标准档(480p/720p)× 是否含视频,没有 1080p / 4k 价目', () => {
+    // 估算口径:文档 ¥46/M(含视频 ¥28/M),按 2.0 的 USD 对应值折(文档没给 USD)。展示时是「估算」。
+    expect(unitPriceUsd('2.5-flash', '720p', false)).toBe(7.0)
+    expect(unitPriceUsd('2.5-flash', '480p', false)).toBe(7.0)
+    expect(unitPriceUsd('2.5-flash', '720p', true)).toBe(4.3)
+    expect(unitPriceUsd('2.5-flash', '1080p', false)).toBeNull()
+    expect(unitPriceUsd('2.5-flash', '4k', true)).toBeNull()
+    // 不是 2.5 的价(10.7),也没有把 2.5 的价带歪
+    expect(unitPriceUsd('2.5-flash', '720p', false)).not.toBe(unitPriceUsd('2.5', '720p', false))
+    expect(unitPriceUsd('2.5', '720p', false)).toBe(10.7)
+  })
+
   it('fast/mini 只有标准档;1080p 返回 null', () => {
     expect(unitPriceUsd('2.0-fast', '720p', false)).toBe(5.6)
     expect(unitPriceUsd('2.0-fast', '720p', true)).toBe(3.3)

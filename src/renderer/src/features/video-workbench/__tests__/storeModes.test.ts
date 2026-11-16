@@ -52,6 +52,44 @@ describe('taskModeForCard（卡片模式 → 上游 taskMode）', () => {
   })
 })
 
+/**
+ * Seedance 2.5 Flash:`taskModeForCard` / `canStart` / 建卡夹取都读能力表、不认具体别名,
+ * 所以 Flash 不需要自己的分支 —— 这里钉的是「它确实吃到了能力表」,以及它**没有**样片。
+ */
+describe('Seedance 2.5 Flash 在工作台里的行为', () => {
+  it('编辑 / 延长模式派生出 edit / extend,其它模式不派生(和 2.5 一致)', () => {
+    expect(taskModeForCard(buildCard({ model: '2.5-flash', mode: 'edit_video' }, 0))).toBe('edit')
+    expect(taskModeForCard(buildCard({ model: '2.5-flash', mode: 'extend_video' }, 0))).toBe('extend')
+    expect(taskModeForCard(buildCard({ model: '2.5-flash', mode: 'multimodal_ref' }, 0))).toBeUndefined()
+  })
+
+  it('建卡可到 30 秒(不被夹到 15);分辨率 1080p 平台余额也不行,720p 行', () => {
+    expect(buildCard({ prompt: 'x', model: '2.5-flash', duration: 30 }, 0).duration).toBe(30)
+    for (const billing of ['own-key', 'platform'] as const) {
+      expect(canStart(buildCard({ prompt: 'x', model: '2.5-flash', resolution: '1080p' }, 0), billing).ok, billing).toBe(false)
+      expect(canStart(buildCard({ prompt: 'x', model: '2.5-flash', resolution: '720p' }, 0), billing).ok, billing).toBe(true)
+    }
+  })
+
+  it('编辑视频必须带参考视频', () => {
+    const missing = canStart(buildCard({ prompt: 'x', model: '2.5-flash', mode: 'edit_video' }, 0))
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toMatch(/参考视频/)
+  })
+
+  it('卡上残留 draft 开关(从 2.5 换过来)时提交的是普通生成:不带 draft,分辨率照卡片', async () => {
+    const submit = mockSubmit()
+    const store = useVideoWorkbenchStore.getState()
+    const [id] = store.addCards([{ prompt: '一只猫', model: '2.5-flash', resolution: '720p', draft: true }])
+    await store.startCards([id])
+    expect(submit).toHaveBeenCalledTimes(1)
+    const payload = submit.mock.calls[0][0] as Record<string, unknown>
+    expect(payload.model).toBe('2.5-flash')
+    expect(payload.resolution).toBe('720p')
+    expect(payload.draft).not.toBe(true)
+  })
+})
+
 describe('canStart 按模型能力判定', () => {
   const withVideo = (over: Record<string, unknown>) =>
     buildCard({ prompt: '一只猫', referenceVideos: [{ src: 'https://x/v.mp4', kind: 'video' }], ...over } as never, 0)

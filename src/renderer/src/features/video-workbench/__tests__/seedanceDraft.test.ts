@@ -19,6 +19,12 @@ describe('样片开关', () => {
     expect(effectiveDraft({ model: '2.5' })).toBe(false)
   })
 
+  it('2.5 Flash 没有样片:开关留着也不生效,提交分辨率照卡片、不被压成 480p', () => {
+    expect(effectiveDraft({ draft: true, model: '2.5-flash' })).toBe(false)
+    expect(submitResolution({ draft: true, model: '2.5-flash', resolution: '720p' })).toBe('720p')
+    expect(draftToggleAvailability('2.5-flash', 'platform').available).toBe(false)
+  })
+
   it('样片固定 480p,关掉后回到卡片设置', () => {
     expect(submitResolution({ draft: true, model: '2.5', resolution: '720p' })).toBe('480p')
     expect(submitResolution({ model: '2.5', resolution: '720p' })).toBe('720p')

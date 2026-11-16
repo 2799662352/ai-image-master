@@ -117,6 +117,45 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(sent.layerDecomposition).toBe(true)
   })
 
+  it('honors an explicit Seedream 5.5 for layer splitting (it supports it too)', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('gpt-image-2-vip')
+
+    await callGenerate({
+      prompt: '',
+      referenceImages: [],
+      model: 'doubao-seedream-5-5-261028',
+      layerDecomposition: true,
+    })
+
+    const sent = api.generateImage.mock.calls[0][0]
+    expect(sent.model).toBe('doubao-seedream-5-5-261028')
+    expect(sent.siteKey).toBe('antigravity')
+    expect(sent.layerDecomposition).toBe(true)
+  })
+
+  it('pins layer splitting to 5.0 Pro when the agent names a channel that cannot split', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
+    registerFakes(api, makeHistory())
+
+    await callGenerate({ prompt: '', referenceImages: [], model: 'wan2.7-image-pro', layerDecomposition: true })
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('doubao-seedream-5-0-pro-260628')
+  })
+
+  it('does NOT silently follow a picker on 5.5 for splitting: omitted `model` stays on 5.0 Pro', async () => {
+    // 5.5 上拆分的计费接入说明没写、没核对过 —— 不替用户把一次拆分悄悄记到它头上;
+    // 要用 5.5 拆分得由 agent 显式点名(用户说了「用 5.5 拆」)。
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('doubao-seedream-5-5-261028')
+
+    await callGenerate({ prompt: '', referenceImages: [], layerDecomposition: true })
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('doubao-seedream-5-0-pro-260628')
+  })
+
   it('threads layerDecomposition through to ApiService without rewriting the prompt', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['https://x/base.png'] })) }
     registerFakes(api, makeHistory())

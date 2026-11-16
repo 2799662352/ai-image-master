@@ -7,11 +7,14 @@
  */
 export {
   DEFAULT_IMAGE_CHANNEL_ID,
+  DEFAULT_LAYER_SPLIT_CHANNEL_ID,
   IMAGE_CHANNEL_IDS,
   IMAGE_CHANNELS,
+  LAYER_SPLIT_CHANNEL_IDS,
   findImageChannel,
   isMiauOnlyChannel,
   isSelectableImageChannel,
   resolveImageChannel,
+  resolveLayerSplitChannel,
 } from '../../../../shared/imageChannels'
 export type { ImageChannel } from '../../../../shared/imageChannels'

@@ -10,6 +10,7 @@ import {
   isMiauOnlyChannel,
   isSelectableImageChannel,
   resolveImageChannel,
+  resolveLayerSplitChannel,
 } from './imageChannels'
 import { gifSvgUnsupportedReason } from '../../../../shared/imageModelParams'
 import { recordCodexArtifact } from './codexArtifactPersistence'
@@ -119,13 +120,6 @@ function resolveEffectiveImageChannel(agentRequested: unknown): string {
   if (isSelectableImageChannel(agentRequested)) return agentRequested
   return resolveImageChannel(useAgentChatStore.getState().selectedImageChannel)
 }
-
-/**
- * 图层拆分唯一支持的渠道。拆分请求省略 `model` 时不走上面的「用户选的渠道 / VIP」回退
- * —— 那条路必然撞上 ApiService 的能力守卫，把「你没写 model」变成一次失败的 tool call。
- * 拆分只有这一个渠道可选，没有歧义，直接钉住比报错更有用。
- */
-const LAYER_DECOMPOSITION_CHANNEL = 'doubao-seedream-5-0-pro-260628'
 
 /** 空 prompt 是拆分的「自动全拆」模式，但气泡不能空着 —— 给个能读的占位。 */
 const LAYER_DECOMPOSITION_BUBBLE_LABEL = '图层分离'
@@ -1551,8 +1545,11 @@ export class AgentToolExecutor {
     // Resolved BEFORE the references below because the channel decides how refs
     // must travel: nano/gemini want base64 `inline_data`, everything else wants
     // a URL. See resolveReferenceImages.
+    // 拆分请求不走「用户选的渠道 / 默认」回退(那条路多半撞上 ApiService 的能力守卫,把「你没写
+    // model」变成一次失败的 tool call):agent 显式点名了能拆分的渠道(5.0 Pro / 5.5)就听它的,
+    // 否则钉缺省 5.0 Pro。见 `resolveLayerSplitChannel`。
     const model = params.layerDecomposition
-      ? LAYER_DECOMPOSITION_CHANNEL
+      ? resolveLayerSplitChannel(params.model)
       : resolveEffectiveImageChannel(params.model)
 
     // GIF / SVG 输出只有 GPT Image 2.6 支持:apiyi 官转(flare / sunburst)与腾讯(og-v2.6-f / -s,

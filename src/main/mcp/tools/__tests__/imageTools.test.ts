@@ -193,9 +193,12 @@ describe('registerImageTools / generate_image schema', () => {
       'youchuan-v8.2',
       'youchuan-v8.2-turbo',
       'doubao-seedream-5-0-pro-260628',
+      'doubao-seedream-5-5-261028',
     ]) {
       expect(genSchema.safeParse({ prompt: 'x', model }).success, model).toBe(true)
     }
+    // 5.5 必须带完整日期后缀;控制台页面上的短名调不通(会 404)
+    expect(genSchema.safeParse({ prompt: 'x', model: 'doubao-seedream-5-5' }).success).toBe(false)
     expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2-all' }).success).toBe(false)
     expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2.5-vip' }).success).toBe(false)
 

@@ -70,6 +70,12 @@ describe('提示词底座在 MCP 描述里被点名', () => {
     expect(hits.map((t) => t.name).sort()).toEqual([...PROMPT_WRITING_TOOLS].sort())
   })
 
+  it('Flash 与 2.5 同属 sd25-pe —— 指令里点名 2.5-flash,否则 agent 会给 Flash 载 sd2-pe 写错提示词', () => {
+    // Flash 必须出现在「→ skill `sd25-pe`」之前的同一个映射里,而不是 sd2-pe 那一边
+    expect(PROMPT_BASE_DIRECTIVE).toMatch(/"2\.5-flash"[^→]*→ skill `sd25-pe`/)
+    expect(PROMPT_BASE_DIRECTIVE).not.toMatch(/"2\.5-flash"[^→]*→ skill `sd2-pe`/)
+  })
+
   it('指令本身写明了两代模型的映射方向', () => {
     // 别把「2.0 家族用 sd2-pe」写丢了——只说 2.5 会让 agent 对 2.0 也载 sd25-pe。
     expect(PROMPT_BASE_DIRECTIVE).toMatch(/2\.0-fast/)

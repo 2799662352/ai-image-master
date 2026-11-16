@@ -3,12 +3,15 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_IMAGE_CHANNEL_ID,
+  DEFAULT_LAYER_SPLIT_CHANNEL_ID,
   IMAGE_CHANNEL_IDS,
   IMAGE_CHANNELS,
+  LAYER_SPLIT_CHANNEL_IDS,
   findImageChannel,
   isMiauOnlyChannel,
   isSelectableImageChannel,
   resolveImageChannel,
+  resolveLayerSplitChannel,
 } from '../imageChannels'
 
 describe('imageChannels registry', () => {
@@ -18,9 +21,11 @@ describe('imageChannels registry', () => {
     expect(isMiauOnlyChannel(DEFAULT_IMAGE_CHANNEL_ID)).toBe(true)
   })
 
-  it('lists channels in the requested order: SD5 → 腾讯 ×6 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.6 官转 ×2 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
+  it('lists channels in the requested order: SD5 → SD5.5 → 腾讯 ×6 → Nano2 → Nano2.1 → Wan2.7 → Qwen3 → 悠船 ×2 → NovelAI ×4 → Image 2.6 官转 ×2 → Image 2.5 ×3 → Image2 官方 → VIP', () => {
     expect(IMAGE_CHANNELS.map((c) => c.id)).toEqual([
       'doubao-seedream-5-0-pro-260628',
+      // 2026-11-16 接入,同系列紧跟 5.0 Pro
+      'doubao-seedream-5-5-261028',
       'custom-imagemodel-gt',
       'custom-model-og-v2',
       // 同一条 og-image 渠道上的 2.5 Flare / Sunburst,紧挨着 image2 fast 摆
@@ -82,6 +87,44 @@ describe('imageChannels registry', () => {
   it('resolves the Seedream 5.0 Pro channel as selectable', () => {
     expect(isSelectableImageChannel('doubao-seedream-5-0-pro-260628')).toBe(true)
     expect(resolveImageChannel('doubao-seedream-5-0-pro-260628')).toBe('doubao-seedream-5-0-pro-260628')
+  })
+
+  it('resolves the Seedream 5.5 channel as selectable and Miau-only', () => {
+    expect(isSelectableImageChannel('doubao-seedream-5-5-261028')).toBe(true)
+    expect(resolveImageChannel('doubao-seedream-5-5-261028')).toBe('doubao-seedream-5-5-261028')
+    expect(isMiauOnlyChannel('doubao-seedream-5-5-261028')).toBe(true)
+  })
+
+  describe('图层拆分渠道', () => {
+    it('缺省是 5.0 Pro;agent 显式点名 5.5 / 5.0 Pro 就听它的', () => {
+      expect(DEFAULT_LAYER_SPLIT_CHANNEL_ID).toBe('doubao-seedream-5-0-pro-260628')
+      expect(resolveLayerSplitChannel('doubao-seedream-5-5-261028')).toBe('doubao-seedream-5-5-261028')
+      expect(resolveLayerSplitChannel('doubao-seedream-5-0-pro-260628')).toBe('doubao-seedream-5-0-pro-260628')
+    })
+
+    it('没指定、或指了做不了拆分的渠道(含合法的普通渠道)一律钉回缺省', () => {
+      expect(resolveLayerSplitChannel(undefined)).toBe(DEFAULT_LAYER_SPLIT_CHANNEL_ID)
+      expect(resolveLayerSplitChannel('wan2.7-image-pro')).toBe(DEFAULT_LAYER_SPLIT_CHANNEL_ID)
+      expect(resolveLayerSplitChannel('made-up')).toBe(DEFAULT_LAYER_SPLIT_CHANNEL_ID)
+      expect(resolveLayerSplitChannel(42)).toBe(DEFAULT_LAYER_SPLIT_CHANNEL_ID)
+    })
+
+    /**
+     * 清单必须与 ApiService 的能力位**同一个集合**。漏一边的后果都不报错:
+     * 清单缺了 5.5 → agent 指定 5.5 被悄悄钉回 5.0 Pro;清单多了一个能力位没开的 →
+     * 撞上 ApiService 的「不支持图层拆分」守卫。
+     */
+    it('LAYER_SPLIT_CHANNEL_IDS 与 ApiService 里 capabilities.layerDecomposition 的集合一致', async () => {
+      const { ApiService } = await import('../../../services/api/ApiService')
+      const models = new ApiService().getAllModels()
+      const capable = Object.entries(models)
+        .filter(([, m]) => m.capabilities?.layerDecomposition)
+        .map(([id]) => id)
+        .sort()
+      expect([...LAYER_SPLIT_CHANNEL_IDS].sort()).toEqual(capable)
+      // 且都是聊天里选得到的渠道
+      for (const id of LAYER_SPLIT_CHANNEL_IDS) expect(isSelectableImageChannel(id), id).toBe(true)
+    })
   })
 
   it('validates selectable ids', () => {

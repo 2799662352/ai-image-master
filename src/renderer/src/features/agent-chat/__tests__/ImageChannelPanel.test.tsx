@@ -58,7 +58,7 @@ describe('ImageChannelPanel · 分区与停靠', () => {
     expect(visibleIds()).toEqual(['gemini-3.1-flash-image', 'gemini-nano-banana-2.1'])
 
     fireEvent.click(tab(/^火山豆包/))
-    expect(visibleIds()).toEqual(['doubao-seedream-5-0-pro-260628'])
+    expect(visibleIds()).toEqual(['doubao-seedream-5-0-pro-260628', 'doubao-seedream-5-5-261028'])
 
     fireEvent.click(tab(/^阿里百炼/))
     expect(visibleIds()).toEqual(['wan2.7-image-pro', 'qwen-image-3.0-pro'])

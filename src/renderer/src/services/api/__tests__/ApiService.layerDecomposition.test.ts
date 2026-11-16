@@ -16,8 +16,10 @@ import {
 describe('Seedream 5.0 Pro layer decomposition capability', () => {
   const service = new ApiService()
 
-  it('is enabled on 5.0 Pro only', () => {
+  it('is enabled on 5.0 Pro and 5.5 only', () => {
     expect(service.getModelConfig('doubao-seedream-5-0-pro-260628')?.capabilities?.layerDecomposition).toBe(true)
+    // 5.5 也有(用户 2026-11-16 亲测);请求转换与 5.0 Pro 同一套,所以走同一个开关
+    expect(service.getModelConfig('doubao-seedream-5-5-261028')?.capabilities?.layerDecomposition).toBe(true)
     // 同族的 4.5 / 其他出图模型都没有这个能力，别让开关漏到普通渠道上
     expect(service.getModelConfig('seedream-4-5-251128')?.capabilities?.layerDecomposition).toBeUndefined()
     expect(service.getModelConfig('gpt-image-2')?.capabilities?.layerDecomposition).toBeUndefined()
@@ -92,6 +94,26 @@ describe('Seedream 5.0 Pro layer decomposition payload', () => {
     expect(payload.image).toBe(dataUrl)
   })
 
+  it('Seedream 5.5 builds the same split payload (tier size, single image, no n)', () => {
+    const cfg55 = service.getModelConfig('doubao-seedream-5-5-261028')!
+    const payload = (service as any).buildOpenAIPayload({
+      model: 'doubao-seedream-5-5-261028',
+      modelConfig: cfg55,
+      count: 4,
+      layerDecomposition: true,
+      referenceImages: [REF],
+      prompt: '',
+      resolution: '2K',
+      ratio: '16:9',
+    })
+    expect(payload.model).toBe('doubao-seedream-5-5-261028')
+    expect(payload.layer_decomposition).toBe(true)
+    expect(payload.image).toBe(REF)
+    expect(payload.size).toBe('2K')
+    expect(payload.n).toBeUndefined()
+    expect(payload).not.toHaveProperty('prompt')
+  })
+
   it('builds a normal pixel-size payload when the switch is off (no regression)', () => {
     const payload = (service as any).buildOpenAIPayload({
       model: 'doubao-seedream-5-0-pro-260628',
@@ -128,6 +150,20 @@ describe('generateImage layer decomposition guards', () => {
     })
     expect(result.success).toBe(false)
     expect(result.error).toContain('不支持图层拆分')
+    // 「请切换到谁」从能力位派生:两个有拆分能力的型号都要点名,不能只剩 5.0 Pro
+    expect(result.error).toContain('Seedream 5.0 Pro')
+    expect(result.error).toContain('Seedream 5.5')
+  })
+
+  it('lets Seedream 5.5 through the capability guard (fails only on the missing input image)', async () => {
+    const result = await makeService().generateImage({
+      prompt: 'a',
+      model: 'doubao-seedream-5-5-261028',
+      layerDecomposition: true,
+    })
+    expect(result.success).toBe(false)
+    expect(result.error).not.toContain('不支持图层拆分')
+    expect(result.error).toContain('需要一张待拆分的输入图')
   })
 
   it('rejects a split request with no input image (it would degrade to text-to-image)', async () => {
