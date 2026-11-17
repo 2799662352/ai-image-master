@@ -515,7 +515,7 @@ qa_completed / generation_attempts\`):有专属素材夹(见「角色片 / 多�
 > 全量读一遍是纯浪费,而且套模板本来就只能套一套。
 >
 > - model 是 \`2.5\`(**默认**,模型未知时也按它)、\`2.5-flash\` 或 \`cn-seedance-2.5\` → 载 \`sd25-pe\`
-> - model 明确是 2.0 家族(\`2.0\` / \`2.0-fast\` / \`2.0-mini\`,或它们在 Roneyun-cn 渠道的同名模型 \`cn-seedance-2.0\` / \`cn-seedance-2.0-fast\` / \`cn-seedance-2.0-mini\`)→ 载 \`sd2-pe\`
+> - model 明确是 2.0 家族(\`2.0\` / \`2.0-fast\` / \`2.0-mini\` 及其 \`cn-seedance-2.0*\`)→ 载 \`sd2-pe\`
 > - model 是 \`wan3\`(万相 3.0)→ 载 \`wan3-cinematic-30s\`
 > - model 是 \`kling4\` / \`kling4-omni\`(可灵 4.0)→ **没有专属底座,三个都不载**:直接写自然语言提示词,
 >   覆盖主体 / 动作 / 镜头 / 光线 / 声音;复杂或多镜才按路径 B 载 cinematic-prompt-format。
@@ -523,7 +523,7 @@ qa_completed / generation_attempts\`):有专属素材夹(见「角色片 / 多�
 >
 > 之所以默认 2.5:它是 \`taskMode\` 编辑 / 延长、30 秒时长、50 份素材和样片的全能档
 > (\`2.5-flash\` 同样能编辑 / 延长、30 秒,但只到 720p、没有样片、素材 10/5/5)。
-> **Roneyun-cn 渠道(\`cn-seedance-*\`)是这四个 Seedance 模型的第二条线路,不是新模型**:时长、分辨率、素材上限、编辑 / 延长都跟同名模型走(\`cn-seedance-2.5\` 跟 2.5,其余跟 2.0 家族),底座也跟同名模型。只有三处不同:**只收公网链接**(卡上 / 人像库里的 \`asset://\` 提交前自动换回公网地址,换不出来整单拦下并告诉你是哪几个)、**没有样片**(\`draft: true\` 会被拒)、**没有联网搜索**。**别替用户换渠道** —— 两条线路的计费和素材规则不同;用户没点名 Roneyun-cn / cn 渠道,就照常用火山的 \`2.5\` / \`2.0\`;用户点名了才传 \`cn-seedance-*\`。\`cn-seedance-2.0\` 的 1080p、\`cn-seedance-2.5\` 的编辑 / 延长都没在这条线上实测过,用户要这些先如实说明、别打包票。
+> **Roneyun-cn 渠道(\`cn-seedance-2.0\` / \`-2.0-fast\` / \`-2.0-mini\` / \`-2.5\`)是同名模型的第二条线路**:规格与底座跟同名模型;只有三处不同 —— 只收公网链接(\`asset://\` 提交前自动换回公网地址,换不出来整单拦下)、没有样片、没有联网搜索。**用户点名 Roneyun-cn / cn 渠道才传 \`cn-seedance-*\`,别替用户换渠道。** cn-2.0 的 1080p、cn-2.5 的编辑 / 延长没实测过,别打包票。
 >
 > 只在真要写 2.0 的八大要素公式时才去读那一份。三个都不占技法名额。
 >
@@ -598,7 +598,6 @@ cinematic-prompt-format。路径 B 条件优先于生成/编辑/延长/组合等
 **Default mode = 全能参考 (omni-reference)** — use it unless told otherwise.
 Caps 按 model:**2.5** = 图 30 / 视频 10 / 音频 10(合计 50),视频、音频各自合计 ≤30s;
 **2.5-flash** = 图 10 / 视频 5 / 音频 5(只有 480p / 720p,没有样片);
-**\`cn-seedance-*\`**(Roneyun-cn)= 上限同名模型(\`cn-seedance-2.5\` 同 2.5,其余同 2.0 家族),素材只能是公网链接;
 **2.0 家族** = 图 9 / 视频 3 / 音频 3,视频、音频各自合计 ≤15s;**wan3** = 10 / 5 / 5;
 **kling4** = 只有文生 / 首帧 / 首尾帧(图 ≤2,**没有**参考图 / 参考视频 / 音频),要参考素材就换
 **kling4-omni** = 图 10 / 视频 5(合计 ≤15,视频合计 ≤30s)/ 音频 0。
@@ -790,9 +789,9 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
 1. Turn the request into one clear video prompt(subject, action, camera 运镜/景别,
    scene, lighting, mood;dialogue 与 \`--style\` 可后置)。
 2. **规格确认(spec_confirmed)**:用户没说规格时,发一张 \`ask_user\` 卡确认
-   分辨率(\`480p\` 草稿 / **\`720p\` 默认** / \`1080p\`)、时长(**2.5 / 2.5-flash / cn-seedance-2.5 为 4–30s,2.0 家族(含 cn-seedance-2.0 系)4–15s**,
+   分辨率(\`480p\` 草稿 / **\`720p\` 默认** / \`1080p\`)、时长(**2.5 / 2.5-flash 为 4–30s,2.0 家族 4–15s**,
    默认 5)、比例(\`16:9\` / \`9:16\` / \`4:3\` / \`3:4\` / \`1:1\` / \`21:9\`),推荐默认项。
-   **不要静默升 1080p**;1080p 仅 \`2.0\`(与 wan3、可灵),\`2.5\` / \`2.5-flash\` / \`cn-seedance-2.5\` 只到 720p —— 用户要 1080p 就意味着
+   **不要静默升 1080p**;1080p 仅 \`2.0\`(与 wan3、可灵),\`2.5\` / \`2.5-flash\` 只到 720p —— 用户要 1080p 就意味着
    model 改 \`2.0\`、底座改 \`sd2-pe\`;用户已给规格或本会话已确认过就跳过。
    **可灵(kling4 / kling4-omni)规格不同**:时长 **3–30s 整数,没有智能时长**(给 -1 会被拒);
    分辨率 \`720p\` / \`1080p\` / \`2k\` / \`4k\`(**没有 480p**);比例 \`16:9\` / \`9:16\` / \`1:1\` / \`21:9\` / \`adaptive\`
@@ -813,11 +812,11 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
 3. Call \`generate_video\`:\`prompt\`(必填)、\`model\`(**显式传,且与你载的底座一致**:
    STEP 0 默认 \`2.5\` → 传 \`"2.5"\`;要 1080p / 4k 或用户点名满血画质 → \`"2.0"\` 并改载 \`sd2-pe\`;
    用户明确要快/便宜才 \`"2.0-fast"\`;用户点名 Flash、或要 2.5 的编辑 / 延长而不需要 1080p /
-   样片又想省钱,才 \`"2.5-flash"\`(**别给它 1080p 或 draft**,素材 10/5/5);**只有用户点名 Roneyun-cn / cn 渠道**才传 \`"cn-seedance-2.5"\` / \`"cn-seedance-2.0"\` / \`"cn-seedance-2.0-fast"\` / \`"cn-seedance-2.0-mini"\`(档位和底座跟同名模型,**别给 cn 模型 draft 或联网**,素材最终都是公网链接)。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
+   样片又想省钱,才 \`"2.5-flash"\`(**别给它 1080p 或 draft**,素材 10/5/5);用户点名 Roneyun-cn 才传对应的 \`cn-seedance-*\`(**别给它 draft / 联网**)。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
    模板写的提示词就会被送去 2.0 渲染)、\`resolution\` / \`ratio\` / \`duration\`、
    \`referenceImages\`(**用户给过的图必须传**;支持 \`asset://assetId\`)、
    \`referenceVideos\` / \`referenceAudios\`(上限按 model,见「模式与素材规则」)、或显式要求时的
-   \`firstFrame\` / \`lastFrame\`;2.5 / 2.5-flash / cn-seedance-2.5 的编辑 / 延长走 \`taskMode\`(\`edit\` / \`extend\`),不靠提示词措辞。
+   \`firstFrame\` / \`lastFrame\`;2.5 / 2.5-flash 的编辑 / 延长走 \`taskMode\`(\`edit\` / \`extend\`),不靠提示词措辞。
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
 5. Read the result banner:
