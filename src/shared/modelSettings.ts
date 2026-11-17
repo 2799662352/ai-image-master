@@ -152,6 +152,17 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     isDefault: false,
     pickerHidden: true,
   },
+  // 2026-11-17 加入 Qwen4-Max:新一代旗舰多模态(输入文本 / 图片 / 视频,输出文本),
+  // 深度思考、函数调用、结构化输出、联网搜索,官方页写上下文 1M(最大输入 991K)。
+  // 生产网关 `/api/pricing` 已有 `qwen4-max`(与 3.8 Max 同样 openai 端点、同样 57 个分组)。
+  // 排在 Qwen 组最前面 —— 它是目前最新一代的旗舰。
+  {
+    id: 'qwen4-max',
+    displayName: 'Qwen 4 Max',
+    tier: 'Extra High',
+    description: '通义千问 4 Max（Miau 网关）。新一代旗舰多模态:文本 / 图片 / 视频理解 + 深度思考,适合编程、办公、前端设计与复杂智能体任务;支持工具调用、结构化输出。',
+    isDefault: false,
+  },
   {
     id: 'qwen3.8-omni-flash',
     displayName: 'Qwen 3.8 Omni Flash',

@@ -10,6 +10,7 @@ import {
   isConcreteModelReasoningEffort,
   isModelContextWindowSupported,
   isModelReasoningEffort,
+  isPickerHiddenModel,
   mergeModelSettingsCapabilities,
   migrateLegacyModelSelection,
   modelAutoCompactTokenLimit,
@@ -137,6 +138,32 @@ describe('model settings capabilities', () => {
       displayName: 'DeepSeek V4.1 Flash 经济版（火山引擎）',
       tier: 'High',
       isDefault: false,
+    })
+  })
+
+  describe('Qwen 4 Max (Miau)', () => {
+    const qwenIds = (): string[] => CANONICAL_MODEL_SETTINGS_ROWS
+      .map((row) => row.id)
+      .filter((id) => id.startsWith('qwen'))
+
+    it('是 canonical 行:Extra High 档、选择器里可见,不是默认模型', () => {
+      expect(CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'qwen4-max'))
+        .toMatchObject({ id: 'qwen4-max', displayName: 'Qwen 4 Max', tier: 'Extra High', isDefault: false })
+      expect(isPickerHiddenModel('qwen4-max')).toBe(false)
+    })
+
+    it('排在 Qwen 组里所有可见行的最前面(3.7 两档是 pickerHidden,仍占着下标)', () => {
+      const visibleQwen = qwenIds().filter((id) => !isPickerHiddenModel(id))
+      expect(visibleQwen).toEqual(['qwen4-max', 'qwen3.8-omni-flash', 'qwen3.8-max', 'qwen3.8-flash'])
+    })
+
+    it('没有登记「已核实」的上下文窗口:与其它千问行一样走保守默认,1M 只作实验选项', () => {
+      // 官方页写 1M,但还没有对生产网关实测过超长请求的报错上限;高估窗口会让自动压缩来得太晚、
+      // 请求先被上游拒绝(见 grok-4.6 那段注释)。要登记就先实测,别在这里悄悄改。
+      expect(defaultContextWindowForModel('qwen4-max')).toBe(UNKNOWN_MODEL_CONTEXT_WINDOW)
+      expect(defaultContextWindowForModel('qwen4-max')).toBe(defaultContextWindowForModel('qwen3.8-max'))
+      expect(modelContextOptions('qwen4-max').map((option) => option.value))
+        .toEqual([UNKNOWN_MODEL_CONTEXT_WINDOW, EXPERIMENTAL_CONTEXT_WINDOW])
     })
   })
 

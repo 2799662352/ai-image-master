@@ -88,6 +88,10 @@ const QWEN_MIAU_MODELS = Object.freeze([
   // 默认档已换成它。上面两个 3.7 `-dashscope` 别名暂不撤 —— 用户拍板与 3.8 并行一段时间。
   'qwen3.8-omni-flash',
   'qwen3.8-max',
+  // 2026-11-17 对着生产网关 `/api/pricing` 实测存在(vendor 5 阿里巴巴,model_ratio 5 /
+  // completion 3 / cache 0.05,按「倍率 1 ≈ ¥2 每百万 token」折算正好是官方页的 ¥10 / ¥30 / ¥0.5;endpoint 只有
+  // `openai`、57 个分组,与 3.8 Max 一样)。**只核对了价目表,没有拿 token 真发过一轮对话**。
+  'qwen4-max',
   // 2026-08-31 对着网关 `/v1/models` 实测存在(74 个模型里有它)。这一步不能省 ——
   // 列进来的 slug 若上游没有,选择器里看得见、点下去每轮 404,而错误里不会有一个字
   // 提到是模型名写错了。同一条纪律见上面 grok-4.6 那段注释。

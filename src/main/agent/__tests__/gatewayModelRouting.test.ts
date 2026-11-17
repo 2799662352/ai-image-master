@@ -26,6 +26,8 @@ describe('gatewayModelRouting', () => {
       expect(channel!.compatibilityPolicy).toBe('responses-namespace-bridge')
       // qwen3.8-max 是撞上这个 bug 的那一个，确保它确实在这条通道里。
       expect(channel!.allowedModels).toContain('qwen3.8-max')
+      // Qwen 4 Max(2026-11-17):同一条通道、同一座桥,不另开通道。
+      expect(channel!.allowedModels).toContain('qwen4-max')
     }
   })
 
@@ -244,6 +246,8 @@ describe('gatewayModelRouting', () => {
         .toMatchObject({ channelId: `${gatewayId}-qwen`, family: 'qwen' })
       expect(resolveGatewayModelRoute(gatewayId, 'qwen3.7-max-dashscope'))
         .toMatchObject({ channelId: `${gatewayId}-qwen`, family: 'qwen' })
+      expect(resolveGatewayModelRoute(gatewayId, 'qwen4-max'))
+        .toEqual({ gatewayId, channelId: `${gatewayId}-qwen`, modelId: 'qwen4-max', family: 'qwen' })
     }
     // 不在白名单里的 qwen 变体照样被拒，而不是悄悄落到别的渠道。
     expect(() => resolveGatewayModelRoute('apiyi', 'qwen-bogus-9'))
