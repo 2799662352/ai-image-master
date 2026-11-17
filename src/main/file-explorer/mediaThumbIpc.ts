@@ -1,7 +1,9 @@
-import { ipcMain, nativeImage } from 'electron'
+import { ipcMain, nativeImage, net } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
+import { checkRemoteImageUrl } from '../utils/remoteImageGuard'
+import { parseImageUri, readRemoteOrInlineBytes, type FetchLike } from '../utils/imageUriSource'
 import {
   ALLOWED_MIME_BY_EXT,
   hasTraversalSegment,
@@ -49,7 +51,14 @@ export type MediaThumbResult =
   | { ok: false; reason: string }
 
 export interface MediaThumbArgs {
-  path: string
+  /** 本地文件路径。与 `url` 二选一;两个都给时只认 `path`。 */
+  path?: string
+  /**
+   * 远程图或内联图:`https://…` 或 `data:image/…;base64,…`。主进程自己取字节、缩成缩略图,
+   * 渲染端从头到尾拿不到(也不必解码)那张原图。其它写法(`http:`、本地路径、内网地址)一律拒绝 ——
+   * 本地文件只能走 `path`,那条路有自己的白名单。
+   */
+  url?: string
   /** Longest edge in CSS pixels. Default 256. Capped at 1024 to avoid the
    *  "thumbnail" channel being abused as a backdoor for full-res reads. */
   size?: number
@@ -104,10 +113,10 @@ async function tryNativeThumb(
 }
 
 async function sharpThumb(
-  realPath: string,
+  input: string | Buffer,
   size: number,
 ): Promise<{ buf: Buffer; width: number; height: number }> {
-  const pipeline = sharp(realPath, { failOn: 'none' })
+  const pipeline = sharp(input, { failOn: 'none' })
     .rotate() // honor EXIF orientation
     .resize(size, size, { fit: 'inside', withoutEnlargement: true })
   const { data, info } = await pipeline
@@ -146,26 +155,44 @@ async function videoThumb(realPath: string, size: number): Promise<MediaThumbRes
   }
 }
 
-export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumbResult> {
-  if (!args || typeof args.path !== 'string' || args.path.length === 0) {
+/** 渲染端传来的尺寸收敛到安全范围;调用方通常传 64/128/256/512。 */
+function clampThumbSize(size: unknown): number {
+  return typeof size === 'number' && Number.isFinite(size) && size > 0
+    ? Math.min(Math.floor(size), MAX_THUMB_SIZE)
+    : DEFAULT_THUMB_SIZE
+}
+
+/** 测试可以换掉取网络的实现;生产用 Chromium 网络栈(走系统代理 / 证书),并给整次请求设上限。 */
+export interface MediaThumbDeps {
+  fetch?: FetchLike
+}
+
+export async function handleMediaThumb(
+  args: MediaThumbArgs,
+  deps: MediaThumbDeps = {},
+): Promise<MediaThumbResult> {
+  const hasPath = !!args && typeof args.path === 'string' && args.path.length > 0
+  // 没有本地路径、但给了远程 / 内联地址:走远程分支。有路径就只认路径(各走各的白名单,
+  // 不能让 `url` 变成绕过路径检查的后门 —— 远程分支只接受 https 与 data:image)。
+  if (!hasPath && !!args && typeof args.url === 'string' && args.url.length > 0) {
+    return handleUrlThumb(args.url, clampThumbSize(args.size), deps)
+  }
+  if (!hasPath) {
     return { ok: false, reason: 'whitelist: empty path' }
   }
-  if (hasTraversalSegment(args.path)) {
+  const argPath = args.path as string
+  if (hasTraversalSegment(argPath)) {
     return { ok: false, reason: 'traversal segment in path' }
   }
-  const mime = mimeFromExt(args.path)
+  const mime = mimeFromExt(argPath)
   if (!mime) {
     return { ok: false, reason: 'mime whitelist: extension not allowed' }
   }
-  // Clamp size to a safe range. Renderer callers pass 64/128/256/512.
-  const requestedSize =
-    typeof args.size === 'number' && Number.isFinite(args.size) && args.size > 0
-      ? Math.min(Math.floor(args.size), MAX_THUMB_SIZE)
-      : DEFAULT_THUMB_SIZE
+  const requestedSize = clampThumbSize(args.size)
 
   let realPath: string
   try {
-    realPath = await fs.realpath(args.path)
+    realPath = await fs.realpath(argPath)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'ENOENT') return { ok: false, reason: 'file not found' }
@@ -241,7 +268,18 @@ export const THUMB_CONCURRENCY = 4
 /** 缩略图结果缓存的总字节预算(base64 字符数 ≈ 字节数);一张通常 5–30 KB,够几千张。 */
 export const THUMB_CACHE_MAX_BYTES = 32 * 1024 * 1024
 
+/**
+ * 远程 / 内联图的并发闸,和本地的分开:远程那条的耗时主要在等网络,放进同一个闸里,
+ * 几张慢链接就会把本地缩略图(读盘 + sharp,几十毫秒)堵在后面。
+ */
+export const REMOTE_THUMB_CONCURRENCY = 4
+/** 远程原图字节上限(比任何一张出图都大,又不会让一个坏链接吃满内存)。 */
+export const MAX_REMOTE_THUMB_SOURCE_BYTES = 40 * 1024 * 1024
+/** 抓一张远程图的总时限(含读完 body)。 */
+export const REMOTE_THUMB_FETCH_TIMEOUT_MS = 30_000
+
 const runLimited = createLimiter(THUMB_CONCURRENCY)
+const runRemoteLimited = createLimiter(REMOTE_THUMB_CONCURRENCY)
 const thumbCache = createByteLru<Extract<MediaThumbResult, { ok: true }>>(THUMB_CACHE_MAX_BYTES)
 const pendingThumbs = new Map<string, Promise<MediaThumbResult>>()
 
@@ -253,21 +291,19 @@ export function resetThumbCacheForTest(): void {
 
 /**
  * 缓存 → 同一张图的在途请求合并 → 限并发地真正生成。
- * 只缓存成功结果:失败(文件还没写完、暂时读不到)下次要能重试。
+ * 只缓存成功结果:失败(文件还没写完、暂时读不到、网络抖了一下)下次要能重试。
  */
-function scheduleThumb(
-  realPath: string,
-  stat: import('node:fs').Stats,
-  size: number,
+function scheduleByKey(
+  key: string,
+  limit: <T>(task: () => Promise<T>) => Promise<T>,
   build: () => Promise<MediaThumbResult>,
 ): Promise<MediaThumbResult> {
-  const key = `${realPath}\0${stat.mtimeMs}\0${stat.size}\0${size}`
   const hit = thumbCache.get(key)
   if (hit) return Promise.resolve(hit)
   const inflight = pendingThumbs.get(key)
   if (inflight) return inflight
 
-  const p = runLimited(build)
+  const p = limit(build)
     .then((res) => {
       if (res.ok) thumbCache.set(key, res, res.base64.length)
       return res
@@ -279,13 +315,88 @@ function scheduleThumb(
   return p
 }
 
+function scheduleThumb(
+  realPath: string,
+  stat: import('node:fs').Stats,
+  size: number,
+  build: () => Promise<MediaThumbResult>,
+): Promise<MediaThumbResult> {
+  return scheduleByKey(`${realPath}\0${stat.mtimeMs}\0${stat.size}\0${size}`, runLimited, build)
+}
+
+/** 默认的取网络实现:Chromium 网络栈(系统代理 / 证书),整次请求(含 body)限时。 */
+const defaultRemoteFetch: FetchLike = (url) =>
+  net.fetch(url, { signal: AbortSignal.timeout(REMOTE_THUMB_FETCH_TIMEOUT_MS) })
+
+/**
+ * 把一张远程 / 内联图缩成缩略图 —— 渲染端只会拿到几 KB 的结果,从不加载原图。
+ *
+ * 为什么要主进程来做:数据万象的缩略参数只能拼在**自家 COS 的裸链接**上;带签名的直出链接
+ * (拼参数会让签名失效)和别家的 CDN 都没法在服务端缩小,交给 `<img>` 就是把整张原图
+ * 下载、解码进一个 80px 的框里(真窗口量测:240 张 2336px 原图当缩略图,快速滚动丢掉
+ * 1.9–2.7 s)。这里下载一次、sharp 缩小、按地址缓存,同一张图再出现不再下载。
+ *
+ * 只收 `https://`(过 `checkRemoteImageUrl`)和 `data:image/…;base64`。
+ */
+async function handleUrlThumb(url: string, size: number, deps: MediaThumbDeps): Promise<MediaThumbResult> {
+  const parsed = parseImageUri(url)
+  if (!parsed.ok) return { ok: false, reason: `url: ${parsed.error}` }
+  const source = parsed.source
+  if (source.kind === 'path') return { ok: false, reason: 'url: local paths must use `path`' }
+  if (source.kind === 'http') {
+    const guard = checkRemoteImageUrl(source.url)
+    if (!guard.ok) return { ok: false, reason: `url: ${guard.reason}` }
+  }
+  const fetchImpl = deps.fetch ?? defaultRemoteFetch
+
+  const build = async (): Promise<MediaThumbResult> => {
+    const got = await readRemoteOrInlineBytes(source, { fetch: fetchImpl, maxBytes: MAX_REMOTE_THUMB_SOURCE_BYTES })
+    if (!got.ok) return { ok: false, reason: `url: ${got.error}` }
+    if (got.bytes.length > MAX_REMOTE_THUMB_SOURCE_BYTES) return { ok: false, reason: 'url: source too large' }
+    try {
+      const built = await remoteSharpThumb(got.bytes, size)
+      return { ok: true, base64: built.buf.toString('base64'), mime: built.mime, width: built.width, height: built.height }
+    } catch (err) {
+      return { ok: false, reason: `url: thumbnail failed: ${String(err)}` }
+    }
+  }
+
+  // 内联图不进缓存:渲染端的共享 blob 缓存已经按它的内容键去重,而且给几 MB 的字符串再算一遍哈希不划算。
+  if (source.kind === 'data') return runRemoteLimited(build)
+  return scheduleByKey(`url\0${source.url}\0${size}`, runRemoteLimited, build)
+}
+
+/**
+ * 远程图的缩小:不透明的出 JPEG(最小),带透明通道的出 WebP —— 否则透明 PNG 会被拍成黑底。
+ * (本地路径那条仍是 JPEG,行为没动。)
+ */
+async function remoteSharpThumb(
+  input: Buffer,
+  size: number,
+): Promise<{ buf: Buffer; mime: string; width: number; height: number }> {
+  const meta = await sharp(input, { failOn: 'none' }).metadata()
+  const resized = sharp(input, { failOn: 'none' })
+    .rotate() // honor EXIF orientation
+    .resize(size, size, { fit: 'inside', withoutEnlargement: true })
+  const out = meta.hasAlpha
+    ? await resized.webp({ quality: 80 }).toBuffer({ resolveWithObject: true })
+    : await resized.jpeg({ quality: 78, mozjpeg: true }).toBuffer({ resolveWithObject: true })
+  return {
+    buf: out.data,
+    mime: meta.hasAlpha ? 'image/webp' : 'image/jpeg',
+    width: out.info.width,
+    height: out.info.height,
+  }
+}
+
 export function registerMediaThumbIpc(): void {
   ipcMain.handle(
     'media:thumb',
     (_event, rawArgs: MediaThumbArgs) =>
       handleMediaThumb({
         ...rawArgs,
-        path: typeof rawArgs?.path === 'string' ? path.normalize(rawArgs.path) : '',
+        // 空串不能交给 normalize(它会变成 '.'),否则「只给 url」的调用会被当成一个路径。
+        path: typeof rawArgs?.path === 'string' && rawArgs.path.length > 0 ? path.normalize(rawArgs.path) : '',
       }),
   )
 }

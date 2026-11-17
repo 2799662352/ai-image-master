@@ -16,6 +16,12 @@ import { __resetVideoPosterCacheForTests, setCachedPoster } from '../videoPoster
 const COS_VIDEO =
   'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/media-relay/2026/06/29/5caba59c7886f0ce.mp4'
 const LOCAL_IMG = 'local-file:///C:/gen/a.png'
+// 数据万象缩略链接 = 「本来就是小图」的远端形态,直接交给 <img>(原图不会,见下)。
+const thumbForm = (name: string): string => `https://cdn.test/${name}?imageMogr2/thumbnail/512x512%3E/format/webp`
+const REMOTE_THUMB_A = thumbForm('a.png')
+const REMOTE_THUMB_B = thumbForm('b.png')
+const REMOTE_THUMB_C = thumbForm('c.png')
+const REMOTE_THUMB_D = thumbForm('d.png')
 
 class FakeIO {
   static instances: FakeIO[] = []
@@ -50,7 +56,7 @@ class FakeIO {
 type AnyGlobal = typeof globalThis & { electronAPI?: unknown }
 
 function installApis() {
-  const readMediaThumb = vi.fn(async (_a: { path: string }) => ({
+  const readMediaThumb = vi.fn(async (_a: { path?: string; url?: string }) => ({
     ok: true as const,
     base64: 'AAAA',
     mime: 'image/jpeg',
@@ -107,14 +113,31 @@ describe('MediaThumbWithPoster · 滚到附近才加载', () => {
     expect(queryByTestId('media-thumbnail-broken')).toBeNull()
   })
 
+  // 远端用「缩略形态」的地址(数据万象缩略链接):它直接交给 <img>,门控行为能同步断言。
+  // 远端「原图」不会直接交给 <img>(改由主进程缩小),见 MediaThumbnail.remote.test.tsx。
   it('远端图:还没靠近 → 不放 <img>(不发请求、不解码);靠近后才放', () => {
     installApis()
     const { container } = render(
-      <MediaThumbWithPoster src="https://cdn.test/a.png" videoUri="https://cdn.test/a.png" kind="image" />,
+      <MediaThumbWithPoster src={REMOTE_THUMB_A} videoUri="https://cdn.test/a.png" kind="image" />,
     )
     expect(container.querySelector('img')).toBeNull()
     FakeIO.instances[0].fire(true)
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('https://cdn.test/a.png')
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(REMOTE_THUMB_A)
+  })
+
+  it('远端原图:没靠近之前连主进程缩略请求都不发;靠近后才发,而且 <img> 拿到的是 blob 不是原图地址', async () => {
+    const { readMediaThumb } = installApis()
+    const { container } = render(
+      <MediaThumbWithPoster src="https://cdn.test/full.png" videoUri="https://cdn.test/full.png" kind="image" />,
+    )
+    expect(container.querySelector('img')).toBeNull()
+    expect(readMediaThumb).not.toHaveBeenCalled()
+
+    FakeIO.instances[0].fire(true)
+    await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+    expect(readMediaThumb).toHaveBeenCalledTimes(1)
+    expect(readMediaThumb.mock.calls[0][0]).toMatchObject({ url: 'https://cdn.test/full.png' })
+    expect(container.querySelector('img')?.getAttribute('src')).not.toBe('https://cdn.test/full.png')
   })
 
   it('视频:还没靠近 → 不放 <video>、不去生成封面;靠近后才放并生成', async () => {
@@ -169,7 +192,7 @@ describe('MediaThumbWithPoster · 滚到附近才加载', () => {
     installApis()
     const { container } = render(
       <div data-testid="scroller" style={{ overflowY: 'scroll' }}>
-        <MediaThumbWithPoster src="https://cdn.test/b.png" videoUri="https://cdn.test/b.png" kind="image" />
+        <MediaThumbWithPoster src={REMOTE_THUMB_B} videoUri="https://cdn.test/b.png" kind="image" />
       </div>,
     )
     const io = FakeIO.instances[0]
@@ -182,7 +205,7 @@ describe('MediaThumbWithPoster · 滚到附近才加载', () => {
   it('靠近一次就不再回收:之后滚远了图还在,观察器已断开', () => {
     installApis()
     const { container } = render(
-      <MediaThumbWithPoster src="https://cdn.test/c.png" videoUri="https://cdn.test/c.png" kind="image" />,
+      <MediaThumbWithPoster src={REMOTE_THUMB_C} videoUri="https://cdn.test/c.png" kind="image" />,
     )
     const io = FakeIO.instances[0]
     io.fire(true)
@@ -197,7 +220,7 @@ describe('MediaThumbWithPoster · 滚到附近才加载', () => {
     delete (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver
     installApis()
     const { container } = render(
-      <MediaThumbWithPoster src="https://cdn.test/d.png" videoUri="https://cdn.test/d.png" kind="image" />,
+      <MediaThumbWithPoster src={REMOTE_THUMB_D} videoUri="https://cdn.test/d.png" kind="image" />,
     )
     expect(container.querySelector('img')).toBeTruthy()
   })

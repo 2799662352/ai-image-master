@@ -16,8 +16,9 @@
  */
 import type { KeyboardEvent as ReactKeyboardEvent, Ref } from 'react'
 import { useMemo, useState } from 'react'
-import { buildMediaCandidates } from './mediaFallback'
+import { buildMediaCandidates, guardThumbCandidates } from './mediaFallback'
 import { useMediaCandidates } from './useMediaCandidates'
+import { hasRemoteThumbBridge } from './useResolvedMediaSrc'
 
 export type MediaThumbnailKind = 'image' | 'video'
 
@@ -125,11 +126,13 @@ export function MediaThumbnail({
 }: MediaThumbnailProps) {
   // 候选链按内容记忆:调用方通常每次 render 都传一个新数组。
   const fallbackKey = (fallbackSrcs ?? []).join('\n')
-  const candidates = useMemo(
-    () => buildMediaCandidates(src, fallbackSrcs),
+  const candidates = useMemo(() => {
+    const chain = buildMediaCandidates(src, fallbackSrcs)
+    // 图片:远程 / 内联原图不许直接交给 <img>(整张下载 + 解码进小框),
+    // 改由主进程缩小,并排到本地副本之后;视频的候选就是视频本身,不动。
+    return kind === 'image' && hasRemoteThumbBridge() ? guardThumbCandidates(chain) : chain
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [src, fallbackKey],
-  )
+  }, [src, fallbackKey, kind])
   // `kind` is already 'image' | 'video' — pass through as the mime hint so
   // the resolver can disambiguate ambiguous extensions when the main-process
   // mime probe returns application/octet-stream.

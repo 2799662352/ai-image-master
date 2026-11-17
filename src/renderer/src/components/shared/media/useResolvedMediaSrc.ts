@@ -35,6 +35,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { parseRemoteThumbSrc } from './mediaFallback'
 
 const IMAGE_EXT_TO_MIME: Record<string, string> = {
   png: 'image/png',
@@ -166,7 +167,10 @@ interface AttachmentsApi {
    * during in-place upgrades; falls back to readThumb when missing.
    */
   readMediaThumb?: (args: {
-    path: string
+    /** 本地文件路径;与 `url` 二选一。 */
+    path?: string
+    /** 远程 https 图 / `data:image/` 内联图:主进程自己取字节、缩小,渲染端不碰原图。 */
+    url?: string
     size?: number
   }) => Promise<
     | { ok: true; base64: string; mime: string; width?: number; height?: number }
@@ -296,6 +300,42 @@ function mediaCacheKey(src: string, hint: MediaKindHint, opts: UseResolvedMediaS
   return `${mode}|${hint}|${src}`
 }
 
+/**
+ * 这个源要不要走主进程才能拿到可渲染的 URL:本地文件(读盘)或「远程原图缩略」
+ * (`remote-thumb:`,见 mediaFallback)。其余(https / blob / data)浏览器原生就能加载。
+ */
+export function needsMainResolve(src: string): boolean {
+  if (typeof src !== 'string' || src.length === 0) return false
+  return parseRemoteThumbSrc(src) !== null || toOsPathIfLocal(src) !== null
+}
+
+/**
+ * 有没有能把远程原图缩小的主进程通道。打包后的应用里恒为 true;纯网页预览 / 没有 Electron 的
+ * 测试环境没有这条通道 —— 那里没有「主进程」可交,候选链保持原样,别把能显示的图变成占位。
+ */
+export function hasRemoteThumbBridge(): boolean {
+  return typeof getAttachmentsApi()?.readMediaThumb === 'function'
+}
+
+/** 远程 / 内联原图 → 主进程下载并缩小 → blob:。渲染进程从头到尾不加载那张原图。 */
+async function readRemoteThumbAsBlobUrl(
+  url: string,
+  opts: UseResolvedMediaSrcOptions,
+  label: string,
+): Promise<string | null> {
+  const attachments = getAttachmentsApi()
+  if (!attachments?.readMediaThumb) return null
+  const res = await attachments.readMediaThumb({ url, size: opts.thumbSize })
+  if (!res.ok) {
+    if (import.meta.env?.DEV) {
+      // eslint-disable-next-line no-console
+      console.warn(`[${label}] remote thumb failed`, { reason: res.reason })
+    }
+    return null
+  }
+  return URL.createObjectURL(await base64ToBlob(res.base64, res.mime || 'image/jpeg'))
+}
+
 async function readAsBlobUrl(
   osPath: string,
   hint: MediaKindHint,
@@ -330,8 +370,9 @@ export function acquireMediaSrc(
   opts: UseResolvedMediaSrcOptions = {},
 ): Promise<string | null> {
   if (typeof src !== 'string' || src.length === 0) return Promise.resolve(null)
-  const osPath = toOsPathIfLocal(src)
-  if (osPath === null) return Promise.resolve(src)
+  const remoteUrl = parseRemoteThumbSrc(src)
+  const osPath = remoteUrl === null ? toOsPathIfLocal(src) : null
+  if (remoteUrl === null && osPath === null) return Promise.resolve(src)
 
   const key = mediaCacheKey(src, hint, opts)
   const existing = mediaCache.get(key)
@@ -341,7 +382,11 @@ export function acquireMediaSrc(
   }
 
   const entry: MediaCacheEntry = { refs: 1, promise: Promise.resolve(null) }
-  entry.promise = readAsBlobUrl(osPath, hint, opts, 'acquireMediaSrc').then((url) => {
+  const read =
+    remoteUrl !== null
+      ? readRemoteThumbAsBlobUrl(remoteUrl, opts, 'acquireMediaSrc')
+      : readAsBlobUrl(osPath as string, hint, opts, 'acquireMediaSrc')
+  entry.promise = read.then((url) => {
     entry.settled = { url }
     // Everyone let go while the read was in flight — revoke now and don't keep
     // a cache row for bytes nobody asked for any more.
@@ -366,7 +411,7 @@ export function releaseMediaSrc(
   opts: UseResolvedMediaSrcOptions = {},
 ): void {
   if (typeof src !== 'string' || src.length === 0) return
-  if (toOsPathIfLocal(src) === null) return
+  if (!needsMainResolve(src)) return
 
   const key = mediaCacheKey(src, hint, opts)
   const entry = mediaCache.get(key)
@@ -406,6 +451,8 @@ export async function resolveMediaSrcOnce(
   opts: UseResolvedMediaSrcOptions = {},
 ): Promise<string | null> {
   if (typeof src !== 'string' || src.length === 0) return null
+  const remoteUrl = parseRemoteThumbSrc(src)
+  if (remoteUrl !== null) return readRemoteThumbAsBlobUrl(remoteUrl, opts, 'resolveMediaSrcOnce')
   const osPath = toOsPathIfLocal(src)
   if (osPath === null) return src
   const res = await readBytes(osPath, opts)
@@ -437,7 +484,7 @@ export async function resolveMediaSrcOnce(
  */
 function initialResolved(src: string): string | null {
   if (typeof src !== 'string' || src.length === 0) return null
-  if (toOsPathIfLocal(src) === null) return src
+  if (!needsMainResolve(src)) return src
   return null
 }
 
@@ -474,8 +521,7 @@ export function useResolvedMediaSrc(
       setResolved(null)
       return
     }
-    const osPath = toOsPathIfLocal(src)
-    if (osPath === null) {
+    if (!needsMainResolve(src)) {
       // Web URL / blob / data — Chromium loads these natively.
       setResolved(src)
       return
@@ -494,7 +540,7 @@ export function useResolvedMediaSrc(
         if (cancelled) return
         if (import.meta.env?.DEV) {
           // eslint-disable-next-line no-console
-          console.warn('[useResolvedMediaSrc] read threw', { osPath, err: String(err) })
+          console.warn('[useResolvedMediaSrc] read threw', { src: src.slice(0, 200), err: String(err) })
         }
         setResolved(null)
       })

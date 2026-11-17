@@ -23,8 +23,8 @@ import { isPersistedCosThumbUrl } from '../../../utils/cosThumb'
 import { isRemoteHttpUrl } from './mediaFallback'
 import {
   acquireMediaSrc,
+  needsMainResolve,
   releaseMediaSrc,
-  toOsPathIfLocal,
   type MediaKindHint,
   type UseResolvedMediaSrcOptions,
 } from './useResolvedMediaSrc'
@@ -71,7 +71,7 @@ export interface MediaCandidatesState {
 /** 远端 / blob / data 透传源可以同步给出,不必等 effect —— 首帧就有图。 */
 function syncSrc(candidate: string | null): string | null {
   if (!candidate) return null
-  return toOsPathIfLocal(candidate) === null ? candidate : null
+  return needsMainResolve(candidate) ? null : candidate
 }
 
 export function useMediaCandidates(
@@ -136,7 +136,7 @@ export function useMediaCandidates(
   // 解析当前候选。本地路径经共享 blob 缓存读盘;读不到(null)直接换下一条。
   useEffect(() => {
     if (!current) return
-    if (toOsPathIfLocal(current) === null) {
+    if (!needsMainResolve(current)) {
       setSrc(current)
       return
     }
