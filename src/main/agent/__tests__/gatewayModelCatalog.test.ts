@@ -50,6 +50,9 @@ describe('buildGatewayModelCatalog', () => {
       'gpt-5.5-openai-compact',
       'qwen3.7-plus-dashscope',
       'qwen3.7-max-dashscope',
+      // Qwen 4 Max(2026-11-17 加入):最新一代旗舰,排在 Qwen 组最前(3.7 两档是 pickerHidden,
+      // 仍占着 canonical 下标)。
+      'qwen4-max',
       // 3.8 全模态档(2026-09-20 加入),与 3.7 两档并行,canonical 里排在 3.7 之后。
       'qwen3.8-omni-flash',
       'qwen3.8-max',
@@ -386,6 +389,7 @@ describe('buildGatewayModelCatalog', () => {
       'qwen3.8-flash',
       'qwen3.8-max',
       'qwen3.8-omni-flash',
+      'qwen4-max',
     ])
   })
 })
