@@ -170,8 +170,10 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
       '5e8414d7a33f53c0be2c5b06065c0aa166e2cb45adeb7ffdca223c1ea65ad981',
       // Kling 4.0 / 4.0 Omni (2026-10-28, #383)
       'e25734ecd8db4dcd3c9a43b25b4976bbcbe7947e7f11e2f38eca676e3053e103',
-      // Kling multi-shot (2026-10-28) — current.
+      // Kling multi-shot (2026-10-28).
       '8134974b001fcc05e58658f4c5a62121a5517f894ce14d59ef60c715d37386ad',
+      // Roneyun-cn / cn-seedance-* models (2026-11-17) — current.
+      'c409fda3733d0b6c70f2e4d832808388f6ea4aa43b82649f5c8598315acd1be9',
     ]),
   ],
 ])

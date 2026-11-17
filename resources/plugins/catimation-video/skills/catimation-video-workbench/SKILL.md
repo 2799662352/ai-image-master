@@ -23,8 +23,8 @@ catimation-video 入口负责,写提示词由**提示词底座**负责,单镜镜
 `director-orchestrator` 负责,**镜头表怎么切、几镜、每镜多长由 `shotlist-builder`
 负责** —— 本 skill 不重复它们,只在该交接的地方点名。
 
-> **底座按卡片的 `model` 选一个**(入口已经定过,这里只是提醒):`2.5` → sd25-pe;
-> 2.0 家族 → `sd2-pe`;`wan3`(万相 3.0)→ wan3-cinematic-30s;`kling4` / `kling4-omni`
+> **底座按卡片的 `model` 选一个**(入口已经定过,这里只是提醒):`2.5` / `2.5-flash` / `cn-seedance-2.5` → sd25-pe;
+> 2.0 家族(含 `cn-seedance-2.0` / `-2.0-fast` / `-2.0-mini`)→ `sd2-pe`;`wan3`(万相 3.0)→ wan3-cinematic-30s;`kling4` / `kling4-omni`
 > (可灵 4.0)**没有专属底座**,直接写自然语言提示词(入口 skill 里写明了)。
 >
 > **本文说「底座」时,指的就是当前这张卡的 model 对应的那一个。** 工作台的纪律
@@ -124,7 +124,7 @@ digraph when_to_use {
 ## 一张卡 = 一次生成 = 一个连续节拍
 
 **一张卡是一次上游调用,出一段几秒到几十秒的片子。** 具体区间**按 model 来**,别写死:
-2.0 家族 4–15s、2.5 是 4–30s、万相 3.0 是 2–30s(它还支持 `-1` 智能时长,由模型自己
+2.0 家族 4–15s、2.5 是 4–30s(Roneyun-cn 的 `cn-seedance-*` 跟同名模型)、万相 3.0 是 2–30s(它还支持 `-1` 智能时长,由模型自己
 定长度)、可灵 3–30s(**没有智能时长**,`-1` 会被拒)。拿不准就读能力表,别按记忆填 —— 填超了要等一次网络往返才被上游拒。
 
 这一段里可以只有一个镜头,也可以是一小段镜头流程 —— 那正是 `sd2-pe` 路径 B 的
@@ -287,7 +287,7 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | --- | --- |
 | 改提示词里几个词 | `video_workbench_patch_prompt`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | `video_workbench_update_task` |
-| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | `video_workbench_set_spec`(样片 = `draft: true`,仅 2.5 + 平台余额) |
+| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | `video_workbench_set_spec`(样片 = `draft: true`,仅 2.5 + 平台余额;`2.5-flash` / `cn-seedance-*` 没有样片、`cn-seedance-*` 也没有联网搜索,别给它们开) |
 | 样片满意了要 1080p 成片 | `video_workbench_finalize_draft`(`status` 里 `draftRun: true` 的卡;沿用样片一切,7 天内有效,成片是同卡新版本) |
 | 整页重排 | `video_workbench_reorder`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | `video_workbench_move_task`(**不要并发调**,重排没有交换律) |
