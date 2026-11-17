@@ -10,11 +10,12 @@
  * This component never points a `<video>` at a live `ci-process=snapshot` URL,
  * so there is no recurring per-render billing.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   MediaThumbnail,
   type MediaThumbnailKind,
 } from '../../components/shared/media/MediaThumbnail'
+import { useNearViewport } from '../../components/shared/media/useNearViewport'
 import { toRenderableUri } from '../file-explorer/uri'
 import { isCosUrl } from '../../utils/cosThumb'
 import { getCachedPoster, setCachedPoster } from './videoPosterCache'
@@ -78,7 +79,9 @@ export function useResolvedVideoPoster(
   }, [cosVideo, videoUri])
 
   if (explicit) return explicit
-  return cosVideo ? resolved : undefined
+  // 缓存里有的同步给出:门控让 cosVideo 在「滚到附近」那一刻才变 true,等 effect 再补会让
+  // `<video>` 先无封面地挂一帧。
+  return cosVideo ? (getCachedPoster(videoUri) ?? resolved) : undefined
 }
 
 export interface MediaThumbWithPosterProps {
@@ -111,7 +114,11 @@ export function MediaThumbWithPoster({
   onClick,
   className,
 }: MediaThumbWithPosterProps) {
-  const posterSrc = useResolvedVideoPoster(videoUri, thumbnailUri, kind)
+  // 聊天里图 / 视频缩略图可能有几百个:只有「滚到附近」的才去读盘 / 发请求 / 解码 /
+  // 生成视频封面,其余先画空底框(量测与出处见 `useNearViewport`)。
+  const holderRef = useRef<HTMLDivElement | null>(null)
+  const near = useNearViewport(holderRef)
+  const posterSrc = useResolvedVideoPoster(near ? videoUri : '', thumbnailUri, kind)
   return (
     <MediaThumbnail
       src={src}
@@ -121,6 +128,8 @@ export function MediaThumbWithPoster({
       posterSrc={posterSrc}
       onClick={onClick}
       className={className}
+      active={near}
+      containerRef={holderRef}
     />
   )
 }

@@ -1961,7 +1961,7 @@ const electronAPI: ElectronAPI = {
           remote: 'alive' | 'dead' | 'unknown' | 'skipped'
         }>
       >(IPC_CHANNELS.ATTACHMENTS.VERIFY_UPLOADED_MATERIALS, args),
-    readMediaThumb: (args: { path: string; size?: number }) =>
+    readMediaThumb: (args: { path?: string; url?: string; size?: number }) =>
       safeInvoke<
         | { ok: true; base64: string; mime: string; width?: number; height?: number }
         | { ok: false; reason: string }

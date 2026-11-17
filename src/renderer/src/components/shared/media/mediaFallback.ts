@@ -22,6 +22,8 @@
  * 占位卡,但占位卡会定时自动从主源再来(见 `useMediaCandidates`),「重载」只是手动加速。
  */
 
+import { appendCosThumb, isPersistedCosThumbUrl, persistedCosThumbUrl } from '../../../utils/cosThumb'
+
 export interface SignedUrlWindow {
   /** 秒级 epoch。 */
   start: number
@@ -94,4 +96,79 @@ export function buildMediaCandidates(
     out.push(src)
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// 缩略图位置不许加载原图
+//
+// 候选链里的远程 / 内联源分两类:
+//  - **本来就是小图**:持久化缩略图(`.thumb512.webp`)、数据万象 `imageMogr2` 缩略链接;
+//  - **原图**:自家 COS 的裸链接、带签名的直出链接(拼缩略参数会让签名失效)、别家 CDN、
+//    `data:` 内联图。直接交给 `<img>` = 把整张原图下载并解码进 80px 的框里。
+// 原图改写成「主进程缩略」地址(`remote-thumb:`):渲染端只收到主进程缩好的几 KB,
+// 并且排到所有便宜的候选(缩略链接、本地副本)后面 —— 有本地副本就根本不下载。
+// ---------------------------------------------------------------------------
+
+/** 候选链里「交给主进程下载并缩小」的地址前缀。不是真实协议,只在候选链与共享 blob 缓存里流转。 */
+export const REMOTE_THUMB_PREFIX = 'remote-thumb:'
+
+/** 原图地址 → 主进程缩略地址。 */
+export function toRemoteThumbSrc(url: string): string {
+  return `${REMOTE_THUMB_PREFIX}${url}`
+}
+
+/** 是主进程缩略地址就还原出原图地址,否则 null。 */
+export function parseRemoteThumbSrc(src: string): string | null {
+  if (typeof src !== 'string' || !src.startsWith(REMOTE_THUMB_PREFIX)) return null
+  const url = src.slice(REMOTE_THUMB_PREFIX.length)
+  return url.length > 0 ? url : null
+}
+
+/** 已经是缩略形态的远程地址:不必(也不该)再绕主进程。 */
+function isThumbnailForm(url: string): boolean {
+  return isPersistedCosThumbUrl(url) || /[?&]imageMogr2\/thumbnail\//.test(url)
+}
+
+/** SVG 是矢量文本,浏览器自己缩放,不用栅格化。 */
+function isSvg(url: string): boolean {
+  if (/^data:image\/svg/i.test(url)) return true
+  return /\.svg$/i.test(url.split(/[?#]/, 1)[0])
+}
+
+/**
+ * 只有 `https://` 的原图和 `data:image/` 内联图交给主进程(主进程那边也只收这两种)。
+ * 其余(本地路径、`local-file:`、`blob:`、`http:`)原样保留:本地的走 `media:thumb(path)`,
+ * `blob:` 只活在渲染进程里,`http:` 主进程不碰。
+ */
+function isRemoteOriginal(src: string): boolean {
+  if (/^https:\/\//i.test(src)) return !isThumbnailForm(src) && !isSvg(src)
+  if (/^data:image\//i.test(src)) return !isSvg(src)
+  return false
+}
+
+/**
+ * 整理图片缩略图的候选链,保证**没有任何一条会把 https 原图 / 内联原图直接交给 `<img>`**:
+ *  - 小图形态、本地路径、其它透传源:保持原来的相对顺序,排在前面;
+ *  - 自家 COS 的裸链接:先补出它的缩略形态(持久化缩略图、`imageMogr2`),放在原位;
+ *  - 远程 / 内联原图:改写成 {@link toRemoteThumbSrc},按原相对顺序排到**最后**。
+ * 全程去重。只给 `kind === 'image'` 用;视频的候选链是视频本身,不能这样处理。
+ */
+export function guardThumbCandidates(candidates: readonly string[]): string[] {
+  const front: string[] = []
+  const tail: string[] = []
+  for (const c of candidates) {
+    if (!isRemoteOriginal(c)) {
+      front.push(c)
+      continue
+    }
+    // `data:` 内联图可能有几 MB,不拿它去扫 COS 特征。
+    if (/^https:/i.test(c)) {
+      const persisted = persistedCosThumbUrl(c)
+      if (persisted) front.push(persisted)
+      const live = appendCosThumb(c)
+      if (live !== c) front.push(live)
+    }
+    tail.push(toRemoteThumbSrc(c))
+  }
+  return [...new Set([...front, ...tail])]
 }

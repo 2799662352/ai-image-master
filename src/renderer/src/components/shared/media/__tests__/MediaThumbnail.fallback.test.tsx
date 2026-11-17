@@ -17,10 +17,13 @@ import { resetMediaSrcCacheForTest } from '../useResolvedMediaSrc'
 const EXPIRED_COS =
   'https://aigc-output-image-1326893053.cos.ap-guangzhou.myqcloud.com/x.png?q-sign-algorithm=sha1&q-ak=AKID&q-sign-time=1700000000;1700003600&q-key-time=1700000000;1700003600&q-header-list=host&q-url-param-list=&q-signature=abc'
 
-function installReadThumb(handler: (path: string) => { ok: true; base64: string; mime: string } | { ok: false; reason: string }) {
-  const readMediaThumb = vi.fn(async ({ path }: { path: string }) => handler(path))
+type ThumbReply = { ok: true; base64: string; mime: string } | { ok: false; reason: string }
+
+/** `handler` 拿到 (路径, 完整参数):本地读盘的参数是 `{ path }`,远程缩略是 `{ url }`。 */
+function installReadThumb(handler: (path: string, args: { path?: string; url?: string }) => ThumbReply) {
+  const readMediaThumb = vi.fn(async (args: { path?: string; url?: string }) => handler(args.path ?? '', args))
   ;(globalThis as unknown as { electronAPI?: unknown }).electronAPI = {
-    attachments: { readMediaThumb, readThumb: vi.fn(async (path: string) => handler(path)) },
+    attachments: { readMediaThumb, readThumb: vi.fn(async (path: string) => handler(path, { path })) },
   }
   return readMediaThumb
 }
@@ -100,15 +103,20 @@ describe('MediaThumbnail fallback chain', () => {
       expect(img()!.getAttribute('src')).toBe(primary)
     }
     fireEvent.error(img()!)
-    expect(img()!.getAttribute('src')).toBe('https://bucket.cos.ap-guangzhou.myqcloud.com/a.png')
+    // 主源用尽后换下一条:仍然是缩略链接(由「不许加载原图」整理出来的实时缩略),不是裸原图。
+    const next = img()!.getAttribute('src')!
+    expect(next).not.toBe(primary)
+    expect(next).toContain('imageMogr2/thumbnail/')
+    expect(next).not.toBe('https://bucket.cos.ap-guangzhou.myqcloud.com/a.png')
   })
 
-  it('walks primary → bare url → local copy as each remote candidate is exhausted', async () => {
-    installReadThumb(() => ({ ok: true, base64: 'AAAA', mime: 'image/png' }))
+  it('walks primary → live thumbnail → local copy; the bare original is never handed to <img>, and a local copy means no download', async () => {
+    const readMediaThumb = installReadThumb(() => ({ ok: true, base64: 'AAAA', mime: 'image/png' }))
+    const BARE = 'https://bucket.cos.ap-guangzhou.myqcloud.com/a.png'
     const { container } = render(
       <MediaThumbnail
         src="https://bucket.cos.ap-guangzhou.myqcloud.com/a.png?imageMogr2/thumbnail/512x512%3E"
-        fallbackSrcs={['https://bucket.cos.ap-guangzhou.myqcloud.com/a.png', 'local-file:///D:/out/a.png']}
+        fallbackSrcs={[BARE, 'local-file:///D:/out/a.png']}
         kind="image"
         name="a.png"
       />,
@@ -117,15 +125,18 @@ describe('MediaThumbnail fallback chain', () => {
     expect(img()?.getAttribute('src')).toContain('imageMogr2')
 
     await exhaustRemote(img)
-    expect(img()?.getAttribute('src')).toBe('https://bucket.cos.ap-guangzhou.myqcloud.com/a.png')
+    expect(img()?.getAttribute('src')).toContain('ignore-error') // 实时缩略(整理时补出的)
+    expect(img()?.getAttribute('src')).not.toBe(BARE)
 
     await exhaustRemote(img)
     expect(img()?.getAttribute('src')).toMatch(/^blob:/)
     expect(screen.queryByTestId('media-thumbnail-broken')).toBeNull()
+    // 本地副本读到了 → 一次远程下载都没发。
+    expect(readMediaThumb.mock.calls.map((c) => c[0])).toEqual([{ path: 'D:/out/a.png', size: undefined }])
   })
 
   it('renders the placeholder (not a bare broken <img>) once every candidate failed, and 重载 restarts the chain', async () => {
-    installReadThumb(() => ({ ok: false, reason: 'ENOENT: no such file' }))
+    const readMediaThumb = installReadThumb(() => ({ ok: false, reason: 'ENOENT: no such file' }))
     const onClick = vi.fn()
     const { container } = render(
       <MediaThumbnail
@@ -136,12 +147,17 @@ describe('MediaThumbnail fallback chain', () => {
         onClick={onClick}
       />,
     )
-    await exhaustRemote(() => container.querySelector('img'))
+    await flush()
 
-    // Local copy is missing → IPC null → chain exhausted → placeholder, no <img>.
+    // 本地副本没了、主进程也缩不出来 → 全链耗尽 → 占位卡。**没有任何 <img>**:
+    // https 原图绝不会被直接交给浏览器(这正是它被改走主进程的原因)。
     expect(container.querySelector('img')).toBeNull()
     const broken = screen.getByTestId('media-thumbnail-broken')
     expect(broken.getAttribute('title')).toMatch(/过期|网络/)
+    expect(readMediaThumb.mock.calls.map((c) => c[0])).toEqual([
+      { path: 'D:/gone.png', size: undefined },
+      { url: 'https://x.test/a.png', size: undefined },
+    ])
 
     // 重载 is its own button: it must not bubble into the tile's onClick (lightbox).
     // (The interactive tile is itself role=button whose name is computed from its
@@ -149,22 +165,32 @@ describe('MediaThumbnail fallback chain', () => {
     fireEvent.click(within(broken).getByRole('button', { name: '重载' }))
     expect(onClick).not.toHaveBeenCalled()
     await flush()
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('https://x.test/a.png')
+    // 重载 = 从链头重来:本地与远程都被再问了一遍,但仍然没有把原图交给 <img>。
+    expect(readMediaThumb).toHaveBeenCalledTimes(4)
+    expect(container.querySelector('img')).toBeNull()
   })
 
-  it('does not give up on the placeholder: after the re-arm interval it retries from the primary on its own', async () => {
-    installReadThumb(() => ({ ok: false, reason: 'ENOENT' }))
+  it('does not give up on the placeholder: after the re-arm interval it asks again on its own, and paints once the main process can thumbnail it', async () => {
+    vi.useFakeTimers()
+    let mainCanThumbnail = false
+    const readMediaThumb = installReadThumb((_path, args) =>
+      args.url && mainCanThumbnail ? { ok: true, base64: 'AAAA', mime: 'image/jpeg' } : { ok: false, reason: 'ENOENT' },
+    )
     const { container } = render(
       <MediaThumbnail src="https://x.test/a.png" fallbackSrcs={['local-file:///D:/gone.png']} kind="image" name="a.png" />,
     )
-    await exhaustRemote(() => container.querySelector('img'))
+    await flush()
     expect(screen.getByTestId('media-thumbnail-broken')).toBeTruthy()
+    const before = readMediaThumb.mock.calls.length
 
+    mainCanThumbnail = true // 网络恢复了
     await act(async () => {
       vi.advanceTimersByTime(DEFAULT_REARM_INTERVAL_MS)
     })
+    await flush()
+    expect(readMediaThumb.mock.calls.length).toBeGreaterThan(before)
     expect(screen.queryByTestId('media-thumbnail-broken')).toBeNull()
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('https://x.test/a.png')
+    expect(container.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
   })
 
   it('skips an expired presigned primary without a request and paints the local copy', async () => {

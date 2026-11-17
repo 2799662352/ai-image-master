@@ -20,7 +20,7 @@ import { AttachmentCard } from '../cards/AttachmentCard'
 // IPC and returns a blob: URL) resolves to null and MediaThumbnail never renders
 // its inner <img>/<video>. Pass the src through — these tests assert kind
 // classification and click behaviour, not the IPC byte plumbing.
-// `toOsPathIfLocal → null` makes the candidate chain treat `local-file://` as a
+// `needsMainResolve → false` makes the candidate chain treat `local-file://` as a
 // passthrough source (painted synchronously) instead of an IPC read.
 vi.mock('../../../components/shared/media/useResolvedMediaSrc', async (importOriginal) => {
   const actual =
@@ -30,6 +30,7 @@ vi.mock('../../../components/shared/media/useResolvedMediaSrc', async (importOri
     useResolvedMediaSrc: (src: string) =>
       typeof src === 'string' && src.length > 0 ? src : null,
     toOsPathIfLocal: () => null,
+    needsMainResolve: () => false,
   }
 })
 

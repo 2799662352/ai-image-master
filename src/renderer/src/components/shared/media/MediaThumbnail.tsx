@@ -14,10 +14,11 @@
  *  - 自行决定 `kind`(从 mime / 扩展名推断,见 `classifyMediaKind`)
  *  - 在 `onClick` 里串接 Lightbox / 文件预览 / 下载等具体行为
  */
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, Ref } from 'react'
 import { useMemo, useState } from 'react'
-import { buildMediaCandidates } from './mediaFallback'
+import { buildMediaCandidates, guardThumbCandidates } from './mediaFallback'
 import { useMediaCandidates } from './useMediaCandidates'
+import { hasRemoteThumbBridge } from './useResolvedMediaSrc'
 
 export type MediaThumbnailKind = 'image' | 'video'
 
@@ -49,7 +50,17 @@ export interface MediaThumbnailProps {
    * AttachmentCard 一致),业务需要更大可直接覆盖。
    */
   className?: string
+  /**
+   * `false` = 先只画空底框,不加载任何东西(不读盘、不发请求、不放 `<video>`),
+   * 也不画「加载失败」占位。调用方据此把「滚到附近才加载」做成门控
+   * (见 `useNearViewport`);默认 `true`,行为同以前。
+   */
+  active?: boolean
+  /** 挂到外层容器 div 上,给调用方做可视区观察用。 */
+  containerRef?: Ref<HTMLDivElement>
 }
+
+const NO_CANDIDATES: readonly string[] = []
 
 function PlayBadge() {
   return (
@@ -110,21 +121,31 @@ export function MediaThumbnail({
   posterSrc,
   onClick,
   className,
+  active = true,
+  containerRef,
 }: MediaThumbnailProps) {
   // 候选链按内容记忆:调用方通常每次 render 都传一个新数组。
   const fallbackKey = (fallbackSrcs ?? []).join('\n')
-  const candidates = useMemo(
-    () => buildMediaCandidates(src, fallbackSrcs),
+  const candidates = useMemo(() => {
+    const chain = buildMediaCandidates(src, fallbackSrcs)
+    // 图片:远程 / 内联原图不许直接交给 <img>(整张下载 + 解码进小框),
+    // 改由主进程缩小,并排到本地副本之后;视频的候选就是视频本身,不动。
+    return kind === 'image' && hasRemoteThumbBridge() ? guardThumbCandidates(chain) : chain
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [src, fallbackKey],
-  )
+  }, [src, fallbackKey, kind])
   // `kind` is already 'image' | 'video' — pass through as the mime hint so
   // the resolver can disambiguate ambiguous extensions when the main-process
   // mime probe returns application/octet-stream.
-  const { src: resolvedSrc, reloadKey, onError, exhausted, retry } = useMediaCandidates(candidates, kind)
+  // 未激活 = 没有候选:`useMediaCandidates` 不会读盘;链一旦换成真候选会同步复位。
+  const { src: resolvedSrc, reloadKey, onError, exhausted, retry } = useMediaCandidates(
+    active ? candidates : NO_CANDIDATES,
+    kind,
+  )
   // 退避重试期间别让浏览器画裂图 + alt:onLoad 之前 <img> 透明,底下是容器自己的底色。
   const [loadedKey, setLoadedKey] = useState<string | null>(null)
   const imgLoaded = loadedKey === `${reloadKey}|${resolvedSrc ?? ''}`
+  // 未激活时 exhausted 恒为 true(没有候选),但那不是「失败」,不能画占位。
+  const showBroken = active && exhausted
 
   if (typeof src !== 'string' || src.length === 0) return null
 
@@ -159,11 +180,12 @@ export function MediaThumbnail({
         title={name}
         aria-label={name ?? 'video'}
         data-media-kind="video"
+        ref={containerRef}
         onClick={activate}
         onKeyDown={keyHandler}
         className={containerClass}
       >
-        {exhausted ? <BrokenPlaceholder name={name} onRetry={retry} /> : null}
+        {showBroken ? <BrokenPlaceholder name={name} onRetry={retry} /> : null}
         {resolvedSrc ? (
           <video
             key={reloadKey}
@@ -188,7 +210,7 @@ export function MediaThumbnail({
             className="block h-full w-full object-cover"
           />
         ) : null}
-        {exhausted ? null : <PlayBadge />}
+        {showBroken ? null : <PlayBadge />}
       </div>
     )
   }
@@ -201,11 +223,12 @@ export function MediaThumbnail({
       // 从内容算成「重载」。
       aria-label={name}
       data-media-kind="image"
+      ref={containerRef}
       onClick={activate}
       onKeyDown={keyHandler}
       className={containerClass}
     >
-      {exhausted ? <BrokenPlaceholder name={name} onRetry={retry} /> : null}
+      {showBroken ? <BrokenPlaceholder name={name} onRetry={retry} /> : null}
       {resolvedSrc ? (
         <img
           key={reloadKey}

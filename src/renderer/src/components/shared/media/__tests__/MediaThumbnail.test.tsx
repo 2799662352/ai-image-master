@@ -59,6 +59,47 @@ describe('MediaThumbnail', () => {
     const { container } = render(<MediaThumbnail src="" kind="image" />)
     expect(container.firstChild).toBeNull()
   })
+
+  describe('active=false(调用方做「滚到附近才加载」门控)', () => {
+    it('图:只画空底框,不放 <img>,也不画「加载失败」占位;激活后才放图', () => {
+      const { container, rerender } = render(
+        <MediaThumbnail src="https://x.test/a.png" kind="image" name="a.png" active={false} />,
+      )
+      expect(container.querySelector('[data-media-kind="image"]')).toBeTruthy()
+      expect(container.querySelector('img')).toBeNull()
+      expect(screen.queryByTestId('media-thumbnail-broken')).toBeNull()
+
+      rerender(<MediaThumbnail src="https://x.test/a.png" kind="image" name="a.png" active />)
+      expect(container.querySelector('img')?.getAttribute('src')).toBe('https://x.test/a.png')
+      expect(screen.queryByTestId('media-thumbnail-broken')).toBeNull()
+    })
+
+    it('视频:不放 <video>,但播放角标仍在;激活后才放 <video>', () => {
+      const { container, rerender } = render(
+        <MediaThumbnail src="https://x.test/a.mp4" kind="video" active={false} />,
+      )
+      const wrap = container.querySelector('[data-media-kind="video"]')
+      expect(wrap).toBeTruthy()
+      expect(wrap?.querySelector('video')).toBeNull()
+      expect(wrap?.querySelector('svg')).toBeTruthy()
+
+      rerender(<MediaThumbnail src="https://x.test/a.mp4" kind="video" active />)
+      expect(container.querySelector('video')?.getAttribute('src')).toBe('https://x.test/a.mp4')
+    })
+
+    it('containerRef 指向外层容器(图 / 视频都是)', () => {
+      const imgRef = { current: null as HTMLDivElement | null }
+      const vidRef = { current: null as HTMLDivElement | null }
+      const { container } = render(
+        <>
+          <MediaThumbnail src="https://x.test/a.png" kind="image" containerRef={imgRef} />
+          <MediaThumbnail src="https://x.test/a.mp4" kind="video" containerRef={vidRef} />
+        </>,
+      )
+      expect(imgRef.current).toBe(container.querySelector('[data-media-kind="image"]'))
+      expect(vidRef.current).toBe(container.querySelector('[data-media-kind="video"]'))
+    })
+  })
 })
 
 describe('classifyMediaKind', () => {
