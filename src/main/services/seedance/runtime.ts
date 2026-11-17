@@ -52,10 +52,11 @@ import {
   usesPlatformAssetLibrary,
 } from './assetLibraryPolicy'
 import { verifyPlatformAssetReferences } from './platformAssetGuard'
+import { replaceAssetRefsWithPublicUrls } from './assetPublicUrl'
 import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../auth/gatewayToken'
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { notePlatformSpend } from '../auth/platformSpend'
-import { ensureAsset, lookupAssetBinding } from '../portraitLibrary/ensureAsset'
+import { ensureAsset, lookupAssetBinding, lookupAssetSourceUrl } from '../portraitLibrary/ensureAsset'
 // 软删:只在后台隐藏,不释放配额,已经引用它的 `asset://` 仍解析得到(见其注释)。
 // 正因为是软删,才能在「开关关着」时既登记又不让它出现在库里。
 import {
@@ -82,6 +83,7 @@ import { createMediaKitClient } from '../mediaKit/client'
 import { checkDepthInput } from '../depth/model'
 import { translateVideoTaskError } from '../videoTaskError'
 import type { PortraitOverlayMutation, VideoResolution } from '../../../types/seedance'
+import { videoModelChannelLabel } from '../../../types/seedance'
 
 /**
  * download_portrait_asset 的自定超时。必须 < codex 默认 tool_timeout_sec(60s),
@@ -313,6 +315,12 @@ async function importImagesToPlatformLibrary(
  *
  * 入库函数吞异常、只回它成功登记的那部分映射。没登记上的图保持原 URL
  * 直传:真人图仍会被上游拒,但不比改动之前更差,也不会因为素材库抖动就发不出生成。
+ *
+ * ## 只收公网链接的渠道(Roneyun-cn)方向相反
+ *
+ * 它不登记,而是把卡上已有的 `asset://` 换回公网地址(`publicUrlsForAssetRefs`)。这条分支
+ * 排在登记之前:排在后面的话,平台余额下它的图会先进人像库、被改写成 `asset://`,再原样
+ * 发给一个不认它的渠道。
  */
 async function materializeAssetRefs(
   content: SeedanceContentItem[],
@@ -320,8 +328,12 @@ async function materializeAssetRefs(
   billing: VideoBillingSource,
   visibleInLibrary: boolean,
 ): Promise<SeedanceContentItem[]> {
-  // 只有 Seedance 系认 asset://;万相(provider miau)原样返回。
-  const acceptsAssetRefs = capabilitiesFor(model ?? '2.0').provider === 'vvdance'
+  const assetRefs = capabilitiesFor(model ?? '2.0').assetRefs
+  // 只收公网链接的渠道(Roneyun-cn):方向相反 —— 不登记,把卡上已有的 `asset://` 换回公网地址。
+  // 与计费方式无关(自填 Key 也要换);换不出来就抛,一个 id 都不发出去。
+  if (assetRefs === 'public-url') return publicUrlsForAssetRefs(content, model, billing)
+  // 只有认素材库 id 的模型才改写成 asset://;万相 / 可灵 / 深度捕捉原样返回。
+  const acceptsAssetRefs = assetRefs === 'library'
   if (!acceptsAssetRefs) return content
 
   // 🚨 **登记不受「默认上传人像库」开关管。** 它是过审的前提(真人图只有走
@@ -338,6 +350,24 @@ async function materializeAssetRefs(
   // 逐项回填(图片 + 视频),**保持数组顺序**:上游按 content[] 的下标解析提示词里的
   // 「图片1 / 视频1」,顺序一乱,生成的内容就跟用户想的不是一回事,而且不报任何错。
   return applyAssetRewrites(content, rewrites)
+}
+
+/**
+ * `asset://` → 公网地址(只收公网链接的渠道用)。规则与取舍写在 `assetPublicUrl.ts`,这里只接依赖:
+ * 本机绑定表,加上(平台余额且已选计费池时)按 id 向素材库取详情。自填 Key 没有登录态,问不了
+ * 素材库,只靠本机绑定表 —— 换不出来的会被那边拦下并说明。
+ */
+function publicUrlsForAssetRefs(
+  content: SeedanceContentItem[],
+  model: SeedanceModelAlias | undefined,
+  billing: VideoBillingSource,
+): Promise<SeedanceContentItem[]> {
+  const scope = billing === 'platform' ? activePlatformScope() : null
+  return replaceAssetRefsWithPublicUrls(content, {
+    lookupSourceUrl: lookupAssetSourceUrl,
+    ...(scope ? { fetchAsset: (assetId: string) => getPlatformAsset(assetId, scope) } : {}),
+    channelLabel: videoModelChannelLabel(model) ?? '当前',
+  })
 }
 
 /**
@@ -861,7 +891,9 @@ export function initSeedanceRuntime(opts: {
           ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
           ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
           ...(Number.isFinite(seedRaw) && seedRaw >= 0 ? { seed: Math.round(seedRaw) } : {}),
-          ...(payload?.webSearch === true ? { webSearch: true } : {}),
+          // 联网搜索:按能力表丢弃。卡片的开关默认是开的(cardSpec 缺省 true),而 Roneyun-cn 的网关
+          // 会把 `tools` 直接 400 掉 —— 不按表丢的话,那条渠道的每一次默认提交都会被拒。
+          ...(payload?.webSearch === true && caps.webSearch ? { webSearch: true } : {}),
           referenceImages: asStringArray(payload?.referenceImages),
           referenceVideos: asStringArray(payload?.referenceVideos),
           referenceAudios: asStringArray(payload?.referenceAudios),

@@ -48,6 +48,7 @@ import type {
   SeedanceTaskMode,
 } from './seedance/types'
 import { resolveSeedanceModelId } from './seedance/modelIds'
+import { assertPublicUrlMediaOnly } from './seedance/assetPublicUrl'
 import type { VideoModelAlias } from '../../types/seedance'
 
 /** 提交一次生成所需的全部已解析信息。收敛与校验由 taskManager 在上游做完。 */
@@ -251,6 +252,14 @@ export function createSeedanceGatewayTransport(
       if (!token.trim()) throw new Error(describeMissingGatewayToken(billing))
     },
     createTask(ctx) {
+      // 只收公网链接的渠道(Roneyun-cn):出门前最后查一遍,不让 asset:// / data: 漏到上游。
+      // `content` 在这条 transport 里是直通的,所以这是它离开本机前的最后一个检查点。
+      // 其它渠道是空操作。拦下时回一个 rejected promise(不是同步抛),与「提交失败」同一个出口。
+      try {
+        assertPublicUrlMediaOnly(ctx.model, ctx.content)
+      } catch (e) {
+        return Promise.reject(e)
+      }
       const model = resolveSeedanceModelId(ctx.model)
       if (ctx.input.fromDraftTaskId) {
         // 由样片出成片:整份 metadata 只有 draft_task + 成片分辨率(1080p / 4k),其余一律沿用样片。
@@ -384,6 +393,12 @@ const DEFAULT_TRANSPORT_BY_ALIAS: Record<VideoModelAlias, VideoTransportKey> = {
   '2.0-mini': 'seedance',
   '2.5': 'seedance',
   '2.5-flash': 'seedance',
+  // Roneyun-cn 渠道的 Seedance:同一个网关、同一种请求体、同样按任务钉死钱包(平台余额 / 自填 Key),
+  // 所以走同一对 transport。渠道之分只落在模型名与素材规则上(能力表的 `assetRefs`)。
+  'cn-seedance-2.0': 'seedance',
+  'cn-seedance-2.0-fast': 'seedance',
+  'cn-seedance-2.0-mini': 'seedance',
+  'cn-seedance-2.5': 'seedance',
   wan3: 'wan3',
   // Prime 与标准档共用整条万相链路,只有上游 slug 与单价不同。
   'wan3-prime': 'wan3',

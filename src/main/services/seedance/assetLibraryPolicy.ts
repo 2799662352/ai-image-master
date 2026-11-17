@@ -37,12 +37,17 @@ import type { VideoBillingSource } from './types'
  * 万相不认识 `asset://`,不参与;自填 Miau Key 没有素材库,也不参与。
  * 用途是提交前核验卡上的 `asset://` 在当前计费池里真的存在 —— 否则上游要先建任务、
  * 跑到取素材那一步才回 `The specified asset … is not found`。
+ *
+ * 判据读能力表的 `assetRefs`,不再读 `provider`:Roneyun-cn 也是 Seedance 家族(同一种请求体),
+ * 却不认素材库 id(`assetRefs: 'public-url'`,提交前把 `asset://` 换回公网地址,见
+ * `assetPublicUrl.ts`)。按 provider 判会让它每次提交都去素材库核验、登记,而那正是用户说
+ * 「不需要管」的那部分。
  */
 export function usesPlatformAssetLibrary(
   model: VideoModelAlias | undefined,
   billing?: VideoBillingSource,
 ): boolean {
-  return billing === 'platform' && capabilitiesFor(model ?? '2.0').provider === 'vvdance'
+  return billing === 'platform' && capabilitiesFor(model ?? '2.0').assetRefs === 'library'
 }
 
 /**
@@ -60,7 +65,12 @@ export function usesPlatformAssetLibrary(
  *
  * 注:`provider === 'vvdance'` 这个取值的字面是历史遗留，语义现在就是「Seedance 家族」
  * （与万相 / 可灵 / 深度捕捉相对）；改名留给清理 PR。
+ *
+ * `publicUrlMediaOnly` 的模型一律答否,哪怕它是 Seedance 家族 —— Roneyun-cn 只收公网链接
+ * （用户 2026-11-17：「只发公网 url」）。提交链路上真正起作用的是 `runtime.withSourceVideoRelay`
+ * （它读同一个字段,再加一条 `noInline`）；这里跟着答对,是为了别让这个谓词对它说谎。
  */
 export function upstreamAcceptsInlineMedia(model: VideoModelAlias | undefined): boolean {
-  return capabilitiesFor(model ?? '2.0').provider === 'vvdance'
+  const caps = capabilitiesFor(model ?? '2.0')
+  return caps.provider === 'vvdance' && !caps.publicUrlMediaOnly
 }

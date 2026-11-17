@@ -50,6 +50,37 @@ describe('unitPriceUsd(文档 9.2 价格表)', () => {
     expect(unitPriceUsd('2.0-fast', '1080p', false)).toBeNull()
     expect(unitPriceUsd('2.0-mini', '1080p', true)).toBeNull()
   })
+
+  /**
+   * Roneyun-cn 与方舟刊例同价(生产 `/api/pricing` model_ratio 23 / 18.5 / 11.5 / 35 = ¥46 / 37 / 23 / 70
+   * 每百万 token;含视频输入 28 / 22 / 14 / 42,见 new-api #203)。美元口径逐行等于火山同名模型。
+   * 一次真实 cn-seedance-2.0-mini 任务(40594 token × 11.5 = 466831 额度)与此一致。
+   *
+   * 🧬 变异点:把任一 cn 行改成别的数(或改回「未公布」返回 null),这条必红。
+   */
+  it('Roneyun-cn 四个模型的单价与火山同名模型逐档相同', () => {
+    const PAIRS = [
+      ['cn-seedance-2.0', '2.0'],
+      ['cn-seedance-2.0-fast', '2.0-fast'],
+      ['cn-seedance-2.0-mini', '2.0-mini'],
+      ['cn-seedance-2.5', '2.5'],
+    ] as const
+    for (const [cn, volc] of PAIRS) {
+      for (const resolution of ['480p', '720p', '1080p', '2k', '4k']) {
+        for (const hasVideo of [false, true]) {
+          expect(unitPriceUsd(cn, resolution, hasVideo), `${cn} ${resolution} ${hasVideo ? '含' : '不含'}视频`).toBe(
+            unitPriceUsd(volc, resolution, hasVideo),
+          )
+        }
+      }
+    }
+    // 绝对值也钉一遍,免得两边一起被改歪时对照式断言还是绿的。
+    expect(unitPriceUsd('cn-seedance-2.0-mini', '480p', false)).toBe(3.5)
+    expect(unitPriceUsd('cn-seedance-2.5', '720p', true)).toBe(6.4)
+    // 没有价目的档位同样返回 null,不拿标准档顶替。
+    expect(unitPriceUsd('cn-seedance-2.5', '4k', false)).toBeNull()
+    expect(unitPriceUsd('cn-seedance-2.0-fast', '1080p', false)).toBeNull()
+  })
 })
 
 describe('estimateCostUsd(文档 9.3 示例)', () => {

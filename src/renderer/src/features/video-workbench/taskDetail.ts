@@ -27,6 +27,7 @@ import type {
   VideoWorkbenchVersion,
 } from '../../../../types/videoWorkbench'
 import type { VideoBillingSource, VideoModelAlias } from '../../../../types/seedance'
+import { SEEDANCE_MODEL_CAPABILITIES } from '../../../../types/seedance'
 import { getModeSpec } from './modes'
 import { runResolution } from './seedanceDraft'
 
@@ -96,6 +97,9 @@ function upstreamVendor(model: VideoModelAlias): string {
   if (model.startsWith('wan')) return '阿里云百炼 · DashScope'
   // 可灵走腾讯云点播 AIGC(渠道类型 76):上游任务号是腾讯 VOD 的 TaskId,不是火山的 cgt-。
   if (model.startsWith('kling')) return '腾讯云 VOD · 可灵'
+  // Roneyun-cn 渠道的 Seedance:上游任务号是那条渠道签的,拿去找火山对不上。
+  // 按能力表的渠道判,不按别名前缀猜(认不出的旧别名落到下面的缺省)。
+  if (SEEDANCE_MODEL_CAPABILITIES[model]?.channel === 'roneyun-cn') return 'Roneyun-cn'
   return '火山引擎 · Ark'
 }
 

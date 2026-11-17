@@ -435,6 +435,40 @@ describe('ensureAsset', () => {
     expect(pollAsset).not.toHaveBeenCalled()
     expect(registerAsset).not.toHaveBeenCalled()
   })
+
+  /**
+   * 反查:「这个 asset id 当初是拿哪条 URL 登记的」。只收公网链接的渠道(Roneyun-cn)用它把
+   * 卡上的 `asset://` 换回公网地址。
+   *
+   * 🧬 变异点:把 `b.assetId === assetId` 改成恒真,第二、三条断言必红(会回第一条绑定的 URL)。
+   */
+  it('lookupAssetSourceUrl 按 id 反查登记时的 URL,不分池、不发请求', async () => {
+    seed({
+      [URL_A]: [{ projectId: 42, assetId: 'asset-a' }],
+      [URL_B]: [
+        { projectId: 42, assetId: 'asset-b-42' },
+        { projectId: 42, producerProjectId: 7, assetId: 'asset-b-pp7' },
+      ],
+    })
+    const m = await import('../ensureAsset')
+
+    expect(m.lookupAssetSourceUrl('asset-a')).toBe(URL_A)
+    expect(m.lookupAssetSourceUrl('asset-b-42')).toBe(URL_B)
+    // 同一张图在另一个池里的 id 也指回同一条 URL —— 反查只问「这份素材的源地址」,与池无关。
+    expect(m.lookupAssetSourceUrl('asset-b-pp7')).toBe(URL_B)
+    expect(m.lookupAssetSourceUrl('asset-unknown')).toBeNull()
+    expect(m.lookupAssetSourceUrl('')).toBeNull()
+    expect(getAsset).not.toHaveBeenCalled()
+    expect(pollAsset).not.toHaveBeenCalled()
+    expect(registerAsset).not.toHaveBeenCalled()
+  })
+
+  it('lookupAssetSourceUrl 认得本次会话里刚登记的 id', async () => {
+    const m = await import('../ensureAsset')
+    await m.ensureAsset({ url: URL_A }, POOL)
+
+    expect(m.lookupAssetSourceUrl('asset-new')).toBe(URL_A)
+  })
 })
 
 // ── resolveAsset:从 Task 1 挪过来的两件缓存 ────────────────────────────────

@@ -154,6 +154,75 @@ describe('createSeedanceGatewayTransport 组包', () => {
     )
   })
 
+  it('Roneyun-cn 四个别名:模型名就是别名本身(网关上叫 cn-seedance-*),不是 doubao-*', async () => {
+    for (const alias of ['cn-seedance-2.0', 'cn-seedance-2.0-fast', 'cn-seedance-2.0-mini', 'cn-seedance-2.5'] as const) {
+      for (const [name, token] of [
+        ['platform', platformToken],
+        ['own-key', ownKeyToken],
+      ] as const) {
+        const client = gatewayClient()
+        await createSeedanceGatewayTransport(client, token).createTask(ctx({ model: alias }))
+        const body = (client.createTask.mock.calls[0] as [Record<string, any>, string])[0]
+        expect(body.model, `${alias} / ${name}`).toBe(alias)
+      }
+    }
+  })
+
+  // Roneyun-cn 只收公网链接。正常链路在上游就换好了;这是素材离开本机前的最后一道,
+  // 给「以后有人加了第三个提交入口、忘了走那两步」留的。拦下 = 一个请求都不发、不扣费。
+  describe('Roneyun-cn 最后一道:content 里只能是公网链接', () => {
+    it('asset:// 被拦下,且没有向网关发任何请求', async () => {
+      const client = gatewayClient()
+      const content: SeedanceContentItem[] = [
+        { type: 'text', text: '主角出场' },
+        { type: 'image_url', role: 'reference_image', image_url: { url: 'asset://portrait-7' } },
+      ]
+      await expect(
+        createSeedanceGatewayTransport(client, platformToken).createTask(ctx({ model: 'cn-seedance-2.0', content })),
+      ).rejects.toThrow('asset://portrait-7')
+      expect(client.createTask).not.toHaveBeenCalled()
+    })
+
+    it('data: 内联同样被拦下(这条渠道不吃 base64)', async () => {
+      const client = gatewayClient()
+      const content: SeedanceContentItem[] = [
+        { type: 'text', text: 'x' },
+        { type: 'image_url', role: 'first_frame', image_url: { url: 'data:image/png;base64,AAAA' } },
+      ]
+      await expect(
+        createSeedanceGatewayTransport(client, ownKeyToken).createTask(ctx({ model: 'cn-seedance-2.0-mini', content })),
+      ).rejects.toThrow('data:image/png;base64,AAAA'.slice(0, 24))
+      expect(client.createTask).not.toHaveBeenCalled()
+    })
+
+    it('拦下的是一个 rejected promise,不是同步抛 —— 与「提交失败」同一个出口', () => {
+      const content: SeedanceContentItem[] = [
+        { type: 'text', text: 'x' },
+        { type: 'image_url', role: 'first_frame', image_url: { url: 'asset://p' } },
+      ]
+      const transport = createSeedanceGatewayTransport(gatewayClient(), platformToken)
+      let returned: Promise<unknown> | undefined
+      expect(() => {
+        returned = transport.createTask(ctx({ model: 'cn-seedance-2.5', content }))
+      }).not.toThrow()
+      return expect(returned).rejects.toThrow()
+    })
+
+    it('公网链接照常发出;火山同样的 asset:// 不受影响', async () => {
+      const cn = gatewayClient()
+      await createSeedanceGatewayTransport(cn, platformToken).createTask(ctx({ model: 'cn-seedance-2.0' }))
+      expect(cn.createTask).toHaveBeenCalledTimes(1)
+
+      const volc = gatewayClient()
+      const content: SeedanceContentItem[] = [
+        { type: 'text', text: 'x' },
+        { type: 'image_url', role: 'reference_image', image_url: { url: 'asset://portrait-7' } },
+      ]
+      await createSeedanceGatewayTransport(volc, platformToken).createTask(ctx({ model: '2.0', content }))
+      expect(volc.createTask).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('asset:// 原样发出 —— 平台人像库引用是这条路存在的理由', async () => {
     const client = gatewayClient()
     const content: SeedanceContentItem[] = [

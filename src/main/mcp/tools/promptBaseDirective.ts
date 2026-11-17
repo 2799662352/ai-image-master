@@ -22,8 +22,9 @@
 
 /** 视频出片面用：按 Seedance 档位二选一。 */
 export const PROMPT_BASE_DIRECTIVE =
-  'PROMPT BASE — load exactly ONE, keyed by `model`: "2.5" / "2.5-flash" (also the default when the model is ' +
-  'unknown) → skill `sd25-pe`; "2.0" / "2.0-fast" / "2.0-mini" → skill `sd2-pe`. Load it ONCE per task and reuse ' +
+  'PROMPT BASE — load exactly ONE, keyed by `model`: "2.5" / "2.5-flash" / "cn-seedance-2.5" (also the default when the model is ' +
+  'unknown) → skill `sd25-pe`; "2.0" / "2.0-fast" / "2.0-mini" / "cn-seedance-2.0" / "cn-seedance-2.0-fast" / ' +
+  '"cn-seedance-2.0-mini" → skill `sd2-pe` (the "cn-" names are the same models on another channel — same base). Load it ONCE per task and reuse ' +
   'it across every card — re-reading it per shot is pure overhead. Never load both: they are ~40k characters ' +
   'combined and you can only follow one template anyway. The base owns the material reference syntax ' +
   '(@图片N / @视频N / @音频N, sent verbatim — the @ stays), the shot-structure formula, and, on the 2.5 family only, the edit / extend / keyframe / ' +

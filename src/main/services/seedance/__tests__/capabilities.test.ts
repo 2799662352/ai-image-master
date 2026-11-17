@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   SEEDANCE_MODEL_CAPABILITIES,
+  VIDEO_MODEL_CHANNELS,
+  WORKBENCH_VIDEO_MODEL_ALIASES,
   capabilitiesFor,
+  supportsSeedanceDraft,
   validateSeedanceRequest,
+  videoModelChannelLabel,
   type VideoModelAlias,
 } from '../../../../types/seedance'
 
@@ -62,6 +66,10 @@ describe('SEEDANCE_MODEL_CAPABILITIES', () => {
       '2.0-mini',
       '2.5',
       '2.5-flash',
+      'cn-seedance-2.0',
+      'cn-seedance-2.0-fast',
+      'cn-seedance-2.0-mini',
+      'cn-seedance-2.5',
       'depth',
       'kling4',
       'kling4-omni',
@@ -355,6 +363,130 @@ describe('深度捕捉 depth 能力', () => {
   it('不让别的模型沾上这条规则:2.0 不带视频照样放行', () => {
     expect(validateSeedanceRequest('2.0', { videos: 0 })).toEqual([])
     expect(validateSeedanceRequest('wan3', { videos: 0 })).toEqual([])
+  })
+})
+
+/**
+ * Roneyun-cn 渠道(`cn-seedance-*`)—— Seedance 的第二条线路,经 Miau 网关(2026-11-17)。
+ *
+ * 起点是用户的话:「这个渠道所有能力和我们自己的火山渠道一样」;素材这一件刻意不同:
+ * 「不需要管人像库…只发公网 url」。网关(new-api #203)又在预扣前拒掉样片与联网搜索
+ * (2026-11-17 用真 key 对生产各发一次,都是 400)。所以这里钉的是**关系**而不是一组数字 ——
+ * 「与火山同名模型逐字段相同,只差五项」。以后火山那行改了而这行没跟上、或者有人顺手把
+ * 这条渠道的某个字段改了,这里会点名是哪一个模型的哪一个字段。
+ */
+describe('Roneyun-cn 渠道(cn-seedance-*)', () => {
+  const PAIRS = [
+    ['cn-seedance-2.0', '2.0'],
+    ['cn-seedance-2.0-fast', '2.0-fast'],
+    ['cn-seedance-2.0-mini', '2.0-mini'],
+    ['cn-seedance-2.5', '2.5'],
+  ] as const
+
+  /** 两条渠道之间**有意不同**的字段。 */
+  const DIFFERING = ['channel', 'assetRefs', 'publicUrlMediaOnly', 'draft', 'webSearch'] as const
+  const withoutDiffering = (caps: ReturnType<typeof capabilitiesFor>) => {
+    const copy: Record<string, unknown> = { ...caps }
+    for (const key of DIFFERING) delete copy[key]
+    return copy
+  }
+
+  it('逐字段等于火山同名模型,只差渠道 / 素材策略 / 只发公网链接 / 没有样片 / 没有联网搜索五项', () => {
+    for (const [cn, volc] of PAIRS) {
+      expect(withoutDiffering(capabilitiesFor(cn)), `${cn} 应与 ${volc} 逐字段相同`).toEqual(
+        withoutDiffering(capabilitiesFor(volc)),
+      )
+      const caps = capabilitiesFor(cn)
+      expect([caps.channel, caps.assetRefs, caps.publicUrlMediaOnly, caps.draft, caps.webSearch], cn).toEqual([
+        'roneyun-cn',
+        'public-url',
+        true,
+        false,
+        false,
+      ])
+      expect(capabilitiesFor(volc).channel, volc).toBe('volcengine')
+      expect(capabilitiesFor(volc).assetRefs, volc).toBe('library')
+      expect(capabilitiesFor(volc).publicUrlMediaOnly, volc).toBe(false)
+    }
+  })
+
+  /**
+   * 🧬 变异点:把任一 `cn-seedance-*` 的 `draft` 改成 true,这条必红。
+   * 网关在预扣前就 400「Roneyun Tokenhub 渠道不支持样片(draft)」—— 界面开着样片开关,
+   * 用户点下去换来的是一个失败。
+   */
+  it('样片只有火山 2.5;Roneyun-cn 的 2.5 也没有', () => {
+    const withDraft = (Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]).filter((alias) =>
+      supportsSeedanceDraft(alias),
+    )
+    expect(withDraft).toEqual(['2.5'])
+    expect(supportsSeedanceDraft('cn-seedance-2.5')).toBe(false)
+    expect(supportsSeedanceDraft(undefined)).toBe(false)
+  })
+
+  /**
+   * 🧬 变异点:把任一 `cn-seedance-*` 的 `webSearch` 改回 true,这条必红。
+   * 卡片的联网开关默认是开的,留着 true 就是这条渠道的每次默认提交都带 `tools`、被网关 400。
+   */
+  it('联网搜索:Roneyun-cn 四个模型都没有(网关拒 tools)', () => {
+    for (const [cn] of PAIRS) expect(capabilitiesFor(cn).webSearch, cn).toBe(false)
+  })
+
+  it('素材策略:走人像库的只有火山方舟,换公网地址的只有 Roneyun-cn,其余都不认 asset://', () => {
+    for (const alias of Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]) {
+      const caps = capabilitiesFor(alias)
+      const expected =
+        caps.channel === 'volcengine' ? 'library' : caps.channel === 'roneyun-cn' ? 'public-url' : 'none'
+      expect(caps.assetRefs, alias).toBe(expected)
+    }
+  })
+
+  it('请求校验跟着能力表走:2.5 的 30 秒 / 30 图 / edit,2.0 的 15 秒 / 9 图 / 不认 taskMode', () => {
+    expect(validateSeedanceRequest('cn-seedance-2.5', { duration: 30, images: 30, resolution: '720p' })).toEqual([])
+    expect(validateSeedanceRequest('cn-seedance-2.5', { taskMode: 'edit', duration: -1, videos: 1 })).toEqual([])
+    expect(validateSeedanceRequest('cn-seedance-2.5', { duration: 31 })[0]).toMatch(/4-30/)
+    expect(validateSeedanceRequest('cn-seedance-2.0', { duration: 15, images: 9, resolution: '1080p' })).toEqual([])
+    expect(validateSeedanceRequest('cn-seedance-2.0', { duration: 16 })[0]).toMatch(/4-15/)
+    expect(validateSeedanceRequest('cn-seedance-2.0', { images: 10 })[0]).toMatch(/9/)
+    expect(validateSeedanceRequest('cn-seedance-2.0', { taskMode: 'edit', duration: -1, videos: 1 })[0]).toMatch(
+      /cn-seedance-2\.5/,
+    )
+    expect(validateSeedanceRequest('cn-seedance-2.0-fast', { resolution: '1080p' })[0]).toMatch(/1080p/)
+  })
+
+  it('cn-seedance-2.5 的 1080p / 4k 与火山 2.5 同规则:平台余额放行,自填 Key 拦下', () => {
+    expect(validateSeedanceRequest('cn-seedance-2.5', { resolution: '1080p', billing: 'platform' })).toEqual([])
+    expect(validateSeedanceRequest('cn-seedance-2.5', { resolution: '1080p', billing: 'own-key' })[0]).toMatch(/1080p/)
+  })
+})
+
+describe('视频渠道(模型选择器的一级)', () => {
+  it('能进工作台的模型都归到了一个有名字的渠道', () => {
+    const named = new Set(VIDEO_MODEL_CHANNELS.map((channel) => channel.id))
+    for (const alias of WORKBENCH_VIDEO_MODEL_ALIASES) {
+      expect(named.has(capabilitiesFor(alias).channel), `${alias} 的渠道没有在 VIDEO_MODEL_CHANNELS 里`).toBe(true)
+    }
+  })
+
+  it('渠道顺序与名字:火山方舟在前,Roneyun-cn 紧随其后', () => {
+    expect(VIDEO_MODEL_CHANNELS.map((channel) => [channel.id, channel.label])).toEqual([
+      ['volcengine', '火山方舟'],
+      ['roneyun-cn', 'Roneyun-cn'],
+      ['wan', '阿里万相'],
+      ['kling', '可灵'],
+    ])
+    // 没有空渠道:每个列出来的渠道至少有一个能进工作台的模型。
+    for (const channel of VIDEO_MODEL_CHANNELS) {
+      const members = WORKBENCH_VIDEO_MODEL_ALIASES.filter((alias) => capabilitiesFor(alias).channel === channel.id)
+      expect(members.length, channel.id).toBeGreaterThan(0)
+    }
+  })
+
+  it('渠道名:列出来的回名字,没列的(深度捕捉)与没给模型回 null', () => {
+    expect(videoModelChannelLabel('cn-seedance-2.5')).toBe('Roneyun-cn')
+    expect(videoModelChannelLabel('2.0')).toBe('火山方舟')
+    expect(videoModelChannelLabel('depth')).toBeNull()
+    expect(videoModelChannelLabel(undefined)).toBeNull()
   })
 })
 

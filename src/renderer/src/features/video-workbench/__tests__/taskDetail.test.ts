@@ -50,6 +50,24 @@ describe('标识区', () => {
     expect(field(d, 'upstreamTaskId').hint).toMatch(/阿里|百炼|DashScope/)
   })
 
+  /**
+   * Roneyun-cn 的上游任务号是那条渠道签的(如 `task_97eb…`),拿去火山对账对不上 —— 标成火山就是
+   * 把用户指去找错的供应商。
+   *
+   * 🧬 变异点:去掉 `upstreamVendor` 里按渠道判的那一行,这条必红(会落回「火山引擎 · Ark」)。
+   */
+  it('Roneyun-cn 卡的上游供应商标成 Roneyun-cn,不是火山', () => {
+    for (const model of ['cn-seedance-2.0', 'cn-seedance-2.0-fast', 'cn-seedance-2.0-mini', 'cn-seedance-2.5'] as const) {
+      const d = buildTaskDetail(
+        card({ model, status: 'running', taskId: 'task_cn', upstreamTaskId: 'task_97eb3ce2', billing: 'platform' }),
+        { index: 0 },
+      )
+      const hint = field(d, 'upstreamTaskId').hint ?? ''
+      expect(hint, model).toMatch(/Roneyun-cn/)
+      expect(hint, model).not.toMatch(/火山/)
+    }
+  })
+
   it('直连(自填 Key)没有另一跳:上游任务 ID 行直接给任务 ID,并说明原因', () => {
     const d = buildTaskDetail(card({ status: 'succeeded', taskId: 'cgt-direct-1', billing: 'own-key' }), { index: 0 })
     expect(field(d, 'taskId').label).toMatch(/直连/)
