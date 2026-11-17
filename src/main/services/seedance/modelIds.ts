@@ -11,7 +11,8 @@ import { KLING_4_OMNI_UPSTREAM_MODEL_ID, KLING_4_UPSTREAM_MODEL_ID } from '../kl
 import { WAN3_PRIME_UPSTREAM_MODEL_ID, WAN3_UPSTREAM_MODEL_ID } from '../wan3/model'
 
 /**
- * 网关目录里的上游模型 ID。MCP 别名仍是 2.0 / 2.0-fast / 2.0-mini / 2.5 / 2.5-flash。
+ * 网关目录里的上游模型 ID。MCP 别名仍是 2.0 / 2.0-fast / 2.0-mini / 2.5 / 2.5-flash(火山方舟),
+ * 以及 cn-seedance-*(Roneyun-cn,别名与上游 id 同名)。
  *
  * 万相 / 可灵 / 深度捕捉也登记在这里,是为了保住 `Record<VideoModelAlias, string>` 的穷尽性:
  * 正是这个穷尽性在加 wan3 时把「你还没决定这个模型的 id」直接编译报错报了出来。
@@ -25,6 +26,12 @@ export const SEEDANCE_MODEL_IDS: Record<SeedanceModelAlias, string> = {
   '2.5': 'doubao-seedance-2-5-260628',
   // 带日期后缀才能调用;控制台页面 URL 里的 `doubao-seedance-2-5-flash` 不能直接调(会 404)。
   '2.5-flash': 'doubao-seedance-2-5-flash-261115',
+  // Roneyun-cn 渠道:别名就是网关上的模型名(用户 2026-11-17 确认「模型名字就是这个」),原样发。
+  // 没有日期后缀 —— 后缀是火山方舟自己的命名,这条渠道的名字由网关那边定。
+  'cn-seedance-2.0': 'cn-seedance-2.0',
+  'cn-seedance-2.0-fast': 'cn-seedance-2.0-fast',
+  'cn-seedance-2.0-mini': 'cn-seedance-2.0-mini',
+  'cn-seedance-2.5': 'cn-seedance-2.5',
   wan3: WAN3_UPSTREAM_MODEL_ID,
   'wan3-prime': WAN3_PRIME_UPSTREAM_MODEL_ID,
   kling4: KLING_4_UPSTREAM_MODEL_ID,

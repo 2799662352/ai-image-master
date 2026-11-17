@@ -76,6 +76,8 @@ import {
 } from '../../features/file-explorer/dragHelpers'
 import { materialsFromPaths } from '../../features/video-workbench/pathMaterials'
 import { useSeedanceModels } from '../../features/video-workbench/useSeedanceModels'
+import { MODEL_LABELS } from '../../features/video-workbench/modelChannels'
+import { VideoModelPicker } from './VideoModelPicker'
 
 const CARD_DRAG_MIME = 'application/x-vw-card'
 /** 拖进聊天栏的载荷里,每一版产物带的提示词最多多少字(整份提示词在卡自己的 spec 里)。 */
@@ -135,23 +137,9 @@ function dragStateOf(
 /** 文件栏(FileExplorerPanel)内部拖拽的词表 —— 只有路径,没有 dataTransfer.files。 */
 const FILE_PATHS_MIME = 'application/x-catimation-file-paths'
 
-export const MODEL_LABELS: Record<SeedanceModelAlias, string> = {
-  '2.5': 'Seedance 2.5',
-  '2.5-flash': 'Seedance 2.5 Flash',
-  '2.0': 'Seedance 2.0 满血',
-  '2.0-fast': 'Seedance 2.0 Fast',
-  '2.0-mini': 'Seedance 2.0 Mini(最省)',
-  // 传输层未接完前 region.ts 的 NOT_YET_SELECTABLE 会把它挡在下拉之外;
-  // 标签先备着,免得开闸时又要回来补一处。
-  wan3: '万相 3.0',
-  'wan3-prime': '万相 3.0 Prime',
-  // 可灵走腾讯云 VOD,经 Miau 网关(渠道类型 76):4.0 文生 / 首帧 / 首尾帧,Omni 多参考图 + 参考视频。
-  kling4: '可灵 4.0',
-  'kling4-omni': '可灵 4.0 Omni',
-  // 深度捕捉没有工作台模式,`useSeedanceModels` 不会把它放进下拉;这里只为穷尽性
-  // (编译期保证新别名不漏标签)。
-  depth: '深度捕捉',
-}
+// 模型的叫法搬去了 features/video-workbench/modelChannels(两级选择器与它同源);
+// 这里保留同名导出,别处(UhdConfirmDialog)的 import 不用改。
+export { MODEL_LABELS }
 /** 站点未报可用档位时的兜底(旧主进程 / IPC 尚未返回)——保守只给 2.0 家族。 */
 const FALLBACK_MODELS: readonly SeedanceModelAlias[] = ['2.0', '2.0-fast', '2.0-mini']
 /** 画幅按模型现算（`capabilitiesFor(model).ratios`），这里不再留写死的数组。 */
@@ -1129,13 +1117,14 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
               ✎ 高级编辑
             </button>
           )}
-          <select
-            aria-label="模型"
+          {/* 模型:渠道 → 模型两级面板(原来是把所有模型排成一列的 <select>)。
+              换模型后的收敛逻辑原样保留,只是触发点从 onChange 换成了面板的 onSelect。 */}
+          <VideoModelPicker
             value={card.model}
+            models={availableModels}
+            billing={billingSource}
             disabled={busy}
-            className="bg-[#18181B] border border-[#3F3F46] text-white/80 px-2 py-1.5 focus:outline-none focus:border-[#FCE300] disabled:opacity-60"
-            onChange={(e) => {
-              const model = e.target.value as SeedanceModelAlias
+            onSelect={(model) => {
               const caps = capabilitiesFor(model)
               // 换档可能让当前分辨率/时长越界(1080p 只有 2.0 满血有;2.5 上限 30s
               // 而 2.0 家族 15s)。就地收敛到新模型的合法值,别把越界值留到提交时
@@ -1160,11 +1149,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
                 ...(ratio ? { ratio } : {}),
               })
             }}
-          >
-            {availableModels.map((m) => (
-              <option key={m} value={m}>{MODEL_LABELS[m]}</option>
-            ))}
-          </select>
+          />
           <select
             aria-label="分辨率"
             // 样片固定 480p:显示实际要发的那一档并锁住;关掉样片后回到卡片原来的设置。

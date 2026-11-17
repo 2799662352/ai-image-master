@@ -559,6 +559,34 @@
 .vw-ctx-hint { font-size: 10px; color: #71717a; letter-spacing: 0.04em; }
 .vw-ctx-sep { height: 1px; margin: 4px 0; background: #27272a; }
 
+/* 模型两级选择器(渠道 → 模型,VideoModelPicker)。按钮长得和旁边的 <select> 一样;面板挂在 body 上,
+   沿用右键菜单的底色 / 描边 / 黄色辉光。黄是唯一强调色,直角,不加新颜色。 */
+.vw-mp-trigger { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; background: #18181b; border: 1px solid #3f3f46; color: rgba(255, 255, 255, 0.8); text-align: left; }
+.vw-mp-trigger:hover:not(:disabled), .vw-mp-trigger:focus-visible, .vw-mp-trigger.is-open { border-color: #fce300; outline: none; }
+.vw-mp-trigger:disabled { opacity: 0.6; cursor: not-allowed; }
+.vw-mp-trigger__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-mp-trigger__caret { flex: none; font-size: 10px; color: #71717a; }
+.vw-mp-trigger.is-open .vw-mp-trigger__caret { color: #fce300; }
+
+.vw-mp { position: fixed; z-index: 90; display: flex; width: 468px; max-width: calc(100vw - 16px); max-height: min(420px, calc(100vh - 16px)); background: #111113; border: 1px solid #3f3f46; box-shadow: 0 0 14px rgba(252, 227, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 12px; color: #e4e4e7; }
+.vw-mp-rail { flex: none; width: 132px; padding: 4px 0; border-right: 1px solid #27272a; overflow-y: auto; }
+.vw-mp-tab { display: flex; align-items: center; gap: 6px; width: 100%; padding: 8px 10px; color: #a1a1aa; text-align: left; background: transparent; }
+.vw-mp-tab:hover, .vw-mp-tab:focus-visible { color: #fff; background: #18181b; outline: none; }
+.vw-mp-tab.is-on { color: #fce300; background: #18181b; box-shadow: inset 2px 0 0 #fce300; }
+.vw-mp-tab__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-mp-tab__dot { flex: none; width: 5px; height: 5px; background: #fce300; }
+.vw-mp-tab__count { flex: none; font-size: 10px; color: #71717a; font-variant-numeric: tabular-nums; }
+.vw-mp-list { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.vw-mp-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-bottom: 1px solid #27272a; }
+.vw-mp-head__title { font-size: 12px; font-weight: 700; color: #fff; }
+.vw-mp-head__caption { font-size: 10px; line-height: 1.4; color: #71717a; }
+.vw-mp-rows { flex: 1; min-height: 0; padding: 4px 0; overflow-y: auto; }
+.vw-mp-opt { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 12px; color: #e4e4e7; text-align: left; background: transparent; }
+.vw-mp-opt:hover, .vw-mp-opt:focus-visible { background: #18181b; color: #fff; outline: none; box-shadow: inset 2px 0 0 #fce300; }
+.vw-mp-opt__name { font-size: 12px; font-weight: 600; }
+.vw-mp-opt.is-on .vw-mp-opt__name { color: #fce300; }
+.vw-mp-opt__desc { font-size: 10px; line-height: 1.4; color: #71717a; }
+
 /* 危险按钮:彻底删除 / 清空回收站;armed = 已点第一下,等第二下确认 */
 .vw-danger { height: 28px; padding: 0 10px; border: 1px solid #4a1f1f; color: #f87171; font-size: 11px; background: transparent; white-space: nowrap; }
 .vw-danger:hover { border-color: #f87171; background: rgba(248, 113, 113, 0.08); }

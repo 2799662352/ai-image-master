@@ -15,6 +15,9 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { upstreamAcceptsInlineMedia, usesPlatformAssetLibrary } from '../assetLibraryPolicy'
 
+/** Roneyun-cn 渠道的四个别名(能力表里 `channel: 'roneyun-cn'` 的那几行)。 */
+const CN_ALIASES = ['cn-seedance-2.0', 'cn-seedance-2.0-fast', 'cn-seedance-2.0-mini', 'cn-seedance-2.5'] as const
+
 /**
  * 「素材库要不要参与」取决于**计费模式**;「上游吃不吃 base64 内联」只取决于 **provider** ——
  * 换了钱包上游仍然是 Seedance(经网关中转),内联与否不因此改变。合成一个谓词的后果就是
@@ -33,6 +36,18 @@ describe('upstreamAcceptsInlineMedia', () => {
 
   it('缺省(未指定模型)按 2.0 处理', () => {
     expect(upstreamAcceptsInlineMedia(undefined)).toBe(true)
+  })
+
+  /**
+   * Roneyun-cn 也是 Seedance 家族,但只收公网链接(用户 2026-11-17:「url 和 wan3.0 差不多,
+   * 收公网 url」)。按 provider 判的话它会被答成「吃内联」,小图就以 base64 发出去。
+   *
+   * 🧬 变异点:把谓词里的 `&& !caps.publicUrlMediaOnly` 删掉,这条必红。
+   */
+  it('Roneyun-cn 不吃内联 —— 同是 Seedance 家族,但这条渠道只收公网链接', () => {
+    for (const alias of CN_ALIASES) {
+      expect(upstreamAcceptsInlineMedia(alias)).toBe(false)
+    }
   })
 })
 
@@ -57,6 +72,19 @@ describe('usesPlatformAssetLibrary', () => {
   it('万相在任何计费模式下都不走', () => {
     expect(usesPlatformAssetLibrary('wan3', 'platform')).toBe(false)
     expect(usesPlatformAssetLibrary('wan3', 'own-key')).toBe(false)
+  })
+
+  /**
+   * Roneyun-cn 不登记、不核验人像库(用户 2026-11-17:「切换的时候就别发人像库 id,只发公网 url」)。
+   * 它与火山同 provider,所以这条不能按 provider 判 —— 判据是能力表的 `assetRefs`。
+   *
+   * 🧬 变异点:把谓词改回 `provider === 'vvdance'`,这条必红。
+   */
+  it('Roneyun-cn 在任何计费模式下都不走 —— 平台余额也不登记、不核验', () => {
+    for (const alias of CN_ALIASES) {
+      expect(usesPlatformAssetLibrary(alias, 'platform')).toBe(false)
+      expect(usesPlatformAssetLibrary(alias, 'own-key')).toBe(false)
+    }
   })
 })
 
@@ -204,12 +232,30 @@ describe('两个提交入口都必须问过这个谓词', () => {
    * 平台模式下每一次万相生成都会挂,而那与本功能想解决的问题毫无关系。
    *
    * 🧬 变异点:删掉 `acceptsAssetRefs` 那道早退,这条必红。
+   *
+   * 判据从「provider 是不是 Seedance」换成了能力表的 `assetRefs`:Roneyun-cn 也是 Seedance
+   * 家族(provider 相同),但它不认 `asset://` —— 按 provider 判会把它也登记进人像库。
    */
   it('只有认 asset:// 的模型才改写引用(万相原样放行)', () => {
-    expect(runtimeSource).toContain(
-      "const acceptsAssetRefs = capabilitiesFor(model ?? '2.0').provider === 'vvdance'",
-    )
+    expect(runtimeSource).toContain("const acceptsAssetRefs = assetRefs === 'library'")
     expect(runtimeSource).toContain('if (!acceptsAssetRefs) return content')
+    expect(runtimeSource).not.toContain("capabilitiesFor(model ?? '2.0').provider === 'vvdance'")
+  })
+
+  /**
+   * 只收公网链接的渠道(Roneyun-cn)走第三条路:既不登记,也不原样放行,而是把 `asset://`
+   * 换成那份素材的公网地址。这条分支必须排在「登记」之前 —— 排在后面的话,平台余额下它的
+   * 图会先被登记进人像库、改写成 `asset://`,再原样发给一个不认它的渠道。
+   *
+   * 🧬 变异点:删掉 `public-url` 那一行,这条必红。
+   */
+  it('只收公网链接的渠道在登记之前就分流:asset:// 换成公网地址,不登记', () => {
+    const fn = /async function materializeAssetRefs\([\s\S]*?\n\}/.exec(runtimeSource)?.[0] ?? ''
+    const branch = fn.indexOf("if (assetRefs === 'public-url') return publicUrlsForAssetRefs(content, model, billing)")
+    const register = fn.indexOf('importImagesToPlatformLibrary(')
+    expect(branch).toBeGreaterThan(-1)
+    expect(register).toBeGreaterThan(-1)
+    expect(branch).toBeLessThan(register)
   })
 
   /**

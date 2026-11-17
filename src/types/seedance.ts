@@ -54,6 +54,12 @@ export type VideoModelAlias =
   | '2.0-mini'
   | '2.5'
   | '2.5-flash'
+  // Roneyun-cn 渠道的 Seedance(经 Miau 网关)。**别名就是网关上的模型名**,不另起短名:
+  // 协作者 / 网关文档 / 价目表里叫的都是这几个字,少一层映射就少一处对不上。
+  | 'cn-seedance-2.0'
+  | 'cn-seedance-2.0-fast'
+  | 'cn-seedance-2.0-mini'
+  | 'cn-seedance-2.5'
   | 'wan3'
   | 'wan3-prime'
   | 'kling4'
@@ -81,6 +87,47 @@ export type SeedanceModelAlias = VideoModelAlias
 export type VideoModelProvider = 'vvdance' | 'miau'
 
 /**
+ * 模型挂在哪条**渠道**下 —— 工作台「渠道 → 模型」两级选择器的第一级。
+ *
+ * 与 `provider` 不是一回事:`provider` 讲请求体长什么样(Seedance 家族 / 其它),渠道讲
+ * 「网关之后那一跳是谁家」。同一个 Seedance 2.0 可以挂在火山方舟,也可以挂在 Roneyun-cn ——
+ * 请求体同形,上游与素材规则不同。
+ *
+ * `other` 只给不进工作台的模型(深度捕捉)占位,选择器里不会出现。
+ */
+export type VideoModelChannel = 'volcengine' | 'roneyun-cn' | 'wan' | 'kling' | 'other'
+
+export interface VideoModelChannelInfo {
+  id: VideoModelChannel
+  /** 选择器左栏、任务详情里的叫法。 */
+  label: string
+  /** 一句话说明,选择器右栏标题旁。 */
+  caption: string
+}
+
+/** 选择器里渠道的顺序与叫法(`other` 不在其中)。 */
+export const VIDEO_MODEL_CHANNELS: readonly VideoModelChannelInfo[] = [
+  { id: 'volcengine', label: '火山方舟', caption: 'Seedance 官方线路，参考素材可走人像库' },
+  { id: 'roneyun-cn', label: 'Roneyun-cn', caption: 'Seedance 的另一条线路，参考素材只发公网链接（不走人像库）' },
+  { id: 'wan', label: '阿里万相', caption: '万相 3.0，按秒计费' },
+  { id: 'kling', label: '可灵', caption: '可灵 4.0，按秒计费' },
+]
+
+/**
+ * 这个模型怎么对待人像库(素材库)引用 `asset://<id>`。
+ *
+ *   - `library`:上游认素材库 id。平台余额下,提交前把参考素材登记进库并改写成 `asset://`
+ *     (登记过的素材不走上游的真人检测),并核验卡上已有的 id 在当前计费池里。
+ *   - `public-url`:上游**不认** id、只收公网链接,但库里的素材仍可以当「来源」用 —— 提交前把
+ *     `asset://` 换回它的公网地址;不登记、不核验,**一个 id 都不发出去**。
+ *   - `none`:不认,也不替换。各自的组包层见到 `asset://` 直接报错(万相 / 可灵 / 深度捕捉)。
+ *
+ * 曾经由 `provider === 'vvdance'` 推出来。Roneyun-cn 也是 Seedance 家族(同一种请求体),
+ * 却不走人像库 —— 推不出来了,所以写成数据。
+ */
+export type AssetRefPolicy = 'library' | 'public-url' | 'none'
+
+/**
  * 2.5 独有的任务模式（文档 4.9）。两者都**必须带视频参考**、比例被上游强制
  * `adaptive`;`edit` 另外锁死 `durationSeconds: -1`。
  */
@@ -89,6 +136,15 @@ export type SeedanceTaskMode = 'edit' | 'extend'
 export interface SeedanceModelCapabilities {
   /** 上游归属。见 `VideoModelProvider`。 */
   provider: VideoModelProvider
+  /** 挂在哪条渠道下(工作台两级选择器的第一级)。见 `VideoModelChannel`。 */
+  channel: VideoModelChannel
+  /** 怎么对待人像库引用 `asset://`。见 `AssetRefPolicy`。 */
+  assetRefs: AssetRefPolicy
+  /**
+   * 是否支持样片(Seedance 2.5 Draft:先出 480p 预览,满意后用样片任务号出成片)。
+   * 另外还要求平台余额,见 `supportsSeedanceDraft` 的调用方。
+   */
+  draft: boolean
   /**
    * 这个模型接受的画幅。
    *
@@ -248,6 +304,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
 > = {
   '2.0': {
     provider: 'vvdance',
+    channel: 'volcengine',
+    assetRefs: 'library',
+    draft: false,
     ratios: SEEDANCE_RATIOS,
     seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
@@ -270,6 +329,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.0-fast': {
     provider: 'vvdance',
+    channel: 'volcengine',
+    assetRefs: 'library',
+    draft: false,
     ratios: SEEDANCE_RATIOS,
     seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
@@ -294,6 +356,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.0-mini': {
     provider: 'vvdance',
+    channel: 'volcengine',
+    assetRefs: 'library',
+    draft: false,
     ratios: SEEDANCE_RATIOS,
     seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
@@ -316,6 +381,10 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
   },
   '2.5': {
     provider: 'vvdance',
+    channel: 'volcengine',
+    assetRefs: 'library',
+    // 样片只有 2.5 有(Flash 没有,见下)。
+    draft: true,
     ratios: SEEDANCE_RATIOS,
     seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
@@ -356,6 +425,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   '2.5-flash': {
     provider: 'vvdance',
+    channel: 'volcengine',
+    assetRefs: 'library',
+    draft: false,
     ratios: SEEDANCE_RATIOS,
     seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
@@ -377,6 +449,138 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     multiShot: false,
   },
   /**
+   * Roneyun-cn 渠道的 Seedance(`cn-seedance-2.0` / `-2.0-fast` / `-2.0-mini` / `-2.5`),经 Miau 网关,
+   * 平台余额与自填 Miau Key 两个钱包都能用(2026-11-17 接入,网关侧由协作者同步在做)。
+   *
+   * 起点是用户的话(2026-11-17):「这个渠道所有能力和我们自己的火山渠道一样」,所以四行先抄自
+   * `2.0` / `2.0-fast` / `2.0-mini` / `2.5`(时长、分辨率、素材上限、edit / extend、智能时长、
+   * 平台余额下 2.5 的 1080p / 4k)。
+   *
+   * ## 与火山渠道**不同**的三处
+   *
+   * 1. **素材**(用户原话「不需要管人像库…切换的时候就别发人像库 id,只发公网 url」):
+   *    - `assetRefs: 'public-url'` —— 不登记、不核验人像库;卡上已有的 `asset://` 在提交前换回公网地址
+   *      (见 `main/services/seedance/assetPublicUrl.ts`),换不出来就拦下,一个 id 都不发;
+   *    - `publicUrlMediaOnly: true` —— 本地文件一律先中转成公网链接,不走 ≤512KB 的 base64 内联。
+   * 2. **没有样片**(`draft: false`,含 `cn-seedance-2.5`)。网关适配器 `relay/channel/task/roneyun`
+   *    (new-api #203)在预扣前就拒掉 `draft` / `draft_task`,2026-11-17 用真 key 对生产网关各发一次,
+   *    都回 400「Roneyun Tokenhub 渠道不支持样片(draft)/ 由样片生成成片(draft_task)」,没有扣费。
+   *    ——这与用户当时说的「有样片能力」不符,以网关为准。
+   * 3. **没有联网搜索**(`webSearch: false`)。同一处适配器拒 `tools`,同日实测 400「不支持联网搜索(tools)」。
+   *    必须是 false:卡片 / agent 的联网搜索默认开,留着 true 就是每一次默认提交都会被拒。
+   *
+   * ## 实测过的 / 没实测的(2026-11-17,自填 Miau Key)
+   *
+   * 实测:经 `POST /v1/video/generations` 提交 `cn-seedance-2.0-mini` / 480p / 4 秒 / 不带音频 / 一张公网
+   * 参考图,`queued → running → succeeded`,109 秒出片,结算 = completion_tokens × model_ratio(11.5)。
+   * 没实测:平台余额那个钱包、720p 及以上、cn-2.0 / Fast / 2.5 三个模型、edit / extend、音频参考。
+   * 上游价目页只列了 cn-2.0 与 mini 的 480p / 720p、2.5 到 1080p,所以 cn-2.0 的 1080p / 4k、
+   * cn-2.5 的 4k 是「照火山抄」而非实测。哪一项被上游拒,只改这里对应的字段,
+   * 界面 / 校验 / MCP 说明都读这张表。
+   */
+  'cn-seedance-2.0': {
+    provider: 'vvdance',
+    channel: 'roneyun-cn',
+    assetRefs: 'public-url',
+    draft: false,
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
+    duration: { min: 4, max: 15 },
+    resolutions: ['480p', '720p', '1080p', '4k'],
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: true,
+    audioOnlyReference: false,
+    sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
+    multiShot: false,
+  },
+  'cn-seedance-2.0-fast': {
+    provider: 'vvdance',
+    channel: 'roneyun-cn',
+    assetRefs: 'public-url',
+    draft: false,
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
+    duration: { min: 4, max: 15 },
+    resolutions: ['480p', '720p'],
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: true,
+    audioOnlyReference: false,
+    sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
+    multiShot: false,
+  },
+  'cn-seedance-2.0-mini': {
+    provider: 'vvdance',
+    channel: 'roneyun-cn',
+    assetRefs: 'public-url',
+    draft: false,
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
+    duration: { min: 4, max: 15 },
+    resolutions: ['480p', '720p'],
+    maxImages: 9,
+    maxVideos: 3,
+    maxAudios: 3,
+    maxMaterialsTotal: 15,
+    taskModes: [],
+    subtitleErase: false,
+    audioOnlyReference: false,
+    sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
+    multiShot: false,
+  },
+  'cn-seedance-2.5': {
+    provider: 'vvdance',
+    channel: 'roneyun-cn',
+    assetRefs: 'public-url',
+    // 没有样片:网关在预扣前拒 draft / draft_task(见上面注释第 2 条)。
+    draft: false,
+    ratios: SEEDANCE_RATIOS,
+    seedMax: 4_294_967_295,
+    modes: ALL_VIDEO_WORKBENCH_MODES,
+    duration: { min: 4, max: 30 },
+    resolutions: ['480p', '720p'],
+    platformResolutions: ['480p', '720p', '1080p', '4k'],
+    maxImages: 30,
+    maxVideos: 10,
+    maxAudios: 10,
+    maxMaterialsTotal: 50,
+    taskModes: ['edit', 'extend'],
+    subtitleErase: false,
+    audioOnlyReference: true,
+    sourceVideoTransform: false,
+    defaultRatio: '16:9',
+    smartDuration: true,
+    documentSlot: false,
+    publicUrlMediaOnly: true,
+    webSearch: false,
+    multiShot: false,
+  },
+  /**
    * 阿里万相 3.0（`wan3.0-video`），经 Miau 网关打 DashScope。
    *
    * 数字出自官方《万相 3.0 视频生成 API 参考》：多模态上限 图 10 / 视频 5 /
@@ -391,6 +595,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   wan3: {
     provider: 'miau',
+    channel: 'wan',
+    assetRefs: 'none',
+    draft: false,
     ratios: WAN3_RATIOS,
     // 官方写明 [0, 2147483647]，比 Seedance 的 uint32 小一半。
     seedMax: 2_147_483_647,
@@ -428,6 +635,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   'wan3-prime': {
     provider: 'miau',
+    channel: 'wan',
+    assetRefs: 'none',
+    draft: false,
     ratios: WAN3_RATIOS,
     seedMax: 2_147_483_647,
     modes: WAN3_MODES,
@@ -461,6 +671,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   kling4: {
     provider: 'miau',
+    channel: 'kling',
+    assetRefs: 'none',
+    draft: false,
     ratios: KLING_RATIOS,
     seedMax: 0,
     defaultRatio: '16:9',
@@ -493,6 +706,9 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   'kling4-omni': {
     provider: 'miau',
+    channel: 'kling',
+    assetRefs: 'none',
+    draft: false,
     ratios: KLING_RATIOS,
     seedMax: 0,
     defaultRatio: '16:9',
@@ -532,6 +748,10 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    */
   depth: {
     provider: 'miau',
+    // 不进工作台,选择器里没有它;`other` 只是占位。
+    channel: 'other',
+    assetRefs: 'none',
+    draft: false,
     ratios: ['adaptive'],
     seedMax: 0,
     modes: [],
@@ -556,6 +776,15 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
 
 export function capabilitiesFor(alias: SeedanceModelAlias): SeedanceModelCapabilities {
   return SEEDANCE_MODEL_CAPABILITIES[alias]
+}
+
+/**
+ * 这个模型所在渠道的叫法(「火山方舟」「Roneyun-cn」…)。不在选择器里的渠道(`other`)与认不出的
+ * 别名返回 null —— 调用方自己决定不显示还是换一句话,这里不编一个名字出来。
+ */
+export function videoModelChannelLabel(alias: VideoModelAlias | undefined): string | null {
+  const channel = alias ? SEEDANCE_MODEL_CAPABILITIES[alias]?.channel : undefined
+  return VIDEO_MODEL_CHANNELS.find((info) => info.id === channel)?.label ?? null
 }
 
 /**
@@ -705,8 +934,12 @@ export function agentUhdRefusal(input: {
 
 export const SEEDANCE_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
+/**
+ * 这个模型有没有样片模式。读能力表的 `draft`,不再写死 `alias === '2.5'` —— 同一个 2.5 挂在
+ * 第二条渠道(Roneyun-cn)时这句就成了错话。认不出的别名(旧存档 / 手改的载荷)按没有处理。
+ */
 export function supportsSeedanceDraft(alias: VideoModelAlias | undefined): boolean {
-  return alias === '2.5'
+  return alias !== undefined && SEEDANCE_MODEL_CAPABILITIES[alias]?.draft === true
 }
 
 /** 样片还能不能生成成片:从样片创建起 7 天内。缺创建时间时按可用处理(让网关来判)。 */
@@ -773,7 +1006,11 @@ export function validateSeedanceRequest(
   }
 
   if (request.subtitleErase && !caps.subtitleErase) {
-    errors.push(`模型 ${alias} 不支持擦除字幕（仅 2.0 与 2.0-fast 支持）`)
+    // 「谁支持」同样从能力表派生(原先写死「仅 2.0 与 2.0-fast」,Roneyun-cn 的同名两档进来就不全了)。
+    const eraseAliases = (Object.keys(SEEDANCE_MODEL_CAPABILITIES) as SeedanceModelAlias[])
+      .filter((candidate) => SEEDANCE_MODEL_CAPABILITIES[candidate].subtitleErase)
+      .join(' / ')
+    errors.push(`模型 ${alias} 不支持擦除字幕（仅 ${eraseAliases} 支持）`)
   }
 
   if (caps.sourceVideoTransform) {

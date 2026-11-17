@@ -27,15 +27,17 @@ import { parseSeedanceGatewayTaskResult, type SeedanceGatewayTaskResult } from '
 export const SEEDANCE_GATEWAY_CREATE_PATH = '/video/generations'
 
 /**
- * ⚠️ **尚未经真网关证实。**
- *
  * 网关侧参考实现打的是 `GET /v1/videos/{id}`,而本仓已经跑通的 wan3 打的是
  * `GET /v1/video/generations/{id}`（2026-08-14 对着真网关钉死）。两条路径可能
  * 都在（各管各的上游），也可能只有一条。
  *
+ * **已证实的(2026-11-17,生产网关,自填 Key)**:Roneyun-cn 的 `cn-seedance-2.0-mini`
+ * 提交后用 `GET /v1/videos/{id}` 轮询,跑到 `status: "completed"`,`metadata.url` 是成片地址。
+ * **没证实的**:火山那几个 `doubao-seedance-*` 是否也认这条路径、`/v1/video/generations/{id}`
+ * 在这条渠道上是否也在 —— 没有拿同一个 taskId 把两条都打一遍。
+ *
  * 提成常量 + 允许 `queryPath` 覆盖,是为了让烟测能拿同一个真 taskId 把两条都打
- * 一遍再定,而不是改代码重编译。定下来之后把这段注释换成结论和日期。
- * 待办登记在计划的 Task 6 第一条。
+ * 一遍再定,而不是改代码重编译。
  */
 export const SEEDANCE_GATEWAY_QUERY_PATH = '/videos'
 

@@ -179,6 +179,25 @@ export function lookupAssetBinding(url: string, scope: PlatformAssetScope): stri
   return state().bindings[url]?.find((b) => samePool(b, pool))?.assetId ?? null
 }
 
+/**
+ * 反查:这个 asset id 当初是拿哪条公网 URL 登记的。只读,不发请求;查不到回 `null`。
+ *
+ * **刻意不看池。** `lookupAssetBinding` 问的是「这张图在这个池里的 id 是哪个」,池不对就是不存在;
+ * 这里问的是「这个 id 背后是哪张图」—— id 由上游签发、全局唯一,同一个 id 不会在两个池里指向
+ * 两张不同的图,而登记用的那条 URL 本身是公网地址,与池无关。
+ *
+ * 用途:上游不认素材库 id、只收公网链接的渠道(Roneyun-cn),提交前把卡上的 `asset://` 换回
+ * 它的来源地址。只覆盖**本机登记过**的素材(经工作台 / agent 入库的那些);在别的设备或网页版
+ * 入库的不在这份文件里,调用方要另有出路(见 `seedance/assetPublicUrl.ts`)。
+ */
+export function lookupAssetSourceUrl(assetId: string): string | null {
+  if (!assetId) return null
+  for (const [url, list] of Object.entries(state().bindings)) {
+    if (list.some((b) => b.assetId === assetId)) return url
+  }
+  return null
+}
+
 function putBinding(url: string, pool: Pool, assetId: string): void {
   const cur = state().bindings
   // 同池只留一条:写路径做去重,读路径就不必猜「两条同池的绑定哪条算数」。

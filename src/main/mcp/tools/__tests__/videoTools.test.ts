@@ -148,6 +148,23 @@ describe('registerVideoTools / schemas', () => {
     expect(router.call).not.toHaveBeenCalled()
   })
 
+  /**
+   * Roneyun-cn 的 2.5 同样不能出样片:网关(new-api #203)在预扣前就 400「不支持样片(draft)」。
+   * 在本机拦下,agent 才能拿到一句可操作的话,而不是一个网关错误。
+   *
+   * 🧬 变异点:把能力表里 `cn-seedance-2.5` 的 `draft` 改回 true,这条必红。
+   */
+  it('generate_video 的 draft 不给 Roneyun-cn 的 2.5(网关不收样片)', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const res = await tools.find((t) => t.name === 'generate_video')!.handler(
+      { prompt: 'x', model: 'cn-seedance-2.5', draft: true },
+      undefined,
+    )
+    expect(JSON.stringify(res)).toContain('Seedance \\"2.5\\" only')
+    expect(router.call).not.toHaveBeenCalled()
+  })
+
   it('first blocking window is short (~75s) so turn/steer interjection stays responsive', () => {
     // The model cannot process queued turn/steer input while blocked inside this
     // tool call, so the first window must be short — it hands back a taskId and

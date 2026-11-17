@@ -17,9 +17,7 @@ import { runResolution } from './seedanceDraft'
 const NOT_TOKEN_BILLED = 'not-token-billed' as const
 
 type TokenPriceTier = { noVideo: number; withVideo: number }
-type TokenPriceEntry =
-  | { standard: TokenPriceTier; fhd?: TokenPriceTier }
-  | typeof NOT_TOKEN_BILLED
+type TokenPriceEntry = { standard: TokenPriceTier; fhd?: TokenPriceTier } | typeof NOT_TOKEN_BILLED
 
 /** $ / 1M tokens。standard = 480p/720p;fhd = 1080p(仅 2.0 满血有此档)。 */
 const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
@@ -46,6 +44,28 @@ const PRICE_TABLE: Record<SeedanceModelAlias, TokenPriceEntry> = {
   // 这和上面各行一样是**估算**,不是账单:网关按 `ModelRatio` 结算,以网关扣费为准。
   '2.5-flash': {
     standard: { noVideo: 7.0, withVideo: 4.3 },
+  },
+  // Roneyun-cn 渠道:按 token 计费,单价与方舟刊例相同,所以逐行照同名火山模型填。
+  // 出处(2026-11-17):
+  //   - 生产 `/api/pricing`:cn-seedance-2.0 / -fast / -mini / 2.5 的 model_ratio = 23 / 18.5 / 11.5 / 35,
+  //     即 ¥46 / 37 / 23 / 70 每百万 token(不含视频输入),与上面火山各行的美元口径是同一档;
+  //   - 网关价目表(new-api #203 `doubao/constants.go`):含视频输入 28 / 22 / 14 / 42,1080p 档 2.0 为 51 / 31。
+  //   - 实测结算:一次 cn-seedance-2.0-mini / 480p / 4 秒任务,completion_tokens 40594 × 11.5 × 分组倍率 1
+  //     = 466831 额度,与日志里的 quota 逐位相等。
+  // 同样是**估算**,以网关扣费为准。cn-2.0 的 1080p 价目页没列(网关沿用方舟刊例作保守估计),
+  // cn-2.5 的 1080p / 4k 同火山 2.5 一样不在这里出价。
+  'cn-seedance-2.0': {
+    standard: { noVideo: 7.0, withVideo: 4.3 },
+    fhd: { noVideo: 7.7, withVideo: 4.7 },
+  },
+  'cn-seedance-2.0-fast': {
+    standard: { noVideo: 5.6, withVideo: 3.3 },
+  },
+  'cn-seedance-2.0-mini': {
+    standard: { noVideo: 3.5, withVideo: 2.1 },
+  },
+  'cn-seedance-2.5': {
+    standard: { noVideo: 10.7, withVideo: 6.4 },
   },
   // 按秒计费，走 CNY_PER_SECOND 那条路，不在这张表里出价。
   wan3: NOT_TOKEN_BILLED,
