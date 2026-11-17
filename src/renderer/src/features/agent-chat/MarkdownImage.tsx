@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { JSX, RefObject } from 'react'
+import type { JSX } from 'react'
+import { useNearViewport } from '../../components/shared/media/useNearViewport'
 import { useResolvedMediaSrc } from '../../components/shared/media/useResolvedMediaSrc'
 import { parseFileCitation } from '../../../../shared/fileCitation'
 import type { AttachmentRef } from '../../../../types/agent-timeline'
@@ -66,51 +67,6 @@ function nameFromUri(uri: string, alt: string | undefined): string {
 
 /** 本地图读盘最多等这么久,超过就当加载失败(给个明确的占位,而不是永远转圈)。 */
 const LOAD_TIMEOUT_MS = 8000
-
-/** 离可视区还有这么远就开始读盘:够把读盘 + 解码的几百毫秒藏在滚动里,又不会一次读完整段对话。 */
-const NEAR_VIEWPORT_MARGIN_PX = 800
-
-/** 最近的纵向滚动祖先(聊天的消息列表);找不到就返回 null(= 用浏览器视口)。 */
-function findScrollParent(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const oy = getComputedStyle(p).overflowY
-    if (oy === 'auto' || oy === 'scroll') return p
-  }
-  return null
-}
-
-/**
- * 「靠近可视区」才读盘。
- *
- * 一次对话里可能有几十张正文大图(分类总览图一张就 1 MB 多)。如果每张挂载就立刻整张读盘 +
- * base64 + 建 blob,N 张是同时抢主进程的读盘,**第一张出来的时间随 N 线性变慢**
- * (真窗口量测:40 张 ≈ 1.5–2.4 s,120 张 ≈ 8.2 s),而用户其实只看得见其中几张。
- * 官方 Codex App 在「图很多的对话」里卡死 / 无响应的同类报告(openai/codex#21232、#24695、#28916)
- * 的共同点也是「历史里的图一次性全拿出来渲染」,社区的缓解思路就是延迟 / 引用化。
- *
- * 没有 IntersectionObserver(jsdom、极老内核)时直接当作「已靠近」,行为同改动前。
- * 进入范围后就不再回收:blob 的释放仍由共享缓存的引用计数负责(组件卸载时释放)。
- */
-function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
-  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
-  useEffect(() => {
-    if (near) return undefined
-    const el = ref.current
-    if (!el) return undefined
-    const io = new IntersectionObserver(
-      (entries) => {
-        // near 一变,下面 effect 的清理函数就会 disconnect,这里不必重复。
-        if (entries.some((e) => e.isIntersecting)) setNear(true)
-      },
-      // root 必须是真正的滚动容器:root=null 时 rootMargin 不会撑开中间祖先的裁剪区,
-      // 「快滚到了」的图还是不会被判为相交。
-      { root: findScrollParent(el), rootMargin: `${NEAR_VIEWPORT_MARGIN_PX}px 0px` },
-    )
-    io.observe(el)
-    return () => io.disconnect()
-  }, [near, ref])
-  return near
-}
 
 export function MarkdownImage({ src, alt }: { src?: string; alt?: string }): JSX.Element {
   const workspaceRoot = useFileExplorerStore((s) => s.workspaceRoot)

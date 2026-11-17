@@ -9,6 +9,7 @@ import {
   isVideoMime,
   mimeFromExt,
 } from './mediaPathValidation'
+import { createByteLru, createLimiter } from './thumbScheduling'
 import { grabVideoFrame } from './videoFrame'
 
 /**
@@ -70,18 +71,18 @@ async function readSvgPassthrough(realPath: string): Promise<MediaThumbResult> {
 }
 
 /**
- * Try Electron's OS-native thumbnail provider first. On macOS this uses
- * Quick Look; on Windows it uses the Shell IThumbnailProvider that File
- * Explorer itself uses. When the OS already has a thumbnail cached (common
- * for files the user has interacted with in File Explorer or Finder) this
- * is materially faster than sharp's decode-resize-encode round trip.
+ * Electron's OS-native thumbnail provider. On macOS this uses Quick Look; on
+ * Windows it uses the Shell IThumbnailProvider that File Explorer itself uses.
+ * It is the only way to thumbnail formats sharp cannot decode (BMP, ICO, …)
+ * and the only video-still source that needs no ffmpeg spawn, so it is the
+ * fallback for images and the first choice for videos. For freshly written
+ * images (nothing in the OS cache) it is slower than sharp and its `toJPEG`
+ * runs on the main thread — see {@link imageThumb}.
  *
  * Returns null on:
  *   - empty NativeImage (Linux + most Windows cases without a registered
  *     IThumbnailProvider for the extension)
  *   - thrown error (macOS error path for unreadable inputs)
- *
- * Caller falls back to sharp on null.
  */
 async function tryNativeThumb(
   realPath: string,
@@ -183,7 +184,7 @@ export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumb
 
   // 视频只截一帧、不读整个文件,所以不受体积上限约束(成片动辄几百 MB)。
   if (isVideoMime(mime)) {
-    return videoThumb(realPath, requestedSize)
+    return scheduleThumb(realPath, stat, requestedSize, () => videoThumb(realPath, requestedSize))
   }
 
   if (stat.size > MAX_ATTACHMENT_BYTES) {
@@ -203,7 +204,26 @@ export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumb
     return { ok: false, reason: 'no thumbnail for non-image mime' }
   }
 
-  const fromNative = await tryNativeThumb(realPath, requestedSize)
+  return scheduleThumb(realPath, stat, requestedSize, () => imageThumb(realPath, requestedSize))
+}
+
+/**
+ * 图片缩略图:**先 sharp,sharp 解不了(BMP / ICO 等)再问系统提供者**。
+ *
+ * 之前是系统提供者在前。量测(60 张全新的 2336px JPEG):系统提供者共 1.8 s,且每张的
+ * `toJPEG` 都在主线程上(一起发时事件循环停 1.5 s);sharp 共 0.9 s,全部在线程池里,
+ * 事件循环最长只停 24 ms。系统缓存「已命中」才是它更快的场景,而聊天里的生成图
+ * 都是刚写下来的新文件,几乎不命中。
+ */
+async function imageThumb(realPath: string, size: number): Promise<MediaThumbResult> {
+  let sharpErr: unknown
+  try {
+    const { buf, width, height } = await sharpThumb(realPath, size)
+    return { ok: true, base64: buf.toString('base64'), mime: 'image/jpeg', width, height }
+  } catch (err) {
+    sharpErr = err
+  }
+  const fromNative = await tryNativeThumb(realPath, size)
   if (fromNative) {
     return {
       ok: true,
@@ -213,19 +233,50 @@ export async function handleMediaThumb(args: MediaThumbArgs): Promise<MediaThumb
       height: fromNative.height,
     }
   }
+  return { ok: false, reason: `thumbnail failed: ${String(sharpErr)}` }
+}
 
-  try {
-    const { buf, width, height } = await sharpThumb(realPath, requestedSize)
-    return {
-      ok: true,
-      base64: buf.toString('base64'),
-      mime: 'image/jpeg',
-      width,
-      height,
-    }
-  } catch (err) {
-    return { ok: false, reason: `thumbnail failed: ${String(err)}` }
-  }
+/** 同时最多生成这么多张;其余排队。见 `thumbScheduling.ts` 顶部的量测。 */
+export const THUMB_CONCURRENCY = 4
+/** 缩略图结果缓存的总字节预算(base64 字符数 ≈ 字节数);一张通常 5–30 KB,够几千张。 */
+export const THUMB_CACHE_MAX_BYTES = 32 * 1024 * 1024
+
+const runLimited = createLimiter(THUMB_CONCURRENCY)
+const thumbCache = createByteLru<Extract<MediaThumbResult, { ok: true }>>(THUMB_CACHE_MAX_BYTES)
+const pendingThumbs = new Map<string, Promise<MediaThumbResult>>()
+
+/** 测试用:清掉缓存与排队中的去重表,避免用例之间互相影响。 */
+export function resetThumbCacheForTest(): void {
+  thumbCache.clear()
+  pendingThumbs.clear()
+}
+
+/**
+ * 缓存 → 同一张图的在途请求合并 → 限并发地真正生成。
+ * 只缓存成功结果:失败(文件还没写完、暂时读不到)下次要能重试。
+ */
+function scheduleThumb(
+  realPath: string,
+  stat: import('node:fs').Stats,
+  size: number,
+  build: () => Promise<MediaThumbResult>,
+): Promise<MediaThumbResult> {
+  const key = `${realPath}\0${stat.mtimeMs}\0${stat.size}\0${size}`
+  const hit = thumbCache.get(key)
+  if (hit) return Promise.resolve(hit)
+  const inflight = pendingThumbs.get(key)
+  if (inflight) return inflight
+
+  const p = runLimited(build)
+    .then((res) => {
+      if (res.ok) thumbCache.set(key, res, res.base64.length)
+      return res
+    })
+    .finally(() => {
+      pendingThumbs.delete(key)
+    })
+  pendingThumbs.set(key, p)
+  return p
 }
 
 export function registerMediaThumbIpc(): void {

@@ -23,9 +23,13 @@
  *   4. SVG falls through to a raw passthrough (resizing SVG via sharp would
  *      lose the vector representation; SVGs are already small).
  *
- *   5. `nativeImage.createThumbnailFromPath` is tried first as a fast path
- *      (uses OS thumbnail provider — Quick Look on macOS, Shell IThumbnail
- *      on Windows), and sharp is the fallback when native says no.
+ *   5. sharp decodes first (off the main thread, fast for freshly written
+ *      files); `nativeImage.createThumbnailFromPath` (OS thumbnail provider —
+ *      Quick Look on macOS, Shell IThumbnail on Windows) is the fallback for
+ *      formats sharp cannot decode, and the first choice for video stills.
+ *
+ *   6. Generation is concurrency-limited, de-duplicated while in flight, and
+ *      successful results are cached by (realpath, mtime, size, edge).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
@@ -98,42 +102,11 @@ afterEach(async () => {
 })
 
 describe('mediaThumbIpc.handleMediaThumb — happy paths', () => {
-  it('returns a JPEG much smaller than the source PNG when nativeImage succeeds', async () => {
+  // 顺序是量出来的:新生成的图系统缩略图缓存不命中,系统提供者更慢、且 toJPEG 在主线程上,
+  // 一次来几百张会把主进程事件循环占住几秒。所以能被 sharp 解码的图一律不碰 nativeImage。
+  it('sharp 解得了的图:直接缩成小 JPEG,不去问系统缩略图提供者', async () => {
     const { handleMediaThumb } = await import('../mediaThumbIpc')
-    // Build a 256x256 JPEG buffer via sharp to feed the mock — emulates what
-    // Electron's OS thumbnail provider would hand us back.
-    const fakeNativeJpeg = await sharp({
-      create: { width: 256, height: 256, channels: 3, background: { r: 200, g: 60, b: 60 } },
-    })
-      .jpeg({ quality: 78 })
-      .toBuffer()
-    nativeImageThumbMock.mockResolvedValueOnce({
-      isEmpty: () => false,
-      toJPEG: () => fakeNativeJpeg,
-      getSize: () => ({ width: 256, height: 256 }),
-    })
-
     const sourceBytes = (await fs.stat(pngPath)).size
-    const res = await handleMediaThumb({ path: pngPath, size: 256 })
-
-    expect(res.ok).toBe(true)
-    if (!res.ok) return
-    expect(res.mime).toBe('image/jpeg')
-    expect(res.width).toBe(256)
-    expect(res.height).toBe(256)
-    const thumbBytes = Buffer.from(res.base64, 'base64').length
-    expect(thumbBytes).toBeLessThan(sourceBytes / 4)
-    expect(nativeImageThumbMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('falls back to sharp when nativeImage returns an empty image', async () => {
-    const { handleMediaThumb } = await import('../mediaThumbIpc')
-    nativeImageThumbMock.mockResolvedValueOnce({
-      isEmpty: () => true,
-      toJPEG: () => Buffer.alloc(0),
-      getSize: () => ({ width: 0, height: 0 }),
-    })
-
     const res = await handleMediaThumb({ path: pngPath, size: 128 })
 
     expect(res.ok).toBe(true)
@@ -145,17 +118,62 @@ describe('mediaThumbIpc.handleMediaThumb — happy paths', () => {
     expect(res.height).toBeLessThanOrEqual(128)
     const thumbBytes = Buffer.from(res.base64, 'base64').length
     expect(thumbBytes).toBeGreaterThan(0)
+    expect(thumbBytes).toBeLessThan(sourceBytes / 4)
+    expect(nativeImageThumbMock).not.toHaveBeenCalled()
   })
 
-  it('falls back to sharp when nativeImage throws (mac error path)', async () => {
-    const { handleMediaThumb } = await import('../mediaThumbIpc')
-    nativeImageThumbMock.mockRejectedValueOnce(new Error('NSImage rep generation failed'))
+  // BMP / ICO 之类 sharp 解不了的格式,系统提供者是唯一的出路。
+  describe('sharp 解不了的文件才退到系统缩略图提供者', () => {
+    let undecodablePath: string
+    beforeEach(async () => {
+      undecodablePath = path.join(tmpDir, 'weird.png')
+      await fs.writeFile(undecodablePath, Buffer.from('this is not an image sharp can decode'))
+    })
 
-    const res = await handleMediaThumb({ path: pngPath, size: 256 })
+    it('系统提供者给出图 → 用它', async () => {
+      const { handleMediaThumb } = await import('../mediaThumbIpc')
+      // Build a 256x256 JPEG buffer via sharp to feed the mock — emulates what
+      // Electron's OS thumbnail provider would hand us back.
+      const fakeNativeJpeg = await sharp({
+        create: { width: 256, height: 256, channels: 3, background: { r: 200, g: 60, b: 60 } },
+      })
+        .jpeg({ quality: 78 })
+        .toBuffer()
+      nativeImageThumbMock.mockResolvedValueOnce({
+        isEmpty: () => false,
+        toJPEG: () => fakeNativeJpeg,
+        getSize: () => ({ width: 256, height: 256 }),
+      })
 
-    expect(res.ok).toBe(true)
-    if (!res.ok) return
-    expect(res.mime).toBe('image/jpeg')
+      const res = await handleMediaThumb({ path: undecodablePath, size: 256 })
+
+      expect(res.ok).toBe(true)
+      if (!res.ok) return
+      expect(res.mime).toBe('image/jpeg')
+      expect(res.width).toBe(256)
+      expect(res.height).toBe(256)
+      expect(nativeImageThumbMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('系统提供者回空图 → 失败,reason 带 sharp 的原因', async () => {
+      const { handleMediaThumb } = await import('../mediaThumbIpc')
+      nativeImageThumbMock.mockResolvedValueOnce({
+        isEmpty: () => true,
+        toJPEG: () => Buffer.alloc(0),
+        getSize: () => ({ width: 0, height: 0 }),
+      })
+      const res = await handleMediaThumb({ path: undecodablePath, size: 128 })
+      expect(res.ok).toBe(false)
+      if (res.ok) return
+      expect(res.reason).toMatch(/thumbnail failed/)
+    })
+
+    it('系统提供者抛错(mac 的错误路径)→ 失败而不是抛出', async () => {
+      const { handleMediaThumb } = await import('../mediaThumbIpc')
+      nativeImageThumbMock.mockRejectedValueOnce(new Error('NSImage rep generation failed'))
+      const res = await handleMediaThumb({ path: undecodablePath, size: 256 })
+      expect(res.ok).toBe(false)
+    })
   })
 
   it('passes SVG through unchanged (skips both nativeImage and sharp resize)', async () => {
@@ -173,11 +191,6 @@ describe('mediaThumbIpc.handleMediaThumb — happy paths', () => {
 
   it('uses a sensible default size when caller omits it', async () => {
     const { handleMediaThumb } = await import('../mediaThumbIpc')
-    nativeImageThumbMock.mockResolvedValueOnce({
-      isEmpty: () => true,
-      toJPEG: () => Buffer.alloc(0),
-      getSize: () => ({ width: 0, height: 0 }),
-    })
     const res = await handleMediaThumb({ path: pngPath })
     expect(res.ok).toBe(true)
     if (!res.ok) return
@@ -304,5 +317,153 @@ describe('mediaThumbIpc.handleMediaThumb — video frames', () => {
     grabVideoFrameMock.mockResolvedValue(await jpeg(32))
     const res = await handleMediaThumb({ path: bigVideo })
     expect(res.ok).toBe(true)
+  })
+})
+
+// 聊天里一次挂几百张本地生成图时,渲染层会一次发几百个 media:thumb。
+// 这里锁住:限并发(别把主进程事件循环占住)、在途合并、成功结果缓存、失败不缓存。
+describe('mediaThumbIpc.handleMediaThumb — 调度(限并发 / 合并 / 缓存)', () => {
+  async function undecodable(name: string, body = 'not decodable by sharp'): Promise<string> {
+    const p = path.join(tmpDir, name)
+    await fs.writeFile(p, Buffer.from(body))
+    return p
+  }
+
+  async function nativeOk(): Promise<{
+    isEmpty: () => boolean
+    toJPEG: () => Buffer
+    getSize: () => { width: number; height: number }
+  }> {
+    const buf = await sharp({
+      create: { width: 8, height: 8, channels: 3, background: { r: 9, g: 9, b: 9 } },
+    })
+      .jpeg()
+      .toBuffer()
+    return { isEmpty: () => false, toJPEG: () => buf, getSize: () => ({ width: 8, height: 8 }) }
+  }
+
+  beforeEach(async () => {
+    const { resetThumbCacheForTest } = await import('../mediaThumbIpc')
+    resetThumbCacheForTest()
+  })
+
+  it('同时在生成的数量不超过 THUMB_CONCURRENCY,其余排队(但确实并行)', async () => {
+    const { handleMediaThumb, THUMB_CONCURRENCY } = await import('../mediaThumbIpc')
+    let running = 0
+    let peak = 0
+    const img = await nativeOk()
+    nativeImageThumbMock.mockImplementation(async () => {
+      running += 1
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 20))
+      running -= 1
+      return img
+    })
+    const files = await Promise.all(Array.from({ length: 12 }, (_, i) => undecodable(`w${i}.png`, `body ${i}`)))
+    const results = await Promise.all(files.map((f) => handleMediaThumb({ path: f })))
+    expect(results.every((r) => r.ok)).toBe(true)
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(12)
+    // 常量本身也钉住范围:光比较 peak ≤ 常量,常量被改成 1000 时测试照样绿。
+    expect(THUMB_CONCURRENCY).toBeGreaterThanOrEqual(2)
+    expect(THUMB_CONCURRENCY).toBeLessThanOrEqual(8)
+    expect(peak).toBeLessThanOrEqual(THUMB_CONCURRENCY)
+    expect(peak).toBeGreaterThanOrEqual(2)
+  })
+
+  it('同一张图的并发请求合并成一次生成', async () => {
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    const img = await nativeOk()
+    let release: () => void = () => {}
+    nativeImageThumbMock.mockImplementation(
+      () => new Promise((r) => (release = () => r(img))),
+    )
+    const f = await undecodable('same.png')
+    const a = handleMediaThumb({ path: f })
+    const b = handleMediaThumb({ path: f })
+    // 让两次请求都走到「在途」之后再放行。
+    await new Promise((r) => setTimeout(r, 50))
+    release()
+    const [ra, rb] = await Promise.all([a, b])
+    expect(ra.ok && rb.ok).toBe(true)
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('成功的结果被缓存:重复请求不再生成', async () => {
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    nativeImageThumbMock.mockResolvedValue(await nativeOk())
+    const f = await undecodable('cached.png')
+    const first = await handleMediaThumb({ path: f, size: 64 })
+    const second = await handleMediaThumb({ path: f, size: 64 })
+    expect(first.ok && second.ok).toBe(true)
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(1)
+    if (first.ok && second.ok) expect(second.base64).toBe(first.base64)
+  })
+
+  it('文件变了(大小 / 修改时间)缓存自动失效;换个尺寸也是另一条', async () => {
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    nativeImageThumbMock.mockResolvedValue(await nativeOk())
+    const f = await undecodable('changing.png', 'v1')
+    await handleMediaThumb({ path: f, size: 64 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(1)
+    await handleMediaThumb({ path: f, size: 128 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(2)
+    await fs.writeFile(f, 'version two is longer')
+    await handleMediaThumb({ path: f, size: 64 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('缓存键里「大小」与「修改时间」各自独立生效:只变其一也要重新生成', async () => {
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    nativeImageThumbMock.mockResolvedValue(await nativeOk())
+
+    // 大小相同、内容不同、修改时间变了(别的工具原地覆盖了同尺寸的图)
+    const a = await undecodable('same-size.png', 'AAAA')
+    await handleMediaThumb({ path: a, size: 64 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(1)
+    await fs.writeFile(a, 'BBBB')
+    const later = new Date(Date.now() + 60_000)
+    await fs.utimes(a, later, later)
+    await handleMediaThumb({ path: a, size: 64 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(2)
+
+    // 修改时间被还原成一样、大小变了(时间戳被保留的覆盖,比如复制 / 解压工具)
+    const b = await undecodable('same-mtime.png', 'AAAA')
+    const stamp = new Date(Date.now() - 3_600_000)
+    await fs.utimes(b, stamp, stamp)
+    await handleMediaThumb({ path: b, size: 64 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(3)
+    await fs.writeFile(b, 'AAAAAAAA')
+    await fs.utimes(b, stamp, stamp)
+    await handleMediaThumb({ path: b, size: 64 })
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('失败不缓存:文件稍后能读了要能重试成功', async () => {
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    const f = await undecodable('flaky.png')
+    nativeImageThumbMock.mockRejectedValueOnce(new Error('still being written'))
+    const first = await handleMediaThumb({ path: f })
+    expect(first.ok).toBe(false)
+    nativeImageThumbMock.mockResolvedValueOnce(await nativeOk())
+    const second = await handleMediaThumb({ path: f })
+    expect(second.ok).toBe(true)
+    expect(nativeImageThumbMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('视频同样走缓存:第二次不再启动 ffmpeg', async () => {
+    const { handleMediaThumb } = await import('../mediaThumbIpc')
+    nativeImageThumbMock.mockRejectedValue(new Error('no thumbnail provider'))
+    const frame = await sharp({
+      create: { width: 16, height: 16, channels: 3, background: { r: 1, g: 1, b: 1 } },
+    })
+      .jpeg()
+      .toBuffer()
+    grabVideoFrameMock.mockReset()
+    grabVideoFrameMock.mockResolvedValue(frame)
+    const v = path.join(tmpDir, 'again.mp4')
+    await fs.writeFile(v, Buffer.from('video bytes'))
+    await handleMediaThumb({ path: v, size: 64 })
+    await handleMediaThumb({ path: v, size: 64 })
+    expect(grabVideoFrameMock).toHaveBeenCalledTimes(1)
   })
 })
