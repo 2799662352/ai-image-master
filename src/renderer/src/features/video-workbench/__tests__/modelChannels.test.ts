@@ -133,15 +133,23 @@ describe('modelHint(每个模型下面那一行小字,读能力表)', () => {
   })
 
   /**
-   * 与火山 2.5 的唯一差别就是没有「样片」 —— 网关(new-api #203)在预扣前拒 draft。
-   * 说明里写了「样片」而卡片上没有开关,就是自相矛盾。
+   * 网关 2026-11-18 起透传样片(new-api #206/#207/#209),cn-2.5 与火山 2.5 同规格同能力,
+   * 说明里写「样片」与卡片上的开关一致。2.0 三档上游仍拒 draft(mini 实测 400),不写。
    *
-   * 🧬 变异点:把 `cn-seedance-2.5` 的 `draft` 改回 true,这条必红。
+   * 🧬 变异点:把 `cn-seedance-2.5` 的 `draft` 改回 false,第一条必红;
+   * 把 `cn-seedance-2.0-mini` 的 `draft` 改成 true,第二条必红。
    */
-  it('Roneyun-cn 的 2.5:与火山 2.5 同规格,但不写「样片」', () => {
+  it('Roneyun-cn 的 2.5:与火山 2.5 同规格,也写「样片」', () => {
+    expect(modelHint('cn-seedance-2.5', 'platform')).toBe(modelHint('2.5', 'platform'))
     expect(modelHint('cn-seedance-2.5', 'platform')).toBe(
-      '4–30 秒 · 最高 4k · 参考 30 图 / 10 视频 / 10 音频 · 可编辑 / 延长',
+      '4–30 秒 · 最高 4k · 参考 30 图 / 10 视频 / 10 音频 · 可编辑 / 延长 · 样片',
     )
+  })
+
+  it('Roneyun-cn 的 2.0 三档:不写「样片」(上游不收)', () => {
+    for (const m of ['cn-seedance-2.0', 'cn-seedance-2.0-fast', 'cn-seedance-2.0-mini'] as const) {
+      expect(modelHint(m, 'platform'), m).not.toContain('样片')
+    }
   })
 
   it('2.0 家族:没有「可编辑 / 延长」(那是 taskMode,2.0 不认)', () => {

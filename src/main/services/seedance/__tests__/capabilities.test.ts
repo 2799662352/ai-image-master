@@ -370,10 +370,11 @@ describe('深度捕捉 depth 能力', () => {
  * Roneyun-cn 渠道(`cn-seedance-*`)—— Seedance 的第二条线路,经 Miau 网关(2026-11-17)。
  *
  * 起点是用户的话:「这个渠道所有能力和我们自己的火山渠道一样」;素材这一件刻意不同:
- * 「不需要管人像库…只发公网 url」。网关(new-api #203)又在预扣前拒掉样片与联网搜索
- * (2026-11-17 用真 key 对生产各发一次,都是 400)。所以这里钉的是**关系**而不是一组数字 ——
- * 「与火山同名模型逐字段相同,只差五项」。以后火山那行改了而这行没跟上、或者有人顺手把
- * 这条渠道的某个字段改了,这里会点名是哪一个模型的哪一个字段。
+ * 「不需要管人像库…只发公网 url」。网关(new-api #203)曾在预扣前拒掉样片与联网搜索
+ * (2026-11-17 用真 key 对生产各发一次,都是 400),2026-11-18 起放开(#205 / #207 / #209),
+ * 样片 / 联网这两项于是回到「与火山同名行一致」。所以这里钉的是**关系**而不是一组数字 ——
+ * 「与火山同名模型逐字段相同,只差渠道 / 素材策略 / 只发公网链接三项」。以后火山那行改了而这行
+ * 没跟上、或者有人顺手把这条渠道的某个字段改了,这里会点名是哪一个模型的哪一个字段。
  */
 describe('Roneyun-cn 渠道(cn-seedance-*)', () => {
   const PAIRS = [
@@ -384,26 +385,20 @@ describe('Roneyun-cn 渠道(cn-seedance-*)', () => {
   ] as const
 
   /** 两条渠道之间**有意不同**的字段。 */
-  const DIFFERING = ['channel', 'assetRefs', 'publicUrlMediaOnly', 'draft', 'webSearch'] as const
+  const DIFFERING = ['channel', 'assetRefs', 'publicUrlMediaOnly'] as const
   const withoutDiffering = (caps: ReturnType<typeof capabilitiesFor>) => {
     const copy: Record<string, unknown> = { ...caps }
     for (const key of DIFFERING) delete copy[key]
     return copy
   }
 
-  it('逐字段等于火山同名模型,只差渠道 / 素材策略 / 只发公网链接 / 没有样片 / 没有联网搜索五项', () => {
+  it('逐字段等于火山同名模型(含样片 / 联网),只差渠道 / 素材策略 / 只发公网链接三项', () => {
     for (const [cn, volc] of PAIRS) {
       expect(withoutDiffering(capabilitiesFor(cn)), `${cn} 应与 ${volc} 逐字段相同`).toEqual(
         withoutDiffering(capabilitiesFor(volc)),
       )
       const caps = capabilitiesFor(cn)
-      expect([caps.channel, caps.assetRefs, caps.publicUrlMediaOnly, caps.draft, caps.webSearch], cn).toEqual([
-        'roneyun-cn',
-        'public-url',
-        true,
-        false,
-        false,
-      ])
+      expect([caps.channel, caps.assetRefs, caps.publicUrlMediaOnly], cn).toEqual(['roneyun-cn', 'public-url', true])
       expect(capabilitiesFor(volc).channel, volc).toBe('volcengine')
       expect(capabilitiesFor(volc).assetRefs, volc).toBe('library')
       expect(capabilitiesFor(volc).publicUrlMediaOnly, volc).toBe(false)
@@ -411,25 +406,27 @@ describe('Roneyun-cn 渠道(cn-seedance-*)', () => {
   })
 
   /**
-   * 🧬 变异点:把任一 `cn-seedance-*` 的 `draft` 改成 true,这条必红。
-   * 网关在预扣前就 400「Roneyun Tokenhub 渠道不支持样片(draft)」—— 界面开着样片开关,
-   * 用户点下去换来的是一个失败。
+   * 🧬 变异点:把 `cn-seedance-2.0` / `-2.0-fast` / `-2.0-mini` 任一个的 `draft` 改成 true,或把
+   * `cn-seedance-2.5` 的改回 false,这条必红。
+   * 样片是 2.5 独有的:2.0-mini 带 draft 上游回 400「draft is not supported」(2026-11-18 实测),
+   * 界面开着样片开关,用户点下去换来的是一个失败;反过来 cn-2.5 关掉样片就是把已修好的链路藏起来。
    */
-  it('样片只有火山 2.5;Roneyun-cn 的 2.5 也没有', () => {
+  it('样片只有 2.5 家族:火山 2.5 与 Roneyun-cn 的 2.5,其余(含 Flash、cn 的 2.0 三档)都没有', () => {
     const withDraft = (Object.keys(SEEDANCE_MODEL_CAPABILITIES) as VideoModelAlias[]).filter((alias) =>
       supportsSeedanceDraft(alias),
     )
-    expect(withDraft).toEqual(['2.5'])
-    expect(supportsSeedanceDraft('cn-seedance-2.5')).toBe(false)
+    expect(withDraft).toEqual(['2.5', 'cn-seedance-2.5'])
+    expect(supportsSeedanceDraft('cn-seedance-2.0-mini')).toBe(false)
     expect(supportsSeedanceDraft(undefined)).toBe(false)
   })
 
   /**
-   * 🧬 变异点:把任一 `cn-seedance-*` 的 `webSearch` 改回 true,这条必红。
-   * 卡片的联网开关默认是开的,留着 true 就是这条渠道的每次默认提交都带 `tools`、被网关 400。
+   * 🧬 变异点:把任一 `cn-seedance-*` 的 `webSearch` 改回 false,这条必红。
+   * 2026-11-18 起网关原样透传 `metadata.tools`;关着就是把一个能用的开关藏起来,
+   * 而且卡片 / agent 的联网搜索默认值会被这行静默丢掉。
    */
-  it('联网搜索:Roneyun-cn 四个模型都没有(网关拒 tools)', () => {
-    for (const [cn] of PAIRS) expect(capabilitiesFor(cn).webSearch, cn).toBe(false)
+  it('联网搜索:Roneyun-cn 四个模型都有(网关 2026-11-18 起放开 tools)', () => {
+    for (const [cn] of PAIRS) expect(capabilitiesFor(cn).webSearch, cn).toBe(true)
   })
 
   it('素材策略:走人像库的只有火山方舟,换公网地址的只有 Roneyun-cn,其余都不认 asset://', () => {

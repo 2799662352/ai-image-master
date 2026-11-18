@@ -682,10 +682,16 @@ export class SeedanceTaskManager {
       // 网关之后那一跳的任务号(火山 `cgt-…`):第一轮轮询就有。学到就随这一条
       // 广播带出去,不等成片 —— 用户找供应商对账多半正是在任务卡住的时候。
       // 挂到状态对象上之后每条广播自然都带着,所以只在「新学到」时才当成变化。
-      const learnedUpstream =
-        result.upstreamTaskId && result.upstreamTaskId !== task.upstreamTaskId
+      // Roneyun-cn 还有再下一层的火山 `cgt-…`(`providerTaskId`):创建时没有,跑起来后某一轮才带,
+      // 同样「新学到才算变化」。一条不带它的轮询不会把已记下的号抹掉(挂在状态对象上,只增不减)。
+      const learnedUpstream = {
+        ...(result.upstreamTaskId && result.upstreamTaskId !== task.upstreamTaskId
           ? { upstreamTaskId: result.upstreamTaskId }
-          : {}
+          : {}),
+        ...(result.providerTaskId && result.providerTaskId !== task.providerTaskId
+          ? { providerTaskId: result.providerTaskId }
+          : {}),
+      }
 
       if (result.status === 'failed') {
         const err = result.error
@@ -727,7 +733,7 @@ export class SeedanceTaskManager {
       }
 
       // queued / running：仅在状态切换（或刚学到上游任务号）时广播，避免每 6s 刷一次噪音。
-      if (result.status !== task.status || learnedUpstream.upstreamTaskId) {
+      if (result.status !== task.status || learnedUpstream.upstreamTaskId || learnedUpstream.providerTaskId) {
         this.update(taskId, { status: result.status, ...learnedUpstream })
       }
     }

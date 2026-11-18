@@ -246,6 +246,79 @@ describe('upstream_task_id(网关之后那一跳的任务号)', () => {
   })
 })
 
+/**
+ * Roneyun-cn(new-api #209,2026-11-18):`metadata.upstream_task_id` 保持 Roneyun 自己的 `task_…`,
+ * 再往下一层的火山 `cgt-…` 单独放 `metadata.provider_task_id`,要等轮询到才有。
+ * 下面的完成响应形状来自 2026-11-18 对生产网关的真实查询(只换了 id / 地址):
+ * `metadata` 只有 `upstream_task_id` 与 `url` 两个键 —— 那条是 #207 / #209 部署前完成的任务,
+ * 所以**没有** provider_task_id;带 provider_task_id 的形状按 #209 的单测与 PR 说明构造。
+ */
+describe('provider_task_id(Roneyun 再往下一层的火山 cgt- 号)', () => {
+  const COMPLETED_BEFORE_209 = {
+    id: 'task_pub1',
+    task_id: 'task_pub1',
+    object: 'video',
+    model: 'cn-seedance-2.5',
+    status: 'completed',
+    progress: 100,
+    metadata: { upstream_task_id: 'task_eec4691011504588b98fcf3f728d3010', url: URL_A },
+  }
+
+  it('带 provider_task_id:与 upstream_task_id 各取各的,互不覆盖', () => {
+    const r = parseSeedanceGatewayTaskResult({
+      ...COMPLETED_BEFORE_209,
+      metadata: { ...COMPLETED_BEFORE_209.metadata, provider_task_id: 'cgt-20261118101131-i5x3m' },
+    })
+    expect(r.upstreamTaskId).toBe('task_eec4691011504588b98fcf3f728d3010')
+    expect(r.providerTaskId).toBe('cgt-20261118101131-i5x3m')
+    expect(r.status).toBe('succeeded')
+  })
+
+  it('#209 部署前完成的任务(metadata 里没有它):键完全不出现', () => {
+    const r = parseSeedanceGatewayTaskResult(COMPLETED_BEFORE_209)
+    expect(r.upstreamTaskId).toBe('task_eec4691011504588b98fcf3f728d3010')
+    expect(Object.hasOwn(r, 'providerTaskId')).toBe(false)
+  })
+
+  it('包在 data 里 / 顶层直给 / 驼峰 都认', () => {
+    expect(
+      parseSeedanceGatewayTaskResult({
+        data: { task_id: 'task_x', status: 'running', metadata: { provider_task_id: 'cgt-a' } },
+      }).providerTaskId,
+    ).toBe('cgt-a')
+    expect(
+      parseSeedanceGatewayTaskResult({ task_id: 'task_x', status: 'running', provider_task_id: 'cgt-b' }).providerTaskId,
+    ).toBe('cgt-b')
+    expect(
+      parseSeedanceGatewayTaskResult({ task_id: 'task_x', status: 'running', metadata: { providerTaskId: 'cgt-c' } })
+        .providerTaskId,
+    ).toBe('cgt-c')
+  })
+
+  it('空串 / 非字符串:键完全不出现', () => {
+    for (const metadata of [undefined, {}, { provider_task_id: '' }, { provider_task_id: 42 }]) {
+      const r = parseSeedanceGatewayTaskResult({ task_id: 'task_x', status: 'running', metadata })
+      expect(Object.hasOwn(r, 'providerTaskId')).toBe(false)
+    }
+  })
+
+  it('与网关自己的 task_id 或上游任务号相同就不重复给(那不是另一层)', () => {
+    const sameAsGateway = parseSeedanceGatewayTaskResult({
+      task_id: 'task_x',
+      status: 'running',
+      metadata: { provider_task_id: 'task_x' },
+    })
+    expect(Object.hasOwn(sameAsGateway, 'providerTaskId')).toBe(false)
+    const sameAsUpstream = parseSeedanceGatewayTaskResult({
+      task_id: 'task_x',
+      status: 'running',
+      metadata: { upstream_task_id: 'cgt-same', provider_task_id: 'cgt-same' },
+    })
+    expect(sameAsUpstream.upstreamTaskId).toBe('cgt-same')
+    expect(Object.hasOwn(sameAsUpstream, 'providerTaskId')).toBe(false)
+  })
+})
+
 describe('畸形输入不炸', () => {
   it('null / 字符串 / 数组都退化成一个 running 的空结果', () => {
     for (const raw of [null, undefined, 'oops', 42, []]) {

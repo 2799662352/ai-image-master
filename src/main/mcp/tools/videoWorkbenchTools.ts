@@ -84,8 +84,8 @@ const cardInputSchema = z.object({
     + 'Seedance models on a second channel (Roneyun-cn); modes, durations, resolutions, materials and edit/extend '
     + 'follow "2.0" / "2.0-fast" / "2.0-mini" / "2.5" respectively. Differences: the channel takes PUBLIC URLs only '
     + '(nothing goes into the portrait library; an asset:// reference is replaced by that asset\'s public URL at '
-    + 'submit, and the card fails without submitting if it has none), and it has NO draft (样片) and NO web '
-    + 'search — the gateway rejects both. Pick them ONLY when the user asks for the Roneyun-cn / "cn" channel '
+    + 'submit, and the card fails without submitting if it has none); draft (样片) exists only on "cn-seedance-2.5", '
+    + 'exactly as on "2.5". Pick them ONLY when the user asks for the Roneyun-cn / "cn" channel '
     + 'or the board already uses it. '
     + '"wan3" = 阿里万相 3.0 (All-in-One): 2–30s or smart duration, 10/5/5 materials, 480P/720P/1080P, '
     + 'accepts one document or web link as reference, billed per second (¥) instead of per token. '
@@ -129,9 +129,9 @@ const cardInputSchema = z.object({
     + 'length follows the video being edited. extend_video is NOT affected; its seconds are real.',
   ),
   generateAudio: z.boolean().optional().describe('Generate soundtrack. Default true.'),
-  webSearch: z.boolean().optional().describe('Enable web search for the render. Default true. Seedance only (ignored by wan3 / kling / cn-seedance-*).'),
+  webSearch: z.boolean().optional().describe('Enable web search for the render. Default true. Seedance only (ignored by wan3 / kling).'),
   draft: z.boolean().optional().describe(
-    '样片 mode — model "2.5" (NOT "2.5-flash", NOT "cn-seedance-*") + platform balance only. true = the card renders a cheap 480p draft (billed as '
+    '样片 mode — model "2.5" or "cn-seedance-2.5" (NOT "2.5-flash", NOT the other cn-seedance-*) + platform balance only. true = the card renders a cheap 480p draft (billed as '
     + '480p) instead of the full render; once it succeeds, call video_workbench_finalize_draft to turn it into '
     + 'the 1080p final (valid 7 days, reuses the draft\'s prompt/materials/duration/ratio/seed/audio). Default false.',
   ),

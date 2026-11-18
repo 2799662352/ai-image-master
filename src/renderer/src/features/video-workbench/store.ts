@@ -876,6 +876,7 @@ type SetState = (
 const CLEARED_RUN_RESULT = {
   taskId: undefined,
   upstreamTaskId: undefined,
+  providerTaskId: undefined,
   submittedReferences: undefined,
   videoUrl: undefined,
   error: undefined,
@@ -1049,6 +1050,7 @@ function archiveVersion(card: VideoWorkbenchCard): VideoWorkbenchVersion[] {
       createdAt: Date.now(),
       ...(card.taskId ? { taskId: card.taskId } : {}),
       ...(card.upstreamTaskId ? { upstreamTaskId: card.upstreamTaskId } : {}),
+      ...(card.providerTaskId ? { providerTaskId: card.providerTaskId } : {}),
       ...(card.submittedReferences ? { submittedReferences: card.submittedReferences } : {}),
       ...(card.localPath ? { localPath: card.localPath } : {}),
       ...(card.remoteUrl ? { remoteUrl: card.remoteUrl } : {}),
@@ -2496,6 +2498,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
             draftFinalResolution: undefined,
             taskId: undefined,
             upstreamTaskId: undefined,
+            providerTaskId: undefined,
             submittedReferences: undefined,
             videoUrl: undefined,
             error: undefined,
@@ -2744,6 +2747,8 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
           // 主进程一学到就每条广播都带;这里仍按「有才写」,一条不带它的迟到广播
           // 不该把已经记下的号抹掉。
           ...(update.upstreamTaskId ? { upstreamTaskId: update.upstreamTaskId } : {}),
+          // Roneyun-cn 的火山 cgt- 号:同样只在带了才写,晚一轮才到、之后缺字段的广播也不抹它。
+          ...(update.providerTaskId ? { providerTaskId: update.providerTaskId } : {}),
           ...(update.referenceUrls ? { submittedReferences: update.referenceUrls } : {}),
           ...(update.videoUrl ? { videoUrl: update.videoUrl } : {}),
           ...(update.localPath ? { localPath: update.localPath } : {}),

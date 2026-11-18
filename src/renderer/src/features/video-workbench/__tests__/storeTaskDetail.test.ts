@@ -83,6 +83,58 @@ describe('upstreamTaskId 落到卡片', () => {
   })
 })
 
+/**
+ * `providerTaskId`:Roneyun-cn 再往下一层的火山 cgt- 号(网关 `metadata.provider_task_id`)。
+ * 与 upstreamTaskId 同一待遇(结果不是意图),但它到得晚 —— 创建时没有,跑起来后某一轮才带,
+ * 所以「晚到」「之后缺字段」「重新生成」三种走向都要钉。
+ *
+ * 🧬 变异点:去掉 applyTaskUpdate 里的 providerTaskId 展开 / archiveVersion 里的 /
+ * CLEARED_RUN_RESULT 与提交重置里的,各自让对应一条红。
+ */
+describe('providerTaskId 落到卡片', () => {
+  const CGT = 'cgt-20261118101131-i5x3m'
+
+  it('晚一轮才到:先有 upstreamTaskId,后到的 providerTaskId 写进卡片且不覆盖前者;再来不带它的广播不抹掉', async () => {
+    const clientId = await submitOneCard()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'queued', upstreamTaskId: 'task_up1' }))
+    expect(card().providerTaskId).toBeUndefined()
+
+    useVideoWorkbenchStore
+      .getState()
+      .applyTaskUpdate(makeUpdate({ clientId, status: 'running', upstreamTaskId: 'task_up1', providerTaskId: CGT }))
+    expect(card().upstreamTaskId).toBe('task_up1')
+    expect(card().providerTaskId).toBe(CGT)
+
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'running' }))
+    expect(card().providerTaskId).toBe(CGT)
+  })
+
+  it('没有火山那一层的渠道:卡上保持 undefined', async () => {
+    const clientId = await submitOneCard()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'running', upstreamTaskId: UPSTREAM }))
+    expect(card().providerTaskId).toBeUndefined()
+  })
+
+  it('是结果不是意图:不改变 specEquals', async () => {
+    const clientId = await submitOneCard()
+    const before = card()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(makeUpdate({ clientId, status: 'running', providerTaskId: CGT }))
+    expect(specEquals(before, card())).toBe(true)
+  })
+
+  it('成功那一轮的版本存档记下它;重新生成清掉卡上的,版本里的保留', async () => {
+    const clientId = await submitOneCard()
+    useVideoWorkbenchStore.getState().applyTaskUpdate(
+      makeUpdate({ clientId, status: 'succeeded', localPath: 'C:/v1.mp4', persistence: 'done', upstreamTaskId: 'task_up1', providerTaskId: CGT }),
+    )
+    expect(card().versions?.[0]).toMatchObject({ seq: 1, upstreamTaskId: 'task_up1', providerTaskId: CGT })
+
+    await useVideoWorkbenchStore.getState().startCards([card().id])
+    expect(card().providerTaskId).toBeUndefined()
+    expect(card().versions?.[0].providerTaskId).toBe(CGT)
+  })
+})
+
 describe('submittedReferences(这一轮实际递给上游的素材地址)', () => {
   const REFS = { images: ['https://cos/a.png', 'https://cos/b.png'], videos: [], audios: [] }
 

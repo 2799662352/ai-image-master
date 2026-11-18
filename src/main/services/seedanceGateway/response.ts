@@ -35,6 +35,8 @@ export interface SeedanceGatewayTaskResult {
   error?: { code?: string; message?: string }
   /** 见 `SeedanceQueryResult.upstreamTaskId`:网关之后那一跳(火山 `cgt-…`)的任务号。 */
   upstreamTaskId?: string
+  /** 见 `SeedanceQueryResult.providerTaskId`:Roneyun 再往下一层的火山 `cgt-…` 任务号。 */
+  providerTaskId?: string
 }
 
 const STATUS_BY_UPSTREAM: Record<string, SeedanceTaskStatus> = {
@@ -179,6 +181,31 @@ function findUpstreamTaskId(body: Record<string, unknown>, record: Record<string
   return undefined
 }
 
+const PROVIDER_TASK_ID_KEYS = ['provider_task_id', 'providerTaskId'] as const
+
+/**
+ * 外部任务号:Roneyun 渠道在上游任务号(`task_…`)**之下**还有一层火山 `cgt-…`。创建任务时
+ * 只回 `task_…`,`cgt-…` 要等网关轮询到才有,网关(new-api #209,2026-11-18)把它单独放进
+ * `metadata.provider_task_id`,**不**再覆盖 `metadata.upstream_task_id`。其它渠道没有这个键。
+ * 与网关自己的 `id` 或上游任务号相同的不给 —— 那不是另一层,给了只会在界面上重复一行。
+ */
+function findProviderTaskId(
+  body: Record<string, unknown>,
+  record: Record<string, unknown>,
+  id: string,
+  upstreamTaskId: string | undefined,
+): string | undefined {
+  const inner = asRecord(record.data)
+  const containers = [asRecord(record.metadata), asRecord(inner.metadata), record, inner, body]
+  for (const container of containers) {
+    for (const key of PROVIDER_TASK_ID_KEYS) {
+      const value = asString(container[key])
+      if (value) return value === id || value === upstreamTaskId ? undefined : value
+    }
+  }
+  return undefined
+}
+
 /**
  * 查询接口把任务记录包在 `data` 里；有的回形直接摊在顶层。用「只有任务记录才有」
  * 的字段识别,免得把某个上游的 `output` 误当成网关信封。
@@ -232,6 +259,7 @@ export function parseSeedanceGatewayTaskResult(raw: unknown): SeedanceGatewayTas
     asString(body.message)
 
   const upstreamTaskId = findUpstreamTaskId(body, record, id)
+  const providerTaskId = findProviderTaskId(body, record, id, upstreamTaskId)
 
   return {
     id,
@@ -239,5 +267,6 @@ export function parseSeedanceGatewayTaskResult(raw: unknown): SeedanceGatewayTas
     ...(videoUrl ? { content: { video_url: videoUrl } } : {}),
     ...(code || message ? { error: { ...(code ? { code } : {}), ...(message ? { message } : {}) } } : {}),
     ...(upstreamTaskId ? { upstreamTaskId } : {}),
+    ...(providerTaskId ? { providerTaskId } : {}),
   }
 }

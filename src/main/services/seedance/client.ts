@@ -27,6 +27,12 @@ export interface SeedanceQueryResult {
    * 第一轮轮询就有,不必等成片。
    */
   upstreamTaskId?: string
+  /**
+   * 再往下一层的外部任务号:Roneyun-cn 渠道的火山 `cgt-…`(网关 `metadata.provider_task_id`)。
+   * `upstreamTaskId` 在这条渠道上是 Roneyun 自己的 `task_…`,找火山对账用的是这个。
+   * 创建时没有,任务跑起来后某一轮轮询才带上;其它渠道永远没有。
+   */
+  providerTaskId?: string
   error?: { code?: string; message?: string }
 }
 

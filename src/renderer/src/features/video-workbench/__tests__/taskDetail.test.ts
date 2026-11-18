@@ -89,6 +89,92 @@ describe('标识区', () => {
   })
 })
 
+/**
+ * Roneyun-cn 再往下一层的火山 `cgt-…` 号(网关 new-api #209,2026-11-18:`metadata.provider_task_id`)。
+ * 「上游任务 ID」那一行在这条渠道上是 Roneyun 自己的 `task_…`,找火山对账要的是这一行。
+ */
+describe('火山任务 ID(providerTaskId)', () => {
+  const CGT = 'cgt-20261118101131-i5x3m'
+  const cn = (patch: Partial<VideoWorkbenchCard> = {}) =>
+    card({ model: 'cn-seedance-2.5', status: 'running', taskId: 'task_cn', upstreamTaskId: 'task_eec4691', billing: 'platform', ...patch })
+  const idKeys = (d: TaskDetail) => d.sections.find((s) => s.key === 'ids')!.fields.map((f) => f.key)
+
+  /**
+   * 🧬 变异点:去掉 `idFields` 里的 `...(provider ? [provider] : [])`,这条必红;
+   * 把 providerField 里的 `copy: true` 去掉,这条也红。
+   */
+  it('Roneyun-cn 卡带了火山号:紧跟在「上游任务 ID」后面,可复制,提示指向火山', () => {
+    const d = buildTaskDetail(cn({ providerTaskId: CGT }), { index: 0 })
+    expect(field(d, 'providerTaskId')).toMatchObject({ value: CGT, copy: true })
+    expect(field(d, 'providerTaskId').hint).toMatch(/火山/)
+    expect(field(d, 'upstreamTaskId').value).toBe('task_eec4691') // 不被覆盖
+    const keys = idKeys(d)
+    expect(keys.indexOf('providerTaskId')).toBe(keys.indexOf('upstreamTaskId') + 1)
+  })
+
+  it('Roneyun-cn 卡已提交、火山号还没到:标 missing 说明缺在哪,不拿 task_ 冒充,不给复制', () => {
+    const d = buildTaskDetail(cn(), { index: 0 })
+    expect(field(d, 'providerTaskId')).toMatchObject({ missing: true })
+    expect(field(d, 'providerTaskId').value).toMatch(/尚未/)
+    expect(field(d, 'providerTaskId').copy).toBeFalsy()
+    expect(field(d, 'providerTaskId').value).not.toContain('task_')
+  })
+
+  it('Roneyun-cn 卡还没提交到上游:不多出这一行', () => {
+    const d = buildTaskDetail(cn({ status: 'failed', error: '素材上传失败', taskId: undefined, upstreamTaskId: undefined }), { index: 0 })
+    expect(idKeys(d)).not.toContain('providerTaskId')
+  })
+
+  /**
+   * 🧬 变异点:把 `hasProviderLayer` 改成恒真,火山 / 万相 / 可灵的卡就会凭空多一行「渠道尚未回传」。
+   */
+  it('没有火山那一层的渠道(火山直出 / 万相 / 可灵)不多这一行', () => {
+    for (const model of ['2.5', '2.0', 'wan3', 'kling4'] as const) {
+      const d = buildTaskDetail(card({ model, status: 'running', taskId: 'task_x', upstreamTaskId: 'up-1', billing: 'platform' }), { index: 0 })
+      expect(idKeys(d), model).not.toContain('providerTaskId')
+    }
+  })
+
+  it('「复制全部」的 JSON:有火山号才有 ids.providerTaskId;其它卡的 ids 与以前逐键相同', () => {
+    const withIt = JSON.parse(buildTaskDetail(cn({ providerTaskId: CGT }), { index: 0 }).json) as { ids: Record<string, unknown> }
+    expect(withIt.ids).toEqual({ taskId: 'task_cn', upstreamTaskId: 'task_eec4691', providerTaskId: CGT, clientId: null })
+    const without = JSON.parse(buildTaskDetail(cn(), { index: 0 }).json) as { ids: Record<string, unknown> }
+    expect(Object.keys(without.ids)).toEqual(['taskId', 'upstreamTaskId', 'clientId'])
+  })
+
+  describe('历史版本', () => {
+    const cnSpec = { ...specOf(), model: 'cn-seedance-2.5' as const }
+    const v1: VideoWorkbenchVersion = { id: 'v1', seq: 1, createdAt: T0, taskId: 't1', upstreamTaskId: 'task_a', providerTaskId: CGT, spec: cnSpec }
+    const v2: VideoWorkbenchVersion = { id: 'v2', seq: 2, createdAt: T0 + 60_000, taskId: 't2', upstreamTaskId: 'task_b', spec: cnSpec }
+    const two = (versions: VideoWorkbenchVersion[]) =>
+      cn({ status: 'succeeded', taskId: 't2', upstreamTaskId: 'task_b', providerTaskId: 'cgt-latest', versions })
+
+    it('指向更早的版本:取那一版存档里的火山号,不混卡片当前的', () => {
+      const d = buildTaskDetail(two([v1, v2]), { index: 0, now: T0, versionIdx: 0 })
+      expect(field(d, 'providerTaskId')).toMatchObject({ value: CGT, copy: true })
+      const parsed = JSON.parse(d.json) as { ids: Record<string, unknown> }
+      expect(parsed.ids).toEqual({ taskId: 't1', upstreamTaskId: 'task_a', providerTaskId: CGT, clientId: null })
+    })
+
+    it('那一版没记下火山号:标 missing,不拿卡片现在的号冒充', () => {
+      const d = buildTaskDetail(two([{ ...v1, providerTaskId: undefined }, v2]), { index: 0, now: T0, versionIdx: 0 })
+      expect(field(d, 'providerTaskId')).toMatchObject({ missing: true })
+      expect(field(d, 'providerTaskId').value).toMatch(/未记录/)
+      expect(field(d, 'providerTaskId').value).not.toContain('cgt-latest')
+    })
+
+    it('版本行与版本 JSON 带火山号;没有就不出现', () => {
+      const d = buildTaskDetail(two([v1, v2]), { index: 0, now: T0 })
+      const rows = d.sections.find((s) => s.key === 'versions')!.fields
+      expect(rows[0].value).toContain(`火山 ${CGT}`)
+      expect(rows[1].value).not.toContain('火山')
+      const parsed = JSON.parse(d.json) as { versions: Array<Record<string, unknown>> }
+      expect(parsed.versions[0]).toMatchObject({ providerTaskId: CGT })
+      expect(Object.hasOwn(parsed.versions[1], 'providerTaskId')).toBe(false)
+    })
+  })
+})
+
 describe('样片 / 成片的请求参数写实际发出去的分辨率', () => {
   it('样片 480p;成片 1080p(旧卡没有选档字段);样片升 4K 写 4k', () => {
     const base = { status: 'succeeded' as const, taskId: 'task_x', billing: 'platform' as const, resolution: '720p' as const }

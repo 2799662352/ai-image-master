@@ -4,8 +4,10 @@
  * 为什么要有这道:工作台卡片的联网开关默认是开的(`cardSpec` 缺省 true),`startCards` 只看
  * `card.webSearch` 就把 `webSearch: true` 放进提交载荷,能力表只决定「要不要显示那个开关」。
  * 万相 / 可灵各有自己的组包层,根本不读这个字段;但 Roneyun-cn 与火山走同一个 Seedance 网关组包,
- * 它会照发 `metadata.tools`,而 Roneyun-cn 的网关(new-api #203)在预扣前就 400「不支持联网搜索」
- * —— 不丢的话,这条渠道的每一次**默认**提交都会被拒(2026-11-17 用真 key 对生产实测)。
+ * 它会照发 `metadata.tools`。Roneyun-cn 的网关(new-api #203)曾在预扣前就 400「不支持联网搜索」
+ * (2026-11-17 用真 key 对生产实测)—— 那时不丢的话,这条渠道的每一次**默认**提交都会被拒;
+ * 2026-11-18 起网关放开,能力表四行改成联网,这道闸留着是为了「哪个渠道哪天又拒 tools」时
+ * 只改一个字段就能止血。
  *
  * runtime.ts 一 import 就要 electron,所以和 agentUhdGate.test.ts / billingWiring.test.ts 一样读源码断言形状。
  */
@@ -43,14 +45,17 @@ describe('工作台提交入口按能力表丢弃 webSearch', () => {
 describe('组包层:webSearch 缺席时一个字都不出现', () => {
   const base = { model: 'cn-seedance-2.0-mini', content: [{ type: 'text' as const, text: 'x' }] }
 
-  it('带 webSearch 才有 tools;没带 / false 都没有 —— 与能力表的 false 配合,Roneyun-cn 永远不会带 tools', () => {
+  it('带 webSearch 才有 tools;没带 / false 都没有', () => {
     expect(buildSeedanceGatewayCreateBody({ ...base, webSearch: true }).metadata.tools).toEqual([{ type: 'web_search' }])
     expect('tools' in buildSeedanceGatewayCreateBody(base).metadata).toBe(false)
     expect('tools' in buildSeedanceGatewayCreateBody({ ...base, webSearch: false }).metadata).toBe(false)
   })
 
-  it('Roneyun-cn 四个模型的能力表都是不联网', () => {
+  it('Roneyun-cn 四个模型的能力表都联网(2026-11-18 起网关放开);万相 / 可灵不联网,仍靠这道闸丢掉', () => {
     for (const alias of ['cn-seedance-2.0', 'cn-seedance-2.0-fast', 'cn-seedance-2.0-mini', 'cn-seedance-2.5'] as const) {
+      expect(capabilitiesFor(alias).webSearch, alias).toBe(true)
+    }
+    for (const alias of ['wan3', 'kling4', 'kling4-omni'] as const) {
       expect(capabilitiesFor(alias).webSearch, alias).toBe(false)
     }
   })

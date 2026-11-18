@@ -129,7 +129,7 @@ describe('面板结构', () => {
     const r = row(panel, 'cn-seedance-2.5')
     expect(r.querySelector('.vw-mp-opt__name')?.textContent).toBe('Seedance 2.5')
     expect(r.querySelector('.vw-mp-opt__desc')?.textContent).toBe(
-      '4–30 秒 · 最高 4k · 参考 30 图 / 10 视频 / 10 音频 · 可编辑 / 延长',
+      '4–30 秒 · 最高 4k · 参考 30 图 / 10 视频 / 10 音频 · 可编辑 / 延长 · 样片',
     )
     expect(r.getAttribute('title')).toBe('cn-seedance-2.5')
   })

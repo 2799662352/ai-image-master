@@ -210,6 +210,80 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  /**
+   * Roneyun-cn:`upstreamTaskId`(Roneyun 自己的 task_…)创建后第一轮就有,火山 `cgt-…`
+   * (`providerTaskId`)要跑起来后某一轮才带。两个号各自「新学到才广播」,互不覆盖;
+   * 之后一条不带它的轮询(中间态响应缺字段)不会把已记下的号抹掉。
+   *
+   * 🧬 变异点:把 `learnedUpstream` 里 providerTaskId 那段去掉,或把末尾广播条件里的
+   * `learnedUpstream.providerTaskId` 去掉,这条必红。
+   */
+  it('providerTaskId 晚一轮才学到:单独广播一次,不覆盖 upstreamTaskId,后续没带它也不丢', async () => {
+    const mgr = makeManager(
+      makeClient([
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1' },
+        // 状态没变、上游号没变,只是这一轮多了 cgt → 必须广播
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1', providerTaskId: 'cgt-20261118101131-i5x3m' },
+        // 下一轮响应没带 cgt(中间态缺字段):不广播,也不能把已记下的抹掉
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1' },
+        { id: 'task-1', status: 'succeeded', content: { video_url: 'https://cdn/v.mp4' }, upstreamTaskId: 'task_up1' },
+      ]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(2)
+    expect(broadcasts[1]).toMatchObject({ upstreamTaskId: 'task_up1' })
+    expect(Object.hasOwn(broadcasts[1], 'providerTaskId')).toBe(false)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(3)
+    expect(broadcasts[2]).toMatchObject({ upstreamTaskId: 'task_up1', providerTaskId: 'cgt-20261118101131-i5x3m' })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(3)
+    await vi.advanceTimersByTimeAsync(6_000)
+    const succeededBroadcast = broadcasts.find((b) => b.status === 'succeeded')
+    expect(succeededBroadcast).toMatchObject({ upstreamTaskId: 'task_up1', providerTaskId: 'cgt-20261118101131-i5x3m' })
+    expect(mgr.get('task-1')).toMatchObject({ upstreamTaskId: 'task_up1', providerTaskId: 'cgt-20261118101131-i5x3m' })
+    mgr.dispose()
+  })
+
+  /**
+   * 轮询每 6 秒一次,而 cgt 一旦到了,之后每一轮响应里都会带着同一个号。只有「新学到」才广播:
+   * 同一个号重复出现不能让每一轮都多广播一条(会把渲染端和落盘都白白刷一遍)。
+   *
+   * 🧬 变异点:把 `result.providerTaskId !== task.providerTaskId` 的「不同才算新」去掉,这条必红。
+   */
+  it('providerTaskId 同一个号每轮都带:只在第一次学到时广播,之后状态没变就不再广播', async () => {
+    const cgt = 'cgt-20261118101131-i5x3m'
+    const mgr = makeManager(
+      makeClient([
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1' },
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1', providerTaskId: cgt },
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1', providerTaskId: cgt },
+        { id: 'task-1', status: 'queued', upstreamTaskId: 'task_up1', providerTaskId: cgt },
+      ]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(3)
+    expect(broadcasts[2]).toMatchObject({ providerTaskId: cgt })
+    await vi.advanceTimersByTimeAsync(6_000)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(broadcasts).toHaveLength(3)
+    mgr.dispose()
+  })
+
+  it('非 Roneyun 渠道(查询结果不带 providerTaskId):状态与广播里都没有这个键', async () => {
+    const mgr = makeManager(
+      makeClient([{ id: 'task-1', status: 'queued', upstreamTaskId: 'cgt-20260903172200-5n7rt' }]),
+    )
+    await mgr.submit({ input: INPUT, content: [] })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(Object.hasOwn(broadcasts[1], 'providerTaskId')).toBe(false)
+    expect(Object.hasOwn(mgr.get('task-1')!, 'providerTaskId')).toBe(false)
+    mgr.dispose()
+  })
+
   it('submit 把实际递给上游的素材地址(已解析成 https)按类记进状态与每条广播', async () => {
     const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
     const state = await mgr.submit({
