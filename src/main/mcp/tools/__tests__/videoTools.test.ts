@@ -73,6 +73,51 @@ describe('registerVideoTools / schemas', () => {
     )
   })
 
+  /**
+   * Roneyun-cn 的 2.5 样片:成片必须发给样片所在的渠道。写死 `model:'2.5'` 的话,成片会按火山去找
+   * 一条 Roneyun 的样片,网关答 `task_origin_not_exist`。
+   *
+   * 🧬 变异点:把 `model === 'cn-seedance-2.5' ? … : '2.5'` 改回写死 '2.5',这条必红;
+   * 把条件改成「任何 model 原样转发」,下一条(拒绝别的模型)必红。
+   */
+  it('finalize_video_draft 带 model:cn-seedance-2.5 → 成片发给 cn-seedance-2.5;别的值一律按 2.5', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const call = vi.mocked(router.call)
+    call.mockImplementation(async (name: string) =>
+      name === 'generate_video'
+        ? { taskId: 'task_final', status: 'queued' }
+        : { found: true, task: { taskId: 'task_final', status: 'failed', error: 'x' } },
+    )
+    const finalize = tools.find((t) => t.name === 'finalize_video_draft')!
+    await finalize.handler({ taskId: 'task_cn_draft', model: 'cn-seedance-2.5' }, undefined)
+    expect(call).toHaveBeenCalledWith(
+      'generate_video',
+      { prompt: '由样片生成成片', model: 'cn-seedance-2.5', fromDraftTaskId: 'task_cn_draft' },
+      undefined,
+    )
+    call.mockClear()
+    await finalize.handler({ taskId: 'task_d2', model: '2.0' }, undefined)
+    expect(call).toHaveBeenCalledWith(
+      'generate_video',
+      { prompt: '由样片生成成片', model: '2.5', fromDraftTaskId: 'task_d2' },
+      undefined,
+    )
+  })
+
+  it('finalize_video_draft 的模型参数只收 2.5 与 cn-seedance-2.5(样片只有 2.5 家族有)', () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    const schema = tools.find((t) => t.name === 'finalize_video_draft')!.config.inputSchema as unknown as {
+      safeParse: (v: unknown) => { success: boolean }
+    }
+    expect(schema.safeParse({ taskId: 't', model: 'cn-seedance-2.5' }).success).toBe(true)
+    expect(schema.safeParse({ taskId: 't', model: '2.5' }).success).toBe(true)
+    expect(schema.safeParse({ taskId: 't' }).success).toBe(true)
+    expect(schema.safeParse({ taskId: 't', model: 'cn-seedance-2.0-mini' }).success).toBe(false)
+    expect(schema.safeParse({ taskId: 't', model: '2.5-flash' }).success).toBe(false)
+  })
+
   describe('4K 只能由用户本人二次确认,AI 的调用一律挡下', () => {
     it('generate_video 要 4K(任何模型)→ 不调主进程,回执写明要用户确认', async () => {
       const { tools, server, router } = capture()
@@ -118,7 +163,8 @@ describe('registerVideoTools / schemas', () => {
       const shape = (tools.find((t) => t.name === 'finalize_video_draft')!.config.inputSchema as unknown as {
         shape: Record<string, unknown>
       }).shape
-      expect(Object.keys(shape)).toEqual(['taskId'])
+      // `model` 只是在 2.5 / cn-seedance-2.5 之间选渠道,不是分辨率。
+      expect(Object.keys(shape)).toEqual(['taskId', 'model'])
     })
 
     it('finalize_video_draft 即使被塞了 finalResolution 也不转发给主进程', async () => {
@@ -149,20 +195,35 @@ describe('registerVideoTools / schemas', () => {
   })
 
   /**
-   * Roneyun-cn 的 2.5 同样不能出样片:网关(new-api #203)在预扣前就 400「不支持样片(draft)」。
-   * 在本机拦下,agent 才能拿到一句可操作的话,而不是一个网关错误。
+   * Roneyun-cn 的 2.0 三档没有样片(`cn-seedance-2.0-mini` 带 draft 上游回 400「draft is not supported」,
+   * 2026-11-18 实测),在本机拦下,agent 才能拿到一句可操作的话,而不是一个网关错误。
+   * `cn-seedance-2.5` 则与 2.5 一样放行(网关 2026-11-18 起透传 draft)。
    *
-   * 🧬 变异点:把能力表里 `cn-seedance-2.5` 的 `draft` 改回 true,这条必红。
+   * 🧬 变异点:把能力表里 `cn-seedance-2.0-mini` 的 `draft` 改成 true,第一条必红;
+   * 把 `cn-seedance-2.5` 的改回 false,第二条必红。
    */
-  it('generate_video 的 draft 不给 Roneyun-cn 的 2.5(网关不收样片)', async () => {
+  it('generate_video 的 draft 不给 Roneyun-cn 的 2.0 三档', async () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)
-    const res = await tools.find((t) => t.name === 'generate_video')!.handler(
+    for (const model of ['cn-seedance-2.0', 'cn-seedance-2.0-fast', 'cn-seedance-2.0-mini']) {
+      const res = await tools.find((t) => t.name === 'generate_video')!.handler(
+        { prompt: 'x', model, draft: true },
+        undefined,
+      )
+      expect(JSON.stringify(res), model).toContain('Seedance \\"2.5\\" only')
+    }
+    expect(router.call).not.toHaveBeenCalled()
+  })
+
+  it('generate_video 的 draft 放行 Roneyun-cn 的 2.5(与 2.5 一致)', async () => {
+    const { tools, server, router } = capture()
+    registerVideoTools(server, router)
+    router.call.mockResolvedValue({ taskId: 'task_cn_d', status: 'queued' })
+    await tools.find((t) => t.name === 'generate_video')!.handler(
       { prompt: 'x', model: 'cn-seedance-2.5', draft: true },
       undefined,
     )
-    expect(JSON.stringify(res)).toContain('Seedance \\"2.5\\" only')
-    expect(router.call).not.toHaveBeenCalled()
+    expect(router.call).toHaveBeenCalled()
   })
 
   it('first blocking window is short (~75s) so turn/steer interjection stays responsive', () => {
@@ -428,6 +489,35 @@ describe('registerVideoTools / schemas', () => {
     const link = res.content[1] as { type: string; mimeType: string }
     expect(link.type).toBe('resource_link')
     expect(link.mimeType).toBe('video/mp4')
+  })
+
+  /**
+   * 样片成功后给 agent 的下一步提示:Roneyun-cn 的 2.5 样片要提醒它「出成片也带 cn-seedance-2.5」,
+   * 否则 finalize_video_draft 缺省按火山 2.5 去找,网关答 task_origin_not_exist。火山的样片不加这句。
+   *
+   * 🧬 变异点:`draftNextStep` 里把 cn 分支去掉,第一条必红;让所有样片都带这句,第二条必红。
+   */
+  it('样片成功:cn-seedance-2.5 的提示里要求 finalize 也带 model;火山 2.5 不带', async () => {
+    const cn = makeTask({
+      status: 'succeeded', persistence: 'done', draft: true, model: 'cn-seedance-2.5',
+      localPath: 'D:/save/d.mp4', videoUrl: 'https://cdn/d.mp4',
+    })
+    const a = capture({ found: true, task: cn })
+    registerVideoTools(a.server, a.router)
+    const checkA = a.tools.find((t) => t.name === 'check_video_task')!
+    const cnText = ((await checkA.handler({ taskId: 'task_cn' })).content[0] as { text: string }).text
+    expect(cnText).toContain('pass model "cn-seedance-2.5" to finalize_video_draft')
+
+    const volc = makeTask({
+      status: 'succeeded', persistence: 'done', draft: true, model: '2.5',
+      localPath: 'D:/save/d.mp4', videoUrl: 'https://cdn/d.mp4',
+    })
+    const b = capture({ found: true, task: volc })
+    registerVideoTools(b.server, b.router)
+    const checkB = b.tools.find((t) => t.name === 'check_video_task')!
+    const volcText = ((await checkB.handler({ taskId: 'task_v' })).content[0] as { text: string }).text
+    expect(volcText).toContain('finalize_video_draft')
+    expect(volcText).not.toContain('cn-seedance-2.5')
   })
 
   it('check_video_task unknown taskId returns explicit guidance', async () => {

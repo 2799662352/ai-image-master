@@ -523,7 +523,7 @@ qa_completed / generation_attempts\`):有专属素材夹(见「角色片 / 多�
 >
 > 之所以默认 2.5:它是 \`taskMode\` 编辑 / 延长、30 秒时长、50 份素材和样片的全能档
 > (\`2.5-flash\` 同样能编辑 / 延长、30 秒,但只到 720p、没有样片、素材 10/5/5)。
-> **Roneyun-cn 渠道(\`cn-seedance-2.0\` / \`-2.0-fast\` / \`-2.0-mini\` / \`-2.5\`)是同名模型的第二条线路**:规格与底座跟同名模型;只有三处不同 —— 只收公网链接(\`asset://\` 提交前自动换回公网地址,换不出来整单拦下)、没有样片、没有联网搜索。**用户点名 Roneyun-cn / cn 渠道才传 \`cn-seedance-*\`,别替用户换渠道。** cn-2.0 的 1080p、cn-2.5 的编辑 / 延长没实测过,别打包票。
+> **Roneyun-cn 渠道(\`cn-seedance-2.0\` / \`-2.0-fast\` / \`-2.0-mini\` / \`-2.5\`)是同名模型的第二条线路**:规格与底座跟同名模型;唯一差别是只收公网链接(\`asset://\` 提交前自动换回公网地址,换不出来整单拦下);样片只有 \`cn-seedance-2.5\` 有(同 \`2.5\`)。**用户点名 Roneyun-cn / cn 渠道才传 \`cn-seedance-*\`,别替用户换渠道。** cn-2.0 的 1080p、cn-2.5 的编辑 / 延长、cn 样片→成片整链没实测过,别打包票。
 >
 > 只在真要写 2.0 的八大要素公式时才去读那一份。三个都不占技法名额。
 >
@@ -805,14 +805,14 @@ app 提交前会把参考图和参考视频自动登记进人像库、改成 \`a
    = 自己分镜,**1–6 个镜头,每镜描述 ≤512 字、时长是整数秒,各镜头秒数之和必须等于 \`duration\`**,
    这时总 \`prompt\` 可留空(以各镜描述为准)。分镜不加价,仍按总秒数计费。其它模型传 \`multiShot\` 会被拒;
    时长对不上、镜头描述为空 / 超长,工具会当场说明,按提示改就行,别反复重试。
-   **例外:2.5 样片 → 1080p 成片**(平台余额才有;\`2.5-flash\` 与 \`cn-seedance-*\` 没有样片):\`generate_video\` 带 \`draft: true\` 先出
+   **例外:2.5 样片 → 1080p 成片**(平台余额才有;\`cn-seedance-2.5\` 同样有,成片要带 \`model:"cn-seedance-2.5"\`;\`2.5-flash\` 与其它 \`cn-seedance-*\` 没有):\`generate_video\` 带 \`draft: true\` 先出
    480p 样片(按 480p 计费)看构图和动作;用户满意就 \`finalize_video_draft({ taskId })\` 出
    1080p 成片 —— 方舟沿用样片的提示词、素材、时长、比例、seed 与音频,改不了也不用重传,
    样片 7 天内有效。长镜头、贵的片子、用户说「先看看效果」时推荐走这条;要改内容就重出样片。
 3. Call \`generate_video\`:\`prompt\`(必填)、\`model\`(**显式传,且与你载的底座一致**:
    STEP 0 默认 \`2.5\` → 传 \`"2.5"\`;要 1080p / 4k 或用户点名满血画质 → \`"2.0"\` 并改载 \`sd2-pe\`;
    用户明确要快/便宜才 \`"2.0-fast"\`;用户点名 Flash、或要 2.5 的编辑 / 延长而不需要 1080p /
-   样片又想省钱,才 \`"2.5-flash"\`(**别给它 1080p 或 draft**,素材 10/5/5);用户点名 Roneyun-cn 才传对应的 \`cn-seedance-*\`(**别给它 draft / 联网**)。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
+   样片又想省钱,才 \`"2.5-flash"\`(**别给它 1080p 或 draft**,素材 10/5/5);用户点名 Roneyun-cn 才传对应的 \`cn-seedance-*\`(**样片只给 \`cn-seedance-2.5\`**)。**别省略** —— 工具不传 model 时落到 \`2.0\`,一条按 2.5
    模板写的提示词就会被送去 2.0 渲染)、\`resolution\` / \`ratio\` / \`duration\`、
    \`referenceImages\`(**用户给过的图必须传**;支持 \`asset://assetId\`)、
    \`referenceVideos\` / \`referenceAudios\`(上限按 model,见「模式与素材规则」)、或显式要求时的
@@ -2071,7 +2071,7 @@ handoff 表这类导演级制片包时,走 create-storyboard 出包再回到「�
 | --- | --- |
 | 改提示词里几个词 | \`video_workbench_patch_prompt\`(给旧片段和新片段,不用重发整段) |
 | 一张卡多个字段 / 整段重写提示词 | \`video_workbench_update_task\` |
-| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | \`video_workbench_set_spec\`(样片 = \`draft: true\`,仅 2.5 + 平台余额;\`2.5-flash\` / \`cn-seedance-*\` 没有样片、\`cn-seedance-*\` 也没有联网搜索,别给它们开) |
+| 一批卡同一个规格(整板 480p、都开联网、都先出样片) | \`video_workbench_set_spec\`(样片 = \`draft: true\`,仅 \`2.5\` / \`cn-seedance-2.5\` + 平台余额;\`2.5-flash\` 与其它 \`cn-seedance-*\` 没有样片,别给它们开) |
 | 样片满意了要 1080p 成片 | \`video_workbench_finalize_draft\`(\`status\` 里 \`draftRun: true\` 的卡;沿用样片一切,7 天内有效,成片是同卡新版本) |
 | 整页重排 | \`video_workbench_reorder\`(一次给出该页完整 id 顺序) |
 | 挪一张卡的位置 | \`video_workbench_move_task\`(**不要并发调**,重排没有交换律) |

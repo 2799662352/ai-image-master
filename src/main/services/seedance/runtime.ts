@@ -891,8 +891,9 @@ export function initSeedanceRuntime(opts: {
           ...(typeof payload?.firstFrame === 'string' && payload.firstFrame ? { firstFrame: payload.firstFrame } : {}),
           ...(typeof payload?.lastFrame === 'string' && payload.lastFrame ? { lastFrame: payload.lastFrame } : {}),
           ...(Number.isFinite(seedRaw) && seedRaw >= 0 ? { seed: Math.round(seedRaw) } : {}),
-          // 联网搜索:按能力表丢弃。卡片的开关默认是开的(cardSpec 缺省 true),而 Roneyun-cn 的网关
-          // 会把 `tools` 直接 400 掉 —— 不按表丢的话,那条渠道的每一次默认提交都会被拒。
+          // 联网搜索:按能力表丢弃。卡片的开关默认是开的(cardSpec 缺省 true),不支持的模型(万相 / 可灵,
+          // 以及哪天网关又拒 `tools` 的渠道)不按表丢的话,每一次默认提交都会被拒。
+          // (Roneyun-cn 曾在 2026-11-17 被网关 400 掉 tools,2026-11-18 起放开,见 types/seedance.ts。)
           ...(payload?.webSearch === true && caps.webSearch ? { webSearch: true } : {}),
           referenceImages: asStringArray(payload?.referenceImages),
           referenceVideos: asStringArray(payload?.referenceVideos),

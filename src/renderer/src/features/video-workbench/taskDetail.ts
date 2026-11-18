@@ -103,6 +103,37 @@ function upstreamVendor(model: VideoModelAlias): string {
   return '火山引擎 · Ark'
 }
 
+/** 这个模型的任务在「网关之后那一跳」之下还有一层火山(只有 Roneyun-cn:Roneyun 签 `task_…`,再往下是火山 `cgt-…`)。 */
+function hasProviderLayer(model: VideoModelAlias): boolean {
+  return SEEDANCE_MODEL_CAPABILITIES[model]?.channel === 'roneyun-cn'
+}
+
+const PROVIDER_ID_LABEL = '火山任务 ID'
+const PROVIDER_ID_HINT = '火山方舟那一层的任务号(cgt-…)—— 找火山对账用这个号;上一行是 Roneyun 自己的号。'
+
+/**
+ * 「火山任务 ID」一行。只给有这一层的渠道(Roneyun-cn)出现,其它渠道不多一行。
+ * 号还没到就写缺并说明:它不在创建响应里,要等网关轮询到任务跑起来才有;网关改版(2026-11-18)
+ * 之前就完成的老任务可能一直没有 —— 缺就说缺,不拿 `task_…` 冒充。
+ */
+function providerField(
+  model: VideoModelAlias,
+  providerTaskId: string | undefined,
+  state: 'submitted' | 'not-submitted' | 'archived',
+): TaskDetailField | undefined {
+  if (providerTaskId) {
+    return { key: 'providerTaskId', label: PROVIDER_ID_LABEL, value: providerTaskId, copy: true, hint: PROVIDER_ID_HINT }
+  }
+  if (!hasProviderLayer(model) || state === 'not-submitted') return undefined
+  return {
+    key: 'providerTaskId',
+    label: PROVIDER_ID_LABEL,
+    value: state === 'archived' ? '这一版未记录火山任务号' : '渠道尚未回传',
+    missing: true,
+    hint: '任务跑起来后才有;渠道改版(2026-11-18)之前完成的老任务可能一直没有。',
+  }
+}
+
 function billingLabel(billing: VideoBillingSource | undefined): string {
   switch (billing) {
     case 'platform':
@@ -251,10 +282,12 @@ function idFields(card: VideoWorkbenchCard): TaskDetailField[] {
   } else {
     upstream = { key: 'upstreamTaskId', label: '上游任务 ID', value: '尚未提交到上游', missing: true }
   }
+  const provider = providerField(card.model, card.providerTaskId, submitted ? 'submitted' : 'not-submitted')
 
   return [
     taskId,
     upstream,
+    ...(provider ? [provider] : []),
     card.clientId
       ? { key: 'clientId', label: '客户端请求 ID', value: card.clientId, copy: true, hint: '本机提交时生成,用来把广播对回这张卡。' }
       : { key: 'clientId', label: '客户端请求 ID', value: '—', missing: true },
@@ -333,9 +366,11 @@ function versionIdFields(card: VideoWorkbenchCard, v: VideoWorkbenchVersion): Ta
         missing: true,
         hint: `${vendor}。只有存档时网关已回传的版本才有;直连(自填 Key)时任务 ID 本身就是供应商那边的号。`,
       }
+  const provider = providerField(v.spec.model, v.providerTaskId, 'archived')
   return [
     taskId,
     upstream,
+    ...(provider ? [provider] : []),
     { key: 'clientId', label: '客户端请求 ID', value: '历史版本未记录', missing: true },
     { key: 'cardId', label: '卡片 ID', value: card.id, copy: true },
     { key: 'billing', label: '计费来源', value: '历史版本未记录', missing: true },
@@ -410,6 +445,7 @@ function versionRequestOf(v: VideoWorkbenchVersion): Record<string, unknown> {
 
 function versionLine(v: VideoWorkbenchVersion): string {
   const parts = [formatTime(v.createdAt), `task ${v.taskId ?? '—'}`, `上游 ${v.upstreamTaskId ?? '—'}`]
+  if (v.providerTaskId) parts.push(`火山 ${v.providerTaskId}`)
   if (v.localPath) parts.push(v.localPath)
   else if (v.remoteUrl) parts.push(v.remoteUrl)
   return parts.join(' · ')
@@ -443,6 +479,7 @@ function versionJson(v: VideoWorkbenchVersion): Record<string, unknown> {
     createdAt: v.createdAt,
     taskId: v.taskId ?? null,
     upstreamTaskId: v.upstreamTaskId ?? null,
+    ...(v.providerTaskId ? { providerTaskId: v.providerTaskId } : {}),
     ...(v.submittedReferences ? { references: v.submittedReferences } : {}),
     ...(v.localPath ? { localPath: v.localPath } : {}),
     ...(v.remoteUrl ? { remoteUrl: v.remoteUrl } : {}),
@@ -484,9 +521,20 @@ export function buildTaskDetail(card: VideoWorkbenchCard, opts: TaskDetailOption
     position: opts.index + 1,
     view,
     status: historical ? 'succeeded' : card.status,
+    // providerTaskId 只在有值时出现:没有火山那一层的渠道,「复制全部」的 JSON 与以前逐字节相同。
     ids: historical
-      ? { taskId: historical.taskId ?? null, upstreamTaskId: historical.upstreamTaskId ?? null, clientId: null }
-      : { taskId: card.taskId ?? null, upstreamTaskId: card.upstreamTaskId ?? null, clientId: card.clientId ?? null },
+      ? {
+          taskId: historical.taskId ?? null,
+          upstreamTaskId: historical.upstreamTaskId ?? null,
+          ...(historical.providerTaskId ? { providerTaskId: historical.providerTaskId } : {}),
+          clientId: null,
+        }
+      : {
+          taskId: card.taskId ?? null,
+          upstreamTaskId: card.upstreamTaskId ?? null,
+          ...(card.providerTaskId ? { providerTaskId: card.providerTaskId } : {}),
+          clientId: card.clientId ?? null,
+        },
     billing: historical ? null : card.billing ?? null,
     upstreamVendor: upstreamVendor(historical ? historical.spec.model : card.model),
     request,

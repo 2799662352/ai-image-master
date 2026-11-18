@@ -351,6 +351,13 @@ export interface VideoWorkbenchCard extends VideoWorkbenchSpec {
    */
   upstreamTaskId?: string
   /**
+   * 再往下一层的外部任务号:Roneyun-cn 渠道的火山 `cgt-…`(见 `SeedanceTask.providerTaskId`)。
+   * 那条渠道的 `upstreamTaskId` 是 Roneyun 自己的 `task_…`,找火山对账用这个;其它渠道没有。
+   * 与 upstreamTaskId 同一待遇:是结果不是意图,不进 spec、不参与 specEquals、重新生成随上一轮
+   * 结果一起清掉(版本存档里的保留)。
+   */
+  providerTaskId?: string
+  /**
    * 这一轮**实际递给上游**的素材地址(已解析成 https,与 referenceImages /
    * referenceVideos / referenceAudios 同序),来自提交时的广播。「任务详情」把素材
    * 写成这些地址而不是本机路径 —— 路径贴给别人没有意义。同样是结果不是意图。
@@ -498,6 +505,8 @@ export interface VideoWorkbenchVersion {
   taskId?: string
   /** 产出这一版的上游任务号(见 `VideoWorkbenchCard.upstreamTaskId`)。 */
   upstreamTaskId?: string
+  /** 产出这一版的外部任务号(Roneyun-cn 的火山 `cgt-…`,见 `VideoWorkbenchCard.providerTaskId`)。 */
+  providerTaskId?: string
   /** 产出这一版时实际递给上游的素材地址(见 `VideoWorkbenchCard.submittedReferences`)。 */
   submittedReferences?: SeedanceReferenceUrls
   localPath?: string

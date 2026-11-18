@@ -116,6 +116,67 @@ describe('finalizeDrafts 选分辨率', () => {
   })
 })
 
+/**
+ * 样片的上游任务号(Roneyun-cn 是 task_… + 火山 cgt-…)属于样片那一轮;成片是新任务,有自己的号。
+ * 提交成片那一刻卡上必须清掉样片的,否则成片在拿到自己的 cgt 之前,详情页会把样片的 cgt 当成片的。
+ * 样片那一版的号已在成功时存档进 versions,清的只是卡上「当前结果」。
+ *
+ * 🧬 变异点:从 `CLEARED_RUN_RESULT` 里去掉 `providerTaskId: undefined`,这条必红。
+ */
+describe('样片 → 成片:卡上的上游任务号清掉,样片那一版里的保留', () => {
+  it('提交成片后 upstreamTaskId / providerTaskId 都清空,等成片自己的号到', async () => {
+    mockApi()
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '一只橘猫', model: 'cn-seedance-2.5' }])
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              draft: true,
+              draftRun: true,
+              status: 'succeeded' as const,
+              taskId: 'task_draft',
+              upstreamTaskId: 'task_draft',
+              providerTaskId: 'cgt-20261118101131-i5x3m',
+              startedAt: Date.now() - 1000,
+            }
+          : c,
+      ),
+    }))
+
+    const res = await useVideoWorkbenchStore.getState().finalizeDrafts([id])
+
+    expect(res.started).toEqual([id])
+    expect(cardOf(id).fromDraftTaskId).toBe('task_draft')
+    expect(cardOf(id).upstreamTaskId).toBeUndefined()
+    expect(cardOf(id).providerTaskId).toBeUndefined()
+  })
+
+  it('成片提交的载荷里是网关任务号 task_…,不是 cgt-(网关自己换)', async () => {
+    const { submit } = mockApi()
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '一只橘猫', model: 'cn-seedance-2.5' }])
+    useVideoWorkbenchStore.setState((s) => ({
+      cards: s.cards.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              draft: true,
+              draftRun: true,
+              status: 'succeeded' as const,
+              taskId: 'task_draft',
+              providerTaskId: 'cgt-20261118101131-i5x3m',
+              startedAt: Date.now() - 1000,
+            }
+          : c,
+      ),
+    }))
+
+    await useVideoWorkbenchStore.getState().finalizeDrafts([id])
+
+    expect(submit.mock.calls[0][0]).toMatchObject({ model: 'cn-seedance-2.5', fromDraftTaskId: 'task_draft' })
+  })
+})
+
 describe('4K 成片这一轮的记录', () => {
   it('版本记录写 4k,并标明来自哪张样片', async () => {
     mockApi()

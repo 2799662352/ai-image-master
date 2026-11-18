@@ -172,8 +172,10 @@ export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
       'e25734ecd8db4dcd3c9a43b25b4976bbcbe7947e7f11e2f38eca676e3053e103',
       // Kling multi-shot (2026-10-28).
       '8134974b001fcc05e58658f4c5a62121a5517f894ce14d59ef60c715d37386ad',
-      // Roneyun-cn / cn-seedance-* models (2026-11-17) — current.
+      // Roneyun-cn / cn-seedance-* models (2026-11-17)
       'c409fda3733d0b6c70f2e4d832808388f6ea4aa43b82649f5c8598315acd1be9',
+      // cn-seedance-2.5 draft opened (2026-11-18) — current.
+      'b868a45d6b5f980796429180efcf1e28cdd64416463b4b34c449bcfaebde6825',
     ]),
   ],
 ])

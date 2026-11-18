@@ -456,18 +456,30 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
    * `2.0` / `2.0-fast` / `2.0-mini` / `2.5`(时长、分辨率、素材上限、edit / extend、智能时长、
    * 平台余额下 2.5 的 1080p / 4k)。
    *
-   * ## 与火山渠道**不同**的三处
+   * ## 与火山渠道**不同**的一处(素材)
    *
-   * 1. **素材**(用户原话「不需要管人像库…切换的时候就别发人像库 id,只发公网 url」):
-   *    - `assetRefs: 'public-url'` —— 不登记、不核验人像库;卡上已有的 `asset://` 在提交前换回公网地址
-   *      (见 `main/services/seedance/assetPublicUrl.ts`),换不出来就拦下,一个 id 都不发;
-   *    - `publicUrlMediaOnly: true` —— 本地文件一律先中转成公网链接,不走 ≤512KB 的 base64 内联。
-   * 2. **没有样片**(`draft: false`,含 `cn-seedance-2.5`)。网关适配器 `relay/channel/task/roneyun`
-   *    (new-api #203)在预扣前就拒掉 `draft` / `draft_task`,2026-11-17 用真 key 对生产网关各发一次,
-   *    都回 400「Roneyun Tokenhub 渠道不支持样片(draft)/ 由样片生成成片(draft_task)」,没有扣费。
-   *    ——这与用户当时说的「有样片能力」不符,以网关为准。
-   * 3. **没有联网搜索**(`webSearch: false`)。同一处适配器拒 `tools`,同日实测 400「不支持联网搜索(tools)」。
-   *    必须是 false:卡片 / agent 的联网搜索默认开,留着 true 就是每一次默认提交都会被拒。
+   * **素材**(用户原话「不需要管人像库…切换的时候就别发人像库 id,只发公网 url」):
+   *  - `assetRefs: 'public-url'` —— 不登记、不核验人像库;卡上已有的 `asset://` 在提交前换回公网地址
+   *    (见 `main/services/seedance/assetPublicUrl.ts`),换不出来就拦下,一个 id 都不发;
+   *  - `publicUrlMediaOnly: true` —— 本地文件一律先中转成公网链接,不走 ≤512KB 的 base64 内联。
+   *
+   * ## 样片与联网搜索:2026-11-17 网关拒、2026-11-18 起放开
+   *
+   * 11-17 网关适配器(new-api #203)在预扣前就拒掉 `draft` / `draft_task` / `tools`(实测都回 400),
+   * 所以当时这几行是 `draft: false` / `webSearch: false`。11-18 网关侧改成原样透传
+   * (new-api #205 放开 draft / tools;#206 / #207 / #209 让成片的 `draft_task.id` 换成上游那一层的
+   * `cgt-…` 号 —— Roneyun 创建任务只回 `task_…`,`cgt-…` 要等轮询才有,网关把它单独存成
+   * `metadata.provider_task_id`),随后落到生产。据此:
+   *  - **样片只开 `cn-seedance-2.5`**(`draft: true`),与火山行一致 —— 样片是 2.5 独有的;
+   *    `cn-seedance-2.0-mini` 带 draft 上游回 400「draft is not supported」(2026-11-18 实测,没有扣费),
+   *    2.0 / 2.0-fast 照火山行不开。样片的桌面端规则不变:只在平台余额下可用(见 `seedanceDraft.ts`);
+   *  - **联网搜索四行都开**(`webSearch: true`),与火山行一致。实测只有 `cn-seedance-2.0-mini` 带
+   *    `tools:[{type:'web_search'}]` 网关 200、任务 `completed`;2.0 / 2.0-fast / 2.5 没有单独跑过。
+   *    响应里没有工具调用 / 用量字段,所以「搜索真的执行了」没有证据,只证明不再被拒。
+   *
+   * ⚠️ 样片 → 成片的完整链路(样片 → 轮询到成功 → 1080p 成片)**我们没有真跑通过**:11-18 上午那次
+   * 成片被上游拒(`draft task task_… not found for current user`,当时发的还是 `task_…`),
+   * #207 / #209 修的就是这个;修好之后用户说「修复成功了」,但桌面端这边没有再花钱实测。
    *
    * ## 实测过的 / 没实测的(2026-11-17,自填 Miau Key)
    *
@@ -500,7 +512,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     smartDuration: true,
     documentSlot: false,
     publicUrlMediaOnly: true,
-    webSearch: false,
+    webSearch: true,
     multiShot: false,
   },
   'cn-seedance-2.0-fast': {
@@ -525,7 +537,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     smartDuration: true,
     documentSlot: false,
     publicUrlMediaOnly: true,
-    webSearch: false,
+    webSearch: true,
     multiShot: false,
   },
   'cn-seedance-2.0-mini': {
@@ -550,15 +562,15 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     smartDuration: true,
     documentSlot: false,
     publicUrlMediaOnly: true,
-    webSearch: false,
+    webSearch: true,
     multiShot: false,
   },
   'cn-seedance-2.5': {
     provider: 'vvdance',
     channel: 'roneyun-cn',
     assetRefs: 'public-url',
-    // 没有样片:网关在预扣前拒 draft / draft_task(见上面注释第 2 条)。
-    draft: false,
+    // 样片:2026-11-18 起网关放开并修好成片换号(见上面「样片与联网搜索」)。只有 2.5 有。
+    draft: true,
     ratios: SEEDANCE_RATIOS,
     seedMax: 4_294_967_295,
     modes: ALL_VIDEO_WORKBENCH_MODES,
@@ -577,7 +589,7 @@ export const SEEDANCE_MODEL_CAPABILITIES: Record<
     smartDuration: true,
     documentSlot: false,
     publicUrlMediaOnly: true,
-    webSearch: false,
+    webSearch: true,
     multiShot: false,
   },
   /**
@@ -1115,6 +1127,12 @@ export interface SeedanceTaskState {
    * 学到就随广播带出,此后每条广播都带着(状态对象上一直挂着)。
    */
   upstreamTaskId?: string
+  /**
+   * 再往下一层的外部任务号:Roneyun-cn 渠道的火山 `cgt-…`(网关 `metadata.provider_task_id`)。
+   * 那条渠道的 `upstreamTaskId` 是 Roneyun 自己的 `task_…`,找火山对账用这个。创建时没有,
+   * 轮询到某一轮才学到,此后每条广播都带着;其它渠道没有。
+   */
+  providerTaskId?: string
   /**
    * 见 `SeedanceReferenceUrls`。提交时从最终 content[] 抽出,一条素材都没有就不给
    * (纯文生视频不摆三个空数组)。合成的预备 / 失败卡片不带。

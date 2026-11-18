@@ -130,10 +130,13 @@ describe('Roneyun-cn 渠道的卡片', () => {
   })
 
   /**
-   * 样片开关:火山 2.5 有,Roneyun-cn 的 2.5 没有 —— 网关(new-api #203)在预扣前就拒 draft。
-   * 联网开关同理:卡片的联网默认是开的,这条渠道的卡片上不该出现那个开关(也不会带 tools)。
+   * 样片 / 联网开关:网关 2026-11-18 起透传(new-api #206/#207/#209),cn-2.5 与火山 2.5 同规格同开关。
+   * 2.0 三档的上游仍拒 draft(mini 实测 400),所以样片开关只在 cn-2.5 上出现;联网四个都有。
+   *
+   * 🧬 变异点:把 `cn-seedance-2.5` 的 `draft` 改回 false,样片那条必红;
+   * 把任一 cn 行的 `webSearch` 改回 false,联网那条必红。
    */
-  it('cn-seedance-2.5 与火山 2.5 同规格(时长 30 秒、平台余额下 1080p / 4k),但没有样片开关、没有联网开关', async () => {
+  it('cn-seedance-2.5 与火山 2.5 同规格(时长 30 秒、平台余额下 1080p / 4k),样片与联网开关都在', async () => {
     useQuotaStore.setState({ billingSource: 'platform' })
     renderCardWith({ model: 'cn-seedance-2.5' })
 
@@ -141,8 +144,17 @@ describe('Roneyun-cn 渠道的卡片', () => {
     expect(durations).toContain('30')
     expect(durations).not.toContain('31')
     expect(optionValues(screen.getByLabelText('分辨率'))).toEqual(['480p', '720p', '1080p', '4k'])
+    expect(screen.queryByTestId('vw-draft-toggle')).not.toBeNull()
+    expect(screen.queryByLabelText(/联网/)).not.toBeNull()
+  })
+
+  it('cn-seedance-2.0-mini 没有样片开关(上游不收),但有联网开关', async () => {
+    useQuotaStore.setState({ billingSource: 'platform' })
+    renderCardWith({ model: 'cn-seedance-2.0-mini' })
+
+    await screen.findByTestId('vw-model-picker')
     expect(screen.queryByTestId('vw-draft-toggle')).toBeNull()
-    expect(screen.queryByLabelText(/联网/)).toBeNull()
+    expect(screen.queryByLabelText(/联网/)).not.toBeNull()
   })
 
   it('对照:火山 2.5 的卡片有样片开关与联网开关(证明上一条的「没有」不是页面没渲染好)', async () => {
