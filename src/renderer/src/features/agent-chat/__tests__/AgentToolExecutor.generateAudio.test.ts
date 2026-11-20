@@ -16,8 +16,11 @@ function registerApi(api: AudioApiFake): void {
 }
 
 // generateAudio 是私有方法,和 generateImage 测试一样直达。
-function callGenerateAudio(params: Record<string, unknown>): Promise<any> {
-  return (new AgentToolExecutor() as unknown as { generateAudio: (p: unknown) => Promise<any> }).generateAudio(params)
+// 第二个参数是发起这次调用的对话;不传 = 主进程认不出是谁发起的(游离调用)。
+function callGenerateAudio(params: Record<string, unknown>, threadId?: string): Promise<any> {
+  return (
+    new AgentToolExecutor() as unknown as { generateAudio: (p: unknown, threadId?: string) => Promise<any> }
+  ).generateAudio(params, threadId)
 }
 
 beforeEach(async () => {
@@ -74,9 +77,9 @@ describe('AgentToolExecutor.generate_audio', () => {
       audioHistory: { uploadCos: vi.fn(async () => ({ success: true as const, url: 'https://cos.example.com/audio/a.mp3', key: 'k' })) },
     }
     const { useAgentChatStore } = await import('../store')
-    useAgentChatStore.setState({ messages: [], threadId: undefined })
+    useAgentChatStore.setState({ messages: [], threadId: 'A', threadSlices: {} })
 
-    await callGenerateAudio({ input: '念一段旁白' })
+    await callGenerateAudio({ input: '念一段旁白' }, 'A')
 
     const items = useAgentChatStore.getState().messages.flatMap((m) => m.items)
     const artifact = items.find((i) => i.type === 'artifact') as any
@@ -87,17 +90,85 @@ describe('AgentToolExecutor.generate_audio', () => {
     expect(artifact.artifacts[0].mime).toBe('audio/mpeg')
   })
 
+  it('the bubble goes to the requesting thread even when another chat is open', async () => {
+    registerApi({
+      generateAudio: vi.fn(async () => ({ success: true, audioBase64: 'QUJD', format: 'mp3', duration: 6 })),
+    })
+    ;(window as any).electronAPI = {
+      audioHistory: { uploadCos: vi.fn(async () => ({ success: true as const, url: 'https://cos.example.com/audio/a.mp3', key: 'k' })) },
+    }
+    const { useAgentChatStore } = await import('../store')
+    useAgentChatStore.setState({ messages: [], threadId: 'B', threadSlices: {} })
+
+    await callGenerateAudio({ input: '念一段旁白' }, 'A')
+
+    const state = useAgentChatStore.getState()
+    expect(state.messages.flatMap((m) => m.items)).toHaveLength(0)
+    const inA = (state.threadSlices.A?.messages ?? []).flatMap((m) => m.items)
+    expect(inA.filter((i) => i.type === 'artifact')).toHaveLength(1)
+  })
+
   it('marks the bubble as error when generation fails', async () => {
     registerApi({ generateAudio: vi.fn(async () => ({ success: false, error: 'boom' })) })
     ;(window as any).electronAPI = { audioHistory: {} }
     const { useAgentChatStore } = await import('../store')
-    useAgentChatStore.setState({ messages: [], threadId: undefined })
+    useAgentChatStore.setState({ messages: [], threadId: 'A', threadSlices: {} })
 
-    await callGenerateAudio({ input: 'x' })
+    await callGenerateAudio({ input: 'x' }, 'A')
 
     const artifact = useAgentChatStore.getState().messages.flatMap((m) => m.items).find((i) => i.type === 'artifact') as any
     expect(artifact.status).toBe('error')
     expect(artifact.error).toBe('boom')
+  })
+
+  // 主进程认不出是哪个对话发起的(本机埋点里 generate_audio 46 次有 7 次这样)。
+  // 以前气泡落到「此刻打开的对话」;现在音频照样生成、照样进作品库,只是不进任何对话。
+  describe('没有发起对话的调用(游离)', () => {
+    async function freshStore() {
+      const { useAgentChatStore } = await import('../store')
+      const { resetDetachedToolOutputForTest } = await import('../detachedToolOutput')
+      resetDetachedToolOutputForTest()
+      useAgentChatStore.setState({ messages: [], threadId: 'B', threadSlices: {}, notices: [] })
+      return useAgentChatStore
+    }
+
+    function everyItem(store: Awaited<ReturnType<typeof freshStore>>): unknown[] {
+      const state = store.getState()
+      return [
+        ...state.messages.flatMap((m) => m.items),
+        ...Object.values(state.threadSlices).flatMap((slice) => (slice?.messages ?? []).flatMap((m) => m.items)),
+      ]
+    }
+
+    it('生成成功:哪个对话里都没有气泡,音频进了作品库,结果照样回给 agent,用户得到一条提示', async () => {
+      registerApi({
+        generateAudio: vi.fn(async () => ({ success: true, audioBase64: 'QUJD', format: 'mp3', duration: 6 })),
+      })
+      ;(window as any).electronAPI = {
+        audioHistory: { uploadCos: vi.fn(async () => ({ success: true as const, url: 'https://cos.example.com/audio/a.mp3', key: 'k' })) },
+      }
+      const store = await freshStore()
+
+      const result = await callGenerateAudio({ input: '念一段旁白' })
+
+      expect(everyItem(store)).toHaveLength(0)
+      expect(result.success).toBe(true)
+      expect(result.remoteUrl).toBe('https://cos.example.com/audio/a.mp3')
+      expect((await getAudioLibraryStore().list()).length).toBe(1)
+      expect(store.getState().notices.map((n) => n.kind)).toEqual(['toolOutputDetached'])
+    })
+
+    it('生成失败:不留错误气泡,不提示,错误照样回给 agent', async () => {
+      registerApi({ generateAudio: vi.fn(async () => ({ success: false, error: 'boom' })) })
+      ;(window as any).electronAPI = { audioHistory: {} }
+      const store = await freshStore()
+
+      const result = await callGenerateAudio({ input: 'x' })
+
+      expect(everyItem(store)).toHaveLength(0)
+      expect(result).toEqual({ success: false, error: 'boom' })
+      expect(store.getState().notices).toEqual([])
+    })
   })
 
   it('passes reference audios and non-default speed through', async () => {

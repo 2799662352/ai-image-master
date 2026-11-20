@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ToolRouter } from '../ToolRouter'
+import { ToolRouter, type ToolThreadResolver } from '../ToolRouter'
+import { runWithToolCaller } from '../toolCaller'
 import { setToolTelemetrySink, type ToolCallRecord } from '../toolTelemetry'
 
 /**
@@ -72,5 +73,124 @@ describe('ToolRouter 埋点', () => {
 
     vi.useRealTimers()
     expect(records[0].duration_ms).toBeGreaterThanOrEqual(5_000)
+  })
+})
+
+/**
+ * 归属埋点。起因:一位用户的日志里 1,512 次出图有 718 次没有 `thread.id`,而那份日志
+ * 分不清「调用方没报线程」和「报了但认不出」,更查不到认不出的是哪条 codex 线程 ——
+ * 根因只能靠猜。这里钉住:下一份日志必须能直接回答这两个问题。
+ */
+describe('ToolRouter 埋点:这次调用归谁', () => {
+  function collect(): ToolCallRecord[] {
+    const records: ToolCallRecord[] = []
+    setToolTelemetrySink((r) => records.push(r))
+    return records
+  }
+
+  function mainRouter(resolver?: ToolThreadResolver): ToolRouter {
+    const r = router()
+    r.registerMain('generate_video', async () => 'ok')
+    if (resolver) r.setThreadResolver(resolver)
+    return r
+  }
+
+  it('最普通的情况(调用方就是对话当前的线程):记录和以前一个字段都不差', async () => {
+    const records = collect()
+    const r = mainRouter(() => ({ threadId: 'db-1', via: 'live' }))
+
+    await r.call('generate_video', {}, 'codex-1')
+
+    expect(Object.keys(records[0]).sort()).toEqual(
+      [
+        'duration_ms',
+        'event.timestamp',
+        'gen_ai.operation.name',
+        'gen_ai.tool.name',
+        'gen_ai.tool.type',
+        'thread.id',
+      ].sort(),
+    )
+    expect(records[0]['thread.id']).toBe('db-1')
+  })
+
+  it('认不出:写明 unresolved,并留下调用方和祖先的 codex 线程 id', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const records = collect()
+      const r = mainRouter(() => undefined)
+
+      await runWithToolCaller({ threadId: 'child', ancestorThreadIds: ['parent', 'root'] }, () =>
+        r.call('generate_video', {}),
+      )
+
+      expect(records[0]['thread.id']).toBeUndefined()
+      expect(records[0]['thread.attribution']).toBe('unresolved')
+      expect(records[0]['codex.thread.id']).toBe('child')
+      expect(records[0]['codex.thread.ancestors']).toEqual(['parent', 'root'])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('没人报线程(主进程内部调用 / 非 codex 客户端):写明 anonymous,不带 codex id', async () => {
+    const records = collect()
+    const r = mainRouter(() => ({ threadId: 'never-asked', via: 'live' }))
+
+    await r.call('generate_video', {})
+
+    expect(records[0]['thread.id']).toBeUndefined()
+    expect(records[0]['thread.attribution']).toBe('anonymous')
+    expect(records[0]['codex.thread.id']).toBeUndefined()
+  })
+
+  it.each(['subagent', 'retired', 'ancestor', 'persisted'] as const)(
+    '不是按最普通的路认出来的(%s):记下走的是哪条路和调用方的 codex 线程',
+    async (via) => {
+      const records = collect()
+      const r = mainRouter(() => ({ threadId: 'db-1', via }))
+
+      await r.call('generate_video', {}, 'codex-odd')
+
+      expect(records[0]['thread.id']).toBe('db-1')
+      expect(records[0]['thread.via']).toBe(via)
+      expect(records[0]['codex.thread.id']).toBe('codex-odd')
+      expect(records[0]['thread.attribution']).toBeUndefined()
+    },
+  )
+
+  it('失败的调用同样带归属', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const records = collect()
+      const r = router()
+      r.registerMain('generate_video', async () => {
+        throw new Error('boom')
+      })
+      r.setThreadResolver(() => undefined)
+
+      await expect(r.call('generate_video', {}, 'codex-lost')).rejects.toThrow('boom')
+
+      expect(records[0]['error.type']).toBe('Error')
+      expect(records[0]['thread.attribution']).toBe('unresolved')
+      expect(records[0]['codex.thread.id']).toBe('codex-lost')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 语义约定把参数 / 结果标成 Opt-In,我们的参数就是用户的提示词。归属字段只能是 id。
+  it('归属字段里只有 id,不带任何参数内容', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const records = collect()
+      const r = mainRouter(() => undefined)
+
+      await r.call('generate_video', { prompt: '机密提示词 SECRET-PROMPT' }, 'codex-lost')
+
+      expect(JSON.stringify(records[0])).not.toContain('SECRET-PROMPT')
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

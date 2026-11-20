@@ -116,14 +116,37 @@ const DELIVER_FIRST_IMAGE =
   'FIRST, before anything else: send the user a one-line delivery message NOW (the image is already visible in the chat; cite the saved path). Only AFTER that message may you run any QA/self-review — and announce it briefly (e.g. 「正在快速质检…」) before starting. NEVER run silent QA before replying; the user cannot see tool calls and will think you are stuck.'
 
 /**
+ * 没有对话认领这次调用时(`ImageTaskState.detached`)换上的说法。
+ *
+ * 这个文件里的回执处处在说「用户已经看到图了」—— 对有归属的调用是真话:渲染层在发起它的
+ * 对话里开了气泡。没有归属时图照常生成、照常保存,但**不在任何对话里显示**;agent 照原话
+ * 回复,用户就会去聊天里找一张根本不在那儿的图。所以凡是讲「用户看到了什么」的句子都有
+ * 一份不撒谎的版本;其余(路径、别重试、别批量 view_image)照旧。
+ *
+ * 有归属时的文字一个字都没动 —— 那是每天几千次调用读到的话,不该因为这个分支而漂移。
+ */
+const NO_OWNER_REASON = 'this call came from a thread that belongs to no chat in the app'
+const NOT_SHOWN_IN_CHAT = `NOT shown in any chat — ${NO_OWNER_REASON}`
+const DELIVER_DETACHED_IMAGE =
+  'Do NOT say the image is visible in the chat. State plainly in your reply that it was generated but is not displayed in any chat, and say where it is: the saved path(s) when listed here, otherwise the app history page. The generation itself is COMPLETE — do NOT retry or re-generate.'
+const NO_BATCH_VIEW_DETACHED =
+  'Do NOT batch-open these files with view_image — viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If a visual check is genuinely required (or the user asks), view at most ONE representative image.'
+
+/**
  * Build the plain-text result the agent actually reads. Kept deliberately short
  * (well under Codex's ~10 KiB / 256-line tool-result cap, openai/codex#6544) and
  * front-loaded with the completion signal + exact location so the agent treats
  * the call as DONE and never re-hunts for the file via `query_history` or a
  * filesystem search. A trailing compact JSON line preserves the machine-readable
- * `{ ok, count, model, historyId, paths, dir }` contract.
+ * `{ ok, count, model, historyId, paths, dir }` contract (plus
+ * `shownInChat: false` for a detached call).
  */
-function buildCompletionBanner(result: unknown, paths: string[], dir: string | undefined): string {
+function buildCompletionBanner(
+  result: unknown,
+  paths: string[],
+  dir: string | undefined,
+  detached = false,
+): string {
   const r = (result && typeof result === 'object' ? result : {}) as {
     ok?: unknown
     count?: unknown
@@ -132,18 +155,26 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     persistencePending?: unknown
   }
   const count = typeof r.count === 'number' ? r.count : paths.length
-  const machine = JSON.stringify({ ...(r as object), ...(dir ? { dir } : {}) })
+  const machine = JSON.stringify({
+    ...(r as object),
+    ...(dir ? { dir } : {}),
+    ...(detached ? { shownInChat: false } : {}),
+  })
 
   if (r.persistencePending === true) {
     // Render succeeded but local bookkeeping (history/file save) exceeded its
     // time budget and is still settling in the background. Success is decided
     // by the render — never make the agent wait on (or retry over) bookkeeping.
     return [
-      `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
+      detached
+        ? `✅ generate_image DONE — ${count} image(s) generated. ${NOT_SHOWN_IN_CHAT}.`
+        : `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
       'Local file save is still finishing in the background, so no path is available yet.',
-      DELIVER_FIRST_IMAGE,
+      detached ? DELIVER_DETACHED_IMAGE : DELIVER_FIRST_IMAGE,
       'Treat this generation as COMPLETE — do NOT retry or re-generate.',
-      'If you genuinely need the file path later, call query_history then; otherwise just confirm to the user.',
+      detached
+        ? 'If you need the file path, call query_history.'
+        : 'If you genuinely need the file path later, call query_history then; otherwise just confirm to the user.',
       machine,
     ].join('\n')
   }
@@ -152,25 +183,35 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     // No on-disk path (save failed / disabled). Still a clean completion; the
     // image was shown + persisted to history, just not to the file panel.
     return [
-      `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
-      'No local file path was returned this time; the image is in the app chat + history.',
-      DELIVER_FIRST_IMAGE,
-      'Do NOT call query_history or search the filesystem to "find" it — just confirm to the user.',
+      detached
+        ? `✅ generate_image DONE — ${count} image(s) generated. ${NOT_SHOWN_IN_CHAT}.`
+        : `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
+      detached
+        ? 'No local file path was returned this time; the image is in the app history page only.'
+        : 'No local file path was returned this time; the image is in the app chat + history.',
+      detached ? DELIVER_DETACHED_IMAGE : DELIVER_FIRST_IMAGE,
+      detached
+        ? 'Do NOT search the filesystem to "find" it.'
+        : 'Do NOT call query_history or search the filesystem to "find" it — just confirm to the user.',
       machine,
     ].join('\n')
   }
 
   return [
-    `✅ generate_image DONE — ${count} image(s) saved. Already shown to the user.`,
+    detached
+      ? `✅ generate_image DONE — ${count} image(s) saved. ${NOT_SHOWN_IN_CHAT}.`
+      : `✅ generate_image DONE — ${count} image(s) saved. Already shown to the user.`,
     dir ? `📁 SAVED FOLDER: ${dir}` : '',
     'FILES:',
     ...paths.map((p) => `- ${p}`),
-    DELIVER_FIRST_IMAGE,
+    detached ? DELIVER_DETACHED_IMAGE : DELIVER_FIRST_IMAGE,
     // The "do not self-inspect" line is load-bearing: a batch of view_image
     // calls on these full-res files injects N × multi-MB base64 into the next
     // model request, which exceeds relay gateways' request-size cap and wedges
     // the thread (observed live 2026-06-11: 5 images → 5 view_image → hang).
-    'Do NOT batch-open these files with view_image — the user is already looking at the image(s) in chat, and viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If your QA tier genuinely requires a visual check (or the user asks), view at most ONE representative image, AFTER your delivery message.',
+    detached
+      ? NO_BATCH_VIEW_DETACHED
+      : 'Do NOT batch-open these files with view_image — the user is already looking at the image(s) in chat, and viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If your QA tier genuinely requires a visual check (or the user asks), view at most ONE representative image, AFTER your delivery message.',
     'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the task is complete.',
     machine,
   ]
@@ -178,7 +219,7 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     .join('\n')
 }
 
-function buildBatchCompletionBanner(results: unknown[], paths: string[]): string {
+function buildBatchCompletionBanner(results: unknown[], paths: string[], detached = false): string {
   const dirs = [...new Set(paths.map((p) => path.dirname(p)))]
   const pendingCount = results.filter(
     (r) => (r as { persistencePending?: unknown } | null)?.persistencePending === true,
@@ -189,18 +230,23 @@ function buildBatchCompletionBanner(results: unknown[], paths: string[]): string
     paths,
     dirs,
     results,
+    ...(detached ? { shownInChat: false } : {}),
   })
 
   return [
-    `✅ generate_images DONE — ${results.length}/${results.length} image(s) generated. Already shown to the user.`,
+    detached
+      ? `✅ generate_images DONE — ${results.length}/${results.length} image(s) generated. ${NOT_SHOWN_IN_CHAT}.`
+      : `✅ generate_images DONE — ${results.length}/${results.length} image(s) generated. Already shown to the user.`,
     dirs.length === 1 ? `📁 SAVED FOLDER: ${dirs[0]}` : '',
     paths.length > 0 ? 'FILES:' : '',
     ...paths.map((p) => `- ${p}`),
     pendingCount > 0
       ? `${pendingCount} file save(s) are still finishing in the background — their paths are not listed yet. The generation itself is COMPLETE; do NOT retry. Use query_history later only if a missing path is genuinely needed.`
       : '',
-    DELIVER_FIRST_IMAGE,
-    'Do NOT batch-open these files with view_image — the user is already looking at the image(s) in chat, and viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If your QA tier genuinely requires a visual check (or the user asks), view at most ONE representative image, AFTER your delivery message.',
+    detached ? DELIVER_DETACHED_IMAGE : DELIVER_FIRST_IMAGE,
+    detached
+      ? NO_BATCH_VIEW_DETACHED
+      : 'Do NOT batch-open these files with view_image — the user is already looking at the image(s) in chat, and viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If your QA tier genuinely requires a visual check (or the user asks), view at most ONE representative image, AFTER your delivery message.',
     pendingCount === 0
       ? 'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the batch task is complete.'
       : '',
@@ -210,15 +256,29 @@ function buildBatchCompletionBanner(results: unknown[], paths: string[]): string
     .join('\n')
 }
 
-function buildBatchFailureBanner(successes: unknown[], failures: Array<{ index: number; error: string }>, paths: string[]): string {
-  const machine = JSON.stringify({ ok: false, successCount: successes.length, failureCount: failures.length, paths, failures })
+function buildBatchFailureBanner(
+  successes: unknown[],
+  failures: Array<{ index: number; error: string }>,
+  paths: string[],
+  detached = false,
+): string {
+  const machine = JSON.stringify({
+    ok: false,
+    successCount: successes.length,
+    failureCount: failures.length,
+    paths,
+    failures,
+    ...(detached ? { shownInChat: false } : {}),
+  })
   return [
     `❌ generate_images PARTIAL/FAILED — ${successes.length} succeeded, ${failures.length} failed.`,
     paths.length > 0 ? 'SAVED FILES:' : '',
     ...paths.map((p) => `- ${p}`),
     'FAILURES:',
     ...failures.map((f) => `- #${f.index}: ${f.error}`),
-    'The chat UI already shows any successful image(s). Do not inspect generated images unless the user explicitly asks.',
+    detached
+      ? `Neither the successful image(s) nor the failures are shown in any chat (${NO_OWNER_REASON}) — report both in your reply, citing the saved path(s). Do not inspect generated images unless the user explicitly asks.`
+      : 'The chat UI already shows any successful image(s). Do not inspect generated images unless the user explicitly asks.',
     machine,
   ]
     .filter((line) => line.length > 0)
@@ -226,27 +286,37 @@ function buildBatchFailureBanner(successes: unknown[], failures: Array<{ index: 
 }
 
 /** 成功任务的统一回包:DONE banner(纯文本权威) + 每个本地文件一个 resource_link。 */
-function buildImageDoneContent(result: unknown): ImageToolContent {
+function buildImageDoneContent(result: unknown, detached = false): ImageToolContent {
   const savedPaths = collectPaths((result as { paths?: unknown } | null)?.paths)
   const dir = savedPaths.length > 0 ? path.dirname(savedPaths[0]) : undefined
-  const content: ImageToolContent = [{ type: 'text', text: buildCompletionBanner(result, savedPaths, dir) }]
+  const content: ImageToolContent = [
+    { type: 'text', text: buildCompletionBanner(result, savedPaths, dir, detached) },
+  ]
   for (const p of savedPaths) {
     content.push({
       type: 'resource_link',
       uri: pathToFileURL(p).href,
       name: basenameFromSavedPath(p),
       mimeType: mimeFromPath(p),
-      description: 'Generated image saved locally (also in app history + chat).',
+      description: savedImageDescription(detached),
     })
   }
   return content
+}
+
+function savedImageDescription(detached: boolean): string {
+  return detached
+    ? 'Generated image saved locally (also in app history; not shown in any chat).'
+    : 'Generated image saved locally (also in app history + chat).'
 }
 
 /** 短预算烧完仍在渲染:把 taskId 交还 agent,它可继续回话,由 check_image_task 兜底。 */
 export function buildImageRunningHandoffBanner(task: ImageTaskState): string {
   return [
     `⏳ generate_image STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
-    'The render is alive and the user ALREADY sees a live "generating" bubble in the chat — the finished image will appear there automatically.',
+    task.detached
+      ? `The render is alive, but no chat shows a "generating" bubble for it (${NO_OWNER_REASON}) — the finished image will be saved, not displayed in a chat.`
+      : 'The render is alive and the user ALREADY sees a live "generating" bubble in the chat — the finished image will appear there automatically.',
     'NEXT STEP (mandatory): tell the user in ONE short line that the image is generating, then IMMEDIATELY call check_image_task with this taskId (it long-polls ~25s server-side) and KEEP calling it until DONE or FAILED. Do NOT end your turn while the task is still running — ending early is why results feel delayed to the user.',
     'Do NOT resubmit generate_image for the same request — that would render a duplicate.',
     JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
@@ -258,7 +328,9 @@ export function buildImageCheckRunningBanner(task: ImageTaskState): string {
   return [
     `⏳ check_image_task — still rendering. Elapsed: ${elapsedSeconds(task)}s.`,
     'If you have NOT yet told the user the render is in progress, say so in one short line BEFORE polling again — never leave the user in silence across multiple polls.',
-    'Call check_image_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately). Do NOT resubmit generate_image — the task is alive and the user sees its progress bubble.',
+    task.detached
+      ? 'Call check_image_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately). Do NOT resubmit generate_image — the task is alive (no chat shows its progress).'
+      : 'Call check_image_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately). Do NOT resubmit generate_image — the task is alive and the user sees its progress bubble.',
     JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
   ].join('\n')
 }
@@ -275,21 +347,23 @@ export function buildUnknownImageTaskBanner(taskId: string): string {
 export function buildImageFailureBanner(task: ImageTaskState): string {
   return [
     `❌ generate_image FAILED — ${task.error ?? 'image generation failed'}.`,
-    'The user sees the failure in the chat. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem; otherwise report the error to the user.',
+    task.detached
+      ? `No chat shows this failure (${NO_OWNER_REASON}), so report the error in your reply. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem.`
+      : 'The user sees the failure in the chat. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem; otherwise report the error to the user.',
     JSON.stringify({ ok: false, taskId: task.taskId, error: task.error ?? 'image generation failed' }),
   ].join('\n')
 }
 
 /** 批量任务完成回包:组合 banner(全成功/部分失败) + 每个本地文件 resource_link。 */
-function buildBatchContent(data: BatchTaskResult): ImageToolContent {
+function buildBatchContent(data: BatchTaskResult, detached = false): ImageToolContent {
   const { successes, failures, savedPaths } = data
   const content: ImageToolContent = [
     {
       type: 'text',
       text:
         failures.length === 0
-          ? buildBatchCompletionBanner(successes, savedPaths)
-          : buildBatchFailureBanner(successes, failures, savedPaths),
+          ? buildBatchCompletionBanner(successes, savedPaths, detached)
+          : buildBatchFailureBanner(successes, failures, savedPaths, detached),
     },
   ]
   for (const p of savedPaths) {
@@ -298,17 +372,27 @@ function buildBatchContent(data: BatchTaskResult): ImageToolContent {
       uri: pathToFileURL(p).href,
       name: basenameFromSavedPath(p),
       mimeType: mimeFromPath(p),
-      description: 'Generated image saved locally (also in app history + chat).',
+      description: savedImageDescription(detached),
     })
   }
   return content
+}
+
+/**
+ * 渲染层对「踢」的秒回 ack 里带 `detached: true` = 没有对话会显示这次出图(它是决定开不开
+ * 气泡的那一方,见渲染层 `openGenerationBubble`)。其它任何形状都按「有归属」处理。
+ */
+function ackSaysDetached(ack: unknown): boolean {
+  return (ack as { detached?: unknown } | null | undefined)?.detached === true
 }
 
 /** generate_images 烧满预算仍在渲染:把批量 taskId 交还,走 check_image_task 兜底。 */
 export function buildBatchRunningHandoffBanner(task: ImageTaskState): string {
   return [
     `⏳ generate_images STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
-    'The batch is alive; the user ALREADY sees live "generating" bubbles in the chat — every finished image appears there automatically.',
+    task.detached
+      ? `The batch is alive, but no chat shows "generating" bubbles for it (${NO_OWNER_REASON}) — the finished images will be saved, not displayed in a chat.`
+      : 'The batch is alive; the user ALREADY sees live "generating" bubbles in the chat — every finished image appears there automatically.',
     'NEXT STEP (mandatory): tell the user in ONE short line that the batch is generating, then IMMEDIATELY call check_image_task with this taskId (it long-polls ~25s server-side) and KEEP calling it until DONE or FAILED. Do NOT end your turn while the batch is still running — ending early is why results feel delayed to the user.',
     'Do NOT resubmit generate_images for the same request — that would render duplicates.',
     JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
@@ -554,11 +638,17 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     // regains control and polls via check_image_task. The renderer's own
     // "generating" bubble shows the image to the user regardless of polling.
     const taskId = manager.create(typeof params.prompt === 'string' ? params.prompt : '', 'single')
-    void router.call('generate_image', { ...params, __taskId: taskId }, codexThreadId).catch((error) => {
-      // The renderer never even acked (it's gone / threw before starting) →
-      // settle failed so the budget wait returns immediately instead of stalling.
-      manager.fail(taskId, error instanceof Error ? error.message : String(error))
-    })
+    void router
+      .call('generate_image', { ...params, __taskId: taskId }, codexThreadId)
+      .then((ack) => {
+        // No chat will display this render → every banner below must say so.
+        if (ackSaysDetached(ack)) manager.markDetached(taskId)
+      })
+      .catch((error) => {
+        // The renderer never even acked (it's gone / threw before starting) →
+        // settle failed so the budget wait returns immediately instead of stalling.
+        manager.fail(taskId, error instanceof Error ? error.message : String(error))
+      })
 
     const snapshot = await manager.waitForTerminal(taskId, blockingBudgetMs)
     if (!snapshot) {
@@ -581,7 +671,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     // truncated — and must read as a "task complete + where it is" reminder so
     // the agent stops hunting for the file. resource_links replicate codex
     // native image_gen's "report the saved path" contract (best-effort bonus).
-    return { content: buildImageDoneContent(snapshot.result) }
+    return { content: buildImageDoneContent(snapshot.result, snapshot.detached === true) }
   })
 
   server.registerTool('check_image_task', {
@@ -607,9 +697,10 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       return { content: [{ type: 'text', text: buildImageFailureBanner(snapshot) }] }
     }
     if (snapshot.status === 'succeeded') {
+      const detached = snapshot.detached === true
       return snapshot.kind === 'batch'
-        ? { content: buildBatchContent(snapshot.result as BatchTaskResult) }
-        : { content: buildImageDoneContent(snapshot.result) }
+        ? { content: buildBatchContent(snapshot.result as BatchTaskResult, detached) }
+        : { content: buildImageDoneContent(snapshot.result, detached) }
     }
     return { content: [{ type: 'text', text: buildImageCheckRunningBanner(snapshot) }] }
   })
@@ -691,6 +782,9 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     const taskId = manager.create(prompts[0] ?? '', 'batch')
     void router
       .call('generate_images', { ...(params as Record<string, unknown>), prompts, __taskId: taskId }, codexThreadId)
+      .then((ack) => {
+        if (ackSaysDetached(ack)) manager.markDetached(taskId)
+      })
       .catch((error) => {
         manager.fail(taskId, error instanceof Error ? error.message : String(error))
       })
@@ -706,6 +800,6 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       // The whole batch kick failed before the renderer could run.
       return { content: [{ type: 'text', text: buildImageFailureBanner(snapshot) }] }
     }
-    return { content: buildBatchContent(snapshot.result as BatchTaskResult) }
+    return { content: buildBatchContent(snapshot.result as BatchTaskResult, snapshot.detached === true) }
   })
 }

@@ -796,6 +796,7 @@ interface AgentChatState extends ModelRoutingSlice {
    * 视频工作台一个渲染批次全部落终态时的推送入口（由 batchCompletion watcher 调）。
    * 线程在跑 → steer 插进当前 turn，模型当场就知道；线程闲着 → 入队，随下一条
    * 用户消息以隐藏前缀送达。两条路都不新开 turn。
+   * `threadId` 是发起这一批的线程；没有（认不出是谁发起的）就不投递，不改投当前对话。
    */
   notifyWorkbenchBatchDone: (text: string, threadId?: string) => void
   addApprovalRequest: (request: CodexApprovalRequest) => void
@@ -2475,9 +2476,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     }),
   notifyWorkbenchBatchDone: (text, threadId) => {
     const state = get()
-    const target = threadId ?? state.threadId
-    // 没有线程可归属（从未开过聊天）：这条通知没有收件人，丢掉。用户在工作台
-    // 页面上照样看得到结果。
+    // 只投给发起这一批的线程。认不出是谁发起的 = 这条通知没有收件人，丢掉 ——
+    // 用户在工作台页面上照样看得到结果。以前这里会改投「此刻打开的对话」：
+    // 那个对话的 agent 就凭空收到一句「你那批视频跑完了」，而它从没启动过任何批次。
+    const target = threadId
     if (!target) return
 
     // 该线程正在跑 → 直接 steer 插进当前 turn。刻意绕开 store 的 steer()：

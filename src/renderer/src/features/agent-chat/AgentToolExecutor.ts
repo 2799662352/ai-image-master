@@ -15,6 +15,11 @@ import {
 import { gifSvgUnsupportedReason } from '../../../../shared/imageModelParams'
 import { recordCodexArtifact } from './codexArtifactPersistence'
 import { buildLightArtifacts } from './buildLightArtifacts'
+import {
+  DETACHED_OUTPUT_THREAD_ID,
+  openGenerationBubble,
+  type GenerationBubble,
+} from './detachedToolOutput'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../../../../types/agent'
 import type { AgentApiBridge } from '../../../../types/agentApi'
@@ -235,6 +240,27 @@ const BACKGROUND_PROJECT_NOTE = (name: string): string =>
 /** add_tasks 的 clientRef 上限。超长直接报错 —— 截断会让两个不同的键悄悄变成同一个。 */
 const CLIENT_REF_MAX = 64
 
+/**
+ * `ask_user` 的发起方不属于任何对话时回给 agent 的话。
+ *
+ * 形状与用户点了「跳过」一致(`answered:false, skipped:true`),agent 现有的分支都认得;
+ * `note` 把真相说清:**没有人看到这个问题**,所以不能当成用户默许了什么。
+ *
+ * 每次新建一个对象(连 `selected` 数组):回答会原样交给调用方,共用一份的话,
+ * 谁改了它,后面每一次游离提问拿到的都是被改过的。
+ */
+function askUserDetachedAnswer(): ChoiceAnswer {
+  return {
+    answered: false,
+    skipped: true,
+    selected: [],
+    note:
+      '这个问题没有展示给用户：发起它的线程不属于任何对话，选项卡片没有地方可放。'
+      + '没有人回答，不要当作用户已同意或已选择。'
+      + '需要用户决定时，请把问题直接写进回复正文。',
+  }
+}
+
 export class AgentToolExecutor {
   start(): () => void {
     const agent = this.getAgentApi()
@@ -253,7 +279,14 @@ export class AgentToolExecutor {
     // only the main↔renderer contract becomes non-blocking.
     if (request.toolName === 'generate_image' || request.toolName === 'generate_images') {
       const taskId = typeof request.params.__taskId === 'string' ? request.params.__taskId : ''
-      this.getAgentApi().sendToolResponse?.({ id: request.id, ok: true, result: { accepted: true, taskId } })
+      this.getAgentApi().sendToolResponse?.({
+        id: request.id,
+        ok: true,
+        // `detached` = no chat owns this call, so no chat will show the render
+        // (see `openGenerationBubble`). Main needs to know: what it tells the
+        // agent must not claim "the user already sees it" when nobody does.
+        result: { accepted: true, taskId, ...(request.threadId ? {} : { detached: true }) },
+      })
       void this.runImageTaskInBackground(request, taskId)
       return
     }
@@ -1294,10 +1327,9 @@ export class AgentToolExecutor {
 
     // Show a chat bubble (spinner → audio player) like generate_image/video, so
     // agent-generated audio is visible IN THE CONVERSATION, not only in the
-    // 音频生成 library. Route to the requesting thread (parallel-chat safe).
-    const chat = useAgentChatStore.getState()
-    const reqThreadId = requestThreadId ?? chat.threadId
-    const genId = chat.beginImageGeneration(prompt, reqThreadId, 'audio')
+    // 音频生成 library. The bubble goes to the REQUESTING chat only; a call no
+    // chat owns gets no bubble (the audio still lands in the library).
+    const bubble = openGenerationBubble(prompt, requestThreadId, 'audio')
 
     const outcome = await generateAudioToLibrary(
       { prompt, format, speed, referenceAudios },
@@ -1305,7 +1337,7 @@ export class AgentToolExecutor {
       getAudioLibraryStore(),
     )
     if (!outcome.success) {
-      useAgentChatStore.getState().failImageGeneration(genId, outcome.error, reqThreadId)
+      bubble.fail(outcome.error)
       return { success: false, error: outcome.error }
     }
     const { item } = outcome
@@ -1313,22 +1345,18 @@ export class AgentToolExecutor {
     // fall back to the local file path (toRenderableUri → local-file://).
     const playbackUri = item.remoteUrl || item.filePath || ''
     if (playbackUri) {
-      useAgentChatStore.getState().resolveImageGeneration(
-        genId,
-        [{
-          id: item.id,
-          kind: 'file',
-          name: `${item.prompt.slice(0, 24) || 'audio'}.${item.format.includes('opus') || item.format.includes('ogg') ? 'ogg' : item.format.includes('wav') ? 'wav' : 'mp3'}`,
-          mime: item.format.includes('opus') || item.format.includes('ogg') ? 'audio/ogg' : item.format.includes('wav') ? 'audio/wav' : 'audio/mpeg',
-          size: 0,
-          uri: playbackUri,
-        }],
-        reqThreadId,
-      )
+      bubble.resolve([{
+        id: item.id,
+        kind: 'file',
+        name: `${item.prompt.slice(0, 24) || 'audio'}.${item.format.includes('opus') || item.format.includes('ogg') ? 'ogg' : item.format.includes('wav') ? 'wav' : 'mp3'}`,
+        mime: item.format.includes('opus') || item.format.includes('ogg') ? 'audio/ogg' : item.format.includes('wav') ? 'audio/wav' : 'audio/mpeg',
+        size: 0,
+        uri: playbackUri,
+      }])
     } else {
       // No renderable source (base64-only fallback) — settle the bubble as done
       // with no artifacts rather than leaving it spinning.
-      useAgentChatStore.getState().resolveImageGeneration(genId, [], reqThreadId)
+      bubble.resolve([])
     }
 
     return {
@@ -1432,16 +1460,17 @@ export class AgentToolExecutor {
    * 都会把导出文件落盘为线程附件(FK on threadId);没有线程时 bridge 返回
    * 结构化错误而不是丢文件。其余 action 忽略该字段,注入无副作用。
    *
-   * 线程来源与 ask_user / generate_image 一致:优先用主进程按 Codex `_meta` 反查出的
-   * 发起线程(`requestThreadId`),缺失(老 codex / 手动调用)才回退到此刻的活动线程。
-   * 以前这里直接取活动线程:后台对话的 agent 导出的文件会记到用户正在看的另一个对话头上。
+   * 线程来源与 ask_user / generate_image 一致:只用主进程按 Codex `_meta` 反查出的
+   * 发起线程(`requestThreadId`)。**认不出发起方时不再借用此刻的活动线程** ——
+   * 那会把别人导出的文件记到用户正在看的对话头上。认不出时用 `DETACHED_OUTPUT_THREAD_ID`:
+   * 文件照样落盘、路径照样回给 agent,只是不挂到任何对话的附件面板里。
    */
   private async callDirector(
     toolName: string,
     params: Record<string, unknown>,
     requestThreadId?: string,
   ): Promise<unknown> {
-    const threadId = requestThreadId ?? useAgentChatStore.getState().threadId
+    const threadId = requestThreadId ?? DETACHED_OUTPUT_THREAD_ID
     return directorBridge.handle(toolName, { ...params, threadId })
   }
 
@@ -1487,12 +1516,14 @@ export class AgentToolExecutor {
       // the agent's VIRTUAL viewport is keyed per thread so the next
       // canvas_snapshot (same thread) tiers around it.
       //
-      // Requesting thread first (reverse-mapped from Codex `_meta` in main), the
-      // active thread only when that is missing — same rule as ask_user /
-      // generate_image. Using the active thread unconditionally filed a
-      // background chat's exports under whichever chat the user was looking at,
-      // and made two chats share one virtual viewport.
-      const threadId = requestThreadId ?? useAgentChatStore.getState().threadId
+      // The requesting thread ONLY (mapped from Codex `_meta` in main) — same
+      // rule as ask_user / generate_image. Borrowing the active thread filed
+      // someone else's exports under whichever chat the user was looking at,
+      // and made that chat share its virtual viewport with a stranger. A call
+      // no chat owns uses the detached pseudo thread instead: the export is
+      // still written and its path still returned to the agent, it just is not
+      // any chat's attachment, and its viewport is kept apart from every chat's.
+      const threadId = requestThreadId ?? DETACHED_OUTPUT_THREAD_ID
       return canvasBridge.handle(toolName, { ...params, threadId })
     }
     return canvasBridge.handle(toolName, params)
@@ -1524,9 +1555,16 @@ export class AgentToolExecutor {
     const allowFreeText = options.length === 0 ? true : params.allowFreeText !== false
     const allowSkip = params.allowSkip !== false
 
-    const chat = useAgentChatStore.getState()
-    const reqThreadId = requestThreadId ?? chat.threadId
-    return chat.ask({ question, options, mode, allowFreeText, allowSkip }, reqThreadId)
+    // No chat owns this call → there is nowhere to put the card. It used to go
+    // into whichever chat was open: the user answered a question from an agent
+    // they could not see, about work that was not this chat's. Answer the
+    // agent at once instead (a card nobody is shown would hold it for the full
+    // idle timeout), and say plainly that nobody was asked.
+    if (!requestThreadId) return askUserDetachedAnswer()
+
+    return useAgentChatStore
+      .getState()
+      .ask({ question, options, mode, allowFreeText, allowSkip }, requestThreadId)
   }
 
   private async generateImage(
@@ -1597,25 +1635,25 @@ export class AgentToolExecutor {
       ...(isMiauOnlyChannel(model) ? { siteKey: MIAU_SITE_KEY } : {}),
     }
 
-    // Resolve the REQUESTING thread. Prefer the authoritative id Codex stamped
-    // on the tool call's `_meta` (reverse-mapped to our db thread id in main,
-    // arriving as `requestThreadId`) — that's correct even when several chats
-    // generate in parallel. Fall back to the active thread at tool-start only
-    // when the metadata is missing (older codex / manual calls). This is what
-    // keeps a background turn's image in ITS chat instead of leaking into
-    // whatever chat is active when the render finishes.
-    const chat = useAgentChatStore.getState()
-    const reqThreadId = requestThreadId ?? chat.threadId
-
+    // The REQUESTING thread is the id Codex stamped on the tool call's `_meta`,
+    // mapped to our db thread id in main and arriving as `requestThreadId` —
+    // correct even when several chats generate in parallel.
+    //
+    // When it is missing, main could not tie the call to ANY chat, and there is
+    // deliberately no fallback to the chat that is open: that guess is exactly
+    // how one conversation's images ended up shown in — and, through the
+    // reload anchor below, permanently filed under — another. The render still
+    // runs and is still saved; it just has no bubble.
+    //
     // Show a "generating" bubble immediately so the user sees in-progress
     // feedback during the (potentially long) request, then settle it in place.
-    const genId = chat.beginImageGeneration(
+    const bubble = openGenerationBubble(
       // 拆分的「自动全拆」模式 prompt 就是空的（见 LAYER_DECOMPOSITION_BUBBLE_LABEL）；
       // 其余渠道空 prompt 进不来（MCP schema 拦掉），行为保持原样。
       request.layerDecomposition && !request.prompt?.trim()
         ? LAYER_DECOMPOSITION_BUBBLE_LABEL
         : request.prompt,
-      reqThreadId,
+      requestThreadId,
     )
 
     let result: GenerateResult
@@ -1623,25 +1661,25 @@ export class AgentToolExecutor {
       result = await api.generateImage(request)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      chat.failImageGeneration(genId, message, reqThreadId)
+      bubble.fail(message)
       throw error
     }
 
     if (!result.success) {
       const message = result.error || 'Image generation failed'
-      chat.failImageGeneration(genId, message, reqThreadId)
+      bubble.fail(message)
       throw new Error(message)
     }
 
     const images = result.images ?? result.urls ?? []
     if (images.length === 0) {
       const message = 'Image generation returned no images'
-      chat.failImageGeneration(genId, message, reqThreadId)
+      bubble.fail(message)
       throw new Error(message)
     }
 
     // Settle the bubble with the finished images (thumbnail + lightbox).
-    chat.resolveImageGeneration(genId, this.toArtifacts(images), reqThreadId)
+    bubble.resolve(this.toArtifacts(images))
 
     // THE SUCCESS CRITERION ENDS HERE. The image is rendered and on screen, so
     // the tool call is a success no matter what happens to the bookkeeping
@@ -1651,7 +1689,7 @@ export class AgentToolExecutor {
     // immediately with empty paths and let persistence settle in the
     // background. Codex must NEVER wait on bookkeeping for an image the user
     // is already looking at.
-    const persistence = this.persistArtifacts(request, images, reqThreadId)
+    const persistence = this.persistArtifacts(request, images, requestThreadId)
     const settled = await Promise.race([
       persistence,
       new Promise<null>((resolve) => setTimeout(() => resolve(null), PERSISTENCE_BUDGET_MS)),
@@ -1661,13 +1699,11 @@ export class AgentToolExecutor {
       // Show the save-status banner on the bubble NOW (pending), and update the
       // SAME bubble whenever the background save eventually settles — so the
       // user sees "保存中" flip to the final folder without any new message.
-      chat.annotateImageGeneration(genId, { status: 'pending' }, reqThreadId)
+      bubble.annotate({ status: 'pending' })
       void persistence
         .then((late) => {
-          this.swapBubbleToSaved(genId, late, reqThreadId)
-          useAgentChatStore
-            .getState()
-            .annotateImageGeneration(genId, this.toSaveInfo(late), reqThreadId)
+          this.swapBubbleToSaved(bubble, late)
+          bubble.annotate(this.toSaveInfo(late))
         })
         .catch(() => {})
       return {
@@ -1680,8 +1716,8 @@ export class AgentToolExecutor {
       }
     }
 
-    this.swapBubbleToSaved(genId, settled, reqThreadId)
-    chat.annotateImageGeneration(genId, this.toSaveInfo(settled), reqThreadId)
+    this.swapBubbleToSaved(bubble, settled)
+    bubble.annotate(this.toSaveInfo(settled))
 
     // Return a COMPACT result to the agent — never echo multi-MB base64 back
     // into the model context (token blowup + useless to the agent). `paths`
@@ -1782,7 +1818,10 @@ export class AgentToolExecutor {
     try {
       const [historyId, paths] = await Promise.all([
         this.recordHistory(request, images),
-        threadId ? this.saveToFilePanel(threadId, request.prompt, images) : Promise.resolve([]),
+        // A call no chat owns still gets its files written (under the detached
+        // pseudo thread): the agent that asked needs the paths, and the bytes
+        // were paid for. They just are not any chat's attachment.
+        this.saveToFilePanel(threadId ?? DETACHED_OUTPUT_THREAD_ID, request.prompt, images),
       ])
 
       // Anchor the bubble to the history record so it survives reload /
@@ -1790,6 +1829,10 @@ export class AgentToolExecutor {
       // remain `pending:*` until async R2/COS upload settles. Store the tiny
       // local saved paths too, so reload/edit can still restore thumbnail +
       // address.
+      //
+      // ONLY for a call a chat owns. This anchor is what makes an image
+      // reappear in a chat after every reload — written under a guessed thread
+      // it turned a one-off misplaced bubble into a permanent one.
       if (historyId != null && threadId) {
         recordCodexArtifact(threadId, {
           id: `codex-artifact-${historyId}`,
@@ -1817,21 +1860,20 @@ export class AgentToolExecutor {
    * original base64 keeps the image visible; the save banner reports failure).
    */
   private swapBubbleToSaved(
-    genId: string,
+    bubble: GenerationBubble,
     settled: { historyId: number | string | null; paths: string[] },
-    threadId: string | undefined,
   ): void {
-    const light = buildLightArtifacts(settled.paths, 'image', genId)
-    if (light.length > 0) {
-      useAgentChatStore.getState().replaceImageArtifacts(genId, light, threadId)
-    }
+    // A detached call has no bubble to rebuild.
+    if (!bubble.itemId) return
+    const light = buildLightArtifacts(settled.paths, 'image', bubble.itemId)
+    if (light.length > 0) bubble.replaceArtifacts(light)
   }
 
   /** Map settled persistence results to the bubble's save-status banner payload. */
   private toSaveInfo(settled: { historyId: number | string | null; paths: string[] }): ArtifactSaveInfo {
     const { historyId, paths } = settled
     // No file paths AND no history record → the bookkeeping really failed.
-    // Paths alone can legitimately be empty (e.g. no file-panel thread); the
+    // Paths alone can legitimately be empty (e.g. no attachments bridge); the
     // history record still makes the image findable, so that's a save.
     if (paths.length === 0) {
       return historyId != null ? { status: 'saved' } : { status: 'failed' }

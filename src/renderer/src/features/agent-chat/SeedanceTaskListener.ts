@@ -21,7 +21,7 @@
 
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import type { HistoryDataService } from '../history'
-import { useAgentChatStore } from './store'
+import { openGenerationBubble, type GenerationBubble } from './detachedToolOutput'
 import { recordCodexArtifact } from './codexArtifactPersistence'
 import type { AttachmentRef } from '../../../../types/agent-timeline'
 import type { SeedanceTaskUpdate } from '../../../../types/seedance'
@@ -33,7 +33,8 @@ type SeedanceElectronApi = {
 }
 
 interface TrackedTask {
-  itemId: string
+  /** The chat bubble for this task — a no-op when no chat owns the task. */
+  bubble: GenerationBubble
   threadId?: string
   /** Bubble already settled with artifacts (don't re-resolve on every poll). */
   resolvedUri?: string
@@ -135,33 +136,37 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
   // 工作台页自己的卡片消费（useVideoWorkbenchStore 同样订阅 seedance:task-update）。
   if (update.source === 'workbench') return
 
-  const chat = useAgentChatStore.getState()
-
   // 气泡身份优先用稳定的 clientId：generate_video 的「预备卡片」与之后真实
   // taskId 的广播带同一个 clientId，于是驱动同一张气泡（不重复建）；缺省回退 taskId。
   const key = update.clientId ?? update.taskId
   let task = tracked.get(key)
   if (!task) {
-    const itemId = chat.beginImageGeneration(update.prompt, update.threadId, 'video')
-    task = { itemId, threadId: update.threadId, historyRecorded: false }
+    // 气泡只进发起这条任务的对话。任务没有对话(主进程认不出是谁发起的)时不建气泡 ——
+    // 以前会落到此刻打开的对话里,那是别人的视频。成片照样进历史记录。
+    task = {
+      bubble: openGenerationBubble(update.prompt, update.threadId, 'video'),
+      threadId: update.threadId,
+      historyRecorded: false,
+    }
     tracked.set(key, task)
   }
+  const { bubble } = task
 
   switch (update.status) {
     case 'queued':
     case 'running':
-      chat.updateGenerationProgress(task.itemId, progressLabel(update), task.threadId)
+      bubble.progress(progressLabel(update))
       return
 
     case 'failed':
-      chat.failImageGeneration(task.itemId, update.error ?? '视频生成失败', task.threadId)
+      bubble.fail(update.error ?? '视频生成失败')
       tracked.delete(key)
       return
 
     // 聊天气泡的状态机没有「已取消」这一档，用失败态承载，并把原因原样带出
     // —— 那句话里写着这次到底还计不计费（running 阶段无法真取消）。
     case 'cancelled':
-      chat.failImageGeneration(task.itemId, update.error ?? '视频生成已取消', task.threadId)
+      bubble.fail(update.error ?? '视频生成已取消')
       tracked.delete(key)
       return
 
@@ -172,26 +177,24 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
       const uri = update.remoteUrl ?? (update.localPath ? toFileUrl(update.localPath) : update.videoUrl)
       if (uri && uri !== task.resolvedUri) {
         task.resolvedUri = uri
-        chat.resolveImageGeneration(task.itemId, [videoArtifact(update, uri)], task.threadId)
+        bubble.resolve([videoArtifact(update, uri)])
       }
 
       switch (update.persistence) {
         case 'idle':
         case 'running':
-          chat.annotateImageGeneration(task.itemId, { status: 'pending' }, task.threadId)
+          bubble.annotate({ status: 'pending' })
           return
         case 'failed':
-          chat.annotateImageGeneration(task.itemId, { status: 'failed' }, task.threadId)
+          bubble.annotate({ status: 'failed' })
           tracked.delete(key)
           return
         case 'done': {
           const localPath = update.localPath
-          chat.annotateImageGeneration(
-            task.itemId,
+          bubble.annotate(
             localPath
               ? { status: 'saved', dir: dirOf(localPath), paths: [localPath] }
               : { status: 'saved' },
-            task.threadId,
           )
           void persistHistory(update, task).finally(() => tracked.delete(key))
           return
