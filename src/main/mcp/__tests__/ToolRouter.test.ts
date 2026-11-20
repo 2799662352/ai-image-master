@@ -1,5 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ToolRouter } from '../ToolRouter'
+import { ToolRouter, type ToolThreadResolver } from '../ToolRouter'
+import { runWithToolCaller, type CodexToolCaller, type ToolThreadResolution } from '../toolCaller'
+
+/** A resolver that knows only the caller's OWN thread — the pre-lineage behaviour. */
+function byThread(map: Record<string, string>): ToolThreadResolver {
+  return (caller) => {
+    const dbThreadId = caller.threadId ? map[caller.threadId] : undefined
+    return dbThreadId ? { threadId: dbThreadId, via: 'live' } : undefined
+  }
+}
+
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
 
 describe('ToolRouter', () => {
   it('runs main handlers before renderer fallback', async () => {
@@ -10,48 +23,54 @@ describe('ToolRouter', () => {
     expect(win.webContents.send).not.toHaveBeenCalled()
   })
 
-  it('reverse-maps the codex thread id to a db thread id on the renderer request', () => {
+  it('maps the codex thread id to a db thread id on the renderer request', () => {
     const send = vi.fn()
     const win = { webContents: { send } } as any
     const router = new ToolRouter(win)
-    router.setThreadIdResolver((codexId) => (codexId === 'codex-uuid-1' ? 'db-thread-1' : undefined))
+    router.setThreadResolver(byThread({ 'codex-uuid-1': 'db-thread-1' }))
 
     void router.call('generate_image', { prompt: 'a cat' }, 'codex-uuid-1')
 
+    // Same tick: an in-memory answer must not delay the renderer request.
     expect(send).toHaveBeenCalledTimes(1)
     const [, request] = send.mock.calls[0]
     expect(request.toolName).toBe('generate_image')
     expect(request.threadId).toBe('db-thread-1')
   })
 
-  it('omits threadId when the codex id cannot be mapped (renderer falls back)', () => {
+  it('omits threadId when no chat owns the caller — the renderer runs the tool detached', () => {
     const send = vi.fn()
     const win = { webContents: { send } } as any
     const router = new ToolRouter(win)
-    router.setThreadIdResolver(() => undefined)
+    router.setThreadResolver(() => undefined)
 
     void router.call('generate_image', { prompt: 'a cat' }, 'unknown-codex-id')
 
     const [, request] = send.mock.calls[0]
-    expect(request.threadId).toBeUndefined()
+    expect('threadId' in request).toBe(false)
   })
 
-  describe('unresolved codex thread id (renderer falls back to the ACTIVE chat)', () => {
-    // The fallback is the exact path that put one chat's option card into the
-    // chat the user was looking at. It still has to exist (no mapping yet during
-    // a thread's first moments), but it must never be silent.
-    it('warns when a codex id was supplied but has no DB mapping', () => {
+  describe('caller no chat owns', () => {
+    // Such a call used to be handed to whichever chat was open — the path that
+    // put one conversation's images into another. It now runs detached, and it
+    // must never do so silently.
+    it('warns, naming the tool and every codex thread the caller reported', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       try {
         const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
-        router.setThreadIdResolver(() => undefined)
+        router.setThreadResolver(() => undefined)
 
-        void router.call('ask_user', { question: 'q' }, 'unmapped-codex-id')
+        runWithToolCaller({ threadId: 'child-id', ancestorThreadIds: ['parent-id'] }, () => {
+          void router.call('ask_user', { question: 'q' })
+        })
 
         expect(warn).toHaveBeenCalledTimes(1)
         const text = warn.mock.calls[0].map(String).join(' ')
         expect(text).toContain('ask_user')
-        expect(text).toContain('unmapped-codex-id')
+        expect(text).toContain('child-id')
+        expect(text).toContain('parent-id')
+        // The old wording promised a fallback that no longer exists.
+        expect(text).not.toMatch(/ACTIVE chat/i)
       } finally {
         warn.mockRestore()
       }
@@ -61,12 +80,169 @@ describe('ToolRouter', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       try {
         const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
-        router.setThreadIdResolver((id) => (id === 'known' ? 'db-1' : undefined))
+        router.setThreadResolver(byThread({ known: 'db-1' }))
 
         void router.call('ask_user', { question: 'q' }, 'known')
         void router.call('ask_user', { question: 'q' })
 
         expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    })
+  })
+
+  describe('caller scope (the tool handler\'s `_meta`, not a hand-forwarded id)', () => {
+    // Most tools never forwarded the caller — the canvas-export and director
+    // tools among them — so their output could only ever go to the open chat.
+    // Inside a caller scope a bare `router.call(name, params)` is attributed.
+    it('attributes a call that forwards nothing', () => {
+      const send = vi.fn()
+      const router = new ToolRouter({ webContents: { send } } as any)
+      router.setThreadResolver(byThread({ 'codex-1': 'db-1' }))
+
+      runWithToolCaller({ threadId: 'codex-1', ancestorThreadIds: [] }, () => {
+        void router.call('canvas_snapshot', {})
+      })
+
+      expect(send.mock.calls[0][1].threadId).toBe('db-1')
+    })
+
+    it('still attributes a call issued later in the same async flow', async () => {
+      const send = vi.fn()
+      const router = new ToolRouter({ webContents: { send } } as any)
+      router.setThreadResolver(byThread({ 'codex-1': 'db-1' }))
+
+      await runWithToolCaller({ threadId: 'codex-1', ancestorThreadIds: [] }, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        void router.call('director_snapshot', {})
+      })
+
+      expect(send.mock.calls[0][1].threadId).toBe('db-1')
+    })
+
+    it('keeps two overlapping handlers apart', async () => {
+      const send = vi.fn()
+      const router = new ToolRouter({ webContents: { send } } as any)
+      router.setThreadResolver(byThread({ 'codex-a': 'db-a', 'codex-b': 'db-b' }))
+
+      const run = (codexId: string, delayMs: number): Promise<void> =>
+        runWithToolCaller({ threadId: codexId, ancestorThreadIds: [] }, async () => {
+          await new Promise((resolve) => setTimeout(resolve, delayMs))
+          void router.call('canvas_snapshot', { from: codexId })
+        })
+      // B starts second but finishes first: neither may inherit the other's caller.
+      await Promise.all([run('codex-a', 20), run('codex-b', 5)])
+
+      const byParam = new Map(send.mock.calls.map(([, req]) => [req.params.from, req.threadId]))
+      expect(byParam.get('codex-a')).toBe('db-a')
+      expect(byParam.get('codex-b')).toBe('db-b')
+    })
+
+    it('hands the resolver the whole lineage, so an unknown child resolves through its parent', () => {
+      const send = vi.fn()
+      const router = new ToolRouter({ webContents: { send } } as any)
+      const resolver = vi.fn((caller: CodexToolCaller): ToolThreadResolution | undefined =>
+        caller.ancestorThreadIds.includes('parent-codex') ? { threadId: 'db-parent', via: 'ancestor' } : undefined,
+      )
+      router.setThreadResolver(resolver)
+
+      runWithToolCaller({ threadId: 'child-codex', ancestorThreadIds: ['parent-codex'] }, () => {
+        // The tool forwards the child's own id the old way; the lineage must survive.
+        void router.call('generate_image', { prompt: 'x' }, 'child-codex')
+      })
+
+      expect(resolver).toHaveBeenCalledWith({ threadId: 'child-codex', ancestorThreadIds: ['parent-codex'] })
+      expect(send.mock.calls[0][1].threadId).toBe('db-parent')
+    })
+
+    it('an explicit id that differs from the scope keeps the scope\'s thread as lineage', () => {
+      const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
+      const resolver = vi.fn(() => undefined)
+      router.setThreadResolver(resolver)
+
+      runWithToolCaller({ threadId: 'scope-thread', ancestorThreadIds: ['scope-parent'] }, () => {
+        void router.call('generate_image', {}, 'explicit-thread')
+      })
+
+      expect(resolver).toHaveBeenCalledWith({
+        threadId: 'explicit-thread',
+        ancestorThreadIds: ['scope-thread', 'scope-parent'],
+      })
+    })
+
+    it('does not consult the resolver for a call nobody is behind', () => {
+      const send = vi.fn()
+      const router = new ToolRouter({ webContents: { send } } as any)
+      const resolver = vi.fn(() => undefined)
+      router.setThreadResolver(resolver)
+
+      void router.call('query_history', {})
+
+      expect(resolver).not.toHaveBeenCalled()
+      expect('threadId' in send.mock.calls[0][1]).toBe(false)
+    })
+  })
+
+  describe('resolution happens once, and never breaks the call', () => {
+    it('resolves once per call and gives the SAME answer to a main handler', async () => {
+      const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
+      const resolver = vi.fn(byThread({ 'codex-1': 'db-1' }))
+      router.setThreadResolver(resolver)
+      const handler = vi.fn(async () => 'ok')
+      router.registerMain('generate_video', handler)
+
+      await router.call('generate_video', { prompt: 'p' }, 'codex-1')
+
+      expect(resolver).toHaveBeenCalledTimes(1)
+      expect(handler).toHaveBeenCalledWith({ prompt: 'p' }, 'db-1')
+    })
+
+    it('resolves once per call on the renderer path too', () => {
+      const router = new ToolRouter({ webContents: { send: vi.fn() } } as any)
+      const resolver = vi.fn(byThread({ 'codex-1': 'db-1' }))
+      router.setThreadResolver(resolver)
+
+      void router.call('generate_image', {}, 'codex-1')
+
+      expect(resolver).toHaveBeenCalledTimes(1)
+    })
+
+    it('waits for an asynchronous answer (database lookup) before sending', async () => {
+      const send = vi.fn()
+      const router = new ToolRouter({ webContents: { send } } as any)
+      let release: (value: ToolThreadResolution) => void = () => {}
+      router.setThreadResolver(() => new Promise<ToolThreadResolution>((resolve) => { release = resolve }))
+
+      void router.call('generate_image', {}, 'cold-codex')
+      await flush()
+      // Sending now would mean sending without an owner — the bug.
+      expect(send).not.toHaveBeenCalled()
+
+      release({ threadId: 'db-cold', via: 'persisted' })
+      await flush()
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(send.mock.calls[0][1].threadId).toBe('db-cold')
+    })
+
+    it.each([
+      ['throws', () => { throw new Error('map exploded') }],
+      ['rejects', () => Promise.reject(new Error('db down'))],
+    ])('a resolver that %s degrades to detached instead of failing the tool', async (_label, resolver) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const send = vi.fn()
+        const router = new ToolRouter({ webContents: { send } } as any)
+        router.setThreadResolver(resolver as never)
+        const handler = vi.fn(async () => 'ran')
+        router.registerMain('generate_video', handler)
+
+        await expect(router.call('generate_video', {}, 'codex-1')).resolves.toBe('ran')
+        expect(handler).toHaveBeenCalledWith({}, undefined)
+
+        void router.call('generate_image', {}, 'codex-1')
+        await flush()
+        expect('threadId' in send.mock.calls[0][1]).toBe(false)
       } finally {
         warn.mockRestore()
       }

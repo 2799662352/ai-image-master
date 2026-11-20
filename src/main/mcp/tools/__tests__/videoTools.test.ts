@@ -36,6 +36,9 @@ function capture(routerResult: unknown = { ok: true }): { tools: Captured[]; ser
 function makeTask(patch: Partial<SeedanceTaskState> = {}): SeedanceTaskState {
   return {
     taskId: 'cgt-123',
+    // 有主的调用(绝大多数):任务挂在发起它的对话上,渲染端在那个对话里开气泡。
+    // 游离的(`threadId: undefined`)见文件末尾那一组。
+    threadId: 'thread-1',
     prompt: '一只猫在雨里跳舞',
     model: '2.0-fast',
     resolution: '720p',
@@ -569,5 +572,111 @@ describe('video banners', () => {
     const text = buildUnknownTaskBanner('cgt-x')
     expect(text).toContain('cgt-x')
     expect(text).toContain('NEW generate_video')
+  })
+})
+
+/**
+ * 任务不挂在任何对话上(`threadId` 缺席 —— 发起调用的线程不属于任何对话)时,渲染端不给它开
+ * 气泡。回执要是还写着「已经在聊天里播放了」,agent 就会照着回复,用户去聊天里找一段
+ * 根本不在那儿的视频。图片那边同一件事见 imageTools.detached.test.ts。
+ */
+describe('video banners:任务不属于任何对话时说实话', () => {
+  /** 每一句都在声称「用户此刻在聊天里看得到它」。 */
+  const CLAIMS_THE_USER_SEES_IT = [
+    /already playing in the chat/i,
+    /and playing in the chat/i,
+    /sees a live progress bubble/i,
+    /sees its progress bubble/i,
+    /The user sees the failure/i,
+    /playing in app chat/i,
+    /just confirm to the user/i,
+  ]
+  const expectNoFalseClaim = (words: string): void => {
+    for (const claim of CLAIMS_THE_USER_SEES_IT) expect(words, String(claim)).not.toMatch(claim)
+  }
+  const stray = (patch: Partial<SeedanceTaskState> = {}): SeedanceTaskState =>
+    makeTask({ threadId: undefined, ...patch })
+
+  it('成片已落盘:说「没有在任何对话里播放」,路径照给', () => {
+    const text = buildDoneBanner(stray({ status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4' }))
+    expect(text).toContain('generate_video DONE — video generated and saved locally. NOT playing in any chat')
+    expect(text).toContain('📁 SAVED FILE: D:/save/v.mp4')
+    expect(text).toContain('Do NOT say the video is playing in the chat')
+    expect(text).toContain('do NOT re-generate')
+    expectNoFalseClaim(text)
+  })
+
+  it('落盘失败 / 落盘还在跑:同样不说「正在聊天里播放」', () => {
+    const saveFailed = buildDoneBanner(stray({ status: 'succeeded', persistence: 'failed', videoUrl: 'https://cdn/v.mp4' }))
+    expect(saveFailed).toContain('local file save FAILED. NOT playing in any chat')
+    expect(saveFailed).toContain('https://cdn/v.mp4')
+    expectNoFalseClaim(saveFailed)
+
+    const pending = buildDoneBanner(stray({ status: 'succeeded', persistence: 'running', videoUrl: 'https://cdn/v.mp4' }))
+    expect(pending).toContain('generate_video DONE — video generated. NOT playing in any chat')
+    expect(pending).toContain('persistencePending')
+    // 没有气泡可指,路径是唯一能交付的东西 —— 所以这里要它再查一次,而不是「不需要就算了」。
+    expect(pending).toContain('Call check_video_task ONCE more in ~10s to get the saved path')
+    expectNoFalseClaim(pending)
+  })
+
+  it('还在跑 / 超预算交还 / 失败:不说用户看得到进度气泡或失败气泡', () => {
+    const budget = buildBudgetExhaustedBanner(stray({ status: 'running' }))
+    expect(budget).toContain('STILL RUNNING')
+    expect(budget).toContain('no chat shows a progress bubble for it')
+    expectNoFalseClaim(budget)
+
+    const running = buildRunningBanner(stray({ status: 'running' }))
+    expect(running).toContain('check_video_task again')
+    expect(running).toContain('no chat shows its progress')
+    expectNoFalseClaim(running)
+
+    const failed = buildFailedBanner(stray({ status: 'failed', error: 'OutputVideoSensitive: 审核未通过' }))
+    expect(failed).toContain('OutputVideoSensitive')
+    expect(failed).toContain('No chat shows this failure')
+    expect(failed).toContain('report the error in your reply')
+    expectNoFalseClaim(failed)
+  })
+
+  it('空字符串的 threadId 也算没有归属', () => {
+    const text = buildDoneBanner(stray({ threadId: '', status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4' }))
+    expect(text).toContain('NOT playing in any chat')
+  })
+
+  it('经工具回包:resource_link 的说明也不说「在聊天里播放」', async () => {
+    const task = stray({ status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4' })
+    const { tools, server, router } = capture({ found: true, task })
+    registerVideoTools(server, router)
+    const check = tools.find((t) => t.name === 'check_video_task')!
+    const res = await check.handler({ taskId: 'cgt-123' })
+
+    expect(String(res.content[0].text)).toContain('NOT playing in any chat')
+    expect(res.content[1]).toMatchObject({
+      type: 'resource_link',
+      description: 'Generated video saved locally (not playing in any chat).',
+    })
+  })
+
+  it('对照:挂在对话上的任务照旧说气泡在聊天里', async () => {
+    expect(buildDoneBanner(makeTask({ status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4' })))
+      .toContain('generate_video DONE — video generated, saved locally, and already playing in the chat.')
+    expect(buildDoneBanner(makeTask({ status: 'succeeded', persistence: 'failed' })))
+      .toContain('video generated and playing in the chat, but the local file save FAILED.')
+    expect(buildDoneBanner(makeTask({ status: 'succeeded', persistence: 'running' })))
+      .toContain('otherwise just confirm to the user.')
+    expect(buildBudgetExhaustedBanner(makeTask({ status: 'running' })))
+      .toContain('the user sees a live progress bubble in the chat.')
+    expect(buildRunningBanner(makeTask({ status: 'running' })))
+      .toContain('the task is alive and the user sees its progress bubble.')
+    expect(buildFailedBanner(makeTask({ status: 'failed', error: 'x' })))
+      .toContain('The user sees the failure in the chat bubble.')
+
+    const task = makeTask({ status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4' })
+    const { tools, server, router } = capture({ found: true, task })
+    registerVideoTools(server, router)
+    const res = await tools.find((t) => t.name === 'check_video_task')!.handler({ taskId: 'cgt-123' })
+    expect(res.content[1]).toMatchObject({
+      description: 'Generated video saved locally (also playing in app chat + history).',
+    })
   })
 })

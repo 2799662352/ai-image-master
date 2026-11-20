@@ -33,6 +33,14 @@ export interface ImageTaskState {
   prompt: string
   /** 发起请求的 db thread id（并行聊天归位用；渲染层另有同值，主进程仅留作 debug）。 */
   threadId?: string
+  /**
+   * 没有任何对话认领这次调用：渲染层照常出图、照常保存，但**不在任何对话里显示**
+   * （没有「生成中」气泡，也没有成图 / 失败气泡）。由渲染层在 ack 里如实上报。
+   *
+   * 回给 agent 的每一句「用户已经看到了」都得看它 —— 否则 agent 会照着说，
+   * 用户去聊天里找一张根本不在那儿的图。
+   */
+  detached?: boolean
   createdAt: number
   settledAt?: number
   /**
@@ -95,6 +103,15 @@ export class ImageTaskManager {
     } else {
       this.settle(update.taskId, 'succeeded', { result: update.result })
     }
+  }
+
+  /**
+   * 渲染层 ack 说「这次调用不属于任何对话」时记下来（见 `ImageTaskState.detached`）。
+   * ack 总是先于终态广播到达，所以读回执时这个标记已经在了；未知 taskId 安全忽略。
+   */
+  markDetached(taskId: string): void {
+    const task = this.tasks.get(taskId)
+    if (task) task.detached = true
   }
 
   /** 渲染层 ack 失败（根本没跑起来）时由调用方直接判失败。 */

@@ -38,7 +38,35 @@ export interface ToolCallRecord {
   'error.reason'?: string
   /** 可选:我们这侧的会话 id,用来把调用归到某次对话。 */
   'thread.id'?: string
+  /**
+   * 这次调用是怎么认出所属对话的。只在**不是**最普通的情况(调用方就是该对话当前的
+   * codex 线程)时才写,所以绝大多数记录和以前一个字不差。
+   *
+   * 为什么要记:2026-11 一位用户的日志里 1,512 次出图有 718 次没有 `thread.id`,
+   * 而那份日志分不清「调用方没带线程」和「带了但认不出」,更说不出认不出的是子代理、
+   * 被分叉换下的旧线程、还是别的 —— 结果只能靠猜。
+   */
+  'thread.via'?: 'subagent' | 'retired' | 'ancestor' | 'persisted'
+  /**
+   * 只在没有 `thread.id` 时出现:
+   * - `unresolved` 调用方报了 codex 线程,但没有任何对话认领它(工具结果不会进任何对话);
+   * - `anonymous`  调用方什么线程信息都没带(不是 codex 发来的,或主进程内部调用)。
+   */
+  'thread.attribution'?: 'unresolved' | 'anonymous'
+  /**
+   * 调用方自己的 codex 线程 id。只在没认出来、或不是按最普通的路认出来时才写 ——
+   * 有了它才能回到 codex 的会话库里查这条线程是谁生的。是随机 UUID,不含用户内容。
+   */
+  'codex.thread.id'?: string
+  /** 只在没认出来时出现:调用方报的祖先线程(近的在前)。 */
+  'codex.thread.ancestors'?: string[]
 }
+
+/** {@link buildToolCallRecord} 的归属入参:认出来了、没认出来、还是压根没人报线程。 */
+export type ToolCallAttribution =
+  | { kind: 'resolved'; via: 'live' | 'subagent' | 'retired' | 'ancestor' | 'persisted'; codexThreadId?: string }
+  | { kind: 'unresolved'; codexThreadId?: string; ancestorThreadIds: readonly string[] }
+  | { kind: 'anonymous' }
 
 /** 错误原因保留的字符数。够分类,够不到被塞进错误里的提示词全文。 */
 export const TOOL_ERROR_REASON_MAX = 80
@@ -65,6 +93,8 @@ export function buildToolCallRecord(input: {
   name: string
   durationMs: number
   threadId?: string
+  /** 不传 = 调用方不关心归属细节(旧调用点、单测),记录形状与以前完全一致。 */
+  attribution?: ToolCallAttribution
   error?: unknown
   now?: Date
 }): ToolCallRecord {
@@ -75,6 +105,7 @@ export function buildToolCallRecord(input: {
     'gen_ai.tool.type': 'function',
     duration_ms: Math.max(0, Math.round(input.durationMs)),
     ...(input.threadId ? { 'thread.id': input.threadId } : {}),
+    ...attributionFields(input.attribution),
   }
   if (input.error === undefined) return record
 
@@ -85,6 +116,28 @@ export function buildToolCallRecord(input: {
   const reason = message.startsWith(prefix) ? message.slice(prefix.length) : message
   record['error.reason'] = reason.slice(0, TOOL_ERROR_REASON_MAX)
   return record
+}
+
+function attributionFields(
+  attribution: ToolCallAttribution | undefined,
+): Partial<ToolCallRecord> {
+  if (!attribution) return {}
+  if (attribution.kind === 'anonymous') return { 'thread.attribution': 'anonymous' }
+  if (attribution.kind === 'unresolved') {
+    return {
+      'thread.attribution': 'unresolved',
+      ...(attribution.codexThreadId ? { 'codex.thread.id': attribution.codexThreadId } : {}),
+      ...(attribution.ancestorThreadIds.length > 0
+        ? { 'codex.thread.ancestors': [...attribution.ancestorThreadIds] }
+        : {}),
+    }
+  }
+  // 最普通的情况不加字段:这是日志里的大多数,保持原样既省体积,也让旧的统计脚本照常工作。
+  if (attribution.via === 'live') return {}
+  return {
+    'thread.via': attribution.via,
+    ...(attribution.codexThreadId ? { 'codex.thread.id': attribution.codexThreadId } : {}),
+  }
 }
 
 /** 记一次调用。埋点永远不能弄坏一次真实调用,所以整体吞异常。 */

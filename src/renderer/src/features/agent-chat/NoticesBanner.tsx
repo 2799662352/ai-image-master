@@ -86,5 +86,7 @@ function labelFor(kind: AgentNotice['kind']): string {
       return 'new turn'
     case 'editBranchDegraded':
       return 'edit'
+    case 'toolOutputDetached':
+      return 'unassigned'
   }
 }

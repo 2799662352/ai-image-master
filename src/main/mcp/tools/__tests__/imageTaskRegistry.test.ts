@@ -39,6 +39,21 @@ describe('ImageTaskManager', () => {
     expect(reg.get(id)!.error).toBe('renderer gone')
   })
 
+  it('markDetached 只标记它点名的那个任务,并且终态之后还在(check_image_task 要读它)', () => {
+    const reg = new ImageTaskManager()
+    const stray = reg.create('stray')
+    const owned = reg.create('owned')
+    expect(reg.get(stray)!.detached).toBeUndefined()
+
+    reg.markDetached(stray)
+    reg.markDetached('no-such-task') // 未知 id 安全忽略
+
+    expect(reg.get(stray)!.detached).toBe(true)
+    expect(reg.get(owned)!.detached).toBeUndefined()
+    reg.applyUpdate({ taskId: stray, kind: 'single', status: 'succeeded', result: { ok: true } })
+    expect(reg.get(stray)).toMatchObject({ status: 'succeeded', detached: true })
+  })
+
   it('applyUpdate is idempotent — a second terminal update does not overwrite the first', () => {
     const reg = new ImageTaskManager()
     const id = reg.create('cat')

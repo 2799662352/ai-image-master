@@ -836,6 +836,15 @@ export type AgentNoticeKind =
    * tripped. Surfaces with `details.backupPath` or `details.ephemeralDir`.
    */
   | 'pgliteReset'
+  /**
+   * A tool produced output (image / audio / video) for a caller no chat owns —
+   * e.g. a codex thread this app has no record of. The output is kept (history
+   * page + on disk) but shown in NO chat: putting it into the chat the user
+   * happens to have open is how one conversation's images used to turn up in
+   * another. Renderer-raised, global (no `threadId`), at most one notice per
+   * ten minutes however many outputs there are.
+   */
+  | 'toolOutputDetached'
 
 export interface AgentNotice {
   /** Stable id so the renderer can dedupe identical notices. */
@@ -907,10 +916,15 @@ export interface AgentToolRequest {
   toolName: string
   params: Record<string, unknown>
   /**
-   * DB thread id of the chat that requested this tool, reverse-mapped from the
-   * Codex `_meta` thread id by the main process. Lets the renderer attribute a
-   * tool's UI (e.g. a generated image) to the requesting chat even when the
-   * user has switched to another chat. Undefined for older codex / manual calls.
+   * DB thread id of the chat that requested this tool, mapped from the Codex
+   * `_meta` thread id (or one of its ancestors) by the main process. Lets the
+   * renderer attribute a tool's UI (e.g. a generated image) to the requesting
+   * chat even when the user has switched to another chat.
+   *
+   * Absent = the main process could not tie the call to ANY chat. The tool
+   * still runs, but DETACHED: no bubble, no thread attachment, no persisted
+   * anchor in any chat. It is never a cue to use the chat that is currently
+   * open — that guess is what delivered one chat's images to another.
    */
   threadId?: string
 }

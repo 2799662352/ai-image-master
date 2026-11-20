@@ -281,3 +281,63 @@ describe('ThreadStore.listThreads', () => {
     expect(result[0]).not.toHaveProperty('_count')
   })
 })
+
+/**
+ * Reverse lookup used to attribute an MCP tool call whose codex thread is not
+ * in AgentManager's in-memory map. Backed by an in-memory table here — the
+ * point is the contract (which row counts as an answer), not Prisma.
+ */
+describe('ThreadStore.findThreadIdByCodexThreadId', () => {
+  type Row = { id: string; codexThreadId: string | null }
+
+  function storeOver(rows: Row[]) {
+    const findMany = vi.fn(async (args: { where: { codexThreadId: string }; take?: number }) =>
+      rows
+        .filter((row) => row.codexThreadId === args.where.codexThreadId)
+        .slice(0, args.take ?? rows.length)
+        .map((row) => ({ id: row.id })),
+    )
+    const agentThread = { findMany, update: vi.fn(), updateMany: vi.fn(), delete: vi.fn(), create: vi.fn() }
+    return { store: new ThreadStore({ agentThread } as any), findMany, agentThread }
+  }
+
+  const ROWS: Row[] = [
+    { id: 'db-A', codexThreadId: 'codex-A' },
+    { id: 'db-B', codexThreadId: 'codex-B' },
+    { id: 'db-never-sent', codexThreadId: null },
+  ]
+
+  it('returns the conversation that persisted the codex thread', async () => {
+    const { store } = storeOver(ROWS)
+    await expect(store.findThreadIdByCodexThreadId('codex-B')).resolves.toBe('db-B')
+  })
+
+  it('returns null for a codex thread no conversation persisted', async () => {
+    const { store } = storeOver(ROWS)
+    await expect(store.findThreadIdByCodexThreadId('codex-stranger')).resolves.toBeNull()
+  })
+
+  // Picking one of two would be the very guess this lookup exists to avoid.
+  it('returns null when more than one conversation carries the id', async () => {
+    const { store } = storeOver([...ROWS, { id: 'db-A-dup', codexThreadId: 'codex-A' }])
+    await expect(store.findThreadIdByCodexThreadId('codex-A')).resolves.toBeNull()
+  })
+
+  // An empty id must not match the rows whose codexThreadId is simply unset.
+  it('never queries for an empty id', async () => {
+    const { store, findMany } = storeOver(ROWS)
+    await expect(store.findThreadIdByCodexThreadId('')).resolves.toBeNull()
+    expect(findMany).not.toHaveBeenCalled()
+  })
+
+  it('is read-only and fetches at most two rows', async () => {
+    const { store, findMany, agentThread } = storeOver(ROWS)
+    await store.findThreadIdByCodexThreadId('codex-A')
+
+    expect(findMany).toHaveBeenCalledWith({ where: { codexThreadId: 'codex-A' }, select: { id: true }, take: 2 })
+    expect(agentThread.update).not.toHaveBeenCalled()
+    expect(agentThread.updateMany).not.toHaveBeenCalled()
+    expect(agentThread.delete).not.toHaveBeenCalled()
+    expect(agentThread.create).not.toHaveBeenCalled()
+  })
+})

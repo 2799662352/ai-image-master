@@ -123,4 +123,25 @@ describe('工作台批次完成通知', () => {
     expect(steer).not.toHaveBeenCalled()
     expect(useAgentChatStore.getState().pendingWorkbenchNoticesByThread).toEqual({})
   })
+
+  // 认不出这一批是谁发起的。以前会改投「此刻打开的对话」:那个对话的 agent
+  // 凭空收到一句「你那批跑完了」,而它从没启动过任何批次。
+  describe('这一批没有发起线程', () => {
+    it('打开的对话闲着:不入它的队,下一条消息也不带这句', async () => {
+      useAgentChatStore.getState().notifyWorkbenchBatchDone(NOTICE)
+
+      expect(useAgentChatStore.getState().pendingWorkbenchNoticesByThread).toEqual({})
+      await useAgentChatStore.getState().send()
+      expect((sendMessage.mock.calls[0][0] as { content: string }).content).toBe('刚才那批怎么样')
+    })
+
+    it('打开的对话正在跑:不 steer 进它的 turn', () => {
+      useAgentChatStore.setState({ runningByThread: { 'thread-1': true }, isRunning: true })
+
+      useAgentChatStore.getState().notifyWorkbenchBatchDone(NOTICE)
+
+      expect(steer).not.toHaveBeenCalled()
+      expect(useAgentChatStore.getState().pendingWorkbenchNoticesByThread).toEqual({})
+    })
+  })
 })

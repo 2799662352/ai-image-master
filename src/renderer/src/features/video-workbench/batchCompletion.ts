@@ -41,7 +41,7 @@ export const AGENT_BATCH_STORAGE_KEY = 'catimation.workbench.agentBatches'
 const BATCH_TTL_MS = 24 * 60 * 60 * 1000
 
 export interface WorkbenchBatchNotice {
-  /** 发起这一批的线程；缺省时由 agent-chat 落到当前活跃线程。 */
+  /** 发起这一批的线程；缺省 = 认不出是谁发起的，agent-chat 不投递（不改投当前对话）。 */
   threadId?: string
   total: number
   succeeded: number
