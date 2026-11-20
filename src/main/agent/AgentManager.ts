@@ -167,6 +167,13 @@ import { takeSnapshot } from './workspaceSnapshot'
 import { diffSnapshots } from './snapshotDiff'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 import { setWan3TokenSource } from '../services/wan3/credentials'
+import type { CodexToolCaller, ToolThreadResolution } from '../mcp/toolCaller'
+
+/** How many off-map codex thread ids {@link AgentManager} keeps for tool attribution. */
+const OFF_MAP_CODEX_THREAD_LIMIT = 512
+/** How long "the database does not know this codex thread" is trusted. */
+const UNKNOWN_TOOL_CALLER_TTL_MS = 30_000
+const UNKNOWN_TOOL_CALLER_LIMIT = 256
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
 const MIAU_CREDENTIAL_ERROR = '请登录使用平台余额，或在设置页填写 Miau API Key'
@@ -517,6 +524,37 @@ export class AgentManager {
    * in whatever conversation happens to be open.
    */
   private readonly subagentParentByCodexThread = new Map<string, string>()
+
+  /**
+   * Codex thread ids that belong to a conversation WITHOUT being its live
+   * binding, for attributing MCP tool calls only ({@link resolveToolCallThread}).
+   *
+   * - `retired`: was the conversation's codex thread until a fork (model
+   *   rebind, edit-and-resend) or a reset re-pointed the conversation. Codex
+   *   does not stop the old thread when we unsubscribe from it — measured on
+   *   0.169.0: a turn still running there keeps calling tools under the OLD
+   *   id. Before this map those calls matched no conversation and their images
+   *   went to whichever chat was open.
+   * - `persisted`: found by the database reverse lookup; cached so the next
+   *   call from the same thread resolves without another query.
+   *
+   * Bounded, oldest first out. Deliberately separate from
+   * {@link codexThreadIdByDbThreadId}: a retired thread must never be sent to
+   * again, and goal / settings notifications from it must not be mistaken for
+   * the conversation's current state.
+   */
+  private readonly offMapCodexThreads = new Map<
+    string,
+    { dbThreadId: string, via: 'retired' | 'persisted' }
+  >()
+
+  /**
+   * Codex thread ids the database reverse lookup did not know, with the time
+   * the verdict expires. A caller no conversation owns can issue hundreds of
+   * tool calls; without this each one would query the database again.
+   * Short-lived so a thread that IS registered a moment later is not shut out.
+   */
+  private readonly unknownToolCallerThreads = new Map<string, number>()
 
   /**
    * Live delegation items, keyed by timeline item id, with the conversation
@@ -3972,6 +4010,131 @@ export class AgentManager {
       ?? this.subagentParentByCodexThread.get(codexThreadId)
   }
 
+  /**
+   * Which conversation owns this MCP tool call?
+   *
+   * Tries, in order, and stops at the first answer:
+   *   1. the caller's own thread — live binding, known sub-agent, or a thread
+   *      this conversation used until it was re-pointed;
+   *   2. the caller's ancestors, the same way — a sub-agent we never saw being
+   *      spawned (codex started the turn itself, e.g. a goal continuation, so
+   *      its events never passed through `forwardEvents`) still names its
+   *      parent in `_meta`;
+   *   3. the database: a codex thread persisted on a conversation this process
+   *      has not loaded.
+   *
+   * Steps 1–2 are synchronous so the common case adds no latency. Returns
+   * `undefined` when nothing matches: the call then belongs to NO conversation.
+   * There is no "current chat" fallback anywhere down this path — guessing is
+   * what put one conversation's images into another.
+   */
+  resolveToolCallThread(
+    caller: CodexToolCaller,
+  ): ToolThreadResolution | undefined | Promise<ToolThreadResolution | undefined> {
+    const own = caller.threadId
+    if (own) {
+      const hit = this.lookupToolCallerThread(own)
+      if (hit) return hit
+    }
+    for (const ancestor of caller.ancestorThreadIds) {
+      const hit = this.lookupToolCallerThread(ancestor)
+      if (!hit) continue
+      // Learned the hard way that the child is this conversation's — remember
+      // it, so its later calls (and a cancel of the parent) find it directly.
+      if (own) this.subagentParentByCodexThread.set(own, hit.threadId)
+      return { threadId: hit.threadId, via: 'ancestor' }
+    }
+    if (!this.store?.findThreadIdByCodexThreadId) return undefined
+    return this.resolveToolCallThreadFromStore(caller)
+  }
+
+  private lookupToolCallerThread(codexThreadId: string): ToolThreadResolution | undefined {
+    const live = findDbThreadId(this.codexThreadIdByDbThreadId, codexThreadId)
+    if (live) return { threadId: live, via: 'live' }
+    const parent = this.subagentParentByCodexThread.get(codexThreadId)
+    if (parent) return { threadId: parent, via: 'subagent' }
+    const offMap = this.offMapCodexThreads.get(codexThreadId)
+    if (offMap) return { threadId: offMap.dbThreadId, via: offMap.via }
+    return undefined
+  }
+
+  private async resolveToolCallThreadFromStore(
+    caller: CodexToolCaller,
+  ): Promise<ToolThreadResolution | undefined> {
+    const store = this.store
+    if (!store?.findThreadIdByCodexThreadId) return undefined
+    const own = caller.threadId
+    const now = Date.now()
+    for (const codexThreadId of [own, ...caller.ancestorThreadIds]) {
+      if (!codexThreadId) continue
+      const unknownUntil = this.unknownToolCallerThreads.get(codexThreadId)
+      if (unknownUntil !== undefined) {
+        if (unknownUntil > now) continue
+        this.unknownToolCallerThreads.delete(codexThreadId)
+      }
+      let dbThreadId: string | null = null
+      try {
+        dbThreadId = await store.findThreadIdByCodexThreadId(codexThreadId)
+      } catch (err) {
+        // A flaky database is not evidence that nobody owns the thread — do
+        // not cache the miss, just fail this one lookup.
+        console.warn('[AgentManager] reverse lookup of codex thread failed:', err)
+        continue
+      }
+      if (!dbThreadId) {
+        this.rememberUnknownToolCaller(codexThreadId, now)
+        continue
+      }
+      this.rememberOffMapCodexThread(codexThreadId, dbThreadId, 'persisted')
+      if (own && codexThreadId !== own) {
+        this.subagentParentByCodexThread.set(own, dbThreadId)
+        return { threadId: dbThreadId, via: 'ancestor' }
+      }
+      return { threadId: dbThreadId, via: 'persisted' }
+    }
+    return undefined
+  }
+
+  private rememberOffMapCodexThread(
+    codexThreadId: string,
+    dbThreadId: string,
+    via: 'retired' | 'persisted',
+  ): void {
+    // Re-insert so the entry counts as newest for eviction.
+    this.offMapCodexThreads.delete(codexThreadId)
+    this.offMapCodexThreads.set(codexThreadId, { dbThreadId, via })
+    this.unknownToolCallerThreads.delete(codexThreadId)
+    while (this.offMapCodexThreads.size > OFF_MAP_CODEX_THREAD_LIMIT) {
+      const oldest = this.offMapCodexThreads.keys().next().value
+      if (oldest === undefined) break
+      this.offMapCodexThreads.delete(oldest)
+    }
+  }
+
+  private rememberUnknownToolCaller(codexThreadId: string, now: number): void {
+    this.unknownToolCallerThreads.delete(codexThreadId)
+    this.unknownToolCallerThreads.set(codexThreadId, now + UNKNOWN_TOOL_CALLER_TTL_MS)
+    while (this.unknownToolCallerThreads.size > UNKNOWN_TOOL_CALLER_LIMIT) {
+      const oldest = this.unknownToolCallerThreads.keys().next().value
+      if (oldest === undefined) break
+      this.unknownToolCallerThreads.delete(oldest)
+    }
+  }
+
+  /**
+   * A deleted conversation owns nothing: drop every codex thread that pointed
+   * at it, so a straggler still running there resolves to no conversation
+   * instead of to an id the renderer no longer has.
+   */
+  private dropToolAttributionFor(dbThreadId: string): void {
+    for (const [codexThreadId, entry] of this.offMapCodexThreads) {
+      if (entry.dbThreadId === dbThreadId) this.offMapCodexThreads.delete(codexThreadId)
+    }
+    for (const [codexThreadId, owner] of this.subagentParentByCodexThread) {
+      if (owner === dbThreadId) this.subagentParentByCodexThread.delete(codexThreadId)
+    }
+  }
+
   async respondToApprovalResponse(response: CodexApprovalResponse): Promise<{ ok: boolean; error?: string }> {
     if (!this.backend.respondToApprovalResponse) {
       return { ok: false, error: 'Codex approval response API is unavailable' }
@@ -4234,6 +4397,7 @@ export class AgentManager {
     await this.deleteCodexRollout(threadId)
     await this.store.deleteThread(threadId)
     this.forgetCodexThread(threadId)
+    this.dropToolAttributionFor(threadId)
   }
 
   private async deleteCodexRollout(dbThreadId: string): Promise<void> {
@@ -4594,6 +4758,15 @@ export class AgentManager {
     codexThreadId: string,
     channelIdHint?: string,
   ): void {
+    // Re-pointing a conversation (fork / rebind) overwrites its binding, but
+    // the thread it used a moment ago may still be mid-turn. Keep that id
+    // attributable to this conversation instead of letting it fall off the map.
+    const previous = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (previous && previous !== codexThreadId) {
+      this.rememberOffMapCodexThread(previous, dbThreadId, 'retired')
+    }
+    // Live again (or for the first time) — the live map is the authority.
+    this.offMapCodexThreads.delete(codexThreadId)
     this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
     const epoch = this.backend.currentEpoch?.()
     if (epoch !== undefined) this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
@@ -4615,6 +4788,11 @@ export class AgentManager {
 
   /** Drop both the id and its epoch tag (poisoned-thread reset / stale respawn). */
   private forgetCodexThread(dbThreadId: string): void {
+    // Forgetting only means "never SEND to it again". A turn that is still
+    // running on that thread keeps calling tools, and those calls are still
+    // this conversation's — see `offMapCodexThreads`.
+    const previous = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (previous) this.rememberOffMapCodexThread(previous, dbThreadId, 'retired')
     this.codexThreadIdByDbThreadId.delete(dbThreadId)
     this.codexThreadEpochByDbThreadId.delete(dbThreadId)
     // A forgotten thread is dead for this process — never resurrect it via the

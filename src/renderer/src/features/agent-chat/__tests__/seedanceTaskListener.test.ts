@@ -12,14 +12,23 @@ import { useAgentChatStore } from '../store'
 import { handleSeedanceTaskUpdate } from '../SeedanceTaskListener'
 import { ServiceRegistry, SERVICE_KEYS } from '../../../services/ServiceBridge'
 import { clearCodexArtifacts, getCodexArtifacts } from '../codexArtifactPersistence'
+import { resetDetachedToolOutputForTest } from '../detachedToolOutput'
 import type { ArtifactItem } from '../../../../../types/agent-timeline'
 import type { SeedanceTaskUpdate } from '../../../../../types/seedance'
 
 let taskSeq = 0
 
+/**
+ * The chat that started every task below, and the chat that is open. A task's
+ * bubble exists only in the chat that owns the task; tasks no chat owns are
+ * covered by their own block at the end.
+ */
+const OWNER = 'thread-1'
+
 function makeUpdate(partial: Partial<SeedanceTaskUpdate>): SeedanceTaskUpdate {
   return {
     taskId: partial.taskId ?? `task-${taskSeq}`,
+    threadId: OWNER,
     prompt: '一只赛博猫在雨夜奔跑',
     model: '2.0-fast',
     resolution: '720p',
@@ -40,9 +49,10 @@ function lastArtifact(): ArtifactItem {
 
 beforeEach(() => {
   taskSeq += 1
-  useAgentChatStore.setState({ messages: [] })
+  useAgentChatStore.setState({ messages: [], threadId: OWNER, threadSlices: {}, notices: [] })
   ServiceRegistry.clear()
-  clearCodexArtifacts('thread-1')
+  clearCodexArtifacts(OWNER)
+  resetDetachedToolOutputForTest()
 })
 
 describe('seedance task-update → artifact bubble', () => {
@@ -289,5 +299,143 @@ describe('seedance task-update → artifact bubble', () => {
     const item = lastArtifact()
     expect(item.status).toBe('error')
     expect(item.error).toContain('LOCAL_ASSET_IMPORT_FAILED')
+  })
+})
+
+describe('任务按发起对话归属', () => {
+  function artifactsIn(threadId: string): ArtifactItem[] {
+    const state = useAgentChatStore.getState()
+    const messages = threadId === state.threadId ? state.messages : state.threadSlices[threadId]?.messages ?? []
+    return messages.flatMap((m) => m.items).filter((i): i is ArtifactItem => i.type === 'artifact')
+  }
+
+  it('另一个对话的任务:气泡进它自己的对话,屏幕上的对话干净', () => {
+    const taskId = `task-${taskSeq}`
+    handleSeedanceTaskUpdate(makeUpdate({ taskId, threadId: 'thread-other', status: 'queued' }))
+    handleSeedanceTaskUpdate(
+      makeUpdate({
+        taskId,
+        threadId: 'thread-other',
+        status: 'succeeded',
+        videoUrl: 'https://ark.example/video.mp4',
+        persistence: 'running',
+      }),
+    )
+
+    expect(artifactsIn(OWNER)).toHaveLength(0)
+    expect(artifactsIn('thread-other')).toHaveLength(1)
+    expect(artifactsIn('thread-other')[0].status).toBe('done')
+  })
+})
+
+/**
+ * 主进程认不出是哪个对话发起的任务(update 里没有 threadId)。
+ * 以前气泡落到此刻打开的对话里 —— 用户在自己的对话里看到别人的视频。
+ */
+describe('没有发起对话的任务(游离)', () => {
+  function everyArtifact(): ArtifactItem[] {
+    const state = useAgentChatStore.getState()
+    return [
+      ...state.messages,
+      ...Object.values(state.threadSlices).flatMap((slice) => slice?.messages ?? []),
+    ]
+      .flatMap((m) => m.items)
+      .filter((i): i is ArtifactItem => i.type === 'artifact')
+  }
+
+  const detachedNotices = () =>
+    useAgentChatStore.getState().notices.filter((n) => n.kind === 'toolOutputDetached')
+
+  it('排队 / 生成中 / 成片:哪个对话里都不出气泡', () => {
+    const clientId = `pending-${taskSeq}-stray`
+    handleSeedanceTaskUpdate(
+      makeUpdate({ taskId: clientId, clientId, threadId: undefined, status: 'queued', phase: 'preparing' }),
+    )
+    expect(everyArtifact()).toHaveLength(0)
+
+    handleSeedanceTaskUpdate(makeUpdate({ taskId: 'real-stray', clientId, threadId: undefined, status: 'running' }))
+    expect(everyArtifact()).toHaveLength(0)
+
+    handleSeedanceTaskUpdate(
+      makeUpdate({
+        taskId: 'real-stray',
+        clientId,
+        threadId: undefined,
+        status: 'succeeded',
+        videoUrl: 'https://ark.example/video.mp4',
+        persistence: 'running',
+      }),
+    )
+    expect(everyArtifact()).toHaveLength(0)
+  })
+
+  it('成片照样进历史记录(作品库),但不给任何对话记重载锚点', async () => {
+    const addToHistory = vi.fn().mockResolvedValue({ id: 99 })
+    ServiceRegistry.register(SERVICE_KEYS.HISTORY_DATA, {
+      init: vi.fn().mockResolvedValue(undefined),
+      addToHistory,
+    })
+
+    const taskId = `task-${taskSeq}`
+    handleSeedanceTaskUpdate(
+      makeUpdate({
+        taskId,
+        threadId: undefined,
+        status: 'succeeded',
+        remoteUrl: 'https://cos.example/stray.mp4',
+        localPath: 'C:\\data\\uploads\\stray.mp4',
+        persistence: 'done',
+      }),
+    )
+    await vi.waitFor(() => expect(addToHistory).toHaveBeenCalledTimes(1))
+
+    expect(addToHistory.mock.calls[0][2]).toEqual(['https://cos.example/stray.mp4'])
+    expect(getCodexArtifacts(OWNER)).toEqual([])
+    expect(everyArtifact()).toHaveLength(0)
+  })
+
+  it('成片时提示用户一次;轮询重复到达同一地址不再提示', () => {
+    const taskId = `task-${taskSeq}`
+    const done = makeUpdate({
+      taskId,
+      threadId: undefined,
+      status: 'succeeded',
+      videoUrl: 'https://ark.example/video.mp4',
+      persistence: 'running',
+    })
+    handleSeedanceTaskUpdate(done)
+    handleSeedanceTaskUpdate(done)
+    handleSeedanceTaskUpdate(done)
+
+    expect(detachedNotices()).toHaveLength(1)
+  })
+
+  it('还在排队 / 生成中不提示(还没有产出)', () => {
+    const taskId = `task-${taskSeq}`
+    handleSeedanceTaskUpdate(makeUpdate({ taskId, threadId: undefined, status: 'queued' }))
+    handleSeedanceTaskUpdate(makeUpdate({ taskId, threadId: undefined, status: 'running' }))
+
+    expect(detachedNotices()).toHaveLength(0)
+  })
+
+  it('失败 / 取消:不留错误气泡,也不提示', () => {
+    handleSeedanceTaskUpdate(
+      makeUpdate({ taskId: `task-${taskSeq}-f`, threadId: undefined, status: 'failed', error: 'boom' }),
+    )
+    handleSeedanceTaskUpdate(
+      makeUpdate({ taskId: `task-${taskSeq}-c`, threadId: undefined, status: 'cancelled', error: '已取消' }),
+    )
+
+    expect(everyArtifact()).toHaveLength(0)
+    expect(detachedNotices()).toHaveLength(0)
+  })
+
+  it('有主的任务不出这条提示', () => {
+    handleSeedanceTaskUpdate(
+      makeUpdate({ status: 'succeeded', videoUrl: 'https://ark.example/video.mp4', persistence: 'running' }),
+    )
+
+    expect(everyArtifact()).toHaveLength(1)
+    expect(detachedNotices()).toHaveLength(0)
   })
 })

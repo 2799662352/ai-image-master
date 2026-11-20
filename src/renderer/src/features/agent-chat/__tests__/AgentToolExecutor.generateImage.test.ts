@@ -18,9 +18,19 @@ function makeHistory(): HistoryFake {
   return { init: vi.fn(async () => {}), addToHistory: vi.fn(async () => null) }
 }
 
+/**
+ * The chat that issues every call in this file. A bubble only exists for a
+ * call some chat owns (a call with no owner runs detached — covered in
+ * AgentToolExecutor.threadRouting.test.ts), so the tests here generate as this
+ * chat, and have it open, to look at the bubble.
+ */
+const OWNER = 'thread-owner'
+
 // generateImage is private; reach it directly for a focused unit test.
-function callGenerate(params: Record<string, unknown>): Promise<unknown> {
-  return (new AgentToolExecutor() as unknown as { generateImage: (p: unknown) => Promise<unknown> }).generateImage(params)
+function callGenerate(params: Record<string, unknown>, threadId: string = OWNER): Promise<unknown> {
+  return (
+    new AgentToolExecutor() as unknown as { generateImage: (p: unknown, threadId?: string) => Promise<unknown> }
+  ).generateImage(params, threadId)
 }
 
 function callGenerateBatch(
@@ -44,7 +54,16 @@ beforeEach(() => {
   localStorage.clear()
   // Reset to the default channel (VIP) before each test; individual tests set a
   // specific channel to exercise the authoritative-picker behavior.
-  useAgentChatStore.setState({ messages: [], selectedImageChannel: DEFAULT_IMAGE_CHANNEL_ID })
+  useAgentChatStore.setState({
+    messages: [],
+    threadId: OWNER,
+    threadSlices: {},
+    selectedImageChannel: DEFAULT_IMAGE_CHANNEL_ID,
+  })
+})
+
+afterEach(() => {
+  useAgentChatStore.setState({ threadId: undefined, threadSlices: {} })
 })
 
 describe('AgentToolExecutor.generateImage', () => {
@@ -416,8 +435,8 @@ describe('AgentToolExecutor.generateImage', () => {
 
     const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
 
-    // No threadId / no attachments API in this test → nothing saved locally,
-    // history fake returns null. Compact shape only; never any base64.
+    // No attachments API in this test → nothing saved locally, history fake
+    // returns null. Compact shape only; never any base64.
     expect(result).toEqual({ ok: true, count: 1, model: DEFAULT_IMAGE_CHANNEL_ID, historyId: null, paths: [] })
     expect(JSON.stringify(result)).not.toContain('base64')
   })
@@ -433,9 +452,11 @@ describe('AgentToolExecutor.generateImage', () => {
     const history: HistoryFake = { init: vi.fn(async () => {}), addToHistory: vi.fn(async () => ({ id: 42 })) }
     registerFakes(api, history)
 
-    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
+    const result = (await callGenerate({ prompt: 'a cat' }, 'thread-1')) as Record<string, unknown>
 
     expect(save).toHaveBeenCalledTimes(1)
+    // Filed under the chat that asked — not under whatever happens to be open.
+    expect(save.mock.calls[0][0]).toMatchObject({ threadId: 'thread-1' })
     expect(result).toEqual({
       ok: true,
       count: 1,
@@ -510,7 +531,7 @@ describe('AgentToolExecutor.generateImage', () => {
       const history: HistoryFake = { init: vi.fn(async () => {}), addToHistory: vi.fn(async () => ({ id: 7 })) }
       registerFakes(api, history)
 
-      const pending = callGenerate({ prompt: 'a cat' })
+      const pending = callGenerate({ prompt: 'a cat' }, 'thread-late')
       await vi.advanceTimersByTimeAsync(10_000)
       await pending
 

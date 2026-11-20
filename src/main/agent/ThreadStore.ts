@@ -249,6 +249,29 @@ export class ThreadStore {
   }
 
   /**
+   * The inverse of {@link getCodexThreadId}: which DB thread persisted this
+   * Codex thread UUID? Read-only.
+   *
+   * Used to attribute an MCP tool call whose codex thread is running but is
+   * not in AgentManager's in-memory map — the map is only filled when a
+   * conversation is sent to or opened in this process, while codex can be
+   * driving a thread the process only knows from disk.
+   *
+   * Answers only when EXACTLY ONE row carries the id. Two rows sharing a codex
+   * thread should not happen, and if it ever does, picking one would be the
+   * very guess this lookup exists to avoid.
+   */
+  async findThreadIdByCodexThreadId(codexThreadId: string): Promise<string | null> {
+    if (!codexThreadId) return null
+    const rows = await this.prisma.agentThread.findMany({
+      where: { codexThreadId },
+      select: { id: true },
+      take: 2,
+    })
+    return rows.length === 1 ? rows[0].id : null
+  }
+
+  /**
    * Record the user's cross-session memory choice for one thread. Stored as the
    * durable intent behind `thread/memoryMode/set`: the RPC itself needs a live
    * codex thread id, which a brand-new thread does not have yet and which is

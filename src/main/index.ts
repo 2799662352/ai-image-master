@@ -1223,12 +1223,13 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
       mcpRuntime: catimationMcpLaunch,
       cinematographyKbStdio,
     })
-    // Let the MCP ToolRouter reverse-map Codex thread UUIDs (carried in each
-    // tool call's `_meta`) to our DB thread ids, so renderer tools like
-    // `generate_image` route their UI to the chat that requested them instead
-    // of whatever chat is active when the render finishes.
-    agentMcpRuntime?.router.setThreadIdResolver((codexThreadId) =>
-      agentManager?.resolveDbThreadId(codexThreadId),
+    // Let the MCP ToolRouter map each tool call's caller (the Codex thread in
+    // its `_meta`, plus that thread's ancestors) to our DB thread id, so tools
+    // like `generate_image` route their UI to the chat that requested them.
+    // A caller no chat owns stays unowned — it is never handed to whatever
+    // chat is active when the render finishes.
+    agentMcpRuntime?.router.setThreadResolver((caller) =>
+      agentManager?.resolveToolCallThread(caller),
     )
 
     // Unblock any IPC handlers that fired before the manager was ready (e.g.

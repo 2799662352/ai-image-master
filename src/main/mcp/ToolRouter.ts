@@ -1,6 +1,13 @@
 import type { BrowserWindow } from 'electron'
 import type { AgentToolRequest, AgentToolResponse } from '../../types/agent'
-import { recordToolCall } from './toolTelemetry'
+import {
+  callerCodexThreadIds,
+  currentToolCaller,
+  mergeToolCaller,
+  type CodexToolCaller,
+  type ToolThreadResolution,
+} from './toolCaller'
+import { recordToolCall, type ToolCallAttribution } from './toolTelemetry'
 
 // How long the main process waits for a renderer-handled tool (e.g.
 // `generate_image`) to respond before giving up. Image generation on the
@@ -40,8 +47,20 @@ function rendererToolTimeoutMs(toolName: string): number {
  * call (reverse-mapped from the codex thread UUID), so main-process tools
  * (e.g. `generate_video`) can route progress bubbles / persistence to the
  * requesting chat — same parallel-chat contamination fix as renderer tools.
+ *
+ * `undefined` means NO chat owns this call. It does not mean "use whichever
+ * chat is open": a handler must then keep its output out of every chat.
  */
 export type MainToolHandler = (params: Record<string, unknown>, threadId?: string) => Promise<unknown>
+
+/**
+ * Maps a tool call's caller to the chat that owns it. May answer synchronously
+ * (everything held in memory) or asynchronously (a database lookup); returns
+ * `undefined` when no chat owns the caller.
+ */
+export type ToolThreadResolver = (
+  caller: CodexToolCaller,
+) => ToolThreadResolution | undefined | Promise<ToolThreadResolution | undefined>
 
 type PendingRendererTool = {
   resolve: (value: unknown) => void
@@ -49,15 +68,39 @@ type PendingRendererTool = {
   timeout: NodeJS.Timeout
 }
 
+function isThenable<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as { then?: unknown } | null | undefined)?.then === 'function'
+}
+
+function describeAttribution(
+  caller: CodexToolCaller | undefined,
+  resolution: ToolThreadResolution | undefined,
+): ToolCallAttribution {
+  if (!caller) return { kind: 'anonymous' }
+  if (resolution) {
+    return {
+      kind: 'resolved',
+      via: resolution.via,
+      ...(caller.threadId ? { codexThreadId: caller.threadId } : {}),
+    }
+  }
+  return {
+    kind: 'unresolved',
+    ...(caller.threadId ? { codexThreadId: caller.threadId } : {}),
+    ancestorThreadIds: caller.ancestorThreadIds,
+  }
+}
+
 export class ToolRouter {
   private mainHandlers = new Map<string, MainToolHandler>()
   private pending = new Map<string, PendingRendererTool>()
   /**
-   * Resolves a Codex thread UUID (from a tool call's `_meta`) to our DB thread
-   * id, so renderer tools can be attributed to the chat that requested them.
-   * Injected by `index.ts` once the AgentManager exists.
+   * Resolves the caller of a tool call (the codex thread in its `_meta`, plus
+   * that thread's ancestors) to our DB thread id, so tool UI is attributed to
+   * the chat that requested it. Injected by `index.ts` once the AgentManager
+   * exists.
    */
-  private threadIdResolver: ((codexThreadId: string) => string | undefined) | null = null
+  private threadResolver: ToolThreadResolver | null = null
 
   constructor(private win: BrowserWindow) {}
 
@@ -65,14 +108,19 @@ export class ToolRouter {
     this.win = win
   }
 
-  setThreadIdResolver(resolver: (codexThreadId: string) => string | undefined): void {
-    this.threadIdResolver = resolver
+  setThreadResolver(resolver: ToolThreadResolver): void {
+    this.threadResolver = resolver
   }
 
   registerMain(name: string, handler: MainToolHandler): void {
     this.mainHandlers.set(name, handler)
   }
 
+  /**
+   * `codexThreadId` is the caller's thread when a tool forwards it explicitly.
+   * It is optional on purpose: tool handlers run inside a caller scope (see
+   * `withToolCallerScope`), so a call that forwards nothing is still attributed.
+   */
   async call(name: string, params: Record<string, unknown>, codexThreadId?: string): Promise<unknown> {
     // DIAGNOSTIC: every tool name Codex actually dispatches to our MCP server
     // arrives here verbatim. Use this to confirm whether `ask_user` ever
@@ -81,17 +129,55 @@ export class ToolRouter {
     console.log(`[ToolRouter] incoming tool call: ${JSON.stringify(name)}`)
     // 埋点收口在这里:主处理器和渲染端委派两条路都必经此处,少一处就少一半数据。
     const startedAt = Date.now()
-    const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
+    const caller = mergeToolCaller(codexThreadId, currentToolCaller())
+    // Resolved ONCE, here, for both the main-handler and renderer paths. Only
+    // awaited when the resolver actually went async: the common in-memory hit
+    // must keep the renderer request going out in the same tick as the call.
+    const lookup = caller ? this.resolveThread(caller) : undefined
+    const resolution = isThenable(lookup) ? await lookup : lookup
+    const threadId = resolution?.threadId
+    const attribution = describeAttribution(caller, resolution)
+    if (caller && !threadId) {
+      // The caller said which thread it is, but no chat owns that thread (or
+      // any of its ancestors). The tool still runs — but its output is not
+      // attached to any chat. It used to go to whichever chat was open, which
+      // is how one conversation's images ended up in another.
+      console.warn(
+        `[ToolRouter] ${name}: codex thread ${callerCodexThreadIds(caller).join(' <- ')} ` +
+          'belongs to no chat; the tool runs detached and its output is shown in no chat',
+      )
+    }
     try {
       const mainHandler = this.mainHandlers.get(name)
       const result = mainHandler
         ? await mainHandler(params, threadId)
-        : await this.callRenderer(name, params, codexThreadId)
-      recordToolCall({ name, durationMs: Date.now() - startedAt, threadId })
+        : await this.callRenderer(name, params, threadId)
+      recordToolCall({ name, durationMs: Date.now() - startedAt, threadId, attribution })
       return result
     } catch (error) {
-      recordToolCall({ name, durationMs: Date.now() - startedAt, threadId, error })
+      recordToolCall({ name, durationMs: Date.now() - startedAt, threadId, attribution, error })
       throw error
+    }
+  }
+
+  /**
+   * Attribution must never break a tool call: a resolver that throws or
+   * rejects degrades to "no chat owns this", which is the safe answer.
+   */
+  private resolveThread(
+    caller: CodexToolCaller,
+  ): ToolThreadResolution | undefined | Promise<ToolThreadResolution | undefined> {
+    if (!this.threadResolver) return undefined
+    try {
+      const result = this.threadResolver(caller)
+      if (!isThenable(result)) return result
+      return result.catch((error: unknown) => {
+        console.warn('[ToolRouter] thread resolver rejected:', error)
+        return undefined
+      })
+    } catch (error) {
+      console.warn('[ToolRouter] thread resolver threw:', error)
+      return undefined
     }
   }
 
@@ -121,28 +207,17 @@ export class ToolRouter {
     response.ok ? pending.resolve(response.result) : pending.reject(new Error(response.error ?? 'Renderer tool failed'))
   }
 
+  /**
+   * `threadId` is the chat that owns the call, already resolved by `call`.
+   * Absent = no chat owns it; the renderer then runs the tool detached and
+   * must not put its UI into the chat the user happens to have open.
+   */
   private callRenderer(
     toolName: string,
     params: Record<string, unknown>,
-    codexThreadId?: string,
+    threadId?: string,
   ): Promise<unknown> {
     const id = crypto.randomUUID()
-    // Reverse-map the codex thread UUID to our DB thread id so the renderer
-    // routes the tool's UI (e.g. a generated image bubble) to the requesting
-    // chat. Undefined when there's no resolver or no mapping yet — the renderer
-    // falls back to its active-thread capture.
-    const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
-    if (codexThreadId && !threadId) {
-      // The caller said which thread it is, but we cannot map it to a chat (no
-      // resolver yet, or the thread is not registered). Falling back to the
-      // active chat is the only option — but it is exactly the path that
-      // delivers one chat's UI to another, so leave a trace instead of failing
-      // silently.
-      console.warn(
-        `[ToolRouter] ${toolName}: codex thread ${codexThreadId} has no DB mapping; ` +
-          'renderer will fall back to the ACTIVE chat',
-      )
-    }
     const request: AgentToolRequest = { id, toolName, params, ...(threadId ? { threadId } : {}) }
 
     return new Promise((resolve, reject) => {
