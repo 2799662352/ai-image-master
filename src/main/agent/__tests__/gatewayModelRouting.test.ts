@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BUILTIN_CHANNELS,
+  builtinGateways,
   channelsForGateway,
+  inferModelFamily,
   ModelUnavailableInGatewayError,
   resolveAuthorizedGatewayModelRoute,
   resolveGatewayModelRoute,
@@ -235,7 +237,20 @@ describe('gatewayModelRouting', () => {
       'apiyi-qwen',
       'apiyi-deepseek-miau',
       'apiyi-grok-miau',
+      'apiyi-gemini-miau',
     ])
+  })
+
+  it('网关卡片声明的 channelIds 与实际注册的通道是同一个集合', () => {
+    // `channelIds` 目前没有运行时消费者(查通道走的是 `channelsForGateway`),
+    // 所以它一旦与注册表脱节不会有任何报错 —— 加通道时漏写、或删通道时忘删都看不出来。
+    // 这条只守「两边说的是同一批通道」,不守次序。
+    for (const gateway of builtinGateways()) {
+      const registered = channelsForGateway(gateway.id).map((channel) => channel.id)
+      expect(registered.length, gateway.id).toBeGreaterThan(0)
+      expect([...gateway.channelIds].sort(), gateway.id).toEqual([...registered].sort())
+      expect(new Set(gateway.channelIds).size, gateway.id).toBe(gateway.channelIds.length)
+    }
   })
 
   it('把 qwen 送到 Miau 渠道，而不是网关自家的 standard', () => {
@@ -320,6 +335,92 @@ describe('gatewayModelRouting', () => {
         const channel = resolveProviderChannel(`${gatewayId}-grok-miau`)
         expect(channel.memoriesModel, gatewayId).toBe('qwen3.8-flash')
         expect(channel, gatewayId).not.toHaveProperty('memoriesModelByModel')
+      }
+    })
+  })
+
+  describe('Miau 上的 Gemini 4', () => {
+    // 次序 = 选择器里的次序(发布由新到旧)。
+    const MIAU_GEMINI_SLUGS = ['gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon']
+
+    it('三个 slug 在两个网关下都落各自的 Miau 通道,自成一族', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        for (const slug of MIAU_GEMINI_SLUGS) {
+          expect(resolveGatewayModelRoute(gatewayId, slug), `${gatewayId} / ${slug}`)
+            .toEqual({
+              gatewayId,
+              channelId: `${gatewayId}-gemini-miau`,
+              modelId: slug,
+              family: 'gemini',
+            })
+        }
+      }
+    })
+
+    it('打 Miau、复用 Miau token 槽位,因此自动吃平台余额', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        const channel = resolveProviderChannel(`${gatewayId}-gemini-miau`)
+        expect(channel.name).toBe('Gemini (Miau)')
+        expect(channel.baseUrl).toBe(MIAU_BASE_URL)
+        expect(channel.envKey).toBe('MIAU_API_KEY')
+        expect(channel.credentialId).toBe('qwen')
+        expect(channel.model).toBe('gemini-4-argon')
+        expect(channel.allowedModels).toEqual(MIAU_GEMINI_SLUGS)
+      }
+    })
+
+    it('走 namespace 桥 —— 网关的 Responses→Gemini 转换只留 function 工具', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        expect(resolveProviderChannel(`${gatewayId}-gemini-miau`).compatibilityPolicy)
+          .toBe('responses-namespace-bridge')
+      }
+    })
+
+    it('记忆 / 起标题钉在便宜的固定模型上,不跟随选中的 Gemini 4', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        const channel = resolveProviderChannel(`${gatewayId}-gemini-miau`)
+        expect(channel.memoriesModel, gatewayId).toBe('qwen3.8-flash')
+        expect(channel, gatewayId).not.toHaveProperty('memoriesModelByModel')
+      }
+    })
+
+    it('Gemini 自成一族只影响分组:没被点名的 Gemini slug 仍落 standard,与归 other 时同一条通道', () => {
+      expect(inferModelFamily('gemini-4-neon')).toBe('gemini')
+      expect(inferModelFamily('  Gemini-2.5-Pro ')).toBe('gemini')
+      // 不以 gemini 开头的不算这一族(例如带供应商前缀的 slug)。
+      expect(inferModelFamily('vendor/gemini-4-neon')).toBe('other')
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        // Miau 通道只认它点名的三个;别的 Gemini(网关 model/list 里若有)照旧去
+        // standard —— 指到 gemini-miau 的话它们会全部变成「此网关不可用」。
+        expect(resolveGatewayModelRoute(gatewayId, 'gemini-2.5-pro'), gatewayId).toEqual({
+          gatewayId,
+          channelId: `${gatewayId}-standard`,
+          modelId: 'gemini-2.5-pro',
+          family: 'gemini',
+        })
+        expect(resolveGatewayModelRoute(gatewayId, 'gemini-3.7-flash').channelId, gatewayId)
+          .toBe(`${gatewayId}-standard`)
+      }
+      // 自定义网关:只是换了分组标签,通道不变。
+      expect(resolveAuthorizedGatewayModelRoute({
+        source: 'model-catalog',
+        gatewayId: 'custom-studio',
+      }, 'gemini-4-carbon')).toEqual({
+        gatewayId: 'custom-studio',
+        channelId: 'custom:custom-studio',
+        modelId: 'gemini-4-carbon',
+        family: 'gemini',
+      })
+    })
+
+    it('别的通道不抢这三个 slug(同一网关内一个 slug 只属于一条通道)', () => {
+      for (const gatewayId of ['apiyi', 'rightcode']) {
+        for (const slug of MIAU_GEMINI_SLUGS) {
+          const owners = channelsForGateway(gatewayId)
+            .filter((channel) => channel.allowedModels?.includes(slug))
+            .map((channel) => channel.id)
+          expect(owners, `${gatewayId} / ${slug}`).toEqual([`${gatewayId}-gemini-miau`])
+        }
       }
     })
   })

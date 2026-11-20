@@ -326,6 +326,67 @@ const GROK_MIAU_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
   grokMiauChannel('rightcode'),
 ])
 
+/**
+ * Miau 上的 Gemini 4(Neon / Carbon / Argon)。与 `grokMiauChannel` 同构:同一个 Miau
+ * 端点在两个网关下各注册一次,复用 `credentialId: 'qwen'`(那个槽位存的是 **Miau token**),
+ * baseUrl 指向 Miau 因此平台余额自动生效。
+ *
+ * 三个 slug 2026-11-20 都在生产网关公开的 `/api/pricing` 里(ratio 7 / completion 5 /
+ * cache 0.05,57 个分组)。数组次序与选择器里的次序一致(选择器的真正次序由
+ * `CANONICAL_MODEL_SETTINGS_ROWS` 决定,这里只是保持书写一致)。
+ *
+ * ⚠️ **「slug 存在」不等于「Codex 能用」,这一组到写下这段话时还没跑通过一轮**:
+ * Codex 只说 Responses(`wire_api = "chat"` 已被上游删除),而这三个模型在 Miau 上
+ * 挂的是 OpenAI 型渠道(`supported_endpoint_types: ["openai"]`),`/v1/responses` 被原样
+ * 转给上游 apiyi —— apiyi 的文档写明 Gemini 4 Argon「不支持 `/v1/responses`(会返回
+ * `contents is required`)」,Carbon 的端点表里也只有原生与 `/v1/chat/completions`。
+ * 同一条渠道上的 `gemini-3.7-flash` 当天实测正是这个 400。要让这里的三行真的能对话,
+ * 得网关侧让这条渠道认 Responses(改成 Gemini 型走网关自带的 Responses⇄Gemini 转换,
+ * 或用带 Responses→Chat 转换的渠道类型);桌面端这边不需要再改。
+ *
+ * 其它 Gemini slug(`gemini-3.7-flash` 等)**刻意不列**:没被点名的 Gemini 仍按老规矩
+ * 落各网关自己的 standard 通道(见 `FAMILY_CHANNEL_SUFFIX.gemini`)。
+ */
+const GEMINI_MIAU_MODELS = Object.freeze([
+  'gemini-4-neon',
+  'gemini-4-carbon',
+  'gemini-4-argon',
+])
+
+/**
+ * Gemini 通道的记忆 / 会话起标题模型:与 Grok 通道同一个选择、同一个理由(见
+ * `GROK_MIAU_MEMORIES_MODEL`)—— 不钉就回落到「上次 spawn 时选中的模型」,也就是
+ * 让约 100 万 input token 的记忆整合跑在 ¥14 / ¥70 每百万的旗舰上。
+ * **还没对这条通道实际跑过记忆请求**;记忆请求失败是非致命的。
+ */
+const GEMINI_MIAU_MEMORIES_MODEL = 'qwen3.8-flash'
+
+function geminiMiauChannel(gatewayId: 'apiyi' | 'rightcode'): ProviderChannelPreset {
+  return Object.freeze({
+    id: `${gatewayId}-gemini-miau`,
+    gatewayId,
+    name: 'Gemini (Miau)',
+    // ⚠️ 必须是生产常量,不能在这个文件里做环境覆盖 —— 理由见 `qwenChannel`。
+    baseUrl: MIAU_BASE_URL,
+    envKey: 'MIAU_API_KEY',
+    credentialId: 'qwen',
+    // 通道默认对话模型取 Argon:官方给它的定位是日常代码与知识工作(Carbon 是更慢的
+    // 难题档)。默认值只对「没选过具体模型」的人生效。
+    model: 'gemini-4-argon',
+    memoriesModel: GEMINI_MIAU_MEMORIES_MODEL,
+    allowedModels: GEMINI_MIAU_MODELS,
+    // 网关的 Responses→Gemini 转换只留 `type=function` 的工具,codex 包成
+    // `{"type":"namespace"}` 的 MCP 工具会被静默丢掉(读网关源码得出;同一转换在
+    // `gemini-3-flash-preview` 上实测 namespace 工具时灵时不灵)。所以照旧摊平。
+    compatibilityPolicy: 'responses-namespace-bridge',
+  })
+}
+
+const GEMINI_MIAU_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
+  geminiMiauChannel('apiyi'),
+  geminiMiauChannel('rightcode'),
+])
+
 const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'apiyi',
@@ -333,7 +394,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'API易 Responses 网关',
     credentialId: 'apiyi',
     defaultChannelId: 'apiyi-standard',
-    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen', 'apiyi-deepseek-miau', 'apiyi-grok-miau'],
+    channelIds: ['apiyi-standard', 'apiyi-grok', 'apiyi-claude', 'apiyi-qwen', 'apiyi-deepseek-miau', 'apiyi-grok-miau', 'apiyi-gemini-miau'],
   }),
   Object.freeze({
     id: 'rightcode',
@@ -341,7 +402,7 @@ const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
     description: 'Right.Codes Codex 与 Grok 网关',
     credentialId: 'rightcode',
     defaultChannelId: 'rightcode-standard',
-    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen', 'rightcode-grok-miau'],
+    channelIds: ['rightcode-standard', 'rightcode-grok', 'rightcode-deepseek-miau', 'rightcode-claude', 'rightcode-qwen', 'rightcode-grok-miau', 'rightcode-gemini-miau'],
   }),
 ])
 
@@ -517,6 +578,7 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
   ...QWEN_CHANNELS,
   ...DEEPSEEK_MIAU_CHANNELS,
   ...GROK_MIAU_CHANNELS,
+  ...GEMINI_MIAU_CHANNELS,
 ])
 
 /** Maps a model slug to its provider family for channel routing. */
@@ -529,6 +591,9 @@ export function inferModelFamily(modelId: string): AgentModelFamily {
   // （网关自家的端点），而这两族各有独立 host。
   if (normalized.startsWith('qwen')) return 'qwen'
   if (normalized.startsWith('deepseek')) return 'deepseek'
+  // 只为选择器分组而单列一族:路由上它与 `other` 走同一条回落(standard),
+  // 被 Miau 通道点名的 slug 由 `channelForModel` 的精确命中接走。
+  if (normalized.startsWith('gemini')) return 'gemini'
   return 'other'
 }
 
@@ -538,11 +603,19 @@ export function inferModelFamily(modelId: string): AgentModelFamily {
  * `other` (unrecognized slugs) deliberately falls back to the standard
  * channel: it is the OpenAI-compatible Responses endpoint, which is the only
  * safe guess for a model we cannot classify.
+ *
+ * `gemini` keeps that same fallback on purpose. Gemini slugs were `other`
+ * until the family was split out for picker grouping, and splitting it must
+ * not change where an unlisted Gemini slug goes (pointing it at
+ * `gemini-miau` would turn every such slug into "unavailable in gateway",
+ * because that channel only admits the slugs it lists). The Miau channel
+ * is reached by exact slug match in `channelForModel`, never by this suffix.
  */
 const FAMILY_CHANNEL_SUFFIX: Readonly<Record<AgentModelFamily, string>> =
   Object.freeze({
     openai: 'standard',
     other: 'standard',
+    gemini: 'standard',
     xai: 'grok',
     anthropic: 'claude',
     qwen: 'qwen',

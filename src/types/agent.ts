@@ -237,8 +237,19 @@ export interface CodexModelContextConfig {
  * 并进 `other`：`other` 会落到 standard 渠道（各网关自己的 OpenAI 兼容端点）。
  * qwen 挂在 Miau（new-api）上，baseUrl 与 Key 都不同；deepseek 挂在
  * Right.Codes 的 `/deepseek` 端点上，standard 的 `/codex` 不卖这两个 slug。
+ *
+ * `gemini` 独立成族是为了选择器分组（要排在 DeepSeek 与 Grok 之间，而 `other`
+ * 固定垫底）。它**不改变**没被任何通道点名的 Gemini slug 的去向：那些仍落
+ * standard，与归在 `other` 时一样（见 `FAMILY_CHANNEL_SUFFIX`）。
  */
-export type AgentModelFamily = 'openai' | 'xai' | 'anthropic' | 'qwen' | 'deepseek' | 'other'
+export type AgentModelFamily =
+  | 'openai'
+  | 'xai'
+  | 'anthropic'
+  | 'qwen'
+  | 'deepseek'
+  | 'gemini'
+  | 'other'
 
 export interface AgentModelRoute {
   gatewayId: string

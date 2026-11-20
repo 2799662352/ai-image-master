@@ -218,6 +218,33 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'DeepSeek Flash（Miau 网关，DeepSeek 官方渠道）。1M 上下文，能看图，最便宜的一档，可用平台余额结算。',
     isDefault: false,
   },
+  // Gemini 4 组(2026-11-20 产品要求:排在 DeepSeek 与 Grok 之间)。三个 slug 都在生产
+  // 网关公开的 `/api/pricing` 里;组内次序 = 发布由新到旧(Neon 11-18、Carbon 10-28、
+  // Argon 09-30)。定位与「1M 统一窗口」出自 apiyi 文档转述的谷歌官方口径,**没有经
+  // Miau 网关实测**,所以下面不登记上下文窗口与思考档位(走未知模型的保守默认)。
+  // ⚠️ 这一组到写下这段话时**还没跑通过一轮 Codex 对话**,原因与网关侧要做什么见
+  // `GEMINI_MIAU_MODELS`(gatewayModelRouting.ts)。
+  {
+    id: 'gemini-4-neon',
+    displayName: 'Gemini 4 Neon',
+    tier: 'High',
+    description: 'Gemini 4 Neon（Miau 网关）。Gemini 4 的中间档：复杂编码、分析与生产任务，官方称比 Carbon 快约 3 倍；官方 1M 统一窗口，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'gemini-4-carbon',
+    displayName: 'Gemini 4 Carbon',
+    tier: 'Extra High',
+    description: 'Gemini 4 Carbon（Miau 网关）。谷歌最强推理档：长程 agent 编程、科学推理与安全审计，思考多、首字慢；官方 1M 统一窗口，可用平台余额结算。',
+    isDefault: false,
+  },
+  {
+    id: 'gemini-4-argon',
+    displayName: 'Gemini 4 Argon',
+    tier: 'Extra High',
+    description: 'Gemini 4 Argon（Miau 网关）。Gemini 4 旗舰：长程软件工程与企业知识工作，日常代码比 Carbon 更快更省；官方 1M 统一窗口，可用平台余额结算。',
+    isDefault: false,
+  },
   {
     id: 'grok-4.7',
     displayName: 'Grok 4.7',

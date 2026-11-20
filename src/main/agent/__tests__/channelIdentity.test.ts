@@ -41,8 +41,14 @@ describe('buildChannelIdentityInstructions', () => {
     expect(text).not.toContain('联网搜索')
   })
 
-  it('千问 / Grok 的 Miau 通道:有身份说明,但不替它们声明联网搜索(没验过)', () => {
-    for (const id of ['rightcode-qwen', 'apiyi-qwen', 'rightcode-grok-miau']) {
+  it('千问 / Grok / Gemini 的 Miau 通道:有身份说明,但不替它们声明联网搜索(没验过)', () => {
+    for (const id of [
+      'rightcode-qwen',
+      'apiyi-qwen',
+      'rightcode-grok-miau',
+      'rightcode-gemini-miau',
+      'apiyi-gemini-miau',
+    ]) {
       const text = buildChannelIdentityInstructions(channel(id), { webSearch: 'live' })
       expect(text, id).toContain('`rightcode`')
       expect(text, id).not.toContain('web_search')
