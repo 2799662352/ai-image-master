@@ -46,7 +46,7 @@ export interface ToolCallRecord {
    * 而那份日志分不清「调用方没带线程」和「带了但认不出」,更说不出认不出的是子代理、
    * 被分叉换下的旧线程、还是别的 —— 结果只能靠猜。
    */
-  'thread.via'?: 'subagent' | 'retired' | 'ancestor' | 'persisted'
+  'thread.via'?: 'subagent' | 'retired' | 'ancestor' | 'pinned' | 'persisted'
   /**
    * 只在没有 `thread.id` 时出现:
    * - `unresolved` 调用方报了 codex 线程,但没有任何对话认领它(工具结果不会进任何对话);
@@ -64,7 +64,7 @@ export interface ToolCallRecord {
 
 /** {@link buildToolCallRecord} 的归属入参:认出来了、没认出来、还是压根没人报线程。 */
 export type ToolCallAttribution =
-  | { kind: 'resolved'; via: 'live' | 'subagent' | 'retired' | 'ancestor' | 'persisted'; codexThreadId?: string }
+  | { kind: 'resolved'; via: 'live' | 'subagent' | 'retired' | 'ancestor' | 'pinned' | 'persisted'; codexThreadId?: string }
   | { kind: 'unresolved'; codexThreadId?: string; ancestorThreadIds: readonly string[] }
   | { kind: 'anonymous' }
 

@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
 import { connect, type Socket } from 'node:net'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { startCatimationMcpServer, type McpRuntime } from '../server'
-import { CATIMATION_MCP_HOST } from '../config'
+import { CATIMATION_MCP_HOST, CATIMATION_MCP_OWNER_ENV } from '../config'
+import type { AgentToolRequest } from '../../../types/agent'
+import type { CodexToolCaller, ToolThreadResolution } from '../toolCaller'
 import { imageTaskManager } from '../tools/imageTaskRegistry'
 
 /**
@@ -271,5 +273,156 @@ describe('catimation stdio bridge listener', () => {
     await expect(
       Promise.race([exited, new Promise((resolve) => setTimeout(() => resolve('hung'), 5000))]),
     ).resolves.toBe(0)
+  })
+
+  it('pins the owning DB thread id from the `<token>\\t<owner>` handshake even when `_meta` is absent', async () => {
+    const sent: AgentToolRequest[] = []
+    let runtimeRef: NonNullable<McpRuntime> | null = null
+    const win = {
+      webContents: {
+        send: (_channel: string, request: AgentToolRequest) => {
+          sent.push(request)
+          queueMicrotask(() =>
+            runtimeRef?.router.handleRendererResponse({ id: request.id, ok: true, result: { ok: true } }),
+          )
+        },
+      },
+    } as unknown as BrowserWindow
+
+    const runtime = await startCatimationMcpServer(win, 0)
+    if (!runtime) throw new Error('failed to boot MCP server for test')
+    runtimeRef = runtime
+    cleanup.push(() => new Promise<void>((resolve) => runtime.httpServer.close(() => resolve())))
+    if (runtime.bridge) cleanup.push(() => runtime.bridge!.close())
+
+    const resolver = vi.fn((caller: CodexToolCaller): ToolThreadResolution | undefined =>
+      caller.pinnedThreadId ? { threadId: caller.pinnedThreadId, via: 'pinned' } : undefined,
+    )
+    runtime.router.setThreadResolver(resolver)
+
+    const dialAndCall = async (handshakeSuffix: string, height: number): Promise<void> => {
+      const socket = connect({ host: CATIMATION_MCP_HOST, port: runtime.bridge!.port })
+      cleanup.push(() => socket.destroy())
+      await new Promise<void>((resolve, reject) => {
+        socket.once('connect', resolve)
+        socket.once('error', reject)
+      })
+      const onLine = lineFeed(socket)
+      socket.write(`${runtime.bridge!.token}${handshakeSuffix}\n${initializeLine(1)}`)
+      await waitForResponse(onLine, 1)
+      socket.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+      // Payload contains a literal tab (`\t`) to ensure handshake parsing stops at `\n`.
+      socket.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'director_capture', arguments: { mode: 'view', height } },
+        })}\n`,
+      )
+      const res = await waitForResponse(onLine, 2)
+      expect(JSON.stringify(res)).not.toContain('"isError":true')
+    }
+
+    await Promise.all([
+      dialAndCall('\tdb-chat-A', 111),
+      dialAndCall('\tdb-chat-B', 222),
+      // Invalid owner (contains whitespace) is ignored; connection stays unpinned.
+      dialAndCall('\tbad owner', 333),
+    ])
+
+    const byHeight = new Map(sent.map((r) => [r.params.height, r]))
+    expect(byHeight.get(111)?.threadId).toBe('db-chat-A')
+    expect(byHeight.get(222)?.threadId).toBe('db-chat-B')
+    expect('threadId' in byHeight.get(333)!).toBe(false)
+    expect(resolver).toHaveBeenCalledWith({ ancestorThreadIds: [], pinnedThreadId: 'db-chat-A' })
+    expect(resolver).toHaveBeenCalledWith({ ancestorThreadIds: [], pinnedThreadId: 'db-chat-B' })
+  })
+
+  it('still destroys the connection when the token is wrong even if `\\t<owner>` is appended', async () => {
+    const runtime = await bootServer()
+    const socket = connect({ host: CATIMATION_MCP_HOST, port: runtime.bridge!.port })
+    cleanup.push(() => socket.destroy())
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve)
+      socket.once('error', reject)
+    })
+
+    const closed = new Promise<void>((resolve) => socket.once('close', resolve))
+    socket.write('wrong-token\tdb-chat-A\n' + initializeLine(1))
+    await expect(
+      Promise.race([
+        closed.then(() => 'closed'),
+        new Promise((resolve) => setTimeout(() => resolve('alive'), 3000)),
+      ]),
+    ).resolves.toBe('closed')
+  })
+
+  it('END-TO-END: the real bridge script forwards CATIMATION_OWNER_THREAD_ID to the MCP server', async () => {
+    const sent: AgentToolRequest[] = []
+    let runtimeRef: NonNullable<McpRuntime> | null = null
+    const win = {
+      webContents: {
+        send: (_channel: string, request: AgentToolRequest) => {
+          sent.push(request)
+          queueMicrotask(() =>
+            runtimeRef?.router.handleRendererResponse({ id: request.id, ok: true, result: { ok: true } }),
+          )
+        },
+      },
+    } as unknown as BrowserWindow
+
+    const runtime = await startCatimationMcpServer(win, 0)
+    if (!runtime) throw new Error('failed to boot MCP server for test')
+    runtimeRef = runtime
+    cleanup.push(() => new Promise<void>((resolve) => runtime.httpServer.close(() => resolve())))
+    if (runtime.bridge) cleanup.push(() => runtime.bridge!.close())
+
+    runtime.router.setThreadResolver((caller) =>
+      caller.pinnedThreadId ? { threadId: caller.pinnedThreadId, via: 'pinned' } : undefined,
+    )
+
+    const bridgeScript = path.resolve(__dirname, '../../../../resources/catimation-bridge/index.js')
+    const child = spawn(process.execPath, [bridgeScript], {
+      env: {
+        ...process.env,
+        CATIMATION_BRIDGE_PORT: String(runtime.bridge!.port),
+        CATIMATION_BRIDGE_TOKEN: runtime.bridge!.token,
+        [CATIMATION_MCP_OWNER_ENV]: 'db-e2e-owner',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    cleanup.push(() => { child.kill() })
+
+    let buffer = ''
+    const handlers: Array<(line: string) => void> = []
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      let idx = buffer.indexOf('\n')
+      while (idx >= 0) {
+        const line = buffer.slice(0, idx).trim()
+        buffer = buffer.slice(idx + 1)
+        if (line) for (const h of handlers) h(line)
+        idx = buffer.indexOf('\n')
+      }
+    })
+
+    child.stdin.write(initializeLine(1))
+    await waitForResponse((h) => handlers.push(h), 1, 10_000)
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+    child.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'director_capture', arguments: { mode: 'view' } },
+      })}\n`,
+    )
+    const callRes = await waitForResponse((h) => handlers.push(h), 2, 10_000)
+    expect(JSON.stringify(callRes)).not.toContain('"isError":true')
+    expect(sent).toHaveLength(1)
+    expect(sent[0].threadId).toBe('db-e2e-owner')
+
+    child.stdin.end()
   })
 })

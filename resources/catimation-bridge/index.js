@@ -26,6 +26,11 @@
  *  - env CATIMATION_BRIDGE_TOKEN — per-app-session secret; sent as the very
  *    first line on the socket before any JSON-RPC bytes. Wrong/missing token
  *    → the app destroys the socket and we exit non-zero.
+ *  - env CATIMATION_OWNER_THREAD_ID (optional) — app DB thread id pinned onto
+ *    this Codex thread at thread/start, thread/fork, or thread/resume (and
+ *    inherited by any sub-agent it spawns). Sent on the same first line as
+ *    `<token>\t<owner>\n` so every tool call on this socket carries its owning
+ *    chat from birth.
  *  - After the token line, the socket carries raw newline-delimited JSON-RPC
  *    in both directions. `_meta` (codex thread ids) passes through untouched.
  *
@@ -39,6 +44,7 @@ const net = require('node:net')
 
 const port = Number(process.env.CATIMATION_BRIDGE_PORT || '')
 const token = process.env.CATIMATION_BRIDGE_TOKEN || ''
+const ownerThreadId = (process.env.CATIMATION_OWNER_THREAD_ID || '').replace(/[\r\n\t]/g, '').trim()
 
 function fail(code, reason) {
   try {
@@ -78,7 +84,7 @@ process.stdin.on('end', () => {
 process.stdout.on('error', () => fail(0, 'stdout closed (codex side gone)'))
 
 socket.on('connect', () => {
-  socket.write(`${token}\n`)
+  socket.write(ownerThreadId ? `${token}\t${ownerThreadId}\n` : `${token}\n`)
   process.stdin.pipe(socket, { end: true })
   socket.pipe(process.stdout)
 })

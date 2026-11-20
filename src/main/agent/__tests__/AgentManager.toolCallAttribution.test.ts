@@ -407,3 +407,239 @@ describe('resolveToolCallThread — a deleted conversation owns nothing', () => 
     expect(sync(manager.resolveToolCallThread(caller('codex-B2')))).toEqual({ threadId: 'db-B', via: 'live' })
   })
 })
+
+describe('resolveToolCallThread — connection-pinned owner thread id', () => {
+  const pinnedCaller = (
+    pinnedThreadId: string,
+    threadId?: string,
+    ...ancestorThreadIds: string[]
+  ): CodexToolCaller => ({
+    ...(threadId ? { threadId } : {}),
+    ancestorThreadIds,
+    pinnedThreadId,
+  })
+
+  it('resolves synchronously via pinned even when codex thread is unknown or _meta is absent', () => {
+    const store = fakeStore()
+    const { manager } = makeManager(store)
+    ;(manager as unknown as { withOwnerPin(id: string): unknown }).withOwnerPin('db-A')
+
+    // Unknown grandchild codex UUID (never seen in live/subagent/retired/DB).
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-A', 'codex-unknown-grandchild')))).toEqual({
+      threadId: 'db-A',
+      via: 'pinned',
+    })
+    // Completely absent `_meta` (pinned-only caller).
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-A')))).toEqual({
+      threadId: 'db-A',
+      via: 'pinned',
+    })
+    expect(store.findThreadIdByCodexThreadId).not.toHaveBeenCalled()
+  })
+
+  it('live and ancestor matches still win over pinnedThreadId so telemetry stays accurate', () => {
+    const { manager, internals } = makeManager(fakeStore())
+    ;(manager as unknown as { withOwnerPin(id: string): unknown }).withOwnerPin('db-A')
+    internals.rememberCodexThread('db-A', 'codex-A')
+
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-A', 'codex-A')))).toEqual({
+      threadId: 'db-A',
+      via: 'live',
+    })
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-A', 'child-1', 'codex-A')))).toEqual({
+      threadId: 'db-A',
+      via: 'ancestor',
+    })
+  })
+
+  it('rejects a pinnedThreadId that this process never pinned (and skips DB when _meta is absent)', () => {
+    const store = fakeStore()
+    const { manager } = makeManager(store)
+
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-spoofed')))).toBeUndefined()
+    expect(store.findThreadIdByCodexThreadId).not.toHaveBeenCalled()
+  })
+
+  it('deleteThread revokes the pin so a draining bridge on a deleted chat runs detached', async () => {
+    const store = fakeStore()
+    const { manager } = makeManager(store)
+    const pin = (manager as unknown as { withOwnerPin(id: string): unknown }).withOwnerPin.bind(manager)
+    pin('db-A')
+    pin('db-B')
+
+    await manager.deleteThread('db-A')
+
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-A')))).toBeUndefined()
+    await expect(
+      Promise.resolve(manager.resolveToolCallThread(pinnedCaller('db-A', 'codex-straggler'))),
+    ).resolves.toBeUndefined()
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-B')))).toEqual({
+      threadId: 'db-B',
+      via: 'pinned',
+    })
+  })
+
+  it('stamps ownerDbThreadId across send / resume / rebind / branch / restart-hydration, while leaving raw forkCodexThread unpinned', async () => {
+    const sendInputs: unknown[] = []
+    const resumeCalls: Array<{ id: string; overrides?: unknown }> = []
+    const forkCalls: Array<{ id: string; overrides?: unknown; lastTurnId?: string }> = []
+    let epoch = 1
+    const backend = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(async function* (_tid: string | undefined, input: unknown) {
+        sendInputs.push(input)
+        yield { type: 'thread_created', threadId: 'codex-new-1' } as AgentStreamEvent
+        yield { type: 'done' } as AgentStreamEvent
+      }),
+      cancel: vi.fn(),
+      isHealthy: vi.fn().mockReturnValue(true),
+      currentEpoch: vi.fn(() => epoch),
+      onMcpNotification: vi.fn(),
+      resumeThread: vi.fn(async (id: string, overrides?: unknown) => {
+        resumeCalls.push({ id, overrides })
+      }),
+      forkThread: vi.fn(async (id: string, overrides?: unknown, lastTurnId?: string) => {
+        forkCalls.push({ id, overrides, lastTurnId })
+        return { id: `${id}-forked`, preview: '', cwd: tmpDir }
+      }),
+      unsubscribeThread: vi.fn().mockResolvedValue(undefined),
+    }
+    const store = {
+      createThread: vi.fn(async () => ({
+        id: 'db-send',
+        title: 't',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastMessageAt: new Date().toISOString(),
+      })),
+      getThread: vi.fn(async (id: string) => ({
+        id,
+        title: 't',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastMessageAt: new Date().toISOString(),
+      })),
+      addMessage: vi.fn().mockResolvedValue(undefined),
+      updateLastMessageAt: vi.fn().mockResolvedValue(undefined),
+      setCodexThreadId: vi.fn().mockResolvedValue(undefined),
+      // 'db-send' is a BRAND-NEW chat (nothing persisted) so its first send takes
+      // the plain thread/start path — the only place that authorizes its pin.
+      getCodexThreadId: vi.fn(async (dbId: string) =>
+        dbId === 'db-send' ? null : dbId === 'db-cold' ? 'codex-cold' : 'codex-existing'),
+      findThreadIdByCodexThreadId: vi.fn().mockResolvedValue(null),
+      getThreadRouting: vi.fn().mockResolvedValue(null),
+      setThreadRouting: vi.fn().mockResolvedValue(undefined),
+      // Edit-and-resend: m1 (turn-1) is the last KEPT user row before the edited m3.
+      listMessagesForBranch: vi.fn(async () => [
+        {
+          id: 'm1',
+          role: 'user',
+          items: [
+            {
+              type: 'text',
+              id: 'm1-t',
+              startedAt: 1,
+              content: 'first',
+              codexReconcile: {
+                codexItemId: 'm1-echo',
+                clientId: 'm1',
+                turnId: 'turn-1',
+                localImages: [],
+                textElements: [],
+              },
+            },
+          ],
+        },
+        { id: 'm2', role: 'assistant', items: [{ type: 'text', id: 'm2-t', startedAt: 1, content: 'reply' }] },
+        { id: 'm3', role: 'user', items: [{ type: 'text', id: 'm3-t', startedAt: 1, content: 'edited' }] },
+      ]),
+      deleteMessages: vi.fn().mockResolvedValue(undefined),
+      deleteThread: vi.fn().mockResolvedValue(undefined),
+    }
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: backend as never,
+      store: store as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+
+    // 1. sendMessage → thread/start input carries ownerDbThreadId and authorizes pin.
+    await manager.sendMessage({ threadId: 'db-send', content: 'hi', model: 'gpt-5.5', attachments: [] })
+    expect(sendInputs[0]).toMatchObject({ ownerDbThreadId: 'db-send' })
+    // Nothing was resumed on the way: the authorization below can only come
+    // from the send path itself.
+    expect(resumeCalls).toHaveLength(0)
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-send')))).toEqual({
+      threadId: 'db-send',
+      via: 'pinned',
+    })
+
+    // 2. resumeSelectedThread (plain resume, no target).
+    const m = manager as unknown as {
+      resumeSelectedThread(id: string, target?: unknown): Promise<void>
+      rebindThreadInProcess(db: string, codex: string, target: unknown): Promise<void>
+      resolveCodexThreadForSend(db: string): Promise<string | undefined>
+      hydrateCodexThreadAfterRestart(db: string): Promise<string | undefined>
+      rememberCodexThread(db: string, codex: string): void
+    }
+    await m.resumeSelectedThread('db-sel')
+    expect(resumeCalls.at(-1)).toEqual({
+      id: 'codex-existing',
+      overrides: { ownerDbThreadId: 'db-sel' },
+    })
+
+    // 3. rebindThreadInProcess (Plan B channel switch fork).
+    await m.rebindThreadInProcess('db-rebind', 'codex-rebind', {
+      gatewayId: 'rightcode',
+      channelId: 'rightcode-grok',
+      modelId: 'grok-4.5',
+      contextWindow: 256_000,
+    })
+    expect(forkCalls.at(-1)?.overrides).toMatchObject({
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      ownerDbThreadId: 'db-rebind',
+    })
+
+    // 4. branchThreadBeforeMessage (edit-and-resend fork).
+    m.rememberCodexThread('db-branch', 'codex-branch-src')
+    await expect(manager.branchThreadBeforeMessage('db-branch', 'm3')).resolves.toEqual({
+      branched: true,
+      mode: 'fork',
+    })
+    expect(forkCalls.at(-1)).toEqual({
+      id: 'codex-branch-src',
+      overrides: { ownerDbThreadId: 'db-branch' },
+      lastTurnId: 'turn-1',
+    })
+
+    // 5. resolveCodexThreadForSend (codex respawn epoch mismatch).
+    m.rememberCodexThread('db-epoch', 'codex-epoch')
+    epoch = 2
+    await m.resolveCodexThreadForSend('db-epoch')
+    expect(resumeCalls.at(-1)).toEqual({
+      id: 'codex-epoch',
+      overrides: { ownerDbThreadId: 'db-epoch' },
+    })
+
+    // 6. hydrateCodexThreadAfterRestart (cold app restart).
+    await m.hydrateCodexThreadAfterRestart('db-cold')
+    expect(resumeCalls.at(-1)).toEqual({
+      id: 'codex-cold',
+      overrides: { ownerDbThreadId: 'db-cold' },
+    })
+    expect(sync(manager.resolveToolCallThread(pinnedCaller('db-cold')))).toEqual({
+      threadId: 'db-cold',
+      via: 'pinned',
+    })
+
+    // 7. Raw forkCodexThread (not owned by any DB chat) stays unpinned.
+    const forkCountBefore = forkCalls.length
+    await manager.forkCodexThread('019d0000-0000-7000-8000-000000000001')
+    expect(forkCalls).toHaveLength(forkCountBefore + 1)
+    expect(forkCalls.at(-1)?.overrides).toBeUndefined()
+  })
+})

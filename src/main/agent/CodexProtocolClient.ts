@@ -37,6 +37,10 @@ import type {
   CodexThreadSummary,
 } from '../../types/agent'
 import { CODEX_REQUEST_USER_INPUT_METHOD } from '../../types/agent'
+import {
+  CATIMATION_MCP_OWNER_ENV_CONFIG_KEY,
+  CATIMATION_MCP_OWNER_HEADER_CONFIG_KEY,
+} from '../mcp/config'
 import type {
   AgentInput,
   ListThreadsParams,
@@ -77,14 +81,32 @@ import type {
  * fields, and an explicit field — even null — flips codex's
  * `has_model_resume_override` and suppresses persisted-metadata restore).
  */
+export type CatimationMcpTransportKind = 'stdio' | 'http'
+
+function mcpOwnerConfigOverride(
+  transport: CatimationMcpTransportKind | undefined,
+  ownerDbThreadId: string | undefined,
+): Record<string, string> | undefined {
+  if (!transport || !ownerDbThreadId) return undefined
+  const key = transport === 'stdio'
+    ? CATIMATION_MCP_OWNER_ENV_CONFIG_KEY
+    : CATIMATION_MCP_OWNER_HEADER_CONFIG_KEY
+  return { [key]: ownerDbThreadId }
+}
+
 function threadConfigOverrideParams(
   overrides: CodexThreadConfigOverrides | undefined,
-): Partial<CodexThreadConfigOverrides> {
-  if (!overrides) return {}
+  catimationMcpTransport?: CatimationMcpTransportKind,
+): Partial<Omit<CodexThreadConfigOverrides, 'ownerDbThreadId'>> {
+  const ownerConfig = mcpOwnerConfigOverride(catimationMcpTransport, overrides?.ownerDbThreadId)
+  if (!overrides && !ownerConfig) return {}
+  const mergedConfig = overrides?.config || ownerConfig
+    ? { ...(overrides?.config ?? {}), ...(ownerConfig ?? {}) }
+    : undefined
   return {
-    ...(overrides.model ? { model: overrides.model } : {}),
-    ...(overrides.modelProvider ? { modelProvider: overrides.modelProvider } : {}),
-    ...(overrides.config ? { config: overrides.config } : {}),
+    ...(overrides?.model ? { model: overrides.model } : {}),
+    ...(overrides?.modelProvider ? { modelProvider: overrides.modelProvider } : {}),
+    ...(mergedConfig ? { config: mergedConfig } : {}),
   }
 }
 
@@ -254,6 +276,13 @@ export interface CodexProtocolClientOptions {
    * default so the stable wire behaviour stays byte-identical.
    */
   experimentalApi?: boolean
+  /**
+   * Active `catimation` MCP transport on this app-server (`stdio` bridge env
+   * or Streamable-HTTP header). Undefined when `catimation` MCP was not
+   * configured at launch — in that case per-thread `mcp_servers.catimation.*`
+   * keys MUST NOT be emitted, or Codex creates a transportless server table.
+   */
+  catimationMcpTransport?: CatimationMcpTransportKind
   onLog?: (line: string) => void
   /**
    * A mapped event that belongs to no turn this client started — in practice a
@@ -754,7 +783,7 @@ export class CodexProtocolClient {
     // the legacy no-branch wire shape stays byte-identical for old binaries.
     const response = await this.rpc<unknown>('thread/fork', {
       threadId,
-      ...threadConfigOverrideParams(overrides),
+      ...threadConfigOverrideParams(overrides, this.options.catimationMcpTransport),
       ...(lastTurnId ? { lastTurnId } : {}),
     })
     return normalizeThreadSummary(extractThreadRecord(response))
@@ -794,7 +823,7 @@ export class CodexProtocolClient {
   ): Promise<void> {
     await this.rpc<unknown>('thread/resume', {
       threadId,
-      ...threadConfigOverrideParams(overrides),
+      ...threadConfigOverrideParams(overrides, this.options.catimationMcpTransport),
     })
   }
 
@@ -1120,6 +1149,10 @@ export class CodexProtocolClient {
     // thread's window (unlike the process-wide `-c model_context_window`).
     // Both spread-omit so the legacy wire shape stays byte-identical.
     const pin = input.threadContextPin
+    const mcpOwner = mcpOwnerConfigOverride(
+      this.options.catimationMcpTransport,
+      input.ownerDbThreadId,
+    )
     return {
       model: input.model,
       ...(input.modelProvider ? { modelProvider: input.modelProvider } : {}),
@@ -1145,6 +1178,7 @@ export class CodexProtocolClient {
               model_auto_compact_token_limit: pin.modelAutoCompactTokenLimit,
             }
           : {}),
+        ...(mcpOwner ?? {}),
       },
     }
   }

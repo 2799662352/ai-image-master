@@ -90,6 +90,32 @@ describe('ToolRouter', () => {
         warn.mockRestore()
       }
     })
+
+    it('attributes a pinned-only caller without `_meta`, and warns with `pinned:<id>` when a pin is rejected', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const send = vi.fn()
+        const router = new ToolRouter({ webContents: { send } } as any)
+        router.setThreadResolver((caller) =>
+          caller.pinnedThreadId === 'db-live' ? { threadId: 'db-live', via: 'pinned' } : undefined,
+        )
+
+        runWithToolCaller({ ancestorThreadIds: [], pinnedThreadId: 'db-live' }, () => {
+          void router.call('director_capture', { mode: 'view' })
+        })
+        expect(send.mock.calls[0][1].threadId).toBe('db-live')
+        expect(warn).not.toHaveBeenCalled()
+
+        runWithToolCaller({ ancestorThreadIds: [], pinnedThreadId: 'db-deleted' }, () => {
+          void router.call('director_capture', { mode: 'view' })
+        })
+        expect('threadId' in send.mock.calls[1][1]).toBe(false)
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls[0].map(String).join(' ')).toContain('pinned:db-deleted')
+      } finally {
+        warn.mockRestore()
+      }
+    })
   })
 
   describe('caller scope (the tool handler\'s `_meta`, not a hand-forwarded id)', () => {

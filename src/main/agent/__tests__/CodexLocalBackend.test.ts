@@ -96,6 +96,11 @@ async function startFakeServer(opts: FakeServerOptions = {}): Promise<FakeServer
           jsonrpc: '2.0', id: msg.id,
           result: { thread: { id: msg.params.threadId, preview: '', cwd: '/' } },
         }))
+      } else if (msg.method === 'thread/fork' && msg.id !== undefined) {
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0', id: msg.id,
+          result: { thread: { id: `${msg.params.threadId}-fork`, preview: '', cwd: '/' } },
+        }))
       } else if (msg.method === 'turn/interrupt' && msg.id !== undefined) {
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }))
         setImmediate(() => {
@@ -293,6 +298,131 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
 
     const resume = server.receivedFromClient.find((m) => m.method === 'thread/resume')
     expect(resume?.params).toEqual({ threadId: 'thread-2', modelProvider: 'openai' })
+  })
+
+  it('resumeThread & forkThread preserve process-active provider defaults when caller only passes ownerDbThreadId, and emit MCP pin according to transport', async () => {
+    server = await startFakeServer()
+    backend = new CodexLocalBackend({
+      wsUrl: server.url,
+      provider: {
+        id: 'rightcode-grok',
+        name: 'Right.Codes Grok',
+        baseUrl: 'https://rightapi.ai/grok/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'grok-4.5',
+      },
+      catimationMcp: {
+        port: 12345,
+        token: 'tok',
+        stdio: { nodePath: process.execPath, scriptPath: 'bridge.js', port: 12346, token: 'btok' },
+      },
+    })
+    await backend.start()
+
+    for await (const _ of backend.send(undefined, { ...baseInput, ownerDbThreadId: 'db-A' })) { /* drain */ }
+    await backend.resumeThread('thread-1', { ownerDbThreadId: 'db-A' })
+    await backend.forkThread('thread-1', { ownerDbThreadId: 'db-A' }, 'turn-2')
+
+    const startReq = server.receivedFromClient.find((m) => m.method === 'thread/start')
+    expect(startReq?.params.config['mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID']).toBe('db-A')
+    expect('ownerDbThreadId' in startReq?.params).toBe(false)
+
+    const resumeReq = server.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(resumeReq?.params).toEqual({
+      threadId: 'thread-1',
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      config: { 'mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID': 'db-A' },
+    })
+
+    const forkReq = server.receivedFromClient.find((m) => m.method === 'thread/fork')
+    expect(forkReq?.params).toEqual({
+      threadId: 'thread-1',
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      config: { 'mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID': 'db-A' },
+      lastTurnId: 'turn-2',
+    })
+  })
+
+  it('forwards explicit per-thread routing overrides verbatim (no process-active model mixed in) while still adding the owner pin', async () => {
+    server = await startFakeServer()
+    backend = new CodexLocalBackend({
+      wsUrl: server.url,
+      provider: {
+        id: 'rightcode-grok',
+        name: 'Right.Codes Grok',
+        baseUrl: 'https://rightapi.ai/grok/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'grok-4.5',
+      },
+      catimationMcp: {
+        port: 12345,
+        token: 'tok',
+        stdio: { nodePath: process.execPath, scriptPath: 'bridge.js', port: 12346, token: 'btok' },
+      },
+    })
+    await backend.start()
+
+    // The thread is bound to a SIBLING channel; the caller names only that
+    // channel. The process-active model (grok-4.5) must not leak onto it.
+    await backend.resumeThread('thread-sibling', {
+      modelProvider: 'rightcode-standard',
+      ownerDbThreadId: 'db-sibling',
+    })
+    await backend.forkThread('thread-sibling', {
+      model: 'gpt-5.6-sol',
+      modelProvider: 'rightcode-standard',
+      config: { model_context_window: 400_000, model_auto_compact_token_limit: 360_000 },
+      ownerDbThreadId: 'db-sibling',
+    })
+
+    const resumeReq = server.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(resumeReq?.params).toEqual({
+      threadId: 'thread-sibling',
+      modelProvider: 'rightcode-standard',
+      config: { 'mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID': 'db-sibling' },
+    })
+    const forkReq = server.receivedFromClient.find((m) => m.method === 'thread/fork')
+    expect(forkReq?.params).toEqual({
+      threadId: 'thread-sibling',
+      model: 'gpt-5.6-sol',
+      modelProvider: 'rightcode-standard',
+      config: {
+        model_context_window: 400_000,
+        model_auto_compact_token_limit: 360_000,
+        'mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID': 'db-sibling',
+      },
+    })
+  })
+
+  it('uses HTTP header owner pin when catimationMcp has no stdio bridge, and emits nothing when catimationMcp is absent', async () => {
+    server = await startFakeServer()
+    backend = new CodexLocalBackend({
+      wsUrl: server.url,
+      catimationMcp: { port: 12345, token: 'tok' },
+    })
+    await backend.start()
+
+    await backend.resumeThread('thread-http', { ownerDbThreadId: 'db-http' })
+    const httpResume = server.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(httpResume?.params).toEqual({
+      threadId: 'thread-http',
+      modelProvider: 'openai',
+      config: { 'mcp_servers.catimation.http_headers.x-catimation-thread-id': 'db-http' },
+    })
+
+    await backend.stop()
+    server.receivedFromClient.length = 0
+
+    backend = new CodexLocalBackend({ wsUrl: server.url })
+    await backend.start()
+    await backend.resumeThread('thread-none', { ownerDbThreadId: 'db-none' })
+    const plainResume = server.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(plainResume?.params).toEqual({
+      threadId: 'thread-none',
+      modelProvider: 'openai',
+    })
   })
 
   it('send(existingThreadId, input) skips thread/start and does not emit thread_created', async () => {

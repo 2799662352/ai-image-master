@@ -7,7 +7,11 @@ import { assertCodexModelContextConfig } from '../../shared/modelSettings'
 import { buildCodexLaunchArgs, redactCodexLaunchArgsForLog, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexLaunchOptions, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
-import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
+import {
+  CodexProtocolClient,
+  mapServerNotification,
+  type CatimationMcpTransportKind,
+} from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveBundledFfmpegDir, resolveCodexBinary } from './paths'
 import { runCodexDoctor, type DoctorReport } from './codexDoctor'
@@ -489,6 +493,12 @@ export class CodexLocalBackend implements IAgentBackend {
     await previousKbRelay?.close().catch(() => undefined)
   }
 
+  private catimationMcpTransport(): CatimationMcpTransportKind | undefined {
+    const mcp = this.options.catimationMcp
+    if (!mcp) return undefined
+    return mcp.stdio ? 'stdio' : 'http'
+  }
+
   private async startWsClient(url: string): Promise<CodexProtocolClient> {
     const client = new CodexProtocolClient({
       url,
@@ -496,6 +506,7 @@ export class CodexLocalBackend implements IAgentBackend {
       sessionConfig: this.sessionConfig,
       connectTimeoutMs: 5_000,
       experimentalApi: this.options.experimentalApi,
+      catimationMcpTransport: this.catimationMcpTransport(),
       onApprovalRequest: this.options.onApprovalRequest,
       onApprovalResolved: this.options.onApprovalResolved,
       onMcpNotification: this.options.onMcpNotification,
@@ -679,6 +690,7 @@ export class CodexLocalBackend implements IAgentBackend {
       sessionConfig: this.sessionConfig,
       connectTimeoutMs: this.options.connectTimeoutMs ?? DEFAULT_SPAWN_CONNECT_TIMEOUT_MS,
       experimentalApi: this.options.experimentalApi,
+      catimationMcpTransport: this.catimationMcpTransport(),
       onLog: (line) => log.write(line + '\n'),
       onApprovalRequest: this.options.onApprovalRequest,
       onApprovalResolved: this.options.onApprovalResolved,
@@ -843,7 +855,7 @@ export class CodexLocalBackend implements IAgentBackend {
     lastTurnId?: string,
   ): Promise<CodexThreadSummary> {
     if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
-    return this.client.forkThread(threadId, overrides ?? this.threadConfigOverrides(), lastTurnId)
+    return this.client.forkThread(threadId, this.resolveThreadConfigOverrides(overrides), lastTurnId)
   }
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {
@@ -868,7 +880,21 @@ export class CodexLocalBackend implements IAgentBackend {
     overrides?: CodexThreadConfigOverrides,
   ): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.resumeThread called before start')
-    return this.client.resumeThread(threadId, overrides ?? this.threadConfigOverrides())
+    return this.client.resumeThread(threadId, this.resolveThreadConfigOverrides(overrides))
+  }
+
+  /**
+   * Merge caller overrides with the process-active provider defaults when the
+   * caller only supplied non-routing fields (e.g. `ownerDbThreadId` for MCP
+   * connection pinning). Preserves the cross-channel resume fix
+   * (`openai/codex#19287`) while still forwarding the owner pin.
+   */
+  private resolveThreadConfigOverrides(
+    overrides?: CodexThreadConfigOverrides,
+  ): CodexThreadConfigOverrides {
+    if (!overrides) return this.threadConfigOverrides()
+    if (overrides.model || overrides.modelProvider) return overrides
+    return { ...this.threadConfigOverrides(), ...overrides }
   }
 
   /**
