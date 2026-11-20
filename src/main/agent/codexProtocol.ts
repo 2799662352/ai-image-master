@@ -1,4 +1,8 @@
 import type {
+  CATIMATION_MCP_OWNER_ENV_CONFIG_KEY,
+  CATIMATION_MCP_OWNER_HEADER_CONFIG_KEY,
+} from '../mcp/config'
+import type {
   CodexApprovalPolicy,
   CodexSandboxMode,
   CodexWebSearchMode,
@@ -78,6 +82,14 @@ export interface ThreadStartParams {
      * when the user keeps 'default' so codex resolves its own default.
      */
     model_verbosity?: string
+    /**
+     * Connection-pinned owning app DB thread id for the `catimation` MCP
+     * bridge (stdio env or HTTP header). Emitted ONLY when `catimation` MCP
+     * is configured on this app-server (omitted otherwise so Codex never
+     * materializes a transportless `[mcp_servers.catimation]` table).
+     */
+    [CATIMATION_MCP_OWNER_ENV_CONFIG_KEY]?: string
+    [CATIMATION_MCP_OWNER_HEADER_CONFIG_KEY]?: string
   }
 }
 export interface ThreadStartResponse { thread: Thread }
@@ -95,13 +107,21 @@ export interface CodexThreadConfigOverrides {
   model?: string
   modelProvider?: string
   /**
-   * Per-thread context pin forwarded on resume/fork (same thread-scoped keys
-   * as `ThreadStartParams.config`; smoke-verified on the bundled binary).
-   * Spread-omit when the thread is unpinned.
+   * App DB thread id to pin onto the resumed/forked thread's `catimation` MCP
+   * connection. Translated into a `config` leaf key by `CodexProtocolClient`
+   * only when `catimation` MCP is active; never sent as a top-level RPC field.
+   */
+  ownerDbThreadId?: string
+  /**
+   * Per-thread context pin and/or `catimation` MCP owner pin forwarded on
+   * resume/fork (same thread-scoped keys as `ThreadStartParams.config`).
+   * Spread-omit when absent.
    */
   config?: {
-    model_context_window: number
-    model_auto_compact_token_limit: number
+    model_context_window?: number
+    model_auto_compact_token_limit?: number
+    [CATIMATION_MCP_OWNER_ENV_CONFIG_KEY]?: string
+    [CATIMATION_MCP_OWNER_HEADER_CONFIG_KEY]?: string
   }
 }
 

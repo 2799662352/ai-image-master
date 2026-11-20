@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { parsePinnedThreadId } from './config'
 
 /**
  * Who is calling this MCP tool — the codex thread, plus the threads it descends
@@ -31,6 +32,13 @@ export interface CodexToolCaller {
    * {@link threadId}. Empty for an ordinary conversation thread.
    */
   ancestorThreadIds: readonly string[]
+  /**
+   * App DB thread id pinned onto the MCP connection when the Codex thread was
+   * started, forked, or resumed (and inherited by its sub-agents). Present
+   * even when `_meta` is absent or names a deep sub-agent whose direct parent
+   * is not in memory.
+   */
+  pinnedThreadId?: string
 }
 
 /** How a caller was matched to a chat. Recorded so the next log can say which path fired. */
@@ -43,6 +51,8 @@ export type ToolThreadVia =
   | 'retired'
   /** The caller itself is unknown; one of its ancestors is a chat's thread. */
   | 'ancestor'
+  /** The MCP connection itself was pinned to this chat when the thread was created / resumed / forked. */
+  | 'pinned'
   /** Not in memory; the chat's persisted codex thread id matched. */
   | 'persisted'
 
@@ -114,9 +124,25 @@ export function currentToolCaller(): CodexToolCaller | undefined {
 }
 
 /**
+ * Attach a connection-pinned DB thread id onto an extracted caller. Creates a
+ * caller even when `_meta` was absent so the resolver still sees the pin.
+ */
+export function attachPinnedThread(
+  caller: CodexToolCaller | undefined,
+  pinnedThreadId: string | undefined,
+): CodexToolCaller | undefined {
+  const pinned = parsePinnedThreadId(pinnedThreadId)
+  if (!pinned) return caller
+  return {
+    ...(caller ?? { ancestorThreadIds: [] }),
+    pinnedThreadId: pinned,
+  }
+}
+
+/**
  * Combine an explicitly forwarded thread id (the older convention, still used
  * by most tools) with the ambient caller. The explicit id wins as the caller's
- * own thread; the lineage always comes from the ambient scope.
+ * own thread; the lineage and connection pin always come from the ambient scope.
  */
 export function mergeToolCaller(
   explicitThreadId: string | undefined,
@@ -132,8 +158,13 @@ export function mergeToolCaller(
     ],
     threadId,
   )
-  if (!threadId && ancestorThreadIds.length === 0) return undefined
-  return { ...(threadId ? { threadId } : {}), ancestorThreadIds }
+  const pinnedThreadId = parsePinnedThreadId(ambient?.pinnedThreadId)
+  if (!threadId && ancestorThreadIds.length === 0 && !pinnedThreadId) return undefined
+  return {
+    ...(threadId ? { threadId } : {}),
+    ancestorThreadIds,
+    ...(pinnedThreadId ? { pinnedThreadId } : {}),
+  }
 }
 
 /** Every codex thread id a caller names, own thread first. */

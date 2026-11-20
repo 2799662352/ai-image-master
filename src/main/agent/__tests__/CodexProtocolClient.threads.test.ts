@@ -76,6 +76,25 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
             },
           },
         }))
+      } else if (msg.method === 'thread/start' && msg.id !== undefined) {
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { thread: { id: 'codex-thread-started', preview: '', cwd: 'D:/repo' } },
+        }))
+      } else if (msg.method === 'turn/start' && msg.id !== undefined) {
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { turn: { id: 'turn-1', status: 'running' } },
+        }))
+        setImmediate(() => {
+          ws.send(JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'turn/completed',
+            params: { threadId: msg.params.threadId, turn: { id: 'turn-1', status: 'completed' } },
+          }))
+        })
       } else if (msg.method === 'thread/resume' && msg.id !== undefined) {
         // Response shape matches thread/start; resumeThread ignores it.
         ws.send(JSON.stringify({
@@ -116,11 +135,14 @@ describe('CodexProtocolClient thread history wrappers', () => {
     server = null
   })
 
-  async function startClient(): Promise<void> {
+  async function startClient(
+    extra?: { catimationMcpTransport?: 'stdio' | 'http' },
+  ): Promise<void> {
     server = await startFakeCodexServer()
     client = new CodexProtocolClient({
       url: server.url,
       clientInfo: { name: 'catimation-test', version: '0.0.0' },
+      ...(extra ?? {}),
     })
     await client.start()
   }
@@ -265,5 +287,108 @@ describe('CodexProtocolClient thread history wrappers', () => {
         model_auto_compact_token_limit: 450_000,
       },
     })
+  })
+
+  it('pins ownerDbThreadId via stdio env config key on thread/start, thread/fork, and thread/resume (merging with context pin)', async () => {
+    await startClient({ catimationMcpTransport: 'stdio' })
+
+    for await (const _ of client!.send(undefined, {
+      content: 'hi',
+      model: 'gpt-5.5',
+      cwd: 'D:/repo',
+      attachments: [],
+      items: [{ type: 'text', text: 'hi' }],
+      ownerDbThreadId: 'db-stdio-A',
+    })) { /* drain */ }
+
+    await client!.forkThread('codex-thread-1', {
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      ownerDbThreadId: 'db-stdio-B',
+      config: {
+        model_context_window: 500_000,
+        model_auto_compact_token_limit: 450_000,
+      },
+    })
+    await client!.resumeThread('codex-thread-1', { ownerDbThreadId: 'db-stdio-C' })
+
+    const startReq = server!.receivedFromClient.find((m) => m.method === 'thread/start')
+    expect(startReq?.params.config['mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID']).toBe('db-stdio-A')
+    expect('ownerDbThreadId' in startReq?.params).toBe(false)
+
+    const forkReq = server!.receivedFromClient.find((m) => m.method === 'thread/fork')
+    expect(forkReq?.params).toEqual({
+      threadId: 'codex-thread-1',
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      config: {
+        model_context_window: 500_000,
+        model_auto_compact_token_limit: 450_000,
+        'mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID': 'db-stdio-B',
+      },
+    })
+
+    const resumeReq = server!.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(resumeReq?.params).toEqual({
+      threadId: 'codex-thread-1',
+      config: { 'mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID': 'db-stdio-C' },
+    })
+  })
+
+  it('pins ownerDbThreadId via HTTP header config key when catimationMcpTransport is http', async () => {
+    await startClient({ catimationMcpTransport: 'http' })
+
+    for await (const _ of client!.send(undefined, {
+      content: 'hi',
+      model: 'gpt-5.5',
+      cwd: 'D:/repo',
+      attachments: [],
+      items: [{ type: 'text', text: 'hi' }],
+      ownerDbThreadId: 'db-http-1',
+    })) { /* drain */ }
+    await client!.forkThread('codex-thread-1', { ownerDbThreadId: 'db-http-2' })
+    await client!.resumeThread('codex-thread-1', { ownerDbThreadId: 'db-http-3' })
+
+    const startReq = server!.receivedFromClient.find((m) => m.method === 'thread/start')
+    expect(startReq?.params.config['mcp_servers.catimation.http_headers.x-catimation-thread-id']).toBe('db-http-1')
+    expect('mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID' in startReq?.params.config).toBe(false)
+
+    const forkReq = server!.receivedFromClient.find((m) => m.method === 'thread/fork')
+    expect(forkReq?.params).toEqual({
+      threadId: 'codex-thread-1',
+      config: { 'mcp_servers.catimation.http_headers.x-catimation-thread-id': 'db-http-2' },
+    })
+
+    const resumeReq = server!.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(resumeReq?.params).toEqual({
+      threadId: 'codex-thread-1',
+      config: { 'mcp_servers.catimation.http_headers.x-catimation-thread-id': 'db-http-3' },
+    })
+  })
+
+  it('emits NO mcp_servers.catimation.* key and NO ownerDbThreadId on the wire when catimationMcpTransport is unset', async () => {
+    await startClient()
+
+    for await (const _ of client!.send(undefined, {
+      content: 'hi',
+      model: 'gpt-5.5',
+      cwd: 'D:/repo',
+      attachments: [],
+      items: [{ type: 'text', text: 'hi' }],
+      ownerDbThreadId: 'db-unconfigured',
+    })) { /* drain */ }
+    await client!.forkThread('codex-thread-1', { ownerDbThreadId: 'db-unconfigured' })
+    await client!.resumeThread('codex-thread-1', { ownerDbThreadId: 'db-unconfigured' })
+
+    const startReq = server!.receivedFromClient.find((m) => m.method === 'thread/start')
+    expect(Object.keys(startReq?.params.config)).not.toContain('mcp_servers.catimation.env.CATIMATION_OWNER_THREAD_ID')
+    expect(Object.keys(startReq?.params.config)).not.toContain('mcp_servers.catimation.http_headers.x-catimation-thread-id')
+    expect('ownerDbThreadId' in startReq?.params).toBe(false)
+
+    const forkReq = server!.receivedFromClient.find((m) => m.method === 'thread/fork')
+    expect(forkReq?.params).toEqual({ threadId: 'codex-thread-1' })
+
+    const resumeReq = server!.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(resumeReq?.params).toEqual({ threadId: 'codex-thread-1' })
   })
 })

@@ -557,6 +557,21 @@ export class AgentManager {
   private readonly unknownToolCallerThreads = new Map<string, number>()
 
   /**
+   * App DB thread ids that THIS process actually pinned onto a Codex thread's
+   * `catimation` MCP connection (`thread/start`, `thread/fork`, `thread/resume`).
+   *
+   * Two jobs:
+   *  1. Birth-bound attribution: every call arriving on that connection (from
+   *     the thread itself, a sub-agent, or a nested sub-agent) carries its
+   *     owning chat id without needing any reverse map lookup.
+   *  2. Deletion safety: `deleteThread` removes the id here immediately, so a
+   *     late tool call from an in-flight turn on a deleted chat is rejected
+   *     (runs detached) instead of routing into a gone chat — and an external
+   *     client sending an arbitrary header cannot invent a chat id.
+   */
+  private readonly pinnedOwnerThreadIds = new Set<string>()
+
+  /**
    * Live delegation items, keyed by timeline item id, with the conversation
    * they belong to and the latest snapshot we forwarded. Kept so a child's
    * token report can be merged back into the card that represents it.
@@ -2115,7 +2130,7 @@ export class AgentManager {
     if (!this.backend.resumeThread) {
       throw new Error('Codex strict thread resume API is unavailable')
     }
-    await this.backend.resumeThread(persistedThreadId)
+    await this.backend.resumeThread(persistedThreadId, this.withOwnerPin(threadId))
     this.codexThreadIdByDbThreadId.set(threadId, persistedThreadId)
     const epoch = this.backend.currentEpoch?.()
     if (epoch !== undefined) {
@@ -2151,7 +2166,7 @@ export class AgentManager {
       throw new Error('Codex thread fork API is unavailable')
     }
     const pin = resolveModelContextPin(target.modelId, target.contextWindow)
-    const overrides: CodexThreadConfigOverrides = {
+    const overrides: CodexThreadConfigOverrides = this.withOwnerPin(dbThreadId, {
       model: target.modelId,
       modelProvider: target.channelId,
       ...(pin
@@ -2162,7 +2177,7 @@ export class AgentManager {
             },
           }
         : {}),
-    }
+    })
     let forked: CodexThreadSummary
     try {
       forked = await this.backend.forkThread(codexThreadId, overrides)
@@ -3654,11 +3669,13 @@ export class AgentManager {
       }
     }
 
+    this.pinnedOwnerThreadIds.add(thread.id)
     const input: AgentInput = {
       ...payload,
       model,
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       clientUserMessageId,
+      ownerDbThreadId: thread.id,
       items,
     }
 
@@ -4020,10 +4037,15 @@ export class AgentManager {
    *      spawned (codex started the turn itself, e.g. a goal continuation, so
    *      its events never passed through `forwardEvents`) still names its
    *      parent in `_meta`;
-   *   3. the database: a codex thread persisted on a conversation this process
+   *   3. the connection-pinned owner DB thread id (`CATIMATION_OWNER_THREAD_ID`
+   *      on the stdio bridge or `x-catimation-thread-id` on HTTP), injected
+   *      into `thread/start` / `thread/fork` / `thread/resume` and inherited
+   *      automatically by every sub-agent and nested sub-agent, provided this
+   *      process actually pinned that chat and has not deleted it;
+   *   4. the database: a codex thread persisted on a conversation this process
    *      has not loaded.
    *
-   * Steps 1–2 are synchronous so the common case adds no latency. Returns
+   * Steps 1–3 are synchronous so the common case adds no latency. Returns
    * `undefined` when nothing matches: the call then belongs to NO conversation.
    * There is no "current chat" fallback anywhere down this path — guessing is
    * what put one conversation's images into another.
@@ -4044,8 +4066,25 @@ export class AgentManager {
       if (own) this.subagentParentByCodexThread.set(own, hit.threadId)
       return { threadId: hit.threadId, via: 'ancestor' }
     }
+    if (caller.pinnedThreadId && this.pinnedOwnerThreadIds.has(caller.pinnedThreadId)) {
+      return { threadId: caller.pinnedThreadId, via: 'pinned' }
+    }
+    if (!own && caller.ancestorThreadIds.length === 0) return undefined
     if (!this.store?.findThreadIdByCodexThreadId) return undefined
     return this.resolveToolCallThreadFromStore(caller)
+  }
+
+  /**
+   * Stamp `ownerDbThreadId` onto `thread/fork` / `thread/resume` overrides and
+   * authorize that chat id in {@link pinnedOwnerThreadIds} so calls arriving
+   * on the pinned MCP connection resolve synchronously via `'pinned'`.
+   */
+  private withOwnerPin(
+    dbThreadId: string,
+    overrides?: CodexThreadConfigOverrides,
+  ): CodexThreadConfigOverrides {
+    this.pinnedOwnerThreadIds.add(dbThreadId)
+    return { ...(overrides ?? {}), ownerDbThreadId: dbThreadId }
   }
 
   private lookupToolCallerThread(codexThreadId: string): ToolThreadResolution | undefined {
@@ -4127,6 +4166,7 @@ export class AgentManager {
    * instead of to an id the renderer no longer has.
    */
   private dropToolAttributionFor(dbThreadId: string): void {
+    this.pinnedOwnerThreadIds.delete(dbThreadId)
     for (const [codexThreadId, entry] of this.offMapCodexThreads) {
       if (entry.dbThreadId === dbThreadId) this.offMapCodexThreads.delete(codexThreadId)
     }
@@ -4304,8 +4344,12 @@ export class AgentManager {
     let forked: CodexThreadSummary
     try {
       // Same-provider fork: reuse the thread's own Plan B routing overrides
-      // so the branch doesn't silently migrate to the process-active Channel.
-      const overrides = await this.threadRoutingResumeOverrides(dbThreadId)
+      // so the branch doesn't silently migrate to the process-active Channel,
+      // and keep the owning chat pinned onto the forked thread's MCP bridge.
+      const overrides = this.withOwnerPin(
+        dbThreadId,
+        await this.threadRoutingResumeOverrides(dbThreadId),
+      )
       forked = await this.backend.forkThread(codexThreadId, overrides, lastTurnId)
     } catch (error) {
       await truncateDb()
@@ -4887,11 +4931,13 @@ export class AgentManager {
     if (this.backend.resumeThread) {
       try {
         // Plan B: resume onto the thread's OWN bound Channel (undefined =
-        // unbound → backend falls back to the process-active provider).
-        const overrides = await this.threadRoutingResumeOverrides(dbThreadId)
-        await (overrides
-          ? this.backend.resumeThread(id, overrides)
-          : this.backend.resumeThread(id))
+        // unbound → backend falls back to the process-active provider), and
+        // re-pin the owning chat onto the resumed thread's MCP bridge.
+        const overrides = this.withOwnerPin(
+          dbThreadId,
+          await this.threadRoutingResumeOverrides(dbThreadId),
+        )
+        await this.backend.resumeThread(id, overrides)
         // Same id is now live in the current generation — re-tag and reuse it.
         this.codexThreadEpochByDbThreadId.set(dbThreadId, current)
         return id
@@ -4944,11 +4990,13 @@ export class AgentManager {
       return undefined
     }
     try {
-      // Plan B: rebind to the thread's persisted Channel across app restarts.
-      const overrides = await this.threadRoutingResumeOverrides(dbThreadId)
-      await (overrides
-        ? this.backend.resumeThread(persisted, overrides)
-        : this.backend.resumeThread(persisted))
+      // Plan B: rebind to the thread's persisted Channel across app restarts,
+      // and re-pin the owning chat onto the resumed thread's MCP bridge.
+      const overrides = this.withOwnerPin(
+        dbThreadId,
+        await this.threadRoutingResumeOverrides(dbThreadId),
+      )
+      await this.backend.resumeThread(persisted, overrides)
       // Live again in this generation — adopt it (re-tags epoch + re-persists).
       this.rememberCodexThread(dbThreadId, persisted)
       return persisted

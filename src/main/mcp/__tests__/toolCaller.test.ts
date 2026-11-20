@@ -1,12 +1,14 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import {
+  attachPinnedThread,
   callerCodexThreadIds,
   currentToolCaller,
   extractCodexCaller,
   mergeToolCaller,
   runWithToolCaller,
 } from '../toolCaller'
+import { parsePinnedThreadId } from '../config'
 import { withToolCallerScope } from '../tools'
 
 /**
@@ -250,5 +252,76 @@ describe('withToolCallerScope', () => {
     // Called off the proxy, `this` must still be the real server (SDK methods touch private state).
     expect(scoped.registerResource()).toBe(server)
     expect(other).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('connection-pinned thread id', () => {
+  it('parsePinnedThreadId trims valid ids and rejects empty, overlong, or whitespace/control values', () => {
+    expect(parsePinnedThreadId('db-thread-1')).toBe('db-thread-1')
+    expect(parsePinnedThreadId('  db-thread-1  ')).toBe('db-thread-1')
+    expect(parsePinnedThreadId('')).toBeUndefined()
+    expect(parsePinnedThreadId('   ')).toBeUndefined()
+    expect(parsePinnedThreadId('db thread')).toBeUndefined()
+    expect(parsePinnedThreadId('db\tthread')).toBeUndefined()
+    expect(parsePinnedThreadId('db\nthread')).toBeUndefined()
+    // Control characters that `\s` does not cover (NUL, ESC).
+    expect(parsePinnedThreadId('db\x00thread')).toBeUndefined()
+    expect(parsePinnedThreadId('db\x1bthread')).toBeUndefined()
+    expect(parsePinnedThreadId('x'.repeat(257))).toBeUndefined()
+    expect(parsePinnedThreadId('x'.repeat(256))).toBe('x'.repeat(256))
+    expect(parsePinnedThreadId(['db-1', 'db-2'])).toBeUndefined()
+    expect(parsePinnedThreadId(undefined)).toBeUndefined()
+  })
+
+  it('attachPinnedThread keeps _meta lineage and creates a caller even when _meta is absent', () => {
+    expect(attachPinnedThread(undefined, 'db-A')).toEqual({
+      ancestorThreadIds: [],
+      pinnedThreadId: 'db-A',
+    })
+    expect(attachPinnedThread({ threadId: 'T-1', ancestorThreadIds: ['T-p'] }, 'db-A')).toEqual({
+      threadId: 'T-1',
+      ancestorThreadIds: ['T-p'],
+      pinnedThreadId: 'db-A',
+    })
+    expect(attachPinnedThread(undefined, '  ')).toBeUndefined()
+  })
+
+  it('mergeToolCaller preserves pinnedThreadId with or without an explicit thread id', () => {
+    expect(mergeToolCaller(undefined, { ancestorThreadIds: [], pinnedThreadId: 'db-A' })).toEqual({
+      ancestorThreadIds: [],
+      pinnedThreadId: 'db-A',
+    })
+    expect(mergeToolCaller('T-explicit', { threadId: 'T-child', ancestorThreadIds: ['T-p'], pinnedThreadId: 'db-A' })).toEqual({
+      threadId: 'T-explicit',
+      ancestorThreadIds: ['T-child', 'T-p'],
+      pinnedThreadId: 'db-A',
+    })
+  })
+
+  it('withToolCallerScope attaches pinnedThreadId both with _meta and when _meta is absent', async () => {
+    const registered = new Map<string, (...args: unknown[]) => unknown>()
+    const server = {
+      registerTool(name: string, _config: unknown, handler: (...args: unknown[]) => unknown) {
+        registered.set(name, handler)
+        return { name }
+      },
+    }
+    const seen: unknown[] = []
+    withToolCallerScope(server as never, 'db-pinned').registerTool(
+      'director_capture',
+      {} as never,
+      (async () => {
+        seen.push(currentToolCaller())
+        return { content: [] }
+      }) as never,
+    )
+
+    await registered.get('director_capture')!({}, undefined)
+    await registered.get('director_capture')!({}, SUBAGENT)
+
+    expect(seen).toEqual([
+      { ancestorThreadIds: [], pinnedThreadId: 'db-pinned' },
+      { threadId: 'T-child', ancestorThreadIds: ['T-parent'], pinnedThreadId: 'db-pinned' },
+    ])
   })
 })

@@ -84,6 +84,17 @@ describe('buildToolCallRecord', () => {
   it('耗时取整且不为负（系统时钟回拨过也别写出负数）', () => {
     expect(buildToolCallRecord({ name: 'x', durationMs: -5 }).duration_ms).toBe(0)
   })
+
+  it('支持记录 connection-pinned 归属来源 thread.via=pinned', () => {
+    const r = buildToolCallRecord({
+      name: 'generate_image',
+      durationMs: 8,
+      threadId: 'db-pinned',
+      attribution: { kind: 'resolved', via: 'pinned' },
+    })
+    expect(r['thread.id']).toBe('db-pinned')
+    expect(r['thread.via']).toBe('pinned')
+  })
 })
 
 describe('recordToolCall', () => {
