@@ -110,11 +110,29 @@ function machineLine(task: SeedanceTaskState): string {
   })
 }
 
+/**
+ * 任务有没有挂在某个对话上。渲染层只给**有归属**的任务开气泡(进度、成片、失败都在那个
+ * 气泡里),所以 `threadId` 缺席 = 没有任何对话显示它 —— 发起调用的线程不属于任何对话时
+ * 就是这样(见 `ToolRouter.call`)。
+ *
+ * 下面的回执处处在说「用户正看着它」;没有归属时那是假话,agent 照着回复,用户就会去聊天
+ * 里找一段根本不在那儿的视频。所以讲「用户看到了什么」的句子各有一份不撒谎的版本。
+ * 有归属时的文字一个字都没动。图片那边同一件事见 imageTools.ts。
+ */
+function shownInChat(task: SeedanceTaskState): boolean {
+  return typeof task.threadId === 'string' && task.threadId.length > 0
+}
+
+const NO_CHAT_REASON = 'this task is not attached to any chat in the app'
+const NOT_PLAYING_IN_CHAT = `NOT playing in any chat — ${NO_CHAT_REASON}`
+
 /** 阻塞预算烧完仍未终态：把 taskId 交还模型走 check_video_task 兜底。 */
 export function buildBudgetExhaustedBanner(task: SeedanceTaskState): string {
   return [
     `⏳ generate_video STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
-    'The render is taking unusually long but the task is alive; the user sees a live progress bubble in the chat.',
+    shownInChat(task)
+      ? 'The render is taking unusually long but the task is alive; the user sees a live progress bubble in the chat.'
+      : `The render is taking unusually long but the task is alive; no chat shows a progress bubble for it (${NO_CHAT_REASON}).`,
     'NEXT STEP (mandatory): tell the user in ONE short line that the render is in progress, then IMMEDIATELY call check_video_task with this taskId (it long-polls ~25s server-side) and KEEP calling until DONE or FAILED. Do NOT end your turn while the render is still running — ending early is why the finished video feels delayed to the user. Do NOT resubmit generate_video.',
     machineLine(task),
   ].join('\n')
@@ -126,7 +144,9 @@ export function buildRunningBanner(task: SeedanceTaskState): string {
     `⏳ check_video_task — still ${label}. Elapsed: ${elapsedSeconds(task)}s.`,
     'If you have NOT yet told the user the render is in progress, say so in one short line BEFORE polling again — never leave the user in silence across multiple polls.',
     'Call check_video_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately).',
-    'Do NOT resubmit generate_video — the task is alive and the user sees its progress bubble.',
+    shownInChat(task)
+      ? 'Do NOT resubmit generate_video — the task is alive and the user sees its progress bubble.'
+      : 'Do NOT resubmit generate_video — the task is alive (no chat shows its progress).',
     machineLine(task),
   ].join('\n')
 }
@@ -140,21 +160,31 @@ export function buildRunningBanner(task: SeedanceTaskState): string {
 const DELIVER_FIRST_VIDEO =
   'FIRST, before anything else: send the user a one-line delivery message NOW (the video is already playing in the chat; cite the saved path). Only AFTER that message may you run QA/verification (frame grids, understand_video, etc.) — and announce it briefly (e.g. 「正在快速质检…」) before starting. NEVER run silent QA before replying; the user cannot see tool calls and will think you are stuck.'
 
+/** `DELIVER_FIRST_VIDEO` 的无归属版本:没有气泡可指,只能如实说它在哪。 */
+const DELIVER_DETACHED_VIDEO =
+  'Do NOT say the video is playing in the chat. State plainly in your reply that it was generated but is not displayed in any chat, and cite the saved path (or the remote URL) given here. The generation itself is COMPLETE — do NOT retry or re-generate.'
+
 export function buildDoneBanner(task: SeedanceTaskState): string {
+  const shown = shownInChat(task)
+  const deliver = shown ? DELIVER_FIRST_VIDEO : DELIVER_DETACHED_VIDEO
   if (task.localPath) {
     return [
-      '✅ generate_video DONE — video generated, saved locally, and already playing in the chat.',
+      shown
+        ? '✅ generate_video DONE — video generated, saved locally, and already playing in the chat.'
+        : `✅ generate_video DONE — video generated and saved locally. ${NOT_PLAYING_IN_CHAT}.`,
       `📁 SAVED FILE: ${task.localPath}`,
-      DELIVER_FIRST_VIDEO,
+      deliver,
       'This path is authoritative and the task is COMPLETE — do NOT call check_video_task again, do NOT search the filesystem, and do NOT re-generate.',
       machineLine(task),
     ].join('\n')
   }
   if (task.persistence === 'failed') {
     return [
-      '✅ generate_video DONE — video generated and playing in the chat, but the local file save FAILED.',
+      shown
+        ? '✅ generate_video DONE — video generated and playing in the chat, but the local file save FAILED.'
+        : `✅ generate_video DONE — video generated, but the local file save FAILED. ${NOT_PLAYING_IN_CHAT}.`,
       task.videoUrl ? `Remote video URL (validity window unknown): ${task.videoUrl}` : '',
-      DELIVER_FIRST_VIDEO,
+      deliver,
       'The generation itself is COMPLETE — do NOT retry. Mention to the user that local save failed.',
       machineLine(task),
     ]
@@ -164,10 +194,14 @@ export function buildDoneBanner(task: SeedanceTaskState): string {
   // persistence still running: success is decided by the render — never make
   // the agent wait on bookkeeping (pitfalls doc, lesson 3).
   return [
-    '✅ generate_video DONE — video generated and already playing in the chat.',
+    shown
+      ? '✅ generate_video DONE — video generated and already playing in the chat.'
+      : `✅ generate_video DONE — video generated. ${NOT_PLAYING_IN_CHAT}.`,
     'Local file save is still finishing in the background (persistencePending) — treat this task as COMPLETE; do NOT retry.',
-    DELIVER_FIRST_VIDEO,
-    'If you genuinely need the saved path, call check_video_task ONCE more in ~10s; otherwise just confirm to the user.',
+    deliver,
+    shown
+      ? 'If you genuinely need the saved path, call check_video_task ONCE more in ~10s; otherwise just confirm to the user.'
+      : 'Call check_video_task ONCE more in ~10s to get the saved path — it is the only way to point at this video.',
     machineLine(task),
   ].join('\n')
 }
@@ -175,7 +209,9 @@ export function buildDoneBanner(task: SeedanceTaskState): string {
 export function buildFailedBanner(task: SeedanceTaskState): string {
   return [
     `❌ generate_video FAILED — ${task.error ?? 'upstream reported failure without a reason'}.`,
-    'The user sees the failure in the chat bubble. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem; otherwise report the error to the user.',
+    shownInChat(task)
+      ? 'The user sees the failure in the chat bubble. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem; otherwise report the error to the user.'
+      : `No chat shows this failure (${NO_CHAT_REASON}), so report the error in your reply. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem.`,
     machineLine(task),
   ].join('\n')
 }
@@ -232,7 +268,9 @@ function doneContent(task: SeedanceTaskState): { content: ToolContent } {
       uri: pathToFileURL(task.localPath).href,
       name: path.basename(task.localPath),
       mimeType: 'video/mp4',
-      description: 'Generated video saved locally (also playing in app chat + history).',
+      description: shownInChat(task)
+        ? 'Generated video saved locally (also playing in app chat + history).'
+        : 'Generated video saved locally (not playing in any chat).',
     })
   }
   return { content }

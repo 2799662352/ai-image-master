@@ -409,6 +409,42 @@ describe('游离调用:结果照样生成、照样保存,但不进任何对话',
     stop()
   })
 
+  // 主进程回给 agent 的话里处处写着「用户已经看到图了」。游离调用没有气泡,那就是假话 ——
+  // 所以渲染端(决定开不开气泡的那一方)在秒回的 ack 里如实说一声,主进程据此改口。
+  it('秒回的 ack 如实上报:没有对话会显示这次出图就带 detached,有主的不带', async () => {
+    registerApi()
+    installSave()
+    let deliver: (request: Record<string, unknown>) => void = () => {}
+    const sendToolResponse = vi.fn()
+    const sendImageTaskUpdate = vi.fn()
+    ;(window as unknown as { electronAPI: { agent: unknown } }).electronAPI.agent = {
+      onToolRequest: (listener: (request: Record<string, unknown>) => void) => {
+        deliver = listener
+        return () => {}
+      },
+      sendToolResponse,
+      sendImageTaskUpdate,
+    }
+    useAgentChatStore.setState({ threadId: 'B', messages: [] })
+    const stop = new AgentToolExecutor().start()
+
+    deliver({ id: 'r1', toolName: 'generate_image', params: { prompt: 'stray', __taskId: 't1' } })
+    deliver({ id: 'r2', toolName: 'generate_image', params: { prompt: 'owned', __taskId: 't2' }, threadId: 'B' })
+    deliver({ id: 'r3', toolName: 'generate_images', params: { prompts: ['a', 'b'], __taskId: 't3' } })
+    deliver({ id: 'r4', toolName: 'generate_images', params: { prompts: ['c', 'd'], __taskId: 't4' }, threadId: 'B' })
+
+    // ack 在收到请求的同一拍里就发出去了(先于任何渲染),所以此刻四条都在。
+    expect(sendToolResponse.mock.calls.map((call) => call[0])).toStrictEqual([
+      { id: 'r1', ok: true, result: { accepted: true, taskId: 't1', detached: true } },
+      { id: 'r2', ok: true, result: { accepted: true, taskId: 't2' } },
+      { id: 'r3', ok: true, result: { accepted: true, taskId: 't3', detached: true } },
+      { id: 'r4', ok: true, result: { accepted: true, taskId: 't4' } },
+    ])
+
+    await vi.waitFor(() => expect(sendImageTaskUpdate).toHaveBeenCalledTimes(4))
+    stop()
+  })
+
   it('真实入口的其它工具(同步回执那条路)也是从 request 上取线程', async () => {
     let deliver: (request: Record<string, unknown>) => void = () => {}
     const sendToolResponse = vi.fn()

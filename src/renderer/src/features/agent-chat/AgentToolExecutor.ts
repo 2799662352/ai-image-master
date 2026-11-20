@@ -279,7 +279,14 @@ export class AgentToolExecutor {
     // only the main↔renderer contract becomes non-blocking.
     if (request.toolName === 'generate_image' || request.toolName === 'generate_images') {
       const taskId = typeof request.params.__taskId === 'string' ? request.params.__taskId : ''
-      this.getAgentApi().sendToolResponse?.({ id: request.id, ok: true, result: { accepted: true, taskId } })
+      this.getAgentApi().sendToolResponse?.({
+        id: request.id,
+        ok: true,
+        // `detached` = no chat owns this call, so no chat will show the render
+        // (see `openGenerationBubble`). Main needs to know: what it tells the
+        // agent must not claim "the user already sees it" when nobody does.
+        result: { accepted: true, taskId, ...(request.threadId ? {} : { detached: true }) },
+      })
       void this.runImageTaskInBackground(request, taskId)
       return
     }
