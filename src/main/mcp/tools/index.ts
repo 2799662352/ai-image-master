@@ -9,7 +9,7 @@ import { registerUiTools } from './uiTools'
 import { registerUnderstandTools } from './understandTools'
 import { registerVideoTools } from './videoTools'
 import { registerVideoWorkbenchTools } from './videoWorkbenchTools'
-import { extractCodexCaller, runWithToolCaller } from '../toolCaller'
+import { attachPinnedThread, extractCodexCaller, runWithToolCaller } from '../toolCaller'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
 
@@ -19,16 +19,18 @@ import type { ToolRouter } from '../ToolRouter'
  *
  * The SDK always passes the request context last — `(args, ctx)`, or just
  * `(ctx)` for a tool without an input schema — so the last argument is where
- * the caller lives. Everything else on the server is passed through bound to
- * the real instance, so a tool file that later registers a resource or prompt
- * keeps working.
+ * the caller lives. When the connection itself was pinned to a chat at birth
+ * (`pinnedThreadId`), that pin travels on the caller alongside `_meta`.
+ * Everything else on the server is passed through bound to the real instance,
+ * so a tool file that later registers a resource or prompt keeps working.
  */
-export function withToolCallerScope(server: McpServer): McpServer {
+export function withToolCallerScope(server: McpServer, pinnedThreadId?: string): McpServer {
   const registerTool = (name: unknown, config: unknown, handler: unknown): unknown => {
     const scoped = typeof handler === 'function'
       ? (...args: unknown[]) =>
-          runWithToolCaller(extractCodexCaller(args[args.length - 1]), () =>
-            (handler as (...a: unknown[]) => unknown)(...args),
+          runWithToolCaller(
+            attachPinnedThread(extractCodexCaller(args[args.length - 1]), pinnedThreadId),
+            () => (handler as (...a: unknown[]) => unknown)(...args),
           )
       : handler
     return (server.registerTool as unknown as (...a: unknown[]) => unknown).call(
@@ -49,8 +51,12 @@ export function withToolCallerScope(server: McpServer): McpServer {
   })
 }
 
-export function registerTools(server: McpServer, router: ToolRouter): void {
-  const scoped = withToolCallerScope(server)
+export function registerTools(
+  server: McpServer,
+  router: ToolRouter,
+  options?: { pinnedThreadId?: string },
+): void {
+  const scoped = withToolCallerScope(server, options?.pinnedThreadId)
   registerImageTools(scoped, router)
   registerVideoTools(scoped, router)
   registerVideoWorkbenchTools(scoped, router)

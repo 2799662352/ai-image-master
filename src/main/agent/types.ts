@@ -101,6 +101,13 @@ export interface AgentInput extends AgentSendMessagePayload {
    * `channelIdentity.ts`). Omitted / blank = nothing added.
    */
   channelIdentityNote?: string
+  /**
+   * App DB thread id to pin onto this Codex thread's `catimation` MCP
+   * connection at `thread/start` (inherited by all sub-agents). Translated
+   * into a per-thread `config` leaf key by `CodexProtocolClient` only when
+   * `catimation` MCP is active; never sent as a top-level RPC field.
+   */
+  ownerDbThreadId?: string
   items: Array<
     | { type: 'text'; text: string }
     | { type: 'localImage'; path: string }

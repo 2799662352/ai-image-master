@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import type { McpServer, Transport, JSONRPCMessage } from '@modelcontextprotocol/server'
 import { getCodexResourceRoot } from '../agent/paths'
-import { CATIMATION_MCP_HOST } from './config'
+import { CATIMATION_MCP_HOST, parsePinnedThreadId } from './config'
 
 /**
  * stdio-bridge listener for the catimation MCP server.
@@ -113,6 +113,15 @@ export interface BridgeRuntime {
   close: () => Promise<void>
 }
 
+/** Per-connection metadata extracted at handshake time (bridge TCP or HTTP init). */
+export interface McpConnectionContext {
+  /**
+   * App DB thread id pinned onto this connection when the Codex thread was
+   * created, forked, or resumed. Absent for external/unpinned clients.
+   */
+  pinnedThreadId?: string
+}
+
 /**
  * Start the TCP loopback listener that bridge processes dial into. Binds an
  * ephemeral port on 127.0.0.1 only; auth is the random per-app-session token
@@ -136,7 +145,7 @@ export interface BridgeRuntime {
  * own multi-session examples.
  */
 export function startCatimationBridgeListener(
-  createServerInstance: () => McpServer,
+  createServerInstance: (context?: McpConnectionContext) => McpServer,
 ): Promise<BridgeRuntime | null> {
   const token = randomBytes(32).toString('hex')
 
@@ -156,7 +165,10 @@ export function startCatimationBridgeListener(
       socket.pause()
       socket.off('data', onData)
 
-      const presented = handshake.slice(0, newlineAt).trim()
+      const firstLine = handshake.slice(0, newlineAt)
+      const tabAt = firstLine.indexOf('\t')
+      const presented = (tabAt >= 0 ? firstLine.slice(0, tabAt) : firstLine).trim()
+      const pinnedThreadId = tabAt >= 0 ? parsePinnedThreadId(firstLine.slice(tabAt + 1)) : undefined
       const leftover = handshake.slice(newlineAt + 1)
       if (presented !== token) {
         socket.destroy()
@@ -167,7 +179,7 @@ export function startCatimationBridgeListener(
       // Dedicated McpServer per connection (see doc comment above). The
       // instance stays alive exactly as long as the socket: transport →
       // onmessage closure → server, and the socket owns the transport.
-      const server = createServerInstance()
+      const server = createServerInstance(pinnedThreadId ? { pinnedThreadId } : undefined)
       void server.connect(transport).catch((err) => {
         console.error('[mcp-bridge] failed to attach bridge session:', err)
         socket.destroy()

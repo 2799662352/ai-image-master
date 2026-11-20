@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { startCatimationMcpServer, type McpRuntime } from '../server'
-import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../config'
+import { CATIMATION_MCP_HOST, CATIMATION_MCP_OWNER_HEADER, CATIMATION_MCP_TOKEN_HEADER } from '../config'
 import type { AgentToolRequest } from '../../../types/agent'
 import type { CodexToolCaller, ToolThreadResolution } from '../toolCaller'
 
@@ -65,7 +65,12 @@ async function boot(
   return { runtime, baseUrl: `http://${CATIMATION_MCP_HOST}:${runtime.port}/mcp`, sent, resolver }
 }
 
-async function post(h: Harness, sessionId: string | null, body: unknown): Promise<Response> {
+async function post(
+  h: Harness,
+  sessionId: string | null,
+  body: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
   return fetch(h.baseUrl, {
     method: 'POST',
     headers: {
@@ -73,12 +78,13 @@ async function post(h: Harness, sessionId: string | null, body: unknown): Promis
       Accept: 'application/json, text/event-stream',
       [CATIMATION_MCP_TOKEN_HEADER]: h.runtime.token,
       ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
+      ...(extraHeaders ?? {}),
     },
     body: JSON.stringify(body),
   })
 }
 
-async function openSession(h: Harness): Promise<string> {
+async function openSession(h: Harness, extraHeaders?: Record<string, string>): Promise<string> {
   const res = await post(h, null, {
     jsonrpc: '2.0',
     id: 1,
@@ -88,7 +94,7 @@ async function openSession(h: Harness): Promise<string> {
       capabilities: {},
       clientInfo: { name: 'caller-scope-test', version: '0' },
     },
-  })
+  }, extraHeaders)
   expect(res.status).toBe(200)
   const sessionId = res.headers.get('mcp-session-id')
   await res.body?.cancel()
@@ -202,5 +208,27 @@ describe('real MCP server: a tool call is attributed to the chat that made it', 
 
     expect(h.resolver).not.toHaveBeenCalled()
     expect('threadId' in h.sent[0]).toBe(false)
+  })
+
+  it('HTTP session pinned via x-catimation-thread-id attributes calls even when `_meta` is absent', async () => {
+    const h = await boot((caller) =>
+      caller.pinnedThreadId ? { threadId: caller.pinnedThreadId, via: 'pinned' } : undefined,
+    )
+    const sessionA = await openSession(h, { [CATIMATION_MCP_OWNER_HEADER]: 'db-http-A' })
+    const sessionB = await openSession(h, { [CATIMATION_MCP_OWNER_HEADER]: 'db-http-B' })
+    const sessionBad = await openSession(h, { [CATIMATION_MCP_OWNER_HEADER]: 'bad id' })
+
+    await Promise.all([
+      callTool(h, sessionA, 'director_capture', { mode: 'view', height: 101 }),
+      callTool(h, sessionB, 'director_capture', { mode: 'view', height: 202 }),
+      callTool(h, sessionBad, 'director_capture', { mode: 'view', height: 303 }),
+    ])
+
+    const byHeight = new Map(h.sent.map((r) => [r.params.height, r]))
+    expect(byHeight.get(101)?.threadId).toBe('db-http-A')
+    expect(byHeight.get(202)?.threadId).toBe('db-http-B')
+    expect('threadId' in byHeight.get(303)!).toBe(false)
+    expect(h.resolver).toHaveBeenCalledWith({ ancestorThreadIds: [], pinnedThreadId: 'db-http-A' })
+    expect(h.resolver).toHaveBeenCalledWith({ ancestorThreadIds: [], pinnedThreadId: 'db-http-B' })
   })
 })

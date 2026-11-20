@@ -6,8 +6,18 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Express, Request, Response } from 'express'
-import { CATIMATION_MCP_HOST, CATIMATION_MCP_PORT, CATIMATION_MCP_TOKEN_HEADER } from './config'
-import { startCatimationBridgeListener, type BridgeRuntime } from './bridge'
+import {
+  CATIMATION_MCP_HOST,
+  CATIMATION_MCP_OWNER_HEADER,
+  CATIMATION_MCP_PORT,
+  CATIMATION_MCP_TOKEN_HEADER,
+  parsePinnedThreadId,
+} from './config'
+import {
+  startCatimationBridgeListener,
+  type BridgeRuntime,
+  type McpConnectionContext,
+} from './bridge'
 import { ToolRouter } from './ToolRouter'
 import { CATIMATION_SERVER_INSTRUCTIONS } from './serverInstructions'
 import { setToolTelemetrySink } from './toolTelemetry'
@@ -102,14 +112,14 @@ export async function startCatimationMcpServer(
   // codex hung forever. Per-session instances are the SDK's own documented
   // multi-session pattern; registering the handful of tools per session is
   // cheap (no I/O, just closures over the shared router).
-  const createServerInstance = (): McpServer => {
+  const createServerInstance = (context?: McpConnectionContext): McpServer => {
     // `instructions` 装跨工具的选择关系与并发边界 —— 单个工具的 description 说不全
     // 这些,而 codex 官方文档明确要求 server 作者用这个字段承载它们。
     const server = new McpServer(
       { name: 'catimation', version: '1.0.0' },
       { instructions: CATIMATION_SERVER_INSTRUCTIONS },
     )
-    registerTools(server, router)
+    registerTools(server, router, context)
     return server
   }
 
@@ -153,8 +163,9 @@ export async function startCatimationMcpServer(
       transport.onclose = () => {
         if (transport.sessionId) transports.delete(transport.sessionId)
       }
+      const pinnedThreadId = parsePinnedThreadId(req.headers[CATIMATION_MCP_OWNER_HEADER])
       // Fresh per-session instance — see createServerInstance for why.
-      await createServerInstance().connect(transport)
+      await createServerInstance(pinnedThreadId ? { pinnedThreadId } : undefined).connect(transport)
       await transport.handleRequest(req, res, req.body)
       return
     }

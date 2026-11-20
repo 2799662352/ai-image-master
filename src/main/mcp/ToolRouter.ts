@@ -138,12 +138,18 @@ export class ToolRouter {
     const threadId = resolution?.threadId
     const attribution = describeAttribution(caller, resolution)
     if (caller && !threadId) {
-      // The caller said which thread it is, but no chat owns that thread (or
-      // any of its ancestors). The tool still runs — but its output is not
-      // attached to any chat. It used to go to whichever chat was open, which
-      // is how one conversation's images ended up in another.
+      // The caller said which thread it is (or arrived on a pinned socket whose
+      // chat was deleted), but no live chat owns it. The tool still runs — but
+      // its output is not attached to any chat. It used to go to whichever chat
+      // was open, which is how one conversation's images ended up in another.
+      const ids = callerCodexThreadIds(caller)
+      const label = ids.length > 0
+        ? ids.join(' <- ')
+        : caller.pinnedThreadId
+          ? `pinned:${caller.pinnedThreadId}`
+          : '(unknown)'
       console.warn(
-        `[ToolRouter] ${name}: codex thread ${callerCodexThreadIds(caller).join(' <- ')} ` +
+        `[ToolRouter] ${name}: codex thread ${label} ` +
           'belongs to no chat; the tool runs detached and its output is shown in no chat',
       )
     }
