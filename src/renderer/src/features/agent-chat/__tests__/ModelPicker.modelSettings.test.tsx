@@ -561,6 +561,83 @@ describe('ModelPicker family grouping and route transition status', () => {
     expect(screen.getByRole('option', { name: 'Claude Opus 5' })).toBeTruthy()
   })
 
+  it('renders Gemini 4 rows in their own GEMINI group between DEEPSEEK and XAI', () => {
+    // 产品要求(2026-11-20):Gemini 4 三档排在 DeepSeek 与 Grok 之间。分组顺序由
+    // 选择器的 FAMILY_ORDER 决定 —— 目录里故意把 Gemini 放在最前、DeepSeek 放在最后,
+    // 证明位置不是跟着目录顺序来的。族若没进 FAMILY_ORDER,这三行会被静默丢掉。
+    const catalog = gatewayFamilyCatalog()
+    const miauRow = (
+      id: string,
+      displayName: string,
+      family: 'gemini' | 'deepseek',
+    ): AgentModelSettingsCatalog['models'][number] => {
+      const channelId = `rightcode-${family}-miau`
+      return {
+        id,
+        displayName,
+        description: `${family} model`,
+        hidden: false,
+        isDefault: false,
+        family,
+        route: { gatewayId: 'rightcode', channelId, modelId: id, family },
+        availability: { status: 'available' },
+        capabilities: mergeModelSettingsCapabilities({
+          model: id,
+          gatewayId: 'rightcode',
+          channelId,
+          supportedReasoningEfforts: [],
+        }),
+      }
+    }
+    setPickerState({
+      selectedModelId: 'gpt-5.5',
+      modelSettingsCatalog: {
+        ...catalog,
+        models: [
+          miauRow('gemini-4-neon', 'Gemini 4 Neon', 'gemini'),
+          miauRow('gemini-4-carbon', 'Gemini 4 Carbon', 'gemini'),
+          miauRow('gemini-4-argon', 'Gemini 4 Argon', 'gemini'),
+          ...catalog.models,
+          miauRow('deepseek-flash', 'DeepSeek Flash', 'deepseek'),
+        ],
+      },
+      modelReasoningEffortByModel: {},
+      activeModelContextWindow: 272_000,
+    })
+    render(<ModelPicker />)
+    openPicker()
+
+    const follows = (before: HTMLElement, after: HTMLElement): boolean =>
+      Boolean(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const deepseekHeader = screen.getByText('DEEPSEEK')
+    const geminiHeader = screen.getByText('GEMINI')
+    const xaiHeader = screen.getByText('XAI')
+    expect(follows(deepseekHeader, geminiHeader)).toBe(true)
+    expect(follows(geminiHeader, xaiHeader)).toBe(true)
+
+    const neon = screen.getByRole('option', { name: 'Gemini 4 Neon' })
+    const carbon = screen.getByRole('option', { name: 'Gemini 4 Carbon' })
+    const argon = screen.getByRole('option', { name: 'Gemini 4 Argon' })
+    // 三行都落在 GEMINI 标题之后、XAI 标题之前,组内保持目录给的次序。
+    expect(follows(geminiHeader, neon)).toBe(true)
+    expect(follows(neon, carbon)).toBe(true)
+    expect(follows(carbon, argon)).toBe(true)
+    expect(follows(argon, xaiHeader)).toBe(true)
+
+    // 键盘的扁平下标与分组一致:DeepSeek 最后一行 ↓ 到 Gemini 第一行,
+    // Gemini 最后一行 ↓ 到 Grok 第一行。
+    const deepseek = screen.getByRole('option', { name: 'DeepSeek Flash' })
+    deepseek.focus()
+    fireEvent.keyDown(deepseek, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(neon)
+    argon.focus()
+    fireEvent.keyDown(argon, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Grok 4.5' }))
+
+    fireEvent.click(carbon)
+    expect(setSelectedModel).toHaveBeenCalledWith('gemini-4-carbon')
+  })
+
   it('keeps deterministic unauthorized Grok visible and disabled', () => {
     setGatewayPickerState({
       status: 'unauthorized',

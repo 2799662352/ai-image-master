@@ -61,6 +61,9 @@ describe('codexProviders', () => {
       // Miau 上的 Grok 4.7,同样两个网关各一次;4.5 / 4.6 仍在各自网关的 grok 通道。
       'apiyi-grok-miau',
       'rightcode-grok-miau',
+      // Miau 上的 Gemini 4(Neon / Carbon / Argon),同样两个网关各一次。
+      'apiyi-gemini-miau',
+      'rightcode-gemini-miau',
     ])
 
     const claude = resolveProviderChannel('rightcode-claude')
@@ -151,6 +154,20 @@ describe('codexProviders', () => {
       })
     }
 
+    // Gemini 4 三档只挂在 Miau:同一枚 Miau token、同一座 namespace 桥;通道默认
+    // 对话模型是 Argon,记忆钉在便宜的固定模型上。
+    for (const gatewayId of ['apiyi', 'rightcode']) {
+      expect(resolveProviderChannel(`${gatewayId}-gemini-miau`)).toMatchObject({
+        name: 'Gemini (Miau)',
+        envKey: 'MIAU_API_KEY',
+        credentialId: 'qwen',
+        model: 'gemini-4-argon',
+        memoriesModel: 'qwen3.8-flash',
+        allowedModels: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon'],
+        compatibilityPolicy: 'responses-namespace-bridge',
+      })
+    }
+
     const apiyiGrok = resolveProviderChannel('apiyi-grok')
     expect(apiyiGrok).toMatchObject({
       name: 'API Yi Grok',
@@ -177,6 +194,7 @@ describe('codexProviders', () => {
       'rightcode-qwen',
       'rightcode-deepseek-miau',
       'rightcode-grok-miau',
+      'rightcode-gemini-miau',
     ])
   })
 

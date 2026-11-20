@@ -167,6 +167,51 @@ describe('model settings capabilities', () => {
     })
   })
 
+  describe('Gemini 4 (Miau)', () => {
+    const GEMINI_4 = ['gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon']
+
+    it('三行都是 canonical 行:选择器里可见,不是默认模型', () => {
+      const row = (id: string) => CANONICAL_MODEL_SETTINGS_ROWS.find((entry) => entry.id === id)
+      expect(row('gemini-4-neon'))
+        .toMatchObject({ displayName: 'Gemini 4 Neon', tier: 'High', isDefault: false })
+      expect(row('gemini-4-carbon'))
+        .toMatchObject({ displayName: 'Gemini 4 Carbon', tier: 'Extra High', isDefault: false })
+      expect(row('gemini-4-argon'))
+        .toMatchObject({ displayName: 'Gemini 4 Argon', tier: 'Extra High', isDefault: false })
+      for (const id of GEMINI_4) expect(isPickerHiddenModel(id), id).toBe(false)
+    })
+
+    it('紧挨着排在 DeepSeek 组之后、Grok 组之前,组内由新到旧', () => {
+      const ids = CANONICAL_MODEL_SETTINGS_ROWS.map((entry) => entry.id)
+      // Gemini 只有这三行,且次序固定。
+      expect(ids.filter((id) => id.startsWith('gemini'))).toEqual(GEMINI_4)
+      const lastDeepseek = Math.max(
+        ...ids.flatMap((id, index) => (id.startsWith('deepseek') ? [index] : [])),
+      )
+      const firstGrok = ids.findIndex((id) => id.startsWith('grok'))
+      // 三行连续,正好填满 DeepSeek 最后一行与 Grok 第一行之间。
+      expect(ids.slice(lastDeepseek + 1, firstGrok)).toEqual(GEMINI_4)
+    })
+
+    it.each([
+      ['apiyi', 'apiyi-gemini-miau'],
+      ['rightcode', 'rightcode-gemini-miau'],
+    ])('没有登记「已核实」的上下文窗口与思考档位(%s/%s):走未知模型的保守默认', (gatewayId, channelId) => {
+      // 官方写 1M 统一窗口、Argon / Carbon 三档思考、Neon 四档,但都没有经 Miau 网关实测;
+      // 网关的能力表也还不认 gemini-4-*(传了思考强度不生效)。要登记就先实测,别在这里悄悄改。
+      for (const id of GEMINI_4) {
+        expect(defaultContextWindowForModel(id, gatewayId, channelId), id)
+          .toBe(UNKNOWN_MODEL_CONTEXT_WINDOW)
+        expect(modelContextOptions(id, gatewayId, channelId).map((option) => option.value), id)
+          .toEqual([UNKNOWN_MODEL_CONTEXT_WINDOW, EXPERIMENTAL_CONTEXT_WINDOW])
+        expect(supportedReasoningEfforts(id, gatewayId, channelId), id).toEqual([])
+        const merged = mergeModelSettingsCapabilities({ model: id, gatewayId, channelId })
+        expect(merged.supportedReasoningEfforts, id).toEqual([])
+        expect(merged.defaultReasoningEffort, id).toBeUndefined()
+      }
+    })
+  })
+
   it('DeepSeek 组只剩 Miau 的四行:火山方舟两个在前,官方渠道两个在后(v4-pro 先于 flash)', () => {
     const deepseekIds = CANONICAL_MODEL_SETTINGS_ROWS
       .map((row) => row.id)

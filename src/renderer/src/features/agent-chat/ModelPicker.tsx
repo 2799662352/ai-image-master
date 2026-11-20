@@ -39,9 +39,12 @@ import { usePopoverPlacement } from './usePopoverPlacement'
 // 两者之间：同是独立家族渠道，选择器里跟在千问后面、Grok 前面。分组顺序就是
 // 这个数组的顺序 —— 注意它与 `sortByCanonicalOrder`（组内顺序）是两层：这里排
 // 分组，那里排组内。两处都要动才能真正改变用户看到的位置。
+// GEMINI 夹在 DEEPSEEK 与 XAI 之间（2026-11-20 产品要求：Gemini 4 三档放在
+// DeepSeek 和 Grok 中间）。
 const FAMILY_ORDER: readonly AgentModelFamily[] = [
   'qwen',
   'deepseek',
+  'gemini',
   'xai',
   'openai',
   'anthropic',
@@ -54,6 +57,7 @@ const FAMILY_LABEL: Record<AgentModelFamily, string> = {
   anthropic: 'ANTHROPIC',
   qwen: 'QWEN',
   deepseek: 'DEEPSEEK',
+  gemini: 'GEMINI',
   other: 'OTHER',
 }
 

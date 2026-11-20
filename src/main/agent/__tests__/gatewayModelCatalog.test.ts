@@ -63,6 +63,10 @@ describe('buildGatewayModelCatalog', () => {
       'deepseek-v4-1-flash-economy-261017',
       'deepseek-v4-pro',
       'deepseek-flash',
+      // Gemini 4 组(2026-11-20 加入):夹在 DeepSeek 与 Grok 之间,组内由新到旧。
+      'gemini-4-neon',
+      'gemini-4-carbon',
+      'gemini-4-argon',
       // Grok 4.7 在 Miau 上,排在 Grok 组最前;4.6 / 4.5 仍是 Right.Codes 自家通道。
       'grok-4.7',
       'grok-4.6',
@@ -70,6 +74,13 @@ describe('buildGatewayModelCatalog', () => {
       'claude-sonnet-5',
       'claude-opus-5',
     ])
+    for (const slug of ['gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon']) {
+      expect(catalog.models.find((model) => model.id === slug), slug).toMatchObject({
+        family: 'gemini',
+        hidden: false,
+        route: { channelId: 'rightcode-gemini-miau', family: 'gemini' },
+      })
+    }
     expect(catalog.models.find((model) => model.id === 'gpt-5.5-openai-compact')?.route)
       .toMatchObject({ channelId: 'rightcode-standard', family: 'openai' })
     for (const grok of ['grok-4.5', 'grok-4.6']) {
@@ -380,6 +391,10 @@ describe('buildGatewayModelCatalog', () => {
       'deepseek-v4-1-flash-261017',
       'deepseek-v4-1-flash-economy-261017',
       'deepseek-v4-pro',
+      // Miau 上的 Gemini 4 三档同样两个网关都挂(同一枚 Miau token)。
+      'gemini-4-argon',
+      'gemini-4-carbon',
+      'gemini-4-neon',
       'gpt-5.5',
       'grok-4.5',
       // Miau 上的 Grok 4.7 同样两个网关都挂(同一枚 Miau token)。
