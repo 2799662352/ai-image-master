@@ -214,6 +214,36 @@ describe('gatewayToken 取用', () => {
     })
   })
 
+  // 平台 JWT 过期时挡回来的是 `authMiddleware`:只有 message,没有 error.code。按通用
+  // 分支走会落成 `HTTP_401`「获取平台凭据失败」,而渲染层那条「重新登录后再启用平台余额」
+  // 的提示认的是 `NOT_LOGGED_IN`。判据在 `httpJson.ts:loginRejected`。
+  it('平台不认登录凭据的 401 → NOT_LOGGED_IN,且不可重试', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ success: false, message: 'Token 无效或已过期' }),
+    })
+    const m = await import('../gatewayToken')
+
+    await expect(m.getGatewayToken(POOL)).rejects.toMatchObject({
+      name: 'GatewayTokenError',
+      code: 'NOT_LOGGED_IN',
+      message: '登录已失效,请重新登录',
+      retryable: false,
+    })
+  })
+
+  // 与上一条成对:带错误码的 401 是上游的问题,压成「请重新登录」会把用户支去做一件没用的事。
+  it('带后端错误码的 401 原样透出', async () => {
+    fetchMock.mockResolvedValueOnce(fail(401, 'UPSTREAM_FAILED', '上游拒绝'))
+    const m = await import('../gatewayToken')
+
+    await expect(m.getGatewayToken(POOL)).rejects.toMatchObject({
+      code: 'UPSTREAM_FAILED',
+      message: '上游拒绝',
+    })
+  })
+
   it('5xx 标记为可重试', async () => {
     fetchMock.mockResolvedValueOnce(fail(503, 'UPSTREAM_DOWN'))
     const m = await import('../gatewayToken')

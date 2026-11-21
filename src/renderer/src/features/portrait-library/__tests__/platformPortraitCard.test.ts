@@ -12,6 +12,7 @@ import {
   cardStatusBadge,
   findCardByAssetId,
   isCardSelectable,
+  isLoginRequired,
   platformAssetTypeOf,
   portraitCardsFromPlatform,
   portraitErrorHint,
@@ -267,6 +268,21 @@ describe('portraitErrorHint 按 code 分支', () => {
   it('NOT_AUTHENTICATED 引导登录', () => {
     expect(portraitErrorHint('NOT_AUTHENTICATED', '原文')).toMatch(/登录/)
   })
+
+  // 文案与面板上的「重新登录」按钮认的必须是**同一组** code:只有文案认得的话是
+  // 「让你去登录却不给入口」,只有按钮认得的话是「给了入口却不说为什么」。
+  it.each(['NOT_AUTHENTICATED', 'NOT_LOGGED_IN'])('%s:文案与「该不该给登录入口」同时命中', (code) => {
+    expect(isLoginRequired(code)).toBe(true)
+    expect(portraitErrorHint(code, '原文')).toMatch(/重新登录/)
+  })
+
+  // 403 是没有这个池的权限、5xx 是服务出了问题 —— 重新登录都解决不了,给了入口就是误导。
+  it.each(['HTTP_401', 'HTTP_403', 'HTTP_500', 'PROJECT_NOT_ALLOCATED', 'INVALID_POOL', ''])(
+    '「%s」不算该去登录',
+    (code) => {
+      expect(isLoginRequired(code)).toBe(false)
+    },
+  )
 
   it('INVALID_POOL 引导先选计费池', () => {
     expect(portraitErrorHint('INVALID_POOL', '原文')).toMatch(/计费池/)

@@ -1086,4 +1086,119 @@ describe('auth session', () => {
       status: 401,
     })
   })
+
+  // ── 登录被平台拒收 ──────────────────────────────────────────────────────
+  //
+  // 判据本身在 `httpJson.test.ts` 里逐条测过。这里钉的是**接线**:带平台 JWT 的端点
+  // 一个不漏地用上了它,而没带 token 的配对端点一个都没误用。
+  describe('登录被平台拒收(authMiddleware 的裸 401)', () => {
+    const STORED = { token: 'jwt.tok.en', userId: 'u1', username: 'a', displayName: 'a', role: 'USER', expiresAt: 1 }
+
+    // 八个带 token 的端点。漏掉任何一个,那一处就还是后端原话 + `HTTP_401`,
+    // 用户在那个界面上照旧不知道该重新登录。
+    it.each<[string, (m: typeof SessionModule) => Promise<unknown>]>([
+      ['fetchBalance', (m) => m.fetchBalance(1)],
+      ['fetchOrganizations', (m) => m.fetchOrganizations()],
+      ['fetchQuota', (m) => m.fetchQuota()],
+      ['fetchPaymentConfig', (m) => m.fetchPaymentConfig()],
+      ['fetchUsageLogs', (m) => m.fetchUsageLogs({ projectId: 1 })],
+      ['fetchUsageSummary', (m) => m.fetchUsageSummary({ projectId: 1 })],
+      ['createRechargeOrder', (m) => m.createRechargeOrder(10, { kind: 'personal' })],
+      ['fetchRechargeOrder', (m) => m.fetchRechargeOrder('RC1')],
+    ])('%s → NOT_AUTHENTICATED + 能照着做的文案', async (_name, call) => {
+      cred.current = { ...STORED }
+      cred.source = 'safeStorage'
+      fetchMock.mockResolvedValue(errBare(401))
+      const m = await import('../session')
+
+      await expect(call(m)).rejects.toMatchObject({
+        code: 'NOT_AUTHENTICATED',
+        status: 401,
+        message: '登录已失效,请重新登录',
+      })
+      // 只改文案,不清凭据:`authMiddleware` 把查库失败也回成 401。
+      expect(cred.current).not.toBeNull()
+      expect(clearGatewayTokens).not.toHaveBeenCalled()
+    })
+
+    it('带后端错误码的 401 原样透出 —— 那是上游的问题,不是登录的问题', async () => {
+      cred.current = { ...STORED }
+      cred.source = 'safeStorage'
+      fetchMock.mockResolvedValue(errCoded(401, 'UPSTREAM_FAILED'))
+      const m = await import('../session')
+
+      await expect(m.fetchBalance(1)).rejects.toMatchObject({ code: 'UPSTREAM_FAILED', status: 401 })
+    })
+
+    // 配对的两个端点是公开的,此刻手上没有任何凭据。告诉一个正在登录的人
+    // 「登录已失效,请重新登录」是句废话。(start 那半在上面那条用例里。)
+    it('claimPairing 的裸 401 不算 —— 它根本没带 token', async () => {
+      fetchMock.mockResolvedValue(errBare(401))
+      const m = await import('../session')
+
+      await expect(m.claimPairing('p1', 'g', 'v')).rejects.toMatchObject({ code: 'HTTP_401' })
+    })
+  })
+
+  // ── 已登录时再次登录 ────────────────────────────────────────────────────
+  //
+  // 登录失效后的「重新登录」不先登出(好留住计费池与平台余额的开关),所以 claim 会在
+  // 手上还有旧凭据时跑。绝大多数时候回来的是同一个人;不是的时候,上一个人的网关 token
+  // 永不过期、按池缓存、键里不含用户 —— 留着就是新账号继续扣上一个人的钱。
+  describe('已登录时再次 claim', () => {
+    const BOB = { token: 'old.jwt', userId: 'u0', username: 'bob', displayName: 'bob', role: 'USER', expiresAt: 1 }
+
+    it('回来的是另一个账号 → 先清网关 token,再落新凭据', async () => {
+      cred.current = { ...BOB }
+      cred.source = 'safeStorage'
+      // 记下「清的那一刻凭据是谁的」:顺序反了的话这里看到的已经是新账号 —— 也就是
+      // 「新 userId + 旧 token」同时可读的那一瞬真的存在过。
+      let userAtClear: unknown
+      clearGatewayTokens.mockImplementation(async () => {
+        userAtClear = cred.current?.userId
+      })
+      fetchMock.mockResolvedValue(ok(SESSION)) // SESSION 是 u1
+      const m = await import('../session')
+
+      await m.claimPairing('p1', 'g', 'v')
+
+      expect(clearGatewayTokens).toHaveBeenCalledTimes(1)
+      expect(userAtClear).toBe('u0')
+      expect(cred.current).toMatchObject({ userId: 'u1', token: 'jwt.tok.en' })
+    })
+
+    it('同一个账号重新登录 → 凭据换新,网关 token 原样留着', async () => {
+      cred.current = { ...BOB, userId: 'u1' }
+      cred.source = 'safeStorage'
+      fetchMock.mockResolvedValue(ok(SESSION))
+      const m = await import('../session')
+
+      await m.claimPairing('p1', 'g', 'v')
+
+      expect(cred.current).toMatchObject({ userId: 'u1', token: 'jwt.tok.en' })
+      expect(clearGatewayTokens).not.toHaveBeenCalled()
+    })
+
+    it('原本没登录 → 没有东西可清', async () => {
+      fetchMock.mockResolvedValue(ok(SESSION))
+      const m = await import('../session')
+
+      await m.claimPairing('p1', 'g', 'v')
+
+      expect(clearGatewayTokens).not.toHaveBeenCalled()
+    })
+
+    // 清理必须排在所有字段校验之后:响应里缺东西时这次登录不成立,而旧账号的
+    // 平台余额不该因为一次失败的登录就停摆。
+    it('响应畸形 → 抛错,旧凭据与网关 token 都不动', async () => {
+      cred.current = { ...BOB }
+      cred.source = 'safeStorage'
+      fetchMock.mockResolvedValue(ok({ ...SESSION, token: undefined }))
+      const m = await import('../session')
+
+      await expect(m.claimPairing('p1', 'g', 'v')).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+      expect(clearGatewayTokens).not.toHaveBeenCalled()
+      expect(cred.current).toMatchObject({ userId: 'u0', token: 'old.jwt' })
+    })
+  })
 })

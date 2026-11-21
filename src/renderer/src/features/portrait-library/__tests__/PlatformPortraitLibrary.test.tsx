@@ -6,6 +6,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PortraitAsset } from '../../../../../types/portraitApi'
+import { useAuthStore } from '../../../stores/useAuthStore'
 import { useToastStore } from '../../../stores/useToastStore'
 import { __resetQuotaStoreForTesting, useQuotaStore } from '../../../stores/useQuotaStore'
 import { PlatformPortraitLibrary } from '../PlatformPortraitLibrary'
@@ -80,6 +81,8 @@ afterEach(() => {
   delete (window as unknown as { electronAPI?: unknown }).electronAPI
   __resetQuotaStoreForTesting()
   useQuotaStore.setState({ selectedPool: null })
+  // 「登录失效」那组会把登录流程推到等待态;不复位的话下一条用例一挂载就看到 pending。
+  useAuthStore.setState({ pending: false, error: null, authorizeUrl: null })
   vi.restoreAllMocks()
 })
 
@@ -105,7 +108,70 @@ describe('数据源', () => {
     const bridge = mockBridge()
     bridge.list.mockResolvedValue(errEnvelope('NOT_AUTHENTICATED', 'token expired') as never)
     await renderPanel()
-    expect(await screen.findByText(/登录/)).toBeTruthy()
+    // 写全整句而不是 `/登录/`:面板上现在还有一个「重新登录」按钮,模糊匹配会命中两处。
+    expect(await screen.findByText('登录已失效,请重新登录后再试')).toBeTruthy()
+    expect(screen.queryByText(/token expired/)).toBeNull()
+  })
+})
+
+// 2026-11-21 线上:登录过期的用户在这块面板上只有一句报错和一个「重试」,而重试多少次
+// 结果都一样 —— 得自己摸到设置页先退出再登录。
+describe('登录失效', () => {
+  /** 在 `mockBridge()` 挂好的桥上补一个 `auth.startLogin`。必须在它之后调。 */
+  function mockLogin() {
+    const startLogin = vi.fn(async () => ({ authorizeUrl: 'https://example.test/authorize', expiresIn: 300 }))
+    const api = (window as unknown as { electronAPI: Record<string, unknown> }).electronAPI
+    api.auth = { startLogin }
+    return startLogin
+  }
+
+  it('给「重新登录」按钮,点下去就发起登录', async () => {
+    const bridge = mockBridge()
+    bridge.list.mockResolvedValue(errEnvelope('NOT_AUTHENTICATED', '登录已失效,请重新登录') as never)
+    const startLogin = mockLogin()
+    await renderPanel()
+
+    const relogin = await screen.findByTestId('platform-portrait-relogin')
+    await act(async () => {
+      relogin.click()
+    })
+    expect(startLogin).toHaveBeenCalledTimes(1)
+    // 浏览器授权期间不让连点:每点一次主进程都会另开一轮配对、再弹一个浏览器标签。
+    expect((screen.getByTestId('platform-portrait-relogin') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  // 登录失效时凭据还在本机,`authenticated` 从头到尾是 true —— 靠它触发重拉永远等不到。
+  // 所以用例里也**不碰** `authenticated`,只走登录流程的等待态。
+  it('登录流程一收尾就自己重拉,不用再点「重试」', async () => {
+    const bridge = mockBridge({ normal: [asset({ Id: 'a1', Name: '主角' })] })
+    bridge.list.mockResolvedValueOnce(errEnvelope('NOT_AUTHENTICATED', '登录已失效,请重新登录') as never)
+    mockLogin()
+    await renderPanel()
+    await screen.findByTestId('platform-portrait-relogin')
+    const before = bridge.list.mock.calls.length
+
+    await act(async () => {
+      useAuthStore.setState({ pending: true })
+    })
+    // 还在等授权,不该提前重拉 —— 那一趟注定还是 401。
+    expect(bridge.list.mock.calls.length).toBe(before)
+
+    await act(async () => {
+      useAuthStore.setState({ pending: false })
+    })
+    expect(await screen.findByTestId('platform-card-a1')).toBeTruthy()
+    expect(screen.queryByTestId('platform-portrait-relogin')).toBeNull()
+  })
+
+  it('别的失败不给这个按钮 —— 重新登录解决不了 500', async () => {
+    const bridge = mockBridge()
+    bridge.list.mockResolvedValue(errEnvelope('HTTP_500', '后端炸了') as never)
+    mockLogin()
+    await renderPanel()
+
+    expect(await screen.findByText(/后端炸了/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
+    expect(screen.queryByTestId('platform-portrait-relogin')).toBeNull()
   })
 })
 

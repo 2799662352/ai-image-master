@@ -18,12 +18,14 @@ import type { PortraitScopeRef } from '../../../../types/portraitApi'
 // 直接指到 store 文件而不是 `../agent-chat` 那个桶:桶里还挂着 mount / 任务监听器,
 // 而这里只要一个 zustand store。
 import { useAgentChatStore } from '../agent-chat/store'
+import { useAuthStore } from '../../stores/useAuthStore'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { useToastStore } from '../../stores/useToastStore'
 import { TextPromptModal } from './TextPromptModal'
 import {
   cardStatusBadge,
   isCardSelectable,
+  isLoginRequired,
   visibleCards,
   type PortraitCard,
   type PortraitCardKind,
@@ -102,7 +104,10 @@ export function PlatformPortraitLibrary() {
   const [truncated, setTruncated] = useState(false)
   const [trash, setTrash] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // code 与 message 一起留:只留文案的话,下面就分不出「该给重新登录按钮」与「重试即可」。
+  const [error, setError] = useState<{ code: string; message: string } | null>(null)
+  const startLogin = useAuthStore((s) => s.startLogin)
+  const loginPending = useAuthStore((s) => s.pending)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [kind, setKind] = useState<KindFilter>('all')
   const [search, setSearch] = useState('')
@@ -134,7 +139,7 @@ export function PlatformPortraitLibrary() {
       if (seq !== loadSeq.current) return
       setLoading(false)
       if (!r.ok) {
-        setError(r.message)
+        setError({ code: r.code, message: r.message })
         return
       }
       setError(null)
@@ -149,6 +154,20 @@ export function PlatformPortraitLibrary() {
   useEffect(() => {
     void load({ trash })
   }, [load, trash])
+
+  const loginRequired = error !== null && isLoginRequired(error.code)
+
+  // 登录流程一收尾就自己重拉一次,不让用户登录完还得再点「重试」。
+  //
+  // 盯的是 `pending` 的**下降沿**而不是 `authenticated`:登录失效时凭据还在本机,
+  // `authenticated` 自始至终是 true,重新登录成功它也不会变 —— 盯它等于永远不触发。
+  // 成功、失败、取消都会经过这个下降沿;后两种重拉出来还是同一句提示,多一趟往返而已。
+  const wasLoginPending = useRef(false)
+  useEffect(() => {
+    const ended = wasLoginPending.current && !loginPending
+    wasLoginPending.current = loginPending
+    if (ended && loginRequired) void load({ trash })
+  }, [loginPending, loginRequired, load, trash])
 
   // 展示层过滤。🚨 `visibleCards` 之外**不许**再加状态过滤:非 Active 的素材
   // 从网格里消失会让用户以为没传上去,于是重复上传 —— 而每重复一次都真实占配额。
@@ -511,13 +530,28 @@ export function PlatformPortraitLibrary() {
       <div className="flex-1 overflow-auto">
         {error ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-            <p className="text-sm text-red-400 max-w-md break-all">{error}</p>
-            <button
-              onClick={() => void load({ trash })}
-              className="px-3 py-1.5 bg-zinc-800 border border-zinc-600 text-zinc-300 text-sm rounded hover:bg-zinc-700"
-            >
-              重试
-            </button>
+            <p className="text-sm text-red-400 max-w-md break-all">{error.message}</p>
+            <div className="flex items-center gap-2">
+              {/* 不先登出:登出会清掉主进程的网关 token 与当前计费池,并把计费来源打回
+                  自有 Key(`useQuotaStore` 的登出复位),登录回来要整套重新 arm。
+                  这里直接重新授权,凭据原地换新,那些都不动。 */}
+              {loginRequired && (
+                <button
+                  data-testid="platform-portrait-relogin"
+                  onClick={() => void startLogin()}
+                  disabled={loginPending}
+                  className="px-3 py-1.5 bg-cyberpunk-yellow text-cyberpunk-black font-bold text-sm rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loginPending ? '等待浏览器授权…' : '重新登录'}
+                </button>
+              )}
+              <button
+                onClick={() => void load({ trash })}
+                className="px-3 py-1.5 bg-zinc-800 border border-zinc-600 text-zinc-300 text-sm rounded hover:bg-zinc-700"
+              >
+                重试
+              </button>
+            </div>
           </div>
         ) : loading && cards.length === 0 ? (
           <div className="flex items-center justify-center h-full">

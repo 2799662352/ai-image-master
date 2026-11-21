@@ -10,7 +10,7 @@
 // 这批端点的失败模式几乎全是**静默**的 —— 后端不报错,只是悄悄换掉你的入参。所以下面
 // 每一处看起来多余的客户端校验,挡的都是一个「测试全绿、真机出怪事」的坑。
 
-import { AuthError, requireString, requireToken, sendJson } from '../auth/httpJson'
+import { AuthError, loginRejected, requireString, requireToken, sendJson } from '../auth/httpJson'
 
 const PREFIX = '/api/volcengine-asset'
 
@@ -200,6 +200,12 @@ function scopeHeaders(scope: PlatformAssetScope): Record<string, string> {
  * `code` 保证是非空字符串:IPC 层的信封按 code 分支,落到 undefined 就成了「未知错误」。
  */
 function toAssetError(status: number, body: Record<string, unknown>): AuthError {
+  // 这批端点全都带平台 JWT,所以先认「登录被平台拒收」—— 判据与理由见
+  // `httpJson.ts:loginRejected`。落到下面就是 `HTTP_401` + 后端那句「Token 无效或已过期」,
+  // 渲染层引导登录的分支(`NOT_AUTHENTICATED`)命不中。
+  const rejected = loginRejected(status, body)
+  if (rejected) return rejected
+
   const nested =
     typeof body.error === 'object' && body.error !== null
       ? (body.error as { code?: unknown; message?: unknown })

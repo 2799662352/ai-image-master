@@ -3,7 +3,7 @@
 import { authBaseUrl } from './authBaseUrl'
 import { clearCredential, credentialSource, getCredential, setCredential } from './credentials'
 import { clearGatewayTokens } from './gatewayToken'
-import { AuthError, requireString, requireToken, sendJson } from './httpJson'
+import { AuthError, loginRejected, requireString, requireToken, sendJson } from './httpJson'
 // `AuthState` 的单一真源在 `src/types/authApi.ts` —— preload 与渲染层同吃一份,
 // 不在这里再声明一遍(AgentApi 就是因为两处各写一份而漂移过)。
 import type { AuthState } from '../../../types/authApi'
@@ -42,6 +42,16 @@ function toAuthError(status: number, body: Record<string, unknown>): AuthError {
     (typeof body.message === 'string' && body.message) ||
     `请求失败(HTTP ${status})`
   return new AuthError(code, status, message)
+}
+
+/**
+ * **带平台 JWT 的端点**用这个,不直接用 `toAuthError`:先认「登录被平台拒收」(判据与
+ * 理由见 `httpJson.ts:loginRejected`),其余照旧。
+ *
+ * 配对的两个公开端点没带 token,继续用 `toAuthError`。
+ */
+function toAuthedError(status: number, body: Record<string, unknown>): AuthError {
+  return loginRejected(status, body) ?? toAuthError(status, body)
 }
 
 /**
@@ -104,6 +114,17 @@ export async function claimPairing(
   }
 
   const username = requireString(user.username, 'user.username', status)
+  const token = requireString(data.token, 'token', status)
+  const userId = requireString(user.id, 'user.id', status)
+
+  // 已登录时也会走到这里:登录失效后的「重新登录」**不先登出**,好留住计费池与平台余额
+  // 的开关。回来的若是**另一个账号**,上一个人的网关 token 一枚都不能留 —— 它们永不过期、
+  // 按池缓存、键里不含用户,留着就是新账号的请求继续扣上一个人的钱。
+  //
+  // 放在所有字段校验之后:响应畸形时什么都不该动。放在落新凭据之前:反过来会有一瞬
+  // 「新 userId + 旧 token」同时可读,而出网组头恰好就读这两样。
+  const previous = getCredential()
+  if (previous && previous.userId !== userId) await clearGatewayTokens()
 
   // `displayName` / `role` 在 AuthSession 上是**可选**的,且后端 `issueSessionForUserId`
   // 对空 displayName 传的是 `''`。兜底是必需的,不是装饰:Task 3 的 `parseCredential()`
@@ -114,8 +135,8 @@ export async function claimPairing(
   // 必须 `await`:落盘是异步的。不等的话,调用方会在凭据写进盘之前就广播「已登录」,
   // 此时关掉应用,凭据就丢了 —— 又是「登录成功了,但重启后又忘了我」。
   await setCredential({
-    token: requireString(data.token, 'token', status),
-    userId: requireString(user.id, 'user.id', status),
+    token,
+    userId,
     username,
     displayName: (typeof user.displayName === 'string' && user.displayName) || username,
     role: (typeof user.role === 'string' && user.role) || 'USER',
@@ -203,7 +224,7 @@ export async function fetchBalance(
     : `/api/user/balance?projectId=${projectId}`
 
   const { status, body } = await sendJson(path, 'GET', { token })
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const data = (body.data ?? body) as Record<string, unknown>
   const quota = num(data.balance_quota)
@@ -224,7 +245,7 @@ export async function fetchBalance(
 export async function fetchOrganizations(): Promise<AccountOrganization[]> {
   const token = requireToken()
   const { status, body } = await sendJson('/api/user/organizations', 'GET', { token })
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const raw = Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : []
   return (raw as Record<string, unknown>[]).map((p) => {
@@ -248,7 +269,7 @@ export async function fetchOrganizations(): Promise<AccountOrganization[]> {
 export async function fetchQuota(): Promise<Record<string, unknown>> {
   const token = requireToken()
   const { status, body } = await sendJson('/api/user/quota', 'GET', { token })
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
   return (body.data ?? body) as Record<string, unknown>
 }
 
@@ -262,7 +283,7 @@ export async function fetchQuota(): Promise<Record<string, unknown>> {
 export async function fetchPaymentConfig(): Promise<PaymentConfig> {
   const token = requireToken()
   const { status, body } = await sendJson('/api/payment/config', 'GET', { token })
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const data = (body.data ?? body) as Record<string, unknown>
   const pb = data.personalBilling as { enabled?: unknown; projectId?: unknown } | undefined
@@ -479,7 +500,7 @@ export async function fetchUsageLogs(query: UsageQuery): Promise<UsageLogPage> {
   params.set('pageSize', String(pageSize))
 
   const { status, body } = await sendJson(`/api/user/usage-logs?${params}`, 'GET', { token })
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const data = (body.data ?? body) as Record<string, unknown>
   const logs = Array.isArray(data.logs) ? (data.logs as Record<string, unknown>[]) : []
@@ -509,7 +530,7 @@ export async function fetchUsageSummary(query: UsageQuery): Promise<UsageModelSu
     'GET',
     { token },
   )
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const raw = Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : []
   return (raw as Record<string, unknown>[]).map((s) => ({
@@ -609,7 +630,7 @@ export async function createRechargeOrder(
       ...rechargeScope(target),
     },
   })
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const data = (body.data ?? body) as Record<string, unknown>
   return {
@@ -642,7 +663,7 @@ export async function fetchRechargeOrder(outTradeNo: string): Promise<RechargeOr
     'GET',
     { token },
   )
-  if (status >= 400) throw toAuthError(status, body)
+  if (status >= 400) throw toAuthedError(status, body)
 
   const data = (body.data ?? body) as Record<string, unknown>
   const order = (data.order ?? data) as Record<string, unknown>

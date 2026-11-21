@@ -98,3 +98,53 @@ describe('httpJson.sendJson 的头所有权', () => {
     expect(valueOf('x-project-id')).toBe('42')
   })
 })
+
+// ── 「登录被平台拒收」的判据 ────────────────────────────────────────────────
+//
+// 2026-11-21 线上:生产把登录有效期配成了 7 天。到期的用户在人像库里看到的是后端
+// 原话「Token 无效或已过期」加一个怎么点都没用的「重试」—— 那句话的 code 落成了
+// `HTTP_401`,而渲染层引导登录的分支认的是 `NOT_AUTHENTICATED`。
+describe('httpJson.loginRejected', () => {
+  const REJECTED = { code: 'NOT_AUTHENTICATED', status: 401, message: '登录已失效,请重新登录' }
+
+  // `authMiddleware` 的三种 401(`middleware/auth.ts:66,83,103`)都是这个形状:
+  // 只有 message,没有任何错误码。
+  it.each(['Token 无效或已过期', '未提供认证 Token', '用户不存在'])(
+    '401 且只有 message「%s」→ NOT_AUTHENTICATED,后端原话不透给用户',
+    async (message) => {
+      const { loginRejected } = await import('../httpJson')
+      expect(loginRejected(401, { success: false, message })).toMatchObject(REJECTED)
+    },
+  )
+
+  // 人像库那批 controller 自己判的「未登录」:`error` 是**字符串**,不是带 code 的对象。
+  it('`error` 是字符串的 401 也算 —— 字符串不是错误码', async () => {
+    const { loginRejected } = await import('../httpJson')
+    expect(loginRejected(401, { success: false, error: '未登录' })).toMatchObject(REJECTED)
+  })
+
+  // 空响应体与非 JSON 错误页,`sendJson` 交回来的都是 `{}`。
+  it('响应体是空对象的 401 也算', async () => {
+    const { loginRejected } = await import('../httpJson')
+    expect(loginRejected(401, {})).toMatchObject(REJECTED)
+  })
+
+  // 带 code 的 401 是另一回事。`userOrg.ts:71` 把 New API 的状态码原样透传 —— 那是平台
+  // 自己打上游的凭据坏了,让用户重新登录一万次也没用,还会让他以为是自己账号的问题。
+  it.each<[string, Record<string, unknown>]>([
+    [
+      '嵌套 error.code(上游透传)',
+      { success: false, error: { code: 'UPSTREAM_FAILED', message: 'x', upstreamStatus: 401 } },
+    ],
+    ['顶层 code', { success: false, code: 'UNAUTHORIZED', error: 'x' }],
+  ])('401 但带后端错误码 —— %s → 不认,留给各端点自己的映射', async (_name, body) => {
+    const { loginRejected } = await import('../httpJson')
+    expect(loginRejected(401, body)).toBeNull()
+  })
+
+  // 403 是封号或没有这个池的权限,后端的话已经说清了,重新登录都解决不了。
+  it.each([400, 403, 404, 500])('%i 不认 —— 只有 401 是「凭据不被接受」', async (status) => {
+    const { loginRejected } = await import('../httpJson')
+    expect(loginRejected(status, { success: false, message: 'x' })).toBeNull()
+  })
+})

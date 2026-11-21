@@ -5,6 +5,9 @@ import path from 'node:path'
 // 一并清网关 token),再反向 import 回去就成环。见 `authBaseUrl.ts` 顶部。
 import { authBaseUrl } from './authBaseUrl'
 import { getCredential } from './credentials'
+// 叶子模块,不 import 本文件,不成环(它顶部的注释说的是反方向:别让人像库经 session
+// 把本模块拉进去)。
+import { loginRejected } from './httpJson'
 
 export interface Pool {
   projectId: number
@@ -210,6 +213,11 @@ async function fetchToken(pool: Pool): Promise<string> {
     | null
 
   if (!resp.ok || !body?.success) {
+    // 平台 JWT 被拒收(过期等)。不单独认的话落成 `HTTP_401`「获取平台凭据失败」,渲染层
+    // 那条「重新登录后再启用平台余额」的提示认的是 `NOT_LOGGED_IN`,命不中。
+    const rejected = loginRejected(resp.status, body)
+    if (rejected) throw new GatewayTokenError('NOT_LOGGED_IN', rejected.message)
+
     const code = body?.error?.code ?? `HTTP_${resp.status}`
     const message = body?.error?.message ?? '获取平台凭据失败'
     throw new GatewayTokenError(code, message, resp.status >= 500)

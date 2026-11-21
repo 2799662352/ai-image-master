@@ -29,6 +29,42 @@ export class AuthError extends Error {
   }
 }
 
+const LOGIN_REJECTED_MESSAGE = '登录已失效,请重新登录'
+
+/** 后端信封里的错误码:顶层 `code`,或嵌套的 `error.code`。两种都没有回 null。 */
+function backendErrorCode(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const { code, error } = body as { code?: unknown; error?: unknown }
+  if (typeof code === 'string' && code) return code
+  const nested =
+    typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+  return typeof nested === 'string' && nested ? nested : null
+}
+
+/**
+ * 带着平台 JWT 发出去的请求被 `authMiddleware` 挡了回来:登录过期、签名密钥换过,
+ * 或账号已被删除。是就回一个 `NOT_AUTHENTICATED`,不是回 null。
+ *
+ * 判据是 **401 且响应体里没有后端错误码**。`authMiddleware` 的信封只有
+ * `{ success:false, message }`(`middleware/auth.ts:66,83,103`)。带 code 的 401 是另一
+ * 回事:`userOrg.ts:71` 把 New API 的状态码原样透传(`UPSTREAM_FAILED`),那是平台自己
+ * 打上游的凭据坏了,用户重新登录多少次都没用。
+ *
+ * 不单独认的话,后端那句「Token 无效或已过期」被各端点的映射原样透给用户、code 落成
+ * `HTTP_401` —— 而渲染层「引导登录」的分支认的是 `NOT_AUTHENTICATED`,一条都命不中。
+ * 2026-11-21 线上就是这样:人像库里只有那句原话,外加一个怎么点都没用的「重试」。
+ *
+ * **只给带了 token 的请求用。** 配对那两个公开端点手上还没有任何凭据,它们的 401
+ * 不可能是「登录失效」。
+ *
+ * **只改文案,不清凭据。** `authMiddleware` 的 catch 把任何异常都回成 401(含查库失败),
+ * 据此登出等于让后端一次数据库抖动把所有人的网关 token 一起清掉。
+ */
+export function loginRejected(status: number, body: unknown): AuthError | null {
+  if (status !== 401 || backendErrorCode(body) !== null) return null
+  return new AuthError('NOT_AUTHENTICATED', 401, LOGIN_REJECTED_MESSAGE)
+}
+
 export type BackendMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
 
 export interface BackendRequestOptions {
