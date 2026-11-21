@@ -242,6 +242,17 @@ export function rejectUploadReason(file: { name: string; type: string; size: num
 }
 
 /**
+ * 「该去登录了」的那两个 code:`NOT_AUTHENTICATED` 来自平台 JWT 这条路(本地没有凭据,
+ * 或平台不认它了 —— 过期、被删),`NOT_LOGGED_IN` 来自网关 token 那条路。
+ *
+ * 单独导出是因为面板要靠它决定**给不给「重新登录」按钮**:光有一句「请重新登录」而
+ * 手边只有「重试」,用户得自己摸到设置页先退出再登录 —— 重试多少次结果都一样。
+ */
+export function isLoginRequired(code: string): boolean {
+  return code === 'NOT_AUTHENTICATED' || code === 'NOT_LOGGED_IN'
+}
+
+/**
  * 按 error code 给下一步动作。
  *
  * **按 code 分支而不是照抄 message,是这个函数存在的理由**:几类错误要引导的动作
@@ -250,14 +261,14 @@ export function rejectUploadReason(file: { name: string; type: string; size: num
  * 原文比「什么都不说」强,至少还能报给客服。
  */
 export function portraitErrorHint(code: string, message: string): string {
+  // 走 `isLoginRequired` 而不是在下面的 switch 里再列一遍:文案与「重新登录」按钮
+  // 必须认同一组 code,各列一份迟早有一边漏掉新加的那个。
+  if (isLoginRequired(code)) return '登录已失效,请重新登录后再试'
   switch (code) {
     case 'ASSET_NOT_READY':
       return '素材还在处理中,稍等几秒再试'
     case 'ASSET_FAILED':
       return '这条素材上游处理失败了,换一张或重新导入'
-    case 'NOT_AUTHENTICATED':
-    case 'NOT_LOGGED_IN':
-      return '登录已失效,请重新登录后再试'
     case 'INVALID_POOL':
       return '请先在账号设置里选择一个计费池'
     case 'HTTP_403':

@@ -620,6 +620,26 @@ describe('platformAssets', () => {
     })
   })
 
+  /**
+   * 登录过期时挡回来的是 `authMiddleware`,不是这批 controller:信封只有 `message`,
+   * `error` 与 `code` 都没有。落到通用映射就是 `HTTP_401` + 后端原话「Token 无效或已过期」
+   * —— 渲染层引导登录的分支认的是 `NOT_AUTHENTICATED`,命不中,用户手边只剩一个
+   * 怎么点都没用的「重试」(2026-11-21 线上)。判据在 `auth/httpJson.ts:loginRejected`。
+   */
+  it('平台不认登录凭据的 401 → NOT_AUTHENTICATED,不把后端原话透给用户', async () => {
+    const m = await import('../platformAssets')
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ success: false, message: 'Token 无效或已过期' }),
+    } as unknown as Response)
+    await expect(m.listAssets(SCOPE)).rejects.toMatchObject({
+      code: 'NOT_AUTHENTICATED',
+      status: 401,
+      message: '登录已失效,请重新登录',
+    })
+  })
+
   // code 永远是非空字符串 —— IPC 层的 switch 落到 undefined 分支就成了「未知错误」。
   it('后端一个可用字段都没给时,code 仍按状态码合成', async () => {
     const m = await import('../platformAssets')
