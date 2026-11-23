@@ -14,7 +14,7 @@ import type { SeedanceModelAlias, VideoResolution } from '../../../../types/seed
 import type { PortraitAssetItem } from '../../features/portrait-library/portraitLibraryShared'
 import { capabilitiesFor, resolutionsFor, supportsSeedanceDraft } from '../../../../types/seedance'
 import { askUhdConfirmIfHeld } from '../../features/video-workbench/uhdConfirm'
-import { useQuotaStore } from '../../stores/useQuotaStore'
+import { useEffectiveBillingSource } from '../../stores/effectiveBilling'
 import {
   draftFinalAvailability,
   draftToggleAvailability,
@@ -399,7 +399,7 @@ const resaveCard = useVideoWorkbenchStore((s) => s.resaveCard)
   const startCards = useVideoWorkbenchStore((s) => s.startCards)
   const finalizeDrafts = useVideoWorkbenchStore((s) => s.finalizeDrafts)
   const cancelCards = useVideoWorkbenchStore((s) => s.cancelCards)
-  const billingSource = useQuotaStore((s) => s.billingSource)
+  const billingSource = useEffectiveBillingSource()
   const selected = useVideoWorkbenchStore((s) => s.selectedCardIds.includes(card.id))
   const selectCard = useVideoWorkbenchStore((s) => s.selectCard)
 

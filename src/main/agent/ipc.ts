@@ -92,6 +92,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:get-providers',
   'agent:set-active-provider',
   'agent:set-provider-api-key',
+  'agent:set-custom-gateway',
   'agent:get-gateways',
   'agent:set-active-gateway',
   'agent:set-gateway-api-key',
@@ -525,6 +526,15 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       }
     },
   )
+  // 设置页「自定义网关」:渲染端把 `{ active, url }` 推过来,主进程重新校验、落盘,
+  // 变了就重启 Codex。参数整体当不可信输入处理(见 `services/customGateway.ts`)。
+  ipcMain.handle('agent:set-custom-gateway', async (_event, state: unknown) => {
+    try {
+      return (await getManager()).setCustomGateway(state)
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle('agent:add-custom-provider', async (_event, input: unknown) => {
     try {
       const created = await (await getManager()).addCustomProvider(

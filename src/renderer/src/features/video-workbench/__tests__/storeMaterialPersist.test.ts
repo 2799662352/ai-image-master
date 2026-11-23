@@ -367,4 +367,40 @@ describe('提交前', () => {
     expect(submit).toHaveBeenCalledTimes(1)
     expect([r1.started.length, r2.started.length].sort()).toEqual([0, 1])
   })
+
+  // 体检只该为「确实会提交」的卡发起:选中「自定义网关」后计费口径是自填 Key,
+  // 2.5 的 1080p 在渲染端就会被拦下,不该先去探它素材的云端地址(白白一次 HEAD)。
+  it('选中「自定义网关」:会被自填 Key 口径拦下的卡不做提交前体检(对照:不选则体检 + 提交)', async () => {
+    const { cardOf, cardId, useStore } = await restartWithCard(
+      [persistedMaterial({ src: LOCAL_A, uploadedUrl: COS_A, uploadedFrom: FROM_A })],
+      { model: '2.5', resolution: '1080p' },
+    )
+    // store 在 beforeEach 的 resetModules 之后才动态引入,这两个模块要取同一份实例。
+    const { useQuotaStore } = await import('../../../stores/useQuotaStore')
+    const effective = await import('../../../stores/effectiveBilling')
+    effective.__resetEffectiveBillingForTests()
+    useQuotaStore.setState({ billingSource: 'platform' })
+    await vi.waitFor(() => expect(cardOf().referenceImages[0].uploadState).toBe('uploaded'))
+
+    verifyUploadedMaterials.mockClear()
+    const control = await useStore.getState().startCards([cardId])
+    expect(control.started).toEqual([cardId])
+    expect(verifyUploadedMaterials.mock.calls.filter((c) => c[0].checkRemote)).toHaveLength(1)
+    expect(submit).toHaveBeenCalledTimes(1)
+
+    useStore.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === cardId ? { ...c, status: 'failed' as const } : c)),
+    }))
+    // 对照那次探到的地址已记成「本会话活着」,所以被放行的话这里至少还会有一次只复核本地的体检。
+    verifyUploadedMaterials.mockClear()
+    submit.mockClear()
+    effective.setCustomGatewaySelected(true)
+
+    const blocked = await useStore.getState().startCards([cardId])
+
+    expect(blocked.started).toEqual([])
+    expect(blocked.skipped[0].reason).toContain('自填 Key')
+    expect(verifyUploadedMaterials).not.toHaveBeenCalled()
+    expect(submit).not.toHaveBeenCalled()
+  })
 })

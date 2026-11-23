@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { useEraseSessionStore, type EraseSessionTask } from '../../stores/useEraseSessionStore'
 import { useErasePersistStore } from '../../stores/useErasePersistStore'
-import { useQuotaStore } from '../../stores/useQuotaStore'
+import { useEffectiveBillingSource } from '../../stores/effectiveBilling'
 import { useToastStore } from '../../stores'
 import type { EraseProbeResult, EraseTool } from '../../../../types/smartErase'
 import {
@@ -168,7 +168,7 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
   const enhanceSpec = useEraseSessionStore((s) => s.enhanceSpec)
   const setEnhanceSpec = useEraseSessionStore((s) => s.setEnhanceSpec)
   // 高清那条路的计费意向,与视频工作台同源。去字幕不看它。
-  const billingSource = useQuotaStore((s) => s.billingSource)
+  const billingSource = useEffectiveBillingSource()
   const pendingProbes = useEraseSessionStore((s) => s.pendingProbes)
   const showCostConfirm = useEraseSessionStore((s) => s.showCostConfirm)
   const setPendingProbes = useEraseSessionStore((s) => s.setPendingProbes)

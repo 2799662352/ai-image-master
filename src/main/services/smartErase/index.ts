@@ -27,6 +27,11 @@ import { runMediaKitUpload, runMediaKitProcessAndPoll } from '../mediaKit/runner
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { getActivePoolToken, gatewayPlatformHeaders } from '../auth/gatewayToken'
 import { notePlatformSpend } from '../auth/platformSpend'
+import {
+  createCustomGatewayFetch,
+  isCustomGatewayActive,
+  platformTokenUnlessCustom,
+} from '../customGateway'
 import { getWan3ApiKey } from '../wan3/credentials'
 import {
   describeMissingGatewayToken,
@@ -69,7 +74,8 @@ let defaultConfig: EraseConfig = { ...DEFAULT_ERASE_CONFIG }
 // 钱从错的钱包出,两边日志看起来都对(理由见 `seedance/billing.ts`)。
 
 const mediaKitTokenSources: SeedanceGatewayTokenSources = {
-  platformToken: getActivePoolToken,
+  // 「自定义网关」生效期间当作没有平台 token(平台的钱不能发往用户填的地址,见 `customGateway.ts`)。
+  platformToken: platformTokenUnlessCustom(getActivePoolToken),
   ownKey: getWan3ApiKey,
 }
 
@@ -80,7 +86,12 @@ const mediaKitTokenSources: SeedanceGatewayTokenSources = {
  */
 function mediaKitAuthFor(prefer: 'platform' | 'own-key' | undefined): () => MediaKitAuthHeaders {
   return () => {
-    const { billing, token } = resolveSeedanceGatewayToken(mediaKitTokenSources, prefer)
+    // 自定义网关生效时只有自填 Key 一种钱包:载荷里带的 platform 意向照 own-key 处理,
+    // 否则会在没有平台 token 的情况下报一句与当下无关的「平台余额未就绪」。
+    const { billing, token } = resolveSeedanceGatewayToken(
+      mediaKitTokenSources,
+      isCustomGatewayActive() ? 'own-key' : prefer,
+    )
     if (!token) {
       const err: any = new Error(describeMissingGatewayToken(billing))
       err.code = 'CREDENTIALS_MISSING'
@@ -96,7 +107,10 @@ let mediaKitClientRef: ReturnType<typeof createMediaKitClient> | null = null
 function mediaKitClient() {
   if (!mediaKitClientRef) {
     mediaKitClientRef = createMediaKitClient({
-      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      fetchImpl: createCustomGatewayFetch(
+        (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+        resolveGatewayOrigin,
+      ),
       // 🚨 与出网注入器共用同一个 origin 解析 —— 写死生产地址在测试服模式下会把
       // 测试签发的 token 发到生产网关(2026-08-31 万相踩过,`seedance/runtime.ts` 有详述)。
       baseUrl: `${resolveGatewayOrigin()}/v1`,

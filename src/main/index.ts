@@ -77,6 +77,7 @@ import { allowAuthBaseUrlOverride } from './services/auth/authBaseUrl'
 import { registerPortraitLibraryIpc } from './services/portraitLibrary/ipc'
 import { installGatewayHeaderInjector } from './services/auth/gatewayHeaderInjector'
 import { buildContentSecurityPolicy } from './utils/contentSecurityPolicy'
+import { initCustomGateway } from './services/customGateway'
 import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
@@ -1333,6 +1334,11 @@ app.whenReady().then(async () => {
   // 渲染进程一加载就会去问登录态 —— 所以必须赶在 `createWindow()` 之前完成。
   // 两个都不会 reject(读不出来就是「没有凭证」),不需要 try/catch。
   await Promise.all([initAuthCredential(), initTencentCredentials()])
+
+  // 设置页「自定义网关」的开关 / 地址(只有这两样,不含密钥)。要赶在 Codex 拉起与视频任务轮询
+  // 之前读进来 —— 渲染端要等窗口加载完才会推送,而那之前主进程就可能去重连一个跑在自定义网关
+  // 上的任务,按「未启用」处理会把它打到 Miau 上、查不到、被当成失败。同步读小文件,读不到 = 未启用。
+  initCustomGateway(app.getPath('userData'))
 
   // Register agent IPC handlers BEFORE the window starts loading so the
   // renderer's mount-time calls (e.g. `agent:list-threads`) always hit a

@@ -377,6 +377,7 @@ const IPC_CHANNELS = {
     GET_PROVIDERS: 'agent:get-providers',
     SET_ACTIVE_PROVIDER: 'agent:set-active-provider',
     SET_PROVIDER_API_KEY: 'agent:set-provider-api-key',
+    SET_CUSTOM_GATEWAY: 'agent:set-custom-gateway',
     GET_GATEWAYS: 'agent:get-gateways',
     SET_ACTIVE_GATEWAY: 'agent:set-active-gateway',
     SET_GATEWAY_API_KEY: 'agent:set-gateway-api-key',
@@ -1588,6 +1589,12 @@ const electronAPI: ElectronAPI = {
         IPC_CHANNELS.AGENT.SET_PROVIDER_API_KEY,
         id,
         key,
+      ),
+
+    setCustomGateway: (state: { active: boolean; url: string }) =>
+      safeInvoke<{ ok: boolean; error?: string; changed?: boolean }>(
+        IPC_CHANNELS.AGENT.SET_CUSTOM_GATEWAY,
+        state,
       ),
 
     addCustomProvider: (input: CodexCustomProviderInput) =>

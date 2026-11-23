@@ -5,6 +5,7 @@
  */
 
 import { BILLING_MARKER_HEADER, BILLING_MARKER_VALUE } from '../../../../types/authApi'
+import { setCustomGatewaySelected } from '../../stores/effectiveBilling'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { getAgentApi } from '../../utils/agentBridge'
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
@@ -18,7 +19,7 @@ import {
   normalizeGatewayUrl,
   readStoredCustomGatewayUrl,
   type GatewayUrlResult,
-} from './customGatewayUrl'
+} from '../../../../shared/customGatewayUrl'
 import {
   GIF_FRAME_LONG_EDGE,
   GPT_IMAGE_26_PARAM_SPECS,
@@ -579,6 +580,13 @@ function resolveLayerDecompositionSizeTier(value: string | undefined): LayerDeco
  * {@link ModelConfig.requiredSiteKey} 声明,请求会被钉在这里而不跟随用户选的站点。
  */
 export const MIAU_SITE_KEY = 'antigravity'
+
+/**
+ * 「自定义网关」站点 key(设置页「选择 API 站点」里用户填地址的那一项)。
+ * 选中它时,钉在 {@link MIAU_SITE_KEY} 的渠道与主进程里打 Miau 网关的通道一并改走用户填的地址。
+ * 键名沿用历史上的 `local`(已存的 `api_key_local` / `current_site` 不用迁移)。
+ */
+export const CUSTOM_GATEWAY_SITE_KEY = 'local'
 
 // 「本次请求走平台余额」的标记头曾在这里重复声明过一份(理由写的是「渲染层不能
 // import 主进程模块」)。那条理由只对**主进程模块**成立,而常量本身可以住在两边共吃的
@@ -2464,6 +2472,8 @@ export class ApiService {
     this.apiSites = this.composeSites()
     this.models = orderModelsForDisplay({ ...DEFAULT_MODELS })
     this.currentSite = this.getStoredSite() || 'b-apiyi'
+    // 视频工作台 / 智能擦除读「有效计费来源」时要知道当前是不是自定义网关(见 `stores/effectiveBilling.ts`)。
+    setCustomGatewaySelected(this.isCustomGatewaySelected())
     this.currentModel = this.resolveModelKey(this.getStoredModel() || 'gemini-3-pro-image')
     this.apiKey = this.getStoredApiKey(this.currentSite)
     this.visionApiKey = this.getStoredVisionApiKey(this.currentSite)
@@ -2471,6 +2481,9 @@ export class ApiService {
     // a qwen understanding subagent works without re-saving the key. Deferred +
     // guarded so it never blocks construction or runs outside Electron.
     queueMicrotask(() => this.syncMiauTokenToMain())
+    // 「自定义网关」的开关 / 地址同样要在启动时对齐一次:主进程自己落盘了一份,
+    // 用户清过浏览器数据 / 换过站点时两边可能不一致,以渲染端当前选择为准。
+    queueMicrotask(() => void this.syncCustomGatewayToMain())
     // Same idea for the cinematography-kb-mcp: mirror the 设置 → 运镜知识库 key
     // (localStorage) into `mcp_servers.cinematography_kb.env` so the bundled KB
     // server gets its `DASHSCOPE_API_KEY` at codex spawn.
@@ -2555,8 +2568,10 @@ export class ApiService {
       modelConfig.requiredSiteKey && this.apiSites[modelConfig.requiredSiteKey]
         ? modelConfig.requiredSiteKey
         : undefined
-    const effectiveSiteKey =
-      (siteKey && this.apiSites[siteKey] ? siteKey : undefined) ?? requiredSiteKey ?? this.currentSite
+    // 选中「自定义网关」时,钉在 Miau 站点的渠道一并改走它(用户自己的 Key、自己的地址)。
+    const effectiveSiteKey = this.resolveSiteForCustomGateway(
+      (siteKey && this.apiSites[siteKey] ? siteKey : undefined) ?? requiredSiteKey ?? this.currentSite,
+    )
     const site = this.apiSites[effectiveSiteKey]
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
@@ -2683,7 +2698,9 @@ export class ApiService {
   async generateAudio(params: GenerateAudioParams): Promise<GenerateAudioResult> {
     const { input, model, responseFormat, speed, referenceAudios, signal, siteKey } = params
 
-    const effectiveSiteKey = siteKey && this.apiSites[siteKey] ? siteKey : this.currentSite
+    const effectiveSiteKey = this.resolveSiteForCustomGateway(
+      siteKey && this.apiSites[siteKey] ? siteKey : this.currentSite,
+    )
     const site = this.apiSites[effectiveSiteKey]
     const apiKey =
       effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
@@ -3231,6 +3248,9 @@ export class ApiService {
    * 只认站点键会漏掉它。出图前的同一判据见 {@link evaluatePlatformBillingEligibility}。
    */
   private shouldUsePlatformBilling(requestUrl: string): boolean {
+    // 选中「自定义网关」= 明确要用自己的 Key 打自己的地址,平台余额一律不参与 ——
+    // 连「自定义地址恰好填成官方域名」也不例外(主进程那一侧同样按此处理)。
+    if (this.isCustomGatewaySelected()) return false
     if (useQuotaStore.getState().billingSource !== 'platform') return false
     const gateway = this.apiSites[MIAU_SITE_KEY]
     return !!gateway && isSameOrigin(requestUrl, gateway.baseURL)
@@ -3245,6 +3265,7 @@ export class ApiService {
    * 或者「门拦下了但本该走平台」= 登录了还被要求填 key。
    */
   private willUsePlatformBilling(modelKey: string, effectiveSiteKey: string): boolean {
+    if (this.isCustomGatewaySelected()) return false
     if (useQuotaStore.getState().billingSource !== 'platform') return false
     return evaluatePlatformBillingEligibility(
       this.models[modelKey],
@@ -3261,6 +3282,8 @@ export class ApiService {
    */
   getPlatformBillingEligibility(modelKey: string): PlatformBillingEligibility {
     const modelConfig = this.getModelConfig(modelKey)
+    // 选中「自定义网关」:平台余额不可用(原因同 `shouldUsePlatformBilling`),UI 按「站点不是网关」提示。
+    if (this.isCustomGatewaySelected()) return { eligible: false, blocker: 'site-not-gateway' }
     const siteKey =
       modelConfig?.requiredSiteKey && this.apiSites[modelConfig.requiredSiteKey]
         ? modelConfig.requiredSiteKey
@@ -4791,9 +4814,14 @@ export class ApiService {
     if (!this.apiSites[siteKey]) {
       return false
     }
+    const crossesCustomGateway =
+      (this.currentSite === CUSTOM_GATEWAY_SITE_KEY) !== (siteKey === CUSTOM_GATEWAY_SITE_KEY)
     this.currentSite = siteKey
     this.saveStoredSite(siteKey)
     this.apiKey = this.getStoredApiKey(siteKey)
+    setCustomGatewaySelected(this.isCustomGatewaySelected())
+    // 进出「自定义网关」时,主进程那几条通道(Codex / 视频 / 智能擦除)也要跟着换地址与 Key。
+    if (crossesCustomGateway) void this.syncCustomGatewayToMain()
     return true
   }
 
@@ -4857,7 +4885,9 @@ export class ApiService {
     try {
       this.apiKey = key
       localStorage.setItem(`api_key_${this.currentSite}`, key)
-      if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
+      if (this.currentSite === MIAU_SITE_KEY || this.isCustomGatewaySelected()) {
+        this.syncMiauTokenToMain()
+      }
       return true
     } catch {
       return false
@@ -4940,6 +4970,7 @@ export class ApiService {
       }
       this.customGatewayUrl = DEFAULT_CUSTOM_GATEWAY_URL
       this.apiSites = this.composeSites()
+      if (this.isCustomGatewaySelected()) void this.syncCustomGatewayToMain()
       return { ok: true, url: DEFAULT_CUSTOM_GATEWAY_URL, insecurePublicHttp: false }
     }
 
@@ -4949,6 +4980,7 @@ export class ApiService {
     localStorage.setItem(CUSTOM_GATEWAY_URL_STORAGE_KEY, result.url)
     this.customGatewayUrl = result.url
     this.apiSites = this.composeSites()
+    if (this.isCustomGatewaySelected()) void this.syncCustomGatewayToMain()
     return result
   }
 
@@ -5005,8 +5037,10 @@ export class ApiService {
     input: UnderstandInput,
     opts: { retries?: number; retryDelayMs?: number; model?: string; fallback?: boolean } = {},
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
-    const site = this.apiSites['antigravity']
-    const key = this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity')
+    // 选中「自定义网关」时这条路一并改走它(站点与 Key 都换成自定义网关的那一份)。
+    const miauSiteKey = this.resolveSiteForCustomGateway(MIAU_SITE_KEY)
+    const site = this.apiSites[miauSiteKey]
+    const key = this.getStoredApiKey(miauSiteKey) || this.getStoredVisionApiKey(miauSiteKey)
     // 平台余额模式下没有自填 Key 是正常的 —— 凭据在主进程。这道门原先无条件拦,
     // 于是 understand_video / understand_document / web_research 这三个 MCP 工具
     // 在平台模式下一律报「未配置 Miau API 令牌」,而用户明明已经登录并选好了计费池。
@@ -5225,15 +5259,63 @@ export class ApiService {
    * understand() runs here in the renderer and reads the token directly.
    */
   syncMiauTokenToMain(): void {
+    void this.pushMiauTokenToMain()
+  }
+
+  /**
+   * {@link syncMiauTokenToMain} 的可等待版本 —— 要与「自定义网关」状态按顺序推送时用
+   * (Key 必须先落到主进程,状态变更触发的 Codex 重启才会带上新 Key)。
+   *
+   * 选中「自定义网关」时镜像的是**它那把** Key:主进程里 Codex 的 Miau 通道、万相 / Seedance /
+   * 可灵 / 深度捕捉 / 智能擦除读的都是这一个槽位,而这些通道此时打的正是自定义地址。
+   */
+  async pushMiauTokenToMain(): Promise<void> {
     try {
-      const token =
-        this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity') || ''
+      const siteKey = this.resolveSiteForCustomGateway(MIAU_SITE_KEY)
+      const token = this.getStoredApiKey(siteKey) || this.getStoredVisionApiKey(siteKey) || ''
       const agent = getAgentApi()
       if (agent?.setProviderApiKey) {
-        void agent.setProviderApiKey('qwen', token)
+        await agent.setProviderApiKey('qwen', token)
       }
     } catch {
       // best-effort; never block image-gen on the Path B bridge.
+    }
+  }
+
+  /** 选中的站点是不是「自定义网关」(站点键 `local`)。 */
+  isCustomGatewaySelected(): boolean {
+    return this.currentSite === CUSTOM_GATEWAY_SITE_KEY
+  }
+
+  /**
+   * 选中「自定义网关」时,把「钉在 Miau 站点」的解析结果换成自定义网关;其余原样返回。
+   *
+   * 只换 Miau 这一个键:别的站点(apiyi / 用户自加)是用户在渠道上显式点名的,不该被悄悄改道。
+   */
+  private resolveSiteForCustomGateway(siteKey: string): string {
+    return siteKey === MIAU_SITE_KEY && this.isCustomGatewaySelected()
+      ? CUSTOM_GATEWAY_SITE_KEY
+      : siteKey
+  }
+
+  /**
+   * 把「自定义网关」的开关 / 地址推给主进程(Codex 的 Miau 通道与视频 / 智能擦除通道要跟着走)。
+   *
+   * 先等 Key 落地、再推状态:状态一变主进程会重启 Codex,它拉起时读的是当时的 Key。
+   * 主进程会重新校验地址并落盘,所以这里不信任自己的结果也不影响安全;推失败只是主进程
+   * 保持原状态(= 退回 Miau 官方网关,是安全的那个方向),不打断渲染端。
+   */
+  async syncCustomGatewayToMain(): Promise<void> {
+    try {
+      const agent = getAgentApi()
+      if (!agent?.setCustomGateway) return
+      await this.pushMiauTokenToMain()
+      await agent.setCustomGateway({
+        active: this.isCustomGatewaySelected(),
+        url: this.isCustomGatewaySelected() ? this.customGatewayUrl : '',
+      })
+    } catch {
+      // best-effort
     }
   }
 
@@ -5288,7 +5370,9 @@ export class ApiService {
     try {
       localStorage.setItem(`vision_api_key_${this.currentSite}`, key)
       this.visionApiKey = key
-      if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
+      if (this.currentSite === MIAU_SITE_KEY || this.isCustomGatewaySelected()) {
+        this.syncMiauTokenToMain()
+      }
       return true
     } catch {
       return false

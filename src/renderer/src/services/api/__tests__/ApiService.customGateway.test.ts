@@ -4,7 +4,7 @@ import {
   CUSTOM_GATEWAY_URL_STORAGE_KEY,
   DEFAULT_CUSTOM_GATEWAY_URL,
   LEGACY_LOCAL_PORT_STORAGE_KEY,
-} from '../customGatewayUrl'
+} from '../../../../../shared/customGatewayUrl'
 
 /**
  * 设置页「自定义网关」(site key 仍是 `local`)。

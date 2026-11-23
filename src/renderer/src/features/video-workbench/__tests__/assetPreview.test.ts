@@ -8,6 +8,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuotaStore } from '../../../stores/useQuotaStore'
 import {
+  __resetEffectiveBillingForTests,
+  setCustomGatewaySelected,
+} from '../../../stores/effectiveBilling'
+import {
   enrichAssetReferences,
   extractAssetId,
   getCachedAssetPreview,
@@ -217,6 +221,23 @@ describe('自填 Miau Key:没有人像库,asset:// 按解析不到处理', () =>
     expect(found.size).toBe(0)
     expect(list).not.toHaveBeenCalled()
     expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it('选中「自定义网关」时同理:偏好仍是平台余额且选了池,也不去查平台素材库', async () => {
+    useQuotaStore.setState({
+      billingSource: 'platform',
+      selectedPool: { projectId: 42, producerProjectId: null },
+    })
+    mockList([asset('a1')])
+    setCustomGatewaySelected(true)
+    try {
+      const found = await resolveAssetPreviews(['a1'])
+      expect(found.size).toBe(0)
+      expect(list).not.toHaveBeenCalled()
+      expect(resolve).not.toHaveBeenCalled()
+    } finally {
+      __resetEffectiveBillingForTests()
+    }
   })
 
   it('getCachedAssetPreview 回 null(不是 undefined),withCachedAssetPreview 原样返回', () => {

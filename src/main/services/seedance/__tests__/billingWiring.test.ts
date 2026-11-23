@@ -47,8 +47,23 @@ describe('Seedance 的两条通道(平台余额 / 自填 Key)必须都被注册'
     // 能走到这条 transport 就说明路由已经判定「这一次花平台余额」。再让它按
     // 「手上有什么用什么」兜底,一旦影子 token 恰好取不到就会静默换成用户自填的
     // Miau Key —— credentials.ts 明令禁止的跨模式回落。
+    //
+    // 平台余额这一条取的是**不过「自定义网关」过滤**的那份来源(`platformPinnedTokenSources`):
+    // 它永远只打官方域名,自定义网关只改道别的通道;若换成过滤过的那份,
+    // 用户一开自定义网关,在途的平台任务轮询会因为「取不到影子 token」整批失败。
     expect(runtimeSource).toMatch(
-      /createSeedanceGatewayTokenResolver\(\s*gatewayTokenSources,\s*(\/\/[^\n]*\n\s*)*\(\) => 'platform',/,
+      /createSeedanceGatewayTokenResolver\(\s*platformPinnedTokenSources,\s*(\/\/[^\n]*\n\s*)*\(\) => 'platform',/,
+    )
+  })
+
+  it('其余通道(自填 Key / 万相 / 深度 / 可灵)用的来源过「自定义网关」过滤', () => {
+    // 选中自定义网关期间这份来源里的平台 token 一律当「没有」:即使哪天有调用方用
+    // 自动判定(不钉意向),也读不到影子 token。与前面「平台专用」那份的区别就在这一行。
+    expect(runtimeSource).toMatch(
+      /const gatewayTokenSources: SeedanceGatewayTokenSources = \{[^}]*platformToken: platformTokenUnlessCustom\(getActivePoolToken\),/,
+    )
+    expect(runtimeSource).toMatch(
+      /const platformPinnedTokenSources: SeedanceGatewayTokenSources = \{\s*platformToken: getActivePoolToken,/,
     )
   })
 
@@ -74,6 +89,11 @@ describe('意向一路走到 transportFor', () => {
 
     // 读了。
     expect(body).toContain('coerceVideoBillingSource(payload?.billing)')
+    // 选中「自定义网关」时,不管渲染层带来什么意向都一律按自填 Key 提交:平台钱包只对官方网关有效。
+    // 这是渲染层「有效计费来源」之后的第二道,删掉它两端的单测都照样绿。
+    expect(body).toMatch(
+      /isCustomGatewayActive\(\)\s*\?\s*\('own-key' as const\)\s*:\s*coerceVideoBillingSource\(payload\?\.billing\)/,
+    )
     // 而且真的用了 —— 只读不传等于没读,且两端的测试都察觉不到。
     const submitCall = /taskManager\.submit\(\{[\s\S]*?\n {6}\}\)/.exec(body)?.[0] ?? ''
     expect(submitCall, 'taskManager.submit 的调用块没找到').not.toBe('')

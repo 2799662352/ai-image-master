@@ -334,6 +334,79 @@ describe('smartErase service composer — enhance (高清) tool', () => {
     expect(headers).toEqual({ Authorization: 'Bearer miau-own' })
   })
 
+  describe('自定义网关生效时', () => {
+    async function submitOnCustomGateway(payloadBilling?: 'platform' | 'own-key') {
+      const gw = await import('../../customGateway')
+      gw.applyCustomGatewayState({ active: true, url: 'https://my-gw.example.com' })
+      const svc = await import('../index')
+      svc.setMainWindow(mockWin as any)
+      const ret = await svc.submitErase({
+        filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5,
+        tool: 'enhance', ...(payloadBilling ? { billing: payloadBilling } : {}),
+      })
+      await flush(); await flush(); await flush(); await flush()
+      return { gw, ret }
+    }
+
+    afterEach(async () => {
+      const gw = await import('../../customGateway')
+      await gw.flushCustomGatewayPersist()
+      gw.__resetCustomGatewayForTests()
+    })
+
+    it('已登录平台、载荷也点名 platform:仍只发自填 Key,绝不带平台头', async () => {
+      poolTokenForTest.value = 'sk-shadow'
+      wan3KeyForTest.value = 'miau-own'
+      const { ret } = await submitOnCustomGateway('platform')
+      expect(ret.success).toBe(true)
+      const [, resolveAuth] = runMediaKitProcessAndPollMock.mock.calls[0]
+      const headers = resolveAuth()
+      expect(headers).toEqual({ Authorization: 'Bearer miau-own' })
+      expect(headers).not.toHaveProperty('X-Platform-User-Id')
+    })
+
+    it('只有平台登录、没填自填 Key:入队前就拒,不会把影子 token 发出去', async () => {
+      poolTokenForTest.value = 'sk-shadow'
+      wan3KeyForTest.value = ''
+      const { ret } = await submitOnCustomGateway()
+      expect(ret.success).toBe(false)
+      expect(runMediaKitUploadMock).not.toHaveBeenCalled()
+      expect(runMediaKitProcessAndPollMock).not.toHaveBeenCalled()
+    })
+
+    it('MediaKit 客户端的请求改发到用户的网关,不再是官方域名', async () => {
+      wan3KeyForTest.value = 'miau-own'
+      const { net } = await import('electron')
+      const fetchSpy = vi.mocked(net.fetch)
+      fetchSpy.mockReset()
+      fetchSpy.mockResolvedValue(new Response(JSON.stringify({ id: 't1', status: 'running' })))
+
+      await submitOnCustomGateway()
+      const [client] = runMediaKitProcessAndPollMock.mock.calls[0]
+      await client.query('t1', { Authorization: 'Bearer miau-own' }).catch(() => undefined)
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(String(fetchSpy.mock.calls[0][0])).toBe('https://my-gw.example.com/v1/videos/t1')
+    })
+
+    it('没启用时同一个请求仍打官方域名(对照:改写只在启用时发生)', async () => {
+      wan3KeyForTest.value = 'miau-own'
+      const { net } = await import('electron')
+      const fetchSpy = vi.mocked(net.fetch)
+      fetchSpy.mockReset()
+      fetchSpy.mockResolvedValue(new Response(JSON.stringify({ id: 't1', status: 'running' })))
+
+      const svc = await import('../index')
+      svc.setMainWindow(mockWin as any)
+      await svc.submitErase({ filePath: '/tmp/a.mp4', filename: 'a.mp4', fileSize: 10, durationSeconds: 5, tool: 'enhance' })
+      await flush(); await flush(); await flush(); await flush()
+      const [client] = runMediaKitProcessAndPollMock.mock.calls[0]
+      await client.query('t1', { Authorization: 'Bearer miau-own' }).catch(() => undefined)
+
+      expect(String(fetchSpy.mock.calls[0][0])).toBe('https://gw.test/v1/videos/t1')
+    })
+  })
+
   it('既没登录也没 Miau Key:入队前就拒,不先传几百 MB 再报', async () => {
     poolTokenForTest.value = null
     const svc = await import('../index')

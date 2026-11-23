@@ -15,6 +15,10 @@ import {
 } from '../store'
 import { resetWorkbenchDbForTest } from '../WorkbenchDb'
 import { useQuotaStore } from '../../../stores/useQuotaStore'
+import {
+  __resetEffectiveBillingForTests,
+  setCustomGatewaySelected,
+} from '../../../stores/effectiveBilling'
 
 function mockApi() {
   const submit = vi.fn(async () => ({ success: true, taskId: 'task_final' }))
@@ -113,6 +117,22 @@ describe('finalizeDrafts 选分辨率', () => {
     expect(res.started).toEqual([])
     expect(res.skipped[0].reason).toContain('平台余额')
     expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('选中「自定义网关」时偏好仍是平台余额也被拦:成片不能花到用户自己的地址上', async () => {
+    const { submit } = mockApi()
+    const id = addSucceededDraftCard()
+    // 偏好保持 beforeEach 的 platform;只是设置页选了自定义网关。
+    setCustomGatewaySelected(true)
+    try {
+      const res = await useVideoWorkbenchStore.getState().finalizeDrafts([id], '1080p')
+
+      expect(res.started).toEqual([])
+      expect(res.skipped[0].reason).toContain('平台余额')
+      expect(submit).not.toHaveBeenCalled()
+    } finally {
+      __resetEffectiveBillingForTests()
+    }
   })
 })
 
