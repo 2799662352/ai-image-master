@@ -7,6 +7,7 @@ import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
 import { CodexProviderManager } from './settings/CodexProviderManager'
 import { AccountSection } from './settings/AccountSection'
+import { CustomGatewayUrlField } from './settings/CustomGatewayUrlField'
 import { getAgentApi } from '../utils/agentBridge'
 import {
   CINEMATOGRAPHY_KB_MCP_PROVIDER_ID,
@@ -287,7 +288,7 @@ export default function SettingsPage() {
   const apiKey = useSettingsStore((s) => s.apiKey)
   const visionApiKey = useSettingsStore((s) => s.visionApiKey)
   const codexApiKey = useSettingsStore((s) => s.codexApiKey)
-  const localPort = useSettingsStore((s) => s.localPort)
+  const localUrl = useSettingsStore((s) => s.localUrl)
   const connectionStatus = useSettingsStore((s) => s.connectionStatus)
   const saving = useSettingsStore((s) => s.saving)
   const loadError = useSettingsStore((s) => s.loadError)
@@ -297,7 +298,7 @@ export default function SettingsPage() {
     setApiKey,
     setVisionApiKey,
     setCodexApiKey,
-    setLocalPort,
+    setLocalUrl,
     testConnection,
     saveAll,
     loadFromService,
@@ -382,25 +383,11 @@ export default function SettingsPage() {
           onSelect={(key) => switchSite(key, api)}
         />
         {activeSiteKey === 'local' && (
-          <div className="flex items-center gap-3 mt-3">
-            <span className="text-sm text-zinc-400 whitespace-nowrap">服务端口</span>
-            <input
-              type="number"
-              min={1}
-              max={65535}
-              value={localPort}
-              onChange={(e) => {
-                const v = e.target.value
-                if (/^\d*$/.test(v)) setLocalPort(v, api)
-              }}
-              placeholder="3000"
-              className="w-28 px-3 py-2 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow text-sm"
-              style={{ MozAppearance: 'textfield' } as React.CSSProperties}
-            />
-            <span className="text-xs text-zinc-500">
-              当前: http://127.0.0.1:{localPort || '3000'}
-            </span>
-          </div>
+          <CustomGatewayUrlField
+            value={localUrl}
+            activeUrl={sites.local?.baseURL ?? localUrl}
+            onChange={(raw) => setLocalUrl(raw, api)}
+          />
         )}
       </section>
 

@@ -18,8 +18,8 @@ function createMockApi(overrides: Partial<ApiActions> = {}): ApiActions {
     getStoredVisionApiKey: vi.fn().mockReturnValue(null),
     getCurrentSite: vi.fn().mockReturnValue({ name: 'API易 B站', baseURL: 'https://b.apiyi.com', description: '推荐', authType: 'bearer', isBuiltIn: true }),
     getSiteConfig: vi.fn().mockReturnValue(null),
-    getLocalPort: vi.fn().mockReturnValue('3000'),
-    setLocalPort: vi.fn(),
+    getLocalUrl: vi.fn().mockReturnValue('http://127.0.0.1:3000'),
+    setLocalUrl: vi.fn().mockReturnValue({ ok: true, url: 'http://127.0.0.1:3000', insecurePublicHttp: false }),
     understandImage: vi.fn(),
     currentSiteKey: 'b-apiyi',
     ...overrides,
@@ -34,9 +34,47 @@ describe('useSettingsStore', () => {
       apiKey: '',
       visionApiKey: '',
       codexApiKey: '',
+      localUrl: '',
       connectionStatus: 'idle',
       saving: false,
       loadError: null,
+    })
+  })
+
+  describe('自定义网关地址', () => {
+    it('loadFromService 把当前生效的网关地址读进输入框', async () => {
+      const api = createMockApi({ getLocalUrl: vi.fn().mockReturnValue('https://gw.example.com') })
+
+      await useSettingsStore.getState().loadFromService(api)
+
+      expect(useSettingsStore.getState().localUrl).toBe('https://gw.example.com')
+    })
+
+    it('setLocalUrl 把输入原文交给服务,输入框保留原文,站点表按服务返回的刷新', () => {
+      const refreshedSites = {
+        local: { name: '自定义网关', baseURL: 'https://gw.example.com', description: '', authType: 'bearer' as const },
+      }
+      const api = createMockApi({
+        getAllSites: vi.fn().mockReturnValue(refreshedSites),
+        setLocalUrl: vi.fn().mockReturnValue({ ok: true, url: 'https://gw.example.com', insecurePublicHttp: false }),
+      })
+
+      useSettingsStore.getState().setLocalUrl('gw.example.com', api)
+
+      expect(api.setLocalUrl).toHaveBeenCalledWith('gw.example.com')
+      const state = useSettingsStore.getState()
+      expect(state.localUrl).toBe('gw.example.com')
+      expect(state.sites).toBe(refreshedSites)
+    })
+
+    it('输入不合法时,输入框照样保留敲到一半的原文(服务端不落盘、不改生效地址)', () => {
+      const api = createMockApi({
+        setLocalUrl: vi.fn().mockReturnValue({ ok: false, reason: 'invalid' }),
+      })
+
+      useSettingsStore.getState().setLocalUrl('http://', api)
+
+      expect(useSettingsStore.getState().localUrl).toBe('http://')
     })
   })
 
