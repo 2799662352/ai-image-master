@@ -1,6 +1,7 @@
-// src/renderer/src/services/api/customGatewayUrl.ts
+// src/shared/customGatewayUrl.ts
 /**
- * 「自定义网关」(站点键 `local`)的地址处理。
+ * 「自定义网关」(站点键 `local`)的地址处理。渲染端(设置页 / ApiService)与主进程
+ * (出网改写、Codex 通道地址)共用这一份,两边对「什么算一个合法地址」不可能各说各话。
  *
  * 这个站点原来叫「本地服务」,只让填端口、地址写死 `http://127.0.0.1:<端口>`。
  * 现在改成直接填地址:本机的 new-api(`http://127.0.0.1:3000`)、局域网里的机器、

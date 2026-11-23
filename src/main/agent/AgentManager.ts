@@ -36,6 +36,11 @@ import {
 } from './gatewayModelRouting'
 import { getActivePoolToken } from '../services/auth/gatewayToken'
 import {
+  applyCustomGatewayState,
+  isCustomGatewayActive,
+  type ApplyCustomGatewayResult,
+} from '../services/customGateway'
+import {
   ProviderChannelController,
   ProviderChannelRecoveryError,
 } from './ProviderChannelController'
@@ -1083,6 +1088,19 @@ export class AgentManager {
     return next
   }
 
+  /**
+   * 设置页「自定义网关」的开关 / 地址变了(渲染端推来,见 `services/customGateway.ts`)。
+   *
+   * 视频 / 智能擦除那几条通道每次请求都现取状态,不用管;**Codex 的 Miau 通道地址是拉起进程时
+   * 烘进去的**(`withDevGatewayOverride`),所以状态一变就要重启一次。重启不等 —— IPC 要立刻回,
+   * 重启链自己吞并报警。
+   */
+  setCustomGateway(raw: unknown): ApplyCustomGatewayResult {
+    const result = applyCustomGatewayState(raw)
+    if (result.ok && result.changed) void this.queueBackendRestart('custom gateway change')
+    return result
+  }
+
   private enqueueProviderStoreOperation<T>(operation: () => Promise<T>): Promise<T> {
     return this.enqueueLifecycleOperation(operation)
   }
@@ -1374,7 +1392,14 @@ export class AgentManager {
     // copy fresh; it is consumed at the next codex (re)start via
     // getUnderstandProvider.
     if (id === QWEN_UNDERSTAND_PROVIDER_ID) {
+      const changed = next !== this.miauToken
       this.miauToken = next
+      // 平时这把 Key 只在下一次拉起 codex 时才被读到;但「自定义网关」生效期间它就是用户填在
+      // 那个地址上的凭据,换了而不重启会让对话继续拿旧 Key(或空 Key)打新地址。
+      // 同样要带变更闸:渲染端启动 / 保存时会幂等地再推一次,不能每次都重启。
+      if (changed && isCustomGatewayActive()) {
+        void this.queueBackendRestart('miau key change (custom gateway)')
+      }
     }
     // The renderer mirrors the 设置 → 运镜知识库 key here (id='cinematography-kb')
     // so the bundled cinematography-kb-mcp server gets its `DASHSCOPE_API_KEY`
@@ -2247,7 +2272,14 @@ export class AgentManager {
     // 后者时代理会在出网前换成影子 token,自填 Key 用不上。不把平台余额算进来的
     // 话,登录了的用户会看到千问 / DeepSeek Miau 被标灰、提示去填一枚根本不需要
     // 的 Key(2026-09-01 真机撞到)。
-    if (credentialId === QWEN_UNDERSTAND_PROVIDER_ID && getActivePoolToken()) return true
+    // 「自定义网关」生效期间平台池不算数:钱包只有自填 Key 一种(见 `services/customGateway.ts`)。
+    if (
+      credentialId === QWEN_UNDERSTAND_PROVIDER_ID
+      && !isCustomGatewayActive()
+      && getActivePoolToken()
+    ) {
+      return true
+    }
     const persisted = this.providerStore.loadSync()
     const activeCredentialId = credentialIdForProvider(
       this.activeGatewayId,
@@ -3156,7 +3188,9 @@ export class AgentManager {
       return this.codexApiKey ? null : EMPTY_KEY_ERROR
     }
     if (envKey === MIAU_ENV_KEY) {
-      return this.miauToken || getActivePoolToken() ? null : MIAU_CREDENTIAL_ERROR
+      return this.miauToken || (!isCustomGatewayActive() && getActivePoolToken())
+        ? null
+        : MIAU_CREDENTIAL_ERROR
     }
     return this.codexApiKey ? null : EMPTY_KEY_ERROR
   }

@@ -56,6 +56,12 @@ import { replaceAssetRefsWithPublicUrls } from './assetPublicUrl'
 import { gatewayPlatformHeaders, getActivePool, getActivePoolToken } from '../auth/gatewayToken'
 import { resolveGatewayOrigin } from '../auth/gatewayHeaderInjector'
 import { notePlatformSpend } from '../auth/platformSpend'
+import {
+  createCustomGatewayFetch,
+  isCustomGatewayActive,
+  platformTokenUnlessCustom,
+  withCustomGatewayBilling,
+} from '../customGateway'
 import { ensureAsset, lookupAssetBinding, lookupAssetSourceUrl } from '../portraitLibrary/ensureAsset'
 // 软删:只在后台隐藏,不释放配额,已经引用它的 `asset://` 仍解析得到(见其注释)。
 // 正因为是软删,才能在「开关关着」时既登记又不让它出现在库里。
@@ -101,15 +107,44 @@ const FALLBACK_THREAD_ID = 'seedance'
  * `gatewayHeaderInjector`、以及主进程这份 activePool 与渲染层状态之间的已知缺口。
  */
 const gatewayTokenSources: SeedanceGatewayTokenSources = {
-  platformToken: getActivePoolToken,
+  // 「自定义网关」生效期间当作没有平台 token:平台的钱不能发往用户填的地址
+  // (见 `customGateway.ts` 的第 1 条)。读不到时既有逻辑落到自填 Key 那一支。
+  platformToken: platformTokenUnlessCustom(getActivePoolToken),
   ownKey: getWan3ApiKey,
 }
 
 /**
+ * **平台专用 transport** 取 token 用的那份来源 —— 不套「自定义网关」那层。
+ *
+ * 它服务的是已经按平台余额建好的任务(轮询 / 取消 / 重取地址),那些任务活在 Miau 官方网关上,
+ * 轮询必须回到官方域名、用当初的影子 token。这条 transport 的 fetch 也**不**挂出网改写,
+ * 所以它永远只会打默认域名 —— 凭据与去向同属平台一侧,不会交叉。
+ */
+const platformPinnedTokenSources: SeedanceGatewayTokenSources = {
+  platformToken: getActivePoolToken,
+  ownKey: getWan3ApiKey,
+}
+
+const resolveVideoBillingBase = createVideoBillingResolver(gatewayTokenSources)
+
+/**
  * 这一次的钱从哪出。路由与取 token 共用这一个结论,理由见
  * `billing.ts` 的 `createVideoBillingResolver`。
+ *
+ * 「自定义网关」生效期间**新提交一律走自填 Key**,不论卡片 / 载荷上带的是 platform:
+ * 平台钱包只在官方网关上有效,带去用户的地址只会 401 或更糟(见 `customGateway.ts`)。
+ * 已经建好的任务不经这里 —— 它们按任务上钉死的 `billing` 取 transport。
  */
-const resolveVideoBilling = createVideoBillingResolver(gatewayTokenSources)
+const resolveVideoBilling = withCustomGatewayBilling<VideoBillingSource>(
+  resolveVideoBillingBase,
+  'own-key',
+)
+
+/** 视频类客户端的出网:自定义网关生效时把发往官方域名的请求改发到用户的地址。 */
+const customGatewayAwareFetch = createCustomGatewayFetch(
+  (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+  resolveGatewayOrigin,
+)
 
 /** 从扩展名 / mime / data: 头推断素材 kind(供 add_to_portrait_library 自动判断)。 */
 function inferAssetKind(src: string, explicit?: string): 'image' | 'video' | 'audio' {
@@ -534,7 +569,7 @@ export function initSeedanceRuntime(opts: {
   // 传真实的 `resolveVideoBilling`,而不是那边写死的 `() => 'platform'`。
   const wan3Transport = createWan3Transport(
     createWan3Client({
-      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      fetchImpl: customGatewayAwareFetch,
       // 🚨 **必须与出网注入器共用同一个 origin 解析**,理由与下面那个网关客户端
       // 逐字相同 —— 而这里曾经漏了,代价是 2026-08-31 的一次真机故障:
       //
@@ -568,6 +603,7 @@ export function initSeedanceRuntime(opts: {
    */
   const seedanceGatewayTransport = createSeedanceGatewayTransport(
     createSeedanceGatewayClient({
+      // 平台专用:**不**挂「自定义网关」改写 —— 它永远只打官方域名(见 `platformPinnedTokenSources`)。
       fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
       // 与出网注入器**共用同一个** origin 解析(开发构建才认 `CATIMATION_GATEWAY_ORIGIN`,
       // 打包产物读都不读 —— 理由见 `gatewayHeaderInjector.resolveGatewayOrigin`)。
@@ -584,7 +620,7 @@ export function initSeedanceRuntime(opts: {
       onBilledExchange: notePlatformSpend,
     }),
     createSeedanceGatewayTokenResolver(
-      gatewayTokenSources,
+      platformPinnedTokenSources,
       () => 'platform',
     ),
   )
@@ -602,7 +638,8 @@ export function initSeedanceRuntime(opts: {
    */
   const seedanceOwnKeyTransport = createSeedanceGatewayTransport(
     createSeedanceGatewayClient({
-      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      // 自定义网关生效时,这条路改打用户的地址(凭据本来就是用户自己的 Key)。
+      fetchImpl: customGatewayAwareFetch,
       baseUrl: `${resolveGatewayOrigin()}/v1`,
     }),
     createSeedanceGatewayTokenResolver(
@@ -620,7 +657,7 @@ export function initSeedanceRuntime(opts: {
    */
   const depthTransport = createDepthTransport(
     createMediaKitClient({
-      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      fetchImpl: customGatewayAwareFetch,
       baseUrl: `${resolveGatewayOrigin()}/v1`,
       onBilledExchange: notePlatformSpend,
     }),
@@ -635,7 +672,7 @@ export function initSeedanceRuntime(opts: {
    */
   const klingTransport = createKlingTransport(
     createSeedanceGatewayClient({
-      fetchImpl: (url, init) => net.fetch(url, init as Parameters<typeof net.fetch>[1]),
+      fetchImpl: customGatewayAwareFetch,
       baseUrl: `${resolveGatewayOrigin()}/v1`,
       onBilledExchange: notePlatformSpend,
     }),
@@ -822,7 +859,11 @@ export function initSeedanceRuntime(opts: {
     // 一个窗口:渲染层已是自填 Key,主进程仍握着 activePool。此刻去猜,猜出来的
     // 是平台余额,用户在不知情的情况下花掉组织的钱。
     // (完整论证见 seedanceGateway/credentials.ts 的「已知缺口」。)
-    const billing = coerceVideoBillingSource(payload?.billing)
+    //
+    // 例外:设置页选中了「自定义网关」时,一律按自填 Key 提交,不看渲染层带来的意向。
+    // 平台余额的钱包、影子 token 与归属头只对官方网关有效,不能花到用户自己的地址上;
+    // 渲染层本来就按同一口径取有效值(`stores/effectiveBilling.ts`),这里是第二道。
+    const billing = isCustomGatewayActive() ? ('own-key' as const) : coerceVideoBillingSource(payload?.billing)
     const asStringArray = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
     const seedRaw = Number(payload?.seed)

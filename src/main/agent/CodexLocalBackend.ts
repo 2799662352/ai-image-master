@@ -25,6 +25,7 @@ import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
 import { resolveGatewayOrigin } from '../services/auth/gatewayHeaderInjector'
 import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gatewayToken'
 import { notePlatformSpend } from '../services/auth/platformSpend'
+import { customGatewayBaseUrl, isCustomGatewayActive } from '../services/customGateway'
 
 /**
  * 让 agent 聊天也能花平台余额。
@@ -54,12 +55,23 @@ import { notePlatformSpend } from '../services/auth/platformSpend'
  *
  * 打包产物原样返回:`resolveMiauBaseUrl` 自己有那道闸,理由见它的注释。
  */
-function withDevGatewayOverride(
+export function withDevGatewayOverride(
   providers: readonly CodexProviderConfig[],
 ): CodexProviderConfig[] {
   // `app` 在测试的 electron mock 里是 undefined。缺省按**已打包**算 —— 证不出这是
   // 开发构建,就不该放行「改凭据去向」这种操作;顺带让测试不受本机是否设了那个
   // 环境变量影响。
+  //
+  // 用户在设置页填了「自定义网关」时,Miau 通道整条改走他的地址(凭据 = 他自己的 Key,
+  // 由渲染端把 `local` 站点的 Key 同步进 `qwen` 槽位)。**优先于**开发期覆盖:用户显式
+  // 的选择比环境变量更具体。平台影子 token 不会跟过去 —— `gatewayPlatformHeadersFor` 只认
+  // 官方网关的 origin,而这个地址按定义不是它(见 `services/customGateway.ts`)。
+  const customBaseUrl = customGatewayBaseUrl()
+  if (customBaseUrl) {
+    return providers.map((provider) =>
+      provider.baseUrl === MIAU_BASE_URL ? { ...provider, baseUrl: customBaseUrl } : { ...provider },
+    )
+  }
   const resolved = resolveMiauBaseUrl(app?.isPackaged ?? true)
   if (resolved === MIAU_BASE_URL) return [...providers]
   return providers.map((provider) =>
@@ -67,7 +79,9 @@ function withDevGatewayOverride(
   )
 }
 
-function gatewayPlatformHeadersFor(target: URL): Record<string, string> | null {
+export function gatewayPlatformHeadersFor(target: URL): Record<string, string> | null {
+  // 自定义网关生效 = 用户明确选了「用自己的 Key」:连目标恰好填成官方域名的情形也不贴平台头。
+  if (isCustomGatewayActive()) return null
   if (target.origin !== resolveGatewayOrigin()) return null
   const token = getActivePoolToken()
   if (!token) return null

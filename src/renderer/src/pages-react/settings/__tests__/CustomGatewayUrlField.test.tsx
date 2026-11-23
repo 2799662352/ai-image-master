@@ -17,6 +17,14 @@ describe('CustomGatewayUrlField', () => {
     expect(screen.getByText(/当前:/).textContent).toContain('https://gw.example.com')
   })
 
+  it('写明选中后哪些功能发往这个地址、哪些只在官方网关上有', () => {
+    render(<CustomGatewayUrlField value="" activeUrl="http://127.0.0.1:3000" onChange={() => {}} />)
+
+    const note = screen.getByTestId('custom-gateway-scope-note').textContent ?? ''
+    expect(note).toMatch(/出图.*对话.*视频.*Codex/)
+    expect(note).toMatch(/平台余额.*人像库.*充值.*不适用/)
+  })
+
   it('敲到一半不合法时说清原因,并写明仍在用哪个地址', () => {
     render(
       <CustomGatewayUrlField value="http://" activeUrl="https://still-in-use.example.com" onChange={() => {}} />,

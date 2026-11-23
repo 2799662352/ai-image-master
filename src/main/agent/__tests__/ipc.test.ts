@@ -57,6 +57,7 @@ interface FakeManager {
   getProvidersSnapshot: ReturnType<typeof vi.fn>
   setActiveProvider: ReturnType<typeof vi.fn>
   setProviderApiKey: ReturnType<typeof vi.fn>
+  setCustomGateway: ReturnType<typeof vi.fn>
   addCustomProvider: ReturnType<typeof vi.fn>
   updateCustomProvider: ReturnType<typeof vi.fn>
   removeCustomProvider: ReturnType<typeof vi.fn>
@@ -99,6 +100,11 @@ function makeManager(): FakeManager {
       ok: true,
       activeId: 'apiyi',
       providerGeneration: 3,
+    }),
+    setCustomGateway: vi.fn().mockReturnValue({
+      ok: true,
+      changed: true,
+      state: { active: true, url: 'https://gw.example.com' },
     }),
     addCustomProvider: vi.fn().mockResolvedValue({
       id: 'custom-1',
@@ -275,6 +281,7 @@ describe('registerAgentIpc thread management handlers', () => {
     // canvas edit-queue handler used to throw "second handler" on dev reload
     // because it was missing from the cleanup list.
     expect(get('canvas:edit-queue-status')).toBeTypeOf('function')
+    expect(get('agent:set-custom-gateway')).toBeTypeOf('function')
     // `ipcMain.on` listeners must be torn down on re-register too, or each dev
     // reload stacks another listener (double tool-response / double enqueue).
     expect(listenerCount('agent:tool-response')).toBe(1)
@@ -447,6 +454,29 @@ describe('registerAgentIpc thread management handlers', () => {
     // Non-string key gets coerced to '' so we never crash on undefined.
     await handler!({}, 'apiyi', undefined)
     expect(manager.setProviderApiKey).toHaveBeenLastCalledWith('apiyi', '')
+  })
+
+  it('agent:set-custom-gateway 把渲染端推来的状态原样交给管理器,并带回结果', async () => {
+    const handler = get('agent:set-custom-gateway')
+    expect(handler).toBeTypeOf('function')
+
+    const state = { active: true, url: 'https://gw.example.com' }
+    const result = await handler!({}, state)
+
+    expect(manager.setCustomGateway).toHaveBeenCalledWith(state)
+    expect(result).toMatchObject({ ok: true, changed: true })
+  })
+
+  it('agent:set-custom-gateway 管理器抛错时回 {ok:false,error},不让 IPC 调用方收到异常', async () => {
+    manager.setCustomGateway.mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const handler = get('agent:set-custom-gateway')
+
+    const result = (await handler!({}, { active: true, url: 'https://x' })) as { ok: boolean; error?: string }
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/boom/)
   })
 
   it('agent:add-custom-provider validates required fields', async () => {

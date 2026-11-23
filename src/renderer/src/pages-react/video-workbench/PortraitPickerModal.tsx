@@ -13,6 +13,7 @@ import {
   OWN_KEY_NO_PORTRAIT_LIBRARY_HINT,
   type PortraitAssetItem,
 } from '../../features/portrait-library/portraitLibraryShared'
+import { useEffectiveBillingSource } from '../../stores/effectiveBilling'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { useToastStore } from '../../stores/useToastStore'
 import {
@@ -76,7 +77,7 @@ interface PortraitPickerModalProps {
 export function PortraitPickerModal({ open, onClose, onConfirm }: PortraitPickerModalProps) {
   // 平台人像库按计费池分组,一个池下登记的素材在另一个池下读不出来。
   const addToast = useToastStore((s) => s.addToast)
-  const billingSource = useQuotaStore((s) => s.billingSource)
+  const billingSource = useEffectiveBillingSource()
   const selectedPool = useQuotaStore((s) => s.selectedPool)
   const platform = billingSource === 'platform'
   const scope = useMemo(

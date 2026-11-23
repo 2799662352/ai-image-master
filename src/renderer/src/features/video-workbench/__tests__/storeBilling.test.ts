@@ -13,6 +13,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetWorkbenchStoreForTest, useVideoWorkbenchStore } from '../store'
 import { resetWorkbenchDbForTest } from '../WorkbenchDb'
 import { useQuotaStore } from '../../../stores/useQuotaStore'
+import {
+  __resetEffectiveBillingForTests,
+  setCustomGatewaySelected,
+} from '../../../stores/effectiveBilling'
 
 function mockApi() {
   const submit = vi.fn(async () => ({ success: true, taskId: 'task-1' }))
@@ -27,6 +31,7 @@ beforeEach(() => {
   resetWorkbenchDbForTest()
   delete (window as any).electronAPI
   useQuotaStore.setState({ billingSource: 'own-key' })
+  __resetEffectiveBillingForTests()
 })
 
 describe('提交载荷带上渲染层的计费来源', () => {
@@ -121,5 +126,62 @@ describe('卡片记住这一轮用的计费模式', () => {
     expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)?.billing).toBe(
       'own-key',
     )
+  })
+})
+
+// 设置页选中「自定义网关」= 用户自己的地址 + 自己的 Key。平台余额的钱包、影子 token 与归属头
+// 只对官方网关有效,工作台绝不能在这时还把「平台余额」当成这一轮的钱包交给主进程。
+// 偏好本身(useQuotaStore.billingSource)不被改写:切回官方网关后用户的选择还在。
+describe('选中「自定义网关」时一律按自填 Key 提交(偏好是平台余额也一样)', () => {
+  it('提交载荷与卡片记下的都是 own-key,偏好不被改写', async () => {
+    const { submit } = mockApi()
+    useQuotaStore.setState({ billingSource: 'platform' })
+    setCustomGatewaySelected(true)
+    const [id] = useVideoWorkbenchStore.getState().addCards([{ prompt: '一只橘猫' }])
+
+    await useVideoWorkbenchStore.getState().startCards([id])
+
+    expect(submit.mock.calls[0][0]).toMatchObject({ billing: 'own-key' })
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)?.billing).toBe(
+      'own-key',
+    )
+    expect(useQuotaStore.getState().billingSource).toBe('platform')
+  })
+
+  it('样片只在平台余额下出:选中后 2.5 的样片开关不生效(对照:不选则出样片)', async () => {
+    const { submit } = mockApi()
+    useQuotaStore.setState({ billingSource: 'platform' })
+    const draftCard = { prompt: '一只橘猫', model: '2.5' as const, draft: true }
+
+    const [control] = useVideoWorkbenchStore.getState().addCards([draftCard])
+    await useVideoWorkbenchStore.getState().startCards([control])
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === control)?.draftRun).toBe(true)
+
+    submit.mockClear()
+    setCustomGatewaySelected(true)
+    const [id] = useVideoWorkbenchStore.getState().addCards([draftCard])
+    await useVideoWorkbenchStore.getState().startCards([id])
+
+    expect(submit.mock.calls[0][0]).toMatchObject({ billing: 'own-key' })
+    expect(useVideoWorkbenchStore.getState().cards.find((c) => c.id === id)?.draftRun).toBeUndefined()
+  })
+
+  it('分辨率闸按自填 Key 的口径:2.5 的 1080p 在渲染端就被拦下(对照:不选则放行)', async () => {
+    const { submit } = mockApi()
+    useQuotaStore.setState({ billingSource: 'platform' })
+    const hd = { prompt: '一只橘猫', model: '2.5' as const, resolution: '1080p' as const }
+
+    const [control] = useVideoWorkbenchStore.getState().addCards([hd])
+    const ok = await useVideoWorkbenchStore.getState().startCards([control])
+    expect(ok.started).toEqual([control])
+
+    submit.mockClear()
+    setCustomGatewaySelected(true)
+    const [id] = useVideoWorkbenchStore.getState().addCards([hd])
+    const blocked = await useVideoWorkbenchStore.getState().startCards([id])
+
+    expect(blocked.started).toEqual([])
+    expect(blocked.skipped[0].reason).toContain('自填 Key')
+    expect(submit).not.toHaveBeenCalled()
   })
 })

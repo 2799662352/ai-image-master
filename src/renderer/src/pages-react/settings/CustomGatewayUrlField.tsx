@@ -1,4 +1,4 @@
-import { DEFAULT_CUSTOM_GATEWAY_URL, GATEWAY_URL_FAILURE_MESSAGE, normalizeGatewayUrl } from '../../services/api/customGatewayUrl'
+import { DEFAULT_CUSTOM_GATEWAY_URL, GATEWAY_URL_FAILURE_MESSAGE, normalizeGatewayUrl } from '../../../../shared/customGatewayUrl'
 
 interface CustomGatewayUrlFieldProps {
   /** 输入框里的原文(可能敲到一半)。 */
@@ -61,6 +61,10 @@ export function CustomGatewayUrlField({ value, activeUrl, onChange }: CustomGate
 
       <p className="text-xs text-zinc-500">
         本地或公网部署的 New API 网关都可以填,不用单独设置端口。可以省略 http(s):// 和结尾的 /v1。
+      </p>
+      <p className="text-xs text-zinc-500" data-testid="custom-gateway-scope-note">
+        选中本站点后,出图、对话理解、视频和 Codex 的 Miau 通道都发往这个地址,并使用你在下方填的 API Key;
+        平台余额、人像库、充值只在官方网关上可用,这里不适用。
       </p>
     </div>
   )

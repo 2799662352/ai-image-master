@@ -347,6 +347,11 @@ export interface AgentApi {
   }>
   setActiveProvider: (id: string) => Promise<CodexProviderMutationResponse>
   setProviderApiKey: (id: string, key: string) => Promise<CodexProviderMutationResponse>
+  /** 设置页「自定义网关」的开关 / 地址;主进程重新校验、落盘,变了就重启 Codex。 */
+  setCustomGateway: (state: {
+    active: boolean
+    url: string
+  }) => Promise<{ ok: boolean; error?: string; changed?: boolean }>
   addCustomProvider: (
     input: CodexCustomProviderInput,
   ) => Promise<{ ok: boolean; error?: string; provider?: CodexProviderRecord }>

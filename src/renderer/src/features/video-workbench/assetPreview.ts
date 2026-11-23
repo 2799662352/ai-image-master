@@ -23,6 +23,7 @@
 
 import type { PortraitAsset, PortraitLibraryApi, PortraitScopeRef } from '../../../../types/portraitApi'
 import type { VideoWorkbenchMaterial } from '../../../../types/videoWorkbench'
+import { getEffectiveBillingSource } from '../../stores/effectiveBilling'
 import { useQuotaStore } from '../../stores/useQuotaStore'
 import { portraitCardsFromPlatform } from '../portrait-library/platformPortraitCard'
 
@@ -61,8 +62,9 @@ type Library = { key: string; scope: PortraitScopeRef }
  * 或平台余额但还没选池,都返回 null —— 没有地方可查,调用方按「解析不到」处理。
  */
 function currentLibrary(): Library | null {
-  const { billingSource, selectedPool } = useQuotaStore.getState()
-  if (billingSource === 'platform' && selectedPool) {
+  const { selectedPool } = useQuotaStore.getState()
+  // 有效值:选中「自定义网关」时没有平台素材库可查(与视频提交同口径)。
+  if (getEffectiveBillingSource() === 'platform' && selectedPool) {
     const pp = selectedPool.producerProjectId
     return {
       key: `platform:${selectedPool.projectId}:${pp ?? ''}`,

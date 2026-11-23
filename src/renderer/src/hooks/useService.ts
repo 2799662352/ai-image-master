@@ -1,7 +1,7 @@
 import { useSyncExternalStore, useCallback } from 'react'
 import { ServiceRegistry, SERVICE_KEYS } from '../services/ServiceBridge'
 import type { ApiService, ApiSite, GenerateImageParams, GenerateResult, VisionParams, VisionResult } from '../services/api'
-import type { GatewayUrlResult } from '../services/api/customGatewayUrl'
+import type { GatewayUrlResult } from '../../../shared/customGatewayUrl'
 import type { StorageBridge } from '../services/storage'
 import type { I18nService } from '../services/i18n'
 import type { R2StorageService } from '../services/r2-storage'

@@ -68,7 +68,7 @@ import { partitionTrash, pruneTrash, softenRemovals, type WorkbenchTrashEntry } 
 import { cancelPendingPersist, persistTimers } from './persistQueue'
 import { assignDefaultProject, defaultProject, getWorkbenchDb } from './WorkbenchDb'
 import { useToastStore } from '../../stores/useToastStore'
-import { useQuotaStore } from '../../stores/useQuotaStore'
+import { getEffectiveBillingSource } from '../../stores/effectiveBilling'
 import {
   type MaterialKind,
   buildCard,
@@ -2429,7 +2429,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     // 体检期间连点两次不会双提交:await 之后重新取目标、重新过 canStart 门,先到的那次
     // 把卡落成 preparing,后到的会被「任务进行中」挡下。
     const uploadCheckIds = targets
-      .filter((c) => canStart(c, useQuotaStore.getState().billingSource).ok)
+      .filter((c) => canStart(c, getEffectiveBillingSource()).ok)
       .map((c) => c.id)
     if (collectUploadEntries(targets.filter((c) => uploadCheckIds.includes(c.id))).length > 0) {
       await verifyUploadsBeforeSubmit(uploadCheckIds)
@@ -2451,7 +2451,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
       }
       // 带上计费来源:2.5 的 1080p / 4K 只在平台余额下开放,选了又切回自填 Key 要在这里说清楚,
       // 别等素材中转完才被主进程拒。
-      const gate = canStart(card, useQuotaStore.getState().billingSource)
+      const gate = canStart(card, getEffectiveBillingSource())
       if (!gate.ok) {
         // 整页全量启动时 draft 空卡静默跳过;显式指名(id / 选中)才报原因
         if (scope || gate.reason !== '提示词为空') {
@@ -2463,7 +2463,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
       // 4K 闸:这一轮真正发出去的是 4k,就必须有用户在弹窗里走完两步的标记。
       // 放在 canStart 之后(别的原因优先报)、任何状态改动之前 —— 被拦的卡原样不动,
       // 不留一张假的 preparing;样片固定 480p,不算 4K。
-      const sendsDraft = effectiveDraft(card) && useQuotaStore.getState().billingSource === 'platform'
+      const sendsDraft = effectiveDraft(card) && getEffectiveBillingSource() === 'platform'
       if (!startOpts?.uhdConfirmed && (sendsDraft ? submitResolution(card) : card.resolution) === '4k') {
         result.skipped.push({ cardId: card.id, reason: UHD_CONFIRM_REASON, code: UHD_CONFIRM_REQUIRED })
         continue
@@ -2477,7 +2477,10 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
       // 存在一个窗口 —— 渲染层已经是自填 Key,主进程仍握着 activePool。此刻让
       // 主进程猜,猜出来的是平台余额,用户在不知情的情况下花掉组织的钱。
       // 完整论证见 seedanceGateway/credentials.ts 的「已知缺口」。
-      const billing = useQuotaStore.getState().billingSource
+      //
+      // 取**有效值**:选中设置页「自定义网关」时一律是自填 Key —— 平台钱包只在官方网关上有效,
+      // 不能花到用户自己的地址上(主进程那边另有一道同样的兜底,见 `video-workbench:submit`)。
+      const billing = getEffectiveBillingSource()
       let submitted: VideoWorkbenchCard | null = null
       set((state) => ({
         cards: state.cards.map((c) => {
@@ -2579,7 +2582,7 @@ export const useVideoWorkbenchStore = create<VideoWorkbenchState>()((set, get, a
     }
     // 同 startCards:提交那一刻现读,主进程不猜。成片必须与样片同一个计费池 ——
     // 网关按「本人 + 已成功」查样片,换了池就查不到。
-    const billing = useQuotaStore.getState().billingSource
+    const billing = getEffectiveBillingSource()
     const submissions: Array<Promise<void>> = []
     for (const id of ids) {
       const card = get().cards.find((c) => c.id === id)
