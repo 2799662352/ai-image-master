@@ -1,6 +1,7 @@
 import { useSyncExternalStore, useCallback } from 'react'
 import { ServiceRegistry, SERVICE_KEYS } from '../services/ServiceBridge'
 import type { ApiService, ApiSite, GenerateImageParams, GenerateResult, VisionParams, VisionResult } from '../services/api'
+import type { GatewayUrlResult } from '../services/api/customGatewayUrl'
 import type { StorageBridge } from '../services/storage'
 import type { I18nService } from '../services/i18n'
 import type { R2StorageService } from '../services/r2-storage'
@@ -65,8 +66,8 @@ export interface ApiActions {
   getStoredVisionApiKey(siteKey?: string): string | null
   getCurrentSite(): ApiSite | undefined
   getSiteConfig(key: string): ApiSite | undefined
-  getLocalPort(): string
-  setLocalPort(port: string): void
+  getLocalUrl(): string
+  setLocalUrl(url: string): GatewayUrlResult
   readonly currentSiteKey: string
 }
 
@@ -84,8 +85,8 @@ export function useApi(): ApiActions {
     getStoredVisionApiKey: (k) => api.getStoredVisionApiKey(k),
     getCurrentSite: () => api.getCurrentSite(),
     getSiteConfig: (k) => api.getAllSites()[k],
-    getLocalPort: () => api.getLocalPort(),
-    setLocalPort: (p) => api.setLocalPort(p),
+    getLocalUrl: () => api.getLocalUrl(),
+    setLocalUrl: (u) => api.setLocalUrl(u),
     get currentSiteKey() { return api.currentSiteKey },
   }
 }

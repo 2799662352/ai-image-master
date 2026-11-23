@@ -41,7 +41,8 @@ interface SettingsState {
   visionApiKey: string
   /** API key for the *currently active* Codex provider. Mirrors providers.apiKeys[activeId]. */
   codexApiKey: string
-  localPort: string
+  /** 「自定义网关」输入框里的**原文**(可能是敲到一半的,不一定合法)。生效的地址看 `sites.local.baseURL`。 */
+  localUrl: string
   connectionStatus: 'idle' | 'testing' | 'success' | 'error'
   saving: boolean
   loadError: string | null
@@ -54,7 +55,7 @@ interface SettingsState {
   setApiKey: (key: string) => void
   setVisionApiKey: (key: string) => void
   setCodexApiKey: (key: string) => void
-  setLocalPort: (port: string, api: ApiActions) => void
+  setLocalUrl: (url: string, api: ApiActions) => void
   testConnection: (api: ApiActions) => Promise<boolean>
   saveAll: (api: ApiActions) => Promise<void>
 
@@ -350,7 +351,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   apiKey: '',
   visionApiKey: '',
   codexApiKey: '',
-  localPort: '3000',
+  localUrl: '',
   connectionStatus: 'idle',
   saving: false,
   loadError: null,
@@ -377,7 +378,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         apiKey,
         visionApiKey: visionKey || '',
         codexApiKey: legacyCodexKey,
-        localPort: api.getLocalPort(),
+        localUrl: api.getLocalUrl(),
         connectionStatus: 'idle',
         loadError: null,
       })
@@ -418,10 +419,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     })
   },
 
-  setLocalPort: (port, api) => {
-    api.setLocalPort(port)
-    const sites = api.getAllSites()
-    set({ localPort: port, sites })
+  setLocalUrl: (url, api) => {
+    // 输入框里留的是原文;不合法时 `api.setLocalUrl` 不落盘、不动生效地址,
+    // 所以这里照常刷新站点表即可(生效的地址没变,表也就没变)。
+    api.setLocalUrl(url)
+    set({ localUrl: url, sites: api.getAllSites() })
   },
 
   testConnection: async (api) => {

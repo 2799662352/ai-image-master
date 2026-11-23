@@ -12,6 +12,14 @@ import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 import { ensureLayerSplitInputFormat } from '../../utils/layerSplitInput'
 import type { ModelVendor } from './modelVendors'
 import {
+  CUSTOM_GATEWAY_URL_STORAGE_KEY,
+  DEFAULT_CUSTOM_GATEWAY_URL,
+  LEGACY_LOCAL_PORT_STORAGE_KEY,
+  normalizeGatewayUrl,
+  readStoredCustomGatewayUrl,
+  type GatewayUrlResult,
+} from './customGatewayUrl'
+import {
   GIF_FRAME_LONG_EDGE,
   GPT_IMAGE_26_PARAM_SPECS,
   TENCENT_IMAGE_26_PARAM_SPECS,
@@ -769,10 +777,14 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     authType: 'bearer',
     isBuiltIn: true
   },
+  // 站点键保持 `local`(各处存的 `api_key_local` / `current_site` 都认它),但它已经
+  // 不只是「本机」:地址由用户填,本机、局域网、公网部署的 new-api 网关都行。
+  // 这里的 baseURL 只是缺省值 —— 真正生效的地址由 `ApiService.composeSites()` 按
+  // 用户存的值覆盖,**不要在这个常量上原地改**(它是模块级单例,改了会串给别的实例)。
   'local': {
-    name: '本地服务',
-    baseURL: `http://127.0.0.1:${localStorage.getItem('ai_image_local_port') || '3000'}`,
-    description: '本地部署 API 服务',
+    name: '自定义网关',
+    baseURL: DEFAULT_CUSTOM_GATEWAY_URL,
+    description: '本地或公网 API 服务',
     authType: 'bearer',
     isBuiltIn: true
   }
@@ -2438,6 +2450,8 @@ function orderModelsForDisplay(models: Record<string, ModelConfig>): Record<stri
 export class ApiService {
   private apiSites: Record<string, ApiSite>
   private customSites: Record<string, ApiSite>
+  /** 「自定义网关」(站点键 `local`)当前生效的根地址,已归一化。见 `customGatewayUrl.ts`。 */
+  private customGatewayUrl: string
   private models: Record<string, ModelConfig>
   private currentSite: string
   private currentModel: string
@@ -2446,7 +2460,8 @@ export class ApiService {
 
   constructor() {
     this.customSites = this.loadCustomSites()
-    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+    this.customGatewayUrl = readStoredCustomGatewayUrl(localStorage)
+    this.apiSites = this.composeSites()
     this.models = orderModelsForDisplay({ ...DEFAULT_MODELS })
     this.currentSite = this.getStoredSite() || 'b-apiyi'
     this.currentModel = this.resolveModelKey(this.getStoredModel() || 'gemini-3-pro-image')
@@ -3190,6 +3205,12 @@ export class ApiService {
       const siteUrl = new URL(site.baseURL)
       modelUrl.protocol = siteUrl.protocol
       modelUrl.host = siteUrl.host
+      // 站点地址带反代子路径(`https://x.com/newapi`)时,接口路径要接在它后面。
+      // 只换协议和主机会把子路径吞掉 —— 对话接口(`${baseURL}/v1/…`)能通、出图接口
+      // 却打到根路径 404,同一个网关出现「聊天好的、出图坏的」。
+      // 内置站点的 baseURL 都没有路径(basePath 为空),行为不变。
+      const basePath = siteUrl.pathname.replace(/\/+$/, '')
+      if (basePath) modelUrl.pathname = `${basePath}${modelUrl.pathname}`
       return modelUrl.toString()
     } catch {
       return sourceUrl
@@ -4878,13 +4899,57 @@ export class ApiService {
     return { ...this.apiSites }
   }
 
-  getLocalPort(): string {
-    return localStorage.getItem('ai_image_local_port') || '3000'
+  /**
+   * 站点表 = 内置站点 + 用户自加的站点,其中「自定义网关」的地址换成用户填的那个。
+   *
+   * 所有重建站点表的地方(构造、增删改自定义站点、改网关地址)都走这一个函数。
+   * 原先各处各写一句 `{ ...BUILT_IN_SITES, ...customSites }`,而本地服务的地址是
+   * **原地改**在模块级常量上才没丢 —— 一旦哪处改成「不改常量」,别的重建就会把地址
+   * 悄悄打回缺省值。
+   */
+  private composeSites(): Record<string, ApiSite> {
+    return {
+      ...BUILT_IN_SITES,
+      local: { ...BUILT_IN_SITES['local'], baseURL: this.customGatewayUrl },
+      ...this.customSites,
+    }
   }
 
-  setLocalPort(port: string): void {
-    localStorage.setItem('ai_image_local_port', port)
-    this.apiSites['local'].baseURL = `http://127.0.0.1:${port}`
+  /** 「自定义网关」当前生效的根地址(已归一化)。 */
+  getLocalUrl(): string {
+    return this.customGatewayUrl
+  }
+
+  /**
+   * 设置「自定义网关」地址。
+   *
+   * - 合法:归一化后落盘并立即生效,返回归一化结果;
+   * - 留空:恢复缺省 `http://127.0.0.1:3000`,并清掉存的值(与旧版清空端口框的表现一致);
+   * - 不合法:**不落盘、不动当前生效的地址**,返回失败原因 —— 输入框里敲到一半的
+   *   `http://` 不能把正在用的网关换成一个坏地址。
+   *
+   * 不碰旧版的端口键:回滚到旧版时它还在,旧版照样读得到。
+   */
+  setLocalUrl(raw: string): GatewayUrlResult {
+    if (!raw.trim()) {
+      localStorage.removeItem(CUSTOM_GATEWAY_URL_STORAGE_KEY)
+      // 旧版端口键也会被 `readStoredCustomGatewayUrl` 兜底读到;清空是要回缺省,
+      // 所以这里要让「下次启动」也回缺省 —— 写一份缺省值把兜底挡住。
+      if (localStorage.getItem(LEGACY_LOCAL_PORT_STORAGE_KEY)) {
+        localStorage.setItem(CUSTOM_GATEWAY_URL_STORAGE_KEY, DEFAULT_CUSTOM_GATEWAY_URL)
+      }
+      this.customGatewayUrl = DEFAULT_CUSTOM_GATEWAY_URL
+      this.apiSites = this.composeSites()
+      return { ok: true, url: DEFAULT_CUSTOM_GATEWAY_URL, insecurePublicHttp: false }
+    }
+
+    const result = normalizeGatewayUrl(raw)
+    if (!result.ok) return result
+
+    localStorage.setItem(CUSTOM_GATEWAY_URL_STORAGE_KEY, result.url)
+    this.customGatewayUrl = result.url
+    this.apiSites = this.composeSites()
+    return result
   }
 
   // 存储相关方法
@@ -5263,7 +5328,7 @@ export class ApiService {
 
     this.customSites[key] = newSite
     this.saveCustomSites()
-    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+    this.apiSites = this.composeSites()
     return true
   }
 
@@ -5275,7 +5340,7 @@ export class ApiService {
 
     this.customSites[key] = { ...this.customSites[key], ...config }
     this.saveCustomSites()
-    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+    this.apiSites = this.composeSites()
     return true
   }
 
@@ -5287,7 +5352,7 @@ export class ApiService {
 
     delete this.customSites[key]
     this.saveCustomSites()
-    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+    this.apiSites = this.composeSites()
 
     // 如果删除的是当前站点，切换到默认
     if (this.currentSite === key) {
