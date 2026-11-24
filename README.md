@@ -18,7 +18,7 @@ AI 图片生成桌面应用 — Electron + React + LangChain/LangGraph。
 ![TypeScript](https://img.shields.io/badge/TypeScript-95%25-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F?style=flat-square&logo=electron&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=white)
-![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-orange?style=flat-square)
+![License](https://img.shields.io/badge/License-PolyForm%20Shield%201.0.0-orange?style=flat-square)
 
 ## 核心功能
 
@@ -329,8 +329,8 @@ Pass 4: 一致性校验
 
 ## 许可证
 
-本仓库的代码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)(SPDX:`PolyForm-Noncommercial-1.0.0`):**只允许非商业用途**(个人学习 / 研究 / 兴趣项目、慈善 / 教育 / 公共研究 / 政府机构等,详见 [LICENSE](LICENSE) 的 Noncommercial Purposes / Personal Uses / Noncommercial Organizations 三节);**商业用途需要另行取得版权人的书面授权**。这是「源码可见」协议,不是 OSI 定义的开源协议。
+本仓库的代码采用 [PolyForm Shield License 1.0.0](LICENSE)(SPDX:`PolyForm-Shield-1.0.0`):可以出于任何目的使用、修改和分发,**但不得用它来提供与本软件、或与版权人(及其关联方)用本软件提供的产品相竞争的产品**(详见 [LICENSE](LICENSE) 的 Noncompete / Competition 两节;免费提供的竞品同样算竞争)。这是「源码可见」协议,不是 OSI 定义的开源协议。
 
-- **协议变更说明**:最后一个按 MIT 协议发布的版本是 **v4.9.46**(tag 对应提交 `d695cd85`)。已经按 MIT 取得 v4.9.46 及更早版本代码的人,对那些副本仍可按 MIT 使用,本次变更不追溯;之后新增的提交与版本按 PolyForm Noncommercial 1.0.0 发布。
+- **协议变更说明**:最后一个按 MIT 协议发布的版本是 **v4.9.46**(tag 对应提交 `d695cd85`)。已经按 MIT 取得 v4.9.46 及更早版本代码的人,对那些副本仍可按 MIT 使用,本次变更不追溯;之后新增的提交与版本按 PolyForm Shield 1.0.0 发布。
 - **第三方内容保留各自的协议,不受本协议覆盖**:`resources/plugins/**`、`resources/codex-skills/**` 各技能目录里自带的 `LICENSE` / `NOTICE`(上游有 GPL-3.0、MIT 等);`src/renderer/public/cdn/**`(第三方库原样);`src/renderer/public/pets/**/RIGHTS.md`(Piapro 角色许可,非商业);`src/renderer/src/features/startup-screen/THIRD_PARTY_NOTICE.md`(MIT,版权保留)。
-- 商业授权请联系仓库所有者(GitHub:[2799662352](https://github.com/2799662352))。
+- 不确定自己的用途算不算「竞争」,或需要协议之外的授权,请联系仓库所有者(GitHub:[2799662352](https://github.com/2799662352))。

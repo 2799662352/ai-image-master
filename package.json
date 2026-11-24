@@ -4,7 +4,7 @@
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "PolyForm-Shield-1.0.0",
   "codexCliVersion": "0.170.0",
   "dockerMcpGatewayVersion": "0.42.1",
   "ffmpegBuildTag": "8.1.1",
