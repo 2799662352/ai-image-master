@@ -52,6 +52,51 @@ describe('SessionConfigStore', () => {
     expect(reloaded).toEqual({ memoriesEnabled: false })
   })
 
+  it('persists the xAI server-tool switches and round-trips them', () => {
+    const store = new SessionConfigStore(tmpDir)
+    store.saveSync(fullConfig({ grokXSearch: true, grokCodeInterpreter: true }))
+
+    expect(new SessionConfigStore(tmpDir).loadSync()).toEqual({
+      grokXSearch: true,
+      grokCodeInterpreter: true,
+    })
+  })
+
+  it('persists the remote MCP list and round-trips it', () => {
+    const grokRemoteMcp = [
+      { label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' },
+      { label: 'docs', url: 'https://docs.example.com/mcp' },
+    ]
+    new SessionConfigStore(tmpDir).saveSync(fullConfig({ grokRemoteMcp }))
+
+    expect(new SessionConfigStore(tmpDir).loadSync()).toEqual({ grokRemoteMcp })
+  })
+
+  it('treats a fresh empty remote MCP array as "equal to the default" (no file for a pristine config)', () => {
+    // 数组用 `!==` 比较恒为「不同」:一份内容全是默认值、但数组是新建的配置,
+    // 会让「全是默认就删文件」的承诺失效,干净安装也会凭空多出一个文件。
+    const store = new SessionConfigStore(tmpDir)
+    store.saveSync(fullConfig({ webSearch: 'disabled' }))
+    expect(existsSync(storePath())).toBe(true)
+
+    store.saveSync(fullConfig({ grokRemoteMcp: [] }))
+    expect(existsSync(storePath())).toBe(false)
+  })
+
+  it('rejects a persisted remote MCP entry that is not a public https address (whole file fails safe)', () => {
+    writeFileSync(storePath(), JSON.stringify({
+      version: 1,
+      overrides: {
+        grokXSearch: true,
+        grokRemoteMcp: [{ label: 'sneaky', url: 'https://169.254.169.254/latest' }],
+      },
+    }), 'utf8')
+    const diagnostics: string[] = []
+    const store = new SessionConfigStore(tmpDir, { onDiagnostic: (message) => diagnostics.push(message) })
+    expect(store.loadSync()).toEqual({})
+    expect(diagnostics.length).toBeGreaterThan(0)
+  })
+
   it('never persists writableRoots (workspace-scoped, runtime-owned)', () => {
     const store = new SessionConfigStore(tmpDir)
     store.saveSync(fullConfig({

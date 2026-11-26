@@ -134,6 +134,106 @@ describe('AgentManager session config updates', () => {
     expect(mgr.getSessionStatus().writableRoots).toEqual([path.resolve(root)])
   })
 
+  describe('xAI server tools (Grok x_search / code_interpreter / remote MCP)', () => {
+    it('ships all three off and exposes them in the status snapshot', () => {
+      const status = new AgentManager({ userDataDir: tmpDir }).getSessionStatus()
+      expect(status.grokXSearch).toBe(false)
+      expect(status.grokCodeInterpreter).toBe(false)
+      expect(status.grokRemoteMcp).toEqual([])
+    })
+
+    it('applies the two switches without any confirmation dialog and forwards them to the backend', async () => {
+      const backend = {
+        async start() {},
+        async stop() {},
+        async *send() {},
+        async cancel() {},
+        isHealthy() { return true },
+        setSessionConfig: vi.fn(),
+      } satisfies IAgentBackend & { setSessionConfig: (patch: Partial<CodexSessionConfig>) => void }
+      const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+      const status = await mgr.setSessionConfigPatch({ grokXSearch: true, grokCodeInterpreter: true })
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled()
+      expect(status).toMatchObject({ grokXSearch: true, grokCodeInterpreter: true })
+      expect(backend.setSessionConfig).toHaveBeenCalledWith({ grokXSearch: true, grokCodeInterpreter: true })
+    })
+
+    it('asks for confirmation when a NEW remote MCP address is added, and names it', async () => {
+      const mgr = new AgentManager({ userDataDir: tmpDir })
+      await mgr.setSessionConfigPatch({
+        grokRemoteMcp: [{ label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }],
+      })
+
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1)
+      // 用户确认框里必须看得到「对话会被转发到哪个地址」
+      expect(JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls[0]))
+        .toContain('https://mcp.deepwiki.com/mcp')
+      expect(mgr.getSessionStatus().grokRemoteMcp).toEqual([
+        { label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' },
+      ])
+    })
+
+    it('keeps the old list when the remote MCP confirmation is cancelled', async () => {
+      const mgr = new AgentManager({ userDataDir: tmpDir })
+      vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 1, checkboxChecked: false })
+
+      await expect(mgr.setSessionConfigPatch({
+        grokRemoteMcp: [{ label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }],
+      })).rejects.toThrow('session config change cancelled')
+      expect(mgr.getSessionStatus().grokRemoteMcp).toEqual([])
+    })
+
+    it('does not re-ask for addresses it already knows, nor when the list shrinks or is cleared', async () => {
+      const mgr = new AgentManager({ userDataDir: tmpDir })
+      const a = { label: 'a', url: 'https://a.example.com/mcp' }
+      const b = { label: 'b', url: 'https://b.example.com/mcp' }
+      await mgr.setSessionConfigPatch({ grokRemoteMcp: [a, b] })
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1)
+
+      // 只调顺序 / 只改标签 / 删掉一个 / 清空:都没有新增地址
+      await mgr.setSessionConfigPatch({ grokRemoteMcp: [b, a] })
+      await mgr.setSessionConfigPatch({ grokRemoteMcp: [{ label: 'renamed', url: a.url }] })
+      await mgr.setSessionConfigPatch({ grokRemoteMcp: [] })
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1)
+    })
+
+    it('persists the choices with "save as default" and restores them on the next boot', async () => {
+      const first = new AgentManager({ userDataDir: tmpDir })
+      await first.setSessionConfigPatch(
+        { grokXSearch: true, grokRemoteMcp: [{ label: 'a', url: 'https://a.example.com/mcp' }] },
+        { persist: true },
+      )
+
+      const restored = new AgentManager({ userDataDir: tmpDir }).getSessionStatus()
+      expect(restored.grokXSearch).toBe(true)
+      expect(restored.grokCodeInterpreter).toBe(false)
+      expect(restored.grokRemoteMcp).toEqual([{ label: 'a', url: 'https://a.example.com/mcp' }])
+    })
+
+    it('factory reset turns all three back off', async () => {
+      const mgr = new AgentManager({ userDataDir: tmpDir })
+      await mgr.setSessionConfigPatch({
+        grokXSearch: true,
+        grokCodeInterpreter: true,
+        grokRemoteMcp: [{ label: 'a', url: 'https://a.example.com/mcp' }],
+      }, { persist: true })
+
+      const status = await mgr.resetSessionConfigToFactory()
+      expect(status).toMatchObject({ grokXSearch: false, grokCodeInterpreter: false, grokRemoteMcp: [] })
+    })
+
+    it('rejects an internal address before it can reach the config', async () => {
+      const mgr = new AgentManager({ userDataDir: tmpDir })
+      await expect(mgr.setSessionConfigPatch({
+        grokRemoteMcp: [{ label: 'meta', url: 'https://169.254.169.254/latest' }],
+      })).rejects.toThrow(/remote MCP/i)
+      expect(mgr.getSessionStatus().grokRemoteMcp).toEqual([])
+      expect(dialog.showMessageBox).not.toHaveBeenCalled()
+    })
+  })
+
   it('exposes the batch-2 tuning defaults in the status snapshot', () => {
     const mgr = new AgentManager({ userDataDir: tmpDir })
 

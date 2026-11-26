@@ -21,6 +21,7 @@ import {
   type ProviderCompatibilityProxyGroup,
 } from './responsesCompatibilityProxy'
 import { startKbPlatformRelay, type KbPlatformRelay } from './kbPlatformRelay'
+import { xaiServerToolsFromSessionConfig } from './xaiServerTools'
 import { MIAU_BASE_URL, resolveMiauBaseUrl } from '../../shared/miau'
 import { resolveGatewayOrigin } from '../services/auth/gatewayHeaderInjector'
 import { gatewayPlatformHeaders, getActivePoolToken } from '../services/auth/gatewayToken'
@@ -610,6 +611,9 @@ export class CodexLocalBackend implements IAgentBackend {
       compatibilityProxies = providerConfigs.length > 0
         ? await startProviderCompatibilityProxies(providerConfigs, {
           platformHeaders: gatewayPlatformHeadersFor,
+          // 每条请求现读 `this.sessionConfig`(`setSessionConfig` 会整个换掉它),
+          // 所以设置面板里改 xAI 服务端工具的开关,下一条 Grok 消息就生效。
+          xaiServerTools: () => xaiServerToolsFromSessionConfig(this.sessionConfig),
         })
         : null
       let providerIndex = 0

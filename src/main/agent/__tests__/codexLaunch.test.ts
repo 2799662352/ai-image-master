@@ -664,6 +664,35 @@ describe('buildCodexLaunchArgs', () => {
     expect(resolved.writableRoots).toEqual(['D:/repo/sub'])
   })
 
+  it('resolves the xAI server-tool settings to "all off" and never leaks them into codex launch args', () => {
+    const resolved = resolveCodexSessionConfig()
+    expect(resolved.grokXSearch).toBe(false)
+    expect(resolved.grokCodeInterpreter).toBe(false)
+    expect(resolved.grokRemoteMcp).toEqual([])
+
+    // 这三项只经兼容桥注入请求,不属于 codex 的配置:任何取值都不许出现在 `-c` 参数里,
+    // 否则 codex 会因为不认识的键而拒绝启动 / 把远程 MCP 地址写进它的日志。
+    const args = buildCodexLaunchArgs({
+      listenUrl: 'ws://127.0.0.1:1234',
+      sessionConfig: {
+        grokXSearch: true,
+        grokCodeInterpreter: true,
+        grokRemoteMcp: [{ label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }],
+      },
+    })
+    expect(args.join(' ')).not.toMatch(/x_search|grok|code_interpreter|deepwiki|mcp\.deepwiki/i)
+  })
+
+  it('resolves the remote MCP list without sharing the caller array or its entries', () => {
+    const grokRemoteMcp = [{ label: 'a', url: 'https://a.example.com/mcp' }]
+    const resolved = resolveCodexSessionConfig({ grokRemoteMcp })
+
+    grokRemoteMcp.push({ label: 'later', url: 'https://later.example.com/mcp' })
+    grokRemoteMcp[0].url = 'https://mutated.example.com/mcp'
+
+    expect(resolved.grokRemoteMcp).toEqual([{ label: 'a', url: 'https://a.example.com/mcp' }])
+  })
+
   it('uses appendProviderArgs to attach provider config when supplied', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',

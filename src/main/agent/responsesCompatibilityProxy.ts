@@ -20,6 +20,12 @@ import { notePlatformSpend } from '../services/auth/platformSpend'
 import { inferModelFamily } from './gatewayModelRouting'
 import { rewriteOmniMediaInput } from './omniMediaInput'
 import { evictStaleToolImages } from './staleToolImages'
+import {
+  hasInjectedXaiServerTools,
+  injectXaiServerTools,
+  stripInjectedXaiServerTools,
+  type XaiServerToolsSettings,
+} from './xaiServerTools'
 
 type JsonObject = Record<string, unknown>
 
@@ -58,11 +64,61 @@ export const PROXY_HEADERS_TIMEOUT_MS = 125_000
 /**
  * 桥接代理的可选行为。
  *
- * 只有一项:平台余额组头。**Anthropic 桥不接它** —— 那条路的上游是 Claude,
- * 不在 Miau 网关上,平台凭据发过去既没用也不该发。
+ * - `platformHeaders`:平台余额组头。**Anthropic 桥不接它** —— 那条路的上游是 Claude,
+ *   不在 Miau 网关上,平台凭据发过去既没用也不该发。
+ * - `xaiServerTools`:xAI(Grok)服务端工具的当前设置(`x_search` / `code_interpreter` /
+ *   远程 MCP),**每条请求读一次**,所以设置面板里改了下一条消息就生效。只有 Responses 桥接它,
+ *   且只改 xAI 族的请求,见 `xaiServerTools.ts`。缺省 / 返回 `null` = 逐字节的旧行为。
  */
 export interface CompatibilityProxyOptions {
   platformHeaders?: (target: URL) => Record<string, string> | null
+  xaiServerTools?: () => XaiServerToolsSettings | null
+}
+
+/**
+ * 上游认不得注入的 xAI 服务端工具时(400 / 422),剥掉注入内容重发一次;重发成功后,
+ * 在这个窗口内对同一份设置不再注入,免得每一轮都白白多一次失败往返。
+ * 15 分钟:够覆盖一个工作段,又不至于网关修好后要重启应用才能恢复。
+ */
+export const XAI_SERVER_TOOLS_REJECT_TTL_MS = 15 * 60 * 1000
+
+/** 把「上游拒绝了注入的工具就退回去重发」包在 fetch 外面。 */
+function createXaiServerToolsFallbackFetch(
+  baseFetch: typeof fetch,
+  currentSettings: () => XaiServerToolsSettings | null,
+  rejection: { signature: string | null; until: number },
+): typeof fetch {
+  return async (input, init) => {
+    const response = await baseFetch(input, init)
+    if (response.status !== 400 && response.status !== 422) return response
+    if (typeof init?.body !== 'string' || init.signal?.aborted) return response
+
+    let parsed: JsonObject
+    try {
+      const candidate: unknown = JSON.parse(init.body)
+      if (!isJsonObject(candidate)) return response
+      parsed = candidate
+    } catch {
+      return response
+    }
+    // 请求里没有我们注入的东西 = 这个 400 与我们无关,原样交还。
+    if (!hasInjectedXaiServerTools(parsed)) return response
+
+    const retried = await baseFetch(input, {
+      ...init,
+      body: JSON.stringify(stripInjectedXaiServerTools(parsed)),
+    })
+    // 第一次的响应体没人读了,及时放掉连接。
+    await response.body?.cancel().catch(() => undefined)
+    if (retried.ok) {
+      rejection.signature = JSON.stringify(currentSettings())
+      rejection.until = Date.now() + XAI_SERVER_TOOLS_REJECT_TTL_MS
+      console.warn(
+        `[bridge] 上游拒绝了注入的 xAI 服务端工具(HTTP ${response.status}),已剥掉后重发成功;${Math.round(XAI_SERVER_TOOLS_REJECT_TTL_MS / 60000)} 分钟内不再对这份设置注入`,
+      )
+    }
+    return retried
+  }
 }
 
 export interface ProviderCompatibilityProxyGroup {
@@ -733,12 +789,28 @@ export async function startResponsesCompatibilityProxy(
   options: CompatibilityProxyOptions = {},
 ): Promise<ResponsesCompatibilityProxy> {
   const upstreamBase = parseUpstreamBase(upstreamBaseUrl, 'Responses')
+  const xaiServerTools = options.xaiServerTools
+  // 这座桥(= 这个上游)上一次「上游拒绝注入工具」的记录;不同上游各记各的。
+  const rejection: { signature: string | null; until: number } = { signature: null, until: 0 }
   return startCompatibilityBridgeServer({
     basePath: upstreamBase.pathname.replace(/\/+$/, ''),
     resolveTarget: (requestUrl) => upstreamUrl(upstreamBase, requestUrl),
-    fetch,
+    fetch: xaiServerTools
+      ? createXaiServerToolsFallbackFetch(fetch, xaiServerTools, rejection)
+      : fetch,
     transformBody: (body) => {
       rewriteOmniMediaInput(body)
+      if (!xaiServerTools) return
+      try {
+        const settings = xaiServerTools()
+        if (!settings) return
+        const stillRejected = rejection.signature === JSON.stringify(settings)
+          && Date.now() < rejection.until
+        if (!stillRejected) injectXaiServerTools(body, settings)
+      } catch (error) {
+        // 注入只是增强:出任何岔子都不能把用户的请求打成 502。
+        console.warn('[bridge] 注入 xAI 服务端工具失败,原样转发:', error)
+      }
     },
     ...(options.platformHeaders ? { platformHeaders: options.platformHeaders } : {}),
   })
