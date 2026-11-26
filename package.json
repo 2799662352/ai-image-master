@@ -5,7 +5,7 @@
   "main": "dist/main/index.js",
   "author": "CATIMATION",
   "license": "PolyForm-Shield-1.0.0",
-  "codexCliVersion": "0.170.0",
+  "codexCliVersion": "0.172.0",
   "dockerMcpGatewayVersion": "0.42.1",
   "ffmpegBuildTag": "8.1.1",
   "packageManager": "pnpm@10.12.4",
