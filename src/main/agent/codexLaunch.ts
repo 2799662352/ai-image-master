@@ -40,6 +40,11 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   // Cross-session memory default ON — mirrors the previously hardcoded
   // `features.memories=true` launch pin so fresh installs behave identically.
   memoriesEnabled: true,
+  // xAI(Grok)服务端工具默认全关:这三项只经兼容桥注入 xAI 族请求,没开 = 与旧版逐字节一致
+  // (见 `xaiServerTools.ts`)。
+  grokXSearch: false,
+  grokCodeInterpreter: false,
+  grokRemoteMcp: [],
   writableRoots: [],
 }
 
@@ -364,6 +369,10 @@ export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): 
     modelVerbosity: (input?.modelVerbosity ?? DEFAULT_CODEX_SESSION_CONFIG.modelVerbosity) as CodexModelVerbosity,
     notifyOnTurnComplete: input?.notifyOnTurnComplete ?? DEFAULT_CODEX_SESSION_CONFIG.notifyOnTurnComplete,
     memoriesEnabled: input?.memoriesEnabled ?? DEFAULT_CODEX_SESSION_CONFIG.memoriesEnabled,
+    grokXSearch: input?.grokXSearch ?? DEFAULT_CODEX_SESSION_CONFIG.grokXSearch,
+    grokCodeInterpreter: input?.grokCodeInterpreter ?? DEFAULT_CODEX_SESSION_CONFIG.grokCodeInterpreter,
+    grokRemoteMcp: (input?.grokRemoteMcp ?? DEFAULT_CODEX_SESSION_CONFIG.grokRemoteMcp)
+      .map((server) => ({ ...server })),
     writableRoots: [...(input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots)],
   }
 }

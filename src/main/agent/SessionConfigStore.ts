@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { CodexSessionConfig } from '../../types/agent'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
+import { sameRemoteMcpServers } from '../../shared/xaiServerTools'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 
 const STORE_VERSION = 1 as const
@@ -31,6 +32,9 @@ const PERSISTABLE_KEYS = [
   'modelVerbosity',
   'notifyOnTurnComplete',
   'memoriesEnabled',
+  'grokXSearch',
+  'grokCodeInterpreter',
+  'grokRemoteMcp',
 ] as const
 
 type PersistableKey = (typeof PERSISTABLE_KEYS)[number]
@@ -146,7 +150,11 @@ export class SessionConfigStore {
   saveSync(config: CodexSessionConfig): void {
     const overrides: SessionConfigOverrides = {}
     for (const key of PERSISTABLE_KEYS) {
-      if (config[key] !== DEFAULT_CODEX_SESSION_CONFIG[key]) {
+      // `grokRemoteMcp` 是数组,`!==` 恒为真 —— 那样「全是默认值就删文件」的承诺会被打破。
+      const differs = key === 'grokRemoteMcp'
+        ? !sameRemoteMcpServers(config.grokRemoteMcp, DEFAULT_CODEX_SESSION_CONFIG.grokRemoteMcp)
+        : config[key] !== DEFAULT_CODEX_SESSION_CONFIG[key]
+      if (differs) {
         (overrides as Record<string, unknown>)[key] = config[key]
       }
     }

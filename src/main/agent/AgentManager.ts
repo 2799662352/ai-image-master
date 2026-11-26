@@ -1562,6 +1562,9 @@ export class AgentManager {
       modelVerbosity: this.sessionConfig.modelVerbosity,
       notifyOnTurnComplete: this.sessionConfig.notifyOnTurnComplete,
       memoriesEnabled: this.sessionConfig.memoriesEnabled,
+      grokXSearch: this.sessionConfig.grokXSearch,
+      grokCodeInterpreter: this.sessionConfig.grokCodeInterpreter,
+      grokRemoteMcp: this.sessionConfig.grokRemoteMcp.map((server) => ({ ...server })),
       persistedDefaults: this.sessionConfigPersisted,
       writableRoots: [...this.sessionConfig.writableRoots],
     }
@@ -4505,6 +4508,16 @@ export class AgentManager {
     }
     if (patch.webSearch === 'live' && this.sessionConfig.webSearch !== 'live') {
       unsafeChanges.push('live web search')
+    }
+    // 远程 MCP 会让 xAI 服务端把对话内容转发给第三方地址:新增 / 变更 URL 集合要用户确认一次。
+    // 删光(空列表)和只调整顺序不算。`grokXSearch` / `grokCodeInterpreter` 不弹:前者受联网搜索
+    // 开关约束,后者是 xAI 自己的沙箱,都不把对话交给用户没点名的第三方。
+    if (patch.grokRemoteMcp && patch.grokRemoteMcp.length > 0) {
+      const known = new Set(this.sessionConfig.grokRemoteMcp.map((server) => server.url))
+      const added = patch.grokRemoteMcp.filter((server) => !known.has(server.url))
+      if (added.length > 0) {
+        unsafeChanges.push(`remote MCP (conversation is forwarded to: ${added.map((server) => server.url).join(', ')})`)
+      }
     }
     if (unsafeChanges.length === 0) return
 

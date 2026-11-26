@@ -8,7 +8,14 @@ import type {
   CodexSessionConfig,
   CodexSessionStatus,
   CodexWebSearchMode,
+  GrokRemoteMcpServer,
 } from '../../../../types/agent'
+import {
+  XAI_REMOTE_MCP_MAX,
+  formatRemoteMcpLines,
+  parseRemoteMcpLines,
+  sameRemoteMcpServers,
+} from '../../../../shared/xaiServerTools'
 
 /**
  * Option rows show a Chinese label first and the raw config value in mono —
@@ -83,7 +90,13 @@ type Draft = Pick<
   | 'modelVerbosity'
   | 'notifyOnTurnComplete'
   | 'memoriesEnabled'
->
+  | 'grokXSearch'
+  | 'grokCodeInterpreter'
+> & {
+  // 数组字段不能走下面 `DRAFT_KEYS` 的 `===` 比较,单独带着,比较时用 `sameRemoteMcpServers`。
+  // 面板里编辑它用的是文本框(`mcpText`),这里只是「应用后的基线」。
+  grokRemoteMcp: GrokRemoteMcpServer[]
+}
 
 export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory }: CodexPermissionsPanelProps) {
   const [draft, setDraft] = useState<Draft | undefined>(() => statusToDraft(status))
@@ -97,6 +110,9 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
   // main-process builds omit the tuning fields, and comparing 'default'
   // against undefined would wrongly mark them as changed on every apply.
   const [baseline, setBaseline] = useState<Draft | undefined>(() => statusToDraft(status))
+  // 远程 MCP 用文本框编辑(每行「标签 地址」):键入过程中的半截内容不能立刻被解析结果覆盖,
+  // 所以文本自己是一份状态,解析出的列表只在合法时才进 patch。
+  const [mcpText, setMcpText] = useState(() => formatRemoteMcpLines(statusToDraft(status)?.grokRemoteMcp ?? []))
   const nextBaseline = statusToDraft(status)
   if (!sameDraft(nextBaseline, baseline)) {
     // Resync during render rather than in an effect. An effect would leave a
@@ -105,11 +121,21 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
     // rebuilt a value-identical snapshot object.
     setBaseline(nextBaseline)
     setDraft(nextBaseline)
+    setMcpText(formatRemoteMcpLines(nextBaseline?.grokRemoteMcp ?? []))
   }
+  const mcpParsed = useMemo(() => parseRemoteMcpLines(mcpText), [mcpText])
 
   const patch = useMemo(() => {
     if (!baseline || !draft) return {}
     const next: Partial<CodexSessionConfig> = {}
+    if (draft.grokXSearch !== baseline.grokXSearch) next.grokXSearch = draft.grokXSearch
+    if (draft.grokCodeInterpreter !== baseline.grokCodeInterpreter) next.grokCodeInterpreter = draft.grokCodeInterpreter
+    if (
+      mcpParsed.errors.length === 0
+      && !sameRemoteMcpServers(mcpParsed.servers, baseline.grokRemoteMcp)
+    ) {
+      next.grokRemoteMcp = mcpParsed.servers
+    }
     if (draft.sandboxMode !== baseline.sandboxMode) next.sandboxMode = draft.sandboxMode
     if (draft.approvalPolicy !== baseline.approvalPolicy) next.approvalPolicy = draft.approvalPolicy
     if (draft.webSearch !== baseline.webSearch) next.webSearch = draft.webSearch
@@ -120,7 +146,7 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
     if (draft.notifyOnTurnComplete !== baseline.notifyOnTurnComplete) next.notifyOnTurnComplete = draft.notifyOnTurnComplete
     if (draft.memoriesEnabled !== baseline.memoriesEnabled) next.memoriesEnabled = draft.memoriesEnabled
     return next
-  }, [draft, baseline])
+  }, [draft, baseline, mcpParsed])
 
   if (!status || !draft) {
     return (
@@ -133,13 +159,19 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
   // With persist checked, "apply" is meaningful even without field changes:
   // it snapshots the CURRENT config as the new startup default.
   const changed = Object.keys(patch).length > 0 || (persist && !status.persistedDefaults)
+  // 文本框里有写错的行时一律拦住「应用」:否则别的改动会被应用、而这一框被悄悄丢掉。
+  const mcpInvalid = mcpParsed.errors.length > 0
+  // 与主进程 `confirmUnsafeSessionConfigChange` 对齐:只有**新增**的远程 MCP 地址才会弹确认框。
+  const knownMcpUrls = new Set((baseline?.grokRemoteMcp ?? []).map((server) => server.url))
+  const addsRemoteMcp = (patch.grokRemoteMcp ?? []).some((server) => !knownMcpUrls.has(server.url))
   const unsafe =
     patch.sandboxMode === 'danger-full-access' ||
     patch.approvalPolicy === 'never' ||
-    patch.webSearch === 'live'
+    patch.webSearch === 'live' ||
+    addsRemoteMcp
 
   async function apply(): Promise<void> {
-    if (!changed) return
+    if (!changed || mcpInvalid) return
     setApplying(true)
     try {
       if (persist) {
@@ -196,7 +228,7 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
         <button
           type="button"
           onClick={() => void apply()}
-          disabled={!changed || applying}
+          disabled={!changed || applying || mcpInvalid}
           className="cursor-pointer rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 text-[11px] font-medium text-cyan-100 transition-colors duration-200 hover:border-cyan-300/60 hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:border-zinc-700/60 disabled:bg-zinc-900 disabled:text-zinc-500"
         >
           应用设置
@@ -343,6 +375,79 @@ export function CodexPermissionsPanel({ status, onApply, onReset, onResetMemory 
         </fieldset>
       </div>
 
+      <fieldset
+        className="mt-3 rounded-lg border border-zinc-800/80 bg-black/20 p-2"
+        data-testid="grok-server-tools"
+      >
+        <legend className="px-1 text-[11px] font-medium text-zinc-400">
+          Grok 服务端工具 <span className="font-mono text-[10px] text-zinc-600">xAI server-side tools</span>
+        </legend>
+        <p className="px-0.5 text-[10px] leading-4 text-zinc-500">
+          只对 Grok 模型的请求生效(API易 / Miau / Right.Codes 的 Grok 渠道),由 xAI 在服务端执行。
+          与上面其他项不同,这里的开关<span className="text-zinc-300">对 Grok 的下一条消息就生效</span>,无需新开会话。
+          网关不支持时会自动退回不带这些工具的请求并写日志,不会让对话报错。
+        </p>
+        <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[11px] text-zinc-300 transition-colors duration-200 hover:bg-cyan-400/5">
+          <input
+            type="checkbox"
+            checked={draft.grokXSearch}
+            onChange={() => setDraft({ ...draft, grokXSearch: !draft.grokXSearch })}
+            className="h-3 w-3 cursor-pointer accent-cyan-300"
+          />
+          <span>X 搜索</span>
+          <span className="font-mono text-[10px] text-zinc-500">x_search</span>
+        </label>
+        <p className="px-0.5 pl-6 text-[10px] leading-4 text-zinc-500">
+          检索 X(推特)上的实时帖子与账号动态。随「联网搜索」走:联网搜索选「关闭」时不生效。
+          单次问答可能搜索 20 多次、约 45 秒,注入的 token 也多,费用明显高于普通联网搜索。
+        </p>
+        {draft.grokXSearch && draft.webSearch === 'disabled' ? (
+          <p className="px-0.5 pl-6 text-[10px] leading-4 text-amber-300">
+            当前联网搜索为「关闭」,X 搜索不会被发送。
+          </p>
+        ) : null}
+        <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[11px] text-zinc-300 transition-colors duration-200 hover:bg-cyan-400/5">
+          <input
+            type="checkbox"
+            checked={draft.grokCodeInterpreter}
+            onChange={() => setDraft({ ...draft, grokCodeInterpreter: !draft.grokCodeInterpreter })}
+            className="h-3 w-3 cursor-pointer accent-cyan-300"
+          />
+          <span>代码执行</span>
+          <span className="font-mono text-[10px] text-zinc-500">code_interpreter</span>
+        </label>
+        <p className="px-0.5 pl-6 text-[10px] leading-4 text-zinc-500">
+          xAI 服务端的 Python 沙箱,适合精确计算与数据处理。它看不到你电脑上的文件,
+          读写本机文件与运行项目命令仍走本地工具。
+        </p>
+        <div className="mt-1.5 px-0.5">
+          <label htmlFor="grok-remote-mcp" className="text-[11px] text-zinc-300">
+            远程 MCP 服务器 <span className="font-mono text-[10px] text-zinc-500">mcp</span>
+          </label>
+          <textarea
+            id="grok-remote-mcp"
+            value={mcpText}
+            onChange={(event) => setMcpText(event.target.value)}
+            rows={3}
+            spellCheck={false}
+            placeholder={'每行一个:标签 https://地址\n例:deepwiki https://mcp.deepwiki.com/mcp'}
+            className="mt-1 w-full resize-y rounded-md border border-zinc-800 bg-black/30 px-2 py-1 font-mono text-[11px] leading-4 text-zinc-200 placeholder:text-zinc-600 focus:border-cyan-400/50 focus:outline-none"
+          />
+          <p className="mt-1 text-[10px] leading-4 text-zinc-500">
+            连接由 xAI 服务端发起:地址必须是公网可达的 https 地址(不能是 localhost / 内网 / 带账号密码的地址),
+            最多 {XAI_REMOTE_MCP_MAX} 个,工具调用自动放行。
+            <span className="text-amber-300">你的对话内容会经 xAI 发送到这些地址,请只接入可信服务。</span>
+          </p>
+          {mcpInvalid ? (
+            <ul className="mt-1 space-y-0.5" role="alert" data-testid="grok-remote-mcp-errors">
+              {mcpParsed.errors.map((message) => (
+                <li key={message} className="text-[10px] leading-4 text-rose-300">{message}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </fieldset>
+
       {status.writableRoots.length > 0 ? (
         <div className="mt-3">
           <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">可写目录</div>
@@ -408,6 +513,10 @@ function statusToDraft(status?: CodexSessionStatus): Draft | undefined {
     // Older main-process builds omit the field; ON mirrors the historical
     // hardcoded `features.memories=true` launch pin.
     memoriesEnabled: status.memoriesEnabled ?? true,
+    // xAI 服务端工具:旧主进程不带这三项,按「全关」处理(与主进程默认值一致)。
+    grokXSearch: status.grokXSearch ?? false,
+    grokCodeInterpreter: status.grokCodeInterpreter ?? false,
+    grokRemoteMcp: (status.grokRemoteMcp ?? []).map((server) => ({ ...server })),
   }
 }
 
@@ -421,11 +530,14 @@ const DRAFT_KEYS = [
   'modelVerbosity',
   'notifyOnTurnComplete',
   'memoriesEnabled',
+  'grokXSearch',
+  'grokCodeInterpreter',
 ] as const satisfies readonly (keyof Draft)[]
 
 function sameDraft(a?: Draft, b?: Draft): boolean {
   if (!a || !b) return a === b
   return DRAFT_KEYS.every((key) => a[key] === b[key])
+    && sameRemoteMcpServers(a.grokRemoteMcp, b.grokRemoteMcp)
 }
 
 function RadioGroup<T extends string>({

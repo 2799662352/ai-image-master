@@ -513,7 +513,26 @@ export interface CodexSessionConfig {
    * next codex restart (the feature is evaluated at engine session start).
    */
   memoriesEnabled: boolean
+  /**
+   * xAI(Grok)服务端托管工具(2026-11-26,依据 docs.apiyi.com 的 Grok「联网搜索与 X 搜索」
+   * 与「代码执行与 Remote MCP」两页)。三项都**只经本机兼容桥**注入到 xAI 族模型的
+   * `/responses` 请求里,不进 codex 的 `-c` / `thread/start.config`,所以**每条消息按当前值
+   * 生效**(不需要新开会话、不需要重启)。默认全关 = 与旧版逐字节一致。
+   * 细节与护栏见 `main/agent/xaiServerTools.ts`。
+   */
+  /** `x_search`:检索 X(推特)帖子 / 账号动态。只在联网搜索不是 `disabled` 时才会被注入。 */
+  grokXSearch: boolean
+  /** `code_interpreter`:xAI 服务端 Python 沙箱(精确计算 / 数据处理;看不到本机文件)。 */
+  grokCodeInterpreter: boolean
+  /** Remote MCP:由 xAI 服务端直连的公网 https MCP 服务器(最多 5 个,自动审批)。 */
+  grokRemoteMcp: GrokRemoteMcpServer[]
   writableRoots: string[]
+}
+
+/** 一个 xAI 服务端直连的远程 MCP 服务器。`label` 对应上游的 `server_label`。 */
+export interface GrokRemoteMcpServer {
+  label: string
+  url: string
 }
 
 export interface CodexSessionStatus {
@@ -532,6 +551,10 @@ export interface CodexSessionStatus {
   modelVerbosity?: CodexModelVerbosity
   notifyOnTurnComplete?: boolean
   memoriesEnabled?: boolean
+  /** xAI 服务端工具(见 {@link CodexSessionConfig.grokXSearch});旧主进程不带这三项,渲染层按「全关」处理。 */
+  grokXSearch?: boolean
+  grokCodeInterpreter?: boolean
+  grokRemoteMcp?: GrokRemoteMcpServer[]
   /**
    * True when the CURRENT defaults come from a user-saved snapshot
    * (electron-store persistence). Lets the settings panel show a

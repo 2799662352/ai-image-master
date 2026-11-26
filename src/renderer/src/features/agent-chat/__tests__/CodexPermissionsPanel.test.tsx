@@ -239,3 +239,197 @@ describe('CodexPermissionsPanel', () => {
     expect(await screen.findByText(/Memory reset API unavailable/)).toBeTruthy()
   })
 })
+
+describe('CodexPermissionsPanel · Grok 服务端工具', () => {
+  const mcpBox = (): HTMLTextAreaElement => screen.getByRole('textbox', { name: /远程 MCP/ }) as HTMLTextAreaElement
+  const xSearch = (): HTMLInputElement => screen.getByRole('checkbox', { name: /x_search/ }) as HTMLInputElement
+  const codeExec = (): HTMLInputElement => screen.getByRole('checkbox', { name: /code_interpreter/ }) as HTMLInputElement
+  const applyButton = (): HTMLButtonElement => screen.getByRole('button', { name: /应用设置/ }) as HTMLButtonElement
+  const type = (text: string): void => { fireEvent.change(mcpBox(), { target: { value: text } }) }
+
+  it('ships everything off when the status omits the fields (older main process)', () => {
+    render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    expect(xSearch().checked).toBe(false)
+    expect(codeExec().checked).toBe(false)
+    expect(mcpBox().value).toBe('')
+    expect(applyButton().disabled).toBe(true)
+  })
+
+  it('reflects the saved values from the status snapshot', () => {
+    render(
+      <CodexPermissionsPanel
+        status={{
+          ...baseStatus,
+          grokXSearch: true,
+          grokCodeInterpreter: true,
+          grokRemoteMcp: [{ label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }],
+        }}
+        onApply={vi.fn()}
+      />,
+    )
+
+    expect(xSearch().checked).toBe(true)
+    expect(codeExec().checked).toBe(true)
+    expect(mcpBox().value).toBe('deepwiki https://mcp.deepwiki.com/mcp')
+    expect(applyButton().disabled).toBe(true)
+  })
+
+  it('puts only the toggled switch in the patch', () => {
+    const onApply = vi.fn()
+    render(<CodexPermissionsPanel status={baseStatus} onApply={onApply} />)
+
+    fireEvent.click(xSearch())
+    fireEvent.click(applyButton())
+    expect(onApply).toHaveBeenLastCalledWith({ grokXSearch: true })
+
+    cleanup()
+    const second = vi.fn()
+    render(<CodexPermissionsPanel status={baseStatus} onApply={second} />)
+    fireEvent.click(codeExec())
+    fireEvent.click(applyButton())
+    expect(second).toHaveBeenCalledWith({ grokCodeInterpreter: true })
+  })
+
+  it('does not call the two switches "unsafe" (no confirmation banner)', () => {
+    render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    fireEvent.click(xSearch())
+    fireEvent.click(codeExec())
+
+    expect(screen.queryByText(/高权限配置/)).toBeNull()
+  })
+
+  it('warns that X search will not be sent while web search is off', () => {
+    render(<CodexPermissionsPanel status={{ ...baseStatus, webSearch: 'disabled' }} onApply={vi.fn()} />)
+    expect(screen.queryByText(/X 搜索不会被发送/)).toBeNull()
+
+    fireEvent.click(xSearch())
+    expect(screen.getByText(/X 搜索不会被发送/)).toBeTruthy()
+  })
+
+  it('turns typed lines into a remote MCP list in the patch, and flags the confirm dialog', () => {
+    const onApply = vi.fn()
+    render(<CodexPermissionsPanel status={baseStatus} onApply={onApply} />)
+
+    type('deepwiki https://mcp.deepwiki.com/mcp\nhttps://docs.example.com/mcp')
+
+    expect(screen.getByText(/高权限配置/)).toBeTruthy()
+    fireEvent.click(applyButton())
+    expect(onApply).toHaveBeenCalledWith({
+      grokRemoteMcp: [
+        { label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' },
+        { label: 'docs_example_com', url: 'https://docs.example.com/mcp' },
+      ],
+    })
+  })
+
+  it('blocks Apply and names the bad line while the box has invalid content', () => {
+    const onApply = vi.fn()
+    render(<CodexPermissionsPanel status={baseStatus} onApply={onApply} />)
+
+    // 别的改动是合法的,但文本框有写错的行 → 整个「应用」被拦住,不能悄悄丢掉那一框
+    fireEvent.click(xSearch())
+    type('ok https://ok.example.com/mcp\nbad http://plain.example.com/mcp')
+
+    const errors = screen.getByTestId('grok-remote-mcp-errors')
+    expect(errors.textContent).toMatch(/第 2 行/)
+    expect(applyButton().disabled).toBe(true)
+    fireEvent.click(applyButton())
+    expect(onApply).not.toHaveBeenCalled()
+
+    // 改对之后放行,而且两处改动一起提交
+    type('ok https://ok.example.com/mcp')
+    expect(screen.queryByTestId('grok-remote-mcp-errors')).toBeNull()
+    expect(applyButton().disabled).toBe(false)
+    fireEvent.click(applyButton())
+    expect(onApply).toHaveBeenCalledWith({
+      grokXSearch: true,
+      grokRemoteMcp: [{ label: 'ok', url: 'https://ok.example.com/mcp' }],
+    })
+  })
+
+  it('rejects internal and credentialed addresses right in the box', () => {
+    render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+
+    for (const line of [
+      'a https://localhost/mcp',
+      'a https://192.168.1.5/mcp',
+      'a https://169.254.169.254/latest',
+      'a https://user:pw@example.com/mcp',
+    ]) {
+      type(line)
+      expect(screen.getByTestId('grok-remote-mcp-errors')).toBeTruthy()
+      expect(applyButton().disabled).toBe(true)
+    }
+  })
+
+  it('clearing a saved list applies as an empty array and does not trigger the confirm flag', () => {
+    const onApply = vi.fn()
+    render(
+      <CodexPermissionsPanel
+        status={{ ...baseStatus, grokRemoteMcp: [{ label: 'a', url: 'https://a.example.com/mcp' }] }}
+        onApply={onApply}
+      />,
+    )
+
+    type('')
+
+    expect(screen.queryByText(/高权限配置/)).toBeNull()
+    fireEvent.click(applyButton())
+    expect(onApply).toHaveBeenCalledWith({ grokRemoteMcp: [] })
+  })
+
+  it('only flags the confirm dialog for addresses that are new relative to the saved list', () => {
+    render(
+      <CodexPermissionsPanel
+        status={{ ...baseStatus, grokRemoteMcp: [{ label: 'a', url: 'https://a.example.com/mcp' }] }}
+        onApply={vi.fn()}
+      />,
+    )
+
+    // 改标签、加注释:地址没变 → 不弹
+    type('# 备注\nrenamed https://a.example.com/mcp')
+    expect(screen.queryByText(/高权限配置/)).toBeNull()
+
+    // 多一个新地址 → 弹
+    type('renamed https://a.example.com/mcp\nb https://b.example.com/mcp')
+    expect(screen.getByText(/高权限配置/)).toBeTruthy()
+  })
+
+  it('treats comment-only / reformatted text as "no change" (Apply stays disabled)', () => {
+    render(
+      <CodexPermissionsPanel
+        status={{ ...baseStatus, grokRemoteMcp: [{ label: 'a', url: 'https://a.example.com/mcp' }] }}
+        onApply={vi.fn()}
+      />,
+    )
+
+    type('# 注释\n\n   a     https://a.example.com/mcp   ')
+    expect(applyButton().disabled).toBe(true)
+  })
+
+  it('keeps half-typed text when the parent re-renders with a value-identical snapshot', () => {
+    const { rerender } = render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+    type('half https://half')
+
+    rerender(<CodexPermissionsPanel status={{ ...baseStatus }} onApply={vi.fn()} />)
+
+    expect(mcpBox().value).toBe('half https://half')
+  })
+
+  it('adopts the new saved list (and resets the box) once the status changes', () => {
+    const { rerender } = render(<CodexPermissionsPanel status={baseStatus} onApply={vi.fn()} />)
+    type('a https://a.example.com/mcp')
+
+    rerender(
+      <CodexPermissionsPanel
+        status={{ ...baseStatus, grokRemoteMcp: [{ label: 'a', url: 'https://a.example.com/mcp' }] }}
+        onApply={vi.fn()}
+      />,
+    )
+
+    expect(mcpBox().value).toBe('a https://a.example.com/mcp')
+    expect(applyButton().disabled).toBe(true)
+  })
+})

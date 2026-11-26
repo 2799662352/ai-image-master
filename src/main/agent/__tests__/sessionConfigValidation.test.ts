@@ -101,6 +101,38 @@ describe('validateSessionConfigPatch', () => {
     expect(() => validateSessionConfigPatch({ memoriesEnabled: 1 }, [])).toThrow(/memoriesEnabled/i)
   })
 
+  it('accepts the xAI server-tool switches (booleans only)', () => {
+    expect(validateSessionConfigPatch({ grokXSearch: true, grokCodeInterpreter: false }, []))
+      .toEqual({ grokXSearch: true, grokCodeInterpreter: false })
+    expect(() => validateSessionConfigPatch({ grokXSearch: 'yes' }, [])).toThrow(/grokXSearch/)
+    expect(() => validateSessionConfigPatch({ grokXSearch: 1 }, [])).toThrow(/grokXSearch/)
+    expect(() => validateSessionConfigPatch({ grokCodeInterpreter: 'on' }, [])).toThrow(/grokCodeInterpreter/)
+    expect(() => validateSessionConfigPatch({ grokCodeInterpreter: null }, [])).toThrow(/grokCodeInterpreter/)
+  })
+
+  it('accepts a valid remote MCP list (and an empty one to clear it)', () => {
+    const list = [{ label: 'deepwiki', url: ' https://mcp.deepwiki.com/mcp ' }]
+    expect(validateSessionConfigPatch({ grokRemoteMcp: list }, []))
+      .toEqual({ grokRemoteMcp: [{ label: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }] })
+    expect(validateSessionConfigPatch({ grokRemoteMcp: [] }, [])).toEqual({ grokRemoteMcp: [] })
+  })
+
+  it('rejects remote MCP lists that are not public https, are duplicated, or are malformed', () => {
+    const bad = [
+      'not an array',
+      [{ label: 'a', url: 'http://example.com/mcp' }],
+      [{ label: 'a', url: 'https://localhost/mcp' }],
+      [{ label: 'a', url: 'https://192.168.1.2/mcp' }],
+      [{ label: 'a', url: 'https://u:p@example.com/mcp' }],
+      [{ label: 'a b', url: 'https://example.com/mcp' }],
+      [{ label: 'a', url: 'https://a.example.com/mcp' }, { label: 'A', url: 'https://b.example.com/mcp' }],
+      Array.from({ length: 6 }, (_, i) => ({ label: `s${i}`, url: `https://s${i}.example.com/mcp` })),
+    ]
+    for (const grokRemoteMcp of bad) {
+      expect(() => validateSessionConfigPatch({ grokRemoteMcp }, [])).toThrow()
+    }
+  })
+
   it('returns writableRoots that cannot be mutated through the input array', () => {
     const root = path.resolve('D:/workspace')
     const inputRoots = [root]

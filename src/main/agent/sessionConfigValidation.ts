@@ -8,6 +8,7 @@ import type {
   CodexSessionConfig,
   CodexWebSearchMode,
 } from '../../types/agent'
+import { validateRemoteMcpServers } from '../../shared/xaiServerTools'
 
 const SANDBOX_MODES = new Set<CodexSandboxMode>([
   'read-only',
@@ -118,6 +119,26 @@ export function validateSessionConfigPatch(
       throw new Error('invalid memoriesEnabled')
     }
     patch.memoriesEnabled = source.memoriesEnabled
+  }
+
+  if ('grokXSearch' in source) {
+    if (typeof source.grokXSearch !== 'boolean') {
+      throw new Error('invalid grokXSearch')
+    }
+    patch.grokXSearch = source.grokXSearch
+  }
+
+  if ('grokCodeInterpreter' in source) {
+    if (typeof source.grokCodeInterpreter !== 'boolean') {
+      throw new Error('invalid grokCodeInterpreter')
+    }
+    patch.grokCodeInterpreter = source.grokCodeInterpreter
+  }
+
+  if ('grokRemoteMcp' in source) {
+    // 与设置面板文本框共用同一套规则(https + 公网 + 无凭据 + label 合法 + 去重 + 上限),
+    // 落盘读回也走这条路,所以手改配置文件也塞不进内网地址。
+    patch.grokRemoteMcp = validateRemoteMcpServers(source.grokRemoteMcp)
   }
 
   if ('writableRoots' in source) {
